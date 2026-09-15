@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A self-test check that no box had ever seen fail, and the reader that
+  refuses the next one**
+  ([#335](https://github.com/andrediashexa/hexarouting/issues/335)). Measured
+  over the 122 boxes `test/test_selftest.sh` arranges: the `vat2` stub answered
+  the constant `bpa_pool_add_del`, so `binary API NOT registered: no CGNAT pool
+  can be configured here` had never run anywhere. That is the check written for
+  [#119](https://github.com/andrediashexa/hexarouting/issues/119) - the medium
+  shipped without the vat2 plugin for the life of the project, and such a box
+  boots, routes, answers ssh and fails every pool commit, which is the one
+  thing it exists to do. It is the check you most want to be able to go red.
+  The stub now answers from the fake box, the way `systemctl` already does -
+  and the comments on that stub record the same repair being made twice before
+  ([#222](https://github.com/andrediashexa/hexarouting/issues/222)), one
+  constant at a time, which is how a third came to be sitting three lines
+  below them. So the class is closed as well as the instance: **no `[ ok ]`
+  line may be identical across every box the suite arranges**, measured from
+  the runs rather than from the source, because a stub that answers a constant
+  looks like any other stub and what gives it away is a hundred boxes all being
+  told the same thing. The rule carries no exceptions. When it went red on the
+  manifest line - whose red form is measured next door in
+  `test/test_manifest.sh` - the repair was to arrange that box here too, not to
+  excuse the line, because an excused line is one nobody re-examines.
+
+### Fixed
+
 * **The cores table an operator sizes hardware from had no reader**
   ([#172](https://github.com/andrediashexa/hexarouting/issues/172)). The public
   page somebody reads before choosing a processor carries a table of how many
