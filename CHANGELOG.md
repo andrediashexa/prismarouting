@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Three more labs waited out a collector window chosen when they were
+  written.** `tools/ipfix_collector.py` takes a number of seconds, and a lab
+  that picks one and then waits it out has decided, at writing time, how long
+  the box would take. On a machine carrying something else the box is slower,
+  its records arrive after the window has closed, and the lab reports that the
+  log is missing them - a product defect the product has not got. That is
+  [#342](https://github.com/andrediashexa/hexarouting/issues/342) in the soak,
+  and on 2026-09-15 it was `detreserve` at 30 s, `extblocks` at 25 s and
+  `ipfix` at 75 s, all three red on *"the record arrived at the collector"*
+  while the same machine ran the whole test suite under `gcov` three times
+  over.
+
+  All three now tell the collector when the box has finished, behind a ceiling
+  of 300 seconds for a run nobody is watching. `test/test_lab_collector_window.py`
+  holds the rule, and it needs no list of exceptions: **a lab that starts the
+  UDP collector and waits on it must either pass a stop file or give it a
+  budget generous enough not to be the thing that expires**. Both spellings are
+  in the tree - these three tell it, and `ipfix-stop` and `ipfix-outbuf` give
+  it 300 seconds and synchronise on the box's own exported record count. What
+  is refused is the third: a number small enough to be reached. The labs the
+  suite does not run at all are read out of `NOT_LABS` rather than listed
+  again, and dropping that table takes the check red.
+
 * **Seven refusals printed a paragraph on one row**
   ([#355](https://github.com/andrediashexa/hexarouting/issues/355)). `err()`
   wraps nothing, which is right for a verdict and wrong for a paragraph, and

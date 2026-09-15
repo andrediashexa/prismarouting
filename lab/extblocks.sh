@@ -234,7 +234,23 @@ $HX -c "configure" \
 # stdout into a file, so the records appear when the collector ENDS. Reading
 # the file while it is still running reads an empty buffer and says the box
 # exported nothing.
-ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 25 \
+# THE COLLECTOR'S WINDOW IS NOT A GUESS ANY MORE (#342's fix, applied here).
+#
+# This was a fixed number of seconds chosen when the lab was written, and the
+# lab then waited it out whatever the box did. On a machine carrying something
+# else the box is slower, its records arrive after the window has closed, and
+# the lab reports that the log is missing them - which is a product defect it
+# has not got. That happened on 2026-09-15: this lab and two others went red on
+# "the record arrived at the collector" while the same machine ran the whole
+# test suite under gcov three times over, and all of them passed alone.
+#
+# So the number is a CEILING for a run nobody is watching, and the lab tells
+# the collector when the box has finished. The collector drains what is
+# already in its receive buffer before it leaves, so nothing in flight is lost.
+COL_STOP=/tmp/collector.stop
+rm -f "$COL_STOP"
+ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 180 \
+  "$COL_STOP" \
   > /tmp/collector.out 2>&1 &
 COL_PID=$!
 sleep 2
@@ -323,6 +339,11 @@ echo
 echo "  -- and every block the subscriber holds is in the log --"
 # The records have to leave the box; the collector is on the other side of a
 # wire and decodes what arrived.
+# The box has done everything this lab asks of it, so there is nothing more to
+# hear. A moment first for the last records to cross the wire: the collector
+# drains its buffer, so this only has to cover flight time.
+sleep 2
+: > "$COL_STOP"
 wait $COL_PID 2>/dev/null
 vppctl show bpa logging | sed -n '1,6p' | sed 's/^/    /'
 COL=$(cat /tmp/collector.out)
