@@ -123,6 +123,45 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The documented upgrade path did not exist on a box anybody had**
+  ([#295](https://github.com/andrediashexa/hexarouting/issues/295)).
+  `appliance/install.sh` has called itself the path "for updating a box in
+  production without reinstalling it" since the first release, and it copies
+  every file out of `$REPO`. Measured on a real appliance installed from a
+  published medium: there is no `install.sh` on it, no repository and no
+  toolchain. So the path served `tools/release-gate.sh` and `lab/upgrade.sh`,
+  which have a build tree, and nobody who bought the product - while five
+  sentences in the repository and two on the box itself told an operator it was
+  theirs. Their only route to a new version was a reinstall, which erases the
+  disk and takes `/var/log/hexarouting` with it: a year of connection records
+  they remain answerable for, and the configuration trail that makes an answer
+  about a past instant defensible. The earlier half of this work corrected
+  those five sentences and wrote the operator page; this is the half that makes
+  them true again. `appliance/build-upgrade.sh` packs the four directories
+  `appliance/build-iso.sh` already installs the medium from, with the two
+  compiled plugins laid where `install.sh` looks for them, and
+  `appliance/upgrade` runs **that same `install.sh`** out of the unpacked
+  result. There is no second implementation of the upgrade: an operator's
+  upgrade is byte for byte the one the release gate and `lab/upgrade.sh` have
+  been driving all along, which is the only reason it can be believed. Two
+  things travel that a tarball cannot work out for itself. The version stamp is
+  written into the artifact at build time, because there is no `.git` inside a
+  tarball and `install.sh` would otherwise stamp the box "not a git tree" - the
+  line `show version` prints and the first thing anybody is asked on the
+  telephone. And the VPP and FRR versions `build-iso.sh` pins travel with it,
+  read out of that file so there is one owner of them: the artifact carries
+  product files and installs no packages, so a release that moves the platform
+  is **refused** on the box, naming both versions, before a single byte is
+  written. `tools/release-gate.sh` builds the artifact for every release and
+  publishes its `sha256` beside the medium's, and `build-upgrade.sh` installs
+  what it has just packed into a throwaway root before it will hand it over -
+  an artifact nobody installs in the gate is one whose first installation is
+  somebody's production box. `test/test_upgrade_artifact.sh` drives the whole
+  of it in about a second, against a box that is a directory with a real dpkg
+  database in it. What this does **not** do is take a booted box from one
+  release to the next: that is `lab/upgrade.sh`'s question and it still runs
+  out of a source tree.
+
 * **`show hardware` told an operator their card was unusable and stopped
   there** ([#328](https://github.com/andrediashexa/hexarouting/issues/328)).
   The driver line read `kernel driver: DPDK cannot take a NIC through it`. It

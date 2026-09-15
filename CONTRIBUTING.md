@@ -350,6 +350,16 @@ When it happens it **MUST** produce all six of:
    NOT** be generated from the commit list: a list of commits describes the
    work, and what a reader needs is what changed for them.
 
+   **And the upgrade artifact beside it, with its own `sha256`.** The medium
+   is a route only somebody with an empty disk can take: installing it erases
+   the disk, and on a box already in service that is a year of connection
+   records. A release that publishes the medium alone is a release the boxes
+   already in the field cannot take at all, which is what
+   [#295](https://github.com/andrediashexa/hexarouting/issues/295) measured.
+   `tools/release-gate.sh` builds it, installs it out of its own tarball, and
+   prints both files and both checksums in the same breath as "ready to
+   publish".
+
    The checksum is written down here because every release so far has carried
    one and nothing said to. `tools/release-gate.sh` prints it in the same
    breath as "ready to publish", so it has always been to hand and has always
@@ -412,8 +422,8 @@ When it happens it **MUST** produce all six of:
    home in the file; neither blocks the release.
 
    `make release-gate` is the whole procedure — clone at the tag, build the
-   plugin, build the medium, boot it, install it to a disk and boot the disk —
-   and it **MUST** be what cuts a release.
+   plugin, build the medium, boot it, install it to a disk, boot the disk and
+   build the upgrade artifact — and it **MUST** be what cuts a release.
    Done by hand it goes wrong: three times in one evening, each caught by a
    rule rather than by attention. See `TESTING.md`.
 

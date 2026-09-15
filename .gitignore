@@ -14,6 +14,11 @@ test/bpa_vectors.h
 # pattern alone un-ignored the image already on disk under the old name, and
 # "git add -A" committed 321 MB before GitHub refused the push (#91).
 hexarouting*.iso
+# And the upgrade artifact, for the same reason one size down. It is a megabyte
+# rather than 321, which is exactly what makes it the one that would slip
+# through: nothing refuses a push of it, so it would simply become a file in
+# the history that somebody later mistakes for a release.
+hexarouting*-upgrade.tar.gz
 boot-console.log
 install-console.log
 

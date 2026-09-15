@@ -920,9 +920,10 @@ infection on the far side of the access network.
 
 Two bounds, per pool, **zero meaning unlimited** so a configuration written
 before they existed refuses nothing that worked yesterday. That holds whichever
-way the new version reached the box: `appliance/install.sh` over a running one,
-which needs a source tree, or the reinstall an operator holding a published
-medium has to do, after which the same file is loaded again.
+way the new version reached the box: the upgrade artifact published beside the
+medium, which runs `appliance/install.sh` over a running box and does not touch
+the configuration at all, or the reinstall that a change of platform still
+forces, after which the same file is typed back and loaded again.
 
 ```
 nat cgnat pool residential

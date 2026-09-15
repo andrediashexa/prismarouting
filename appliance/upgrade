@@ -1,0 +1,183 @@
+#!/bin/sh
+# Takes an installed box to the version in this artifact.
+#
+#   tar xzf hexarouting-0.75.0-upgrade.tar.gz
+#   cd hexarouting-0.75.0-upgrade
+#   sudo sh appliance/upgrade
+#
+# WHAT THIS IS, AND WHY IT IS NOT install.sh. install.sh IS the upgrade: it
+# copies thirty-odd files out of $REPO over the ones on the box, and it
+# installs no packages at all - `grep -nE "^[[:space:]]*(apt|apt-get|dpkg|make|
+# cmake|ninja|gcc)\b" appliance/install.sh` returns nothing, so it needs no
+# network and no toolchain on the box. What it needs and an operator does not
+# have is $REPO: a source tree with a compiled .build-vpp beside it. Measured
+# on a real appliance installed from a published medium (#295):
+#
+#   # ls /usr/lib/hexarouting/
+#   apply-tuning  bind-dataplane-nic  config.py  hexash.py  ...
+#   # find / -name install.sh -path '*hexarouting*'
+#   (nothing)
+#   # command -v cmake ninja gcc
+#   (nothing)
+#
+# So the path this repository has documented since its first release existed
+# only for the release gate and lab/upgrade.sh, which both have a build tree.
+# An operator holding a medium had one route to a new version - a reinstall,
+# which erases the disk and takes /var/log/hexarouting with it, a year of
+# connection records they are answerable for.
+#
+# This artifact is that $REPO with the build already in it. The script that
+# does the work is still install.sh, unchanged and running from here, which is
+# the point: the upgrade an operator performs is the one the release gate and
+# lab/upgrade.sh have been proving all along, not a second implementation of it
+# that nothing drives.
+#
+# WHAT IS LEFT FOR THIS FILE, then, is the two things install.sh cannot work
+# out once the tree has left the repository, and both of them are refusals.
+set -eu
+
+ART=$(cd "$(dirname "$0")/.." && pwd)
+DESTDIR=${DESTDIR:-}
+
+# DESTDIR IS HONOURED, and it is a seam rather than an operator's option.
+#
+# install.sh has taken one since it was written, and everything that drives
+# this path without a box uses it: appliance/build-upgrade.sh installs the
+# artifact it has just packed into a throwaway root before it will publish it,
+# and test/test_upgrade_artifact.sh stands a box up as a directory. The
+# alternative is a mechanism whose only exercise is a real machine, and this
+# project's own argument against that is written on tools/release-gate.sh's
+# RELEASE_GATE_CHECK_ONLY seam: a check that can only be exercised by building
+# a 321 MB image is a check nobody exercises.
+
+die() {  # every refusal in this file goes through here, before anything writes
+  echo "$@" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------- what this artifact is
+#
+# RELEASE is written by build-upgrade.sh and is what makes an unpacked
+# directory an artifact rather than somebody's copy of the tree.
+#
+# WHY THE STAMP TRAVELS IN A FILE. install.sh asks tools/version-stamp.sh for
+# the version it is about to write into /usr/share/hexarouting/VERSION, and
+# that calculation reads git. There is no .git here and there never can be:
+# this directory came out of a tarball. Left to itself install.sh would stamp
+# the box "0.75.0 (not a git tree)", and that line is what `show version`
+# prints, what the boot self-test puts at the top of its report, and the first
+# thing anybody is asked on the telephone. A box that cannot name the build it
+# is running is the whole of #302, and it would be this artifact that put it in
+# that state. build-iso.sh carries the same scar and the same fix - "the chroot
+# cannot see the host's .git, so the stamp is computed here and passed in.
+# Without it every ISO would declare itself unknown".
+REL="$ART/RELEASE"
+[ -f "$REL" ] || die \
+"There is no RELEASE file here, so this is not an unpacked upgrade artifact.
+
+  In a source tree the upgrade is 'sh appliance/install.sh', which reads the
+  version from git and the plugin from .build-vpp.
+  To build an artifact from a tree: sh appliance/build-upgrade.sh"
+
+field() {  # <name> - one line of RELEASE, or empty
+  sed -n "s/^$1=//p" "$REL" | head -1
+}
+STAMP=$(field stamp)
+WANT_VPP=$(field vpp)
+WANT_FRR=$(field frr)
+need() {  # <field name> <value read back>
+  [ -n "$2" ] || die \
+"RELEASE here has no '$1=' line, so this artifact cannot say what it is or
+  what it needs. It is damaged; fetch it again."
+}
+need stamp "$STAMP"
+need vpp "$WANT_VPP"
+need frr "$WANT_FRR"
+
+echo "==> HexaRouting $STAMP"
+
+# ------------------------------------------------------------------ the box
+#
+# Root, unless something is driving this into a directory. install.sh writes
+# into /usr, /lib and /etc and checks nothing, so a non-root run gets some way
+# in and then stops on a permission error, leaving a box that is half one
+# version and half another. build-iso.sh refuses the same way in its first ten
+# lines and for the same reason.
+if [ -z "$DESTDIR" ] && [ "$(id -u)" != 0 ]; then
+  die "must run as root: this writes into /usr, /lib and /etc"
+fi
+
+# THE PLATFORM, and the one case where this artifact has to send an operator
+# back to the medium.
+#
+# appliance/build-iso.sh pins the two packages the product runs on top of, and
+# build-upgrade.sh copies those pins into RELEASE from that file so there is
+# one owner of them:
+#
+#   VPP_VERSION=${VPP_VERSION:-26.06-release}
+#   FRR_VERSION=${FRR_VERSION:-10.7.1-0~deb12u1}
+#
+# A release that moves either cannot be delivered by this artifact. It carries
+# product files and nothing else - no packages, no repositories, no apt - so a
+# box taking it would keep the VPP it has and receive a bpa_plugin.so compiled
+# in a container built against another one. `git log -p --follow` over those
+# two lines shows one occurrence each, the commit that introduced them: neither
+# has moved in the life of this project, so this is the rare case and not the
+# ordinary one. That is the measured frequency and not a promise.
+#
+# REFUSING IS THE POINT. A refusal here costs the operator the reinstall they
+# were going to do anyway, and it costs it before anything on the box has
+# changed. An upgrade that half-happens costs them the box, at whatever hour
+# the dataplane next restarts - and the half that would be wrong is the one
+# nothing on the box reads, which is the shape #301 and #293 are both about.
+#
+# ASKED OF THE BOX, not of a file this artifact wrote. dpkg is what installed
+# those packages and its database is what says which versions are on the disk.
+ADMINDIR="$DESTDIR/var/lib/dpkg"
+command -v dpkg-query >/dev/null 2>&1 || die \
+"There is no dpkg-query here, so nothing can say which VPP and FRR this box
+  has. This product is installed on Debian 12 by appliance/build-iso.sh and
+  every box it produces has one."
+[ -d "$ADMINDIR" ] || die \
+"There is no package database at $ADMINDIR, so nothing can say which VPP and
+  FRR this box has."
+
+have() {  # <package> - the version installed, or empty if it is not
+  dpkg-query --admindir="$ADMINDIR" -W -f '${Version}' "$1" 2>/dev/null || true
+}
+HAVE_VPP=$(have vpp)
+HAVE_FRR=$(have frr)
+
+# Named one at a time rather than as a pair. An operator reading "the platform
+# does not match" has to go and find out which half, and the answer is two
+# commands they have to know; the refusal can just say it.
+platform() {  # <package> <wanted> <found>
+  if [ -z "$3" ]; then
+    die "This box has no $1 package installed, so it is not an appliance this
+  artifact can upgrade. $1 $2 is what this release was built against."
+  fi
+  if [ "$2" != "$3" ]; then
+    die "This box runs $1 $3 and this release was built against $1 $2.
+
+  An upgrade artifact carries product files only: no packages, no apt, no
+  network. It cannot move the platform under the box, and the dataplane
+  plugin in it was compiled against $1 $2.
+
+  Nothing has been written. The route to this version is the installation
+  medium, which carries the platform with it - and it erases the disk, so
+  read the wiki page on taking a new version before you start."
+  fi
+}
+platform vpp "$WANT_VPP" "$HAVE_VPP"
+platform frr "$WANT_FRR" "$HAVE_FRR"
+echo "    platform: vpp $HAVE_VPP, frr $HAVE_FRR"
+
+# ---------------------------------------------------------------- the upgrade
+#
+# From here on this is install.sh and nothing else, so everything it says about
+# what it wrote, what is still running the old build and what each restart
+# costs (#291) is said by the one file that knows - and is not repeated here,
+# where a second copy would fall out of step with the first.
+echo
+exec env DESTDIR="$DESTDIR" HEXA_VERSION_STAMP="$STAMP" \
+     sh "$ART/appliance/install.sh"
