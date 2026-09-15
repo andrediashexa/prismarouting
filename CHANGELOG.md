@@ -1042,8 +1042,9 @@ version has a chance of seeing it.
 
 * **A whole arm of the dynamic allocator had never been executed by any C
   harness, and nothing could have said so.** The ten harnesses under `test/`
-  run 65,376 checks and their verdict is a count of checks, not of product
-  reached - so a guard nobody enters looks exactly like one everybody enters.
+  ran 65,376 checks when this was written, and **65,767** on this tree; their
+  verdict is a count of checks, not of product reached - so a guard nobody
+  enters looks exactly like one everybody enters.
   Measured with `gcov` for the first time: 108 of the plugin's 4,807
   executable lines are never touched by any of them, and twelve of those were
   the block-stride placement in `bpa_dyn_acquire_extra()`, with both of its
@@ -1057,14 +1058,21 @@ version has a chance of seeing it.
   question, not a sentence - and refuses when it read no counters at all.
 
 * **The refusals in `appliance/`, swept, and 26 of them had never run.** The
-  scripts that put this product on somebody's disk and bring it up refuse in
-  113 places across eight files, counted by reading each one rather than by
+  scripts that put this product on somebody's disk and bring it up refused in
+  113 places across eight files the day of this sweep, counted by reading each
+  one rather than by
   grepping for `exit 1`: `hexarouting-install` 79, `build-iso.sh` 8, `upgrade`
   7, `bind-dataplane-nic` 6, `build-upgrade.sh` 6, `apply-tuning` 5,
   `install.sh` 2, and `ssh-host-key-origin` 0 - that last one never refuses
   anything, it classifies, and saying so is part of the measurement. 51 of the
   113 were rendered by something. 26 more are now, and the rest are named
   below with what each would take.
+
+  It is 115 and `hexarouting-install` 81 now. The #339 entry above this one is
+  what added the two: `git diff` over those eight files since this sweep shows
+  nothing else moved, and what it added are the two `die`s that read
+  `release_disk_until_free`'s refusal at `appliance/hexarouting-install:1450`
+  and `:1512`.
 
   **The one at the top of the list had no test on either arm.** `Type 'yes' to
   install:` is the last thing between an operator and a destroyed disk, and
@@ -1140,7 +1148,16 @@ version has a chance of seeing it.
   run, the empty disk menu through `main` rather than at the seam, and `this
   medium has no mdadm`; `upgrade`'s `There is no dpkg-query here` is a ninth.
 
-  **Four things found and not fixed, because none of them is a test.**
+  **Four things found and not fixed, because none of them is a test.** Two of
+  the four were fixed later the same day, by the
+  [#339](https://github.com/andrediashexa/hexarouting/issues/339) entry above:
+  `release_disk()`'s two early exits return **2** now, at
+  `appliance/hexarouting-install:1380` and `:1381`, and
+  `release_disk_until_free`'s `return 1` is at `:1447` and is read by both call
+  sites, which `die` at `:1450` and `:1512`. The paragraph below is what was
+  true when it was written, and the two line numbers it gives for those exits
+  no longer point at them. The other two stand.
+
   `release_disk()` returns 0 from both of its early exits
   (`appliance/hexarouting-install:1379` and `:1380`) and its caller reads
   non-zero as *"the disk is free"*, so on a box with no `mdadm` or no readable
@@ -1165,10 +1182,12 @@ version has a chance of seeing it.
 * **Six C assertions that could not fail, and the suite that refuses the next
   one.** `test/` holds 10 C harnesses that compile against the BPA plugin's
   headers with `-DBPA_STANDALONE`, 382 `CHECK` sites between them, 65,376
-  checks on a run. They are the only thing in this repository that measures
-  the dataplane's arithmetic without a container, and nobody had ever swept
-  them. This is that sweep, and it is the same sweep as the lab one above,
-  one layer down.
+  checks on a run - the figures the sweep was over, and both have grown
+  since: `make test` reports **65,767** checks on this tree, over the sites
+  the coverage work two entries above added. They are the only thing in this
+  repository that measures the dataplane's arithmetic without a container, and
+  nobody had ever swept them. This is that sweep, and it is the same sweep as
+  the lab one above, one layer down.
 
   Sixteen product mutations were driven to settle it, each one an edit to
   `src/plugins/bpa/*` that still compiles under `-Wall -Wextra -Werror`, runs,
@@ -1233,10 +1252,12 @@ version has a chance of seeing it.
   `test/test_c_restates_product.py` refuses the next assertion that quotes the
   product's own refusal back at it. It pairs each harness with the files it
   includes, reduces every `CHECK` and every `if (...) return/break/continue` to
-  one comparison, and reports a `CHECK` that is a guard's negation. It reads 294
-  of the 382 sites against 74 guards and flags none today; against the RTSP
-  harness as it stood this morning it names line 60 and the guard. It is the
-  sister of `test/test_lab_vacuous.py`, which asks the same question of the
+  one comparison, and reports a `CHECK` that is a guard's negation. It read 294
+  of the 382 sites against 74 guards and flagged none the day it was written;
+  it reads **429** against 74 on this tree and still flags none, which is the
+  number `test/test_c_restates_product.py` prints on every run; against the
+  RTSP harness as it stood this morning it names line 60 and the guard. It is
+  the sister of `test/test_lab_vacuous.py`, which asks the same question of the
   shell labs, and between them both of this repository's assertion idioms are
   swept. What neither can see is stated in its header rather than left to be
   discovered: a guard reached through a helper or expressed as a loop bound is
@@ -1379,6 +1400,12 @@ version has a chance of seeing it.
   a line joiner deliberately broken, which reports *"the checker does not see a
   needle written across two source lines"*.
 
+  The second of those is a line nobody can follow now: this entry's own repair
+  went into `lab/vty-ssh.sh` in the same merge, so `lab/vty-ssh.sh:114` on
+  `master` is an unrelated `echo` and the lab reads stderr. The text the
+  checker was shown red on is kept verbatim in `test/test_lab_negative.py`
+  under the name `VTY_SSH_114`, which is where to read it.
+
   `make test`: 61 suites, 61 passed.
 
 * **The lab suite could lose a lab and still pass.** `tools/run-all-labs.sh`
@@ -1412,7 +1439,14 @@ version has a chance of seeing it.
   into the lab itself; 20 labs declare an `OFF-RED-AT-LEAST` and 20 are given an
   off run, with `lab/upgrade.sh` explaining in a comment why it has neither. So
   425 of the 1381 assertions have had their red branch rendered on every release
-  run. The five below are among the 956 that have not.
+  run. The six below are among the 956 that have not - this said "the five
+  below" when it was written, over six findings, and six is what is under it.
+
+  1381, 425 and 956 are the count on the tree this sweep read. Three more
+  `expect*` call sites have landed under `lab/` since, counted with the line
+  joiner in `test/test_lab_negative.py`, which is the only reader here that
+  sees an assertion written across two source lines. 60 labs, 62 files, 20 off
+  runs and 20 floors are unchanged.
 
   **`lab/extblocks.sh` asserted that its own arithmetic held.**
   `expect "and one this worker count can honour" test "$((STRIDE % NW))" -eq 0`
@@ -1434,7 +1468,11 @@ version has a chance of seeing it.
   prints *"could NOT be written"* only under `if (lost)`, so the phrase the line
   below asserts IS the count being non-zero. The `OFF-RED-AT-LEAST: 8` floor is
   unchanged and was not re-measured: an assertion true for every value was green
-  in the off run too, so it was never one of the eight.
+  in the off run too, so it was never one of the eight. **That floor is 9 now**,
+  and the entry above about a floor below what the off run measures is the one
+  that raised it: `grep OFF-RED-AT-LEAST lab/ipfix-outbuf.sh` reads
+  `# OFF-RED-AT-LEAST: 9`, and the lab's own note at `lab/ipfix-outbuf.sh:776`
+  says the floor WAS changed by it.
 
   **`lab/boot-iso.sh` read the login banner instead of the answer.** The check
   for [#305](https://github.com/andrediashexa/hexarouting/issues/305) greps the
@@ -1493,8 +1531,10 @@ version has a chance of seeing it.
   them cannot fail, and one false for all of them cannot pass. It is a check on
   the SOURCE, like `test/test_lab_crlf.py`, and for the same reason: an
   assertion that cannot fail is invisible on a green box by construction. 216
-  assertions are in scope and the floor refuses a run that reads fewer than 150,
-  because a suite that reads nothing passes, which is the defect it is about.
+  assertions were in scope the day it was written and **217** are on this tree,
+  which is the number the suite prints; the floor refuses a run that reads
+  fewer than 150, because a suite that reads nothing passes, which is the
+  defect it is about.
 
   It folds only definitions that are real arithmetic, never a bare copy, and
   that distinction was measured rather than chosen. `lab/pool-del.sh` writes
@@ -1814,6 +1854,11 @@ version has a chance of seeing it.
   [ ok ] 113 messages appliance/selftest can print, and a box for every one
   ```
 
+  The count is read out of the product, so it moves with the product: that
+  line reads **118 messages** on this tree, which is what
+  `sh test/test_selftest.sh` prints today. 113 is the number the rule was
+  closed at.
+
 
 * **`commit` bound the card immediately while telling the operator it had
   not** ([#336](https://github.com/andrediashexa/hexarouting/issues/336)).
@@ -2107,6 +2152,14 @@ version has a chance of seeing it.
   to it, because its lookbehind refused a `.` in front of the name, so the one
   file the check was first written to read was the one shape it missed. The
   same comment that produced three false FAILs before produces none now.
+
+  Two of those three line numbers were true of the tree that day and are not
+  true of this one. The FAIL names the file and the line it read the parameter
+  on, so re-driving the same three mutations here reads
+  `appliance/build-iso.sh:314` unchanged, `appliance/hexarouting-tune:709` -
+  that file has grown 792 lines since - and `appliance/etc/sysctl.conf:34`,
+  which is the line an appended `kernel.nmi_watchdog = 0` lands on in a
+  33-line file. There is no line 36 in it and there was none then either.
 
 * **A box that handed its only card to the dataplane came back with no address
   on any interface and nobody could reach it**
@@ -2529,7 +2582,10 @@ version has a chance of seeing it.
   different refusals from one line.
 
 * **Eleven of the release gate's fourteen reachable refusals are driven now,
-  up from six.** The five added protect what an operator reads about their own
+  up from six.** Fourteen was the reachable count that day; the gate has grown
+  two refusals since, and `sh test/test_release_gate.sh` now prints *"16 of the
+  gate's 24 refusals are reachable without an image, and this file drives 11 of
+  them"*. The five added protect what an operator reads about their own
   version: a commit that is not a tag; a release tag whose `## Unreleased`
   section still carries entries, so the release contains work it does not
   claim; a shipped release's section edited after the fact, which changes what
@@ -2562,18 +2618,23 @@ version has a chance of seeing it.
 
 
 * **Six of the release gate's refusals now have assertions, and it had two.**
-  `tools/release-gate.sh` carries 22 refusals and its own header calls it "the
-  only thing in this project that has ever caught a release mistake". Until
-  tonight the only two anything had watched fire were the two added tonight;
+  `tools/release-gate.sh` carried 22 refusals when this was written and
+  carries **24** now, which is what
+  `grep -c 'echo "error:' tools/release-gate.sh` answers. Its own header calls
+  it "the only thing in this project that has ever caught a release mistake".
+  Until tonight the only two anything had watched fire were the two added
+  tonight;
   the rest had been seen only when a real release went wrong. A refusal nobody
   has watched fire is a refusal that may not fire, which is #335's finding in
   the place it would cost the most. `test/test_release_gate.sh` clones the
   newest tag, **breaks exactly one thing**, re-tags and requires that one
   refusal - starting from a tree that passes is what makes each case about its
-  own break rather than about the scaffolding. It also says, as a number, that
-  it reaches 14 of the 22: everything after `RELEASE_GATE_CHECK_ONLY` needs a
-  321 MB image built, booted and installed, and is still measured only by
-  running a real release.
+  own break rather than about the scaffolding. It also says, as a number, how
+  many of them it reaches: 14 of the 22 that day, **16 of the 24** on this
+  tree, because the suite counts both off the gate itself rather than quoting
+  a figure. Everything after `RELEASE_GATE_CHECK_ONLY` needs a 321 MB image
+  built, booted and installed, and is still measured only by running a real
+  release.
 
 
 * **The release gate refuses a release that would ship past a stale wiki**
