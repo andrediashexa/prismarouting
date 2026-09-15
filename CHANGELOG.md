@@ -109,6 +109,70 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box that handed its only card to the dataplane came back with no address
+  on any interface and nobody could reach it**
+  ([#332](https://github.com/andrediashexa/hexarouting/issues/332)). Measured
+  on a booted qemu guest by the new phases above, against the published 0.74.2
+  medium. The box did everything the VTY promised except the last clause: the
+  bind worked - `virtio-pci` to `uio_pci_generic` - Linux released the netdev,
+  the dataplane held `GigabitEthernet0/9/0`, and the box answered nowhere. Its
+  own boot self-test printed the reason on the same console: routing is
+  configured and no interface is paired into the kernel. So the diagnosis was
+  right and the doing was missing. On a single-card machine that means
+  somebody walks to it, which is the outcome the handover exists to prevent.
+
+  **The two halves of one decision had two lifetimes.** `commit` writes the
+  card and the management path it carries into the tuner's file, and that file
+  is what performs the handover at the next boot. The pair the address goes
+  on is made by `hexash --load`, out of `/etc/hexarouting/hexarouting.conf` -
+  and `commit` does not write that file. Only `save` does. So the boot after
+  the handover replayed a file that had never heard of the card: on a fresh
+  appliance the three comments the installer ships, which `Config.is_empty()`
+  returns on before `apply()` is reached, so `apply_management_path()` was
+  never called at all. The half that hands the card over survived the reboot;
+  the half that keeps the box reachable did not. `load()` now takes the card
+  and its record from the tuner's file - their holder, and the reason the
+  record is kept there at all - when the file being replayed carries neither,
+  and puts the management path back even on an empty file, because a file with
+  no statements in it is not a box that gave its card away. A box that HAD
+  saved before the handover was worse off still: its file said nothing about a
+  dataplane card, so the boot replay read that as a card being taken away and
+  un-named the card the box was holding, and the next boot gave it back.
+
+  **And a card the dataplane has not got is now two answers instead of one.**
+  `apply_management_path()` returned success, silently, whenever the recorded
+  MAC was not among the dataplane's interfaces. That is right on the boots it
+  was written for - `hexash --load` runs before the operator reboots into the
+  handover, and after a rollback has given the card back, and a commit that
+  failed because a card had not moved yet would be a box that cannot be
+  configured at all - and it is wrong on the boot where the card is gone from
+  Linux too. There the card is on neither side, the address has nowhere to go,
+  and the box is off the network, which is the one state where the console is
+  the only place left that can be told. The box now asks which boot it is on,
+  by looking for the MAC under `/sys/class/net` - a device DPDK has taken is
+  not there at all, and the Linux name is the one thing that does not survive
+  the handover - and says so rather than returning success:
+
+  ```
+  error: the card this box is reached on was handed over and nothing took it
+      Linux no longer has ens18 and no interface the dataplane holds has
+      52:54:00:00:00:01, so there is no pair for 10.95.200.198/24 to go on
+  ```
+
+  "Cannot look" is not "the card is gone": a tree with no `/sys/class/net` in
+  it - a developer's box, this VTY's own suites - answers that the card is
+  still Linux's, the same posture `dataplane_if_refusal()` already takes about
+  a card list it could not read. Each of the five assertions in
+  `test/test_dataplane_if.py` was shown red on its own mutation of the
+  product, and the boot cases are driven through `load()` against a file on
+  disk rather than by calling the function directly, because "never called"
+  is the defect and a case that calls it cannot see that.
+
+  **What this does not prove.** The guest itself. Everything here is measured
+  against the product's own seams in a tempdir; that the box comes back and
+  answers on the network needs `lab/install-iso.sh` PHASE 4/5 on a booted
+  guest, and nothing in this entry claims it has been run again.
+
 * **A box installed from a medium that carried SSH host keys said so only to
   its console, at boot**
   ([#248](https://github.com/andrediashexa/hexarouting/issues/248)). Every
