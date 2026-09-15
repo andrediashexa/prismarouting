@@ -120,6 +120,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The README told a reader that every release was built from its tag and
+  booted before publishing, and that is false about a third of what is
+  published.** It is the state table somebody reads to decide whether to trust
+  this product, and that row was in the present tense about all of it.
+
+  Measured: `tools/release-gate.sh` was added by
+  [#100](https://github.com/andrediashexa/hexarouting/issues/100), and
+  `git tag --contains` puts the first release carrying it at **v0.28.0**. Of
+  the 74 published releases, **26 are older** - v0.2.0 through v0.27.0, every
+  one of them still downloadable, and 20 of those 26 publish an ISO.
+
+  The row names the boundary now, and says what the gate actually does, which
+  is more than the old sentence claimed: built from the tag, booted, installed
+  to a disk and booted again from that disk.
+
+  And `test/test_doc_copies.py` reads that version back **out of the git
+  history** rather than trusting the sentence, because a boundary somebody
+  writes down is a boundary that drifts and this one already had. Not a count
+  of published releases: that needs the network and `make test` runs offline
+  ([#317](https://github.com/andrediashexa/hexarouting/issues/317)). What is
+  held is the half that goes wrong by editing a document. Shown failing both
+  ways - the wrong version named, and the version taken out again.
+
 * **A document check whose verdict depended on whether somebody had built.**
   `test/test_doc_commands.py` refuses a document that sends a reader to a path
   the tree does not have - a file renamed or removed with the document left

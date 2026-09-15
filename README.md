@@ -128,7 +128,7 @@ stays on `0.x.x` until it is declared ready for production; see
 | IPFIX logging (UDP and TCP) | Verified with a decoding collector |
 | VTY (`hexash`) | Candidate/`commit`/`rollback`, roles, `show route` against the FIB, `show this`, and completion of live values — interfaces from the dataplane, pools from the candidate |
 | Configuration trail | Attributable and tamper-evident: every entry names the operator and is chained by SHA-256 |
-| Appliance (ISO, tuning, systemd) | ISO boots clean, self-test reports ready; every release is built from its tag and booted before publishing |
+| Appliance (ISO, tuning, systemd) | ISO boots clean, self-test reports ready; **since v0.28.0** every release is built from its tag, booted, installed to a disk and booted again from that disk before publishing, by `tools/release-gate.sh`. The 26 releases before it, v0.2.0 to v0.27.0, were published without that gate |
 | Connection records | On their own filesystem, so a full log cannot stop the box working |
 | **HA / failover** | **NOT implemented** — see [docs/ha.md](docs/ha.md) |
 | **Throughput** | **NOT measured** — every performance figure is untested; see [#28](https://github.com/andrediashexa/hexarouting/issues/28) |
