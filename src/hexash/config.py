@@ -385,6 +385,58 @@ class Pool:
                     "describes no path.")
         return None
 
+    #: The two ends of every pool setting this box holds a number for, and the
+    #: only place they are written down. `?` reads them, both parsers refuse by
+    #: them, and the wiki is generated from the same tree.
+    #:
+    #: Each pair is the DATAPLANE'S field, not a round number chosen here:
+    #: `max_blocks` is a u8 in `bpa_pool_t` and in bpa.api, so 256 arrives as
+    #: 0 and `bpa_pool_init` resolves 0 to 1 - an operator who asked for 256
+    #: blocks per subscriber got one block, from a VTY whose help said
+    #: `<1-65535>` and whose parser took anything (#351). `block_stride` and
+    #: `block_reserve` are u16; the session limits and the timeouts are u32.
+    #:
+    #: 0 is IN range for the four where it means something the operator can
+    #: ask for - no stride, no reserve, no session cap, no rate cap - and OUT
+    #: of it for the timeouts, where the message that carries them reads zero
+    #: as "leave this one alone".
+    RANGES = {
+        "block-size": (64, 32768),
+        "utilisation-alarm": (1, 100),
+        "max-blocks": (1, 255),
+        "block-stride": (0, 65535),
+        "reserve": (0, 65535),
+        "max-sessions": (0, 4294967295),
+        "max-session-rate": (0, 4294967295),
+        "timeout": (1, 4294967295),
+        # 0 is IN range for a POOL's two, and out of it for an interface's:
+        # VPP numbers the default table 0, so `vrf 0` names a real table here,
+        # while on an interface the same word with the same number is how an
+        # operator takes the statement back off. Two meanings, two ranges, and
+        # the hints say so - ARG_VRF against ARG_VRF_ID.
+        "vrf": (0, 4294967295),
+        "outside-vrf": (0, 4294967295),
+    }
+
+    @staticmethod
+    def check_range(name: str, v: str, what=""):
+        """
+        None if `v` is in the range `name` is offered with, otherwise why not.
+
+        Named after the STATEMENT rather than taking two numbers, because the
+        two numbers are what the help text quotes and a caller that passes its
+        own is a second copy of them - the thing that lets the screen and the
+        box disagree. `what` names the half being refused when one statement
+        carries two numbers, the way `vlan_tag_error` does.
+        """
+        lo, hi = Pool.RANGES[name]
+        label = f"{name} {what}".rstrip()
+        if not v.isdigit():
+            return f"{label} '{v}': expected a number {lo}-{hi}"
+        if not lo <= int(v) <= hi:
+            return f"{label} {v}: expected {lo}-{hi}"
+        return None
+
     # Mirrors foreach_bpa_alg in bpa_pool.h, in the same order and with the
     # same bits. A pool a VTY cannot express is a pool an operator cannot
     # configure, so this list and that macro have to be kept in step; the lab
@@ -732,6 +784,47 @@ def _address_family_error(keyword: str, prefix: str):
         return f"'{prefix}' is not an IPv4 prefix"
     if "/" not in prefix:
         return f"'{prefix}' has no prefix length"
+    return None
+
+
+#: The two ends of a VLAN tag, and the only place they are written down.
+#:
+#: 802.1Q numbers a VLAN 1 to 4094. Zero is the priority tag - a frame with a
+#: tag header and no VLAN in it - and 4095 is reserved; no switch on the far
+#: end will trunk either, so a sub-interface built on one carries nothing and
+#: looks configured.
+#:
+#: Here rather than in the VTY because THREE places need the same two numbers:
+#: the `?` hint an operator reads before typing, the VTY's refusal when they
+#: type one outside it, and the refusal `Config.parse` writes into `unknown`
+#: for a saved file that carries one. Written out separately in each, they
+#: drift, and the way they drift is the one measured in #312: the hint said
+#: `<1-4094>` from the day it was written and nothing anywhere compared a
+#: typed tag against it, so `vlan 0`, `vlan 4095` and `vlan 4096` were all
+#: staged in silence (#350).
+VLAN_MIN, VLAN_MAX = 1, 4094
+VLAN_RANGE = f"<{VLAN_MIN}-{VLAN_MAX}>"
+
+
+def vlan_tag_error(word: str, what: str = "vlan"):
+    """
+    None when `word` is a VLAN tag, a sentence when it is not.
+
+    `what` names the half being refused, because a sub-interface carries two
+    tags and "vlan 4095" and "inner 4095" are different mistakes to have made
+    - the outer one is the tag the sub-interface is NAMED after and the inner
+    one is a Q-in-Q customer tag, and an operator reading a refusal has to
+    know which of the two numbers on the line it is about.
+    """
+    if not word.isdigit():
+        return f"{what} '{word}': expected a VLAN tag {VLAN_RANGE}"
+    # ONE ROW, and short. `err` prints what it is given and wraps nothing
+    # (#252), and a racked box is read at 80 columns - so the reason why 0 and
+    # 4095 are not tags belongs in `?` and in the wiki, not here. What this
+    # row owes the operator is the number they typed and the two ends.
+    if not VLAN_MIN <= int(word) <= VLAN_MAX:
+        return (f"{what} {word} out of range ({VLAN_MIN}-{VLAN_MAX}): "
+                "802.1Q reserves 0 and 4095")
     return None
 
 
@@ -1511,8 +1604,23 @@ class Config:
                 elif s == "no vrf":
                     cfg.vrfs.pop(iface, None)
                 elif w[0] == "vlan" and len(w) > 1 and w[1].isdigit():
+                    # The tag is bounded HERE as well as at the prompt. A file
+                    # is the other way a statement arrives, and a range checked
+                    # only where it is typed is a range an operator gets past
+                    # by saving the line and loading it back - which is the
+                    # defect the `forward` comment in do_pool warns about, one
+                    # statement meaning two different things depending on how
+                    # it got here.
+                    why = vlan_tag_error(w[1])
+                    if why:
+                        cfg.unknown.append((lineno, s, why))
+                        continue
                     tag = {"outer": int(w[1]), "inner": None}
                     if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
+                        why = vlan_tag_error(w[3], "inner")
+                        if why:
+                            cfg.unknown.append((lineno, s, why))
+                            continue
                         tag["inner"] = int(w[3])
                     elif len(w) != 2:
                         cfg.unknown.append(
@@ -1629,6 +1737,16 @@ class Config:
         elif w[0] == "outside" and len(w) > 1:
             pool.outside.append(w[1])
         elif w[0] == "block-size" and len(w) > 1:
+            # Bounded here, and the power-of-two rule deliberately left to the
+            # dataplane. The device is the authority on whether a pool can be
+            # built and says so well - "block size 96 must be a power of two"
+            # - but it cannot say anything useful about 65536, because the
+            # field it reads into is a u16 and 65536 reaches it as 0 (#352).
+            # So the one thing checked here is the thing the device cannot
+            # see: the number the operator actually typed.
+            why = Pool.check_range("block-size", w[1])
+            if why:
+                return why
             pool.block_size = w[1]
         elif w[0] == "ports" and len(w) > 2:
             pool.ports = f"{w[1]} {w[2]}"
@@ -1637,8 +1755,9 @@ class Config:
                 return f"policy '{w[1]}': expected interleaved or blocked"
             pool.policy = w[1]
         elif w[0] in ("vrf", "outside-vrf") and len(w) > 1:
-            if not w[1].isdigit():
-                return f"{w[0]} '{w[1]}': expected a VRF id"
+            why = Pool.check_range(w[0], w[1])
+            if why:
+                return why
             if w[0] == "vrf":
                 pool.vrf = w[1]
             else:
@@ -1651,21 +1770,27 @@ class Config:
             if w[1] not in Pool.TIMEOUTS:
                 return (f"timeout '{w[1]}': expected one of "
                         + ", ".join(Pool.TIMEOUTS))
-            if not w[2].isdigit():
-                return f"timeout {w[1]}: '{w[2]}' is not a number of seconds"
+            why = Pool.check_range("timeout", w[2], w[1])
+            if why:
+                return why
             pool.timeouts[w[1]] = int(w[2])
         elif w[0] == "max-blocks" and len(w) > 1:
-            if not w[1].isdigit() or int(w[1]) < 1:
-                return f"max-blocks '{w[1]}': expected a number of at least 1"
+            # The TOP as well as the bottom, and the top is where this was
+            # wrong: `max-blocks 256` was taken here, written to the file,
+            # sent to a u8 field and arrived as 1 (#351).
+            why = Pool.check_range("max-blocks", w[1])
+            if why:
+                return why
             pool.max_blocks = int(w[1])
         elif w[0] == "block-stride" and len(w) > 1:
-            if not w[1].isdigit() or int(w[1]) > 65535:
-                return f"block-stride '{w[1]}': expected 0-65535 blocks"
+            why = Pool.check_range("block-stride", w[1])
+            if why:
+                return why
             pool.block_stride = int(w[1])
         elif w[0] == "reserve" and len(w) > 1:
-            if not w[1].isdigit() or int(w[1]) > 65535:
-                return (f"reserve '{w[1]}': expected 0-65535 blocks per "
-                        "public address")
+            why = Pool.check_range("reserve", w[1])
+            if why:
+                return why
             pool.block_reserve = int(w[1])
         elif w[0] == "bypass" and len(w) > 2:
             if w[1] not in ("source", "destination"):
@@ -1676,13 +1801,19 @@ class Config:
             if w[2] not in lst:
                 lst.append(w[2])
         elif w[0] == "utilisation-alarm" and len(w) > 1:
-            if not w[1].isdigit() or not 1 <= int(w[1]) <= 100:
-                return (f"utilisation-alarm '{w[1]}': expected a percentage "
-                        "between 1 and 100")
+            # Through Pool.RANGES like the rest, and the sentence changed with
+            # it: "between 1 and 100" spelled out in words the two numbers `?`
+            # quotes as `<1-100>`, so an operator comparing the screen to the
+            # hint was comparing two spellings of one range - and nothing
+            # could compare them either (#351).
+            why = Pool.check_range("utilisation-alarm", w[1])
+            if why:
+                return why
             pool.util_alarm = int(w[1])
         elif w[0] in ("max-sessions", "max-session-rate") and len(w) > 1:
-            if not w[1].isdigit():
-                return f"{w[0]}: '{w[1]}' is not a number"
+            why = Pool.check_range(w[0], w[1])
+            if why:
+                return why
             if w[0] == "max-sessions":
                 pool.max_sessions = int(w[1])
             else:

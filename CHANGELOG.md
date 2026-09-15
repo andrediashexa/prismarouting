@@ -77,6 +77,85 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The VTY quotes 23 distinct numeric ranges at the operator, and five of them
+  were not the ranges the box takes**
+  ([#350](https://github.com/andrediashexa/hexarouting/issues/350),
+  [#351](https://github.com/andrediashexa/hexarouting/issues/351),
+  [#352](https://github.com/andrediashexa/hexarouting/issues/352),
+  [#353](https://github.com/andrediashexa/hexarouting/issues/353),
+  [#354](https://github.com/andrediashexa/hexarouting/issues/354)).
+  [#312](https://github.com/andrediashexa/hexarouting/issues/312) was one site
+  of this shape - `commit confirmed` had said `<1-60>` since the day it was
+  written, `confirmed 600` armed ten hours and `confirmed 0` armed nothing and
+  answered `commit complete`. The other 44 sites were swept the same way, four
+  values each - `a-1`, `a`, `b`, `b+1`, and 0 wherever 0 is outside the range -
+  through the VTY, and through a live FRR 10.7.1 for the statements this box
+  forwards.
+
+  **`vlan <1-4094>` was enforced by nothing.** `vlan 0`, `vlan 4095` and `vlan
+  4096` were all staged and committed, and the inner tag had no bound of any
+  kind. The sub-interface name check does not bound it: `interface ens19.4095`
+  carrying `vlan 4095` satisfies that check, because the name and the tag agree
+  and both are wrong.
+
+  **`ARG_NUM = "<1-65535>"` was offered at fifteen statements and is true at
+  three.** Two of them contradicted themselves in one sentence - `max-sessions`
+  described "0 is unlimited" beside a hint whose bottom is 1. The expensive one
+  is `max-blocks`: the dataplane's field is a `u8` in `bpa_pool_t` and in
+  `bpa.api`, so `max-blocks 256` was accepted at the prompt, written to the
+  file, sent to the device and arrived as **1**.
+
+  **`block-size <64-65536>` was wrong at both ends.** `block_size` is a `u16`
+  and `bpa_cli.c` casts to it, so the documented maximum reached the device as
+  0 and came back as *"block size 0 must be a power of two"* - naming a number
+  the operator never typed. At the other end 32 is a power of two, below the
+  documented floor, and was accepted end to end.
+
+  **Four routing hints quoted a range FRR does not have**: `maximum-paths` is
+  `(1-256)` in `router ospf` and `router ospf6` and not `<1-64>`; `set weight`
+  is `(0-4294967295)`; `set metric` takes negatives and `rtt`; `set-overload-bit
+  on-startup` starts at 0. The VTY forwards these and FRR is the authority on
+  them - a refusal arriving at `commit` rather than at the line is a different
+  experience and not a wrong one - so the text is what moves.
+
+  **`set local-preference <0-4294967295>` is a range FRR does not enforce at
+  all**: its grammar is `set local-preference WORD`, and `set local-preference
+  banana` is accepted at the prompt, passes `frr-reload.py --test` with exit 0,
+  and appears verbatim in bgpd's running configuration, where the clause then
+  sets nothing. That one is refused here, in `route_map_findings`, beside the
+  `deny` clause carrying a `set` - a policy that looks right and does nothing
+  is what that function is for.
+
+  **What this changes on a box being upgraded, and it is worth reading before
+  the upgrade.** `hexash --load` runs at boot and refuses a file whole rather
+  than applying it minus a line it cannot hold - the reasoning is in its own
+  docstring, and it is the right trade for a box nobody is watching. So a
+  saved configuration carrying `max-blocks 256` or above, or a `block-size`
+  outside 64 to 32768, will now **refuse at boot and name the line**, where
+  before it loaded. Neither value was doing what it said: `max-blocks 300`
+  reached the dataplane as 1 and `block-size 65536` reached it as 0. A box in
+  that state comes up saying which line to fix, rather than coming up with a
+  pool whose block size is not the one in its own file - which would re-map
+  every subscriber on it, silently, and is the hazard
+  [#23](https://github.com/andrediashexa/hexarouting/issues/23) exists for.
+  Measured on both paths: the saved file, and `show bpa config` read back from
+  a running dataplane.
+
+  The remaining 18 ranges were driven and hold at both ends. Two that look
+  wrong and are not are written down in
+  [#353](https://github.com/andrediashexa/hexarouting/issues/353) so nobody
+  re-opens them: FRR's own grammar declares `max-lsp-lifetime (350-65535)` and
+  then refuses 350 through YANG, and `remote-as <1-4294967295>` matches FRR's
+  `ASNUM` token exactly.
+
+  Every bound now has ONE owner - `config.VLAN_MIN`/`VLAN_MAX` and
+  `Pool.RANGES` - read by `?`, by the typed parser and by the file parser, so a
+  hint and the check behind it cannot be two numbers that drift apart.
+  `test_hexash_complete.py` drives all four values at every range this VTY
+  enforces and requires the refusal to NAME the range, which is the half that
+  tells a range refusal from a refusal that happened to fire for some other
+  reason - the distinction `confirmed 0` turned on.
+
 * **The vector table's coverage of both mapping policies rested on nobody
   removing a pool.** `bpa_split()`, `bpa_join()` and `bpa_reserve_index()` each
   have an arm for the blocked policy that nothing in this repository reaches

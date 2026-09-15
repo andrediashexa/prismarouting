@@ -29,7 +29,7 @@ import textwrap
 import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
-                    CONSOLE_COLUMNS,
+                    CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
                     strip_nat, as_hierarchy, group_static,
@@ -300,8 +300,42 @@ VPP_ERROR = re.compile(r"^(unknown input\b|[a-z][a-z0-9 _-]*: \S)")
 # ---------------------------------------------------------------------------
 
 ARG_PREFIX = "<A.B.C.D/M>"
-ARG_NUM = "<1-65535>"
 ARG_WORD = "<word>"
+
+# A RANGE IS A PROMISE, so there is one of these per quantity and not one for
+# every number in the VTY.
+#
+# `ARG_NUM = "<1-65535>"` stood here and was offered at fifteen statements.
+# It is true at three of them - a TCP or UDP port really does stop at 65535 -
+# and at the other twelve it was a sentence the box had no intention of
+# keeping. Measured on master, every one of these from the prompt: `max-
+# sessions 0` was accepted, on a line whose own description says "0 is
+# unlimited"; `block-stride 0` and `reserve 0` likewise, and 0 is the ordinary
+# value for both; `timeout udp 65536`, `vrf 65536`, `snmp enterprise-number
+# 65536` and `max-blocks 65536` were all accepted. So the hint refused nothing
+# and promised nothing an operator could rely on in either direction - and
+# `max-blocks` was the expensive one, because the dataplane's field is a u8
+# and 256 arrives there as 1 (#351).
+#
+# The rule these four hold to: the two numbers are the two the box takes, and
+# where the box takes a wider range than the hint used to admit, the hint
+# moves rather than the box - an operator who needs a 24-hour session timeout
+# should be able to type 86400, and could always type it.
+ARG_PORT = "<1-65535>"
+#: Seconds. The dataplane carries every timeout in a u32 (`bpa_timeouts_t`),
+#: which is where the top comes from; the bottom is 1 because zero means
+#: "leave this one alone" in the message that sets them, not "expire at once".
+ARG_SECONDS = "<1-4294967295>"
+#: A VRF table id on an INTERFACE, u32 in Linux. Zero is not in the range
+#: because here it REMOVES the statement rather than selecting table 0.
+ARG_VRF = "<1-4294967295>"
+#: The same id where it names a table rather than a statement: u32 in the
+#: dataplane (`bpa_pool_t.vrf_id`), and 0 is VPP's default table, which a pool
+#: may legitimately be pinned to.
+ARG_VRF_ID = "<0-4294967295>"
+#: A per-subscriber limit the dataplane counts in a u32, where 0 is the
+#: documented "no limit" rather than a limit of none.
+ARG_LIMIT = "<0-4294967295>"
 
 # Places where the grammar knows a WORD goes here and the BOX knows which
 # words. "<word>" is true and useless: it tells the operator what they already
@@ -462,7 +496,8 @@ ISIS_BLOCK = {
                          "every router in the area agrees", None),
     }),
     "set-overload-bit": ("tell everybody not to transit through this box - "
-                         "IS-IS's maintenance drain", "[on-startup <1-86400>]"),
+                         "IS-IS's maintenance drain",
+                         "[on-startup <0-86400>]"),
     "redistribute": ("inject routes from another source", {
         "ipv4": ("IPv4", "<proto> level-1|level-2 [metric <n>] "
                  "[route-map <name>]"),
@@ -543,7 +578,12 @@ OSPF_BLOCK = {
                                 "above 100 Mbit/s costs 1, which disables "
                                 "path selection on a 10G box", "<1-4294967>"),
     }),
-    "maximum-paths": ("how many equal-cost paths to install", "<1-64>"),
+    # FRR's number, read off `list` in `router ospf` on 10.7.1: (1-256).
+    # This said <1-64>, which is neither FRR's bound nor anything this box
+    # enforces - it forwards the statement and FRR decides - so an operator
+    # with 100 equal-cost paths was told by the screen that the box would not
+    # take what it takes (#353).
+    "maximum-paths": ("how many equal-cost paths to install", "<1-256>"),
     "log-adjacency-changes": ("log every adjacency transition", "[detail]"),
     "timers": ("SPF timers", {
         "throttle": ("throttle the SPF calculation", {
@@ -622,7 +662,8 @@ OSPF6_BLOCK = {
                                 "above 100 Mbit/s costs 1, which disables "
                                 "path selection on a 10G box", "<1-4294967>"),
     }),
-    "maximum-paths": ("how many equal-cost paths to install", "<1-64>"),
+    # (1-256) in `router ospf6` too, measured the same way.
+    "maximum-paths": ("how many equal-cost paths to install", "<1-256>"),
     "log-adjacency-changes": ("log every adjacency transition", "[detail]"),
     "timers": ("SPF timers", {
         "throttle": ("throttle the SPF calculation", {
@@ -665,8 +706,14 @@ OSPF6_INTERFACE = {
 # the TAP's 9000 and spend an afternoon on an OSPF adjacency stuck in Exchange.
 INTERFACE_BLOCK = {
     "description": ("what this interface is for", "<text>"),
-    "vlan": ("VLAN tag, on a sub-interface", "<1-4094> [inner <1-4094>]"),
-    "vrf": ("the routing table this interface's addresses live in", ARG_NUM),
+    # The two ends come from config.VLAN_RANGE, which is also what refuses a
+    # tag outside them - at the prompt and in a saved file. A hint that spells
+    # the numbers out is a second copy of them, and a second copy of a range
+    # is a range that can disagree with the check (#350).
+    "vlan": ("VLAN tag, on a sub-interface",
+             f"{VLAN_RANGE} [inner {VLAN_RANGE}]"),
+    "vrf": ("the routing table this interface's addresses live in; 0 takes "
+            "the interface back out of one", ARG_VRF),
     "linux-name": ("the name FRR and 'ip' see this interface by; without one "
                    "the routing daemons cannot see it at all", "<name>"),
     "mac-address": ("the MAC this interface answers to", "<xx:xx:xx:xx:xx:xx>"),
@@ -821,7 +868,13 @@ ROUTE_MAP_MATCH = {
 ROUTE_MAP_SET = {
     "local-preference": ("which path this box prefers; higher wins",
                          "<0-4294967295>"),
-    "metric": ("the MED sent to the neighbour", "<0-4294967295>"),
+    # FRR's own form, read off `list`: the MED can be set, added to or
+    # subtracted from, and `rtt` is the round-trip-time form the daemon takes
+    # for IS-IS. <0-4294967295> named a third of it, and the two thirds it
+    # left out are the ones an operator reaches for when they want to nudge a
+    # MED rather than replace it.
+    "metric": ("the MED sent to the neighbour",
+               "<-4294967295-4294967295>|rtt|+rtt|-rtt|igp|aigp"),
     "community": ("communities to carry; 'additive' keeps the ones already "
                   "there", "<AS:NN> [additive]"),
     "large-community": ("large communities to carry",
@@ -832,7 +885,11 @@ ROUTE_MAP_SET = {
                     "<asn> [<asn> ...]"),
         "exclude": ("remove AS numbers from the path", "<asn> [<asn> ...]"),
     }),
-    "weight": ("this box's own preference, never advertised", "<0-65535>"),
+    # (0-4294967295) in `route-map` on FRR 10.7.1, and measured: `set weight
+    # 65536` is taken and read back. <0-65535> was BGP's weight as Cisco
+    # documents it, not as the daemon this box forwards to implements it.
+    "weight": ("this box's own preference, never advertised",
+               "<0-4294967295>"),
     "origin": ("the origin attribute", {
         "igp": ("learned inside the AS", None),
         "egp": ("learned from another AS", None),
@@ -965,28 +1022,37 @@ BGP_AF_BLOCK = {
 CGNAT_POOL = {
     "inside": ("inside prefix, may repeat", ARG_PREFIX),
     "outside": ("public prefix, may repeat", ARG_PREFIX),
-    "block-size": ("ports per block, power of two", "<64-65536>"),
+    # <64-65536> was wrong at BOTH ends and the top end was the expensive
+    # one: the dataplane carries block_size in a u16, `bpa_cli.c` casts to it,
+    # and 65536 arrives as 0 - so the documented maximum came back as "block
+    # size 0 must be a power of two", naming a number the operator never
+    # typed. 32768 is the largest power of two that fits, and it is also the
+    # largest that can fit inside a 65535-port range. The bottom stays at 64
+    # because it is the product's own floor and is now enforced, rather than
+    # being a number on a screen that the dataplane would have taken 32 past
+    # (#352).
+    "block-size": ("ports per block, power of two", "<64-32768>"),
     "ports": ("usable port range", "<min> <max>"),
     "policy": ("how subscribers spread across public addresses", {
         "interleaved": ("neighbours on distinct public addresses", None),
         "blocked": ("neighbours on the same public address", None),
     }),
     "timeout": ("session lifetimes for this pool; absent inherits the global", {
-        "udp": ("seconds", ARG_NUM),
-        "icmp": ("seconds", ARG_NUM),
-        "tcp-syn": ("seconds, half-open TCP", ARG_NUM),
-        "gre": ("seconds, a PPTP call's GRE mapping", ARG_NUM),
-        "tcp-transitory": ("seconds", ARG_NUM),
-        "tcp-established": ("seconds", ARG_NUM),
-        "port-holddown": ("seconds a released port waits", ARG_NUM),
-        "alg-expect": ("seconds an announced media port waits", ARG_NUM),
+        "udp": ("seconds", ARG_SECONDS),
+        "icmp": ("seconds", ARG_SECONDS),
+        "tcp-syn": ("seconds, half-open TCP", ARG_SECONDS),
+        "gre": ("seconds, a PPTP call's GRE mapping", ARG_SECONDS),
+        "tcp-transitory": ("seconds", ARG_SECONDS),
+        "tcp-established": ("seconds", ARG_SECONDS),
+        "port-holddown": ("seconds a released port waits", ARG_SECONDS),
+        "alg-expect": ("seconds an announced media port waits", ARG_SECONDS),
     }),
-    "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
+    "max-blocks": ("how many blocks one subscriber may hold", "<1-255>"),
     "block-stride": ("blocks between the ones a subscriber holds; 1 puts them "
-                     "side by side, 0 lets the pool place them", ARG_NUM),
+                     "side by side, 0 lets the pool place them", "<0-65535>"),
     "reserve": ("blocks per public address kept aside so a deterministic "
                 "subscriber that fills its block can be given another; "
-                "REDUCES CAPACITY and re-maps subscribers", ARG_NUM),
+                "REDUCES CAPACITY and re-maps subscribers", "<0-65535>"),
     "bypass": ("prefixes that leave untranslated", {
         "source": ("a source that must keep its own address", ARG_PREFIX),
         "destination": ("a destination that must see the real source",
@@ -995,16 +1061,16 @@ CGNAT_POOL = {
     "utilisation-alarm": ("log once when a subscriber's block reaches this "
                           "percentage, ahead of exhaustion", "<1-100>"),
     "max-sessions": ("most sessions one subscriber may hold at once; 0 is "
-                     "unlimited", ARG_NUM),
+                     "unlimited", ARG_LIMIT),
     "max-session-rate": ("most new sessions per second, per subscriber; 0 is "
-                         "unlimited", ARG_NUM),
+                         "unlimited", ARG_LIMIT),
     "tcp-mss": ("lower the MSS of handshakes so segments fit the path", {
         "auto": ("derive it from the CGNAT interfaces' MTUs", None),
     }),
     "forward": ("pin an inbound port to one subscriber; the public address is "
                 "the subscriber's own", {
-        "tcp": ("public port, then 'to <private-ip> <private-port>'", ARG_NUM),
-        "udp": ("public port, then 'to <private-ip> <private-port>'", ARG_NUM),
+        "tcp": ("public port, then 'to <private-ip> <private-port>'", ARG_PORT),
+        "udp": ("public port, then 'to <private-ip> <private-port>'", ARG_PORT),
     }),
     "filter": ("which inbound packets a mapping accepts (RFC 4787 REQ-8)", {
         "endpoint-independent": ("anyone may reach an open mapping "
@@ -1022,9 +1088,9 @@ CGNAT_POOL = {
                 "<on|off>"),
     }),
     "vrf": ("the VRF whose subscribers this pool serves; absent means every "
-            "VRF", ARG_NUM),
+            "VRF", ARG_VRF_ID),
     "outside-vrf": ("the VRF translated traffic leaves by; absent leaves it "
-                    "where it was", ARG_NUM),
+                    "where it was", ARG_VRF_ID),
     "mode": ("how the block is assigned", {
         "deterministic": ("by formula, no allocation logging", None),
         "dynamic": ("on demand, with allocation logging", None),
@@ -1190,12 +1256,13 @@ CGNAT_CONFIG = {
     "pool": ("create or edit a pool", ARG_POOL),
     "interface": ("enable CGNAT on an interface", "<interface> inside|outside"),
     "timeout": ("session lifetimes", {
-        "udp": ("seconds", ARG_NUM),
-        "icmp": ("seconds", ARG_NUM),
-        "tcp-transitory": ("seconds", ARG_NUM),
-        "tcp-established": ("seconds", ARG_NUM),
+        "udp": ("seconds", ARG_SECONDS),
+        "icmp": ("seconds", ARG_SECONDS),
+        "tcp-transitory": ("seconds", ARG_SECONDS),
+        "tcp-established": ("seconds", ARG_SECONDS),
     }),
-    "block-holddown": ("seconds a block stays reserved once idle", ARG_NUM),
+    "block-holddown": ("seconds a block stays reserved once idle",
+                       ARG_SECONDS),
     "logging": ("IPFIX export of block events", {
         "enable": ("enable UDP export", None),
         "disable": ("disable UDP export", None),
@@ -1737,7 +1804,7 @@ TREE = {
                            "management card keeps, on its pair",
                            "<name> address <a.b.c.d/len> mac <xx:xx:...>")}),
         "ssh": ("the SSH daemon", {
-            "port": ("TCP port", ARG_NUM),
+            "port": ("TCP port", ARG_PORT),
             "listen-address": ("address to listen on", ARG_WORD),
             "permit-root-login": ("whether root may log in over SSH", {
                 "yes": ("password or key", None),
@@ -1751,9 +1818,9 @@ TREE = {
         "snmp": ("the SNMP agent, read-only by construction", {
             "enabled": ("run the agent", {"yes": ("", None), "no": ("", None)}),
             "listen-address": ("address to listen on", ARG_WORD),
-            "port": ("UDP port", ARG_NUM),
+            "port": ("UDP port", ARG_PORT),
             "enterprise-number": ("your organisation's IANA Private "
-                                  "Enterprise Number", ARG_NUM),
+                                  "Enterprise Number", "<1-4294967295>"),
             "community": ("an SNMPv2c community, read-only", ARG_WORD),
         }),
         "snmp-user": ("an SNMPv3 user", ARG_SNMP_USER),
@@ -3093,6 +3160,50 @@ def rpki_findings(routing):
     return out
 
 
+# The `set` statements FRR takes a value for and does NOT bound itself, with
+# the bound that belongs to them.
+#
+# ONE ENTRY, and it earns the table. `set local-preference` is declared to FRR
+# as `set local-preference WORD` - no range, measured off `list` inside a
+# route-map on 10.7.1 - so `set local-preference banana` is accepted by vtysh,
+# accepted by `frr-reload.py --test` (rc 0, which is what `commit check` runs),
+# and appears verbatim in bgpd's running configuration. bgpd complains once,
+# to the session, in the line `Frr._summarise()` throws away, and then the
+# clause sets nothing: a policy that looks right and does nothing, which is
+# the shape the rest of this function exists for.
+#
+# This VTY has offered `<0-4294967295>` for it since the route-map tree was
+# written, and that number is right - local preference is a 32-bit unsigned in
+# the protocol. The range was never the problem; nothing enforcing it was
+# (#354). Everything else FRR bounds in its own grammar and is left to it,
+# which is why this table has one row and not twenty.
+SET_RANGES = {
+    "local-preference": (0, 4294967295),
+}
+
+
+def set_value_error(stmt: str):
+    """
+    Why a route-map `set` statement's value is not one, or None.
+
+    Takes the whole statement so the finding can quote it back the way the
+    operator typed it - `say_finding` prints the statement on a row of its own
+    and the reason above it, and a reason that names a bare value leaves them
+    looking for which of the clause's statements it came from.
+    """
+    w = stmt.split()
+    if len(w) != 3 or w[0] != "set":
+        return None
+    bound = SET_RANGES.get(w[1])
+    if bound is None:
+        return None
+    lo, hi = bound
+    if not w[2].isdigit() or not lo <= int(w[2]) <= hi:
+        return (f"'{w[2]}' is not a {w[1]}: expected {lo}-{hi}. FRR takes "
+                "this statement with any word in it and then sets nothing")
+    return None
+
+
 def route_map_findings(routing):
     """
     What a set of route-maps says that is wrong or worth saying out loud.
@@ -3180,6 +3291,10 @@ def route_map_findings(routing):
         catch_all = None
         steered = any(c["steers"] for c in clauses)
         for c in sorted(clauses, key=by_seq):
+            for stmt in c["set"]:
+                why = set_value_error(stmt)
+                if why:
+                    out.append(("error", stmt, why))
             if c["action"] == "deny" and c["set"]:
                 out.append(("error", c["header"],
                             f"a deny clause with {len(c['set'])} 'set' "
@@ -8607,6 +8722,27 @@ class Shell:
                     "nothing. What this box takes here is: "
                     + ", ".join(sorted(CGNAT_CONFIG)))
                 return True
+            # #273 closed the WORD and left the NUMBER. `cgnat timeout udp
+            # 65536` and `cgnat block-holddown 0` were both accepted here,
+            # under a hint that said `<1-65535>`, and both are seconds in a
+            # u32 field where zero is the message's "leave this alone" rather
+            # than a timeout of none (#351). Same two numbers as the pool's
+            # own timeouts, from Pool.RANGES, because they are the same field.
+            if w[1] == "timeout" and len(w) >= 4:
+                why = Pool.check_range("timeout", w[3], w[2])
+            elif w[1] == "block-holddown" and len(w) >= 3:
+                # "timeout" names the RANGE, and the operator's statement is
+                # what the row has to name - so the range's key does not go
+                # into the sentence. `cgnat timeout block-holddown 0` is not a
+                # statement this box has.
+                why = Pool.check_range("timeout", w[2], "")
+                if why:
+                    why = why.replace("timeout ", "block-holddown ", 1)
+            else:
+                why = None
+            if why:
+                self.err(f"cgnat {why}")
+                return True
             key = global_key(line)
             self.candidate.globals = [g for g in self.candidate.globals
                                       if global_key(g) != key]
@@ -8689,8 +8825,13 @@ class Shell:
         # `vrf` moves the interface between routing tables. The device's, and
         # not something FRR can be told about after the fact.
         if iface and not neg and dp == "vrf":
-            if len(w) < 2 or not w[1].isdigit():
-                self.err("usage: vrf <table>")
+            # The TOP is new, and the refusal now quotes the same two numbers
+            # `?` does. A table id is a u32 in Linux and a u32 in the
+            # dataplane, `?` offered `<1-65535>`, and the parser took any run
+            # of digits at all - so all three said something different and
+            # only one of them was checking anything (#351).
+            if len(w) < 2 or not w[1].isdigit() or int(w[1]) > 4294967295:
+                self.err(f"usage: vrf {ARG_VRF}, or 0 to take it back out")
             elif int(w[1]):
                 self.candidate.vrfs[iface] = int(w[1])
             else:
@@ -8707,7 +8848,19 @@ class Shell:
         if iface and not neg and dp == "vlan":
             why = None
             if len(w) < 2 or not w[1].isdigit():
-                why = "usage: vlan <1-4094> [inner <1-4094>]"
+                why = f"usage: vlan {VLAN_RANGE} [inner {VLAN_RANGE}]"
+            # THE RANGE THIS STATEMENT HAS ALWAYS QUOTED, now checked. `?` and
+            # the usage line above both said <1-4094> and nothing compared a
+            # typed tag against them, so `vlan 0` and `vlan 4095` - the two
+            # 802.1Q keeps for itself - were staged, committed and turned into
+            # a sub-interface no switch will trunk. `vlan 4096` went through
+            # too: there was no upper bound of any kind (#350).
+            #
+            # Before the sub-interface name check rather than after it, because
+            # `interface ens19.4095` satisfies that check - the name and the
+            # tag agree, and both are wrong - so on its own it bounds nothing.
+            elif vlan_tag_error(w[1]):
+                why = vlan_tag_error(w[1])
             elif "." not in iface:
                 why = (f"{iface} is not a sub-interface; a VLAN tag belongs "
                        "to one, named <parent>.<n>")
@@ -8724,9 +8877,16 @@ class Shell:
                 return True
             tag = {"outer": int(w[1]), "inner": None}
             if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
+                # The inner tag had no check at all, not even the name one the
+                # outer tag borrowed: nothing is named after it, so `inner 0`
+                # and `inner 9999` reached the dataplane exactly as typed.
+                why = vlan_tag_error(w[3], "inner")
+                if why:
+                    self.err(why)
+                    return True
                 tag["inner"] = int(w[3])
             elif len(w) != 2:
-                self.err("usage: vlan <1-4094> [inner <1-4094>]")
+                self.err(f"usage: vlan {VLAN_RANGE} [inner {VLAN_RANGE}]")
                 return True
             self.candidate.vlans[iface] = tag
             return True
@@ -8956,6 +9116,19 @@ class Shell:
             self.err(f"unknown statement in user mode: {w[0]}")
         return True
 
+    def pool_range(self, name, value, what=""):
+        """
+        Raise unless `value` is inside the range `name` is offered with.
+
+        A raise rather than a return, because do_pool's whole statement chain
+        already runs inside one `try` and answers a ValueError with the
+        operator's line - so a check that returned would be a second way of
+        saying no in a method that already has one.
+        """
+        why = Pool.check_range(name, value, what)
+        if why:
+            raise ValueError(why)
+
     def do_pool(self, line):
         w = line.split()
         p = self.pool
@@ -8976,6 +9149,7 @@ class Shell:
             elif w[0] == "outside":
                 p.outside.append(w[1])
             elif w[0] == "block-size":
+                self.pool_range("block-size", w[1])
                 p.block_size = str(int(w[1]))
             elif w[0] == "ports":
                 p.ports = f"{int(w[1])} {int(w[2])}"
@@ -8995,18 +9169,21 @@ class Shell:
                 if w[1] not in Pool.TIMEOUTS:
                     raise ValueError("timeout must be one of "
                                      + ", ".join(Pool.TIMEOUTS))
+                # Pool.RANGES, and not two numbers written out again here.
+                # The typed side and the file side both bound these now, and
+                # one owner is what keeps them the same bound - the pair that
+                # had drifted was `block-stride`, refused above 65535 here and
+                # offered as `<1-65535>` by `?`, which is neither end (#351).
+                self.pool_range("timeout", w[2], w[1])
                 p.timeouts[w[1]] = int(w[2])
             elif w[0] == "max-blocks":
-                if int(w[1]) < 1:
-                    raise ValueError("max-blocks must be at least 1")
+                self.pool_range("max-blocks", w[1])
                 p.max_blocks = int(w[1])
             elif w[0] == "block-stride":
-                if not 0 <= int(w[1]) <= 65535:
-                    raise ValueError("block-stride must be 0-65535")
+                self.pool_range("block-stride", w[1])
                 p.block_stride = int(w[1])
             elif w[0] == "reserve":
-                if not 0 <= int(w[1]) <= 65535:
-                    raise ValueError("reserve must be 0-65535")
+                self.pool_range("reserve", w[1])
                 p.block_reserve = int(w[1])
             elif w[0] == "bypass":
                 why = Config._pool_line(p, " ".join(w))
@@ -9017,8 +9194,7 @@ class Shell:
                 if why:
                     raise ValueError(why)
             elif w[0] in ("max-sessions", "max-session-rate"):
-                if int(w[1]) < 0:
-                    raise ValueError(f"{w[0]} cannot be negative")
+                self.pool_range(w[0], w[1])
                 if w[0] == "max-sessions":
                     p.max_sessions = int(w[1])
                 else:

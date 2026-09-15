@@ -24,7 +24,7 @@ O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali den
 | `no ipv4 address` | `<prefixo>` | remove **um** endereço, sem tocar nos outros |
 | `mtu`   | `<576-9216>` | MTU, na interface e no par Linux dela |
 | `linux-name` | `<nome>` | o nome pelo qual o roteamento e o `ip` enxergam esta interface; **sem ele o roteamento não a enxerga de jeito nenhum** |
-| `vrf`   | `<tabela>` | tabela de roteamento onde os endereços vivem |
+| `vrf`   | `<1-4294967295>` | tabela de roteamento onde os endereços vivem; `0` tira a interface de uma |
 | `vlan`  | `<1-4094> [inner <1-4094>]` | tag da sub-interface |
 | `mac-address` | `<xx:xx:xx:xx:xx:xx>` | o MAC ao qual a interface responde |
 | `no ipv6 nd suppress-ra` |           | anuncia esta caixa como roteador nesta porta (por padrão não anuncia) |
@@ -124,6 +124,24 @@ interface GigabitEthernet0/12/0.200
 **O número depois do ponto tem de ser igual à tag externa.** `GigabitEthernet0/12/0.7` com `vlan 100` é recusado.
 
 O equipamento nomeia a sub-interface pela tag, e a configuração em vigor é lida do equipamento. Se os dois nomes pudessem divergir, você leria um nome e a caixa teria outro.
+
+:::
+
+
+:::warning
+**A tag vai de 1 a 4094, nas duas posições.** `vlan 0`, `vlan 4095` e qualquer
+número acima disso são recusados na hora em que você digita - e o mesmo vale
+para a tag interna, `vlan 100 inner 0` e `vlan 100 inner 4095`.
+
+```
+error: vlan 4095 out of range (1-4094): 802.1Q reserves 0 and 4095
+```
+
+Zero e 4095 são reservados pelo próprio 802.1Q: zero é a marcação de
+prioridade, um quadro que carrega o cabeçalho de tag e nenhuma VLAN dentro, e
+4095 não é atribuível. Nenhum switch do outro lado entrega uma nem outra, então
+uma sub-interface construída em cima delas fica com cara de configurada e não
+carrega nada.
 
 :::
 
