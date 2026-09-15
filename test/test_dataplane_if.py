@@ -845,6 +845,49 @@ check(not _one_wide,
 print(f"  the one-card path and its completion rows fit "
       f"{CONSOLE_COLUMNS} columns")
 
+print("\n=== a statement FRR already carries does not block every commit (#358) ===")
+# `set local-preference banana` was accepted at this prompt and committed
+# until #354 gave that statement a value check, and FRR stores it and sets
+# nothing. So there are boxes carrying one.
+#
+# A refusal that fires on what the box ALREADY has makes every commit on that
+# box fail, and `--load` refuses the saved file whole at boot, so a box that
+# was working comes up with nothing on it. That is the trap the route-map
+# REFERENCE check beside it has been guarded against since #145, and the value
+# check needed the same guard the moment it existed.
+#
+# Driven through do_commit, not through the finding: the finding is right
+# either way, and what this is about is whether the commit is refused.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = one_card_box(tmp)
+    sh.frr.held = ["route-map LP permit 10",
+                   " match as-path AS1",
+                   " set local-preference banana"]
+    # A change that touches nothing the route-map is about, and needs no
+    # interface the fake dataplane has not got. If the guard is missing, the
+    # statement FRR already has is enough on its own to refuse it - which is
+    # the whole defect: not that a change is rejected, but that NO change can
+    # be made on that box.
+    said = drive(sh, ["configure", "nat cgnat block-holddown 90", "commit"])
+    check("commit complete" in said,
+          f"a box whose FRR already carries a statement this VTY refuses "
+          f"could not commit anything at all, not even an empty change: "
+          f"{said!r}")
+    check("banana" in said,
+          f"and it was not told about the statement either, so the one thing "
+          f"it cannot do is also the one thing nobody mentioned: {said!r}")
+    print("  it commits, and the statement is still reported")
+
+with tempfile.TemporaryDirectory() as tmp:
+    sh = one_card_box(tmp)
+    said = drive(sh, ["configure", "router bgp 65000", "exit",
+                      "route-map LP permit 10", "match as-path AS1",
+                      "set local-preference banana", "exit", "commit"])
+    check("commit complete" not in said,
+          f"a box being GIVEN the statement now was allowed to commit it, "
+          f"which is what #354 is about: {said!r}")
+    print("  and a box being given one now is still refused")
+
 print("\n=== the documented procedure is the procedure THIS box needs ===")
 # WHY THIS IS HERE AND NOT IN test_doc_copies.py. The claim is about two
 # documents, but its premise is a measurement: that the same three statements

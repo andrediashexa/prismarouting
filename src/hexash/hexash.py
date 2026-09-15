@@ -6494,12 +6494,31 @@ class Shell:
             # warnings do NOT fail the check - a permit with no match is a
             # real idiom - but they are printed, because afterwards nobody can
             # tell a finished policy from an unfinished one.
+            # REFUSED ONLY WHEN THIS CHANGE IS WHAT CAUSES IT, which is the
+            # guard the reference check below has carried since #145 and this
+            # one needed the moment it gained a value check.
+            #
+            # `set local-preference banana` was accepted at this prompt and
+            # committed until #354, and FRR stores it and sets nothing. So
+            # there are boxes carrying one. Without this guard, upgrading to a
+            # version that refuses it makes EVERY commit on such a box fail,
+            # and `--load` refuses the saved file whole at boot - a box that
+            # was working comes up with nothing on it (#358, and the same
+            # shape as #357 one file over).
+            #
+            # What an operator can still do is fix the statement, which turns
+            # the finding off. What they cannot be made to do is fix it before
+            # they are allowed to change anything else.
+            rm_already = {stmt for sev, stmt, _
+                          in route_map_findings(running.routing)
+                          if sev == "error"}
             for sev, stmt, why in route_map_findings(target.routing):
-                if sev == "error":
+                if sev == "error" and stmt not in rm_already:
                     self.say_finding("error", stmt, why)
                     ok = False
                 else:
-                    self.say_finding("warning", stmt, why)
+                    self.say_finding("warning" if sev != "error" else "error",
+                                     stmt, why)
 
             # A route-map named and never defined (#145). REFUSED, and the
             # difference from the policy lists above is measured rather than
