@@ -1876,6 +1876,117 @@ directory being excused for it.
 lines. Named here for the same reason the three above were.
 
 
+#### A box in a VM, which is where most of these will run
+
+*Fixed, unreleased.* The maintainer's ask, translated: **what hurts today is
+making it work in a VM, because many of the smaller deployments will run that
+way**. Production is bare metal or SR-IOV passthrough; the smaller
+installation is a guest with one virtio card, and that box could not be brought
+up. Eleven defects, every one of
+them found on a real guest rather than by reading.
+
+The blocker was
+[#330](https://github.com/andrediashexa/hexarouting/issues/330): the tuner
+wrote a dataplane configuration for hardware it never looked at - **7 receive
+queues and MTU 9000 on a card with one queue and a maximum MTU of 1500**. VPP
+refused the interface and the box had no dataplane. It reads the card now, and
+says so when it could not.
+[#331](https://github.com/andrediashexa/hexarouting/issues/331) is the same
+path asked the other way: a box with no dataplane card at all was told its card
+is `(not a PCI device)`, a sentence about a card that does not exist. Three
+states now, and the third is `none, because no card has been given to the
+dataplane on this box`.
+
+Then the handover.
+[#332](https://github.com/andrediashexa/hexarouting/issues/332): `commit` bound
+the card to DPDK and never created the `linux_cp` pair, so the guest came back
+with its only card owned by VPP, no address anywhere, and nobody able to reach
+it. [#336](https://github.com/andrediashexa/hexarouting/issues/336) is the half
+that makes that unrecoverable: the box bound the card **immediately** while
+printing a message saying it had not, so an operator who read the message and
+rebooted found a NIC neither stack owned. It binds at boot now, and the three
+answers it can give - bound, not bound, cannot tell - are distinct, because "I
+could not ask systemd" is not "the dataplane is down".
+
+What the VTY said about all this was worse than useless.
+[#327](https://github.com/andrediashexa/hexarouting/issues/327): `show
+interface` listed what is not there and never said where to see what is, so the
+operator left the VTY for `ip l`.
+[#328](https://github.com/andrediashexa/hexarouting/issues/328): `show
+hardware` told a one-card guest that **DPDK cannot take a NIC through it**,
+which is false - the install binds it - and the sentence was printed by a path
+that had not asked which box it was on. The same shape as the fifteen above.
+
+And the instruments hid all of it.
+[#329](https://github.com/andrediashexa/hexarouting/issues/329): **no lab had
+ever bound a NIC.** The driver change every box makes at boot was modelled in
+four places and performed in none, which is how #330, #332 and #336 could all
+be true at once with a green suite. `lab/install-iso.sh` does it on a booted
+guest now: the card on `uio_pci_generic`, `ens9` as the pair, the address back
+on it, and `GigabitEthernet0/9/0 tap4096` in the dataplane.
+[#334](https://github.com/andrediashexa/hexarouting/issues/334): the self-test's
+pair check only looked at boxes running a routing protocol, so a plain handover
+box - the one the maintainer has - was warned instead of failed.
+[#335](https://github.com/andrediashexa/hexarouting/issues/335): two self-test
+checks had never been seen to fail, because the vat2 stub answered a constant
+and no box in any fixture got a manifest that did not match.
+[#333](https://github.com/andrediashexa/hexarouting/issues/333): a test that
+word-matched kernel parameter names **in prose**, so it went red on work that
+was right.
+
+The measurement that matters is that the guest boots, binds and forwards, and
+that it took three runs to get there. **Each red was a different defect**,
+which is what a lab that performs the step is for.
+
+#### The instruments, measured against themselves
+
+*Fixed, unreleased.* A test that cannot fail is worse than no test, and there
+are now enough of them here to know the shapes by name: a constant stub, a
+fixture that answers by accident, a needle matching a label, an empty haystack,
+and an assertion whose expected value is computed by the function under test.
+`TESTING.md` records the four ways a **mutation** lies, which is the other half
+and cost more time this week than the defects did.
+
+* [#338](https://github.com/andrediashexa/hexarouting/issues/338) -
+  `appliance/test_startup_conf.sh` and `appliance/test_tuned_conf.sh` ran only
+  from a docker target, so everything they assert sat outside `N suites: N
+  passed` with nothing saying so. Every run now counts the harness files in the
+  tree, says how many it read, and names the rest. Discovered, not listed.
+* [#339](https://github.com/andrediashexa/hexarouting/issues/339) -
+  `release_disk()` answered "free" when it meant "I could not look", and both
+  callers discarded the refusal under it. A disk nobody could ask about is not
+  a disk that is free.
+* [#341](https://github.com/andrediashexa/hexarouting/issues/341) -
+  `wiki-pull.sh`'s "nothing came back" guard was `[ -s docs.json ]`, and an
+  answer holding no published documents reads out as `[]`, which is two bytes
+  and passes a size test. Measured against a stub: the rewrite ran, **every
+  page in the mirror was deleted**, `wiki/.ids` came back empty, `wiki/.pulled`
+  was written empty, and the script exited 0 saying `0 pages`. The guard is the
+  document count now. That script's whole first half exists to stop `wiki/`
+  being emptied.
+* [#342](https://github.com/andrediashexa/hexarouting/issues/342) - the
+  eight-hour soak's two hardest checks were red on a box that had done nothing
+  wrong. The collector had a budget fixed before the run, 822 cycles drift
+  about 80 seconds past their own arithmetic, and it stopped listening inside
+  the final cycle. It reported **104,227 allocations against 104,181** while
+  the box's own counters read 104,227 against 104,227 with zero blocks in use.
+  A collector outlived by its exporter reports what it did not wait for as
+  allocations nobody ever released, which in the log an operator is obliged to
+  keep is indistinguishable from a leak. The caller says when to stop now, and
+  the collector says which of the two ended it.
+* [#151](https://github.com/andrediashexa/hexarouting/issues/151) - a floor
+  **below** what the off run measures was silent. `lab/ipfix-outbuf.sh` sat at
+  8 while two runs measured 9, because the commit that repaired the ninth
+  assertion wrote "the floor is unchanged by this" into the header and nothing
+  asked the off run whether that was still true. The suite says when a floor is
+  behind its lab, by how much, and what raising it buys.
+
+The sweep for assertions that cannot fail is complete over `appliance/`,
+`tools/`, the VTY, the labs and the 34 Python suites - **1,744 assertion sites
+in the last of those, 108 anchored product mutations, one defect**: the only
+check in the tree about the `match` pipe filter compared one product-backed
+call with itself. The dataplane plugin's C suites are the last body unswept.
+
 #### The rename to PrismaRouting
 
 [#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
