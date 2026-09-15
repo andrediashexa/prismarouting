@@ -134,6 +134,26 @@ version has a chance of seeing it.
   the old transcript for the two-card box, which is the box it was wrong on,
   and carry the new one.
 
+* **A box whose FRR was silent was told what its BGP neighbour keeps.**
+  `show bgp neighbor <n> received-routes` and `clear bgp <n> soft in` both need
+  the neighbour to be holding what it sent, and both refuse when it is not.
+  What decided that was `Frr.running()`, which reports a control plane that is
+  **down** as a configuration with nothing in it - the exact collapse
+  `Frr.daemons()` forbids forty lines above it in the same class: *"None is not
+  the empty set and the two MUST NOT be collapsed."* So a box whose vtysh was
+  not answering got a refusal about its neighbour's configuration, read off
+  nothing, with three pieces of advice none of which it could follow: add a
+  statement the box may already carry, through a daemon that is not there to
+  take it; then `show bgp neighbor <n> routes`, which answers from the same
+  silent FRR; then `clear bgp <n>`, an outage offered on a premise nothing
+  read, on a box where it would reset nothing. The reading answers three ways
+  now, and the two screens say which. Neither path had a single assertion
+  before this - the same gap #328 found in `which_dpdk_driver()` - and both
+  have one on each of the three boxes, shown red on the collapse being put back
+  (five red) and on "cannot ask" being read as "it keeps everything", which
+  silently drops the refusal the box with no soft-reconfiguration needs (two
+  red).
+
 ### Fixed
 
 * **`commit` bound the card immediately while telling the operator it had

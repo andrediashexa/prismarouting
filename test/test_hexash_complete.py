@@ -6734,5 +6734,122 @@ check(len(_quoted) >= 12,
 if not _missing and len(_quoted) >= 12:
     print(f"  [ ok ] all {len(_quoted)} of them")
 
+# --- "not answering" is not "the neighbour keeps nothing" ---
+#
+# `show bgp neighbor <n> received-routes` and `clear bgp <n> soft in` both need
+# the neighbour to be holding what it sent, and both refuse when it is not.
+# What decided that was `Frr.running()`, which reports a control plane that is
+# DOWN as a configuration with nothing in it - the exact collapse
+# `Frr.daemons()` forbids forty lines above it in the same class: "None is not
+# the empty set and the two MUST NOT be collapsed."
+#
+# So a box whose FRR was silent got a refusal about its neighbour's
+# configuration, read off nothing, with advice that cannot be followed: add a
+# statement the box may already carry, through a daemon that is not there to
+# take it; then `show bgp neighbor <n> routes`, which answers from the same
+# silent FRR; then `clear bgp <n>`, an outage offered on a premise nothing
+# read, on a box where it would reset nothing.
+#
+# Neither path had a single assertion before this, which is why nobody noticed
+# - the same gap #328 found in which_dpdk_driver().
+import system as _sys_soft                                      # noqa: E402
+import vppapi as _vppapi_soft                                   # noqa: E402
+
+print("\n=== FRR not answering is not 'the neighbour keeps nothing' ===")
+
+_SOFT_CONF = ("router bgp 65000\n neighbor 10.0.0.2 remote-as 65001\n"
+              " address-family ipv4 unicast\n"
+              "  neighbor 10.0.0.2 soft-reconfiguration inbound\n"
+              " exit-address-family\n")
+
+
+def _soft_box(frr_rc, conf):
+    """
+    A box whose FRR answers `conf`, or does not answer at all.
+
+    Driven through `sh.feed()` so what is measured is what the command prints.
+    `frr_rc` non-zero is vtysh failing, which is what Frr.running() turns into
+    an empty configuration and what this is about.
+    """
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    sh.dp = type("D", (), {"TRACE": False, "run": lambda s, c: (0, ""),
+                           "reachable": lambda s: True})()
+
+    class _F(hexash.Frr):
+        def show(self, cmd):
+            if cmd == "show running-config":
+                return (frr_rc, conf)
+            return (frr_rc, "" if frr_rc else "  1.1.1.0/24  10.0.0.2")
+
+        def available(self):
+            return frr_rc == 0
+
+        def daemons(self):
+            return {"bgpd"} if frr_rc == 0 else None
+
+    sh.frr = _F()
+    sh.api = type("A", (), {
+        "interface_index": lambda s, n: None,
+        "call": lambda s, m, a: _vppapi_soft.Reply(_vppapi_soft.OK),
+        "dump": lambda s, m, a, timeout=15:
+            _vppapi_soft.Reply(_vppapi_soft.OK, fields={"rows": []})})()
+    _t = tempfile.mkdtemp()
+    sh.TUNE_ENV = os.path.join(_t, "tune.env")
+    open(sh.TUNE_ENV, "w").write("")
+    sh.sys = _sys_soft.System(
+        runner=lambda a, stdin=None, timeout=30: (127, ""), root=_t)
+    return sh
+
+
+def _soft_says(frr_rc, conf, line):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _soft_box(frr_rc, conf).feed(line)
+    return buf.getvalue()
+
+
+_RECV = "show bgp neighbor 10.0.0.2 received-routes"
+_SOFTIN = "clear bgp 10.0.0.2 soft in"
+
+# The box the refusal was written for, unchanged: FRR answers, and the
+# statement is not there.
+_off = _soft_says(0, "router bgp 65000\n", _RECV)
+check("does not keep what it received" in _off
+      and "soft-reconfiguration inbound" in _off,
+      f"a neighbour that really is not keeping what it received was not told "
+      f"so, which is the refusal both of these exist for: {_off!r}")
+_off_clear = _soft_says(0, "router bgp 65000\n", _SOFTIN)
+check("nothing to re-apply" in _off_clear,
+      f"and a soft clear against it was not refused: {_off_clear!r}")
+
+# The box that IS keeping it: the command goes through to FRR.
+_on = _soft_says(0, _SOFT_CONF, _RECV)
+check("does not keep" not in _on and "1.1.1.0/24" in _on,
+      f"a neighbour that keeps what it received was refused anyway, so the "
+      f"reading is not finding the statement at all: {_on!r}")
+
+# And the box nobody can ask.
+_deaf_recv = _soft_says(1, "", _RECV)
+check("does not keep what it received" not in _deaf_recv,
+      f"a box whose FRR is silent was told what its neighbour keeps, read off "
+      f"a configuration it never got: {_deaf_recv!r}")
+check("FRR is not answering" in _deaf_recv,
+      f"and is not told that is why, so an empty answer reads as the "
+      f"neighbour sending nothing: {_deaf_recv!r}")
+check("soft-reconfiguration inbound" not in _deaf_recv,
+      f"it is told to add a statement it may already have, through a daemon "
+      f"that is not there to take it: {_deaf_recv!r}")
+_deaf_clear = _soft_says(1, "", _SOFTIN)
+check("FRR is not answering" in _deaf_clear
+      and "does not keep what it received" not in _deaf_clear,
+      f"the same on the clear path, which is the one that matters more: "
+      f"{_deaf_clear!r}")
+check("use 'clear bgp 10.0.0.2' to reset the session" not in _deaf_clear,
+      f"a box whose FRR is silent is offered a session reset as the remedy - "
+      f"an outage, on a premise nothing read, against a daemon that would not "
+      f"take it: {_deaf_clear!r}")
+print("  three answers: keeping, not keeping, and nobody to ask")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -10859,15 +10859,31 @@ class Shell:
         # not keeping them" are different answers to look at during an
         # incident.
         if len(args) >= 3 and args[0] == "neighbor" \
-                and args[2] == "received-routes" \
-                and not self.soft_reconfiguration_on(args[1]):
-            self.err(f"neighbour {args[1]} does not keep what it received, "
-                     "so this would print an empty table either way")
-            print("    add 'neighbor " + args[1] + " soft-reconfiguration "
-                  "inbound' under the address family; it costs memory")
-            print("    'show bgp neighbor " + args[1] + " routes' shows what "
-                  "survived inbound policy, which the box does have")
-            return
+                and args[2] == "received-routes":
+            keeps = self.soft_reconfiguration_on(args[1])
+            if keeps is None:
+                # NOT the refusal below. Every sentence in it is about the
+                # neighbour's configuration, and a box whose FRR is down has
+                # not read that configuration - it has read nothing. The
+                # advice would be a statement the box may already carry,
+                # offered through a daemon that could not take it, and the
+                # command it points at answers from the same FRR.
+                self.err(f"FRR is not answering, so whether {args[1]} keeps "
+                         f"what it received cannot be read")
+                print_prose("an empty table here would be this box's control "
+                            "plane being down rather than the neighbour "
+                            "sending nothing: 'systemctl status frr' and its "
+                            "journal say why")
+                return
+            if not keeps:
+                self.err(f"neighbour {args[1]} does not keep what it "
+                         "received, so this would print an empty table "
+                         "either way")
+                print("    add 'neighbor " + args[1] + " soft-reconfiguration "
+                      "inbound' under the address family; it costs memory")
+                print("    'show bgp neighbor " + args[1] + " routes' shows "
+                      "what survived inbound policy, which the box does have")
+                return
         if args[:1] != ["summary"]:
             rc, out = self.frr.show("show bgp " + " ".join(args))
             if out:
@@ -11428,7 +11444,20 @@ class Shell:
         # needs the neighbour to have kept what it sent. Saying that here is
         # the difference between "no routes" and "I am not keeping them".
         if w[3:4] == ["soft"] and w[4:5] != ["out"]:
-            if not self.soft_reconfiguration_on(w[2]):
+            keeps = self.soft_reconfiguration_on(w[2])
+            if keeps is None:
+                # And here the second half of that refusal is worse than
+                # wrong: 'clear bgp <n>' is an outage offered on a premise
+                # nothing read, on a box where it would reset nothing because
+                # the daemon that holds the session is not answering either.
+                self.err(f"FRR is not answering, so whether {w[2]} keeps what "
+                         f"it received cannot be read")
+                print_prose("nothing was re-applied, and 'clear bgp' would "
+                            "reset nothing either - both go to the FRR that "
+                            "is silent: 'systemctl status frr' and its "
+                            "journal say why")
+                return
+            if not keeps:
                 self.err(f"neighbour {w[2]} does not keep what it received, "
                          "so there is nothing to re-apply")
                 print("    add 'neighbor " + w[2] + " soft-reconfiguration "
@@ -11492,7 +11521,26 @@ class Shell:
                   + (" " + rest[1] if len(rest) == 2 else ""))
 
     def soft_reconfiguration_on(self, neighbour):
-        """Is this neighbour keeping what it received, so policy can re-run?"""
+        """
+        Is this neighbour keeping what it received, so policy can re-run?
+
+        THREE ANSWERS. True and False are read off the running configuration;
+        None is FRR not answering, and it is not False. Frr.running() reports
+        a control plane that is down as a configuration with nothing in it -
+        deliberately, because most of its callers want a list - and a caller
+        that took that for "this neighbour keeps nothing" would tell the
+        operator to add a statement the box may already have, through a daemon
+        that is not there to take it. Frr.daemons() argues exactly this about
+        its own reading forty lines away: "None is not the empty set and the
+        two MUST NOT be collapsed."
+
+        Asked of `available()`, which is the box's own question for whether
+        FRR is answering, rather than by re-reading the configuration here. A
+        second reader of the running routing configuration is a second answer
+        to it.
+        """
+        if not self.frr.available():
+            return None
         cfg = self.running_config()
         want = ["neighbor", neighbour, "soft-reconfiguration", "inbound"]
         return any(l.split()[:4] == want for l in cfg.routing)
