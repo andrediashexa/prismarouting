@@ -72,7 +72,32 @@ printf '%s\n' "$BADA" | sed 's/^/  /'
 # What is in EFFECT afterwards, not what the file looks like: a refused commit
 # rolls back by rewriting the file with the values that were running, so the
 # bytes legitimately differ while the configuration does not.
-EFFECTIVE=$(sshd -T 2>/dev/null | grep -i "^listenaddress" | head -2 | tr "\n" " ")
+#
+# The WHOLE answer, stderr and all, and the assertions below are made against
+# it rather than against the two lines pulled out of it for the report.
+#
+# This read `sshd -T 2>/dev/null | grep -i "^listenaddress"` and the negative
+# below could not fail in either direction. sshd -T refuses a file it cannot
+# parse instead of printing a partial one, so on the box this section is about
+# - the one that left `ListenAddress not:an:address` in the file - it exits
+# 255, says "bad addr or host: not:an:address (Name or service not known)" on
+# STDERR, and prints no configuration at all. 2>/dev/null threw the refusal
+# away, the grep had no listenaddress line to select, EFFECTIVE was EMPTY, and
+# "not:an:address is not in it" was green. On a box that rolled the address
+# back EFFECTIVE holds "listenaddress [::]:22 listenaddress 0.0.0.0:22" and it
+# was green again. Driven on 2026-09-15 against OpenSSH 9.2 over two real
+# sshd_config files, with this line copied out verbatim: both boxes read
+# "[ ok ]".
+#
+# Keeping stderr puts the refusal itself in the haystack, which is where the
+# address the box must not be using appears. The positive beside it is what
+# stops the same thing happening again for a different reason: if sshd ever
+# stops answering, or rewords its refusal, the haystack goes quiet and the
+# check below would be vacuous again - so something has to say the answer is
+# there, which is what lab/routing.sh's block_of pair says for the same reason.
+SSHD_SAID=$(sshd -T 2>&1)
+EFFECTIVE=$(printf '%s\n' "$SSHD_SAID" | grep -i "^listenaddress" | head -2 \
+            | tr "\n" " ")
 # Directly: is the daemon's configuration still one it would start with?
 # That is what "put back" has to mean; a port read out of sshd -T is a proxy
 # for it, and a proxy that can be empty for its own reasons.
@@ -111,8 +136,10 @@ expect "the refused change was not applied: the account is still there" \
 
 expect_in "the VTY refuses an impossible port itself" "expected 1-65535" "$BADP"
 expect_in "sshd refuses what the VTY let through" "sshd refused" "$BADA"
+expect_in "sshd could be asked what it would run with at all" \
+  "listenaddress" "$SSHD_SAID"
 expect_not_in "and the address it refused is not in effect" \
-  "not:an:address" "${EFFECTIVE:-}"
+  "not:an:address" "$SSHD_SAID"
 expect_in "so sshd would still start" "VALID" "${STILL_VALID:-}"
 
 # Not "readable only by root", which is what this asserted while the VTY
