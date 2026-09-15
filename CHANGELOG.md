@@ -183,8 +183,36 @@ version has a chance of seeing it.
   which is a **better** argument for claiming nothing, and is what the section
   says now. Publishing no number was right; supporting it with an unmeasured
   one was the same mistake in miniature.
+### Internal
 
+* **The one check that guarded paired address pooling could not fail**
+  ([#226](https://github.com/andrediashexa/hexarouting/issues/226)).
+  `lab/detreserve.sh` asserts that a deterministic pool's reserve block lands
+  on the subscriber's own public address, which is the RFC 4787 REQ-2 property
+  the box states in four places and the only place in the product where
+  "prefer the subscriber's own address" is actually implemented. It ran on a
+  pool with ONE public address, where there is nowhere else for the block to
+  land, so the assertion was true whatever the allocator did.
 
+  Measured, not argued: with the preference loop in
+  `bpa_dyn_acquire_extra()` switched off, that check stayed green and only the
+  new one went red.
+
+  The lab now runs a second pool with four public addresses, where the
+  subscribers extend in descending index order while the free list hands
+  blocks out in ascending order, so the block on top of the stack is never the
+  one the subscriber's own address holds and the box has to choose. A guard
+  beside it asserts the four holders really are on four different addresses,
+  so the day the pool stops offering anywhere else the measurement says so
+  instead of passing. A third pool reports, without asserting, what the same
+  preference does one block further along the address, which is where the
+  worker sharding starts to answer differently: 4 of 4 on the holder's own
+  address at 0 and at 2 workers, 0 of 4 at 3, with one subscriber getting no
+  extension at all. That number is the cost of the preference under sharding
+  and it is read from #226.
+
+  The off run goes red on ten checks where it went red on nine, and the header
+  floor says so.
 
 ## 0.74.1 - fifteen things this product said that were not true, and the checks that hold them
 

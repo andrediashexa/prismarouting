@@ -25,16 +25,24 @@
 #      the far side of a wire.
 #   5. Running out of reserve is counted and visible, and is a different
 #      number from a subscriber reaching max-blocks.
+#   6. The extension lands on the SUBSCRIBER'S OWN public address, measured on
+#      a pool where it could land somewhere else. Items 2 to 5 run on a pool
+#      with one public address, where "its own address" is the only answer
+#      there is and the check cannot fail. The second pool has four. A third
+#      one reports, without asserting, what the same preference does for a
+#      subscriber one block further along its address, which is where the
+#      worker sharding starts to answer differently; that number is read from
+#      issue #226 and the section says why it is not a check.
 #
 # AND IT RUNS WITH THE FEATURE OFF. `sh tools/lab.sh detreserve off` builds
 # the same pool with `reserve 0`, which is what every configuration written
 # before this existed means, and the extension assertions MUST then go red.
 # That argument is the only thing that makes the green run worth anything.
-# OFF-RED-AT-LEAST: 9
+# OFF-RED-AT-LEAST: 10
 #
 # A FLOOR, not a target, and measured rather than chosen: `sh tools/lab.sh
-# detreserve off` on 2026-09-13 went red on exactly these nine, which are the
-# nine that depend on a block the formula does not produce:
+# detreserve off` on 2026-09-14 went red on exactly these ten, which are the
+# ten that depend on a block the formula does not produce:
 #
 #   the subscriber that filled its block was given a second one
 #   and it is the block the model holds out of the formula
@@ -45,12 +53,20 @@
 #   the reserve block arrived at the collector as its own natEvent 16
 #   and its release as its own natEvent 17, at the same port range
 #   one allocation record per block, not one for the pair
+#   and every reserve block landed on its holder's own address
+#
+# It was nine until item 6 was added. The tenth is the one that goes red for
+# the RIGHT reason where the third goes red for a free one: with no reserve
+# nobody extends at all, so both fail, and only the tenth would still fail if
+# the extension happened and landed on the wrong address.
 #
 # The three that stay green are the ones asserting what the box does INSTEAD,
-# and one more - "the second subscriber found the reserve empty and stayed on
-# one block" - which is true for free when there is no reserve. It is left in
-# rather than counted: an assertion that cannot discriminate in this mode is
-# not evidence, and pretending it is would put the floor one too high.
+# and two more - "the second subscriber found the reserve empty and stayed on
+# one block", which is true for free when there is no reserve, and "the four
+# holders really are on four different public addresses", which is about the
+# pool's shape and not about the reserve. They are left in rather than
+# counted: an assertion that cannot discriminate in this mode is not evidence,
+# and pretending it is would put the floor too high.
 #
 # tools/run-all-labs.sh refuses an off run that goes red on fewer, because a
 # lab that used to fail nine checks and now fails one has lost eight
@@ -256,6 +272,93 @@ DEALLOC_RES=$(printf '%s\n' "$COL" \
 ALLOC_ANY=$(printf '%s\n' "$COL" | grep -cE " ALLOCATION +$S1 ")
 
 echo
+echo "=========== the preference, on a pool where it can be seen ==========="
+# THE ASSERTION ABOVE CANNOT FAIL. Pool `det` has ONE public address, so "the
+# extension landed on the subscriber's own address" is true whatever the
+# allocator does: there is no other address for it to land on. The preference
+# in bpa_dyn_acquire_extra() could be deleted and that line would stay green,
+# which is how a property stops being held with nothing going red. Measured
+# rather than argued: the loop was deleted and the run below says what each of
+# the two checks did (#226).
+#
+# This pool has FOUR public addresses and four reserve blocks, one per
+# address. The subscribers extend in descending index order while the free
+# list hands blocks out in ascending order, so the block waiting on top of the
+# stack is never the one the subscriber's own address holds. The box has to
+# choose between the two, and nothing here names a block for it.
+#
+# Worth knowing before reading a red one: the reserve is sharded by index like
+# every other block, so which subscribers the preference can be honoured for
+# depends on the worker count as well as on the pool. The section after this
+# one reports that half rather than asserting it, and says why.
+vppctl bpa timeouts udp 600 >/dev/null   # the section above shortened it to 2
+vppctl bpa pool pair inside 100.64.8.0/28 outside 200.150.4.16/30 \
+    ports $PORTS block $BSZ mode deterministic max-blocks 2 $RESLINE
+vppctl show bpa pool | sed 's/^/  /'
+
+PAIR_OWN=0; PAIR_N=0; PAIR_PRIM=""
+for i in 3 2 1 0; do
+  for sp in 7001 7002 7003 7004 7005; do send 100.64.8.$i $sp; done
+done
+for i in 3 2 1 0; do
+  PSUB=$(vppctl show bpa subscriber 100.64.8.$i)
+  P_A=$(blocks_of "$PSUB" | sed -n 1p | cut -d' ' -f1)
+  P_B=$(blocks_of "$PSUB" | sed -n 2p | cut -d' ' -f1)
+  P_N=$(printf '%s\n' "$PSUB" | grep -c '^  block ')
+  PAIR_N=$((PAIR_N + 1))
+  PAIR_PRIM="$PAIR_PRIM $P_A"
+  if [ "$P_N" -eq 2 ] && [ -n "$P_A" ] && [ "$P_A" = "$P_B" ]; then
+    PAIR_OWN=$((PAIR_OWN + 1)); P_V="own address"
+  else
+    P_V="ELSEWHERE"
+  fi
+  printf '    %-14s primary %-14s extension %-14s %s\n' \
+    "100.64.8.$i" "${P_A:--}" "${P_B:--}" "$P_V"
+done
+PAIR_DISTINCT=$(printf '%s\n' $PAIR_PRIM | sort -u | grep -c .)
+echo "  $PAIR_OWN of $PAIR_N extensions landed on the holder's own public address"
+echo "  and the four holders sit on $PAIR_DISTINCT distinct public addresses"
+echo "  workers on this box: $(box_workers)"
+
+# And the same measurement one block further along the address, which is where
+# the SHARDING starts to answer differently.
+#
+# PRINTED AND NOT ASSERTED, deliberately. A subscriber's reserve block sits at
+# reserve index off*addresses + pub while its own traffic is on block index
+# blk*addresses + pub, and the two are the same number only when off can equal
+# blk. With one reserve block per address, off is 0 and these subscribers are
+# on blk 1, so whether the preference can be honoured at all depends on the
+# worker count - and working out which worker count honours it would put a
+# second copy of the allocator's arithmetic in this file, which is the thing
+# item 1 above exists to avoid. So the number is measured and reported, and
+# #226 is where it is read.
+vppctl bpa pool pair2 inside 100.64.9.0/28 outside 200.150.5.16/30 \
+    ports $PORTS block $BSZ mode deterministic max-blocks 2 $RESLINE
+FAR_OWN=0; FAR_N=0; FAR_EXT=0
+for i in 7 6 5 4; do
+  for sp in 7001 7002 7003 7004 7005; do send 100.64.9.$i $sp; done
+done
+for i in 7 6 5 4; do
+  FSUB=$(vppctl show bpa subscriber 100.64.9.$i)
+  F_A=$(blocks_of "$FSUB" | sed -n 1p | cut -d' ' -f1)
+  F_B=$(blocks_of "$FSUB" | sed -n 2p | cut -d' ' -f1)
+  F_N=$(printf '%s\n' "$FSUB" | grep -c '^  block ')
+  FAR_N=$((FAR_N + 1))
+  [ "$F_N" -eq 2 ] && FAR_EXT=$((FAR_EXT + 1))
+  if [ "$F_N" -eq 2 ] && [ -n "$F_A" ] && [ "$F_A" = "$F_B" ]; then
+    FAR_OWN=$((FAR_OWN + 1)); F_V="own address"
+  elif [ "$F_N" -eq 2 ]; then
+    F_V="ELSEWHERE"
+  else
+    F_V="no extension at all"
+  fi
+  printf '    %-14s primary %-14s extension %-14s %s\n' \
+    "100.64.9.$i" "${F_A:--}" "${F_B:--}" "$F_V"
+done
+echo "  one block further along: $FAR_OWN of $FAR_N on the holder's own address,"
+echo "  $FAR_EXT of $FAR_N got an extension at all, at $(box_workers) worker(s)"
+
+echo
 echo "=========== VERDICT ==========="
 echo "  run mode: $MODE (reserve $RESERVE)"
 
@@ -312,6 +415,15 @@ expect "and its release as its own natEvent 17, at the same port range" \
   test "${DEALLOC_RES:-0}" -ge 1
 expect "one allocation record per block, not one for the pair" \
   test "${ALLOC_ANY:-0}" -eq 1
+
+# 6. The preference the one-address pool above cannot see. The first of these
+#    two is what makes the second worth reading: if the pool ever stops
+#    offering somewhere else for the block to go, the measurement goes back to
+#    being free and this says so instead of passing.
+expect "the four holders really are on four different public addresses" \
+  test "${PAIR_DISTINCT:-0}" -eq 4
+expect "and every reserve block landed on its holder's own address" \
+  test "${PAIR_N:-0}" -eq 4 -a "${PAIR_OWN:-0}" -eq "${PAIR_N:-0}"
 
 # And what the box does INSTEAD with no reserve, which the assertions above
 # cannot say: it must do what it did before this feature existed rather than
