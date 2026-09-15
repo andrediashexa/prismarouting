@@ -627,6 +627,77 @@ def render_vpp(p):
     )
 
 
+def render_report(p, vpp_base):
+    """The commented report the tuner prints above the files it generates.
+
+    A FUNCTION so that it can be rendered without running the tuner, which is
+    what render_grub(), render_vpp() and render_irqbalance() beside it are
+    for. It was inline in main(), and docs/appliance.md quotes it: the page
+    said the box prints `1G hugepages: 6 requested` where it prints
+    `6 GB requested`, and nothing could compare the two because there was
+    nothing to call (#326). The commit that changed that line landed three
+    hours after the one that quoted it correctly.
+
+    `vpp_base` is passed rather than read off the argument parser, because the
+    only thing the report needs from it is the path it names.
+    """
+    out = []
+    out.append(f"# {p['nic_note']}")
+    out.append(f"# {p['total_cpus']} CPUs total; chosen NUMA node: {p['node']}")
+    out.append(f"# operating system and VPP main: {fmt_list(p['os_cpus'])}")
+    out.append(f"# workers ({len(p['workers'])}): {fmt_list(p['workers'])}")
+    out.append(f"# isolated: {fmt_list(p['isolated']) or '(none)'}")
+    out.append(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
+          f"(sized for {p['subscribers']} subscribers), "
+          f"{p['hugepages_reserved']} reserved right now")
+    if p["hugepages_capped"]:
+        # Said plainly, because the operator's real problem is that the box is
+        # too small for the subscriber target - not that a number was adjusted.
+        out.append(f"# WARNING: {p['hugepages_wanted']} GB of hugepages were needed "
+              f"for {p['subscribers']} subscribers, but this machine has "
+              f"{p['total_gb']} GB of RAM.")
+        if p["hugepages_gb"] == 0:
+            out.append("#          Hugepages disabled: the box stays on the "
+                  "conservative profile, where it runs but does not perform.")
+        else:
+            out.append(f"#          Capped at {p['hugepages_gb']} GB. Expect fewer "
+                  "subscribers than configured, or add RAM.")
+    # The statistics segment, said out loud precisely because it is the one
+    # memory resource above that is NOT sized here - and the only one with a
+    # hard abort behind it. VPP exports every counter through a segment of
+    # fixed size; each dataplane interface adds entries to it; filling it
+    # reaches os_panic and SIGABRT rather than refusing the interface. So the
+    # box loses its whole dataplane and says nothing about why.
+    #
+    # It is not sized because nothing this program reads predicts how many
+    # INTERFACES a box will carry. Every other figure above comes either from
+    # ground truth - the topology, the RAM, the pages the kernel really
+    # reserved - or from a subscriber target the operator set. A CGNAT
+    # subscriber is not an interface: HEXA_SUBSCRIBERS=200000 describes
+    # 200,000 translations sharing a handful of ports, so sizing the segment
+    # from it would reserve hundreds of MB, on a box whose RAM floor is 4 GB,
+    # for interfaces that never appear. A constant instead would be a number
+    # nobody can justify, which is what main-heap-size stopped being when it
+    # started reading the pages the kernel had actually reserved.
+    #
+    # What is left is to say where the box stands, here and at every boot in
+    # the self-test, so the limit is met as a sentence rather than as a signal.
+    out.append(f"# statistics segment: NOT sized here, so VPP's built-in "
+          f"{STATSEG_DEFAULT_MB} MB applies.")
+    out.append("#          Measured: a box on that default aborted between 7,000 "
+          "and 8,000")
+    out.append("#          interfaces. It is per INTERFACE, not per subscriber, "
+          "which is why")
+    out.append("#          nothing here sizes it. To raise it, put a statseg "
+          "stanza in the")
+    out.append(f"#          base file ({vpp_base}):")
+    out.append("#          it is concatenated ahead of these stanzas.")
+    out.append(f"# dataplane NIC PCI address: {p['nic_pci'] or '(not a PCI device)'}")
+    out.append(f"# low latency (C-states off, THP off): {'yes' if p['low_latency'] else 'no'}")
+    out.append(f"# state: {'kernel tuned, full configuration' if p['tuned_now'] else 'FIRST BOOT, conservative configuration until reboot'}")
+    return "\n".join(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -655,59 +726,7 @@ def main():
     vpp = render_vpp(p)
     irq = render_irqbalance(p)
 
-    print(f"# {p['nic_note']}")
-    print(f"# {p['total_cpus']} CPUs total; chosen NUMA node: {p['node']}")
-    print(f"# operating system and VPP main: {fmt_list(p['os_cpus'])}")
-    print(f"# workers ({len(p['workers'])}): {fmt_list(p['workers'])}")
-    print(f"# isolated: {fmt_list(p['isolated']) or '(none)'}")
-    print(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
-          f"(sized for {p['subscribers']} subscribers), "
-          f"{p['hugepages_reserved']} reserved right now")
-    if p["hugepages_capped"]:
-        # Said plainly, because the operator's real problem is that the box is
-        # too small for the subscriber target - not that a number was adjusted.
-        print(f"# WARNING: {p['hugepages_wanted']} GB of hugepages were needed "
-              f"for {p['subscribers']} subscribers, but this machine has "
-              f"{p['total_gb']} GB of RAM.")
-        if p["hugepages_gb"] == 0:
-            print("#          Hugepages disabled: the box stays on the "
-                  "conservative profile, where it runs but does not perform.")
-        else:
-            print(f"#          Capped at {p['hugepages_gb']} GB. Expect fewer "
-                  "subscribers than configured, or add RAM.")
-    # The statistics segment, said out loud precisely because it is the one
-    # memory resource above that is NOT sized here - and the only one with a
-    # hard abort behind it. VPP exports every counter through a segment of
-    # fixed size; each dataplane interface adds entries to it; filling it
-    # reaches os_panic and SIGABRT rather than refusing the interface. So the
-    # box loses its whole dataplane and says nothing about why.
-    #
-    # It is not sized because nothing this program reads predicts how many
-    # INTERFACES a box will carry. Every other figure above comes either from
-    # ground truth - the topology, the RAM, the pages the kernel really
-    # reserved - or from a subscriber target the operator set. A CGNAT
-    # subscriber is not an interface: HEXA_SUBSCRIBERS=200000 describes
-    # 200,000 translations sharing a handful of ports, so sizing the segment
-    # from it would reserve hundreds of MB, on a box whose RAM floor is 4 GB,
-    # for interfaces that never appear. A constant instead would be a number
-    # nobody can justify, which is what main-heap-size stopped being when it
-    # started reading the pages the kernel had actually reserved.
-    #
-    # What is left is to say where the box stands, here and at every boot in
-    # the self-test, so the limit is met as a sentence rather than as a signal.
-    print(f"# statistics segment: NOT sized here, so VPP's built-in "
-          f"{STATSEG_DEFAULT_MB} MB applies.")
-    print("#          Measured: a box on that default aborted between 7,000 "
-          "and 8,000")
-    print("#          interfaces. It is per INTERFACE, not per subscriber, "
-          "which is why")
-    print("#          nothing here sizes it. To raise it, put a statseg "
-          "stanza in the")
-    print(f"#          base file ({a.vpp_base}):")
-    print("#          it is concatenated ahead of these stanzas.")
-    print(f"# dataplane NIC PCI address: {p['nic_pci'] or '(not a PCI device)'}")
-    print(f"# low latency (C-states off, THP off): {'yes' if p['low_latency'] else 'no'}")
-    print(f"# state: {'kernel tuned, full configuration' if p['tuned_now'] else 'FIRST BOOT, conservative configuration until reboot'}")
+    print(render_report(p, a.vpp_base))
     print()
     print("### /etc/default/grub.d/hexarouting.cfg")
     print(grub)

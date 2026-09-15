@@ -142,6 +142,15 @@ version has a chance of seeing it.
   begins `2M hugepages:`. The commit that rewrote that line landed three hours
   after the one that quoted it correctly, and did not touch the page.
 
+  **Nothing could have compared them**, which is why it stood: the report was
+  printed inline in `main()`, so there was no way to render it without running
+  the whole tuner. It is `render_report()` now, beside the three `render_*()`
+  functions it sat among, and `appliance/test_tune.py` drives the tuner against
+  a synthetic root and reads the line back out of its real output. **The fixed
+  text, not the numbers**: the page's box is not the fixture's box and the
+  figures should differ, but the wording between them is what a reader compares
+  their own console against, and that is what changed underneath the page.
+
 * **Two invariants in `docs/context.md` that stopped being true, and a number
   that was never measured**
   ([#324](https://github.com/andrediashexa/hexarouting/issues/324),
