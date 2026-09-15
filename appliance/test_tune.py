@@ -25,7 +25,7 @@ def w(path, content):
 
 def build(root, sockets, cores_per_socket, threads, nic_node=None,
           hugepages_gb=0, isolated="", nic_pci=None, ram_gb=64,
-          nic_bus=None, hugepage_kb=1048576):
+          nic_bus=None, hugepage_kb=1048576, tx_queues=None):
     """
     Typical Linux numbering: first every first thread, then every second one.
     With 2 sockets x 8 cores x 2 threads, the sibling of cpu0 is cpu16.
@@ -64,6 +64,18 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
             if nic_bus is not None:
                 os.makedirs(target, exist_ok=True)
             os.symlink(target, f"{root}/sys/class/net/eth0/device")
+            # HOW MANY QUEUES THE CARD HAS, which the tuner did not read at
+            # all until #330 and which is the difference between a virtio
+            # guest and the 10G card this was developed on. The default is
+            # none, so every fixture written before this one keeps the shape
+            # it had: the tuner falls back to one queue per worker when the
+            # card cannot be read.
+            if tx_queues:
+                for _q in range(tx_queues):
+                    os.makedirs(f"{root}/sys/class/net/eth0/queues/tx-{_q}",
+                                exist_ok=True)
+                    os.makedirs(f"{root}/sys/class/net/eth0/queues/rx-{_q}",
+                                exist_ok=True)
         else:
             w(f"{root}/sys/class/net/eth0/device/numa_node", nic_node)
     # The POOL THAT EXISTS, and only that one. A box whose CPU cannot do 1G
@@ -79,9 +91,26 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
     w(f"{root}/proc/meminfo", f"MemTotal:       {ram_gb * 1024 * 1024} kB")
     return node_cpus
 
-def run(root, *args):
+def run(root, *args, maxmtu=None):
+    """
+    The tuner against a synthetic root.
+
+    `maxmtu` installs a stub `ip` on PATH. The card's maximum MTU is a netlink
+    attribute rather than a file under `root`, so without a seam the fixtures
+    could not reach that half at all - and the first version of the #330 fix
+    had a check that could not fail because of it.
+    """
+    env = dict(os.environ)
+    if maxmtu is not None:
+        _bin = tempfile.mkdtemp()
+        with open(os.path.join(_bin, "ip"), "w") as _f:
+            _f.write("#!/bin/sh\n"
+                     f"echo '2: eth0: <BROADCAST> mtu 1500 ... minmtu 68 "
+                     f"maxmtu {maxmtu}'\n")
+        os.chmod(os.path.join(_bin, "ip"), 0o755)
+        env["HEXA_IP"] = os.path.join(_bin, "ip")
     p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root] + list(args),
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=env)
     return p.stdout
 
 def field(out, prefix):
@@ -842,6 +871,116 @@ if _printed and _quoted:
           f"the wording is what a reader compares their console against)")
     if not _badly:
         print(f"  the page and the box agree on: {_fixed.strip()}")
+
+print("\n=== the stanza matches the card, not the processor (#330) ===")
+# THE DEFECT, measured on the maintainer's installed box after a handover that
+# worked. VPP owned the NIC and the device would not start:
+#
+#   dpdk: [0] Configured number of TX queues (7) is bigger than maximum
+#         supported (1)
+#   dpdk: [0] rte_eth_dev_set_mtu failed (mtu 8996, Unknown error -22)
+#   dpdk: Interface GigabitEthernet0/12/0 error -22
+#
+# `nq` was one queue per WORKER, which is a fact about the processor, and the
+# card was never asked. Every other figure in that stanza is measured. On a
+# virtio guest - how most smaller deployments run - the card has one queue and
+# a maxmtu of 1500, and both numbers were wrong at once.
+_vq = tempfile.mkdtemp()
+build(_vq, 1, 8, 1, nic_node=0, hugepages_gb=4, isolated="1-7",
+      nic_pci="0000:00:12.0", nic_bus="virtio3", ram_gb=8, tx_queues=1)
+_vout = run(_vq, "--interface", "eth0", "--subscribers", "200000",
+            maxmtu=1500)
+
+check("num-tx-queues 1" in _vout,
+      f"a one-queue card was asked for more than one transmit queue, which is "
+      f"the -22 the box actually got: "
+      f"{[l.strip() for l in _vout.splitlines() if 'queues' in l]}")
+check("num-rx-queues 7" not in _vout,
+      f"the receive side still asks for one per worker: "
+      f"{[l.strip() for l in _vout.splitlines() if 'rx-queues' in l]}")
+
+# AND THE OPERATOR IS TOLD, because one queue and seven workers means one
+# worker receives packets. Capping quietly would trade a box that does not
+# start for a box that runs at a seventh of its CPU with nothing said.
+check("NIC queues: 1" in _vout and "Capped" in _vout,
+      f"the cap was applied silently: "
+      f"{[l for l in _vout.splitlines() if 'NIC queues' in l]}")
+
+# THE OTHER HALF OF THE SAME -22. VPP defaults a DPDK interface to 9000 and
+# this card's maximum is 1500, so the device failed on the MTU as well as on
+# the queues. Reachable here only because run() can stand in for netlink.
+check("mtu 1500" in _vout,
+      f"a card with maxmtu 1500 got VPP's 9000 default, which is the other "
+      f"error the box printed: "
+      f"{[l.strip() for l in _vout.splitlines() if 'mtu' in l.lower()]}")
+check("NIC max MTU: 1500" in _vout,
+      f"the MTU the card forced was not reported: "
+      f"{[l for l in _vout.splitlines() if 'MTU' in l]}")
+
+print("\n=== and a card that can do jumbo is left alone ===")
+# The other direction, and it is the one that keeps this from being a
+# regression on the hardware this product was built for. A 10G card with eight
+# queues gets exactly what it got before: one queue per worker and no mtu line
+# at all, because VPP's own default is right there.
+_jq = tempfile.mkdtemp()
+build(_jq, 1, 8, 1, nic_node=0, hugepages_gb=4, isolated="1-7",
+      nic_pci="0000:3b:00.0", ram_gb=64, tx_queues=8)
+_jout = run(_jq, "--interface", "eth0", "--subscribers", "200000",
+            maxmtu=9216)
+check("num-tx-queues 7" in _jout,
+      f"a card with eight queues was capped below its worker count: "
+      f"{[l.strip() for l in _jout.splitlines() if 'queues' in l]}")
+check("Capped" not in _jout,
+      f"a card that needed no cap was reported as capped: "
+      f"{[l for l in _jout.splitlines() if 'NIC queues' in l]}")
+check("mtu " not in _jout.split("dpdk {", 1)[-1].split("}", 1)[0],
+      f"a jumbo-capable card was given an mtu line, which changes what every "
+      f"physical box has always done: "
+      f"{_jout.split('dpdk {', 1)[-1].split('}', 1)[0]!r}")
+
+print("\n=== and the check is reading a card at all ===")
+# Without this the two sections above pass on a fixture whose queue directory
+# was never created, which is the shape #151 spent an issue on.
+_probe = tempfile.mkdtemp()
+build(_probe, 1, 8, 1, nic_node=0, hugepages_gb=4, isolated="1-7",
+      nic_pci="0000:00:12.0", ram_gb=8, tx_queues=2)
+_pout = run(_probe, "--interface", "eth0", "--subscribers", "200000")
+check("NIC queues: 2" in _pout,
+      f"the tuner read no queue count from a fixture that has two, so these "
+      f"checks are asserting about a card that was never built: "
+      f"{[l for l in _pout.splitlines() if 'NIC' in l]}")
+
+print("\n=== a card it could not read is said out loud, not assumed fine ===")
+# The state #330 can still happen in. With no queues/ directory the tuner
+# falls back to one queue per worker, which is exactly the number that made
+# DPDK refuse the user's virtio card. If the report stays quiet about that,
+# "could not read the card" and "read it and it is fine" look identical on
+# the one screen an operator has, and the next person debugs the wrong thing.
+_unread = tempfile.mkdtemp()
+build(_unread, 1, 8, 1, nic_node=0, hugepages_gb=4, isolated="1-7",
+      nic_pci="0000:00:12.0", nic_bus="virtio3", ram_gb=8)
+_uout = run(_unread, "--interface", "eth0", "--subscribers", "200000")
+check("num-tx-queues 7" in _uout,
+      f"the unreadable-card fixture no longer falls back to one queue per "
+      f"worker, so this check is not about the state it was written for: "
+      f"{[l for l in _uout.splitlines() if 'queues' in l]}")
+check("could not be read" in _uout,
+      f"the tuner asked for 7 queues because it could not read the card and "
+      f"said nothing about it, so a box that is about to refuse the device "
+      f"looks the same as a healthy one: "
+      f"{[l for l in _uout.splitlines() if 'NIC' in l]}")
+
+print("\n=== and a box with no dataplane card says nothing about queues ===")
+# The other half of the same question. Every defect this file has carried was
+# a sentence true of one box and false of another, printed by a path that
+# never asked which box it was on: a queue count is not a fact about a machine
+# that has no card to count queues on.
+_nonic = tempfile.mkdtemp()
+build(_nonic, 1, 8, 1, hugepages_gb=4, isolated="1-7", ram_gb=8)
+_nout = run(_nonic, "--subscribers", "200000")
+check("NIC queues" not in _nout,
+      f"a box with no dataplane interface was told something about its NIC "
+      f"queues: {[l for l in _nout.splitlines() if 'NIC' in l]}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -75,6 +75,27 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The tuner sized the dataplane's NIC from the processor and never asked the
+  card** ([#330](https://github.com/andrediashexa/hexarouting/issues/330)).
+  `appliance/hexarouting-tune` derived `num-rx-queues` and `num-tx-queues` from
+  the worker count alone - `nq = max(1, len(workers))` - and left the MTU at
+  VPP's 9000 default. On an eight-core virtio guest that wrote
+  `num-tx-queues 7` and MTU 9000 for a card with one TX queue and `maxmtu
+  1500`, DPDK refused the device with `-22` and the box came up owning a NIC it
+  could not start: `show interface` listed `local0` and nothing else, on a
+  machine whose handover had otherwise worked. The tuner now reads
+  `/sys/class/net/<if>/queues` and the card's `maxmtu`, caps the queue count at
+  what the card has, and writes an `mtu` line only when the card is below 9000
+  - so a jumbo-capable card is left exactly as it was. The report says which
+  of those happened, including the case where the queue directory could not be
+  read at all: that state still falls back to one queue per worker, which is
+  the number that failed, and a report that stayed quiet about it would make a
+  box about to refuse its card look identical to a healthy one. A box with no
+  dataplane interface says nothing about queues, because a queue count is not a
+  fact about a machine that has no card to count them on.
+
 ## 0.74.2 - what the documents said about installing, and a check that could not fail
 
 [#226](https://github.com/andrediashexa/hexarouting/issues/226), [#321](https://github.com/andrediashexa/hexarouting/issues/321), [#322](https://github.com/andrediashexa/hexarouting/issues/322), [#323](https://github.com/andrediashexa/hexarouting/issues/323), [#324](https://github.com/andrediashexa/hexarouting/issues/324), [#325](https://github.com/andrediashexa/hexarouting/issues/325), [#326](https://github.com/andrediashexa/hexarouting/issues/326).
