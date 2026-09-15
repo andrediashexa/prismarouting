@@ -217,7 +217,7 @@ A contagem é do total, não por sessão. A tabela de encaminhamento não guarda
 `show bgp neighbor <endereço> received-routes` mostra o que o vizinho mandou **antes** da política de entrada — e isso o equipamento só tem se mandaram guardar. Sem `soft-reconfiguration inbound` a tabela sai vazia, e "não recebi rota" e "não estou guardando" são respostas diferentes para se olhar durante um incidente:
 
 ```
-error: neighbour 200.150.0.2 does not keep what it received
+error: 200.150.0.2 does not keep what it received
     so this would print an empty table either way
     add 'neighbor 200.150.0.2 soft-reconfiguration inbound' under the address
     family; it costs memory
@@ -229,7 +229,7 @@ error: neighbour 200.150.0.2 does not keep what it received
 oferece é a que sempre funciona: reiniciar a sessão e pegar as rotas de novo.
 
 ```
-error: neighbour 200.150.0.2 does not keep what it received
+error: 200.150.0.2 does not keep what it received
     so there is nothing to re-apply
     add 'neighbor 200.150.0.2 soft-reconfiguration inbound' under the address
     family, which costs memory,
@@ -239,8 +239,15 @@ error: neighbour 200.150.0.2 does not keep what it received
 
 As duas recusas vêm em linhas dentro da largura do console. Por um tempo o
 veredito e a primeira explicação saíam grudados numa linha só, que media de 92 a
-106 colunas numa tela de 79 — e um endereço IPv6 no lugar do IPv4 alarga mais
-ainda, porque o endereço do vizinho entra em todas as linhas.
+106 colunas numa tela de 79.
+
+E repare que o veredito **começa pelo endereço**, sem a palavra `neighbour` na
+frente. Ela saiu porque o endereço logo a seguir já diz de quem se fala, e ela
+custava dez colunas numa linha que o equipamento não quebra: com um vizinho
+IPv6 no lugar de um IPv4, o veredito chegava a 87 colunas numa tela de 79. O
+endereço do vizinho entra em todas as linhas desta recusa, então é ele que
+manda na largura de todas elas — e é por isso que a palavra a mais era a
+primeira a sair.
 
 ## E quando quem não responde é o roteamento
 

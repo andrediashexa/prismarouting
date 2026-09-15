@@ -120,6 +120,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The BGP page quoted a verdict the fix to
+  [#363](https://github.com/andrediashexa/hexarouting/issues/363) had just
+  changed, and the wiki reader did not catch it.** Both
+  soft-reconfiguration refusals lost the noun `neighbour` from the headline,
+  because the address that follows already says who is meant and the word cost
+  ten columns on a row the box does not fold - with an IPv6 peer the verdict
+  reached 87 columns on a console of 79.
+
+  `test/test_wiki_screens.py` passed on the stale page, and that is worth
+  recording rather than only fixing: the product builds that row as
+  `f"{peer} does not keep what it received"`, so the template OPENS with a
+  hole, and a hole matched as `[^\n]+?` absorbs any leading text - including a
+  word the box stopped printing. 199 of the templates in that corpus open with
+  a hole. The page is corrected here; the reader is
+  [#365](https://github.com/andrediashexa/hexarouting/issues/365).
+
 * **The console rule held 131 rows and said nothing about the 296 that carry a
   value, and an IPv6 peer is what makes the difference.**
   [#359](https://github.com/andrediashexa/hexarouting/issues/359) and
