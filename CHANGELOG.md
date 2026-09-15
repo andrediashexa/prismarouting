@@ -237,6 +237,56 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The capacity a subscriber can actually reach was printed on one interface
+  and not on the other, and no check outside a container could see the number
+  at all**
+  ([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
+  `show bpa pool` stopped claiming a ceiling it cannot deliver when a dynamic
+  pool's blocks are sharded per worker. `bpa_pool_details`, which is the
+  interface a provisioning system reads, went on reporting `capacity` alone -
+  the same false promise, on the mouth that answers a machine rather than
+  somebody who might notice the second line. It now carries `guaranteed` and
+  the `n_workers` it was computed on, because the floor is not a property of
+  the pool: the same configuration guarantees a different number on a box with
+  four workers, and a caller that stored the figure without it could not tell
+  a re-sized box from a changed pool.
+
+  The arithmetic moved to `bpa_pool_guaranteed()` in
+  `src/plugins/bpa/bpa_pool.h`, with `bpa_pool_usable()` beside it, and it is
+  now one holder with three readers instead of a copy per reader - there were
+  already two of `usable`, in `bpa_cli.c` and in `bpa_pool_remap_count()`.
+  Moving it is what makes it reachable: it was `static` inside `bpa_cli.c`,
+  which builds only against a VPP tree, so the central capacity claim of this
+  product was asserted by `lab/dynamic.sh` and by nothing else. `make test`
+  could not see it, and a regression in it would have shipped with 56 suites
+  green.
+
+  `test/test_bpa_pool.c` now checks it three ways, and the third is what #210
+  asked a lab for. Twelve sized cases, the measured pool among them - three
+  blocks in front of a `/22` at two workers promises **1**, not the 3 the box
+  used to print - and the five rows of the sizing table the wiki shows an
+  operator. Then the nine pool definitions the vectors carry, where the floor
+  must equal the ceiling in deterministic mode and at one worker, since a
+  caveat shown where it does not apply is one people learn to skip. Then 672
+  pools swept, 270 of them losing something to the shard, each one checked
+  against a **simulation of the mechanism** rather than against the formula
+  written a second time: `bpa_dyn_init()` cuts the slices, `bpa_owner_worker()`
+  decides which slice a subscriber may draw from, and every way n subscribers
+  can fall across the workers is walked. Every subscriber the pool claims
+  capacity for gets a block, and one more than that can be refused - the
+  second half matters as much, because a floor that is merely never exceeded
+  sends an operator to buy addresses they already own.
+
+  **Measured, and it settles half of what #210 left open.** Over 2800
+  combinations of blocks, inside addresses and worker count, there is **no**
+  way of splitting the blocks among the workers that guarantees more than the
+  even split already does. Re-partitioning is not a cheap fix hiding behind
+  the expensive ones: with a subscriber's worker fixed by arithmetic on its
+  own address, the adversary crowds whichever slice is thinnest, so the floor
+  is `capacity / workers` for any static partition. The two options that do
+  recover the loss both need shared state, which is what the partition exists
+  to avoid, and remain the maintainer's decision.
+
 * **A check that asserted about a word in prose went red on work that was
   right** ([#333](https://github.com/andrediashexa/hexarouting/issues/333)).
   `test/test_kernel_tuning.py` asserts that none of the kernel parameters

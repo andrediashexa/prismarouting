@@ -476,4 +476,26 @@ define bpa_pool_details
   u32 capacity;
   u32 inside_count;
   u32 outside_count;
+  /*
+   * The number to size against, and the worker count it was computed on.
+   *
+   * `capacity` is a ceiling nobody is promised: a dynamic pool's blocks are
+   * sharded per worker and a subscriber draws only from its own worker's
+   * slice, so it can be refused with blocks free elsewhere (#210).
+   * "show bpa pool" stopped claiming the ceiling alone; a provisioning system
+   * reading this message went on doing it, which is the same false promise
+   * over the interface that is read by a machine rather than by somebody who
+   * might notice.
+   *
+   * `n_workers` travels with it because the floor is not a property of the
+   * pool: the same configuration guarantees a different number on a box with
+   * four workers, and a caller that stored the figure without it could not
+   * tell a re-sized box from a changed pool.
+   *
+   * Both come from bpa_pool_guaranteed(), which is also what the CLI prints.
+   * Equal to `capacity` capped by `inside_count` whenever there is no shard
+   * to lose anything to - a deterministic pool, or a single-threaded box.
+   */
+  u32 guaranteed;
+  u32 n_workers;
 };

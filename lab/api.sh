@@ -97,6 +97,33 @@ echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 OK=$(vat2 bpa_pool_dump '{}' 2>&1)
 expect_in "the pool created through the API is listed" "via-api" "$OK"
+
+# The capacity the API reports is the one a subscriber can reach.
+#
+# `capacity` alone is a ceiling nobody is promised once a dynamic pool's
+# blocks are sharded per worker (#210). `show bpa pool` stopped claiming it
+# alone; this message went on doing it, and it is the interface read by a
+# provisioning system rather than by somebody who might notice.
+#
+# This pool is DETERMINISTIC, so its blocks are a formula and there is no
+# slice to run out of: the floor must be the ceiling, capped by the inside
+# set. That identity is asked OF THE BOX - all three numbers come out of the
+# same reply - rather than recomputed here, because a lab that recomputes the
+# arithmetic agrees with itself instead of with the product.
+num_of() {
+  printf '%s' "$2" | tr -d ' \t\r' | sed -n "s/.*\"$1\":\([0-9][0-9]*\).*/\1/p" | head -1
+}
+API_CAP=$(num_of capacity "$OK")
+API_IN=$(num_of inside_count "$OK")
+API_FLOOR=$(num_of guaranteed "$OK")
+API_CEIL=$API_CAP
+[ -n "$API_CAP" ] && [ -n "$API_IN" ] && [ "$API_IN" -lt "$API_CAP" ] && API_CEIL=$API_IN
+echo "  capacity ${API_CAP:-none}, inside ${API_IN:-none}, guaranteed ${API_FLOOR:-none}"
+# Differing defaults on purpose. A missing field would make both sides empty,
+# and `[ "$a" = "$b" ]` on two empty strings is a check that passes by being
+# unable to read anything - the false green #210's own lab shipped once.
+expect "the API reports the number a subscriber can reach" \
+  sh -c "[ '${API_FLOOR:-no floor}' = '${API_CEIL:-no ceiling}' ]"
 BAD=$(vat2 bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","filter":"BPA_API_FILTER_ENDPOINT_INDEPENDENT","max_blocks":0,"block_stride":0,"block_reserve":0,"alg":0,"alg_set":0,"tcp_mss":0,"tcp_mss_auto":false,"vrf_id":4294967295,"out_vrf_id":4294967295,"audit_user":"api-lab","audit_uid":4242,"timeouts":{"udp":0,"icmp":0,"tcp_syn":0,"tcp_transitory":0,"tcp_established":0,"gre":0,"port_holddown":0,"alg_expect":0},"n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
 # vat2 prints a real TAB between the key and the value. Written as '\t' in a
 # quoted shell pattern it is a backslash followed by a t, which matches
