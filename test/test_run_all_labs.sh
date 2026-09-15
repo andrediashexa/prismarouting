@@ -162,13 +162,20 @@ case "$1 ${2:-}" in
   "urpf ")    echo "LAB PASSED"; exit 0 ;;
   "urpf off") echo "VPP did not start"; echo "LAB FAILED: 6 check(s)"; exit 1 ;;
 
+  # An off mode that lands exactly on its floor, which is the ordinary case
+  # and the one the report has to state rather than assume.
+  "sip ")    echo "LAB PASSED"; exit 0 ;;
+  "sip off") echo "  [FAIL] the call was not rewritten in the SDP body"
+             echo "  [FAIL] and the RTP ports were not pinholed"
+             echo "LAB FAILED: 2 check(s)"; exit 1 ;;
+
   *) echo "the stub was asked for a lab it does not have: $*" >&2; exit 2 ;;
 esac
 EOF
 chmod +x "$d/tools/build.sh" "$d/tools/lab.sh"
 
 for n in aa-good bb-broken cc-panic dd-refused ee-silent ff-halfdead \
-         gg-late hh-died ii-deadstart vrf audit urpf; do
+         gg-late hh-died ii-deadstart vrf audit urpf sip; do
   echo '#!/bin/sh' > "$d/lab/$n.sh"
 done
 # The lab with a floor in its header, and a lab file is where the floor lives
@@ -179,6 +186,8 @@ printf '#!/bin/sh\n# OFF-RED-AT-LEAST: 4\n' > "$d/lab/mss.sh"
 # floor of one. Nothing is wrong with it, which is the point - the suite has
 # to say so anyway, or the two extra assertions can be lost for free.
 printf '#!/bin/sh\n# OFF-RED-AT-LEAST: 1\n' > "$d/lab/vrf.sh"
+# And one that lands exactly on its floor.
+printf '#!/bin/sh\n# OFF-RED-AT-LEAST: 2\n' > "$d/lab/sip.sh"
 
 out=$(sh "$d/tools/run-all-labs.sh" 2>&1); rc=$?
 
@@ -345,13 +354,27 @@ case "$out" in
 esac
 # And the line for a lab that meets its floor says what was compared, rather
 # than claiming a header was read when it was not.
+#
+# This was written on urpf+off, which never reaches that line: its capture
+# opens with "VPP did not start", so it is classified NO VPP three branches
+# earlier, and the loop above gives it no floor to read either. The case
+# accepted NO VPP as a second answer and said so in its own words, so what it
+# actually asserted was what the case forty lines up already asserts. Landing
+# exactly on the floor is the ordinary reading of this line and now has a lab
+# of its own.
 case "$out" in
-  *"urpf+off           pass (6 check(s) red, floor 6)"*)
-    ok "a lab that meets its floor says both numbers" ;;
-  *"urpf+off           NO VPP"*)
-    ok "urpf+off is NO VPP here, which its own case above already asserts" ;;
-  *) bad "the floor was not reported beside the count; got:
-$(printf '%s' "$out" | grep 'urpf+off')" ;;
+  *"sip+off            pass (2 check(s) red, floor 2)"*)
+    ok "a lab that meets its floor exactly says both numbers" ;;
+  *) bad "the floor was not reported beside a count equal to it; got:
+$(printf '%s' "$out" | grep 'sip+off')" ;;
+esac
+# Scoped to sip's own three lines. Looking for the notice in the whole report
+# would find vrf's, which is five lines further down and says nothing about
+# this lab.
+case "$(printf '%s' "$out" | grep -A3 'sip+off')" in
+  *"more than its header floor"*)
+    bad "a lab exactly on its floor was told its floor is behind" ;;
+  *) ok "and is not told to raise a floor it is already meeting" ;;
 esac
 
 echo "=== a check whose timing the machine could not keep is its own state ==="
@@ -377,7 +400,7 @@ esac
 
 echo "=== the summary counts them apart, and the suite still exits non-zero ==="
 case "$out" in
-  *"pass=7  fail=4  notmeasured=1  novpp=5  ran=1"*) ok "the five states are counted apart" ;;
+  *"pass=9  fail=4  notmeasured=1  novpp=5  ran=1"*) ok "the five states are counted apart" ;;
   *) bad "the summary line is not what was counted; got:
 $(printf '%s' "$out" | tail -12)" ;;
 esac

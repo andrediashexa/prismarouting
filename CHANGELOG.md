@@ -91,6 +91,16 @@ version has a chance of seeing it.
   floor is and what raising it would buy - not a failure, because a lab that
   grew is the good direction, but not silence either.
 
+  The case that was supposed to hold the ordinary reading of that line - a lab
+  red on exactly its floor - could not fail. It was written on `urpf+off`,
+  whose stub capture opens with `VPP did not start`, so the report classifies
+  it NO VPP three branches before any floor is read, and the stub lab was
+  given no floor to read either. The case accepted `NO VPP` as a second answer
+  and said in its own words that this was what a case forty lines above
+  already asserted. Put back on its own, without that escape, it is red: it
+  never matched anything. A lab landing exactly on its floor now has a stub of
+  its own.
+
 * **The nine refusals the `appliance/` sweep named as renderable here, and
   left.** That sweep read 113 refusal sites in the scripts that put this
   product on somebody's disk, found 51 had ever been rendered by anything,
