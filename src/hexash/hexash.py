@@ -7953,9 +7953,12 @@ class Shell:
 
         if not cutoff_ok and self.cutoff:
             for pfx, why, advice in self.cutoff:
+                # The advice THROUGH print_prose. Each line is a sentence
+                # written to be read once, and printed as it stood the longest
+                # of them reached the console at 144 columns (#363).
                 self.err(f"{pfx}: {why}")
                 for line in advice:
-                    print("    " + line)
+                    print_prose(line)
             return
 
         confirm_min = 0
@@ -7997,9 +8000,15 @@ class Shell:
             #
             # Below zero: a deadline already in the past.
             if not 1 <= confirm_min <= 60:
+                # THE VERDICT AND THE REASON, split. Composed as one
+                # sentence this reached the console at 136 to 139 columns -
+                # the words alone are 136 of it, so no value could have made
+                # it fit - and #359's walk could not see it because the
+                # f-string interpolates the number (#363).
                 self.err(f"commit confirmed {confirm_min}: expected 1-60 "
-                         f"minutes. The window has to outlast a reconnection "
-                         f"and end while somebody is still at the console")
+                         f"minutes")
+                print_prose("the window has to outlast a reconnection and "
+                            "end while somebody is still at the console")
                 return
         elif args and args[0] == "comment":
             comment = " ".join(args[1:]).strip('"')
@@ -8667,8 +8676,14 @@ class Shell:
             return line          # FRR's own spelling, typed inside the block
         if w[0] in ("exit", "quit", "end", "show", "commit", "rollback"):
             return line
-        self.err(f"{w[0]}: not a statement of 'router static' - "
-                 "'route <prefix> <next-hop>', or 'exit'")
+        # The word typed goes into the PROSE and not into the verdict: it
+        # is whatever the operator typed, so a verdict carrying it has no
+        # width at all, and the verdict without it is 43 columns and the same
+        # refusal (#363). As one row it was 84 with the shortest word that
+        # reaches it.
+        self.err_prose("not a statement of 'router static'",
+                       f"'{w[0]}' is not one; what is entered here is "
+                       f"'route <prefix> <next-hop>', or 'exit'")
         return ""
 
     def do_config(self, line):
@@ -11338,7 +11353,14 @@ class Shell:
                 # IPv6 peer is wider again - which is the case #276 widened
                 # the check in test_hexash_bgp.py to cover, on a different
                 # message. These two were not among the rows it split.
-                self.err(f"neighbour {args[1]} does not keep what it received")
+                # AND THE WORD 'neighbour' IS GONE FROM IT, which is the
+                # rest of #349's own fix rather than a second one. The comment
+                # above says the address is interpolated and an IPv6 peer is
+                # wider again; driven with a full-length one this verdict is
+                # 87 columns, and `err` folds nothing (#363). Dropping the
+                # noun costs nothing - what follows the address says what it
+                # is - and leaves 77.
+                self.err(f"{args[1]} does not keep what it received")
                 print_prose("so this would print an empty table either way")
                 print_prose(f"add 'neighbor {args[1]} soft-reconfiguration "
                             f"inbound' under the address family; it costs "
@@ -11774,20 +11796,27 @@ class Shell:
             return
         if punting:
             if silent_circuits:
-                print("  the dataplane IS punting IS-IS to the kernel "
-                      f"(NLPID 0x{self.OSI_ISIS:02x}), so the hellos are "
-                      "reaching isisd; the far end is not answering them")
+                # THROUGH print_prose, like the sentence above it. These three
+                # were composed as one row each and reached the console at
+                # 128, 95 and 111 columns; the NLPID is interpolated into all
+                # three, which is why #359's walk counted them and measured
+                # none (#363).
+                print_prose("the dataplane IS punting IS-IS to the kernel "
+                            f"(NLPID 0x{self.OSI_ISIS:02x}), so the hellos "
+                            "are reaching isisd; the far end is not "
+                            "answering them", indent="  ")
             return
-        print(f"  the dataplane is NOT punting IS-IS to the kernel (NLPID "
-              f"0x{self.OSI_ISIS:02x}), so no hello ever reaches isisd")
+        print_prose("the dataplane is NOT punting IS-IS to the kernel (NLPID "
+                    f"0x{self.OSI_ISIS:02x}), so no hello ever reaches isisd",
+                    indent="  ")
         if drops:
             # The evidence, and the reason this is not merely "nothing
             # happened": the frames ARRIVED and were dropped for want of a
             # registered receiver. Without it the same sentence would be
             # printed on a box whose neighbour is switched off.
-            print(f"    {drops} frame(s) counted in osi-input as an unknown "
-                  "OSI protocol, which is the hellos arriving and being "
-                  "dropped")
+            print_prose(f"{drops} frame(s) counted in osi-input as an "
+                        "unknown OSI protocol, which is the hellos arriving "
+                        "and being dropped", indent="    ")
         else:
             print_prose("and nothing has been counted in osi-input either, "
                         "so the frames are not even arriving")
@@ -11926,7 +11955,10 @@ class Shell:
             if not keeps:
                 # The same shape as the refusal in show_bgp, and it was over
                 # the console for the same reason (#349): 92, 105 and 81.
-                self.err(f"neighbour {w[2]} does not keep what it received")
+                # The noun dropped here for the reason it is dropped in
+                # show_bgp: 87 columns on a full-length IPv6 peer, 77 without
+                # it (#363).
+                self.err(f"{w[2]} does not keep what it received")
                 print_prose("so there is nothing to re-apply")
                 print_prose(f"add 'neighbor {w[2]} soft-reconfiguration "
                             f"inbound' under the address family, which costs "

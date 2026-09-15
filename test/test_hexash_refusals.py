@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Every refusal the VTY can print, against the ones something has watched print.
+Every refusal the VTY can print, against the ones something has watched print -
+and every row it printed doing it, against the widest value that can reach it.
 
 WHAT A REFUSAL IS. `src/hexash/hexash.py` says no to the operator 180 times,
 through `self.err(...)` and `self.err_dataplane(...)`. Each one of those is
@@ -50,6 +51,22 @@ WHAT IT CANNOT SEE, stated rather than left to be discovered:
     measured by name in test/test_hexash_perms.py and test/test_dataplane_if.py
     instead.
 
+AND THE SECOND READER, at the end of the file, which is about WIDTH rather
+than about coverage and is here because this is where the driving is. #359 and
+#362 put a rule on the source - no LITERAL row is wider than
+`config.CONSOLE_COLUMNS` - and both printed, on every run, the half they did
+not hold: 296 rows carry an interpolated value, and the width of those is not a
+property of the source. `neighbour {peer} does not keep what it received` is 48
+columns plus the peer, which fits an IPv4 address and does not fit a full-length
+IPv6 one. Deciding that needs the site DRIVEN with the widest value that can
+reach it (#363), and the boxes above already reach 185 of the VTY's 185 verdict
+sites and 168 of its 238 print sites. A second harness would have to build its
+own way of reaching every one of them, which is nine tenths of what this file
+is; so the rows are recorded by the same hook, and the reader at the end says,
+per site, whether the row is bounded and fits, or carries something with no
+widest and puts it where a fold costs nothing. What it cannot reach is printed
+with the rest.
+
 THE COUNT IS A FLOOR, and there is no allowlist. An allowlist is the thing the
 next person grows: a refusal lands in it once and nobody reads it again. So the
 unrendered ones are NAMED, the number they may not exceed is written down, and
@@ -59,6 +76,7 @@ already uses for labs with no off run.
 import ast
 import contextlib
 import io
+import ipaddress
 import os
 import re
 import subprocess
@@ -83,6 +101,9 @@ import os
 import sys
 
 LOG = os.environ.get("HEXASH_REFUSAL_LOG")
+VTY_PATH = os.environ.get("HEXASH_VTY")
+if VTY_PATH:
+    VTY_PATH = os.path.realpath(VTY_PATH)
 
 
 def _record(module):
@@ -126,12 +147,55 @@ if LOG:
         return module
 
     builtins.__import__ = _hooked
+
+# ---------------------------------------------------------------- the rows
+#
+# THE SAME TRICK ONE LAYER DOWN, and it is here rather than in a suite of its
+# own because the boxes above are what drive the sites: a second harness would
+# have to build its own way of reaching every one of them, and reaching them
+# is nine tenths of the work this file already does. What `err` records is
+# WHICH refusal fired; what this records is WHAT REACHED THE CONSOLE - the row
+# as the operator sees it, with the value already interpolated into it. The
+# width reader at the end of this file is what reads the two together.
+#
+# `print` and not `sys.stdout.write`: every row this VTY prints goes through
+# `print`, measured, and wrapping the stream instead would see rows cut into
+# pieces by the writes that compose them and could not say which call made
+# one.
+#
+# Rows written to a `file=` are not the console - `[device]` and `[api]`
+# tracing go to stderr - so they are left alone.
+_rows = os.environ.get("HEXASH_ROW_LOG")
+if _rows and VTY_PATH:
+    _real_print = builtins.print
+
+    def _print(*args, sep=" ", end="\n", file=None, flush=False):
+        if file is None:
+            frame = sys._getframe(1)
+            seen = []
+            while frame is not None:
+                if os.path.realpath(frame.f_code.co_filename) == VTY_PATH:
+                    seen.append(str(frame.f_lineno))
+                frame = frame.f_back
+            if seen:
+                text = sep.join(str(a) for a in args)
+                with open(_rows, "a") as out:
+                    out.write(",".join(seen) + "\t"
+                              + text.replace("\\", "\\\\").replace("\n", "\\n")
+                              + "\n")
+        return _real_print(*args, sep=sep, end=end, file=file, flush=flush)
+
+    builtins.print = _print
 '''
 
 _tmp = tempfile.mkdtemp(prefix="hexash-refusals-")
 LOG = os.path.join(_tmp, "rendered")
+ROWS = os.path.join(_tmp, "rows")
 open(LOG, "w").close()
+open(ROWS, "w").close()
 os.environ["HEXASH_REFUSAL_LOG"] = LOG
+os.environ["HEXASH_ROW_LOG"] = ROWS
+os.environ["HEXASH_VTY"] = VTY
 with open(os.path.join(_tmp, "sitecustomize.py"), "w") as _f:
     _f.write(HOOK)
 exec(compile(HOOK, "<hexash-refusal-hook>", "exec"), {"__name__": "_hook"})
@@ -1442,6 +1506,477 @@ else:
     else:
         ok(f"and the {len(unseen)} that have not are named, at the floor of "
            f"{UNRENDERED_AT_MOST}")
+
+# ------------------------------------------------------- the driven widths
+#
+# WHY THIS IS HERE AND NOT IN test/test_console_width.py. That file puts a
+# rule on the SOURCE - no literal row is wider than `config.CONSOLE_COLUMNS` -
+# and it says on every run what the rule does not cover: 64 literal rows held,
+# 178 print() calls and 118 verdicts carry an interpolated value and were only
+# counted. The width of those is not a property of the source. `neighbour
+# {peer} does not keep what it received` is 48 columns plus the peer: an IPv4
+# address fits and a full-length IPv6 one does not, which is how #349 found
+# the two it split. A static walk cannot decide that, and no amount of reading
+# will make it able to (#363).
+#
+# What CAN decide it is driving the site and measuring what came out, and this
+# file already drives them: the boxes above plus the suites below reach 185 of
+# the 185 verdict sites in the VTY and 172 of its 242 print sites. A second
+# harness would have to build its own way of reaching every one of them, which
+# is nine tenths of what this file is. So the rows are recorded by the same
+# hook that records the refusals, one line of the log per row, and read here.
+#
+# WHAT IT DECIDES, per site, and it is one of three things:
+#
+#   * BOUNDED. Every value that reaches it comes from somewhere with a widest
+#     member, so the row is rebuilt with that member in place of the value and
+#     measured. The widest members are read from the product or computed, not
+#     invented: an invented 200-character pool name proves a fold nobody will
+#     ever see and turns this into a check that fails for the wrong reason.
+#   * UNBOUNDED BUT SAFE. The value is an operator's own word - a pool name, a
+#     route-map name, a path, a sentence the dataplane sent back - and nothing
+#     follows it on its row. A fold there costs nothing: it is the last thing
+#     printed, every word the VTY wrote is already on the screen, and the
+#     value survives whole in the scrollback for grepping. That is the shape
+#     `say_finding` uses for its statement and the one #362 gave `ports` and
+#     `block-size`.
+#   * NEITHER, which is refused. An unbounded value with the VTY's own words
+#     behind it pushes those words past the margin exactly when the value is
+#     long, which is the failure #349, #355 and #362 each closed by hand.
+#
+# WHAT IT CANNOT SEE is printed too. A site no box here and no suite below
+# reaches has no rows to read, and is counted as unreached rather than as
+# passing - the labs are where most of those are driven, and the labs need a
+# container. A row whose text is assembled somewhere else and handed to
+# `print()` or `err()` whole cannot be decomposed at all; those are measured
+# as they were driven, which is a lower bound on their width and not a bound.
+
+WIDEST = {}          # a name for the kind -> how many columns it can take
+
+#: A full-length IPv6 address, computed rather than typed. `.exploded` is the
+#: longest text form of one, which is what an operator's neighbour statement
+#: carries when nothing has compressed it.
+WIDEST["an IP address"] = len(ipaddress.IPv6Address(1).exploded)
+WIDEST["an IP prefix"] = WIDEST["an IP address"] + len("/128")
+WIDEST["a MAC address"] = len("02:00:00:00:00:01")
+
+#: The widest decimal any of these rows carries, read out of the VTY's own
+#: grammar: `ARG_VRF` is `<1-4294967295>` and nothing this box prints a number
+#: from is wider than the widest range it offers to type. NOT a bound on what
+#: an operator can type - `mtu 99999999999999999999` is refused with the
+#: digits quoted back - and that is the limit named on the screen below.
+WIDEST["a decimal"] = max(
+    len(n) for name, value in vars(hexash).items()
+    if name.startswith("ARG_") and isinstance(value, str)
+    for n in re.findall(r"\d+", value))
+
+#: The widest interface name this box can have, which is the DATAPLANE's and
+#: not Linux's. Linux refuses a name over 15 characters and config.py enforces
+#: that on `linux-name`, but VPP's own names are longer:
+#: `TenGigabitEthernet0/0/0` is 23, and a sub-interface adds a dot and a tag
+#: out of the VLAN range this product declares. The wider of the two is the
+#: one to measure with.
+WIDEST["an interface name"] = (len("TenGigabitEthernet0/0/0") + 1
+                               + len(str(config.VLAN_MAX)))
+
+#: Names in the VTY that hold an interface name wherever they appear. A
+#: vocabulary and not a list of sites: it is six words for the whole file, and
+#: a site that starts carrying an interface name under one of them is bounded
+#: on the next run with nothing added here.
+IFNAMES = ("ifname", "iface", "parent", "sub", "host_name", "src")
+
+#: Every collection of strings the product declares at module level, which is
+#: where its closed sets live - URPF_MODES, the role names, the daemons, the
+#: filters a pipe takes. Derived rather than listed, so a set added to the
+#: product bounds its own sites without being mentioned here.
+CLOSED = {}
+for _mod in (config, hexash):
+    for _name, _value in vars(_mod).items():
+        if _name.startswith("_") or not _name.isupper():
+            continue
+        if (isinstance(_value, (tuple, list, set, dict)) and _value
+                and all(isinstance(x, str) for x in _value)):
+            CLOSED[f"{_mod.__name__}.{_name}"] = set(_value)
+
+#: The constants themselves, for a slot that interpolates one. `usage: vrf
+#: {ARG_VRF}` holds exactly what ARG_VRF is and nothing else.
+CONSTANTS = {n: str(v) for m in (config, hexash) for n, v in vars(m).items()
+             if n.isupper() and isinstance(v, (str, int))}
+
+MAC_SHAPE = re.compile(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$")
+
+
+def widest_for(expr, seen):
+    """
+    What the widest value at this slot is, or None if it has no widest.
+
+    `seen` is every value that actually reached the slot while the boxes above
+    and the suites below ran. The kind is read off those - the values are what
+    the product really puts there - and the width is read off the product.
+    """
+    if expr in CONSTANTS:
+        return (f"the constant {expr}", len(CONSTANTS[expr]))
+    if expr in IFNAMES:
+        return ("an interface name", WIDEST["an interface name"])
+    if not seen:
+        return None
+    try:
+        for v in seen:
+            ipaddress.ip_address(v)
+        return ("an IP address", WIDEST["an IP address"])
+    except ValueError:
+        pass
+    try:
+        for v in seen:
+            if "/" not in v:
+                raise ValueError(v)
+            ipaddress.ip_interface(v)
+        return ("an IP prefix", WIDEST["an IP prefix"])
+    except ValueError:
+        pass
+    if all(MAC_SHAPE.match(v) for v in seen):
+        return ("a MAC address", WIDEST["a MAC address"])
+    if all(v.isdigit() for v in seen):
+        return ("a decimal", WIDEST["a decimal"])
+    # The TIGHTEST set that holds every value seen. Several of the product's
+    # tables overlap - a daemon name is in three of them - and the widest
+    # member of the widest of those would be a bound on a different set.
+    best = None
+    for name, members in CLOSED.items():
+        if all(v in members for v in seen):
+            width = max(len(m) for m in members)
+            if best is None or width < best[1]:
+                best = (f"one of {name}", width)
+    return best
+
+
+def row_sites(path):
+    """
+    Every call in the VTY that BUILDS a row, by line, with its first argument.
+
+    `err`, `err_prose` and `err_dataplane` are skipped inside their own
+    bodies, for the reason `refusal_sites` skips `err_dataplane`: the `print`
+    in `err` is the mechanism every verdict goes through and the site an
+    operator's row came from is its caller. `print_prose` and `say_finding`
+    are noted rather than skipped - what they print is wrapped by
+    `console_prose` to this same budget by construction, except a single token
+    longer than the budget, which is deliberate and documented (#252).
+    """
+    tree = ast.parse(open(path).read())
+    inside = set()
+    wrapped = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        span = range(node.lineno, (node.end_lineno or node.lineno) + 1)
+        if node.name in ("err", "err_prose", "err_dataplane"):
+            inside.update(span)
+        elif node.name in ("print_prose", "say_finding"):
+            wrapped.update(span)
+    prints, verdicts = {}, {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        if node.lineno in inside:
+            continue
+        if getattr(node.func, "id", None) == "print":
+            prints[node.lineno] = node
+        elif getattr(node.func, "attr", None) in ("err", "err_prose",
+                                                  "err_dataplane"):
+            verdicts[node.lineno] = node
+    return prints, verdicts, wrapped
+
+
+def pieces(node):
+    """
+    A row as `[(literal, expression, format spec), ...]`, or None.
+
+    None when the argument is not an f-string this reader can take apart: a
+    name, a concatenation, a `*rest`. Those rows are assembled somewhere else
+    and handed over whole, and what they are made of is not visible here.
+
+    A slot whose expression is a CONSTANT - `{'Interface':<26}` in a table
+    header - is folded into the literal it is, formatted the way the product
+    formats it. It is not a value and treating it as one would make every
+    table header unbounded.
+    """
+    if len(node.args) != 1:
+        return None
+    arg = node.args[0]
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return [(arg.value, None, "")]
+    if not isinstance(arg, ast.JoinedStr):
+        return None
+    out, literal = [], ""
+    for part in arg.values:
+        if isinstance(part, ast.Constant):
+            literal += part.value
+            continue
+        spec = ""
+        if part.format_spec is not None:
+            spec = "".join(c.value for c in part.format_spec.values
+                           if isinstance(c, ast.Constant))
+        if isinstance(part.value, ast.Constant):
+            literal += format(part.value.value, spec)
+            continue
+        out.append((literal, ast.unparse(part.value), spec))
+        literal = ""
+    out.append((literal, None, ""))
+    return out
+
+
+def pad(spec):
+    """The columns a format spec takes whatever the value is."""
+    found = re.match(r"^.?[<>^=]?[+\- ]?#?0?(\d+)", spec or "")
+    return int(found.group(1)) if found else 0
+
+
+def slot_values(shape, text):
+    """The values that produced this row, recovered from its literal parts."""
+    pattern = "".join(re.escape(lit) + ("(.*?)" if expr is not None else "")
+                      for lit, expr, _ in shape)
+    found = re.fullmatch(pattern, text, re.S)
+    return found.groups() if found else None
+
+
+def compose(shape, prefix, fill):
+    """The widest row this shape makes, with `fill` deciding each slot."""
+    out, i = prefix, 0
+    for lit, expr, _ in shape:
+        out += lit
+        if expr is not None:
+            out += fill(i)
+            i += 1
+    return max(len(row) for row in out.split("\n")), out
+
+
+print("\n=== every row these boxes made the VTY print, measured against the "
+      "widest ===")
+print("=== value that can reach it (#363) ===")
+
+# Read out of the product by DRIVING it rather than by parsing `err`, for the
+# reason the rest of this file drives rather than reads: a verdict is seven
+# columns wider than it looks, and a second copy of "error: " written here is
+# a second thing to keep in step - one that fails SILENTLY, by measuring
+# columns the box may have stopped printing.
+_probe = driven(shell().err, "needle")[1].splitlines()[0]
+PREFIX = _probe[:-len("needle")] if _probe.endswith("needle") else ""
+if not PREFIX:
+    # Loud, not skipped: without it every verdict below is measured seven
+    # columns short and the whole section goes green on rows the box does not
+    # print.
+    bad(f"a verdict came back as {_probe!r}, so what `err` puts in front of "
+        f"one cannot be read; every verdict below would be measured against "
+        f"the wrong margin")
+else:
+    ok(f"a verdict reaches the console {len(PREFIX)} columns wider than it is "
+       f"written, driven out of Shell.err: {PREFIX!r}")
+
+PRINTS, VERDICTS, WRAPPED = row_sites(VTY)
+SOURCE = open(VTY).read().splitlines()
+
+printed = {}
+for _line in open(ROWS):
+    _chain, _, _text = _line.rstrip("\n").partition("\t")
+    _text = _text.replace("\\n", "\n").replace("\\\\", "\\")
+    for _n in _chain.split(","):
+        # The INNERMOST frame that is a row-building site. `err` calls
+        # `print`, `err_prose` calls `err`, and the row an operator reads was
+        # composed by whichever of them the VTY's own code wrote.
+        if _n and (int(_n) in PRINTS or int(_n) in VERDICTS):
+            printed.setdefault(int(_n), set()).add(_text)
+            break
+
+tally = {}
+unreached = []
+over = []          # a row that does not fit, with the widest value driven
+unsafe = []        # an unbounded value with the VTY's own words behind it
+opaque = 0
+
+
+def note(kind):
+    tally[kind] = tally.get(kind, 0) + 1
+
+
+for _site in sorted(set(PRINTS) | set(VERDICTS)):
+    _node = VERDICTS.get(_site) or PRINTS[_site]
+    _is_verdict = _site in VERDICTS
+    _seen = printed.get(_site)
+    if not _seen:
+        note("never printed here")
+        unreached.append(_site)
+        continue
+    if _site in WRAPPED:
+        note("wrapped to the budget by console_prose")
+        continue
+    _shape = pieces(_node)
+    if _shape is None:
+        # Assembled elsewhere. Measured as driven, which is a lower bound:
+        # what came out is what came out, and a row already over the console
+        # is over it whatever the widest turns out to be.
+        opaque += 1
+        _worst = max((r for t in _seen for r in t.split("\n")), key=len)
+        if len(_worst) > config.CONSOLE_COLUMNS:
+            note("assembled elsewhere, and driven over")
+            over.append((_site, len(_worst), "as driven", _worst))
+        else:
+            note("assembled elsewhere, driven inside")
+        continue
+    if all(expr is None for _, expr, _ in _shape):
+        note("no value in it")
+        continue
+    _slots = [(expr, spec) for _, expr, spec in _shape if expr is not None]
+    _values = [[] for _ in _slots]
+    _matched = 0
+    for _text in _seen:
+        _got = slot_values(_shape, _text[len(PREFIX):]
+                           if _is_verdict and _text.startswith(PREFIX)
+                           else _text)
+        if _got is None:
+            continue
+        _matched += 1
+        for _i, _v in enumerate(_got):
+            _values[_i].append(_v)
+    if not _matched:
+        # The literal parts did not match what was printed, so the values
+        # cannot be told from the words. Named rather than dropped: it is a
+        # row this reader has an opinion about and could not form one on.
+        note("could not be taken apart")
+        continue
+    _kinds = []
+    for _i, (_expr, _spec) in enumerate(_slots):
+        _k = widest_for(_expr, _values[_i])
+        _kinds.append((_k[0], max(_k[1], pad(_spec))) if _k else None)
+    _head = PREFIX if _is_verdict else ""
+    _bare, _ = compose(_shape, _head, lambda i: "-" * pad(_slots[i][1]))
+    if _bare > config.CONSOLE_COLUMNS:
+        # The VTY's own words are already over the console with every value
+        # taken out, so no value can make this row fit. #359's walk could not
+        # see it because the f-string interpolates.
+        note("the words alone are over")
+        _, _row = compose(_shape, _head, lambda i: "")
+        over.append((_site, _bare, "with every value taken out", _row))
+        continue
+    if all(_kinds):
+        _wide, _row = compose(_shape, _head, lambda i: "X" * _kinds[i][1])
+        if _wide > config.CONSOLE_COLUMNS:
+            note("bounded, and over at its widest")
+            over.append((_site, _wide, " and ".join(k[0] for k in _kinds),
+                         _row))
+        else:
+            note("bounded, and fits at its widest")
+        continue
+    _tail_only = True
+    _at = [i for i, (lit, expr, _) in enumerate(_shape) if expr is not None]
+    for _i, _k in enumerate(_kinds):
+        if _k:
+            continue
+        _rest = _shape[_at[_i] + 1:]
+        if any(e is not None for _, e, _ in _rest) or \
+                "".join(l for l, _, _ in _rest).strip():
+            _tail_only = False
+    if not _tail_only:
+        note("unbounded, with the VTY's own words behind it")
+        unsafe.append((_site, [k[0] if k else "no widest" for k in _kinds]))
+        continue
+    _upto, _row = compose(_shape, _head,
+                          lambda i: "X" * (_kinds[i][1] if _kinds[i] else 0))
+    if _upto > config.CONSOLE_COLUMNS:
+        note("the words before the unbounded value are over")
+        over.append((_site, _upto, "up to the unbounded value", _row))
+    else:
+        note("unbounded, and last on its row")
+
+MEASURED = sum(v for k, v in tally.items() if k != "never printed here")
+# Same floor idiom as the two walks in test/test_console_width.py and the same
+# reason: a reader that drove nothing would go green on the day the hook
+# stopped being installed, which is the shape of failure this whole file
+# exists to refuse. It was 357 when this was written.
+ROW_FLOOR = 250
+if MEASURED < ROW_FLOOR:
+    bad(f"only {MEASURED} row-building site(s) printed anything, below the "
+        f"floor of {ROW_FLOOR}; the recorder is what is broken, not the "
+        f"widths")
+else:
+    ok(f"{MEASURED} of the {len(PRINTS) + len(VERDICTS)} row-building sites "
+       f"in the VTY printed here ({len(VERDICTS)} verdict(s), "
+       f"{len(PRINTS)} print(s))")
+for _kind in sorted(tally):
+    print(f"    {tally[_kind]:4d}  {_kind}")
+print(f"  the widest values, read from the product: an IP address is "
+      f"{WIDEST['an IP address']} columns")
+print(f"  and a prefix {WIDEST['an IP prefix']}, both computed; a decimal is "
+      f"{WIDEST['a decimal']}, the widest range this VTY's")
+print(f"  own grammar declares; an interface name is "
+      f"{WIDEST['an interface name']}, VPP's longest card name")
+print(f"  plus a tag out of config.VLAN_RANGE; a closed set is its own widest "
+      f"member,")
+print(f"  out of the {len(CLOSED)} collections of strings the product "
+      f"declares.")
+
+print("\n  NOT MEASURED HERE, and these are the whole of what is not:")
+print(f"  {len(unreached)} site(s) printed nothing while this ran, so there "
+      f"was no row to")
+print("  measure. Most are inside a 'show' that needs a dataplane, which is "
+      "the")
+print("  labs' half and cannot run in `make test`.")
+print(f"  {opaque} site(s) print a row assembled somewhere else - a name, a "
+      f"concatenation,")
+print("  a '*rest' - and were measured as they were driven, which is a lower "
+      "bound")
+print("  on their width and not a bound on it.")
+print(f"  a decimal is measured at {WIDEST['a decimal']} columns, which is "
+      f"the widest NUMBER this box")
+print("  prints and not the widest thing an operator can type: 'mtu' followed "
+      "by")
+print("  fifty digits quotes all fifty back, and that row is not measured "
+      "here.")
+
+# THE CEILINGS ARE WHAT REFUSE THE 297th SITE, in the idiom
+# UNRENDERED_AT_MOST above already uses and for the same reason: an allowlist
+# is read once and grown forever, so what is left is NAMED on every run and
+# the number it may not exceed is written down. Every row that gains a fix
+# lowers one of these, and they may only go down.
+#
+# They are not zero, and the ones still counted are the work #363 leaves
+# behind it rather than a clean bill. What is fixed in this commit is the
+# handful the reader found that nothing else could: rows whose own WORDS are
+# over the console, which no static walk sees because the f-string
+# interpolates, and the two `neighbour <peer>` verdicts #349 measured on an
+# IPv4 peer and left at 87 columns on an IPv6 one.
+OVER_AT_MOST = 26
+UNSAFE_AT_MOST = 52
+
+
+def ceiling(found, allowed, what, detail):
+    global fail
+    if len(found) > allowed:
+        fail += 1
+        print(f"  FAIL: {len(found)} {what}, above the ceiling of {allowed}. "
+              f"A row that does not fit is read folded at whatever width the "
+              f"operator's window happens to be, and the fold lands inside "
+              f"the words rather than between them - fix the row, do not "
+              f"raise the number:")
+        for row in detail:
+            print(f"    {row}")
+    elif len(found) < allowed:
+        fail += 1
+        print(f"  FAIL: the ceiling says {allowed} and only {len(found)} "
+              f"{what}: lower it, or it stops holding anything")
+    else:
+        ok(f"{len(found)} {what}, at the ceiling of {allowed}")
+
+
+over.sort()
+unsafe.sort()
+ceiling(over, OVER_AT_MOST, "row(s) do not fit the console once driven",
+        [f"hexash.py:{n}  {w} columns {why}\n      {row.strip()[:110]!r}"
+         for n, w, why, row in over])
+ceiling(unsafe, UNSAFE_AT_MOST,
+        "row(s) carry a value with no widest and the VTY's own words behind "
+        "it",
+        [f"hexash.py:{n}  {' | '.join(k)}\n      "
+         f"{SOURCE[n - 1].strip()[:100]}" for n, k in unsafe])
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

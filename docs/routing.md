@@ -3194,8 +3194,8 @@ routes received" and "I am not keeping them" are different answers to be
 looking at during an incident:
 
 ```
-error: neighbour 10.0.0.2 does not keep what it received, so this would print
-an empty table either way
+error: 10.0.0.2 does not keep what it received
+    so this would print an empty table either way
     add 'neighbor 10.0.0.2 soft-reconfiguration inbound' under the address
     family; it costs memory
     'show bgp neighbor 10.0.0.2 routes' shows what survived inbound policy,
