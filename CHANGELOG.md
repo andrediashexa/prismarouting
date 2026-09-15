@@ -120,6 +120,51 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The console rule held 131 rows and said nothing about the 296 that carry a
+  value, and an IPv6 peer is what makes the difference.**
+  [#359](https://github.com/andrediashexa/hexarouting/issues/359) and
+  [#362](https://github.com/andrediashexa/hexarouting/issues/362) put a rule on
+  `src/hexash/`: no LITERAL row is wider than `config.CONSOLE_COLUMNS`. Both
+  printed, on every run, the half they did not hold. The width of an
+  interpolated row is not a property of the source: `neighbour {peer} does not
+  keep what it received` is 48 columns plus the peer, which fits
+  `200.150.0.2` and does not fit
+  `2001:0db8:1234:5678:9abc:def0:1234:5678`
+  ([#363](https://github.com/andrediashexa/hexarouting/issues/363)).
+
+  `test/test_hexash_refusals.py` gains a second reader, in that file rather
+  than in a new one because that is where the driving already is: its boxes and
+  the 22 suites it runs reach 185 of the VTY's 185 verdict sites and 168 of its
+  238 print sites, and a new harness would have had to build its own way to
+  every one of them. The same hook that records WHICH refusal fired now records
+  WHAT reached the console, and the reader rebuilds each row with the widest
+  value that can reach it. The widest values are read from the product or
+  computed, never invented: an IP address is 39 columns out of `ipaddress`, a
+  prefix 43, a decimal 10 (the widest range this VTY's own grammar declares),
+  an interface name 28 (VPP's longest card name plus a tag out of
+  `config.VLAN_RANGE`), and a closed set is the widest member of whichever of
+  the product's 50 declared collections holds it. A value with no widest - a
+  pool name, a route-map name, a path, a sentence the dataplane sent back - is
+  accepted only where nothing follows it on its row, which is the shape
+  `say_finding` uses for its statement.
+
+  Eight rows were fixed, each driven before and after. The two `neighbour
+  <peer>` verdicts [#349](https://github.com/andrediashexa/hexarouting/issues/349)
+  measured on an IPv4 peer are 87 columns on a full-length IPv6 one and 77 with
+  the noun dropped. The `commit confirmed` window refusal was 136 to 139
+  columns and is 48 to 50 with its reason under it: its WORDS alone were 136,
+  so no value could have made it fit, and no static walk could see it because
+  the f-string interpolates the number. The `router static` refusal was 84 and
+  is 41 with the word typed moved into the prose. Three IS-IS punt sentences
+  were 128, 95 and 111 and now go through `print_prose`, and so does the cutoff
+  advice that reached 144.
+
+  What is left is NAMED on every run against two ceilings that may only go
+  down, in the idiom the refusal floor above it already uses: 26 rows that do
+  not fit once driven and 52 that carry a value with no widest and the VTY's
+  own words behind it. `docs/routing.md` quoted the pre-split BGP refusal and
+  is corrected.
+
 * **Three wiki screens the new reader caught, two of them made stale an hour
   earlier by this same release.** `test/test_wiki_screens.py` went in green and
   then went red on its first real test: the split of the `nat: a hierarchy, not
