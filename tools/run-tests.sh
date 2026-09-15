@@ -115,6 +115,65 @@ echo "=============================================================="
 printf '  %s suites: %s passed, %s failed, %s not measured, %s with no verdict\n' \
   "$total" "$pass" "$fail" "$nomeasure" "$noverdict"
 
+# THE NUMBER ABOVE IS THE COUNT OF WHAT THE LIST NAMES, and a reader takes it
+# for the count of what this repository measures. Those were different:
+# appliance/test_startup_conf.sh and appliance/test_tuned_conf.sh are run only
+# by `make test-appliance`, so everything they assert about the installed
+# tuner, the generated startup.conf and the VPP that has to come up with it sat
+# outside "59 suites: 59 passed" with nothing saying so (#338). Not one branch
+# unmeasured, but two whole files - and the reader had no way to know they
+# existed.
+#
+# DISCOVERED, NOT LISTED. A roster of excused files is a second thing to keep
+# true, and the next person adds a harness without touching it - which is how
+# the two above stayed invisible. The repository's own naming convention is
+# the whole rule: a harness is a file whose name begins with test_. A third
+# one added tomorrow is named here on the next run, by nobody's decision.
+#
+# Dot-directories are pruned because .build holds the COMPILED artifacts of
+# the .c harnesses - .build/test_bpa is what test/test_bpa_pool.c becomes, not
+# a second harness - and .git is not source at all.
+find "$REPO" -mindepth 1 -name '.*' -prune -o -type f -name 'test_*' -print \
+  2>/dev/null | sed "s|^$REPO/||" | sort > "$OUT/harnesses"
+
+# What this run read. The last word of each command is the file it runs, with
+# one exception that is not an excuse but an indirection: a compiled suite is
+# named by its BINARY, and .build/test_bpa carries nothing of the name
+# test/test_bpa_pool.c. So the Makefile is asked which sources go into a target
+# the list names, rather than assuming the two names match. Assuming it would
+# report a file as unread on every green run, and a report that is wrong about
+# a file people can see is one they learn to skip.
+: > "$OUT/read"
+while IFS= read -r cmd; do
+  for w in $cmd; do last=$w; done
+  printf '%s\n' "$last" >> "$OUT/read"
+  case "$last" in
+    *.build/*)
+      awk -v t="\$(BUILD)/${last##*/}:" '
+        $1 == t { in_rule = 1 }
+        in_rule { for (i = 1; i <= NF; i++) if ($i ~ /\.c$/) print $i
+                  if ($NF !~ /\\$/) exit }
+      ' "$REPO/Makefile" 2>/dev/null >> "$OUT/read" ;;
+  esac
+done < "$OUT/list"
+sort -u "$OUT/read" > "$OUT/read.sorted"
+grep -Fxv -f "$OUT/read.sorted" "$OUT/harnesses" > "$OUT/unread" || true
+
+n_harness=$(wc -l < "$OUT/harnesses")
+n_unread=$(wc -l < "$OUT/unread")
+if [ "$n_unread" -gt 0 ]; then
+  printf '  %s harness file(s) in the tree, and this run read %s. NOT read:\n' \
+    "$n_harness" "$((n_harness - n_unread))"
+  sed 's/^/    /' "$OUT/unread"
+  echo
+  echo "  No verdict above is about those. They assert things about the product"
+  echo "  and this run did not execute them, so the count is what the list"
+  echo "  names and not what this repository measures."
+else
+  printf '  %s harness file(s) in the tree, and this run read every one.\n' \
+    "$n_harness"
+fi
+
 # Only what was not a pass, and each with the line that says why. A report
 # that repeats twenty green names buries the one that is not.
 if [ $((fail + nomeasure + noverdict)) -gt 0 ]; then
