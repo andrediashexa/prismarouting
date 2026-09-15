@@ -12,7 +12,8 @@ Comandos dentro de `configure`, na hierarquia `nat cgnat`.
 `nat` sozinho **não é um bloco em que se entra** — é uma hierarquia. Digitado só, é recusado dizendo o que digitar no lugar:
 
 ```
-error: nat: a hierarchy, not a block - 'nat cgnat pool <name>' or 'nat cgnat interface ...'
+error: nat: a hierarchy, not a block
+    what is entered is 'nat cgnat pool <name>' or 'nat cgnat interface ...'
 ```
 
 O bloco em que se entra continua sendo o pool: `nat cgnat pool <nome>`.

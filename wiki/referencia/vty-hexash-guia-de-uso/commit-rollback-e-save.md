@@ -229,9 +229,22 @@ O log está ligado e não há para onde mandar. Uma caixa nesse estado parece re
 
 Vale notar onde isso é recusado: **aqui**, e não no dataplane. Recusado lá, o resto da mudança já teria sido aplicado.
 
-### `routing is configured and FRR is not answering; check 'systemctl status frr'`
+### `routing is configured and FRR is not answering`
 
-Há configuração de roteamento na candidata e o roteamento não responde. Aplicar agora significaria perder silenciosamente tudo o que é de roteamento. Veja `systemctl status frr` antes de insistir.
+Há configuração de roteamento na candidata e o roteamento não responde.
+Aplicar agora significaria perder silenciosamente tudo o que é de roteamento.
+A recusa vem em três linhas, e a segunda e a terceira dizem para onde **não**
+olhar:
+
+```
+error: routing is configured and FRR is not answering
+    'systemctl status frr' and its journal say why; blaming the configuration
+    for a daemon that is not running sends somebody to debug the wrong thing
+```
+
+A configuração não é o problema. Um daemon que não está de pé não recusa nada,
+não responde nada e não deixa log nenhum na candidata - quem for procurar o
+erro na configuração vai procurar muito tempo.
 
 ### `pool '<nome>': inside and outside required`
 

@@ -77,10 +77,18 @@ A forma com peer group é a mesma:
 O nome ali é o nome pelo qual **o roteamento** conhece a interface — o mesmo que vale em `passive-interface` e nas estrofes de OSPF e IS-IS. Uma interface do `linux_cp` atende por mais de um nome, e quem escrever o nome do dataplane recebe um aviso dizendo qual é o outro:
 
 ```
-warning: neighbor host-veth-vpp interface remote-as external: FRR knows this
-interface as vppwan0, not host-veth-vpp: written this way the session has
-nothing to run over
+warning: FRR knows this interface as vppwan0, not host-veth-vpp: written this
+    way the session has nothing to run over
+    neighbor host-veth-vpp interface remote-as external
 ```
+
+Repare na ordem: **o motivo vem primeiro e a sentença recusada vem por último,
+numa linha só dela**. Não é estilo. A sentença é o que você vai procurar no
+`show configuration` e digitar de novo, então ela tem de sair inteira e num
+pedaço só; o motivo é para ler, então ele é quebrado na largura do console. Com
+os dois na mesma linha, um nome de route-map comprido ou um vizinho IPv6 punham
+a linha entre 104 e 264 colunas, e o que se perdia na dobra era metade de cada
+um.
 
 :::warning
 O enlace precisa carregar os anúncios de roteador do vizinho (router advertisement) para que o roteamento descubra o endereço de enlace local do outro lado. É assim que uma sessão sem endereço encontra com quem falar; sem isso a sessão fica em Idle com AS 0, mesmo com a configuração inteira certa. Confira com `show bgp summary`.
