@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The two screens that refuse a soft re-read printed eight lines wider than
+  the console** ([#349](https://github.com/andrediashexa/hexarouting/issues/349)).
+  `err()` wraps nothing and the rows under those refusals were bare
+  `print("    ...")` calls, so they measured **106, 101, 102, 92, 105 and 81**
+  columns against 79 - and the two "FRR is not answering" headlines written in
+  the same cycle measured 86 and 99. The neighbour address is interpolated into
+  every one of them, so an IPv6 peer is wider again, which is exactly the case
+  [#276](https://github.com/andrediashexa/hexarouting/issues/276) widened a
+  check to cover on a different message. These rows were not among the ones it
+  split and nothing read their width. They go through `print_prose` now and the
+  headlines carry only the refusal.
+
+  Driven over three peers - one IPv4 and two IPv6 - on all four paths, and the
+  case refuses a run that printed nothing, because an empty screen passes a
+  width test for free.
+
 * **The installer sent the operator to a path the box does not have**
   ([#348](https://github.com/andrediashexa/hexarouting/issues/348)). The
   connection-records question said *"one year at 200k subscribers in dynamic

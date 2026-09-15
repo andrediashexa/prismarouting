@@ -6898,6 +6898,36 @@ check("use 'clear bgp 10.0.0.2' to reset the session" not in _deaf_clear,
       f"a box whose FRR is silent is offered a session reset as the remedy - "
       f"an outage, on a premise nothing read, against a daemon that would not "
       f"take it: {_deaf_clear!r}")
+
+# AND BOTH REFUSALS FIT THE CONSOLE THEY ARE READ ON (#349).
+#
+# err() wraps nothing and the rows under these two were bare print("    ...")
+# calls, so they measured 106, 101, 102, 92, 105 and 81 columns against a
+# console of 79. The neighbour address is interpolated into every one of them,
+# which is why the peers below are driven rather than one: an IPv6 peer is the
+# widest real case, and it is the case #276 widened the check in
+# test_hexash_bgp.py to cover on a different message. These two were not among
+# the rows it split, and nothing read their width.
+#
+# The third answer on each path - FRR not answering - goes through the same
+# measurement, because it was written in the same cycle and has the same
+# shape.
+for _peer in ("10.0.0.2", "2001:db8:aaaa:bbbb::2", "fd00:1234:5678:9abc::42"):
+    for _rc, _conf, _line in (
+            (0, "router bgp 65000\n",
+             f"show bgp neighbor {_peer} received-routes"),
+            (0, "router bgp 65000\n", f"clear bgp {_peer} soft in"),
+            (1, "", f"show bgp neighbor {_peer} received-routes"),
+            (1, "", f"clear bgp {_peer} soft in")):
+        _said = _soft_says(_rc, _conf, _line)
+        # A run that printed nothing would pass the width test for free.
+        check(_said.strip(),
+              f"{_line!r} printed nothing on the box that must refuse it, so "
+              f"the width below is of an empty screen")
+        _over = [(len(l), l) for l in _said.splitlines()
+                 if len(l) > CONSOLE_COLUMNS]
+        check(not _over,
+              f"{_line!r} wraps on a serial console: {_over}")
 print("  three answers: keeping, not keeping, and nobody to ask")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
