@@ -245,6 +245,39 @@ else:
         print(f"  [ ok ] no merge since {last_tag.strip()} names an issue, "
               f"so there is nothing this check can be wrong about")
 
+print("\n=== and the section a release will rename says each heading once ===")
+# THE GATE ALREADY REFUSES THIS, AND ONLY AT THE RELEASE. Its message names the
+# cause exactly - "a branch cut before a release rename re-adds the whole
+# section on merge", except here it is simpler: seventeen branches each add
+# their entry under `### Fixed`, git resolves none of it because they are
+# different lines, and the section ends up saying Fixed twelve times.
+#
+# Measured on 2026-09-15: `## Unreleased` carried 12 `### Fixed` and 4
+# `### Added` over 37 entries. That section becomes `## <version>` the moment a
+# release is cut, so the gate would have refused - at the one moment when
+# somebody is holding a tag and a built image and wants to publish, over
+# something every merge could have caught for free.
+#
+# CONTRIBUTING.md section 5 says the entry goes in the order a reader cares
+# about, and a section that says Fixed twelve times has no order.
+_u = re.search(r"^## Unreleased$(.*?)(?=^## )", TEXT, re.M | re.S)
+if not _u:
+    check(False, "there is no '## Unreleased' section to read, so this check "
+                 "is about nothing")
+else:
+    _h = re.findall(r"^(### .+)$", _u.group(1), re.M)
+    _dup = sorted({h for h in _h if _h.count(h) > 1})
+    check(not _dup,
+          f"'## Unreleased' repeats {', '.join(_dup)}. The release gate "
+          f"refuses this once the section is renamed to a version, so it is "
+          f"found with a tag in hand instead of at the merge that caused it. "
+          f"Keep one of each and move the bullets under it: "
+          f"{[(h, _h.count(h)) for h in _dup]}")
+    check(len(_h) >= 1,
+          f"'## Unreleased' has no '###' heading at all while carrying "
+          f"{_u.group(1).count(chr(10) + '* **')} entries, so this check read "
+          f"nothing")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

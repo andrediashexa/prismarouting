@@ -75,28 +75,6 @@ version has a chance of seeing it.
 
 ## Unreleased
 
-### Added
-
-* **Every lab is now accounted for on whether its checks have ever been seen
-  to fail, or it is named.** `tools/run-all-labs.sh` runs some labs a third
-  time with the feature they test switched off and requires each to go red
-  against a floor the lab declares - and that is the only mechanism in this
-  repository that renders a lab assertion's **red** branch. Measured while
-  sweeping them: 425 of the 1381 assertions under `lab/` have their failure
-  shown on every release run, and 956 do not. There were three ways a lab could
-  be accounted for - an off mode plus a floor, a `NOT_LABS` entry saying why it
-  is not run at all, or nothing - and 32 labs were in the third, with no file
-  anywhere recording whether that was a decision. `test/test_off_run_coverage.sh`
-  makes that a fourth, explicit way (`NO-OFF-RUN:` with a reason, which has to
-  be a sentence rather than a stamp) and holds the unaccounted count as a
-  **floor that may only go down**, in the same idiom as `OFF-RED-AT-LEAST`.
-  Writing 32 reasons tonight would have meant inventing most of them, and a
-  rubber stamp is worse than the silence it replaces. It also refuses the two
-  halves coming apart: an off mode with no floor accepts whatever that run
-  returns, and a floor with no off mode is a number nobody reads. `lab/upgrade.sh`
-  already carried its reason in prose and now carries it in the form the check
-  can find.
-
 ### Fixed
 
 * **Six C assertions that could not fail, and the suite that refuses the next
@@ -179,6 +157,158 @@ version has a chance of seeing it.
   discovered: a guard reached through a helper or expressed as a loop bound is
   out of reach of a source check, and the answer for those is still to delete
   the product behaviour and watch the assertion stay green.
+
+* **The `## Unreleased` section said `### Fixed` twelve times, and only the
+  release would have found out.** Every branch adds its entry under `### Fixed`
+  or `### Added`, git resolves none of it because they are different lines, and
+  the section accumulates one heading per branch - measured here at 12 `### Fixed`
+  and 4 `### Added` over 37 entries. That section becomes `## <version>` the
+  moment a release is cut, and `tools/release-gate.sh` refuses a version section
+  that repeats a heading. So it would have been found with a tag in hand and an
+  image built, over something every merge could have caught for free.
+  `test/test_changelog_landing.py` catches it at the merge now, and the section
+  is consolidated with every one of the 37 entries kept in the order it landed.
+
+* **The negative half of the lab assertions, swept, and one of them could not
+  fail.** The sweep below this one read every `expect*` call site in `lab/` for
+  a red branch nothing renders; this one reads the 141 that say a thing must be
+  ABSENT, which is a different question with a different way of going wrong. `expect_not_in` and `expect_not_said` say *"the box must not print
+  X"*, and that is the direction nobody notices: a needle that can never match
+  makes a positive check red on a correct box, which somebody chases, and a
+  negative check green on a broken one, which nobody does. The sweep counted
+  them itself rather than trusting a figure. 141 in `lab/*.sh`, 128
+  `expect_not_in` and 13 `expect_not_said`, counted by joining shell
+  continuations and quoted strings that span source lines and matching the
+  helper at the start of a statement; one `expect_not_in` in `lab/vty.sh:785`
+  is inside a comment and is not one. Beside them the labs hold twelve more
+  assertions that are negative without being those helpers, and they were read
+  too: four `expect ... sh -c "! vppctl ..."` in `lab/igp.sh`, six
+  `expect ... test -z` in `lab/esp.sh` and `lab/pptp.sh`, and the two
+  bad-answer needles `expect_one_of` takes in `lab/install-iso.sh`. 153 in all.
+  No lab could be run: a soak still holds the container.
+
+  **Can the product print the needle at all.** 134 of the 141 needles are
+  literal. Screened against `src/plugins/bpa/*.c`, `src/hexash/hexash.py`,
+  `appliance/*` and `tools/*`, with adjacent string literals joined and
+  whitespace collapsed on both sides, 42 came back absent. That is the same 42
+  `test/test_doc_copies.py` records from the last time this was tried, which is
+  what says the screen works and not that 42 needles are wrong. Every one was
+  checked by hand and every one is a false positive. Most are composed at run
+  time from a fixture the lab built: `pool z `, `pool client-bad`, `pool
+  doomed`, `del pool fwd`, `PL-BAD`, `PL-MINE`, `hexro`, `not:an:address`,
+  `HEXA_DATAPLANE_IF=box0`, `pg0.700`, `pg1`, `vppmgmt0`, `10.7.0.0/24` and a
+  dozen other addresses. Six more are FRR's words rather than this product's:
+  `gracefulShutdown`, `pseudo interface`, `router isis HEXA`, `description
+  uplink`, `Waiting for children`, `frr: '`. `ospf6d is not running` is built
+  by `hexash.py:6218` out of `ROUTER_DAEMON`. The two sentences in
+  `lab/upgrade.sh` are printed by `appliance/install.sh` across two `echo`
+  lines each, at 648 and 677, which is why a literal search cannot see them and
+  why both use `expect_not_said`. `carries OSPF and its MTU is` reaches `show
+  ospf interface` through `mtu_stall_lines()`, called at `hexash.py:11235` as
+  well as at commit check. `carries no per-interface description` is a sentence
+  the product deliberately no longer prints, and its wording is pinned by
+  `docs/routing.md:240` and by `test/test_hexash_complete.py` twice. So there
+  is no finding in this half, and saying so with the numbers is the point:
+  nobody should spend another afternoon on it.
+
+  **Is the haystack there.** The other half of `lab/routing.sh`'s
+  `host-veth2-vpp`: a negative assertion over output that is empty for a reason
+  unrelated to its subject is green for the wrong reason. Measured: 29 of the
+  141 read a variable no other assertion in that lab reads. A rule demanding
+  every negative haystack be pinned non-empty would flag all 29, and most are
+  correct - `$FLOOR_OK`, `$QUIET`, `$STRIDE_OK`, `$BOOT_GONE`, `$LOAD` are all
+  *"the box said nothing"*, where an empty answer IS the pass. That rule needs
+  an allowlist, so it was not written. Two narrower sweeps were run instead and
+  found nothing: no negative assertion names an interface, pool or card that
+  appears nowhere else in its own lab except `lab/ipfix-tcp.sh:162`, which was
+  already recorded as unsettled and whose `vppmgmt0` is created by the lab at
+  line 41; and exactly one negative needle carries column alignment,
+  `lab/bgp-policy.sh:680`, which is pinned by its own positive twin one line
+  above it.
+
+  **`lab/vty-ssh.sh` asked a question its own failure case cannot answer.**
+  *"and the address it refused is not in effect"* searched
+  `EFFECTIVE=$(sshd -T 2>/dev/null | grep -i "^listenaddress" | head -2 ...)`
+  for `not:an:address`. `sshd -T` refuses a file it cannot parse instead of
+  printing a partial one, so on the box this check is about - the one that left
+  `ListenAddress not:an:address` in `sshd_config` - it exits 255, writes
+  *"bad addr or host: not:an:address (Name or service not known)"* on STDERR,
+  and prints no configuration at all. `2>/dev/null` threw the refusal away, the
+  grep had no `listenaddress` line to select, and the needle was searched for
+  in an empty string. Driven on OpenSSH 9.2 over two real `sshd_config` files,
+  with that capture line and the assertion copied out verbatim: the box that
+  rolled the address back reads `[ ok ]`, and the box that did not reads
+  `[ ok ]` as well. It could not fail in either direction, and the section's
+  whole subject is that second box.
+
+  The capture now keeps stderr, so the refusal itself is in the haystack, which
+  is where the address the box must not be using appears; and a positive beside
+  it says sshd answered at all, so a future sshd that stops answering or
+  rewords its refusal makes the pair red rather than vacuous again. That is the
+  same repair `lab/routing.sh`'s `block_of` pair took. Driven over the same two
+  files: the good box reads `[ ok ]` twice and the bad box reads
+  `[FAIL] sshd could be asked what it would run with at all (missing:
+  listenaddress)` and `[FAIL] and the address it refused is not in effect
+  (unexpected: not:an:address)`. `expect_in "so sshd would still start"` two
+  lines below already went red on that box, which is why this is a repair and
+  not a new subject.
+
+* **`test/test_lab_negative.py`** refuses the two shapes that have actually
+  been found here, and refuses nothing else. A check on the SOURCE, like the
+  two suites beside it, for the reason they both give: an assertion that cannot
+  fail is invisible on a green box.
+
+  The first rule is that `expect_in` and `expect_not_in` may not be given a
+  needle with a NEWLINE in it. They search the text as it came, so such a
+  needle matches only where the output happens to break, and every one written
+  in this repository has been a prose sentence typed across two source lines
+  with the closing quote in column 1 - which is `lab/routing.sh:950` above.
+  `expect_said` and `expect_not_said` collapse whitespace on both sides and
+  exist for this.
+
+  The second is that a negative assertion may not read a haystack built by
+  DISCARDING STDERR and then SELECTING LINES unless some other assertion in the
+  same lab reads it too. That pair is the one combination where the haystack
+  goes empty on precisely the box the check is about: the command refused, said
+  why on stderr, the refusal was thrown away, and the selection had nothing to
+  pick. `head`, `tail` and `cut` are not in it, because they cannot turn a
+  non-empty answer into an empty one. The escape is structural rather than a
+  list of excused lines. Measured today: two negative assertions read such a
+  haystack, `lab/handoff.sh:140` and `lab/vty.sh:634`, and both are pinned, so
+  the rule costs nobody an exception.
+
+  141 negative assertions are in scope and the floor refuses a run that reads
+  fewer than 100, because a suite that reads nothing passes, which is the
+  defect it is about. That floor earned itself twice while the file was being
+  written. The reader has to join quoted strings across source lines or it
+  cannot see the first rule's defect at all; counting double quotes alone
+  swallowed 14 assertions into the logical line above them, because inside
+  single quotes a double quote is an ordinary character and `lab/routing.sh`'s
+  `block_of` is a multi-line awk program full of them; and tracking both quotes
+  without stopping at `#` swallowed 87, because the labs explain themselves in
+  English and *"the operator's own"* leaves a single quote open. Only the
+  version that reads 141 is the one that reads the labs.
+
+  Shown failing three ways: on `lab/routing.sh:950` restored to what it was
+  before it was fixed, on `lab/vty-ssh.sh:114` as it stands in `master`, and on
+  a line joiner deliberately broken, which reports *"the checker does not see a
+  needle written across two source lines"*.
+
+  `make test`: 61 suites, 61 passed.
+
+* **The lab suite could lose a lab and still pass.** `tools/run-all-labs.sh`
+  ends with four counters - `pass`, `fail`, `notmeasured`, `novpp`, plus `ran`
+  - and exits green when three of them are zero. Those counters are internally
+  consistent with each other **whatever happens**: a lab that never reaches
+  `judge_batch`, because a batch lost its file or a name produced none, simply
+  makes the totals smaller, and the suite reports that everything it ran
+  passed. That is a verdict about fewer labs than the repository has, and
+  nothing anywhere said so - which is the same defect as a release cut on a
+  suite that never measured the thing it cleared. It now counts what it set out
+  to run, before anything runs, and refuses when the accounting is short. The
+  rule is the one `test/test_doc_copies.py` already applies to documents: a
+  counted list says how many it has.
+
 
 * **Six lab assertions that could not fail, and the suite that refuses the
   next one.** `lab/` holds 62 shell files, 60 of them labs and two of them the
@@ -331,23 +461,6 @@ version has a chance of seeing it.
   arm is `ok "..." ;;` and the trailing `;;` otherwise becomes a fragment the
   reader demands of a printed line.
 
-### Added
-
-* **Six of the release gate's refusals now have assertions, and it had two.**
-  `tools/release-gate.sh` carries 22 refusals and its own header calls it "the
-  only thing in this project that has ever caught a release mistake". Until
-  tonight the only two anything had watched fire were the two added tonight;
-  the rest had been seen only when a real release went wrong. A refusal nobody
-  has watched fire is a refusal that may not fire, which is #335's finding in
-  the place it would cost the most. `test/test_release_gate.sh` clones the
-  newest tag, **breaks exactly one thing**, re-tags and requires that one
-  refusal - starting from a tree that passes is what makes each case about its
-  own break rather than about the scaffolding. It also says, as a number, that
-  it reaches 14 of the 22: everything after `RELEASE_GATE_CHECK_ONLY` needs a
-  321 MB image built, booted and installed, and is still measured only by
-  running a real release.
-
-### Fixed
 
 * **`make test` counted 59 suites over a tree holding 61 harnesses, and named
   neither of the two it was not reading**
@@ -411,7 +524,6 @@ version has a chance of seeing it.
   documentation rather than in the code and left it alone as another branch's
   territory. It was.
 
-### Fixed
 
 * **Two more screens stated a consequence without asking which box they were
   on.** Both found by sweeping `src/hexash/hexash.py` for the shape behind
@@ -512,7 +624,6 @@ version has a chance of seeing it.
   **asked**: a gate that stopped calling the holder would still print "the
   roadmap and the tracker agree", and that reads as a pass.
 
-### Fixed
 
 * **The handover lab asserted a design this product does not have**
   ([#332](https://github.com/andrediashexa/hexarouting/issues/332)). PHASE 5
@@ -530,7 +641,6 @@ version has a chance of seeing it.
   on it, because "the address is on `ens9`" means opposite things depending on
   what `ens9` is.
 
-### Fixed
 
 * **The lab's console driver could only wait for success, and had never been
   tested** ([#332](https://github.com/andrediashexa/hexarouting/issues/332)).
@@ -549,7 +659,6 @@ version has a chance of seeing it.
   rather than copying them, because a second copy of a wait would pass while
   the real one did whatever it does.
 
-### Fixed
 
 * **Swept every harness for the stub that answers a constant, and found seven
   self-test branches, a lockout and two suites that were red on the machines
@@ -620,7 +729,6 @@ version has a chance of seeing it.
   [ ok ] 113 messages appliance/selftest can print, and a box for every one
   ```
 
-### Fixed
 
 * **`commit` bound the card immediately while telling the operator it had
   not** ([#336](https://github.com/andrediashexa/hexarouting/issues/336)).
@@ -644,7 +752,6 @@ version has a chance of seeing it.
   box nobody can reach, and this file already carries that trade in
   [#123](https://github.com/andrediashexa/hexarouting/issues/123)'s refusal.
 
-### Fixed
 
 * **The self-test asked only half of "who needs this pair", and the half it
   asked is false on the box that most needs the answer**
@@ -712,7 +819,6 @@ version has a chance of seeing it.
   `test/test_manifest.sh` - the repair was to arrange that box here too, not to
   excuse the line, because an excused line is one nobody re-examines.
 
-### Fixed
 
 * **The cores table an operator sizes hardware from had no reader**
   ([#172](https://github.com/andrediashexa/hexarouting/issues/172)). The public
@@ -728,59 +834,6 @@ version has a chance of seeing it.
   the existing worker checks do not see, and a page promising 30 forwarding
   cores on a 32-core processor.
 
-### Added
-
-* **The release gate refuses a release that would ship past a stale wiki**
-  ([#277](https://github.com/andrediashexa/hexarouting/issues/277)). Twenty
-  seven pages have been corrected in this repository and are still showing
-  operators the text from the pull on 2026-09-09, and a twenty eighth was
-  written here and does not exist on the wiki at all. One of those corrections
-  is [#254](https://github.com/andrediashexa/hexarouting/issues/254): the
-  published page tells an operator that a refused `commit` applies nothing,
-  which stopped being true when the FRR read-back check became a refusal that
-  leaves the box half-configured, and it is read by somebody looking at that
-  refusal on their screen deciding what state their box is in. A correction
-  sitting in a mirror nobody can read is not a correction yet.
-  `tools/wiki-status.sh` has been able to say this for a while and nothing
-  asked it. The gate asks now, before it builds anything, and repeats what
-  that script said rather than listing pages of its own. It is the gate and
-  not `make test` on purpose: a check that goes red on every run is one people
-  learn to run around, and the person who can publish a page is the one
-  holding the token at the moment a release is cut.
-
-### Added
-
-* **A lab performs the bind, on a real guest, for the first time**
-  ([#329](https://github.com/andrediashexa/hexarouting/issues/329)). Handing a
-  card to the dataplane means unbinding it from its kernel driver and binding
-  it to `vfio-pci` or `uio_pci_generic`. Nothing in this repository had ever
-  performed that bind. `lab/one-nic.sh` models it and says so in its own
-  header, because a container has no PCI device to hand DPDK; `lab/install-iso.sh`
-  booted a real qemu guest with a real virtio card and never asked the box to
-  take it. What was proven was the decision and the boot-time replay - the
-  driver change itself was unmeasured, on the path most deployments will
-  actually run: a virtual machine with one virtio card and no IOMMU. Two new
-  phases ask the box, through the VTY, with the one statement an operator has
-  on a single-card machine, and then assert the four things that have to be
-  true together afterwards: the card is on a driver DPDK can use and not the
-  kernel driver it started on, Linux no longer has the netdev, the management
-  address moved off the card, and the dataplane holds an interface that is not
-  `local0`. The network reading is taken before this phase logs in at all,
-  because a box that takes its card and stops answering has eaten its own
-  management port, and on a single-card machine that means somebody walks to
-  it.
-
-  It went red on its first run, against the published 0.74.2 medium, and what
-  it found is [#332](https://github.com/andrediashexa/hexarouting/issues/332):
-  the box binds the card, Linux releases it, the dataplane holds it, and the
-  box comes back with no address on any interface and nobody can reach it. The
-  boot self-test on that same console says so - no interface is paired into
-  the kernel - so the diagnosis was already right and only the doing was
-  missing. That is what an unmeasured claim costs: the sentence was on the
-  public page a virtual-machine operator reads, and the release gate now
-  refuses a release until it is true.
-
-### Fixed
 
 * **A dynamic pool put one subscriber on two public addresses, while the box
   documented paired address pooling in four places**
@@ -1092,7 +1145,6 @@ version has a chance of seeing it.
   reached by a different road. Three states now get three sentences, and the
   one the old wording was right for keeps its answer.
 
-### Fixed
 
 * **The documented upgrade path did not exist on a box anybody had**
   ([#295](https://github.com/andrediashexa/hexarouting/issues/295)).
@@ -1218,6 +1270,93 @@ version has a chance of seeing it.
   the base file is the operator's, one that reached `startup.conf` without
   being in the base is the tuner's, and reading only `startup.conf` would have
   told a box the tuner sized that its operator had sized it.
+
+### Added
+
+* **Every lab is now accounted for on whether its checks have ever been seen
+  to fail, or it is named.** `tools/run-all-labs.sh` runs some labs a third
+  time with the feature they test switched off and requires each to go red
+  against a floor the lab declares - and that is the only mechanism in this
+  repository that renders a lab assertion's **red** branch. Measured while
+  sweeping them: 425 of the 1381 assertions under `lab/` have their failure
+  shown on every release run, and 956 do not. There were three ways a lab could
+  be accounted for - an off mode plus a floor, a `NOT_LABS` entry saying why it
+  is not run at all, or nothing - and 32 labs were in the third, with no file
+  anywhere recording whether that was a decision. `test/test_off_run_coverage.sh`
+  makes that a fourth, explicit way (`NO-OFF-RUN:` with a reason, which has to
+  be a sentence rather than a stamp) and holds the unaccounted count as a
+  **floor that may only go down**, in the same idiom as `OFF-RED-AT-LEAST`.
+  Writing 32 reasons tonight would have meant inventing most of them, and a
+  rubber stamp is worse than the silence it replaces. It also refuses the two
+  halves coming apart: an off mode with no floor accepts whatever that run
+  returns, and a floor with no off mode is a number nobody reads. `lab/upgrade.sh`
+  already carried its reason in prose and now carries it in the form the check
+  can find.
+
+
+* **Six of the release gate's refusals now have assertions, and it had two.**
+  `tools/release-gate.sh` carries 22 refusals and its own header calls it "the
+  only thing in this project that has ever caught a release mistake". Until
+  tonight the only two anything had watched fire were the two added tonight;
+  the rest had been seen only when a real release went wrong. A refusal nobody
+  has watched fire is a refusal that may not fire, which is #335's finding in
+  the place it would cost the most. `test/test_release_gate.sh` clones the
+  newest tag, **breaks exactly one thing**, re-tags and requires that one
+  refusal - starting from a tree that passes is what makes each case about its
+  own break rather than about the scaffolding. It also says, as a number, that
+  it reaches 14 of the 22: everything after `RELEASE_GATE_CHECK_ONLY` needs a
+  321 MB image built, booted and installed, and is still measured only by
+  running a real release.
+
+
+* **The release gate refuses a release that would ship past a stale wiki**
+  ([#277](https://github.com/andrediashexa/hexarouting/issues/277)). Twenty
+  seven pages have been corrected in this repository and are still showing
+  operators the text from the pull on 2026-09-09, and a twenty eighth was
+  written here and does not exist on the wiki at all. One of those corrections
+  is [#254](https://github.com/andrediashexa/hexarouting/issues/254): the
+  published page tells an operator that a refused `commit` applies nothing,
+  which stopped being true when the FRR read-back check became a refusal that
+  leaves the box half-configured, and it is read by somebody looking at that
+  refusal on their screen deciding what state their box is in. A correction
+  sitting in a mirror nobody can read is not a correction yet.
+  `tools/wiki-status.sh` has been able to say this for a while and nothing
+  asked it. The gate asks now, before it builds anything, and repeats what
+  that script said rather than listing pages of its own. It is the gate and
+  not `make test` on purpose: a check that goes red on every run is one people
+  learn to run around, and the person who can publish a page is the one
+  holding the token at the moment a release is cut.
+
+
+* **A lab performs the bind, on a real guest, for the first time**
+  ([#329](https://github.com/andrediashexa/hexarouting/issues/329)). Handing a
+  card to the dataplane means unbinding it from its kernel driver and binding
+  it to `vfio-pci` or `uio_pci_generic`. Nothing in this repository had ever
+  performed that bind. `lab/one-nic.sh` models it and says so in its own
+  header, because a container has no PCI device to hand DPDK; `lab/install-iso.sh`
+  booted a real qemu guest with a real virtio card and never asked the box to
+  take it. What was proven was the decision and the boot-time replay - the
+  driver change itself was unmeasured, on the path most deployments will
+  actually run: a virtual machine with one virtio card and no IOMMU. Two new
+  phases ask the box, through the VTY, with the one statement an operator has
+  on a single-card machine, and then assert the four things that have to be
+  true together afterwards: the card is on a driver DPDK can use and not the
+  kernel driver it started on, Linux no longer has the netdev, the management
+  address moved off the card, and the dataplane holds an interface that is not
+  `local0`. The network reading is taken before this phase logs in at all,
+  because a box that takes its card and stops answering has eaten its own
+  management port, and on a single-card machine that means somebody walks to
+  it.
+
+  It went red on its first run, against the published 0.74.2 medium, and what
+  it found is [#332](https://github.com/andrediashexa/hexarouting/issues/332):
+  the box binds the card, Linux releases it, the dataplane holds it, and the
+  box comes back with no address on any interface and nobody can reach it. The
+  boot self-test on that same console says so - no interface is paired into
+  the kernel - so the diagnosis was already right and only the doing was
+  missing. That is what an unmeasured claim costs: the sentence was on the
+  public page a virtual-machine operator reads, and the release gate now
+  refuses a release until it is true.
 
 ## 0.74.2 - what the documents said about installing, and a check that could not fail
 
