@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "bpa_shim.h"
 #include "../src/plugins/bpa/bpa_rtsp.h"
 
@@ -41,13 +42,25 @@ run (const char *msg, int is_reply, bpa_rtsp_pair_t *cp)
 
 /* Asserts the verdict and, for a match, that the offset really points at the
  * digits. An offset that is off by one produces a rewritten header that still
- * parses and names the wrong ports. */
+ * parses and names the wrong ports.
+ *
+ * The two PORTS are asserted against the digits the case was written with,
+ * read out of want_text here rather than passed alongside it, so the numbers
+ * the parser reports are checked against the message and not against
+ * themselves. What stood here before was "cp.hi == cp.lo + 1", which is the
+ * parser's own "if (hi != lo + 1) return BPA_RTSP_UNPARSED" said a second
+ * time: no message reaching this line can carry a pair that is not
+ * consecutive, so it was green for every input and green for a parser that
+ * reported the wrong pair entirely. Only the round-trip case at the bottom of
+ * this file ever looked at lo and hi, and it looks at one message. */
 static void
 expect (const char *what, const char *msg, int is_reply,
 	bpa_rtsp_verdict_t want, const char *want_text)
 {
   bpa_rtsp_pair_t cp;
   bpa_rtsp_verdict_t got = run (msg, is_reply, &cp);
+  unsigned long want_lo, want_hi;
+  char *dash;
 
   CHECK (got == want, "%s: verdict %u, expected %u", what, got, want);
   if (got != BPA_RTSP_FOUND || want != BPA_RTSP_FOUND)
@@ -57,8 +70,12 @@ expect (const char *what, const char *msg, int is_reply,
 						  cp.len),
 	 "%s: matched \"%.*s\", expected \"%s\"", what, (int) cp.len,
 	 msg + cp.off, want_text);
-  CHECK (cp.hi == cp.lo + 1, "%s: %u-%u is not a consecutive pair", what,
-	 cp.lo, cp.hi);
+
+  want_lo = strtoul (want_text, &dash, 10);
+  want_hi = *dash == '-' ? strtoul (dash + 1, NULL, 10) : 0;
+  CHECK (cp.lo == want_lo && cp.hi == want_hi,
+	 "%s: reported ports %u-%u, the message says %s", what, cp.lo, cp.hi,
+	 want_text);
 }
 
 int

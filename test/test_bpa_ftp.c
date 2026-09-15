@@ -323,6 +323,27 @@ main (void)
   expect_ack ("a session that never drifted is not", &s, 1208, TCP_FLAG_ACK, 0,
 	      1208);
 
+  /*
+   * The SECOND term of "off_after || off_before", which nothing above reaches.
+   *
+   * Every other reverse adjustment in this file has a non-zero off_after, so
+   * the disjunction is answered by its first term and the second is never the
+   * reason the branch is taken. Measured: with the guard cut down to
+   * `if (rev->off_after)` all 58 checks of this file passed, and that is a
+   * live defect - an acknowledgement landing BEFORE the correction point of a
+   * session whose later rewrite took the drift back to zero is expressed in a
+   * stream that was 8 bytes longer, and goes back to the subscriber
+   * uncorrected.
+   *
+   * 900 is before the correction point, so the delta is off_before and not
+   * off_after, which is the only arrangement that puts the second term of the
+   * disjunction on the path.
+   */
+  s = session (1000, 8, 0);
+  expect_ack ("one before the correction point of a session whose drift went "
+	      "back to zero is still shifted",
+	      &s, 900, TCP_FLAG_ACK, 1, 892);
+
   printf ("\n--- a control connection rewritten TWICE ---\n");
   /*
    * Two PORT commands on one control connection, which is ordinary: the
