@@ -10893,21 +10893,34 @@ class Shell:
                 # advice would be a statement the box may already carry,
                 # offered through a daemon that could not take it, and the
                 # command it points at answers from the same FRR.
-                self.err(f"FRR is not answering, so whether {args[1]} keeps "
-                         f"what it received cannot be read")
+                # The headline carries no address, for the reason the two
+                # below it do not either: err() wraps nothing, and an IPv6
+                # peer put this at 99 columns on a console of 79 (#349).
+                self.err("FRR is not answering")
+                print_prose(f"so whether {args[1]} keeps what it received "
+                            f"cannot be read")
                 print_prose("an empty table here would be this box's control "
                             "plane being down rather than the neighbour "
                             "sending nothing: 'systemctl status frr' and its "
                             "journal say why")
                 return
             if not keeps:
-                self.err(f"neighbour {args[1]} does not keep what it "
-                         "received, so this would print an empty table "
-                         "either way")
-                print("    add 'neighbor " + args[1] + " soft-reconfiguration "
-                      "inbound' under the address family; it costs memory")
-                print("    'show bgp neighbor " + args[1] + " routes' shows "
-                      "what survived inbound policy, which the box does have")
+                # THROUGH print_prose, and the headline shortened to carry
+                # only the refusal. err() wraps nothing and these rows were
+                # bare print("    ...") calls, so the three of them measured
+                # 106, 101 and 102 columns against a console of 79 (#349).
+                # The neighbour address is interpolated into all three, so an
+                # IPv6 peer is wider again - which is the case #276 widened
+                # the check in test_hexash_bgp.py to cover, on a different
+                # message. These two were not among the rows it split.
+                self.err(f"neighbour {args[1]} does not keep what it received")
+                print_prose("so this would print an empty table either way")
+                print_prose(f"add 'neighbor {args[1]} soft-reconfiguration "
+                            f"inbound' under the address family; it costs "
+                            f"memory")
+                print_prose(f"'show bgp neighbor {args[1]} routes' shows what "
+                            f"survived inbound policy, which the box does "
+                            f"have")
                 return
         if args[:1] != ["summary"]:
             rc, out = self.frr.show("show bgp " + " ".join(args))
@@ -11475,20 +11488,24 @@ class Shell:
                 # wrong: 'clear bgp <n>' is an outage offered on a premise
                 # nothing read, on a box where it would reset nothing because
                 # the daemon that holds the session is not answering either.
-                self.err(f"FRR is not answering, so whether {w[2]} keeps what "
-                         f"it received cannot be read")
+                self.err("FRR is not answering")
+                print_prose(f"so whether {w[2]} keeps what it received cannot "
+                            f"be read")
                 print_prose("nothing was re-applied, and 'clear bgp' would "
                             "reset nothing either - both go to the FRR that "
                             "is silent: 'systemctl status frr' and its "
                             "journal say why")
                 return
             if not keeps:
-                self.err(f"neighbour {w[2]} does not keep what it received, "
-                         "so there is nothing to re-apply")
-                print("    add 'neighbor " + w[2] + " soft-reconfiguration "
-                      "inbound' under the address family, which costs memory,")
-                print("    or use 'clear bgp " + w[2] + "' to reset the "
-                      "session and take the routes again")
+                # The same shape as the refusal in show_bgp, and it was over
+                # the console for the same reason (#349): 92, 105 and 81.
+                self.err(f"neighbour {w[2]} does not keep what it received")
+                print_prose("so there is nothing to re-apply")
+                print_prose(f"add 'neighbor {w[2]} soft-reconfiguration "
+                            f"inbound' under the address family, which costs "
+                            f"memory,")
+                print_prose(f"or use 'clear bgp {w[2]}' to reset the session "
+                            f"and take the routes again")
                 return
         rc, out = self.frr.show("clear bgp " + " ".join(w[2:]))
         if out.strip():
