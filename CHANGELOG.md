@@ -120,6 +120,58 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **44 of `appliance/install.sh`'s 75 messages were printed by no run, and the
+  measurement that said otherwise was reading the wrong thing**
+  ([#371](https://github.com/andrediashexa/hexarouting/issues/371)).
+  [#364](https://github.com/andrediashexa/hexarouting/issues/364) gave the
+  installer, the NIC binder and the tuner a message-coverage reader over
+  `test/say-coverage.sh`. `appliance/install.sh` did not get one, and it is the
+  program that puts the files on the box - on a first install and on every
+  upgrade, which is the path
+  [#295](https://github.com/andrediashexa/hexarouting/issues/295) opened.
+
+  **The first measurement said 71 of 75 covered and was measuring suite
+  stdout.** The five suites that run this program redirect everything it prints
+  into a file - `sh "$TREE/appliance/install.sh" > "$2" 2>&1` - so none of it
+  reaches the suite's own stdout and a corpus built from there sees almost none
+  of it. That design is right and is not changed: `test/test_install_says.sh`
+  keeps stdout and stderr in two files on purpose, because
+  [#301](https://github.com/andrediashexa/hexarouting/issues/301) is a defect
+  about which stream a sentence went to, and a tee that merged them would buy
+  the corpus by taking away the question the suite exists to ask.
+
+  **So `SAY_CORPUS` grew a third caller rather than a third name.** `say_capture`
+  in `test/say-coverage.sh` is handed the file a suite already wrote, after the
+  run: it boxes it when that suite has a reader open, and keeps it under
+  `$SAY_CORPUS/<program>.runs/<suite>.<run>.out` when somebody named a
+  directory. Off unless somebody does, exactly as `SAY_CORPUS` and
+  `tools/run-all-labs.sh`'s `LAB_OUTPUT`
+  ([#366](https://github.com/andrediashexa/hexarouting/issues/366)) are off, and
+  for the same reason: a suite that writes outside its own tempdir on every run
+  leaves litter in somebody's repository. `test/test_manifest.sh` sources the
+  file for that one function and no reader.
+
+  **The reader is at the bottom of `test/test_install_says.sh`**, over the boxes
+  that were already there, and it accounts for all 68 messages this program can
+  print to a console, over 11 boxes. Two boxes are new and are what the count
+  needed: the `HEXA_VTY_LOGIN=1` arm that every shipped medium is built by and
+  that no run in this repository had ever taken, and the service-enabling branch
+  behind `[ -z "$DESTDIR" ]`, driven at its own seam with a `/run/systemd/system`
+  in a mount namespace rather than this machine's - read off the machine, that
+  answer is green on a laptop and red in a build container over a product nobody
+  changed. Both halves, no allowlist. The widths half comes with the reader:
+  0 rows over the 79-column console, and the one row carrying a value with no
+  widest is `installed into <DESTDIR> (services enabled offline)`.
+
+  **What the reader does NOT count, said out loud.** The 75 in the issue
+  includes seven rows of the MANIFEST header, which `say_messages` drops because
+  they are a brace group redirected to a file - the same rule that drops
+  `write_network_config`'s management stanza in `appliance/hexarouting-install`,
+  and for the same reason: that file is read back by name, by
+  `test/test_manifest.sh`, in a section of its own. They are a file's contents
+  and not a screen, and measuring them against a console would measure a
+  64-character checksum against 79 columns.
+
 * **The plugin message reader named a branch unseen that two labs were
   printing, so the 38 and the 48 it published were an upper bound**
   ([#369](https://github.com/andrediashexa/hexarouting/issues/369)).

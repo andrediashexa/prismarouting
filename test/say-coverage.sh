@@ -65,6 +65,11 @@ SAY_COLUMNS=${SAY_COLUMNS:-79}
 #
 #   SAY_CORPUS=/var/tmp/rows sh test/test_installer.sh
 #
+# AND A `<program>.runs/` DIRECTORY BESIDE THEM, written by say_capture below,
+# for the suites that run a program with its output redirected into a file
+# rather than through this reader's own pipeline. One knob, two shapes of
+# evidence: the pile of rows, and the runs those rows came out of.
+#
 # It is the same knob tools/run-all-labs.sh grew for #366 - `LAB_OUTPUT=<dir>`,
 # named rather than a flag because whoever wants the corpus wants to say where
 # it goes - and it keeps that rule: the absence of the variable is the off
@@ -138,6 +143,66 @@ say_box() {
   # box has in common. Numbered off the file just written, for the same reason
   # the count is in a file: a counter in a variable dies with the pipeline.
   printf '%s\n' "$_sb" > "$SAY_DIR/box-$(grep -c . "$SAY_DIR/boxes")"
+}
+
+# A RUN WHOSE OUTPUT WAS CAPTURED INTO A FILE, boxed and kept without changing
+# how it was captured (#371).
+#
+# WHY A THIRD CALLER AND NOT A THIRD KNOB. SAY_CORPUS above keeps the rows of a
+# program this file DRIVES, one line at a time through say_box (#367), and
+# tools/run-all-labs.sh keeps a lab's whole transcript under LAB_OUTPUT (#366).
+# appliance/install.sh is neither shape. Its suites run it with everything it
+# prints redirected into a file - `sh "$TREE/appliance/install.sh" > "$2" 2>&1`
+# - so NOTHING it prints reaches the suite's own stdout, and a corpus built out
+# of suite stdout sees almost none of it. The first measurement taken for #371
+# was built exactly that way and reported 71 of 75 messages covered; taken off
+# the files the program really wrote, 44 were covered by nothing at all. That
+# is the same mistake #366 records against the lab summary logs, which is why
+# this is the same variable a third time rather than a third name: whoever
+# wants a corpus of what this product says wants one directory and one knob,
+# and a second name here is a second thing to remember and get wrong.
+#
+# AND WHY IT KEEPS THE FILE RATHER THAN TEEING THE PIPELINE. The redirection is
+# not an accident to work around. test_install_says.sh keeps stdout and stderr
+# in two separate files on purpose, and its comment says why: "a runner that
+# merges them cannot ask the question: a warning on stderr followed by exit 0
+# and a refusal on stderr followed by exit 1 are the same text in one file".
+# #301 is a defect about exactly that pair, so a tee that merged the two
+# streams would buy this corpus by taking away the question the suite exists to
+# ask. Handed the file the suite already wrote, after the run, this copies it
+# and the suite is untouched.
+#
+# ONE FILE PER RUN, under a directory named after the program and a name made
+# of the suite and the run, because which run printed a row is half the corpus:
+# `.rows` beside it is every row in one pile, and two suites pointed at one
+# directory must not overwrite each other.
+#
+# AND IT BOXES THE RUN TOO, when the suite that called it has a reader open on
+# the same program. A suite with a reader would otherwise write the file, keep
+# the file, and then have to hand it to say_box in a second line beside this
+# one - two call sites per run, one of which somebody eventually forgets, and a
+# run missing from the boxes is a message this reader reports as covered by
+# nothing having looked at it. A suite with no reader (test/test_manifest.sh
+# runs the installer twice and reads the MANIFEST, not the screen) passes the
+# test below and only keeps.
+say_capture() {   # <program source> <capture file> <tag for this run>
+  # A run that printed nothing is not a box - say_box says why - and it is not
+  # a corpus either. test_install_says.sh asserts that two of its runs print
+  # NOTHING on stdout, because a refusal that narrated work first is a refusal
+  # that came too late, and an empty file kept beside the others would read as
+  # a run whose output went missing.
+  [ -s "$2" ] || return 0
+  [ -z "${SAY_DIR:-}" ] || [ "${SAY_SRC:-}" != "$1" ] || say_box < "$2"
+  [ -n "$SAY_CORPUS" ] || return 0
+  # Loud on failure rather than quiet, for the reason say_init gives: somebody
+  # who asked for the corpus and got no file would read the absence as "this
+  # suite prints nothing", which is the reading that starts a measurement off
+  # wrong.
+  _cr=$SAY_CORPUS/$(basename "$1").runs
+  mkdir -p "$_cr" || { echo "SAY_CORPUS=$SAY_CORPUS cannot be made - no runs" \
+                            "of $1 will be kept" >&2; return 0; }
+  printf '%s\n' "$1" > "$SAY_CORPUS/$(basename "$1").src"
+  cp "$2" "$_cr/$(basename "$0" .sh).$3.out"
 }
 
 # Every printer this program has, DERIVED from it rather than listed here.

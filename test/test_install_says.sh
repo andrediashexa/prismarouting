@@ -63,6 +63,38 @@ said() {  # <haystack> <sentence>
   case "$_h" in *"$_n"*) return 0 ;; *) return 1 ;; esac
 }
 
+# THE THREE READERS AT THE BOTTOM OF THIS FILE, and the reason every run below
+# hands its output to say_capture (#371).
+#
+# #364 gave appliance/hexarouting-install, appliance/bind-dataplane-nic and
+# appliance/apply-tuning a message-coverage reader over test/say-coverage.sh.
+# appliance/install.sh did not get one, and it is the program that puts the
+# files on the box - on a first install and on every upgrade, which is the path
+# #295 opened. Measured over its real output: of the messages it can print, 44
+# had been produced by no run anywhere in this repository. Three of them are
+# the manifest header, one is the last sentence an operator reads on a first
+# install, and the rest are EVERYTHING THIS SCRIPT SAYS ABOUT UPGRADING A BOX
+# THAT IS RUNNING - the whole of #291 and #293, the work that stopped a box
+# reporting a new version while forwarding through the previous dataplane.
+#
+# WHY THE READER IS HERE AND NOT IN A SUITE OF ITS OWN. The boxes are already
+# here: a first install, three upgrades, two refusals, the ISO's own arm and
+# the closing screens driven against box states this machine cannot be put
+# into. A second suite would have to build every one of those again, and the
+# day after it was written the two rigs would differ. test_installer.sh and
+# test_selftest.sh put their pair at the bottom of the file that arranges the
+# boxes for the same reason.
+#
+# AND WHY EVERY RUN GOES THROUGH say_capture RATHER THAN A PIPE INTO say_box.
+# This suite redirects the installer's output into a file, deliberately and
+# permanently - the two streams are kept apart because #301 is a defect about
+# WHICH stream a sentence went to - so there is no pipeline to box. say_capture
+# is handed the file after the run, boxes it and keeps it where SAY_CORPUS
+# says, and the suite is otherwise untouched.
+. "$(cd "$(dirname "$0")" && pwd)/say-coverage.sh"
+INSTALL=$REPO/appliance/install.sh
+say_init "$INSTALL"
+
 # ---------------------------------------------------------------- the fixture
 TREE=$WORK/tree
 DEST=$WORK/root
@@ -88,6 +120,12 @@ install_run() {  # <version stamp> <output file>
   DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
     VAT2_DIR=/usr/lib/vat2_plugins \
     sh "$TREE/appliance/install.sh" > "$2" 2>&1
+  # THE STATUS FIRST. say_capture is a command, and every caller of this
+  # function reads what it returns - `if install_run ... ; then` is how the
+  # first run decides whether anything below it was measured at all.
+  _rc=$?
+  say_capture "$INSTALL" "$2" "$(basename "$2")"
+  return "$_rc"
 }
 
 # The same run with the two streams kept apart, and the exit status returned
@@ -99,6 +137,16 @@ install_try() {  # <version stamp> <stdout file> <stderr file>
   DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
     VAT2_DIR=/usr/lib/vat2_plugins \
     sh "$TREE/appliance/install.sh" > "$2" 2> "$3"
+  _rc=$?
+  # BOTH STREAMS, as two boxes. They are two files because the question this
+  # suite asks needs them apart, and they are two boxes for the same reason:
+  # the refusals live on stderr and the narration on stdout, and a box that
+  # merged them could not tell the reader below which of the two a message
+  # came out of. An empty one is not a box at all - say_capture drops it, and
+  # the runs here that print nothing on stdout print nothing on purpose.
+  say_capture "$INSTALL" "$2" "$(basename "$2")"
+  say_capture "$INSTALL" "$3" "$(basename "$3")"
+  return "$_rc"
 }
 
 echo "=== the first install: there was nothing here before ==="
@@ -415,6 +463,57 @@ standing" \
 here, so the refused run moved the stamp after all: $RUN5"
 
 echo
+echo "=== the arm the ISO takes, where root lands in the VTY ==="
+#
+# HEXA_VTY_LOGIN=1 is the one branch of this installer that an operator never
+# takes and every shipped box is built by: appliance/build-iso.sh sets it in
+# the chroot, and it is what makes the console of a racked appliance the VTY
+# rather than a root shell. Opt-in on an existing Debian on purpose, because
+# silently replacing root's login shell on a machine that has other jobs is
+# hostile.
+#
+# It is here for the sentence it prints, which is the one line of this run an
+# operator reads if they ever take this arm by hand, and which no run in this
+# repository had ever produced. LAST of the runs over this root, because it is
+# the only one that edits /etc/passwd and /etc/shells and every check above is
+# about a root that was not treated that way.
+printf 'root:x:0:0::/root:/bin/sh\n' > "$DEST/etc/passwd"
+: > "$DEST/etc/shells"
+install_run_vty() {  # <version stamp> <output file>
+  DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
+    VAT2_DIR=/usr/lib/vat2_plugins HEXA_VTY_LOGIN=1 \
+    sh "$TREE/appliance/install.sh" > "$2" 2>&1
+  _rc=$?
+  say_capture "$INSTALL" "$2" "$(basename "$2")"
+  return "$_rc"
+}
+if install_run_vty "$NEXT_V" "$WORK/run7"; then
+  ok "the installer ran the way build-iso.sh runs it, with HEXA_VTY_LOGIN=1"
+else
+  bad "the installer failed on the ISO's own arm:"
+  sed 's/^/        /' "$WORK/run7"
+fi
+RUN7=$(cat "$WORK/run7")
+said "$RUN7" "root logs into the VTY; 'start shell' escapes, 'hexash=off' \
+bypasses" \
+  && ok "and says so, with both ways out of it" \
+  || bad "the arm that puts root in the VTY says nothing about it. An operator \
+who takes it by hand is not told which console they have just changed, nor \
+either way back out of it: $RUN7"
+said "$RUN7" "not changing any login shell" \
+  && bad "it said it was leaving the login shell alone on the run that \
+changed it" \
+  || ok "and not the sentence the other arm prints"
+grep -qx /usr/bin/hexash-login "$DEST/etc/shells" \
+  && ok "/etc/shells names the VTY launcher, so it is a shell root may have" \
+  || bad "the VTY launcher is not in /etc/shells, so chsh would refuse it and \
+the sentence above describes something that did not happen"
+case "$(cat "$DEST/etc/passwd")" in
+  *:/usr/bin/hexash-login) ok "and root's shell in /etc/passwd is the VTY" ;;
+  *) bad "root's login shell was not changed: $(cat "$DEST/etc/passwd")" ;;
+esac
+
+echo
 echo "=== the three screens only a running box can reach ==="
 #
 # install.sh says what it says about vpp.service and hexarouting.service only
@@ -462,17 +561,25 @@ exit 0
 STUBEOF
 chmod +x "$STUB/systemctl"
 
-screen() {  # <previous stamp> <live box 0|1> <active units, newline separated>
+screen() {  # <prev stamp> <live box 0|1> <active units, newline separated> <tag>
   printf '%s\n' "$3" > "$WORK/active"
   { echo "PREV_STAMP='$1'; stamp='$NEW_V'; LIVE_BOX=$2"; cat "$CLOSING"; } \
     > "$WORK/drive.sh"
-  PATH="$STUB:$PATH" FAKE_ACTIVE="$WORK/active" sh "$WORK/drive.sh" 2>&1
+  # INTO A FILE AND THEN OUT AGAIN, rather than straight to the caller's
+  # command substitution. These screens are the three the reader at the bottom
+  # of this file can get nowhere else - they are most of #371's forty-four -
+  # and a corpus that held every install this suite runs and none of them
+  # would be missing the half the issue is about.
+  PATH="$STUB:$PATH" FAKE_ACTIVE="$WORK/active" sh "$WORK/drive.sh" \
+    > "$WORK/screen.$4" 2>&1
+  say_capture "$INSTALL" "$WORK/screen.$4" "screen-$4"
+  cat "$WORK/screen.$4"
 }
 
 BOTH_UP="vpp.service
 hexarouting.service"
 
-FIRST=$(screen "" 1 "")
+FIRST=$(screen "" 1 "" first)
 said "$FIRST" "Installed. Adjust /etc/hexarouting/tune.env and reboot so \
 that isolcpus and hugepages take effect." \
   && ok "a first install on a live box still gets the sentence it always got" \
@@ -486,7 +593,7 @@ said "$FIRST" "vpp.service" \
 build on a box that has never had one" \
   || ok "and nothing about a dataplane still running an older build"
 
-UP=$(screen "$OLD_V" 1 "$BOTH_UP")
+UP=$(screen "$OLD_V" 1 "$BOTH_UP" up)
 said "$UP" "Installed. Adjust /etc/hexarouting/tune.env and reboot" \
   && bad "an upgrade closed with the first install's sentence. That is #291: \
 an operator who tuned this box a year ago reads 'and reboot so that isolcpus \
@@ -538,7 +645,7 @@ said "$UP" "run this installer again" \
 not on their box (#295)" \
   || ok "and does not send the operator back to a file the box does not have"
 
-DOWN=$(screen "$OLD_V" 1 "")
+DOWN=$(screen "$OLD_V" 1 "" down)
 said "$DOWN" "vpp.service is NOT running" \
   && ok "a stopped dataplane is reported stopped" \
   || bad "the upgrade screen claims vpp.service is running on a box where it \
@@ -548,6 +655,72 @@ said "$DOWN" "it is what translates every packet on this box" \
 the box, which sends the operator to schedule a window for a restart that \
 would cost them nothing" \
   || ok "and is not described as carrying traffic"
+
+echo
+echo "=== and the screen a \$DESTDIR install can never reach ==="
+#
+# `say "enabling services"` sits behind `[ -z "$DESTDIR" ]`, which is to say
+# behind installing into the machine this suite is running on. Everything else
+# in this file installs into a fake root, because a unit suite may not put
+# files in /usr/bin to read a sentence, and every container this product's labs
+# run in has no systemd for the second half of that condition either. So this
+# is the fourth screen the comment at the top of this file counts: three are
+# below the CLOSING WORDS marker and driven above, and this one is not.
+#
+# DRIVEN THE SAME WAY, at the seam the product already has: the branch is its
+# own `if` under a comment of its own, it is the only thing between the
+# documentation and the manifest, and the LIVE arm of it writes nothing at all
+# - it reloads systemd and enables five units, and that is the whole of it. The
+# OFFLINE arm writes, and is what every run above took, so it is covered
+# already and not driven here.
+#
+# The cost, stated because it is the same cost the closing section carries:
+# this reaches into install.sh by a line of its own text rather than by calling
+# a function the file exports. If that comment moves, the extraction comes back
+# short and the floor below goes red rather than quiet.
+ENABLE=$WORK/enable.sh
+sed -n '/^# In a chroot or container there is no systemd running/,/^fi$/p' \
+  "$REPO/appliance/install.sh" > "$ENABLE"
+if [ "$(wc -l < "$ENABLE")" -ge 20 ] && grep -q 'enabling services' "$ENABLE"
+then
+  ok "the service-enabling branch is $(wc -l < "$ENABLE") lines of install.sh"
+else
+  bad "the branch that enables the services could not be found in \
+appliance/install.sh, so the check below is running on nothing"
+fi
+# DESTDIR EMPTY, which is what makes it the live arm, and say() because the
+# fragment calls it and the definition is three hundred lines above the marker.
+{ echo 'DESTDIR=""'; echo 'say() { echo "==> $*"; }'; cat "$ENABLE"; } \
+  > "$WORK/drive-enable.sh"
+# AND A /run/systemd/system OF ITS OWN, in a mount namespace, rather than this
+# machine's. The third clause of the condition is `[ -d /run/systemd/system ]`,
+# and read off the machine it makes the answer a property of where this suite
+# was run: green on a developer's laptop and red in a build container, over a
+# product nobody changed. With a namespace the answer is the fixture's.
+if unshare -r true 2>/dev/null; then
+  PATH="$STUB:$PATH" unshare -rm sh -c '
+      mount -t tmpfs tmpfs /run || exit 97
+      mkdir -p /run/systemd/system || exit 96
+      exec sh "$1"' sh "$WORK/drive-enable.sh" > "$WORK/enable.out" 2>&1
+elif [ -d /run/systemd/system ]; then
+  # No namespaces here, so the machine answers. Still a box, and still the
+  # live arm, because the two clauses this suite does control are the ones
+  # that decide it.
+  PATH="$STUB:$PATH" sh "$WORK/drive-enable.sh" > "$WORK/enable.out" 2>&1
+else
+  : > "$WORK/enable.out"
+fi
+say_capture "$INSTALL" "$WORK/enable.out" "enable"
+ENABLED=$(cat "$WORK/enable.out")
+said "$ENABLED" "enabling services" \
+  && ok "a live box is told its services are being enabled" \
+  || bad "the live arm of the service branch printed nothing about enabling \
+services, so this machine could arrange neither a user namespace nor a \
+/run/systemd/system and the branch was not run: $ENABLED"
+said "$ENABLED" "(services enabled offline)" \
+  && bad "the run with DESTDIR empty took the OFFLINE arm, so what was \
+measured is the branch every other run in this file already takes" \
+  || ok "and not the offline line, which is the other arm"
 
 echo
 echo "=== and this suite is reading something ==="
@@ -578,6 +751,20 @@ else
 $NU. The driver is producing nothing, and every negative check above passes \
 on nothing"
 fi
+
+# ------------------------------------------------- what it can say, and said
+#
+# THE CEILINGS, and they may only go down. Not an allowlist: what is left over
+# is named on every run with the line it is on, and every row that gains a fix
+# lowers one of these. SAY_OVER_AT_MOST is rows that do not fit the console at
+# the widest value that can reach them; SAY_UNSAFE_AT_MOST is rows carrying a
+# value with no widest and the program's own words behind it - which here is
+# the $DESTDIR an operator names, printed with "(services enabled offline)"
+# after it.
+SAY_OVER_AT_MOST=0
+SAY_UNSAFE_AT_MOST=1
+say_report appliance/install.sh
+rm -rf "$SAY_DIR"
 
 if [ "$fail" -eq 0 ]; then
   echo
