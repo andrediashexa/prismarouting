@@ -287,7 +287,7 @@ on a pair of definitions that differ only in the reserve:
 | policy | what a reserve of 1 does |
 |---|---|
 | `interleaved` | the divisor is `outside.count`, which a reserve does not touch, so **no retained subscriber moves**. The pool is truncated: the subscribers above the new capacity lose their block, and there are `outside.count × reserve` of them |
-| `blocked` | the divisor **is** `blocks_mapped`, so it re-divides: 738 of 882 subscribers moved in the model's own fragmented pool, plus the 21 the truncation dropped |
+| `blocked` | the divisor **is** `blocks_mapped`, so it re-divides: 750 of 882 subscribers moved in the model's own fragmented pool, plus the 7 the truncation dropped |
 
 The reserve blocks live in **an index space of their own**, `[0, reserve_count)`,
 and not at the end of the subscriber index. Under the blocked policy a block
@@ -460,7 +460,7 @@ unique by accident. `lab/two-pools.sh` is the one that does not.
 |---|---|---|
 | Port bitmap | `block_size` bits per active subscriber | 64 bytes at 512 ports; ~13 MB for 200k |
 | Session tables | Two bihash tables per worker | Default 16 MB each, configurable via `bpa session-table` |
-| Block ownership (dynamic) | 17 bytes per block per worker slice | owner, idle-since, pinned flag and free-list slot, one array each |
+| Block ownership (dynamic) | 21 bytes per block per worker slice | owner, idle-since, pinned flag, free-list slot and its position in that list, one array each |
 
 Session table size is a **virtual** reservation, but the OOM killer counts
 virtual memory. The default is therefore modest: a deployment with 200k

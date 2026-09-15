@@ -341,6 +341,57 @@ version has a chance of seeing it.
   not fail. Taken red by removing the guard: four values inside the range are
   staged where the dataplane will not build them.
 
+* **The three large engineering documents said six things the box does not
+  do.** `docs/claims-sweep.md` named its own gap - `docs/architecture.md`,
+  `docs/routing.md` and `docs/logging.md`, 7,236 lines, never read end to end
+  against the code - and that sentence stood while every release changed what
+  they describe. Read now, and the six are two shapes: a transcript nobody
+  re-took, and a number nobody recomputed.
+
+  The one that costs an operator most is a **virtio guest being told it has no
+  NIC to choose from**. `routing.md` said a guest's NICs fail the PCI test, and
+  printed a `show hardware` message saying so on the screen an operator reaches
+  when the box forwards nothing. `pci_address_of()` walks **up** the sysfs
+  parent chain for exactly this reason, and reproduced in a tempdir,
+  `/sys/class/net/x/device -> .../pci0000:00/0000:00:12.0/virtio3` resolves to
+  `0000:00:12.0`: the card has been eligible since
+  [#286](https://github.com/andrediashexa/hexarouting/issues/286) and the box's
+  own message now says so. Beside it, the same page's `show hardware`
+  transcript still quoted `Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env`
+  - the advice [#283](https://github.com/andrediashexa/hexarouting/issues/283)
+  replaced, in the section that is about #283 - where the VTY now names
+  `configure`, `dataplane interface <name>`, `commit`. A VM with one virtual
+  NIC is, by that page's own sentence, how most people first meet this product,
+  and both readings were wrong for that box and right for nobody.
+
+  Then: `show cgnat ?` listed eleven sub-commands where the tree offers twelve,
+  an interface block's `vrf` description was stale in both places the page
+  prints that listing, the reserve's cost under `blocked` said **738 of 882
+  moved and 21 dropped** where the model it cites gives **750 and 7**, and the
+  memory table costed the dynamic allocator at **17 bytes per block** across
+  four arrays where `bpa_dyn.h` now has five and **21**. All six were
+  documentation defects: where a page and the code disagreed, the code was
+  right every time.
+
+  **Two readers rather than two more copies**, in `test/test_doc_copies.py`. A
+  `?` listing a document prints is compared to `Shell._options()` - the option
+  names and their descriptions, which is where `ha` and `vrf` slipped;
+  `test/test_doc_commands.py` walks the **command** on the prompt line and
+  stops at the placeholder, and what follows it is output nothing read. And the
+  reserve table's four numbers are recomputed by running `ref/bpa_model.py`,
+  not grepped out of `ref/validate.py`'s output, so the number has to be what
+  the arithmetic says. Shown red five ways between them, including the prompt
+  line reworded so the listing check would otherwise have gone quiet.
+
+  What was checked and held is in `docs/claims-sweep.md` with the rest: 149
+  backticked VTY commands walked through the command tree, 183 identifiers and
+  every link and anchor resolved, `show hardware` driven through all four of
+  its states against `/sys` trees in a tempdir, and the RFC floors, the IPFIX
+  record's seven fields, the console budget and the labs' off-run floors read
+  from whatever owns each. What needed a dataplane, a NIC or a booted medium is
+  recorded there as out of reach rather than passed over - the lab suite was
+  running on another tree throughout.
+
 * **Three more labs waited out a collector window chosen when they were
   written.** `tools/ipfix_collector.py` takes a number of seconds, and a lab
   that picks one and then waits it out has decided, at writing time, how long

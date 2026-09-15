@@ -130,7 +130,7 @@ hexarouting# [edit interface GigabitEthernet0/12/0] ?
   shutdown     take the interface administratively down
   urpf         drop packets whose source does not route back this way
   vlan         VLAN tag, on a sub-interface
-  vrf          the routing table this interface's addresses live in
+  vrf          the routing table this interface's addresses live in; 0 takes the interface back out of one
 ```
 
 It used to offer the whole configuration tree - fifteen options, of which
@@ -309,16 +309,24 @@ that is decoration
 hexarouting> show hardware
   the dataplane has no interface to forward on: no interface was named, so VPP
   was given no NIC.
-  Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env to the interface carrying
-  subscriber traffic,
-  then restart hexarouting-tune and vpp.
+  Name it here: 'configure', then 'dataplane interface <name>',
+  then 'commit'. A name this box has not got is refused, and the
+  refusal says which ones it has.
+  'show hardware' is where the names come from: it lists this box's cards as
+  Linux has them, and marks the one carrying the default route.
 
-  Interface     PCI            Driver           Link   Speed
-  eno1          0000:03:00.0   ixgbe            up     1000Mb/s
-    3c:ec:ef:1a:2b:3c  kernel driver: DPDK cannot take a NIC through it
+  Interface     PCI            Driver           Link           Speed
+  eno1          0000:03:00.0   ixgbe            up             1000Mb/s
+    3c:ec:ef:1a:2b:3c  ixgbe, a kernel driver
+      DPDK cannot take the card through it as it is; when this card is given to
+      the dataplane the box moves it to a driver DPDK can use, chosen at boot
+      from whether this box has an IOMMU; this VTY could not ask
     *** carries the DEFAULT ROUTE ***
-  ens1f0        0000:5e:00.0   ixgbe            down   -
-    b4:96:91:0d:1e:2f  kernel driver: DPDK cannot take a NIC through it
+  ens1f0        0000:5e:00.0   ixgbe            down           -
+    b4:96:91:0d:1e:2f  ixgbe, a kernel driver
+      DPDK cannot take the card through it as it is; when this card is given to
+      the dataplane the box moves it to a driver DPDK can use, chosen at boot
+      from whether this box has an IOMMU; this VTY could not ask
 
   2 NIC(s) on this box, as Linux has them
   'eno1' carries the default route: it is how this box is reached, and giving
@@ -334,12 +342,18 @@ of the two tools this VTY exists to keep the operator out of, and the
 assertions run against a `/sys` tree built in a tempdir rather than against a
 stubbed method.
 
-* **PCI address** is `device` resolved and its basename taken, and a basename
-  that is not shaped `0000:3b:00.0` is **skipped**. `lo`, a bridge, a tap and a
-  virtio guest's NICs all fail that test, and none of them is a device DPDK
-  could be given. It is the same test `appliance/hexarouting-tune` applies, so
-  a NIC this screen offers is a NIC the tuner can resolve — the two cannot
-  disagree about what is a candidate.
+* **PCI address** is `device` resolved and then **walked up** until a component
+  is shaped `0000:3b:00.0`; a link with no such ancestor is **skipped**. `lo`,
+  a bridge, a tap and a virtio-mmio NIC all fail that test, and none of them is
+  a device DPDK could be given. A **virtio guest's NIC passes it**: the
+  `device` link there points at the virtio bus device, whose parent is the PCI
+  one, so a reading that stopped at the basename answered "not PCI" for every
+  NIC in every VM and this screen told a virtio guest it had nothing to choose
+  from ([#286](https://github.com/andrediashexa/hexarouting/issues/286)). DPDK
+  drives virtio through its own poll-mode driver and the card was always
+  eligible. It is the same walk `nic_pci()` in `appliance/hexarouting-tune`
+  does, so a NIC this screen offers is a NIC the tuner can resolve - the two
+  cannot disagree about what is a candidate.
 * **Driver** is `device/driver` resolved, and it is the driver holding the NIC
   *now*, not a guess. `vfio-pci`, `uio_pci_generic` and `igb_uio` are the three
   DPDK can take a device through; everything else is a kernel driver and is
@@ -585,11 +599,23 @@ A dataplane that cannot be asked says that, and is not reported as empty.
 ### A tree with no NIC in it must not read as a healthy box
 
 ```
-  no PCI NIC is visible to Linux on this box: either the dataplane already owns
-  every one of them, or none of them resolves to a PCI address, which is what a
-  virtio guest looks like. DPDK cannot be given a device that has no PCI
-  address, so there is nothing here to choose from.
+  no PCI NIC is visible to Linux on this box, and the dataplane has none
+  either, so there is no card here to give it.
+  A virtio card in a virtual machine does resolve to a PCI address and is
+  eligible, so a missing one here is missing from Linux too.
 ```
+
+The second line is there because the reading it corrects is the one somebody
+makes on the box where this screen matters most. A guest's NIC **is** a
+candidate ([#286](https://github.com/andrediashexa/hexarouting/issues/286)), so
+"none here" on a VM means Linux has no card either, and not that virtio was
+passed over.
+
+Whether the dataplane could be **asked** changes the sentence, because it
+changes what can be concluded. With the dataplane unreachable a card it had
+taken is missing from this reading too, so a box that handed every card over
+and a box that never had one read alike - and the screen says so, and names
+`systemctl status vpp` as what tells them apart.
 
 "Nothing to show" and "nothing is wrong" look identical on a screen, and this
 screen is read on a box that forwards nothing. The check that the empty case
@@ -648,7 +674,7 @@ hexarouting# [edit interface GigabitEthernet0/12/0] ?
   shutdown     take the interface administratively down
   urpf         drop packets whose source does not route back this way
   vlan         VLAN tag, on a sub-interface
-  vrf          the routing table this interface's addresses live in
+  vrf          the routing table this interface's addresses live in; 0 takes the interface back out of one
 ```
 
 **`description` lives in the dataplane**, as a VPP interface tag returned by
@@ -2401,6 +2427,7 @@ hexarouting> show cgnat ?
   blocks       blocks allocated in dynamic mode, and how many a forward pins
   drops        why packets did not get through
   forward      the port forwards the dataplane holds
+  ha           whether this box and its peer map subscribers the same way
   history      dated configuration trail
   logging      IPFIX export state
   pool         configured CGNAT pools

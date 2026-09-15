@@ -120,9 +120,106 @@ was read.
   all found on one. That is still the surface nothing in this repository
   covers, and it is the reason this sweep leant on the places a box's words
   can be checked without a box.
-* **`docs/` was swept only where it makes a claim about the box or the
-  process.** `docs/architecture.md`, `docs/routing.md` and `docs/logging.md`
-  are large and were not read end to end against the code. `docs/wiki-audit.md`
-  and [#277](https://github.com/andrediashexa/hexarouting/issues/277) already
+* **`docs/wiki-audit.md` and
+  [#277](https://github.com/andrediashexa/hexarouting/issues/277)** already
   record that the wiki mirror stands ahead of what operators can read, which is
   a different question from whether the mirror is right.
+* **The three large engineering documents were not read end to end.**
+  `docs/architecture.md`, `docs/routing.md` and `docs/logging.md` were swept
+  only where they make a claim about the box or the process. **That gap was
+  closed on 2026-09-15**; what was found and what is still out of reach is the
+  section below.
+
+# The three large documents, 2026-09-15
+
+The 7,236 lines the sweep above named and did not read: `docs/architecture.md`
+(2,127), `docs/routing.md` (4,239) and `docs/logging.md` (870), against the
+code. Swept against v0.74.2. Same rule as above - every finding reproduced
+before it was written down, and a sentence that merely looked wrong was
+discarded. Unlike the sweep above this one **did** fix as it went: these are
+documentation defects with no behaviour behind them, so the fix is the same
+edit as the finding and a second pass would only be a second chance to
+mistranscribe it.
+
+## How it was checked
+
+Mechanically first, so that the reading had something to argue with:
+
+| What was walked | How | Found |
+|---|---|---|
+| Every backticked VTY command in prose, both modes | 149 of them through `Shell._options()`, the same walk `?` answers from | every one reaches a tree, FRR, the dataplane CLI or Linux; nothing dead |
+| Every `?` listing the pages print | the option sets compared name by name and description by description | **two wrong**, below |
+| Every markdown link and anchor | resolved against the file and its headings | all resolve |
+| Every backticked identifier and dotted reference | 183 of them against the whole tree | all present |
+| The reserve's cost under each policy | `ref/bpa_model.py` re-run | **one row wrong**, below |
+| `show hardware`, all four of its states | driven against `/sys` trees in a tempdir through `SYS_CLASS_NET`, `PROC_NET_ROUTE`, `STARTUP_CONF`, `TUNE_ENV` | **three transcripts wrong**, below |
+| The quoted refusals and warnings | typed at the VTY and compared | every one word for word |
+| The RFC floors, the IPFIX record's seven fields, the marker's 16 bytes and 30 s, the spill's 1 MB, 4739/512/20 s, the MTU range, the rollback depth, the banner's six lines and 59 columns, `CONSOLE_COLUMNS`, the 16-character marker and the 59-column budget, the off-run counts of five labs, the four `VNET_FEATURE_INIT` blocks, `ref/check_magic.py`'s 1074 divisors at 61 bits | read from the code that owns each, or run | all hold |
+
+## What was found
+
+Five, all in the same two places: a transcript nobody re-took, and a number
+nobody recomputed.
+
+| | |
+|---|---|
+| **A virtio guest is told it has no NIC to choose from.** `routing.md` said a virtio guest's NICs fail the PCI test and printed a `show hardware` message saying so. `pci_address_of()` **walks up** the sysfs parent chain for exactly this reason: the `device` link on a guest points at the virtio bus device whose parent is the PCI one, and reproduced in a tempdir, `/sys/class/net/x/device -> .../pci0000:00/0000:00:12.0/virtio3` resolves to `0000:00:12.0`. The card is eligible and has been since [#286](https://github.com/andrediashexa/hexarouting/issues/286); the box's own message now says so in as many words. The page carried the pre-#286 reading in two places, and a VM with one virtual NIC is, by this page's own sentence, how most people first meet this product. |
+| **The first screen of a fresh appliance sends the operator to an editor.** `routing.md`'s `show hardware` transcript quoted `Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env ... then restart hexarouting-tune and vpp`. Driven against a `no-pci` startup file, the VTY prints its own remedy instead - `configure`, `dataplane interface <name>`, `commit` - which is precisely what [#283](https://github.com/andrediashexa/hexarouting/issues/283) replaced that advice with. The section is *about* #283 and was quoting the defect. Its driver rows and its column widths had drifted with it. |
+| **`show cgnat ?` is missing an entry.** The page lists eleven sub-commands; the tree offers twelve. `ha` has been there since the HA comparison was built and the transcript was never re-taken. |
+| **An interface block's `vrf` description is stale**, in both of the two places `routing.md` prints that listing: the box now adds *"; 0 takes the interface back out of one"*. |
+| **The reserve's cost under `blocked` is wrong in both numbers.** `architecture.md` said "738 of 882 subscribers moved ... plus the 21 the truncation dropped". Re-running the model it cites gives **750 and 7**. The 7 is also what the `interleaved` row beside it derives from the pool definition - `outside.count x reserve`, 7 x 1 - so the table contradicted itself, and the half that was wrong is the one an operator sizes a `commit remap` window against. |
+
+One more, smaller and in the same shape: `architecture.md`'s memory table said
+the dynamic allocator costs **17 bytes per block per worker slice** across four
+arrays. `bpa_dyn.h` carries **five** - `free_pos` was added so a named block
+comes out of the free stack by index rather than by a walk - and the code's own
+arithmetic beside it says a 258048-block slice "grows from about 4.4 MB to
+5.4 MB", which is 17 bytes to **21**.
+
+All six were documentation defects and all six were fixed. **No product defect
+was found in these three documents**: where a page and the code disagreed, the
+code was right every time.
+
+## The reader that was added
+
+Two of the six are a truth living in two places with nothing comparing them, so
+`test/test_doc_copies.py` gained a reader for each rather than only the fix:
+
+* **A `?` listing a document prints, against the tree that answers it.** The
+  option names *and* their descriptions, out of `Shell._options()`.
+  `test/test_doc_commands.py` walks the **command** on the prompt line and
+  stops at the placeholder; what follows is output, and nothing read it. Shown
+  red four ways: the `ha` row removed, the `vrf` description put back, an
+  option the tree does not offer added, and the prompt line reworded so the
+  check would otherwise have gone quiet.
+* **The reserve's cost, against the model that is its definition.** The table's
+  four numbers recomputed from `ref/bpa_model.py` - run, not grepped out of
+  `ref/validate.py`'s output - plus the agreement between the two rows about
+  how many the truncation drops. Shown red with the document's old numbers put
+  back.
+
+## What this sweep could not reach
+
+* **Nothing was run that needs a dataplane, a NIC or a booted medium.** The
+  full lab suite was running on another tree throughout, so no lab and no
+  container was started, and the C suites were not built. That puts these out
+  of reach: the `MUST`s `lab/ipfix-outbuf.sh` holds over the TCP spill; the
+  paired-address rates `test/test_bpa_dyn.c` asserts (100%, 99.6%, 99.2%),
+  which agree with that file's own comment and were read rather than measured;
+  `bpa_pool_guaranteed()` against `test/test_bpa_pool.c`'s simulation; and
+  every `lab/*.sh` assertion total the pages quote. The five off-run counts
+  those pages state (`forward` 26, `esp` 25, `pptp` 17, `ftp-alg` 13,
+  `rtsp` 11, `sip` 7) were checked against the `OFF-RED-AT-LEAST` floors the
+  labs declare, which is a number against a number and not a run.
+* **"Measured over 2800 combinations of blocks, inside addresses and worker
+  count"** in `architecture.md`'s re-partitioning bullet is a measurement whose
+  code is in no file in this repository. It is a candidate and was **not
+  reproduced**; reproducing it needs the simulation to be written down
+  somewhere a reader can re-run, which is the point.
+* **Everything these pages record as measured at a live FRR 10.7.1 or a live
+  VPP 26.06** - the read-back table, the route-map and prefix-list verdicts,
+  the RPKI cache markers, the QinQ three-tag over-match, the router
+  advertisement intervals - was left as written. Each says where it was
+  measured; none could be re-measured here.
+* **The wiki was not touched**, and is a different question: see
+  `docs/wiki-audit.md`.
