@@ -302,6 +302,30 @@ run_gate "v$V"
   || bad "a CHANGELOG carrying one entry twice was accepted (rc=$RC): $OUT"
 
 echo
+echo "=== and the gate reaches the published-title check ==="
+# The third document verdict, and the one that cannot be driven to its refusal
+# from here: it compares the title of the PUBLISHED release against the
+# CHANGELOG heading, and no fixture can publish a release for its own tag.
+#
+# What is asserted is that the gate gets there. The check sits after two that
+# have been red since 2026-09-09 - the wiki is behind - so placed behind them
+# it would never execute, which is the defect that pair already had once. Its
+# comparison is measured separately, over real releases: v0.74.2 accepted,
+# v0.70.0 and v0.69.0 refused, both truncations that drop the second defect
+# their heading names (#340).
+reset_fixture
+V=$(cat "$FIX/VERSION")
+retag "v$V"
+run_gate "v$V"
+case "$OUT" in
+  *"the published release title is the CHANGELOG heading"* \
+  |*"does not carry the"*|*"has no published release yet"*)
+    ok "it reaches the title check rather than stopping at the two before it" ;;
+  *) bad "the gate never reached the published-title check, so a third \
+document comparison sits behind two that have been red since September" ;;
+esac
+
+echo
 echo "=== and this suite reaches only the half that needs no image ==="
 # Said as a number rather than left to be assumed. The gate refuses eighteen
 # times; everything after RELEASE_GATE_CHECK_ONLY needs a 321 MB image built,

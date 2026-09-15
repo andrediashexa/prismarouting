@@ -521,6 +521,60 @@ case "$OUTPUT" in
 esac
 
 echo
+echo "=== and something has to be there to ask it with (#295) ==="
+# The database is one half of "ask the box"; dpkg-query is the other, and it
+# is the half that is not a file this artifact can look for. A root with a
+# /var/lib/dpkg and no dpkg-query on PATH is a container, a rescue shell, or a
+# box somebody has taken apart - and answering "no vpp package installed"
+# there would be a sentence about the box when the truth is that nothing was
+# asked at all.
+#
+# ARRANGED WITH A PATH THAT DOES NOT CONTAIN IT. `command -v` searches PATH,
+# so a tool cannot be hidden by putting something in front of it: the run has
+# to be handed a PATH it is not on. This one holds the four commands
+# appliance/upgrade uses before that line - sh to start it, dirname to find
+# the artifact, sed and head to read RELEASE - and nothing else.
+mini=$WORK/mini; rm -rf "$mini"; mkdir -p "$mini"
+for t in sh dirname sed head; do ln -s "$(command -v "$t")" "$mini/$t"; done
+fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
+OUTPUT=$(DESTDIR="$BOX" env PATH="$mini" sh "$ART/upgrade" 2>&1); RC=$?
+# WHICH SENTENCE, because refusing is not the half that is in doubt. Without
+# this check `have` comes back empty for both packages and the box is told it
+# has no VPP installed - a refusal, and a true-sounding one, about a database
+# this fixture is carrying with the right versions in it. Its owner would go
+# looking for a VPP that is on the disk.
+case "$OUTPUT" in
+  *"no dpkg-query here"*)
+    [ "$RC" != 0 ] \
+      && ok "a root with nothing to ask dpkg with is refused, and says so" \
+      || bad "it said there was no dpkg-query and ran install.sh anyway" ;;
+  *"no vpp package installed"*)
+    bad "a box nothing could ask was told it is not an appliance at all, \
+about a package database that has vpp $(iso_pin VPP_VERSION) in it: $OUTPUT" ;;
+  *) bad "a root with no dpkg-query was answered with: $OUTPUT" ;;
+esac
+# THE PROOF THAT THE PATH IS NOT WHAT REFUSED. The same four commands with a
+# dpkg-query added has to get PAST that line, and the only way to see that it
+# did is a refusal from further down. The stub answers a version no release
+# was ever built against, so it is the platform check that stops it - which is
+# the sentence this case is telling its own apart from.
+cat > "$mini/dpkg-query" <<'DQ'
+#!/bin/sh
+echo "0.0.0-not-a-release"
+DQ
+chmod +x "$mini/dpkg-query"
+OUTPUT=$(DESTDIR="$BOX" env PATH="$mini" sh "$ART/upgrade" 2>&1); RC=$?
+case "$OUTPUT" in
+  *"no dpkg-query here"*)
+    bad "the control run had a dpkg-query on its PATH and was told there was \
+none, so this case's PATH is not what it says it is: $OUTPUT" ;;
+  *"0.0.0-not-a-release"*)
+    ok "and with one on the same PATH the run reaches the platform check" ;;
+  *) bad "the control run stopped somewhere else entirely, so the four \
+commands above are not enough to reach the platform check: $OUTPUT" ;;
+esac
+
+echo
 echo "=== and it will not write into / as an ordinary user ==="
 # install.sh writes into /usr, /lib and /etc and checks nothing: a non-root run
 # gets some way in and then stops on the first permission error, leaving a box
