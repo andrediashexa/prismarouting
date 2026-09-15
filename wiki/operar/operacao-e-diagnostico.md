@@ -54,6 +54,42 @@ Reiniciar não é zelo: o DPDK amarrou a placa a um driver de espaço de usuári
 
 Uma caixa sem interface de dataplane parece uma caixa funcionando — ela responde, loga e aceita configuração, só não encaminha. Por isso o self-test diz que ela não tem interface de dataplane e diz o que digitar para dar uma a ela.
 
+## O autoteste diz que a placa foi entregue e nada carrega o endereço
+
+Numa caixa de uma placa só, entregar essa placa ao dataplane é permitido - e no momento em que você confirma a entrega a caixa anota, ao lado do nome da placa, o caminho de gerência que ela vai precisar de volta: o endereço, a máscara e o MAC. No boot seguinte o dataplane toma a porta e esse endereço volta para o par `linux_cp` da interface. É por esse par que a caixa passa a ser alcançada.
+
+Se o par não existir, não há para onde o endereço voltar. A caixa sobe encaminhando e **sem ninguém conseguir chegar nela** - só pelo console, no lugar onde ela está. O autoteste diz isso no console, em todo boot, e diz como falha e não como aviso:
+
+```
+  [FAIL] this box handed its only card over and NO pair carries the address
+        The card named in /etc/hexarouting/tune.env was given to the
+        dataplane, and the linux_cp pair is where the address the box answers
+        on goes back. Without one it comes up forwarding and unreachable from
+        anywhere but its console.
+        the management path it recorded: ens18 10.95.200.198/24
+        52:54:00:00:00:01
+        without a pair: GigabitEthernet0/9/0
+        give each one a 'linux-name <name>' under 'interface' in
+        hexash, and commit.
+```
+
+A linha do caminho de gerência é a que interessa primeiro: ela é o endereço que a caixa tinha, e quem está no console não tem outro lugar de onde tirá-lo. O conserto é dar um nome de Linux à porta que o dataplane está segurando, que é o que cria o par:
+
+```
+configure
+interface GigabitEthernet0/9/0
+ linux-name wan0
+ exit
+commit
+```
+
+Depois `exit` e `save`. O `save` não é opcional aqui: sem ele o par some no próximo boot e a caixa volta ao mesmo lugar.
+
+:::info
+Uma caixa que **não** entregou placa nenhuma e **não** roda protocolo de roteamento continua recebendo só um aviso por não ter par - `[warn] no linux_cp pair on:`. Ela não está quebrada: encaminhar CGNAT sem protocolo de roteamento é uma configuração legítima deste produto, e uma verificação que ficasse vermelha nela seria uma verificação que todo mundo aprende a ignorar.
+
+:::
+
 ## Um disco morreu debaixo do espelho dos registros
 
 Numa caixa instalada com os registros em dois discos, a morte de um deles **não derruba nada**: o volume continua montado, a gravação continua, a caixa continua encaminhando. Só o autoteste avisa, e ele avisa em todo boot:
