@@ -102,6 +102,41 @@ _jobs_by_mem() {
 }
 JOBS=${LAB_JOBS:-$(_jobs_by_mem)}
 pass=0; fail=0; ran=0; novpp=0; nomeasure=0
+
+# WHAT ELSE THE MACHINE WAS DOING, read rather than advised about.
+#
+# This suite already tells a reader to "look at the machine's load and free
+# memory first" when a lab could not be run - and then does not look. The
+# advice has been there since the release run that reported `handoff FAIL`
+# over a VPP startup backtrace and `nat-behaviour+workers FAIL` over a capture
+# of connection refusals, at load 12 to 15 on 8 cores with three agents
+# running labs beside the suite. Neither lab's source had changed and both
+# passed alone afterwards.
+#
+# It happened again on 2026-09-15: detreserve, extblocks and extblocks+workers
+# went red on "the record arrived at the collector", against collector windows
+# of 25 and 30 seconds, while an agent ran the full test suite under gcov
+# three times over and left three spinning processes on a core for an hour.
+# All three passed alone on a quiet machine.
+#
+# So the reading is taken here and at every batch, and printed beside the
+# verdict. NOT a threshold and not a refusal: the suite's own measurements say
+# LAB_JOBS=16 peaked at load 3.09 on 32 cores and was the fastest clean run
+# there is, so a number that refused would refuse correct work. What the
+# reader gets is the evidence for the question they are about to ask, which is
+# whether to believe a red lab or re-run it alone.
+_load_now() { cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo "?"; }
+NCPU=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "?")
+LOAD_START=$(_load_now)
+LOAD_PEAK=$LOAD_START
+_load_note() {
+  _l=$(_load_now)
+  # Compared with awk: these are decimals and `[ ]` is integers only, so a
+  # shell comparison would read 10.5 as smaller than 9.2 and the peak would
+  # be whatever happened to have the largest first digit.
+  LOAD_PEAK=$(awk -v a="$LOAD_PEAK" -v b="$_l" \
+                  'BEGIN{print (b+0 > a+0) ? b : a}')
+}
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
@@ -672,16 +707,35 @@ for n in $LABS; do
   running=$((running + 1))
   if [ "$running" -ge "$JOBS" ]; then
     wait
+    _load_note
     judge_batch
     running=0
   fi
 done
 wait
+_load_note
 judge_batch
 
 
 echo
 echo "  pass=$pass  fail=$fail  notmeasured=$nomeasure  novpp=$novpp  ran=$ran"
+# One echo, not two arguments on a continued line: `echo a b` puts a space
+# between them and the continuation already had one, so the row came out with
+# "at  the" in the middle of it.
+# Two rows rather than one: with two-digit loads - which is the case this
+# exists for - a single row reaches 82 columns, and this is read in a
+# terminal beside the verdict.
+echo "  machine: $NCPU cpu(s)"
+echo "  load $LOAD_START at the start, $LOAD_PEAK at the highest batch boundary"
+# Said only when there is something to explain. On a clean run the numbers
+# above are a record; here they are the first thing to check before reading a
+# red lab as a product defect, because this suite has twice reported one that
+# was not.
+if [ "$((fail + novpp + nomeasure + ran))" -gt 0 ]; then
+  echo "  a lab that went red on a busy machine is a lab to run again alone:"
+  echo "  'sh tools/lab.sh <name>'. Both times this suite reported a defect"
+  echo "  that was not one, the machine was carrying something else."
+fi
 _accounted=$((pass + fail + nomeasure + novpp + ran))
 if [ "$_accounted" -ne "$EXPECTED" ]; then
   echo

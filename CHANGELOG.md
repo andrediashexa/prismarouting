@@ -77,6 +77,34 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The lab suite told the reader to look at the machine's load and never
+  looked itself.** That advice has been in the `NO VPP` block since the release
+  run that reported `handoff FAIL` over a VPP startup backtrace at load 12 to
+  15 on 8 cores, with three agents running labs beside the suite; neither lab's
+  source had changed and both passed alone afterwards. It happened again on
+  2026-09-15: `detreserve`, `extblocks` and `extblocks+workers` went red on
+  *"the record arrived at the collector"*, against collector windows of 25 and
+  30 seconds, while an agent ran the whole test suite under `gcov` three times
+  over and left three spinning processes on a core for an hour. All three
+  passed alone on a quiet machine.
+
+  The suite reads `/proc/loadavg` at the start and at every batch boundary now
+  and prints the cpu count and both readings beside the verdict, with one
+  sentence - only where there is red to explain - saying that a lab which went
+  red on a busy machine is a lab to run again alone. **Not a threshold and not
+  a refusal**: the suite's own measurements say `LAB_JOBS=16` peaked at load
+  3.09 on 32 cores and was the fastest clean run there is, so a number that
+  refused would refuse correct work. What the reader gets is the evidence for
+  the question they are about to ask.
+
+  The peak is kept by **value**. `[ "$a" \> "$b" ]` compares strings, so 10.50
+  reads as smaller than 9.20 and the peak would be whichever reading had the
+  largest first digit - reporting a quiet machine on exactly the busy one this
+  is for. The case drives `_load_note()` itself, cut whole out of the suite
+  rather than by the line the `awk` is on, because a cut anchored on the
+  arithmetic goes red when somebody replaces it and goes red for the wrong
+  reason.
+
 * **Seven refusals printed a paragraph on one row**
   ([#355](https://github.com/andrediashexa/hexarouting/issues/355)). `err()`
   wraps nothing, which is right for a verdict and wrong for a paragraph, and
