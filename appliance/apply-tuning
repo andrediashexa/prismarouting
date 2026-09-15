@@ -159,7 +159,54 @@ printf 'kernel cmdline hugepages: %s\n' \
 # wants its hugepages, its isolcpus and its governor - and it wants to come up
 # far enough for somebody to log in and read why. The reason goes to the
 # journal, and the self-test says it again on the console.
-if command -v hexarouting-bind-nic >/dev/null 2>&1; then
+#
+# AND ONLY WHEN THE DATAPLANE HAS NOT STARTED YET, which is the question this
+# path never asked (#336). The window above is the boot: the tuner has chosen
+# the device and VPP is ordered after this unit, so the bind hands the card
+# straight to the process that is about to take it.
+#
+# A `commit` that names the card restarts this unit too, and there the same
+# two lines mean something else entirely: the card comes off its kernel driver
+# with VPP already running and not about to be restarted, so it belongs to
+# neither stack. On a box whose only card carries the management address, that
+# is the operator losing the box - while the VTY is printing, in the same
+# breath, "NOT IN EFFECT YET: the dataplane claims its card when it starts,
+# and this commit does not restart it". Measured on a booted guest: the driver
+# read uio_pci_generic and the netdev was gone three lines under that sentence.
+#
+# THE DIRECTION TO BE WRONG IN, when this cannot be told. Skipping a bind that
+# should have happened leaves a box that forwards nothing and is reachable, and
+# the self-test says so on the console. Performing one that should not leaves a
+# box nobody can reach. This file already carries that trade, in the refusal
+# #123 is about: a box with no dataplane card is fixed over the network, and a
+# box that ate its own management is fixed by walking to it. So the bind runs
+# only when the dataplane is positively known NOT to be up.
+# Three answers, not two, because "the dataplane is not up" and "nobody here
+# can be asked" are different boxes and only one of them is the boot. Without
+# systemd this is not an appliance starting: it is a chroot during the install
+# or a container, and a bind there takes a card off whichever machine is
+# really running.
+# HEXA_SYSTEMCTL is the same kind of seam as HEXA_ROOT above and as HEXA_IP and
+# HEXA_MEMINFO in hexarouting-tune: the one external command whose answer
+# changes the decision, named so a synthetic box can give it. Without it the
+# answer would come from whatever machine is running the suite, and a developer
+# box with a vpp.service would measure something the build runner does not.
+: "${HEXA_SYSTEMCTL:=systemctl}"
+may_bind() {  # 0 only when the dataplane is positively known NOT to be up
+  command -v "$HEXA_SYSTEMCTL" >/dev/null 2>&1 || return 2
+  "$HEXA_SYSTEMCTL" is-active --quiet vpp.service 2>/dev/null && return 1
+  return 0
+}
+may_bind; bind_verdict=$?
+if [ "$bind_verdict" = 1 ]; then
+  echo "bind: the dataplane is already running, so the card is not taken" >&2
+  echo "      now: it would come off the kernel with nothing to pick it up." >&2
+  echo "      It is claimed at the next start of the dataplane, which is what" >&2
+  echo "      the VTY says when the card is named." >&2
+elif [ "$bind_verdict" = 2 ]; then
+  echo "bind: nothing here can say whether the dataplane is running, so the" >&2
+  echo "      card is left where it is. This is not a box starting up." >&2
+elif command -v hexarouting-bind-nic >/dev/null 2>&1; then
   hexarouting-bind-nic || true
 elif [ -x "$ROOT/usr/lib/hexarouting/bind-dataplane-nic" ]; then
   "$ROOT/usr/lib/hexarouting/bind-dataplane-nic" || true

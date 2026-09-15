@@ -77,6 +77,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`commit` bound the card immediately while telling the operator it had
+  not** ([#336](https://github.com/andrediashexa/hexarouting/issues/336)).
+  Naming the dataplane card restarts `hexarouting-tune`, that unit runs
+  `appliance/apply-tuning`, and `apply-tuning` performs the bind. At boot that
+  is right: the tuner has chosen the device and VPP is ordered after it, so the
+  card goes straight to the process about to take it. Restarted from a commit
+  it is not - VPP is already running and is not restarted, so the card comes
+  off its kernel driver with nothing to pick it up and belongs to neither
+  stack. On a box whose only card carries the management address that is the
+  operator losing the box, while the VTY prints in the same breath *"NOT IN
+  EFFECT YET: the dataplane claims its card when it starts, and this commit
+  does not restart it"*. Measured on a booted guest: the driver read
+  `uio_pci_generic` and the netdev was gone three lines under that sentence.
+  The bind now runs only when the dataplane is positively known **not** to be
+  up, and the three boxes are three answers: running, not running, and nobody
+  here can be asked - which is a chroot during an install or a container, not
+  an appliance starting, and where a bind takes a card off whichever machine is
+  really running. Skipping one that should have happened leaves a box that
+  forwards nothing and is reachable; performing one that should not leaves a
+  box nobody can reach, and this file already carries that trade in
+  [#123](https://github.com/andrediashexa/hexarouting/issues/123)'s refusal.
+
+### Fixed
+
 * **The self-test asked only half of "who needs this pair", and the half it
   asked is false on the box that most needs the answer**
   ([#334](https://github.com/andrediashexa/hexarouting/issues/334)). A
