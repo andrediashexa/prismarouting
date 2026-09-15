@@ -33,13 +33,41 @@ Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed proc
 
 O dataplane pega a porta pelo endereço PCI dela. Uma interface que **não** tem endereço PCI não pode ser entregue: `lo`, uma bridge, um bond e um veth não têm. Nesse caso a caixa escreve `no-pci` no arquivo do dataplane, sobe, roteia, responde - e não encaminha nada. O autoteste de boot diz isso em vez de deixar você descobrir pelo contador parado.
 
+## A caixa lê a placa antes de escrever a configuração dela
+
+O ajuste de boot pergunta **à placa** quantas filas ela tem e qual é a MTU máxima dela, em vez de deduzir do processador. Antes ele pedia uma fila por worker e a MTU padrão do dataplane, 9000 — e numa placa virtual, que tem **uma** fila e MTU máxima de 1500, os dois números estavam errados de uma vez: o dispositivo era recusado e a caixa subia dona de uma placa que não conseguia iniciar.
+
+O relatório de boot diz o que ele encontrou. Numa máquina de oito núcleos com placa virtual:
+
+```
+# NIC queues: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
+# NIC max MTU: 1500, below VPP's default of 9000, so the interface is set to 1500
+```
+
+**O limite é dito, não aplicado em silêncio.** Uma fila com sete workers significa um worker recebendo pacotes, e isso é uma fração da capacidade que aquele processador teria — é informação de dimensionamento, e esconder o corte trocaria uma caixa que não sobe por uma caixa lenta sem explicação.
+
+Placa com filas de sobra recebe uma linha curta, e placa com MTU de 9000 ou mais **não** ganha linha de MTU nenhuma — fica exatamente como estava:
+
+```
+# NIC queues: 8, enough for 7 worker(s)
+```
+
+E quando a caixa não consegue ler as filas da placa, ela **diz isso**, porque é exatamente esse o estado em que o defeito morava:
+
+```
+# NIC queues: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device: 'show hardware' says what the box can see.
+```
+
+Nesse caso ela volta a pedir uma fila por worker, que é o número que falhava. Uma caixa prestes a recusar a própria placa não pode ter a mesma cara de uma caixa saudável.
+
+Uma caixa **sem** placa de dataplane não fala em fila nenhuma: contagem de fila não é fato sobre uma máquina que não tem placa para contar.
+
 ## IOMMU: com ou sem, e o que muda
 
 Havendo IOMMU no firmware, a placa vai para o `vfio-pci`, que passa o dispositivo pela IOMMU - um defeito no dataplane não consegue escrever em memória que o dispositivo nunca recebeu. Sem IOMMU o `vfio-pci` carrega e recusa todo dispositivo, então a caixa usa `uio_pci_generic`, que **não tem essa proteção**, e **diz na tela** que está usando:
 
 ```
-bind: no IOMMU groups on this box, so vfio-pci cannot take a device;
-      using uio_pci_generic, which has no IOMMU protection
+bind: no IOMMU groups on this box, so vfio-pci cannot take a device; using uio_pci_generic, which has no IOMMU protection
 ```
 
 A escolha é feita onde dá para explicá-la, e não descoberta como um bind que falha sem motivo aparente. Ligue a IOMMU no firmware (`VT-d` na Intel, `AMD-Vi` na AMD) se a máquina tiver: é uma opção de firmware, não um ajuste do produto.
@@ -125,7 +153,9 @@ Isso é deliberado: um erro de digitação **não** pode custar o ajuste da caix
 
 :::
 
-**Mudou `tune.env`? Só vale no boot seguinte.** Isolamento de núcleos, hugepages e estados de energia são linha de comando do kernel. O self-test de boot compara as duas coisas e avisa quando elas discordam — quando o arquivo já diz uma coisa e a caixa ainda está rodando a linha antiga, ele diz isso com todas as letras, em vez de dar a caixa por ajustada.
+**Mudou `tune.env`? Só vale no boot seguinte.** Isolamento de núcleos, hugepages e estados de energia são linha de comando do kernel. Quando o arquivo já diz uma coisa e a caixa ainda está rodando a linha antiga, o self-test de boot diz isso com todas as letras, em vez de dar a caixa por ajustada.
+
+**E ele lê o que o kernel fez, não o que foi pedido.** Um parâmetro pode se perder em três lugares — o `update-grub` não rodou, a caixa não reiniciou, ou o kernel viu e recusou —, e a caixa que pediu páginas de 1 GB num processador que não tem página de 1 GB ficou a vida inteira dizendo que estava ajustada. São dezesseis regras lidas de volta da máquina em funcionamento, cada uma em um de quatro estados: **valendo**, **pedido e não valendo**, **não dá para ler nesta caixa** e **não foi pedido aqui**. Os quatro estão descritos, com as linhas que a caixa imprime, em *Operação e diagnóstico*.
 
 ## O self-test confere os núcleos que o dataplane recebeu
 

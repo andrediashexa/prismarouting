@@ -4,9 +4,11 @@ As regras que evitam incidente, a ordem em que a máquina sobe, e por onde come�
 
 # Regras que evitam incidente
 
-## A interface de gerência não vai para o VPP
+## A interface de gerência não vai para o VPP — havendo outra placa
 
-O DPDK tira a NIC do Linux. Entregue ao VPP a porta pela qual você administra a máquina e ela fica **inalcançável** — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece em `nat cgnat interface`.
+O DPDK tira a NIC do Linux. Numa caixa que tem outra placa, entregar ao VPP a porta pela qual você administra a máquina a deixa **inalcançável** — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece em `nat cgnat interface`. A própria caixa recusa essa entrega, no prompt, e diz qual é a outra placa.
+
+**A exceção é a caixa que tem uma placa só**, que é como a maioria conhece este produto. Ali não existe outra placa para nomear, a recusa mandaria fazer uma coisa impossível, e a entrega é permitida: o endereço de gerência vai junto com a placa, para o par que o dataplane mantém do lado do Linux, com o mesmo MAC. O que torna isso seguro está descrito na regra seguinte — a entrega é sempre um `commit confirmed`, com trinta minutos, que ninguém confirmando desfaz sozinho. O passo a passo está em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
 
 ## Mudança remota vai com rede de segurança
 
@@ -17,6 +19,8 @@ commit confirmed 5
 Aplica agora e desfaz sozinho em 5 minutos se você não confirmar. Se a mudança cortar seu próprio acesso, a máquina se recupera.
 
 O prazo é do **equipamento**, não da sessão: sair da VTY, perder o SSH, fechar o console ou reiniciar a máquina não cancela o desfazer. Só `commit` cancela. E três mudanças viram `commit confirmed 10` mesmo sem você pedir — qualquer coisa em `ssh`, qualquer coisa em `user`, e um `commit cutoff` —, porque são as que podem cortar a sessão em que você está digitando.
+
+Há uma quarta, com prazo maior: **entregar ao dataplane a placa por onde a caixa é alcançada** vira `commit confirmed 30`. Trinta e não dez porque a janela precisa caber um reinício e um login, e não uma reconexão — e o desfazer dessa, além de devolver a configuração, **reinicia a caixa**, porque devolver a placa ao Linux só acontece num novo start.
 
 ## `commit` não é `save`
 
@@ -255,7 +259,27 @@ O limite de 60 segundos é generoso de propósito: o VPP responde em 5 a 21 segu
 
 O tuning roda em todo boot justamente para que uma mudança em `tune.env` ou uma troca de NIC seja honrada.
 
-Nesse mesmo boot, o que a caixa **pediu** e o que ela **recebeu** são conferidos um contra o outro. Três linhas que valem a pena reconhecer no console:
+Nesse mesmo boot, o que a caixa **pediu** e o que ela **recebeu** são conferidos um contra o outro — e o que é lido de volta é o que o **kernel** está fazendo, não o que o arquivo gerado pediu. Um parâmetro pode se perder em três lugares: o `update-grub` não rodou, a caixa não reiniciou desde então, ou o kernel viu e recusou. Uma appliance que se diz ajustada quando o kernel não aceitou o parâmetro é pior que uma que não diz nada.
+
+São **quatro** respostas por regra, e nenhuma delas se confunde com outra:
+
+| Linha no autoteste | O que significa |
+|---|---|
+| `[ ok ] every tuning rule this box can read back is in effect (2)` | tudo que dava para conferir está valendo, e diz quantas regras foram |
+| `[warn] requested and NOT in effect: isolcpus` | foi pedido e o kernel não está fazendo. A linha de baixo diz o que ele está fazendo em vez disso |
+| `[info] cannot be read on this box: nohz_full` | esta caixa não expõe jeito de ler se pegou. Não é "pegou" nem "não pegou" |
+| `[info] not requested on this box: 99-hexarouting.conf` | ninguém pediu esse ajuste aqui. Uma caixa deliberada não pode ter a cara de uma caixa quebrada |
+
+Medido numa caixa cujo kernel recusou o isolamento:
+
+```
+  [warn] requested and NOT in effect: isolcpus
+         cpu(s) 1-3 were asked for and the kernel is not isolating them
+```
+
+A linha verde **não sai** ao lado de uma regra recusada: uma caixa com metade do ajuste no chão não é uma caixa ajustada. E duas regras caem em `cannot be read` em hardware real — o `rcu_nocbs`, que não tem leitura fora de um debugfs só de root, e a lista de CPUs do `irqbalance`, que fica no ambiente do daemon.
+
+Três outras linhas valem a pena reconhecer no console:
 
 | O que aparece | O que significa |
 |---|---|
@@ -314,7 +338,7 @@ flowchart TD
 
 ## Duas armadilhas de diagnóstico
 
-`**vppctl**` **sai com código 0 mesmo quando falha.** Não trate o código de retorno dele como prova. A VTY usa a API binária justamente por isso.
+**A CLI de texto do dataplane sai com código 0 mesmo quando falha.** É por isso que a VTY não fala com o dataplane por texto: ela usa a API binária, que responde se deu certo. Nada nesta wiki pede para você descer até lá, e o código de retorno que você veria ali não é prova de nada.
 
 **Um contador não é evidência.** Um ALG incrementa o contador dele tendo a reescrita saído certa ou não. Confira o pacote, não o contador.
 

@@ -77,6 +77,104 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Twenty-one corrections on eight public wiki pages, and the rule about that
+  wiki had no reader.** Swept against the product since the last wiki sweep of
+  2026-09-13, which is three releases and a day of defect work ago - most of it
+  about the box with **one** network card, which the pages were written before
+  this product could bring up. Every correction measured by running the thing
+  that prints it.
+
+  **The rule that had nothing reading it first.**
+  `PADRAO-DOCUMENTACAO.md` section 0 says an issue number, a GitHub link, a
+  source file name and the dataplane's own text CLI never appear on a public
+  page, and gives a reason for each. Four pages named `vppctl`: two offering
+  it beside a `show` command, one as a diagnostic trap worth knowing, one in
+  the architecture sketch. None was added carelessly and all four read as
+  helpful, which is the difficulty - a rule with no reader erodes one
+  reasonable-looking sentence at a time. `test/test_wiki_rules.py` reads all
+  32 published pages for the three needles, and is shown red on each: a page
+  naming the CLI, a page citing `#303` and github.com, a page naming
+  `src/hexash/hexash.py`, and the wiki moved out from under it so the three
+  "this list is empty" checks cannot pass by having read nothing.
+
+  WHOLE PAGES, fences included, and the exemption that was there first is
+  gone. The argument for exempting quoted box output is real -
+  `appliance/hexarouting-install` prints "see docs/logging.md" at the
+  connection-records question, which is the installer's defect and not the
+  page's - but measured over all 32 pages nothing goes red with the fences
+  read, because that line is not backticked and a backtick is what
+  `doc_paths.repo_paths` looks for. The check written to prove the exemption
+  worked could not fail either: its own sample had no backticks in it. An
+  exemption protecting a case that does not exist, with a vacuous guard under
+  it, is two defects.
+
+  **What the pages said and the box does.** Each measured by driving the
+  product, not by reading it: the VTY through the seams
+  `test/test_dataplane_if.py` uses, the self-test against a fake root the way
+  `test/test_selftest.sh` arranges one, the tuner against a synthetic virtio
+  guest, and `appliance/bind-dataplane-nic` on the no-IOMMU box in
+  `test/test_bind_nic.sh`.
+
+  *Operação e diagnóstico* opened with "the management interface does not go
+  to VPP", flat, as the first rule on the page. That is the rule wherever
+  there is another card to name, and since
+  [#303](https://github.com/andrediashexa/hexarouting/issues/303) the one-card
+  box is the exception the product has an answer for - the same correction
+  [#343](https://github.com/andrediashexa/hexarouting/issues/343) made to
+  `docs/context.md`'s invariant 1.5, in the place a customer reads it.
+
+  **A fourth change becomes a confirmed commit on its own, and the pages knew
+  three.** `commit` on a handover arms `commit confirmed 30` and its revert
+  restarts the box; the commit reference and the operations page both listed
+  ssh, user and cutoff at ten and stopped. The thirty, the reason for it - a
+  reboot and a login rather than a reconnection - and the restart are on both
+  pages now, with the two screens as they print.
+
+  **The self-test reports the tuning in EFFECT**
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)), and the
+  requirements page still said it compares the file against the booted command
+  line. The four states are on the operations page with the lines the box
+  prints, driven against a fake root whose kernel refused `isolcpus` and one
+  that exposes no `nohz_full` readback.
+
+  **The tuner reads the card**
+  ([#330](https://github.com/andrediashexa/hexarouting/issues/330)) and the
+  wiki said nothing at all - on the page somebody reads before buying, about
+  the machine most of them run. All four report lines measured on synthetic
+  guests: capped, enough, could-not-be-read, and the MTU below 9000.
+
+  **Four quoted blocks were not what the box prints.** The `?` listing still
+  offered `lo`, which stopped being offered when completion started refusing
+  to name a card the box would then refuse; `it has:` is `the cards it has:`;
+  `show hardware` on a box with no card still said to edit
+  `HEXA_DATAPLANE_IF` in the tuner's file and restart two units, which is the
+  advice [#283](https://github.com/andrediashexa/hexarouting/issues/283)
+  replaced with three statements in this VTY; and the expiry transcript had
+  the first two lines and the last, with the four between them - the ones
+  saying what became of the setting - dropped without a mark.
+
+  **And five blocks were folded by hand.** The one-card handover headline, the
+  no-IOMMU bind line and the two soft-reconfiguration refusals are printed by
+  the box as single long lines, and the pages had them wrapped at 79 as though
+  the box had done it. They are quoted as printed now, which is also how the
+  next three entries were found.
+
+  **Three product defects, filed rather than papered over.** The one-card
+  path prints an 81-column headline and a 100-column completion row, and
+  `bind-dataplane-nic` a 121-column line, on a console this product holds at
+  79 everywhere else - the width sweep in `test/test_dataplane_if.py` collects
+  its lines from the two-card box only
+  ([#346](https://github.com/andrediashexa/hexarouting/issues/346)).
+  `show hardware`'s `Link` column is seven wide and `unknown` is seven
+  characters, so a card with no driver bound prints `unknown-` with no space
+  before the speed
+  ([#347](https://github.com/andrediashexa/hexarouting/issues/347)). The
+  installer sends the operator to `docs/logging.md`, which is a path in this
+  tree and not on any box it installs
+  ([#348](https://github.com/andrediashexa/hexarouting/issues/348)). And the
+  two soft-reconfiguration refusals print six rows between 81 and 106 columns,
+  each carrying a statement the operator is meant to type back
+  ([#349](https://github.com/andrediashexa/hexarouting/issues/349)).
 * **The bind failure's advice is false of both boxes that can reach it**, in
   opposite directions
   ([#346](https://github.com/andrediashexa/hexarouting/issues/346) for the

@@ -33,7 +33,7 @@ flowchart LR
 * **FRR** cuida do roteamento, alcançado pelo TAP do `linux_cp`.
 * **hexash** é a VTY única — configura CGNAT e roteamento pela mesma interface.
 
-A VTY conversa com o dataplane via **vat2**, um processo por chamada — não é conexão persistente nem texto de `vppctl`.
+A VTY conversa com o dataplane via **vat2**, um processo por chamada sobre a API binária — não é conexão persistente, e não é a linha de comando de texto do dataplane, que sai com código zero mesmo quando falha.
 
 ## Dimensionamento
 
