@@ -6530,6 +6530,29 @@ class Shell:
             # guard the reference check below has carried since #145 and this
             # one needed the moment it gained a value check.
             #
+            # WHICH CHECKS NEED THIS GUARD, because the other refusals in this
+            # function do not have it and that is not an oversight.
+            #
+            # A finding can only fire on something the box ALREADY has if FRR
+            # would take that statement. `set local-preference banana` is such
+            # a statement: FRR's grammar for it is WORD, vtysh takes it,
+            # `frr-reload.py --test` exits 0 and bgpd carries it back verbatim
+            # - so a box can be running one, and a refusal that does not ask
+            # makes every commit on that box fail.
+            #
+            # The checks without the guard are about statements FRR ITSELF
+            # refuses: an as-path regex that does not compile, a `remote-as 0`
+            # (FRR's ASNUM takes 1 to 2^32-1), a prefix-list range its own
+            # parser rejects. Those cannot be facts, only requests, which is
+            # why no box has ever been locked out by them. Established by
+            # driving all four readers rather than by reading them, which is
+            # also why five long-standing refusals were left alone instead of
+            # being given a guard they cannot need.
+            #
+            # So the question to ask of a new refusal here is not "is it
+            # right" but "can the box already be in this state". If FRR takes
+            # the statement, the guard is not optional (#358).
+            #
             # `set local-preference banana` was accepted at this prompt and
             # committed until #354, and FRR stores it and sets nothing. So
             # there are boxes carrying one. Without this guard, upgrading to a
