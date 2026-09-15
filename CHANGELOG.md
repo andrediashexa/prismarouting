@@ -121,7 +121,8 @@ version has a chance of seeing it.
 ### Fixed
 
 * **Three of `README.md`'s ten state-table rows had nothing holding them, and
-  one of the three was false.** That table is what a reader consults to decide
+  one of the three was false**
+  ([#374](https://github.com/andrediashexa/hexarouting/issues/374)). That table is what a reader consults to decide
   whether to trust this product, and two of its rows were read and corrected
   earlier in this cycle - the appliance row, which claimed a release gate that
   26 of the 74 published releases predate, and the configuration trail row,
