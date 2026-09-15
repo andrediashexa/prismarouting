@@ -3027,7 +3027,18 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send 'echo "HX""LAB ho-drv2=$([ -e /sys/bus/pci/devices/'"$HO_PCI"'/driver ] && basename $(readlink -f /sys/bus/pci/devices/'"$HO_PCI"'/driver) || echo none)"'
     wait_for "HXLAB ho-drv2=" 60 \
       "the box to say which driver holds the card now" || fail=1
-    send 'echo "HX""LAB ho-netdev2=$([ -e /sys/class/net/'"$HO_IF"' ] && echo present || echo gone)"'
+    # NOT "is the name still there", which is what this asked and got wrong.
+    # The product's promise is that the name SURVIVES: the dataplane takes the
+    # PCI device and linux_cp makes a TAP carrying the same name, so nothing
+    # upstream has to re-learn anything and the address goes back where it was.
+    # Measured on a booted guest: ens9 present, address on it, and the card
+    # bound to uio_pci_generic at the same time. Asserting the name was gone
+    # was asserting a design this product does not have.
+    #
+    # What distinguishes the two is what the name now resolves to. A TAP has no
+    # PCI parent; the card did. So "pair" is the right answer, "card" means the
+    # handover never happened, and "gone" means the name was not put back.
+    send 'echo "HX""LAB ho-netdev2=$(if [ ! -e /sys/class/net/'"$HO_IF"' ]; then echo gone; elif [ -e /sys/class/net/'"$HO_IF"'/device ]; then echo card; else echo pair; fi)"'
     wait_for "HXLAB ho-netdev2=" 30 \
       "the box to say whether Linux still has the card" || fail=1
     # The address, wherever it now lives. NOT looked for on a named pair: the
@@ -3093,36 +3104,53 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       fail=1 ;;
   esac
 
-  # 2. AND LINUX GAVE IT UP. A card bound for DPDK has no kernel netdev: if
-  # one is still there, something re-created it, and the kernel would go on
-  # answering ARP for an address off the wire beside a dataplane that thinks
-  # it owns the port. That is the state lab/one-nic.sh has to model around,
-  # and here it can be read.
+  # 2. AND THE NAME IS THE PAIR NOW, NOT THE CARD. Something called $HO_IF
+  # still being there is what the handover is FOR: the card keeps its MAC and
+  # the pair keeps its name, so nothing across the cable re-learns anything.
+  # What would be wrong is that name still resolving to the PCI device, which
+  # means the card never left the kernel and two stacks believe they own the
+  # port.
   case "$HO_NETDEV2" in
-    gone) echo "  [ ok ] and Linux no longer has $HO_IF, which is what a bind"
-          echo "         for DPDK leaves behind" ;;
-    present)
-      echo "  [FAIL] Linux still has the netdev $HO_IF after the handover."
-      echo "         Two stacks now believe they own the port"
+    pair) echo "  [ ok ] and $HO_IF is the pair now, not the card: the name"
+          echo "         survived the handover and no longer resolves to a"
+          echo "         PCI device" ;;
+    card)
+      echo "  [FAIL] $HO_IF still resolves to a PCI device after the"
+      echo "         handover, so the card never left the kernel and two"
+      echo "         stacks believe they own the port"
       fail=1 ;;
-    *) echo "  [FAIL] whether Linux still has $HO_IF was not read"; fail=1 ;;
+    gone)
+      echo "  [FAIL] $HO_IF is not there at all. The card left the kernel and"
+      echo "         nothing put the name back, so the address the box is"
+      echo "         reached on has nowhere to live"
+      fail=1 ;;
+    *) echo "  [FAIL] what $HO_IF resolves to was not read"; fail=1 ;;
   esac
 
-  # 3. AND THE ADDRESS IS SOMEWHERE ELSE. The card it was on does not exist
-  # any more, so an address still on $HO_IF would mean the handover never
-  # happened, and no address at all would mean it happened and took the
-  # management path with it.
+  # 3. AND THE ADDRESS IS BACK ON THAT NAME. This asked for the opposite and
+  # was wrong for the same reason as the check above: the address being on
+  # $HO_IF is the whole promise, once $HO_IF is the pair rather than the card.
+  # Check 2 is what makes this one mean anything, which is why the two are
+  # read from the same boot and reported together.
   case "$HO_ADDR2" in
     "")
-      echo "  [FAIL] the box came back with no address on any interface"
-      echo "         ('${HO_ADDR2:-<unread>}'). The card went to the"
-      echo "         dataplane and the management path did not follow"
+      echo "  [FAIL] the box came back with no address on any interface."
+      echo "         The card went to the dataplane and the management path"
+      echo "         did not follow"
       fail=1 ;;
     *"$HO_IF="*)
-      echo "  [FAIL] the address is still on $HO_IF, so the card never left"
-      echo "         the kernel: $HO_ADDR2"
+      if [ "$HO_NETDEV2" = pair ]; then
+        echo "  [ ok ] and the address is back on it: $HO_ADDR2"
+      else
+        echo "  [FAIL] the address is on $HO_IF and $HO_IF is still the card,"
+        echo "         so nothing moved: $HO_ADDR2"
+        fail=1
+      fi ;;
+    *)
+      echo "  [FAIL] the box has an address and it is not on $HO_IF."
+      echo "         The handover keeps the name so that nothing upstream has"
+      echo "         to re-learn: $HO_ADDR2"
       fail=1 ;;
-    *) echo "  [ ok ] and the address moved off the card to $HO_ADDR2" ;;
   esac
 
   # 4. AND SOMEBODY TOOK IT. local0 is VPP's loopback and is there on a box
