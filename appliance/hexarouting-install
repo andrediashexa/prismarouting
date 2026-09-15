@@ -1081,8 +1081,15 @@ elif [ -z "${HEXA_LOG_GB:-}" ]; then
   echo
   echo "  Connection records go on their own filesystem, so that a full log"
   echo "  cannot stop the box working. One year at 200k subscribers in dynamic"
-  echo "  mode is about 29 GB (see docs/logging.md); deterministic mode logs"
-  echo "  no allocations and needs almost none."
+  echo "  mode is about 29 GB; deterministic mode logs no allocations and"
+  echo "  needs almost none. The arithmetic is in"
+  # THE PATH THIS BOX HAS, not the one the source tree has. It said
+  # docs/logging.md, and there is no docs/ on a box this product installs:
+  # install.sh puts that file under /usr/share/doc/hexarouting/ (#348). An
+  # operator answering this question has the box and not the repository, and
+  # the installation page quotes this screen verbatim, so the path they cannot
+  # follow reached a reader who has not installed anything yet.
+  echo "  /usr/share/doc/hexarouting/logging.md once this box is installed."
   if [ -n "$MAX_LOG" ]; then
     echo "  This disk is $(( DISK_MB / 1024 )) GB; at most $(( MAX_LOG / 1024 )) GB can go to records."
   else
