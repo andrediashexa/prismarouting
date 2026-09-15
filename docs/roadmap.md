@@ -16,8 +16,14 @@ reserved so the allocator can never hand it to anyone else
 ([#17](https://github.com/andrediashexa/hexarouting/issues/17)) — on a dynamic
 pool too, where the forward pins the whole block so it cannot move to another
 customer ([#67](https://github.com/andrediashexa/hexarouting/issues/67)). What is still
-missing is the rest of the second tier: bounds on the customer who takes too
-much, seeing a pool fill before it fills, and **performance**. Throughput in
+missing out of the second tier is **performance**, and that sentence used to
+name two more. It read "bounds on the customer who takes too much, seeing a
+pool fill before it fills, and **performance**" - the first two shipped as
+[#18](https://github.com/andrediashexa/hexarouting/issues/18) in v0.12.0 and
+[#27](https://github.com/andrediashexa/hexarouting/issues/27) in v0.17.0, and
+the release table below has carried them as released, in those same two
+phrases, ever since. The first paragraph of this file was sending a reader to
+build what two releases had already delivered. Throughput in
 bits per second still needs a real NIC
 ([#28](https://github.com/andrediashexa/hexarouting/issues/28)), but the
 per-packet CPU cost is measured: `bpa-in2out` spends **346 clocks per packet**
@@ -30,8 +36,11 @@ L4 checksum, which a NIC does instead of the CPU, so it waits on the same card
 rest is ordered by the cost of not having it.
 
 Most "delivered" markers below name the release they shipped in, and where a
-feature can be switched off there is a lab that goes red when it is - nineteen
-of them, listed in `OFF_MODES` in `tools/run-all-labs.sh`. Neither is
+feature can be switched off there is a lab that goes red when it is - twenty
+of them, listed in `OFF_MODES` in `tools/run-all-labs.sh`. This line said
+**nineteen** until it was counted: `detreserve:off` joined that list on
+2026-09-13 and nothing came back here, and `test/test_doc_copies.py` already
+reads twenty labs declaring a floor for their off run. Neither is
 universal, and the gap is the point: a roadmap that says something is missing
 when it shipped is worse than no roadmap, because it is the document people
 check instead of the code.
@@ -55,6 +64,33 @@ check instead of the code.
 
 ## How the themes relate
 
+**This diagram was five nodes behind the tree and is the correction with the
+widest reach in this file**, because it is a picture and a picture is read
+before any paragraph under it. Everything outside the "Delivered" box reads as
+work that remains. Measured against the tracker on 2026-09-15: SIP and ESP are
+both in `BPA_ALG_DEFAULT` in `src/plugins/bpa/bpa_pool.h`, per-subscriber
+limits are [#18](https://github.com/andrediashexa/hexarouting/issues/18)
+closed in v0.12.0, block stride and block-size ranges are
+[#55](https://github.com/andrediashexa/hexarouting/issues/55) closed in
+v0.67.0, bypass lists are
+[#25](https://github.com/andrediashexa/hexarouting/issues/25) closed in
+v0.13.0, VRF pool selection is
+[#79](https://github.com/andrediashexa/hexarouting/issues/79) closed in
+v0.18.0, and utilisation is
+[#27](https://github.com/andrediashexa/hexarouting/issues/27) closed in
+v0.17.0. Of the six nodes this drawing held outside "Delivered", five had
+shipped. What is genuinely outside it is PCP
+([#32](https://github.com/andrediashexa/hexarouting/issues/32), open), the ACL
+half of pool selection
+([#80](https://github.com/andrediashexa/hexarouting/issues/80), open) and
+throughput on a real NIC
+([#28](https://github.com/andrediashexa/hexarouting/issues/28), open). TFTP is
+in neither box: #14 closed with it **decided against**, so a node for it in a
+"remains" box is an invitation to build something this project refused.
+
+`tools/roadmap-state.sh` cannot see any of this, because a mermaid label names
+no issue number.
+
 ```mermaid
 flowchart TD
     subgraph now["Delivered"]
@@ -64,19 +100,19 @@ flowchart TD
         D["full cone: EIM + EIF + hairpinning"]
         I["per-pool timeouts, half-open, hold-down"]
         J["extended blocks with a cap"]
-        E["FTP, RTSP and PPTP/GRE ALGs"]
+        E["FTP, RTSP, PPTP/GRE, SIP and ESP ALGs"]
         K["filtering mode: full or restricted cone"]
         F["static port forwards"]
+        H["per-subscriber limits"]
+        J2["block stride and block-size ranges"]
+        L["NAT bypass lists, pool selection by VRF"]
+        U["utilisation, ahead of exhaustion"]
     end
     subgraph calls["Prevents support calls"]
-        E2["SIP, TFTP and ESP ALGs"]
         G["PCP: the CPE asks for its own"]
-        H["per-subscriber limits"]
     end
     subgraph control["Operator control"]
-        J2["block stride and block-size ranges"]
-        L["NAT bypass lists, pool selection"]
-        U["utilisation, ahead of exhaustion"]
+        L2["pool selection by ACL"]
     end
     subgraph unknown["Not measured"]
         P["throughput on real NICs"]
@@ -176,7 +212,7 @@ blocks in fewer events and changes nothing a session pays, because a session
 walks the blocks a subscriber holds rather than the events that produced them.
 The reading is in `ref/validate.py` and is re-taken on every `make model`.
 
-### 2.3 ALG — FTP, RTSP, PPTP, ESP and SIP-over-UDP built; TFTP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
+### 2.3 ALG — FTP, RTSP, PPTP, ESP and SIP-over-UDP built; TFTP decided against — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 
 Protocols that carry an address or port inside the payload break behind any
 NAT unless the NAT rewrites the payload too.
@@ -196,7 +232,7 @@ The design of each, and what each deliberately refuses to do, is in
 | **SIP over UDP** | VoIP registers and nobody can call the subscriber, or the call connects with no audio. The single most expensive support call an ISP receives. | **Built**, [#14](https://github.com/andrediashexa/hexarouting/issues/14) |
 | **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | **Built** |
 | **SIP over TCP/TLS** | A SIP message over TCP is a stream, so an honest ALG needs reassembly, and TLS is untouchable by any NAT. | **Not being built**, stated as a decision |
-| **TFTP** | Provisioning of some CPE. | Low |
+| **TFTP** | Provisioning of some CPE. | **Not being built**, decided on #14 - this row said *Low* |
 
 Each ALG **MUST** be individually switchable per pool, and a malformed or
 unexpected payload **MUST** leave the packet untouched and increment a counter:
@@ -309,7 +345,7 @@ of the logging obligation. If the scope ever changes, that is where to start.
 |---|---|---|
 | **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: **346 clocks** in `bpa-in2out`, about 22 cores for 100 Gbps of 64-byte frames, down from 470 when [#63](https://github.com/andrediashexa/hexarouting/issues/63) was taken. Bits per second still needs an E810 or CX6 - [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it. | M |
 | **Symmetric RSS** | The handoff works, but symmetric hashing would put both directions on the right worker before the handoff, saving the extra enqueue. | M |
-| **RFC 4787, 5382 and 5508: the requirements this box states** - *delivered, under a narrower title than it had* | This row used to read "RFC 4787 / 5382 conformance suite", which promises the whole of both documents. Measured over the tree rather than judged: the requirement numbers named anywhere in this repository are **RFC 4787 REQ-1, REQ-2, REQ-5, REQ-8 and REQ-9**, **RFC 5382 REQ-5** and **RFC 5508 REQ-2**. That is five of RFC 4787's fourteen, one of RFC 5382's ten, and one from an RFC the old title did not admit to. Nothing else is claimed, so nothing else is asserted falsely, but a reader judging the product against that title was being told otherwise, which is the direction this file cares about. What stands behind each claim, so the next reader does not measure it again: **REQ-1** mapping and **REQ-8** filtering in `lab/nat-behaviour.sh`, whose `address-dependent` run is the control because the full-cone assertions **MUST** fail in it, and whose own header says the evidence before it was a reading of a hash key; **REQ-9** hairpinning in `lab/hairpin.sh`; **port preservation** off a running box in `lab/forward.sh`; **REQ-2** paired address pooling in `test/test_bpa_dyn.c`, which asserts it for a dynamic pool as the rate it is and states the floor for three arrival patterns, and in `lab/detreserve.sh` for the deterministic reserve; `lab/crossaddr.sh` pinned the behaviour [#226](https://github.com/andrediashexa/hexarouting/issues/226) replaced and is outside the suite on purpose, which is why it went red on the fix rather than in it; and the four **timeout floors** in `bpa_pool.h`, which `show bpa timeouts` marks a value below rather than refusing it ([#54](https://github.com/andrediashexa/hexarouting/issues/54), v0.16.0). | **not an effort.** Every requirement this box states is asserted, so there is no suite left to write. What is not asserted is what is not claimed, and a requirement arrives as an implementation and its assertion together, on an issue of its own. |
+| **RFC 4787, 5382, 5508 and 6888: the requirements this box states** - *delivered, under a narrower title than it had* | This row used to read "RFC 4787 / 5382 conformance suite", which promises the whole of both documents. Measured over the tree rather than judged: the requirement numbers named anywhere in this repository are **RFC 4787 REQ-1, REQ-2, REQ-5, REQ-8 and REQ-9**, **RFC 5382 REQ-5**, **RFC 5508 REQ-2** and **RFC 6888 REQ-2**. That is five of RFC 4787's fourteen, one of RFC 5382's ten, and one each from two RFCs the old title did not admit to. **The RFC 6888 entry is new since this row was written and the row is what found it stale**: on 2026-09-14 `git grep 'RFC 6888'` outside the CHANGELOG answered nothing, and [#226](https://github.com/andrediashexa/hexarouting/issues/226)'s fix put it in eight files on 2026-09-15 - `Makefile`, `docs/architecture.md`, `ref/bpa_model.py`, three plugin sources, `test/test_bpa_dyn.c` and the paired-address-pooling row in section 1 of **this file**, two hundred lines above this sentence. A row whose whole subject is "we claim exactly these and no more" is a row that has to be re-taken, not quoted. Nothing else is claimed, so nothing else is asserted falsely, but a reader judging the product against that title was being told otherwise, which is the direction this file cares about. What stands behind each claim, so the next reader does not measure it again: **REQ-1** mapping and **REQ-8** filtering in `lab/nat-behaviour.sh`, whose `address-dependent` run is the control because the full-cone assertions **MUST** fail in it, and whose own header says the evidence before it was a reading of a hash key; **REQ-9** hairpinning in `lab/hairpin.sh`; **port preservation** off a running box in `lab/forward.sh`; **REQ-2** paired address pooling in `test/test_bpa_dyn.c`, which asserts it for a dynamic pool as the rate it is and states the floor for three arrival patterns, and in `lab/detreserve.sh` for the deterministic reserve; `lab/crossaddr.sh` pinned the behaviour [#226](https://github.com/andrediashexa/hexarouting/issues/226) replaced and is outside the suite on purpose, which is why it went red on the fix rather than in it; and the four **timeout floors** in `bpa_pool.h`, which `show bpa timeouts` marks a value below rather than refusing it ([#54](https://github.com/andrediashexa/hexarouting/issues/54), v0.16.0). | **not an effort.** Every requirement this box states is asserted, so there is no suite left to write. What is not asserted is what is not claimed, and a requirement arrives as an implementation and its assertion together, on an issue of its own. |
 | **Sustained-load soak test** — *delivered* | `lab/soak.sh` ([#30](https://github.com/andrediashexa/hexarouting/issues/30)), for as many seconds as its one argument says. Every cycle fills the session table and every cycle empties it — fifteen seconds of traffic at a rate that fills the burst, then twenty seconds of nothing, which outlasts the UDP timeout and the block hold-down together — and the box is read at the end of each half. **Every trough is the same state of the box**, so two troughs are directly comparable and anything a later one holds is memory the box did not give back: no working set to subtract and no settling to wait out. Asserts the table back at its baseline at every trough, every session created also expired, every block back in the pool, the box's own allocation and release counters equal, the heap and the resident size unmoved between two empty tables, and a real collector's `natEvent` 17 count equal to its 16 count with no allocation left open. Outside `tools/run-all-labs.sh` (`NOT_LABS`) and outside `make test`: four minutes is its shortest run. | M |
 
 ### 3.6 BNG, asked for and not scoped - [#170](https://github.com/andrediashexa/hexarouting/issues/170)
@@ -1503,8 +1539,14 @@ still configured. The central assertion is the file the old version saved being
 accepted whole, because `hexash --load` refuses it whole or not at all: a
 statement the new VTY does not accept does not degrade an upgraded box, it
 unconfigures it, at a boot nobody is watching. Renaming one pool statement out
-of the new tree's grammar takes nineteen of its thirty-five checks red and
-leaves the box with no pool and no addresses.
+of the new tree's grammar takes **17 of its 35** checks red and leaves the box
+with no pool and no addresses. This paragraph said *nineteen* and was the only
+place that did: `lab/upgrade.sh`'s own header and `TESTING.md` both say 17, and
+the lab is where the number was taken. Both figures were written on 2026-09-14,
+so this was a copy that never matched its source rather than one the tree moved
+out from under it. The live count is not re-taken here, because the lab needs a
+container to run at all, and `lab/upgrade.sh` has taken six commits since - so
+35 is the reading of that day and not a promise about today's run.
 
 The plugin's version was the constant `"0.1"`, unmoved in seventy-one releases,
 so `show plugins` could not tell an operator which dataplane they were running,
@@ -1545,7 +1587,10 @@ arranged 105 boxes and **every one of them failed something** - its own count
 line said `105 of 105`. So the summary every healthy appliance prints had never
 been executed, and the assertion written for #297 went green and then stayed
 green under both mutations of the thing it was testing. There is a box that
-passes now: 30 checks green, no `[FAIL]`, no `[warn]` and no `[info]`. The
+passes now: **33** checks green, no `[FAIL]`, no `[warn]` and no `[info]`. It
+was 30 when this was written; `sh test/test_selftest.sh` prints
+*"33 checks pass on it and not one goes red"* today, because the fixture
+gained checks and nothing came back here. The
 suite had the failing half of the control and not the passing one, which is
 the argument `lab/nat-behaviour.sh` already makes about its own off mode.
 
@@ -1619,8 +1664,14 @@ checksum at all, because a checksum nobody may act on is an invitation to start
 acting on it. There were three and not the two anybody would guess:
 `hexarouting.conf` was a `printf` of a banner rather than a copy.
 
-18 ms at every boot over 31 files and 2.5 MB, measured and printed by the suite
-on every run rather than left as a number in a commit message.
+Measured and printed by the suite on every run rather than left as a number in
+a commit message, which is what makes the drift readable: this said **18 ms at
+every boot over 31 files and 2.5 MB**, and `sh test/test_manifest.sh` now
+prints 32 files and about 2.7 MB. The exact byte count is left to the suite
+rather than written here, because it moves with every commit and a number that
+rots on the next merge is the thing this sweep is about. The milliseconds are
+the machine the suite happened to run on and are not comparable between two of
+them, which is why the line prints the CPU beside them.
 
 #### A box installed from the medium could not be reached, and a box with one card could not forward
 
@@ -2026,8 +2077,15 @@ call with itself. The dataplane plugin's C suites are the last body unswept.
 
 [#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
 is renaming the product **HexaRouting → PrismaRouting**. Recorded here with its
-measured size rather than an impression of it: 905 lines across 101 files carry
-`hexarouting`, 372 across 73 carry `hexash`, and 87 carry the role group names.
+measured size rather than an impression of it, **and the measurement has to be
+re-taken rather than quoted**. On 2026-09-11 it was 905 lines across 101 files
+carrying `hexarouting`, 372 across 73 carrying `hexash` and 87 carrying the
+role group names. Re-taken on 2026-09-15 with `git grep`: **2,543 lines across
+157 files** carry `hexarouting`, **1,006 across 116** carry `hexash`, and
+**104** carry `hexa-admin` or `hexa-cgnat`. The `hexarouting` figure nearly
+tripled in four days, because every release writes the name into the CHANGELOG
+and every sweep writes it into a document. A number this file states about its
+own tree is a number with a date on it, and this one had none.
 
 The rename is not the hard part. **A box already in service carries the old name
 in the path of its saved configuration, in its unit names, in its group names
@@ -2132,10 +2190,19 @@ reason than this table.
    operator was exposed to that day. A roadmap wrong in both directions is
    worse than no roadmap, because it is the document people check instead of
    the code. The tool is deliberately **not** part of `make test`, which has to
-   work with no network, and deliberately not part of `make release-gate`:
-   whether a stale roadmap should refuse a release is the maintainer's call,
-   and the gate is the one thing here that has caught every release mistake
-   this project has made.
+   work with no network. It **is** part of `make release-gate`, and this said
+   the opposite: "deliberately not part of `make release-gate`: whether a
+   stale roadmap should refuse a release is the maintainer's call". The gate
+   grew the call at `tools/release-gate.sh:401` and nothing came back here, so
+   this file told a reader that a stale roadmap cannot stop a release when it
+   can. `tools/roadmap-state.sh`'s own header carried the same sentence and was
+   corrected first, which is how this one was found. The concern the old
+   sentence raised is answered where the call is: the gate skips the check
+   loudly when `gh` cannot answer, so a release is never refused because GitHub
+   was unreachable, and `test/test_wiki_roundtrip.sh` holds the gate and the
+   tool to the same answer. The gate is the one thing here that has caught
+   every release mistake this project has made, and it is where a document
+   nobody re-measures belongs.
 
 ### What this plan does not promise
 
