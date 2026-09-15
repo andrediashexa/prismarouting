@@ -308,6 +308,89 @@ main (void)
 	   found);
   }
 
+  /*
+   * The start line of a REPLY, which is where the parser decides whether the
+   * bytes in front of it are an RTSP response at all. Three of its four
+   * refusals had never been executed by anything docker-free: every reply case
+   * above is a well-formed "RTSP/1.0 nnn", so what was measured was only the
+   * status code.
+   *
+   * A reply is the direction that carries the SERVER's idea of the ports, and
+   * the ALG rewrites it. Reading a non-RTSP payload as a reply means looking
+   * for a Transport header inside whatever the stream actually carries - and
+   * an RTSP control connection is an ordinary TCP stream that can be carrying
+   * an interleaved RTP frame at the moment this runs.
+   *
+   * Every one of them carries a well-formed Transport header, so the ONLY
+   * thing deciding the verdict is the start line. Without it the parser finds
+   * nothing to rewrite in these messages for a second reason and the row is
+   * green with the start-line test deleted.
+   *
+   * The fourth refusal of that test - a payload too short to hold a status
+   * line - is not here, and deliberately: no eleven-byte prefix gets past the
+   * version and status checks below it, so the bound cannot be shown failing
+   * in a harness whose payloads are string literals. It is a memory-safety
+   * bound, and showing one takes the guard page test/test_bpa_icmp.c builds.
+   */
+  expect ("a reply that does not begin with the version token",
+	  "HTTP/1.1 200 OK\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-6971\r\n"
+	  "\r\n",
+	  1, BPA_RTSP_NONE, 0);
+  expect ("a reply whose version is not two digits round a dot",
+	  "RTSP/1x0 200 OK\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-6971\r\n"
+	  "\r\n",
+	  1, BPA_RTSP_NONE, 0);
+  expect ("a reply with no space after the version",
+	  "RTSP/1.0_200 OK\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-6971\r\n"
+	  "\r\n",
+	  1, BPA_RTSP_NONE, 0);
+  /* The control: the same shape with a version this file has never used, so
+   * the four above are about the malformation rather than about the digits.
+   * RFC 7826 keeps the Transport syntax, which is why the digits are not
+   * pinned to 1.0. */
+  expect ("a 2.0 reply is still a reply",
+	  "RTSP/2.0 200 OK\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-6971\r\n"
+	  "\r\n",
+	  1, BPA_RTSP_FOUND, "6970-6971");
+
+  /*
+   * "Transport :" - whitespace between the header name and its colon. Legal
+   * (RFC 2326 inherits HTTP's HCOLON, and RFC 3261 s25.1 states the same rule
+   * for SIP), emitted by real encoders, and the loop that skips it had never
+   * been executed. A parser that stopped at the space would take the header
+   * for one whose name merely starts like Transport and leave the ports in a
+   * SETUP unrewritten - the black frame nobody blames on the CGNAT.
+   */
+  expect ("whitespace between the header name and its colon",
+	  "SETUP rtsp://cam/t RTSP/1.0\r\n"
+	  "Transport \t: RTP/AVP;unicast;client_port=6970-6971\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_FOUND, "6970-6971");
+
+  /*
+   * A range with nothing after the dash. The first port parses, the dash is
+   * there, and then the digits run out - which is a different refusal from
+   * "the second port is too large" and from "the two are separated by
+   * something that is not a dash", and the only one of the three that had
+   * never been executed. Read as a pair it would be 6970-0, and port 0 is not
+   * a port: the ALG would reserve a mapping for it and the SDP would leave
+   * announcing one.
+   */
+  expect ("a range whose second port is missing",
+	  "SETUP rtsp://cam/t RTSP/1.0\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-;mode=play\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_UNPARSED, 0);
+  expect ("a range whose second port ends the value",
+	  "SETUP rtsp://cam/t RTSP/1.0\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_UNPARSED, 0);
+
   /* ---- rendering the replacement ---- */
 
   n = bpa_rtsp_format_pair (out, 1030, 1031);

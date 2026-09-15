@@ -496,6 +496,127 @@ main (void)
 	"v=0\r\n"
 	"c=IN IP4 100.64.0.5\r\n",
 	BPA_SIP_UNPARSED },
+      /*
+       * The shapes below are the refusals of bpa_sip_hostport(),
+       * bpa_sip_via() and bpa_sip_contact() that nothing docker-free had ever
+       * executed. Every one of them is a header this parser must NOT come
+       * apart, because the caller rewrites what it comes apart into: a Via it
+       * misreads is a response that never comes back, and a Contact it
+       * misreads is a subscriber nobody can call.
+       */
+      /* bpa_sip_hostport: a "[" that never closes. An IPv6 reference is a
+       * host this ALG does not act on, but a reference with no "]" is not a
+       * host at all and the scan for it must not run past the value. */
+      { "a Contact whose IPv6 reference never closes",
+	"REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Contact: <sip:a@[2001:db8::1>\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_hostport: a host name of no characters. */
+      { "a Via whose sent-by begins with its own port separator",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP :5060;branch=z1\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_hostport, through bpa_sip_num: a colon that introduces no
+       * port. A sent-by of "host:" names port 5060 to some stacks and nothing
+       * to others, and this box maps neither. */
+      { "a Via whose sent-by ends at the colon",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:;branch=z1\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      { "a Via whose sent-by port is zero",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:0;branch=z1\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_num's upper bound. A port of 70000 is 4464 on sixteen bits,
+       * which is a real port belonging to a real subscriber. */
+      { "a Via whose sent-by port does not fit in sixteen bits",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:70000;branch=z1\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_via: the version token. Not pinned to 2.0 - the sent-by
+       * syntax survives a version bump - but it has to be there, because the
+       * transport and the sent-by are located by counting from it. */
+      { "a Via with no version token at all",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      { "a Via whose version is not two digits round a dot",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2x0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_via: a transport token that merely STARTS with UDP. Without
+       * this the sent-by would be read three bytes into the token. */
+      { "a Via whose transport only starts like UDP",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDPX 100.64.0.5:5060;branch=z1\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_contact: a header with nothing in it. */
+      { "a Contact with nothing in its value",
+	"REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Contact:  \r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_contact: a quoted display name that never closes. The scan
+       * for the closing quote skips backslash escapes, so it is the one place
+       * in this parser that advances by two. */
+      { "a Contact whose quoted display name never closes",
+	"REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Contact: \"Ana <sip:a@100.64.0.5>\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      { "a Contact whose angle bracket never closes",
+	"REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Contact: <sip:a@100.64.0.5\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_contact: a comma reached while looking for the scheme. A
+       * comma separates Contact values, so a URI is being skipped past. */
+      { "a Contact with an unquoted display name holding a comma",
+	"REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Contact: Ana,B <sip:a@100.64.0.5>\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_contact: a scheme with no colon after it. */
+      { "a Contact whose scheme is not followed by a colon",
+	"REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Contact: <sipfoo@100.64.0.5>\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_num, through Content-Length: a value with no digits in it.
+       * Everything below the header block is bounded by this number. */
+      { "a Content-Length that is not a number",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	"Content-Length: none\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
       { "a body that claims to be SDP and is not",
 	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
 	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
@@ -728,6 +849,193 @@ main (void)
 	     "the rewritten media port is not announced at the public "
 	     "address");
     }
+  }
+
+  /*
+   * A host that LOOKS like an address and is not one.
+   *
+   * bpa_sip_ip4() consumes a dotted quad and nothing else, and the arm that
+   * refuses one of the four octets had never been executed - every header in
+   * this file carries either a complete address or a name that starts with a
+   * letter. The dangerous shape is the one in between: three octets, or digits
+   * with something other than a dot between them. Read as an address it would
+   * be compared against the subscriber's own, and a rewrite there replaces
+   * bytes out of the middle of somebody's host name.
+   *
+   * Accepted rather than refused, with no address recorded, which is what the
+   * whole file rests on: the caller rewrites a span only where `addr` equals
+   * the session's private address, so zero means "left alone" with no further
+   * rule.
+   */
+  {
+    static const char *names[] = {
+      "100.64.0",     /* three octets: the fourth never arrives */
+      "100.64.0.5.6", /* five: a name whose first labels look numeric */
+      "100x64.0.5",   /* a separator that is not a dot */
+      "100.64.0.999", /* an octet that does not fit in a byte */
+    };
+    char msg[512], want[64];
+    unsigned k;
+
+    for (k = 0; k < sizeof (names) / sizeof (names[0]); k++)
+      {
+	snprintf (msg, sizeof (msg),
+		  "INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+		  "Via: SIP/2.0/UDP %s:5060;branch=z1\r\n"
+		  "Content-Length: 0\r\n"
+		  "\r\n",
+		  names[k]);
+	CHECK (run (msg, &m) == BPA_SIP_PARSED,
+	       "a Via naming the host \"%s\" refused the message, where it is "
+	       "a host this ALG has nothing to do with", names[k]);
+	it = item_of (&m, BPA_SIP_VIA, 0);
+	snprintf (want, sizeof (want), "%s:5060", names[k]);
+	span_is ("a sent-by that is not a dotted quad", msg, it, want);
+	CHECK (it && it->addr == 0,
+	       "the host \"%s\" was read as address %08x, so a rewrite would "
+	       "replace bytes out of the middle of it", names[k],
+	       it ? it->addr : 0);
+      }
+    /* The control: the same message with a real dotted quad IS read as an
+     * address, so the four above are about the shape and not about the
+     * parser having stopped recognising addresses. */
+    snprintf (msg, sizeof (msg),
+	      "INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	      "Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+	      "Content-Length: 0\r\n"
+	      "\r\n");
+    CHECK (run (msg, &m) == BPA_SIP_PARSED, "the control message refused");
+    it = item_of (&m, BPA_SIP_VIA, 0);
+    CHECK (it && it->addr == PRIV,
+	   "a real dotted quad was read as address %08x", it ? it->addr : 0);
+  }
+
+  /*
+   * "sips:", and the SDP written with the whitespace RFC 4566 allows.
+   *
+   * Both are ACCEPTING paths that nothing had executed, and both fail
+   * silently: a Contact this parser walks past is a subscriber the internet
+   * cannot call back, and a c= line it walks past is a media address left
+   * announcing the private one - the call connects and there is no audio.
+   */
+  {
+    static const char *msg =
+      "INVITE sip:2000@8.8.8.8 SIP/2.0\r\n"
+      "Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
+      "Contact: <sips:1000@100.64.0.5:5061>\r\n"
+      "Content-Type: application/sdp\r\n"
+      "Content-Length: 56\r\n"
+      "\r\n"
+      "v=0\r\n"
+      "c=  IN   IP4   100.64.0.5\r\n"
+      "m=audio 8000 RTP/AVP 0\r\n";
+
+    CHECK (run (msg, &m) == BPA_SIP_PARSED,
+	   "a sips: Contact and a spaced-out c= line refused the message");
+    it = item_of (&m, BPA_SIP_CONTACT, 0);
+    span_is ("sips Contact host", msg, it, "100.64.0.5:5061");
+    CHECK (it && it->addr == PRIV && it->port == 5061,
+	   "the sips: Contact parsed as %08x:%u", it ? it->addr : 0,
+	   it ? it->port : 0);
+    it = item_of (&m, BPA_SIP_CONN, 0);
+    span_is ("spaced c= address", msg, it, "100.64.0.5");
+    CHECK (it && it->addr == PRIV, "the spaced c= parsed as %08x",
+	   it ? it->addr : 0);
+    it = item_of (&m, BPA_SIP_MEDIA, 0);
+    CHECK (it && it->port == 8000 && it->addr == PRIV,
+	   "the media port was not governed by the spaced c= line: %u at "
+	   "%08x", it ? it->port : 0, it ? it->addr : 0);
+  }
+
+  /*
+   * More spans than one message may contribute.
+   *
+   * bpa_sip_add()'s refusal, and the three places that check what it returned,
+   * none of which had been executed. The bound is not arbitrary: the items
+   * array is inline in the message structure, and bpa_alg.h's worst-case
+   * growth calculation is BPA_SIP_MAX_ITEMS spans wide - so a message that
+   * needed more and was half recorded would be rewritten past the space the
+   * caller reserved for it.
+   *
+   * Contact headers are the filler because nothing bounds how many a REGISTER
+   * may carry; the media sections have a bound of their own four lines up.
+   * Every message here is refused WHOLE, which is the contract: half a
+   * rewritten message is the one outcome worse than none.
+   *
+   * Each of the four cases puts the overflow on a different span kind, so the
+   * three `if (bpa_sip_add (...))` arms are each the one that fires. The
+   * Content-Length is computed from the body rather than typed, because a
+   * message refused for a length that no longer matches its body is a message
+   * refused for the wrong reason and would go on passing with the bound gone.
+   */
+  {
+    char msg[4096];
+    char body[256];
+    u32 n;
+    unsigned k, pos;
+
+    for (pos = 0; pos < 4; pos++)
+      {
+	const char *what;
+	u32 n_contacts;
+
+	/*
+	 * Items in header order: one Via, then the Contacts, then
+	 * Content-Length, then the session c=, then the media m=. The count
+	 * is chosen so that the span named below is the (BPA_SIP_MAX_ITEMS+1)
+	 * th one.
+	 */
+	switch (pos)
+	  {
+	  case 0: what = "a Contact"; n_contacts = BPA_SIP_MAX_ITEMS; break;
+	  case 1: what = "Content-Length"; n_contacts = BPA_SIP_MAX_ITEMS - 1;
+	    break;
+	  case 2: what = "an SDP c="; n_contacts = BPA_SIP_MAX_ITEMS - 2;
+	    break;
+	  default: what = "an SDP m="; n_contacts = BPA_SIP_MAX_ITEMS - 3;
+	    break;
+	  }
+
+	body[0] = 0;
+	if (pos >= 2)
+	  snprintf (body, sizeof (body),
+		    "v=0\r\nc=IN IP4 100.64.0.5\r\n"
+		    "m=audio 8000 RTP/AVP 0\r\n");
+	n = (u32) snprintf (msg, sizeof (msg), "REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+			    "Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n");
+	for (k = 0; k < n_contacts; k++)
+	  n += (u32) snprintf (msg + n, sizeof (msg) - n,
+			       "Contact: <sip:%u@100.64.0.5:5060>\r\n", k);
+	if (body[0])
+	  n += (u32) snprintf (msg + n, sizeof (msg) - n,
+			       "Content-Type: application/sdp\r\n");
+	n += (u32) snprintf (msg + n, sizeof (msg) - n,
+			     "Content-Length: %u\r\n\r\n",
+			     (u32) strlen (body));
+	snprintf (msg + n, sizeof (msg) - n, "%s", body);
+
+	CHECK (run (msg, &m) == BPA_SIP_UNPARSED,
+	       "a message whose %s span is the %uth was not refused whole",
+	       what, BPA_SIP_MAX_ITEMS + 1);
+      }
+
+    /* The control: one Contact fewer than the first case is exactly
+     * BPA_SIP_MAX_ITEMS spans - one Via, twelve Contacts and a
+     * Content-Length - and must parse, so the four above are about the bound
+     * rather than about a message this parser dislikes for some other
+     * reason. */
+    n = (u32) snprintf (msg, sizeof (msg), "REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+			"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n");
+    for (k = 0; k + 2 < BPA_SIP_MAX_ITEMS; k++)
+      n += (u32) snprintf (msg + n, sizeof (msg) - n,
+			   "Contact: <sip:%u@100.64.0.5:5060>\r\n", k);
+    snprintf (msg + n, sizeof (msg) - n, "Content-Length: 0\r\n\r\n");
+    CHECK (run (msg, &m) == BPA_SIP_PARSED,
+	   "a message with exactly %u spans was refused", BPA_SIP_MAX_ITEMS);
+    CHECK (m.n_items == BPA_SIP_MAX_ITEMS,
+	   "the control message contributed %u spans, not %u, so the counts "
+	   "above are not landing where they are meant to", m.n_items,
+	   BPA_SIP_MAX_ITEMS);
   }
 
   return bpa_test_verdict (checks, failures);
