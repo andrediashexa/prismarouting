@@ -190,6 +190,41 @@ with tempfile.TemporaryDirectory() as tmp:
     check(r.returncode != 0 and "quote" in r.stderr,
           "a stamp carrying a quote is refused, by name",
           f"rc={r.returncode} {r.stderr!r}")
+    # The other pattern of the same case arm, and it is not the same
+    # character: a lone backslash closes nothing, it ESCAPES the quote that
+    # ends the literal, so the compiler swallows the next line as well and the
+    # error it reports is about a token further down a file nobody wrote.
+    r = generate(REPO, hdr, {"HEXA_VERSION_STAMP": "9.9.9 (x\\)"})
+    check(r.returncode != 0 and "backslash" in r.stderr,
+          "and so is one carrying a backslash",
+          f"rc={r.returncode} {r.stderr!r}")
+    # And the header is NOT left half-written. The refusal comes before the
+    # `cat > "$OUT.new"`, so a stamp the generator would not take leaves the
+    # previous header standing rather than a .new beside it for the next build
+    # to find.
+    check(defined(hdr) == "9.9.9 (0ddba11)"
+          and not os.path.exists(hdr + ".new"),
+          "and neither leaves a header behind",
+          f"{defined(hdr)!r}, .new exists: {os.path.exists(hdr + '.new')}")
+
+    # The two arguments, which are `${1:?usage}` and `${2:?usage}` and had
+    # never been driven either. tools/build.sh and the Makefile both call this
+    # with two; a caller that passes one would otherwise write the header to
+    # an empty path, and the build that followed would compile the LAST one -
+    # a plugin stamped with a version nobody generated for it.
+    # Three, because two of them cannot tell the two guards apart: with no
+    # arguments BOTH fire, so a run that only passed none would stay green
+    # with the first one deleted. An EMPTY first argument is the call only
+    # `${1:?}` refuses, and it is the realistic one - a caller expanding a
+    # variable that is not set.
+    for argv, which in (([], "no arguments"),
+                        ([REPO], "one argument"),
+                        (["", os.path.join(tmp, "empty.h")],
+                         "an empty repository argument")):
+        r = subprocess.run(["sh", GEN] + argv, capture_output=True, text=True)
+        check(r.returncode != 0 and "usage: plugin-version-h.sh" in r.stderr,
+              f"{which} is refused with the usage line",
+              f"rc={r.returncode} {r.stderr!r}")
 
 
 # ----------------------------------------------------------------------------

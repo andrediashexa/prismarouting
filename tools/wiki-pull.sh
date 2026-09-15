@@ -127,7 +127,26 @@ docs.sort(key=lambda d: (d["collection"] or "", d["parent"] or "",
 json.dump(docs, sys.stdout)
 PYEOF
 
-[ -s "$TMP/docs.json" ] || { echo "error: nothing came back" >&2; exit 1; }
+# COUNTED, NOT SIZED. This was `[ -s "$TMP/docs.json" ]` and could never fire:
+# the reader above prints "[]" for an answer holding no published documents,
+# which is two bytes and passes a size test. Measured against a stub answering
+# {"data":[],"pagination":{...,"total":0}}: the rewrite below ran, every page
+# in the mirror was deleted, wiki/.ids came back empty and wiki/.pulled was
+# written EMPTY - a mirror stamped as freshly pulled and holding nothing, from
+# a script whose whole first half exists to stop wiki/ being emptied. The
+# guard is the document count, which is the number it was always about.
+docs=$(python3 -c '
+import json, sys
+try:
+    print(len(json.load(open(sys.argv[1]))))
+except Exception:
+    print(-1)' "$TMP/docs.json")
+[ "$docs" -gt 0 ] || {
+  echo "error: the wiki answered with no published documents at all, so" >&2
+  echo "       NOTHING came back. Rewriting wiki/ from that answer would" >&2
+  echo "       delete every page in the mirror and stamp it as fresh." >&2
+  exit 1
+}
 
 python3 - "$TMP/docs.json" "$REPO" "${WIKI_IDS_ONLY:-0}" <<'PYEOF'
 import json, os, re, shutil, sys, unicodedata
