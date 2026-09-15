@@ -308,7 +308,10 @@ if fail == n_before:
            "ran out of budget")
 
 print()
+# The verdict lines tools/run-tests.sh reads. A suite that ends without one is
+# NO VERDICT, which is a killed process and not a pass - so the words matter
+# and "all checks passed" is not one of them.
 if fail:
-    print(f"  {fail} check(s) failed")
+    print(f"{fail} FAILURES")
     sys.exit(1)
-print("  all checks passed")
+print("ALL TESTS PASSED")
