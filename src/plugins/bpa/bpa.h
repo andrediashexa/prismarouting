@@ -346,6 +346,15 @@ int bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
 void bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool);
 void bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p);
 void bpa_reserve_warn (vlib_main_t *vm, const bpa_pool_t *p);
+/*
+ * The reserve warning WITHOUT the log record: the rows an operator reads, for
+ * a caller that is answering somebody who is looking rather than reporting an
+ * event. `show bpa pool` is one - it is the readback hexash relays to an
+ * operator who applied the pool over the API - and so is `bpa pool ... check`,
+ * which creates nothing to write a record about. The record for a pool that
+ * IS created is written once, by bpa_pool_add().
+ */
+void bpa_reserve_say (vlib_main_t *vm, const bpa_pool_t *p);
 
 format_function_t format_bpa_pool;
 format_function_t format_bpa_policy;

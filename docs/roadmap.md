@@ -2246,13 +2246,18 @@ fold and the scripts choose between them on purpose.
 is the `vppctl` handler**. The binary API path hexash uses calls the other two
 warn functions and not this one, so an operator who configures `reserve` from
 the VTY - which is every operator, since the VTY exists so nobody has to drop
-to `vppctl` - sees it neither on the terminal nor in the log. And
-`configuracao-de-pool.md` tells them *"A caixa avisa na criação do pool"*. The
-cost is concrete: workers holding no reserve at all, whose subscribers can
-never be given a second block, so a customer who fills their block stays full
-on a box that reports a reserve. This is the highest-priority open defect by
-this file's own rule - what the product claims and does not do comes above
-everything - and the wiki page is wrong until it closes.
+to `vppctl` - sees it neither on the terminal nor in the log. And the pool
+configuration page tells them the box warns at pool creation. The cost is
+concrete: workers holding no reserve at all, whose subscribers can never be
+given a second block, so a customer who fills their block stays full on a box
+that reports a reserve. This was the highest-priority open defect by this
+file's own rule - what the product claims and does not do comes above
+everything - **and it is fixed**. The warning is said at `bpa_pool_add()`,
+which is where creation AND every later change arrive, because `reserve` is
+not a setting that can be edited in place; hexash reads it back from
+`show bpa pool` for the pools a commit created or recreated and prints it at
+the prompt. The wiki page needed no correction: it described what the product
+intended, and the box now does it.
 
 **And `appliance/install.sh` has no message reader, unlike the four that got
 one** ([#371](https://github.com/andrediashexa/hexarouting/issues/371)). It is

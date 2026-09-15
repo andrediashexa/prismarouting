@@ -1265,7 +1265,8 @@ bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p)
 }
 
 /*
- * A reserve too small for the worker count, said at creation.
+ * A reserve too small for the worker count, said at creation and whenever the
+ * pool is asked about.
  *
  * The reserve is sharded the way every other block is - worker w hands out
  * only the indices congruent to w, because the return path resolves the
@@ -1281,32 +1282,82 @@ bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p)
  * every subscriber on it would lose traffic to enforce a property about
  * extensions.
  *
- * `vm` may be null, and then only the log hears about it.
+ * THREE FUNCTIONS AND NOT ONE, because three different occasions ask for it
+ * and they want different halves. The guard below owns the arithmetic, the
+ * say owns the words, and the warn is the say plus the record.
  */
-void
-bpa_reserve_warn (vlib_main_t *vm, const bpa_pool_t *p)
+
+/*
+ * How many of this box's workers the reserve does not reach, and 0 when it
+ * reaches all of them.
+ *
+ * THE ONE OWNER OF THE ARITHMETIC. Three callers ask this question now - the
+ * pool is created, the operator types "show bpa pool", and the record is
+ * written - and a second copy of `reserve_count >= n_workers` in any of them
+ * is a second thing to keep in step with this one. A worker-less box compares
+ * one against one and is never short, which is why `nw` is floored at 1 here
+ * and not at each caller.
+ */
+static u32
+bpa_reserve_short (const bpa_pool_t *p, u32 *nwp)
 {
   bpa_main_t *bm = &bpa_main;
   u32 nw = bm->n_workers ? bm->n_workers : 1;
 
+  *nwp = nw;
   if (p->block_reserve == 0 || p->reserve_count >= nw)
+    return 0;
+  return nw - p->reserve_count;
+}
+
+/*
+ * The three rows an operator reads, and nothing else.
+ *
+ * SEPARATE FROM THE RECORD, because the two have different occasions. The
+ * record belongs to the event - a pool was created with a reserve that does
+ * not reach every worker, once - and the rows belong to whoever is looking.
+ * "show bpa pool" is the readback hexash uses to put this in front of an
+ * operator who applied the pool over the API and has no terminal on the box,
+ * and a show that wrote a log line every time somebody ran it would fill the
+ * log with one event repeated by its own reader.
+ *
+ * Same words for every occasion, on purpose: the sentence an operator is told
+ * at the prompt and the sentence they are told at the console are the same
+ * sentence, so neither can drift into being the friendlier one.
+ */
+void
+bpa_reserve_say (vlib_main_t *vm, const bpa_pool_t *p)
+{
+  u32 nw;
+  u32 none = bpa_reserve_short (p, &nw);
+
+  if (!vm || none == 0)
     return;
 
-  if (vm)
-    {
-      vlib_cli_output (
-	vm, "warning: the reserve on pool %v is %u block(s) and this box has "
-	    "%u workers: %u of them hold no reserve at all, and their "
-	    "subscribers can never be given a second block",
-	p->name, p->reserve_count, nw, nw - p->reserve_count);
-      vlib_cli_output (vm,
-		       "         raise the reserve to at least %u, or add "
-		       "public addresses; each reserve block per address is "
-		       "%u more",
-		       nw, p->outside.count);
-      vlib_cli_output (vm, "         the pool is created either way; this is "
-			   "a warning, not a refusal");
-    }
+  vlib_cli_output (
+    vm, "warning: the reserve on pool %v is %u block(s) and this box has "
+	"%u workers: %u of them hold no reserve at all, and their "
+	"subscribers can never be given a second block",
+    p->name, p->reserve_count, nw, none);
+  vlib_cli_output (vm,
+		   "         raise the reserve to at least %u, or add "
+		   "public addresses; each reserve block per address is "
+		   "%u more",
+		   nw, p->outside.count);
+  vlib_cli_output (vm, "         the pool is created either way; this is "
+		       "a warning, not a refusal");
+}
+
+void
+bpa_reserve_warn (vlib_main_t *vm, const bpa_pool_t *p)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 nw;
+
+  if (bpa_reserve_short (p, &nw) == 0)
+    return;
+
+  bpa_reserve_say (vm, p);
   vlib_log_warn (bm->log_class,
 		 "pool %v: reserve of %u blocks does not reach all %u workers",
 		 p->name, p->reserve_count, nw);
@@ -1550,6 +1601,29 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
     }
 
   vlib_worker_thread_barrier_release (bm->vlib_main);
+
+  /*
+   * A reserve too small for this box's workers is warned about HERE, and here
+   * is the only place it needs saying.
+   *
+   * The reserve is not on bpa_pool_settings_set at all - see the 0.13.0 note
+   * in bpa.api - because it is taken out of capacity, capacity is the divisor
+   * under the blocked policy, and changing it re-maps subscribers. So the VTY
+   * classifies `reserve` as a mapping field, and an operator who LOWERS a
+   * reserve on a live pool does not edit it in place: the pool is removed and
+   * added again, through this function. Creation and every later change are
+   * the same call, which is why one call site covers both - and why the
+   * warning cannot be missed on the day the number is lowered.
+   *
+   * No vlib_main_t, for the reason bpa_pool_settings_set() gives above: the
+   * operator is at the other end of an API call rather than at a terminal, so
+   * this goes to the log, and hexash relays it from "show bpa pool" - which
+   * says the same sentence through the same function.
+   *
+   * After the barrier and after bpa_pool_init(), because reserve_count is
+   * computed in there: warning before it would read a zero the pool never has.
+   */
+  bpa_reserve_warn (0, p);
 
   bpa_audit ("add", p, 0);
 
