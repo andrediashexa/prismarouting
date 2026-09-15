@@ -77,6 +77,36 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show hardware` told an operator their card was unusable and stopped
+  there** ([#328](https://github.com/andrediashexa/hexarouting/issues/328)).
+  The driver line read `kernel driver: DPDK cannot take a NIC through it`. It
+  is true, it is the state every uninstalled box is in, and on a box with one
+  NIC - a virtual machine, which is how most people first meet this product -
+  it was the only thing said about the only card. The reasonable reading is
+  that the hardware is unsuitable. The screen now says what happens to the
+  card instead: the driver it is on, and the driver the box will move it to
+  when the dataplane claims it. That second driver is **asked of**
+  `appliance/bind-dataplane-nic`, which is where the IOMMU rule already lives,
+  through a `--which-driver` mode that answers without binding anything - and
+  the rule inside that script, which was written twice, is now one function
+  both the answer and the bind call. A box where the binder cannot be reached
+  says it could not ask rather than naming a driver that may be wrong.
+
+* **`show hardware` on a box with no PCI NIC said a virtio guest is what that
+  looks like** ([#328](https://github.com/andrediashexa/hexarouting/issues/328)).
+  False since [#286](https://github.com/andrediashexa/hexarouting/issues/286)
+  taught `pci_address_of()` to walk up to the PCI parent: a virtio card in a
+  VM resolves and is eligible. The sentence stayed, and the audience most
+  likely to reach that screen is exactly the one it was wrong for. A wrong
+  sentence on an empty table ends the search, which is worse than the empty
+  table.
+
+* **`why no dataplane interface` never named the screen that answers it**
+  ([#327](https://github.com/andrediashexa/hexarouting/issues/327)). All three
+  branches - hugepages missing, no interface named, a name that did not
+  resolve - now point at `show hardware`, which is the command written for
+  that exact moment and which an operator had no way to know about.
+
 * **The tuner sized the dataplane's NIC from the processor and never asked the
   card** ([#330](https://github.com/andrediashexa/hexarouting/issues/330)).
   `appliance/hexarouting-tune` derived `num-rx-queues` and `num-tx-queues` from

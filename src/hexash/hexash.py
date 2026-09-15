@@ -9626,7 +9626,9 @@ class Shell:
                         "Hugepages are reserved by the tuning an INSTALLED box "
                         "applies at its first boot. Type 'install' to put "
                         "HexaRouting on a disk, and the card is claimed "
-                        "there."]
+                        "there.",
+                        "'show hardware' lists the cards this box has and "
+                        "what will happen to each one when it is installed."]
             said = ["DPDK is off until hugepages exist, so no NIC can be "
                     "claimed yet.",
                     "This is the first-boot profile. Reboot once the tuning "
@@ -9638,6 +9640,8 @@ class Shell:
             # Saying so here costs nothing and saves two reboots and a naming
             # attempt to learn it (#289, #303).
             said += self.one_nic_note()
+            said.append("'show hardware' lists the cards this box has and "
+                        "what will happen to each one at that boot.")
             return said
         if "no-pci" in conf:
             named = ""
@@ -9659,7 +9663,10 @@ class Shell:
                         "interface <name>',",
                         "then 'commit'. A name this box has not got is "
                         "refused, and the",
-                        "refusal says which ones it has."]
+                        "refusal says which ones it has.",
+                        "'show hardware' is where the names come from: it "
+                        "lists this box's cards as Linux has them, and marks "
+                        "the one carrying the default route."]
             return [f"'{named}' was named and VPP was given no NIC.",
                     "Either it does not exist on this box, or it could not be "
                     "resolved to a PCI address,",
@@ -9980,6 +9987,34 @@ class Shell:
             })
         return out
 
+    #: Where the binder lives, so a test can point this at a stub.
+    BIND_NIC = "/usr/lib/hexarouting/bind-dataplane-nic"
+
+    def which_dpdk_driver(self):
+        """
+        What this box would move a card to, asked of the thing that decides.
+
+        appliance/bind-dataplane-nic reads the IOMMU groups and chooses
+        vfio-pci or uio_pci_generic, and it has a mode that answers without
+        binding anything. Asking it is the whole point: the rule lives in one
+        place, and a screen that predicted it from a copy would be right until
+        the copies drifted (#328).
+
+        A box where the binder cannot be reached gets a sentence that says so
+        rather than a guess, because "vfio-pci" on a box that will fall back is
+        worse than no sentence.
+        """
+        try:
+            p = subprocess.run([self.BIND_NIC, "--which-driver"],
+                               capture_output=True, text=True, timeout=10)
+            out = (p.stdout or "").strip()
+            if p.returncode == 0 and out:
+                return out
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return ("a driver DPDK can use, chosen at boot from whether this box "
+                "has an IOMMU; this VTY could not ask")
+
     def show_hardware(self, args):
         """
         The physical NICs of this box, from Linux, with the one that must not
@@ -10040,12 +10075,20 @@ class Shell:
             # NOT an empty table. "nothing to show" and "nothing is wrong"
             # look the same on a screen, and this screen is read on a box that
             # forwards nothing.
-            print_prose("no PCI NIC is visible to Linux on this box: either "
-                        "the dataplane already owns every one of them, or "
-                        "none of them resolves to a PCI address, which is "
-                        "what a virtio guest looks like. DPDK cannot be "
-                        "given a device that has no PCI address, so there is "
-                        "nothing here to choose from.", indent="  ")
+            # The virtio half of this sentence was FALSE from #286 onward and
+            # nothing here noticed. pci_address_of() walks up from the netdev
+            # to the PCI parent, so a virtio card in a VM resolves and is
+            # eligible; this screen went on telling the one audience most
+            # likely to read it - somebody trying the product in a VM - that
+            # their box had nothing to offer. A wrong sentence on an empty
+            # table is worse than an empty table, because it ends the search.
+            print_prose("no PCI NIC is visible to Linux on this box. Either "
+                        "the dataplane already owns every one of them, which "
+                        "the lines above say, or this box genuinely has no "
+                        "card Linux can see. A virtio card in a virtual "
+                        "machine does resolve to a PCI address and is "
+                        "eligible, so a missing one here is missing from "
+                        "Linux too.", indent="  ")
             return
 
         mgmt = self.default_route_nic()
@@ -10063,10 +10106,33 @@ class Shell:
             if n["dpdk"]:
                 said = f"{n['driver']} is a driver DPDK can use"
             elif n["driver"]:
-                said = "kernel driver: DPDK cannot take a NIC through it"
+                # AND WHAT HAPPENS TO IT, which the old wording left out
+                # (#328). "kernel driver: DPDK cannot take a NIC through it"
+                # is true and, on a box with ONE NIC - a VM, which is how most
+                # people first meet this product - it is the only thing said
+                # about the only card. The reasonable reading is that the
+                # hardware is unsuitable, and the operator stops there.
+                #
+                # It is the state EVERY uninstalled box is in. The binding is
+                # what the box does when it claims the card, and saying so
+                # turns a dead end into a step.
+                said = f"{n['driver']}, a kernel driver"
             else:
                 said = "no driver is bound to it at all"
             print(f"    {n['mac']}  {said}")
+            if not n["dpdk"]:
+                # ASKED, NOT RE-DERIVED. appliance/bind-dataplane-nic decides
+                # this from the IOMMU groups at boot, and a second copy of
+                # that rule here is how a screen comes to promise vfio-pci on
+                # a box that will fall back to uio_pci_generic. There are
+                # already two copies of the driver list; this does not add a
+                # third.
+                what = ("DPDK cannot take the card through it as it is"
+                        if n["driver"] else
+                        "DPDK needs a driver bound to the card")
+                print_prose(f"{what}; when this card is given to the "
+                            f"dataplane the box moves it to "
+                            f"{self.which_dpdk_driver()}", indent="      ")
             if mgmt and n["name"] == mgmt:
                 print("    *** carries the DEFAULT ROUTE ***")
 
