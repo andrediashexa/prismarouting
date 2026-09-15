@@ -47,6 +47,17 @@ bad() { echo "  FAIL: $*"; fail=$((fail+1)); }
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
+
+# SOURCED FOR ONE FUNCTION AND NO READER (#371). This suite runs the installer
+# seven times and reads the MANIFEST it wrote, not the screen; the screen goes
+# into a file and is looked at only when a run fails. Those files are most of
+# what appliance/install.sh has ever printed, and until #371 nothing could keep
+# them: SAY_CORPUS names a directory and say_capture puts each run in it, off
+# unless somebody asks. No say_init here, so nothing in this file is measured
+# by the coverage reader - test/test_install_says.sh arranges the boxes for
+# that, and a second reader over one program would be a second count to
+# believe.
+. "$(cd "$(dirname "$0")" && pwd)/say-coverage.sh"
 trap 'rm -rf "$WORK"' EXIT
 
 TREE=$WORK/tree
@@ -129,6 +140,12 @@ install_run() {  # <version stamp>
   env DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" \
       PLUGIN_DIR=/usr/lib/vpp_plugins VAT2_DIR=/usr/lib/vat2_plugins \
       sh "$TREE/appliance/install.sh" > "$WORK/install.out" 2>&1
+  # The status FIRST, because say_capture below is a command and would
+  # otherwise be what `if install_run ...` reads. Every caller here tests it.
+  _rc=$?
+  _runs=$((${_runs:-0} + 1))
+  say_capture "$REPO/appliance/install.sh" "$WORK/install.out" "run$_runs"
+  return "$_rc"
 }
 
 fresh_tree
@@ -368,6 +385,7 @@ printf 'root:x:0:0::/root:/bin/sh\n' > "$DEST/etc/passwd"
 if env HEXA_VTY_LOGIN=1 DESTDIR="$DEST" HEXA_VERSION_STAMP="$STAMP" \
      PLUGIN_DIR=/usr/lib/vpp_plugins VAT2_DIR=/usr/lib/vat2_plugins \
      sh "$TREE/appliance/install.sh" > "$WORK/iso.out" 2>&1; then
+  say_capture "$REPO/appliance/install.sh" "$WORK/iso.out" "iso"
   ok "the installer ran the way build-iso.sh runs it, into a chroot"
 else
   bad "the installer failed on the ISO's own path:"
