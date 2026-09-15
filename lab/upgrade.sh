@@ -138,9 +138,10 @@
 #      An operator who upgrades in the evening and turns up a new customer
 #      range before the maintenance reboot gets that, with nothing on the box
 #      to explain it. Printed and not asserted: an assertion either pins a
-#      defect that somebody will fix - lab/crossaddr.sh is out of the suite
-#      for exactly that - or turns this lab permanently red for a defect it is
-#      not the one holding.
+#      defect that somebody will fix - lab/crossaddr.sh is what that costs,
+#      having gone red the day #226 fixed what it pinned and needed rewriting
+#      against a running box before it could be a lab again - or turns this
+#      lab permanently red for a defect it is not the one holding.
 #
 #   2. IT RECREATES THE pg INTERFACES after that restart. A real box's cards
 #      come back by themselves; packet-generator interfaces are created by
@@ -597,11 +598,11 @@ echo "  test/test_install_says.sh drives those screens directly."
 #
 # WHETHER IT IS REFUSED AT ALL IS STILL PRINTED AND NOT ASSERTED, deliberately
 # and for the reason this comment has always given. An assertion that this
-# FAILS pins today's behaviour and would go red on the day somebody fixes it,
-# which is why lab/crossaddr.sh is excluded from the suite
-# (tools/run-all-labs.sh's NOT_LABS says so in as many words). An assertion
-# that it SUCCEEDS would make this lab permanently red for a defect it is not
-# the one holding.
+# FAILS pins today's behaviour and would go red on the day somebody fixes it -
+# which is exactly what lab/crossaddr.sh did when #226 landed, and it then had
+# to be left out of the suite, asserting the opposite of the box, until it
+# could be rewritten against a running one. An assertion that it SUCCEEDS would
+# make this lab permanently red for a defect it is not the one holding.
 #
 # WHAT IS ASSERTED NOW is the other half, which is the one #293 fixed: IF the
 # old dataplane refuses, the refusal says which dataplane answered, that the
