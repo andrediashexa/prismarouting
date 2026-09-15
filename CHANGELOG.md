@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A floor below what the off run measures was silent, which is how floors go
+  stale** ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+  `lab/ipfix-outbuf.sh` declared `OFF-RED-AT-LEAST: 8` and its off run went
+  red on nine, on 2026-09-14 and again on 2026-09-15. The ninth is the check
+  repaired on 2026-09-13: it had been true for every value, so it was green in
+  the off run too and was never among the eight, and the commit that repaired
+  it wrote "the floor is unchanged by this and was not re-measured" into the
+  header. Nothing ever asked the off run whether that was still true, so for
+  two days deleting that assertion again would have cost nothing. The floor is
+  now 9 and its header names all nine by their words. The suite says so from
+  now on: a pass whose red count is above its floor prints how far behind the
+  floor is and what raising it would buy - not a failure, because a lab that
+  grew is the good direction, but not silence either.
+
 * **The nine refusals the `appliance/` sweep named as renderable here, and
   left.** That sweep read 113 refusal sites in the scripts that put this
   product on somebody's disk, found 51 had ever been rendered by anything,

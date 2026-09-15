@@ -138,9 +138,13 @@ case "$1 ${2:-}" in
     echo "LAB NOT MEASURED: 1 check(s)"; exit 2 ;;
 
   # An off mode that does what its header says: red with the feature gone.
+  # It also goes red on MORE checks than its header declares, which is the
+  # good direction and the silent one: the lab grew and the floor did not.
   "vrf ")    echo "LAB PASSED"; exit 0 ;;
   "vrf off") echo "  [FAIL] the two tenants got different public addresses"
-             echo "LAB FAILED: 1 check(s)"; exit 1 ;;
+             echo "  [FAIL] and the second tenant reached the first's subscriber"
+             echo "  [FAIL] and the table the route was in was not its own"
+             echo "LAB FAILED: 3 check(s)"; exit 1 ;;
 
   # An off mode that still fails, and on FEWER checks than it used to. Its
   # verdict is unchanged, which is exactly what makes this invisible without
@@ -171,6 +175,10 @@ done
 # because that is where the number is true: the header of the lab whose off run
 # it describes.
 printf '#!/bin/sh\n# OFF-RED-AT-LEAST: 4\n' > "$d/lab/mss.sh"
+# And one whose floor is BELOW what its off run measures: three red against a
+# floor of one. Nothing is wrong with it, which is the point - the suite has
+# to say so anyway, or the two extra assertions can be lost for free.
+printf '#!/bin/sh\n# OFF-RED-AT-LEAST: 1\n' > "$d/lab/vrf.sh"
 
 out=$(sh "$d/tools/run-all-labs.sh" 2>&1); rc=$?
 
@@ -310,6 +318,30 @@ case "$out" in
   *"lost assertions without losing its verdict"*)
     ok "and the report says what that means" ;;
   *) bad "nothing explained what a thinned off run is" ;;
+esac
+
+echo
+echo "=== and one whose floor is behind the lab is said out loud ==="
+# The other direction, and the one that is silent because nothing is wrong:
+# the off run goes red on more checks than the header declares. That is a lab
+# that grew, and until somebody raises the floor those extra assertions can be
+# deleted again for free. lab/ipfix-outbuf.sh spent two days like this.
+case "$out" in
+  *"vrf+off            pass (3 check(s) red, floor 1)"*)
+    ok "a floor below the measurement still passes, and says both numbers" ;;
+  *) bad "the floor was not reported beside a count above it; got:
+$(printf '%s' "$out" | grep 'vrf+off')" ;;
+esac
+case "$out" in
+  *"2 more than its header floor, so the floor is behind the"*)
+    ok "and the report says by how much, and what raising it buys" ;;
+  *) bad "a stale floor was reported as an ordinary pass; got:
+$(printf '%s' "$out" | grep -A3 'vrf+off')" ;;
+esac
+case "$out" in
+  *"Raising it to 3 is what keeps those from being lost"*)
+    ok "and names the number to raise it to, which is the measurement" ;;
+  *) bad "the note did not say what to raise the floor to" ;;
 esac
 # And the line for a lab that meets its floor says what was compared, rather
 # than claiming a header was read when it was not.
