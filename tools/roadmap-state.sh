@@ -11,11 +11,26 @@
 # that way: whether an issue is open is written down nowhere in the tree. Run
 # it when a release is cut, which is when this file is read.
 #
-# It is NOT wired into tools/release-gate.sh, and that is a decision rather
-# than an omission. Whether a stale roadmap should refuse a release is the
-# maintainer's call: the gate is the only thing in this project that has ever
-# caught a release mistake, and a check that needs GitHub to be reachable
-# changes what a failed gate means.
+# tools/release-gate.sh CALLS IT, at release-gate.sh:401, and this comment said
+# for days that it did not: "it is NOT wired into tools/release-gate.sh, and
+# that is a decision rather than an omission". It stopped being true when the
+# gate grew the call and nobody came back here. Somebody opening this file to
+# ask whether a stale roadmap can stop a release was told it cannot, when it
+# can - which is the shape docs/roadmap.md has fifteen entries about, standing
+# in the tool that exists to catch that shape.
+#
+# The concern the old sentence raised is real and is answered where the call
+# is: the gate skips this check loudly when gh cannot answer, so a release is
+# never refused because GitHub was unreachable. test/test_wiki_roundtrip.sh
+# holds the pair together - it runs this tool against the gate's own clone and
+# refuses a gate whose answer differs from it.
+#
+# WHAT IT CANNOT SEE. It compares ISSUE NUMBERS, so a stale paragraph naming no
+# issue is invisible to it in both directions. Measured on 2026-09-15: the file
+# said "still not swept" of four documents that had been swept the day before
+# and shipped as 0.74.2, and because #321 to #326 were not named anywhere in
+# it, this tool reported that the roadmap and the tracker agree. A reader was
+# sent to redo a day of finished work and nothing here could tell.
 #
 # What it was written for, measured on 2026-09-14 (#292): the file named 116
 # issues, 99 of them closed, and never mentioned seven that were open -
