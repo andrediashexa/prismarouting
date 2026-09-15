@@ -239,6 +239,62 @@ runbind "$R"
   || ok "and it did not tear the device off its working driver first"
 
 echo
+echo "=== a write into sysfs that is refused is reported, not stepped over ==="
+# Both of these run as root on a real box, so on a real box they fail only
+# when something is wrong: a device that has gone away between the readlink
+# and the write, a driver that is unbinding it at the same moment, a sysfs
+# mounted read-only in a container the tuner is being run inside. What they
+# must NOT do is carry on, because the two writes are a pair and the state
+# between them is a device the kernel still holds with an override on it
+# telling the bus to give it away at the next probe.
+#
+# Arranged by taking the write permission off the directory, which is the one
+# way a suite that is not root can make a write into sysfs fail. It is the
+# same errno the kernel returns.
+#
+# Skipped for root, which writes into a directory whatever its mode says - the
+# case would then measure the runner and pass on a binder that ignores both.
+if [ "$(id -u)" = 0 ]; then
+  echo "  SKIP: running as root, which writes into a 0500 directory anyway"
+else
+  R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+  chmod 500 "$R/sys/bus/pci/devices/0000:03:00.0"
+  runbind "$R"
+  chmod 700 "$R/sys/bus/pci/devices/0000:03:00.0"
+  [ "$RC" != 0 ] && said "cannot write driver_override" \
+    && ok "a driver_override that cannot be written stops the bind, by name" \
+    || bad "the binder could not write driver_override and did not say so: \
+rc=$RC $OUT"
+  # And it must not have gone on to the unbind. The override is what tells the
+  # bus which driver to hand the device to; without it, unbinding the card
+  # from ixgbe leaves a NIC that belongs to neither stack - which is the state
+  # the last message in this script calls the worst one to be quiet about.
+  [ -e "$R/sys/bus/pci/drivers/ixgbe/unbind" ] \
+    && bad "it failed to claim the device and unbound it from ixgbe anyway, \
+which leaves the card belonging to neither the kernel nor the dataplane" \
+    || ok "and the card was left on the driver that was holding it"
+
+  R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+  chmod 500 "$R/sys/bus/pci/drivers/ixgbe"
+  runbind "$R"
+  chmod 700 "$R/sys/bus/pci/drivers/ixgbe"
+  [ "$RC" != 0 ] && said "cannot unbind 0000:03:00.0 from ixgbe" \
+    && ok "an unbind that is refused stops the bind too, naming both" \
+    || bad "the card stayed on ixgbe with an override on it and the binder \
+reported nothing: rc=$RC $OUT"
+  # This is the half that would otherwise pass unnoticed. The device ends up
+  # on its old driver either way, so the verification at the end of the script
+  # says "did NOT bind" and exits non-zero whether this refusal fired or not -
+  # the exit status cannot tell the two apart, and the message is the only
+  # thing that can.
+  said "did NOT bind" \
+    && bad "it fell through to the verification, so the console says the \
+device refused the driver when what happened is that the unbind was refused: \
+$OUT" \
+    || ok "and it says the unbind was refused rather than blaming the driver"
+fi
+
+echo
 echo "=== --which-driver promises what the bind actually writes ==="
 # Compared against THE OTHER PLACE THE ANSWER IS WRITTEN, not against a needle
 # this test carries. `show hardware` prints whatever this mode says, so if the

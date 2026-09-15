@@ -383,6 +383,179 @@ else
     *) bad "the build failed without saying which half is missing: $BUILD_OUT" ;;
   esac
 fi
+fresh_tree
+
+# AND THE OTHER HALF OF THE PAIR. Both plugins come out of one ninja run, so
+# "one and not the other" has two spellings and only one of them had ever been
+# driven. This is the one that reads as an empty build tree rather than as a
+# half-finished one, and it is the likelier of the two: a clean checkout, a
+# container that was rebuilt, a .build-vpp somebody removed to reclaim space.
+rm -f "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
+if build; then
+  bad "an artifact was packed with no dataplane plugin in it at all: every \
+box taking it would be stamped the new version over the plugin it already had"
+else
+  case "$BUILD_OUT" in
+    *"bpa_plugin.so not found"*)
+      ok "and a tree with no dataplane plugin is refused, naming it" ;;
+    *) bad "the build failed without naming the missing plugin: $BUILD_OUT" ;;
+  esac
+fi
+fresh_tree
+
+echo
+echo "=== the artifact is installed once before it is published ==="
+#
+# THE PROOF build-upgrade.sh CALLS ITS OWN, and nothing had ever made it fail.
+# An artifact that is missing one path is an artifact whose failure happens on
+# an operator's box, at the hour they chose to upgrade, with part of it already
+# overwritten - install.sh's preflight can refuse a missing plugin but nothing
+# can refuse a tree with no src/hexash/config.py until the line that copies it
+# runs. So every artifact is unpacked and installed into a throwaway root
+# before the tarball is written, and that step is only worth having if it can
+# say no.
+#
+# A file the installer copies BY NAME and no preflight looks at, removed from
+# the tree. It is not a plugin and not a version stamp: it is one of the
+# thirty-odd ordinary files, which is the whole point - the check is that the
+# tree is COMPLETE, and completeness cannot be asserted by a list.
+#
+# By name, and that word is load-bearing. src/hexash/*.py is installed through
+# a GLOB, deliberately (install.sh:251, which says why: naming those files one
+# by one shipped a box with no config.py in 0.2.0). A glob over a file that is
+# not there installs one file fewer and exits 0, so it is not the case this
+# proof can catch - measured, removing src/hexash/config.py from the tree
+# still packed an artifact, "31 file(s) installed", and would have published
+# it.
+rm -f "$TREE/appliance/wait-for-vpp"
+# Removed first, because build() writes to a fixed path and the successful
+# builds above have already left one there. Without this the assertion below
+# would be reading yesterday's tarball.
+rm -f "$WORK/artifact.tar.gz"
+if build; then
+  bad "an artifact was packed and published with appliance/wait-for-vpp \
+missing from it. The operator's box would take the upgrade, overwrite part of \
+itself, and stop on a path nothing had ever looked for"
+else
+  case "$BUILD_OUT" in
+    *"the artifact is incomplete"*)
+      ok "a tree that cannot be installed does not become a tarball" ;;
+    *) bad "the build failed, but not on its own proof: $BUILD_OUT" ;;
+  esac
+fi
+# WHAT THE INSTALL SAID, quoted into the build log. "Installing it failed" on
+# its own sends whoever is building to run the install by hand to find out
+# which path; the tail of the log names it, and the path is the fix.
+case "$BUILD_OUT" in
+  *wait-for-vpp*)
+    ok "and the build log names the path that could not be installed" ;;
+  *) bad "the refusal quoted none of the install log, so the missing file is \
+not named anywhere: $BUILD_OUT" ;;
+esac
+# And no tarball, which is the thing that would otherwise be published. A
+# refusal that leaves the artifact on disk is a refusal somebody uploads past.
+[ ! -f "$WORK/artifact.tar.gz" ] \
+  && ok "and no tarball was left behind for anybody to publish" \
+  || bad "the build refused and wrote $WORK/artifact.tar.gz anyway"
+fresh_tree
+build || bad "the tree could not be rebuilt after the cases above, so \
+anything below this line is measuring a broken fixture"
+
+echo
+echo "=== an artifact that cannot say what it is (#295) ==="
+#
+# RELEASE carries three lines and appliance/upgrade reads all three: the stamp
+# it writes into /usr/share/hexarouting/VERSION, and the two platform versions
+# it compares against the box. A file with one of them missing is a DAMAGED
+# artifact - a truncated download, an edit, a tar that was interrupted - and
+# every one of the three has a different box at the end of it.
+#
+# Left to itself a missing "stamp" line stamps the box with an empty version,
+# which is #302: a box that cannot name the build it is running. A missing
+# "vpp" or "frr" line compares the box's version against nothing and either
+# accepts every box or refuses every box, depending which way the comparison
+# falls. All three go through one refusal and none of them had ever run it.
+fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
+cp "$ART/RELEASE" "$WORK/RELEASE.whole"
+for _f in stamp vpp frr; do
+  grep -v "^$_f=" "$WORK/RELEASE.whole" > "$ART/RELEASE"
+  upgrade
+  if [ "$RC" = 0 ]; then
+    bad "an artifact with no '$_f=' line installed anyway, stamping the box \
+'$(cat "$BOX/usr/share/hexarouting/VERSION" 2>/dev/null)'"
+  else
+    case "$OUTPUT" in
+      *"no '$_f=' line"*)
+        ok "a RELEASE with no '$_f=' line is refused, and the line is named" ;;
+      *) bad "refused without saying which line is missing: $OUTPUT" ;;
+    esac
+  fi
+  # It is DAMAGED and not wrong, which is a different thing to tell somebody:
+  # there is nothing here for them to correct, and the answer is to fetch the
+  # artifact again.
+  case "$OUTPUT" in
+    *"fetch it again"*) ;;
+    *) bad "the refusal over a damaged artifact does not say to fetch it \
+again, so the reader is left looking for what they did wrong: $OUTPUT" ;;
+  esac
+done
+ok "and each of the three says the artifact is damaged rather than the box"
+cp "$WORK/RELEASE.whole" "$ART/RELEASE"
+
+echo
+echo "=== the box has to have a package database to be asked about (#295) ==="
+# The platform check is ASKED OF THE BOX, and the thing it asks is dpkg. A
+# root with no /var/lib/dpkg in it is not an appliance: it is a chroot, a
+# half-unpacked image, or a DESTDIR somebody pointed at an empty directory.
+# Answering "no vpp package installed" there would be true and useless - the
+# reason is that nothing was asked at all, and the two have different fixes.
+rm -rf "$BOX"; mkdir -p "$BOX/etc/frr"
+upgrade
+[ "$RC" != 0 ] \
+  && ok "a root with no package database is refused" \
+  || bad "an upgrade ran against a root nothing could be asked about"
+case "$OUTPUT" in
+  *"no package database at"*)
+    ok "and says that is what is missing, not that the versions are wrong" ;;
+  *) bad "a root with no dpkg database was answered with: $OUTPUT" ;;
+esac
+
+echo
+echo "=== and it will not write into / as an ordinary user ==="
+# install.sh writes into /usr, /lib and /etc and checks nothing: a non-root run
+# gets some way in and then stops on the first permission error, leaving a box
+# that is half one version and half another. The check is here because this is
+# the file that knows the run is about a box at all - with DESTDIR set,
+# something is driving this into a directory and root is neither needed nor
+# wanted, which is how every other case in this suite runs.
+#
+# THE INTERLOCK, because this case deliberately unsets DESTDIR and so names
+# the machine running the suite as the target. A dpkg-query of its own, first
+# on PATH, answers with a version no release was ever built against - so a run
+# that got past the root check would be refused by the platform check a few
+# lines later and could not reach install.sh on this machine whatever it is
+# installed on. The assertion is on the message, which is what tells the two
+# refusals apart.
+if [ "$(id -u)" = 0 ]; then
+  echo "  SKIP: this suite is running as root"
+else
+  guard=$WORK/guard; mkdir -p "$guard"
+  cat > "$guard/dpkg-query" <<'DQ'
+#!/bin/sh
+echo "0.0.0-not-a-release"
+DQ
+  chmod +x "$guard/dpkg-query"
+  OUTPUT=$(PATH="$guard:$PATH" sh "$ART/upgrade" 2>&1); RC=$?
+  [ "$RC" != 0 ] \
+    && ok "an upgrade of this machine by an ordinary user is refused" \
+    || bad "appliance/upgrade ran install.sh over / as an ordinary user"
+  case "$OUTPUT" in
+    *"must run as root"*)
+      ok "and says so before it has asked the box anything" ;;
+    *) bad "refused for some other reason, so the root check is not what \
+stopped it: $OUTPUT" ;;
+  esac
+fi
 
 echo
 if [ "$fail" -gt 0 ]; then

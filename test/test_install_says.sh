@@ -324,6 +324,69 @@ than the 79-column console an operator reads it on: $WIDE"
 fi
 
 echo
+echo "=== and a tree with NO dataplane plugin, which is the other spelling ==="
+#
+# THE FIRST REFUSAL IN install.sh AND THE ONE NOTHING HAD RUN. It sits eight
+# lines above the one this section has just measured, refuses for the same
+# reason, and makes the same promise about what it left on the root - and the
+# only thing that had ever driven it was somebody running a build out of
+# order. A refusal nobody has watched fire is a refusal that may not fire.
+#
+# It reads as an empty build tree rather than a half-finished one, and it is
+# the likelier of the two: a clean checkout, a container that was rebuilt, a
+# .build-vpp somebody removed to reclaim space. The box it protects is the
+# same box - an upgrade that is refused having changed nothing is the only
+# outcome an operator woken at two in the morning can act on.
+# THE VAT2 PLUGIN IS PUT BACK FIRST, so that the dataplane plugin is the only
+# thing missing from this tree. Left out, both refusals would be available and
+# the first one to run would be the only one measured - a check that passes
+# whichever of the two fired.
+echo "a NEWER stand-in vat2 plugin" > "$BUILT_VAT2"
+rm -f "$BUILT_DP"
+WAS_DP=$(sum "$ROOT_DP")
+WAS_VAT2=$(sum "$ROOT_VAT2")
+WAS_STAMP=$(cat "$STAMP_FILE" 2>/dev/null)
+if install_try "$NEXT_V" "$WORK/out6" "$WORK/err6"; then
+  bad "the installer exited 0 on a build tree with no dataplane plugin at \
+all, so the box was stamped a version whose dataplane it never received"
+else
+  ok "it refuses: a tree with no bpa_plugin.so is not an upgrade"
+fi
+ERR6=$(cat "$WORK/err6")
+OUT6=$(cat "$WORK/out6")
+said "$ERR6" "bpa_plugin.so not found" \
+  && ok "and names the file that is missing" \
+  || bad "the refusal does not name bpa_plugin.so, so the reader is told the \
+install failed and not which component it could not install: $ERR6"
+said "$ERR6" "run tools/build.sh plugin first" \
+  && ok "and the command that produces it" \
+  || bad "the refusal does not say how to produce the missing plugin: $ERR6"
+# THE SAME PROMISE THE OTHER REFUSAL MAKES, and it is the reason both of them
+# are at the top of the file rather than beside the lines that install the
+# plugins. A refusal is only worth taking while it still costs nothing, and it
+# costs nothing only while nothing has been written.
+said "$ERR6" "this root is still whatever it was before" \
+  && ok "and says the root was not touched" \
+  || bad "the refusal does not tell the reader that nothing was written. A \
+failed upgrade whose blast radius is not stated is one an operator has to go \
+and measure at two in the morning: $ERR6"
+# And the state, because every message above is satisfied by an installer that
+# says all of it and installs anyway.
+[ "$(cat "$STAMP_FILE" 2>/dev/null)" = "$WAS_STAMP" ] \
+  && ok "the version stamp still says $WAS_STAMP" \
+  || bad "the refused install moved the version stamp from $WAS_STAMP to \
+$(cat "$STAMP_FILE" 2>/dev/null)"
+[ "$(sum "$ROOT_DP")" = "$WAS_DP" ] && [ "$(sum "$ROOT_VAT2")" = "$WAS_VAT2" ] \
+  && ok "and both plugins on the root are the ones that were there" \
+  || bad "the refused install wrote a plugin onto the root"
+[ -z "$OUT6" ] \
+  && ok "and it printed nothing on stdout: it refused before it announced \
+installing anything" \
+  || bad "the refused install narrated work on stdout before it refused: $OUT6"
+# Put back, because everything below this line is about a tree that has both.
+echo "a NEWER stand-in bpa_plugin.so" > "$BUILT_DP"
+
+echo
 echo "=== and the same tree, once the build is finished ==="
 # The other half of the refusal, and the one that says it is about the missing
 # file rather than about anything else on this root. It also proves the

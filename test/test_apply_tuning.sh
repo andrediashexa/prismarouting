@@ -379,6 +379,57 @@ said "tuning unchanged" \
   || bad "an unchanged tuning said nothing: $OUT"
 
 echo
+echo "=== a box with no update-grub is told, rather than left disagreeing ==="
+#
+# THE LAST REFUSAL IN THIS SCRIPT AND THE ONLY ONE NOTHING RAN. Every case
+# above puts a stub update-grub on PATH, so the branch that runs when there is
+# none had never been taken - and it is the branch that decides what an
+# operator is left holding.
+#
+# What it is about: this script has already WRITTEN the kernel command line
+# into /etc/default/grub.d/hexarouting.cfg, and that file does nothing at all
+# until a bootloader is regenerated from it. A box in that state boots with
+# the isolcpus and hugepages of the PREVIOUS boot while startup.conf beside it
+# names the new ones - the mismatch the refusals at the top of this file exist
+# to avoid, arriving by a different road. So this one fails the unit, and the
+# message is the whole of its value: it names the file to apply by hand.
+#
+# A PATH WITH NOTHING BUT THE STUBS ON IT, because update-grub is a real
+# command on a Debian box and $STUB:$PATH would find the machine's own. The
+# four tools the script itself reaches for are linked in beside them; anything
+# else being missing would be this fixture failing rather than the branch.
+nogrub=$WORK/nogrub
+mkdir -p "$nogrub"
+for f in "$STUB"/*; do
+  case "${f##*/}" in update-grub) continue ;; esac
+  ln -sf "$f" "$nogrub/${f##*/}"
+done
+# sh and mkdir are here for the harness rather than for the script: `env`
+# resolves the interpreter through this PATH, and the stub tuner makes the
+# directory it writes the GRUB file into.
+for t in sh mkdir cat tr grep dirname; do
+  _p=$(command -v "$t") && ln -sf "$_p" "$nogrub/$t"
+done
+mkbox
+OUT=$(env PATH="$nogrub" REC="$REC" HEXA_ROOT="$R" STUB_GRUB="isolcpus=1-3" \
+      sh "$BIN" 2>&1); RC=$?
+[ "$RC" != 0 ] \
+  && ok "the unit fails on a box that cannot regenerate its bootloader" \
+  || bad "the kernel command line changed, nothing can apply it, and the unit \
+reported success (rc=$RC): the box would boot on the previous command line \
+with a startup.conf that names the new one"
+said "update-grub missing" \
+  && ok "and says which command it could not find" \
+  || bad "it failed without naming what is missing: $OUT"
+# The file, by path. This is the one thing an operator can act on: the tuning
+# was computed and written, and all that is left is to put it into whatever
+# bootloader this box has.
+said "hexarouting.cfg" \
+  && ok "and names the file whose contents still have to be applied" \
+  || bad "it did not say where the command line it computed can be found, so \
+the operator is told a command is missing and not what to do instead: $OUT"
+
+echo
 echo "=== a live system does not run update-grub at all ==="
 # GRUB is not installed to disk there: it would change nothing and can spend
 # minutes scanning devices, inside a unit with a 90 second timeout.
