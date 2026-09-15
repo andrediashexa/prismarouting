@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **One configuration came back in two spellings**
+  ([#356](https://github.com/andrediashexa/hexarouting/issues/356)). CGNAT has
+  lived under `nat` since
+  [#193](https://github.com/andrediashexa/hexarouting/issues/193), and
+  `Config.text()` put `nat ` in front of the pools and in front of the
+  interface attachments and in front of none of the four global settings. So
+  an operator reading `show running-config`, `show configuration` or the file
+  `save` writes - all three are that one function - found `nat cgnat pool
+  residencial` above `cgnat timeout udp 300`. All of them carry the prefix
+  now.
+
+  Safe in both directions, and measured: the parser has accepted `nat cgnat
+  ...` and the bare form for every global since the hierarchy moved, and
+  stores the bare form either way. A file written here loads here, and a file
+  written by an older version still loads, which is what `lab/upgrade.sh` puts
+  through it.
+
+  One thing found while driving the red: `allg[0]` on an empty list is an
+  `IndexError`, and the mutation that removed the prefix killed the suite at
+  that line before reaching the check about the spelling. A crash is a third
+  state that reads as neither red nor green, so the list is checked for
+  content first and the index is a named failure now.
+
 * **Why the range table is a table, measured rather than left as a note.** The
   sweep that fixed the five range defects ended by saying that walking the
   command tree instead of writing the nine rows out would be the obvious next
