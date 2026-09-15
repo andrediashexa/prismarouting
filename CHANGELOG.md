@@ -3019,6 +3019,46 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The wiki quotes screens the box prints, and now something compares them.**
+  `wiki/` is 32 published pages on the open internet and 61 of its fenced
+  blocks quote a verdict the box says: `error:`, `warning:`, `[ ok ]`,
+  `[warn]`, `[FAIL]`, `[info]`. Nothing read one of them. The sweep of
+  2026-09-15 found ten stale by hand, one page at a time, and eight were
+  stale the same way: a refusal that
+  [#355](https://github.com/andrediashexa/hexarouting/issues/355) had split
+  into rows of its own was still quoted as one long sentence, beside a
+  paragraph telling the operator that the terminal would fold it and to look
+  for the beginning of the sentence. True when it was written; by then it sent
+  a reader looking for a fold that no longer happens.
+
+  `test/test_wiki_screens.py` is the fourth reader of the public wiki, beside
+  the three in `test/test_wiki_rules.py`. It builds a corpus out of the
+  product's own sources - the VTY's f-strings, the appliance scripts'
+  `ok`/`warn`/`bad`/`say_list`, the plugin's C format strings - drives twenty
+  scenarios through `hexash.Shell` and its finding checks, and requires every
+  quoted verdict to be a screen one of those two accounts for.
+
+  **A matcher with wildcards is the classic check that cannot fail**, and most
+  of these screens interpolate a value, so the defence against that is the
+  design and it is argued in the file's docstring: driving beats matching and
+  is counted separately on the report; a template must account for a whole row
+  and more than half of it in literal text; a template that is nearly all hole
+  never enters the corpus and the number refused is printed; a wildcard never
+  crosses a row, because a paragraph is reconstructed only to hand it back to
+  `console_prose` - or to `fold -s`, for the self-test - and the page's rows
+  have to come back out of it character for character. That last one is what
+  catches the eight. The loosest match the run leaned on is printed with its
+  hole count, and so is the list of screens nothing could attribute: 22 of 61
+  today, named on the screen with page and line, because the skip list is the
+  honest edge of the rule and belongs where the next person reads it.
+
+  Measured against the pages as they were before the sweep, it names five of
+  the six stale screens that carried a verdict at all - the sixth had its
+  sentence rewritten rather than re-folded, and the four remaining of the ten
+  are tables and completion hints, which carry no verdict and are outside what
+  this reads. It also refuses a screen with a word edited inside it, which is
+  what a quoted refusal looks like after somebody repairs it by hand.
+
 * **`tools/wiki-publish.sh`: the whole backlog in one command**
   ([#277](https://github.com/andrediashexa/hexarouting/issues/277)).
   `tools/wiki-push.sh` takes one file, and that is the right granularity: each
