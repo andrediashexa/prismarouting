@@ -77,6 +77,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The roadmap disagreed with the tracker, and the tool that measures that had
+  no caller.** `docs/roadmap.md` is what somebody reads to decide what to do
+  next, and it presented a closed issue as work that remains while never
+  mentioning two open ones. `tools/roadmap-state.sh` has been able to say so
+  since it was written and nothing ran it: it needs the network to know an
+  issue's state, so it cannot live in `make test`, and a reader nobody calls is
+  a rule that has quietly stopped applying - which is exactly what
+  `test/test_selftest.sh` refuses of the verdict holder's readers. The release
+  gate asks it now, beside the wiki check, at the moment somebody is deciding
+  the tree is worth a version number. It degrades loudly when `gh` cannot
+  answer, because a release refused because GitHub was unreachable is a gate
+  people learn to argue with.
+
+* **A document check sat behind one that had been red since September.** The
+  wiki comparison refused on the spot, so the roadmap comparison placed after it
+  would never have executed once - the wiki has been behind since 2026-09-09.
+  Both verdicts are taken before either refusal now, so a maintainer learns
+  everything that is wrong in one run rather than fixing the wiki, running
+  again, and discovering the roadmap. The assertion requires the gate to have
+  **asked**: a gate that stopped calling the holder would still print "the
+  roadmap and the tracker agree", and that reads as a pass.
+
+### Fixed
+
 * **The handover lab asserted a design this product does not have**
   ([#332](https://github.com/andrediashexa/hexarouting/issues/332)). PHASE 5
   required that Linux no longer had the card's name after the handover, and

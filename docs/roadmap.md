@@ -1293,7 +1293,7 @@ actually start.
 | [#202](https://github.com/andrediashexa/hexarouting/issues/202) the rename to PrismaRouting | the maintainer's, and one question is open: `hexash` is the recorded login shell of existing accounts, so whether it renames with the product changes the migration |
 | [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
 | [#226](https://github.com/andrediashexa/hexarouting/issues/226) whether a dynamic pool's pairing rate is high enough, and what `lab/crossaddr.sh` becomes | the mechanism is in: the allocator prefers a free block on the subscriber's own public address, measured at 100%, 99.6% and 99.2% over three arrival patterns against 0.0%, 0.0% and 0.2% before. What is left is a judgement - a preference cannot be a guarantee without refusing extensions, which costs a customer traffic rather than an address - and one piece of work needing a container: `lab/crossaddr.sh` asserted the old behaviour and now measures the opposite, so it has to be re-run and rewritten on a box with docker |
-| [#248](https://github.com/andrediashexa/hexarouting/issues/248) every box installed from a released ISO shares one SSH host key | the maintainer's, and it is a disclosure rather than a repair. An appliance installed from any release up to 0.66.0 carries the host key its build container generated, and the private half of it is inside the published artefact, so an operator's SSH session can be impersonated by anybody holding the ISO and the client will not object. #245 generates a set per box at install time and does nothing for a box already in the field. What those operators are told, and whether the public wiki or the release note carries it, is the decision |
+| [#337](https://github.com/andrediashexa/hexarouting/issues/337) the disclosure for boxes already in the field | the repair is done ([#248](https://github.com/andrediashexa/hexarouting/issues/248)): a box tells whoever logs in that its host keys were not made on it, names them, says the private half is in the published download and that the session being read can be impersonated, and gives the three commands that fix it. What is left is not code. Nothing here names which releases shipped those keys, and a box that is never taken to a new version never runs the code that would tell it, so where the disclosure is said and whether it names the releases is the maintainer's |
 | [#277](https://github.com/andrediashexa/hexarouting/issues/277) publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. `sh tools/wiki-status.sh` measures the gap: **27 pages corrected here and still showing operators the old text, plus one page the wiki does not have at all**. One is wrong rather than merely stale: the published page says a refused `commit` applies nothing, which stopped being true when the read-back check became a refusal and is read by somebody deciding what state their box is in. The mirror also carries pages for #67, #182, #210, #213, #217, the block stride (#55), what `commit` refuses, and the four IGP `show` commands. `test/test_wiki_roundtrip.sh` checks the mirror keeps the format the two scripts agree on, after five pages were found opening with their own title up to four times (#225). The tooling no longer stands in the way: `tools/wiki-push.sh <file>` reads the document id from `wiki/.ids`, so nobody has to find 28 ids by hand, and `tools/wiki-pull.sh` refuses to rewrite the mirror while those pages are unpublished - it deletes `wiki/`, so pulling first would have lost all 28. What is left is the token |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
 | [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
@@ -1648,6 +1648,51 @@ box has one NIC, it never contacts the box over the network, and it never asks
 the box to accept a dataplane interface. `lab/install-iso.sh` now power-cycles
 the machine and reaches it from outside, and `lab/one-nic.sh` carries the
 handover against a real dataplane.
+
+**And nothing had ever performed the bind.** Handing a card over means
+unbinding it from its kernel driver and binding it to `vfio-pci` or
+`uio_pci_generic`. `lab/one-nic.sh` models that step and says so in its own
+header, because a container has no PCI device to give DPDK; `lab/install-iso.sh`
+booted a real guest with a real virtio card and never asked the box to take it.
+So what was proven was the decision and the boot-time replay, and the driver
+change itself was unmeasured - on the path most smaller deployments will run.
+Its PHASE 4 and 5 ask the box, through the VTY, with the one statement an
+operator has on a single-card machine, and then require four things to be true
+together: the card is on a driver DPDK can use and not the one it started on,
+the name it was reached on is now the pair rather than the card, the management
+address is back on that name, and the dataplane holds an interface that is not
+`local0`. The network reading is taken before the phase logs in at all, because
+a box that takes its card and stops answering has eaten its own management port
+([#329](https://github.com/andrediashexa/hexarouting/issues/329)).
+
+It went red on its first run and found two defects that no unit test could have.
+
+[#332](https://github.com/andrediashexa/hexarouting/issues/332) - *fixed*. The
+boot after the handover made no pair at all, so the box came back holding its
+card with no address on anything and nobody could reach it. `commit` writes the
+card and its management path into the tuner's file, and that file is what
+performs the handover; the pair is made by `hexash --load` out of
+`/etc/hexarouting/hexarouting.conf`, which **`commit` does not write - only
+`save` does**. So the boot replayed a file that had never heard of the card.
+The record has a second home now, and a boot where the card is on neither side
+refuses, naming the card, the MAC and the address, instead of returning success
+in silence.
+
+[#336](https://github.com/andrediashexa/hexarouting/issues/336) - *fixed*. And
+the reason that state existed: `commit` bound the card **immediately**, while
+printing "NOT IN EFFECT YET: the dataplane claims its card when it starts, and
+this commit does not restart it". Naming the card restarts `hexarouting-tune`,
+that unit runs `apply-tuning`, and `apply-tuning` performs the bind - which is
+right at boot, where VPP is ordered after it, and wrong from a commit, where
+nothing starts VPP afterwards. Measured on a booted guest: the driver read
+`uio_pci_generic` and the netdev was gone three lines under that sentence. The
+bind now runs only when the dataplane is positively known not to be up, and
+"nobody here can be asked" is its own third answer, because that is a chroot or
+a container rather than a box starting.
+
+With both in, a guest hands its only card over and comes back reachable, with
+the dataplane holding the port and the pair, and the address back on the name
+it was always reached on.
 
 The wiki was the third half. The requirements page listed RAM and an
 instruction set and said nothing about network cards - the one resource the
