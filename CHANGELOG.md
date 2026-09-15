@@ -109,6 +109,46 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A check that asserted about a word in prose went red on work that was
+  right** ([#333](https://github.com/andrediashexa/hexarouting/issues/333)).
+  `test/test_kernel_tuning.py` asserts that none of the kernel parameters
+  `docs/appliance.md` lists as deliberately NOT applied is set by the
+  appliance, and it looked for the bare parameter name anywhere in any of the
+  32 files under `appliance/`. Three of the seven candidates are ordinary
+  English: `audit`, `tsc` and `clocksource`. Writing the word "audit" in an
+  English sentence in a comment during the
+  [#248](https://github.com/andrediashexa/hexarouting/issues/248) work turned
+  the check red on a comment that set nothing, and the comment was reworded to
+  get past it. Measured on the current tree by putting one such comment back:
+  three FAILs, all three false, none of them touching a kernel command line.
+  A check that can go red on correct work is one that whoever is holding the
+  branch reroutes around, by rewording, by an exception, and eventually by
+  deleting it.
+
+  It now asserts about a parameter where a parameter lives. The generated
+  command line is parsed with the same `params()` the applied table is
+  compared against, so a token is a parameter there or it is not. In a shipped
+  file a valued candidate must appear as `name=`, the `=` being what turns a
+  word into a parameter, or as a `sysctl.conf` assignment at the head of a
+  line; a bare flag such as `nosoftlockup` carries no value anywhere, so the
+  whole token is the parameter. `#` comments are cut first, quote-aware,
+  because a comment is prose about a parameter and never a parameter: a `#`
+  line boots nothing in a shell script, a systemd unit, `sysctl.conf` or the
+  `grub.cfg` the medium is built with. There is no allowlist of excused words,
+  which is the thing the next person would have grown.
+
+  **It catches more than it did, not less.** Each half was shown red on a real
+  setting: `audit=0` added to the string `hexarouting-tune` builds
+  `GRUB_CMDLINE_LINUX_DEFAULT` from is caught twice, once by the parsed line
+  and once at `appliance/hexarouting-tune:554`; `nosoftlockup` added to the
+  boot line `build-iso.sh` writes into the medium is caught at
+  `appliance/build-iso.sh:314`, where the parsed line cannot see it because no
+  synthetic topology renders it. And `kernel.nmi_watchdog = 0` in
+  `appliance/etc/sysctl.conf` is caught at line 36 - the old sweep was blind
+  to it, because its lookbehind refused a `.` in front of the name, so the one
+  file the check was first written to read was the one shape it missed. The
+  same comment that produced three false FAILs before produces none now.
+
 * **A box installed from a medium that carried SSH host keys said so only to
   its console, at boot**
   ([#248](https://github.com/andrediashexa/hexarouting/issues/248)). Every
