@@ -9201,6 +9201,29 @@ class Shell:
                 p.outside.append(w[1])
             elif w[0] == "block-size":
                 self.pool_range("block-size", w[1])
+                # The range is one of TWO things `?` promises about this
+                # number - "ports per block, power of two" - and the shape was
+                # kept by nothing, so `block-size 100` reached the dataplane
+                # and came back as "block size 100 must be a power of two" at
+                # commit time, on a candidate the operator had already built
+                # (#360).
+                #
+                # HERE and not in Config._pool_line(), which is where the next
+                # person adding a constraint to this statement will reach,
+                # because that is where the statement is modelled. That
+                # function is also the reader for the configuration read back
+                # out of the RUNNING dataplane, and a block size the box
+                # already has is a fact rather than a request: a bound put
+                # there made a box carrying `block-size 4` refuse every commit
+                # (#357). A bound belongs where the request is made.
+                #
+                # Said rather than raised, because the chain's ValueError is
+                # answered with "invalid argument: " in front of it and this
+                # refusal is already 78 columns wide at its widest value.
+                why = Pool.check_pow2("block-size", w[1])
+                if why:
+                    self.err(why)
+                    return True
                 p.block_size = str(int(w[1]))
             elif w[0] == "ports":
                 p.ports = f"{int(w[1])} {int(w[2])}"
