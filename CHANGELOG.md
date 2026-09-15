@@ -77,6 +77,43 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Two documents describe the one-card box as the box that does not exist**
+  ([#343](https://github.com/andrediashexa/hexarouting/issues/343),
+  [#344](https://github.com/andrediashexa/hexarouting/issues/344), both from
+  [#303](https://github.com/andrediashexa/hexarouting/issues/303)). Same shape
+  as the five before them: a sentence that is true of one box and false of
+  another, written by a path that never asked which box it was on.
+
+  **`docs/context.md` invariant 1.5** said the management interface **MUST
+  NOT** be given to VPP and that unreachable is unfixable remotely. Since #303
+  the box with one card is the one case where it may go: the VTY accepts it,
+  writes the management path down, carries the address onto the `linux_cp`
+  pair with the MAC, and applies the commit as `commit confirmed 30` so that a
+  handover nobody confirms undoes itself and restarts the box. The page 1.5
+  cites as authoritative, `docs/appliance.md`, says exactly that. The invariant
+  now states the rule, where it still binds - every one of the three places
+  refuses the default-route card wherever there is another to name - and the
+  one exception.
+
+  **`docs/appliance.md`'s post-install procedure** is `configure`,
+  `dataplane interface <name>`, `commit`, edit `tune.env`, reboot. Measured:
+  on a two-card box that is a plain commit and the procedure is complete. On a
+  one-card box the same three statements arm `commit confirmed 30`, a reboot
+  confirms nothing - the deadline is absolute and lives on disk - and the box
+  puts `HEXA_DATAPLANE_IF` back and restarts itself. An operator who followed
+  the page ends where they started, half an hour later, with nothing they did
+  to explain it.
+
+  **One holder, and the box goes first.** `test/test_dataplane_if.py` drives
+  both boxes through the three statements the page prints, reads the window
+  off the box that armed one, and requires the pages to name that number and
+  the step after the reboot. A check that read the pages for the word
+  "confirm" without watching a box arm a window would stay green on the day
+  the VTY stops arming it, which is the day the pages become right by
+  accident. Shown red at `takes_management = False`, at
+  `takes_management = True`, at `confirm_min = 20` with the pages still saying
+  30, and with either sentence deleted from either page.
+
 * **The soak's collector stopped before the box did, and the records it missed
   read as a leak**
   ([#342](https://github.com/andrediashexa/hexarouting/issues/342), follows

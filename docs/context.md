@@ -94,13 +94,27 @@ test anything.
 *Authoritative:* [CONTRIBUTING.md](../CONTRIBUTING.md),
 [TESTING.md](../TESTING.md).
 
-### 1.5 The management interface MUST NOT be given to VPP
+### 1.5 The management interface MUST NOT be given to VPP, unless it is the only card
 
 DPDK binds a NIC away from Linux. Hand over the port you administer the box
-through and it is unreachable, and unreachable is unfixable remotely. On the
-lab machines this is `ens18`.
+through and it is unreachable, and unreachable is unfixable remotely. So the
+VTY, the tuner and `bind-dataplane-nic` all refuse the card carrying the
+default route **wherever there is another card to name instead**, and the
+refusal names that other card. On the lab machines the management card is
+`ens18`.
 
-*Authoritative:* [appliance.md](appliance.md), `lab/hw-lab.sh`.
+**On a box with one card that refusal was a dead end**, and that is
+[#303](https://github.com/andrediashexa/hexarouting/issues/303): it sent the
+operator to name a card the box has not got, so the box could not forward and
+could not be told to. There the card **MAY** go. The box writes the management
+path down first - the address moves onto the `linux_cp` pair the dataplane
+keeps for that card, MAC and all - and the VTY applies that commit as
+`commit confirmed 30` whether or not it was asked for, so a handover nobody
+comes back to confirm undoes itself and restarts the box. Unreachable is
+fixable remotely there because the box, not the operator, is what fixes it.
+
+*Authoritative:* [appliance.md](appliance.md), [routing.md](routing.md),
+`lab/hw-lab.sh`, `lab/one-nic.sh`.
 
 ### 1.6 The VTY changes the dataplane through vat2 — one process per call
 
