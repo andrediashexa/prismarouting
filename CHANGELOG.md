@@ -120,6 +120,72 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A message-coverage reader that saw one of the three bodies the plugin
+  prints from.**
+  [#366](https://github.com/andrediashexa/hexarouting/issues/366) gave
+  `src/plugins/bpa/bpa_cli.c` a reader that hunts every message the plugin can
+  print inside a corpus of real lab output and names the ones no box ever
+  produced. It read the **format string** of a `vlib_cli_output` call and
+  nothing else. Two more bodies sat beside it, and together they are bigger:
+
+  ```
+  vlib_cli_output format strings   87 sites, 67 readable, 66 distinct
+  literals passed as an ARGUMENT   45 branches with a literal, 22 readable
+  format() format strings          88 sites, 67 readable
+  ```
+
+  **The argument body is where the branches are**, which is why it matters
+  more than its size. `cond ? " - PINNED by a forward, so no hold-down will
+  take it" : ""` tells an operator why a block they expected back has not come
+  back; `"   BELOW the floor " rfc " asks for"` is the warning that stops
+  somebody setting a timeout that breaks the protocol. Both reach the screen
+  as a value handed to a `%s`, and #366's rule is written on the format string
+  with values cut out - so each of them was a branch reported as covered
+  because nothing had ever gone to look at it.
+
+  **The floor decides which arguments are sentences, and no second rule was
+  written for it.** An argument branch is kept when its literals, cut the way
+  a format string is cut, carry the same `SAY_MIN` characters of their own. A
+  format fragment is only the limiting case: `"%s%s"` cuts to nothing, `" "`
+  to one character, `", "` to two, and none of the three can be hunted for in
+  a run. A separate "is this a format fragment" test would have been a second
+  spelling of the floor. Under-floor branches are still rows, counted and
+  named as unreadable - text that reaches the screen and cannot be recognised
+  is not the same as text that is not there. One message per BRANCH, because
+  `a ? "  (pinned by a forward)" : (i ? "  (extension)" : "")` puts three
+  answers on one line of source and no run carries two of them at once.
+
+  **Both halves moved together**, which is #366's own rule kept rather than
+  waived: a denominator that moves without the evidence moving is how a
+  measurement stops meaning anything. `format` joins the default set of
+  printers - `show bpa pool` and `show bpa config` are written entirely that
+  way and are the two screens an operator looks at first - and the corpus
+  behind the number went from #366's 13 labs to the **whole 88-box suite** in
+  the same change. The accounted fraction rose while the denominator more than
+  doubled:
+
+  ```
+                        #366, 13 labs        now, 88 labs
+  vlib_cli_output           36 of 66            47 of 66
+  argument literals          not read           18 of 21
+  format()                   not read           51 of 67
+                          -----------        ------------
+                            36 of 66           116 of 154
+  ```
+
+  The 38 still without a box are named on the screen with their line, as they
+  were before - there is no allowlist, and the list is the point. Most of it
+  is one shape: twelve are per-pool and global timeout overrides in
+  `show bpa config`, which no lab sets and then reads back.
+
+  Found by the widened reader and **not changed**: `bpa_cli.c:2899` can never
+  print `on`. The running-configuration emitter guards each ALG line with
+  `(p->alg & BPA_ALG_sym) != (BPA_ALG_DEFAULT & BPA_ALG_sym)`, and
+  `BPA_ALG_DEFAULT` in `bpa_pool.h` has all five bits set, so a departure from
+  the default is always an ALG switched **off**. The branch stays: it is what
+  keeps the emitter correct on the day an ALG ships defaulting off, and
+  deleting it would make the running configuration silently wrong then.
+
 * **A document check whose verdict depended on whether somebody had built.**
   `test/test_doc_commands.py` refuses a document that sends a reader to a path
   the tree does not have - a file renamed or removed with the document left
