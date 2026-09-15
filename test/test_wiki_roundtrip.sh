@@ -876,5 +876,102 @@ says '$RM_GATE', so the gate is not asking it"
   fi
 fi
 
+echo
+echo "=== publishing the whole backlog is one command, and it stops on a refusal ==="
+# tools/wiki-push.sh takes one file, and that is the right granularity: each
+# push checks that one document and refuses if somebody edited it since the
+# pull. What it is not is a thing anybody does twenty-seven times by hand.
+# #277 is the measurement of exactly that - the mirror stood 28 pages ahead
+# from 2026-09-09, one page telling an operator something that had stopped
+# being true, and the reason on the issue is "nobody did".
+#
+# Its own fixture, because the cases above leave $SREPO with a deleted page in
+# it and this is about the pages that can be pushed.
+PREPO="$WORK/publish"
+mkdir -p "$PREPO/tools" "$PREPO/wiki"
+cp "$REPO/tools/wiki-status.sh" "$REPO/tools/wiki-push.sh" \
+   "$REPO/tools/wiki-publish.sh" "$PREPO/tools/"
+cp "$REPO/wiki/README.md" "$PREPO/wiki/"
+# Both open with the stub document's own title, because wiki-push.sh refuses
+# a file whose heading is not the title of the document it is being sent to -
+# a heading in the body becomes a second title on the page (#165). The stub
+# answers documents.info with one document, so both pages carry its title.
+printf '# %s\n\ncorpo um\n' "$TITLE" > "$PREPO/wiki/uma.md"
+printf '# %s\n\ncorpo dois\n' "$TITLE" > "$PREPO/wiki/outra.md"
+printf '%s\n' "uma.md $DOCID" "outra.md $DOCID" > "$PREPO/wiki/.ids"
+printf '2026-09-01T00:00Z\n' > "$PREPO/wiki/.pulled"
+git -C "$PREPO" init -q
+git -C "$PREPO" -c user.email=t@t -c user.name=t add -A
+git -C "$PREPO" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "the mirror as pulled"
+printf '# %s\n\ncorpo um corrigido\n' "$TITLE" > "$PREPO/wiki/uma.md"
+printf '# %s\n\ncorpo dois corrigido\n' "$TITLE" > "$PREPO/wiki/outra.md"
+# AND ONE PAGE THAT EXISTS ONLY HERE. wiki-push.sh updates a document and
+# cannot create one, so this must not reach it: a run that fed it the new page
+# would stop on a refusal that is nobody editing anything. Without this file
+# in the fixture the list is the same whether --updatable filters by git's
+# status letter or not, and the case below could not fail.
+printf '# %s\n\nnunca publicada\n' "$TITLE" > "$PREPO/wiki/nova.md"
+git -C "$PREPO" -c user.email=t@t -c user.name=t add -A
+git -C "$PREPO" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "two corrections nobody published, and a page the wiki has not got"
+
+# The list is the holder's, not a second reading of the prose.
+HELD=$(sh "$PREPO/tools/wiki-status.sh" --updatable | sort | tr '\n' ' ')
+[ "$HELD" = "wiki/outra.md wiki/uma.md " ] \
+  && ok "wiki-status.sh --updatable names the two pages that can be pushed" \
+  || bad "--updatable named '$HELD', which is not the two edited pages: a page \
+the wiki has not got cannot be updated, and feeding it to wiki-push.sh stops \
+the run on a refusal that is nobody editing anything"
+
+rm -f "$STUB/sent.json"
+( cd "$PREPO" && unset WIKI_TOKEN; sh tools/wiki-publish.sh -n ) \
+  > "$WORK/dry.log" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -q "2 page(s) would be published" "$WORK/dry.log" \
+   && ! grep -q "nova.md" "$WORK/dry.log" \
+  && ok "-n says how many and needs no token" \
+  || { bad "the dry run exited $rc without saying what it would publish:"
+       sed 's/^/    /' "$WORK/dry.log"; }
+# WITH the token, which is the run that can actually do damage: the operator
+# who has it exported and types -n first to see what would go out. Without the
+# token a -n that forgot to stop would be caught by wiki-push.sh refusing, and
+# this case would be passing on somebody else's guard.
+rm -f "$STUB/sent.json"
+( cd "$PREPO" && sh tools/wiki-publish.sh -n ) > "$WORK/dry2.log" 2>&1
+[ ! -f "$STUB/sent.json" ] \
+  && ok "and with a token in the environment it still sends nothing" \
+  || bad "the dry run reached documents.update: a page went out on -n"
+
+( cd "$PREPO" && unset WIKI_TOKEN; sh tools/wiki-publish.sh ) \
+  > "$WORK/notok.log" 2>&1; rc=$?
+[ "$rc" = 2 ] && grep -q "WIKI_TOKEN is not set" "$WORK/notok.log" \
+  && ok "with no token it refuses, rather than publishing nothing and exiting 0" \
+  || { bad "a run with no token exited $rc:"; sed 's/^/    /' "$WORK/notok.log"; }
+
+( cd "$PREPO" && sh tools/wiki-publish.sh ) > "$WORK/pub.log" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -q "2 page(s) published" "$WORK/pub.log" \
+  && ok "$(grep -m1 'page(s) published' "$WORK/pub.log")" \
+  || { bad "publishing two pages exited $rc:"; sed 's/^/    /' "$WORK/pub.log"; }
+[ -f "$STUB/sent.json" ] \
+  && ok "and the wiki was actually asked to take one" \
+  || bad "nothing reached documents.update, so the run published nothing"
+
+# THE ONE THAT MATTERS. A refusal means somebody is editing the wiki right
+# now, and carrying on would publish the rest of the list over the top of
+# whatever they are doing.
+: > "$STUB/update-refuses"
+( cd "$PREPO" && sh tools/wiki-publish.sh ) > "$WORK/stop.log" 2>&1; rc=$?
+rm -f "$STUB/update-refuses"
+[ "$rc" != 0 ] \
+  && ok "a refused page takes the whole run down with it" \
+  || bad "the run exited 0 with a page refused (rc=$rc)"
+grep -q "with 0 of 2 published" "$WORK/stop.log" \
+  && ok "and it says where it stopped and how many had gone out" \
+  || { bad "it stopped without saying how far it got:"
+       sed 's/^/    /' "$WORK/stop.log"; }
+grep -q "rest of the list is NOT published" "$WORK/stop.log" \
+  && ok "and says why the rest was left alone" \
+  || bad "nothing explained why it did not carry on"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

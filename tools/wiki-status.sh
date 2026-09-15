@@ -47,6 +47,22 @@ PULL=$(git log -1 --format=%H -- wiki/.pulled)
 CHANGED=$(git diff --name-status "$PULL" HEAD -- wiki/ |
           grep -v -E '	wiki/(README\.md|\.pulled|\.ids)$' || true)
 
+# THE SAME ANSWER, FOR A PROGRAM. tools/wiki-publish.sh needs the list of
+# pages that can be updated, and the only other way to get it would be to
+# parse the prose below or to re-derive it - a second computation of one truth,
+# which is the shape this repository keeps paying for. One holder, two
+# renderings: everything above this point is shared, and only the printing
+# differs.
+#
+# Nothing else: not the pages that have to be created by hand, not the deleted
+# ones. A caller that fed those to wiki-push.sh would be asking it to update
+# documents that do not exist.
+if [ "${1:-}" = "--updatable" ]; then
+  [ -n "$CHANGED" ] || exit 0
+  printf '%s\n' "$CHANGED" | sed -n 's/^M\t//p'
+  exit 0
+fi
+
 echo "last pull: $(git log -1 --format='%h %ad' --date=iso-strict -- wiki/.pulled)"
 echo "           wiki said $(cat wiki/.pulled 2>/dev/null || echo '(no stamp)')"
 
@@ -83,8 +99,11 @@ if [ "$GONE" -gt 0 ]; then
 fi
 
 echo
-echo "To publish: WIKI_TOKEN=... sh tools/wiki-push.sh <file>, one page at a"
-echo "time. Each push checks that document on its own and refuses if somebody"
-echo "edited it after the last pull, so there is no need to pull first - and"
-echo "pulling first would overwrite every page listed above."
+echo "To publish all of them: WIKI_TOKEN=... sh tools/wiki-publish.sh"
+echo "                        sh tools/wiki-publish.sh -n   says what would go"
+echo "One page at a time: WIKI_TOKEN=... sh tools/wiki-push.sh <file>"
+echo "Each push checks that document on its own and refuses if somebody edited"
+echo "it after the last pull, so there is no need to pull first - and pulling"
+echo "first would overwrite every page listed above. wiki-publish.sh stops at"
+echo "the first refusal for the same reason."
 exit 1
