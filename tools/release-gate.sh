@@ -410,6 +410,36 @@ else
   echo "==> the roadmap and the tracker agree"
 fi
 
+# tools/changelog-state.sh asks the other half of the same question, of the
+# other document: an issue closed as COMPLETED that CHANGELOG.md names nowhere
+# is work that shipped with no record a reader can find. CONTRIBUTING.md
+# section 5 rule 3 makes the entry part of the merge, and nothing had ever
+# checked. Three had gone missing by the time anybody looked, over a tracker of
+# 293 closed issues, and all three were found by hand while writing a note.
+#
+# HERE AND NOT IN `make test` for the reason its own header gives: whether an
+# issue is closed is written down nowhere in the tree, and every suite has to
+# pass offline (#317). Beside the roadmap check and not behind it - #340 is on
+# this file for exactly that mistake, a check placed after one that had been
+# red for days and so never ran once.
+#
+# Skipped loudly when gh cannot answer, on the same argument as above: a
+# release refused because GitHub was unreachable is a gate somebody learns to
+# argue with.
+if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+  echo "==> the CHANGELOG was NOT checked against the tracker: gh cannot answer"
+elif ! cl_out=$(sh "$WORK/tools/changelog-state.sh" "$WORK/CHANGELOG.md" 2>&1); then
+  echo "error: work has shipped that CHANGELOG.md does not record." >&2
+  printf '%s\n' "$cl_out" | sed -n '/^==> completed issues/,$p' | sed 's/^/       /' >&2
+  echo "       The CHANGELOG is what an operator who does not clone this" >&2
+  echo "       repository reads to find out what changed for them. Write the" >&2
+  echo "       entry in the CURRENT section, naming the release that carried" >&2
+  echo "       the work if it was an older one." >&2
+  docs_bad=$((docs_bad + 1))
+else
+  echo "==> the CHANGELOG records every completed issue"
+fi
+
 # AND THE TITLE THIS RELEASE WILL CARRY WHERE PEOPLE ACTUALLY READ IT.
 #
 # The note on the tag is checked above, with the argument that it is what an

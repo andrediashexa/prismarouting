@@ -120,6 +120,50 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Three completed issues the CHANGELOG named nowhere, and nothing had ever
+  asked.** CONTRIBUTING.md section 5 rule 3 makes an entry part of every merge,
+  and the file is what an operator who does not clone this repository reads to
+  find out what changed for them. Measured over the whole tracker: **293 closed
+  issues, 291 of them completed, and three that this file does not mention at
+  all.** Each of the three below was found by hand while writing a release note,
+  one at a time, which is why they were found in the first place and why nothing
+  would have found a fourth.
+
+  They are entered **here** and not in the sections that shipped them, because
+  this file's own TL;DR forbids editing a shipped section: a reconstruction that
+  hides being one is a second and quieter defect, and a reader who has the old
+  version has no way of seeing a change made behind it.
+
+  **[#175](https://github.com/andrediashexa/hexarouting/issues/175) - `router
+  isis <TAB>` completed `<word>` and nothing after it, shipped in v0.62.0.**
+  The instance tag was a bare hint, so an operator writing `ip router isis` on
+  an interface had to remember what they had called the instance, and getting it
+  wrong produces an interface that joins nothing, silently. It completes from
+  the box now, and the block offers the statements an ISP core uses, including
+  `metric-style wide` - narrow metrics cap at 63 and cannot express a 10G
+  topology, which is the classic silent limitation.
+
+  **[#177](https://github.com/andrediashexa/hexarouting/issues/177) -
+  `lab/igp.sh` asserted on files the lab had written, shipped in v0.61.0.** The
+  lab wrote this box's own `ospfd.conf` and `isisd.conf`, so every OSPF and
+  IS-IS assertion under them was evidence about FRR reading a file the lab
+  wrote rather than about the VTY. That is the shape this project refuses by
+  name: a lab that performs the step the product is missing proves nothing. Both
+  files are a hostname line and nothing else now, the way `bgpd.conf` was
+  emptied for [#142](https://github.com/andrediashexa/hexarouting/issues/142),
+  and neither the OSI punt nor the interface MTU is set at setup.
+
+  **[#341](https://github.com/andrediashexa/hexarouting/issues/341) -
+  `wiki-pull.sh`'s empty-answer guard could not fire.** It was
+  `[ -s "$TMP/docs.json" ]`, and an answer holding no published documents reads
+  out as `[]`, which is two bytes and passes a size test. Measured against a
+  stub: the rewrite ran, **every page in the mirror was deleted**, `wiki/.ids`
+  came back empty, `wiki/.pulled` was written empty and the script exited 0
+  saying `0 pages`. That script's whole first half exists to stop `wiki/` being
+  emptied. The guard is the document count now, which is the number it was
+  always about. This one was still unreleased, so it is in its own release's
+  section and not a repair.
+
 * **A check that compared two trees, and the day the wiki was published is
   the day it broke.** `test/test_wiki_roundtrip.sh` drives the release gate and
   requires it to agree with `tools/wiki-status.sh` rather than asserting a
@@ -3885,6 +3929,66 @@ version has a chance of seeing it.
   told a box the tuner sized that its operator had sized it.
 
 ### Added
+
+* **`tools/changelog-state.sh`: the CHANGELOG compared against the tracker.**
+  The roadmap has had this since
+  [#292](https://github.com/andrediashexa/hexarouting/issues/292) and the
+  CHANGELOG never did, so the only thing standing between work shipping and
+  work being recorded was whoever was cutting the release remembering. It is
+  the same shape and the same argument as `tools/roadmap-state.sh`: a tool and
+  not a `make test` suite, because whether an issue is closed is written down
+  nowhere in the tree and every suite here passes offline
+  ([#317](https://github.com/andrediashexa/hexarouting/issues/317)).
+
+  It asks one question - **is every issue closed as COMPLETED named somewhere in
+  this file** - and the three things it deliberately does not ask are written
+  beside it with what each was measured against:
+
+  *Named anywhere, not in the section being cut.* An issue is often closed days
+  after the release carrying it shipped. Of the 17 closed since v0.74.2 and
+  absent from `## Unreleased`, **sixteen** are named in 0.74.1 or 0.74.2.
+  Demanding the current section would have reported sixteen findings and taught
+  the next reader to skip the list.
+
+  *`NOT_PLANNED` is exempt*, because an issue closed that way is a decision not
+  to do something and there is no change to tell anybody about. Two of the 293.
+
+  *An open issue named in the file is not a finding*, which is the opposite of
+  what the roadmap tool does. An entry names the issues it argues from and most
+  of those are open on purpose. The roadmap is a list of what remains; this is a
+  record of what happened, and a check copied between them would be wrong in
+  one of the two.
+
+  The truncation guard is the one worth naming. `gh issue list` cuts at
+  `--limit` in silence, and a cut answer here is the dangerous direction: every
+  issue past it is never looked for, so the tool reports agreement over a list
+  it did not read. That is the empty-haystack shape, and it is refused by
+  comparing the count returned against the limit rather than by trusting it.
+
+  The gate calls it **beside** the roadmap check and not behind it, which is the
+  mistake [#340](https://github.com/andrediashexa/hexarouting/issues/340) is on
+  this same file for: a check placed after one that had been red for days never
+  ran once.
+
+  **Its own refusals are driven, and the first run of them found the tool's
+  worst defect.** `test/test_tool_refusals.sh` gained a section for it beside
+  the one for `roadmap-state.sh`, with its own stub because the two read
+  different `gh` queries and a shared stub is how a fixture stops being the
+  thing under test. Nine cases: the clean control first, so a script that
+  refused unconditionally cannot pass the rest; the exemption asserted rather
+  than assumed; no gh, no auth, an unreachable tracker, an empty answer, a
+  truncated one, a missing file, and a bare `#10` in prose.
+
+  That last case went red, and it was right to. The comparison was written as
+  `awk 'NR == FNR { named[...] }'`, which is the idiom for *still reading the
+  first file* and is wrong the moment that file is empty: awk never runs the
+  rule, `NR` and `FNR` then both count from 1 through the second file, and
+  **every closed issue is filed as named**. A CHANGELOG with no links in it
+  reported that it records everything, having looked at nothing. That is the
+  empty-haystack shape, in the tool written to refuse it, and it would have sat
+  there reporting agreement for as long as the file kept at least one link -
+  which is forever, in practice, and is exactly why it needed a case that takes
+  the last one away.
 
 * **The 87 messages `show bpa` can print had no reader, and the suite deleted
   the evidence that would have given them one.**
