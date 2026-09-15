@@ -123,6 +123,50 @@ version has a chance of seeing it.
   the apply, BGP and dataplane suites already do: what is asserted is the
   sentence the operator reads, not the row the terminal breaks it on.
 
+* **`?` promised a power of two and nothing in the VTY kept it**
+  ([#360](https://github.com/andrediashexa/hexarouting/issues/360)). The hint
+  on a pool's `block-size` says *"ports per block, power of two"* and quotes
+  `<64-32768>`. [#352](https://github.com/andrediashexa/hexarouting/issues/352)
+  enforced the range and left the shape to nobody, so `block-size 100` was
+  taken at the prompt, staged into the candidate, written to the file, and
+  refused on the far side of `commit` by `bpa_pool.c`: *"pool 'p': block size
+  100 must be a power of two"*. The whole argument for modelling a statement
+  in the VTY is that the operator is told no at the point of typing rather
+  than at commit time, with a candidate already built that was probably going
+  to change something else too.
+
+  The prompt refuses it now, and names the two values on either side, because
+  *"not a power of two"* leaves an operator doing arithmetic at a prompt:
+
+  ```
+  error: block-size 100 is not a power of two: the nearest are 64 and 128
+  ```
+
+  78 columns at its widest value, inside the 79 a serial console has.
+
+  The guard is at the typed-statement site in `do_pool` and **not** in
+  `Config._pool_line()` - which is where the next person adding a constraint
+  to this statement will reach, because that is where the statement is
+  modelled. That function also reads the configuration back out of the
+  running dataplane, and a value the box already has is a fact rather than a
+  request; a bound put there is
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357), where a box
+  carrying `block-size 4` stopped being committable at all. The reason is
+  written beside the guard, and the check asserts that a configuration
+  carrying `block-size 4`, and one carrying `block-size 100`, still parse.
+
+  `Pool.POW2` is a set beside `Pool.RANGES` rather than another row inside it:
+  a range asks whether a number lies between two others and this asks what
+  shape it has, and one table answering two questions is a table
+  `check_range` would have to know which question it was being asked.
+
+  Driven through the VTY and read back out of the candidate, which is the
+  shape [#350](https://github.com/andrediashexa/hexarouting/issues/350) to
+  #354 established - a case that calls the predicate directly proves the
+  predicate and not the path, and that is how #357's first two attempts could
+  not fail. Taken red by removing the guard: four values inside the range are
+  staged where the dataplane will not build them.
+
 * **Three more labs waited out a collector window chosen when they were
   written.** `tools/ipfix_collector.py` takes a number of seconds, and a lab
   that picks one and then waits it out has decided, at writing time, how long

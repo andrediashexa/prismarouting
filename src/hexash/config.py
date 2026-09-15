@@ -437,6 +437,48 @@ class Pool:
             return f"{label} {v}: expected {lo}-{hi}"
         return None
 
+    #: The statements whose number also has to be a POWER OF TWO, and the
+    #: reason this is a set of its own rather than another row in RANGES: a
+    #: range asks whether a number lies between two others, and this asks what
+    #: shape it has. Bending RANGES to carry it would make one table answer
+    #: two different questions, and `check_range` would have to know which.
+    #:
+    #: `?` has said "ports per block, power of two" since block-size was
+    #: written, and until #360 nothing in the VTY kept the second half of
+    #: that: `block-size 100` was taken at the prompt, staged, written to the
+    #: file, and refused by bpa_pool.c at commit time - after the operator had
+    #: built a candidate that was probably going to change something else too.
+    POW2 = frozenset(("block-size",))
+
+    @staticmethod
+    def check_pow2(name: str, v: str):
+        """
+        None if `v` is a power of two, otherwise why not and what is nearest.
+
+        Named after the STATEMENT for the same reason `check_range` is: the
+        constraint belongs to the statement, and a caller that passes its own
+        predicate is a second copy of a rule the help text already quotes.
+
+        The two nearest powers are IN the refusal because "not a power of two"
+        leaves an operator doing arithmetic at a prompt, and the numbers they
+        need are the two the box would have accepted on either side.
+        """
+        if name not in Pool.POW2:
+            # As loud as check_range's KeyError on an unknown statement. A
+            # caller asking about a statement that does not carry this
+            # constraint is a bug, and a quiet None would answer "fine".
+            raise KeyError(name)
+        if not v.isdigit() or int(v) < 1:
+            # check_range owns that refusal and runs first; saying it twice in
+            # two spellings is how the two drift apart.
+            return None
+        n = int(v)
+        if not n & (n - 1):
+            return None
+        lo = 1 << (n.bit_length() - 1)
+        return (f"{name} {v} is not a power of two: "
+                f"the nearest are {lo} and {lo << 1}")
+
     # Mirrors foreach_bpa_alg in bpa_pool.h, in the same order and with the
     # same bits. A pool a VTY cannot express is a pool an operator cannot
     # configure, so this list and that macro have to be kept in step; the lab

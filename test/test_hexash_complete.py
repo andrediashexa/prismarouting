@@ -7231,5 +7231,85 @@ for _label, _lines in _WIDE_CASES:
 print(f"  {len(_WIDE_CASES)} refusals, every row inside {CONSOLE_COLUMNS} "
       f"columns")
 
+print("\n=== `?` says block-size is a power of two, and now so does the box "
+      "(#360) ===")
+# The hint on this statement promises TWO things about the same number -
+# "ports per block, power of two", `<64-32768>` - and #352 enforced only the
+# range. `block-size 100` was taken at the prompt, staged into the candidate,
+# written to the file, and refused on the far side of `commit` by
+# bpa_pool.c:143 with "pool 'p': block size 100 must be a power of two", after
+# the operator had built a candidate that was probably going to change
+# something else too.
+#
+# DRIVEN THROUGH THE VTY and read back out of the candidate, not called as a
+# predicate. What is being checked is the path - the statement reaching
+# do_pool, the guard firing there, and the value not being staged - and a case
+# that calls Pool.check_pow2() directly is green whatever do_pool does with
+# it. That is how #357's first two test attempts could not fail.
+for _v in (64, 512, 32768):
+    _s, _refused, _said = _typed(["nat cgnat pool P"], f"block-size {_v}")
+    check(not _refused,
+          f"block-size {_v} is a power of two inside the range `?` quotes "
+          f"and the box refused it: {_said.strip()!r}")
+    check(f"block-size {_v}" in _s.candidate.text(),
+          f"block-size {_v} was accepted and is not in the candidate, so the "
+          f"pool the operator asked for is not the pool that would commit")
+# (value, the two the refusal owes them). Inside the range in every case, so
+# what refuses them can only be the shape.
+for _v, _lo, _hi in ((100, 64, 128), (65, 64, 128), (1000, 512, 1024),
+                     (32767, 16384, 32768)):
+    _s, _refused, _said = _typed(["nat cgnat pool P"], f"block-size {_v}")
+    check(_refused,
+          f"block-size {_v} is inside 64-32768 and is not a power of two, "
+          f"and the box took it - the dataplane refuses it at commit time")
+    # Line-exact, and not "block-size" absent: a pool that has never been
+    # given one still renders the default, so the absent thing to look for is
+    # the number the operator typed rather than the statement.
+    _staged = [l.strip() for l in _s.candidate.text().splitlines()
+               if l.strip().startswith("block-size ")]
+    check(f"block-size {_v}" not in _staged,
+          f"block-size {_v} was refused and staged anyway, so the file would "
+          f"carry a block size the dataplane will not build: {_staged}")
+    check("power of two" in _said,
+          f"block-size {_v} was refused without naming the constraint, which "
+          f"leaves the operator guessing which half of the hint it broke: "
+          f"{_said.strip()!r}")
+    check(f"{_lo} and {_hi}" in _said,
+          f"block-size {_v} was refused without naming {_lo} and {_hi}, which "
+          f"leaves an operator doing arithmetic at a prompt: "
+          f"{_said.strip()!r}")
+    _over = [(len(l), l) for l in _said.splitlines() if len(l) > CONSOLE_COLUMNS]
+    check(not _over, f"block-size {_v}: the refusal wraps on a serial "
+                     f"console: {_over}")
+
+# THE #357 TRAP, ASSERTED HERE rather than taken on trust from the section
+# above, because this is the change that would reopen it. The guard added for
+# #360 is at the typed-statement site; had it gone into Config._pool_line() -
+# which is where the statement is modelled, and where the next person adding a
+# constraint will reach first - then a box whose dataplane reports a pool with
+# a block size that is not a power of two would become a box the VTY cannot
+# model, and `commit` would refuse EVERY change on it. `block-size 4` is not a
+# power of two problem; it is below the floor, and lab/detreserve.sh builds
+# one. The reader must keep taking both.
+for _bs in ("4", "100"):
+    _text = ("! cgnat\n"
+             "cgnat pool det\n"
+             " inside 100.64.0.0/22\n"
+             " outside 200.150.0.16/32\n"
+             f" block-size {_bs}\n"
+             " exit\n")
+    _read = _config.Config.parse(_text)
+    check(not _read.unknown,
+          f"a configuration carrying `block-size {_bs}` no longer parses, so "
+          f"a box whose dataplane reports one cannot be committed at all "
+          f"(#357): {_read.unknown}")
+    check(getattr(_read.pools.get("det"), "block_size", None) == _bs,
+          f"`block-size {_bs}` was read as something else, so a commit would "
+          f"write a different block size over the one the box has: "
+          f"{getattr(_read.pools.get('det'), 'block_size', None)!r}")
+print("  64, 512 and 32768 staged; 65, 100, 1000 and 32767 refused with both "
+      "neighbours named; the reader still models what the box has")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
