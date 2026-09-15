@@ -88,11 +88,19 @@ save
 `no forward tcp 6200` sozinho também serve, enquanto aquela porta estiver encaminhada em **um** endereço público só. Se estiver em mais de um, o equipamento recusa e nomeia os assinantes envolvidos, em vez de remover o primeiro que encontrar. Remover o forward de um cliente que você não citou é o tipo de coisa que se descobre pelo telefone:
 
 ```
-error: forward tcp 6200 is configured for 10.0.0.4, 10.0.0.5 on different public addresses; name the subscriber: no forward tcp 6200 to <private-ip> <private-port>
+error: forward tcp 6200 is configured for more than one subscriber
+    on different public addresses: 100.64.0.5, 100.64.0.6
+    name the subscriber: no forward tcp 6200 to <private-ip> <private-port>
 ```
 
-Sai numa **linha só** e mais larga que o console: quem quebra é o terminal, e
-onde ela quebra depende da largura da sua janela.
+Os endereços da segunda linha são os **assinantes** - os endereços privados
+que você citaria no comando -, e não os públicos onde o encaminhamento caiu.
+São eles que a terceira linha pede, então são eles que a segunda mostra.
+
+A recusa vem em três linhas próprias, dentro da largura do console. Por um
+tempo ela saía numa frase só, mais larga que a tela: o terminal a quebrava
+onde calhasse, e o que ficava perdido era justamente o fim, que é onde está
+o comando a digitar.
 
 # Em pool dinâmico, quem fica preso é o bloco
 

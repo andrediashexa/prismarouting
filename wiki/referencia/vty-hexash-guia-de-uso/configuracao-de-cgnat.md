@@ -23,17 +23,30 @@ O bloco em que se entra continua sendo o pool: `nat cgnat pool <nome>`.
 
 O que mudou é o que a caixa **oferece**: TAB e `?` oferecem só `nat cgnat ...`.
 
-O que ela **escreve** mudou pela metade, e vale saber qual metade. Em
-`show running-config`, `show configuration` e no arquivo que o `save` grava:
+O que ela **escreve** é a grafia nova, em tudo. Em `show running-config`, em
+`show configuration` e no arquivo que o `save` grava:
 
-| Sai como | O quê |
-|---|---|
-| `nat cgnat ...` | os pools (`nat cgnat pool <nome>`) e as interfaces (`nat cgnat interface ...`) |
-| `cgnat ...`, sem o `nat` | os ajustes globais: `cgnat timeout ...`, `cgnat logging ...`, `cgnat block-holddown ...` e `cgnat session-table ...` |
+```
+! cgnat
+nat cgnat pool residencial
+ inside 100.64.0.0/22
+ outside 200.150.0.0/28
+ block-size 512
+ policy interleaved
+ mode deterministic
+ exit
+nat cgnat interface TenGigabitEthernet0/0/0 inside
+nat cgnat block-holddown 90
+nat cgnat timeout udp 300
+```
 
-As duas grafias são lidas de volta sem diferença, então um arquivo salvo assim
-volta inteiro no próximo boot. O que muda é o que você vê na tela: se procurar
-um timeout por `nat cgnat timeout`, não acha - procure por `cgnat timeout`.
+Pools, interfaces e ajustes globais, todos com o `nat` na frente. Por um tempo
+os globais saíam sem ele, e um arquivo trazia as duas grafias misturadas: quem
+lia a própria configuração via `nat cgnat pool` em cima de `cgnat timeout udp`.
+Deixou de ser assim.
+
+As duas grafias continuam sendo **lidas** sem diferença, então um arquivo salvo
+antes disso volta inteiro no próximo boot e nada precisa ser convertido à mão.
 
 :::
 

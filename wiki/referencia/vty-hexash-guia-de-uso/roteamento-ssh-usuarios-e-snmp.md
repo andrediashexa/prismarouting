@@ -246,8 +246,16 @@ error: role 'supervisor': expected one of administrator, cgnat-operator
 E `root` não recebe papel — os direitos dele vêm de ser root, não de grupo:
 
 ```
-error: root's rights come from being root, not from a group: this VTY does not manage root's memberships
+error: root's rights come from being root, not from a group
+    this VTY does not manage root's memberships
 ```
+
+O veredito fica na primeira linha e o motivo na segunda, dentro da largura do
+console. Como frase única ela passava de cem colunas e o terminal a quebrava
+onde calhasse.
+
+A recusa vale para qualquer papel dado ao `root`, inclusive o nome certo de um
+papel que existe: não é o papel que está errado, é a conta.
 
 # SNMP
 
@@ -446,6 +454,30 @@ warning: no 'match': this permits every route. If that is meant, it is the end
 ```
 
 Se era a intenção, o aviso é ruído de uma linha. Se não era, é a diferença entre uma política que filtra e uma que deixa passar tudo.
+
+**`set local-preference` com um valor que não é número é recusado.** A gramática
+do roteamento para essa cláusula aceita **qualquer palavra**: `set
+local-preference banana` é aceito no prompt, passa no `commit check` e vai
+parar na configuração em vigor do BGP — onde não ajusta nada. A cláusula fica
+lá, com cara de política, sem fazer nada:
+
+```
+error: 'banana' is not a local-preference: expected 0-4294967295. FRR takes
+    this statement with any word in it and then sets nothing
+    set local-preference banana
+```
+
+O equipamento recusa aqui porque o roteamento não recusa em lugar nenhum. É o
+contrário de `maximum-paths` e `set weight`, em que o roteamento é a autoridade
+e recusa no `commit`: ali o equipamento só informa a faixa e deixa a recusa com
+quem manda.
+
+A recusa **só sai para o que esta mudança está pedindo**. Um `set
+local-preference` desses que a caixa já carregava não volta a ser recusado em
+todo commit: uma caixa com uma linha dessas na configuração em vigor ficaria com
+todo commit recusado, inclusive os que não têm nada a ver com route-map, e
+recusar uma mudança por causa de um estado que já estava lá tranca o operador
+para fora do próprio equipamento.
 
 **Cláusula que nenhuma rota alcança é avisada.** Se a cláusula 10 libera tudo, a 20 nunca é consultada. Os números de sequência são seus e o equipamento não renumera nada — mas uma política que parece certa e não faz nada merece uma frase.
 

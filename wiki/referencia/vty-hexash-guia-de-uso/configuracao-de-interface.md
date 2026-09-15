@@ -201,12 +201,20 @@ Uma sub-interface **é** a tag dela: o nome `GigabitEthernet0/12/0.700` e a VLAN
 Digitar `no vlan 700` dentro da sub-interface é recusado, e a recusa diz o que fazer no lugar:
 
 ```
-error: vlan cannot be removed: a sub-interface is named after its tag, so one without a tag is not something the dataplane can hold. Remove the sub-interface itself: no interface <name>
+error: vlan cannot be removed
+    a sub-interface is named after its tag, so one without a tag is not
+    something the dataplane can hold
+    remove the sub-interface itself: no interface <name>
 ```
 
-A recusa sai numa **linha só**, mais larga que o console: o terminal é quem a
-quebra, e onde ela quebra depende da largura da sua janela. Procure pelo
-começo da frase, não por um pedaço do meio.
+A recusa vem em linhas próprias, dentro da largura do console: o veredito na
+primeira, o motivo no meio, e **o que digitar no lugar na última**. Por um
+tempo ela saía numa frase só, mais larga que a tela, e o terminal a quebrava
+onde calhasse - o que punha justamente o conselho do fim em qualquer lugar.
+Agora a última linha é sempre a última linha.
+
+`no vlan`, sem número, recebe a mesma recusa: não há tag a tirar de qualquer
+forma.
 
 `no interface GigabitEthernet0/12/0.700`, no nível de cima, remove a sub-interface e tudo o que estava nela.
 

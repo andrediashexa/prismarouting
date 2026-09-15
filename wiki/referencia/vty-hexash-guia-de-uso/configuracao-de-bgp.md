@@ -209,19 +209,38 @@ A contagem é do total, não por sessão. A tabela de encaminhamento não guarda
 `show bgp neighbor <endereço> received-routes` mostra o que o vizinho mandou **antes** da política de entrada — e isso o equipamento só tem se mandaram guardar. Sem `soft-reconfiguration inbound` a tabela sai vazia, e "não recebi rota" e "não estou guardando" são respostas diferentes para se olhar durante um incidente:
 
 ```
-error: neighbour 200.150.0.2 does not keep what it received, so this would print an empty table either way
-    add 'neighbor 200.150.0.2 soft-reconfiguration inbound' under the address family; it costs memory
-    'show bgp neighbor 200.150.0.2 routes' shows what survived inbound policy, which the box does have
+error: neighbour 200.150.0.2 does not keep what it received
+    so this would print an empty table either way
+    add 'neighbor 200.150.0.2 soft-reconfiguration inbound' under the address
+    family; it costs memory
+    'show bgp neighbor 200.150.0.2 routes' shows what survived inbound policy,
+    which the box does have
 ```
 
-`clear bgp <endereço> soft in` recusa pelo mesmo motivo e diz o mesmo, com a saída que sempre funciona: reiniciar a sessão e pegar as rotas de novo.
+`clear bgp <endereço> soft in` recusa pelo mesmo motivo, e a saída que ele
+oferece é a que sempre funciona: reiniciar a sessão e pegar as rotas de novo.
+
+```
+error: neighbour 200.150.0.2 does not keep what it received
+    so there is nothing to re-apply
+    add 'neighbor 200.150.0.2 soft-reconfiguration inbound' under the address
+    family, which costs memory,
+    or use 'clear bgp 200.150.0.2' to reset the session and take the routes
+    again
+```
+
+As duas recusas vêm em linhas dentro da largura do console. Por um tempo o
+veredito e a primeira explicação saíam grudados numa linha só, que media de 92 a
+106 colunas numa tela de 79 — e um endereço IPv6 no lugar do IPv4 alarga mais
+ainda, porque o endereço do vizinho entra em todas as linhas.
 
 ## E quando quem não responde é o roteamento
 
 São **três** respostas e não duas. "O vizinho não guarda" é uma leitura da configuração que está valendo — e numa caixa cujo roteamento não está respondendo não há configuração lida: não há leitura nenhuma. Dizer ali que falta o `soft-reconfiguration inbound` mandaria você acrescentar uma linha que a caixa talvez já tenha, por um daemon que não está de pé para recebê-la, e apontaria para um comando que pergunta ao mesmo roteamento calado.
 
 ```
-error: FRR is not answering, so whether 200.150.0.2 keeps what it received cannot be read
+error: FRR is not answering
+    so whether 200.150.0.2 keeps what it received cannot be read
     an empty table here would be this box's control plane being down rather
     than the neighbour sending nothing: 'systemctl status frr' and its journal
     say why
@@ -230,11 +249,17 @@ error: FRR is not answering, so whether 200.150.0.2 keeps what it received canno
 O `clear bgp <endereço> soft in` responde do mesmo jeito, e acrescenta a parte que importa ali: **`clear bgp` sozinho também não resolveria**, porque quem segura a sessão é justamente o roteamento que está calado.
 
 ```
-error: FRR is not answering, so whether 200.150.0.2 keeps what it received cannot be read
+error: FRR is not answering
+    so whether 200.150.0.2 keeps what it received cannot be read
     nothing was re-applied, and 'clear bgp' would reset nothing either - both
     go to the FRR that is silent: 'systemctl status frr' and its journal say
     why
 ```
+
+O veredito dessas duas **não carrega o endereço do vizinho**, e isso é
+deliberado: o endereço vai na linha de baixo. A primeira linha não é quebrada
+por ninguém, e com um vizinho IPv6 no meio dela ela chegaria a 99 colunas numa
+tela de 79.
 
 Uma tabela vazia numa caixa dessas é o plano de controle da **sua** caixa fora do ar, e não o vizinho sem mandar rota. São problemas diferentes e é o que essa terceira resposta existe para separar.
 

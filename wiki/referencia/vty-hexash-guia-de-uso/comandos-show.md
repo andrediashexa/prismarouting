@@ -196,12 +196,16 @@ hexarouting> show hardware
   'show hardware' is where the names come from: it lists this box's cards as
   Linux has them, and marks the one carrying the default route.
 
-  Interface     PCI            Driver           Link   Speed
-  eno1          0000:03:00.0   ixgbe            up     1000Mb/s
-    3c:ec:ef:1a:2b:3c  kernel driver: DPDK cannot take a NIC through it
+  Interface     PCI            Driver           Link           Speed
+  eno1          0000:03:00.0   ixgbe            up             1000Mb/s
+    3c:ec:ef:1a:2b:3c  ixgbe, a kernel driver
+      DPDK cannot take the card through it as it is; when this card is given to
+      the dataplane the box moves it to vfio-pci
     *** carries the DEFAULT ROUTE ***
-  ens1f0        0000:5e:00.0   ixgbe            down   -
-    b4:96:91:0d:1e:2f  kernel driver: DPDK cannot take a NIC through it
+  ens1f0        0000:5e:00.0   ixgbe            down           -
+    b4:96:91:0d:1e:2f  ixgbe, a kernel driver
+      DPDK cannot take the card through it as it is; when this card is given to
+      the dataplane the box moves it to vfio-pci
 
   2 NIC(s) on this box, as Linux has them
   'eno1' carries the default route: it is how this box is reached, and giving
@@ -214,10 +218,28 @@ hexarouting> show hardware
 | `Interface` | o nome que o Linux dá à placa |
 | `PCI` | o endereço PCI, que é por onde o dataplane reclama o dispositivo |
 | `Driver` | o driver que está com a placa **agora** |
-| `Link` | o enlace: `up`, `down`, `unknown` |
+| `Link` | o enlace, como o kernel o reporta |
 | `Speed` | a velocidade, quando o kernel informa; `-` quando o enlace está caído e não há velocidade a informar |
 
-Embaixo de cada placa vêm o **MAC**, inteiro numa linha só — é o que se compara com a etiqueta da porta ou com a reserva no DHCP —, e o veredito sobre o driver.
+A coluna `Link` é larga porque os valores que o kernel escreve ali não são só
+`up` e `down`: quando o estado não pode ser lido ele vira `unknown`, e existem
+`lowerlayerdown`, `notpresent`, `dormant` e `testing`. Por um tempo a coluna
+tinha a largura exata de `up`, e num estado mais comprido o estado e a
+velocidade saíam colados - `unknown-`, `unknown1000Mb/s` -, que é uma tela que
+o operador lê errado sem perceber que leu.
+
+Embaixo de cada placa vêm o **MAC**, inteiro numa linha só — é o que se compara
+com a etiqueta da porta ou com a reserva no DHCP —, o driver que está com ela, e
+o que acontece com esse driver quando a placa for entregue ao dataplane.
+
+Essa última linha importa mais do que parece. Toda caixa recém-instalada está
+com todas as placas em driver de kernel: dizer só *"o DPDK não pega uma placa
+por esse driver"* é verdade e lê-se como *"esta placa não serve"* — ainda mais
+numa VM de uma placa só, onde é a única coisa dita sobre a única placa. Dizer
+**para qual driver a caixa move a placa** transforma um beco sem saída num
+passo. O nome do driver ali não é chute: é o mesmo que a caixa vai usar de
+verdade, perguntado a quem decide, e numa caixa sem IOMMU ele sai
+`uio_pci_generic` em vez de `vfio-pci`.
 
 ### A marca `*** carries the DEFAULT ROUTE ***`
 
@@ -229,11 +251,11 @@ Numa caixa que tem **só essa** placa, a marca não é uma recusa: é um aviso d
 
 ```
   1 NIC(s) on this box, as Linux has them
-  This box has one NIC, 'ens18', and it carries the default route, so giving
-  it to the dataplane is also giving away the path this box is reached on.
-  It can still be done, and the address goes with it: name it with
-  'configure', 'dataplane interface ens18', 'commit', and the box keeps that
-  address on the linux_cp pair the dataplane holds for the card.
+  This box has one NIC, 'ens18', and it carries the default route, so giving it
+  to the dataplane is also giving away the path this box is reached on.
+  It can still be done, and the address goes with it: name it with 'configure',
+  'dataplane interface ens18', 'commit', and the box keeps that address on the
+  linux_cp pair the dataplane holds for the card.
   The commit is a confirmed one whether or not you ask: restart the box, log
   back in and type 'commit' to keep it, and if nobody does the box puts the
   card back on its own.
@@ -258,24 +280,40 @@ E quando a rota padrão está numa coisa que esta lista não comporta — uma po
 
 Uma lista sem marca nenhuma seria lida como *"nenhuma destas é o caminho de gerência"*, e é exatamente essa leitura que custa a caixa.
 
-### `kernel driver` e `DPDK can use`
+### O veredito do driver, e o que a caixa faz com ele
 
-O dataplane não consegue tomar uma placa que está presa a um driver do kernel. As duas frases que aparecem embaixo de cada placa são:
+O dataplane não consegue tomar uma placa que está presa a um driver do kernel. São três vereditos, e dois deles vêm com a segunda linha que diz o que a caixa fará:
 
-| Frase | O que significa |
-|-------|-----------------|
-| `kernel driver: DPDK cannot take a NIC through it` | a placa está com o driver do kernel (`ixgbe`, `i40e`, `bnxt_en`, …) |
-| `<driver> is a driver DPDK can use` | a placa já está preparada para o dataplane — `vfio-pci`, `uio_pci_generic` ou `igb_uio` |
-| `no driver is bound to it at all` | nenhum driver está com o dispositivo |
+| Veredito | O que significa | Segunda linha |
+|----------|-----------------|---------------|
+| `<driver>, a kernel driver` | a placa está com o driver do kernel (`ixgbe`, `i40e`, `virtio-pci`, …) | `DPDK cannot take the card through it as it is; when this card is given to the dataplane the box moves it to <driver de DPDK>` |
+| `<driver> is a driver DPDK can use` | a placa já está preparada para o dataplane — `vfio-pci`, `uio_pci_generic` ou `igb_uio` | nenhuma: não há nada a mover |
+| `no driver is bound to it at all` | nenhum driver está com o dispositivo | `DPDK needs a driver bound to the card; when this card is given to the dataplane the box moves it to <driver de DPDK>` |
 
 ```
-  Interface     PCI            Driver           Link   Speed
-  eno1          0000:03:00.0   ixgbe            up     1000Mb/s
-    3c:ec:ef:1a:2b:3c  kernel driver: DPDK cannot take a NIC through it
+  Interface     PCI            Driver           Link           Speed
+  eno1          0000:03:00.0   ixgbe            up             1000Mb/s
+    3c:ec:ef:1a:2b:3c  ixgbe, a kernel driver
+      DPDK cannot take the card through it as it is; when this card is given to
+      the dataplane the box moves it to vfio-pci
     *** carries the DEFAULT ROUTE ***
-  ens1f0        0000:5e:00.0   vfio-pci         up     10000Mb/s
+  ens1f0        0000:5e:00.0   vfio-pci         up             10000Mb/s
     b4:96:91:0d:1e:2f  vfio-pci is a driver DPDK can use
+  ens1f1        0000:5e:00.1   (none)           down           -
+    b4:96:91:0d:1e:30  no driver is bound to it at all
+      DPDK needs a driver bound to the card; when this card is given to the
+      dataplane the box moves it to vfio-pci
 ```
+
+O nome do driver de DPDK na segunda linha **é o desta caixa**, e não um nome
+genérico: numa caixa com IOMMU ligado ele sai `vfio-pci`, e numa sem IOMMU sai
+`uio_pci_generic`. A tela não recalcula essa escolha — ela pergunta a quem a
+faz de verdade na hora de entregar a placa, para que uma tela não possa
+prometer um driver e a entrega usar outro.
+
+Uma placa sem driver nenhum aparece com `(none)` na coluna `Driver`. É um
+estado normal e não um defeito: acontece com a placa que já esteve com o
+dataplane e foi devolvida, e com a que o kernel não conseguiu reivindicar.
 
 O `mlx5` da Mellanox é a exceção: é um driver bifurcado e o dataplane trabalha com ele sem trocar de driver.
 
@@ -312,13 +350,28 @@ cgnat pool residential
  inside 100.64.0.0/22
  outside 200.150.0.16/30
  block-size 512
+ policy interleaved
+ mode deterministic
  tcp-mss 1400
  exit
 ```
 
 Mostra a **candidata**, não a configuração em vigor: quem está no meio de uma edição pergunta sobre o que está construindo.
 
+Repare que `policy` e `mode` aparecem sem você ter digitado. Não é a tela
+acrescentando nada: são os três campos que todo pool tem por construção —
+`block-size`, `policy` e `mode` —, e um pool sem eles não existe. Se a tela os
+omitisse quando estão no valor padrão, ela deixaria de dizer o que o pool está
+fazendo enquanto o pool continua fazendo. É a mesma razão pela qual `no policy`
+é recusado.
+
 Dentro de um pool, o bloco sai na forma curta — `cgnat pool residential`, sem o `nat` na frente — que é como o prompt também o nomeia. `show configuration` e `show running-config`, que mostram a caixa inteira, saem na hierarquia nova: `nat cgnat pool ...` e as rotas estáticas num bloco `router static`. As duas grafias são aceitas na entrada, então copiar qualquer uma das telas para um arquivo e carregá-lo de volta funciona.
+
+Na caixa inteira, **os ajustes globais de CGNAT também saem com o** `**nat**` na
+frente — `nat cgnat timeout udp 300`, `nat cgnat block-holddown 90` — e não só
+os blocos de pool. Por um tempo os pools saíam na hierarquia nova e os globais
+na antiga, no mesmo arquivo: quem procurasse um timeout por `nat cgnat timeout`
+não achava. Agora o arquivo inteiro fala uma língua só.
 
 O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface TenGigabitEthernet0/8/0]` — para que a próxima declaração não caia no bloco errado.
 
