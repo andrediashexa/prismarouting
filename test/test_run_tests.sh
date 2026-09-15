@@ -393,5 +393,38 @@ suites.list alone names $n_listed. It is not looking where the harnesses are, \
 and a report that finds none reads exactly like a repository with none"
 fi
 
+echo
+echo "=== and no suite reaches the network ==="
+# TESTING.md says `make test` "Requires no root, no VPP and no network", and
+# for one night it was false: two suites drove the real release gate, which
+# runs `gh auth status`, queries the tracker and looks up the published
+# release. Two live calls each, on a suite that runs at every commit - flaky
+# by construction, and simply broken on a machine with no route out.
+#
+# A RECORDING gh ON THE PATH, not a read of the source. A suite that shells
+# out through a helper, or a tool that grows a call tomorrow, is invisible to
+# grep and caught here. curl is recorded too: tools/wiki-push.sh and
+# wiki-pull.sh are the other way out.
+_nb=$(mktemp -d)
+for _c in gh curl; do
+  printf '#!/bin/sh\necho "%s $*" >> "%s/used"\nexit 1\n' "$_c" "$_nb" \
+    > "$_nb/$_c"
+  chmod +x "$_nb/$_c"
+done
+: > "$_nb/used"
+for _s in test/test_wiki_roundtrip.sh test/test_release_gate.sh; do
+  [ -f "$REPO/$_s" ] || continue
+  ( cd "$REPO" && PATH="$_nb:$PATH" sh "$_s" ) >/dev/null 2>&1 || true
+done
+_used=$(wc -l < "$_nb/used" 2>/dev/null | tr -d ' ')
+[ -n "$_used" ] || _used=0
+if [ "$_used" -eq 0 ]; then
+  ok "the two suites that drive the release gate made no gh or curl call"
+else
+  bad "a suite reached the network $_used time(s), and TESTING.md says this \
+needs none: $(sort -u "$_nb/used" | tr '\n' ' ')"
+fi
+rm -rf "$_nb"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

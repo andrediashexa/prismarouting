@@ -78,10 +78,24 @@ install_gate() {
   cp "$REPO/tools/roadmap-state.sh" "$FIX/tools/roadmap-state.sh"
 }
 
+GHBIN=$WORK/ghbin
+mkdir -p "$GHBIN"
+cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+case "$*" in
+  *"auth status"*)  exit 0 ;;
+  *"issue list"*)   : ;;
+  *"release view"*) exit 1 ;;   # no published release for a fixture tag
+  *)                exit 0 ;;
+esac
+GHSTUB
+chmod +x "$GHBIN/gh"
+
 n=0
 run_gate() {  # <case tag>; -> $OUT and $RC
   n=$((n + 1))
-  OUT=$(cd "$FIX" && RELEASE_WORK="$WORK/w$n" RELEASE_GATE_CHECK_ONLY=1 \
+  OUT=$(cd "$FIX" && PATH="$GHBIN:$PATH" \
+        RELEASE_WORK="$WORK/w$n" RELEASE_GATE_CHECK_ONLY=1 \
         sh tools/release-gate.sh "$1" 2>&1) && RC=0 || RC=$?
 }
 reset_fixture() {
@@ -193,7 +207,8 @@ echo "=== HEAD not on a tag at all, with no tag named ==="
 # the gate with no argument: a release is built from a tag, and the commit
 # somebody happens to be sitting on is not one.
 reset_fixture
-OUT=$(cd "$FIX" && RELEASE_WORK="$WORK/w-notag" RELEASE_GATE_CHECK_ONLY=1 \
+OUT=$(cd "$FIX" && PATH="$GHBIN:$PATH" \
+      RELEASE_WORK="$WORK/w-notag" RELEASE_GATE_CHECK_ONLY=1 \
       sh tools/release-gate.sh 2>&1) && RC=0 || RC=$?
 [ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "HEAD is not on a tag" \
   && ok "refused, and it says how to pass one" \
