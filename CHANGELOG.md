@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A value check that fired on what the box already had, and locked every
+  commit** ([#358](https://github.com/andrediashexa/hexarouting/issues/358)).
+  `set local-preference banana` was accepted at this prompt and committed until
+  [#354](https://github.com/andrediashexa/hexarouting/issues/354) gave that
+  statement a value check, and FRR stores it and sets nothing - so there are
+  boxes carrying one. Without a guard, upgrading to a version that refuses it
+  makes **every** commit on such a box fail, and `hexash --load` refuses the
+  saved file whole at boot, so a box that was working comes up with nothing on
+  it.
+
+  The route-map **reference** check three lines below has carried that guard
+  since [#145](https://github.com/andrediashexa/hexarouting/issues/145), with
+  the reasoning written out beside it. The value check needed the same guard
+  the moment it existed, and it is the second instance of the same shape in an
+  hour: [#357](https://github.com/andrediashexa/hexarouting/issues/357) was a
+  bound in a reader that also reads the box, and this is a refusal that does
+  not ask whether the box already had the thing. **A check that is right about
+  a change can be wrong about a fact.**
+
+  Refused only when this change is what causes it. An operator can still fix
+  the statement, which turns the finding off; what they cannot be made to do
+  is fix it before they are allowed to change anything else. Driven through
+  `do_commit` rather than through the finding - the finding is right either
+  way, and what this is about is whether the commit is refused.
+
 * **A bound in the reader that also reads the box**
   ([#357](https://github.com/andrediashexa/hexarouting/issues/357)).
   `Config._pool_line()` is the reader for three things: a statement typed at

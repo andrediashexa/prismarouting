@@ -1608,6 +1608,38 @@ for _good in ("0", "100", "4294967295"):
           f"{_good} is inside the range and must not be refused: {_lp}")
 print("  'set local-preference banana' is an error, 0 and 4294967295 are not")
 
+# AND A BOX THAT ALREADY HAS ONE IS NOT LOCKED OUT (#358).
+#
+# `set local-preference banana` was accepted at this prompt and committed
+# until the check above existed, and FRR stores it, so there are boxes
+# carrying one. A refusal that fires on what the box ALREADY has makes every
+# commit on that box fail and makes `--load` refuse the saved file whole at
+# boot - a box that was working comes up with nothing on it. That is the trap
+# the reference check beside it has been guarded against since #145, and this
+# one needed the same guard the moment it gained a value check.
+#
+# Driven through the commit path rather than through the finding, because the
+# finding is right either way: what changes is whether the commit is refused.
+_rm_running = ["route-map LP permit 10", " match as-path AS1",
+               " set local-preference banana"]
+_rm_target = _rm_running + ["route-map OTHER permit 10", " match as-path AS2"]
+_already = {stmt for sev, stmt, _ in route_map_findings(_rm_running)
+            if sev == "error"}
+_new = [stmt for sev, stmt, _ in route_map_findings(_rm_target)
+        if sev == "error" and stmt not in _already]
+check(not _new,
+      f"a statement FRR already carries is counted as new, so every commit on "
+      f"that box would be refused and its saved file would not load: {_new}")
+_rm_fresh = ["route-map LP permit 10", " match as-path AS1",
+             " set local-preference banana"]
+_new_fresh = [stmt for sev, stmt, _ in route_map_findings(_rm_fresh)
+              if sev == "error" and stmt not in set()]
+check(_new_fresh,
+      f"a box that did not have it and is being given it now is not refused, "
+      f"which is the whole point of the check: {_new_fresh}")
+print("  a box that already carries one can still be configured, and a new "
+      "one is still refused")
+
 
 # --- no input may put a traceback in front of an operator (#208) ---
 #
