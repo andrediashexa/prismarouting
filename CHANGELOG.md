@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The tuner told a box with no dataplane card that its card is "(not a PCI
+  device)"** ([#331](https://github.com/andrediashexa/hexarouting/issues/331)).
+  One line covered two states that are nothing alike: no card named at all,
+  which is every fresh install, and a named card whose PCI address could not
+  be read. The sentence written for the second was printed for the first, two
+  lines under a line saying no NIC had been given - so the report contradicted
+  itself on one screen, and the reasonable reading sent an operator looking for
+  why their card was not PCI. That is the dead end
+  [#286](https://github.com/andrediashexa/hexarouting/issues/286) was about,
+  reached by a different road. Three states now get three sentences, and the
+  one the old wording was right for keeps its answer.
+
+### Fixed
+
 * **`show hardware` told an operator their card was unusable and stopped
   there** ([#328](https://github.com/andrediashexa/hexarouting/issues/328)).
   The driver line read `kernel driver: DPDK cannot take a NIC through it`. It
