@@ -92,7 +92,17 @@ vppctl bpa block-holddown 4
 # records too early from a collector that joined the stream too late - both
 # look like a data set with no template. Listening first makes every packet
 # this incarnation sends visible, in order.
-ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 75 > /tmp/collector.out 2>&1 &
+# THE WINDOW IS A CEILING, NOT A GUESS. It was 75 seconds, chosen when this
+# lab was written, and the lab then waited it out whatever the box did. On a
+# machine carrying something else the box is slower, its records arrive after
+# the window has closed, and the lab reports that the log is missing them -
+# which is a product defect it has not got (#342, and three labs on
+# 2026-09-15). The collector is told when the box has finished instead, and
+# drains its receive buffer before it leaves.
+COL_STOP=/tmp/collector.stop
+rm -f "$COL_STOP"
+ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 300 "$COL_STOP" \
+  > /tmp/collector.out 2>&1 &
 COL=$!
 # captures the wire in parallel: separates "VPP did not send" from "the
 # collector lost it"
@@ -238,6 +248,11 @@ echo
 echo "=== contadores do exportador ==="
 vppctl show bpa logging | sed 's/^/  /'
 
+# Everything this lab asks of the box has been done, so there is nothing more
+# to hear. A moment first for the last records to cross the wire; the
+# collector drains what is already queued.
+sleep 2
+: > "$COL_STOP"
 wait $COL 2>/dev/null
 echo
 echo "=========== WHAT WENT OVER THE WIRE (tcpdump) ==========="

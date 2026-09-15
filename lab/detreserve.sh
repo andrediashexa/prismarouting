@@ -183,7 +183,23 @@ $HX -c "configure" \
     -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
     -c "cgnat logging enable" \
     -c "commit" 2>&1 | sed 's/^/    /'
-ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 30 \
+# THE COLLECTOR'S WINDOW IS NOT A GUESS ANY MORE (#342's fix, applied here).
+#
+# This was a fixed number of seconds chosen when the lab was written, and the
+# lab then waited it out whatever the box did. On a machine carrying something
+# else the box is slower, its records arrive after the window has closed, and
+# the lab reports that the log is missing them - which is a product defect it
+# has not got. That happened on 2026-09-15: this lab and two others went red on
+# "the record arrived at the collector" while the same machine ran the whole
+# test suite under gcov three times over, and all of them passed alone.
+#
+# So the number is a CEILING for a run nobody is watching, and the lab tells
+# the collector when the box has finished. The collector drains what is
+# already in its receive buffer before it leaves, so nothing in flight is lost.
+COL_STOP=/tmp/collector.stop
+rm -f "$COL_STOP"
+ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 180 \
+  "$COL_STOP" \
   > /tmp/collector.out 2>&1 &
 COL_PID=$!
 sleep 2
@@ -255,6 +271,11 @@ vppctl bpa timeouts udp 2 >/dev/null
 sleep 12
 vppctl show bpa blocks | sed 's/^/    /'
 
+# The box has done everything this lab asks of it, so there is nothing more to
+# hear. A moment first for the last records to cross the wire: the collector
+# drains its buffer, so this only has to cover flight time.
+sleep 2
+: > "$COL_STOP"
 wait $COL_PID 2>/dev/null
 COL=$(cat /tmp/collector.out)
 printf '%s\n' "$COL" | grep -E "$S1 " | sed 's/^/    /'
