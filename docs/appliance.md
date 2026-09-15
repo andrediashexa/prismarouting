@@ -845,8 +845,13 @@ need, and a box told the session was safe and losing it is a box nobody can
 reach.
 
 `commit` writes `HEXA_DATAPLANE_IF` into `tune.env` and restarts
-`hexarouting-tune`, which regenerates `startup.conf` and binds the NIC. **It
-does not restart VPP.** Handing a card to the dataplane takes it away from
+`hexarouting-tune`, which regenerates `startup.conf`. **It does not bind the
+NIC and it does not restart VPP.** The bind used to happen there, and that was
+the defect in #336: `apply-tuning` performs it, `commit` restarts the unit that
+runs `apply-tuning`, and nothing restarts VPP afterwards - so the card came off
+its kernel driver with neither stack owning it, while this same commit printed
+that the card had not moved yet. It is taken at the next start of the
+dataplane, which is what the VTY has always said. Handing a card to the dataplane takes it away from
 Linux and ends everything reaching the box through that card - on a box whose
 only card carries the management address, the operator's own session - the same
 class of consequence as `commit remap`, which this VTY refuses until it is
