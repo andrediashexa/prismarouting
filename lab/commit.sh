@@ -110,8 +110,19 @@ echo "  OK: read-only commands only"
 
 echo
 echo "=========== 8. the check still catches what the device refuses ==========="
-$HX -c "configure" -c "cgnat pool alpha" -c "block-size 500" -c "exit" \
-    -c "commit check" 2>&1 | grep -vE "entering" | sed 's/^/  /'
+# A SECOND overlapping public prefix, and not a block size that is not a power
+# of two, which is what this said. The VTY refuses that at the prompt now, so
+# the device was never asked and this section demonstrated the wrong half of
+# the product: the whole point here is that `commit check` carries a refusal
+# back from the DEVICE without touching it, and a statement the VTY stops at
+# the line never reaches the device to be refused by it.
+#
+# Overlapping prefixes in one address set is a refusal the VTY does not make
+# and the device does: bpa_addr_set_* rejects the set before the pool is
+# built. Chosen for that reason and checked for it - a change the VTY caught
+# first would put this section back where it was.
+$HX -c "configure" -c "cgnat pool alpha" -c "outside 198.19.24.0/25" \
+    -c "exit" -c "commit check" 2>&1 | grep -vE "entering" | sed 's/^/  /'
 echo "  -- device untouched:"
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
 # Captured here, not read at verdict time: the sections after this one commit
@@ -152,14 +163,42 @@ expect "rollback restored the previous MTU" test "$BACK" = "$BEFORE"
 # --- a commit the dataplane refuses must FAIL ---
 # This is the case that could not pass before the binary API: vppctl exits 0
 # even when the command failed, so commit reported success while the dataplane
-# held none of the configuration. The public prefix below collides with a local
-# address, which the device refuses - and the candidate must survive it, or the
-# operator loses the edit they were trying to correct.
+# held none of the configuration. The candidate must survive that refusal, or
+# the operator loses the edit they were trying to correct.
+#
+# WHAT MAKES THE DEVICE REFUSE, and it is worth saying because this case spent
+# its whole life saying something else. The comment here read "the public
+# prefix below collides with a local address, which the device refuses". No
+# interface in this lab carries 10.0.0.0/30 and none ever did, so that was not
+# the reason and never had been: what the device was refusing was
+# `block-size 500`, which is not a power of two - bpa_pool.c's own second
+# clause. The case was right about the product and wrong about itself, and it
+# passed for four months on a refusal its comment did not name.
+#
+# It surfaced the moment the VTY started refusing that block size at the line
+# rather than leaving it to the device, because then the pool committed
+# cleanly and all three assertions below went red at once. A lab that goes red
+# when a defect is FIXED is a lab that was measuring the defect.
+#
+# So the pool is one the VTY passes through and the device refuses: two
+# overlapping prefixes in one address set. `bpa_addr_set_*` rejects the set
+# before the pool is built, and the VTY has no check of its own for it -
+# verified by driving the four statements through a Shell and seeing nothing
+# refused at the prompt.
 BADC=$($HX -c "configure" -c "cgnat pool doomed" -c "inside 100.64.32.0/22" \
-             -c "outside 10.0.0.0/30" -c "block-size 500" -c "exit" -c "commit" 2>&1)
+             -c "outside 10.0.0.0/30" -c "outside 10.0.0.0/31" \
+             -c "exit" -c "commit" 2>&1)
 echo "$BADC" | tail -3 | sed 's/^/  /'
 expect_in "a refused commit says so" "error" "$BADC"
 expect_in "and names the pool" "doomed" "$BADC"
+# THE CAUSE, and not only that something was refused. `error` is green for any
+# refusal at all, and `doomed` is green for any refusal about this pool - which
+# is how this case stayed green for four months while the device was refusing
+# something the comment above did not mention. A case about a device refusal
+# has to name the refusal, or the next change that moves the cause leaves it
+# passing about the wrong thing again.
+expect_in "and says WHICH refusal, so a cause that moves is seen" \
+  "overlapping" "$BADC"
 expect_not_in "and does not claim success" "commit complete" "$BADC"
 expect_not_in "and the pool is not in the dataplane" "pool doomed" "$(vppctl show bpa pool)"
 

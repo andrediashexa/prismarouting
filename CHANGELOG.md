@@ -233,6 +233,35 @@ version has a chance of seeing it.
   beside the equality, because an equality against a mode read from the same
   place would go quiet the day somebody changed both.
 
+* **A lab case that had been passing for four months on a refusal its own
+  comment did not name.** `lab/commit.sh`'s *"a commit the dataplane refuses
+  must FAIL"* built a pool with `outside 10.0.0.0/30` and said, in the comment
+  above it, that the public prefix collides with a local address and that is
+  what the device refuses. No interface in that lab carries 10.0.0.0/30 and
+  none ever did. What the device was actually refusing was `block-size 500`,
+  which is not a power of two.
+
+  It surfaced when
+  [#360](https://github.com/andrediashexa/hexarouting/issues/360) moved that
+  refusal to the prompt: the pool then committed cleanly and all three
+  assertions went red at once. **A lab that goes red when a defect is fixed is
+  a lab that was measuring the defect.** Section 8 of the same file, *"the
+  check still catches what the device refuses"*, had the same `block-size 500`
+  and stopped reaching the device for the same reason.
+
+  Both now use a pool the VTY passes through and the device refuses: two
+  overlapping prefixes in one address set, which `bpa_addr_set_build` rejects
+  because an overlap breaks the address-to-index bijection and a broken
+  bijection means a subscriber can be billed as another one. Verified by
+  driving all four statements through a `Shell` and seeing nothing refused at
+  the prompt, which is the property the case needs and the old one had lost.
+
+  And the case names the refusal now. `error` is green for any refusal at all
+  and `doomed` is green for any refusal about that pool, which is exactly how
+  it stayed green while the device refused something else: a sweep of every
+  `expect_in` in `lab/` finds only two needles that generic, and this was one
+  of them. The other is an `expect_not_in` where generic is the right answer.
+
 * **Three wiki screens the new reader caught, two of them made stale an hour
   earlier by this same release.** `test/test_wiki_screens.py` went in green and
   then went red on its first real test: the split of the `nat: a hierarchy, not
