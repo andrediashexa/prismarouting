@@ -965,6 +965,13 @@ _settings = [
     ("an ssh value sshd would not take", "ssh permit-root-login maybe",
      "error: ssh permit-root-login 'maybe': expected one of yes, no, "
      "prohibit-password, forced-commands-only"),
+    # A GLOBAL CGNAT VALUE, which is a different site from the word check
+    # above it. #273 closed `cgnat <word>` and left `cgnat <word> <number>`
+    # open: a timeout of zero was accepted, saved and sent to a message that
+    # reads zero as "leave this one alone", so the box kept the timeout it
+    # already had and the configuration said otherwise (#351).
+    ("a global timeout of zero", "cgnat timeout udp 0",
+     "error: cgnat timeout udp 0: expected 1-4294967295"),
 ]
 for _label, _line, _want in _settings:
     _rv, _text = driven(cfg_shell().do_config, _line)
@@ -989,7 +996,7 @@ _iface = [
      "error: linux-name: 'a/b' cannot be a Linux interface name "
      "(15 characters, no '/')"),
     ("vrf with no table", "pg0", "vrf",
-     "error: usage: vrf <table>"),
+     "error: usage: vrf <1-4294967295>, or 0 to take it back out"),
     ("a VLAN tag with no number", "pg0.7", "vlan",
      "error: usage: vlan <1-4094> [inner <1-4094>]"),
     # The second `usage: vlan` line, and a different branch from the first:
@@ -998,6 +1005,13 @@ _iface = [
     # on lines rather than on text.
     ("an inner tag with no number", "pg0.7", "vlan 7 inner",
      "error: usage: vlan <1-4094> [inner <1-4094>]"),
+    # The INNER tag's own bound, which is a third site again. The outer tag
+    # borrows the sub-interface name check - `pg0.7` has to carry vlan 7 - so
+    # a wrong outer tag is refused by the name before the range is reached.
+    # Nothing is named after the inner one, and until #350 nothing bounded it:
+    # `vlan 7 inner 4095` was staged exactly as typed.
+    ("an inner tag 802.1Q keeps for itself", "pg0.7", "vlan 7 inner 4095",
+     "error: inner 4095 out of range (1-4094): 802.1Q reserves 0 and 4095"),
     ("an address statement with no prefix", "pg0.7", "ipv4 address",
      "error: usage: ipv4 address <prefix>"),
     ("an address with no prefix length", "pg0.7", "ipv4 address 999",

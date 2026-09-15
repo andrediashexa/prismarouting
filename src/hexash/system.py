@@ -632,14 +632,21 @@ def validate_snmp(settings: dict):
             return f"snmp enabled '{v}': expected yes or no"
         if k == "port" and (not str(v).isdigit() or not 1 <= int(v) <= 65535):
             return f"snmp port '{v}': expected 1-65535"
-        if k == "enterprise-number" and v and not str(v).isdigit():
+        if k == "enterprise-number" and v and (
+                not str(v).isdigit() or not 1 <= int(v) <= 4294967295):
             # An OID under somebody else's PEN is a lie about who the object
             # belongs to, and it collides the day that organisation uses the
             # same subtree. So there is no default and no guess: either the
             # operator has a number from IANA or the enterprise objects stay
             # dark.
-            return (f"snmp enterprise-number '{v}': expected the IANA Private "
-                    "Enterprise Number of your organisation, a plain integer")
+            #
+            # The BOUND is new and `?` is the reason for it. A PEN is an OID
+            # arc, 1 to 2^32-1, and the VTY was offering this one as
+            # `<1-65535>` - which is not the registry's range and never was:
+            # IANA has been assigning above 65535 since the 1990s, so an ISP
+            # reading that hint saw its own number refused by a screen while
+            # the box took it (#351).
+            return f"snmp enterprise-number '{v}': expected 1-4294967295"
     return None
 
 

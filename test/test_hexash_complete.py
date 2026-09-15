@@ -76,8 +76,9 @@ o, hint, _ = opts("pool", "inside ")
 check(hint == hexash.ARG_PREFIX, f"expected a prefix hint, got {hint!r}")
 check(not o, f"should not list options after 'inside': {o}")
 o, hint, _ = opts("config", "nat cgnat block-holddown ")
-check(hint == hexash.ARG_NUM, f"expected a numeric hint, got {hint!r}")
-print(f"  'inside ' -> {hexash.ARG_PREFIX} ; 'block-holddown ' -> {hexash.ARG_NUM}")
+check(hint == hexash.ARG_SECONDS, f"expected a numeric hint, got {hint!r}")
+print(f"  'inside ' -> {hexash.ARG_PREFIX} ; "
+      f"'block-holddown ' -> {hexash.ARG_SECONDS}")
 
 print("\n=== config: CGNAT and routing at the same level ===")
 o, _, _ = opts("config", "")
@@ -130,6 +131,112 @@ sh.feed("no mtu")
 check("ens19" not in sh.candidate.mtus,
       f"'no mtu' must remove the statement: {sh.candidate.mtus}")
 print("  1500 accepted; 99, 20000 and 'abc' refused; 'no mtu' removes it")
+
+print("\n=== every range `?` quotes is a range the box takes ===")
+# WHAT THIS IS ABOUT. A hint like `<576-9216>` is not decoration: it is the
+# box telling an operator, before they type, which numbers it will accept.
+# #312 is what that promise is worth when nothing keeps it - `commit confirmed`
+# had said `<1-60>` since the day it was written, `confirmed 600` armed a ten
+# hour window, and `confirmed 0` armed nothing at all and answered `commit
+# complete`. Sweeping the other forty-four sites found four more of the same
+# shape, all in statements this VTY applies itself (#350, #351, #352).
+#
+# FOUR VALUES PER RANGE, and all four matter. `a` and `b` catch a box that
+# refuses what it documents - an operator typing the documented limit and
+# being told no. `a-1` and `b+1` catch the other direction, which is milder
+# on the screen and not milder on the box: `max-blocks 256` was accepted here,
+# written to the file and sent to a u8 field, where it became 1.
+#
+# Only the statements the VTY ENFORCES are here. `ospf maximum-paths` and the
+# rest of the routing tree are forwarded to FRR, which is the authority on
+# them and refuses at commit rather than at the line; what those are owed is
+# a hint that matches FRR's own grammar, and test_doc_commands compares the
+# tree against the wiki rather than against a number this file would invent.
+_RANGES = [
+    # (label, block to enter, statement with {v}, a, b, what holds the value)
+    ("interface mtu", ["interface ens19"], "mtu {v}", 576, 9216,
+     lambda c: c.mtus.get("ens19")),
+    ("pool block-size", ["nat cgnat pool P"], "block-size {v}", 64, 32768,
+     lambda c: None),
+    ("pool max-blocks", ["nat cgnat pool P"], "max-blocks {v}", 1, 255,
+     lambda c: None),
+    ("pool block-stride", ["nat cgnat pool P"], "block-stride {v}", 0, 65535,
+     lambda c: None),
+    ("pool reserve", ["nat cgnat pool P"], "reserve {v}", 0, 65535,
+     lambda c: None),
+    ("pool utilisation-alarm", ["nat cgnat pool P"],
+     "utilisation-alarm {v}", 1, 100, lambda c: None),
+    ("pool timeout udp", ["nat cgnat pool P"], "timeout udp {v}",
+     1, 4294967295, lambda c: None),
+    ("global cgnat timeout udp", [], "cgnat timeout udp {v}", 1, 4294967295,
+     lambda c: None),
+    ("interface vlan", ["interface ens19.7"], "vlan 7 inner {v}", 1, 4094,
+     lambda c: (c.vlans.get("ens19.7") or {}).get("inner")),
+]
+
+
+def _typed(block, line):
+    """
+    What the VTY did with one statement, said and refused.
+
+    A fresh Shell per value, not one carried across the table. Several of
+    these statements leave a pool or an interface block behind them, and a
+    value refused on a shell that is still inside the previous row's block is
+    a measurement of the wrong statement.
+    """
+    _s = hexash.Shell()
+    _s.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    _s.mode = "config"
+    _s.candidate = _config.Config()
+    _out = io.StringIO()
+    with contextlib.redirect_stdout(_out):
+        for _b in block:
+            _s.feed(_b)
+        _before = _s.failed
+        _s.feed(line)
+    return _s, _s.failed > _before, _out.getvalue()
+
+
+for _label, _block, _tpl, _a, _b, _read in _RANGES:
+    for _end, _v in (("a", _a), ("b", _b)):
+        _s, _refused, _said = _typed(_block, _tpl.format(v=_v))
+        check(not _refused,
+              f"{_label}: {_v} is the {_end} end of the range `?` quotes and "
+              f"the box refused it: {_said.strip()!r}")
+    for _end, _v in (("a-1", _a - 1), ("b+1", _b + 1)):
+        _s, _refused, _said = _typed(_block, _tpl.format(v=_v))
+        check(_refused,
+              f"{_label}: {_v} is outside the range `?` quotes and the box "
+              f"took it")
+        # AND THE REFUSAL NAMES THE RANGE. The two numbers are written in two
+        # places - the hint and the sentence - and a refusal that does not
+        # carry them leaves the operator to find the hint again while the
+        # maintenance window is open. This is also what tells a range refusal
+        # from a refusal that happened to fire for some other reason, which is
+        # the difference `confirmed 0` turned on: zero was falsy, took the
+        # branch for "no window asked for", and nothing was refused at all.
+        check(f"{_a}-{_b}" in _said or f"({_a}-{_b})" in _said,
+              f"{_label}: refusing {_v} without naming {_a}-{_b}: "
+              f"{_said.strip()!r}")
+print(f"  {len(_RANGES)} ranges, each accepting both ends and refusing both "
+      f"outsiders by name")
+
+print("\n=== zero, where zero is outside the range ===")
+# THE VALUE #312 WAS ABOUT, driven on its own everywhere it is not in range.
+# Zero is falsy, so it is the one value that reaches a branch written for "the
+# operator did not ask for this" rather than the branch written for "the
+# operator asked for something out of range" - and the difference between the
+# two is a box that says no and a box that says nothing. `cgnat timeout udp 0`
+# was the live one: accepted, saved, and sent to a message whose contract
+# reads a zero timeout as "leave this one alone" (#351).
+for _label, _block, _tpl, _a, _b, _read in _RANGES:
+    if _a <= 0:
+        continue
+    _s, _refused, _said = _typed(_block, _tpl.format(v=0))
+    check(_refused, f"{_label}: 0 is outside {_a}-{_b} and the box took it")
+    check(f"{_a}-{_b}" in _said,
+          f"{_label}: refusing 0 without naming {_a}-{_b}: {_said.strip()!r}")
+print("  0 refused by name at every range that does not contain it")
 
 print("\n=== mtu survives the configuration round trip ===")
 # It has to appear in show configuration, be saved, and be read back - or a
@@ -1432,6 +1539,34 @@ cont = route_map_findings(["route-map C deny 10", " match as-path AS1",
                            " continue 30", " set local-preference 150"])
 check([f for f in cont if f[0] == "error"],
       f"a set after a 'continue' still belongs to its clause: {cont}")
+
+# `set local-preference`, where THIS VTY quotes a range and FRR does not have
+# one. Measured on FRR 10.7.1: `list` inside a route-map declares `set
+# local-preference WORD`, vtysh takes `set local-preference banana`,
+# `frr-reload.py --test` - which is what `commit check` runs - exits 0 on it,
+# and bgpd's own running configuration carries the line back verbatim. The
+# clause then sets nothing, which is the "looks right and does nothing" shape
+# the rest of this function exists for (#354).
+#
+# The range in the hint is right and was never the question: local preference
+# is a 32-bit unsigned in the protocol. What was missing is anything that held
+# the statement to it.
+for _bad in ("banana", "-1", "4294967296"):
+    _lp = route_map_findings(["route-map LP permit 10",
+                              " match as-path AS1",
+                              f" set local-preference {_bad}"])
+    check([f for f in _lp if f[0] == "error" and _bad in f[1]],
+          f"'set local-preference {_bad}' must be refused, not committed "
+          f"for FRR to drop on the floor: {_lp}")
+    check([f for f in _lp if "0-4294967295" in f[2]],
+          f"and the finding names the range the hint quotes: {_lp}")
+for _good in ("0", "100", "4294967295"):
+    _lp = route_map_findings(["route-map LP permit 10",
+                              " match as-path AS1",
+                              f" set local-preference {_good}"])
+    check(not [f for f in _lp if f[0] == "error"],
+          f"{_good} is inside the range and must not be refused: {_lp}")
+print("  'set local-preference banana' is an error, 0 and 4294967295 are not")
 
 
 # --- no input may put a traceback in front of an operator (#208) ---

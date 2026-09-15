@@ -258,7 +258,7 @@ configure
  snmp enabled yes|no
  snmp listen-address <endereço>
  snmp port <1-65535>
- snmp enterprise-number <n>
+ snmp enterprise-number <1-4294967295>
  snmp community <string>
 ```
 

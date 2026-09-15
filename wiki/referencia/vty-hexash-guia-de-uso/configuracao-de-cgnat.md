@@ -6,7 +6,7 @@ Comandos dentro de `configure`, na hierarquia `nat cgnat`.
 |---------|-----------|-----------|
 | `nat cgnat pool <nome>` | `<word>`  | cria ou edita um pool (entra no modo pool) |
 | `nat cgnat interface <if> inside\|outside` |           | habilita CGNAT numa interface, do lado interno ou externo |
-| `nat cgnat block-holddown <s>` | `<1-65535>` | segundos que um bloco fica reservado depois de ocioso |
+| `nat cgnat block-holddown <s>` | `<1-4294967295>` | segundos que um bloco fica reservado depois de ocioso |
 | `nat cgnat session-table buckets <n> memory <MB>` |           | dimensionamento da tabela de sessões |
 
 `nat` sozinho **não é um bloco em que se entra** — é uma hierarquia. Digitado só, é recusado dizendo o que digitar no lugar:

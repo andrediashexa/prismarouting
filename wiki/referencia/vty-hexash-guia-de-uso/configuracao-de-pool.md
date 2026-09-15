@@ -49,21 +49,23 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 |---------|-----------|--------------|
 | `inside <prefixo>` | `<A.B.C.D/M>` | prefixo interno; pode repetir |
 | `outside <prefixo>` | `<A.B.C.D/M>` | prefixo público; pode repetir |
-| `block-size <n>` | `<64-65536>` | portas por bloco, potência de dois |
+| `block-size <n>` | `<64-32768>` | portas por bloco, potência de dois |
 | `ports <min> <max>` |           | faixa de portas utilizável |
 | `policy interleaved` |           | vizinhos em endereços públicos distintos |
 | `policy blocked` |           | vizinhos no mesmo endereço público |
 | `mode deterministic` |           | por fórmula, sem log de alocação |
 | `mode dynamic` |           | sob demanda, com log de alocação |
-| `vrf <n>` | `<1-65535>` | a VRF cujos assinantes este pool atende; ausente = todas |
-| `outside-vrf <n>` | `<1-65535>` | a VRF por onde o tráfego traduzido sai; ausente = deixa onde estava |
+| `vrf <n>` | `<0-4294967295>` | a VRF cujos assinantes este pool atende; ausente = todas |
+| `outside-vrf <n>` | `<0-4294967295>` | a VRF por onde o tráfego traduzido sai; ausente = deixa onde estava |
 | `reserve <n>` | `<0-65535>` | blocos de **cada** endereço público guardados fora da fórmula, para dar a quem encher o seu; `0` = nenhum |
 
 `**policy interleaved**` **vs** `**blocked**` — `interleaved` espalha vizinhos por endereços públicos distintos, o que dilui o impacto de um bloqueio de reputação em um IP. `blocked` mantém vizinhos no mesmo endereço público.
 
 # Timeouts do pool
 
-`timeout <tipo> <segundos>`. Ausente, herda o global.
+`timeout <tipo> <segundos>`, de `1` a `4294967295`. Ausente, herda o global.
+Zero não é um timeout: é o valor que a caixa lê como "não mexa neste", e por
+isso é recusado na hora em que você digita, e não silenciosamente ignorado.
 
 | Tipo | O que expira |
 |------|--------------|
@@ -82,10 +84,10 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 
 | Comando | Argumento | O que limita |
 |---------|-----------|--------------|
-| `max-blocks <n>` | `<1-65535>` | quantos blocos um assinante pode segurar |
+| `max-blocks <n>` | `<1-255>` | quantos blocos um assinante pode segurar |
 | `block-stride <n>` | `<0-65535>` | distância entre os blocos de um mesmo assinante; `0` deixa o pool escolher |
-| `max-sessions <n>` | `<1-65535>` | máximo de sessões simultâneas por assinante; `0` = ilimitado |
-| `max-session-rate <n>` | `<1-65535>` | máximo de sessões novas por segundo, por assinante; `0` = ilimitado |
+| `max-sessions <n>` | `<0-4294967295>` | máximo de sessões simultâneas por assinante; `0` = ilimitado |
+| `max-session-rate <n>` | `<0-4294967295>` | máximo de sessões novas por segundo, por assinante; `0` = ilimitado |
 | `utilisation-alarm <pct>` | `<1-100>` | loga uma vez quando o bloco de um assinante atinge essa porcentagem |
 
 `max-sessions` e `max-session-rate` são a defesa contra uma máquina infectada consumindo o pool inteiro. `utilisation-alarm` avisa **antes** do esgotamento, não depois.
@@ -349,7 +351,8 @@ Tirar um timeout, um ALG ou um limite **não é o mesmo que ajustá-lo para o va
 Digitar `no block-size 512` dentro do pool é recusado, e a recusa diz o que fazer no lugar:
 
 ```
-error: block-size cannot be removed: every pool has one, so there is no state without it. Set the value you want instead: block-size <64-65536>
+error: block-size cannot be removed: every pool has one, so there is no state
+without it. Set the value you want instead: block-size <64-32768>
 ```
 
 Sai numa **linha só**, mais larga que o console - quem quebra é o terminal.
