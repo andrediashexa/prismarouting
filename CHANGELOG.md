@@ -77,6 +77,64 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The only assertion in the tree about the `match` pipe filter was the
+  filter's own guard quoted back at it** (`test/test_hexash_complete.py:2582`).
+  `apply_pipe()` in `src/hexash/hexash.py` routes both spellings through one
+  branch,
+
+  ```python
+  if verb in ("include", "match"):
+      lines = [l for l in lines if arg in l]
+  ```
+
+  and the check under it read `check(piped("match mtu") == piped("include
+  mtu"))`. That is one expression compared with itself: whatever the branch
+  computes it computes for both verbs, so nothing the filter does can separate
+  them. It is the Python instance of the shape `test/test_c_restates_product.py`
+  refuses in the C harnesses and `test/test_lab_vacuous.py` refuses in the labs,
+  and `match` is piped nowhere else in the tree, so this line was the whole of
+  its coverage.
+
+  The mutation has to be the SHARED branch and cannot be either verb's name:
+  the name is what both sides are built from, so moving it moves the needle and
+  the text together and proves nothing. With `arg in l` inverted to `arg not in
+  l`, five assertions in the file went red and the one about `match` stayed
+  green - the first of the five being
+
+  > `FAIL: include keeps the matching lines: ['interface Gi0', ' ipv4 address
+  > 10.0.0.1/24', 'interface Gi1', 'router bgp 65000', ' neighbor 10.0.0.2
+  > remote-as 65001']`
+
+  The check now compares against the lines, the way the `include` check three
+  lines above it already does, and the same mutation reddens six:
+
+  > `FAIL: match is the same filter under the name operators type: ['interface
+  > Gi0', ' ipv4 address 10.0.0.1/24', 'interface Gi1', 'router bgp 65000', '
+  > neighbor 10.0.0.2 remote-as 65001']`
+
+  **What the sweep behind it drove**, because a single finding is worth as much
+  as the search that produced it is wide. 34 files, 21,273 lines, 1,744
+  assertion sites: 1,620 `check(cond, msg)` and 124 `bad(msg)`, whose condition
+  is the `if` above them, and no bare `assert` anywhere. 2,258 `check` calls run
+  on a green tree over 1,599 distinct sites; the 21 sites never reached are all
+  `check(False, ...)` failure reporters, and of the 124 `bad()` guards every one
+  is evaluated except four that sit on the far side of a branch always taken.
+  The four shapes named in the hunt were each swept and the last three came back
+  empty, which is a result and is written down here so nobody drives them again:
+  no Python check condition contains `*`, `/`, `//` or `%` at all, so the
+  fixture-arithmetic shape that `24 % 4 == 0` gave the C harnesses has nowhere
+  to live; 18 sites whose `in` ran only against an empty container were read and
+  every one is empty BECAUSE of the product's answer; and 592 positive needle
+  matches were witnessed line by line, with the ones answered by a column header
+  rather than a row checked by hand. The shape that did hold is the first:
+  eight sites answer both halves of one comparison with the same
+  product-backed call. The other seven are each falsifiable and every one was
+  shown red on its own anchored mutation, so none of them is being taken on
+  trust: `ospf_state` and `isis_findings` when their parsers are made to read
+  indentation, `advertisement_fingerprint` when the fingerprint is widened to
+  lines that advertise nothing and again when it is emptied, and
+  `config.global_key` with the single special case it has taken out.
+
 * **`make test` reached the network, and `TESTING.md` said it did not.** The
   assertion added earlier tonight that the release gate asks
   `tools/roadmap-state.sh` drove the real gate, which runs `gh auth status` and

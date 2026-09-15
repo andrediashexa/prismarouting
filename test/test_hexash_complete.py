@@ -2579,8 +2579,16 @@ def piped(*stages):
 
 check(piped("include mtu") == [" mtu 1500", " mtu 9000"],
       f"include keeps the matching lines: {piped('include mtu')}")
-check(piped("match mtu") == piped("include mtu"),
-      "match is the same filter under the name operators type")
+# Against the LINES, and not against what `include` answered. The product
+# routes both verbs through one `if verb in ("include", "match")`, so a
+# comparison between the two calls is one expression compared with itself: it
+# is the filter's own guard quoted back at it, and no filtering it does can
+# turn it. Measured by inverting that branch to `arg not in l` - five
+# assertions in this file went red and this one stayed green, on the only
+# line in the tree that pipes `match` at all.
+check(piped("match mtu") == [" mtu 1500", " mtu 9000"],
+      f"match is the same filter under the name operators type: "
+      f"{piped('match mtu')}")
 check(" mtu 1500" not in piped("exclude mtu"), "exclude drops them")
 # `section` is the one that pays most here, because this box's configuration
 # IS blocks: a line at column 0 and everything indented under it.
