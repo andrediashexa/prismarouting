@@ -77,6 +77,44 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box installed console-only said it is reached at its console, over the
+  ssh session it was being read on**
+  ([#387](https://github.com/andrediashexa/hexarouting/issues/387)). The
+  install answers `none` to the management-interface question, and the
+  self-test turned that answer into a claim about the present:
+
+      [info] no management network was asked for at install time; this
+             box is reached at its console
+
+  `none` is a fact about install time and stays true. *"This box is reached at
+  its console"* is a claim about this boot, drawn from it without asking the
+  box. Found on the maintainer's own appliance, where the same box was
+  answering `default via 10.95.200.1 dev ens19` and carrying the session that
+  printed the line.
+
+  **Since [#378](https://github.com/andrediashexa/hexarouting/issues/378) that
+  is worse than a wrong sentence.** A card nothing reserves is claimed by the
+  dataplane at the next boot, and on a box installed this way the reserve can
+  never exist - `none` writes no `iface` line for `reserved_for_linux()` to
+  read. So the box takes the card it is reached on, and the one screen that
+  could have warned about it said the subject does not apply. Driven with that
+  box's own file and both cards present, the tuner answers
+  `claiming all 2 card(s) on this box; none is reserved for Linux`.
+
+  The check asks the box now: a PCI-backed netdev Linux still holds, carrying
+  an address, is named, with what becomes of it at the next boot and the
+  stanza that reserves it - written with the card's real name, because the
+  operator reading it is at a console and `eth0` is almost certainly not what
+  the machine has.
+
+  **The guard is the half worth reading.** It looks only at netdevs with a
+  `device` link, which is what makes them cards rather than `linux_cp` pairs.
+  On the commonest box there is after #378 - one card, already handed over,
+  its address living on the pair - the dataplane cannot claim what it already
+  holds, and warning there would be crying wolf on every such box. Both halves
+  shown failing: the branch disabled, and the `device` guard removed.
+
+
 * **A `hexash -c` batch whose statement is refused no longer commits and says
   `commit complete`**
   ([#376](https://github.com/andrediashexa/hexarouting/issues/376)). The batch

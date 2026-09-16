@@ -3403,6 +3403,57 @@ ADDR18='2: ens18    inet 10.0.2.15/24 brd 10.0.2.255 scope global ens18
 DEFRT='default via 10.0.2.2 dev ens18 proto dhcp metric 100
 '
 
+echo "=== installed console-only, and on the network anyway (#387) ==="
+# THE BOX THE MAINTAINER WAS READING THIS ON. The install answered `none`, so
+# the file exists and carries no `iface` line, and the self-test said "this
+# box is reached at its console" - while it was being read over ssh, on a card
+# added after the install.
+#
+# It is a warning and not an [info] because of what happens next: since #378 a
+# card nothing reserves is claimed by the dataplane at the next boot, and on a
+# box installed this way the reserve can never exist.
+#
+# The `device` link is what makes ens18 a CARD here rather than a pair, and it
+# is the whole of the guard being asserted: without it this case would be
+# indistinguishable from the one below it.
+mgmt_box "# NO MANAGEMENT NETWORK was asked for" "$ADDR18" "$DEFRT"
+mkdir -p "$FAKE/root/sys/class/net/ens18/device"
+run
+said "no management network was asked for, and this box is on one anyway" \
+  && ok "a console-only box that is on the network says so" \
+  || bad "the box answered over the network and still said the management \
+network does not apply to it"
+said "Linux holds: ens18" \
+  && ok "and names the card Linux still holds" \
+  || bad "it warned and did not say which card it is about"
+said_across "nothing reserves is one the dataplane claims at the next boot" \
+  && ok "and says what happens to that card at the next boot" \
+  || bad "it says the box is on the network and not what becomes of the card"
+said "iface ens18 inet dhcp" \
+  && ok "and gives the stanza that reserves it, naming the card the box has" \
+  || bad "the advice does not name a card this box actually has"
+said "box is reached at its console" \
+  && bad "it still says the box is reached at its console, which is the \
+sentence that was false" \
+  || ok "and does not say the box is reached at its console"
+
+echo
+echo "=== the pair a one-card box is reached on is NOT a card to warn about ==="
+# The commonest box there is after #378: the only card went to the dataplane
+# and the address lives on the linux_cp pair. A pair has no `device` link, so
+# it is not something the dataplane can claim - and warning here would be
+# crying wolf on every such box, which is how a warning stops being read.
+mgmt_box "# NO MANAGEMENT NETWORK was asked for" "$ADDR18" "$DEFRT"
+run
+said "no management network was asked for, and this box is on one anyway" \
+  && bad "it warned about an interface that is a linux_cp pair, which the \
+dataplane already holds and cannot claim again" \
+  || ok "a pair carrying the address draws no warning"
+said "box is reached at its console" \
+  && ok "and the console-only box still says so" \
+  || bad "the [info] for a genuinely console-only box is gone"
+
+echo
 echo "=== a box installed by a medium that never asked (the defect) ==="
 # The file is ABSENT, which is every appliance installed up to and including
 # 0.72.0. It is a failed check and not a warning: the box comes back from

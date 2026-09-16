@@ -1733,8 +1733,52 @@ else
   if [ -z "$mgmt_if" ]; then
     # Installed with "none". A decision somebody made, said quietly: the file
     # exists, so this box is NOT one the installer forgot to ask.
-    say "  [info] no management network was asked for at install time; this"
-    say "         box is reached at its console"
+    #
+    # BUT THE ANSWER IS ABOUT INSTALL TIME AND THE SENTENCE WAS ABOUT NOW.
+    # "this box is reached at its console" was drawn from that answer without
+    # asking the box, and it was printed on a box being read over ssh at that
+    # moment, on a card added after the install (#387).
+    #
+    # Since #378 that is worse than a wrong sentence. A card nothing reserves
+    # is claimed by the dataplane at the next boot, and on a box installed
+    # this way the reserve can NEVER exist: `none` writes no `iface` line for
+    # reserved_for_linux() to read. So the box takes the card it is reached
+    # on, and the one screen that could have said so said the subject does
+    # not apply.
+    #
+    # PCI-BACKED NETDEVS ONLY, which is the guard that stops this crying
+    # wolf. On a one-card box that already handed its card over, the address
+    # lives on the linux_cp pair - and a pair has no `device` link, because it
+    # is not a card. The dataplane cannot claim what it already holds. That is
+    # the same reading the tuner makes in pci_nics().
+    _onnet=""
+    for _n in "$ROOT"/sys/class/net/*; do
+      _ni=$(basename "$_n")
+      [ "$_ni" = lo ] && continue
+      [ -e "$_n/device" ] || continue
+      [ -n "$(ip -o -4 addr show dev "$_ni" 2>/dev/null)" ] || continue
+      _onnet="$_onnet $_ni"
+    done
+    if [ -n "$_onnet" ]; then
+      warn "no management network was asked for, and this box is on one anyway"
+      say_list "        " "Linux holds:$_onnet, with an address. The install" \
+        "answered 'none', so nothing is reserved for Linux - and a card" \
+        "nothing reserves is one the" \
+        "dataplane claims at the next boot. The address moves onto the pair" \
+        "it keeps for that card, so the box is not lost, but it is reached" \
+        "THROUGH the dataplane from then on rather than beside it."
+      say "        to keep a card for Linux, and have its address survive a"
+      say "        reboot, write the stanza the install would have written:"
+      say "          F=/etc/network/interfaces.d/hexarouting"
+      for _ni in $_onnet; do
+        say "          echo \"auto $_ni\" >> \$F"
+        say "          echo \"iface $_ni inet dhcp\" >> \$F"
+      done
+      say "        a static address takes 'inet static' and an 'address' line."
+    else
+      say "  [info] no management network was asked for at install time; this"
+      say "         box is reached at its console"
+    fi
   elif [ ! -e "$ROOT/sys/class/net/$mgmt_if" ]; then
     bad "management network: this box has no card called $mgmt_if"
     say_list "        " "It was named at install time and is not here now: a" \
