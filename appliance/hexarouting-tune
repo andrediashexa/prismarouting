@@ -868,7 +868,17 @@ def render_vpp(p):
         #   dev { tag x } dev { name eth0 }  accepted
         #
         # There is no MTU setting anywhere in this VPP's dpdk configuration,
-        # so there is nothing to write here. What #330 was actually seeing is
+        # so there is nothing to write here.
+        #
+        # AND THE PRODUCT ALREADY SETS IT, somewhere else, which is where the
+        # next person reaching for a startup.conf knob should be sent:
+        # src/hexash/hexash.py sends sw_interface_set_mtu over the binary API
+        # with the L3 MTU array, on the dataplane interface AND its TAP, and
+        # reads it back. Its own comment there explains why the array and not
+        # the CLI keyword: plain `set interface mtu` changes the hardware max
+        # frame size, which most drivers refuse, and refused while vppctl still
+        # exited 0. So the MTU is a runtime interface property in this product
+        # and not a boot-time one, and that is not an oversight. What #330 was actually seeing is
         # a log line from rte_eth_dev_set_mtu, which is a complaint and not a
         # refusal: the device still comes up. A dataplane that starts and
         # logs about an MTU is strictly better than one that does not start.
