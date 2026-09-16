@@ -932,17 +932,20 @@ says("revert does not validate", _text,
      "error: the configuration to roll back to does not validate on this box",
      _rv)
 
-# The restart after a revert that took the management card back. It is the
-# only way back onto the network without a reboot by hand, so a systemctl that
-# refuses has to say so rather than leave the operator believing the box is
-# coming back (#303).
-_sh = shell()
-_sh.sys = type("S", (), {
-    "_run": lambda self, c: (1, "Failed to reboot: unit not found"),
-})()
-_rv, _text = driven(_sh.restart_for_management_card)
-says("restart refused", _text,
-     "error: the box could not be restarted: Failed to reboot: unit not found")
+# THE RESTART THAT USED TO BE HERE IS GONE WITH THE MECHANISM IT REFUSED FOR.
+#
+# A revert that took the management card back restarted the box, and this
+# drove the case where systemctl refuses, so the operator is not left
+# believing a box is coming back (#303). #378 removed that restart: the box
+# claims its card on every boot, so a revert that clears the setting is
+# undone by the next start anyway - the window arrived where it started and
+# charged a reboot for it, and the console said the card was going back to
+# Linux while the opposite happened.
+#
+# The case goes with the code rather than being adapted to something else.
+# A refusal kept alive by a test that drives it through a seam nothing else
+# reaches is a refusal nobody can get to, which is the shape this file exists
+# to measure rather than to create.
 
 # And the store's own grammar. A revision that is not a number and a revision
 # that is not there are different answers: one is a typo, the other is a box
@@ -955,8 +958,8 @@ _sh = shell()
 _sh.rb = type("R", (), {"load": lambda self, n: None})()
 _rv, _text = driven(_sh.do_rollback, ["3"])
 says("revision absent", _text, "error: revision 3 does not exist")
-print("  a revert that does not validate, a restart that failed, and two "
-      "revisions that cannot be loaded")
+print("  a revert that does not validate, and two revisions that cannot be "
+      "loaded")
 
 print("\n=== a pool statement, typed ===")
 # THE STATEMENT THAT IS SILENTLY ACCEPTED IS THE EXPENSIVE ONE. #224 is a pool
