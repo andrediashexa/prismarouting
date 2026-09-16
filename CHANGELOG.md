@@ -75,6 +75,12 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+## 0.76.0 - the box claims its own dataplane card, and nobody has to name it
+
+[#378](https://github.com/andrediashexa/hexarouting/issues/378).
+
 ### Breaking
 
 * **The box claims its dataplane cards by itself, and `dataplane interface` is
