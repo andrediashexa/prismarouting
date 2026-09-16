@@ -600,6 +600,40 @@ fi
 echo "==> building the plugin"
 sh "$WORK/tools/build.sh" plugin >/dev/null
 
+# BEFORE the 325 MB image, because it costs two minutes and it refuses the
+# release for a reason the image cannot show.
+#
+# Everything below this line boots a box, and every box this gate boots comes
+# up in FIRST BOOT mode: the kernel has not reserved hugepages yet, so the
+# generated startup.conf has no `dpdk` stanza at all. The TUNED profile - the
+# one an operator's box runs from its second boot onwards - was never given to
+# a real VPP by anything here. 0.75.0 shipped a `dev { mtu ... }` line that
+# this VPP answers with "unknown input", so VPP exited, Restart=always made it
+# a loop, and the box forwarded nothing (#377). The gate passed it.
+echo "==> the generated startup.conf, read by the VPP that reads it"
+( cd "$WORK" && sg docker -c "docker run --rm --privileged \
+    -v $WORK:/src -w /src hexarouting-dev:26.06 \
+    sh /src/appliance/test_startup_conf_shapes.sh" ) \
+  > "$WORK/shapes.log" 2>&1 || {
+  echo "error: VPP refuses a startup.conf this tuner can generate. An" >&2
+  echo "       installed box that reaches that shape does not start its" >&2
+  echo "       dataplane at all." >&2
+  grep -E "FAIL|unknown input|NOT MEASURED" "$WORK/shapes.log" | head -10 >&2
+  echo "       full run: $WORK/shapes.log" >&2
+  exit 1
+}
+# NOT MEASURED is not a pass, and it is the state this check falls into on a
+# machine that cannot reserve hugepages. Publishing on the strength of a run
+# that learned nothing is the shape this whole file exists against.
+grep -q "NOT MEASURED" "$WORK/shapes.log" && {
+  echo "error: the startup.conf shapes were NOT MEASURED on this machine," >&2
+  echo "       so nothing here knows whether VPP accepts what the tuner" >&2
+  echo "       writes. Cut the release where hugepages can be reserved." >&2
+  grep "NOT MEASURED" "$WORK/shapes.log" | head -4 >&2
+  exit 1
+}
+echo "    every shape the tuner can write is one this VPP accepts"
+
 echo "==> building the medium"
 ( cd "$WORK" && make iso >/dev/null )
 [ -f "$WORK/$NAME" ] || { echo "error: $NAME was not produced" >&2; exit 1; }

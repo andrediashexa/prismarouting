@@ -133,6 +133,13 @@ test-appliance:
 	@echo
 	@sg docker -c "docker run --rm --privileged -v $$(pwd):/src -w /src \
 	    hexarouting-dev:26.06 sh /src/appliance/test_tuned_conf.sh"
+	@echo
+# The third profile is not a third box, it is every box: the two above start
+# VPP on ONE generated file each, and the tuner has nine branches. #377 shipped
+# in the branch neither of them renders - a card whose maximum MTU is below
+# 9000 - and VPP answered "unknown input `mtu 1500'" on an installed box.
+	@sg docker -c "docker run --rm --privileged -v $$(pwd):/src -w /src \
+	    hexarouting-dev:26.06 sh /src/appliance/test_startup_conf_shapes.sh"
 
 # The hardware lab keeps a container alive so that hexash and vppctl have a VPP
 # to talk to. Long-lived means somebody has to stop it: hw-down exists so that
