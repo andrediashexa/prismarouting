@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.76.1 - two things the box said that were not true of the box saying them
+
+[#376](https://github.com/andrediashexa/hexarouting/issues/376), [#387](https://github.com/andrediashexa/hexarouting/issues/387).
+
+### Fixed
+
 * **A box installed console-only said it is reached at its console, over the
   ssh session it was being read on**
   ([#387](https://github.com/andrediashexa/hexarouting/issues/387)). The
