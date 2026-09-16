@@ -77,9 +77,7 @@ Toda extensão é registrada como `natEvent 16` e sua liberação como `natEvent
 
 # Começar pequeno e crescer só quem precisa
 
-`block-size` e `max-blocks` juntos já são uma **faixa de portas por assinante**,
-e é assim que um pool atende um medidor inteligente e uma casa pesada ao mesmo
-tempo:
+`block-size` e `max-blocks` juntos já são uma **faixa de portas por assinante**, e é assim que um pool atende um medidor inteligente e uma casa pesada ao mesmo tempo:
 
 ```
 configure
@@ -90,10 +88,7 @@ configure
  commit
 ```
 
-O medidor fica com **64 portas** e nunca pede o segundo bloco. A casa pesada
-chega às 512 sozinha, um bloco de cada vez, à medida que enche cada um - sem
-ninguém configurar nada para ela. Com um bloco único de 512 portas, o medidor
-custaria ao pool as mesmas 512.
+O medidor fica com **64 portas** e nunca pede o segundo bloco. A casa pesada chega às 512 sozinha, um bloco de cada vez, à medida que enche cada um - sem ninguém configurar nada para ela. Com um bloco único de 512 portas, o medidor custaria ao pool as mesmas 512.
 
 `show cgnat pool` mostra a faixa em portas:
 
@@ -101,38 +96,25 @@ custaria ao pool as mesmas 512.
   per sub      64-512 ports (1-8 blocks, grown one at a time as each fills)
 ```
 
-O preço do bloco pequeno é **volume de registro**: cada bloco entregue vira um
-registro próprio no log. A casa que chega a oito blocos gera oito registros
-onde um bloco grande geraria um. Escolha o menor bloco que ainda deixe a
-maioria dos assinantes dentro de **um**, e use `max-blocks` para a minoria.
+O preço do bloco pequeno é **volume de registro**: cada bloco entregue vira um registro próprio no log. A casa que chega a oito blocos gera oito registros onde um bloco grande geraria um. Escolha o menor bloco que ainda deixe a maioria dos assinantes dentro de **um**, e use `max-blocks` para a minoria.
 
 
 :::warning
-`block-size` **reconstrói o pool** e derruba todas as sessões dele.
-`max-blocks` não. Mudar os dois de uma vez é uma mudança de mapeamento, e o
-`commit` recusa até que ela seja pedida pelo nome.
+`block-size` **reconstrói o pool** e derruba todas as sessões dele. `max-blocks` não. Mudar os dois de uma vez é uma mudança de mapeamento, e o `commit` recusa até que ela seja pedida pelo nome.
 
 :::
 
 # Onde os blocos extras caem
 
-O bloco extra cai, sempre que der, **no mesmo endereço público** do assinante.
-Esse é o pareamento de endereço que a RFC 4787 REQ-2 descreve e que a RFC 6888
-REQ-2 exige como padrão de um CGNAT: um cliente que sai por dois endereços ao
-mesmo tempo aparece como dois computadores para quem está do outro lado, e é o
-que faz a chamada SIP conectar e ficar sem áudio - a mídia é anunciada num
-endereço e o sinal veio de outro.
+O bloco extra cai, sempre que der, **no mesmo endereço público** do assinante. Esse é o pareamento de endereço que a RFC 4787 REQ-2 descreve e que a RFC 6888 REQ-2 exige como padrão de um CGNAT: um cliente que sai por dois endereços ao mesmo tempo aparece como dois computadores para quem está do outro lado, e é o que faz a chamada SIP conectar e ficar sem áudio - a mídia é anunciada num endereço e o sinal veio de outro.
 
-É **preferência, não regra**. Se não houver bloco livre naquele endereço, a
-caixa entrega outro qualquer em vez de deixar o cliente sem tráfego. Quanto
-disso valeu no seu pool está em `show cgnat blocks`:
+É **preferência, não regra**. Se não houver bloco livre naquele endereço, a caixa entrega outro qualquer em vez de deixar o cliente sem tráfego. Quanto disso valeu no seu pool está em `show cgnat blocks`:
 
 ```
   RFC 4787 REQ-2 paired: 412 of 419 extension(s) on the holder's own address
 ```
 
-`block-stride` é outra pergunta, e decide a distância entre os blocos de um
-mesmo assinante **dentro** desse endereço:
+`block-stride` é outra pergunta, e decide a distância entre os blocos de um mesmo assinante **dentro** desse endereço:
 
 ```
 configure
@@ -145,28 +127,20 @@ configure
 | Valor | O que acontece |
 |-------|----------------|
 | `0` (padrão) | o bloco livre mais próximo no endereço do assinante |
-| `1` | colados: o segundo bloco começa onde o primeiro termina |
-| `n` | `n × block-size` portas de distância, no mesmo endereço público |
+| `1`   | colados: o segundo bloco começa onde o primeiro termina |
+| `n`   | `n × block-size` portas de distância, no mesmo endereço público |
 
-**Colado** deixa o assinante com uma faixa contínua de portas, e é a opção de
-quem atende ofício e investigação: um intervalo em vez de vários.
-**Afastado** espalha o assinante pela faixa do próprio endereço público, e é a
-opção de quem não quer que observar um intervalo de fora diga muito sobre um
-cliente.
+**Colado** deixa o assinante com uma faixa contínua de portas, e é a opção de quem atende ofício e investigação: um intervalo em vez de vários. **Afastado** espalha o assinante pela faixa do próprio endereço público, e é a opção de quem não quer que observar um intervalo de fora diga muito sobre um cliente.
 
-Trocar a distância é aplicado **no lugar**: ninguém cai, e nenhum bloco já
-entregue se move - vale do próximo bloco em diante.
+Trocar a distância é aplicado **no lugar**: ninguém cai, e nenhum bloco já entregue se move - vale do próximo bloco em diante.
 
-O ajuste nunca custa tráfego a um cliente: se o bloco apontado já estiver com
-outro assinante, a caixa entrega outro qualquer. `show cgnat blocks` conta os
-dois casos, e é onde se confere se a distância está valendo:
+O ajuste nunca custa tráfego a um cliente: se o bloco apontado já estiver com outro assinante, a caixa entrega outro qualquer. `show cgnat blocks` conta os dois casos, e é onde se confere se a distância está valendo:
 
 ```
   stride 1: 412 extensions placed where it says, 7 fell back to the free list
 ```
 
-Só zeros na primeira coluna quer dizer que a distância escolhida não cabe nesta
-caixa - a caixa avisa no momento em que o pool é criado e diz qual serve.
+Só zeros na primeira coluna quer dizer que a distância escolhida não cabe nesta caixa - a caixa avisa no momento em que o pool é criado e diz qual serve.
 
 # Limites por assinante
 

@@ -8,7 +8,7 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 |---------|--------|---------|
 | RAM     | **4 GB** | rodando pela ISO, a raiz gravável fica inteira em RAM sobre o squashfs; com 2 GB o OOM killer mata o VPP e leva o resto do boot junto |
 | CPU     | **SSE4.2** | o binário do VPP assume SSE4.2 e usa AVX quando existe |
-| Placas de rede | **1** | uma basta, e a caixa entrega essa mesma placa ao dataplane levando o endereço de gerência junto; duas é o formato de uma appliance no rack |
+| Placas de rede | **1**  | uma basta, e a caixa entrega essa mesma placa ao dataplane levando o endereço de gerência junto; duas é o formato de uma appliance no rack |
 
 
 :::warning
@@ -26,8 +26,8 @@ Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed proc
 
 | Placas | O que a caixa faz | O que você paga |
 |--------|-------------------|-----------------|
-| 1 | entrega a placa ao dataplane e leva o endereço de gerência para o par | a entrega é uma janela de trinta minutos que alguém precisa confirmar |
-| 2 ou mais | a placa de gerência é recusada para o dataplane, com o nome da outra na recusa | nada |
+| 1      | entrega a placa ao dataplane e leva o endereço de gerência para o par | a entrega é uma janela de trinta minutos que alguém precisa confirmar |
+| 2 ou mais | a placa de gerência é recusada para o dataplane, com o nome da outra na recusa | nada            |
 
 ## A placa precisa ser um dispositivo PCI
 
@@ -76,8 +76,7 @@ A escolha é feita onde dá para explicá-la, e não descoberta como um bind que
 
 ### Quando a entrega da placa falha, o conselho é o da **sua** caixa
 
-Se a placa não aceitar o driver, a caixa diz em que estado ela ficou — e o
-estado pior de todos, placa sem driver nenhum, é dito por extenso:
+Se a placa não aceitar o driver, a caixa diz em que estado ela ficou — e o estado pior de todos, placa sem driver nenhum, é dito por extenso:
 
 ```
 bind: 0000:5e:00.0 did NOT bind to vfio-pci; it is on no driver at all now.
@@ -85,8 +84,7 @@ bind: 0000:5e:00.0 did NOT bind to vfio-pci; it is on no driver at all now.
       refused the device.
 ```
 
-Depois disso vem o conselho, e ele é **diferente nas duas caixas**. Numa caixa
-com IOMMU:
+Depois disso vem o conselho, e ele é **diferente nas duas caixas**. Numa caixa com IOMMU:
 
 ```
       This box has IOMMU groups, so the kernel command line is not the
@@ -107,13 +105,7 @@ E numa caixa sem IOMMU:
       available instead.
 ```
 
-Por um tempo as duas caixas recebiam a mesma frase — *"numa caixa com IOMMU a
-causa costuma ser `intel_iommu=on` faltando na linha de comando"* —, e ela era
-falsa nas duas, em direções opostas. Na caixa com IOMMU, o parâmetro **já
-estava** lá, e o operador era mandado conferir uma linha de comando que estava
-certa, na única mensagem que ele recebe quando a appliance sobe sem encaminhar.
-Na caixa sem IOMMU a frase falava de outra máquina, e o parâmetro que ela cita
-não teria ajudado: aquele driver não usa IOMMU nenhuma.
+Por um tempo as duas caixas recebiam a mesma frase — *"numa caixa com IOMMU a causa costuma ser* `*intel_iommu=on*` *faltando na linha de comando"* —, e ela era falsa nas duas, em direções opostas. Na caixa com IOMMU, o parâmetro **já estava** lá, e o operador era mandado conferir uma linha de comando que estava certa, na única mensagem que ele recebe quando a appliance sobe sem encaminhar. Na caixa sem IOMMU a frase falava de outra máquina, e o parâmetro que ela cita não teria ajudado: aquele driver não usa IOMMU nenhuma.
 
 # Se a caixa vai receber a tabela BGP completa
 
@@ -121,9 +113,9 @@ não teria ajudado: aquele driver não usa IOMMU nenhuma.
 
 | Cenário de peering | RAM só para o roteamento | Piso recomendado da máquina |
 |--------------------|-------------------------:|----------------------------:|
-| Só rota padrão     | \~40 MB                  | 4 GB |
-| Uma tabela IPv4 cheia | \~1,4 GB              | 16 GB |
-| Dois trânsitos com tabela cheia, mais IPv6 | mais que isso | 32 GB |
+| Só rota padrão     | \~40 MB                  | 4 GB                        |
+| Uma tabela IPv4 cheia | \~1,4 GB                 | 16 GB                       |
+| Dois trânsitos com tabela cheia, mais IPv6 | mais que isso            | 32 GB                       |
 
 O dataplane reserva a maior parte da RAM em hugepages e deixa `máx(2, RAM/4)` GB para todo o resto. Numa caixa de 4 GB isso são 2 GB, e uma tabela cheia sozinha já ocupa quase tudo — por isso 8 GB já é apertado e 16 GB é o número sensato.
 
@@ -141,9 +133,9 @@ Numa caixa de 4 ou 8 núcleos isso é equilibrado. Num processador de 32 núcleo
 
 | Núcleos do processador | Encaminhando | Para todo o resto |
 |-----------------------:|-------------:|------------------:|
-| 4   | 3  | 1 |
-| 8   | 7  | 1 |
-| 32  | 31 | 1 |
+| 4                      | 3            | 1                 |
+| 8                      | 7            | 1                 |
+| 32                     | 31           | 1                 |
 
 ## Devolvendo núcleos
 
@@ -154,7 +146,7 @@ Cada núcleo devolvido é aquela fatia da capacidade de encaminhamento. Não exi
 **Diminuir o número de workers custa um boot; aumentar custa dois, e o segundo é diferente.** Medido:
 
 | O que você faz | Próximo boot | O boot seguinte |
-|---|---|---|
+|----------------|--------------|-----------------|
 | Baixa o limite (menos workers) | já sobe com menos workers | os núcleos liberados saem do isolamento e voltam para o escalonador |
 | Sobe o limite, ou apaga o valor | sobe **em modo conservador**: sem workers, sem hugepages, sem placa de dados | sobe com o plano completo |
 
@@ -175,28 +167,29 @@ O modo conservador do segundo caso não é um defeito: o equipamento não pode f
 Quem decide quanto de CPU o plano de controle tem é `HEXA_MAX_WORKERS`, e isso é uma decisão de dimensionamento, não um limite de processo.
 
 :::
+
 ## O que o arquivo de ajuste aceita
 
 `/etc/hexarouting/tune.env` é lido a cada boot, e cada valor dele tem uma forma. Um valor fora dessa forma é **recusado em voz alta**, com o nome da variável e o valor entre aspas, e a caixa usa o padrão de fábrica no lugar.
 
 | Variável | Aceita | De fábrica | Se for recusado |
-|---|---|---|---|
-| `HEXA_DATAPLANE_IF` | nome de interface, ou vazio | vazio | — |
-| `HEXA_SUBSCRIBERS` | só dígitos | `200000` | `200000` |
-| `HEXA_LOW_LATENCY` | `1` ou `0`, mais nada | `1` | `1` |
-| `HEXA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio | sem limite |
+|----------|--------|------------|-----------------|
+| `HEXA_DATAPLANE_IF` | nome de interface, ou vazio | vazio      | —               |
+| `HEXA_SUBSCRIBERS` | só dígitos | `200000`   | `200000`        |
+| `HEXA_LOW_LATENCY` | `1` ou `0`, mais nada | `1`        | `1`             |
+| `HEXA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio      | sem limite      |
 
 `HEXA_LOW_LATENCY=1` desliga os estados profundos de economia de energia do processador, desliga as páginas grandes transparentes e mantém o governador de frequência em `performance`. Custa energia e compra rajada previsível, e é por isso que vem `1`: isto é um roteador. `0` deixa os três em paz, para uma caixa que precisa economizar mais do que precisa encaminhar.
 
 
 :::warning
-**Escreva exatamente `1` ou `0`.** Um valor como `true` ou `sim` é recusado: a caixa diz qual variável recusou, com que valor, e quais são os dois valores que ela aceita e o que cada um faz. Ela segue com `1` e o boot continua.
+**Escreva exatamente** `**1**` **ou** `**0**`**.** Um valor como `true` ou `sim` é recusado: a caixa diz qual variável recusou, com que valor, e quais são os dois valores que ela aceita e o que cada um faz. Ela segue com `1` e o boot continua.
 
 Isso é deliberado: um erro de digitação **não** pode custar o ajuste da caixa. Uma configuração ignorada você conserta editando uma linha; um boot que falha no meio do ajuste deixa a linha de comando do kernel dizendo uma coisa e o arquivo do dataplane dizendo outra, e aí a caixa encaminha pela metade sem contador nenhum para mostrar.
 
 :::
 
-**Mudou `tune.env`? Só vale no boot seguinte.** Isolamento de núcleos, hugepages e estados de energia são linha de comando do kernel. Quando o arquivo já diz uma coisa e a caixa ainda está rodando a linha antiga, o self-test de boot diz isso com todas as letras, em vez de dar a caixa por ajustada.
+**Mudou** `**tune.env**`**? Só vale no boot seguinte.** Isolamento de núcleos, hugepages e estados de energia são linha de comando do kernel. Quando o arquivo já diz uma coisa e a caixa ainda está rodando a linha antiga, o self-test de boot diz isso com todas as letras, em vez de dar a caixa por ajustada.
 
 **E ele lê o que o kernel fez, não o que foi pedido.** Um parâmetro pode se perder em três lugares — o `update-grub` não rodou, a caixa não reiniciou, ou o kernel viu e recusou —, e a caixa que pediu páginas de 1 GB num processador que não tem página de 1 GB ficou a vida inteira dizendo que estava ajustada. São dezesseis regras lidas de volta da máquina em funcionamento, cada uma em um de quatro estados: **valendo**, **pedido e não valendo**, **não dá para ler nesta caixa** e **não foi pedido aqui**. Os quatro estão descritos, com as linhas que a caixa imprime, em *Operação e diagnóstico*.
 
@@ -244,6 +237,7 @@ O tamanho de fábrica é o do próprio dataplane: **32 MB**. Medido, duas vezes 
 Se essas interfaces couberem nos 32 MB de fábrica, ela **não escreve nada** - reservar menos do que o dataplane já dá de graça só tiraria contadores da sua caixa.
 
 :::
+
 O que nenhum arquivo de configuração tem é a interface criada **enquanto a caixa roda**. Se a sua topologia cria interface em tempo de execução, o número é seu e está na seção seguinte.
 
 **O tamanho novo só vale no próximo start do dataplane.** O segmento é lido quando ele sobe e nunca cresce depois: se você criar milhares de subinterfaces numa caixa que já está ligada, elas gastam o segmento com que aquela caixa subiu. O cálculo entra no arquivo de configuração do dataplane no boot seguinte, e vale a partir dali.
@@ -319,11 +313,11 @@ A distância entre os dois encolhe rápido conforme o pool cresce em relação a
 
 | Blocos no pool | Workers | Garantido | Atendidos na prática | Perda |
 |---------------:|--------:|----------:|---------------------:|------:|
-| 12    | 2  | 6     | \~10,6   | 11%  |
-| 48    | 4  | 12    | \~43,3   | 10%  |
-| 192   | 4  | 48    | \~183    | 4,5% |
-| 768   | 8  | 96    | \~742    | 3,4% |
-| 7.936 | 8  | 992   | \~7.848  | 1,1% |
+| 12             | 2       | 6         | \~10,6               | 11%   |
+| 48             | 4       | 12        | \~43,3               | 10%   |
+| 192            | 4       | 48        | \~183                | 4,5%  |
+| 768            | 8       | 96        | \~742                | 3,4%  |
+| 7\.936         | 8       | 992       | \~7.848              | 1,1%  |
 
 E a perda **desaparece** quando os endereços internos são entregues em sequência a partir do início da faixa, que é o caso de um pool DHCP preenchendo de baixo para cima. Um plano de endereçamento contíguo não perde nada; um plano esburacado perde o da coluna da direita.
 

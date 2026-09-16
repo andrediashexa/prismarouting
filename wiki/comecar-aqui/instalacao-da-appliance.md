@@ -119,13 +119,9 @@ O autoteste de boot lê **o mesmo arquivo** de volta em todo boot e conta o que 
 
 ## Mídia antiga traz chave de SSH, e a instalação avisa
 
-Mídias antigas deste produto vinham com as chaves de host do SSH já prontas
-dentro da imagem. Toda caixa instalada de uma dessas mídias respondia com a
-mesma chave, e a metade privada dela está na própria mídia.
+Mídias antigas deste produto vinham com as chaves de host do SSH já prontas dentro da imagem. Toda caixa instalada de uma dessas mídias respondia com a mesma chave, e a metade privada dela está na própria mídia.
 
-Essas chaves não vão para o disco: a instalação apaga o que veio na mídia e
-gera um par novo, desta caixa. Quando a mídia carrega chaves, ela diz isso no
-console:
+Essas chaves não vão para o disco: a instalação apaga o que veio na mídia e gera um par novo, desta caixa. Quando a mídia carrega chaves, ela diz isso no console:
 
 ```
 ==>   this medium carries ssh host keys; they are not going on the disk:
@@ -133,18 +129,13 @@ console:
 ==>   every box installed from this medium answers with them
 ```
 
+
 :::warning
-**A caixa recém-instalada está limpa; o aviso é sobre a mídia.** As outras
-caixas que foram instaladas dessa mesma mídia continuam respondendo com aquela
-chave até alguém gerar chaves novas em cada uma. O procedimento, e o que ele
-custa a quem administra, estão em
-[Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt), na seção
-sobre o autoteste dizer que as chaves SSH não foram geradas na caixa.
+**A caixa recém-instalada está limpa; o aviso é sobre a mídia.** As outras caixas que foram instaladas dessa mesma mídia continuam respondendo com aquela chave até alguém gerar chaves novas em cada uma. O procedimento, e o que ele custa a quem administra, estão em [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt), na seção sobre o autoteste dizer que as chaves SSH não foram geradas na caixa.
 
 :::
 
-Mídia nova não carrega chave nenhuma, e nesse caso a instalação não diz nada
-disso.
+Mídia nova não carrega chave nenhuma, e nesse caso a instalação não diz nada disso.
 
 ## Tudo é perguntado antes de qualquer escrita
 
@@ -155,7 +146,7 @@ disso.
 | Fuso horário | não existe essa zona em `/usr/share/zoneinfo` |
 | Placa de gerência | esta máquina não tem placa com esse nome |
 | Endereço de gerência | não é `dhcp`, não é `none` e não é endereço com prefixo entre 1 e 32 |
-| Gateway | não é endereço, não está na sub-rede do endereço, ou veio junto com `dhcp` |
+| Gateway  | não é endereço, não está na sub-rede do endereço, ou veio junto com `dhcp` |
 | Senha de root | está vazia, ou as duas digitações não conferem |
 
 Nenhum byte é escrito no disco antes de todas as respostas estarem coletadas e válidas.
@@ -223,8 +214,8 @@ Mirror the connection records onto which disk [none]:
 
 | Morre o disco | O que foi observado |
 |---------------|---------------------|
-| do espelho | a caixa sobe normalmente, os registros continuam montados no arranjo rodando com uma perna só, o que foi gravado antes da falha continua lá, e o autoteste diz `[FAIL] the records mirror is DEGRADED: 1 of 2 disks` sem ninguém logado |
-| do sistema | a máquina não chega a carregar nada: fica no firmware. É reinstalação. **Os registros do disco sobrevivente foram lidos em outra máquina**, com aquela caixa desligada |
+| do espelho    | a caixa sobe normalmente, os registros continuam montados no arranjo rodando com uma perna só, o que foi gravado antes da falha continua lá, e o autoteste diz `[FAIL] the records mirror is DEGRADED: 1 of 2 disks` sem ninguém logado |
+| do sistema    | a máquina não chega a carregar nada: fica no firmware. É reinstalação. **Os registros do disco sobrevivente foram lidos em outra máquina**, com aquela caixa desligada |
 
 Uma caixa com **um disco só** não é perguntada, não ganha arranjo nenhum e o autoteste dela não fala em espelho. Nada muda para quem tem um disco.
 

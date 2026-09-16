@@ -48,7 +48,7 @@ Dentro do bloco:
 |---------|-----------|
 | `route <prefixo> <próximo-salto\|interface\|blackhole\|Null0> [distância]` | uma rota estática |
 | `no route <prefixo> ...` | remove uma rota estática |
-| `exit` | sai do bloco |
+| `exit`  | sai do bloco |
 
 **Há um só** `**route**`**, não um para cada família.** A família sai do prefixo: prefixo com dois-pontos é IPv6 e não pode ser outra coisa. Pedir a família outra vez seria pedir ao operador a chance de se contradizer.
 
@@ -68,11 +68,7 @@ error: this next hop is on no connected network: 172.31.99.1
 
 Aceita, essa rota ficaria no FRR e nunca chegaria à tabela de encaminhamento.
 
-Repare que a recusa nomeia a rota **no bloco em que ela está** - `router
-static / route ...` - e não como uma linha solta. É assim mesmo quando você
-digitou na grafia antiga, `ip route ...`: a caixa mostra onde a rota mora na
-configuração, que é onde você vai editá-la. Uma estática dentro de uma VRF não
-tem grafia de topo nenhuma para procurar, e é por isso que o bloco aparece.
+Repare que a recusa nomeia a rota **no bloco em que ela está** - `router static / route ...` - e não como uma linha solta. É assim mesmo quando você digitou na grafia antiga, `ip route ...`: a caixa mostra onde a rota mora na configuração, que é onde você vai editá-la. Uma estática dentro de uma VRF não tem grafia de topo nenhuma para procurar, e é por isso que o bloco aparece.
 
 ## Ver a tabela: `show route`, não `show ip route`
 
@@ -231,7 +227,7 @@ openssl passwd -6
 |-------|--------------------------|
 | `role administrator` | roteamento, CGNAT, contas e a própria máquina |
 | `role cgnat-operator` | só configuração de CGNAT |
-| sem `role` | somente leitura |
+| sem `role` | somente leitura          |
 
 **A configuração é quem decide.** O papel é escrito no bloco do usuário, sai em `show running-config` e sobrevive ao `save` — e o `commit` o materializa nos grupos do sistema, acrescentando os que o papel exige e **retirando** os que ele não exige mais. Uma promoção feita por fora, direto no grupo, é desfeita no commit seguinte: é aqui que ela se escreve.
 
@@ -250,12 +246,9 @@ error: root's rights come from being root, not from a group
     this VTY does not manage root's memberships
 ```
 
-O veredito fica na primeira linha e o motivo na segunda, dentro da largura do
-console. Como frase única ela passava de cem colunas e o terminal a quebrava
-onde calhasse.
+O veredito fica na primeira linha e o motivo na segunda, dentro da largura do console. Como frase única ela passava de cem colunas e o terminal a quebrava onde calhasse.
 
-A recusa vale para qualquer papel dado ao `root`, inclusive o nome certo de um
-papel que existe: não é o papel que está errado, é a conta.
+A recusa vale para qualquer papel dado ao `root`, inclusive o nome certo de um papel que existe: não é o papel que está errado, é a conta.
 
 # SNMP
 
@@ -321,11 +314,7 @@ error: 2 policy statement(s) need mgmtd, which is not running
     restart frr' and read its journal
 ```
 
-O conselho é **diferente** do que sai para `bgpd`, e de propósito: `zebra`,
-`mgmtd` e `staticd` não estão em `/etc/frr/daemons`, quem os sobe é o próprio
-`frr`. Se um deles não está de pé, não há linha para habilitar - o que houve
-foi o `frr` não terminar de subir, e a resposta está no journal dele. As
-estáticas respondem com a mesma frase, trocando `staticd` por `mgmtd`.
+O conselho é **diferente** do que sai para `bgpd`, e de propósito: `zebra`, `mgmtd` e `staticd` não estão em `/etc/frr/daemons`, quem os sobe é o próprio `frr`. Se um deles não está de pé, não há linha para habilitar - o que houve foi o `frr` não terminar de subir, e a resposta está no journal dele. As estáticas respondem com a mesma frase, trocando `staticd` por `mgmtd`.
 
 Uma estrofe `router bgp` que não vai a lugar nenhum se percebe: nenhuma sessão sobe. Uma prefix-list que não vai a lugar nenhum é invisível até o tráfego que devia ser filtrado não ser.
 
@@ -346,6 +335,7 @@ Depois de aplicar, a caixa **lê de volta a configuração que o FRR está rodan
 
 Isso existe porque a ferramenta que aplica a configuração pode terminar com sucesso tendo descartado uma linha. O sintoma é o pior que existe: você sai da janela de manutenção achando que aplicou, e o problema aparece dias depois, sem ninguém ligar uma coisa à outra.
 
+
 :::info
 **Nem tudo que o FRR aceita ele guarda, e isso não é erro.** Três formas, todas medidas nesta caixa e não deduzidas:
 
@@ -354,6 +344,7 @@ Isso existe porque a ferramenta que aplica a configuração pode terminar com su
 * **Ele já tinha ligado.** `neighbor 10.0.0.2 activate` numa família ipv4-unicast é implícito, então ele aceita e não grava nada.
 
 A caixa conhece essas formas e não reclama delas. Você não precisa mudar como escreve.
+
 :::
 
 Se aparecer uma recusa aqui, a leitura é: **o que esta caixa guarda e o que o FRR está rodando não são a mesma coisa.** `show configuration` mostra a desta caixa; `start shell` e depois `vtysh -c "show running-config"` mostra a do FRR.
@@ -394,8 +385,10 @@ note: AS-LOOSE '65002' matches 2 of 5 received AS path(s); e.g. '65001 65002'
 
 Se o número vier muito maior do que você esperava, falta âncora. Se vier zero, a lista existe e não filtra nada.
 
+
 :::info
 Quando a caixa ainda não recebeu nenhum caminho, o equipamento diz isso em vez de responder zero. "Casou 0" e "não havia contra o que casar" são respostas diferentes, e só uma delas fala da sua expressão.
+
 :::
 
 ## Um nome que ninguém definiu é avisado
@@ -455,11 +448,7 @@ warning: no 'match': this permits every route. If that is meant, it is the end
 
 Se era a intenção, o aviso é ruído de uma linha. Se não era, é a diferença entre uma política que filtra e uma que deixa passar tudo.
 
-**`set local-preference` com um valor que não é número é recusado.** A gramática
-do roteamento para essa cláusula aceita **qualquer palavra**: `set
-local-preference banana` é aceito no prompt, passa no `commit check` e vai
-parar na configuração em vigor do BGP — onde não ajusta nada. A cláusula fica
-lá, com cara de política, sem fazer nada:
+`**set local-preference**` **com um valor que não é número é recusado.** A gramática do roteamento para essa cláusula aceita **qualquer palavra**: `set local-preference banana` é aceito no prompt, passa no `commit check` e vai parar na configuração em vigor do BGP — onde não ajusta nada. A cláusula fica lá, com cara de política, sem fazer nada:
 
 ```
 error: 'banana' is not a local-preference: expected 0-4294967295. FRR takes
@@ -467,17 +456,9 @@ error: 'banana' is not a local-preference: expected 0-4294967295. FRR takes
     set local-preference banana
 ```
 
-O equipamento recusa aqui porque o roteamento não recusa em lugar nenhum. É o
-contrário de `maximum-paths` e `set weight`, em que o roteamento é a autoridade
-e recusa no `commit`: ali o equipamento só informa a faixa e deixa a recusa com
-quem manda.
+O equipamento recusa aqui porque o roteamento não recusa em lugar nenhum. É o contrário de `maximum-paths` e `set weight`, em que o roteamento é a autoridade e recusa no `commit`: ali o equipamento só informa a faixa e deixa a recusa com quem manda.
 
-A recusa **só sai para o que esta mudança está pedindo**. Um `set
-local-preference` desses que a caixa já carregava não volta a ser recusado em
-todo commit: uma caixa com uma linha dessas na configuração em vigor ficaria com
-todo commit recusado, inclusive os que não têm nada a ver com route-map, e
-recusar uma mudança por causa de um estado que já estava lá tranca o operador
-para fora do próprio equipamento.
+A recusa **só sai para o que esta mudança está pedindo**. Um `set local-preference` desses que a caixa já carregava não volta a ser recusado em todo commit: uma caixa com uma linha dessas na configuração em vigor ficaria com todo commit recusado, inclusive os que não têm nada a ver com route-map, e recusar uma mudança por causa de um estado que já estava lá tranca o operador para fora do próprio equipamento.
 
 **Cláusula que nenhuma rota alcança é avisada.** Se a cláusula 10 libera tudo, a 20 nunca é consultada. Os números de sequência são seus e o equipamento não renumera nada — mas uma política que parece certa e não faz nada merece uma frase.
 
@@ -513,9 +494,7 @@ error: prefix range refused for 10.0.0.0/8: mask length <= ge <= le <= 32 does
     ip prefix-list PL-CLIENTES seq 10 permit 10.12.0.0/8 ge 24 le 16
 ```
 
-A sentença que foi recusada vai numa **linha própria**, inteira, embaixo do
-motivo - é assim que ela continua procurável na tela do `show configuration`,
-que é onde você vai corrigi-la.
+A sentença que foi recusada vai numa **linha própria**, inteira, embaixo do motivo - é assim que ela continua procurável na tela do `show configuration`, que é onde você vai corrigi-la.
 
 Repare que no motivo o prefixo aparece normalizado - `10.12.0.0/8` vira `10.0.0.0/8`, porque `/8` só olha o primeiro octeto. A linha de baixo traz a sentença como você a escreveu, e é por ela que se procura.
 
@@ -534,8 +513,7 @@ warning: pool 'clientes': nothing here announces 200.150.0.16/28
     'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28' under the BGP address family
 ```
 
-As duas últimas linhas são a parte acionável: o aviso não só diz que falta
-anúncio, diz as duas linhas que resolvem quando é aqui que se quer anunciar.
+As duas últimas linhas são a parte acionável: o aviso não só diz que falta anúncio, diz as duas linhas que resolvem quando é aqui que se quer anunciar.
 
 Esta é a única verificação que cruza as duas metades do equipamento. Configure o CGNAT certo, configure o BGP certo, e o serviço pode estar morto assim mesmo: se nada anuncia um prefixo que **cobre** o lado público do pool, todo assinante atrás dele é traduzido para um endereço que a internet não sabe devolver. O tráfego sai e nada volta.
 

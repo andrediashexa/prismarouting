@@ -71,8 +71,8 @@ O que ele reescreve, saindo:
 
 | Campo | Vira |
 |-------|------|
-| `Via` (o primeiro) | endereço público**:**porta pública |
-| `Contact` | endereço público**:**porta pública |
+| `Via` (o primeiro) | endereço público\*\*:\*\*porta pública |
+| `Contact` | endereço público\*\*:\*\*porta pública |
 | `c=IN IP4` do SDP | endereço público |
 | `m=` do SDP | uma **porta par reservada**, com a de cima guardada para o RTCP |
 | `Content-Length` | recalculado quando o corpo mudou de tamanho |

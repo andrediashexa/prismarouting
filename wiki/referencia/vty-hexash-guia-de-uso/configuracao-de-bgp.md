@@ -45,7 +45,7 @@ router bgp 65000
 | `bfd`   |           | acompanha a sessão por BFD, para a falha ser de segundos e não de minutos |
 | `shutdown` |           | segura a sessão derrubada, mantendo a configuração |
 | `peer-group` | `<nome>`  | põe o vizinho num peer group |
-| `capability extended-nexthop` |     | rotas IPv4 por cima de uma sessão IPv6; é o que uma sessão sem endereço no enlace usa |
+| `capability extended-nexthop` |           | rotas IPv4 por cima de uma sessão IPv6; é o que uma sessão sem endereço no enlace usa |
 
 Dentro de `address-family`, o mesmo vizinho entende `activate`, `route-map`, `prefix-list`, `soft-reconfiguration inbound`, `remove-private-AS`, `default-originate`, `maximum-prefix` e `next-hop-self`. Os dois últimos aparecem nas duas listas de propósito: valem por família, e o roteamento aceita os dois lugares.
 
@@ -82,18 +82,14 @@ warning: FRR knows this interface as vppwan0, not host-veth-vpp: written this
     neighbor host-veth-vpp interface remote-as external
 ```
 
-Repare na ordem: **o motivo vem primeiro e a sentença recusada vem por último,
-numa linha só dela**. Não é estilo. A sentença é o que você vai procurar no
-`show configuration` e digitar de novo, então ela tem de sair inteira e num
-pedaço só; o motivo é para ler, então ele é quebrado na largura do console. Com
-os dois na mesma linha, um nome de route-map comprido ou um vizinho IPv6 punham
-a linha entre 104 e 264 colunas, e o que se perdia na dobra era metade de cada
-um.
+Repare na ordem: **o motivo vem primeiro e a sentença recusada vem por último, numa linha só dela**. Não é estilo. A sentença é o que você vai procurar no `show configuration` e digitar de novo, então ela tem de sair inteira e num pedaço só; o motivo é para ler, então ele é quebrado na largura do console. Com os dois na mesma linha, um nome de route-map comprido ou um vizinho IPv6 punham a linha entre 104 e 264 colunas, e o que se perdia na dobra era metade de cada um.
+
 
 :::warning
 O enlace precisa carregar os anúncios de roteador do vizinho (router advertisement) para que o roteamento descubra o endereço de enlace local do outro lado. É assim que uma sessão sem endereço encontra com quem falar; sem isso a sessão fica em Idle com AS 0, mesmo com a configuração inteira certa. Confira com `show bgp summary`.
 
 Deste lado não há nada a habilitar: o que chega pela interface é entregue ao roteamento. Se a sessão ficar em Idle com AS 0, o que falta está do outro lado ou no caminho - um vizinho que não anuncia, ou um enlace que não entrega o multicast de enlace local. `show bgp neighbors <interface>` mostra o endereço aprendido quando ele chega, e `(unspec)` enquanto não chegou.
+
 :::
 
 # Peer groups
@@ -134,6 +130,7 @@ Esta é a recusa que evita a sessão silenciosa. O roteamento **aceita** apontar
 
 A recusa vale para as três formas que foram medidas negando tudo: `neighbor <endereço> route-map`, `redistribute ... route-map` e `network <prefixo> route-map`. A mensagem **nomeia a route-map que falta** e diz as duas saídas: definir a política, ou escrever a cláusula que deixa tudo passar.
 
+
 :::info
 `call` para uma route-map inexistente **não** é recusado, e a diferença foi medida e não deduzida: o roteamento pula uma chamada que não resolve e a cláusula segue adiante, então o prefixo continua sendo anunciado. É uma linha morta, não uma linha perigosa:
 
@@ -146,6 +143,7 @@ warning: no route-map called 'RM-COMUNIDADES' is defined; FRR skips a call it
 O contrário — uma route-map definida que ninguém usa — também é só aviso. Configuração morta é desarrumação, não perigo, e é exatamente o que fica na caixa entre dois commits de quem monta a política pela política primeiro.
 
 :::
+
 
 :::info
 Numa caixa que **já está** nesse estado a sentença sai como aviso e o commit passa. É de propósito: a mesma verificação roda quando a caixa carrega a configuração salva no boot, e ali ela recusaria o arquivo **inteiro** — uma caixa cuja configuração guardada tem a referência subiria sem nada. Recusa-se o commit que **introduz** a referência; a caixa que já a tem continua podendo ser trabalhada.
@@ -167,6 +165,7 @@ Um vizinho que vaza a tabela inteira dentro de um equipamento dimensionado para 
 
 É **aviso e nunca recusa**, e é a decisão certa: um route server, um cliente cuja tabela se conhece pequena e um enlace de laboratório rodam sem limite de propósito. A escolha é de quem opera.
 
+
 :::info
 O aviso **fala uma vez**: ele sai pelos vizinhos que **esta mudança** coloca nesse estado. Uma caixa com três trânsitos deliberadamente sem limite carregaria três avisos em todo commit que fizesse pelo resto da vida, e alarme que está sempre ligado é alarme que ninguém lê.
 
@@ -185,7 +184,6 @@ Um `maximum-prefix` no **peer group** cobre todos os membros dele — é onde qu
 ```
 
 Vale tanto em `show running-config` quanto em `show this` dentro do bloco. Isso é só a exibição: a configuração salva e as revisões de rollback guardam o valor real, senão um rollback não conseguiria restaurar a sessão — e é por isso que esses arquivos não são legíveis por qualquer um.
-
 
 # Operar a sessão: o que se digita quando algo está errado
 
@@ -225,8 +223,7 @@ error: 200.150.0.2 does not keep what it received
     which the box does have
 ```
 
-`clear bgp <endereço> soft in` recusa pelo mesmo motivo, e a saída que ele
-oferece é a que sempre funciona: reiniciar a sessão e pegar as rotas de novo.
+`clear bgp <endereço> soft in` recusa pelo mesmo motivo, e a saída que ele oferece é a que sempre funciona: reiniciar a sessão e pegar as rotas de novo.
 
 ```
 error: 200.150.0.2 does not keep what it received
@@ -237,17 +234,9 @@ error: 200.150.0.2 does not keep what it received
     again
 ```
 
-As duas recusas vêm em linhas dentro da largura do console. Por um tempo o
-veredito e a primeira explicação saíam grudados numa linha só, que media de 92 a
-106 colunas numa tela de 79.
+As duas recusas vêm em linhas dentro da largura do console. Por um tempo o veredito e a primeira explicação saíam grudados numa linha só, que media de 92 a 106 colunas numa tela de 79.
 
-E repare que o veredito **começa pelo endereço**, sem a palavra `neighbour` na
-frente. Ela saiu porque o endereço logo a seguir já diz de quem se fala, e ela
-custava dez colunas numa linha que o equipamento não quebra: com um vizinho
-IPv6 no lugar de um IPv4, o veredito chegava a 87 colunas numa tela de 79. O
-endereço do vizinho entra em todas as linhas desta recusa, então é ele que
-manda na largura de todas elas — e é por isso que a palavra a mais era a
-primeira a sair.
+E repare que o veredito **começa pelo endereço**, sem a palavra `neighbour` na frente. Ela saiu porque o endereço logo a seguir já diz de quem se fala, e ela custava dez colunas numa linha que o equipamento não quebra: com um vizinho IPv6 no lugar de um IPv4, o veredito chegava a 87 colunas numa tela de 79. O endereço do vizinho entra em todas as linhas desta recusa, então é ele que manda na largura de todas elas — e é por isso que a palavra a mais era a primeira a sair.
 
 ## E quando quem não responde é o roteamento
 
@@ -261,7 +250,7 @@ error: FRR is not answering
     say why
 ```
 
-O `clear bgp <endereço> soft in` responde do mesmo jeito, e acrescenta a parte que importa ali: **`clear bgp` sozinho também não resolveria**, porque quem segura a sessão é justamente o roteamento que está calado.
+O `clear bgp <endereço> soft in` responde do mesmo jeito, e acrescenta a parte que importa ali: `**clear bgp**` **sozinho também não resolveria**, porque quem segura a sessão é justamente o roteamento que está calado.
 
 ```
 error: FRR is not answering
@@ -271,10 +260,7 @@ error: FRR is not answering
     why
 ```
 
-O veredito dessas duas **não carrega o endereço do vizinho**, e isso é
-deliberado: o endereço vai na linha de baixo. A primeira linha não é quebrada
-por ninguém, e com um vizinho IPv6 no meio dela ela chegaria a 99 colunas numa
-tela de 79.
+O veredito dessas duas **não carrega o endereço do vizinho**, e isso é deliberado: o endereço vai na linha de baixo. A primeira linha não é quebrada por ninguém, e com um vizinho IPv6 no meio dela ela chegaria a 99 colunas numa tela de 79.
 
 Uma tabela vazia numa caixa dessas é o plano de controle da **sua** caixa fora do ar, e não o vizinho sem mandar rota. São problemas diferentes e é o que essa terceira resposta existe para separar.
 
@@ -299,10 +285,11 @@ RFC 8326. Antes de uma manutenção, o tráfego **escoa** em vez de cair: os an�
 
 `no bgp graceful-shutdown` desfaz as duas coisas. Uma chave de manutenção que não volta não é uma chave de manutenção.
 
+
 :::info
 Confira pelo efeito, não pelo texto: `show bgp <prefixo>` no vizinho deve mostrar a comunidade `gracefulShutdown`, e `show bgp <prefixo>` aqui deve mostrar preferência local 0. Se a configuração tem a linha e o vizinho não vê a comunidade, a sessão não reanunciou ainda.
-:::
 
+:::
 
 # Como conferir
 

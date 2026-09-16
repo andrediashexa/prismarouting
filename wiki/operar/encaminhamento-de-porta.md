@@ -93,14 +93,9 @@ error: forward tcp 6200 is configured for more than one subscriber
     name the subscriber: no forward tcp 6200 to <private-ip> <private-port>
 ```
 
-Os endereços da segunda linha são os **assinantes** - os endereços privados
-que você citaria no comando -, e não os públicos onde o encaminhamento caiu.
-São eles que a terceira linha pede, então são eles que a segunda mostra.
+Os endereços da segunda linha são os **assinantes** - os endereços privados que você citaria no comando -, e não os públicos onde o encaminhamento caiu. São eles que a terceira linha pede, então são eles que a segunda mostra.
 
-A recusa vem em três linhas próprias, dentro da largura do console. Por um
-tempo ela saía numa frase só, mais larga que a tela: o terminal a quebrava
-onde calhasse, e o que ficava perdido era justamente o fim, que é onde está
-o comando a digitar.
+A recusa vem em três linhas próprias, dentro da largura do console. Por um tempo ela saía numa frase só, mais larga que a tela: o terminal a quebrava onde calhasse, e o que ficava perdido era justamente o fim, que é onde está o comando a digitar.
 
 # Em pool dinâmico, quem fica preso é o bloco
 

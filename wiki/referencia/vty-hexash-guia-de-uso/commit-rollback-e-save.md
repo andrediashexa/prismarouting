@@ -41,7 +41,7 @@ configuration check succeeds
   'commit' refuses this until it is asked for by name, with 'commit remap'
 ```
 
-A conta não é estimativa: quem faz é o dataplane, com as duas definições e a mesma aritmética que rodaria depois. Não é recusa — o `check` não aplicou nada, então não há o que recusar; é o aviso que o comando existe para dar. Quem recusa é o `commit` comum, descrito em *`commit remap`*, logo abaixo.
+A conta não é estimativa: quem faz é o dataplane, com as duas definições e a mesma aritmética que rodaria depois. Não é recusa — o `check` não aplicou nada, então não há o que recusar; é o aviso que o comando existe para dar. Quem recusa é o `commit` comum, descrito em `*commit remap*`, logo abaixo.
 
 Uma mudança que não move ninguém não imprime nada disso. Aviso que aparece sempre é aviso que ninguém lê.
 
@@ -152,8 +152,10 @@ unless you type 'commit' to confirm it.
 * Reiniciou **depois** de confirmar: nada é desfeito. A confirmação é registrada no momento em que você a dá, não no fim da janela.
 * Reiniciou **antes** do prazo: o prazo continua valendo, e é um horário — não uma contagem que recomeça. Uma caixa que ficou desligada além do próprio prazo volta e desfaz na hora, porque ninguém confirmou.
 
+
 :::warning
 A máquina não distingue "reiniciei porque a mudança deu errado" de "reiniciei no meio da manutenção". Nos dois casos ela desfaz. É o lado seguro: confirmar custa uma palavra, e recuperar uma caixa inalcançável não custa palavra nenhuma — custa uma viagem.
+
 :::
 
 #### As mudanças que viram `commit confirmed` sozinhas
@@ -179,7 +181,7 @@ this commit hands over the card this box is reached on
 
 Esse caso tem duas particularidades em relação aos outros três.
 
-* **A sessão não cai no `commit`; cai no reinício seguinte.** É por isso que a janela não pode ser a de sempre, e por isso a confirmação vem depois de você entrar de novo na caixa.
+* **A sessão não cai no** `**commit**`**; cai no reinício seguinte.** É por isso que a janela não pode ser a de sempre, e por isso a confirmação vem depois de você entrar de novo na caixa.
 * **O desfazer reinicia a máquina.** Devolver a placa ao Linux só acontece num novo start do dataplane, então pôr o arquivo de volta sem reiniciar deixaria a caixa desfeita e ainda inalcançável. A caixa avisa no console antes:
 
 ```
@@ -231,10 +233,7 @@ Vale notar onde isso é recusado: **aqui**, e não no dataplane. Recusado lá, o
 
 ### `routing is configured and FRR is not answering`
 
-Há configuração de roteamento na candidata e o roteamento não responde.
-Aplicar agora significaria perder silenciosamente tudo o que é de roteamento.
-A recusa vem em três linhas, e a segunda e a terceira dizem para onde **não**
-olhar:
+Há configuração de roteamento na candidata e o roteamento não responde. Aplicar agora significaria perder silenciosamente tudo o que é de roteamento. A recusa vem em três linhas, e a segunda e a terceira dizem para onde **não** olhar:
 
 ```
 error: routing is configured and FRR is not answering
@@ -242,9 +241,7 @@ error: routing is configured and FRR is not answering
     for a daemon that is not running sends somebody to debug the wrong thing
 ```
 
-A configuração não é o problema. Um daemon que não está de pé não recusa nada,
-não responde nada e não deixa log nenhum na candidata - quem for procurar o
-erro na configuração vai procurar muito tempo.
+A configuração não é o problema. Um daemon que não está de pé não recusa nada, não responde nada e não deixa log nenhum na candidata - quem for procurar o erro na configuração vai procurar muito tempo.
 
 ### `pool '<nome>': inside and outside required`
 
@@ -268,9 +265,7 @@ A VTY não conseguiu falar com o dataplane, então ela não pode nem aplicar nem
 
 ### `FRR accepted <n> statement(s) of this commit and did not keep them`
 
-**Esta é a recusa diferente.** Ela não é decidida antes de aplicar: a caixa
-entregou a configuração ao roteamento, leu de volta o que ele guardou, e
-descobriu que parte não está lá. A descoberta só existe depois de aplicar.
+**Esta é a recusa diferente.** Ela não é decidida antes de aplicar: a caixa entregou a configuração ao roteamento, leu de volta o que ele guardou, e descobriu que parte não está lá. A descoberta só existe depois de aplicar.
 
 ```
 error: FRR accepted 1 statement(s) of this commit and did not keep them
@@ -282,21 +277,13 @@ error: FRR accepted 1 statement(s) of this commit and did not keep them
     "show running-config"' is FRR's
 ```
 
-Leia a segunda frase com cuidado, porque ela contradiz o que vale para todas as
-outras recusas: **nada foi desfeito, e o resto do commit está em efeito**. O
-CGNAT e a configuração da própria caixa estão aplicados. Quem sair daqui
-achando que a caixa está como estava vai diagnosticar a caixa errada.
+Leia a segunda frase com cuidado, porque ela contradiz o que vale para todas as outras recusas: **nada foi desfeito, e o resto do commit está em efeito**. O CGNAT e a configuração da própria caixa estão aplicados. Quem sair daqui achando que a caixa está como estava vai diagnosticar a caixa errada.
 
-`rollback 1` é a volta: ele carrega a revisão anterior na candidata, e você a
-aplica com `commit` como qualquer outra.
+`rollback 1` é a volta: ele carrega a revisão anterior na candidata, e você a aplica com `commit` como qualquer outra.
 
-As sentenças recusadas aparecem uma por linha, com o bloco a que pertencem. As
-marcadas com `<- not checked` são as que esta caixa repassou sem ler: não têm
-gramática aqui, foram para o roteamento palavra por palavra, e são as que o
-roteamento tem mais chance de ter descartado.
+As sentenças recusadas aparecem uma por linha, com o bloco a que pertencem. As marcadas com `<- not checked` são as que esta caixa repassou sem ler: não têm gramática aqui, foram para o roteamento palavra por palavra, e são as que o roteamento tem mais chance de ter descartado.
 
-A última frase é o que fazer em seguida. As duas configurações divergiram, e há
-um comando para ler cada uma: `show configuration` mostra a desta caixa.
+A última frase é o que fazer em seguida. As duas configurações divergiram, e há um comando para ler cada uma: `show configuration` mostra a desta caixa.
 
 ### E as duas que não são recusa, e sim pedido explícito
 
@@ -326,6 +313,7 @@ Funciona nos modos operacional e de configuração.
 
 A separação é proposital: *"passe a valer agora"* e *"continue valendo depois de reiniciar"* são duas decisões, e o `commit confirmed` só faz sentido se a segunda não for automática.
 
+
 :::warning
 `save` dentro de uma janela de `commit confirmed` grava no disco uma mudança que ainda não foi confirmada. O desfazer devolve o que está **valendo** e não reescreve o arquivo — então a caixa desfaria agora e traria a mudança de volta no próximo boot. Por isso o `save` avisa:
 
@@ -337,6 +325,7 @@ warning: what you just saved has NOT been confirmed
 ```
 
 Confirme primeiro, salve depois.
+
 :::
 
 ## Inspecionando antes de aplicar

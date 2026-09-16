@@ -89,6 +89,7 @@ commit
 
 Depois `exit` e `save`. O `save` não é opcional aqui: sem ele o par some no próximo boot e a caixa volta ao mesmo lugar.
 
+
 :::info
 Uma caixa que **não** entregou placa nenhuma e **não** roda protocolo de roteamento continua recebendo só um aviso por não ter par - `[warn] no linux_cp pair on:`. Ela não está quebrada: encaminhar CGNAT sem protocolo de roteamento é uma configuração legítima deste produto, e uma verificação que ficasse vermelha nela seria uma verificação que todo mundo aprende a ignorar.
 
@@ -143,8 +144,9 @@ ssh-keygen -A
 systemctl restart ssh
 ```
 
+
 :::warning
-**Depois disso, toda máquina que já tinha esta caixa no `known_hosts` vai recusar a próxima conexão** e dizer que a chave do host mudou. Isso é o conserto acontecendo, não um ataque — e é o preço dele. Em cada máquina que administra a caixa, apague a entrada antiga com `ssh-keygen -R <endereço da caixa>` e confira a impressão digital nova na primeira conexão, lendo-a no console da caixa: é o único lugar onde ela não pode ter sido trocada no caminho.
+**Depois disso, toda máquina que já tinha esta caixa no** `**known_hosts**` **vai recusar a próxima conexão** e dizer que a chave do host mudou. Isso é o conserto acontecendo, não um ataque — e é o preço dele. Em cada máquina que administra a caixa, apague a entrada antiga com `ssh-keygen -R <endereço da caixa>` e confira a impressão digital nova na primeira conexão, lendo-a no console da caixa: é o único lugar onde ela não pode ter sido trocada no caminho.
 
 :::
 
@@ -204,8 +206,8 @@ Isso acontece de três maneiras, e todas são comuns: alguém copiou um arquivo 
 
 O conserto é instalar de novo, inteira, a versão que a caixa informa. A página **Levar a caixa para uma versão nova** descreve o procedimento e o que ele custa. Se foi você quem colocou o arquivo ali de propósito, essa linha é a caixa lembrando que ele continua lá.
 
-:::info
 
+:::info
 **Os três arquivos de configuração nunca aparecem nessa lista.** `tune.env`, `vpp-base.conf` e `hexarouting.conf` são escritos uma única vez, na primeira instalação, e a partir daí são seus: nem a atualização os substitui, nem o autoteste opina sobre o conteúdo deles. Editar o `tune.env` é o arquivo cumprindo a função dele, não um defeito, e uma verificação que reclamasse disso seria uma verificação que ninguém deixaria ligada.
 
 :::
@@ -267,31 +269,22 @@ O autoteste informa quantas filas de recepção a caixa **pediu** à placa:
   [ ok ] rx queues requested: num-rx-queues 4
 ```
 
-Numa caixa que não pediu nada, a linha diz isso por extenso em vez de sair
-vazia:
+Numa caixa que não pediu nada, a linha diz isso por extenso em vez de sair vazia:
 
 ```
   [ ok ] rx queues requested: default (1 per interface, one worker takes all)
 ```
 
-A palavra `requested` é a linha inteira. Esse número é lido do arquivo que o
-ajuste de boot escreveu — ou seja, é o que a caixa **pediu** ao dataplane — e
-não do dataplane rodando. Uma placa com menos filas do que isso entrega o que
-tem, e há um caso em que ela recusa a interface inteira: sete filas pedidas
-numa placa que tem uma. Ler essa linha como medição seria ler um pedido como se
-fosse uma resposta, e é exatamente na diferença entre os dois que aquele defeito
-morava.
+A palavra `requested` é a linha inteira. Esse número é lido do arquivo que o ajuste de boot escreveu — ou seja, é o que a caixa **pediu** ao dataplane — e não do dataplane rodando. Uma placa com menos filas do que isso entrega o que tem, e há um caso em que ela recusa a interface inteira: sete filas pedidas numa placa que tem uma. Ler essa linha como medição seria ler um pedido como se fosse uma resposta, e é exatamente na diferença entre os dois que aquele defeito morava.
 
-A resposta em vigor — quantas filas a placa realmente deu — não é esta linha, e
-não é lida aqui. Ela só existe numa caixa com placa de verdade entregue ao
-dataplane.
+A resposta em vigor — quantas filas a placa realmente deu — não é esta linha, e não é lida aqui. Ela só existe numa caixa com placa de verdade entregue ao dataplane.
 
 Nesse mesmo boot, o que a caixa **pediu** e o que ela **recebeu** são conferidos um contra o outro — e o que é lido de volta é o que o **kernel** está fazendo, não o que o arquivo gerado pediu. Um parâmetro pode se perder em três lugares: o `update-grub` não rodou, a caixa não reiniciou desde então, ou o kernel viu e recusou. Uma appliance que se diz ajustada quando o kernel não aceitou o parâmetro é pior que uma que não diz nada.
 
 São **quatro** respostas por regra, e nenhuma delas se confunde com outra:
 
 | Linha no autoteste | O que significa |
-|---|---|
+|--------------------|-----------------|
 | `[ ok ] every tuning rule this box can read back is in effect (2)` | tudo que dava para conferir está valendo, e diz quantas regras foram |
 | `[warn] requested and NOT in effect: isolcpus` | foi pedido e o kernel não está fazendo. A linha de baixo diz o que ele está fazendo em vez disso |
 | `[info] cannot be read on this box: nohz_full` | esta caixa não expõe jeito de ler se pegou. Não é "pegou" nem "não pegou" |
@@ -309,7 +302,7 @@ A linha verde **não sai** ao lado de uma regra recusada: uma caixa com metade d
 Três outras linhas valem a pena reconhecer no console:
 
 | O que aparece | O que significa |
-|---|---|
+|---------------|-----------------|
 | `deep C-states left enabled on purpose` | você pôs `HEXA_LOW_LATENCY=0` e a caixa está fazendo o que foi mandada. Não é aviso |
 | `booted a command line older than that file` | `tune.env` foi editado e a caixa ainda não reiniciou desde então. Reinicie para valer |
 | `the kernel exposes no idle-state driver` | numa máquina virtual não há estado de energia para desligar, então esse ajuste não muda nada ali |
@@ -318,9 +311,7 @@ Um valor que a caixa não aceita em `tune.env` também aparece aí, com os valor
 
 ### Quando a linha inteira de boot se perdeu, é **uma** linha
 
-Se o arquivo gerado pede onze parâmetros e o boot não trouxe nenhum, isso é um
-fato só sobre a caixa — o `update-grub` não rodou, ou ela não reiniciou desde
-então — e não onze fatos. O autoteste diz uma vez:
+Se o arquivo gerado pede onze parâmetros e o boot não trouxe nenhum, isso é um fato só sobre a caixa — o `update-grub` não rodou, ou ela não reiniciou desde então — e não onze fatos. O autoteste diz uma vez:
 
 ```
   [warn] requested and NOT in effect: the kernel command line
@@ -329,22 +320,18 @@ então — e não onze fatos. O autoteste diz uma vez:
          the box has not rebooted since. Run update-grub and reboot
 ```
 
-Onze cópias da mesma frase num console de oitenta colunas são vinte e duas
-linhas empurrando todo o resto para fora da tela, e uma tela que não cabe é uma
-tela que ninguém lê.
+Onze cópias da mesma frase num console de oitenta colunas são vinte e duas linhas empurrando todo o resto para fora da tela, e uma tela que não cabe é uma tela que ninguém lê.
 
 ### E quando o próprio conferidor não está lá
 
 Duas linhas separam *"o ajuste não pegou"* de *"ninguém conseguiu conferir"*:
 
 | Linha no autoteste | O que significa |
-|---|---|
+|--------------------|-----------------|
 | `[warn] hexarouting-tune is not on this box, so what the kernel did with the tuning cannot be read here at all` | não há conferidor nesta caixa. Nada foi medido |
 | `[warn] hexarouting-tune could not say what tuning is in effect, so this box is unmeasured rather than confirmed` | o conferidor está lá e não respondeu. Também não foi medido |
 
-Nenhuma das duas diz que o ajuste está valendo, e nenhuma diz que não está. Uma
-caixa **não medida** e uma caixa **conferida e boa** não podem ter a mesma cara
-na tela, que é o que uma ausência de linha faria com as duas.
+Nenhuma das duas diz que o ajuste está valendo, e nenhuma diz que não está. Uma caixa **não medida** e uma caixa **conferida e boa** não podem ter a mesma cara na tela, que é o que uma ausência de linha faria com as duas.
 
 Existe ainda uma quinta resposta que uma caixa entregue não deve ver:
 
@@ -352,10 +339,7 @@ Existe ainda uma quinta resposta que uma caixa entregue não deve ver:
   [warn] no way to read back a parameter this box sets: <parâmetro>
 ```
 
-Ela quer dizer que a caixa escreve um parâmetro para o qual não existe leitura
-de volta — ou seja, algo que ela pede e nunca vai conseguir conferir. Se ela
-aparecer, o que está acontecendo é que a caixa ganhou um ajuste novo sem ganhar
-o conferidor dele.
+Ela quer dizer que a caixa escreve um parâmetro para o qual não existe leitura de volta — ou seja, algo que ela pede e nunca vai conseguir conferir. Se ela aparecer, o que está acontecendo é que a caixa ganhou um ajuste novo sem ganhar o conferidor dele.
 
 # Diagnóstico
 

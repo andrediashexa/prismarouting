@@ -229,8 +229,10 @@ Se você continuar com acesso, confirme com `commit`. Se perder, espere 10 minut
 
 Quem entrar na VTY enquanto a janela estiver aberta é avisado logo no banner, com a hora em que a máquina vai desfazer.
 
+
 :::warning
 Não use `save` antes de confirmar. O desfazer devolve o que está valendo e não reescreve o arquivo de boot, então salvar uma mudança não confirmada a traz de volta no próximo reboot. Confirme primeiro, salve depois — o `save` avisa se você inverter a ordem.
+
 :::
 
 # Adicionar um operador que só mexe em CGNAT
@@ -249,7 +251,7 @@ save
 **Sem a linha** `**role**` **a conta entra somente leitura.** É o `role` que decide o que ela pode mudar, e o `commit` é quem o materializa nos grupos do sistema — acrescentando os que o papel exige e retirando os que ele não exige mais:
 
 | `role` | Pode mudar |
-|--------|------------|
+|------|------------|
 | `administrator` | tudo: roteamento, sistema, contas e CGNAT |
 | `cgnat-operator` | somente CGNAT |
 | ausente | somente leitura |

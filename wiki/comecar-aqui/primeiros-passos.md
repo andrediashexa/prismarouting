@@ -44,19 +44,14 @@ hexarouting>
 
 Precisa de um shell? `start shell`, e `exit` volta.
 
+
 :::info
-**No primeiro boot o console fica quieto por um tempo, e isso é de propósito.**
-A caixa só oferece o prompt de login depois que o dataplane subiu. Se o VPP
-demora, o prompt demora junto — a caixa não travou, está esperando.
+**No primeiro boot o console fica quieto por um tempo, e isso é de propósito.** A caixa só oferece o prompt de login depois que o dataplane subiu. Se o VPP demora, o prompt demora junto — a caixa não travou, está esperando.
 
-O motivo é prático: uma VTY aberta antes do dataplane responder não consegue
-ler a configuração da caixa, e o `configure` digitado ali montaria um candidato
-incompleto. Enquanto isso, o self-test escreve o relatório de boot no mesmo
-console; o prompt aparece depois dele, inteiro.
+O motivo é prático: uma VTY aberta antes do dataplane responder não consegue ler a configuração da caixa, e o `configure` digitado ali montaria um candidato incompleto. Enquanto isso, o self-test escreve o relatório de boot no mesmo console; o prompt aparece depois dele, inteiro.
 
-Se mesmo assim você entrar num momento em que o dataplane ainda não respondeu,
-o `configure` recusa e diz isso, em vez de deixar você trabalhar em cima de uma
-leitura vazia.
+Se mesmo assim você entrar num momento em que o dataplane ainda não respondeu, o `configure` recusa e diz isso, em vez de deixar você trabalhar em cima de uma leitura vazia.
+
 :::
 
 ## 3. Dizer à caixa qual placa carrega os assinantes
@@ -92,16 +87,9 @@ Numa caixa de uma placa só a mesma lista marca a mesma placa com outra frase, p
   <nic>
 ```
 
-Essa linha é lida **antes** de você digitar o nome, e é para isso que ela
-serve. Por isso ela cabe no console: escrita por extenso ela passava de cem
-colunas numa tela de setenta e nove, e o terminal quebrava justamente a frase
-que dizia o que entregar aquela placa significa.
+Essa linha é lida **antes** de você digitar o nome, e é para isso que ela serve. Por isso ela cabe no console: escrita por extenso ela passava de cem colunas numa tela de setenta e nove, e o terminal quebrava justamente a frase que dizia o que entregar aquela placa significa.
 
-Repare que ali a marca **não é** `refused`. Numa caixa de uma placa só a
-entrega é permitida, e dizer `refused` seria recusar na tela o que a caixa
-aceita em seguida. A condição é a mesma que a recusa usa - existe outra placa
-para nomear? -, lida da mesma lista, para que a dica e a resposta não possam
-discordar sobre o que a caixa tem.
+Repare que ali a marca **não é** `refused`. Numa caixa de uma placa só a entrega é permitida, e dizer `refused` seria recusar na tela o que a caixa aceita em seguida. A condição é a mesma que a recusa usa - existe outra placa para nomear? -, lida da mesma lista, para que a dica e a resposta não possam discordar sobre o que a caixa tem.
 
 ### O commit guarda e recalcula, mas não entrega a placa
 
@@ -130,11 +118,7 @@ commit complete
     including this one, so it is not done for you
 ```
 
-Há ainda um terceiro caso, e ele é o da caixa de uma placa só **depois** da
-primeira entrega: a rota default passa a estar num nome que não é placa nenhuma
-do Linux - é a interface que o dataplane mantém emparelhada com a porta. Um
-reinício do dataplane leva essa interface junto, então a caixa não diz que a
-sessão está a salvo:
+Há ainda um terceiro caso, e ele é o da caixa de uma placa só **depois** da primeira entrega: a rota default passa a estar num nome que não é placa nenhuma do Linux - é a interface que o dataplane mantém emparelhada com a porta. Um reinício do dataplane leva essa interface junto, então a caixa não diz que a sessão está a salvo:
 
 ```
     restarting it hands the card over and ends whatever is reaching this box
@@ -145,8 +129,7 @@ sessão está a salvo:
     not done for you
 ```
 
-E quando a caixa não consegue ler por onde é alcançada — nenhuma rota default em
-lugar nenhum — ela diz isso, em vez de escolher uma das outras respostas:
+E quando a caixa não consegue ler por onde é alcançada — nenhuma rota default em lugar nenhum — ela diz isso, em vez de escolher uma das outras respostas:
 
 ```
     restarting it hands the card over and ends whatever is reaching this box
@@ -156,12 +139,7 @@ lugar nenhum — ela diz isso, em vez de escolher uma das outras respostas:
     done for you
 ```
 
-São quatro respostas para quatro caixas, e a caixa escolhe a sua lendo por onde
-é alcançada de **uma** fonte — a mesma que a recusa lê. Vale reparar para que
-lado ela erra quando não consegue ler: ela avisa. Uma caixa avisada de uma
-sessão que nunca ia cair gasta uma janela de manutenção que não precisava; uma
-caixa a quem se disse que a sessão estava a salvo, e não estava, é uma caixa que
-ninguém alcança.
+São quatro respostas para quatro caixas, e a caixa escolhe a sua lendo por onde é alcançada de **uma** fonte — a mesma que a recusa lê. Vale reparar para que lado ela erra quando não consegue ler: ela avisa. Uma caixa avisada de uma sessão que nunca ia cair gasta uma janela de manutenção que não precisava; uma caixa a quem se disse que a sessão estava a salvo, e não estava, é uma caixa que ninguém alcança.
 
 Ou seja: **reinicie a caixa numa janela escolhida por você**, e ela sobe encaminhando pela placa nomeada. Enquanto não reiniciar, `show interface` continua sem mostrar nada — e a própria caixa explica por quê, se você perguntar.
 
@@ -234,6 +212,7 @@ rollback at 2026-09-14T18:36:13Z, in 30 minute(s)
 
 O prazo fica gravado na caixa e **não é cancelado por reiniciar**: é justamente essa propriedade que faz a coisa funcionar aqui. A sequência é:
 
+
 1. `dataplane interface <placa>` e `commit`.
 2. Reinicie a caixa. Ela sobe com a placa no dataplane e o endereço no par do lado do Linux.
 3. Entre de novo, no mesmo endereço de sempre, e digite `commit`. Pronto.
@@ -268,8 +247,10 @@ Depois desse reinício a caixa está de volta como estava antes: sem dataplane, 
 
 **O reinício só acontece se a placa tiver mesmo saído.** A janela conta a partir do `commit`, e o `commit` não move a placa — o reinício seguinte é que move. Se o prazo vencer antes de você reiniciar, a caixa apenas desfaz a configuração: ela pergunta ao dataplane se ele está com aquele MAC antes de reiniciar qualquer coisa, e uma caixa que nunca perdeu a placa continuou alcançável o tempo todo.
 
+
 :::tip
 Se a caixa **não** conseguir ler o endereço da placa (placa sem endereço, sem rota default, ou com dois endereços e nenhum jeito de escolher) ela recusa a entrega e diz o que está faltando. Um endereço que ela não consegue ler é um endereço que ela não consegue devolver, e aí a entrega não teria volta.
+
 :::
 
 ## 4. Identificar as interfaces

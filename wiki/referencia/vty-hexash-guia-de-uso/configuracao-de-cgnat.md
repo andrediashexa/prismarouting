@@ -24,8 +24,7 @@ O bloco em que se entra continua sendo o pool: `nat cgnat pool <nome>`.
 
 O que mudou é o que a caixa **oferece**: TAB e `?` oferecem só `nat cgnat ...`.
 
-O que ela **escreve** é a grafia nova, em tudo. Em `show running-config`, em
-`show configuration` e no arquivo que o `save` grava:
+O que ela **escreve** é a grafia nova, em tudo. Em `show running-config`, em `show configuration` e no arquivo que o `save` grava:
 
 ```
 ! cgnat
@@ -41,13 +40,9 @@ nat cgnat block-holddown 90
 nat cgnat timeout udp 300
 ```
 
-Pools, interfaces e ajustes globais, todos com o `nat` na frente. Por um tempo
-os globais saíam sem ele, e um arquivo trazia as duas grafias misturadas: quem
-lia a própria configuração via `nat cgnat pool` em cima de `cgnat timeout udp`.
-Deixou de ser assim.
+Pools, interfaces e ajustes globais, todos com o `nat` na frente. Por um tempo os globais saíam sem ele, e um arquivo trazia as duas grafias misturadas: quem lia a própria configuração via `nat cgnat pool` em cima de `cgnat timeout udp`. Deixou de ser assim.
 
-As duas grafias continuam sendo **lidas** sem diferença, então um arquivo salvo
-antes disso volta inteiro no próximo boot e nada precisa ser convertido à mão.
+As duas grafias continuam sendo **lidas** sem diferença, então um arquivo salvo antes disso volta inteiro no próximo boot e nada precisa ser convertido à mão.
 
 :::
 

@@ -38,8 +38,7 @@ Um registro por **alocação de bloco** (RFC 8158) — não por fluxo. É a dife
 
 ## Configurando
 
-A exportação por UDP precisa saber **para onde** ir antes de ser ligada. São
-dois comandos, nesta ordem:
+A exportação por UDP precisa saber **para onde** ir antes de ser ligada. São dois comandos, nesta ordem:
 
 ```
 configure
@@ -48,22 +47,18 @@ configure
  commit
 ```
 
-`src` é o endereço de origem dos pacotes IPFIX e **não é opcional**: sem ele a
-caixa recusa. Use um endereço que o coletor reconheça como sendo desta caixa —
-normalmente o de gerência. Sem `port`, vale 4739, a porta registrada pelo
-RFC 7011.
+`src` é o endereço de origem dos pacotes IPFIX e **não é opcional**: sem ele a caixa recusa. Use um endereço que o coletor reconheça como sendo desta caixa — normalmente o de gerência. Sem `port`, vale 4739, a porta registrada pelo RFC 7011.
 
 Os demais comandos da hierarquia:
 
 | Comando | O que faz |
-|---|---|
+|---------|-----------|
 | `nat cgnat logging tcp <coletor> [port <n>]` | exportação por TCP |
 | `nat cgnat logging tcp disable` | desliga o transporte TCP |
 | `nat cgnat logging udp disable` | apaga o destino UDP |
 | `nat cgnat logging disable` | desliga a exportação UDP |
 
-O destino UDP volta em `show running-config`, sobrevive a `save`, a `rollback`
-e ao boot — e é reaplicado na ordem certa, o destino antes do estado.
+O destino UDP volta em `show running-config`, sobrevive a `save`, a `rollback` e ao boot — e é reaplicado na ordem certa, o destino antes do estado.
 
 ### Se você ligar a exportação sem dizer para onde
 
@@ -78,26 +73,16 @@ error: cgnat logging enable: UDP export has no collector
     through this commit
 ```
 
-`nat cgnat logging tcp` **não** satisfaz esse requisito: os dois transportes
-são caminhos independentes, e `logging enable` liga o de UDP.
+`nat cgnat logging tcp` **não** satisfaz esse requisito: os dois transportes são caminhos independentes, e `logging enable` liga o de UDP.
 
-A recusa vale quando é **esta mudança** que cria o problema. Numa caixa que já
-está nesse estado — exportação ligada e o destino apagado por baixo dela — a
-mesma frase sai como `warning:` e o commit passa, porque senão a única
-configuração que a caixa não conseguiria aplicar seria justamente a que
-conserta isso.
+A recusa vale quando é **esta mudança** que cria o problema. Numa caixa que já está nesse estado — exportação ligada e o destino apagado por baixo dela — a mesma frase sai como `warning:` e o commit passa, porque senão a única configuração que a caixa não conseguiria aplicar seria justamente a que conserta isso.
+
 
 :::warning
-**Em versões até a 0.63.0 a exportação por UDP não funcionava em nenhuma
-appliance instalada.** Não havia comando na VTY que dissesse para qual
-coletor enviar, então o dataplane recusava `logging enable` — e, até a 0.63.0,
-o `commit` respondia `commit complete` por cima dessa recusa. Uma operação que
-acreditava estar guardando registros de retenção legal não estava guardando
-nada.
+**Em versões até a 0.63.0 a exportação por UDP não funcionava em nenhuma appliance instalada.** Não havia comando na VTY que dissesse para qual coletor enviar, então o dataplane recusava `logging enable` — e, até a 0.63.0, o `commit` respondia `commit complete` por cima dessa recusa. Uma operação que acreditava estar guardando registros de retenção legal não estava guardando nada.
 
-Se você opera modo dinâmico e ligou a exportação por UDP em versão anterior,
-trate isso como uma lacuna de retenção no período: os registros daquele
-intervalo não existem. A exportação por TCP nunca foi afetada.
+Se você opera modo dinâmico e ligou a exportação por UDP em versão anterior, trate isso como uma lacuna de retenção no período: os registros daquele intervalo não existem. A exportação por TCP nunca foi afetada.
+
 :::
 
 ### Conferindo que está mesmo exportando
@@ -106,15 +91,9 @@ intervalo não existem. A exportação por TCP nunca foi afetada.
 show cgnat logging       estado da exportação e para onde ela vai
 ```
 
-Uma linha `exporter` com endereço é a prova de que existe destino; `exporter
-none` significa que nada sai por UDP, **mesmo com o estado `enabled`** — apagar
-o destino não desliga a exportação, só a deixa sem para onde ir.
+Uma linha `exporter` com endereço é a prova de que existe destino; `exporter none` significa que nada sai por UDP, **mesmo com o estado** `**enabled**` — apagar o destino não desliga a exportação, só a deixa sem para onde ir.
 
-O autoteste de boot também confere isso, e compara duas coisas diferentes: o
-que a caixa foi mandada fazer e o que o dataplane realmente tem. Se a
-configuração pede exportação e o dataplane está sem ela, o boot falha e diz
-qual das duas metades não pegou — porque uma configuração recusada é
-indistinguível de uma que está funcionando quando se olha só para o arquivo.
+O autoteste de boot também confere isso, e compara duas coisas diferentes: o que a caixa foi mandada fazer e o que o dataplane realmente tem. Se a configuração pede exportação e o dataplane está sem ela, o boot falha e diz qual das duas metades não pegou — porque uma configuração recusada é indistinguível de uma que está funcionando quando se olha só para o arquivo.
 
 ```
 show cgnat logging       estado da exportação
@@ -153,8 +132,8 @@ E um **segundo template**, com dois campos, que carrega o marcador de reinício:
 
 | IE  | Nome | Bits | Conteúdo |
 |----:|------|-----:|----------|
-| 323 | `observationTimeMilliseconds` | 64 | instante em que o marcador foi escrito |
-| 160 | `systemInitTimeMilliseconds` | 64 | instante em que esta encarnação do dataplane começou |
+| 323 | `observationTimeMilliseconds` | 64   | instante em que o marcador foi escrito |
+| 160 | `systemInitTimeMilliseconds` | 64   | instante em que esta encarnação do dataplane começou |
 
 
 :::warning
@@ -204,121 +183,80 @@ Por isso o `natEvent 17` na liberação é correção, não capricho.
 
 # Quando a caixa para, e quando ela cai
 
-A mesma lacuna aparece no reinício, e por um motivo mais comum do que a
-ociosidade: **todo reboot planejado** deixava para trás um bloco segurado no
-instante da parada, sem liberação nenhuma. E reboot planejado inclui o que
-inicia uma troca de versão, porque levar a caixa para uma versão nova começa
-bootando pela mídia nova.
+A mesma lacuna aparece no reinício, e por um motivo mais comum do que a ociosidade: **todo reboot planejado** deixava para trás um bloco segurado no instante da parada, sem liberação nenhuma. E reboot planejado inclui o que inicia uma troca de versão, porque levar a caixa para uma versão nova começa bootando pela mídia nova.
 
 ## Parada planejada
 
-Uma parada ordenada - `systemctl stop`, `systemctl restart`, um reboot,
-inclusive o reboot que começa uma troca de versão - **libera todos os blocos
-antes de sair**. Sai um `natEvent 17` por bloco ainda segurado, nos dois
-transportes, carimbado com o **instante da parada**.
+Uma parada ordenada - `systemctl stop`, `systemctl restart`, um reboot, inclusive o reboot que começa uma troca de versão - **libera todos os blocos antes de sair**. Sai um `natEvent 17` por bloco ainda segurado, nos dois transportes, carimbado com o **instante da parada**.
 
-O instante é o da parada e não um anterior de propósito: a caixa não observou o
-momento em que o bloco deixou de ser usado, e um registro que chutasse esse
-momento seria um registro inventado.
+O instante é o da parada e não um anterior de propósito: a caixa não observou o momento em que o bloco deixou de ser usado, e um registro que chutasse esse momento seria um registro inventado.
 
 ## Quando o coletor está atrasado na hora da parada
 
-As liberações são escritas no instante da parada, mas o coletor pode não estar
-pronto para recebê-las todas de uma vez. Dois casos, e o segundo é o comum:
+As liberações são escritas no instante da parada, mas o coletor pode não estar pronto para recebê-las todas de uma vez. Dois casos, e o segundo é o comum:
 
 * um coletor lento, ou que parou de ler sem fechar a conexão;
-* uma caixa com **muitos blocos segurados**. A parada escreve uma liberação por
-  bloco, de uma só vez, e isso é mais do que cabe no socket em uma passada.
+* uma caixa com **muitos blocos segurados**. A parada escreve uma liberação por bloco, de uma só vez, e isso é mais do que cabe no socket em uma passada.
 
-Nos dois casos os bytes que sobraram **não são perdidos**: vão para um arquivo
-no disco da própria caixa,
-`/var/log/hexarouting/ipfix-spill.bin`, e voltam na próxima conexão com o
-coletor, na ordem em que foram escritos. É o mesmo arquivo que cobre um coletor
-fora do ar.
+Nos dois casos os bytes que sobraram **não são perdidos**: vão para um arquivo no disco da própria caixa, `/var/log/hexarouting/ipfix-spill.bin`, e voltam na próxima conexão com o coletor, na ordem em que foram escritos. É o mesmo arquivo que cobre um coletor fora do ar.
 
 O que isso muda para quem opera:
 
-* depois de um reboot, parte das liberações pode chegar ao coletor **alguns
-  segundos depois de a caixa voltar**, e não no instante da parada. O carimbo
-  de cada registro continua sendo o instante da parada, que é o que responde a
-  uma ordem judicial;
-* enquanto a exportação por TCP não voltar a conectar, o arquivo fica no disco.
-  Uma caixa desligada em definitivo deixa esses registros lá - copie o arquivo
-  antes de descomissionar;
-* o estado da exportação mostra quantos bytes foram para o arquivo, quantos já
-  voltaram e quantos foram descartados. Descarte só acontece quando não há onde
-  escrever, e é contado - nunca silencioso.
+* depois de um reboot, parte das liberações pode chegar ao coletor **alguns segundos depois de a caixa voltar**, e não no instante da parada. O carimbo de cada registro continua sendo o instante da parada, que é o que responde a uma ordem judicial;
+* enquanto a exportação por TCP não voltar a conectar, o arquivo fica no disco. Uma caixa desligada em definitivo deixa esses registros lá - copie o arquivo antes de descomissionar;
+* o estado da exportação mostra quantos bytes foram para o arquivo, quantos já voltaram e quantos foram descartados. Descarte só acontece quando não há onde escrever, e é contado - nunca silencioso.
 
 ```
 show cgnat logging
 ```
 
+
 :::info
-Medido com o coletor lendo normalmente e 4001 blocos segurados: 70 kB de
-liberações ainda estavam no buffer de saída no instante em que o processo
-terminou, cerca de 1500 registros. Todos chegaram ao coletor no reinício
-seguinte.
+Medido com o coletor lendo normalmente e 4001 blocos segurados: 70 kB de liberações ainda estavam no buffer de saída no instante em que o processo terminou, cerca de 1500 registros. Todos chegaram ao coletor no reinício seguinte.
+
 :::
 
 ## Queda de energia
 
-Uma caixa que perde energia, que é morta pelo kernel por falta de memória ou
-que entra em pânico **não emite nada** - e não há o que fazer a respeito: não
-existe instante em que ela poderia ter escrito o registro. As alocações dela
-ficam abertas.
+Uma caixa que perde energia, que é morta pelo kernel por falta de memória ou que entra em pânico **não emite nada** - e não há o que fazer a respeito: não existe instante em que ela poderia ter escrito o registro. As alocações dela ficam abertas.
 
-É por isso que a parada ordenada sozinha **não** resolve o problema. Ela fecha
-os casos que a caixa viu chegando, e deixaria quem lê o log convencido de que
-toda alocação aberta é uma alocação em vigor - errando justamente nas caixas
-que caíram.
+É por isso que a parada ordenada sozinha **não** resolve o problema. Ela fecha os casos que a caixa viu chegando, e deixaria quem lê o log convencido de que toda alocação aberta é uma alocação em vigor - errando justamente nas caixas que caíram.
 
 ## O marcador de reinício
 
-Para separar os dois casos, a caixa anuncia periodicamente **quando esta
-encarnação do dataplane começou**, em um segundo template, no campo
-`systemInitTimeMilliseconds` (IE 160) - que o IANA registra exatamente como *"o
-instante absoluto da última (re)inicialização do dispositivo IPFIX"*.
+Para separar os dois casos, a caixa anuncia periodicamente **quando esta encarnação do dataplane começou**, em um segundo template, no campo `systemInitTimeMilliseconds` (IE 160) - que o IANA registra exatamente como *"o instante absoluto da última (re)inicialização do dispositivo IPFIX"*.
 
 Com isso, uma alocação sem liberação passa a ter três leituras, e não duas:
 
 | O que o coletor tem | Leitura |
-|---|---|
+|---------------------|---------|
 | alocação e liberação | o assinante segurou aquelas portas entre os dois instantes - resposta exata |
 | alocação sem liberação, e o valor do marcador **não** mudou depois | **ainda em vigor**: o assinante segura aquelas portas agora |
 | alocação sem liberação, e o marcador anunciou um valor **novo** depois | **terminou naquele reinício**: a caixa caiu segurando o bloco e não observou o fim. A resposta honesta é a janela entre o último registro da encarnação anterior e o novo instante de início - não um instante |
 
-:::info
-O valor do marcador é **latched** no início do processo e não é recalculado. O
-que importa é que ele **mude** quando o processo é substituído; um valor
-recalculado a cada envio pularia a cada ajuste de relógio e seria lido como um
-reinício que não houve.
 
-Em compensação, uma caixa cujo relógio ainda estava errado quando o dataplane
-subiu carrega um valor absoluto errado até ser reiniciada. Ele continua
-diferente do da encarnação anterior, que é para o que o coletor o lê.
+:::info
+O valor do marcador é **latched** no início do processo e não é recalculado. O que importa é que ele **mude** quando o processo é substituído; um valor recalculado a cada envio pularia a cada ajuste de relógio e seria lido como um reinício que não houve.
+
+Em compensação, uma caixa cujo relógio ainda estava errado quando o dataplane subiu carrega um valor absoluto errado até ser reiniciada. Ele continua diferente do da encarnação anterior, que é para o que o coletor o lê.
+
 :::
 
+
 :::warning
-**Um coletor que não conhece o IE 160 continua vendo alocações abertas e não
-consegue distingui-las.** Isso não é defeito da caixa: os registros saem, o
-segundo template é anunciado junto com o primeiro, e quem decodifica é o
-coletor. Ao escolher ou configurar um coletor para guarda legal, confirme que
-ele guarda o `systemInitTimeMilliseconds` por exportador e reprocessa as
-alocações abertas quando esse valor muda.
+**Um coletor que não conhece o IE 160 continua vendo alocações abertas e não consegue distingui-las.** Isso não é defeito da caixa: os registros saem, o segundo template é anunciado junto com o primeiro, e quem decodifica é o coletor. Ao escolher ou configurar um coletor para guarda legal, confirme que ele guarda o `systemInitTimeMilliseconds` por exportador e reprocessa as alocações abertas quando esse valor muda.
+
 :::
 
 ## Conferindo
 
-A linha do marcador aparece no estado da exportação, com o template que o
-carrega, quantos já saíram e o instante de início desta encarnação:
+A linha do marcador aparece no estado da exportação, com o template que o carrega, quantos já saíram e o instante de início desta encarnação:
 
 ```
 show cgnat logging
 ```
 
-Se o número de marcadores enviados não sai do zero com a exportação ligada, o
-coletor não tem como separar os dois casos acima - trate como a exportação
-estar quebrada, não como cosmética.
+Se o número de marcadores enviados não sai do zero com a exportação ligada, o coletor não tem como separar os dois casos acima - trate como a exportação estar quebrada, não como cosmética.
 
 # Verificando que a trilha não foi adulterada
 

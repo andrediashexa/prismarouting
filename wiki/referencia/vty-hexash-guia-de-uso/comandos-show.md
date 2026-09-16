@@ -117,10 +117,10 @@ hexarouting> show interface terse
 ```
 
 | `Admin` | `Link` | O que é |
-|---------|--------|---------|
-| `up`    | `up`   | normal |
-| `up`    | `down` | **é o cabo, o transceiver ou o outro lado** — a configuração está de pé |
-| `down`  | `down` | alguém digitou `shutdown` |
+|-------|------|---------|
+| `up`  | `up` | normal  |
+| `up`  | `down` | **é o cabo, o transceiver ou o outro lado** — a configuração está de pé |
+| `down` | `down` | alguém digitou `shutdown` |
 
 São duas colunas porque são dois fatos, e a diferença entre eles é o defeito. Uma coluna só de "estado" não distingue *alguém aplicou* `shutdown` de *a fibra foi cortada* — e essa é justamente a listagem que se abre quando algo está errado. Por isso a caixa também nomeia, no fim, as interfaces configuradas up cujo enlace está down: é a conclusão da tabela, dita sem precisar ser procurada.
 
@@ -216,30 +216,16 @@ hexarouting> show hardware
 | Coluna | O que é |
 |--------|---------|
 | `Interface` | o nome que o Linux dá à placa |
-| `PCI` | o endereço PCI, que é por onde o dataplane reclama o dispositivo |
+| `PCI`  | o endereço PCI, que é por onde o dataplane reclama o dispositivo |
 | `Driver` | o driver que está com a placa **agora** |
 | `Link` | o enlace, como o kernel o reporta |
 | `Speed` | a velocidade, quando o kernel informa; `-` quando o enlace está caído e não há velocidade a informar |
 
-A coluna `Link` é larga porque os valores que o kernel escreve ali não são só
-`up` e `down`: quando o estado não pode ser lido ele vira `unknown`, e existem
-`lowerlayerdown`, `notpresent`, `dormant` e `testing`. Por um tempo a coluna
-tinha a largura exata de `up`, e num estado mais comprido o estado e a
-velocidade saíam colados - `unknown-`, `unknown1000Mb/s` -, que é uma tela que
-o operador lê errado sem perceber que leu.
+A coluna `Link` é larga porque os valores que o kernel escreve ali não são só `up` e `down`: quando o estado não pode ser lido ele vira `unknown`, e existem `lowerlayerdown`, `notpresent`, `dormant` e `testing`. Por um tempo a coluna tinha a largura exata de `up`, e num estado mais comprido o estado e a velocidade saíam colados - `unknown-`, `unknown1000Mb/s` -, que é uma tela que o operador lê errado sem perceber que leu.
 
-Embaixo de cada placa vêm o **MAC**, inteiro numa linha só — é o que se compara
-com a etiqueta da porta ou com a reserva no DHCP —, o driver que está com ela, e
-o que acontece com esse driver quando a placa for entregue ao dataplane.
+Embaixo de cada placa vêm o **MAC**, inteiro numa linha só — é o que se compara com a etiqueta da porta ou com a reserva no DHCP —, o driver que está com ela, e o que acontece com esse driver quando a placa for entregue ao dataplane.
 
-Essa última linha importa mais do que parece. Toda caixa recém-instalada está
-com todas as placas em driver de kernel: dizer só *"o DPDK não pega uma placa
-por esse driver"* é verdade e lê-se como *"esta placa não serve"* — ainda mais
-numa VM de uma placa só, onde é a única coisa dita sobre a única placa. Dizer
-**para qual driver a caixa move a placa** transforma um beco sem saída num
-passo. O nome do driver ali não é chute: é o mesmo que a caixa vai usar de
-verdade, perguntado a quem decide, e numa caixa sem IOMMU ele sai
-`uio_pci_generic` em vez de `vfio-pci`.
+Essa última linha importa mais do que parece. Toda caixa recém-instalada está com todas as placas em driver de kernel: dizer só *"o DPDK não pega uma placa por esse driver"* é verdade e lê-se como *"esta placa não serve"* — ainda mais numa VM de uma placa só, onde é a única coisa dita sobre a única placa. Dizer **para qual driver a caixa move a placa** transforma um beco sem saída num passo. O nome do driver ali não é chute: é o mesmo que a caixa vai usar de verdade, perguntado a quem decide, e numa caixa sem IOMMU ele sai `uio_pci_generic` em vez de `vfio-pci`.
 
 ### A marca `*** carries the DEFAULT ROUTE ***`
 
@@ -305,15 +291,9 @@ O dataplane não consegue tomar uma placa que está presa a um driver do kernel.
       dataplane the box moves it to vfio-pci
 ```
 
-O nome do driver de DPDK na segunda linha **é o desta caixa**, e não um nome
-genérico: numa caixa com IOMMU ligado ele sai `vfio-pci`, e numa sem IOMMU sai
-`uio_pci_generic`. A tela não recalcula essa escolha — ela pergunta a quem a
-faz de verdade na hora de entregar a placa, para que uma tela não possa
-prometer um driver e a entrega usar outro.
+O nome do driver de DPDK na segunda linha **é o desta caixa**, e não um nome genérico: numa caixa com IOMMU ligado ele sai `vfio-pci`, e numa sem IOMMU sai `uio_pci_generic`. A tela não recalcula essa escolha — ela pergunta a quem a faz de verdade na hora de entregar a placa, para que uma tela não possa prometer um driver e a entrega usar outro.
 
-Uma placa sem driver nenhum aparece com `(none)` na coluna `Driver`. É um
-estado normal e não um defeito: acontece com a placa que já esteve com o
-dataplane e foi devolvida, e com a que o kernel não conseguiu reivindicar.
+Uma placa sem driver nenhum aparece com `(none)` na coluna `Driver`. É um estado normal e não um defeito: acontece com a placa que já esteve com o dataplane e foi devolvida, e com a que o kernel não conseguiu reivindicar.
 
 O `mlx5` da Mellanox é a exceção: é um driver bifurcado e o dataplane trabalha com ele sem trocar de driver.
 
@@ -358,20 +338,11 @@ cgnat pool residential
 
 Mostra a **candidata**, não a configuração em vigor: quem está no meio de uma edição pergunta sobre o que está construindo.
 
-Repare que `policy` e `mode` aparecem sem você ter digitado. Não é a tela
-acrescentando nada: são os três campos que todo pool tem por construção —
-`block-size`, `policy` e `mode` —, e um pool sem eles não existe. Se a tela os
-omitisse quando estão no valor padrão, ela deixaria de dizer o que o pool está
-fazendo enquanto o pool continua fazendo. É a mesma razão pela qual `no policy`
-é recusado.
+Repare que `policy` e `mode` aparecem sem você ter digitado. Não é a tela acrescentando nada: são os três campos que todo pool tem por construção — `block-size`, `policy` e `mode` —, e um pool sem eles não existe. Se a tela os omitisse quando estão no valor padrão, ela deixaria de dizer o que o pool está fazendo enquanto o pool continua fazendo. É a mesma razão pela qual `no policy` é recusado.
 
 Dentro de um pool, o bloco sai na forma curta — `cgnat pool residential`, sem o `nat` na frente — que é como o prompt também o nomeia. `show configuration` e `show running-config`, que mostram a caixa inteira, saem na hierarquia nova: `nat cgnat pool ...` e as rotas estáticas num bloco `router static`. As duas grafias são aceitas na entrada, então copiar qualquer uma das telas para um arquivo e carregá-lo de volta funciona.
 
-Na caixa inteira, **os ajustes globais de CGNAT também saem com o** `**nat**` na
-frente — `nat cgnat timeout udp 300`, `nat cgnat block-holddown 90` — e não só
-os blocos de pool. Por um tempo os pools saíam na hierarquia nova e os globais
-na antiga, no mesmo arquivo: quem procurasse um timeout por `nat cgnat timeout`
-não achava. Agora o arquivo inteiro fala uma língua só.
+Na caixa inteira, **os ajustes globais de CGNAT também saem com o** `**nat**` na frente — `nat cgnat timeout udp 300`, `nat cgnat block-holddown 90` — e não só os blocos de pool. Por um tempo os pools saíam na hierarquia nova e os globais na antiga, no mesmo arquivo: quem procurasse um timeout por `nat cgnat timeout` não achava. Agora o arquivo inteiro fala uma língua só.
 
 O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface TenGigabitEthernet0/8/0]` — para que a próxima declaração não caia no bloco errado.
 
@@ -456,9 +427,7 @@ Zero vizinhos num circuito que está `Up` é o sintoma do IS-IS não estar sendo
 
 ## `show version` — as versões da caixa e quais daemons estão de pé
 
-Quando um `show bgp`, um `show ospf` ou um `show isis` não responde, e quando um
-`commit` recusa uma instância de roteamento, a caixa manda você para cá. Esta
-tela responde: ela nomeia os daemons rodando e os parados, um por um.
+Quando um `show bgp`, um `show ospf` ou um `show isis` não responde, e quando um `commit` recusa uma instância de roteamento, a caixa manda você para cá. Esta tela responde: ela nomeia os daemons rodando e os parados, um por um.
 
 ```
 hexarouting> show version
@@ -472,15 +441,9 @@ HexaRouting 0.67.0 (a1b2c3d)
              nothing; enable it in /etc/frr/daemons and restart frr
 ```
 
-A última linha diz o que fazer: um daemon parado recebe a configuração que
-depende dele e não chega a lugar nenhum. Habilite em `/etc/frr/daemons` e
-reinicie o `frr`. Se quem estiver parado for um dos que o próprio FRR sobe
-sozinho, a mensagem é outra — nesse caso o FRR não terminou de subir, e editar
-`/etc/frr/daemons` não muda nada.
+A última linha diz o que fazer: um daemon parado recebe a configuração que depende dele e não chega a lugar nenhum. Habilite em `/etc/frr/daemons` e reinicie o `frr`. Se quem estiver parado for um dos que o próprio FRR sobe sozinho, a mensagem é outra — nesse caso o FRR não terminou de subir, e editar `/etc/frr/daemons` não muda nada.
 
-Os parados aparecem **por nome**, e não como ausência na lista dos que rodam.
-Quem chega aqui veio de uma mensagem que citou **um** daemon, e procurar por
-uma palavra que não está lá é exatamente como se tira a conclusão errada.
+Os parados aparecem **por nome**, e não como ausência na lista dos que rodam. Quem chega aqui veio de uma mensagem que citou **um** daemon, e procurar por uma palavra que não está lá é exatamente como se tira a conclusão errada.
 
 Se o FRR não responder, a tela diz isso, e não "nenhum daemon rodando":
 
@@ -490,25 +453,13 @@ Se o FRR não responder, a tela diz isso, e não "nenhum daemon rodando":
              'systemctl status frr' and its journal say why
 ```
 
-São falhas diferentes com correções diferentes: um FRR que não responde é o plano
-de controle fora do ar, e a correção é levantar o FRR; um FRR que responde sem
-nada de pé é uma caixa cujos daemons nunca foram habilitados, e a correção está
-em `/etc/frr/daemons`. Ler a primeira como a segunda manda o operador editar um
-arquivo numa caixa que não o teria lido.
+São falhas diferentes com correções diferentes: um FRR que não responde é o plano de controle fora do ar, e a correção é levantar o FRR; um FRR que responde sem nada de pé é uma caixa cujos daemons nunca foram habilitados, e a correção está em `/etc/frr/daemons`. Ler a primeira como a segunda manda o operador editar um arquivo numa caixa que não o teria lido.
 
 ### Qual build está encaminhando de verdade
 
+A linha `plugin:` é a versão do **dataplane que está carregado agora**, lida da própria caixa. A primeira linha, `HexaRouting`, é a versão do que está instalado em disco. Na imensa maioria das vezes as duas são iguais e a caixa não diz mais nada a respeito.
 
-A linha `plugin:` é a versão do **dataplane que está carregado agora**, lida da
-própria caixa. A primeira linha, `HexaRouting`, é a versão do que está instalado
-em disco. Na imensa maioria das vezes as duas são iguais e a caixa não diz mais
-nada a respeito.
-
-Elas se separam num momento previsível: **entre uma atualização e o próximo
-boot**. Atualizar troca o dataplane em disco e **não reinicia** o dataplane que
-está rodando — de propósito, porque reiniciá-lo derruba todas as sessões da
-caixa. Até o reboot, portanto, a VTY, o autoteste e o coletor já são a versão
-nova e quem traduz pacotes ainda é a antiga. A tela passa a dizer isso:
+Elas se separam num momento previsível: **entre uma atualização e o próximo boot**. Atualizar troca o dataplane em disco e **não reinicia** o dataplane que está rodando — de propósito, porque reiniciá-lo derruba todas as sessões da caixa. Até o reboot, portanto, a VTY, o autoteste e o coletor já são a versão nova e quem traduz pacotes ainda é a antiga. A tela passa a dizer isso:
 
 ```
 hexarouting> show version
@@ -523,16 +474,9 @@ HexaRouting 0.68.0 (9f8e7d6)
              session it is carrying.
 ```
 
-Não é um defeito, é um estado — e é um estado que **você escolhe quando
-encerrar**. Reiniciar o dataplane, por reboot ou pelo comando que a própria
-mensagem cita, carrega a versão nova e derruba todas as sessões traduzidas no
-momento em que o comando é dado. Por isso a caixa informa e não age sozinha:
-essa é uma janela de manutenção, não uma tarefa de rotina.
+Não é um defeito, é um estado — e é um estado que **você escolhe quando encerrar**. Reiniciar o dataplane, por reboot ou pelo comando que a própria mensagem cita, carrega a versão nova e derruba todas as sessões traduzidas no momento em que o comando é dado. Por isso a caixa informa e não age sozinha: essa é uma janela de manutenção, não uma tarefa de rotina.
 
-O sufixo entre parênteses identifica a árvore de onde aquele build saiu. Se ele
-terminar em `-dirty`, aquele build **não** é uma versão publicada: saiu de uma
-árvore com alterações não commitadas, e isso precisa aparecer antes de qualquer
-investigação começar pelo caminho errado.
+O sufixo entre parênteses identifica a árvore de onde aquele build saiu. Se ele terminar em `-dirty`, aquele build **não** é uma versão publicada: saiu de uma árvore com alterações não commitadas, e isso precisa aparecer antes de qualquer investigação começar pelo caminho errado.
 
 Se o dataplane não responder, a linha diz isso — e não "sem plugin":
 
@@ -543,22 +487,13 @@ Se o dataplane não responder, a linha diz isso — e não "sem plugin":
              dataplane is silent
 ```
 
-E se ele responder estando de pé **sem o plugin de CGNAT carregado**, a
-mensagem é outra, porque a correção é outra: aí a caixa encaminha e não traduz
-nada.
+E se ele responder estando de pé **sem o plugin de CGNAT carregado**, a mensagem é outra, porque a correção é outra: aí a caixa encaminha e não traduz nada.
 
 ### O que esta tela não confere
 
-A comparação acima é entre **dois** arquivos: o que está em disco e o que o
-dataplane carregou. A linha `HexaRouting` é uma frase sobre cerca de trinta,
-e os outros vinte e oito não são conferidos aqui, de propósito: `show version`
-é rodado o tempo todo enquanto se trabalha, e refazer a conta a cada vez sairia
-caro para dizer que está tudo certo.
+A comparação acima é entre **dois** arquivos: o que está em disco e o que o dataplane carregou. A linha `HexaRouting` é uma frase sobre cerca de trinta, e os outros vinte e oito não são conferidos aqui, de propósito: `show version` é rodado o tempo todo enquanto se trabalha, e refazer a conta a cada vez sairia caro para dizer que está tudo certo.
 
-Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista
-que a instalação deixou na caixa. Se algum arquivo não for da versão que a
-caixa informa, é lá que aparece, com o nome do arquivo. A página **Operação e
-diagnóstico** descreve essa linha e o que fazer com ela.
+Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista que a instalação deixou na caixa. Se algum arquivo não for da versão que a caixa informa, é lá que aparece, com o nome do arquivo. A página **Operação e diagnóstico** descreve essa linha e o que fazer com ela.
 
 ## `show` — restante
 

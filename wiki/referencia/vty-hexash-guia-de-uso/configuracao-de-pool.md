@@ -63,10 +63,7 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 
 ## As duas pontas de `ports` são conferidas na hora, e a faixa no `commit`
 
-Uma porta é um número de 16 bits dos dois lados: se `ports 70000 80000` fosse
-aceito, o que chegaria ao dataplane seria `4464-14464`, e a partir daí
-nenhuma recusa conseguiria nomear os 70000 - o número já não existiria. Então
-cada ponta é recusada onde você a digita, e a recusa diz **qual das duas**:
+Uma porta é um número de 16 bits dos dois lados: se `ports 70000 80000` fosse aceito, o que chegaria ao dataplane seria `4464-14464`, e a partir daí nenhuma recusa conseguiria nomear os 70000 - o número já não existiria. Então cada ponta é recusada onde você a digita, e a recusa diz **qual das duas**:
 
 ```
 error: invalid argument: ports min 70000: expected 1-65535
@@ -76,24 +73,19 @@ error: invalid argument: ports min 70000: expected 1-65535
 error: invalid argument: ports max 70000: expected 1-65535
 ```
 
-Algo que não é número responde por extenso, porque a ação é outra - não é
-escolher outro valor, é escrever um número:
+Algo que não é número responde por extenso, porque a ação é outra - não é escolher outro valor, é escrever um número:
 
 ```
 error: invalid argument: ports min 'x': expected a number 1-65535
 ```
 
-Duas portas legítimas na ordem errada são uma recusa diferente, e de propósito:
-a faixa não é o que está errado ali.
+Duas portas legítimas na ordem errada são uma recusa diferente, e de propósito: a faixa não é o que está errado ali.
 
 ```
 error: invalid argument: ports 9000 100: the max is below the min
 ```
 
-A terceira coisa que pode estar errada só aparece no `commit`, e não na linha:
-uma faixa estreita demais para caber **um bloco**. Ela depende do `block-size`,
-que você pode digitar depois do `ports` - conferir na linha recusaria uma ordem
-de edição legítima. Então a pergunta é feita uma vez, do pool pronto:
+A terceira coisa que pode estar errada só aparece no `commit`, e não na linha: uma faixa estreita demais para caber **um bloco**. Ela depende do `block-size`, que você pode digitar depois do `ports` - conferir na linha recusaria uma ordem de edição legítima. Então a pergunta é feita uma vez, do pool pronto:
 
 ```
 error: pool 'residencial': block-size 512 exceeds the 177 usable ports
@@ -103,15 +95,11 @@ error: pool 'residencial': block-size 512 exceeds the 177 usable ports
     anyone: widen the range, or make the block smaller
 ```
 
-As duas sentenças saem inteiras, cada uma na sua linha, pelo mesmo motivo de
-sempre: é uma delas que você vai editar, e as duas carregam números que você
-vai comparar.
+As duas sentenças saem inteiras, cada uma na sua linha, pelo mesmo motivo de sempre: é uma delas que você vai editar, e as duas carregam números que você vai comparar.
 
 # Timeouts do pool
 
-`timeout <tipo> <segundos>`, de `1` a `4294967295`. Ausente, herda o global.
-Zero não é um timeout: é o valor que a caixa lê como "não mexa neste", e por
-isso é recusado na hora em que você digita, e não silenciosamente ignorado.
+`timeout <tipo> <segundos>`, de `1` a `4294967295`. Ausente, herda o global. Zero não é um timeout: é o valor que a caixa lê como "não mexa neste", e por isso é recusado na hora em que você digita, e não silenciosamente ignorado.
 
 | Tipo | O que expira |
 |------|--------------|
@@ -140,18 +128,14 @@ isso é recusado na hora em que você digita, e não silenciosamente ignorado.
 
 # A faixa de portas que um assinante pode chegar a ter
 
-`block-size` e `max-blocks` juntos **já são uma faixa**, e é assim que um pool
-atende um medidor inteligente e uma casa pesada ao mesmo tempo:
+`block-size` e `max-blocks` juntos **já são uma faixa**, e é assim que um pool atende um medidor inteligente e uma casa pesada ao mesmo tempo:
 
 ```
 block-size 64
 max-blocks 8
 ```
 
-Um assinante **começa com 64 portas**. Só recebe um segundo bloco quando enche
-o primeiro, e só então um terceiro - até 8 blocos, 512 portas. O medidor nunca
-pede o segundo e custa 64 portas ao pool; a casa pesada chega às 512 sozinha,
-sem ninguém configurar nada para ela.
+Um assinante **começa com 64 portas**. Só recebe um segundo bloco quando enche o primeiro, e só então um terceiro - até 8 blocos, 512 portas. O medidor nunca pede o segundo e custa 64 portas ao pool; a casa pesada chega às 512 sozinha, sem ninguém configurar nada para ela.
 
 `show cgnat pool` mostra a faixa em portas, que é a unidade em que se vende:
 
@@ -159,22 +143,13 @@ sem ninguém configurar nada para ela.
   per sub      64-512 ports (1-8 blocks, grown one at a time as each fills)
 ```
 
-O preço de um bloco pequeno é o **volume de registro**: cada bloco entregue a
-um assinante vira um registro próprio no log de blocos. Uma casa que chega a 8
-blocos gera 8 registros; com `block-size 512` e um bloco só, gera 1. Escolha o
-menor bloco que ainda deixe a maioria dos assinantes dentro de **um** bloco, e
-use `max-blocks` para a minoria que precisa de mais.
+O preço de um bloco pequeno é o **volume de registro**: cada bloco entregue a um assinante vira um registro próprio no log de blocos. Uma casa que chega a 8 blocos gera 8 registros; com `block-size 512` e um bloco só, gera 1. Escolha o menor bloco que ainda deixe a maioria dos assinantes dentro de **um** bloco, e use `max-blocks` para a minoria que precisa de mais.
 
 # O bloco de reserva de um pool determinístico
 
-Num pool `mode deterministic` **não existe bloco sobrando**: a fórmula entrega
-todos os blocos a algum assinante. Quem enche o seu bloco é derrubado - a
-internet do cliente para com a caixa saudável - porque qualquer bloco entregue
-como extra seria o bloco de outra pessoa, e o mapeamento dela quebraria em
-silêncio.
+Num pool `mode deterministic` **não existe bloco sobrando**: a fórmula entrega todos os blocos a algum assinante. Quem enche o seu bloco é derrubado - a internet do cliente para com a caixa saudável - porque qualquer bloco entregue como extra seria o bloco de outra pessoa, e o mapeamento dela quebraria em silêncio.
 
-`reserve <n>` guarda **n blocos de cada endereço público** fora da fórmula. São
-esses, e só esses, os blocos que um pool determinístico tem para dar.
+`reserve <n>` guarda **n blocos de cada endereço público** fora da fórmula. São esses, e só esses, os blocos que um pool determinístico tem para dar.
 
 ```
 reserve 1
@@ -188,35 +163,14 @@ blocos que a fórmula usa = blocos por endereço - reserve
 capacidade               = endereços públicos x blocos que a fórmula usa
 ```
 
-:::warning
-**Ligar ou mudar o** `**reserve**` **remapeia assinantes.** Ele sai da
-capacidade, e capacidade é mapeamento: o pool é reconstruído, todas as sessões
-nele caem, e o `commit` recusa a mudança até ela ser pedida pelo nome com
-`commit remap` - igual a acrescentar um prefixo público.
-
-Quanto ele move depende da **política**, e as duas respostas não se parecem:
-
-| Política | O que acontece com `reserve 1` |
-|----------|--------------------------------|
-| `interleaved` | **nenhum** assinante que continua cabendo muda de endereço ou de bloco. O pool só encolhe pelo fim: os que estavam acima da nova capacidade ficam sem bloco nenhum, e são `endereços públicos x reserve` deles |
-| `blocked` | o divisor **é** o número de blocos que a fórmula usa, então quase todo mundo muda de lugar, além dos que o encolhimento deixou de fora |
-
-`commit check` diz o número exato antes de qualquer coisa acontecer.
-
-:::
-
-`show cgnat pool` mostra as duas contas lado a lado, e a capacidade já vem
-descontada:
+`show cgnat pool` mostra as duas contas lado a lado, e a capacidade já vem descontada:
 
 ```
   reserve      1 block(s) per public IP -> 3 mapped, 1 held for extensions
   capacity     3 subscribers (usable 3)
 ```
 
-Cada bloco entregue da reserva vira **um registro próprio** no log de blocos, e
-a devolução dele também. É a única coisa que o modo determinístico registra por
-assinante, e tem de ser: é o único bloco que a fórmula não produz, então a
-configuração datada não responde por ele sozinha.
+Cada bloco entregue da reserva vira **um registro próprio** no log de blocos, e a devolução dele também. É a única coisa que o modo determinístico registra por assinante, e tem de ser: é o único bloco que a fórmula não produz, então a configuração datada não responde por ele sozinha.
 
 `show cgnat blocks` mostra a reserva e conta as recusas:
 
@@ -225,69 +179,43 @@ configuração datada não responde por ele sozinha.
   max-blocks 2, and the reserve had nothing left
 ```
 
-Essa contagem é **separada** de um assinante bater no `max-blocks`, porque a
-ação é outra: contra uma, aumentar a reserva ou acrescentar endereços públicos;
-contra a outra, aumentar o limite por assinante.
+Essa contagem é **separada** de um assinante bater no `max-blocks`, porque a ação é outra: contra uma, aumentar a reserva ou acrescentar endereços públicos; contra a outra, aumentar o limite por assinante.
 
 Três coisas que vale saber antes de escolher o número:
 
-* **Uma reserva menor que o número de workers deixa workers sem nada.** A caixa
-  avisa na criação do pool e cria o pool assim mesmo - recusar faria um pool
-  aceito hoje não subir depois de a máquina ganhar workers, o que derruba todo
-  mundo.
-* **A caixa prefere um bloco do próprio endereço público do assinante**, para
-  que quem está do outro lado continue vendo um host só. É preferência, não
-  garantia: se não houver um livre na fatia daquele worker, ela entrega outro
-  em vez de recusar.
-* **`reserve` não vale em** `**mode dynamic**` e é recusado lá. Um pool dinâmico
-  já tem blocos sobrando - a lista de livres é exatamente de onde sai o bloco
-  extra - então uma reserva tiraria blocos da própria lista de onde eles vêm.
+* **Uma reserva menor que o número de workers deixa workers sem nada.** A caixa avisa na criação do pool e cria o pool assim mesmo - recusar faria um pool aceito hoje não subir depois de a máquina ganhar workers, o que derruba todo mundo.
+* **A caixa prefere um bloco do próprio endereço público do assinante**, para que quem está do outro lado continue vendo um host só. É preferência, não garantia: se não houver um livre na fatia daquele worker, ela entrega outro em vez de recusar.
+* `**reserve**` **não vale em** `**mode dynamic**` e é recusado lá. Um pool dinâmico já tem blocos sobrando - a lista de livres é exatamente de onde sai o bloco extra - então uma reserva tiraria blocos da própria lista de onde eles vêm.
 
 # Onde ficam os blocos extras de um assinante
 
-`block-stride <n>` decide a distância entre os blocos que um mesmo assinante
-segura. Vale só em `mode dynamic`: num pool determinístico o bloco extra vem da
-reserva, que é um conjunto à parte, e a distância não se aplica a ele.
+`block-stride <n>` decide a distância entre os blocos que um mesmo assinante segura. Vale só em `mode dynamic`: num pool determinístico o bloco extra vem da reserva, que é um conjunto à parte, e a distância não se aplica a ele.
 
 | Valor | O que acontece |
 |-------|----------------|
 | `0` (padrão) | o bloco extra vai para onde o pool tiver um livre - comportamento de sempre |
-| `1` | os blocos ficam **colados**: o segundo começa onde o primeiro termina |
-| `n` | os blocos ficam `n × block-size` portas afastados, no mesmo endereço público |
+| `1`   | os blocos ficam **colados**: o segundo começa onde o primeiro termina |
+| `n`   | os blocos ficam `n × block-size` portas afastados, no mesmo endereço público |
 
-**Colado (`1`)** deixa o assinante com uma faixa contínua de portas. É a opção
-para quem atende ofício e investigação: uma faixa em vez de várias, e o técnico
-que olha um horário não precisa cruzar três intervalos separados.
+**Colado (**`**1**`**)** deixa o assinante com uma faixa contínua de portas. É a opção para quem atende ofício e investigação: uma faixa em vez de várias, e o técnico que olha um horário não precisa cruzar três intervalos separados.
 
-**Afastado (`n` maior)** espalha o assinante pela faixa de portas do próprio
-endereço público. É a opção para quem quer que observar um intervalo de portas
-de fora diga o mínimo possível sobre um cliente.
+**Afastado (**`**n**` **maior)** espalha o assinante pela faixa de portas do próprio endereço público. É a opção para quem quer que observar um intervalo de portas de fora diga o mínimo possível sobre um cliente.
 
-Nenhuma das duas é obviamente certa - por isso é um ajuste, e por isso o padrão
-é o comportamento antigo: uma configuração escrita antes de o `stride` existir
-se comporta igual quando a caixa passa a rodar uma versão nova.
+Nenhuma das duas é obviamente certa - por isso é um ajuste, e por isso o padrão é o comportamento antigo: uma configuração escrita antes de o `stride` existir se comporta igual quando a caixa passa a rodar uma versão nova.
+
 
 :::info
-**O `stride` nunca custa tráfego a um cliente.** Se o bloco que a distância
-aponta já estiver com outro assinante, ou se o assinante estiver no fim da
-faixa de portas do seu endereço público, a caixa entrega **outro bloco
-qualquer** em vez de recusar. O cliente continua funcionando; o que muda é só
-onde o bloco caiu.
+**O** `**stride**` **nunca custa tráfego a um cliente.** Se o bloco que a distância aponta já estiver com outro assinante, ou se o assinante estiver no fim da faixa de portas do seu endereço público, a caixa entrega **outro bloco qualquer** em vez de recusar. O cliente continua funcionando; o que muda é só onde o bloco caiu.
 
 :::
 
-`show cgnat blocks` conta os dois casos, e é onde se confere se o ajuste está
-valendo de fato:
+`show cgnat blocks` conta os dois casos, e é onde se confere se o ajuste está valendo de fato:
 
 ```
   stride 1: 412 extensions placed where it says, 7 fell back to the free list
 ```
 
-Só zeros na primeira coluna com números na segunda quer dizer que a distância
-escolhida **não cabe** nesta caixa. Isso acontece quando a máquina roda com
-vários workers: os blocos são divididos entre eles, e um assinante só pode
-receber blocos da fatia do seu próprio worker. A caixa avisa no momento em que
-o pool é criado e diz qual distância serve:
+Só zeros na primeira coluna com números na segunda quer dizer que a distância escolhida **não cabe** nesta caixa. Isso acontece quando a máquina roda com vários workers: os blocos são divididos entre eles, e um assinante só pode receber blocos da fatia do seu próprio worker. A caixa avisa no momento em que o pool é criado e diz qual distância serve:
 
 ```
 warning: block-stride 1 on pool residencial cannot be honoured: blocks are sharded 4 ways and a stride step moves by 2, so every block the stride names belongs to another worker
@@ -295,15 +223,9 @@ warning: block-stride 1 on pool residencial cannot be honoured: blocks are shard
          the setting is applied and extensions fall back to the free list; this is a warning, not a refusal
 ```
 
-São **três** linhas, e o dataplane as escreve inteiras: a primeira passa
-de 170 colunas e a última de 100, então num console de 80 o terminal é que
-dobra. Quem procurar a frase inteira na tela procura o começo dela, não uma
-linha que termina onde a sua janela termina.
+São **três** linhas, e o dataplane as escreve inteiras: a primeira passa de 170 colunas e a última de 100, então num console de 80 o terminal é que dobra. Quem procurar a frase inteira na tela procura o começo dela, não uma linha que termina onde a sua janela termina.
 
-É um aviso e não uma recusa de propósito: o número de workers é ajuste de
-inicialização, e uma configuração recusada por causa dele deixaria o pool
-**sem subir** depois de um reinício - o que derruba todo mundo, para atender a
-uma preferência de arrumação.
+É um aviso e não uma recusa de propósito: o número de workers é ajuste de inicialização, e uma configuração recusada por causa dele deixaria o pool **sem subir** depois de um reinício - o que derruba todo mundo, para atender a uma preferência de arrumação.
 
 # Bypass — o que não é traduzido
 
@@ -404,8 +326,7 @@ error: block-size cannot be removed
     set the value you want instead: block-size <64-32768>
 ```
 
-`policy` e `mode` respondem do mesmo jeito, trocando o nome do campo e o que
-digitar no lugar: `policy interleaved|blocked` e `mode deterministic|dynamic`.
+`policy` e `mode` respondem do mesmo jeito, trocando o nome do campo e o que digitar no lugar: `policy interleaved|blocked` e `mode deterministic|dynamic`.
 
 Para mudar qualquer um dos três, digite o valor que você quer. São campos de mapeamento: a mudança reconstrói o pool e exige `commit remap`.
 

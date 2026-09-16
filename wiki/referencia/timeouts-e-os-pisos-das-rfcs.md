@@ -23,21 +23,15 @@ Esses são **SHOULD**s das RFCs, e o equipamento os trata como tal: um valor aba
 
 :::
 
-O aviso vai para **os dois lugares** - para quem configurou e para o log -
-porque quem encurta um timeout quando o pool enche e quem diagnostica as
-desconexões aleatórias seis semanas depois não são a mesma pessoa. Mas os dois
-não recebem a mesma frase.
+O aviso vai para **os dois lugares** - para quem configurou e para o log - porque quem encurta um timeout quando o pool enche e quem diagnostica as desconexões aleatórias seis semanas depois não são a mesma pessoa. Mas os dois não recebem a mesma frase.
 
-Na VTY, o `commit` imprime uma linha por valor, com o nome do timeout, o valor
-que passou a valer e a RFC:
+Na VTY, o `commit` imprime uma linha por valor, com o nome do timeout, o valor que passou a valer e a RFC:
 
 ```
 warning:  udp                 119   BELOW the floor RFC 4787 REQ-5 asks for
 ```
 
-**O piso em segundos e o que quebra abaixo dele ficam no log**, não na tela do
-commit. Se você quer os três na mesma frase, é o log que responde - a tabela
-acima serve para o resto.
+**O piso em segundos e o que quebra abaixo dele ficam no log**, não na tela do commit. Se você quer os três na mesma frase, é o log que responde - a tabela acima serve para o resto.
 
 Ele dispara **uma vez por mudança** — nunca por pacote, nunca por sessão. E um valor exatamente **no** piso não diz nada: um aviso que sempre dispara é um aviso que o operador aprende a pular.
 

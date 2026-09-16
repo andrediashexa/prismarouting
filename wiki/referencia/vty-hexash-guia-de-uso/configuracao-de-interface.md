@@ -23,7 +23,7 @@ O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali den
 | `ipv6 address` | `<prefixo>` | endereço IPv6; pode repetir |
 | `no ipv4 address` | `<prefixo>` | remove **um** endereço, sem tocar nos outros |
 | `mtu`   | `<576-9216>` | MTU, na interface e no par Linux dela |
-| `linux-name` | `<nome>` | o nome pelo qual o roteamento e o `ip` enxergam esta interface; **sem ele o roteamento não a enxerga de jeito nenhum** |
+| `linux-name` | `<nome>`  | o nome pelo qual o roteamento e o `ip` enxergam esta interface; **sem ele o roteamento não a enxerga de jeito nenhum** |
 | `vrf`   | `<1-4294967295>` | tabela de roteamento onde os endereços vivem; `0` tira a interface de uma |
 | `vlan`  | `<1-4094> [inner <1-4094>]` | tag da sub-interface |
 | `mac-address` | `<xx:xx:xx:xx:xx:xx>` | o MAC ao qual a interface responde |
@@ -129,19 +129,13 @@ O equipamento nomeia a sub-interface pela tag, e a configuração em vigor é li
 
 
 :::warning
-**A tag vai de 1 a 4094, nas duas posições.** `vlan 0`, `vlan 4095` e qualquer
-número acima disso são recusados na hora em que você digita - e o mesmo vale
-para a tag interna, `vlan 100 inner 0` e `vlan 100 inner 4095`.
+**A tag vai de 1 a 4094, nas duas posições.** `vlan 0`, `vlan 4095` e qualquer número acima disso são recusados na hora em que você digita - e o mesmo vale para a tag interna, `vlan 100 inner 0` e `vlan 100 inner 4095`.
 
 ```
 error: vlan 4095 out of range (1-4094): 802.1Q reserves 0 and 4095
 ```
 
-Zero e 4095 são reservados pelo próprio 802.1Q: zero é a marcação de
-prioridade, um quadro que carrega o cabeçalho de tag e nenhuma VLAN dentro, e
-4095 não é atribuível. Nenhum switch do outro lado entrega uma nem outra, então
-uma sub-interface construída em cima delas fica com cara de configurada e não
-carrega nada.
+Zero e 4095 são reservados pelo próprio 802.1Q: zero é a marcação de prioridade, um quadro que carrega o cabeçalho de tag e nenhuma VLAN dentro, e 4095 não é atribuível. Nenhum switch do outro lado entrega uma nem outra, então uma sub-interface construída em cima delas fica com cara de configurada e não carrega nada.
 
 :::
 
@@ -207,14 +201,9 @@ error: vlan cannot be removed
     remove the sub-interface itself: no interface <name>
 ```
 
-A recusa vem em linhas próprias, dentro da largura do console: o veredito na
-primeira, o motivo no meio, e **o que digitar no lugar na última**. Por um
-tempo ela saía numa frase só, mais larga que a tela, e o terminal a quebrava
-onde calhasse - o que punha justamente o conselho do fim em qualquer lugar.
-Agora a última linha é sempre a última linha.
+A recusa vem em linhas próprias, dentro da largura do console: o veredito na primeira, o motivo no meio, e **o que digitar no lugar na última**. Por um tempo ela saía numa frase só, mais larga que a tela, e o terminal a quebrava onde calhasse - o que punha justamente o conselho do fim em qualquer lugar. Agora a última linha é sempre a última linha.
 
-`no vlan`, sem número, recebe a mesma recusa: não há tag a tirar de qualquer
-forma.
+`no vlan`, sem número, recebe a mesma recusa: não há tag a tirar de qualquer forma.
 
 `no interface GigabitEthernet0/12/0.700`, no nível de cima, remove a sub-interface e tudo o que estava nela.
 

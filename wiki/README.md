@@ -3,7 +3,7 @@
 A read-only copy of <https://hexarouting.hexanetworks.com.br>, so the pages can
 be read, searched and diffed from inside the repository.
 
-Snapshot taken 2026-09-10T00:23Z, 32 published pages (this file is not one of them).
+Snapshot taken 2026-09-16T09:43Z, 32 pages.
 
 Refresh it with `WIKI_TOKEN=... sh tools/wiki-pull.sh`. No address or
 credential is kept here — `PADRAO-DOCUMENTACAO.md` says those never go into the

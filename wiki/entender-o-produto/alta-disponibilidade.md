@@ -113,6 +113,7 @@ A caixa diz **qual pool** difere e **quais linhas** diferem, não só que os nú
 
 A mesma comparação roda em `commit check` e em `commit`: uma alteração que afasta o par avisa na hora em que é feita, e não na hora em que a outra caixa é necessária.
 
+
 :::info
 O aviso **nunca recusa o commit**, e isso é de propósito. As duas caixas não podem ser alteradas no mesmo instante: toda ampliação de capacidade legítima afasta o par entre o primeiro commit e o segundo. Uma recusa dispararia em todo procedimento correto, e o jeito de escapar dela seria parar de copiar a configuração da parceira — o que tira a conferência, não a divergência.
 
@@ -123,12 +124,12 @@ O aviso **nunca recusa o commit**, e isso é de propósito. As duas caixas não 
 Os que mudam o **mapeamento**. No modo determinístico o endereço público e o bloco de portas do assinante são função da definição do pool, então o que precisa bater é exatamente o que muda essa conta — e é a mesma lista de campos que, quando alterada, derruba as sessões do pool.
 
 | Precisam ser iguais nas duas caixas | Podem diferir |
-|---|---|
-| `inside`, `outside` | `timeout ...` |
-| `block-size`, `ports` | `alg` de cada protocolo, `tcp-mss` |
-| `policy`, `mode` | `bypass source`, `bypass destination` |
-| `reserve` | `max-sessions`, `max-session-rate` |
-| `vrf`, `outside-vrf` | `forward ...`, `block-stride`, `max-blocks`, `utilisation-alarm` |
+|-------------------------------------|---------------|
+| `inside`, `outside`                 | `timeout ...` |
+| `block-size`, `ports`               | `alg` de cada protocolo, `tcp-mss` |
+| `policy`, `mode`                    | `bypass source`, `bypass destination` |
+| `reserve`                           | `max-sessions`, `max-session-rate` |
+| `vrf`, `outside-vrf`                | `forward ...`, `block-stride`, `max-blocks`, `utilisation-alarm` |
 
 A coluna da direita o dataplane altera num pool que está passando tráfego, e nenhum desses ajustes move assinante nenhum. Duas caixas que diferem só ali estão corretas, e avisar sobre elas seria ensinar o operador a ignorar o aviso que importa.
 
@@ -137,11 +138,12 @@ A coluna da direita o dataplane altera num pool que está passando tráfego, e n
 Ela pode dizer "diferem", pode dizer "concordam" e pode dizer "não sei" — e a terceira resposta nunca vira a segunda.
 
 | Situação | O que a caixa diz |
-|---|---|
+|----------|-------------------|
 | Não há arquivo da parceira | Que não há, e que isso não é uma concordância |
 | O arquivo está vazio, truncado ou sem pool nenhum | O motivo, nunca "iguais" |
 | O arquivo tem uma linha que esta VTY não sabe ler | Qual linha, porque o pool comparado não seria o que a parceira tem |
 | O dataplane não responde | Que parou aí: sem ele esta caixa não sabe o que ela própria mapeia |
+
 
 :::warning
 O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatório mostra a data ao lado da impressão digital: uma impressão digital que bate com uma configuração que a outra caixa parou de usar semana passada é a mesma falsa concordância que a conferência existe para remover. Copie de novo sempre que alterar a parceira.

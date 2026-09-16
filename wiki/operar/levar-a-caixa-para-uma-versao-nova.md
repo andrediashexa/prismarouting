@@ -4,14 +4,14 @@ Como colocar uma versão nova do HexaRouting numa caixa que já está em produç
 
 # Qual dos dois é o seu
 
-| | O pacote de atualização | A reinstalação pela mídia |
-|---|---|---|
+|     | O pacote de atualização | A reinstalação pela mídia |
+|-----|-------------------------|---------------------------|
 | Quando | Sempre que o pacote aceitar a caixa | Quando o pacote recusa, ou quando a máquina é nova |
-| O disco | Intocado | **Apagado** |
-| Configuração, contas, comunidades SNMP | Ficam | Somem |
-| Registros de conexão e trilha de configuração | Ficam | Somem |
+| O disco | Intocado                | **Apagado**               |
+| Configuração, contas, comunidades SNMP | Ficam                   | Somem                     |
+| Registros de conexão e trilha de configuração | Ficam                   | Somem                     |
 | Parada | Só o reinício do dataplane, e no horário que você escolher | A janela inteira, com boot pela mídia |
-| Tamanho do download | Alguns megabytes | Centenas de megabytes |
+| Tamanho do download | Alguns megabytes        | Centenas de megabytes     |
 
 **O pacote é o caminho normal.** A reinstalação existe para a máquina nova e para o caso em que a versão nova muda a plataforma por baixo do produto. Você não precisa adivinhar qual é: o pacote confere isso sozinho e **recusa antes de escrever qualquer coisa**, dizendo o que a caixa tem e o que a versão nova precisa.
 
@@ -51,8 +51,7 @@ Este é o passo que custa alguma coisa, e é seu.
 
 O pacote troca o dataplane **em disco** e não reinicia nada. Até o próximo reinício do VPP, a caixa continua traduzindo com o dataplane antigo, que já estava carregado na memória.
 
-Quem conta essa história é a linha `plugin` do `show version`, e **não** a
-linha `dataplane`:
+Quem conta essa história é a linha `plugin` do `show version`, e **não** a linha `dataplane`:
 
 ```
 hexarouting> show version
@@ -63,16 +62,9 @@ HexaRouting 0.74.2
   daemons:   running  bgpd mgmtd ospfd staticd zebra
 ```
 
-A linha `dataplane` é a versão do próprio VPP e não se mexe numa troca de
-versão do HexaRouting. A que fica para trás é `plugin`: é a build com que o
-dataplane foi carregado no último boot. Compare-a com o número da **primeira**
-linha - e quando as duas discordam a caixa diz isso em voz alta, com um
-parágrafo embaixo da linha `plugin` explicando que só um reinício do dataplane
-as iguala. Quando concordam ela não diz nada, que é o estado normal.
+A linha `dataplane` é a versão do próprio VPP e não se mexe numa troca de versão do HexaRouting. A que fica para trás é `plugin`: é a build com que o dataplane foi carregado no último boot. Compare-a com o número da **primeira** linha - e quando as duas discordam a caixa diz isso em voz alta, com um parágrafo embaixo da linha `plugin` explicando que só um reinício do dataplane as iguala. Quando concordam ela não diz nada, que é o estado normal.
 
-A linha `plugin` responde de quatro jeitos, e três deles não são divergência:
-que a build é tal, que o dataplane não está respondendo, que o dataplane
-respondeu e não informa build nenhuma, ou que não há com o que comparar.
+A linha `plugin` responde de quatro jeitos, e três deles não são divergência: que a build é tal, que o dataplane não está respondendo, que o dataplane respondeu e não informa build nenhuma, ou que não há com o que comparar.
 
 
 :::warning
@@ -108,9 +100,9 @@ Os dois morrem na reinstalação e **nenhum comando deste produto os traz de vol
 |-------|---------------------------|
 | A configuração em vigor | **Não.** Você precisa levá-la para fora e digitá-la de volta |
 | As senhas das contas e as comunidades SNMP | **Não**, e não dá para copiá-las da tela: a caixa as mascara ao imprimir a configuração |
-| As revisões de rollback | **Não** |
-| Os registros de conexão do modo dinâmico | **Não** |
-| A trilha de configuração | **Não** |
+| As revisões de rollback | **Não**                   |
+| Os registros de conexão do modo dinâmico | **Não**                   |
+| A trilha de configuração | **Não**                   |
 | O que já foi exportado para um coletor IPFIX | **Sim** - está fora da caixa, e a reinstalação não o alcança |
 | O que já foi copiado para um syslog remoto | **Sim**, pelo mesmo motivo |
 
