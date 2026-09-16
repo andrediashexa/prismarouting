@@ -559,12 +559,40 @@ and report a pass.
 It refuses to boot an ISO older than the sources — a build that dies halfway
 used to be followed by a green boot of the *previous* image.
 
-`make test-appliance` runs two profiles, because they share no code path:
+`make test-appliance` runs three profiles, because they share no code path:
 
 | Script | Profile | Why it matters |
 |---|---|---|
 | `test_startup_conf.sh` | first boot: no pinning, 4k pages, DPDK off | The profile every freshly installed box uses |
 | `test_tuned_conf.sh` | tuned: `corelist-workers`, `dpdk { dev … num-rx-queues }`, `page-size default-hugepage` | Reserves real 2 MB hugepages so the production stanzas actually meet a parser; skips with a message if the host cannot spare them |
+| `test_startup_conf_shapes.sh` | **every** shape the tuner can write, nine of them, each handed to the real `vpp` binary | The two above start VPP on ONE generated file each. The tuner branches on hugepages, on whether a card was named, on how many workers and queues there are, on the card's maximum MTU and on who sized the statistics segment, and a check that renders one branch is a check the next branch walks past |
+
+**The third exists because 0.75.0 shipped a `startup.conf` VPP refuses to
+read.** [#330](https://github.com/andrediashexa/hexarouting/issues/330) added a
+per-device `mtu` line for a card whose maximum is below VPP's default of 9000.
+There is no `mtu` keyword in this VPP's `dpdk` configuration: it answers
+``dpdk_device_config: unknown input `mtu 1500'`` and exits, `vpp.service`
+carries `Restart=always`, and the box spends its boot in a restart loop
+forwarding nothing
+([#377](https://github.com/andrediashexa/hexarouting/issues/377)). Every
+`virtio` guest whose card reports a maximum below 9000 is in that class.
+
+Nothing caught it because **every box this repository boots comes up in first
+boot mode**, where there is no `dpdk` stanza at all - the medium, the installed
+disk and the release gate alike. The tuned profile reached a real VPP only in
+`test_tuned_conf.sh`, which renders one shape and *skips itself* when the
+machine cannot spare the pages.
+
+The shapes are given to `vpp -c` and the answer is VPP's, because **the only
+authority on what VPP accepts is VPP**. A list of legal keywords kept here
+would be a second copy of VPP's grammar, written by the same people who have
+just been shown inventing a keyword that reads exactly like a DPDK option and
+is not one. It needs hugepages to be worth running: measured, with
+`main-heap-page-size default-hugepage` and none reserved, VPP dies in *early*
+config before the `dpdk` config function runs and the parse error is never
+printed - so a run that cannot reserve them reports `NOT MEASURED` rather than
+a pass, and `tools/release-gate.sh` refuses a release on that as it does on a
+failure.
 
 Verified requirements: **4 GB RAM** and a CPU with **SSE4.2**. Below either,
 VPP is killed by the OOM killer or by SIGILL, and the self-test says so first.

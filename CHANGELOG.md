@@ -77,6 +77,52 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The tuned `startup.conf` had never been read by a VPP, and 0.75.0 shipped
+  one VPP refuses.**
+  [#330](https://github.com/andrediashexa/hexarouting/issues/330) wrote a
+  per-device `mtu` line for a card whose maximum is below VPP's default of
+  9000. There is no `mtu` keyword in this VPP's `dpdk` configuration. An
+  installed box answers
+
+  ```
+  vpp[3322]: dpdk_device_config: unknown input `mtu 1500'
+  vpp.service: Start request repeated too quickly.
+  ```
+
+  and forwards nothing, with `Restart=always` turning the refusal into a loop
+  ([#377](https://github.com/andrediashexa/hexarouting/issues/377)). Measured
+  against the real binary in `hexarouting-dev:26.06`: inside a `dev` stanza
+  `mtu`, `default-mtu`, `max-frame-size` and `max-rx-frame-size` are all
+  `unknown input`, while `num-rx-queues`, `num-tx-queues`, `num-rx-desc`,
+  `name`, `tag`, `tso` and `devargs` are accepted. There is no MTU knob in
+  `startup.conf` at all; the MTU is a runtime interface property, which this
+  product already sets over the binary API from the VTY's `mtu` statement.
+
+  **The fix to the tuner is the maintainer's**; this entry is the reason
+  nothing caught it. Every box this repository boots comes up in FIRST BOOT
+  mode - the medium, the installed disk, and the release gate's boot of both -
+  and that profile has no `dpdk` stanza at all. The tuned profile reached a
+  real VPP only through `appliance/test_tuned_conf.sh`, which renders ONE shape
+  and skips itself when the machine cannot spare hugepages.
+
+  `appliance/test_startup_conf_shapes.sh` renders **nine** shapes with the real
+  tuner and hands each to the real `vpp` binary: first boot, `no-pci`, one
+  card, a card whose maximum MTU is below 9000, several workers and queues, a
+  box with no worker, a tuner-sized `statseg`, an operator's own base carrying
+  one, and two cards. The answer is VPP's, because the only authority on what
+  VPP accepts is VPP: a list of legal keywords kept here would be a second copy
+  of VPP's grammar written by the people who have just been shown inventing a
+  keyword. It runs in `make test-appliance` and in `tools/release-gate.sh`,
+  before the 325 MB image, and a run that cannot reserve hugepages reports
+  `NOT MEASURED` - which the gate refuses, because VPP dies in *early* config
+  without them and the parse error is never reached.
+
+  Shown failing against the shipped product rather than against a mutation:
+  on this tree the `lowmtu` shape is red and names the keyword. With the two
+  lines that write it taken out of `appliance/hexarouting-tune`, all nine are
+  green; restored, red again. Each of the other assertions was shown red on its
+  own, nine of them, by mutating the fixture it reads.
+
 ## 0.75.0 - what the box said about the box it was on, and the checks that could not fail
 
 [#248](https://github.com/andrediashexa/hexarouting/issues/248), [#277](https://github.com/andrediashexa/hexarouting/issues/277), [#288](https://github.com/andrediashexa/hexarouting/issues/288), [#295](https://github.com/andrediashexa/hexarouting/issues/295), [#312](https://github.com/andrediashexa/hexarouting/issues/312), [#317](https://github.com/andrediashexa/hexarouting/issues/317), [#326](https://github.com/andrediashexa/hexarouting/issues/326), [#327](https://github.com/andrediashexa/hexarouting/issues/327), [#328](https://github.com/andrediashexa/hexarouting/issues/328), [#329](https://github.com/andrediashexa/hexarouting/issues/329), [#330](https://github.com/andrediashexa/hexarouting/issues/330), [#331](https://github.com/andrediashexa/hexarouting/issues/331), [#332](https://github.com/andrediashexa/hexarouting/issues/332), [#333](https://github.com/andrediashexa/hexarouting/issues/333), [#334](https://github.com/andrediashexa/hexarouting/issues/334), [#335](https://github.com/andrediashexa/hexarouting/issues/335), [#336](https://github.com/andrediashexa/hexarouting/issues/336), [#338](https://github.com/andrediashexa/hexarouting/issues/338), [#339](https://github.com/andrediashexa/hexarouting/issues/339), [#342](https://github.com/andrediashexa/hexarouting/issues/342), [#343](https://github.com/andrediashexa/hexarouting/issues/343), [#344](https://github.com/andrediashexa/hexarouting/issues/344), [#346](https://github.com/andrediashexa/hexarouting/issues/346), [#347](https://github.com/andrediashexa/hexarouting/issues/347), [#348](https://github.com/andrediashexa/hexarouting/issues/348), [#349](https://github.com/andrediashexa/hexarouting/issues/349), [#350](https://github.com/andrediashexa/hexarouting/issues/350), [#351](https://github.com/andrediashexa/hexarouting/issues/351), [#352](https://github.com/andrediashexa/hexarouting/issues/352), [#353](https://github.com/andrediashexa/hexarouting/issues/353), [#354](https://github.com/andrediashexa/hexarouting/issues/354), [#355](https://github.com/andrediashexa/hexarouting/issues/355), [#356](https://github.com/andrediashexa/hexarouting/issues/356), [#357](https://github.com/andrediashexa/hexarouting/issues/357), [#358](https://github.com/andrediashexa/hexarouting/issues/358), [#359](https://github.com/andrediashexa/hexarouting/issues/359), [#360](https://github.com/andrediashexa/hexarouting/issues/360), [#361](https://github.com/andrediashexa/hexarouting/issues/361), [#362](https://github.com/andrediashexa/hexarouting/issues/362), [#363](https://github.com/andrediashexa/hexarouting/issues/363), [#364](https://github.com/andrediashexa/hexarouting/issues/364), [#365](https://github.com/andrediashexa/hexarouting/issues/365), [#367](https://github.com/andrediashexa/hexarouting/issues/367), [#368](https://github.com/andrediashexa/hexarouting/issues/368), [#369](https://github.com/andrediashexa/hexarouting/issues/369), [#370](https://github.com/andrediashexa/hexarouting/issues/370), [#371](https://github.com/andrediashexa/hexarouting/issues/371), [#372](https://github.com/andrediashexa/hexarouting/issues/372), [#373](https://github.com/andrediashexa/hexarouting/issues/373), [#374](https://github.com/andrediashexa/hexarouting/issues/374).
