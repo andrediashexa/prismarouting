@@ -625,6 +625,23 @@ and exits. It drops no session." \
   && ok "and restarting it is priced separately, at nothing" \
   || bad "the upgrade screen does not say what restarting hexarouting.service \
 does or that it costs no session"
+
+# AND THE ONE THING NEITHER RESTART DOES. /etc/vpp/startup.conf is written by
+# hexarouting-tune.service, which runs at BOOT, so a dataplane restarted
+# without one starts on the file the PREVIOUS version's tuner generated. An
+# operator who upgraded to 0.75.2 for the MTU their card can carry, and then
+# restarted vpp.service alone, would get the same dead port and no reason for
+# it. The paragraph priced both restarts and said nothing about what neither
+# of them does.
+said "$UP" "NEITHER restart rewrites /etc/vpp/startup.conf" \
+  && ok "and the screen says what neither restart does" \
+  || bad "the upgrade screen prices both restarts and never says that \
+neither rewrites the generated startup.conf, so an operator who upgraded for \
+something the tuner decides restarts into the old file"
+said "$UP" "systemctl restart hexarouting-tune.service" \
+  && ok "and names the unit to run first when a reboot is not wanted" \
+  || bad "it says a reboot is needed and does not give the operator the one \
+command that avoids it"
 said "$UP" "'show version' on this box reads both builds and compares them." \
   && ok "and it points at 'show version' for the comparison" \
   || bad "the upgrade screen does not send the operator to 'show version', \
