@@ -128,7 +128,25 @@ hexash --load [arquivo]      # aplica um arquivo de configuração salvo
 
 `--load` sem argumento usa `/etc/hexarouting/hexarouting.conf`. É o que roda no boot, pela `hexarouting.service`.
 
-O código de saída é **1** se qualquer comando falhou, **0** caso contrário — o que permite usar `hexash -c` em script sem depender de casar padrões de texto na saída.
+O código de saída é **1** se qualquer comando falhou, **0** caso contrário - o que permite usar `hexash -c` em script sem depender de casar padrões de texto na saída.
+
+### Um comando recusado recusa o `commit` do mesmo lote
+
+Se qualquer comando de uma mesma invocação `hexash -c` for recusado, o `commit` daquela invocação é recusado junto: a caixa nomeia os comandos que não entraram e **não aplica nada**. Ou o lote inteiro entra, ou nada entra.
+
+```
+error: invalid argument: block-size 16: expected 64-32768
+error: refusing to commit: 1 statement(s) in this batch were refused
+    block-size 16
+    NOTHING was applied and this box is unchanged: the candidate this batch
+    built is not the configuration it asked for
+```
+
+A razão é a mesma do `--load`, que recusa um arquivo inteiro em vez de aplicá-lo sem a linha que não entendeu: um lote aplicado sem um de seus comandos deixa o seu script e a caixa descrevendo configurações diferentes, e essa diferença só aparece depois, para quem ler os dois.
+
+O lote continua rodando até o fim, de propósito: assim todas as recusas aparecem de uma vez e você corrige todas antes de rodar de novo. Nada que venha depois alcança a caixa, porque a caixa só muda no `commit` e o `commit` foi recusado.
+
+Isso vale só para `hexash -c`. Numa sessão interativa quem está lendo a recusa decide o que fazer com ela, e o `commit` digitado depois é aplicado normalmente. Um `hexash -c` que só faz perguntas também não é afetado: não há `commit` nele.
 
 ### Caminhos
 

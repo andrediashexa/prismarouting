@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A `hexash -c` batch whose statement is refused no longer commits and says
+  `commit complete`**
+  ([#376](https://github.com/andrediashexa/hexarouting/issues/376)). The batch
+  kept going, committed what it could, and printed the word that means it did
+  what it was asked. Observed as
+  `error: invalid argument: block-size 16: expected 64-32768` followed by
+  `commit complete`, with the pool created and carrying the **default** block
+  size: the operator's script described one configuration and the box applied
+  another.
+
+  `commit` now refuses while a statement of the same `-c` invocation was
+  refused, names those statements, says nothing was applied, and applies
+  nothing. The batch still runs to its end, so every refusal is printed and
+  named at once rather than one per run - the shape `--load` already had for a
+  saved file, and `docs/routing.md` carries the argument that carries from one
+  to the other, under "`hexash -c`: one command, or a script?".
+
+  **An interactive session is not affected**, and neither is a `-c` batch that
+  only asks questions: the rule is on the `commit`, so
+  `hexash -c "show cgnat pool"` is untouched. The exit status is unchanged - it
+  was already 1, which is why a script that tested it was never misled and why
+  nothing caught this sooner.
+
 ## 0.76.0 - the box claims its own dataplane card, and nobody has to name it
 
 [#378](https://github.com/andrediashexa/hexarouting/issues/378).

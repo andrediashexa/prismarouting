@@ -2400,7 +2400,14 @@ logs the output, or a person reading it afterwards, is. `Shell.load()` answers
 the same question the other way for a saved configuration file and writes down
 why: it refuses rather than trimming, because the difference between the file
 and the running configuration would be discovered later by somebody reading
-both. What has to be decided first is whether `-c` is one command or a script.
+both. What had to be decided first was whether `-c` is one command or a
+script, and the answer is *both, and the word that settles it is `commit`*:
+`commit` now refuses while a statement of the same invocation was refused and
+applies nothing, the batch still runs to its end so that every refusal is named
+at once, and an interactive session and a batch that only asks questions are
+untouched. `docs/routing.md`, under "`hexash -c`: one command, or a script?",
+carries the argument and the measurement behind it - two of this repository's
+283 `hexash -c` invocation sites change behaviour.
 
 **The same shape one statement over, and wider**
 ([#373](https://github.com/andrediashexa/hexarouting/issues/373)). The wiki

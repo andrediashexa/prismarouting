@@ -4979,6 +4979,10 @@ class Shell:
         self.candidate = None          # Config being edited
         self.frr_ctx = []              # FRR block context inside config mode
         self.failed = 0
+        # The statements a `hexash -c` batch asked for and did not get. It is
+        # what `commit` refuses on, it is empty in an interactive session, and
+        # feed_batch() below carries the argument for both halves of that.
+        self.batch_refused = []
         # The in-session half of "commit confirmed". It is the fast path and
         # the fallback, never the promise: what makes the promise true is the
         # file ConfirmPending writes (#212).
@@ -7928,6 +7932,32 @@ class Shell:
         if self.candidate is None:
             self.err("no candidate configuration")
             return
+
+        # THE REFUSAL load() MAKES ABOUT A FILE, on the batch that is this
+        # box's other way of being handed a configuration. feed_batch()
+        # carries the argument; what is said here is what was NOT applied,
+        # because whoever reads it is holding a script that has just not done
+        # what it says. Before running_config(), which reads the dataplane: a
+        # refusal this certain has no reason to ask the box anything.
+        #
+        # `commit check` is refused by it too. It answers "would this commit
+        # work", and "configuration check succeeds" about a candidate the
+        # batch did not ask for is the same false sentence one step earlier.
+        if self.batch_refused:
+            self.err(f"refusing to commit: {len(self.batch_refused)} "
+                     f"statement(s) in this batch were refused")
+            for text in self.batch_refused:
+                # The statement whole on its own row, as the unknown lines
+                # below are quoted whole: it is what the operator goes and
+                # edits (#271).
+                print(f"    {text}")
+            print_prose("NOTHING was applied and this box is unchanged: the "
+                        "candidate this batch built is not the configuration "
+                        "it asked for")
+            print_prose("each refusal is printed above, where it happened; "
+                        "fix the statements and run the batch again")
+            return
+
         running = self.running_config()
 
         # Refused, not warned about. A candidate carrying a line nobody can
@@ -13322,6 +13352,71 @@ class Shell:
             return result
         return handler(line)
 
+    def feed_batch(self, cmds):
+        """
+        Run a `hexash -c` batch, and record what it asked for and did not get.
+
+        IS `-c` ONE COMMAND OR A SCRIPT? Both, and the word that settles it is
+        `commit`. `hexash -c "show cgnat pool"` is a question: it changes
+        nothing, so there is nothing for it to be half of. A sequence of `-c`
+        arguments ending in `commit` describes a configuration, and this
+        product has already answered that question for the other thing that
+        describes one. `load()` refuses a saved file rather than trimming it,
+        and wrote down why: applied minus the line this VTY cannot hold, the
+        file on disk and the running configuration disagree, on a box nobody
+        is watching, and the difference is discovered later by somebody
+        reading both.
+
+        THE ARGUMENT CARRIES, because the script is the file. A batch is
+        written down somewhere - in a deployment tool, in a runbook, in a
+        shell script - and that text is what somebody reads afterwards to
+        find out what the box was asked for. A batch committed minus its
+        refused statement leaves the script and the box disagreeing in
+        exactly the way load() refuses to allow. It was observed doing it:
+        `error: invalid argument: block-size 16: expected 64-32768` and then
+        `commit complete`, with the pool created and carrying the DEFAULT
+        block size (#376).
+
+        So the rule is on the COMMIT and not on the batch: `commit` refuses
+        while a statement of this batch was refused, and applies nothing.
+        That is what keeps the one-off question working, which a batch that
+        stopped at its first refusal would not have needed to keep.
+
+        AND THE BATCH RUNS TO ITS END, which is load()'s shape as well:
+        load() does not stop at the first line it cannot hold, it reads the
+        whole file and then names every one of them. A batch that stopped
+        would report one refusal per run, so an operator fixing a
+        twelve-statement batch would meet the second refusal only after
+        fixing the first. Nothing the rest of the batch runs can reach the
+        box: the box changes at `commit`, and `commit` is refused.
+
+        NOT THE INTERACTIVE SESSION, and the line is where load() draws it -
+        on whether anybody is reading the refusal as it happens. The argv of
+        a batch was fixed before the first refusal existed, so the batch
+        cannot be an answer to one. An operator who types `block-size 16`,
+        reads the refusal, types `block-size 1024` and then `commit` has
+        answered it, and refusing that commit would be the alarm that is
+        always on which #205 and #208 are about.
+
+        WHAT IS NOT COUNTED: a refusal from `commit` itself. The candidate is
+        then exactly what the batch asked for and the refusal is about
+        applying it, which `commit` says better than this could - lab/ipfix.sh
+        drives that pair, a `commit check` refused for a collector that is not
+        configured and the `commit` behind it answering "candidate did not
+        pass validation; nothing applied".
+        """
+        for c in cmds:
+            before = self.failed
+            self.feed(c)
+            # `self.failed`, and not what feed() returns: feed() answers
+            # whether the session goes on, which is a different question -
+            # `exit` returns False and refuses nothing. `failed` is also the
+            # counter the exit status below is computed from, so the word
+            # this box prints and the status it exits with cannot disagree.
+            if self.failed > before and c.split()[:1] != ["commit"]:
+                self.batch_refused.append(c)
+        return 1 if self.failed else 0
+
     def load(self, path):
         """
         Apply a saved configuration file to the device.
@@ -13635,9 +13730,10 @@ def main():
             args = args[1:]
 
     if cmds:
-        for c in cmds:
-            sh.feed(c)
-        return 1 if sh.failed else 0
+        # feed_batch and not a loop over feed(): what a `-c` batch is, and
+        # what `commit` does about a statement of it that was refused, is
+        # written down there.
+        return sh.feed_batch(cmds)
 
     return sh.repl()
 

@@ -2206,6 +2206,89 @@ change through the VTY, and asserts the setting survived. Asking `hexash`
 whether `hexash` stored something proves nothing - that is exactly what the old
 code did successfully.
 
+### `hexash -c`: one command, or a script?
+
+Both, and the word that settles it is `commit`.
+
+`hexash -c "show cgnat pool"` is a question. It changes nothing, so there is
+nothing for it to be half of, and it **MUST** keep working exactly as it does:
+it is how `appliance/selftest` and `appliance/test_startup_conf.sh` ask a
+booted box what it is holding.
+
+A sequence of `-c` arguments ending in `commit` is a script. It describes a
+configuration, and this product had already answered that question for the
+other thing that describes one. `Shell.load()` refuses a saved file rather than
+trimming it, and wrote down why: applied minus the line this VTY cannot hold,
+the file on disk and the running configuration disagree, on a box nobody is
+watching, and the difference is discovered later by somebody reading both.
+
+**That argument carries, because the script is the file.** A batch is written
+down in a deployment tool, a runbook or a shell script, and that text is what
+somebody reads afterwards to find out what the box was asked for. Until
+[#376](https://github.com/andrediashexa/hexarouting/issues/376) a batch
+committed minus its refused statement left the script and the box disagreeing
+in exactly that way, and said the word that means it did what it was asked:
+
+```
+error: invalid argument: block-size 16: expected 64-32768
+commit complete
+```
+
+The pool was created, carrying the **default** block size. Nothing was silent:
+the refusal is printed and the exit status is 1, so a script that tests the
+status was never misled. A script that logs the output, or a person reading it
+afterwards, was.
+
+So the rule is on the **commit** and not on the batch, which is what keeps the
+one-off question working:
+
+* `commit` **MUST** refuse while a statement of this batch was refused, name
+  those statements, and apply nothing. `commit check` is refused by it too:
+  "configuration check succeeds" about a candidate the batch did not ask for is
+  the same false sentence one step earlier.
+* The batch **MUST** still run to its end, which is `load()`'s shape as well.
+  `load()` does not stop at the first line it cannot hold; it reads the whole
+  file and then names every one of them. A batch that stopped would report one
+  refusal per run, so a twelve-statement batch would be fixed one refusal at a
+  time. Nothing the rest of the batch runs can reach the box: the box changes
+  at `commit`, and `commit` is refused.
+* An **interactive** session **MUST NOT** be gated by it, and the line is drawn
+  where `load()` draws it, on whether anybody is reading the refusal as it
+  happens. A batch's argv was fixed before the first refusal existed, so the
+  batch cannot be an answer to one. An operator who types `block-size 16`,
+  reads the refusal and types `block-size 1024` has answered it, and refusing
+  that commit would be the alarm that is always on which
+  [#205](https://github.com/andrediashexa/hexarouting/issues/205) and
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208) are about.
+* A refusal from `commit` itself is **NOT** counted. The candidate is then
+  exactly what the batch asked for and the refusal is about applying it, which
+  `commit` says better than this could: `lab/ipfix.sh` drives that pair on a
+  real box, a `commit check` refused because nothing is configured to export
+  to, and the `commit` behind it answering "candidate did not pass validation;
+  nothing applied".
+
+What it deliberately does not cover: `save` writes the **running**
+configuration and not the candidate, so a refused statement has nothing to do
+with it and it is left alone; and a batch that only asks questions is not
+gated at all, because there is no `commit` in it to gate.
+
+**How much of this repository it changes: two invocation sites.** Counted over
+every way the tree names the VTY as a program, with each backslash
+continuation joined first, there are 283 `hexash -c` invocation sites in 37
+files; 200 of them pass more than one statement and 193 carry a `commit`.
+Driving each batch's statements through an offline `Shell` finds a statement
+refused before the `commit` in two of them: `lab/vty-ssh.sh` drives
+`ssh port 99999`, which is the section asserting this VTY bounds the port
+itself, and `lab/ha-failover.sh` drives `nat cgnat ha peer`, which is the
+section demonstrating that this box has no HA to configure. Neither asserts on
+what the `commit` behind it answered.
+
+`test/test_hexash_batch.py` is the check. It asserts on what the box
+**printed** and on what reached the **dataplane**, because the exit status
+proves nothing
+here: it was already 1 before any of this, which is why nothing caught it for
+the life of the product.
+
 ### Rolling back routing, not just CGNAT
 
 A rollback that restored CGNAT and left routing untouched would leave the box

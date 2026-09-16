@@ -39,6 +39,7 @@ python3 test/test_wiki_screens.py
 python3 test/test_doc_commands.py
 python3 test/test_vppapi.py
 python3 test/test_hexash_apply.py
+python3 test/test_hexash_batch.py
 python3 test/test_hexash_perms.py
 python3 test/test_hexash_confirm.py
 python3 test/test_hexash_igp.py

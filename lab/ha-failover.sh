@@ -368,7 +368,14 @@ echo "  interface that carries the packets. That incoherence is what #7 names."
 echo
 echo "  and under the CGNAT hierarchy, where an operator would look for it:"
 echo "  box a:"; ask_cgnat_ha a hxa 200.150.0.12 | sed 's/^/    /'
-echo "  Accepted, committed, and then absent from the running configuration:"
+# This read "Accepted, committed, and then absent from the running
+# configuration", and the first two words had stopped being true: the VTY
+# refuses `nat cgnat ha` at the prompt, and since #376 the `commit` behind a
+# refused statement is refused with it rather than printing "commit complete".
+# What the line below counts is unchanged and is still the point - there is no
+# HA to configure here, which is what #7 names.
+echo "  Refused at the prompt, and the commit behind it refused with it, so"
+echo "  the running configuration never carried it either:"
 ask_cgnat_ha a hxa 200.150.0.12 >/dev/null 2>&1
 VPPCTL=/usr/local/bin/vppctl-a VAT2=/usr/local/bin/vat2-a \
   HEXA_API_SEGMENT=/dev/shm/hxa-global_vm HEXA_CONFIG=/etc/hexarouting/a.conf \
