@@ -77,6 +77,51 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`block-stride` on a deterministic pool is refused rather than accepted and
+  ignored** ([#375](https://github.com/andrediashexa/hexarouting/issues/375)).
+  The setting was accepted on a pool in `mode deterministic`, `show bpa pool`
+  printed the layout it promises - *"stride 4 (2048 ports between a
+  subscriber's blocks, on its own public address)"* - and the allocator never
+  applied it, at any worker count. A deterministic subscriber's extra block
+  comes out of the **reserve**, at a place the reserve's own arithmetic fixes,
+  so there is no free block for a stride to choose and the setting was never
+  read. The counters that would have shown it doing nothing, `show bpa blocks`'
+  *"N placed, N fell back"*, printed only for dynamic pools - so the one pool
+  where the stride was never applied was also the one pool with no reading to
+  discover that from. Both are fixed: the setting is refused, and those two
+  counters now print wherever a stride is configured.
+
+  Refused rather than made honest, and for the reason the mirror image is
+  already refused: a `reserve` on a *dynamic* pool is turned down so that a
+  pool moved from deterministic to dynamic says what it is losing. This is the
+  same sentence the other way round. It is also a fact about the **pool** -
+  true at every worker count, on every box and after every restart - which is
+  the class this plugin already refuses, as against a fact about the box's
+  thread count, which it warns about and does not refuse.
+
+  It also removes a sentence that was false in both halves. Since the
+  unreachable-stride warning reached the prompt, a deterministic pool was told
+  its stride *"cannot be honoured because blocks are sharded N ways"* and given
+  *"the nearest stride that can be"*. The sharding was not the reason, and no
+  stride would have worked on that pool at any worker count; an operator
+  following that advice changed a number and got the same nothing.
+
+  **What it costs a box already in service: nothing it will notice.** The
+  pair is refused by the dataplane, and at the prompt before anything is
+  applied - `commit`, `rollback` and a `-c` batch alike. A configuration
+  saved by 0.67.0 through 0.76.1 can carry both statements on one pool, and
+  `hexash --load` does NOT refuse that file at boot: it drops the
+  `block-stride` from such a pool, says so, and applies the pool as the box
+  was running it. That pool never read the setting, so the file minus the
+  line is the configuration the box had; a refusal there would have been a
+  box coming up with no pools on it, read by nobody, over a line that was
+  already doing nothing. The boot log carries
+  `note: block-stride N dropped from pool <name>`, the row that promised the
+  layout is gone from the pool screen, and the next `save` writes the file
+  without the statement - until then the file and the running configuration
+  differ by that one line, which is the one trim `--load` makes on purpose
+  and the reason it is said out loud.
+
 ## 0.76.1 - two things the box said that were not true of the box saying them
 
 [#376](https://github.com/andrediashexa/hexarouting/issues/376), [#387](https://github.com/andrediashexa/hexarouting/issues/387).

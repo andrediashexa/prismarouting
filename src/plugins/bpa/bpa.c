@@ -1240,6 +1240,15 @@ bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
  * would be a second thing to keep in step with this one. A worker-less box is never
  * short: bpa_stride_reachable() answers yes at one worker, which is why `nw`
  * is floored here and not at each caller.
+ *
+ * AND NO TEST OF THE MODE, because a pool that reaches here with a stride is
+ * a dynamic pool. Every sentence below is about worker sharding - blocks are
+ * sharded N ways, the nearest stride that is a multiple - and all of it is
+ * false on a deterministic pool, where the stride is not read at any worker
+ * count and no stride would work. That pool cannot exist: bpa_pool_init()
+ * and bpa_pool_settings_set() are the only two ways a stride is ever stored
+ * and both refuse it there (#375). A mode test here would be a third owner
+ * of the same rule and could never be shown failing.
  */
 static int
 bpa_stride_short (const bpa_pool_t *p, u32 *nwp, u32 *okp)
@@ -1440,15 +1449,33 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 
   p = pool_elt_at_index (bm->pools, q[0]);
 
-  /* The one stride refusal that is a fact about the pool itself rather than
-   * about this box's thread count: a stride at or past the blocks one public
-   * address holds steps off the end on the first extension, on every box and
-   * after every restart. */
+  /* THE TWO STRIDE REFUSALS THAT ARE FACTS ABOUT THE POOL ITSELF rather than
+   * about this box's thread count. Both hold on every box and after every
+   * restart, which is what separates them from bpa_stride_warn(): refusing
+   * over a worker count would stop a pool accepted on one box from coming up
+   * on the same box with more workers.
+   *
+   * A stride at or past the blocks one public address holds steps off the end
+   * on the first extension. And a stride on a deterministic pool is never
+   * read at all - that pool's extension comes out of the reserve, which is an
+   * index space no stride steps along - so it is refused here for the reason
+   * bpa_pool_init() gives, which is where the same pool is refused when it
+   * arrives on the creation message instead (#375).
+   *
+   * Both are needed here and neither covers the other: `block-stride` rides
+   * on bpa_pool_add_del as well as on this message, and a pool being created
+   * never comes through this call. */
   if (block_stride >= p->blocks_per_ip)
     return clib_error_return (
       0, "block-stride %u does not fit pool '%v': a public address holds %u "
 	 "blocks",
       block_stride, p->name, p->blocks_per_ip);
+  if (block_stride && p->mode != BPA_MODE_DYNAMIC)
+    return clib_error_return (
+      0, "block-stride applies to dynamic pools only; pool '%v' is "
+	 "deterministic and its extension comes from its reserve, at a fixed "
+	 "place",
+      p->name);
 
   /* Under the barrier: the datapath reads the filtering mode, the ALG mask and
    * the clamp on the packet path, and a half-applied set of them is a pool

@@ -194,6 +194,14 @@ format_bpa_pool (u8 *s, va_list *args)
   else
     s = format (s, "\n%Uper sub      %u ports (one block)", format_white_space,
 		indent + 2, p->block_size);
+  /*
+   * A promise about layout, and no mode test guarding it, because a pool that
+   * carries a stride is a dynamic pool: bpa_pool_init() and
+   * bpa_pool_settings_set() are the only two ways a stride is stored and both
+   * refuse it on a deterministic pool (#375). This row printed on such a pool
+   * since 0.67.0 while the allocator never read the setting, which is
+   * the promise the refusal exists to stop the box making.
+   */
   if (p->block_stride)
     s = format (s, "\n%Ustride       %u (%u ports between a subscriber's "
 		   "blocks, on its own public address)",
@@ -2556,8 +2564,16 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
        * sits at the end of its public address. It is a fault when it is all
        * of them, and that is only visible next to the number that was
        * placed.
+       *
+       * AND NO MODE TEST, which this row carried until #375. It made the two
+       * numbers a dynamic-pool screen, so the one pool where the stride was
+       * never applied at all was also the one pool with no reading to
+       * discover that from. A stride on a deterministic pool is refused now,
+       * so the test could only ever be true - and were it false again,
+       * "0 placed, N fell back" is the direction that tells somebody, where
+       * silence is the direction that hid it since 0.67.0.
        */
-      if (p->block_stride && p->mode == BPA_MODE_DYNAMIC)
+      if (p->block_stride)
 	vlib_cli_output (vm,
 			 "  stride %u: %Lu extensions placed where it says, "
 			 "%Lu fell back to the free list",

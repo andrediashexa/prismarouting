@@ -251,6 +251,16 @@ Um pool sem um dos dois lados não traduz nada. Não é um ajuste que se complet
 
 O dataplane olhou a definição inteira - tamanho de bloco, sobreposição de prefixo, capacidade, e se a faixa pública colide com um endereço local - e disse que não. A linha seguinte traz o motivo dele, nas palavras dele.
 
+### `block-stride applies to dynamic pools only, not to pool <nome>`
+
+O `block-stride` diz a que distância fica o **segundo** bloco de um assinante que encheu o primeiro. Num pool `deterministic` essa escolha não existe: o bloco de cada assinante sai de uma fórmula, e o bloco a mais sai da **reserva**, num lugar que a fórmula também fixa. Não sobra bloco livre para o `block-stride` escolher, e é por isso que ele não se aplica ali - em nenhum tamanho, e em nenhuma máquina.
+
+A recusa mostra as duas linhas em conflito, o `mode` e o `block-stride`, porque qualquer uma das duas resolve e qual delas mudar é decisão sua: tire o `block-stride`, ou ponha o pool em `mode dynamic`.
+
+É a mesma simetria da `reserve`, que só existe em pool determinístico: cada um dos dois ajustes pertence a um modo só, e o equipamento prefere dizer isso a guardar um ajuste que nunca teria efeito. Um pool que **era** dinâmico, tinha `block-stride` e passa a `deterministic` cai exatamente aqui - e essa é a hora de ficar sabendo o que ele está perdendo, não meses depois, olhando uma tela que promete uma distribuição que a caixa não faz.
+
+**Um arquivo salvo por uma versão anterior** pode ter os dois no mesmo pool, porque a combinação era aceita e o `block-stride` simplesmente nunca valia ali. No boot a caixa **não recusa** esse arquivo: sobe o pool sem o `block-stride`, exatamente como ele já rodava, e deixa no log do boot a linha `note: block-stride <n> dropped from pool <nome>`. O próximo `save` grava o arquivo sem a linha. Um `rollback` para uma revisão que ainda tem os dois cai na recusa acima, como um pool novo - no boot ninguém está olhando, e uma caixa que sobe sem pool nenhum por causa de um ajuste que nunca teve efeito é um preço que ninguém pediu para pagar.
+
 ### `this box has no interface <nome>` e `interface <nome>: this box has no such interface`
 
 Um statement nomeia uma interface que não existe aqui. A primeira forma vem de uma linha de roteamento ou de CGNAT que aponta para ela; a segunda, de entrar num bloco `interface` que a caixa não tem. `show interface` lista os nomes que ela tem, e é dali que o nome deve sair - inventar um é como o problema começa.

@@ -740,12 +740,18 @@ main (void)
   {
     bpa_pool_t p;
 
+    /* In dynamic mode, which is where a stride is read and since #375 the
+     * only mode that may carry one: this section is about the SIZE of the
+     * stride, and a deterministic pool would now be refused for its mode
+     * before the size was ever measured. */
     load_pool (&p, &bpa_vec_pools[0]);
+    p.mode = BPA_MODE_DYNAMIC;
     p.block_stride = (u16) p.blocks_per_ip;
     CHECK (bpa_pool_init (&p) != 0,
 	   "a stride of blocks_per_ip was accepted, and would place nothing");
 
     load_pool (&p, &bpa_vec_pools[0]);
+    p.mode = BPA_MODE_DYNAMIC;
     p.block_stride = (u16) (p.blocks_per_ip - 1);
     CHECK (bpa_pool_init (&p) == 0,
 	   "the largest stride that fits was refused");
@@ -1024,6 +1030,91 @@ main (void)
     CHECK (bpa_pool_init (&p) != 0, "a reserve on a dynamic pool was accepted");
     printf ("  a reserve that leaves no mapped block, and one on a dynamic "
 	    "pool, are both refused\n");
+  }
+
+  printf ("\n=== and a stride on a deterministic pool, the mirror of it "
+	  "===\n");
+  {
+    bpa_pool_t p;
+    unsigned n_det = 0;
+
+    /*
+     * #375. The stride was accepted here since 0.67.0, "show bpa pool"
+     * printed the layout it promises, and bpa_dyn_alloc() never read it: it
+     * applies a stride only where it is walking the MAPPED blocks, and a
+     * deterministic pool's allocator walks the reserve instead.
+     *
+     * A reserve as well as without one, because the reserve is what makes a
+     * deterministic pool able to extend at all - so the pool that has the
+     * best claim on a stride is the one that carries a reserve, and it is
+     * the one an operator would set it on.
+     */
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.block_stride = 1;
+    CHECK (bpa_pool_init (&p) != 0,
+	   "a stride on a deterministic pool was accepted, and no allocator "
+	   "will ever read it");
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.block_stride = 1;
+    p.block_reserve = 1;
+    CHECK (bpa_pool_init (&p) != 0,
+	   "a stride on a deterministic pool with a reserve was accepted; the "
+	   "reserve is an index space no stride steps along");
+
+    /*
+     * THE CONTROL, and the section asserts nothing without it: the same pool
+     * and the same stride in dynamic mode is a supported configuration and
+     * MUST still be built. Without this the two refusals above pass on a
+     * plugin that refuses every stride there is.
+     */
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.block_stride = 1;
+    p.mode = BPA_MODE_DYNAMIC;
+    CHECK (bpa_pool_init (&p) == 0,
+	   "a stride on a dynamic pool was refused, which is the one pool the "
+	   "setting is for");
+    CHECK (p.block_stride == 1,
+	   "the stride did not survive bpa_pool_init() on the pool it applies "
+	   "to, so the control above is green for the wrong reason");
+
+    /*
+     * AND THE INVARIANT THE REST OF THE PLUGIN NOW RESTS ON. bpa_stride_say()
+     * carries no mode test and format_bpa_pool() prints the stride row with
+     * no mode test, both because a built pool that carries a stride is a
+     * dynamic pool. That is a property of every pool this function builds,
+     * so it is asserted over the whole vector set rather than over the three
+     * pools above - and over the strides the vectors themselves use.
+     */
+    for (i = 0; i < BPA_VEC_N_POOLS; i++)
+      {
+	u32 stride;
+
+	for (stride = 1; stride <= 3; stride++)
+	  {
+	    load_pool (&p, &bpa_vec_pools[i]);
+	    if (stride >= p.blocks_mapped)
+	      continue;
+	    p.block_stride = (u16) stride;
+	    CHECK (bpa_pool_init (&p) != 0,
+		   "'%s': stride %u was accepted on a deterministic pool",
+		   bpa_vec_pools[i].name, stride);
+	    n_det++;
+	    p.mode = BPA_MODE_DYNAMIC;
+	    p.block_reserve = 0;
+	    CHECK (bpa_pool_init (&p) == 0,
+		   "'%s': stride %u was refused on a dynamic pool",
+		   bpa_vec_pools[i].name, stride);
+	    CHECK (p.block_stride == 0 || p.mode == BPA_MODE_DYNAMIC,
+		   "'%s': a built pool carries stride %u and is not dynamic",
+		   bpa_vec_pools[i].name, p.block_stride);
+	  }
+      }
+    CHECK (n_det > 0,
+	   "no vector pool held a stride of 1 to 3, so the invariant above "
+	   "was asserted over nothing");
+    printf ("  %u pool/stride combination(s) refused in deterministic mode "
+	    "and built in dynamic mode\n", n_det);
   }
 
   /*

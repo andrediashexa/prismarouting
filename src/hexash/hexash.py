@@ -6868,7 +6868,64 @@ class Shell:
                                 "does not contain it")
                     ok = False
 
+            # A BLOCK-STRIDE ON A DETERMINISTIC POOL, asked here for the
+            # reason the block against the port range below is asked here:
+            # `mode` and `block-stride` are two statements, they can be typed
+            # in either order, and a guard at either line would refuse a pool
+            # that is about to be correct.
+            #
+            # EVERY ROUTE IN ONE LOOP, because the two statements reach the
+            # device by three of them. A pool being created or rebuilt carries
+            # the stride on the creation message; a stride added to a pool
+            # that stays put goes through bpa_pool_settings_set; and the
+            # device check below runs for the first two only. Without this
+            # loop the third one fails at the WRITE - after the pools have
+            # been rebuilt, with the candidate half applied - which is what
+            # the block-fits check below is written to avoid.
+            #
+            # The dataplane refuses it too, in bpa_pool_init() and in
+            # bpa_pool_settings_set(), and that is the authority rather than
+            # this: a stride on a deterministic pool is never read, because
+            # that pool's extension comes out of the reserve and a stride
+            # steps along the mapped blocks (#375). This asks first so the
+            # answer arrives before anything has been applied.
+            #
+            # NOT AT BOOT. `load()` drops the stride from such a pool before
+            # it gets here, and says so, because a file saved before this
+            # refusal existed carries the pair on a box that ran on it
+            # yesterday; the argument is written there.
+            stride_refused = set()
+            for pool in (d["pool_add"] + d["pool_replace"]
+                         + list(d["settings_set"].values())):
+                if not pool.stride_inert():
+                    continue
+                stride_refused.add(pool.name)
+                # The pool named LAST on the row, which is not the shape
+                # the refusals around it use: a pool name has no widest, and
+                # a value with the VTY's own words behind it folds inside the
+                # sentence at whatever width the operator's window happens to
+                # be (#363). Last on the row, the fold lands after the words.
+                self.err("block-stride applies to dynamic pools only, not "
+                         f"to pool {pool.name}")
+                # The two statements whole and on their own rows, the #252
+                # idiom: the operator's next move is to go and edit one of
+                # them, and which one is their decision and not this box's.
+                print(f"    mode {pool.mode}")
+                print(f"    block-stride {pool.block_stride}")
+                print_prose("a deterministic subscriber's extension comes "
+                            "out of the pool's reserve, at a place the "
+                            "formula fixes, so there is no free block for a "
+                            "stride to choose: drop the block-stride, or put "
+                            "the pool in dynamic mode")
+                ok = False
+
             for pool in d["pool_add"] + d["pool_replace"]:
+                # Already refused above. The device refuses it too and the
+                # check below would print its sentence as well, which is two
+                # verdicts and two paragraphs for one fault - and the operator
+                # would then have to work out whether they are the same one.
+                if pool.name in stride_refused:
+                    continue
                 if not pool.inside or not pool.outside:
                     self.err(f"pool '{pool.name}': inside and outside required")
                     ok = False
@@ -13490,6 +13547,40 @@ class Shell:
                 print(f"    line {lineno}: {text}")
                 print_prose(f"({why})", indent="        ")
             return
+
+        # A BLOCK-STRIDE ON A DETERMINISTIC POOL, dropped here and refused
+        # everywhere an operator types it (#375). The pair has been accepted
+        # since 0.67.0 and the allocator never read the stride, so a file
+        # saved by any version since can carry it - on a box that ran on that
+        # file yesterday. The commit check refuses the pair, and at boot a
+        # refusal is a box coming up with no pools on it, read by nobody, to
+        # enforce a property about a setting that was already inert.
+        #
+        # This is not the trimming the docstring refuses. That rule is about
+        # a line this VTY cannot hold, where the file minus the line is a
+        # different configuration from the file. Here the file minus the
+        # line is the configuration the box was running: nothing the stride
+        # promised was ever produced, and what goes is the "show cgnat pool"
+        # row that promised it. Said out loud because the file and the
+        # running configuration now differ by one statement, and the next
+        # `save` is what makes them agree again.
+        #
+        # Same test as the commit check, by construction: Pool.stride_inert()
+        # owns it, so a pool refused at the prompt is a pool dropped here and
+        # never one the boot applies whole.
+        for pool in sorted(target.pools.values(), key=lambda p: p.name):
+            if not pool.stride_inert():
+                continue
+            # The pool named last on the row, the #363 shape: a pool name
+            # has no widest, and last on the row the fold lands after the
+            # words.
+            print(f"note: block-stride {pool.block_stride} dropped from "
+                  f"pool {pool.name}")
+            print_prose("it applies to dynamic pools only and this pool "
+                        "never read it, so the box comes up as it ran; the "
+                        "next 'save' writes the file without it, and the "
+                        "same pair typed at the prompt is refused")
+            pool.block_stride = 0
 
         # A file with no statements is nothing to apply, and MUST NOT be read
         # as a configuration that removes what is there. The installer ships

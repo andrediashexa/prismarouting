@@ -364,6 +364,26 @@ it. Contiguity therefore does not make the log smaller - it makes the ranges in
 it adjacent, which is a different and smaller claim than the one the feature was
 first asked for under.
 
+**A stride applies to a dynamic pool, and is refused on any other.** A
+deterministic pool's extension comes out of the reserve, and the reserve is an
+index space of its own that a stride does not step along - so the setting is
+never read there, at any worker count and on any box. That is a fact about the
+pool rather than about the machine, which is what puts it with the refusals
+rather than with the warning above; it is the mirror of the reserve on a
+dynamic pool, refused one bullet up, and for the same reason. Accepted and
+inert, it left `show bpa pool` printing a layout the allocator was not
+producing, and a pool moved from dynamic to deterministic saying nothing about
+what it had just lost.
+
+Refused everywhere an operator types it - `commit`, `rollback`, a `-c` batch -
+and dropped at boot. A file saved before the refusal existed can carry the pair,
+on a box that ran on that file yesterday, and `hexash --load` takes the stride
+off that pool rather than refusing the file: the pool never read it, so the
+file minus the line is the configuration the box was running, and a refusal
+would have been a box coming up with no pools on it, read by nobody, to enforce
+a property about a setting that was already inert. The boot says which
+statement it left out, and the next `save` writes the file without it.
+
 **A stride is a preference, never a refusal.** The block it names may be held by
 another subscriber, or the stride may step off the end of the subscriber's own
 public address; the allocator then falls back to the free list and counts it.

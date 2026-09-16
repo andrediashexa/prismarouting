@@ -467,6 +467,89 @@ says("half a pool", _text, "error: pool 'subs': inside and outside required",
      _rv)
 print("  a pool with an inside and no outside is refused at check time")
 
+print("\n=== a block-stride on a deterministic pool, by all three routes ===")
+# #375. The setting was accepted, `show bpa pool` printed the layout it
+# promises, and the allocator never read it: a deterministic subscriber's
+# extension comes out of the reserve, which is an index space no stride steps
+# along. The dataplane refuses it now, and this asks first - before the pools
+# are rebuilt - because one of the three routes never reaches the device check
+# at all.
+#
+# THREE BOXES AND NOT ONE, because the three are different deltas and only one
+# of them is covered by anything else. A pool being created and a pool being
+# rebuilt carry the stride on the creation message and are handed to the
+# device's own `check`; a stride added to a pool that STAYS PUT is a
+# settings_set, which no check reaches, so without the loop it would fail at
+# the write with the candidate half applied.
+_STRIDE_ROW = ("error: block-stride applies to dynamic pools only, not to "
+               "pool subs")
+
+
+def _strided(mode="deterministic", stride=3, name="subs"):
+    p = config.Pool(name)
+    p.inside = ["100.64.0.0/22"]
+    p.outside = ["200.150.0.16/30"]
+    p.mode = mode
+    p.block_stride = stride
+    return p
+
+
+# a pool being created
+_cfg = config.Config()
+_cfg.pools["subs"] = _strided()
+_sh = shell()
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _cfg, check_only=True)
+says("stride on a new pool", _text, _STRIDE_ROW, _rv)
+says("stride on a new pool: the mode row", _text, "    mode deterministic")
+says("stride on a new pool: the stride row", _text, "    block-stride 3")
+
+# THE CASE THE ISSUE IS NAMED FOR: a pool that was dynamic, carrying a stride
+# that worked, moved to deterministic and keeping it. `mode` is outside
+# Pool.lines(in_place=False), so this is a pool_replace. An operator doing
+# this is losing the stride, and the whole argument for refusing rather than
+# accepting-and-ignoring is that they are told so here rather than finding out
+# from a layout the box stopped producing.
+_running = config.Config()
+_running.pools["subs"] = _strided(mode="dynamic")
+_target = config.Config()
+_target.pools["subs"] = _strided()
+_sh = shell()
+_sh.running_config = lambda: _running
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+check([p.name for p in _running.delta_to(_target)["pool_replace"]] == ["subs"],
+      "the mode-change box is not a pool_replace delta, so it is not "
+      "measuring the route it was written for")
+says("stride kept across a move to deterministic", _text, _STRIDE_ROW, _rv)
+
+# a pool already on the box, taking the stride in place: this is the delta
+# that never meets the device's own check
+_running = config.Config()
+_running.pools["subs"] = _strided(stride=0)
+_target = config.Config()
+_target.pools["subs"] = _strided()
+_sh = shell()
+_sh.running_config = lambda: _running
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+check(_running.delta_to(_target)["settings_set"].keys() == {"subs"},
+      "the in-place box is not a settings_set delta, so it is not measuring "
+      "the route it was written for")
+says("stride added in place", _text, _STRIDE_ROW, _rv)
+
+# THE CONTROL, and the section is worth nothing without it: the same stride on
+# a dynamic pool is a supported configuration and MUST still commit. Without
+# this the three boxes above pass on a VTY that refuses every stride there is.
+_cfg = config.Config()
+_cfg.pools["subs"] = _strided(mode="dynamic")
+_sh = shell()
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _cfg, check_only=True)
+check("block-stride" not in _text,
+      f"a stride on a dynamic pool was argued with: {_text!r}")
+check(_rv is True, f"a stride on a dynamic pool was refused: {_rv!r}")
+print("  refused on a pool created, on a pool rebuilt and on one that stays "
+      "put; accepted in dynamic mode")
+
 print("\n=== a pool the dataplane itself would refuse ===")
 # The device validates for real - block size, overlap, capacity, collision
 # with a local address - and creates nothing doing it. What changed in #119's

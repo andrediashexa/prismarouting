@@ -201,6 +201,29 @@ bpa_pool_init (bpa_pool_t *p)
     p->max_blocks = 1;
 
   /*
+   * A stride on a pool whose extensions do not come off the free list.
+   *
+   * bpa_dyn_alloc() applies a stride only where it is walking the MAPPED
+   * blocks, and a deterministic pool's allocator never is: its extension
+   * comes out of the reserve, which is an index space of its own, so a
+   * stride applied there would name somebody else's reserve block or none
+   * at all. That is a fact about the pool and not about this box - it holds
+   * at every worker count, on every box and after every restart - which is
+   * what puts it with the refusals rather than with bpa_stride_warn().
+   *
+   * Refused rather than accepted and inert, for the reason the mirror image
+   * above is refused: a pool moved from dynamic to deterministic says what
+   * it is losing, instead of keeping a number that quietly stopped meaning
+   * anything and a "show bpa pool" row still promising the layout (#375).
+   */
+  if (p->block_stride && p->mode != BPA_MODE_DYNAMIC)
+    return clib_error_return (
+      0, "pool '%v': block-stride applies to dynamic pools only; a "
+	 "deterministic subscriber's extension comes from its reserve, at a "
+	 "fixed place",
+      p->name);
+
+  /*
    * A stride of blocks_per_ip or more steps past the end of the subscriber's
    * own public address on its very first extension, so it can never place
    * anything. Refused rather than accepted and left silently inert.
