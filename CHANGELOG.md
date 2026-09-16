@@ -77,6 +77,15 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Two readers of one fact, reconciled to one.** 0.75.1 shipped a check in
+  `appliance/test_startup_conf.sh` that lifted the dpdk stanza out of one
+  synthetic tuned box and handed it to VPP. It found what it was written for.
+  `appliance/test_startup_conf_shapes.sh` asks the same question of **every**
+  shape the tuner can write rather than of one, and gives VPP the whole file
+  instead of a stanza, so the weaker of the two is gone and the file says where
+  the question is asked now. Two readers of one fact is what this repository
+  refuses everywhere else.
+
 ## 0.75.1 - the dataplane could not start on a virtio box, because 0.75.0 wrote a keyword VPP has not got
 
 [#380](https://github.com/andrediashexa/hexarouting/issues/380).
