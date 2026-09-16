@@ -77,6 +77,37 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.75.1 - the dataplane could not start on a virtio box, because 0.75.0 wrote a keyword VPP has not got
+
+[#380](https://github.com/andrediashexa/hexarouting/issues/380).
+
+### Fixed
+
+* **The English rule was reading PNGs, and the brand kit made it go red.**
+  `docs/brand/` arrived as reference material - 27 files, the Prisma Routing
+  kit, nothing in the product wired to it. `test/test_english_only.py` walks
+  `docs/` and opened every file in it with `errors="ignore"`, so three PNGs
+  were decoded as prose and matched Portuguese words out of compressed pixel
+  data. **A check that fires on a file it cannot read is a check somebody
+  switches off**, and this one turned `make test` red on a tree where nothing
+  was wrong.
+
+  It skips a file with a NUL byte in its first block now, which is what every
+  tool on this box uses to tell a binary from text, and by content rather than
+  by an extension list - a list of extensions is a second thing to keep in
+  step with whatever gets committed next. The count of files it stopped
+  reading is printed on every run, because a skip nobody prints is how a rule
+  quietly stops applying to a whole directory. Shown failing: with the guard
+  removed it names a PNG and its line number.
+
+  `docs/brand/README.md` is excused by name, beside the wiki standard and for
+  the same reason: it is written in Portuguese by the designer who produced
+  the kit, for the Brazilian team that uses it, it describes files rather than
+  the product, and nothing in the product reads it. By name and not by
+  directory, which is the rule this file already carries - excusing a
+  directory is what let three sections of `docs/routing.md` be written in
+  Portuguese with nothing noticing. Shown failing with the entry taken out.
+
 * **v0.75.0 stopped the dataplane starting on every box whose card reports a
   maximum MTU below 9000, which is every virtio guest**
   ([#380](https://github.com/andrediashexa/hexarouting/issues/380)). Reported from an

@@ -69,6 +69,11 @@ EXCUSED = {
                               "people who write it",
     "PROMPT-DOCUMENTAR-WIKI.md": "the brief that goes with that standard, "
                                  "and read by the same people",
+    "docs/brand/README.md": "the brand kit's own index, written in "
+                            "Portuguese by the designer who produced it, for "
+                            "the Brazilian team that uses it. It describes "
+                            "files rather than the product, and nothing in "
+                            "the product reads it",
     "CHANGELOG.md": "it QUOTES Portuguese strings the product used to carry - "
                     "a VTY help line, a lab's old needle - inside sections "
                     "that have been tagged. This file's own rule is that a "
@@ -174,6 +179,7 @@ def offenders():
     `TESTING.md` sat outside every directory the check walked (#323).
     """
     out = []
+    skipped = []
     for path in scanned():
         rel = os.path.relpath(path, REPO)
         # By NAME, not by directory. Excusing the directory is what let three
@@ -182,9 +188,23 @@ def offenders():
         if rel in EXCUSED:
             continue
         try:
-            text = open(path, encoding="utf-8", errors="ignore").read()
+            raw = open(path, "rb").read()
         except OSError:
             continue
+        # A LANGUAGE CHECK OVER AN IMAGE MEANS NOTHING, and this read every
+        # byte of every file in scope as if it were prose. `errors="ignore"`
+        # turned a PNG into a string, and three of them in docs/brand matched
+        # Portuguese words out of compressed pixel data. A check that fires on
+        # a file it cannot read is a check somebody switches off.
+        #
+        # BY CONTENT AND NOT BY EXTENSION. A list of extensions is a second
+        # list to keep in step with whatever gets added next; a NUL byte in
+        # the first block is what every tool on this box uses to tell a binary
+        # from text, and it costs one read.
+        if b"\x00" in raw[:8192]:
+            skipped.append(rel)
+            continue
+        text = raw.decode("utf-8", errors="ignore")
         for n, line in enumerate(text.split("\n"), 1):
             # A URL is not prose. github.com would otherwise match `com` on
             # every issue link in the tree.
@@ -198,11 +218,11 @@ def offenders():
                           and w not in WORDS)
             if hit:
                 out.append((rel, n, line.strip()[:90], hit[:3]))
-    return out
+    return out, skipped
 
 
 print("=== the product's own files are written in English ===")
-found = offenders()
+found, not_text = offenders()
 if found:
     for rel, n, line, hit in found[:20]:
         bad(f"{rel}:{n} is not in English ({', '.join(hit)}): {line!r}")
@@ -210,6 +230,10 @@ if found:
         bad(f"... and {len(found) - 20} more line(s)")
 else:
     ok(f"{len(WORDS)} words checked over {len(SCOPE)} directories, none found")
+# SAID, NOT SILENT. A file this check stopped reading is a file it no longer
+# holds, and a skip nobody prints is how a rule quietly stops applying to a
+# whole directory.
+print(f"  [info] {len(not_text)} file(s) are not text and were not read")
 
 print("\n=== and the check is reading something ===")
 # Without this the file passes on a scope that resolved to nothing, which is

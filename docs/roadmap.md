@@ -2250,13 +2250,55 @@ configuration page tells them the box warns at pool creation. The cost is
 concrete: workers holding no reserve at all, whose subscribers can never be
 given a second block, so a customer who fills their block stays full on a box
 that reports a reserve. This was the highest-priority open defect by this
-file's own rule - what the product claims and does not do comes above
-everything - **and it is fixed**. The warning is said at `bpa_pool_add()`,
+file's own rule - a claim the product fails to deliver comes above everything
+else - **and it is fixed**. The warning is said at `bpa_pool_add()`,
 which is where creation AND every later change arrive, because `reserve` is
 not a setting that can be edited in place; hexash reads it back from
 `show bpa pool` for the pools a commit created or recreated and prints it at
 the prompt. The wiki page needed no correction: it described what the product
 intended, and the box now does it.
+
+#### The installed box did not forward, and one release made it worse
+
+Reported by the maintainer against 0.75.0, installed to a disk on a VM, and
+this section is open work rather than history.
+
+**The keyword that stopped the dataplane**
+([#380](https://github.com/andrediashexa/hexarouting/issues/380)) - *fixed in
+0.75.1*. The tuner wrote `mtu <n>` into the dpdk `dev` stanza. VPP has no such
+keyword, refuses the whole file and exits, and `vpp.service` restarts it until
+systemd gives up. Every box past its first boot, on any card reporting a
+maximum below 9000, which is every virtio guest. What matters more than the
+keyword is that **nothing here had ever given the tuned profile to a real
+VPP**: the container suite runs untuned and emits no dpdk stanza at all, the
+release gate boots an installed disk exactly once and that boot is untuned,
+and the 89-lab suite passed on the broken tree. A check now hands the
+generated stanza to the VPP binary.
+
+**VPP stops after the card is named by hand**
+([#377](https://github.com/andrediashexa/hexarouting/issues/377)) - open, and
+now partly answered by #380. What remains is whether anything else on that
+path is wrong once the keyword is gone, measured on a guest rather than
+argued.
+
+**The card is taken in the mode where nothing can claim it**
+([#379](https://github.com/andrediashexa/hexarouting/issues/379)) - open. In
+FIRST BOOT mode the tuner disables the DPDK plugin, and `apply-tuning` binds
+the card anyway: the only condition on the bind is *is the dataplane running*,
+never *will the dataplane use this card*. The two decisions are made in the
+same script, one function apart, and never compared. On a box the tuner judges
+too small for a hugepage pool this is not a first-boot state, it is permanent.
+
+**The box must claim its card without being told**
+([#378](https://github.com/andrediashexa/hexarouting/issues/378)) - open, and
+it is a maintainer's decision already taken. Their reason, in English: a box
+is always set up from its console when it is new, so the management-path
+apparatus is protecting nothing, and it is what stands between a fresh install
+and a box that forwards. The rule agreed
+is that the dataplane claims every card except one the box was installed with
+a management network on, and never the last one; `dataplane interface <name>`
+stays as an override. It is gated on #377 and #379: automating a handover that
+does not work would put it on every box.
 
 **And two the stride work uncovered, both open**
 ([#375](https://github.com/andrediashexa/hexarouting/issues/375),
