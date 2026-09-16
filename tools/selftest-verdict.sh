@@ -67,6 +67,27 @@ said_a_verdict() {  # <file>
 
 VERDICT_BAD_RE="check\(s\) failed\. The box is NOT ready\."
 
+# And the third verdict on its own: installed, healthy, and not forwarding.
+#
+# A FOURTH CONSTANT BESIDE THREE, which is the shape this file already has -
+# VERDICT_BAD_RE re-spells a sentence that is also inside VERDICT_RE, for the
+# same reason. What must not happen is a reader spelling it, and the three
+# readers are checked for exactly that by test/test_selftest.sh.
+#
+# WHY IT IS WANTED AS A READER AT ALL. Until #378 this sentence was good news:
+# a box with no card named had none to forward on, and demanding any other
+# verdict would have demanded the box lie about a NIC nobody gave it (#297).
+# Now the box claims its own card, so on a machine that HAS a PCI NIC this
+# sentence is the box saying it did not - which is the defect, not the state.
+# It is still correct on a box with no NIC at all, so the caller asks what the
+# box has before it asks what the box said.
+VERDICT_NOFWD_RE="HexaRouting is installed and healthy, and has"
+
+# Did it end with the one that means it came up and claimed nothing?
+said_a_no_forward_verdict() {  # <file>
+  grep -qE "$VERDICT_NOFWD_RE" "$1"
+}
+
 # And did it reach one that means the box can be handed over?
 #
 # THIS WAS DEFINED AND CALLED BY NOBODY, for two releases (#311). Every reader

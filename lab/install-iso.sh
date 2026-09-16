@@ -1090,13 +1090,21 @@ drive_console() {
   # All three of the self-test's verdicts are a report, and any of them
   # answers the ordering check above. Only two of them say this box is fit to
   # be handed over. The third - installed and healthy with no interface to
-  # forward on - is the state an appliance is in on the day it is racked, and
-  # it is what a box built by this lab is in, because nothing here names a
-  # dataplane interface.
+  # forward on - was the state an appliance was in on the day it was racked,
+  # and it is what a box built by this lab used to be in, because nothing
+  # here names a dataplane interface.
   #
-  # So the assertion is that the verdict is one the self-test can print, and
-  # NOT that it is any particular one. A lab that demanded "ready" would be
-  # demanding the box lie about having a NIC it was never given.
+  # So the assertion HERE is that the verdict is one the self-test can print,
+  # and NOT that it is any particular one. A lab that demanded "ready" would
+  # be demanding the box lie about having a NIC it was never given.
+  #
+  # SINCE #378 THE THIRD VERDICT IS NOT ALWAYS GOOD NEWS, and this is not the
+  # place that can tell. The box claims its own card now, so that sentence on
+  # a machine that HAS a PCI NIC is the box reporting it did not - and whether
+  # this box has one is read off the box further down, not known here. The
+  # check that pairs the two is "the card this box claimed with nobody having
+  # typed", below, and it is deliberately not duplicated into this branch:
+  # two readers of one verdict is what refused 0.72.0 twice (#311).
   console_all > /tmp/verdict-probe.log 2>/dev/null || true
   if ! said_a_verdict /tmp/verdict-probe.log; then
     echo "  [FAIL] the self-test printed no verdict this lab recognises"
@@ -1259,6 +1267,85 @@ drive_console() {
   send 'echo "HX""LAB mgmt-unit=$(systemctl is-enabled networking 2>&1) $(systemctl is-active networking 2>&1)"'
   wait_for "HXLAB mgmt-unit=" 30 \
     "systemd to say what it did with the management network" || return 1
+  # ------------- the card the box claimed, with nobody having typed (#378)
+  #
+  # THE ABSENCE OF AN OPERATOR IS THE SUBJECT. Every reading here is taken
+  # before this lab types anything into the VTY, so a dataplane card found
+  # at this point is one the box chose. Until #378 there was no such thing
+  # to read: a fresh install came up with no-pci, the self-test told the
+  # operator to name a card, and the release gate accepted that as healthy
+  # because it was the only state a box built by this lab could be in.
+  #
+  # FIRST, THE PROOF THAT NOBODY NAMED IT, and it is the reading the rest
+  # of this block is worthless without. HEXA_DATAPLANE_IF is the tuner's
+  # input and the VTY writes it; it ships empty and nothing in this lab
+  # sets it. A non-empty value here means something typed, and then a
+  # claimed card proves nothing about a box that claims its own.
+  #
+  # The COUNT of non-empty assignments, not the value. An empty assignment
+  # is what the box ships with and is the answer wanted, so a reader that
+  # printed the value would give "" for the good case and for a tune.env
+  # that is missing altogether - and those are different boxes.
+  send 'echo "HX""LAB claim-typed=$(grep -c "^HEXA_DATAPLANE_IF=." /etc/hexarouting/tune.env)"'
+  wait_for "HXLAB claim-typed=" 30 \
+    "the box to say whether anything named a card in the tuner's file" \
+    || return 1
+  # The box's NICs as PCI has them, with the driver holding each.
+  #
+  # FROM /sys/bus/pci AND NOT FROM /sys/class/net, and that is the whole
+  # reason this reading exists in this shape: a card handed to DPDK stops
+  # having a netdev, so a box that claimed everything would answer "no
+  # cards" to the obvious question and read identically to a box with no
+  # hardware. The PCI class is 0x02 for a network controller and does not
+  # change when a driver does, so this counts the same cards before and
+  # after the claim - which is what makes the two comparable at all.
+  send 'echo "HX""LAB claim-pci=$(for d in /sys/bus/pci/devices/*; do grep -q "^0x02" $d/class 2>/dev/null && printf "%s:%s " ${d##*/} $([ -e $d/driver ] && basename $(readlink -f $d/driver) || echo none); done)"'
+  wait_for "HXLAB claim-pci=" 30 \
+    "the box to list its network cards and what holds each" || return 1
+  # What the TUNER decided, which is a different question from what the
+  # dataplane got. A device named here and absent below is a bind that did
+  # not take; nothing named here at all is a box that decided to claim
+  # none, and the two need opposite work.
+  send 'echo "HX""LAB claim-conf=$(grep -o "dev 0000:[0-9a-f:.]*" /etc/vpp/startup.conf | sed "s/dev //" | tr "\n" " ")"'
+  wait_for "HXLAB claim-conf=" 30 \
+    "the box to say which devices its startup.conf names" || return 1
+  send 'echo "HX""LAB claim-nopci=$(grep -c "no-pci" /etc/vpp/startup.conf)"'
+  wait_for "HXLAB claim-nopci=" 30 \
+    "the box to say whether its startup.conf refuses every device" \
+    || return 1
+  # AND WHETHER DPDK IS ON AT ALL, which is a third answer and not a shade of
+  # the other two. Without hugepages the tuner turns the DPDK plugin off and
+  # emits no dpdk stanza whatever - no device, and no `no-pci` either - so a
+  # reader that knew only those two would report the deliberate first-boot
+  # profile as the #123 box that lets DPDK probe for itself. appliance/selftest
+  # tells the same three apart for the same reason, and got it wrong once.
+  #
+  # It is asked here rather than inferred, because "no dpdk stanza" and "DPDK
+  # disabled" look identical from the stanza alone.
+  send 'echo "HX""LAB claim-dpdk=$(grep -c "plugin dpdk_plugin.so { disable }" /etc/vpp/startup.conf)"'
+  wait_for "HXLAB claim-dpdk=" 30 \
+    "the box to say whether the DPDK plugin is on at all" \
+    || return 1
+  # AND WHAT THE DATAPLANE ITSELF HOLDS, WITH THE STATE OF IT. The readings
+  # above are files and sysfs; this is the only one that answers "did
+  # anything take the card". A card unbound from the kernel with VPP holding
+  # nothing is worse than a card nobody touched - neither stack can reach the
+  # wire - and from outside the box the two are indistinguishable.
+  #
+  # NAME, STATE AND MTU and not the name alone, which is what this asked for
+  # when it was written. On a tree where the box could not claim a card
+  # unbidden, "the dataplane holds an interface" was the whole question: the
+  # only way to get one was to type, and this block runs before anything is
+  # typed. Now the box claims by itself and a new answer exists that the old
+  # reading could not tell from success - the port is held AND in `error`
+  # state, which is #382: the driver refused it, it carries nothing, and
+  # every other reading here is still true of that box.
+  #
+  # The same triple PHASE 5 reads after a handover, in the same shape, asked
+  # here on a box nobody has typed at.
+  send 'echo "HX""LAB claim-dpif=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ && \$1 != \"Name\" && \$1 != \"local0\" {split(\$4, m, \"/\"); print \$1 \":\" \$3 \":\" m[1]}" | tr "\n" " ")"'
+  wait_for "HXLAB claim-dpif=" 60 \
+    "the dataplane to list the interfaces it holds unbidden" || return 1
   # What systemd will do when this box is stopped, asked of SYSTEMD and not of
   # the drop-in file. In dynamic mode the block log is the connection record
   # the Marco Civil requires, and a block held when the dataplane stops leaves
@@ -2126,6 +2213,224 @@ if [ "$up" = 1 ]; then
     echo "         the only place the address appears, and whoever racked the"
     echo "         box is standing in front of it"
     fail=1
+  fi
+fi
+
+# ---- the card this box claimed, with nobody having typed a name (#378) ----
+#
+# THE ASSERTION THE RELEASE GATE DID NOT MAKE. The gate has installed to a
+# disk and booted it since #119, and everything it asserted about the result
+# was about a box that could not forward - because nothing in this lab names a
+# dataplane interface, and until #378 nothing in the product named one either.
+# So "the medium produces a working appliance" was proved as far as "it boots,
+# it answers, somebody can log in", and stopped one step short of the thing
+# the appliance exists to do.
+#
+# NOTHING HERE PERFORMS THE STEP. This lab does not write tune.env, does not
+# bind a driver, does not create a pair and does not type `dataplane
+# interface`. PHASE 4 does type it, and that is a different measurement: it
+# asks whether a box TOLD to take a card can. This asks whether a box nobody
+# told took one anyway, which is the whole of #378 and cannot be measured on
+# a box that was told.
+#
+# Read in the order a reader needs them: was anything typed, what cards does
+# the box have, what did the tuner decide, what did the dataplane get. A
+# failure in an early one makes the later ones unreadable rather than false,
+# and saying which is which is the difference between sending somebody to the
+# tuner and sending them to DPDK.
+if [ "$up" = 1 ]; then
+  CLAIM_TYPED=$(sed -n 's/^HXLAB claim-typed=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  CLAIM_PCI=$(sed -n 's/^HXLAB claim-pci=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  CLAIM_CONF=$(sed -n 's/^HXLAB claim-conf=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  CLAIM_NOPCI=$(sed -n 's/^HXLAB claim-nopci=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  CLAIM_DPDK=$(sed -n 's/^HXLAB claim-dpdk=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  CLAIM_DPIF=$(sed -n 's/^HXLAB claim-dpif=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  # WAS THE BOX ASKED AT ALL. The same distinction the management block above
+  # makes and for the same measured reason: on the wrong-password control the
+  # driver never reaches a shell, and an absent marker read as an answer would
+  # report "this box claimed nothing" about a box nobody questioned.
+  CLAIM_ASKED=$(grep -c "^HXLAB claim-typed=" /tmp/disk-clean.log)
+  # How many network cards this box has, counted from the marker rather than
+  # from the qemu line that attached them. A lab that counted its own command
+  # line would assert against its own guess (#161), and this one has a second
+  # reason: the count has to be true after the claim, when the netdevs are
+  # gone.
+  CLAIM_NICS=$(printf '%s' "$CLAIM_PCI" | tr ' ' '\n' | grep -c .)
+  # EACH VALUE ON A ROW OF ITS OWN, and the reason is arithmetic rather than
+  # taste: every one of these is a LIST whose width grows with the number of
+  # cards. A PCI address and a driver name is thirty columns, so a four-card
+  # box put 120 of them on one row - and a fold in the middle of an address is
+  # the one thing on this screen somebody copies (#367).
+  # ONE CARD PER ROW and not one list. A PCI address with a driver name is
+  # thirty columns, so two of them never fit together and a four-card box is
+  # 110 - and an address folded mid-token is the one thing here somebody
+  # copies into a command.
+  echo "  -- cards:"
+  printf '%s\n' "${CLAIM_PCI:-<none read>}" | tr ' ' '\n' | grep . \
+    | sed 's/^/       /'
+
+  echo "  -- startup.conf names:"
+  echo "       ${CLAIM_CONF:-<no device>}"
+  echo "  -- the dataplane holds:"
+  echo "       ${CLAIM_DPIF:-<nothing>}"
+
+  if [ "$CLAIM_ASKED" = 0 ]; then
+    echo "  [FAIL] the box was never asked what it claimed, so nothing here"
+    echo "         says whether it claimed anything. The console driver did"
+    echo "         not reach the shell"
+    fail=1
+  elif [ "${CLAIM_TYPED:-0}" != 0 ]; then
+    # The control on the whole block. Not a pass and not a product defect:
+    # it is this lab having typed, which would make every line below it a
+    # measurement of the wrong box.
+    echo "  [FAIL] something named a dataplane card in this box's tune.env,"
+    echo "         so what it claimed is not what it chose. Nothing in this"
+    echo "         lab writes that file: find what did before reading the"
+    echo "         checks below, which are now about a box that was told"
+    fail=1
+  elif [ "$CLAIM_NICS" = 0 ]; then
+    # A real answer about a machine with nothing to claim, and not a defect.
+    # It is also not this lab's box - MGMT_NET attaches one card at a fixed
+    # slot - so it says so rather than passing quietly.
+    echo "  [FAIL] this box reports no PCI network card at all, so there is"
+    echo "         nothing here for the dataplane to have claimed. The lab"
+    echo "         attaches one card at a fixed slot, so either it did not"
+    echo "         arrive or the reading is broken"
+    fail=1
+  else
+    echo "  [ ok ] the box has $CLAIM_NICS network card(s) and nothing named"
+    echo "         one to it: what it claimed below, it claimed by itself"
+    # 1. THE TUNER DECIDED. no-pci is the old default and is now the defect:
+    # it is the box computing an allowlist that claims nothing on a machine
+    # that has a card.
+    if [ "${CLAIM_DPDK:-0}" != 0 ]; then
+      # THE ONE STATE THIS BLOCK CANNOT JUDGE, and it says so rather than
+      # passing. Without hugepages the tuner turns DPDK off on purpose, so no
+      # card can be claimed by anything and the box is correct - but #378's
+      # whole claim is unmeasured on such a boot, and a gate that goes green
+      # without measuring the thing it exists for is the defect class this
+      # repository is organised against. If the gate's box lands here, these
+      # probes belong on the boot after it.
+      echo "  [FAIL] DPDK is off on this boot, so nothing here measured"
+      echo "         whether the box claims a card. That is the conservative"
+      echo "         first-boot profile and it is correct; it is also the one"
+      echo "         boot on which #378 cannot be seen. Move these probes to"
+      echo "         the boot after this one."
+      fail=1
+    elif [ "${CLAIM_NOPCI:-0}" != 0 ]; then
+      echo "  [FAIL] startup.conf says no-pci on a box with $CLAIM_NICS card(s):"
+      echo "         the tuner claimed nothing, so the dataplane was given no"
+      echo "         device and the box forwards nothing. This is the state a"
+      echo "         fresh install came up in before #378, and the operator"
+      echo "         had to name a card to leave it"
+      fail=1
+    elif [ -z "$CLAIM_CONF" ]; then
+      echo "  [FAIL] startup.conf names no device and does not say no-pci, so"
+      echo "         DPDK probes and takes whatever it can bind. That is the"
+      echo "         box of #123, and an allowlist is the thing #378 changed"
+      echo "         the CONTENT of, never whether there is one"
+      fail=1
+    else
+      echo "  [ ok ] and the tuner computed an allowlist, naming:"
+      echo "         $CLAIM_CONF"
+    fi
+    # 2. AND THE DATAPLANE GOT IT. A device named in a file is not a device
+    # the dataplane has: that gap is #283, where an operator did exactly what
+    # they were told and still forwarded nothing, and it is the gap this
+    # whole change would automate onto every box if it were left unasserted.
+    if [ -n "$CLAIM_DPIF" ]; then
+      echo "  [ ok ] and the dataplane holds it, with nobody having asked:"
+      printf '%s\n' "$CLAIM_DPIF" | tr ' ' '\n' | grep . \
+        | sed 's/^/         /'
+      # AND THE PORT STARTED. Held is not started: a port whose driver
+      # refused it sits in `error` state and carries nothing, while every
+      # other reading in this block stays true (#382). Automating the claim
+      # onto every box would automate that state too if nothing here looked.
+      _cerr=""
+      for _e in $CLAIM_DPIF; do
+        case "$_e" in *:error:*) _cerr="$_cerr ${_e%%:*}" ;; esac
+      done
+      if [ -n "$_cerr" ]; then
+        echo "  [FAIL] and the card it claimed is in error state:$_cerr"
+        echo "         The box took a card by itself and its driver refused"
+        echo "         to start the port, so it forwards nothing and every"
+        echo "         other line above is still true. 'journalctl -u vpp'"
+        echo "         has the driver's reason."
+        fail=1
+      else
+        echo "  [ ok ] and no port it claimed is in error state"
+      fi
+    else
+      echo "  [FAIL] the dataplane holds no interface, and startup.conf"
+      echo "         names:"
+      echo "         ${CLAIM_CONF:-<no device>}"
+      echo "         The box decided to claim a card and did not get it:"
+      echo "         either the bind did not take or DPDK refused the device."
+      echo "         The cards and their drivers are printed above, and the"
+      echo "         VPP journal says which"
+      fail=1
+    fi
+    # 3. AND THE CARD IS OFF ITS KERNEL DRIVER. Read from the same marker as
+    # the count, because a driver is what the claim actually changes: DPDK
+    # cannot take a device through ixgbe, i40e or virtio-pci, so a card still
+    # on one is a card the box named and never took (#283).
+    case "$CLAIM_PCI" in
+      *:vfio-pci*|*:uio_pci_generic*|*:igb_uio*)
+        echo "  [ ok ] and a card is on a driver DPDK can use, so the box"
+        echo "         performed the bind itself" ;;
+      *)
+        echo "  [FAIL] no card on this box is on a driver DPDK can use:"
+        printf '%s\n' "${CLAIM_PCI:-<none read>}" | tr ' ' '\n' | grep . \
+          | sed 's/^/         /'
+
+        echo "         Naming a device is not having it. Nothing took the"
+        echo "         card off its kernel driver, so DPDK has nothing"
+        fail=1 ;;
+    esac
+    # 4. AND THE BOX SAID SO ON ITS OWN CONSOLE. The verdict is read through
+    # the holder, never spelled here: four readers of one sentence refused a
+    # correct medium twice (#311). On a box with a card, the sentence that
+    # means "healthy and not forwarding" is the box reporting that #378 did
+    # not happen - which is a defect a reader would otherwise have to notice
+    # in prose.
+    if said_a_no_forward_verdict /tmp/disk-clean.log; then
+      echo "  [FAIL] the box ended its self-test saying it has no interface"
+      echo "         to forward on, and it has $CLAIM_NICS card(s). That"
+      echo "         sentence is correct on a box with no NIC and is this box"
+      echo "         reporting it claimed nothing on one that has some"
+      fail=1
+    else
+      echo "  [ ok ] and its own verdict does not say it has nothing to"
+      echo "         forward on"
+    fi
+  fi
+
+  # 5. AND IT IS STILL REACHABLE, FROM OUTSIDE. The acceptance, and the only
+  # line here an operator could not fake by standing at the console.
+  #
+  # ON THIS BOX THE CLAIMED CARD IS THE ONE IT IS REACHED ON. The lab attaches
+  # a single NIC, so #378's rule - never the last card - hands the dataplane
+  # the card carrying the forwarded port, and the address survives only on the
+  # linux_cp pair the dataplane keeps. So a banner here is not a repeat of the
+  # #303 reading above: that one was taken from a box whose kernel still held
+  # the card, and this one is taken after the box gave it away without being
+  # asked. A TCP handshake completing means the packets went through VPP.
+  #
+  # It reuses BOOT_REACHED rather than probing again because it is the same
+  # boot and the same connection: what differs is what the reading MEANS now,
+  # and a second probe would be a second reader of one fact.
+  if [ "$CLAIM_ASKED" != 0 ] && [ "${CLAIM_NICS:-0}" != 0 ] \
+     && [ -n "$CLAIM_DPIF" ]; then
+    if [ "$BOOT_REACHED" = 0 ]; then
+      echo "  [ ok ] and it answers from outside while the dataplane holds"
+      echo "         its card, so the box forwards and is still reachable"
+    else
+      echo "  [FAIL] the box claimed its card and does not answer on the"
+      echo "         network. It ate the port it is reached on, which on a"
+      echo "         box with one card means somebody walks to it - and"
+      echo "         nobody asked it to take the card at all"
+      fail=1
+    fi
   fi
 fi
 
@@ -3001,15 +3306,43 @@ then
   # The one reading this phase exists for, and it is worth nothing unless the
   # before-value was a kernel driver: a card that was already on uio_pci_generic
   # proves no bind happened here.
-  case "$HO_DRV0" in
-    vfio-pci|uio_pci_generic|"")
-      echo "  [FAIL] the card was on '${HO_DRV0:-<unread>}' BEFORE the"
-      echo "         handover, so nothing below can show a bind. This phase"
-      echo "         is measuring a box that was already in the end state"
-      fail=1 ;;
-    *) echo "  [ ok ] the card started on a kernel driver ($HO_DRV0), so a"
-       echo "         change of driver below is a bind this box performed" ;;
+  # THE PREMISE, CHECKED BEFORE THE READINGS ARE BELIEVED (#378).
+  #
+  # This phase was written when a box claimed nothing until it was told: the
+  # card was Linux's when the phase started, and asking the box to take it
+  # showed a bind. A box that claims its own card is already in the end state
+  # before this phase boots, so there is no "before" for a change of driver to
+  # be measured against - `ho-pci` resolves the linux_cp TAP, which has no PCI
+  # parent at all, and every driver reading below it is about nothing.
+  #
+  # `none` AND NOT ONLY "", which is how this got through. The probe prints
+  # the literal word `none` when the device has no driver link; the guard
+  # tested for an EMPTY value, which is what an unread probe gives. Two
+  # spellings of one answer, and the case that mattered was the one not
+  # listed - so a box already holding its card was reported as one that
+  # started on a kernel driver called "none".
+  case "$HO_PCI" in
+    0000:*) _ho_premise=ok ;;
+    *) _ho_premise=claimed ;;
   esac
+  case "$HO_DRV0" in
+    vfio-pci|uio_pci_generic|igb_uio|none|"") _ho_premise=claimed ;;
+  esac
+  if [ "$_ho_premise" = claimed ]; then
+    # NOT A FAILURE, and that is the whole finding: the box did by itself,
+    # at boot, what this phase exists to ask it to do. PHASE 2 asserted
+    # exactly that on this same box - the allowlist, the bind, the port out
+    # of error state and the box answering from outside - with nothing typed.
+    # The coverage moved; it did not go away.
+    echo "  [ ok ] the card was already the dataplane's before this phase"
+    echo "         began, so there is no bind left for it to show: the box"
+    echo "         claimed it at boot with nobody asked, which PHASE 2"
+    echo "         asserted. Read '${HO_IF:-<unread>}' at"
+    echo "         '${HO_PCI:-<unread>}' on '${HO_DRV0:-<unread>}'"
+  else
+    echo "  [ ok ] the card started on a kernel driver ($HO_DRV0), so a"
+    echo "         change of driver below is a bind this box performed"
+  fi
 fi
 
 # =========================================================================
@@ -3132,6 +3465,13 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   # read off this same box before anything was typed, and against the list of
   # drivers DPDK can use - not against a single name, because which of the two
   # a box gets depends on whether it has an IOMMU and both are correct.
+  # SKIPPED WHEN THERE WAS NO BEFORE. Comparing "after" to a reading taken of
+  # a TAP says nothing, and saying it anyway is how a lab reports a defect
+  # that is its own premise (#378).
+  if [ "${_ho_premise:-ok}" = claimed ]; then
+    echo "  [ ok ] the card is the dataplane's, as it already was before this"
+    echo "         phase: there is no change of driver to compare"
+  else
   case "$HO_DRV2" in
     vfio-pci|uio_pci_generic)
       echo "  [ ok ] the card is bound to $HO_DRV2: the box took it off"
@@ -3148,6 +3488,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       echo "         so DPDK has no device and the box forwards nothing"
       fail=1 ;;
   esac
+  fi
 
   # 2. AND THE NAME IS THE PAIR NOW, NOT THE CARD. Something called $HO_IF
   # still being there is what the handover is FOR: the card keeps its MAC and
