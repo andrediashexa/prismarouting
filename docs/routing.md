@@ -515,49 +515,45 @@ directory at all. A tree with no `/sys/class/net` in it - a developer's box,
 this VTY's own suites - is "cannot look" and not "the card is gone", the same
 posture `dataplane_if_refusal()` takes about an empty card list.
 
-### The handover is a confirmed commit, asked for or not
+### The handover arms nothing, and nothing needs undoing
 
 The box does not lose the session at the commit. It loses it at the restart
-after it, and if anything in between is wrong there is no session left to fix
-it from - which is precisely what `commit confirmed` is for
-([#212](https://github.com/andrediashexa/hexarouting/issues/212)). So the
-commit is a confirmed one whether or not the operator asked, the way an SSH or
-account change already is, with a longer window because it has to cover a
-reboot and a login rather than a reconnection:
+after it, and for two releases that made this a confirmed commit whether or
+not the operator asked - a thirty-minute window, longer than the ten an SSH or
+account change gets, because it had to cover a reboot and a login rather than
+a reconnection
+([#212](https://github.com/andrediashexa/hexarouting/issues/212)).
+
+**That window was removed in
+[#378](https://github.com/andrediashexa/hexarouting/issues/378), because it
+stopped undoing anything.** Since the box claims its own card, the state its
+revert produced - `HEXA_DATAPLANE_IF` empty, on a box with one card - is
+exactly the state that claims that card. An operator who came back and
+confirmed, and one who did nothing, ended in the same place; the second paid a
+reboot to get there. The screen was wrong twice over: it said the card goes
+back to Linux, and it implied that not typing `commit` would lose it. The card
+stays either way.
+
+What the window was for is done earlier, on every boot, without a reboot:
+`hexarouting-tune` reads the card's address, MAC and gateway off it in the
+window before anything is unbound, and this VTY puts them back on the
+`linux_cp` pair. A card whose way back cannot be read is not claimed at all,
+and a dataplane that will not start hands the card to Linux
+([#379](https://github.com/andrediashexa/hexarouting/issues/379)).
+
+So naming the card by hand on a one-card box is a statement of intent and
+nothing else, and the box says so:
 
 ```
-this commit hands over the card this box is reached on
-    the box keeps its address, on the dataplane's side of it, and nothing
-    proves that until it has been restarted and answered
-    applying it as 'commit confirmed 30' rather than as a plain commit:
-    restart the box, log in again and type 'commit' to keep it
-...
-rollback at 2026-09-14T18:36:13Z, in 30 minute(s)
+    nothing is armed to undo this and nothing needs to be: a reserve never
+    takes the last card, so this box would claim this one whether or not you
+    named it
 ```
 
-The deadline lives in `/etc/hexarouting/confirm-pending` and is watched by
-`hexarouting-confirm.timer`, so rebooting does not cancel it - which is the
-whole reason this change can use it. The box reboots into the handover, and
-the operator has the rest of the window to log back in over the new path and
-type `commit`.
-
-**An unconfirmed handover restarts the box.** The rest of a revert is a
-configuration: the file goes back, the dataplane is told, and the box is on
-the old settings. This one is not. The card was unbound from its kernel driver
-at boot and the dataplane holds it, so putting `tune.env` back only decides
-what the *next* start claims - and until that start happens Linux still has no
-card and the box is still unreachable. This runs only where nobody confirmed,
-which is to say on a box no operator can reach: there is no session to ask, and
-leaving it reverted and unreachable would be the revert promising something it
-did not do.
-
-```
-commit confirmed 30: nobody confirmed it within 30 minute(s), so this box has
-put the previous configuration back
-restarting the box: the card goes back to Linux at the next start
-    the dataplane holds it until then, so this is the only way back onto the
-    network without a reboot by hand
-```
+`commit confirmed <minutes>` is still there for an operator who wants a window
+around any change, and its revert still puts the configuration back. What it
+no longer does is restart the box: a revert is a configuration, and the one
+restart this ever had gave back a card the next start re-claims.
 
 A revert that gives back no card restarts nothing, which is what keeps every
 other unconfirmed commit on every other box from rebooting it. Nor does one

@@ -10,6 +10,15 @@ import os, re, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TUNE = os.path.join(HERE, "hexarouting-tune")
+
+
+def read_file(path):
+    """A whole file, or "" - so a missing one fails a check and not the run."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
 fail = 0
 
 def check(cond, msg):
@@ -1375,6 +1384,52 @@ with tempfile.TemporaryDirectory() as root:
           "a way back from an earlier boot survived one that hands over "
           "nothing, so the binder could take a card on stale permission")
 
+
+print("\n=== the documents do not instruct a step the box no longer needs ===")
+# A HOLDER AND A READER, which is the only shape that keeps a claim in a
+# document true. The holder is the TUNER, driven here on a box with a card and
+# the setting shipped empty; the reader is docs/appliance.md, which told an
+# operator to name the card from the VTY after installing. That instruction
+# was right for as long as the box claimed nothing on its own, and a release
+# that ships a document saying the opposite of the product is the defect this
+# repository is organised against.
+#
+# THE PRODUCT SIDE IS DRIVEN, and that is what makes this worth having rather
+# than a grep. If somebody reverts the claiming rule, the tuner stops claiming,
+# this check stops demanding anything of the document, and the pair stays
+# consistent without either being edited to match the other.
+#
+# WHAT IT STILL MISSES, said rather than left to be discovered: the document
+# side is a needle, so an instruction reworded into different words passes.
+# There is no sound way to read "tells the operator to name the card" out of
+# prose, and a list of phrasings here would be the second copy this kind of
+# check exists to forbid. It catches the sentence that is there today and the
+# obvious restatements of it, and nothing else.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    _claims = "no-pci" not in run(root)
+_shipped = read_file(os.path.join(HERE, "etc/tune.env"))
+_empty = any(l.strip() == "HEXA_DATAPLANE_IF=" for l in _shipped.splitlines())
+check(_claims and _empty,
+      f"the tuner no longer claims a card on a box that has one with the "
+      f"setting shipped empty (claims={_claims}, ships empty={_empty}), so "
+      f"this check is holding the documents to nothing")
+_DOC = os.path.join(HERE, "../docs/appliance.md")
+_doc = " ".join(read_file(_DOC).split())
+for _bad in ("name the dataplane NIC from the VTY",
+             "After installing, name the dataplane"):
+    check(_bad not in _doc,
+          f"docs/appliance.md still tells an operator to name the card after "
+          f"installing - {_bad!r} - and the box claims one by itself")
+# AND THE OVERRIDE IS STILL DOCUMENTED, which is the other half: removing the
+# instruction must not remove the statement. A box with several cards where
+# one carries subscribers needs it, and a document that never mentions it
+# leaves that operator with no way to choose.
+check("dataplane interface <name>" in _doc,
+      "docs/appliance.md no longer mentions 'dataplane interface <name>' at "
+      "all, so an operator with several cards has no documented way to "
+      "choose which one the dataplane gets")
 
 print("\n=== a NIC that is not the default route is still claimed ===")
 # The refusal must not become "never claim anything", which would be the same

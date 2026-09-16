@@ -5933,6 +5933,41 @@ class Shell:
         if rc != 0 or mgmt["address"] not in (out or ""):
             if not self.set_address(ifname, mgmt["address"], True):
                 return False
+        # AND THE WAY OFF ITS OWN SUBNET, which the address alone does not
+        # give. A box with the address back and no default route answers
+        # everything on its own wire and nothing beyond it - which on the
+        # lab's guest is indistinguishable from a healthy box, because
+        # qemu's gateway is on that wire. On a real box it is a machine
+        # somebody drives to.
+        #
+        # ONLY FOR THE RECORD THE TUNER COMPUTED, which is the only one that
+        # carries a gateway. The VTY's own record has three fields and its
+        # route arrives with the saved configuration, put there by
+        # take_management_card at the commit - so this must not fire on that
+        # path and cannot, because `gateway` is absent from it.
+        #
+        # IN LINUX AND NOT IN FRR, deliberately. FRR is where an operator's
+        # routing lives and converging it here would mean handing frr-reload
+        # a line set this function does not own. What is being put back is
+        # the box's own way home, which ifupdown and dhclient had in Linux
+        # before the card moved, so Linux is where it goes back.
+        #
+        # `replace` and not `add`: this runs on every boot and the second one
+        # already has the route. An error there would be a box reporting a
+        # failure for having succeeded twice.
+        gw = mgmt.get("gateway")
+        if gw:
+            rc, out = self.sys._run(["ip", "route", "replace", "default",
+                                     "via", gw, "dev", mgmt["name"]])
+            if rc != 0:
+                # SAID AND NOT FATAL. The address is already back, so the box
+                # is reachable from its own subnet and an operator on it can
+                # fix this; failing here would abandon a handover that mostly
+                # worked and leave the card in the dataplane anyway.
+                self.err(f"the default route could not be put back: {out}")
+                print_prose(f"this box has {mgmt['address']} on "
+                            f"{mgmt['name']} and no way off that subnet; "
+                            f"the gateway it recorded is {gw}")
         return True
 
     def device_linux_names(self) -> dict:
@@ -8110,29 +8145,29 @@ class Shell:
         elif args and args[0] == "comment":
             comment = " ".join(args[1:]).strip('"')
 
-        # And the change that hands over the card this session ARRIVED on.
-        # It is the same class of danger as the two above and the largest of
-        # them: the box does not lose the session at the commit but at the
-        # restart after it, and if anything between here and there is wrong
-        # the box is gone with no session left to fix it from. This is the
-        # change `commit confirmed` was built for, so it is not left to the
-        # operator to remember to ask (#303).
-        takes_management = bool(d0["dataplane_mgmt_changed"]
-                                and self.candidate.dataplane_mgmt)
-        if takes_management and not confirm_min:
-            # Thirty and not the ten an access change gets. The window has to
-            # cover a reboot and a login, not a reconnection, and a deadline
-            # that expires while the box is still coming up would undo a
-            # handover that worked.
-            confirm_min = 30
-            print("this commit hands over the card this box is reached on")
-            print_prose("the box keeps its address, on the dataplane's side "
-                        "of it, and nothing proves that until it has been "
-                        "restarted and answered")
-            print_prose("applying it as 'commit confirmed 30' rather than as "
-                        "a plain commit: restart the box, log in again and "
-                        "type 'commit' to keep it")
-        elif touches_access and not confirm_min:
+        # THE HANDOVER NO LONGER ARMS A WINDOW, and the reason is that the
+        # window stopped undoing anything (#378).
+        #
+        # It was armed because the box did not lose the session at the commit
+        # but at the restart after it, and a handover nobody came back to
+        # confirm put the card back and rebooted (#303). Since the box claims
+        # its own card, the state that revert produced - HEXA_DATAPLANE_IF
+        # empty, on a one-card box - is the state that CLAIMS the card. Both
+        # measured: the revert leaves the setting empty and reboots, and the
+        # tuner on that exact file answers `dev 0000:00:09.0`.
+        #
+        # So an operator who confirmed and one who did nothing ended in the
+        # same place, and the second paid a reboot for it. That is worse than
+        # a no-op, and the screen was wrong twice: it said the card goes back
+        # to Linux, and it implied that not typing `commit` would lose it.
+        # The card stays either way.
+        #
+        # What the window was FOR is done earlier and without a reboot now:
+        # hexarouting-tune computes the address, MAC and gateway off the live
+        # card on the boot that claims it and this VTY puts them back, and
+        # appliance/give-the-card-back hands the card to Linux when the
+        # dataplane will not start at all (#379).
+        if touches_access and not confirm_min:
             confirm_min = 10
             # Verdict, then why. As one sentence it measured 133 columns
             # and nothing was wrapping it (#271).
@@ -8439,10 +8474,6 @@ class Shell:
         # path, and there the revert is an ordinary one: the setting goes, the
         # card never moved, and restarting would be this feature rebooting a
         # box that was reachable the whole time.
-        rec = self.read_dataplane_mgmt()
-        gave_card_back = bool(
-            self.read_dataplane_if() and not target.dataplane_if
-            and rec and self.dataplane_if_with_mac(rec["mac"]))
         # Prose, so it is wrapped: the sentence the unit prints when a window
         # expired unconfirmed measured 113 columns (#276). The caller's first
         # words stay on the first row, which is what `commit confirmed 10` is
@@ -8465,42 +8496,7 @@ class Shell:
         self.confirm_deadline = None
         self.confirm_backup = None
         self.confirm_on_box = False
-        if gave_card_back:
-            self.restart_for_management_card()
         return True
-
-    def restart_for_management_card(self):
-        """
-        Give the card back to Linux, which takes a restart and nothing less.
-
-        The rest of a revert is a configuration: the file goes back, the
-        dataplane is told, and the box is on the old settings. This one is
-        not. The card was unbound from its kernel driver at boot and the
-        dataplane holds it now; putting the tuner's file back means the NEXT
-        start claims nothing, and until that start happens Linux still has no
-        card and the box is still unreachable.
-
-        So the box restarts itself, and that is deliberate rather than
-        incidental. This runs only where nobody confirmed a handover, which is
-        to say on a box no operator can reach: there is no session to ask, and
-        leaving it sitting there reverted and unreachable would be the revert
-        promising something it did not do. The console says so first, because
-        the operator this is for may be standing in front of it.
-        """
-        print("restarting the box: the card goes back to Linux at the next "
-              "start")
-        print_prose("the dataplane holds it until then, so this is the only "
-                    "way back onto the network without a reboot by hand")
-        rc, out = self.sys._run(["systemctl", "reboot"])
-        if rc == 127:
-            # Every suite and every developer's tree. Written and not run is
-            # the honest answer here, not a failure.
-            print_prose("systemd is not on this machine, so nothing was "
-                        "restarted; reboot it to get the card back")
-        elif rc != 0:
-            self.err("the box could not be restarted: " + out.strip()[:120])
-            print_prose("reboot it by hand: the configuration is back but the "
-                        "card is not")
 
     def check_confirm_timeout(self):
         """
@@ -10992,12 +10988,19 @@ class Shell:
     #
     # WHY THIS IS IN THE VTY AT ALL. Until this existed the only way to give
     # an appliance a card was to edit HEXA_DATAPLANE_IF in the tuner's file
-    # from a Linux shell, which is the state every fresh install comes up in:
-    # nothing is claimed, VPP has no interface, and the box forwards nothing.
-    # docs/context.md makes the argument for the other half of this - an
-    # operator who has to drop to vppctl is one for whom this VTY is
+    # from a Linux shell, and that was the state every fresh install came up
+    # in: nothing claimed, VPP with no interface, and a box that forwarded
+    # nothing. docs/context.md makes the argument for the other half of this -
+    # an operator who has to drop to vppctl is one for whom this VTY is
     # decoration - and it holds identically for one who has to drop to an
     # editor (#283).
+    #
+    # A FRESH INSTALL IS NO LONGER THAT BOX (#378): it claims every card it
+    # has but a reserve, and never the last one, so nobody has to type this to
+    # make an ordinary box forward. What the statement is for now is the box
+    # with several cards where only one carries subscriber traffic - it claims
+    # the card named here and no other - and that is why removing it was
+    # rejected rather than merely not done.
 
     #: The tuner's input for the dataplane card, and the unit that reads it.
     #:
@@ -11145,6 +11148,15 @@ class Shell:
         print_prose("this does not happen at this commit: the dataplane "
                     "claims its card when it starts, and the box is on the "
                     "old path until it is restarted")
+        # AND WHY THERE IS NO SAFETY NET, which is the sentence that replaces
+        # the confirmed-commit paragraph (#378). An operator who typed this on
+        # a one-card box used to be told to come back and confirm it or lose
+        # the card; both halves were false once the box began claiming its own
+        # card. Saying nothing at all would leave them looking for the window
+        # the documentation used to promise.
+        print_prose("nothing is armed to undo this and nothing needs to be: "
+                    "a reserve never takes the last card, so this box would "
+                    "claim this one whether or not you named it")
 
     def say_dataplane_if_refusal(self, name, why):
         """One refusal, printed: the statement's own words, then the reason."""
@@ -11203,19 +11215,25 @@ class Shell:
         """
         The management path for a card that moved to the dataplane, or {}.
 
-        TWO SOURCES, AND THE ORDER IS THE ARGUMENT (#378).
+        THE OPERATOR'S RECORD ONLY, and the computed one is deliberately NOT
+        here (#378).
 
-        The first is the tuner's, computed on THIS boot off the live card in
-        the window before anything was unbound, and left in /run. It is the
-        one that matters for a box that claims its own card: nobody typed, so
-        nothing was ever written at a commit, and this is the only account of
-        the address there is.
+        This is what `running_config()` reads, so whatever it returns becomes
+        the candidate on the next `configure` and is written back to tune.env
+        by the next commit. The tuner's computed record must not travel that
+        way: it is boot state and not configuration, it is recomputed every
+        boot from the live card, and the VTY's own record has three fields
+        where it has four - so a commit would persist a copy with the gateway
+        dropped, and the NEXT boot would read that copy in preference and put
+        the address back with no route.
 
-        The second is the record the VTY writes when an operator names a card
-        by hand. It is still read, and it still wins, because it is the
-        operator's own answer about a box they configured deliberately - and
-        because a box mid-handover from an earlier release has one and no
-        /run file until its next boot.
+        Measured on an installed box: boot one had its default route, PHASE 2
+        created two accounts and committed, and the boot after the power cycle
+        came back with the address on the pair and
+        `ip -4 route list default` empty. The commit was what did it.
+
+        `load()` asks for the computed record explicitly, on the one path that
+        needs it, which is the boot that hands the card over.
 
         Three fields rather than three assignments: they are one fact and a
         file holding two of the three describes a box that cannot exist. A
@@ -11226,17 +11244,23 @@ class Shell:
         w = self.read_tune_key(self.TUNE_MGMT_KEY).split()
         if len(w) == 3 and "/" in w[1]:
             return {"name": w[0], "address": w[1], "mac": w[2].lower()}
-        return self.read_computed_mgmt()
+        return {}
 
     def read_computed_mgmt(self):
         """
         The way back hexarouting-tune computed on this boot, or {}.
 
-        Four fields - name, address, MAC, gateway - and the gateway is read
-        and dropped here, because what this VTY does with the record is put
-        the address on the pair; the route comes from the configuration. It is
-        in the file because appliance/bind-dataplane-nic prints it and because
-        a record that cannot state its own next hop is one nobody can check.
+        Four fields - name, address, MAC, gateway - and the gateway is KEPT,
+        because on this path nothing else will put the route back.
+
+        The record the VTY writes carries three, and its route comes from the
+        saved configuration: `take_management_card` appends
+        `ip route 0.0.0.0/0 <gw>` to the candidate at the commit, so the boot
+        after it replays a file that has the route in it. A box that claims
+        its own card never had that commit, so the file is empty and the route
+        has no other author. Measured on an installed box: address back on the
+        pair, `ip -4 route list default` empty, and the box reachable from its
+        own subnet and nowhere else.
         """
         try:
             with open(self.MGMT_PATH_FILE, encoding="utf-8") as f:
@@ -11245,7 +11269,10 @@ class Shell:
             return {}
         if len(w) < 3 or "/" not in w[1]:
             return {}
-        return {"name": w[0], "address": w[1], "mac": w[2].lower()}
+        got = {"name": w[0], "address": w[1], "mac": w[2].lower()}
+        if len(w) > 3:
+            got["gateway"] = w[3]
+        return got
 
     def write_dataplane_if(self, name):
         """
@@ -13343,7 +13370,14 @@ class Shell:
         # what keeps `no dataplane interface`, `save` and a reboot working.
         if not target.dataplane_if and not target.dataplane_mgmt:
             target.dataplane_if = self.read_dataplane_if()
-            target.dataplane_mgmt = self.read_dataplane_mgmt()
+            # THE OPERATOR'S RECORD FIRST, THEN THE TUNER'S. This is the one
+            # path that may see the computed record: it runs at boot, on the
+            # file hexarouting.service replays, and it is where the card is
+            # actually handed over. Everything else reads the operator's
+            # record alone, so the computed one cannot be promoted into the
+            # saved configuration by a commit that was about something else.
+            target.dataplane_mgmt = (self.read_dataplane_mgmt()
+                                     or self.read_computed_mgmt())
         if target.unknown:
             # Read at BOOT, on a box that is refusing its own saved
             # configuration, which is the worst moment to be handed a broken

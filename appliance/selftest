@@ -854,8 +854,14 @@ fi
 # so VPP claimed whatever NIC it found, which on a single-NIC box is the
 # management one. The operator learned about it by losing the session (#123).
 #
-# Now nothing is claimed unless it is named, which is safe and is also easy to
-# not notice: a box that forwards nothing looks like a box that is working.
+# Then nothing was claimed unless it was named, which was safe and was also a
+# box that could not forward until somebody typed. Now the box claims every
+# card it has but a reserve, and never the last one (#378) - so what reaches
+# the branches below is a box that claimed nothing because it had nothing to
+# claim, or one that was told which card to take.
+#
+# The reason this is said out loud at all did not change: a box that forwards
+# nothing looks like a box that is working.
 if grep -q "plugin dpdk_plugin.so { disable }" "$STARTUP" 2>/dev/null
 then
   # No DPDK at all, so no device can be claimed by anything. This is the

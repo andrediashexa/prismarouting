@@ -795,17 +795,40 @@ about it by losing the session
 asked, and the installer never asks which interface carries subscriber
 traffic, so this was the ordinary case rather than the exception.
 
-**Unknown MUST mean claim nothing.** The two outcomes are not symmetric:
+**Unknown MUST mean claim nothing**, and it still does: `hexarouting-tune`
+emits `dpdk { no-pci }` when it cannot resolve a device. What changed is
+**when** that happens, not whether. The two outcomes are still not symmetric:
 
 | | recoverable by |
 |---|---|
 | no dataplane interface | logging in over the network and setting one |
 | the dataplane ate the management interface | walking to the console |
 
-So the tuner now emits `dpdk { no-pci }` when it cannot resolve a device, the
-setting ships **empty**, and the boot self-test says the box has no dataplane
-interface and names the statement that gives it one. A box that forwards
-nothing looks like a box that is working, so it has to be said out loud.
+The table is a statement about costs and it is as true as it ever was. The
+conclusion drawn from it — that a box must therefore claim nothing until
+somebody names a card — is not, and two things changed it
+([#378](https://github.com/andrediashexa/hexarouting/issues/378)).
+
+**A box is set up from its console when it is new**, so the left column is not
+the only way back. The maintainer's argument is that the machinery built to
+keep a box reachable over the network during its first configuration is
+protecting a step nobody takes over the network, and it is what stands between
+a fresh install and a box that forwards.
+
+**And a dataplane that will not start hands the card back.**
+`appliance/give-the-card-back`, armed with `OnFailure` on `vpp.service`, puts
+the card on its kernel driver again when the dataplane reaches `failed`
+([#379](https://github.com/andrediashexa/hexarouting/issues/379)). The right
+column's cost is what it was; the chance of paying it for a dataplane that
+never came up is not.
+
+So the box claims every PCI card it has, except one reserved for Linux, and
+never the last one — and it reads the address, MAC and gateway off the card it
+is about to take, on that boot, so the way back is computed rather than
+remembered. `no-pci` is now what an unresolvable device gets, or a box with no
+card at all, or one whose way back could not be read. The boot self-test still
+says so out loud, because a box that forwards nothing looks like a box that is
+working.
 
 ### Naming the card from the VTY
 
@@ -1287,22 +1310,38 @@ sh appliance/build-iso.sh            # hybrid BIOS/UEFI ISO
 sh tools/lab.sh boot-iso             # boot it and check the self-test
 ```
 
-After installing, name the dataplane NIC from the VTY (`configure`, then
-`dataplane interface <name>`, then `commit`), adjust the subscriber target in
-`/etc/hexarouting/tune.env`, and reboot: `isolcpus` and hugepages only apply
-on the next boot, and so does the handover of the card.
+After installing, adjust the subscriber target in
+`/etc/hexarouting/tune.env` and reboot: `isolcpus` and hugepages only apply on
+the next boot, and so does the handover of the card. **Nobody has to name the
+dataplane NIC** — the box claims every card it has but the one it was
+installed with a management network on, and never the last one
+([#378](https://github.com/andrediashexa/hexarouting/issues/378)).
+`show hardware` says which cards it took and why.
 
-**On a box whose only card is the one being named there is a step after the
-reboot, and the three statements above are not the whole procedure there.**
-That commit is the one that takes the management path with it, so the VTY
-applies it as `commit confirmed 30` whether or not it was asked for - and
-rebooting does not confirm anything, which the box says at the prompt in as
-many words. Log in again on the address the box came back on and type
-`commit`. Nobody typing it is the answer that window exists to give: thirty
-minutes after the commit the box puts `HEXA_DATAPLANE_IF` back, gives the card
-to Linux and restarts itself, which is the only way back onto the network for
-an operator whose session never returned. A box with a second card arms no
-window, because the session is on the card Linux keeps.
+`dataplane interface <name>` remains, and it is an **override**: the box then
+claims that card and no other. It is worth typing on a machine with several
+cards where only one carries subscriber traffic and the rest are wanted
+elsewhere; `no dataplane interface` gives the choice back to the box.
+
+**On a box whose only card is the one being named, naming it changes nothing
+the box was not going to do anyway.** A reserve never takes the last card, so
+that box claims it either way; the statement only makes the choice explicit.
+Nothing is armed and nothing has to be confirmed.
+
+Earlier releases applied that commit as a confirmed one, armed without being
+asked, so that a handover nobody came back to confirm undid itself and
+restarted the box. It was removed in
+[#378](https://github.com/andrediashexa/hexarouting/issues/378) because it
+stopped undoing anything: the state its revert produced - the setting empty,
+on a box with one card - is the state that claims the card. An operator who
+confirmed and one who did nothing ended in the same place, and the second paid
+a reboot to get there.
+
+What it was for is done earlier and without a reboot. The box reads
+the address, MAC and gateway off the card on the boot that claims it and puts
+them back; a card whose way back cannot be read is not claimed at all; and a
+dataplane that will not start hands the card to Linux
+([#379](https://github.com/andrediashexa/hexarouting/issues/379)).
 
 ## What the console shows on a first boot
 
