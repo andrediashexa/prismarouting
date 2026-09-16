@@ -111,7 +111,7 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
     w(f"{root}/proc/meminfo", f"MemTotal:       {ram_gb * 1024 * 1024} kB")
     return node_cpus
 
-def run(root, *args, maxmtu=None):
+def run(root, *args, maxmtu=None, addr=None):
     """
     The tuner against a synthetic root.
 
@@ -131,14 +131,40 @@ def run(root, *args, maxmtu=None):
     #
     # No maximum means a card that could not be read, which is a box whose
     # `ip` has nothing to say about the device - one of the cases below.
+    #
+    # TWO QUESTIONS NOW, and the stub has to tell them apart. Since #378 the
+    # tuner also asks `ip -4 -o addr show dev <if>` for the address of a card
+    # it is about to claim - the one reading that decides whether the last
+    # card may go at all - and a stub that answered the link question to both
+    # would have the address parser read a link line and find nothing, which
+    # is a pass for the wrong reason.
     _bin = tempfile.mkdtemp()
     with open(os.path.join(_bin, "ip"), "w") as _f:
-        # PER INTERFACE, because the box can claim more than one card and
-        # `ethernet { default-mtu }` is one value for all of them. A stub that
-        # answered the same maximum for every card could not build the box the
-        # rule is about - a 1500 card beside a 9000 one - so the rule would
-        # have no case that could fail. An int still means "every card".
+        # TWO QUESTIONS AND SEVERAL CARDS, and the stub has to tell them
+        # apart.
+        #
+        # The tuner asks `ip -4 -o addr show dev <if>` for the address of a
+        # card it is about to claim (#378) and `ip -d link show <if>` for
+        # that card's maximum MTU (#382). A stub that answered the link
+        # question to both would have the address parser read a link line and
+        # find nothing, which is a pass for the wrong reason - so the address
+        # arm is matched FIRST, because an addr command names an interface too.
+        #
+        # And PER INTERFACE, because the box can claim more than one card
+        # while `ethernet { default-mtu }` is one value for all of them. A
+        # stub answering the same maximum for every card could not build the
+        # box that rule is about - a 1500 card beside a 9000 one - so the
+        # rule would have no case that could fail. An int still means "every
+        # card"; a list of addresses exercises "exactly one global address".
         _f.write("#!/bin/sh\ncase \"$*\" in\n")
+        if addr is not None:
+            _f.write("  *addr*)\n")
+            for _a in ([addr] if isinstance(addr, str) else addr):
+                _f.write(f"    echo '2: eth0    inet {_a} brd 10.0.0.255 "
+                         f"scope global eth0\\       valid_lft forever'\n")
+            _f.write("    exit 0 ;;\n")
+        else:
+            _f.write("  *addr*) exit 1 ;;\n")
         if isinstance(maxmtu, dict):
             for _if, _m in maxmtu.items():
                 _f.write(f"  *'{_if}') echo '2: {_if}: <BROADCAST> mtu 1500 "
@@ -164,6 +190,10 @@ def run(root, *args, maxmtu=None):
     #
     # A caller that wants a reserve writes one into the tree and passes its
     # own --mgmt-conf, which overrides this because argparse keeps the last.
+    # And the file the tuner leaves the computed way back in, inside the tree
+    # for the same reason (#378): its real path is /run, which a suite cannot
+    # write and must not share between fixtures.
+    env["HEXA_MGMT_PATH"] = os.path.join(root, "run/hexarouting/mgmt")
     mgmt = os.path.join(root, "etc/network/interfaces.d/hexarouting")
     p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root,
                         "--mgmt-conf", mgmt] + list(args),
@@ -1161,8 +1191,20 @@ with tempfile.TemporaryDirectory() as root:
           f"{[l for l in out.splitlines() if 'mtu' in l.lower()][:6]}")
     # AND IT SAYS WHAT THAT COSTS. An operator with a 9000-capable card needs
     # to know why it started at 1500, or the box looks broken to them.
-    _said = " ".join(out.split())
-    check("smallest maximum" in _said and "raises that port" in _said,
+    #
+    # THE REPORT ONLY, and that is not tidiness. The generated `ethernet`
+    # stanza carries its own comment explaining the same rule, in nearly the
+    # same words - so a needle read from the whole output matches the stanza
+    # and stays green however the REPORT is reworded. Measured: with the
+    # report's sentence deleted outright this check went green, because
+    # render_ethernet()'s comment still said "smallest maximum". That is
+    # TESTING.md's fourth lie with two copies of the message instead of one.
+    #
+    # The report's rows start at column one; every row of a generated stanza
+    # is indented.
+    _report = " ".join(l for l in out.splitlines() if l.startswith("# ")
+                       or l.startswith("#  "))
+    check("smallest maximum" in _report and "raises that port" in _report,
           f"the report does not say the bigger card is starting below its own "
           f"maximum, or how to raise it: "
           f"{[l for l in out.splitlines() if l.startswith('#')][:10]}")
@@ -1197,6 +1239,142 @@ with tempfile.TemporaryDirectory() as root:
           f"the card whose maximum could not be read is not named, so a port "
           f"that refuses to start has no explanation on this screen: "
           f"{[l for l in out.splitlines() if l.startswith('#')][:10]}")
+
+print("\n=== the way back is computed off the live card, at boot (#378) ===")
+# THE PIECE THAT MAKES THE STORED RECORD UNNECESSARY. The address of a card
+# being handed over can only be read in this window: after the bind the card
+# is gone from Linux and its address with it, so the tuner is the only thing
+# awake at the right moment. A record written at a commit is a fact the box
+# remembered; this is a fact it can recompute, and one that cannot be stale.
+def _routed(root, iface, gw_hex):
+    os.makedirs(f"{root}/proc/net", exist_ok=True)
+    with open(f"{root}/proc/net/route", "w") as f:
+        f.write("Iface\tDestination\tGateway\tFlags\n")
+        f.write(f"{iface}\t00000000\t{gw_hex}\t0003\n")
+
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    with open(f"{root}/sys/class/net/eth0/address", "w") as f:
+        f.write("52:54:00:AB:CD:EF\n")
+    _routed(root, "eth0", "0102A8C0")     # 192.168.2.1, little-endian
+    out = run(root, addr="192.168.2.50/24")
+    check("dev 0000:3b:00.0" in out,
+          "the only card was not claimed, so there is no handover to compute")
+    check("192.168.2.50/24" in out and "192.168.2.1" in out,
+          f"the box did not work out how to stay reachable without the card "
+          f"it is about to claim: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:8]}")
+    # THE MAC, LOWERCASED, because it is matched against what the dataplane
+    # reports for the interface it took and the two spellings must agree.
+    check("52:54:00:ab:cd:ef" in out,
+          f"the MAC is missing or not lowercased, so the card cannot be found "
+          f"again on the dataplane's side: {out!r}"[:400])
+    # AND THE GATEWAY DECODED, not copied. /proc/net/route holds a
+    # little-endian hex word, so a reader that printed it raw would put
+    # '0102A8C0' where an operator expects an address.
+    check("0102A8C0" not in out,
+          "the gateway was printed as the raw hex field rather than decoded")
+
+print("\n=== and it is written where the binder and the VTY read it ===")
+# DRIVEN AT THE FUNCTION and not through `--write`, and the reason is not
+# convenience: the tuner's write block puts files in /etc/default/grub.d and
+# /etc/vpp, so it cannot run unprivileged at all - a suite that tried would be
+# asserting on a PermissionError. What is driven here is the holder of the
+# record's SHAPE, which is what appliance/bind-dataplane-nic reads with `cat`
+# and what hexash parses into a dict, so the thing those two have to agree on
+# is exactly what this measures. test/test_bind_nic.sh reads the same four
+# fields back from its own fixture, which is the other half.
+#
+# The same two globals the exec further down sets, and for the same reason:
+# the module prefix resolves paths off __file__, so without them the import
+# raises rather than the check failing.
+_ns2 = {"__name__": "hexarouting_tune", "__file__": TUNE}
+exec(compile(open(TUNE).read().split("\ndef plan(")[0], TUNE, "exec"), _ns2)
+with tempfile.TemporaryDirectory() as root:
+    _f = f"{root}/run/hexarouting/mgmt"
+    _h = {"name": "eth0", "address": "192.168.2.50/24",
+          "mac": "52:54:00:ab:cd:ef", "gateway": "192.168.2.1"}
+    check(_ns2["write_management_path"](_h, path=_f) == _f,
+          "the writer did not report where it put the record")
+    _said = open(_f).read().split()
+    check(_said == ["eth0", "192.168.2.50/24", "52:54:00:ab:cd:ef",
+                    "192.168.2.1"],
+          f"the file does not carry name, address, MAC and gateway in that "
+          f"order, which is what the binder and the VTY both read: {_said!r}")
+
+print("\n=== a card whose way back cannot be read is NOT handed over ===")
+# An address the box cannot see is an address it cannot put back, and a
+# handover with no way back is the walk to the console every refusal in this
+# path exists to prevent. The tuner says which of the three was missing,
+# because that is the only thing an operator can act on.
+for _label, _addr, _mac, _gw in (
+        ("no address", None, "52:54:00:AB:CD:EF", "0102A8C0"),
+        ("no MAC", "192.168.2.50/24", None, "0102A8C0"),
+        ("no gateway", "192.168.2.50/24", "52:54:00:AB:CD:EF", "00000000")):
+    with tempfile.TemporaryDirectory() as root:
+        build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+              nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+        if _mac:
+            with open(f"{root}/sys/class/net/eth0/address", "w") as f:
+                f.write(_mac + "\n")
+        _routed(root, "eth0", _gw)
+        out = run(root, addr=_addr)
+        check("could not read a way back" in " ".join(out.split()),
+              f"{_label}: the box handed over its only card without saying it "
+              f"has no way back: "
+              f"{[l for l in out.splitlines() if l.startswith('#')][:8]}")
+        check("dev 0000:3b:00.0" not in out,
+              f"{_label}: the card was still claimed with no way back to put "
+              f"on the pair, so the box comes up forwarding and unreachable")
+
+print("\n=== a card with two addresses is one the box will not carry back ===")
+# THE REFUSAL IS THE POINT, not the arithmetic. A card with several global
+# addresses is a card whose management address nothing here can choose
+# between, and choosing wrong means the box comes back on an address nobody is
+# trying to reach - which is indistinguishable, from outside, from a box that
+# never came back. The same rule the VTY's own reader applies.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    with open(f"{root}/sys/class/net/eth0/address", "w") as f:
+        f.write("52:54:00:AB:CD:EF\n")
+    _routed(root, "eth0", "0102A8C0")
+    out = run(root, addr=["192.168.2.50/24", "10.9.9.9/32"])
+    check("could not read a way back" in " ".join(out.split()),
+          f"a card with two global addresses was carried back on one of them, "
+          f"chosen by position: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:8]}")
+    check("dev 0000:3b:00.0" not in out,
+          "and the card was claimed anyway, so the box hands over the port it "
+          "is reached on and guesses which address to put back")
+
+print("\n=== a stale way back is removed, not left for the next boot ===")
+# THE WHOLE ARGUMENT FOR /run. A file describing a handover THIS boot is not
+# making would be read by the binder as permission to take a card whose
+# address it cannot restore. It is rewritten or removed every boot.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    reserve(root, "eth0")                  # eth0 stays with Linux now
+    _routed(root, "eth0", "0102A8C0")
+    _f = f"{root}/run/hexarouting/mgmt"
+    os.makedirs(os.path.dirname(_f), exist_ok=True)
+    with open(_f, "w") as f:
+        f.write("eth0 192.168.2.50/24 52:54:00:ab:cd:ef 192.168.2.1\n")
+    # The boot decides there is no handover - eth0 is reserved and eth1 is
+    # what gets claimed - and the record from the earlier boot must go.
+    out = run(root, addr="192.168.2.50/24")
+    check("192.168.2.50" not in out,
+          f"the tuner reported a handover on a boot that reserves the card "
+          f"carrying the default route: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:8]}")
+    _ns2["write_management_path"](None, path=_f)
+    check(not os.path.exists(_f),
+          "a way back from an earlier boot survived one that hands over "
+          "nothing, so the binder could take a card on stale permission")
+
 
 print("\n=== a NIC that is not the default route is still claimed ===")
 # The refusal must not become "never claim anything", which would be the same

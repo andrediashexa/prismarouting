@@ -883,14 +883,40 @@ elif grep -q "no-pci" "$STARTUP" 2>/dev/null; then
   # about to type the command anyway, and the box answers for itself.
   # AND THIS IS NO LONGER THE ORDINARY BOX (#378). The box claims every card
   # it has but a reserve, and never the last one, so reaching here means it
-  # found nothing it could claim - not that nobody has typed yet. The old
-  # sentence told the operator to name a card, which on a box with a card is
-  # advice for a state this box is not in.
+  # claimed nothing - not that nobody has typed yet. The old sentence told the
+  # operator to name a card, which on a box that already looked is advice for
+  # a state this box is not in.
+  #
+  # AND WHICH OF TWO BOXES THIS IS, because they need opposite work and read
+  # identically from `no-pci` alone. A box with no card has nothing to claim;
+  # a box WITH a card that claimed nothing declined it, and the only reason it
+  # declines is that it could not work out how to stay reachable without the
+  # card it is reached on.
+  #
+  # COUNTED FROM PCI AND NOT FROM /sys/class/net, which is the same reading
+  # the tuner makes: class 0x02 is a network controller and does not change
+  # when a driver does, so this counts the same cards before and after a bind.
+  _pcinics=0
+  for _d in "$ROOT"/sys/bus/pci/devices/*; do
+    [ -e "$_d/class" ] || continue
+    case "$(cat "$_d/class" 2>/dev/null)" in
+      0x02*) _pcinics=$((_pcinics + 1)) ;;
+    esac
+  done
   noforward="no interface to forward on"
-  warn "no dataplane interface: this box has no PCI network card for the"
-  say "         dataplane to claim, so it forwards nothing. A virtio card in"
-  say "         a virtual machine does count; a card Linux cannot see does"
-  say "         not. 'show hardware' lists what this box can see."
+  if [ "$_pcinics" = 0 ]; then
+    warn "no dataplane interface: this box has no PCI network card for the"
+    say "         dataplane to claim, so it forwards nothing. A virtio card in"
+    say "         a virtual machine does count; a card Linux cannot see does"
+    say "         not. 'show hardware' lists what this box can see."
+  else
+    warn "no dataplane interface: this box has $_pcinics card(s) and claimed"
+    say "         none. The card it is reached on is the only one it could"
+    say "         have taken, and it could not read an address, a MAC and a"
+    say "         gateway to put back - so it kept the card and stayed"
+    say "         reachable. hexarouting-tune says which of the three in the"
+    say "         journal."
+  fi
 elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
   # A NAME IN A FILE IS NOT A NIC. This said [ ok ] as soon as a device
   # appeared in startup.conf, so a box whose dataplane has no interface at all

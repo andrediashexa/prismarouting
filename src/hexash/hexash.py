@@ -11192,18 +11192,58 @@ class Shell:
             pass
         return found
 
+    #: Where hexarouting-tune leaves the way back it computed, on this boot,
+    #: for a card it was about to claim (#378). In /run, so it cannot outlive
+    #: the boot that wrote it and cannot describe a card that has since been
+    #: swapped.
+    MGMT_PATH_FILE = os.environ.get(
+        "HEXA_MGMT_PATH", "/run/hexarouting/dataplane-management")
+
     def read_dataplane_mgmt(self):
         """
-        The management path recorded beside the card, or {}.
+        The management path for a card that moved to the dataplane, or {}.
 
-        Three fields in one assignment rather than three assignments: they are
-        one fact and a file holding two of the three describes a box that
-        cannot exist. A line this cannot read is read as no record at all,
-        which is the safe direction - the box then refuses to hand the card
-        over rather than handing it over with half an answer.
+        TWO SOURCES, AND THE ORDER IS THE ARGUMENT (#378).
+
+        The first is the tuner's, computed on THIS boot off the live card in
+        the window before anything was unbound, and left in /run. It is the
+        one that matters for a box that claims its own card: nobody typed, so
+        nothing was ever written at a commit, and this is the only account of
+        the address there is.
+
+        The second is the record the VTY writes when an operator names a card
+        by hand. It is still read, and it still wins, because it is the
+        operator's own answer about a box they configured deliberately - and
+        because a box mid-handover from an earlier release has one and no
+        /run file until its next boot.
+
+        Three fields rather than three assignments: they are one fact and a
+        file holding two of the three describes a box that cannot exist. A
+        line this cannot read is read as no record at all, which is the safe
+        direction - the box then refuses to hand the card over rather than
+        handing it over with half an answer.
         """
         w = self.read_tune_key(self.TUNE_MGMT_KEY).split()
-        if len(w) != 3 or "/" not in w[1]:
+        if len(w) == 3 and "/" in w[1]:
+            return {"name": w[0], "address": w[1], "mac": w[2].lower()}
+        return self.read_computed_mgmt()
+
+    def read_computed_mgmt(self):
+        """
+        The way back hexarouting-tune computed on this boot, or {}.
+
+        Four fields - name, address, MAC, gateway - and the gateway is read
+        and dropped here, because what this VTY does with the record is put
+        the address on the pair; the route comes from the configuration. It is
+        in the file because appliance/bind-dataplane-nic prints it and because
+        a record that cannot state its own next hop is one nobody can check.
+        """
+        try:
+            with open(self.MGMT_PATH_FILE, encoding="utf-8") as f:
+                w = f.read().split()
+        except (OSError, UnicodeDecodeError):
+            return {}
+        if len(w) < 3 or "/" not in w[1]:
             return {}
         return {"name": w[0], "address": w[1], "mac": w[2].lower()}
 

@@ -21,6 +21,11 @@
 # It still checks the default route itself before unbinding. Not as a second
 # opinion but as a last one: startup.conf is a file, a person can edit it, and
 # the cost of being wrong here is a box somebody has to walk to.
+#
+# The ONE other file it reads is the way back hexarouting-tune computed for
+# the card it is about to claim, in /run (#378). The tuner's output says which
+# device to bind; it has no way to say "and the box knows how to stay
+# reachable", which is the fact the last-card case needs.
 set -u
 
 ROOT=${HEXA_ROOT:-}
@@ -29,7 +34,9 @@ SYSBUS=${HEXA_PCI_BUS:-$ROOT/sys/bus/pci}
 SYSNET=${HEXA_SYS_NET:-$ROOT/sys/class/net}
 PROCROUTE=${HEXA_PROC_ROUTE:-$ROOT/proc/net/route}
 IOMMU=${HEXA_IOMMU_GROUPS:-$ROOT/sys/kernel/iommu_groups}
-TUNEENV=${HEXA_TUNE_ENV:-$ROOT/etc/hexarouting/tune.env}
+# Where hexarouting-tune leaves the way back it computed for a card it is
+# about to claim (#378). In /run, so it cannot outlive the boot that wrote it.
+MGMTPATH=${HEXA_MGMT_PATH:-$ROOT/run/hexarouting/dataplane-management}
 
 say() { echo "$@" >&2; }
 
@@ -182,25 +189,29 @@ bind_one() {  # <pci address> <driver to use>
   if [ -n "$defif" ] && [ -e "$SYSNET/$defif/device" ]; then
     defaddr=$(pci_addr_of "$SYSNET/$defif")
     if [ "$defaddr" = "$ADDR" ]; then
-      # A BOX WITH ONE CARD IS THE CASE THIS REFUSAL COULD NOT ANSWER (#303).
-      # Everywhere else it stands: another card means the operator has one to
-      # name instead, and giving this one away costs the box its management for
-      # nothing. With no other card that advice named a card the box has not
-      # got, and the box could never forward.
+      # A BOX WITH ONE CARD IS THE CASE THIS REFUSAL COULD NOT ANSWER (#303),
+      # and the answer it was given has now moved (#378). Everywhere else the
+      # refusal stands exactly as before: another card means the operator has
+      # one to name instead, giving this one away costs the box its management
+      # for nothing, and the advice can name a card that really exists.
       #
-      # Two things have to be true before the card may go. There must be no
-      # other card - checked here, from sysfs, rather than taken on trust - and
-      # the box must have written down the way back, which is what
-      # HEXA_DATAPLANE_MGMT is. That record is the address and MAC the VTY read
-      # off this card before it named it, and without it there is nothing to put
-      # on the pair once the dataplane has the port: the box would come up
-      # forwarding and unreachable, which is the outcome this whole check
-      # exists to prevent.
+      # WHAT CHANGED IS WHERE THE WAY BACK COMES FROM. It used to be
+      # HEXA_DATAPLANE_MGMT, which only existed if somebody had already typed
+      # `dataplane interface` at the VTY - so on a box that claims its own card
+      # the record was never there, this refused, and the advice it printed
+      # told the operator to type the card the tuner had just named. A loop is
+      # worse than a gap.
       #
-      # tune.env is read HERE and nowhere else in this script, and that is the
-      # one exception to reading only what the tuner wrote. The tuner's output
-      # says which device to bind; it has no way to say "and the box knows how
-      # to stay reachable", which is the fact this needs.
+      # hexarouting-tune now computes that way back on THIS boot, off the live
+      # card, in the window before anything is unbound, and leaves it in
+      # /run. So the two things that have to be true before the last card may
+      # go are unchanged in substance - there must be no other card, and the
+      # box must have a way back - and only the second one's source moved.
+      #
+      # /run AND NOT tune.env, which is the point rather than a detail: a file
+      # in /run cannot outlive the boot that wrote it, so this can never be
+      # reading a way back computed for a card that has since been swapped.
+      # The tuner rewrites or removes it every boot.
       others=""
       for n in "$SYSNET"/*; do
         [ -e "$n/device" ] || continue
@@ -208,31 +219,33 @@ bind_one() {  # <pci address> <driver to use>
         [ "$a" = "$ADDR" ] && continue
         others="$others $(basename "$n")"
       done
-      keep=$(sed -n 's/^[[:space:]]*HEXA_DATAPLANE_MGMT=//p' "$TUNEENV" \
-             2>/dev/null | tail -1 | tr -d '"'"'"'')
+      keep=$(cat "$MGMTPATH" 2>/dev/null | tail -1)
       if [ -n "$others" ] || [ -z "$keep" ]; then
         say "bind: REFUSING $ADDR: it is $defif, which carries this box's default"
         say "      route. Binding it would take the box off the network and leave"
         say "      a console somebody has to walk to."
         if [ -n "$others" ]; then
-          say "      This box has another card:$others. Name one of those in"
-          say "      /etc/hexarouting/tune.env instead."
+          say "      This box has another card:$others. Name one of those with"
+          say "      'dataplane interface' in the VTY instead."
         else
-          say "      It is the only card this box has, so it CAN be handed over -"
-          say "      but only with the management path written down beside it."
-          say "      Name it from the VTY: 'configure', 'dataplane interface"
-          say "      $defif', 'commit'."
+          # NO LONGER AN INSTRUCTION, because there is nothing the operator
+          # could usefully type: the box already claimed this card and the
+          # thing that is missing is a way back it computes for itself. What
+          # they need is which of the three could not be read, and the tuner
+          # said that in the journal a few lines above this one.
+          say "      It is the only card this box has, so it CAN be handed"
+          say "      over - but this box could not work out how to stay"
+          say "      reachable without it. hexarouting-tune says above which"
+          say "      of the address, MAC or gateway it could not read."
         fi
         return 1
       fi
-      # THE RECORD ON A ROW OF ITS OWN. It is a name, an address and a MAC -
-      # fifteen columns, eighteen and seventeen, which is what the VTY writes
-      # there and what read_dataplane_mgmt() will read back - so the sentence
-      # that carried it was 101 columns on an 80-column console (#367). The
-      # record is the one thing on this screen somebody may want to copy, and it
-      # is now the whole of the last row.
+      # THE RECORD ON A ROW OF ITS OWN. It is a name, an address, a MAC and a
+      # gateway, which is more than fits beside a sentence on an 80-column
+      # console (#367). It is also the one thing on this screen somebody may
+      # want to copy, so it is the whole of the last row.
       say "bind: $ADDR is $defif, the only card this box has. Handing it"
-      say "      over, with the management path the box recorded:"
+      say "      over, with the way back this box computed on this boot:"
       say "        $keep"
     fi
   fi

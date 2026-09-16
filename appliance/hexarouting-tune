@@ -315,6 +315,73 @@ class Topology:
         n = len([q for q in qs if q.startswith("tx-")])
         return n or None
 
+    def nic_mac(self, ifname):
+        """The card's MAC, lowercased, or None. Rooted, so a fixture has one."""
+        v = read(self.p("sys/class/net", ifname, "address"))
+        return v.strip().lower() if v else None
+
+    def nic_address(self, ifname):
+        """
+        The one global IPv4 address on this card, as `a.b.c.d/nn`, or None.
+
+        THE FIRST AND ONLY, deliberately, which is the same rule the VTY's own
+        reader applies: a card with several is a card whose management address
+        nothing here can choose between, and getting it wrong means the box
+        comes back on an address nobody is trying to reach. None is then the
+        honest answer and the caller refuses the handover rather than guessing.
+
+        Shelled out for the reason nic_max_mtu() above is: Linux publishes an
+        interface's address nowhere under /sys or /proc in a form that names
+        the interface. HEXA_IP is the same seam, so a fixture can answer.
+        """
+        try:
+            out = subprocess.run([os.environ.get("HEXA_IP", "ip"),
+                                  "-4", "-o", "addr", "show", "dev", ifname],
+                                 capture_output=True, text=True,
+                                 timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        found = []
+        for line in (out or "").splitlines():
+            w = line.split()
+            if "inet" not in w:
+                continue
+            pfx = w[w.index("inet") + 1]
+            if "scope" in w and w[w.index("scope") + 1] != "global":
+                continue
+            if "/" in pfx:
+                found.append(pfx)
+        return found[0] if len(found) == 1 else None
+
+    def default_gateway(self):
+        """
+        The next hop on the default route, or None.
+
+        From /proc/net/route, which is the file default_route_if() above
+        already reads - one source, one answer, and rooted so a fixture can
+        hold it. The field is a little-endian hex word, which is why this
+        decodes rather than parses: `0102A8C0` is 192.168.2.1.
+        """
+        try:
+            with open(self.p("proc/net/route")) as f:
+                for line in f.readlines()[1:]:
+                    w = line.split()
+                    if len(w) > 2 and w[1] == "00000000":
+                        try:
+                            n = int(w[2], 16)
+                        except ValueError:
+                            return None
+                        if n == 0:
+                            # A default route with no gateway: an on-link
+                            # route, which cannot be put back on the far side
+                            # as a next hop.
+                            return None
+                        return ".".join(str((n >> (8 * i)) & 0xFF)
+                                        for i in range(4))
+        except OSError:
+            pass
+        return None
+
     def nic_max_mtu(self, ifname):
         """
         The largest MTU this card accepts, or None if it cannot be read.
@@ -554,6 +621,82 @@ def reserved_for_linux(path):
     return None
 
 
+def management_path(topo, ifname):
+    """
+    What has to be carried over for `ifname` to go to the dataplane, or None.
+
+    COMPUTED AT BOOT, FROM THE LIVE CARD, and that is the whole of why this
+    exists rather than a record written when somebody committed (#378). The
+    read has to happen in this window and no other: after the bind the card is
+    gone from Linux and its address with it, so nothing running later can ask.
+    The tuner is the only thing awake at the right moment, which is what makes
+    the stored record unnecessary rather than merely unwanted - a fact the box
+    can recompute is not a fact it needs to remember.
+
+    It is also why the answer is worth more than the old one: a record written
+    at a commit describes the box as it was that day, and this describes the
+    box as it is on this boot. A card swapped, an address changed or a
+    gateway moved makes the stored version wrong with nothing to notice; this
+    version cannot be stale because it is never older than the boot.
+
+    None when any of the three cannot be read. An address the box cannot see
+    is an address it cannot put back, and a handover with no way back is the
+    walk to the console every refusal here exists to prevent - so the caller
+    refuses rather than hands the card over hopefully.
+    """
+    address = topo.nic_address(ifname)
+    mac = topo.nic_mac(ifname)
+    gateway = topo.default_gateway()
+    if not (address and mac and gateway):
+        return None
+    return {"name": ifname, "address": address, "mac": mac,
+            "gateway": gateway}
+
+
+#: Where the computed way back is left for the two programs that need it:
+#: appliance/bind-dataplane-nic, which will not unbind the last card without
+#: it, and hexash at boot, which puts the address on the linux_cp pair.
+#:
+#: IN /run AND NOT IN /etc, and the reason is the defect being designed out.
+#: /run is tmpfs: the file cannot outlive the boot that computed it, so a
+#: record describing a card that no longer carries that address is not
+#: something to remember to invalidate - it is impossible. An /etc file would
+#: be the stored record again with a different author.
+#: HEXA_MGMT_PATH is the seam, for the reason HEXA_IP and HEXA_MEMINFO are:
+#: this path is absolute and outside --sysfs-root, so without it a suite
+#: could only ever exercise the branch that writes nothing - which is how a
+#: check that cannot fail gets written.
+MGMT_PATH_FILE = os.environ.get("HEXA_MGMT_PATH",
+                                "/run/hexarouting/dataplane-management")
+
+
+def write_management_path(handover, path=None):
+    """
+    Leave the computed way back where the binder and the VTY read it, or
+    remove the one a previous boot left. Returns the path written, or None.
+
+    REWRITTEN OR REMOVED ON EVERY BOOT, never merely left. A file describing a
+    handover THIS boot is not making would be read by
+    appliance/bind-dataplane-nic as permission to take a card whose address it
+    cannot restore - which is the stale-record defect that putting this in
+    /run exists to prevent, arriving by the one route /run does not block.
+
+    A function rather than four lines inside main() because it is the holder
+    of the record's SHAPE: the binder reads it with `cat` and hexash parses it
+    into a dict, so what those two agree on is decided here and nowhere else.
+    """
+    path = path or MGMT_PATH_FILE
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if handover:
+        with open(path, "w") as f:
+            f.write(f"{handover['name']} {handover['address']} "
+                    f"{handover['mac']} {handover['gateway']}\n")
+        return path
+    if os.path.exists(path):
+        os.unlink(path)
+    return None
+
+
 def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
          keep_management=False, config_path=None, vpp_base=None,
          mgmt_conf=None):
@@ -580,13 +723,13 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     # https://github.com/andrediashexa/hexarouting/issues/303
     mgmt = topo.default_route_if()
     refused = None
-    handover = False
+    named_handover = False
     if ifname and mgmt and ifname == mgmt:
         others = [n for n in topo.pci_nics() if n != ifname]
         if others or not keep_management:
             refused, ifname = ifname, None
         else:
-            handover = True
+            named_handover = True
 
     # ------------------------------------- WHICH CARDS THE BOX CLAIMS (#378)
     #
@@ -652,6 +795,48 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
             claimed = list(cards)
             claim_why = "all"
 
+    # ------------------- THE WAY BACK, when the card being claimed is the
+    # one this box is reached on (#378).
+    #
+    # Computed here because here is the only moment it can be: the bind is
+    # minutes away and after it the address is gone from Linux. Not only the
+    # one-card box - a box whose default route is on a card nothing reserved
+    # is about to give that card away too, and it needs the same way back.
+    #
+    # None means the box could not read one of the three, and the binder
+    # refuses on that: a handover whose far side cannot be restored is the
+    # walk to the console.
+    handover = None
+    no_way_back = None
+    if mgmt and mgmt in claimed:
+        handover = management_path(topo, mgmt)
+        # NOT ON THE PATH THE VTY ALREADY ANSWERED FOR. `--keep-management`
+        # says the operator named this card by hand and the box wrote the way
+        # back down at that commit (#303). That record is elsewhere and this
+        # program cannot see it, so a card declined here because THIS reader
+        # came up empty would be the tuner overruling an answer that exists.
+        # The automatic path is the one with nothing behind it.
+        if handover is None and not keep_management:
+            # AND THEN IT IS NOT CLAIMED. The card stays with Linux.
+            #
+            # The binder refuses this case too and always did, but a refusal
+            # THERE is the wrong place for it to be decided: startup.conf
+            # would name a device nothing binds, VPP would start with an
+            # allowlist it cannot satisfy, and the box would come up with the
+            # dataplane holding nothing while its own self-test reports a
+            # named card the dataplane has not got - a [FAIL] on a box where
+            # nothing is broken.
+            #
+            # Deciding it here instead leaves the box exactly where it was
+            # before it tried: the card with Linux, no device claimed, and one
+            # [warn] saying so. The binder's refusal stays as the last line of
+            # defence for a startup.conf somebody edited by hand, which is
+            # what that check is for.
+            no_way_back = mgmt
+            claimed = [c for c in claimed if c != mgmt]
+            if not claimed:
+                claim_why = "no-way-back"
+
     # Read once, here, so the renderer and the report cannot ask the box
     # different questions about the same card.
     claimed_cards = [{"name": n,
@@ -688,6 +873,10 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         nic_note = (f"claiming all {len(claimed)} card(s): '{reserve}' was "
                     f"reserved for Linux at install time and this box has no "
                     f"such card now; node {node}")
+    elif claim_why == "no-way-back":
+        nic_note = (f"claiming NOTHING: '{no_way_back}' carries this box's "
+                    f"default route and no way back to it could be read, so "
+                    f"it stays with Linux; node {node}")
     elif claim_why == "all" and claimed:
         nic_note = (f"claiming all {len(claimed)} card(s) on this box; none "
                     f"is reserved for Linux; node {node}")
@@ -697,7 +886,7 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         nic_note = (f"REFUSED to give '{refused}' to the dataplane: it carries "
                     f"the default route, and the box would lose management. "
                     f"No device is claimed; using node {node}")
-    elif handover:
+    elif named_handover:
         # Said as plainly as the refusal, and for the same reason: this is the
         # line in the journal that explains a box which came back on a
         # different path than it left on.
@@ -802,6 +991,15 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "claim_why": claim_why,
         "reserve": reserve,
         "host_cards": cards,
+        # The address, MAC and gateway of the card this box is reached on,
+        # when that card is one of the ones being claimed. None otherwise, and
+        # None when they could not all be read - which the binder treats as a
+        # refusal rather than as "there was nothing to carry".
+        "handover": handover,
+        "handover_if": mgmt if (mgmt and mgmt in claimed) else None,
+        # The card this box is reached on that it declined to claim, because
+        # it could not work out how to stay reachable without it.
+        "no_way_back": no_way_back,
         "tuned_now": tuned_now,
         "hugepages_reserved": reserved,
         # The page size in kB, the name the kernel command line uses for it,
@@ -1209,6 +1407,9 @@ def render_vpp(p):
                         "  # address, so there is no device to claim.",
             "no-cards": "this box has no PCI network card for the dataplane\n"
                         "  # to claim.",
+            "no-way-back": "the only card this box has carries its default\n"
+                           "  # route, and no way back to it could be read,\n"
+                           "  # so it stays with Linux.",
         }.get(p["claim_why"],
               "no card on this box could be claimed.")
         dpdk = ("dpdk {\n"
@@ -1470,6 +1671,30 @@ def render_report(p, vpp_base):
     else:
         out.append("# dataplane NIC PCI address: none, because this box has "
                    "no card the dataplane could claim")
+    # SAID WHENEVER THE CARD THIS BOX IS REACHED ON IS ONE OF THEM, because
+    # this is the line in the journal that explains a box which came back on a
+    # different path than it left on - and, when it could not be computed, the
+    # line that explains a card the box decided not to take after all.
+    if p["handover_if"] or p["no_way_back"]:
+        h = p["handover"]
+        if h:
+            out.append(f"# management path: '{p['handover_if']}' carries this "
+                       f"box's default route and is being claimed, so its "
+                       f"address moves onto the linux_cp pair the dataplane "
+                       f"keeps for it")
+            out.append(f"#          {h['address']} via {h['gateway']} on "
+                       f"{h['mac']}")
+            out.append("#          read off the card on THIS boot, not "
+                       "remembered: nothing here can be stale")
+        else:
+            out.append(f"# management path: '{p['no_way_back']}' carries this "
+                       f"box's default route and this box could not read a "
+                       f"way back for it - one single global IPv4 address, a "
+                       f"MAC and a gateway are needed, and at least one is "
+                       f"missing")
+            out.append("#          the card is NOT claimed and stays with "
+                       "Linux: a handover with no way back is a box nobody "
+                       "can reach")
     out.append(f"# low latency (C-states off, THP off): {'yes' if p['low_latency'] else 'no'}")
     out.append(f"# state: {'kernel tuned, full configuration' if p['tuned_now'] else 'FIRST BOOT, conservative configuration until reboot'}")
     return "\n".join(out)
@@ -2062,6 +2287,22 @@ def main():
         else:
             print(f"warning: base {a.vpp_base} does not exist; generating tuning only",
                   file=sys.stderr)
+        # THE WAY BACK, before startup.conf names the card it is about to
+        # take. Order matters within this block: appliance/bind-dataplane-nic
+        # runs after this program and reads BOTH, and a startup.conf naming a
+        # card with no way back beside it is the one combination that ends
+        # with a box nobody can reach.
+        #
+        # REWRITTEN OR REMOVED ON EVERY BOOT, never left. A file describing a
+        # handover this boot is not making would be read by the binder as
+        # permission to take a card whose address it cannot restore, which is
+        # the stale-record defect that putting this in /run exists to prevent.
+        if write_management_path(p["handover"]):
+            print(f"wrote {MGMT_PATH_FILE}", file=sys.stderr)
+        else:
+            print(f"no handover on this boot; {MGMT_PATH_FILE} is not there",
+                  file=sys.stderr)
+
         os.makedirs("/etc/vpp", exist_ok=True)
         with open("/etc/vpp/startup.conf", "w") as f:
             f.write("# GENERATED by hexarouting-tune from "

@@ -2040,6 +2040,37 @@ nicconf 'dpdk {
   no-pci
 }'
 run
+# THE SAME no-pci STARTUP.CONF ON A BOX THAT HAS A CARD (#378), which is a
+# different box needing opposite work and reads identically from the file
+# alone. The box claimed nothing and it has hardware, so it declined: the only
+# card it could have taken is the one it is reached on, and it could not work
+# out how to stay reachable without it. Telling this operator "this box has no
+# PCI network card" would send them looking for hardware that is fitted.
+mkdir -p "$FAKE/root/sys/bus/pci/devices/0000:03:00.0"
+echo "0x020000" > "$FAKE/root/sys/bus/pci/devices/0000:03:00.0/class"
+run
+if said 'this box has 1 card\(s\) and claimed'; then
+  ok "a box that declined its only card is told that, not that it has none"
+else
+  bad "a box with a card that claimed nothing was told it has no card: "\
+"$(printf '%s\n' "$OUTPUT" | grep -i -A3 'no dataplane interface' || echo '<nothing>')"
+fi
+# One row's worth: the message folds at 79 and "a gateway" is on the next
+# line, so a needle spelling both halves matches nothing over a box saying
+# exactly the right thing (#285).
+if said 'could not read an address, a MAC and a'; then
+  ok "and what it could not work out, which is the only actionable part"
+else
+  bad "it says the box claimed nothing without saying why: "\
+"$(printf '%s\n' "$OUTPUT" | grep -i -A5 'no dataplane interface' || echo '<nothing>')"
+fi
+# AND BACK TO THE BOX THE CASES BELOW WERE WRITTEN AGAINST. `run` leaves its
+# output in OUTPUT, so without re-running here the next three checks would be
+# reading this box's console while describing the one before it - which is the
+# same class of mistake as a fixture built after the root is rebuilt.
+rm -rf "$FAKE/root/sys/bus/pci"
+run
+
 # NO-PCI IS NO LONGER "NOBODY HAS TYPED YET" (#378). The box claims every card
 # it has but a reserve, and never the last one, so a startup.conf that claims
 # nothing is a box with no PCI network card at all. The warning stays a
@@ -2964,6 +2995,99 @@ CONF
   printf 'noc hexa-admin vpp frr frrvty\n' > "$FAKE/groups"
   echo 0 > "$FAKE/api_rc"
 }
+
+# ============================================================================
+# THE VERDICT A ONE-NIC BOX REACHES, which is the sentence an operator reads
+# and the only one most of them will (#378).
+#
+# Not a code path and not a check: the LAST LINE, the one that survives a
+# scrolling console. The bar this change was held to is that a box with one
+# card comes out of it no worse than it was, and "no worse" is measured here
+# or it is not measured at all.
+#
+# Read through the holder in tools/selftest-verdict.sh, never spelled: four
+# readers of one sentence refused a correct medium twice (#311). VERDICT_RE
+# is all this needs - which of the four a box reached is decided by comparing
+# boxes, not by matching a sentence.
+. "$(cd "$(dirname "$0")/.." && pwd)/tools/selftest-verdict.sh"
+verdict_of() {  # the last verdict line the run printed
+  printf '%s
+' "$OUTPUT" | grep -E "$VERDICT_RE" | tail -1
+}
+
+echo "=== the verdict a one-NIC box reaches (#378) ==="
+# BOX ONE: it claimed its only card, and the dataplane has it. This is the box
+# the change exists to produce, and nothing typed to get there.
+healthy
+mkdir -p "$FAKE/root/sys/bus/pci/devices/0000:00:09.0"
+echo "0x020000" > "$FAKE/root/sys/bus/pci/devices/0000:00:09.0/class"
+run
+_v=$(verdict_of)
+if said_a_failed_verdict /dev/stdin <<EOV
+$OUTPUT
+EOV
+then
+  bad "a one-NIC box that claimed its card FAILS its own self-test:$_v"
+else
+  ok "a box that claimed its only card reaches:$_v"
+fi
+
+# BOX TWO: it declined the card, because it could not read a way back. The
+# state master is in on EVERY one-NIC box today, reached here for a different
+# reason - so the verdict must be the one master reaches and not worse.
+healthy
+mkdir -p "$FAKE/root/sys/bus/pci/devices/0000:00:09.0"
+echo "0x020000" > "$FAKE/root/sys/bus/pci/devices/0000:00:09.0/class"
+nicconf_keep() { printf '%s\n' "$1" >> "$FAKE/root/etc/vpp/startup.conf"; }
+nicconf_keep 'dpdk {
+  no-pci
+}'
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+local0                            0     down          0/0/0/0
+IFACE
+run
+_v2=$(verdict_of)
+if said_a_failed_verdict /dev/stdin <<EOV2
+$OUTPUT
+EOV2
+then
+  bad "a one-NIC box that declined its card FAILS its own self-test, which is
+worse than the box master ships:$_v2
+$(printf '%s\n' "$OUTPUT" | grep '\[FAIL\]')"
+else
+  ok "a box that declined its only card reaches:$_v2"
+fi
+# AND IT IS THE SAME VERDICT AS A BOX WITH NO CARD AT ALL, which is the box
+# master ships every one-NIC appliance as.
+#
+# COMPARED, not matched against a needle. A third reader spelling one of the
+# four verdict sentences is what refused a correct medium twice (#311), and
+# the claim here is not "it says these words" - it is "it is no worse than
+# the box this replaces". Two boxes and one comparison says exactly that, and
+# it keeps saying it if somebody rewords the sentence.
+# A box with NO PCI card at all: no hardware to claim, so nothing claimed.
+# Same startup.conf, same empty dataplane, and the only difference from the
+# box above is whether the machine has a card in it.
+healthy
+nicconf_keep 'dpdk {
+  no-pci
+}'
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+local0                            0     down          0/0/0/0
+IFACE
+run
+_v3=$(verdict_of)
+if [ "$_v2" = "$_v3" ]; then
+  ok "and it is the same verdict a box with no card at all reaches, which is
+         what master ships every one-NIC appliance as"
+else
+  bad "a box that declined its card reaches a different verdict from a box
+that has no card, so #378 made the one-NIC box worse:
+  declined: $_v2
+  no card:  $_v3"
+fi
 
 healthy
 run

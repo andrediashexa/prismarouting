@@ -187,6 +187,14 @@ def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS,
         os.unlink(mgmt)
 
 
+def computed_path(tmp, line):
+    """What hexarouting-tune left in /run on the boot that claimed a card."""
+    d = f"{tmp}/run/hexarouting"
+    os.makedirs(d, exist_ok=True)
+    with open(f"{d}/dataplane-management", "w") as f:
+        f.write(line)
+
+
 #: What `ip -4 -o addr show dev <name>` says on the fake box. The one reading
 #: in this path that is not a file: Linux publishes an interface's own address
 #: nowhere under /sys or /proc in a form that names the interface, so the
@@ -242,6 +250,10 @@ def shell_on(tmp, addrs=None, dp=None, api=None, **kw):
     # machine instead of the fixture - which is the trap HEXA_IP's comment in
     # appliance/test_tune.py describes, in this file's own seams.
     sh.MGMT_CONF = f"{tmp}/etc/network/interfaces.d/hexarouting"
+    # And the way back hexarouting-tune computes on the boot that claims a
+    # card (#378). Its real path is /run, which a suite cannot own and must
+    # not share between fixtures.
+    sh.MGMT_PATH_FILE = f"{tmp}/run/hexarouting/dataplane-management"
     sh.TUNE_ENV = f"{tmp}/etc/hexarouting/tune.env"
     sh.rb = hexash.Rollback(path=f"{tmp}/rollback")
     sh.confirm = hexash.ConfirmPending(path=f"{tmp}/confirm")
@@ -647,6 +659,54 @@ with tempfile.TemporaryDirectory() as tmp:
           f"a commented line was read as configuration: "
           f"{sh.read_dataplane_if()!r}")
     print("  a comment stays a comment")
+
+# --------------------------------- the way back, computed rather than stored
+
+print("\n=== the VTY reads the way back the tuner computed at boot (#378) ===")
+# On a box that claims its own card nobody typed, so nothing was ever written
+# at a commit and HEXA_DATAPLANE_MGMT does not exist. The tuner computed the
+# address off the live card in the window before the bind and left it in
+# /run; this is the only account of that address there is, and without it the
+# boot that hands the card over is the boot that puts nothing on the pair.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
+    computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:AB:CD:EF 10.95.200.1\n")
+    rec = sh.read_dataplane_mgmt()
+    check(rec == {"name": "ens18", "address": "10.95.200.198/24",
+                  "mac": "52:54:00:ab:cd:ef"},
+          f"the VTY cannot read what the tuner computed, so a box that "
+          f"claimed its own card comes back with no address: {rec!r}")
+
+print("\n=== and the operator's own record still wins over it ===")
+# A card named by hand is the operator's answer about a box they configured
+# deliberately, and a box mid-handover from an earlier release has that record
+# and no /run file until its next boot.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, tune="HEXA_DATAPLANE_IF=ens18\n"
+                            "HEXA_DATAPLANE_MGMT=ens18 10.0.0.9/24 "
+                            "52:54:00:00:00:99\n")
+    computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:AB:CD:EF 10.95.200.1\n")
+    rec = sh.read_dataplane_mgmt()
+    check(rec["address"] == "10.0.0.9/24",
+          f"the computed record overrode the one the operator's own commit "
+          f"wrote, so the box comes back on an address nobody chose: {rec!r}")
+
+print("\n=== a computed record missing a field is no record at all ===")
+# The safe direction, and the same rule the stored one has always had: the box
+# then declines the handover rather than making it with half an answer.
+for _bad in ("ens18\n", "ens18 10.95.200.198\n", "\n"):
+    with tempfile.TemporaryDirectory() as tmp:
+        sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
+        computed_path(tmp, _bad)
+        check(sh.read_dataplane_mgmt() == {},
+              f"a half-written record was read as a way back: {_bad!r} gave "
+              f"{sh.read_dataplane_mgmt()!r}")
+with tempfile.TemporaryDirectory() as tmp:
+    # And no file at all is the ordinary box: nothing claimed, nothing to put
+    # back, and no complaint.
+    sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
+    check(sh.read_dataplane_mgmt() == {},
+          "a box with no computed record was given one from somewhere")
 
 # ---------------------------------------------- what the box claims, and why
 
