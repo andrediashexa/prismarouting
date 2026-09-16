@@ -75,6 +75,64 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Breaking
+
+* **The box claims its dataplane cards by itself, and `dataplane interface` is
+  now an override rather than a required step**
+  ([#378](https://github.com/andrediashexa/hexarouting/issues/378)). The rule
+  is one sentence: **the dataplane claims every PCI card this box has, except
+  one reserved for Linux, and never the last one.** The reserve is the
+  management network the installer already recorded in
+  `/etc/network/interfaces.d/hexarouting` — no new setting. A fresh install now
+  forwards without being told anything, which is what this release is for.
+
+  **What it costs a box already in service.** Read this before upgrading:
+
+  | if your box | what changes on its next boot |
+  |---|---|
+  | has **one** card | the dataplane takes it. Its address, MAC and gateway move onto the `linux_cp` pair, so the box is reached *through* the dataplane. Nothing to do |
+  | has **several** cards and you kept one for Linux by simply not naming it | **the dataplane will take it.** Only the card named in `/etc/network/interfaces.d/hexarouting` is spared. A card you were using for a management VLAN, a backup path or storage is claimed unless it is that one |
+  | already names a card with `dataplane interface` | unchanged, and now **exclusive**: the box claims that card and no other. This is how you keep cards for Linux |
+  | mixes a 1500-MTU card with a jumbo-capable one | every interface starts at the **smallest** maximum of the claimed cards, because VPP takes one value for them all. `mtu <n>` under `interface` raises a port afterwards |
+  | was installed naming a card it no longer has | nothing is reserved, so **every** card is claimed |
+
+  The box says what it did and why: `show hardware` names the cards it claimed,
+  the one it reserved and the reason, and the boot self-test says it on the
+  console. A card whose address, MAC and gateway cannot all be read is **not**
+  claimed — the box keeps it rather than hand over a port it cannot restore.
+
+  To keep a card for Linux on a box with several: name the subscriber card with
+  `dataplane interface <name>` and commit, or record the card you want kept as
+  the management network. `no dataplane interface` gives the choice back.
+
+* **Naming the dataplane card no longer arms a confirmed commit.** It used to
+  be applied as `commit confirmed 30` whether or not it was asked for, so a
+  handover nobody came back to confirm undid itself and restarted the box. That
+  window stopped undoing anything once the box began claiming its own card: the
+  state its revert produced — the setting empty, on a box with one card — is
+  the state that claims that card. An operator who confirmed and one who did
+  nothing ended in the same place, and the second paid a reboot to get there.
+
+  **If you have a procedure that says "reboot, log back in and type `commit` to
+  keep the card", delete that step.** There is no window to confirm; the
+  `commit` is harmless and does nothing. `commit confirmed <minutes>` is
+  unchanged for any change you want a window around, and no revert restarts the
+  box any more.
+
+### Changed
+
+* **The way back is computed at boot instead of recorded at a commit.**
+  `hexarouting-tune` reads the address, MAC and gateway off the card it is
+  about to claim, in the window before anything is unbound — the only moment
+  they are legible — and leaves them in `/run`, so they cannot outlive the boot
+  that computed them. A record written at a commit describes the box as it was
+  that day; this one cannot be stale. The default route is put back in Linux
+  beside the address, which is what makes the box reachable off its own subnet.
+
+* **The boot self-test and `show hardware` say what the box claimed and why.**
+  A box that silently ate a card is worse than one that asked, and a box that
+  silently spared one is a card whose absence an operator cannot account for.
+
 ### Fixed
 
 ## 0.75.2 - the card decides the MTU, and a box is no longer stranded by a dataplane that will not start
