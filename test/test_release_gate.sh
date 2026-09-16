@@ -492,19 +492,41 @@ case "$*" in
 esac
 GHSTUB
 chmod +x "$GHBIN/gh"
-# BOTH NUMBERS, which is what makes this a count and not a flag. This fixture
-# is not a git checkout whose history records a wiki pull, so the wiki check
-# is red here whatever else happens - that is why the case above exists at
-# all, to show the title check is reached from behind it. One refusal is the
-# fixture's own state; two is that plus the tracker.
+# THE COUNT IS READ OFF THE RUN, not written here. It was `2`, on the argument
+# that this fixture is not a git checkout whose history records a wiki pull so
+# the wiki check is red "whatever else happens" - and that stopped being true
+# the day the wiki was published, which is the day the product got better. The
+# case then failed on a gate that was working, saying it had refused and never
+# said so when it had said so about a different number.
+#
+# That is the shape test/test_wiki_roundtrip.sh was repaired for in this same
+# release: a check whose green depends on a product defect still being there.
+# What this case is actually about is that the SUMMARY AGREES WITH THE RUN, so
+# it counts the document checks that really refused - each prints its own
+# `error:` line - and demands the summary say that number. It goes red if the
+# gate miscounts in either direction, and it does not care which checks the
+# fixture happens to make red.
 run_gate "v$V"
 BASE_SAID=$OUT
+# Every document refusal opens with `error: ` at column 0; so does the summary,
+# which is excluded by name. `grep -c` over the whole run would also catch the
+# indented continuation lines, so the anchor matters.
+_reds=$(printf '%s\n' "$OUT" \
+  | grep -c "^error: " || true)
+_reds=$((_reds - 1))
 case "$OUT" in
-  *"2 of the four document checks above refused this"*)
-    ok "it says how many refused it, and which four they are" ;;
-  *) bad "the gate refused and never said so; it ended on:
+  *"$_reds of the four document checks above refused this"*)
+    ok "it says how many refused it, and the number is the one the run \
+produced: $_reds" ;;
+  *) bad "the gate refused and never said so, or said a number the run does \
+not support ($_reds refusal(s) printed); it ended on:
 $(printf '%s' "$OUT" | grep -A1 'document checks above' | head -2)" ;;
 esac
+[ "$_reds" -ge 1 ] \
+  && ok "and at least one document check really did refuse, so this case is \
+not asserting about a clean run" \
+  || bad "no document check refused at all, so the summary above was measured \
+against nothing - the fixture no longer breaks anything"
 [ "$RC" != 0 ] \
   && ok "and the refusal is the exit status too" \
   || bad "the gate exited 0 with a document check red (rc=$RC)"
@@ -545,15 +567,34 @@ did not happen:"
 printf '%s\n' "$OUT" | grep -q "the CHANGELOG was NOT checked against the tracker, and it says why" \
   && ok "and so does the CHANGELOG check" \
   || bad "the CHANGELOG check did not say the comparison did not happen"
-# The count is the assertion that neither skip was counted as a refusal. The
-# wiki check is red in this fixture whatever else happens, so ONE is the
-# fixture's own state and anything above it is a skip that was counted.
-case "$OUT" in
-  *"1 of the four document checks above refused this"*)
-    ok "and neither skip is counted among the refusals" ;;
-  *) bad "a skip was counted as a refusal; the gate said:
+# THE ASSERTION IS THAT NEITHER SKIP WAS COUNTED, and it is written so it does
+# not depend on how many OTHER checks this fixture happens to break. It used to
+# read "1 of the four", on the same assumption as the case above - that the
+# wiki check is red here whatever happens - and that assumption died the day
+# the wiki was published.
+#
+# Two skips fired. So the summary must name exactly the number of checks that
+# printed a refusal of their own, and if none did there is no summary at all,
+# which is the same statement said by its absence. Either way a skip counted as
+# a refusal makes the number one too many and this goes red.
+_reds=$(printf '%s\n' "$OUT" | grep -c "^error: " || true)
+_said=$(printf '%s\n' "$OUT" | grep -c "document checks above refused" || true)
+if [ "$_said" = 0 ]; then
+  [ "$_reds" = 0 ] \
+    && ok "no document check refused, so there is no summary and neither skip \
+was counted" \
+    || bad "$_reds refusal(s) were printed and the gate summarised none"
+else
+  _reds=$((_reds - 1))
+  case "$OUT" in
+    *"$_reds of the four document checks above refused this"*)
+      ok "neither skip is counted among the refusals: $_reds refused, $_reds \
+summarised" ;;
+    *) bad "a skip was counted as a refusal; $_reds check(s) printed one and \
+the gate said:
 $(printf '%s' "$OUT" | grep 'document checks above' | head -1)" ;;
-esac
+  esac
+fi
 # TWO, and the number is the point. This replaced a flag that each of three
 # checks set to 1, so a run with all three red and a run with one red exited
 # identically. Two is what this fixture produces - its history records no wiki

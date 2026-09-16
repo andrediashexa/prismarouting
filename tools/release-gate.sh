@@ -624,9 +624,36 @@ echo "==> booting it"
   tail -20 "$WORK/boot.log" >&2
   exit 1
 }
-said_a_verdict "$WORK/boot.log" || {
+# THE BOX'S OWN CONSOLE, NOT THE LAB'S RENDERING OF IT.
+#
+# boot.log is what lab/boot-iso.sh PRINTED, and what it prints of the self-test
+# is `sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40` - capped,
+# so an operator reading a lab run is not handed the whole report twice. The
+# verdict is the LAST line of that report. The report grew past forty lines in
+# 0.75.0, the cap swallowed the verdict, and this gate refused a medium that
+# had booted and said "HexaRouting ready, with 3 warning(s) above." on line 704
+# of its console. The refusal was not true of the box.
+#
+# That is the shape #369 is about, in the gate rather than in a reader: the
+# corpus was the lab's rendering of the box's output and not the box's output.
+# lab/boot-iso.sh asks /tmp/clean.log for the same verdict and was right all
+# along; only this caller was reading second-hand.
+#
+# The console copy is the guest's log, written out by the lab. Its ABSENCE is a
+# refusal and not a skip: a gate that shrugs when the console is missing is a
+# gate that publishes a medium nobody watched boot.
+BOOTLOG=$WORK/boot-console.log
+[ -s "$BOOTLOG" ] || {
+  echo "error: the medium booted and left no console log at $BOOTLOG, so" >&2
+  echo "       nothing here knows what it said. lab/boot-iso.sh copies the" >&2
+  echo "       guest's console there; if that stopped happening, the verdict" >&2
+  echo "       below would be read off the lab's own summary, which is capped" >&2
+  echo "       and drops the last line of the report." >&2
+  exit 1
+}
+said_a_verdict "$BOOTLOG" || {
   echo "error: the medium booted and its self-test reached no verdict." >&2
-  grep -E "\[FAIL\]|\[warn\]" "$WORK/boot.log" | head -10 >&2
+  grep -E "\[FAIL\]|\[warn\]" "$BOOTLOG" | head -10 >&2
   exit 1
 }
 # AND THAT VERDICT HAS TO BE A GOOD ONE (#311). Reaching a verdict is true of a
@@ -637,11 +664,11 @@ said_a_verdict "$WORK/boot.log" || {
 #
 # said_a_good_verdict() has been in tools/selftest-verdict.sh since that file
 # was written and nothing called it.
-said_a_good_verdict "$WORK/boot.log" || {
+said_a_good_verdict "$BOOTLOG" || {
   echo "error: the medium booted and FAILED ITS OWN SELF-TEST. This is the" >&2
   echo "       image an operator is handed, so a failed check here is a" >&2
   echo "       defect that ships." >&2
-  grep -E "\[FAIL\]" "$WORK/boot.log" | head -10 >&2
+  grep -E "\[FAIL\]" "$BOOTLOG" | head -10 >&2
   exit 1
 }
 
@@ -726,6 +753,6 @@ echo "    sha256 $(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
 # only the medium is a release that only people with an empty disk can take.
 echo "    $WORK/$UPGRADE"
 echo "    sha256 $(sha256sum "$WORK/$UPGRADE" | cut -d' ' -f1)"
-grep -E "^\s+\[ ok \] HexaRouting|$VERDICT_RE" "$WORK/boot.log" | sed 's/^/    /'
+grep -E "^\s+\[ ok \] HexaRouting|$VERDICT_RE" "$BOOTLOG" | sed 's/^/    /'
 grep -E "\[ ok \] the installed box can configure a pool" "$WORK/install.log" \
   | sed 's/^/    /'

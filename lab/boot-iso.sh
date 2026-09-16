@@ -89,7 +89,19 @@ sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log > /tmp/clean.log
 # to prevent.
 cp /tmp/clean.log "${LOGCOPY:-/src/boot-console.log}" 2>/dev/null || true
 
-sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
+# THE WHOLE REPORT, and the cap is a guard rather than a length.
+#
+# The sed range is bounded by the report's own closing rule, so `head` is only
+# here for a console that lost that rule and would otherwise spew the rest of
+# the boot. It was 40, and the report reached 46 lines in 0.75.0: the last six
+# went missing, and the verdict is the last line of a report. Nobody running
+# this lab by hand saw whether the box said it was ready.
+#
+# tools/release-gate.sh used to read THIS rendering for its verdict and refused
+# a medium that had booted and said "HexaRouting ready". It reads the console
+# copy now, so the number below is about readability alone - which is why it
+# can be generous.
+sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -120
 # "ready" alone does not prove the ISO carries a version stamp: the self-test
 # prints the version line and carries on without it. Demanding both stops a
 # build that lost the stamp from passing green.

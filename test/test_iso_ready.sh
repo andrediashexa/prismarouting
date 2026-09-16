@@ -100,9 +100,24 @@ READERS=$(grep -rlE 'ISO=\$\{ISO:-.*version-stamp\.sh --filename' \
 " is derived from nothing"
 # tools/test-install.sh is a wrapper around one of them and a Makefile recipe
 # names the wrapper, not the lab.
+#
+# A WRAPPER RUNS A READER. It does not merely name one, and the difference is
+# not academic: tools/release-gate.sh's console-log refusal says "lab/boot-iso.sh
+# copies the guest's console there", which is a sentence for whoever reads the
+# refusal and not a call. Counting it made `release-gate` a target that opens
+# the medium, and the loop below then demanded it consult iso-ready.sh - a
+# guard about a PREBUILT image, which the gate does not use because it builds
+# its own inside its clone. A needle that matches a label rather than a call is
+# one of the shapes docs/TESTING.md names.
+#
+# So comment lines and message lines are dropped before looking. What is left
+# is lines that could execute something.
 WRAPPERS=$(for r in $READERS; do
              grep -rl "$r" "$REPO/tools"/*.sh 2>/dev/null \
-             | while read -r f; do basename "$f"; done
+             | while read -r f; do
+                 grep -vE '^[[:space:]]*#|^[[:space:]]*(echo|printf)[[:space:]]' \
+                   "$f" | grep -q "$r" && basename "$f"
+               done
            done | sort -u)
 # Anchored on the path separator and with the dot escaped, because a bare
 # `lab.sh` matches `/src/lab/hw-lab.sh` as a substring - hw-lab opens no medium

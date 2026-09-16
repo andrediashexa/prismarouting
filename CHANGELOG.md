@@ -126,6 +126,60 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The release gate refused a medium that had booted and said it was ready.**
+  Found by cutting this release: the gate built the ISO, booted it, and stopped
+  with *"the medium booted and its self-test reached no verdict"*. The box had
+  reached one. Line 704 of its console reads
+  `HexaRouting ready, with 3 warning(s) above.`
+
+  The gate was not asking the box. It greps `boot.log`, which is what
+  `lab/boot-iso.sh` PRINTED, and what that lab prints of the self-test is
+  `sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40`. **The report
+  reached 46 lines in this release** and the verdict is its last line, so the
+  cap swallowed it. Measured on the run that refused: the lab's rendering is 49
+  lines and carries no verdict; the box's own console carries it.
+
+  That is the shape [#369](https://github.com/andrediashexa/hexarouting/issues/369)
+  is about, in the gate instead of in a reader - *the corpus was the lab's
+  rendering of the box's output and not the box's output*. `lab/boot-iso.sh`
+  asks `/tmp/clean.log` for the same verdict and was right all along; only this
+  caller was reading second-hand. All four of the gate's boot readers now ask
+  the console copy, and its **absence is a refusal** rather than a skip: a gate
+  that shrugs when the console is missing is a gate that publishes a medium
+  nobody watched boot.
+
+  The lab's own cap is raised to 120 in the same breath, because whoever runs
+  that lab by hand was not being shown the verdict either. It stays a cap and
+  not a length: the `sed` range is bounded by the report's own closing rule, so
+  `head` is only there for a console that lost it.
+
+* **Two checks that went red on work that was correct, both because the product
+  got better.** `test/test_release_gate.sh` hard-coded that **two** of the
+  gate's document checks refuse its fixture, on the stated argument that the
+  wiki check *"is red here whatever else happens"*. That stopped being true the
+  day the wiki was published. The case then reported that a working gate had
+  refused and never said so, when it had said so about a different number.
+
+  It is the same disease this release cured in `test/test_wiki_roundtrip.sh`,
+  caught in a second file. Both cases now **read the count off the run** - each
+  document refusal opens with `error: ` at column zero - and demand the summary
+  say that number, so they go red if the gate miscounts in either direction and
+  do not care which checks the fixture happens to break. A guard beside them
+  refuses a run where nothing refused at all, so the assertion cannot pass by
+  measuring a clean run.
+
+* **A needle that matched a label rather than a call.**
+  `test/test_iso_ready.sh` finds the Makefile targets that open the medium by
+  finding the scripts under `tools/` that **mention** one of the labs which
+  open it. The gate's new console-log refusal says *"lab/boot-iso.sh copies the
+  guest's console there"*, which is a sentence for whoever reads the refusal
+  and not a call - and that made `release-gate` a target that opens the medium,
+  so the check demanded it consult `tools/iso-ready.sh`, a guard about a
+  PREBUILT image the gate does not use because it builds its own. Comment lines
+  and message lines are dropped before looking now. Shown still failing on the
+  real defect: with the `iso-ready.sh` line taken out of the `test-iso` recipe,
+  it names it.
+
 * **Two defects the stride work uncovered, recorded rather than fixed**
   ([#375](https://github.com/andrediashexa/hexarouting/issues/375),
   [#376](https://github.com/andrediashexa/hexarouting/issues/376)). Both were
