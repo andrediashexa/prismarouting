@@ -2307,6 +2307,18 @@ otherwise in exactly the right place - PHASE 5 boots the installed disk with
 the card already in the dataplane - and passed because its card was easier
 than any real one.
 
+**And a screen quoted in `docs/` is compared against nothing**
+([#384](https://github.com/andrediashexa/hexarouting/issues/384)).
+`test/test_wiki_screens.py` drives the product and compares every screen the
+public wiki quotes - 25 character for character, another 34 by template. It
+covers `wiki/` and nothing else. `docs/routing.md` carries a screen verbatim
+and `test/test_doc_copies.py` reads that file only for column-width claims, so
+a transcript there that the box has stopped printing is caught by no one.
+Measured while working out what would catch the one #378 is about to make
+obsolete. The same reason put three sections of that file in Portuguese once:
+`docs/` was excused from a check that covered everywhere else, and an excused
+directory is a directory nobody measures.
+
 **Two gaps of the same kind, still open**
 ([#383](https://github.com/andrediashexa/hexarouting/issues/383)). The guest
 has two CPUs where the reporting box has eight, so it gets one worker and
