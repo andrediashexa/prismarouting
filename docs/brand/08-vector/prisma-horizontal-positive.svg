@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 600" role="img" aria-label="PRISMA">
+  <g transform="translate(0 0)">
+    <g fill="none" stroke="#080B0A" stroke-width="34"><path d="M310 35 545 170v270L310 575 75 440V170Z"/></g>
+    <g fill="#33CC33"><path d="m310 115 102 180-102 180-102-180Z"/><path d="M15 282h235v26H15z"/><circle cx="15" cy="295" r="28"/><path d="M370 277h125l105-75 15 21-110 80H370z"/><circle cx="622" cy="208" r="28"/><path d="M370 282h250v26H370z"/><circle cx="622" cy="295" r="28"/><path d="M370 303h135l110 80-15 21-105-75H370z"/><circle cx="622" cy="398" r="28"/></g>
+  </g>
+  <text x="700" y="390" fill="#080B0A" font-family="DejaVu Sans,Arial,sans-serif" font-size="230" font-weight="900" letter-spacing="3">PRISM</text>
+  <path fill="#080B0A" d="M1470 190h120l-60 200Z"/><path fill="#33CC33" d="m1530 305 30 85h-60Z"/>
+</svg>
