@@ -2276,18 +2276,52 @@ and the 89-lab suite passed on the broken tree. A check now hands the
 generated stanza to the VPP binary.
 
 **VPP stops after the card is named by hand**
-([#377](https://github.com/andrediashexa/hexarouting/issues/377)) - open, and
-now partly answered by #380. What remains is whether anything else on that
+([#377](https://github.com/andrediashexa/hexarouting/issues/377)) - answered
+by #380. What remains is whether anything else on that
 path is wrong once the keyword is gone, measured on a guest rather than
 argued.
 
-**The card is taken in the mode where nothing can claim it**
-([#379](https://github.com/andrediashexa/hexarouting/issues/379)) - open. In
-FIRST BOOT mode the tuner disables the DPDK plugin, and `apply-tuning` binds
-the card anyway: the only condition on the bind is *is the dataplane running*,
-never *will the dataplane use this card*. The two decisions are made in the
-same script, one function apart, and never compared. On a box the tuner judges
-too small for a hugepage pool this is not a first-boot state, it is permanent.
+**A box stranded by a dataplane that will not start**
+([#379](https://github.com/andrediashexa/hexarouting/issues/379)) - *fixed*.
+The issue was filed on a premise that turned out to be wrong, and the
+correction is the useful part: `apply-tuning` does NOT bind in FIRST BOOT
+mode, because the conservative profile names no device and the binder binds
+what `startup.conf` names. Nothing asserted that, so it held by construction
+and by nobody's decision; `test/test_bind_nic.sh` asserts it now.
+
+The real exposure was one step over. With a `dev` line - every boot after the
+first - the card is handed over **before anything has found out whether VPP
+will start with the file beside it**, and if it does not the box has no kernel
+interface and no dataplane interface. `appliance/give-the-card-back` runs on
+`OnFailure` from `vpp.service` and puts the card back, so a dataplane that
+cannot start costs a reboot rather than a drive to the site.
+
+**The lab's guest had a card no hypervisor produces**
+([#381](https://github.com/andrediashexa/hexarouting/issues/381)) - *fixed*.
+`lab/install-iso.sh` created its NIC without `host_mtu`, so qemu negotiated no
+MTU feature and the guest reported a maximum of 65535. The tuner only says
+anything about MTU below 9000, so **that branch was unreachable here and
+reachable on every real VM**. Measured over a complete gate run: `grep -i
+"max MTU"` across the whole guest console returned nothing at all. The lab was
+otherwise in exactly the right place - PHASE 5 boots the installed disk with
+the card already in the dataplane - and passed because its card was easier
+than any real one. Two gaps of the same kind remain and are recorded on that
+issue: the guest has two CPUs where a real box has eight, so nothing that
+depends on more than one worker is exercised end to end, and it has no IOMMU,
+so the `vfio-pci` bind path is never taken.
+
+**The interface comes up in `error` state at 9000**
+([#382](https://github.com/andrediashexa/hexarouting/issues/382)) - open, and
+it is the maintainer's original report. On a card whose maximum is 1500 the
+box takes the card, puts the address on the pair, and the dataplane interface
+sits in `error` at MTU 9000 and forwards nothing. Every structural check
+passes; the box is assembled correctly and cannot pass a packet. #330 saw this
+and was right about it; its remedy was a keyword VPP has not got, which is
+#380. So 0.74.x forwarded on such a card by accident of never setting an MTU,
+0.75.0 could not start, and 0.75.1 starts and does not forward. The product
+already has the mechanism - `sw_interface_set_mtu` over the binary API, on the
+interface and its TAP - and nothing calls it unless an operator configured an
+MTU. `lab/install-iso.sh` PHASE 5 reproduces it and is red until this lands.
 
 **The box must claim its card without being told**
 ([#378](https://github.com/andrediashexa/hexarouting/issues/378)) - open, and
