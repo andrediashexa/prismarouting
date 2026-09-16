@@ -137,6 +137,66 @@ else
 fi
 
 echo
+echo "=== does VPP accept the dpdk stanza the TUNER writes? ==="
+# THE ONE BLIND SPOT THIS FILE HAD, and it cost a release.
+#
+# Everything above runs in a container: no isolated CPUs, no reserved
+# hugepages, so the tuner emits its FIRST BOOT profile, which has no `dpdk`
+# stanza at all. The release gate has the same blind spot for the same reason
+# - it installs to a disk and boots it ONCE, and that first boot is untuned.
+# So the stanza a box actually runs on, from its second boot for the rest of
+# its life, had never been given to a real VPP by anything here.
+#
+# v0.75.0 shipped `mtu 1500` inside the dev stanza (#330). The keyword does
+# not exist. VPP does not ignore it, it refuses the file and exits, and
+# vpp.service carries Restart=always:
+#
+#   vpp[3322]: dpdk_device_config: unknown input `mtu 1500'
+#   vpp.service: Failed with result 'start-limit-hit'.
+#
+# VPP IS THE ONLY AUTHORITY ON WHAT VPP ACCEPTS. Checking the text here
+# against a list of keywords kept in this repository would be a second copy of
+# VPP's grammar, and a second copy is what shipped the first one.
+#
+# THE STANZA AND NOT THE WHOLE FILE, and the reason is the first thing that
+# went wrong when this was written. Handed the complete tuned config, VPP in
+# this container dies in `memory` before it ever reads `dpdk`: the profile
+# asks for hugepage-backed memory that a container has not got, so the run
+# ends in a segfault with no parse error printed at all. A check that cannot
+# reach the thing it is about is a check that cannot fail, which is exactly
+# what shipped the defect. So the generated stanza is lifted out verbatim and
+# given to VPP inside a file it can otherwise start on. What is measured is
+# the grammar of what the tuner wrote, which is where a keyword gets invented.
+TR=$(mktemp -d)
+python3 /src/appliance/fixtures/tuned-root.py "$TR" >/dev/null 2>&1
+# HEXA_IP is the seam the tuner asks a card's maximum MTU through. The fixture
+# answers 1500, the way a virtio guest does, which is the case that produced
+# the shipped defect.
+HEXA_IP="$TR/bin/ip" \
+python3 /src/appliance/hexarouting-tune --sysfs-root "$TR" --interface ens18 \
+  > "$TR/full.conf" 2>/dev/null
+sed -n '/^dpdk {/,/^}/p' "$TR/full.conf" > "$TR/stanza"
+if [ ! -s "$TR/stanza" ]; then
+  bad "the synthetic box did not come out TUNED, so there is no dpdk stanza"\
+" to hand to VPP - this check is measuring the wrong box"
+  grep -i "state:" "$TR/full.conf" | sed 's/^/    /'
+else
+  say "the tuned box names a device: $(grep -c "^  dev " "$TR/stanza") dev stanza(s)"
+  { echo "unix { nodaemon }"; cat "$TR/stanza"; } > "$TR/probe.conf"
+  vout=$(timeout 20 vpp -c "$TR/probe.conf" 2>&1 || true)
+  # `unknown input` is VPP's own words for a keyword it has not got, and it is
+  # fatal. Everything else in that output - no such device, no hugepages - is
+  # this container and not the stanza.
+  if printf '%s\n' "$vout" | grep -q "unknown input"; then
+    bad "VPP refuses a keyword the tuner writes into the dpdk stanza:"
+    printf '%s\n' "$vout" | grep "unknown input" | sed 's/^/    /'
+  else
+    say "VPP reads every keyword in it"
+  fi
+fi
+rm -rf "$TR"
+
+echo
 echo "=== is a CGNAT configuration applicable to it? ==="
 vppctl bpa pool test inside 100.64.0.0/22 outside 200.150.0.16/30 >/dev/null 2>&1
 vppctl show bpa pool | head -1 | grep -q "pool test" \

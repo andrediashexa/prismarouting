@@ -839,19 +839,47 @@ def render_vpp(p):
     have_q = p["nic_tx_queues"]
     nq = min(want_q, have_q) if have_q else want_q
     if p["nic_pci"]:
-        # AND AN MTU THE CARD ACCEPTS. VPP defaults a DPDK interface to 9000,
-        # a virtio card's maxmtu is 1500, and the mismatch is the other half
-        # of the same -22: `rte_eth_dev_set_mtu failed (mtu 8996)`. Written
-        # only when the card reports a maximum below VPP's default, so a
-        # jumbo-capable NIC keeps the behaviour it has always had.
-        mtu_line = ""
-        if p["nic_max_mtu"] and p["nic_max_mtu"] < 9000:
-            mtu_line = f"    mtu {p['nic_max_mtu']}\n"
+        # NO MTU LINE, BECAUSE THIS VPP HAS NO SUCH KNOB.
+        #
+        # #330 wrote `mtu <n>` into the dev stanza to stop VPP asking a
+        # virtio card for a 9000-byte MTU it has not got. The keyword does
+        # not exist. VPP does not ignore it either - it refuses the whole
+        # file and exits, and vpp.service carries Restart=always, so the box
+        # loops until systemd gives up:
+        #
+        #   vpp[3322]: dpdk_device_config: unknown input `mtu 1500'
+        #   vpp.service: Start request repeated too quickly.
+        #   vpp.service: Failed with result 'start-limit-hit'.
+        #
+        # That shipped in v0.75.0 and it stops the dataplane starting on
+        # every box whose card reports a maximum below 9000, which is every
+        # virtio guest. Reported from an installed box; the journal above is
+        # that box's.
+        #
+        # Measured against the real VPP in hexarouting-dev:26.06, by feeding
+        # it one keyword at a time, because the question "what does VPP
+        # accept" has exactly one authority and it is not this file:
+        #
+        #   dev { mtu 1500 }           unknown input
+        #   dev { max-frame-size ... } unknown input
+        #   dev { default-mtu ... }    unknown input
+        #   dpdk { max-frame-size ... }unknown input
+        #   dev { num-rx-desc 512 }    accepted
+        #   dev { tag x } dev { name eth0 }  accepted
+        #
+        # There is no MTU setting anywhere in this VPP's dpdk configuration,
+        # so there is nothing to write here. What #330 was actually seeing is
+        # a log line from rte_eth_dev_set_mtu, which is a complaint and not a
+        # refusal: the device still comes up. A dataplane that starts and
+        # logs about an MTU is strictly better than one that does not start.
+        #
+        # The other half of #330 - the TX queue count - was a real -22 that
+        # DID refuse the device, and it stays. That one is measured from the
+        # card, and it works.
         dpdk = ("dpdk {\n"
                 f"  dev {p['nic_pci']} {{\n"
                 f"    num-rx-queues {nq}\n"
                 f"    num-tx-queues {nq}\n"
-                f"{mtu_line}"
                 "  }\n"
                 f"  dev default {{\n    num-rx-queues {nq}\n  }}\n"
                 "}\n\n")
@@ -943,8 +971,16 @@ def render_report(p, vpp_base):
         out.append(f"# NIC queues: {p['nic_tx_queues']}, enough for "
                    f"{_w} worker(s)")
     if p["nic_max_mtu"] and p["nic_max_mtu"] < 9000:
+        # SAID, AND NOT ACTED ON, which is the honest report of what this
+        # tuner can do. It wrote `mtu <n>` into the dev stanza until that
+        # keyword turned out not to exist and to stop VPP starting at all.
+        # There is no MTU setting in this VPP's dpdk configuration, so the
+        # operator is told what the card is and what VPP will try, and the
+        # log line from rte_eth_dev_set_mtu that follows is a complaint about
+        # a device that still comes up.
         out.append(f"# NIC max MTU: {p['nic_max_mtu']}, below VPP's default "
-                   f"of 9000, so the interface is set to {p['nic_max_mtu']}")
+                   f"of 9000. VPP has no MTU setting in its dpdk stanza, so "
+                   f"it will ask for 9000, be refused by the card and log it")
     out.append(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
           f"(sized for {p['subscribers']} subscribers), "
           f"{p['hugepages_reserved']} reserved right now")
