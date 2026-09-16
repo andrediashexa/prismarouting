@@ -1767,6 +1767,16 @@ With the MTU aligned, the adjacency reached **`Full` in 8 seconds**.
 
 * MTU **MUST** be explicit configuration, never inherited.
 
+**The box now supplies that explicit configuration itself when the card cannot
+carry VPP's default.** On a card whose maximum MTU is below 9000 - every
+virtual machine - the tuner writes `ethernet { default-mtu <the card's
+maximum> }` into `startup.conf`, so the dataplane interface *and* its
+`linux_cp` pair start at a value the card accepts with nobody told to do
+anything ([#382](https://github.com/andrediashexa/hexarouting/issues/382), and
+`docs/appliance.md` carries the measurements). That is a **default, not an
+override**: `mtu <n>` below is applied after VPP is up and wins. It also does
+not touch a card that can do 9000 or more.
+
 **OSPFv3 has the same stall, for the same reason.** RFC 5340 keeps the
 Interface MTU field in the database description packet, so a `linux_cp` pair
 at 9000 against a 1500 wire stops an OSPFv3 adjacency short of `Full` exactly

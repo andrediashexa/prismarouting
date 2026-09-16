@@ -1270,6 +1270,45 @@ check("NIC max MTU: 1500" in _vout,
       f"the MTU the card forced was not reported: "
       f"{[l for l in _vout.splitlines() if 'MTU' in l]}")
 
+# AND IT IS WRITTEN, which is what #382 is. Reporting it was the whole of what
+# this tuner did about the card's MTU until then, on the reading that VPP's
+# `rte_eth_dev_set_mtu failed` was a complaint about a device that still came
+# up. Measured on a booted box: the device does not come up - the port sits in
+# `error` state with `flags: pmd-init-fail` - and no runtime call recovers it.
+#
+# THE VALUE, not the presence of a stanza. The number is the card's, read off
+# the card, and a stanza carrying VPP's own 9000 would leave the box exactly
+# where it was while looking like a fix.
+check("ethernet {" in _vout and "default-mtu 1500" in _vout,
+      f"a card whose maximum is 1500 was left to start at VPP's 9000, which "
+      f"is the driver refusing the port and the box forwarding nothing: "
+      f"{[l.strip() for l in _vout.splitlines() if 'mtu' in l.lower()]}")
+# IN THE dpdk STANZA IT WOULD BE #380 AGAIN, so the two are asserted apart:
+# the keyword is legal in `ethernet` and is `unknown input` in `dpdk`, and a
+# stanza is not a place-independent thing.
+check("default-mtu" not in _dpdk_stanza(_vout),
+      f"the default-mtu landed in the dpdk stanza, where VPP answers "
+      f"'unknown input' and refuses the whole file: "
+      f"{_dpdk_stanza(_vout)!r}")
+
+print("\n=== the first-boot profile says the same thing about the card ===")
+# Both profiles or neither. A box boots conservative until the kernel has
+# reserved hugepages, and a card that cannot do 9000 cannot do 9000 on that
+# boot either - two files that disagree about the hardware is the shape this
+# repository keeps removing.
+_fb = tempfile.mkdtemp()
+build(_fb, 1, 8, 1, nic_node=0, hugepages_gb=0, isolated="", ram_gb=8,
+      nic_pci="0000:00:12.0", nic_bus="virtio3", tx_queues=1)
+_fbout = run(_fb, "--interface", "eth0", "--subscribers", "200000",
+             maxmtu=1500)
+check("FIRST BOOT MODE" in _fbout,
+      f"the fixture is not in first-boot mode, so this is measuring the "
+      f"other profile: {_fbout[:200]!r}")
+check("default-mtu 1500" in _fbout,
+      f"the first-boot profile leaves interfaces at 9000 on a card that "
+      f"cannot carry it: "
+      f"{[l.strip() for l in _fbout.splitlines() if 'mtu' in l.lower()]}")
+
 print("\n=== and a card that can do jumbo is left alone ===")
 # The other direction, and it is the one that keeps this from being a
 # regression on the hardware this product was built for. A 10G card with eight
@@ -1290,6 +1329,13 @@ check("mtu " not in _jout.split("dpdk {", 1)[-1].split("}", 1)[0],
       f"a jumbo-capable card was given an mtu line, which changes what every "
       f"physical box has always done: "
       f"{_jout.split('dpdk {', 1)[-1].split('}', 1)[0]!r}")
+# AND NO ethernet STANZA EITHER. #382 is about a card that cannot do 9000; a
+# card that can keeps VPP's own default, and writing 9216 here would change
+# what every physical box has always started at for no reason anybody asked
+# for.
+check("default-mtu" not in _jout,
+      f"a card whose maximum is above VPP's default was given a default-mtu "
+      f"anyway: {[l.strip() for l in _jout.splitlines() if 'mtu' in l.lower()]}")
 
 print("\n=== and the check is reading a card at all ===")
 # Without this the two sections above pass on a fixture whose queue directory

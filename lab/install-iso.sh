@@ -168,8 +168,15 @@ SSH_PORT=${SSH_PORT:-2222}
 # So the card is given the maximum a real one has. A guest that is easier than
 # the machines this product runs on is a guest that answers a different
 # question.
+#
+# ONE HOLDER, because PHASE 5 now asserts against it. The maximum this lab
+# gives its card and the maximum it expects the dataplane to come up at are
+# the same number, and two copies of it would drift the first time somebody
+# changed the qemu line - leaving an assertion that compares the box against
+# a number nothing on the box ever had.
+MGMT_MAXMTU=${MGMT_MAXMTU:-1500}
 MGMT_NET="-netdev user,id=mgmt,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
-  -device virtio-net-pci,netdev=mgmt,addr=0x9,host_mtu=1500"
+  -device virtio-net-pci,netdev=mgmt,addr=0x9,host_mtu=$MGMT_MAXMTU"
 
 # Does the box answer on the network? <seconds> to keep trying.
 #
@@ -3076,6 +3083,26 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send 'echo "HX""LAB ho-dpif=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ {print \$1}" | grep -v "^Name$" | grep -v "^local0$" | tr "\n" " ")"'
     wait_for "HXLAB ho-dpif=" 60 \
       "the dataplane to list the interfaces it holds" || fail=1
+    # AND WHAT STATE THE PORT IS IN, AND AT WHAT MTU (#382).
+    #
+    # Everything above is true of a box that forwards nothing. On a card
+    # whose maximum is below VPP's default of 9000 the driver refuses the
+    # device, the port never starts, and `show interface` says:
+    #
+    #   GigabitEthernet0/9/0   1   error   9000/0/0/0
+    #
+    # while the card is bound to uio_pci_generic, the pair exists, the
+    # address is on it and the dataplane lists the interface. The
+    # reachability check above is the acceptance and it does go red on such a
+    # box - but it goes red as a timeout, which is what a slow boot, a lost
+    # lease and a dead sshd also look like. This reading names the fault.
+    #
+    # NAME:STATE:MTU for every interface the dataplane holds, the pair
+    # included: the TAP has to agree with the card or the pair drops what the
+    # card accepted, and reading only the card would not see that.
+    send 'echo "HX""LAB ho-dpmtu=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ && \$1 != \"Name\" && \$1 != \"local0\" {split(\$4, m, \"/\"); print \$1 \":\" \$3 \":\" m[1]}" | tr "\n" " ")"'
+    wait_for "HXLAB ho-dpmtu=" 60 \
+      "the dataplane to give the state and MTU of its interfaces" || fail=1
     send "exit"
     wait_for "hexarouting> " 60 "the shell to close" || fail=1
     # And in the operator's own words, on the console, so the log carries what
@@ -3096,6 +3123,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   stop_vm 120
 
   HO_DPIF=$(mfield "$CONSOLE_CLEAN" ho-dpif)
+  HO_DPMTU=$(mfield "$CONSOLE_CLEAN" ho-dpmtu)
   HO_DRV2=$(mfield "$CONSOLE_CLEAN" ho-drv2)
   HO_NETDEV2=$(mfield "$CONSOLE_CLEAN" ho-netdev2)
   HO_ADDR2=$(mfield "$CONSOLE_CLEAN" ho-addr2)
@@ -3183,6 +3211,54 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     echo "         port: this is the state an operator sees as 'show"
     echo "         interface' listing local0 and nothing else"
     fail=1
+  fi
+
+  # 5. AND THE PORT STARTED, AT AN MTU THE CARD CAN CARRY (#382).
+  #
+  # Two readings of one screen, and neither is the reachability check above:
+  # that one says whether a packet got through, these say why not. THIS LAB
+  # SETS NO MTU ANYWHERE - the number below is the one it gave the card in
+  # $MGMT_MAXMTU, and the box has to arrive at it on its own.
+  echo "  -- the dataplane's own interfaces, name:state:mtu:"
+  echo "     ${HO_DPMTU:-<unread>}"
+  if [ -z "$HO_DPMTU" ]; then
+    echo "  [FAIL] the state and MTU of the dataplane's interfaces were not"
+    echo "         read, so nothing below knows whether the port started"
+    fail=1
+  else
+    _errored=""
+    _toobig=""
+    for _e in $HO_DPMTU; do
+      _n=${_e%%:*}; _rest=${_e#*:}; _st=${_rest%%:*}; _mtu=${_rest##*:}
+      [ "$_st" = error ] && _errored="$_errored $_n"
+      case "$_mtu" in
+        ''|*[!0-9]*) ;;
+        *) [ "$_mtu" -gt "$MGMT_MAXMTU" ] && _toobig="$_toobig $_n($_mtu)" ;;
+      esac
+    done
+    if [ -n "$_errored" ]; then
+      echo "  [FAIL] the dataplane holds interface(s) in error state:$_errored"
+      echo "         The driver refused the device, so the port never started"
+      echo "         and the box forwards nothing - with the card bound, the"
+      echo "         pair made and the address on it. 'journalctl -u vpp' on"
+      echo "         the box has the driver's own reason"
+      fail=1
+    else
+      echo "  [ ok ] and no interface it holds is in error state: the driver"
+      echo "         accepted the device and the port started"
+    fi
+    if [ -n "$_toobig" ]; then
+      echo "  [FAIL] interface(s) above the $MGMT_MAXMTU this card can"
+      echo "         carry:$_toobig"
+      echo "         This lab gave the card host_mtu=$MGMT_MAXMTU and typed"
+      echo "         no MTU at the box. Coming up higher means nothing read"
+      echo "         the card, which is the state the port is refused in"
+      fail=1
+    else
+      echo "  [ ok ] and every one of them is at or below the $MGMT_MAXMTU"
+      echo "         this card can carry, with nothing typed to ask for it:"
+      echo "         the card and its pair agree"
+    fi
   fi
 fi
 

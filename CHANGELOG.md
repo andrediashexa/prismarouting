@@ -77,6 +77,69 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **On a card whose maximum MTU is 1500 - every virtual machine - the
+  dataplane interface came up in `error` state at 9000 and the box forwarded
+  nothing.**
+  ([#382](https://github.com/andrediashexa/hexarouting/issues/382)). This is
+  the maintainer's original report, from an installed box, and
+  [v0.75.1](https://github.com/andrediashexa/hexarouting/releases/tag/v0.75.1)
+  did not fix it: 0.75.1 fixed VPP refusing to start, and this is what was
+  underneath.
+
+  Every structural check passed. The card was bound to `uio_pci_generic`, the
+  `linux_cp` pair was there, the management address was on it and the
+  dataplane listed the interface:
+
+  ```
+  GigabitEthernet0/9/0       error  9000   10.0.2.15/24        tap4096 ens9
+  ```
+
+  `hexarouting-tune` now writes the card's own maximum into `startup.conf`:
+
+  ```
+  ethernet {
+    default-mtu 1500
+  }
+  ```
+
+  The number comes from `ip -d link show <card>`, field `maxmtu`, read before
+  `bind-dataplane-nic` gives the card to DPDK - which is the only moment it is
+  legible, because after the handover the card is not under `/sys/class/net`
+  and VPP does not report it either. It is a **default, not an override**:
+  `mtu <n>` under `interface` in the VTY is applied after VPP is up and wins,
+  and a card that can do 9000 or more is left exactly as it was.
+
+  **Not in the `dpdk` stanza**, which is
+  [#380](https://github.com/andrediashexa/hexarouting/issues/380): `mtu`,
+  `max-frame-size` and `default-mtu` are all `unknown input` there and VPP
+  refuses the whole file. `ethernet { default-mtu }` is a different section of
+  VPP's configuration and is accepted - measured by handing the binary one
+  keyword at a time, with an unknown section and an unknown keyword as
+  controls, because "VPP did not complain" is also what an ignored section
+  looks like.
+
+  **And it could not have been done at runtime**, which the issue assumed it
+  could. `sw_interface_set_mtu` is the right tool for the L3 MTU of a port
+  that is running and cannot start one that never started. Measured on the
+  booted box: `set interface mtu packet 1500` moved the L3 MTU to 1500 on the
+  port and its TAP and left the state at `error`; the hardware spelling
+  answered `Invalid value (invalid MTU)`; an admin down and up changed
+  nothing; `show hardware-interfaces` reported `flags: pmd-init-fail`
+  throughout. The comment in `hexarouting-tune` that said the opposite - that
+  VPP's `rte_eth_dev_set_mtu failed` is a complaint about a device that still
+  comes up - is corrected where it stood.
+
+  Held by `lab/install-iso.sh` PHASE 5, which was already red on this and is
+  now red for a named reason as well: it reads the state and MTU of every
+  interface the dataplane holds and refuses a port in `error` state or one
+  above the maximum the lab's own card advertises. **The lab sets no MTU
+  anywhere** - the box has to arrive at the number on its own.
+
+  `appliance/test_startup_conf_shapes.sh` gives the new stanza to the real VPP
+  in the `lowmtu` shape, and asserts the shape really carries it: VPP
+  accepting a file that happens to say nothing about the MTU is the state
+  before this fix.
+
 * **Two readers of one fact, reconciled to one.** 0.75.1 shipped a check in
   `appliance/test_startup_conf.sh` that lifted the dpdk stanza out of one
   synthetic tuned box and handed it to VPP. It found what it was written for.
