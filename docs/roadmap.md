@@ -2371,6 +2371,38 @@ each a step with its own check. Nothing is deleted before the thing that
 replaces it has been seen working, which is why 0.76.0 ships with it half
 present rather than with a half-removed guard.
 
+**Two more from the maintainer's own box, a day into 0.76.0**
+
+**A console-installed box said it was reached at its console, over ssh**
+([#387](https://github.com/andrediashexa/hexarouting/issues/387)) - *fixed*.
+The install answered `none` to the management-interface question and the
+self-test turned that answer into a claim about the present, printed on a box
+carrying a default route, an address and the session reading it - on a card
+added after the install. Since #378 that is worse than a wrong sentence: a
+card nothing reserves is claimed at the next boot, and on a box installed this
+way the reserve can never exist, because `none` writes no `iface` line. Driven
+with that box's file and both cards present, the tuner answered *"claiming all
+2 card(s); none is reserved for Linux"*. The self-test asks the box now, names
+the card Linux holds, says what becomes of it, and prints the stanza that
+reserves it. The guard is the half worth reading: real cards only, never the
+`linux_cp` pair a one-card box is reached on, or it would cry wolf on the
+commonest box there is.
+
+Whether the tuner should also *decline* a card it is about to take from under
+the box's own address is the refusal #123 wrote and #378 removed on the
+maintainer's decision. Reopening it is theirs.
+
+**The operator's card is `ens18` and every screen calls it
+`GigabitEthernet0/12/0`** ([#386](https://github.com/andrediashexa/hexarouting/issues/386))
+- open. It is VPP's DPDK naming from the PCI address, and *"Gigabit"* is not a
+measurement: `show hardware` prints the same card's speed as `-`. Since #378
+nobody types a name at all, so the first time an operator sees the dataplane
+interface it has a name they have never typed, for a card they know by another
+one. The box knows both names at the moment it claims the card and loses the
+mapping afterwards. Record it there and print `GigabitEthernet0/12/0 (ens18)`
+on every screen that names the interface. Not a rename inside VPP: a second
+name for one port is a second thing to keep in step.
+
 **And two the stride work uncovered, both open**
 ([#375](https://github.com/andrediashexa/hexarouting/issues/375),
 [#376](https://github.com/andrediashexa/hexarouting/issues/376)).
