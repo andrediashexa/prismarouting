@@ -138,7 +138,8 @@ class FakeVpp:
         return 0, ""
 
 
-def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS):
+def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS,
+             reserve=None):
     """
     A fake box on disk: the cards Linux has, its routing table, the tuner's
     file. Written once per test so one test cannot see another's edits.
@@ -173,6 +174,17 @@ def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS):
             f.write(tune)
     elif os.path.exists(f"{tmp}/etc/hexarouting/tune.env"):
         os.unlink(f"{tmp}/etc/hexarouting/tune.env")
+    # The management network the installer recorded, which is the card the
+    # dataplane reserves for Linux (#378). None means the box was installed
+    # with no management network - the "none" answer, which is a decision
+    # somebody made and reserves nothing.
+    os.makedirs(f"{tmp}/etc/network/interfaces.d", exist_ok=True)
+    mgmt = f"{tmp}/etc/network/interfaces.d/hexarouting"
+    if reserve:
+        with open(mgmt, "w") as f:
+            f.write(f"auto {reserve}\niface {reserve} inet dhcp\n")
+    elif os.path.exists(mgmt):
+        os.unlink(mgmt)
 
 
 #: What `ip -4 -o addr show dev <name>` says on the fake box. The one reading
@@ -224,6 +236,12 @@ def shell_on(tmp, addrs=None, dp=None, api=None, **kw):
         "reload": lambda self, l, check_only=False: (0, "")})()
     sh.SYS_CLASS_NET = f"{tmp}/sys/class/net"
     sh.PROC_NET_ROUTE = f"{tmp}/net_route"
+    # OUT OF THE TREE, never off the machine running this suite. Without it
+    # `show hardware` would reserve whatever card the developer's own box was
+    # installed to be managed on, and the cases below would measure that
+    # machine instead of the fixture - which is the trap HEXA_IP's comment in
+    # appliance/test_tune.py describes, in this file's own seams.
+    sh.MGMT_CONF = f"{tmp}/etc/network/interfaces.d/hexarouting"
     sh.TUNE_ENV = f"{tmp}/etc/hexarouting/tune.env"
     sh.rb = hexash.Rollback(path=f"{tmp}/rollback")
     sh.confirm = hexash.ConfirmPending(path=f"{tmp}/confirm")
@@ -629,6 +647,120 @@ with tempfile.TemporaryDirectory() as tmp:
           f"a commented line was read as configuration: "
           f"{sh.read_dataplane_if()!r}")
     print("  a comment stays a comment")
+
+# ---------------------------------------------- what the box claims, and why
+
+print("\n=== 'show hardware' says what the box claimed and why (#378) ===")
+# A box that silently ate a card is worse than one that asked, and a box that
+# silently spared one is a card an operator cannot account for. The rule has
+# to be readable off the screen, because it is the screen somebody reads
+# before deciding what to type.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp)
+    said = " ".join(sh.claim_note(sh.host_nics()))
+    check("all 2" in said,
+          f"a two-card box with nothing reserved does not say it takes both: "
+          f"{said!r}")
+    check("no management network" in said,
+          f"and does not say why nothing is reserved: {said!r}")
+
+print("\n=== a card the installer recorded is reserved, and named ===")
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, reserve="enp1s0")
+    said = sh.claim_note(sh.host_nics())
+    joined = " ".join(said)
+    check("reserved for Linux" in joined,
+          f"the card the box is managed on is not said to be reserved: "
+          f"{joined!r}")
+    # THE NAME ON A ROW OF ITS OWN, which is the shape #367 is about: a name
+    # can be fifteen characters and a sentence carrying one folds on an
+    # 80-column console, taking the only word an operator recognises with it.
+    check(any(l.strip() == "enp1s0" for l in said),
+          f"the reserved card's name is not on a row of its own: {said!r}")
+    check("claims 1 of them" in joined,
+          f"the count of what it takes is wrong or missing: {joined!r}")
+
+print("\n=== and never the last card, whatever the installer answered ===")
+# THE NARROWING. A reserve allowed to take the only card leaves the commonest
+# box there is installed, correct and unable to forward.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, cards=("ens18", "lo"), reserve="ens18")
+    joined = " ".join(sh.claim_note(sh.host_nics()))
+    check("only card" in joined and "never takes the last card" in joined,
+          f"a one-card box does not say it takes the card anyway: {joined!r}")
+    check("linux_cp" in joined,
+          f"and does not say where the address goes, which is the whole of "
+          f"what the operator loses if it is wrong: {joined!r}")
+
+print("\n=== an override says it was named, not chosen ===")
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, tune="HEXA_DATAPLANE_IF=enp2s0\n")
+    joined = " ".join(sh.claim_note(sh.host_nics()))
+    check("enp2s0" in joined and "no other" in joined,
+          f"a box told which card to take does not say it was told: "
+          f"{joined!r}")
+    check("claims all" not in joined,
+          f"a box with an override still claims to have taken everything: "
+          f"{joined!r}")
+
+print("\n=== and a card nothing reserves is said to be going anyway ===")
+# THE ONE PLACE THE TWO ANSWERS POINT OPPOSITE WAYS. `dataplane interface`
+# still refuses the card carrying the default route while there is another to
+# name (#123), and the box claims every card nothing reserves (#378). On a box
+# whose default route is not on the card the installer recorded, both are true
+# and the operator needs the second: reserving a card happens at install time,
+# and this is the screen where somebody finds out it did not.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, reserve="enp2s0")   # route is on enp1s0, reserve is not
+    said = drive(sh, ["show hardware"])
+    check("will claim 'enp1s0' anyway" in " ".join(said.split()),
+          f"the box is about to take the card it is reached on and the screen "
+          f"does not say so, which is a box that silently ate its own "
+          f"management: {said!r}")
+with tempfile.TemporaryDirectory() as tmp:
+    # And it is NOT said when the reserve is that very card, because then the
+    # box leaves it alone and the sentence would be a warning about nothing.
+    sh = shell_on(tmp, reserve="enp1s0")
+    said = drive(sh, ["show hardware"])
+    check("anyway" not in said,
+          f"a box that reserves the card it is reached on was warned that it "
+          f"is about to take it: {said!r}")
+
+print("\n=== every row of the screen fits the console it is read on ===")
+# 79 and not 80, for the reason appliance/selftest's say_list already folds to
+# 79. Measured at the WIDEST name Linux will carry - fifteen characters - and
+# not at the fixture's own, because the box that meets the long one is
+# somebody else's.
+#
+# DRIVEN THROUGH `show hardware`, and not by calling claim_note() and folding
+# its lines here. The first version of this check did the latter and could not
+# fail: print_prose() wraps, so a check that wraps the strings itself is a
+# check on its own harness. What can actually go wrong is a row that reaches
+# the screen WITHOUT being wrapped - a caller reaching for print() instead of
+# print_prose(), which is one keystroke and no error - and only the real
+# screen can show that.
+_WIDE = "enp0s31f6abcdef"
+assert len(_WIDE) == 15
+for _res, _cards in ((None, (_WIDE, "enp2s0", "lo")),
+                     (_WIDE, (_WIDE, "enp2s0", "lo")),
+                     (_WIDE, (_WIDE, "lo")),
+                     ("ens99", (_WIDE, "enp2s0", "lo"))):
+    with tempfile.TemporaryDirectory() as tmp:
+        sh = shell_on(tmp, cards=_cards, reserve=_res,
+                      route=f"Iface\tDestination\n{_WIDE}\t00000000\n")
+        said = drive(sh, ["show hardware"])
+        _over = [l for l in said.splitlines() if len(l) > 79]
+        check(not _over,
+              f"reserve={_res!r} cards={_cards!r}: {len(_over)} row(s) of "
+              f"'show hardware' are over 79 columns and fold on the console "
+              f"it is read on: {_over!r}")
+        # AND THE SCREEN REALLY SAID IT. A box where `show hardware` printed
+        # nothing would pass the width check above with nothing measured,
+        # which is the shape of every defect this file's history is made of.
+        check("NIC(s) on this box" in said,
+              f"'show hardware' printed no card listing at all, so the width "
+              f"check above measured an empty screen: {said!r}")
+print("  four box shapes, every row of the screen inside 79 columns")
 
 # ------------------------------------------------------------ the completion
 

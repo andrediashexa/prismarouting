@@ -1887,11 +1887,78 @@ if said '\[ ok \] dataplane NIC: 0000:03:00.0'; then
 else
   bad "a startup.conf naming a device the dataplane HAS said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
 fi
-# AND THE ONE ABOVE IS NOT ENOUGH (#382). The same box, with the driver having
+# AND IT SAYS THE BOX CHOSE IT, which is what #378 changed and the one thing
+# an operator cannot read off a PCI address. The fixture's tune.env names no
+# card, so this box claimed by itself - and the sentence has to say so, or a
+# card that appeared without being asked for reads as one somebody forgot
+# they typed.
+if said 'claimed by this box with nobody asked'; then
+  ok "a card the box claimed by itself says so, and does not read as typed"
+else
+  bad "the box claimed a card unbidden and the console does not say so: "\
+"$(printf '%s\n' "$OUTPUT" | grep -i 'dataplane NIC' || echo '<nothing>')"
+fi
+
+# THE OVERRIDE, which is the other half of the same sentence. A box told which
+# card to use must not claim to have chosen it: that is the box an operator
+# goes looking for a bug in when the card is not the one they meant.
+nicconf 'dpdk {
+  dev 0000:03:00.0
+}'
+# AFTER nicconf, because mkcpus() rebuilds the fake root from nothing: written
+# before it, this file is deleted and the box under test is one that named no
+# card - which is the box the case above already covers, so the check would
+# have passed by measuring the wrong machine.
+mkdir -p "$FAKE/root/etc/hexarouting"
+printf 'HEXA_DATAPLANE_IF=ens18\n' > "$FAKE/root/etc/hexarouting/tune.env"
+run
+if said "named in the configuration as 'ens18'"; then
+  ok "a card named by the configuration is reported as named, not as chosen"
+else
+  bad "a box told which card to take reported it as one it chose by itself: "\
+"$(printf '%s\n' "$OUTPUT" | grep -A2 -i 'dataplane NIC' || echo '<nothing>')"
+fi
+if said 'claimed by this box with nobody asked'; then
+  bad "a card named in tune.env was reported as one nobody asked for"
+else
+  ok "and it does not claim nobody asked"
+fi
+rm -f "$FAKE/root/etc/hexarouting/tune.env"
+
+# MORE THAN ONE CARD, which no fixture in this file could describe before
+# #378 because the tuner could name exactly one. A box claiming two and
+# reporting one is a box forwarding on half its ports and reading as healthy.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet3/0/0           1      up          9000/0/0/0     rx packets                  12
+TenGigabitEthernet3/0/1           2      up          9000/0/0/0     rx packets                  30
+local0                            0     down          0/0/0/0
+IFACE
+nicconf 'dpdk {
+  dev 0000:03:00.0
+  dev 0000:03:00.1
+}'
+run
+if said 'dataplane NIC\(s\): claimed by this box with nobody asked'; then
+  ok "a box that claimed two cards reports both, not the first of them"
+else
+  bad "a box claiming two cards did not say so: "\
+"$(printf '%s\n' "$OUTPUT" | grep -A3 -i 'dataplane NIC' || echo '<nothing>')"
+fi
+if said '0000:03:00.1'; then
+  ok "and the second card is named, so a missing one can be noticed"
+else
+  bad "the second claimed card is nowhere on the console, so an operator "\
+"cannot tell a box holding two from one holding one: "\
+"$(printf '%s\n' "$OUTPUT" | grep -A3 -i 'dataplane NIC' || echo '<nothing>')"
+fi
+
+# AND THE CLAIM IS NOT ENOUGH (#382). The same box, with the driver having
 # refused to start the port: the dataplane still HOLDS the interface, so every
-# check above stays green and the box reports ready while it cannot pass a
-# packet. This is the screen #382 was reported from - MTU 9000 on a card whose
-# maximum is 1500 - and the shape #297 and #311 are about.
+# check above stays green - including the two #378 ones just above, which
+# report a card the box claimed - and it reports ready while it cannot pass a
+# packet. Claimed and forwarding are different claims, which is why the two
+# halves are one screen on the box and two cases here.
 cat > "$FAKE/show_interface" <<'IFACE'
               Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
 TenGigabitEthernet3/0/0           1   error          9000/0/0/0
@@ -1922,6 +1989,13 @@ if said 'refused to start'; then
 else
   ok "and a port that started is not reported as one that did not"
 fi
+# Back to the one-card box the cases below were written against.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet3/0/0           1      up          9000/0/0/0     rx packets                  12
+local0                            0     down          0/0/0/0
+IFACE
+
 # THE STATE AN OPERATOR ACTUALLY REACHES. They read the no-pci warning above,
 # name the interface as it tells them to, and the dataplane still has nothing -
 # because nothing in this appliance binds the NIC or loads vfio-pci. The box
@@ -1966,20 +2040,37 @@ nicconf 'dpdk {
   no-pci
 }'
 run
-if said '\[warn\] no dataplane interface: VPP was given no NIC'; then
-  ok "a box deliberately given no NIC is a warning, and says how to give it one"
+# NO-PCI IS NO LONGER "NOBODY HAS TYPED YET" (#378). The box claims every card
+# it has but a reserve, and never the last one, so a startup.conf that claims
+# nothing is a box with no PCI network card at all. The warning stays a
+# warning - nothing is broken and the box is healthy - but what it says had to
+# change with what it means.
+if said '\[warn\] no dataplane interface: this box has no PCI network card'; then
+  ok "a box with no card to claim is a warning, and says that is what it is"
 else
   bad "no-pci said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
 fi
-# THE COMMAND, not a path and an editor. This is the message an operator reads
-# on the console of a box that has just come up forwarding nothing, and until
-# #283 it sent them out of the VTY to vi - which is the defect, not the
-# remedy. The same words the VTY's own diagnosis prints: two accounts of one
-# fact that disagree are worse than one.
-if said "dataplane interface <name>" && said "commit"; then
-  ok "and the way to give it one is a command in the VTY"
+# AND IT MUST NOT TELL THEM TO NAME A CARD (#378), which is what it did.
+#
+# That advice was right for as long as reaching here meant nobody had typed
+# yet: #283 moved it out of an editor and into the VTY, and this check is what
+# kept it there. Reaching here now means the box looked and found no card, and
+# `dataplane interface <name>` is then a statement with no name that could
+# satisfy it - the operator types it, the VTY refuses because the box has no
+# such interface, and they have been sent round a loop by their own console.
+#
+# So the assertion is inverted rather than deleted. What #283 was protecting
+# is protected still: the box must not send anybody to a file in Linux, which
+# is the check below and is untouched.
+if said "dataplane interface <name>"; then
+  bad "a box with no card to claim was told to name one, which it cannot do: $(printf '%s\n' "$OUTPUT" | grep -A4 -i 'no dataplane interface' || echo '<nothing>')"
 else
-  bad "the advice does not name the statement that fixes it: $(printf '%s\n' "$OUTPUT" | grep -A4 -i 'no dataplane interface' || echo '<nothing>')"
+  ok "and it does not send them to name a card this box has not got"
+fi
+if said "show hardware"; then
+  ok "and it names the screen that lists what this box can actually see"
+else
+  bad "it says the box has no card and does not say where to look: $(printf '%s\n' "$OUTPUT" | grep -A4 -i 'no dataplane interface' || echo '<nothing>')"
 fi
 # Named exactly, and not by the file: the worker cap really does live in that
 # file and really is advised there, a few checks up, so a bare match on the

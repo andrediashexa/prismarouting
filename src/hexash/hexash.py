@@ -10345,6 +10345,89 @@ class Shell:
     #: way is not told it is wrong.
     DPDK_DRIVERS = ("vfio-pci", "uio_pci_generic", "igb_uio")
 
+    #: The management network the installer recorded. The tuner reads this
+    #: same file to decide which card to reserve for Linux (#378), and
+    #: appliance/selftest reads it to say what became of that card - so this
+    #: is the third reader of one answer and not a fourth opinion.
+    MGMT_CONF = os.environ.get("HEXA_MGMT_CONF",
+                               "/etc/network/interfaces.d/hexarouting")
+
+    def reserved_for_linux(self):
+        """
+        The card this box was installed with a management network on, or "".
+
+        The words on that line are interfaces(5)'s and not this product's, so
+        the name comes out of column two rather than being matched against a
+        string this VTY could reword - the same reading appliance/selftest and
+        appliance/hexarouting-tune do of the same file.
+        """
+        try:
+            with open(self.MGMT_CONF, encoding="utf-8") as f:
+                for line in f:
+                    w = line.split()
+                    if len(w) >= 2 and w[0] == "iface":
+                        return w[1]
+        except (OSError, UnicodeDecodeError):
+            pass
+        return ""
+
+    def claim_note(self, nics):
+        """
+        What the dataplane will claim on this box, and why, as prose lines.
+
+        THE RULE IN ONE SENTENCE, because an operator has to be able to
+        predict it: every card this box has, except one reserved for Linux,
+        and never the last one. A box that claimed a card without being asked
+        and said nothing about it is worse than one that asked.
+
+        Said in the FUTURE, deliberately. The dataplane claims its cards when
+        it starts, so on a box where the configuration has just changed this
+        describes the next start and not the present - which is the same thing
+        `dataplane interface` already tells the operator at the commit.
+        """
+        named = self.read_dataplane_if()
+        if named:
+            return [f"'dataplane interface' names '{named}', so the dataplane "
+                    f"claims that card and no other.",
+                    "Remove it with 'no dataplane interface' to let the box "
+                    "choose again."]
+        if not nics:
+            return ["There is no card here for the dataplane to claim."]
+        reserve = self.reserved_for_linux()
+        have = [n["name"] for n in nics]
+        if reserve and reserve in have and len(have) > 1:
+            return [f"The dataplane claims {len(have) - 1} of them. It claims "
+                    f"every card this box has except one reserved for Linux, "
+                    f"and never the last one.",
+                    "Reserved for Linux:",
+                    f"  {reserve}",
+                    "It is the management network this box was installed "
+                    "with.",
+                    "'dataplane interface <name>' claims that card alone "
+                    "instead."]
+        if reserve and reserve in have:
+            # THE NARROWING, and the box it is about is the commonest there
+            # is. A reserve allowed to take the only card leaves a VM
+            # installed, correct and unable to forward, which is the state
+            # this whole change exists to end.
+            return ["The dataplane claims it. It is the only card this box "
+                    "has, and a reserve never takes the last card.",
+                    "Its address moves onto the linux_cp pair the dataplane "
+                    "keeps for it, so this box is reached THROUGH the "
+                    "dataplane rather than beside it. The card keeps its MAC, "
+                    "so nothing upstream has to learn a new one."]
+        if reserve:
+            return [f"The dataplane claims all {len(have)}. '{reserve}' was "
+                    f"reserved for Linux when this box was installed and is "
+                    f"not here now.",
+                    "'dataplane interface <name>' claims one card alone "
+                    "instead."]
+        return [f"The dataplane claims all {len(have)}. No card is reserved "
+                f"for Linux: this box was installed with no management "
+                f"network, so it is reached at its console.",
+                "'dataplane interface <name>' claims that card alone "
+                "instead."]
+
     def one_nic_note(self):
         """
         What a box whose ONLY card is its management path has to do, or "".
@@ -10838,6 +10921,19 @@ class Shell:
                 print("    *** carries the DEFAULT ROUTE ***")
 
         print(f"\n  {len(nics)} NIC(s) on this box, as Linux has them")
+        # WHAT THE BOX DID AND WHY (#378). A box that silently ate a card is
+        # worse than one that asked, and a box that silently SPARED one is a
+        # card whose absence from the dataplane an operator cannot account
+        # for. Both are said here, because this is the screen somebody reads
+        # before deciding what to type.
+        #
+        # ASKED OF THE SAME TWO FACTS THE TUNER DECIDES ON - the cards Linux
+        # has, and the management network the installer recorded - so this
+        # cannot describe a claim the tuner would not make. It is not a second
+        # copy of the rule: the rule is one sentence and this states it, which
+        # is the difference between a screen and a reimplementation.
+        for line in self.claim_note(nics):
+            print_prose(line, indent="  ")
         if not mgmt:
             print_prose("no interface carries a default route on this box, "
                         "so none of them is the management path by that "
@@ -10849,11 +10945,35 @@ class Shell:
             # the mark is a warning about what the handover involves and not a
             # refusal - the address moves with the card (#303).
             if any(n["name"] != mgmt for n in nics):
+                # TWO DIFFERENT QUESTIONS, and this used to answer only one.
+                # What the box claims by itself is said above; this is what
+                # the `dataplane interface` statement will accept, and on a
+                # box with a spare card it still refuses this one (#123).
+                # Merging them would make the screen contradict itself on a
+                # box whose default route is not on the card the installer
+                # recorded - which is a box that exists.
                 print_prose(f"'{mgmt}' carries the default route: it is how "
                             f"this box is reached, and giving it to the "
                             f"dataplane would take the box off the network. "
-                            f"It is refused as a dataplane interface for that "
-                            f"reason.", indent="  ")
+                            f"Naming it by hand with 'dataplane interface' is "
+                            f"refused while this box has another card to name "
+                            f"instead.", indent="  ")
+                # AND IF THE BOX IS ABOUT TO TAKE IT ANYWAY, say so here.
+                #
+                # The refusal above is about the STATEMENT; the claim above
+                # that is about what the box does unbidden, and on a box whose
+                # default route is not on the card the installer recorded
+                # those two point opposite ways. Both are true and the
+                # operator needs the second one most: reserving a card is
+                # done at install time, and this is the screen where somebody
+                # finds out it was not.
+                if not self.read_dataplane_if() \
+                   and self.reserved_for_linux() != mgmt:
+                    print_prose(f"This box will claim '{mgmt}' anyway when "
+                                f"the dataplane next starts, because nothing "
+                                f"reserves it: it is not the management "
+                                f"network this box was installed with.",
+                                indent="  ")
             else:
                 for line in self.one_nic_note():
                     print_prose(line, indent="  ")
