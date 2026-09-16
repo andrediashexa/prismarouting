@@ -181,9 +181,27 @@ chmod +x "$IPSTUB"
 # it; asserting only on the exit would not say WHICH keyword, which is the one
 # thing whoever reads this needs.
 SECS=${SECS:-12}
+# AND A SIGKILL BEHIND THE DEADLINE, because without one this check can hang
+# a release gate forever.
+#
+# `timeout` sends SIGTERM and then WAITS for the child. A VPP that does not
+# take it - and one was measured 38 minutes past a 12-second deadline, at 99%
+# of a core, with `timeout` still sitting there - is never killed, its stdout
+# is never closed, and everything upstream waits on a pipe nobody will shut.
+# The gate for v0.76.0 stopped on exactly that and had to be killed by hand.
+#
+# It is intermittent: the same shape completes most runs, so this is a guard
+# against a state rather than a fix for a reproducible failure, and it is
+# written that way on purpose. A check whose worst case is a hang is worse
+# than one whose worst case is a red light: a red light says something, and a
+# gate that never returns says nothing while looking like work in progress.
+#
+# THREE SECONDS between the two signals, not zero. VPP closes its shared
+# memory and unlinks its socket on SIGTERM, and killing it before it can is
+# how a run leaves /dev/shm and /run/vpp dirty for the next shape.
 feed() {  # <shape name> <startup.conf>
   _name=$1; _conf=$2
-  timeout "$SECS" vpp -c "$_conf" > "$WORK/$_name.log" 2>&1
+  timeout -k 3 "$SECS" vpp -c "$_conf" > "$WORK/$_name.log" 2>&1
   _rc=$?
   _why=$(grep -iE "unknown input|unknown parameter|parse error" \
            "$WORK/$_name.log" | head -1)
