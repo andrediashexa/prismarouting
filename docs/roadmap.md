@@ -2342,16 +2342,34 @@ already has the mechanism - `sw_interface_set_mtu` over the binary API, on the
 interface and its TAP - and nothing calls it unless an operator configured an
 MTU. `lab/install-iso.sh` PHASE 5 reproduces it and is red until this lands.
 
-**The box must claim its card without being told**
-([#378](https://github.com/andrediashexa/hexarouting/issues/378)) - open, and
-it is a maintainer's decision already taken. Their reason, in English: a box
-is always set up from its console when it is new, so the management-path
-apparatus is protecting nothing, and it is what stands between a fresh install
-and a box that forwards. The rule agreed
-is that the dataplane claims every card except one the box was installed with
-a management network on, and never the last one; `dataplane interface <name>`
-stays as an override. It is gated on #377 and #379: automating a handover that
-does not work would put it on every box.
+**The box claims its card without being told**
+([#378](https://github.com/andrediashexa/hexarouting/issues/378)) - *done in
+0.76.0*. The maintainer's decision, and their reason: a box is always set up
+from its console when it is new, so the machinery built to keep it reachable
+over the network during that first step was protecting nothing and was what
+stood between a fresh install and a box that forwards. The rule: the dataplane
+claims every card except one the box was installed with a management network
+on, and never the last one; `dataplane interface <name>` stays as an exclusive
+override. The way back is computed at boot off the live card rather than
+recorded at a commit, and a card whose way back cannot be read is not claimed.
+
+Proven on an installed box that nobody typed anything into: it claimed, bound,
+kept its address and its route across a power cycle, and answered from
+outside. Four lab runs were needed and two of them found real defects in the
+work - a default route with no author, which nearly hid because the guest's
+gateway sits on its own wire, and a computed record leaking into the saved
+configuration and winning on the next boot.
+
+**And the apparatus is half removed**
+([#385](https://github.com/andrediashexa/hexarouting/issues/385)). The
+confirmed-commit window and its restart went, because they undid nothing: the
+revert cleared the setting and the next boot claimed the card again, so the
+window arrived where it began and charged a reboot for it while the console
+said the card was going back. What is left is the refusals, the commit-time
+writer, the `dataplane management` statement and `HEXA_DATAPLANE_MGMT` itself,
+each a step with its own check. Nothing is deleted before the thing that
+replaces it has been seen working, which is why 0.76.0 ships with it half
+present rather than with a half-removed guard.
 
 **And two the stride work uncovered, both open**
 ([#375](https://github.com/andrediashexa/hexarouting/issues/375),

@@ -105,7 +105,9 @@ version has a chance of seeing it.
   `dataplane interface <name>` and commit, or record the card you want kept as
   the management network. `no dataplane interface` gives the choice back.
 
-* **Naming the dataplane card no longer arms a confirmed commit.** It used to
+* **Naming the dataplane card no longer arms a confirmed commit**
+  ([#385](https://github.com/andrediashexa/hexarouting/issues/385) carries what
+  is left of the apparatus). It used to
   be applied as `commit confirmed 30` whether or not it was asked for, so a
   handover nobody came back to confirm undid itself and restarted the box. That
   window stopped undoing anything once the box began claiming its own card: the
