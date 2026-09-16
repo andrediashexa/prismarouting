@@ -18,6 +18,26 @@ def check(cond, msg):
         fail += 1
         print(f"  FAIL: {msg}")
 
+def _dpdk_stanza(out):
+    """
+    The `dpdk { ... }` block of a rendered config, and nothing else.
+
+    The whole config mentions MTU in the report comments on purpose, so a
+    check that looked for "mtu" anywhere would be green whatever the stanza
+    said - which is the needle-matches-a-label shape. The stanza is where a
+    keyword gets invented, so the stanza is what is read.
+    """
+    keep, acc = False, []
+    for line in out.splitlines():
+        if line.startswith("dpdk {"):
+            keep = True
+        if keep:
+            acc.append(line)
+        if keep and line.startswith("}"):
+            break
+    return "\n".join(acc)
+
+
 def w(path, content):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -1226,11 +1246,24 @@ check("NIC queues: 1" in _vout and "Capped" in _vout,
       f"the cap was applied silently: "
       f"{[l for l in _vout.splitlines() if 'NIC queues' in l]}")
 
-# THE OTHER HALF OF THE SAME -22. VPP defaults a DPDK interface to 9000 and
-# this card's maximum is 1500, so the device failed on the MTU as well as on
-# the queues. Reachable here only because run() can stand in for netlink.
-check("mtu 1500" in _vout,
-      f"a card with maxmtu 1500 got VPP's 9000 default, which is the other "
+# AND THE MTU IS REPORTED AND NOT WRITTEN, which is the opposite of what #330
+# did. It put `mtu 1500` inside the dev stanza; the keyword does not exist,
+# VPP refuses the whole file and exits, and vpp.service restarts it until
+# systemd gives up. That shipped in v0.75.0 and stopped the dataplane on every
+# box with a card below 9000.
+#
+# TWO CHECKS, because the defect had two halves and only one of them is about
+# the words. The stanza must not carry the keyword at all, and the operator
+# must still be told what their card is - a tuner that silently stopped
+# mentioning it would be the same information loss with no red light.
+check("mtu" not in _dpdk_stanza(_vout),
+      f"the dev stanza carries an mtu keyword, which VPP has not got: it "
+      f"refuses the file and the box never starts: "
+      f"{[l for l in _dpdk_stanza(_vout).splitlines() if 'mtu' in l]}")
+check("NIC max MTU: 1500" in _vout,
+      f"a card with maxmtu 1500 is not mentioned in the report at all, so "
+      f"an operator has no way to connect VPP's MTU complaint to their "
+      f"card. It was: "
       f"error the box printed: "
       f"{[l.strip() for l in _vout.splitlines() if 'mtu' in l.lower()]}")
 check("NIC max MTU: 1500" in _vout,
