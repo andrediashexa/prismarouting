@@ -610,6 +610,18 @@ grep -q "give-the-card-back" "$REPO/appliance/install.sh" \
   && ok "and install.sh puts that script on the box" \
   || bad "the script is never installed, so the unit names a path no \
 appliance has"
+# AND THE BINARY IT CALLS AFTERWARDS IS ON THE IMAGE. The kernel reclaiming
+# the device creates the netdev and puts no address on it; `ifup -a` is what
+# reads /etc/network/interfaces.d/hexarouting, which the installer wrote. A
+# unit naming a binary the image does not carry would give the card back and
+# leave the box without an address, which is most of the way to the state this
+# is undoing - and it would do it silently, because the call is prefixed `-`.
+grep -q "^ExecStartPost=-/sbin/ifup -a\$" "$U" \
+  && ok "and it brings the interface back up afterwards" \
+  || bad "nothing puts the address back after the card returns"
+grep -q "ifupdown" "$REPO/appliance/build-iso.sh" \
+  && ok "and the image carries ifupdown, so /sbin/ifup is there to run" \
+  || bad "the unit calls /sbin/ifup and the image does not install ifupdown"
 
 # WHAT THE WIDTH READER MAY STILL FIND, and it may only go down.
 #
