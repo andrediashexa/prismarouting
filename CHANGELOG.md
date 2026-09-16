@@ -77,24 +77,6 @@ version has a chance of seeing it.
 
 ### Breaking
 
-* **A suite that crashed rather than failed, and only `make test` could see
-  it.** Removing the restart behind an unconfirmed handover (6e) took
-  `restart_for_management_card` with it, and
-  `test/test_hexash_refusals.py` still drove that method. It did not go red -
-  it raised `AttributeError` and died, which the suite counter reports as
-  **NO VERDICT**: a suite that stopped before reaching a check, not one that
-  failed a check.
-
-  Eleven suites were run individually while the branch was built and every one
-  was green. This is the difference between running the suites you touched and
-  running them all, and it is why `make test` is the gate on a merge rather
-  than a formality after one.
-
-  The case is removed rather than adapted. It drove a refusal that no longer
-  has a mechanism behind it, and a refusal kept alive by the only thing that
-  can reach it is a refusal nobody can get to - the shape that file exists to
-  measure rather than to create.
-
 * **The box claims its dataplane cards by itself, and `dataplane interface` is
   now an override rather than a required step**
   ([#378](https://github.com/andrediashexa/hexarouting/issues/378)). The rule
@@ -152,6 +134,24 @@ version has a chance of seeing it.
   silently spared one is a card whose absence an operator cannot account for.
 
 ### Fixed
+
+* **A suite that crashed rather than failed, and only `make test` could see
+  it.** Removing the restart behind an unconfirmed handover (6e) took
+  `restart_for_management_card` with it, and
+  `test/test_hexash_refusals.py` still drove that method. It did not go red -
+  it raised `AttributeError` and died, which the suite counter reports as
+  **NO VERDICT**: a suite that stopped before reaching a check, not one that
+  failed a check.
+
+  Eleven suites were run individually while the branch was built and every one
+  was green. This is the difference between running the suites you touched and
+  running them all, and it is why `make test` is the gate on a merge rather
+  than a formality after one.
+
+  The case is removed rather than adapted. It drove a refusal that no longer
+  has a mechanism behind it, and a refusal kept alive by the only thing that
+  can reach it is a refusal nobody can get to - the shape that file exists to
+  measure rather than to create.
 
 ## 0.75.2 - the card decides the MTU, and a box is no longer stranded by a dataplane that will not start
 
