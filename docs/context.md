@@ -106,12 +106,27 @@ refusal names that other card. On the lab machines the management card is
 **On a box with one card that refusal was a dead end**, and that is
 [#303](https://github.com/andrediashexa/hexarouting/issues/303): it sent the
 operator to name a card the box has not got, so the box could not forward and
-could not be told to. There the card **MAY** go. The box writes the management
-path down first - the address moves onto the `linux_cp` pair the dataplane
-keeps for that card, MAC and all - and the VTY applies that commit as
-`commit confirmed 30` whether or not it was asked for, so a handover nobody
-comes back to confirm undoes itself and restarts the box. Unreachable is
-fixable remotely there because the box, not the operator, is what fixes it.
+could not be told to. There the card **MAY** go, and since
+[#378](https://github.com/andrediashexa/hexarouting/issues/378) it goes
+without being named: the box claims every card it has except one reserved for
+Linux - the management network the installer recorded - and **never the last
+one**.
+
+The box works out how to stay reachable before it takes the card.
+`hexarouting-tune` reads that card's address, MAC and gateway off it on the
+boot that claims it, in the window before anything is unbound, and the VTY
+puts them back: the address onto the `linux_cp` pair the dataplane keeps for
+that card, MAC and all, and the default route into Linux behind it. A card
+whose way back cannot be read is **not** claimed. And if the dataplane will
+not start at all, `appliance/give-the-card-back` returns the card to its
+kernel driver
+([#379](https://github.com/andrediashexa/hexarouting/issues/379)).
+
+Unreachable is fixable remotely there because the box, not the operator, is
+what fixes it. That was true when a thirty-minute confirmed commit undid an
+unconfirmed handover, and it is true now for a better reason: nothing has to
+be undone, because the way back is computed on every boot rather than
+remembered from one commit.
 
 *Authoritative:* [appliance.md](appliance.md), [routing.md](routing.md),
 `lab/hw-lab.sh`, `lab/one-nic.sh`.

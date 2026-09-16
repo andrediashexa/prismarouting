@@ -21,6 +21,11 @@
 # It still checks the default route itself before unbinding. Not as a second
 # opinion but as a last one: startup.conf is a file, a person can edit it, and
 # the cost of being wrong here is a box somebody has to walk to.
+#
+# The ONE other file it reads is the way back hexarouting-tune computed for
+# the card it is about to claim, in /run (#378). The tuner's output says which
+# device to bind; it has no way to say "and the box knows how to stay
+# reachable", which is the fact the last-card case needs.
 set -u
 
 ROOT=${HEXA_ROOT:-}
@@ -29,7 +34,9 @@ SYSBUS=${HEXA_PCI_BUS:-$ROOT/sys/bus/pci}
 SYSNET=${HEXA_SYS_NET:-$ROOT/sys/class/net}
 PROCROUTE=${HEXA_PROC_ROUTE:-$ROOT/proc/net/route}
 IOMMU=${HEXA_IOMMU_GROUPS:-$ROOT/sys/kernel/iommu_groups}
-TUNEENV=${HEXA_TUNE_ENV:-$ROOT/etc/hexarouting/tune.env}
+# Where hexarouting-tune leaves the way back it computed for a card it is
+# about to claim (#378). In /run, so it cannot outlive the boot that wrote it.
+MGMTPATH=${HEXA_MGMT_PATH:-$ROOT/run/hexarouting/dataplane-management}
 
 say() { echo "$@" >&2; }
 
@@ -72,35 +79,6 @@ if [ "${1:-}" = "--which-driver" ]; then
   exit 0
 fi
 
-ADDR=$(sed -n 's/.*dev \(0000:[0-9a-fA-F:.]*\).*/\1/p' "$VPPCONF" 2>/dev/null \
-       | head -1)
-if [ -z "$ADDR" ]; then
-  # No device named. That is the no-pci case, which the tuner and the
-  # self-test both already explain, so this says nothing rather than adding a
-  # third voice to one fact.
-  exit 0
-fi
-
-DEV="$SYSBUS/devices/$ADDR"
-# TWO ROWS, because one was 88 columns on the 80-column console this prints to
-# (#367). `say` joins its arguments with a space onto ONE row, so a
-# continuation in the source is not a break in the output - the same trap the
-# two-line message further down names. The address is twelve columns and the
-# file the tuner wrote is another twenty-one, and the verdict has to stay one
-# row: what moves off it is the path, onto the end of a row of its own where a
-# fold costs nothing.
-[ -d "$DEV" ] || { say "bind: no such PCI device as $ADDR on this box."
-                   say "      It is the device named in $VPPCONF"; exit 1; }
-
-current=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
-[ "$current" = "." ] && current=""
-for d in $DPDK_DRIVERS igb_uio; do
-  if [ "$current" = "$d" ]; then
-    say "bind: $ADDR is already bound to $d"
-    exit 0
-  fi
-done
-
 # The PCI address a netdev sits on, or nothing.
 #
 # The NEAREST PCI ancestor, not the basename of the link. A virtio NIC's
@@ -120,91 +98,43 @@ pci_addr_of() {  # <netdev path>
   return 1
 }
 
-# The last check before the irreversible part. `ip route` is not used because
-# this runs before the network is necessarily up and because /proc/net/route
-# is what the tuner reads - one source, one answer.
-defif=$(awk 'NR>1 && $2 == "00000000" { print $1; exit }' "$PROCROUTE" \
-        2>/dev/null)
-if [ -n "$defif" ] && [ -e "$SYSNET/$defif/device" ]; then
-  defaddr=$(pci_addr_of "$SYSNET/$defif")
-  if [ "$defaddr" = "$ADDR" ]; then
-    # A BOX WITH ONE CARD IS THE CASE THIS REFUSAL COULD NOT ANSWER (#303).
-    # Everywhere else it stands: another card means the operator has one to
-    # name instead, and giving this one away costs the box its management for
-    # nothing. With no other card that advice named a card the box has not
-    # got, and the box could never forward.
-    #
-    # Two things have to be true before the card may go. There must be no
-    # other card - checked here, from sysfs, rather than taken on trust - and
-    # the box must have written down the way back, which is what
-    # HEXA_DATAPLANE_MGMT is. That record is the address and MAC the VTY read
-    # off this card before it named it, and without it there is nothing to put
-    # on the pair once the dataplane has the port: the box would come up
-    # forwarding and unreachable, which is the outcome this whole check
-    # exists to prevent.
-    #
-    # tune.env is read HERE and nowhere else in this script, and that is the
-    # one exception to reading only what the tuner wrote. The tuner's output
-    # says which device to bind; it has no way to say "and the box knows how
-    # to stay reachable", which is the fact this needs.
-    others=""
-    for n in "$SYSNET"/*; do
-      [ -e "$n/device" ] || continue
-      a=$(pci_addr_of "$n") || continue
-      [ "$a" = "$ADDR" ] && continue
-      others="$others $(basename "$n")"
-    done
-    keep=$(sed -n 's/^[[:space:]]*HEXA_DATAPLANE_MGMT=//p' "$TUNEENV" \
-           2>/dev/null | tail -1 | tr -d '"'"'"'')
-    if [ -n "$others" ] || [ -z "$keep" ]; then
-      say "bind: REFUSING $ADDR: it is $defif, which carries this box's default"
-      say "      route. Binding it would take the box off the network and leave"
-      say "      a console somebody has to walk to."
-      if [ -n "$others" ]; then
-        say "      This box has another card:$others. Name one of those in"
-        say "      /etc/hexarouting/tune.env instead."
-      else
-        say "      It is the only card this box has, so it CAN be handed over -"
-        say "      but only with the management path written down beside it."
-        say "      Name it from the VTY: 'configure', 'dataplane interface"
-        say "      $defif', 'commit'."
-      fi
-      exit 1
-    fi
-    # THE RECORD ON A ROW OF ITS OWN. It is a name, an address and a MAC -
-    # fifteen columns, eighteen and seventeen, which is what the VTY writes
-    # there and what read_dataplane_mgmt() will read back - so the sentence
-    # that carried it was 101 columns on an 80-column console (#367). The
-    # record is the one thing on this screen somebody may want to copy, and it
-    # is now the whole of the last row.
-    say "bind: $ADDR is $defif, the only card this box has. Handing it"
-    say "      over, with the management path the box recorded:"
-    say "        $keep"
-  fi
+# EVERY DEVICE THE TUNER NAMED, and this took the first of them (#378).
+#
+# `head -1` was right for exactly as long as the tuner could name one card.
+# Since the box claims every card it has but a reserve, a three-card box gets
+# three `dev` stanzas - and binding the first left the other two on their
+# kernel drivers, which DPDK cannot take a device through. The dataplane would
+# then come up holding one card out of three and the self-test would call it
+# healthy, because a device named in a file is not a device the dataplane has
+# (#283).
+#
+# Still what startup.conf NAMES and not what the box has, which is the
+# argument in this file's header and is unchanged: the tuner has already
+# applied every rule about which cards the dataplane may have, and a second
+# copy of that decision here is one that can disagree.
+ADDRS=$(sed -n 's/.*dev \(0000:[0-9a-fA-F:.]*\).*/\1/p' "$VPPCONF" 2>/dev/null)
+if [ -z "$ADDRS" ]; then
+  # No device named. That is the no-pci case, which the tuner and the
+  # self-test both already explain, so this says nothing rather than adding a
+  # third voice to one fact.
+  exit 0
 fi
 
-# The interface name, for the messages, while it still has one: once the
-# device is bound to vfio-pci the kernel netdev is gone.
+# One device, start to finish. Everything box-wide - which driver this machine
+# can use, whether it is loaded - is decided once, below, and handed in.
 #
-# Through pci_addr_of() and not the basename of the link, for the reason that
-# function was written: on a virtio guest the basename is `virtio7` and never
-# equals a PCI address. The defence above was the dangerous half of that and is
-# fixed; this is the same comparison thirty lines later, and it fails quietly -
-# every bind message on every VM lost the interface name, which is the one word
-# in it an operator recognises. Two readers of one fact, and only one of them
-# was corrected, is how the release gate refused 0.72.0 twice.
-ifname=""
-for n in "$SYSNET"/*; do
-  [ -e "$n/device" ] || continue
-  if [ "$(pci_addr_of "$n")" = "$ADDR" ]; then
-    ifname=$(basename "$n")
-    break
-  fi
-done
-
+# ITS STATUS IS PER DEVICE and the caller keeps the worst. A box whose second
+# card will not bind still wants its first one bound: stopping at the first
+# failure would cost the operator the cards that were fine, and the reason the
+# bind failed is printed either way.
 # vfio-pci needs an IOMMU. Without one it loads and then refuses every device,
 # which reads on the console as the bind failing for no reason - so the choice
 # is made here, where it can be explained, rather than discovered there.
+#
+# ONCE FOR THE BOX AND NOT ONCE PER CARD (#378). Which driver this machine can
+# use is a property of its firmware, so asking per device would print the same
+# IOMMU sentence three times on a three-card box - and the operator reading a
+# console would reasonably take three warnings for three faults.
 want=$(dpdk_driver)
 if [ "$want" != "vfio-pci" ]; then
   # Two lines, because one was 121 columns on the console this is printed to
@@ -224,63 +154,188 @@ if [ ! -d "$SYSBUS/drivers/$want" ]; then
   # the address to the second row costs nothing: both are bounded, and the row
   # an operator reads first is the one that names what is missing.
   say "bind: $want is not available on this box, so the dataplane"
-  say "      cannot be given $ADDR. The kernel has no such driver to load."
+  say "      cannot be given any card. The kernel has no such driver."
   exit 1
 fi
 
-say "bind: $ADDR${ifname:+ ($ifname)} from ${current:-no driver} to $want"
+bind_one() {  # <pci address> <driver to use>
+    ADDR=$1
+    want=$2
+    DEV="$SYSBUS/devices/$ADDR"
+  # TWO ROWS, because one was 88 columns on the 80-column console this prints to
+  # (#367). `say` joins its arguments with a space onto ONE row, so a
+  # continuation in the source is not a break in the output - the same trap the
+  # two-line message further down names. The address is twelve columns and the
+  # file the tuner wrote is another twenty-one, and the verdict has to stay one
+  # row: what moves off it is the path, onto the end of a row of its own where a
+  # fold costs nothing.
+  [ -d "$DEV" ] || { say "bind: no such PCI device as $ADDR on this box."
+                     say "      It is the device named in $VPPCONF"; return 1; }
 
-# driver_override rather than new_id: new_id matches by vendor and device, so
-# it claims EVERY card of that model in the box - including the management
-# one when both ports are the same part, which is the ordinary case on a
-# two-port card. driver_override names this one device and nothing else.
-echo "$want" > "$DEV/driver_override" 2>/dev/null || {
-  say "bind: cannot write driver_override for $ADDR"; exit 1; }
-if [ -n "$current" ]; then
-  echo "$ADDR" > "$DEV/driver/unbind" 2>/dev/null || {
-    say "bind: cannot unbind $ADDR from $current"; exit 1; }
-fi
-echo "$ADDR" > "$SYSBUS/drivers_probe" 2>/dev/null || true
+  current=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
+  [ "$current" = "." ] && current=""
+  for d in $DPDK_DRIVERS igb_uio; do
+    if [ "$current" = "$d" ]; then
+      say "bind: $ADDR is already bound to $d"
+      return 0
+    fi
+  done
 
-now=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
-[ "$now" = "." ] && now=""
-if [ "$now" = "$want" ]; then
-  say "bind: $ADDR is now on $want"
-  exit 0
-fi
+  # The last check before the irreversible part. `ip route` is not used because
+  # this runs before the network is necessarily up and because /proc/net/route
+  # is what the tuner reads - one source, one answer.
+  defif=$(awk 'NR>1 && $2 == "00000000" { print $1; exit }' "$PROCROUTE" \
+          2>/dev/null)
+  if [ -n "$defif" ] && [ -e "$SYSNET/$defif/device" ]; then
+    defaddr=$(pci_addr_of "$SYSNET/$defif")
+    if [ "$defaddr" = "$ADDR" ]; then
+      # A BOX WITH ONE CARD IS THE CASE THIS REFUSAL COULD NOT ANSWER (#303),
+      # and the answer it was given has now moved (#378). Everywhere else the
+      # refusal stands exactly as before: another card means the operator has
+      # one to name instead, giving this one away costs the box its management
+      # for nothing, and the advice can name a card that really exists.
+      #
+      # WHAT CHANGED IS WHERE THE WAY BACK COMES FROM. It used to be
+      # HEXA_DATAPLANE_MGMT, which only existed if somebody had already typed
+      # `dataplane interface` at the VTY - so on a box that claims its own card
+      # the record was never there, this refused, and the advice it printed
+      # told the operator to type the card the tuner had just named. A loop is
+      # worse than a gap.
+      #
+      # hexarouting-tune now computes that way back on THIS boot, off the live
+      # card, in the window before anything is unbound, and leaves it in
+      # /run. So the two things that have to be true before the last card may
+      # go are unchanged in substance - there must be no other card, and the
+      # box must have a way back - and only the second one's source moved.
+      #
+      # /run AND NOT tune.env, which is the point rather than a detail: a file
+      # in /run cannot outlive the boot that wrote it, so this can never be
+      # reading a way back computed for a card that has since been swapped.
+      # The tuner rewrites or removes it every boot.
+      others=""
+      for n in "$SYSNET"/*; do
+        [ -e "$n/device" ] || continue
+        a=$(pci_addr_of "$n") || continue
+        [ "$a" = "$ADDR" ] && continue
+        others="$others $(basename "$n")"
+      done
+      keep=$(cat "$MGMTPATH" 2>/dev/null | tail -1)
+      if [ -n "$others" ] || [ -z "$keep" ]; then
+        say "bind: REFUSING $ADDR: it is $defif, which carries this box's default"
+        say "      route. Binding it would take the box off the network and leave"
+        say "      a console somebody has to walk to."
+        if [ -n "$others" ]; then
+          say "      This box has another card:$others. Name one of those with"
+          say "      'dataplane interface' in the VTY instead."
+        else
+          # NO LONGER AN INSTRUCTION, because there is nothing the operator
+          # could usefully type: the box already claimed this card and the
+          # thing that is missing is a way back it computes for itself. What
+          # they need is which of the three could not be read, and the tuner
+          # said that in the journal a few lines above this one.
+          say "      It is the only card this box has, so it CAN be handed"
+          say "      over - but this box could not work out how to stay"
+          say "      reachable without it. hexarouting-tune says above which"
+          say "      of the address, MAC or gateway it could not read."
+        fi
+        return 1
+      fi
+      # THE RECORD ON A ROW OF ITS OWN. It is a name, an address, a MAC and a
+      # gateway, which is more than fits beside a sentence on an 80-column
+      # console (#367). It is also the one thing on this screen somebody may
+      # want to copy, so it is the whole of the last row.
+      say "bind: $ADDR is $defif, the only card this box has. Handing it"
+      say "      over, with the way back this box computed on this boot:"
+      say "        $keep"
+    fi
+  fi
 
-# Said as a failure, because it is one, and with the state it ended in. A
-# device left with no driver at all is the worst outcome to be quiet about:
-# the kernel no longer has the NIC and neither does the dataplane.
-say "bind: $ADDR did NOT bind to $want; it is on ${now:-no driver at all} now."
-say "      The dataplane will start without it. 'dmesg' says why $want"
-say "      refused the device."
+  # The interface name, for the messages, while it still has one: once the
+  # device is bound to vfio-pci the kernel netdev is gone.
+  #
+  # Through pci_addr_of() and not the basename of the link, for the reason that
+  # function was written: on a virtio guest the basename is `virtio7` and never
+  # equals a PCI address. The defence above was the dangerous half of that and is
+  # fixed; this is the same comparison thirty lines later, and it fails quietly -
+  # every bind message on every VM lost the interface name, which is the one word
+  # in it an operator recognises. Two readers of one fact, and only one of them
+  # was corrected, is how the release gate refused 0.72.0 twice.
+  ifname=""
+  for n in "$SYSNET"/*; do
+    [ -e "$n/device" ] || continue
+    if [ "$(pci_addr_of "$n")" = "$ADDR" ]; then
+      ifname=$(basename "$n")
+      break
+    fi
+  done
+
+  say "bind: $ADDR${ifname:+ ($ifname)} from ${current:-no driver} to $want"
+
+  # driver_override rather than new_id: new_id matches by vendor and device, so
+  # it claims EVERY card of that model in the box - including the management
+  # one when both ports are the same part, which is the ordinary case on a
+  # two-port card. driver_override names this one device and nothing else.
+  echo "$want" > "$DEV/driver_override" 2>/dev/null || {
+    say "bind: cannot write driver_override for $ADDR"; exit 1; }
+  if [ -n "$current" ]; then
+    echo "$ADDR" > "$DEV/driver/unbind" 2>/dev/null || {
+      say "bind: cannot unbind $ADDR from $current"; exit 1; }
+  fi
+  echo "$ADDR" > "$SYSBUS/drivers_probe" 2>/dev/null || true
+
+  now=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
+  [ "$now" = "." ] && now=""
+  if [ "$now" = "$want" ]; then
+    say "bind: $ADDR is now on $want"
+    exit 0
+  fi
+
+  # Said as a failure, because it is one, and with the state it ended in. A
+  # device left with no driver at all is the worst outcome to be quiet about:
+  # the kernel no longer has the NIC and neither does the dataplane.
+  say "bind: $ADDR did NOT bind to $want; it is on ${now:-no driver at all} now."
+  say "      The dataplane will start without it. 'dmesg' says why $want"
+  say "      refused the device."
+  #
+  # AND THE ADVICE ASKS WHICH BOX IT IS ON. This was one sentence for both
+  # drivers: "on a box with an IOMMU the usual cause is intel_iommu=on or
+  # amd_iommu=on missing from the kernel command line". It is false of each of
+  # the two boxes that can reach it, in opposite directions.
+  #
+  # With vfio-pci the box HAS IOMMU groups - that is the only way dpdk_driver()
+  # returns it - so the parameter cannot be the missing thing. The operator is
+  # sent to check a kernel command line that is already right, on the one
+  # message they get when the appliance comes up not forwarding.
+  #
+  # With uio_pci_generic the box has NO IOMMU, so a sentence opening "on a box
+  # with an IOMMU" is about a different machine, and the parameter it names
+  # would not have helped: that driver does not use an IOMMU at all.
+  if [ "$want" = "vfio-pci" ]; then
+    say "      This box has IOMMU groups, so the kernel command line is not the"
+    say "      cause: vfio-pci is being offered a device it will not take."
+    say "      Read this, on the box:"
+    say "        $SYSBUS/devices/$ADDR/iommu_group"
+    say "      A device with no group of its own cannot go, and a group whose"
+    say "      other members are still held by host drivers cannot either."
+  else
+    say "      This box has no IOMMU groups, which is why vfio-pci was not"
+    say "      tried. uio_pci_generic needs a legacy INTx interrupt, and a"
+    say "      device that has only MSI-X is refused. Enabling an IOMMU in the"
+    say "      firmware and on the kernel command line is what makes vfio-pci"
+    say "      available instead."
+  fi
+    return 1
+}
+
+# EVERY NAMED DEVICE, and the worst answer is the one that is reported.
 #
-# AND THE ADVICE ASKS WHICH BOX IT IS ON. This was one sentence for both
-# drivers: "on a box with an IOMMU the usual cause is intel_iommu=on or
-# amd_iommu=on missing from the kernel command line". It is false of each of
-# the two boxes that can reach it, in opposite directions.
-#
-# With vfio-pci the box HAS IOMMU groups - that is the only way dpdk_driver()
-# returns it - so the parameter cannot be the missing thing. The operator is
-# sent to check a kernel command line that is already right, on the one
-# message they get when the appliance comes up not forwarding.
-#
-# With uio_pci_generic the box has NO IOMMU, so a sentence opening "on a box
-# with an IOMMU" is about a different machine, and the parameter it names
-# would not have helped: that driver does not use an IOMMU at all.
-if [ "$want" = "vfio-pci" ]; then
-  say "      This box has IOMMU groups, so the kernel command line is not the"
-  say "      cause: vfio-pci is being offered a device it will not take."
-  say "      Read this, on the box:"
-  say "        $SYSBUS/devices/$ADDR/iommu_group"
-  say "      A device with no group of its own cannot go, and a group whose"
-  say "      other members are still held by host drivers cannot either."
-else
-  say "      This box has no IOMMU groups, which is why vfio-pci was not"
-  say "      tried. uio_pci_generic needs a legacy INTx interrupt, and a"
-  say "      device that has only MSI-X is refused. Enabling an IOMMU in the"
-  say "      firmware and on the kernel command line is what makes vfio-pci"
-  say "      available instead."
-fi
-exit 1
+# A card that fails to bind does not stop the ones after it: on a box claiming
+# three, two that bind and one that does not is a box that forwards on two -
+# strictly better than one that gave up at the first and forwards on none. The
+# status is kept so apply-tuning still learns that something went wrong, and
+# each failure has already printed its own reason above.
+rc=0
+for a in $ADDRS; do
+  bind_one "$a" "$want" || rc=1
+done
+exit "$rc"

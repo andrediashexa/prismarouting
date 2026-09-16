@@ -502,6 +502,21 @@ fi
 # Read, never sourced: tune.env is a file an operator edits by hand, and
 # sourcing it would run whatever is in it as root inside the boot self-test.
 TUNEENV=${HEXA_TUNE_ENV:-$ROOT/etc/hexarouting/tune.env}
+# The management network the installer recorded, read ONCE and here.
+#
+# Two sections need it and they are seven hundred lines apart: the dataplane
+# block says which card was reserved for Linux and why (#378), and the network
+# section below says what became of that card. Reading the file twice would be
+# two answers to one question in one script, which is what this file's own
+# comment about not keeping a second opinion is against - and they would
+# disagree the first time one of them moved.
+#
+# The words on that line are interfaces(5)'s, not this product's, so the name
+# comes out of column two rather than being matched against a string this file
+# could reword. appliance/hexarouting-tune reads the same file the same way.
+MGMTCONF="$ROOT/etc/network/interfaces.d/hexarouting"
+mgmt_if=$(awk '$1 == "iface" { print $2; exit }' "$MGMTCONF" 2>/dev/null)
+mgmt_how=$(awk '$1 == "iface" { print $4; exit }' "$MGMTCONF" 2>/dev/null)
 ll=$(sed -n 's/^[[:space:]]*HEXA_LOW_LATENCY[[:space:]]*=[[:space:]]*//p' \
      "$TUNEENV" 2>/dev/null | tail -1 | tr -d '"'"'"' \t')
 ll=${ll:-1}
@@ -839,8 +854,14 @@ fi
 # so VPP claimed whatever NIC it found, which on a single-NIC box is the
 # management one. The operator learned about it by losing the session (#123).
 #
-# Now nothing is claimed unless it is named, which is safe and is also easy to
-# not notice: a box that forwards nothing looks like a box that is working.
+# Then nothing was claimed unless it was named, which was safe and was also a
+# box that could not forward until somebody typed. Now the box claims every
+# card it has but a reserve, and never the last one (#378) - so what reaches
+# the branches below is a box that claimed nothing because it had nothing to
+# claim, or one that was told which card to take.
+#
+# The reason this is said out loud at all did not change: a box that forwards
+# nothing looks like a box that is working.
 if grep -q "plugin dpdk_plugin.so { disable }" "$STARTUP" 2>/dev/null
 then
   # No DPDK at all, so no device can be claimed by anything. This is the
@@ -866,13 +887,42 @@ elif grep -q "no-pci" "$STARTUP" 2>/dev/null; then
   # would mean a second copy of the VTY's rule living in a shell script, and
   # the two would disagree the first time one of them moved; the operator is
   # about to type the command anyway, and the box answers for itself.
+  # AND THIS IS NO LONGER THE ORDINARY BOX (#378). The box claims every card
+  # it has but a reserve, and never the last one, so reaching here means it
+  # claimed nothing - not that nobody has typed yet. The old sentence told the
+  # operator to name a card, which on a box that already looked is advice for
+  # a state this box is not in.
+  #
+  # AND WHICH OF TWO BOXES THIS IS, because they need opposite work and read
+  # identically from `no-pci` alone. A box with no card has nothing to claim;
+  # a box WITH a card that claimed nothing declined it, and the only reason it
+  # declines is that it could not work out how to stay reachable without the
+  # card it is reached on.
+  #
+  # COUNTED FROM PCI AND NOT FROM /sys/class/net, which is the same reading
+  # the tuner makes: class 0x02 is a network controller and does not change
+  # when a driver does, so this counts the same cards before and after a bind.
+  _pcinics=0
+  for _d in "$ROOT"/sys/bus/pci/devices/*; do
+    [ -e "$_d/class" ] || continue
+    case "$(cat "$_d/class" 2>/dev/null)" in
+      0x02*) _pcinics=$((_pcinics + 1)) ;;
+    esac
+  done
   noforward="no interface to forward on"
-  warn "no dataplane interface: VPP was given no NIC to forward on"
-  say "         name it from the VTY: 'configure', then"
-  say "         'dataplane interface <name>', then 'commit'. A name this box"
-  say "         has not got is refused. With more than one card, the one"
-  say "         carrying the default route is refused too; with only that"
-  say "         card, it is handed over and its address goes with it."
+  if [ "$_pcinics" = 0 ]; then
+    warn "no dataplane interface: this box has no PCI network card for the"
+    say "         dataplane to claim, so it forwards nothing. A virtio card in"
+    say "         a virtual machine does count; a card Linux cannot see does"
+    say "         not. 'show hardware' lists what this box can see."
+  else
+    warn "no dataplane interface: this box has $_pcinics card(s) and claimed"
+    say "         none. The card it is reached on is the only one it could"
+    say "         have taken, and it could not read an address, a MAC and a"
+    say "         gateway to put back - so it kept the card and stayed"
+    say "         reachable. hexarouting-tune says which of the three in the"
+    say "         journal."
+  fi
 elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
   # A NAME IN A FILE IS NOT A NIC. This said [ ok ] as soon as a device
   # appeared in startup.conf, so a box whose dataplane has no interface at all
@@ -884,14 +934,58 @@ elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
   # operator who did exactly what the warning above tells them - name the
   # interface - lands here, is told the NIC is fine, and still forwards
   # nothing.
-  NICPCI=$(grep -o 'dev 0000:[0-9a-f:.]*' "$STARTUP" | head -1 | cut -d' ' -f2)
+  # EVERY device, not the first (#378). A box claiming three cards and holding
+  # one is a box forwarding on a third of its ports, and `head -1` reported the
+  # one that worked.
+  NICPCI=$(grep -o 'dev 0000:[0-9a-f:.]*' "$STARTUP" | cut -d' ' -f2 \
+           | tr '\n' ' ' | sed 's/ $//')
+  NICN=$(printf '%s' "$NICPCI" | tr ' ' '\n' | grep -c .)
+  # WHETHER THE BOX CHOSE, which is the whole of what #378 changed and the one
+  # thing an operator cannot see from the PCI address. HEXA_DATAPLANE_IF is
+  # the tuner's input and the VTY writes it; it ships empty, so empty means
+  # nobody named a card and the box claimed by itself.
+  #
+  # Read with sed and never sourced, for the reason HEXA_LOW_LATENCY is:
+  # tune.env is a file an operator edits by hand, and sourcing it would run
+  # whatever is in it as root inside the boot self-test.
+  NAMEDIF=$(sed -n \
+      's/^[[:space:]]*HEXA_DATAPLANE_IF[[:space:]]*=[[:space:]]*//p' \
+      "$TUNEENV" 2>/dev/null | tail -1 | tr -d '"'"'"'')
   # "any interface that is not local0" and not a count: local0 is VPP's own
   # loopback and is present on a box with no NIC whatever.
   if vppctl show interface 2>/dev/null \
        | awk 'NR>1 && $1 != "" && $1 != "local0" {found=1} END {exit !found}'
   then
-    ok "dataplane NIC: $NICPCI"
-    # AND THE PORT ACTUALLY STARTED (#382).
+    # WHAT THE BOX DID AND WHY, because a box that silently ate a card is
+    # worse than one that asked (#378). The address alone was the whole line
+    # when there was only ever one card and somebody had always typed it.
+    if [ -n "$NAMEDIF" ]; then
+      ok "dataplane NIC: $NICPCI"
+      say "         named in the configuration as '$NAMEDIF', so the box"
+      say "         claims that card and no other."
+    elif [ "$NICN" = 1 ]; then
+      ok "dataplane NIC: $NICPCI, claimed by this box with nobody asked"
+    else
+      ok "dataplane NIC(s): claimed by this box with nobody asked"
+      say_list "         " "$NICPCI"
+    fi
+    # AND WHICH CARD LINUX KEPT, if any. The reserve is the management network
+    # the installer recorded, and an operator looking at a box with three
+    # cards and two claimed needs the reason the third was spared - otherwise
+    # it reads as a card the box failed to take.
+    if [ -z "$NAMEDIF" ] && [ -n "${mgmt_if:-}" ] \
+       && [ "$NICN" -lt "$(ls "$ROOT/sys/class/net" 2>/dev/null | wc -l)" ]
+    then
+      say "         '$mgmt_if' is reserved for Linux: it is the"
+      say "         management network this box was installed with."
+    fi
+    # AND WHETHER THOSE PORTS ACTUALLY STARTED (#382).
+    #
+    # THE SAME SCREEN, deliberately. The three readings above say which cards
+    # the box took and which it left; this says whether the ones it took work,
+    # and an operator reading a console does not care that the two halves
+    # arrived from different issues. A card claimed and a card forwarding are
+    # different claims, and the gap between them is where #382 lived.
     #
     # An interface the dataplane HOLDS is not an interface that forwards. VPP
     # puts `error` in the State column of a port whose driver refused to start
@@ -912,12 +1006,17 @@ elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
     if [ -n "$errored" ]; then
       bad "the dataplane holds interface(s) its driver refused to start:"
       say "       $errored"
+      # THE SMALLEST OF ITS CARDS' MAXIMA, not "the card's maximum" (#378).
+      # The box can claim several and VPP takes one value for them all, so
+      # naming a single card here would describe a box that has one - and on
+      # the box this sentence is for, the operator is looking at a list.
       say_list "        " "'show interface' reports them in error state." \
         "They carry no traffic, and everything else about this box can look" \
         "right. 'journalctl -u vpp' has the driver's own reason." \
-        "An MTU above what the card accepts is one: the box sets the card's" \
-        "maximum when nothing names an 'mtu', so a port in this state after" \
-        "an 'mtu' was configured is a value the card cannot carry."
+        "An MTU above what the card accepts is one: the box starts every" \
+        "interface at the smallest maximum its claimed cards report, so a" \
+        "port in this state after an 'mtu' was configured is a value that" \
+        "card cannot carry."
     fi
   else
     bad "the dataplane has no interface, and one is named"
@@ -1595,7 +1694,8 @@ fi
 # definition, it is reached at the console it is being installed from, and a
 # [FAIL] there would fail a healthy medium on every boot - the same argument
 # the ssh host keys below are skipped on a live image for.
-MGMTCONF="$ROOT/etc/network/interfaces.d/hexarouting"
+# MGMTCONF, mgmt_if and mgmt_how are read once, at the top of this file,
+# because the dataplane block above needs the same answer (#378).
 if [ -d "$ROOT/run/live/medium" ] || [ -f "$ROOT/run/live/overlay" ]; then
   :
 elif [ ! -f "$MGMTCONF" ]; then
@@ -1630,8 +1730,6 @@ else
   # line are interfaces(5)'s and not this product's, so they cannot be
   # reworded, and taking the interface name out of column two is what makes
   # this check about the box rather than about the message.
-  mgmt_if=$(awk '$1 == "iface" { print $2; exit }' "$MGMTCONF" 2>/dev/null)
-  mgmt_how=$(awk '$1 == "iface" { print $4; exit }' "$MGMTCONF" 2>/dev/null)
   if [ -z "$mgmt_if" ]; then
     # Installed with "none". A decision somebody made, said quietly: the file
     # exists, so this box is NOT one the installer forgot to ask.

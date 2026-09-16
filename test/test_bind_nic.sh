@@ -77,6 +77,48 @@ runbind "$R"
   || ok "and driver_override was not touched"
 
 echo
+echo "=== EVERY device startup.conf names is bound, not the first (#378) ==="
+# Since the box claims every card it has but a reserve, startup.conf carries
+# one `dev` stanza per claimed card. This read the first of them with `head
+# -1`, so a three-card box came up with one card on vfio-pci and two still
+# held by their kernel drivers - which DPDK cannot take a device through. The
+# dataplane would then hold one port in three and the self-test would call it
+# healthy, because a device named in a file is not a device the dataplane has
+# (#283).
+#
+# THE FIXTURE HAS THREE, because a case with two would pass against `head -1`
+# the moment the loop was written wrong in the other direction - taking the
+# last instead of the first is also one device, and one device out of two is
+# half the boxes.
+R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci)
+printf 'dpdk {\n  dev 0000:03:00.0 {\n  }\n  dev 0000:03:00.1 {\n  }\n\
+  dev 0000:03:00.2 {\n  }\n}\n' > "$R/etc/vpp/startup.conf"
+for _a in 0000:03:00.1 0000:03:00.2; do
+  mkdir -p "$R/sys/bus/pci/devices/$_a"
+  on_driver "$R" ixgbe "$_a"
+done
+on_driver "$R" ixgbe 0000:03:00.0
+runbind "$R"
+_bound=0
+for _a in 0000:03:00.0 0000:03:00.1 0000:03:00.2; do
+  # driver_override is what the binder WRITES, and it is the only evidence
+  # here that the device was acted on: this fake sysfs has no kernel to
+  # complete the probe, so the driver link does not change by itself.
+  [ -e "$R/sys/bus/pci/devices/$_a/driver_override" ] && _bound=$((_bound + 1))
+done
+[ "$_bound" = 3 ] \
+  && ok "all three named devices were offered to a DPDK driver" \
+  || bad "$_bound of 3 named devices were bound: a box that claims three \
+cards came up forwarding on $_bound of them, and nothing said so"
+# AND EACH BY NAME. A count alone would pass a binder that wrote the first
+# device's override three times, which is the shape `head -1` fails in.
+for _a in 0000:03:00.1 0000:03:00.2; do
+  said "$_a" && ok "and it says what it did to $_a" \
+    || bad "nothing on the console names $_a, so an operator reading a box \
+that forwards on one port has no line to go to: $OUT"
+done
+
+echo
 echo "=== the device carrying the default route is REFUSED ==="
 # The one mistake here that cannot be undone remotely.
 R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
@@ -92,18 +134,24 @@ said "eth9" \
   || ok "and nothing was written"
 
 echo
-echo "=== a box with ONE card may hand it over, with the way back recorded ==="
+echo "=== a box with ONE card may hand it over, with the way back computed ==="
 # The refusal above is right about every box that has somewhere else to put the
 # dataplane. On a box with one card its advice named a card that does not
 # exist, and the box could never forward (#303). It steps aside here, and only
-# here, and only when tune.env carries the management path the VTY read off
-# the card before naming it - because without that record there is nothing to
-# put on the pair once the dataplane holds the port, and the box comes up
-# forwarding and unreachable.
+# here, and only when the box has a way back to put on the pair once the
+# dataplane holds the port - without one it comes up forwarding and
+# unreachable.
+#
+# WHERE THAT WAY BACK COMES FROM MOVED (#378). It was HEXA_DATAPLANE_MGMT in
+# tune.env, which only existed once somebody had typed `dataplane interface` -
+# so on a box that claims its own card it was never there, this refused, and
+# the advice told the operator to type the card the tuner had just named.
+# hexarouting-tune computes it now, on the boot that claims the card, and
+# leaves it in /run where it cannot outlive that boot.
 R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
-mkdir -p "$R/etc/hexarouting"
-printf 'HEXA_DATAPLANE_IF=eth9\nHEXA_DATAPLANE_MGMT=eth9 10.95.200.198/24 52:54:00:00:00:01\n' \
-  > "$R/etc/hexarouting/tune.env"
+mkdir -p "$R/run/hexarouting"
+printf 'eth9 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n' \
+  > "$R/run/hexarouting/dataplane-management"
 runbind "$R"
 # NOT on the exit status: this fake sysfs cannot actually move a driver, so
 # the verification at the end reports the device on the one it started on and
@@ -121,15 +169,46 @@ said "10.95.200.198/24" \
   || bad "it said it was handing the card over and bound nothing: $OUT"
 
 echo
-echo "=== with a SECOND card on the box, it is refused even so ==="
-# The record says the box knows how to come back on the pair. It does not say
-# it should: with a spare card there is one to name instead.
+echo "=== and with no way back computed, it refuses WITHOUT a loop (#378) ==="
+# THE DEFECT THIS HALF EXISTS TO END. The refusal used to print, to a one-card
+# box, "Name it from the VTY: 'configure', 'dataplane interface eth9',
+# 'commit'". On a box that claims its own card the tuner had ALREADY named
+# eth9 - that is why the binder was looking at it - so the advice told the
+# operator to type the thing that had just happened. Typing it changes
+# nothing and the box refuses again on the next boot.
+#
+# The refusal itself stays: a card handed over with no way back is a box
+# nobody can reach, and that is worth refusing whatever caused it. What must
+# not survive is the instruction.
 R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
-mkdir -p "$R/etc/hexarouting" "$R/sys/bus/pci/devices/0000:03:00.1" \
+runbind "$R"
+[ "$RC" != 0 ] && said "REFUSING" \
+  && ok "a one-card box with no way back is still refused" \
+  || bad "the only card went to the dataplane with nothing to put back: rc=$RC $OUT"
+said "dataplane interface" \
+  && bad "the refusal still tells the operator to name the card the tuner \
+already named, which is a loop: $OUT" \
+  || ok "and it does not tell them to type what has already happened"
+# ONE LINE'S WORTH OF IT. The message folds at 79 columns, so "stay
+# reachable" straddles the break and a needle spelling both words matches
+# nothing - over a box saying exactly the right thing. That is #285, and it
+# cost three needles in the labs before it was written down.
+said "could not work out how to stay" \
+  && ok "it says what is actually missing instead" \
+  || bad "it refuses without saying why, so there is nothing to act on: $OUT"
+
+echo
+echo "=== with a SECOND card on the box, it is refused even so ==="
+# A way back says the box knows how to come back on the pair. It does not say
+# it should: with a spare card there is one to name instead, and giving this
+# one away costs the box its management for nothing (#123). That half of the
+# refusal is untouched by #378 and this is what holds it there.
+R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+mkdir -p "$R/run/hexarouting" "$R/sys/bus/pci/devices/0000:03:00.1" \
          "$R/sys/class/net/eth8"
 ln -s "../../../bus/pci/devices/0000:03:00.1" "$R/sys/class/net/eth8/device"
-printf 'HEXA_DATAPLANE_MGMT=eth9 10.95.200.198/24 52:54:00:00:00:01\n' \
-  > "$R/etc/hexarouting/tune.env"
+printf 'eth9 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n' \
+  > "$R/run/hexarouting/dataplane-management"
 runbind "$R"
 [ "$RC" != 0 ] && said "REFUSING" \
   && ok "refused, because there is another card to name" \
@@ -628,7 +707,7 @@ grep -q "ifupdown" "$REPO/appliance/build-iso.sh" \
 # 6 rows here carry an interface name or a driver name the kernel handed back,
 # with the words of the program behind them. Named on every run rather than
 # excused: an allowlist is read once and grown forever.
-SAY_UNSAFE_AT_MOST=6
+SAY_UNSAFE_AT_MOST=5
 say_report appliance/bind-dataplane-nic
 rm -rf "$SAY_DIR"
 
