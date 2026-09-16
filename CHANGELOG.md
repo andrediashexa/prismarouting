@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The boot self-test reported a box ready while its only interface was
+  dead.** A dataplane interface in `error` state carries no traffic, and every
+  check around it - the card is bound, the device is named, the pair exists -
+  is true of such a box. It is now a failed check that names the interface.
+  The shape [#297](https://github.com/andrediashexa/hexarouting/issues/297)
+  and [#311](https://github.com/andrediashexa/hexarouting/issues/311) are
+  about, reached through the door #382 opened.
+
 * **On a card whose maximum MTU is 1500 - every virtual machine - the
   dataplane interface came up in `error` state at 9000 and the box forwarded
   nothing.**

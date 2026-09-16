@@ -1887,6 +1887,41 @@ if said '\[ ok \] dataplane NIC: 0000:03:00.0'; then
 else
   bad "a startup.conf naming a device the dataplane HAS said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
 fi
+# AND THE ONE ABOVE IS NOT ENOUGH (#382). The same box, with the driver having
+# refused to start the port: the dataplane still HOLDS the interface, so every
+# check above stays green and the box reports ready while it cannot pass a
+# packet. This is the screen #382 was reported from - MTU 9000 on a card whose
+# maximum is 1500 - and the shape #297 and #311 are about.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet3/0/0           1   error          9000/0/0/0
+local0                            0     down          0/0/0/0
+IFACE
+nicconf 'dpdk {
+  dev 0000:03:00.0
+}'
+run
+if said_across "\[FAIL\] the dataplane holds interface\(s\) its driver refused to start:.*TenGigabitEthernet3/0/0"; then
+  ok "a port in error state is a FAILED check, on a box that is otherwise sound"
+else
+  bad "the box reported ready with its only interface in error state: $(printf '%s\n' "$OUTPUT" | grep -i 'error state\|refused to start' || echo '<nothing about it>')"
+fi
+# And a port that DID start must not be reported as one that did not: an alarm
+# that is always on is one nobody reads.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet3/0/0           1      up          1500/0/0/0     rx packets                  12
+local0                            0     down          0/0/0/0
+IFACE
+nicconf 'dpdk {
+  dev 0000:03:00.0
+}'
+run
+if said 'refused to start'; then
+  bad "a port that started was reported as one the driver refused: $(printf '%s\n' "$OUTPUT" | grep -i 'refused to start')"
+else
+  ok "and a port that started is not reported as one that did not"
+fi
 # THE STATE AN OPERATOR ACTUALLY REACHES. They read the no-pci warning above,
 # name the interface as it tells them to, and the dataplane still has nothing -
 # because nothing in this appliance binds the NIC or loads vfio-pci. The box
