@@ -2305,10 +2305,17 @@ reachable on every real VM**. Measured over a complete gate run: `grep -i
 "max MTU"` across the whole guest console returned nothing at all. The lab was
 otherwise in exactly the right place - PHASE 5 boots the installed disk with
 the card already in the dataplane - and passed because its card was easier
-than any real one. Two gaps of the same kind remain and are recorded on that
-issue: the guest has two CPUs where a real box has eight, so nothing that
-depends on more than one worker is exercised end to end, and it has no IOMMU,
-so the `vfio-pci` bind path is never taken.
+than any real one.
+
+**Two gaps of the same kind, still open**
+([#383](https://github.com/andrediashexa/hexarouting/issues/383)). The guest
+has two CPUs where the reporting box has eight, so it gets one worker and
+nothing that depends on more than one is exercised on a booted box - the queue
+cap, the pinning, the per-worker partition, the reserve arithmetic. And it has
+no IOMMU, so the bind always falls back to `uio_pci_generic` and the
+`vfio-pci` path, which is the one this product prefers because it takes the
+device through the IOMMU, is never taken. RAM and the hugepage count do agree,
+so the memory arithmetic the lab exercises is the one a real box runs.
 
 **The interface comes up in `error` state at 9000**
 ([#382](https://github.com/andrediashexa/hexarouting/issues/382)) - open, and
