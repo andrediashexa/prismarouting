@@ -78,7 +78,8 @@ version has a chance of seeing it.
 ### Fixed
 
 * **v0.75.0 stopped the dataplane starting on every box whose card reports a
-  maximum MTU below 9000, which is every virtio guest.** Reported from an
+  maximum MTU below 9000, which is every virtio guest**
+  ([#380](https://github.com/andrediashexa/hexarouting/issues/380)). Reported from an
   installed box within the hour. The tuner wrote `mtu <n>` inside the `dev`
   stanza; **the keyword does not exist**, VPP does not ignore it, it refuses
   the whole file and exits, and `vpp.service` carries `Restart=always`:
