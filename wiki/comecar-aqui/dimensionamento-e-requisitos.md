@@ -35,13 +35,15 @@ O dataplane pega a porta pelo endereço PCI dela. Uma interface que **não** tem
 
 ## A caixa lê a placa antes de escrever a configuração dela
 
-O ajuste de boot pergunta **à placa** quantas filas ela tem e qual é a MTU máxima dela, em vez de deduzir do processador. Antes ele pedia uma fila por worker e a MTU padrão do dataplane, 9000 — e numa placa virtual, que tem **uma** fila e MTU máxima de 1500, os dois números estavam errados de uma vez: o dispositivo era recusado e a caixa subia dona de uma placa que não conseguia iniciar.
+O ajuste de boot pergunta **à placa** quantas filas ela tem e qual é a MTU máxima dela, em vez de deduzir do processador. Antes ele pedia uma fila por worker, e numa placa virtual, que tem **uma** fila, isso fazia o dispositivo ser recusado: a caixa subia dona de uma placa que não conseguia iniciar. O número de filas é corrigido a partir da placa.
+
+A MTU é **dita e não corrigida**, e a diferença importa: o VPP não tem nenhuma opção de MTU na configuração do dataplane, portanto não há nada para escrever ali. Ele pede 9000, a placa recusa, e isso fica registado no log — o dispositivo sobe na mesma. O relatório diz qual é o máximo da sua placa para que essa linha no log tenha explicação.
 
 O relatório de boot diz o que ele encontrou. Numa máquina de oito núcleos com placa virtual:
 
 ```
 # NIC queues: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
-# NIC max MTU: 1500, below VPP's default of 9000, so the interface is set to 1500
+# NIC max MTU: 1500, below VPP's default of 9000. VPP has no MTU setting in its dpdk stanza, so it will ask for 9000, be refused by the card and log it
 ```
 
 **O limite é dito, não aplicado em silêncio.** Uma fila com sete workers significa um worker recebendo pacotes, e isso é uma fração da capacidade que aquele processador teria — é informação de dimensionamento, e esconder o corte trocaria uma caixa que não sobe por uma caixa lenta sem explicação.
