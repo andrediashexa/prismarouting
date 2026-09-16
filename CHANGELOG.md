@@ -85,6 +85,62 @@ version has a chance of seeing it.
   instead of a stanza, so the weaker of the two is gone and the file says where
   the question is asked now. Two readers of one fact is what this repository
   refuses everywhere else.
+* **The lab's guest had a card easier than any real one, and that is why the
+  release gate could not see
+  [#380](https://github.com/andrediashexa/hexarouting/issues/380).**
+  ([#381](https://github.com/andrediashexa/hexarouting/issues/381)).
+  `lab/install-iso.sh` creates its NIC with `-device virtio-net-pci` and no
+  `host_mtu`, so qemu does not negotiate `VIRTIO_NET_F_MTU` and the guest
+  reports a maximum of 65535. Every hypervisor an operator actually runs this
+  on sets it: the box that found #380 is a Proxmox guest and its `ens18`
+  reports 1500.
+
+  The tuner only writes anything about MTU when the card's maximum is below
+  VPP's default of 9000, so **that branch was unreachable in the lab and
+  reachable on every real VM**. Measured on the gate's own run rather than
+  argued: `grep -i "max MTU" install-console.log boot-console.log` over a
+  complete gate returns nothing at all.
+
+  The lab was otherwise in exactly the right place to catch it. It boots the
+  installed disk four times, and PHASE 5 boots it with the card already handed
+  to the dataplane - which is the boot that carries the `dev` stanza and would
+  have carried the bad keyword. It passed because its card advertised a
+  maximum no real one has.
+
+  `host_mtu=1500` now, with the reason written beside it. **A guest that is
+  easier than the machines this product runs on is a guest that answers a
+  different question.**
+
+  Shown failing, which is the point of the change: with #380's keyword put
+  back, the lab goes red at PHASE 5 in the state the reporting box was in -
+  *"the card left the kernel and nothing put the name back"*, *"the dataplane
+  has no interface but local0"* - and the guest's console carries
+  `unknown input 'mtu 1500'`. One qemu option was the whole distance between
+  this suite and the defect that reached an operator.
+
+  **And with the keyword gone the lab is still red, on a different and real
+  defect** ([#382](https://github.com/andrediashexa/hexarouting/issues/382)).
+  Every structural check passes - the card is bound, the pair carries the
+  address, the dataplane holds the port - and the box does not answer from
+  outside, because `GigabitEthernet0/9/0` sits in `error` state at MTU 9000 on
+  a card whose maximum is 1500. That is the maintainer's original report, and
+  it was hidden behind a box that never started. The lab stays red until #382
+  lands, which is what a lab that reproduces a defect is for.
+
+* **A wiki page told operators the box sets their MTU, which was never true.**
+  `dimensionamento-e-requisitos.md` quoted the tuner's report line verbatim -
+  *"below VPP's default of 9000, so the interface is set to 1500"* - and the
+  prose around it read as though the number had been corrected on the card.
+  Nothing was set: the keyword that would have set it does not exist, and
+  before that it was the line that stopped VPP starting. The page now says
+  what the box does, which is to ask for 9000, be refused by the card and log
+  it, and to tell the operator their card's maximum so that log line has an
+  explanation.
+
+  `test/test_wiki_screens.py` did not catch it, and the reason is worth
+  recording: it compares screens the box PRINTS, and the tuner's report lines
+  begin with `#` and are not among the shapes it recognises. That is a limit
+  of the reader rather than a defect in it, and it is now written down.
 
 ## 0.75.1 - the dataplane could not start on a virtio box, because 0.75.0 wrote a keyword VPP has not got
 

@@ -151,8 +151,25 @@ MIRROR_DEV=/dev/vdb
 # not there and this lab would be measuring its own inconsistency. The box is
 # then the same shape as the one in #303: a machine with a single NIC.
 SSH_PORT=${SSH_PORT:-2222}
+# host_mtu=1500 IS NOT COSMETIC, and leaving it off cost a release.
+#
+# Without it qemu does not negotiate VIRTIO_NET_F_MTU and the guest reports a
+# maximum of 65535. Every hypervisor an operator actually runs this on sets it:
+# the box that found #380 is a Proxmox guest and its ens18 reports maxmtu 1500.
+#
+# The tuner only writes anything about MTU when the card's maximum is below
+# VPP's default of 9000, so with the qemu default that branch was unreachable
+# HERE and reachable on every real VM. v0.75.0 shipped `mtu <n>` into the dpdk
+# stanza, VPP has no such keyword and refuses the whole file, and this lab -
+# which boots the installed disk with the card claimed, in PHASE 5, exactly
+# where it would have seen it - passed, because its card advertised a maximum
+# no real one has.
+#
+# So the card is given the maximum a real one has. A guest that is easier than
+# the machines this product runs on is a guest that answers a different
+# question.
 MGMT_NET="-netdev user,id=mgmt,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
-  -device virtio-net-pci,netdev=mgmt,addr=0x9"
+  -device virtio-net-pci,netdev=mgmt,addr=0x9,host_mtu=1500"
 
 # Does the box answer on the network? <seconds> to keep trying.
 #
