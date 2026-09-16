@@ -950,7 +950,23 @@ version has a chance of seeing it.
   case now gives the fixture's heading a comma of its own, so the cut drops
   something on every release, and it was shown red against a gate whose title
   comparison cannot refuse. A test-only change; no box behaves differently.
-
+* **The release gate's guest said nothing about the three ways it is easier
+  than a real box**
+  ([#383](https://github.com/andrediashexa/hexarouting/issues/383)) - the
+  design half. `lab/install-iso.sh` now carries, beside `MGMT_NET`, what each
+  gap hides, the qemu options that would close it, what those touch, the
+  measurement that decides, and the two sentences one of which stays next to
+  the option once it is measured. Driven offline while writing it: the real
+  tuner at `-smp 8` over this guest's shape prints `corelist-workers 1-7`,
+  `Capped at 1` for the one-queue card and `buffers-per-numa 114688`, none of
+  which has ever been on the gate's console; `bind-dataplane-nic
+  --which-driver` flips to `vfio-pci` on the first entry under
+  `/sys/kernel/iommu_groups`; and libslirp keeps a non-loopback peer, so the
+  reachability probe can be made to need a route without touching the
+  gateway, which slirp cannot move off-link. No qemu option moves in this
+  entry: the wall-clock at 2 and at 8, the IOMMU boot and the no-route probe
+  are measured one at a time by the release-gate runner, and the option
+  comments are finished from those numbers.
 ## 0.76.1 - two things the box said that were not true of the box saying them
 
 [#376](https://github.com/andrediashexa/hexarouting/issues/376), [#387](https://github.com/andrediashexa/hexarouting/issues/387).

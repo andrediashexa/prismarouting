@@ -144,6 +144,12 @@ MIRROR_DEV=/dev/vdb
 # answering on it, which is the whole of what #303 is about, and it proves
 # nothing about 10-gigabit optics.
 #
+# NOR ABOUT ROUTING. The peer the box sees is 10.0.2.2, on the guest's own
+# wire, so a box with no default route at all answers this probe (#378
+# shipped that box and this stayed green). That is gap 3 of #383, written up
+# under MGMT_NET below with what would make a banner here mean the box can
+# route.
+#
 # ONE card, explicitly, at a FIXED PCI address, on every boot. qemu adds a
 # default NIC when told nothing, which is how this lab has been running - and
 # a card that changes model or slot between the install and the boot changes
@@ -177,6 +183,214 @@ SSH_PORT=${SSH_PORT:-2222}
 MGMT_MAXMTU=${MGMT_MAXMTU:-1500}
 MGMT_NET="-netdev user,id=mgmt,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
   -device virtio-net-pci,netdev=mgmt,addr=0x9,host_mtu=$MGMT_MAXMTU"
+
+# ------------------------------- the guest against a real box, again (#383)
+#
+# host_mtu above is the first property that rule cost a release to learn: a
+# guest that is easier than the machines this product runs on is a guest
+# that answers a different question. Three more remain, measured against the
+# box that reported #380 (8 CPUs, isolcpus=1-7, intel_iommu=on iommu=pt, a
+# gateway it reaches by a route), and each has already hidden a defect an
+# operator then found:
+#
+#   property   this guest                       a real box
+#   CPUs       2, so ONE worker                 8, so seven
+#   IOMMU      none, so uio_pci_generic         present, so vfio-pci
+#   gateway    10.0.2.2, on the guest's wire    off-link, reached by a route
+#
+# NOTHING IS CHANGED HERE YET. Each one costs something - gate wall-clock, a
+# machine type, a probe that has to mean more - and the release-gate runner
+# measures each cost alone, one lab at a time, before any option moves. Per
+# gap, below: what closes it, what that touches, the measurement, and two
+# paragraphs of which exactly ONE stays next to the option once the numbers
+# are in. The other is deleted with them.
+#
+# 1. -smp 2, on all four qemu lines in this file: the PHASE 1 install,
+#    boot_vm(), the mirror reinstall and the one-disk boot.
+#
+#    Driven offline with the real tuner (appliance/hexarouting-tune
+#    --sysfs-root over a root of this guest's shape, built the way
+#    appliance/test_tune.py builds one: a virtio card with ONE queue, the
+#    DHCP stanza reserving it, five pages reserved). -smp "$BOOT_SMP" gives
+#    `isolcpus=1`, `corelist-workers 1`, `buffers-per-numa 16384` and no cap
+#    of any kind. -smp 8 gives `isolcpus=1-7`, `corelist-workers 1-7`,
+#    `buffers-per-numa 114688`, `NIC queues, ens9: 1, and this box has 7
+#    worker(s). Capped at 1` - the half of #330 that was a real -22 - and,
+#    if MemTotal floors to 7 GB, `WARNING: 6 GB of hugepages were needed ...
+#    Capped at 5 GB`, which is the reporting box's own hugepages=5; at 8 GB
+#    the tuner asks for six pages instead, and the kernel command line on
+#    the console says which this guest is. With the pool the driven session
+#    creates (`cgnat pool lab-a`), the per-worker partition (#210) and the
+#    reserve-per-worker warning (#372, src/plugins/bpa/bpa.c) then run on a
+#    booted box for the first time. None of those lines has ever been on
+#    this console: appliance/test_startup_conf_shapes.sh proves they are
+#    GENERATED at eight cores, not that a box boots with them.
+#
+#    What closes it: -smp 8,sockets=1,cores=8,threads=1, spelled out because
+#    qemu's default topology flipped from sockets to cores in 6.2 and the
+#    tuner reads sibling lists. THE SAME NUMBER ON ALL FOUR LINES, in one
+#    holder: the install runs apply-tuning in the chroot ("boot tuning" in
+#    appliance/hexarouting-install), so the isolcpus the disk first boots
+#    with is computed from the INSTALL boot's CPUs, and an eight-CPU boot
+#    over a two-CPU install is a box reporting its own tuning as requested
+#    and not in effect.
+#
+#    What it risks: seven poll-mode workers at 100% for the length of every
+#    disk boot, on a runner this lab shares with nothing (nproc answers 32
+#    on the machine this was written on); the wrong-password control boots
+#    once more at that cost; without KVM, eight vCPUs under TCG on a path
+#    this file already marks slow. lab/boot-iso.sh keeps -smp "$BOOT_SMP" either way:
+#    the live medium never leaves first-boot mode, so a worker has nothing
+#    to show there.
+#
+#    Measured by: `time sh tools/lab.sh install-iso` at 2 and again at 8,
+#    alone on the machine, and install-console.log read for
+#    "corelist-workers 1-7", "dataplane workers hold the cores the profile
+#    names", "Capped at 1" and "hugepages=" on the kernel command line. The
+#    cost is the difference in wall-clock; the benefit is those lines.
+#
+#    IF THE GUEST GETS IT, the line at the option reads: eight CPUs because
+#      the reporting box has eight; a two-CPU guest gives the dataplane one
+#      worker, and with one worker the queue cap, the pinning, the
+#      per-worker partition and the reserve warning never run on a booted
+#      box. Measured: <N> s at 2 against <M> s at 8, on <date>.
+#    IF THE GAP STAYS: two CPUs, and a real box has eight. This guest gets
+#      ONE worker, so the queue cap, corelist-workers, the per-worker
+#      partition and the reserve warning are proved as generated files
+#      (appliance/test_startup_conf_shapes.sh) and never as a booted box.
+#      Eight cost <M> s over <N> s per gate, measured <date>, which is why
+#      it stays 2. A green run here says nothing about a box with more than
+#      one worker.
+#
+# 2. No IOMMU. bind-dataplane-nic decides on exactly one thing: whether
+#    /sys/kernel/iommu_groups has an entry. Driven offline through
+#    HEXA_IOMMU_GROUPS, a directory that is absent or empty answers
+#    "uio_pci_generic without IOMMU protection" and one with a single group
+#    answers "vfio-pci through the IOMMU". A qemu guest has no groups, so
+#    this file has only ever measured the fallback, and the path the
+#    product prefers has never once been taken here.
+#
+#    What closes it is four parts, each read in its source (qemu 7.2 and
+#    Linux 6.1, which are what the runner and the medium carry):
+#      -machine q35,kernel-irqchip=split
+#        The DMAR table is built by build_dmar_q35() in hw/i386/acpi-build.c
+#        and by nothing else, so the vIOMMU is a q35 device; and interrupt
+#        remapping refuses kernel-irqchip=on outright (hw/i386/x86-iommu.c,
+#        "please use 'split|off'"). Without remapping the guest's
+#        vfio_iommu_type1 returns -EPERM for every group unless
+#        allow_unsafe_interrupts=1 (drivers/vfio/vfio_iommu_type1.c), a
+#        module option this product does not ship.
+#      -device intel-iommu,intremap=on,aw-bits=48
+#        intremap defaults on under a split irqchip and is said anyway.
+#        aw-bits defaults to 39; a real Xeon reports 48, and DPDK reads the
+#        width off the IOMMU's cap register to choose IOVA as VA against PA,
+#        so the VPP journal says which mode it took. caching-mode stays off:
+#        it is for vhost and host-assigned devices, and this card is neither.
+#      ,disable-legacy=on,iommu_platform=on on the virtio-net-pci line above
+#        iommu_platform=on is what sends the card's DMA through the vIOMMU;
+#        without it the device bypasses translation and a driver that
+#        programs IOVAs corrupts memory. qemu refuses it on a transitional
+#        device ("VIRTIO_F_IOMMU_PLATFORM was supported by neither legacy
+#        nor transitional device", hw/virtio/virtio-pci.c), and on q35's
+#        root bus disable-legacy defaults OFF, because pcie_port there is
+#        `pci_bus_is_express && !pci_bus_is_root`. DPDK's virtio PMD
+#        negotiates VIRTIO_F_IOMMU_PLATFORM and VERSION_1
+#        (drivers/net/virtio/virtio_ethdev.h), so a modern-only card is one
+#        it drives.
+#      intel_iommu=on iommu=pt on the guest's kernel command line
+#        Already there: hexarouting-tune writes both into grub on every
+#        installed box, which is why the tuning readback says "the kernel
+#        exposes no IOMMU" on this guest today and would say "the kernel
+#        exposes dmar0" with the device present.
+#
+#    What it touches: MGMT_NET (the two device options) and the four qemu
+#    lines - the machine type on ALL of them, so the card keeps one
+#    predictable name from the install to the last boot, and the IOMMU
+#    device on whichever boots are to take vfio-pci. Which boots is the
+#    design question: with the device on EVERY boot the fallback stops
+#    being measured, and the fallback is the path most hypervisors put an
+#    operator on. One shape measures both binds on one disk: PHASE 2's boot
+#    without it, so the claim-at-boot block reads uio_pci_generic as it does
+#    today, and boot_vm() with it, so PHASE 3, 4 and 5 read vfio-pci and
+#    PHASE 5's port-state and MTU assertions judge that bind. Every driver
+#    reading in this file already accepts either name.
+#
+#    What it risks: q35 puts the medium on AHCI instead of IDE, so live-boot
+#    has to find it there; the card's predictable name may change under
+#    q35, which this file reads off the box and never assumes (#161) but
+#    docs/ and CHANGELOG quote as ens9 in measurements; a split irqchip
+#    costs an exit per IOAPIC interrupt; DPDK under a 39-bit vIOMMU may
+#    choose IOVA as PA, which works as root and is a journal line to read
+#    rather than a failure. A vfio bind that fails leaves the only card on
+#    no driver at all, so the red is the box unreachable in PHASE 2 with
+#    "did NOT bind to vfio-pci" on its console.
+#
+#    Measured by: one run with those options on every boot, read for
+#    "vfio-pci" in the `-- cards:` line, "dmar0" in the tuning readback, no
+#    port in error state, and the box answering from outside with the card
+#    on vfio-pci; then the wall-clock against the run at 2 CPUs above.
+#
+#    IF THE GUEST GETS IT, the line at the option reads: a q35 machine with
+#      an IOMMU because every real box this product is installed on has
+#      one, and bind-dataplane-nic takes vfio-pci wherever a group exists.
+#      Boots without the device measure the fallback; boots with it measure
+#      the path the product prefers. Measured: vfio-pci bound, port up at
+#      1500, answered from outside, <N> s, on <date>.
+#    IF THE GAP STAYS: no IOMMU, so this box binds uio_pci_generic on every
+#      boot and the vfio-pci path, the one the product prefers because it
+#      takes the device through the IOMMU, is never taken here. It was
+#      tried on <date>: <what broke, or what it cost>. A green run here
+#      says nothing about a box with VT-d on.
+#
+# 3. The gateway is on the guest's own wire. slirp's DHCP hands the guest
+#    10.0.2.15/24 with 10.0.2.2 as the router, and 10.0.2.2 is also where a
+#    forwarded connection comes FROM: libslirp 4.7.0, src/socket.c,
+#    sotranslate_accept() rewrites the peer to vhost_addr when the host side
+#    connected from INADDR_ANY or loopback, and leaves any other address
+#    alone. reachable_over_the_network() below connects to 127.0.0.1, so
+#    the SYN the box sees is from 10.0.2.2, on-link, and a box with NO
+#    default route answers it. #378 shipped exactly that box and this probe
+#    stayed green; a different reading caught it.
+#
+#    What closes it is not the gateway: slirp cannot put its router
+#    off-link, the DHCP router option is always vhost_addr. What CAN move
+#    is the peer. Bind the forward on this container's own address instead
+#    of loopback (hostfwd=tcp:<addr>:$SSH_PORT-:22, the address read off
+#    eth0 at run time) and have the probe connect to that address: slirp
+#    then keeps 172.17.x.y as the source, which is off the guest's /24, so
+#    the SYN-ACK needs the default route and a box without one is silent.
+#    Same probe, same banner, same wall-clock; only what a green MEANS
+#    changes, and it then means the box can route.
+#
+#    What it touches: MGMT_NET's hostfwd, reachable_over_the_network(), and
+#    the two readings taken through it - BOOT_REACHED in PHASE 2, which the
+#    claim-at-boot block reuses, and RB_REACHED in PHASE 3, which PHASE 4
+#    and 5 stand on. Each of them then also proves the way back #378
+#    computes carries a gateway the box can use.
+#
+#    What it risks: the container's address is docker's to choose, so it is
+#    read and never written down; a guest whose rp_filter is strict drops an
+#    off-link SYN it has no route back to, which is the same red one step
+#    earlier; nothing outside this file uses the forwarded port.
+#
+#    Measured by: boot the installed disk, `ip route del default` at its
+#    console, and run the probe both ways. Today's shape MUST still answer
+#    with the banner, which is the gap; the off-link shape MUST time out,
+#    and MUST answer again after `ip route add default via 10.0.2.2`.
+#
+#    IF THE GUEST GETS IT, the line at the probe reads: the peer is this
+#      container's own address and not loopback, on purpose. slirp keeps a
+#      non-loopback source, so the SYN arrives from off the guest's subnet
+#      and a box with no default route cannot answer it; a banner here
+#      proves the box routes, which is what an operator's gateway asks of
+#      it. Measured <date>: silent with the route deleted, a banner with it
+#      back.
+#    IF THE GAP STAYS: a banner here proves the box holds its address and
+#      sshd is listening. It does NOT prove the box can reach anything off
+#      its subnet, because the peer is 10.0.2.2 on the guest's own wire and
+#      needs no route; the default-route reading below is the only thing in
+#      this file that does. Measured <date>: the banner, with no default
+#      route at all.
 
 # Does the box answer on the network? <seconds> to keep trying.
 #
@@ -218,6 +432,21 @@ PYPROBE
 [ -f "$ISO" ] || { echo "no ISO at $ISO"; exit 1; }
 fail=0
 
+# THE TWO GAPS ABOVE, AS VARIABLES (#383). The block beside MGMT_NET says
+# what each hides and what would close it; these are what let the question be
+# ASKED - run the lab with them and read the result - rather than argued. What
+# the default is, and why, is written at the end of that block from the
+# numbers those runs produced.
+BOOT_SMP=${BOOT_SMP:-2}
+IOMMU_DEV=""
+IOMMU_ARGS=""
+if [ "${BOOT_IOMMU:-0}" = 1 ]; then
+  # caching-mode=on is what makes vfio inside the guest work at all: without
+  # it the guest's IOMMU driver never sees the mappings qemu makes.
+  IOMMU_DEV="-device intel-iommu,intremap=on,caching-mode=on"
+  IOMMU_ARGS="intel_iommu=on iommu=pt"
+fi
+
 if [ -w /dev/kvm ]; then
   ACCEL="-enable-kvm -cpu host"
   echo "accelerating with KVM"
@@ -225,6 +454,9 @@ else
   ACCEL="-cpu ${BOOT_CPU:-Nehalem}"
   echo "no KVM: emulating with ${BOOT_CPU:-Nehalem} (slow)"
 fi
+# -smp "$BOOT_SMP" on the four qemu lines below, and no -machine, so qemu's i440fx:
+# both are gaps 1 and 2 of #383, written up under MGMT_NET above, and
+# neither moves until the measurements listed there are in.
 
 mkdir -p /mnt/iso /tmp/bf
 mount -o loop,ro "$ISO" /mnt/iso
@@ -322,7 +554,7 @@ echo "=========== PHASE 1: install onto a blank disk ==========="
 # qemu's card is the machine's business and not this lab's.
 # shellcheck disable=SC2086
 timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
-  $ACCEL -m "${BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
+  $ACCEL -m "${BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -drive file="$DISK",format=qcow2,if=virtio $MIRROR_DRIVE $MGMT_NET \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
@@ -701,7 +933,7 @@ boot_vm() {  # <seconds> <qemu arguments...>
   rm -f "$CONSOLE_IN"
   mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
   timeout "$_secs" qemu-system-x86_64 \
-    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot "$@" \
+    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot "$@" \
     < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
   QEMU_PID=$!
   # Held open for the whole session: a writer that opens and closes the pipe
@@ -1994,7 +2226,7 @@ echo "=========== PHASE 5: the SECOND install, over a mirror that exists =======
 # phases left behind, which is the only way to have it.
 # shellcheck disable=SC2086
 timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
-  $ACCEL -m "${BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
+  $ACCEL -m "${BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -drive file="$DISK",format=qcow2,if=virtio \
   -drive file="$DISK2",format=qcow2,if=virtio $MGMT_NET \
@@ -2045,7 +2277,7 @@ fi
 # A minute of that is the product's own deadline and the rest is two more
 # logins around it.
 timeout "${BOOT_SECS:-1200}" qemu-system-x86_64 \
-  $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
+  $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
   -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET \
   < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
 QEMU_PID=$!
@@ -3388,7 +3620,7 @@ then
   mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
   # shellcheck disable=SC2086
   timeout "${VTY_REBOOT_SECS:-1200}" qemu-system-x86_64 \
-    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic \
+    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic \
     -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET \
     < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
   QEMU_PID=$!
