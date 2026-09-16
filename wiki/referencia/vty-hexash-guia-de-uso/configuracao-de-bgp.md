@@ -185,6 +185,88 @@ Um `maximum-prefix` no **peer group** cobre todos os membros dele — é onde qu
 
 Vale tanto em `show running-config` quanto em `show this` dentro do bloco. Isso é só a exibição: a configuração salva e as revisões de rollback guardam o valor real, senão um rollback não conseguiria restaurar a sessão — e é por isso que esses arquivos não são legíveis por qualquer um.
 
+# Validação de origem (RPKI)
+
+Um provedor que valida origens no resto da rede não deveria ter, na borda, uma caixa que aceita o que lhe disserem. O roteamento desta caixa fala RTR: ele se liga a um validador que você já opera e passa a marcar cada rota aprendida como `valid`, `invalid` ou `notfound`, para que a sua política decida o que fazer com cada uma.
+
+```
+configure
+ rpki
+  rpki cache tcp 10.0.0.10 8282 preference 1
+  exit
+ route-map RM-TRANSITO-IN deny 5
+  match rpki invalid
+  exit
+ route-map RM-TRANSITO-IN permit 10
+  exit
+ router bgp 65000
+  neighbor 200.150.0.2 route-map RM-TRANSITO-IN in
+  exit
+ commit
+```
+
+A primeira cláusula descarta o que o validador reprova; a segunda deixa passar todo o resto. Sem a segunda, a route-map nega tudo no fim — que é o comportamento normal de uma política, e aqui filtraria a sessão inteira em vez de filtrar só o inválido.
+
+## A palavra do transporte não é opcional
+
+A forma é `rpki cache tcp <host> <porta> [source <A.B.C.D>] preference <1-255>`, ou `rpki cache ssh ...`. Omitir o `tcp` não é um atalho: é um comando desconhecido, e a caixa o recusa como recusaria qualquer palavra que não existe.
+
+## É um módulo, e um módulo que não está carregado não existe
+
+O suporte a RPKI vem num pacote separado do roteamento, `frr-rpki-rtrlib`. A appliance já o instala. O sintoma de quando ele falta é enganoso e vale reconhecer:
+
+```
+bgpd is not running
+```
+
+Toda e qualquer palavra de RPKI responde isso — porque o roteamento se recusa a subir quando mandam carregar um módulo que ele não acha. A resposta aponta para o lugar errado: parece roteamento caído, é módulo ausente. Por isso o autoteste de boot confere o módulo **pelo nome**, e não pela versão do roteamento, que informa suporte a RPKI esteja o módulo presente ou não.
+
+## As duas coisas que o `commit` avisa
+
+Escrever a política antes de configurar o cache é uma ordem legítima de trabalho, então nenhuma das duas é recusa — mas as duas mudam o que a política faz, e em silêncio.
+
+```
+warning: no RPKI cache is configured, so every route is notfound and this
+    clause matches all of them
+    match rpki notfound
+```
+
+Sem cache, tudo é `notfound`, e é disso que o aviso trata: uma cláusula em `notfound` casa **todas** as rotas da caixa. O outro lado também é avisado, com a frase equivalente — uma cláusula em `valid` ou `invalid` não casa **nenhuma**, porque sem validador nenhuma rota chega a ser uma coisa nem outra. A mesma política, com e sem cache, faz coisas opostas.
+
+## A falha que isso evita, e a que isso cria
+
+
+:::warning
+Um validador que caiu acaba marcando **tudo** como `notfound`. Uma política que nega `invalid` continua funcionando nesse estado; uma política que trata `notfound` como suspeito passa a degradar todas as rotas da caixa no dia em que o cache ficar fora — e cache fora é coisa ordinária, não catástrofe.
+
+:::
+
+Essa é a razão de a recomendação ser negar `invalid` e não desconfiar de `notfound`. A primeira falha fechada para o que o validador reprova; a segunda falha fechada para a internet inteira.
+
+## O que a caixa diz quando o cache some
+
+Com o cache de pé, o resumo do BGP diz assim:
+
+```
+  RPKI: 1 of 1 cache(s) connected
+```
+
+E quando ele some:
+
+```
+  RPKI: 1 cache(s) configured, NONE connected
+        validation is running on data the caches already sent, which expires;
+        after that every route is notfound
+```
+
+As duas metades dessa segunda frase importam. A validação **não** para na hora: a tabela de prefixos que o cache já mandou continua valendo, e só expira depois do `expire_interval` do próprio roteamento — 7200 segundos por padrão. Dizer "nada está validado" mandaria você procurar um incidente que ainda não começou; dizer só "cache fora" esconderia que ele vai começar.
+
+
+:::info
+Em `show rpki cache-connection`, a linha de cabeçalho `**Connected to group 1**` continua lá enquanto o cache estiver configurado — medido setenta segundos depois do validador ter sido morto, ela ainda dizia *Connected*. Quem responde a verdade é o marcador `**(connected)**` de cada cache, que some em menos de um segundo. Tudo neste produto lê o marcador; ao conferir na mão, leia o marcador também.
+
+:::
+
 # Operar a sessão: o que se digita quando algo está errado
 
 ## `show bgp summary`

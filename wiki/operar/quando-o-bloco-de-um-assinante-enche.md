@@ -42,6 +42,63 @@ show cgnat top
 
 Ele lista os assinantes mais carregados com as portas que cada um segura, por exemplo `3/512`.
 
+# Quantos estão perto do limite, e o alarme que avisa sozinho
+
+`show cgnat top` responde **quem**. Ele não responde **quantos**, e essa é a pergunta que decide se você tem um cliente infectado ou um pool mal dimensionado.
+
+```
+show cgnat pool
+```
+
+Junto da capacidade do pool, ele imprime a distribuição de quanto cada assinante está usando do próprio bloco:
+
+```
+utilisation  2 subscriber(s) holding a block
+   75-89%  1
+      100%  1
+alarm at     75% of a subscriber's block
+```
+
+A forma importa mais do que a média. Com 200 mil assinantes, um pool lê como metade vazio enquanto mil clientes estão colados no limite — e a média não conta nem uma coisa nem outra. O que resolve é a **forma**: quantos estão perto do fim do bloco, e se esse número está andando.
+
+
+:::info
+Esse histograma é calculado no momento em que você roda o comando, percorrendo os mapas de portas que o alocador já mantém de qualquer jeito. Nada é contado por pacote e a tabela de sessões não é tocada — rodar isso num equipamento carregado não custa tráfego.
+
+:::
+
+## O alarme, uma vez por travessia
+
+O histograma responde quando você pergunta. O alarme avisa sem ser perguntado, e vem desligado:
+
+```
+configure
+ nat cgnat pool residencial
+  utilisation-alarm 75
+  exit
+ commit
+```
+
+Quando um assinante cruza o limiar, sai **uma** linha no log, nomeando quem é, quanto está usando e do que ela está na frente:
+
+```
+subscriber 5 of pool residencial is 75% through its 512 ports on 200.150.10.7:
+past the 75% alarm. RFC 8158 natEvent 12 would only report this once the
+customer had already started losing traffic.
+```
+
+Essa última frase é o motivo de o alarme existir. O `natEvent 12` que abre esta página é correto e chega tarde: ele reporta a exaustão, que é dizer que reporta o instante em que o cliente **começou a perder tráfego** — quando a ligação para o suporte já está na fila. O alarme reporta o caminho até lá.
+
+E ele fala **uma vez por travessia**, não uma vez por alocação. Depois da linha, o assinante pode continuar enchendo que nada mais é dito.
+
+
+:::info
+Isso é desenho, não economia. Uma linha por alocação acima do limiar é um log que ninguém consegue guardar — e o assinante que dispara o alarme é, por definição, o que está alocando mais rápido, ou seja, o que produziria mais linhas. Dez pontos de histerese limpam a marca, para que um assinante parado exatamente em cima do limiar não gere uma linha cada vez que uma porta é liberada e tomada de novo.
+
+:::
+
+O alarme é avaliado **onde uma porta é tomada**, e em nenhum outro lugar — utilização só sobe ali. A consequência prática: um assinante que esvaziou o bloco e nunca mais alocou nada mantém a marca levantada. Não é resposta errada, é estado parado: o alarme fala sobre assinante **enchendo**, e quem parou de pedir portas não está enchendo.
+
 # Blocos estendidos
 
 Com `max-blocks` acima de 1, um assinante cujos blocos estão todos cheios ganha **outro**.

@@ -79,6 +79,25 @@ Vale saber que esse tratamento tem um modo de falha caro: se as portas guardadas
 
 :::
 
+# Erros ICMP, e por que alguns sites não carregam
+
+Um erro ICMP — *fragmentation needed*, *time exceeded*, *destination unreachable* — não é um pacote sobre si mesmo. Ele carrega **dentro dele** uma cópia do pacote que causou o erro, e é essa cópia embutida que diz de qual sessão ele fala. O endereço ali dentro é o do assinante, privado, escrito antes da tradução.
+
+Uma caixa que traduz o cabeçalho de fora e ignora o de dentro entrega ao assinante um aviso sobre uma conexão que ele não reconhece. A pilha dele descarta, e o aviso se perde. Duas coisas quebram quando isso acontece:
+
+| O que se perde | O sintoma que chega ao suporte |
+|----------------|--------------------------------|
+| PMTUD (*fragmentation needed*) | "alguns sites não carregam" — a conexão abre, troca pouco, e trava no primeiro pacote grande |
+| *time exceeded* | o `traceroute` do assinante para de funcionar |
+
+Esta caixa reescreve o pacote embutido. E reescreve junto o que quase todo mundo esquece: o **checksum do ICMP cobre o pacote embutido inteiro**, inclusive o checksum do cabeçalho IP que está lá dentro. Traduzir com o checksum errado é pior do que não traduzir — a pilha do assinante descarta o pacote, o PMTUD continua quebrado, e o contador do equipamento diz que deu certo.
+
+
+:::info
+Para TCP comum existe uma segunda rede de proteção, o *MSS clamp* (`tcp-mss` no pool), que evita o problema antes de ele precisar de aviso. **Dentro de um túnel não existe MSS para ajustar**, e ali o erro ICMP é o único sinal que o assinante tem — é o caso detalhado em [Protocolos e ALGs](/doc/protocolos-e-algs-vZjaCcHaN7), com o que ele exige de você e onde ele para.
+
+:::
+
 # O limite honesto
 
 A sessão lembra **um** endereço remoto, atualizado a cada pacote de saída. Uma porta de origem reusada para dois remotos só aceita resposta do mais recente.

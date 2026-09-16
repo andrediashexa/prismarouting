@@ -12,7 +12,7 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 | `show cgnat translation` | `<endereço-público> <porta>` | quem estava atrás de um endereço público e porta |
 | `show cgnat top` | `[<n>]`   | assinantes mais próximos de esgotar seus blocos |
 | `show cgnat drops` |           | por que pacotes não passaram |
-| `show cgnat pool` |           | pools de CGNAT configurados |
+| `show cgnat pool` |           | pools configurados, a capacidade de cada um e a distribuição de quanto os assinantes usam do próprio bloco |
 | `show cgnat session` |           | sessões ativas por thread |
 | `show cgnat blocks` |           | blocos alocados em modo dinâmico, e quantos um encaminhamento de porta prende |
 | `show cgnat logging` |           | estado da exportação IPFIX |

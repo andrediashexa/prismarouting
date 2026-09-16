@@ -123,6 +123,38 @@ error: router bgp 65001: bgpd is not running
 
 O autoteste de boot informa quais estão respondendo.
 
+## Drenar a caixa para manutenção: o bit de sobrecarga
+
+É a drenagem do IS-IS. Com ele ligado, a caixa diz a todo mundo para **não transitar por ela**: o que termina nela continua sendo alcançado, mas ela deixa de ser caminho de passagem — que é o que você quer antes de mexer num equipamento em produção.
+
+```
+configure
+ router isis HEXA
+  set-overload-bit
+  exit
+ commit
+```
+
+`no set-overload-bit` tira. Aceita também `set-overload-bit on-startup <0-86400>`, que carrega o bit por esse tanto de segundos depois que o protocolo sobe — para a caixa que acabou de reiniciar não atrair tráfego de passagem antes de ter convergido.
+
+O modo de falha desta função não é ligá-la: é **esquecer ligada**. Uma caixa drenada funciona, atende, responde a tudo que você perguntar, e não carrega o tráfego que deveria — por semanas, se ninguém olhar.
+
+Por isso a conferência:
+
+```
+show isis adjacency
+```
+
+Estando ligado, a tela diz `overload bit set`.
+
+
+:::info
+Essa linha é lida do **LSP que esta caixa está inundando**, não da configuração que pediu o bit. A diferença é o ponto: uma drenagem reportada pelas palavras que a pediram é reportada por uma linha que pode não ter surtido efeito. O que a tela afirma é o que os vizinhos estão recebendo.
+
+Do lado do vizinho, o mesmo fato aparece no `show isis database`, na última coluna `ATT/P/OL` da linha do LSP desta caixa: `OL` é o terceiro dos três, e vale `0/0/1` quando o bit está ligado.
+
+:::
+
 # Três armadilhas de roteamento
 
 ## 1. MTU herdada trava o OSPF

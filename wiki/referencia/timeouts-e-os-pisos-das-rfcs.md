@@ -35,6 +35,27 @@ warning:  udp                 119   BELOW the floor RFC 4787 REQ-5 asks for
 
 Ele dispara **uma vez por mudança** — nunca por pacote, nunca por sessão. E um valor exatamente **no** piso não diz nada: um aviso que sempre dispara é um aviso que o operador aprende a pular.
 
+# Qual timeout vale para uma conexão TCP, e quando
+
+Os quatro pisos acima não se aplicam todos ao mesmo tempo. Uma sessão TCP muda de timeout conforme o que passa por ela, e é isso que decide quanto tempo uma porta fica fora de circulação depois que a conexão acabou:
+
+| Estado da conexão | Timeout que vale | Por quê |
+|-------------------|------------------|---------|
+| SYN enviado, nunca estabeleceu | `tcp-syn` (20 s por padrão) | um host varrendo a internet produz um destes por sondagem; presos pelo transitório, esgotariam o bloco do próprio assinante |
+| estabelecida      | `tcp-established` | a conexão está viva, ainda que ociosa |
+| FIN visto, de qualquer um dos lados | `tcp-transitory` | alguém começou a fechar: ela sai do timeout longo na hora |
+| RST visto, de qualquer um dos lados | nenhum — a porta é liberada | um reset acabou com a conexão; não há o que segurar |
+
+A leitura prática é esta: uma conexão encerrada com **reset** devolve a porta quase na hora; uma encerrada com o fechamento normal espera o transitório, não as duas horas; e só fica no `tcp-established` a conexão que **ninguém fechou**.
+
+
+:::info
+Isso importa quando um assinante enche o bloco sem tráfego que justifique. Se as portas estivessem presas por conexões já encerradas, o número cairia sozinho em poucos minutos. Um bloco que não esvazia é bloco cheio de sessões que ninguém fechou — aplicação que abandona socket, ou host infectado — e não de sobras do que já terminou.
+
+:::
+
+O rastreamento vale **nos dois sentidos**: o reset ou o fechamento contam venha de onde vier, porque quem encerra uma conexão tanto pode ser o assinante quanto o outro lado.
+
 # Configurando
 
 Global:
