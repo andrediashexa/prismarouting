@@ -77,43 +77,6 @@ version has a chance of seeing it.
 
 ### Fixed
 
-* **The release gate could hang forever on a VPP that would not take a
-  SIGTERM, and it did.** `appliance/test_startup_conf_shapes.sh` hands each
-  generated `startup.conf` to the real VPP and relies on the deadline to end
-  a run VPP accepts - that is the design, and `rc 124` is what success looks
-  like there. It used plain `timeout`, which sends SIGTERM and then **waits**.
-
-  Cutting 0.76.0, one VPP was measured **38 minutes past a 12-second
-  deadline**, at 99% of a core, with `timeout` still sitting beside it:
-
-  ```
-  timeout 12 vpp -c /tmp/.../noworkers.conf
-  vpp -c /tmp/.../noworkers.conf      99%   00:37:36
-  ```
-
-  Its stdout was never closed, so everything upstream waited on a pipe nobody
-  would shut. The gate had to be killed by hand.
-
-  `timeout -k 3` now puts a SIGKILL three seconds behind the deadline. Three
-  and not zero: VPP closes its shared memory and unlinks its socket on
-  SIGTERM, and killing it before it can is how a run leaves `/dev/shm` and
-  `/run/vpp` dirty for the next shape.
-
-  **It is intermittent and the comment says so.** The same shape completes
-  most runs; this is a guard against a state rather than a fix for something
-  reproducible, and pretending otherwise would be the more comfortable lie. A
-  check whose worst case is a hang is worse than one whose worst case is red:
-  a red light says something, and a gate that never returns says nothing while
-  looking like work in progress.
-
-  Measured on a process that ignores SIGTERM, which is the shape of the
-  failure whatever VPP's reason was: plain `timeout` was still running after 8
-  seconds against a 3-second deadline and only an outside kill stopped it;
-  `timeout -k 2 3` returned `rc=137` after 5 seconds, which is the deadline
-  plus the grace. The first attempt at that measurement hung the machine it
-  was running on, which is the same defect one level up.
-
-
 ## 0.76.0 - the box claims its own dataplane card, and nobody has to name it
 
 [#378](https://github.com/andrediashexa/hexarouting/issues/378).
@@ -179,6 +142,42 @@ version has a chance of seeing it.
   silently spared one is a card whose absence an operator cannot account for.
 
 ### Fixed
+
+* **The release gate could hang forever on a VPP that would not take a
+  SIGTERM, and it did.** `appliance/test_startup_conf_shapes.sh` hands each
+  generated `startup.conf` to the real VPP and relies on the deadline to end
+  a run VPP accepts - that is the design, and `rc 124` is what success looks
+  like there. It used plain `timeout`, which sends SIGTERM and then **waits**.
+
+  Cutting 0.76.0, one VPP was measured **38 minutes past a 12-second
+  deadline**, at 99% of a core, with `timeout` still sitting beside it:
+
+  ```
+  timeout 12 vpp -c /tmp/.../noworkers.conf
+  vpp -c /tmp/.../noworkers.conf      99%   00:37:36
+  ```
+
+  Its stdout was never closed, so everything upstream waited on a pipe nobody
+  would shut. The gate had to be killed by hand.
+
+  `timeout -k 3` now puts a SIGKILL three seconds behind the deadline. Three
+  and not zero: VPP closes its shared memory and unlinks its socket on
+  SIGTERM, and killing it before it can is how a run leaves `/dev/shm` and
+  `/run/vpp` dirty for the next shape.
+
+  **It is intermittent and the comment says so.** The same shape completes
+  most runs; this is a guard against a state rather than a fix for something
+  reproducible, and pretending otherwise would be the more comfortable lie. A
+  check whose worst case is a hang is worse than one whose worst case is red:
+  a red light says something, and a gate that never returns says nothing while
+  looking like work in progress.
+
+  Measured on a process that ignores SIGTERM, which is the shape of the
+  failure whatever VPP's reason was: plain `timeout` was still running after 8
+  seconds against a 3-second deadline and only an outside kill stopped it;
+  `timeout -k 2 3` returned `rc=137` after 5 seconds, which is the deadline
+  plus the grace. The first attempt at that measurement hung the machine it
+  was running on, which is the same defect one level up.
 
 * **`lab/one-nic.sh` was asserting a sentence the product stopped saying, and
   the release suite caught it.** It demanded the box say that a restart gives
