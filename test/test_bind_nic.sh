@@ -504,6 +504,113 @@ HEXA_ROOT="$R" sh "$BIN" --which-driver >/dev/null 2>&1
 the box at all" \
   || ok "and it touched nothing while answering"
 
+# ---------------------------------------------------------------------------
+# appliance/give-the-card-back, the other half of the same decision.
+#
+# The bind above hands the card to a DPDK driver before VPP starts. If VPP
+# never starts, the card belongs to neither the kernel nor the dataplane and
+# the box is reachable only from a console. An operator reported that on
+# 0.75.0 (#379). This script is what systemd runs when vpp.service reaches
+# `failed`, and what is asserted here is what is asserted above: the DECISION
+# and the WRITES, because a fake tree has no kernel to move a device with.
+# ---------------------------------------------------------------------------
+GIVE=$REPO/appliance/give-the-card-back
+DEVDIR=sys/bus/pci/devices/0000:03:00.0
+
+echo
+echo "=== a card on a DPDK driver is taken off it ==="
+R=$(mkbox 0000:03:00.0 eth9 iommu uio_pci_generic virtio-pci)
+on_driver "$R" uio_pci_generic 0000:03:00.0
+OUT=$(HEXA_ROOT="$R" sh "$GIVE" 2>&1)
+# THE OVERRIDE FIRST, AND EMPTY. Left set, the unbind hands the device straight
+# back to the same DPDK driver and the command looks like it did nothing.
+if [ -e "$R/$DEVDIR/driver_override" ]; then
+  if [ -n "$(tr -d '[:space:]' < "$R/$DEVDIR/driver_override")" ]; then
+    bad "it wrote a driver name into driver_override instead of clearing it"
+  else
+    ok "it cleared driver_override, so the kernel's driver can win the probe"
+  fi
+else
+  bad "it never touched driver_override, so the DPDK driver still wins the \
+probe and the unbind gives the card straight back to it"
+fi
+[ -s "$R/sys/bus/pci/drivers_probe" ] \
+  && ok "and asked the bus to probe for a driver again" \
+  || bad "it never asked the bus to probe, so nothing can claim the device"
+rm -rf "$R"
+
+echo
+echo "=== a card already on a kernel driver is left alone, and says so ==="
+# This unit fires on a FAILURE, so "the card was not the problem" is a verdict
+# an operator reading the journal needs, not a silence.
+R=$(mkbox 0000:03:00.0 eth9 iommu virtio-pci); on_driver "$R" virtio-pci 0000:03:00.0
+OUT=$(HEXA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
+[ "$RC" = 0 ] \
+  && ok "exit 0: there is nothing to undo" \
+  || bad "it exited $RC on a card the kernel already holds"
+printf '%s\n' "$OUT" | grep -q "already where the kernel can use it" \
+  && ok "and it says so rather than saying nothing" \
+  || { bad "it left the card alone and did not say so:"
+       printf '%s\n' "$OUT" | sed 's/^/    /'; }
+[ -e "$R/$DEVDIR/driver_override" ] \
+  && bad "it touched driver_override on a card it was not going to move" \
+  || ok "and driver_override was not touched"
+rm -rf "$R"
+
+echo
+echo "=== a startup.conf that names no device has nothing to give back ==="
+R=$(mkbox 0000:03:00.0 eth9 iommu virtio-pci)
+printf 'dpdk {\n  no-pci\n}\n' > "$R/etc/vpp/startup.conf"
+OUT=$(HEXA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
+[ "$RC" = 0 ] \
+  && ok "exit 0 on a box that never took a card" \
+  || bad "it exited $RC where no card was ever taken"
+printf '%s\n' "$OUT" | grep -q "nothing to give back" \
+  && ok "and says why, which is the FIRST BOOT profile" \
+  || bad "it said nothing about why there was nothing to do"
+rm -rf "$R"
+
+echo
+echo "=== a device that ends with NO driver is the loudest failure here ==="
+# The outcome this file exists to end, and a fake tree cannot let the kernel
+# reclaim a device - which is exactly the state being asserted: the override
+# cleared, the bus asked, and nothing holding the card.
+R=$(mkbox 0000:03:00.0 eth9 iommu uio_pci_generic virtio-pci)
+OUT=$(HEXA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
+[ "$RC" = 1 ] \
+  && ok "exit 1, because a box with no network interface is a failure" \
+  || bad "a device left with no driver exited $RC"
+printf '%s\n' "$OUT" | grep -q "no network interface" \
+  && ok "and says the box has none, in those words" \
+  || { bad "it ended with the card on nothing and did not say so:"
+       printf '%s\n' "$OUT" | sed 's/^/    /'; }
+printf '%s\n' "$OUT" | grep -q "reachable only from" \
+  && ok "and says how the box can still be reached" \
+  || bad "it did not say how the box can still be reached"
+rm -rf "$R"
+
+echo
+echo "=== the drop-in arms it on the failure, not on every restart ==="
+# vpp.service carries Restart=always, so a dataplane that crashes once is
+# restarted and that is not a failure. OnFailure is raised only when the unit
+# reaches `failed`, after the restart limit - the state the reporting box was
+# in: "Failed with result 'start-limit-hit'".
+D=$REPO/appliance/systemd/vpp-give-card-back.conf
+grep -q "^OnFailure=hexarouting-give-card-back.service\$" "$D" \
+  && ok "the drop-in names the unit that gives the card back" \
+  || bad "the drop-in does not arm hexarouting-give-card-back.service"
+grep -q "^\[Unit\]" "$D" \
+  && ok "and puts it under [Unit], where systemd reads OnFailure" \
+  || bad "OnFailure is not under [Unit], so systemd ignores it"
+U=$REPO/appliance/systemd/hexarouting-give-card-back.service
+grep -q "^ExecStart=/usr/lib/hexarouting/give-the-card-back\$" "$U" \
+  && ok "and the unit runs the script these cases have been driving" \
+  || bad "the unit does not run appliance/give-the-card-back"
+grep -q "give-the-card-back" "$REPO/appliance/install.sh" \
+  && ok "and install.sh puts that script on the box" \
+  || bad "the script is never installed, so the unit names a path no \
+appliance has"
+
 # WHAT THE WIDTH READER MAY STILL FIND, and it may only go down.
 #
 # 6 rows here carry an interface name or a driver name the kernel handed back,

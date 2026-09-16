@@ -1,0 +1,114 @@
+#!/bin/sh
+# Put the dataplane card back on its kernel driver after VPP has given up.
+#
+# WHY A BOX NEEDS THIS. appliance/apply-tuning hands the card to a DPDK driver
+# before VPP starts, because DPDK cannot take a device the kernel still holds.
+# That is the right order and it has one consequence nobody had answered for:
+# between the bind and a working dataplane there is a window in which the card
+# belongs to neither. If VPP does not come up, the box stays in that window
+# for good. Linux has no interface, the dataplane has no interface, and the
+# only way in is a console somebody has to walk to.
+#
+# That is not hypothetical. It is the state an operator reported on 0.75.0:
+#
+#   vpp.service: Failed with result 'start-limit-hit'.
+#   # ip l
+#   1: lo: <LOOPBACK,UP,LOWER_UP> ...
+#
+# The keyword that stopped VPP was #380 and is fixed. The window is #379 and
+# is this file: whatever stops VPP starting next time - a bad configuration, a
+# card DPDK refuses, a kernel upgrade that drops a module - the box has to end
+# up reachable rather than stranded.
+#
+# WHEN IT RUNS, and why not sooner. vpp.service carries Restart=always, so a
+# dataplane that crashes once is restarted and that is not a failure. This is
+# wired to OnFailure, which systemd raises only when the unit reaches `failed`
+# - after the restart limit. So a transient crash still gets its retries, and
+# a box that cannot start VPP at all gets its card back.
+#
+# WHAT IT DOES NOT DO. It does not decide whether VPP should have started, it
+# does not edit the configuration, and it does not stop the next boot trying
+# again. Undoing the bind is the whole job: the operator gets a box they can
+# log into, and everything that says WHY is already in the journal.
+set -u
+ROOT=${HEXA_ROOT:-}
+VPPCONF=${HEXA_STARTUP_CONF:-$ROOT/etc/vpp/startup.conf}
+SYSBUS=${HEXA_PCI_BUS:-$ROOT/sys/bus/pci}
+say() { echo "$@" >&2; }
+
+# The device the tuner named, read from the file the binder binds FROM. One
+# source, one answer: a second way of working out which card this is could
+# disagree with the bind it is undoing, and would then hand back a card the
+# box never took.
+ADDR=$(sed -n 's/^[[:space:]]*dev[[:space:]]\{1,\}\([0-9a-fA-F:.]\{7,\}\).*/\1/p' \
+       "$VPPCONF" 2>/dev/null | head -1)
+[ -n "$ADDR" ] || {
+  say "give-back: startup.conf names no PCI device, so nothing was taken"
+  say "           and there is nothing to give back."
+  exit 0
+}
+
+DEV=$SYSBUS/devices/$ADDR
+[ -d "$DEV" ] || {
+  say "give-back: no such PCI device as $ADDR on this box."
+  exit 1
+}
+
+# ASKED WHETHER THE LINK IS THERE BEFORE READING IT. `readlink -f` on a path
+# that does not exist prints the path, so basename hands back the literal word
+# `driver` - which reads as a kernel driver called "driver" and sent this
+# script down the "already back, nothing to do" branch on exactly the box it
+# exists for: a device holding no driver at all. Caught by its own check.
+if [ -e "$DEV/driver" ]; then
+  current=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
+  [ "$current" = "." ] && current=""
+else
+  current=""
+fi
+case "$current" in
+  vfio-pci|uio_pci_generic|igb_uio) ;;
+  "")
+    say "give-back: $ADDR has no driver at all. Probing for a kernel one."
+    ;;
+  *)
+    # Already back, or never left. Saying so and stopping is not a no-op worth
+    # hiding: this unit fires on a failure, and "the card was not the problem"
+    # is what an operator reading the journal needs to see.
+    say "give-back: $ADDR is on $current, which is not a DPDK driver, so the"
+    say "           card is already where the kernel can use it. Nothing done."
+    exit 0
+    ;;
+esac
+
+# THE OVERRIDE FIRST. driver_override is what made the DPDK driver win the
+# probe; clearing it before unbinding is what lets the kernel's own driver win
+# the next one. Unbinding with the override still set hands the device straight
+# back to the same DPDK driver, which looks like the command did nothing.
+printf '\n' > "$DEV/driver_override" 2>/dev/null || {
+  say "give-back: cannot clear driver_override for $ADDR"; exit 1; }
+if [ -n "$current" ]; then
+  echo "$ADDR" > "$DEV/driver/unbind" 2>/dev/null || {
+    say "give-back: cannot unbind $ADDR from $current"; exit 1; }
+fi
+echo "$ADDR" > "$SYSBUS/drivers_probe" 2>/dev/null || true
+
+if [ -e "$DEV/driver" ]; then
+  now=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
+  [ "$now" = "." ] && now=""
+else
+  now=""
+fi
+if [ -n "$now" ]; then
+  say "give-back: the dataplane did not start, so $ADDR is on $now again and"
+  say "           this box is reachable. Read 'journalctl -u vpp' for why, fix"
+  say "           it, and reboot: the card is taken again at the next boot."
+  exit 0
+fi
+
+# Said as a failure, because it is one, and with the state it ended in - the
+# same rule the bind itself keeps. A device with no driver is the outcome this
+# file exists to end, so ending in it is worth the loudest sentence here.
+say "give-back: $ADDR came off its DPDK driver and the kernel claimed nothing."
+say "           This box has no network interface. It is reachable only from"
+say "           its console."
+exit 1

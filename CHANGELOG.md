@@ -77,6 +77,53 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box is no longer stranded by a dataplane that will not start**
+  ([#379](https://github.com/andrediashexa/hexarouting/issues/379)).
+  `apply-tuning` hands the card to a DPDK driver before VPP starts, because
+  DPDK cannot take a device the kernel still holds. That is the right order
+  and it has one consequence nobody had answered for: between the bind and a
+  working dataplane the card belongs to **neither**, and if VPP never comes up
+  the box stays there. Linux has no interface, the dataplane has no interface,
+  and the only way in is a console somebody has to walk to.
+
+  Not hypothetical. It is the state an operator reported on 0.75.0:
+
+  ```
+  vpp.service: Failed with result 'start-limit-hit'.
+  # ip l
+  1: lo: <LOOPBACK,UP,LOWER_UP> ...
+  ```
+
+  The keyword that stopped VPP was
+  [#380](https://github.com/andrediashexa/hexarouting/issues/380) and is
+  fixed. **The window is this**, and whatever stops VPP starting next time - a
+  configuration it refuses, a card DPDK will not take, a kernel upgrade that
+  drops a module - the box now ends up reachable instead of stranded.
+
+  `appliance/give-the-card-back` clears `driver_override`, unbinds the device
+  and asks the bus to probe again, and `ifup -a` puts the address back. The
+  order is the whole of it: left set, the override hands the device straight
+  back to the same DPDK driver and the command looks like it did nothing.
+
+  **Armed on the failure and not on every restart.** `vpp.service` carries
+  `Restart=always`, so a dataplane that crashes once is restarted and that is
+  not a failure. `OnFailure` is raised only when the unit reaches `failed`,
+  which is after the restart limit - exactly the state the reporting box was
+  in.
+
+  It does not decide whether VPP should have started, does not edit the
+  configuration and does not stop the next boot trying again. Undoing the bind
+  is the whole job; everything that says why is already in the journal.
+
+  **Its own check found its worst bug.** `readlink -f` on a path that does not
+  exist prints the path, so `basename` hands back the literal word `driver` -
+  which reads as a kernel driver of that name and sent the script down the
+  *"already back, nothing to do"* branch on precisely the box it exists for, a
+  device holding no driver at all. The four cases in `test/test_bind_nic.sh`
+  caught it on their first run. Shown failing: the drop-in with `OnFailure`
+  commented out, and the override written with a driver name instead of
+  cleared.
+
 * **Two readers of one fact, reconciled to one.** 0.75.1 shipped a check in
   `appliance/test_startup_conf.sh` that lifted the dpdk stanza out of one
   synthetic tuned box and handed it to VPP. It found what it was written for.

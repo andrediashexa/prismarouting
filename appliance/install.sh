@@ -297,6 +297,14 @@ install -D -m 0644 "$REPO/appliance/systemd/vpp-oom-protect.conf" \
 # And the third, for the same reason again: the retention log has to be closed
 # by the dataplane that is stopping, on every stop, including the restart after
 # an upgrade that no unit of ours is ordered around.
+# The card comes back when the dataplane will not start (#379). Two files:
+# the drop-in that arms it on vpp.service, and the unit it names.
+install -D -m 0644 "$REPO/appliance/systemd/vpp-give-card-back.conf" \
+  "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-give-card-back.conf"
+install -D -m 0644 "$REPO/appliance/systemd/hexarouting-give-card-back.service" \
+  "$DESTDIR/lib/systemd/system/hexarouting-give-card-back.service"
+install -D -m 0755 "$REPO/appliance/give-the-card-back" \
+  "$DESTDIR/usr/lib/hexarouting/give-the-card-back"
 install -D -m 0644 "$REPO/appliance/systemd/vpp-stop-drain.conf" \
   "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-stop-drain.conf"
 

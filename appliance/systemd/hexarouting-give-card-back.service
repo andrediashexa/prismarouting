@@ -1,0 +1,19 @@
+[Unit]
+Description=HexaRouting - give the dataplane card back to the kernel
+Documentation=file:///usr/share/doc/hexarouting/appliance.md
+# No ordering and no Wants: this runs because vpp.service failed, and by then
+# everything it depends on is either up or irrelevant. An After= on vpp.service
+# would be an ordering against a unit that has already stopped.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/hexarouting/give-the-card-back
+# And bring the interface back up. The kernel reclaims the device and creates
+# the netdev, but nothing puts an address on it: ifup is what reads
+# /etc/network/interfaces.d/hexarouting, which the installer wrote. Allowed to
+# fail, because a box whose card is back on its kernel driver is already better
+# off than one with no card at all, and the addressing is a separate question
+# from the one this unit answers.
+ExecStartPost=-/sbin/ifup -a
+StandardOutput=journal
+StandardError=journal
