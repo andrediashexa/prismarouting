@@ -77,6 +77,48 @@ runbind "$R"
   || ok "and driver_override was not touched"
 
 echo
+echo "=== EVERY device startup.conf names is bound, not the first (#378) ==="
+# Since the box claims every card it has but a reserve, startup.conf carries
+# one `dev` stanza per claimed card. This read the first of them with `head
+# -1`, so a three-card box came up with one card on vfio-pci and two still
+# held by their kernel drivers - which DPDK cannot take a device through. The
+# dataplane would then hold one port in three and the self-test would call it
+# healthy, because a device named in a file is not a device the dataplane has
+# (#283).
+#
+# THE FIXTURE HAS THREE, because a case with two would pass against `head -1`
+# the moment the loop was written wrong in the other direction - taking the
+# last instead of the first is also one device, and one device out of two is
+# half the boxes.
+R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci)
+printf 'dpdk {\n  dev 0000:03:00.0 {\n  }\n  dev 0000:03:00.1 {\n  }\n\
+  dev 0000:03:00.2 {\n  }\n}\n' > "$R/etc/vpp/startup.conf"
+for _a in 0000:03:00.1 0000:03:00.2; do
+  mkdir -p "$R/sys/bus/pci/devices/$_a"
+  on_driver "$R" ixgbe "$_a"
+done
+on_driver "$R" ixgbe 0000:03:00.0
+runbind "$R"
+_bound=0
+for _a in 0000:03:00.0 0000:03:00.1 0000:03:00.2; do
+  # driver_override is what the binder WRITES, and it is the only evidence
+  # here that the device was acted on: this fake sysfs has no kernel to
+  # complete the probe, so the driver link does not change by itself.
+  [ -e "$R/sys/bus/pci/devices/$_a/driver_override" ] && _bound=$((_bound + 1))
+done
+[ "$_bound" = 3 ] \
+  && ok "all three named devices were offered to a DPDK driver" \
+  || bad "$_bound of 3 named devices were bound: a box that claims three \
+cards came up forwarding on $_bound of them, and nothing said so"
+# AND EACH BY NAME. A count alone would pass a binder that wrote the first
+# device's override three times, which is the shape `head -1` fails in.
+for _a in 0000:03:00.1 0000:03:00.2; do
+  said "$_a" && ok "and it says what it did to $_a" \
+    || bad "nothing on the console names $_a, so an operator reading a box \
+that forwards on one port has no line to go to: $OUT"
+done
+
+echo
 echo "=== the device carrying the default route is REFUSED ==="
 # The one mistake here that cannot be undone remotely.
 R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0

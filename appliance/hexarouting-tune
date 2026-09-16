@@ -524,8 +524,39 @@ def operator_statseg(path):
         return False
 
 
+def reserved_for_linux(path):
+    """
+    The card this box was installed with a management network on, or None.
+
+    THE OPERATOR ALREADY ANSWERED THIS, at the console, before the first boot.
+    appliance/hexarouting-install asks which card the box is managed on and
+    writes it here; appliance/selftest reads the same file back on every boot.
+    Making the tuner a third reader of that one file adds no setting for an
+    operator to learn and no second place for the answer to live - and a
+    reserve this file decided for itself would be a third answer for the next
+    person to reconcile, which is the argument the self-test already makes
+    about not having an opinion of its own here.
+
+    The words on that line are interfaces(5)'s, not this product's, so the
+    name is taken out of column two rather than matched against a string this
+    file could reword. A file with no `iface` line at all - the "none" answer,
+    which is a decision somebody made - reserves nothing, and so does a
+    missing file.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                w = line.split()
+                if len(w) >= 2 and w[0] == "iface":
+                    return w[1]
+    except (OSError, UnicodeDecodeError):
+        pass
+    return None
+
+
 def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
-         keep_management=False, config_path=None, vpp_base=None):
+         keep_management=False, config_path=None, vpp_base=None,
+         mgmt_conf=None):
     # Never the management path, even when it was named on purpose.
     #
     # Handing VPP the interface carrying the default route does not degrade
@@ -557,13 +588,109 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         else:
             handover = True
 
-    node = topo.nic_node(ifname) if ifname else None
+    # ------------------------------------- WHICH CARDS THE BOX CLAIMS (#378)
+    #
+    # A box arrives able to forward, and nobody has to tell it which card to
+    # forward on. Until this, a fresh install came up with `no-pci` and the
+    # only way out was to name a card - which is the step between an installed
+    # box and a working one, and the one the maintainer refused to keep
+    # typing.
+    #
+    # THE RULE, in one sentence an operator can predict: the dataplane claims
+    # every PCI card this box has, except one reserved for Linux, and never
+    # the last one.
+    #
+    # The reserve is not a new setting. It is the management network the
+    # installer already asked about, read back from the file it wrote, so the
+    # box that genuinely wants a card left to Linux says so at install time
+    # and nowhere else.
+    #
+    # AND NEVER THE LAST CARD, which is the narrowing that matters. A reserve
+    # allowed to take the only card would leave the commonest box there is -
+    # a VM with one NIC - installed, correct, and unable to forward: exactly
+    # the state this change exists to end, reintroduced through the back door.
+    # So on a one-card box the dataplane gets the card and the reserve is
+    # ignored, and the screens say so rather than leaving it to be discovered.
+    #
+    # STILL AN EXPLICIT ALLOWLIST, computed here. What changes is which
+    # devices are in it, never whether there is one: `dev default` alone lets
+    # VPP's DPDK plugin probe and bind whatever it finds, which is #123 and is
+    # not a road back.
+    cards = topo.pci_nics()
+    reserve = None
+    if ifname:
+        # The override, and it is exclusive: a box told which card to use
+        # claims that one and no other. This is what makes the statement worth
+        # keeping on a box with several cards where only one carries
+        # subscribers.
+        claimed = [ifname]
+        claim_why = "override"
+    elif refused:
+        # The refusal above took the card away, and auto-claiming would hand
+        # back the very device it just refused.
+        claimed = []
+        claim_why = "refused"
+    elif not cards:
+        claimed = []
+        claim_why = "no-cards"
+    else:
+        reserve = reserved_for_linux(mgmt_conf) if mgmt_conf else None
+        if reserve and reserve in cards and len(cards) > 1:
+            claimed = [c for c in cards if c != reserve]
+            claim_why = "all-but-reserve"
+        elif reserve and reserve in cards:
+            claimed = list(cards)
+            claim_why = "last-card"
+        elif reserve:
+            # Named at install and not here now: a card moved, replaced or
+            # renamed. The self-test is the reader that owns that finding, and
+            # this says which of the two answers it gave rather than reporting
+            # a reserve it did not honour as one it did not have.
+            claimed = list(cards)
+            claim_why = "reserve-absent"
+        else:
+            claimed = list(cards)
+            claim_why = "all"
+
+    # Read once, here, so the renderer and the report cannot ask the box
+    # different questions about the same card.
+    claimed_cards = [{"name": n,
+                      "pci": topo.nic_pci(n),
+                      "tx_queues": topo.nic_tx_queues(n),
+                      "max_mtu": topo.nic_max_mtu(n)} for n in claimed]
+
+    # The NUMA node comes from the first claimed card that declares one. A box
+    # whose cards sit on different sockets cannot have one right answer, and
+    # picking the first is at least predictable; render_report says when they
+    # differ so the operator is not left to infer it from throughput.
+    node = None
+    for _c in claimed:
+        node = topo.nic_node(_c)
+        if node is not None:
+            break
     if node is None or node not in topo.nodes:
         node = sorted(topo.nodes)[0]
-        nic_note = (f"NIC '{ifname}' declares no NUMA affinity; using node {node}"
-                    if ifname else f"no NIC given; using node {node}")
+        nic_note = (f"NIC '{claimed[0]}' declares no NUMA affinity; using "
+                    f"node {node}" if claimed
+                    else f"no NIC given; using node {node}")
     else:
-        nic_note = f"NIC '{ifname}' on NUMA node {node}"
+        nic_note = f"NIC '{claimed[0]}' on NUMA node {node}"
+    if claim_why == "all-but-reserve":
+        nic_note = (f"claiming {len(claimed)} of this box's {len(cards)} "
+                    f"cards; '{reserve}' is reserved for Linux as the "
+                    f"management network this box was installed with; "
+                    f"node {node}")
+    elif claim_why == "last-card":
+        nic_note = (f"claiming '{claimed[0]}', the only card this box has. It "
+                    f"is also the management network it was installed with, "
+                    f"and a reserve never takes the last card; node {node}")
+    elif claim_why == "reserve-absent":
+        nic_note = (f"claiming all {len(claimed)} card(s): '{reserve}' was "
+                    f"reserved for Linux at install time and this box has no "
+                    f"such card now; node {node}")
+    elif claim_why == "all" and claimed:
+        nic_note = (f"claiming all {len(claimed)} card(s) on this box; none "
+                    f"is reserved for Linux; node {node}")
     # After the note above is decided, not inside it: the refusal is about
     # which device is claimed, and the NUMA choice still has to happen.
     if refused:
@@ -661,13 +788,20 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "hugepages_wanted": want_gb,
         "hugepages_capped": capped,
         "low_latency": low_latency,
-        # The name, carried so the report can ask whether there is a card at
-        # all before it says anything about one.
-        "nic_name": ifname,
-        "nic_pci": topo.nic_pci(ifname) if ifname else None,
-        # Read off the card, not derived from the processor (#330).
-        "nic_tx_queues": topo.nic_tx_queues(ifname) if ifname else None,
-        "nic_max_mtu": topo.nic_max_mtu(ifname) if ifname else None,
+        # EVERY CLAIMED CARD, and this list is the only holder (#378). It
+        # was four singular keys, which could describe exactly one device -
+        # so a box claiming two of its three cards had no way to be reported
+        # and no way to be rendered. Each entry carries what the box read off
+        # that card: its PCI address, its queue count (#330) and the maximum
+        # frame it will take, all per card because all three differ between
+        # two cards in one chassis.
+        "cards": claimed_cards,
+        # What the box was asked, so the screens can say why rather than only
+        # what: an override, every card, every card but the reserve, or the
+        # last card with a reserve it could not honour.
+        "claim_why": claim_why,
+        "reserve": reserve,
+        "host_cards": cards,
         "tuned_now": tuned_now,
         "hugepages_reserved": reserved,
         # The page size in kB, the name the kernel command line uses for it,
@@ -789,6 +923,43 @@ def render_statseg(p):
             "}\n")
 
 
+def ethernet_mtu(p):
+    """
+    The one MTU every interface on this box starts at, or None for VPP's own.
+
+    THE SMALLEST MAXIMUM OF THE CLAIMED CARDS, and the reason it is the
+    smallest is that there is nothing else it could be. `ethernet
+    { default-mtu }` is VPP-wide and there is no per-device MTU keyword in
+    this VPP's configuration at all - that is #380, measured one keyword at a
+    time against the binary. A box claiming a 1500 card and a 9000 card has
+    one number for both.
+
+    Taking the larger would leave the smaller card's device refused at PMD
+    init, in `error` state, forwarding nothing and unrepairable at runtime,
+    which is #382. Taking the smaller costs the larger card its jumbo frames
+    and is undone by one statement - `mtu <n>` under `interface` - applied
+    after VPP is up. Those two are not the same size of mistake.
+
+    A CARD WHOSE MAXIMUM COULD NOT BE READ DOES NOT LOWER IT. Unread is not
+    1500: it is no information, and letting it vote would hand every box with
+    an unreadable card the smallest value some other card happens to have.
+    The report says which cards could not be read, because a port that then
+    refuses to start has that as its only explanation.
+
+    ONE HOLDER, called by render_ethernet() and by render_report(). Written
+    twice, the file VPP reads and the line the operator reads could disagree
+    about the number the box chose, and the operator's copy is the one nobody
+    would check.
+    """
+    tops = [c["max_mtu"] for c in p["cards"] if c["pci"] and c["max_mtu"]]
+    if not tops:
+        return None
+    top = min(tops)
+    if not ETHERNET_MTU_MIN <= top < ETHERNET_DEFAULT_MTU:
+        return None
+    return top
+
+
 def render_ethernet(p):
     """
     The `ethernet` stanza, or "" on a box whose card can do VPP's default.
@@ -852,14 +1023,21 @@ def render_ethernet(p):
     Nothing is written for a card that can do 9000 or more: such a box gets
     exactly what every physical box has always had.
     """
-    top = p["nic_max_mtu"]
-    if not top or not ETHERNET_MTU_MIN <= top < ETHERNET_DEFAULT_MTU:
+    top = ethernet_mtu(p)
+    if not top:
         return ""
     return ("ethernet {\n"
-            f"  # This card reports a maximum MTU of {top}, below VPP's\n"
+            f"  # The smallest maximum MTU of the card(s) this box claims is\n"
+            f"  # {top}, below VPP's\n"
             f"  # own default of {ETHERNET_DEFAULT_MTU}. Asked for more\n"
             "  # than the card can carry, the driver refuses the device:\n"
             "  # the port comes up in 'error' state and forwards nothing.\n"
+            "  #\n"
+            "  # ONE VALUE FOR EVERY INTERFACE, because VPP has no per-device\n"
+            "  # MTU keyword anywhere (#380). So the SMALLEST maximum wins: a\n"
+            "  # card that could carry more starts here too, which costs it\n"
+            "  # jumbo frames until something raises it, and the other way\n"
+            "  # round costs the smaller card its port entirely.\n"
             "  #\n"
             "  # This is the value interfaces START at. 'mtu <n>' under\n"
             "  # 'interface' in hexash is applied afterwards and wins.\n"
@@ -933,9 +1111,15 @@ def render_vpp(p):
     # an operator has to be told - the same reason the hugepage cap above
     # announces itself instead of just applying.
     want_q = max(1, len(p["workers"]))
-    have_q = p["nic_tx_queues"]
-    nq = min(want_q, have_q) if have_q else want_q
-    if p["nic_pci"]:
+    # PER CARD, and not one number for the box. The queue count is read off
+    # each card (#330), and a box with a virtio card beside a 10G one has two
+    # different answers - asking the virtio card for the 10G card's count is
+    # the -22 that #330 measured, arrived at from the other direction.
+    def _queues(card):
+        have_q = card["tx_queues"]
+        return min(want_q, have_q) if have_q else want_q
+    devs = [c for c in p["cards"] if c["pci"]]
+    if devs:
         # NO MTU LINE IN HERE, BECAUSE THIS VPP HAS NO SUCH KNOB IN HERE.
         #
         # #330 wrote `mtu <n>` into the dev stanza to stop VPP asking a
@@ -981,12 +1165,19 @@ def render_vpp(p):
         # The other half of #330 - the TX queue count - was a real -22 that
         # DID refuse the device, and it stays. That one is measured from the
         # card, and it works.
+        stanzas = "".join(
+            f"  dev {c['pci']} {{\n"
+            f"    num-rx-queues {_queues(c)}\n"
+            f"    num-tx-queues {_queues(c)}\n"
+            "  }\n" for c in devs)
+        # `dev default` sets defaults for the devices named above; it does NOT
+        # widen the allowlist, which is what the paragraph below is about. The
+        # SMALLEST count across the claimed cards, because a default larger
+        # than a card can do is the refusal #330 measured.
+        dflt = min(_queues(c) for c in devs)
         dpdk = ("dpdk {\n"
-                f"  dev {p['nic_pci']} {{\n"
-                f"    num-rx-queues {nq}\n"
-                f"    num-tx-queues {nq}\n"
-                "  }\n"
-                f"  dev default {{\n    num-rx-queues {nq}\n  }}\n"
+                + stanzas
+                + f"  dev default {{\n    num-rx-queues {dflt}\n  }}\n"
                 "}\n\n")
     else:
         # Unknown means take NOTHING.
@@ -1005,10 +1196,25 @@ def render_vpp(p):
         # A box with no dataplane interface is inconvenient and recoverable
         # over the network. A box that ate its own management is recoverable
         # only by walking to it.
+        # AND THIS IS NOW THE UNUSUAL BOX, not every fresh install (#378).
+        # The box claims its cards by itself, so reaching here means it found
+        # none it could claim: no PCI network card at all, a named card that
+        # does not resolve, or a named card the refusal above took away. The
+        # comment says which, because "no device is claimed" was equally true
+        # of a working box before this and told an operator nothing.
+        _why = {
+            "refused": "the named card carries the default route and was\n"
+                       "  # refused, so no device is claimed.",
+            "override": "the named card could not be resolved to a PCI\n"
+                        "  # address, so there is no device to claim.",
+            "no-cards": "this box has no PCI network card for the dataplane\n"
+                        "  # to claim.",
+        }.get(p["claim_why"],
+              "no card on this box could be claimed.")
         dpdk = ("dpdk {\n"
-                "  # No dataplane interface identified, so no device is\n"
-                "  # claimed. Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env\n"
-                "  # to the interface carrying subscriber traffic.\n"
+                f"  # {_why}\n"
+                "  # 'dataplane interface <name>' in the VTY names one by\n"
+                "  # hand; the box needs no help on ordinary hardware.\n"
                 "  no-pci\n"
                 "}\n\n")
     return (
@@ -1054,54 +1260,77 @@ def render_report(p, vpp_base):
     # they are the same kind of fact and one of them silently disagreeing with
     # the hardware is what #330 was.
     _w = max(1, len(p["workers"]))
-    if not p["nic_name"]:
-        # Nothing: there is no card, and nic_note above already said so. A
-        # sentence about queues here would be true of one box and false of
-        # this one, which is the shape of every defect in this file's history.
-        pass
-    elif not p["nic_tx_queues"]:
-        # SAYING SO, because this is the state the defect lives in. Unread
-        # falls back to one queue per worker, which is exactly what asked a
-        # one-queue card for seven and left the box owning a NIC it could not
-        # start (#330). "Could not read the card" and "read it and it is fine"
-        # must not look the same on this screen.
-        out.append(f"# NIC queues: could not be read, so this asks for "
-                   f"{_w}, one per worker. A card with fewer will refuse the "
-                   f"device: 'show hardware' says what the box can see.")
-    elif p["nic_tx_queues"] < _w:
-        out.append(f"# NIC queues: {p['nic_tx_queues']}, and this box has "
-                   f"{_w} worker(s). Capped at {p['nic_tx_queues']}: only "
-                   f"that many workers receive packets, so expect a "
-                   f"fraction of the forwarding this CPU could do.")
-    else:
-        out.append(f"# NIC queues: {p['nic_tx_queues']}, enough for "
-                   f"{_w} worker(s)")
-    if p["nic_max_mtu"] and p["nic_max_mtu"] < ETHERNET_DEFAULT_MTU:
-        # SAID AND ACTED ON. It was said and not acted on until #382, on the
-        # reading that VPP's complaint was about a device that still came up.
-        # It does not come up: the port sits in `error` state and the box
-        # forwards nothing. render_ethernet() carries the measurement.
+    # ONE ROW PER CLAIMED CARD. These were three mutually exclusive sentences
+    # about "the" card, which on a box claiming two of three said nothing
+    # about two of them - and the queue count is the number that decides
+    # whether the device comes up at all (#330).
+    for _c in p["cards"]:
+        _q = _c["tx_queues"]
+        if not _q:
+            # SAYING SO, because this is the state the defect lives in.
+            # Unread falls back to one queue per worker, which is exactly
+            # what asked a one-queue card for seven and left the box owning a
+            # NIC it could not start (#330). "Could not read the card" and
+            # "read it and it is fine" must not look the same on this screen.
+            out.append(f"# NIC queues, {_c['name']}: could not be read, so "
+                       f"this asks for {_w}, one per worker. A card with "
+                       f"fewer will refuse the device.")
+        elif _q < _w:
+            out.append(f"# NIC queues, {_c['name']}: {_q}, and this box has "
+                       f"{_w} worker(s). Capped at {_q}: only that many "
+                       f"workers receive packets, so expect a fraction of "
+                       f"the forwarding this CPU could do.")
+        else:
+            out.append(f"# NIC queues, {_c['name']}: {_q}, enough for "
+                       f"{_w} worker(s)")
+
+    # THE MTU, WHICH IS ONE NUMBER FOR THE BOX AND SEVERAL FACTS ABOUT CARDS.
+    #
+    # #382 writes `ethernet { default-mtu <n> }`, and that stanza is VPP-wide:
+    # there is no per-device MTU keyword anywhere in this VPP's configuration,
+    # which is what #380 measured and cost a release. So a box claiming more
+    # than one card has one value to give them all, and the SMALLEST maximum
+    # has to win - a card asked for more than it can carry has its device
+    # refused at PMD init and the port sits in `error` state forwarding
+    # nothing, which is the whole of #382.
+    #
+    # The cost of that is real and is said rather than left to be found: on a
+    # box with a 1500 card beside a 9000 one, the 9000 card starts at 1500
+    # too. It is the recoverable direction - `mtu <n>` under `interface` is
+    # applied after VPP is up and raises that port - and the other direction
+    # is a port that never starts and cannot be repaired at runtime.
+    for _c in p["cards"]:
+        if _c["max_mtu"] and _c["max_mtu"] < ETHERNET_DEFAULT_MTU:
+            out.append(f"# NIC max MTU, {_c['name']}: {_c['max_mtu']}, below "
+                       f"VPP's default of {ETHERNET_DEFAULT_MTU}")
+        elif not _c["max_mtu"]:
+            # UNREAD IS NOT FINE, the same argument the queue count above
+            # makes. A card whose maximum could not be read cannot lower the
+            # box's value, so it gets whatever the others settled on - and if
+            # it cannot carry that, the port will not start.
+            out.append(f"# NIC max MTU, {_c['name']}: could not be read")
+    _mtu = ethernet_mtu(p)
+    if _mtu:
         # THREE ROWS AND NOT ONE. This report reaches an 80-column serial
         # console through the journal, and as a single sentence it measured
         # 162 columns - folded by the terminal at whatever width the window
         # happens to be, which is where the actionable half lands (#276).
-        out.append(f"# NIC max MTU: {p['nic_max_mtu']}, below VPP's default "
-                   f"of {ETHERNET_DEFAULT_MTU}.")
-        out.append(f"#          Interfaces start at {p['nic_max_mtu']} "
-                   f"instead, so the card accepts the port")
-        out.append("#          and it forwards. 'mtu <n>' in hexash "
-                   "overrides it.")
-    elif p["nic_name"] and not p["nic_max_mtu"]:
-        # UNREAD IS NOT FINE, the same argument the queue count above makes.
-        # A card whose maximum could not be read gets VPP's 9000, and if the
-        # card cannot carry it the port will not start - which is a state
-        # this line is the only warning of.
-        out.append("# NIC max MTU: could not be read, so interfaces start "
-                   f"at VPP's {ETHERNET_DEFAULT_MTU}.")
-        out.append("#          A card that cannot carry that refuses the "
-                   "port: 'show interface'")
-        out.append("#          reports it in 'error' state and it forwards "
-                   "nothing.")
+        _n = len([c for c in p["cards"] if c["pci"]])
+        out.append(f"# interfaces start at: {_mtu}, which is the smallest "
+                   f"maximum of the")
+        out.append(f"#          {_n} card(s) this box claims. VPP takes one "
+                   f"value for them all,")
+        out.append("#          so a card that could carry more starts here "
+                   "too. 'mtu <n>'")
+        out.append("#          under 'interface' in hexash raises that port "
+                   "afterwards.")
+    elif any(not c["max_mtu"] for c in p["cards"]):
+        out.append(f"# interfaces start at: VPP's {ETHERNET_DEFAULT_MTU}, "
+                   f"because no card's maximum")
+        out.append("#          could be read. A card that cannot carry that "
+                   "refuses the port:")
+        out.append("#          'show interface' reports it in 'error' state "
+                   "and it forwards nothing.")
     out.append(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
           f"(sized for {p['subscribers']} subscribers), "
           f"{p['hugepages_reserved']} reserved right now")
@@ -1212,15 +1441,35 @@ def render_report(p, vpp_base):
     # sent an operator looking for why their card was not PCI, which is the
     # #286 dead end - and the line two above already says no NIC was given, so
     # the report contradicted itself on the same screen (#331).
-    if p["nic_pci"]:
-        out.append(f"# dataplane NIC PCI address: {p['nic_pci']}")
-    elif p["nic_name"]:
-        out.append(f"# dataplane NIC PCI address: '{p['nic_name']}' was named "
-                   f"and no PCI address could be read for it, so DPDK has no "
-                   f"device to be given")
+    _devs = [c for c in p["cards"] if c["pci"]]
+    _named_no_pci = [c for c in p["cards"] if not c["pci"]]
+    if _devs:
+        out.append("# dataplane NIC PCI address(es): "
+                   + " ".join(c["pci"] for c in _devs))
+        # AND WHY IT HAS THEM, on the line under the addresses (#378). An
+        # operator reading a journal wants to know whether the box chose these
+        # or was told, because those are different things to go and change.
+        out.append("#          " + {
+            "override": "named by the configuration, which claims that card "
+                        "and no other",
+            "all": "every card on this box; none is reserved for Linux",
+            "all-but-reserve": f"every card but '{p['reserve']}', which is "
+                               f"reserved for Linux as the management "
+                               f"network this box was installed with",
+            "last-card": f"the only card this box has. '{p['reserve']}' is "
+                         f"the management network it was installed with, and "
+                         f"a reserve never takes the last card",
+            "reserve-absent": f"every card on this box. '{p['reserve']}' was "
+                              f"reserved at install time and is not here now",
+        }.get(p["claim_why"], "claimed by this box"))
+    elif _named_no_pci:
+        out.append("# dataplane NIC PCI address: '"
+                   + "', '".join(c["name"] for c in _named_no_pci)
+                   + "' was named and no PCI address could be read for it, "
+                     "so DPDK has no device to be given")
     else:
-        out.append("# dataplane NIC PCI address: none, because no card has "
-                   "been given to the dataplane on this box")
+        out.append("# dataplane NIC PCI address: none, because this box has "
+                   "no card the dataplane could claim")
     out.append(f"# low latency (C-states off, THP off): {'yes' if p['low_latency'] else 'no'}")
     out.append(f"# state: {'kernel tuned, full configuration' if p['tuned_now'] else 'FIRST BOOT, conservative configuration until reboot'}")
     return "\n".join(out)
@@ -1733,6 +1982,16 @@ def main():
     ap.add_argument("--no-low-latency", action="store_true",
                     help="do not disable C-states or THP on the kernel line")
     ap.add_argument("--sysfs-root", default="/")
+    # THE FILE THE INSTALLER WROTE, and the tuner is its third reader (#378).
+    # A path rather than a name so a synthetic box can be given one, which is
+    # the same seam --sysfs-root and --config already are: without it the
+    # reserve would come from whatever machine is running the suite.
+    ap.add_argument("--mgmt-conf",
+                    default="/etc/network/interfaces.d/hexarouting",
+                    help="the management network the installer recorded; the "
+                         "card named in it is reserved for Linux and the "
+                         "dataplane does not claim it, unless it is the only "
+                         "card this box has")
     ap.add_argument("--vpp-base", default="/etc/hexarouting/vpp-base.conf",
                     help="startup.conf base, concatenated with the tuning")
     ap.add_argument("--config", default="/etc/hexarouting/hexarouting.conf",
@@ -1762,7 +2021,8 @@ def main():
     p = plan(topo, a.interface, a.subscribers, a.max_workers,
              low_latency=not a.no_low_latency,
              keep_management=a.keep_management,
-             config_path=a.config, vpp_base=a.vpp_base)
+             config_path=a.config, vpp_base=a.vpp_base,
+             mgmt_conf=a.mgmt_conf)
 
     grub = render_grub(p)
     vpp = render_vpp(p)

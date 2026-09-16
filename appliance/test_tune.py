@@ -133,17 +133,69 @@ def run(root, *args, maxmtu=None):
     # `ip` has nothing to say about the device - one of the cases below.
     _bin = tempfile.mkdtemp()
     with open(os.path.join(_bin, "ip"), "w") as _f:
-        if maxmtu is None:
-            _f.write("#!/bin/sh\nexit 1\n")
+        # PER INTERFACE, because the box can claim more than one card and
+        # `ethernet { default-mtu }` is one value for all of them. A stub that
+        # answered the same maximum for every card could not build the box the
+        # rule is about - a 1500 card beside a 9000 one - so the rule would
+        # have no case that could fail. An int still means "every card".
+        _f.write("#!/bin/sh\ncase \"$*\" in\n")
+        if isinstance(maxmtu, dict):
+            for _if, _m in maxmtu.items():
+                _f.write(f"  *'{_if}') echo '2: {_if}: <BROADCAST> mtu 1500 "
+                         f"... minmtu 68 maxmtu {_m}'; exit 0 ;;\n")
+            _f.write("  *) exit 1 ;;\n")
+        elif maxmtu is None:
+            _f.write("  *) exit 1 ;;\n")
         else:
-            _f.write("#!/bin/sh\n"
-                     f"echo '2: eth0: <BROADCAST> mtu 1500 ... minmtu 68 "
-                     f"maxmtu {maxmtu}'\n")
+            _f.write(f"  *) echo '2: eth0: <BROADCAST> mtu 1500 ... minmtu 68 "
+                     f"maxmtu {maxmtu}'; exit 0 ;;\n")
+        _f.write("esac\n")
     os.chmod(os.path.join(_bin, "ip"), 0o755)
     env["HEXA_IP"] = os.path.join(_bin, "ip")
-    p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root] + list(args),
+    # THE RESERVE COMES OUT OF THE TREE, never off the machine running this.
+    #
+    # The tuner reads the management network the installer recorded and
+    # reserves that card for Linux (#378). Its default is an absolute path, so
+    # without this every fixture here would consult the build runner's own
+    # /etc/network/interfaces.d/hexarouting - and a developer box that has one
+    # would measure something the runner does not. That is HEXA_IP's argument
+    # two paragraphs up, and the same trap: it is harmless only for as long as
+    # nobody's machine has the file.
+    #
+    # A caller that wants a reserve writes one into the tree and passes its
+    # own --mgmt-conf, which overrides this because argparse keeps the last.
+    mgmt = os.path.join(root, "etc/network/interfaces.d/hexarouting")
+    p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root,
+                        "--mgmt-conf", mgmt] + list(args),
                        capture_output=True, text=True, env=env)
     return p.stdout
+
+
+def add_nic(root, name, pci, tx_queues=None, node=0):
+    """
+    A second, third or fourth card on a fixture box.
+
+    build() makes exactly one, called eth0, because until #378 the tuner could
+    claim exactly one. A box that claims every card but a reserve cannot be
+    described by that fixture at all - and the cases below are about which of
+    several it takes, so a fixture that cannot hold several would let every
+    one of them pass by having nothing to choose between.
+    """
+    dev = f"{root}/sys/devices/pci0000:00/{pci}"
+    w(f"{dev}/numa_node", node)
+    os.makedirs(f"{root}/sys/class/net/{name}", exist_ok=True)
+    os.symlink(dev, f"{root}/sys/class/net/{name}/device")
+    for _q in range(tx_queues or 0):
+        os.makedirs(f"{root}/sys/class/net/{name}/queues/tx-{_q}", exist_ok=True)
+        os.makedirs(f"{root}/sys/class/net/{name}/queues/rx-{_q}", exist_ok=True)
+
+
+def reserve(root, ifname, how="dhcp"):
+    """Write the management network the installer would have recorded."""
+    d = f"{root}/etc/network/interfaces.d"
+    os.makedirs(d, exist_ok=True)
+    with open(f"{d}/hexarouting", "w") as f:
+        f.write(f"auto {ifname}\niface {ifname} inet {how}\n")
 
 def field(out, prefix):
     for line in out.split("\n"):
@@ -894,7 +946,7 @@ with tempfile.TemporaryDirectory() as root:
           "an unresolvable NIC must produce 'no-pci', so nothing is claimed")
     check("dev default" not in out,
           "and must NOT leave DPDK probing for whatever it can bind")
-    print("  " + (field(out, "# dataplane NIC PCI address:") or "(none)"))
+    print("  " + (field(out, "# dataplane NIC PCI address(es):") or "(none)"))
 
 print("\n=== no interface named at all: same answer ===")
 with tempfile.TemporaryDirectory() as root:
@@ -950,7 +1002,7 @@ with tempfile.TemporaryDirectory() as root:
           "be given a dataplane, which is the dead end #303 is about")
     check("dev 0000:3b:00.0" in out,
           f"and the card was not named: "
-          f"{field(out, '# dataplane NIC PCI address:')}")
+          f"{field(out, '# dataplane NIC PCI address(es):')}")
     check("only card" in out and "linux_cp" in out,
           f"the journal does not say the box handed over its management card "
           f"or what keeps it reachable: {field(out, '# ')}")
@@ -976,6 +1028,176 @@ with tempfile.TemporaryDirectory() as root:
           "a box with a spare card gave away its management card anyway")
     print("  " + field(out, "# "))
 
+print("\n=== the box claims every card it has, with nobody having typed (#378) ===")
+# THE RULE, and the state it replaces: a fresh install came up with `no-pci`
+# and could not forward until somebody named a card. Nothing here passes
+# --interface, which is the whole assertion - an operator who types nothing
+# gets a box that forwards.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    add_nic(root, "eth2", "0000:3b:00.2")
+    out = run(root)
+    check("no-pci" not in out,
+          "a box with three cards and nothing typed claimed none of them, "
+          "which is the state #378 exists to end")
+    # THE COUNT, not one address. Binding the first and leaving two on their
+    # kernel drivers is a box that forwards on a third of its ports and reads
+    # as healthy, because a device named in a file is not a device the
+    # dataplane has (#283).
+    devs = [l.split()[1] for l in out.splitlines() if l.strip().startswith("dev 0000:")]
+    check(sorted(devs) == ["0000:3b:00.0", "0000:3b:00.1", "0000:3b:00.2"],
+          f"the box did not claim all three of its cards: {devs}")
+    check("dev default" in out,
+          "the allowlist lost its defaults stanza")
+
+print("\n=== except one reserved for Linux, which the installer already asked ===")
+# NOT A NEW SETTING. The card is the management network the installer recorded
+# at the console before the first boot, read back out of the file it wrote.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    add_nic(root, "eth2", "0000:3b:00.2")
+    reserve(root, "eth1")
+    out = run(root)
+    devs = [l.split()[1] for l in out.splitlines() if l.strip().startswith("dev 0000:")]
+    check("0000:3b:00.1" not in devs,
+          f"the card the box was installed to be managed on was claimed "
+          f"anyway, so the box loses the network it was given: {devs}")
+    check(sorted(devs) == ["0000:3b:00.0", "0000:3b:00.2"],
+          f"the other two cards were not both claimed: {devs}")
+    # AND IT SAYS SO. A box that silently ate a card is worse than one that
+    # asked, and a box that silently SPARED one is a card an operator cannot
+    # find the reason for.
+    check("eth1" in out and "reserved for Linux" in out,
+          f"the report does not say which card was reserved or why: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:6]}")
+
+print("\n=== and never the last card, whatever the installer answered ===")
+# THE NARROWING. A reserve allowed to take the only card leaves the commonest
+# box there is - a VM with one NIC - installed, correct, and unable to
+# forward: the exact state this change exists to end, coming back through the
+# reserve. So on a one-card box the dataplane gets the card.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    reserve(root, "eth0")
+    out = run(root)
+    check("no-pci" not in out and "dev 0000:3b:00.0" in out,
+          f"a one-card box reserved its only card and claimed nothing, which "
+          f"is the dead end #303 was filed for: "
+          f"{field(out, '# dataplane NIC PCI address(es):')}")
+    check("never takes the last card" in out,
+          f"the box took the card it was told to reserve and did not say why: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:6]}")
+
+print("\n=== a reserve naming a card this box has not got is said, not obeyed ===")
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    reserve(root, "ens99")
+    out = run(root)
+    devs = [l.split()[1] for l in out.splitlines() if l.strip().startswith("dev 0000:")]
+    check(sorted(devs) == ["0000:3b:00.0", "0000:3b:00.1"],
+          f"a reserve naming a card that is not here cost the box a card: "
+          f"{devs}")
+    check("ens99" in out,
+          f"the box reserved nothing and did not say that the card it was "
+          f"told to reserve is missing: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:6]}")
+
+print("\n=== the override claims that card and no other ===")
+# WHAT `dataplane interface <name>` IS FOR NOW. Not the ordinary way to set up
+# a box - nobody has to type it - but the way to say "only this one" on a box
+# with several cards where one carries subscribers.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    add_nic(root, "eth2", "0000:3b:00.2")
+    out = run(root, "--interface", "eth1")
+    devs = [l.split()[1] for l in out.splitlines() if l.strip().startswith("dev 0000:")]
+    check(devs == ["0000:3b:00.1"],
+          f"naming one card did not stop the box claiming the others, so an "
+          f"operator cannot keep a card for anything: {devs}")
+
+print("\n=== each card gets the queue count ITS card reports (#330, plural) ===")
+# One number for the box is the -22 of #330 arrived at from the other side: a
+# virtio card beside a 10G card cannot take the 10G card's queue count.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-7", ram_gb=8,
+          tx_queues=1)
+    add_nic(root, "eth1", "0000:3b:00.1", tx_queues=4)
+    out = run(root)
+    stanza = _dpdk_stanza(out)
+    first = stanza.split("dev 0000:3b:00.0", 1)[1].split("}", 1)[0]
+    second = stanza.split("dev 0000:3b:00.1", 1)[1].split("}", 1)[0]
+    check("num-rx-queues 1" in first,
+          f"the one-queue card was asked for more than it has, which is the "
+          f"-22 that stops the device coming up: {first!r}")
+    check("num-rx-queues 4" in second,
+          f"the four-queue card was given the other card's count: {second!r}")
+
+print("\n=== one MTU for the box, and the SMALLEST card decides it (#378+#382) ===")
+# THE INTERACTION THAT ONLY EXISTS WITH BOTH CHANGES IN ONE TREE. #382 writes
+# `ethernet { default-mtu <n> }`, which is VPP-wide because this VPP has no
+# per-device MTU keyword at all (#380). #378 makes the box claim several
+# cards. So a box with a 1500 card and a 9000 card has ONE number for both,
+# and the smaller has to win: a card asked for more than it can carry has its
+# device refused at PMD init and the port sits in `error` state forwarding
+# nothing, which cannot be repaired at runtime.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    out = run(root, maxmtu={"eth0": 1500, "eth1": 9216})
+    check("default-mtu 1500" in out,
+          f"the box took the larger card's maximum, so the 1500 card's device "
+          f"is refused at PMD init and that port forwards nothing: "
+          f"{[l for l in out.splitlines() if 'mtu' in l.lower()][:6]}")
+    # AND IT SAYS WHAT THAT COSTS. An operator with a 9000-capable card needs
+    # to know why it started at 1500, or the box looks broken to them.
+    _said = " ".join(out.split())
+    check("smallest maximum" in _said and "raises that port" in _said,
+          f"the report does not say the bigger card is starting below its own "
+          f"maximum, or how to raise it: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:10]}")
+
+print("\n=== and a box whose cards can all do jumbo is left alone ===")
+# The other direction, and it is the one that keeps this from being a
+# regression on the hardware this product was built for.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    out = run(root, maxmtu={"eth0": 9216, "eth1": 9216})
+    check("ethernet {" not in out,
+          f"a box whose cards can all carry VPP's default was given an "
+          f"ethernet stanza anyway: "
+          f"{[l for l in out.splitlines() if 'mtu' in l.lower()][:6]}")
+
+print("\n=== a card whose maximum cannot be read does not lower the box's ===")
+# Unread is not 1500, it is no information. Letting it vote would hand every
+# box with one unreadable card the smallest value some other card happens to
+# have - and the report has to name it, because a port that then refuses to
+# start has that as its only explanation.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    out = run(root, maxmtu={"eth0": 4000})      # eth1 cannot be read
+    check("default-mtu 4000" in out,
+          f"a card that could not be read changed the value the box chose: "
+          f"{[l for l in out.splitlines() if 'mtu' in l.lower()][:6]}")
+    check("NIC max MTU, eth1: could not be read" in out,
+          f"the card whose maximum could not be read is not named, so a port "
+          f"that refuses to start has no explanation on this screen: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:10]}")
+
 print("\n=== a NIC that is not the default route is still claimed ===")
 # The refusal must not become "never claim anything", which would be the same
 # defect pointing the other way: a box that cannot forward is also a box that
@@ -991,7 +1213,7 @@ with tempfile.TemporaryDirectory() as root:
     check("no-pci" not in out,
           "a data NIC that is not the management path must still be claimed")
     check("dev 0000:" in out,
-          f"and named by PCI address: {field(out, '# dataplane NIC PCI address:')}")
+          f"and named by PCI address: {field(out, '# dataplane NIC PCI address(es):')}")
 
 
 print("\n=== a virtio NIC resolves to the PCI device behind it (#286) ===")
@@ -1242,7 +1464,7 @@ check("num-rx-queues 7" not in _vout,
 # AND THE OPERATOR IS TOLD, because one queue and seven workers means one
 # worker receives packets. Capping quietly would trade a box that does not
 # start for a box that runs at a seventh of its CPU with nothing said.
-check("NIC queues: 1" in _vout and "Capped" in _vout,
+check("NIC queues, eth0: 1" in _vout and "Capped" in _vout,
       f"the cap was applied silently: "
       f"{[l for l in _vout.splitlines() if 'NIC queues' in l]}")
 
@@ -1260,13 +1482,13 @@ check("mtu" not in _dpdk_stanza(_vout),
       f"the dev stanza carries an mtu keyword, which VPP has not got: it "
       f"refuses the file and the box never starts: "
       f"{[l for l in _dpdk_stanza(_vout).splitlines() if 'mtu' in l]}")
-check("NIC max MTU: 1500" in _vout,
+check("NIC max MTU, eth0: 1500" in _vout,
       f"a card with maxmtu 1500 is not mentioned in the report at all, so "
       f"an operator has no way to connect VPP's MTU complaint to their "
       f"card. It was: "
       f"error the box printed: "
       f"{[l.strip() for l in _vout.splitlines() if 'mtu' in l.lower()]}")
-check("NIC max MTU: 1500" in _vout,
+check("NIC max MTU, eth0: 1500" in _vout,
       f"the MTU the card forced was not reported: "
       f"{[l for l in _vout.splitlines() if 'MTU' in l]}")
 
@@ -1344,7 +1566,7 @@ _probe = tempfile.mkdtemp()
 build(_probe, 1, 8, 1, nic_node=0, hugepages_gb=4, isolated="1-7",
       nic_pci="0000:00:12.0", ram_gb=8, tx_queues=2)
 _pout = run(_probe, "--interface", "eth0", "--subscribers", "200000")
-check("NIC queues: 2" in _pout,
+check("NIC queues, eth0: 2" in _pout,
       f"the tuner read no queue count from a fixture that has two, so these "
       f"checks are asserting about a card that was never built: "
       f"{[l for l in _pout.splitlines() if 'NIC' in l]}")
@@ -1391,7 +1613,8 @@ check("NIC queues" not in _nout,
 check("not a PCI device" not in _nout,
       f"a box with no dataplane card was told its card is not a PCI device: "
       f"{[l for l in _nout.splitlines() if 'PCI' in l]}")
-check(any("no card has been given" in l for l in _nout.splitlines()),
+check(any("no card the dataplane could claim" in l
+          for l in _nout.splitlines()),
       f"and it is not told why there is no address either: "
       f"{[l for l in _nout.splitlines() if 'PCI' in l]}")
 
