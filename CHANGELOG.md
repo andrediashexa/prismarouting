@@ -135,6 +135,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`lab/one-nic.sh` was asserting a sentence the product stopped saying, and
+  the release suite caught it.** It demanded the box say that a restart gives
+  the card back after an unconfirmed handover. That was true while a box
+  claimed nothing unless it was named: clearing the setting really did leave
+  the card in Linux at the next start. It stopped being true with the claiming
+  rule, and saying it anyway is the defect 6e removed.
+
+  **Inverted rather than deleted.** A check that merely stops demanding a
+  false sentence is not the same as one that demands it stays gone, and the
+  second is what this is for. Shown failing by putting the promise back into
+  `confirm_expired`: `[FAIL] ... (unexpected: reboot)`.
+
+  It was found by the 89-lab release suite and by nothing else - every offline
+  suite was green, and so was the four-run `install-iso` campaign. A lab that
+  drives a box end to end is the only thing that could see it.
+
 * **A suite that crashed rather than failed, and only `make test` could see
   it.** Removing the restart behind an unconfirmed handover (6e) took
   `restart_for_management_card` with it, and

@@ -336,6 +336,20 @@ expect_said "an unconfirmed handover is put back" \
   "put the previous configuration back" "$EXPIRED"
 expect_not_in "the card is not named anywhere the next boot would read it" \
   "HEXA_DATAPLANE_IF=box0" "$(cat "$HEXA_TUNE_ENV")"
-expect_said "and the box says a restart is what gives the card back" \
+# AND IT DOES NOT PROMISE A RESTART, because a restart no longer gives the
+# card back and saying so was the whole defect #378's 6e removed.
+#
+# What this line asserted until 0.76.0 was true when the box claimed nothing
+# unless it was named: clearing the setting really did mean the next start
+# left the card in Linux. Now the box claims every card except one reserved
+# for Linux and never the last one, so the next start takes it again - the
+# revert arrives where it began and charges a reboot for it, while the console
+# says the card is going back.
+#
+# So the assertion is inverted rather than deleted. The sentence is gone from
+# the product and something has to say it stayed gone; a check that only
+# stopped demanding it would be a check that no longer measures anything.
+expect_not_in "and the box does NOT promise a restart, which would not give \
+the card back" \
   "reboot" "$EXPIRED"
 verdict
