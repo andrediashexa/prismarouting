@@ -985,6 +985,92 @@ It read as a harmless fallback and it was the defect, written down and
 guarded. **A test can hold a bug in place**, and this one did — passing on
 every run while the behaviour it protected removed boxes from the network.
 
+### The MTU the card can carry
+
+**A card whose maximum MTU is below 9000 - which is every virtual machine -
+had to be told to VPP before VPP configured the device, or the port never
+started at all.** VPP registers an ethernet interface at its own default of
+**9000**; a driver asked for more than the card can carry refuses the device,
+and the box comes up assembled correctly and forwarding nothing
+([#382](https://github.com/andrediashexa/hexarouting/issues/382)).
+
+What that looks like on the box, measured on an installed disk after a
+handover that worked:
+
+```
+GigabitEthernet0/9/0       error  9000   10.0.2.15/24        tap4096 ens9
+```
+
+and in its journal:
+
+```
+dpdk: [0] rte_eth_dev_set_mtu failed (mtu 8996, Unknown error -22 (-22))
+dpdk: Interface GigabitEthernet0/9/0 error -22: Unknown error -22
+dpdk: [0] setup failed Errors:
+    rte_eth_tx_queue_setup[port:0, errno:-22]: Unknown error -22
+  rte_eth_rx_queue_setup[port:0, errno:-22]: Unknown error -22
+```
+
+The card is bound to `uio_pci_generic`, the `linux_cp` pair exists, the
+management address is on it and the dataplane lists the interface. Every
+structural check passes.
+
+So the tuner writes the card's own maximum into `startup.conf`:
+
+```
+ethernet {
+  default-mtu 1500
+}
+```
+
+| | |
+|---|---|
+| Where the number comes from | `ip -d link show <card>`, field `maxmtu`, read by the tuner **before** `bind-dataplane-nic` hands the card to DPDK. After the handover the card is not under `/sys/class/net` at all, and VPP does not report it either: `show hardware-interfaces` on a virtio port carries `max rx packet len: 9728`, which is the PMD's own ceiling and not the 1500 the card negotiated |
+| When nothing is written | The card can do 9000 or more, or its maximum could not be read. A jumbo-capable card gets exactly what every physical box has always had |
+| What it is | A **default**, not an override: it is the value interfaces *start* at. `mtu <n>` under `interface` in the VTY is applied after VPP is up and wins |
+| Why the pair agrees | The stanza is VPP-wide, so the `linux_cp` TAP registers at the same value as the card. Measured against the real binary: with no stanza a TAP and a host-interface both register at 9000, and with `default-mtu 1500` both register at 1500 |
+
+**It is not in the `dpdk` stanza, and that is the whole of
+[#380](https://github.com/andrediashexa/hexarouting/issues/380).**
+[#330](https://github.com/andrediashexa/hexarouting/issues/330) put `mtu 1500`
+inside `dev { }`; the keyword does not exist there, VPP answers
+``dpdk_device_config: unknown input `mtu 1500'`` and exits, and `vpp.service`
+carries `Restart=always`. Asked one keyword at a time, the binary says:
+
+| written | VPP's answer |
+|---|---|
+| `dpdk { dev X { mtu 1500 } }` | `dpdk_device_config: unknown input` |
+| `dpdk { dev X { max-frame-size 1518 } }` | `dpdk_device_config: unknown input` |
+| `dpdk { dev default { max-frame-size 1518 } }` | `dpdk_device_config: unknown input` |
+| `dpdk { max-frame-size 1518 }` | `dpdk_config: unknown input` |
+| `ethernet { default-mtu 1500 }` | accepted, VPP runs |
+| `ethernet { default-mtu 99999 }` | `ethernet_config: default MTU must be >=64, <=9000` |
+| `ethernet { frobnicate 1500 }` | `ethernet_config: unknown input` |
+| `frobnicate { default-mtu 1500 }` | `vlib_call_all_config_functions: unknown input` |
+
+The last two are the controls. Without them "VPP did not complain" is what an
+ignored section looks like as well as what an accepted one does.
+
+**And it could not have been done at runtime**, which is what the first
+attempt at #382 assumed. `hexash` sets an MTU over the binary API with
+`sw_interface_set_mtu`, and that is the right tool for the L3 MTU of a port
+that **is** running. It cannot start a port that never started. Measured on
+the booted box above, through both of VPP's runtime doors:
+
+| typed | what happened |
+|---|---|
+| `set interface mtu packet 1500 Gig…` | the L3 MTU became 1500, on the port and its TAP; the state stayed `error` |
+| `set interface mtu 1500 Gig…` | `set interface mtu: Invalid value (invalid MTU)`, with `rte_eth_dev_set_mtu failed (mtu 1496, -22)` behind it |
+| `set interface state … down` then `up` | the state stayed `error` |
+
+`show hardware-interfaces` kept reporting `flags: pmd-init-fail` throughout. A
+device whose PMD init failed does not come back, so the value has to be right
+before VPP configures it, and that means a file.
+
+The two are therefore not two ways of doing one thing. One chooses the value
+VPP **starts** the port with; the other changes the L3 MTU of a port that is
+already carrying traffic. Neither replaces the other.
+
 ## Boot self-test
 
 A racked appliance is seen over serial console or IPMI, not `journalctl`. If

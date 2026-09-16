@@ -370,6 +370,23 @@ class Topology:
         return out
 
 
+# VPP's own ethernet MTU default, and the range it accepts for one. MEASURED
+# by handing the real binary a file per value, because the only authority on
+# what VPP accepts is VPP:
+#
+#   ethernet { default-mtu 1500 }    accepted, VPP runs
+#   ethernet { default-mtu 99999 }   ethernet_config: default MTU must be
+#                                    >=64, <=9000
+#   ethernet { frobnicate 1500 }     ethernet_config: unknown input
+#   frobnicate { default-mtu 1500 }  vlib_call_all_config_functions: unknown
+#                                    input
+#
+# The last two are the controls: without them "VPP did not complain" would be
+# what an ignored section looks like as well as what an accepted one does.
+ETHERNET_DEFAULT_MTU = 9000
+ETHERNET_MTU_MIN = 64
+
+
 # VPP's own STAT_SEGMENT_DEFAULT_SIZE, in MB: the segment a box gets when no
 # statseg stanza names one. Kept as a constant rather than read from the
 # running dataplane because the tuner runs before VPP does, and the image pins
@@ -772,8 +789,87 @@ def render_statseg(p):
             "}\n")
 
 
+def render_ethernet(p):
+    """
+    The `ethernet` stanza, or "" on a box whose card can do VPP's default.
+
+    THE ONE PLACE THE CARD'S MTU CAN BE SET, and it is here rather than at
+    runtime because the device is configured ONCE, while VPP starts, before
+    anything can talk to VPP (#382).
+
+    What a 1500-MTU card does with VPP's default of 9000, measured on the box
+    this was reported from - an installed disk, the card handed over, the
+    journal of the boot that followed:
+
+        dpdk: [0] rte_eth_dev_set_mtu failed (mtu 8996, Unknown error -22)
+        dpdk: Interface GigabitEthernet0/9/0 error -22
+        dpdk: [0] setup failed Errors:
+            rte_eth_tx_queue_setup[port:0, errno:-22]
+            rte_eth_rx_queue_setup[port:0, errno:-22]
+
+    and `show interface` on that box:
+
+        GigabitEthernet0/9/0   1   error   9000/0/0/0
+
+    The port is in `error` state with `flags: pmd-init-fail`, and the box is
+    assembled correctly and cannot pass a packet.
+
+    IT CANNOT BE REPAIRED AFTERWARDS. Measured on that same running box,
+    through both of VPP's runtime doors:
+
+        set interface mtu packet 1500 Gig...  L3 MTU became 1500, state
+                                              stayed `error`
+        set interface mtu 1500 Gig...         set interface mtu: Invalid
+                                              value (invalid MTU), and
+                                              rte_eth_dev_set_mtu failed
+                                              (mtu 1496, -22)
+        set interface state ... down/up       state stayed `error`
+
+    A device whose PMD init failed does not come back, so
+    `sw_interface_set_mtu` - which is what the VTY's own `mtu <n>` sends, and
+    the right tool for the L3 MTU of a port that IS running - cannot be what
+    fixes this. The value has to be right before VPP configures the device,
+    and that means a file.
+
+    NOT in the `dpdk` stanza, which is where #330 put it and what #380 cost:
+    `mtu`, `max-frame-size` and `default-mtu` are all `unknown input` there,
+    per device and at the `dpdk` level alike, and VPP refuses the whole file
+    and exits. `ethernet { default-mtu }` is a different section of VPP's own
+    configuration and it is accepted - see the constants above for the file
+    that was fed to the binary to find that out.
+
+    IT SETS THE PAIR TOO, which the dpdk stanza could never have done.
+    Measured against the real binary with the dpdk plugin disabled: with no
+    stanza a TAP and a host-interface both register at 9000, and with
+    `ethernet { default-mtu 1500 }` both register at 1500. The card and the
+    TAP linux_cp puts beside it therefore agree by construction rather than by
+    a second statement somebody has to keep in step.
+
+    A DEFAULT AND NOT AN OVERRIDE. It is the value VPP STARTS the interface
+    with; `mtu <n>` under `interface` in the VTY is applied after VPP is up
+    and wins. An operator who named an MTU keeps it.
+
+    Nothing is written for a card that can do 9000 or more: such a box gets
+    exactly what every physical box has always had.
+    """
+    top = p["nic_max_mtu"]
+    if not top or not ETHERNET_MTU_MIN <= top < ETHERNET_DEFAULT_MTU:
+        return ""
+    return ("ethernet {\n"
+            f"  # This card reports a maximum MTU of {top}, below VPP's\n"
+            f"  # own default of {ETHERNET_DEFAULT_MTU}. Asked for more\n"
+            "  # than the card can carry, the driver refuses the device:\n"
+            "  # the port comes up in 'error' state and forwards nothing.\n"
+            "  #\n"
+            "  # This is the value interfaces START at. 'mtu <n>' under\n"
+            "  # 'interface' in hexash is applied afterwards and wins.\n"
+            f"  default-mtu {top}\n"
+            "}\n")
+
+
 def render_vpp(p):
     statseg = render_statseg(p)
+    ethernet = render_ethernet(p)
     if not p["tuned_now"]:
         # First boot: the kernel has not reserved hugepages or isolated CPUs yet.
         return (
@@ -801,6 +897,7 @@ def render_vpp(p):
             "  main-heap-size 256M\n"
             "  main-heap-page-size 4k\n"
             "}\n"
+            + ("\n" + ethernet if ethernet else "")
             + ("\n" + statseg if statseg else "")
         )
 
@@ -839,7 +936,7 @@ def render_vpp(p):
     have_q = p["nic_tx_queues"]
     nq = min(want_q, have_q) if have_q else want_q
     if p["nic_pci"]:
-        # NO MTU LINE, BECAUSE THIS VPP HAS NO SUCH KNOB.
+        # NO MTU LINE IN HERE, BECAUSE THIS VPP HAS NO SUCH KNOB IN HERE.
         #
         # #330 wrote `mtu <n>` into the dev stanza to stop VPP asking a
         # virtio card for a 9000-byte MTU it has not got. The keyword does
@@ -867,21 +964,19 @@ def render_vpp(p):
         #   dev { num-rx-desc 512 }    accepted
         #   dev { tag x } dev { name eth0 }  accepted
         #
-        # There is no MTU setting anywhere in this VPP's dpdk configuration,
-        # so there is nothing to write here.
+        # THE CARD'S MTU IS STILL A BOOT-TIME SETTING, and render_ethernet()
+        # above is where it is written: `ethernet { default-mtu <n> }`, which
+        # is a different section of VPP's configuration and IS accepted. It
+        # went there and not here because the dpdk stanza has no way to say
+        # it, not because the MTU does not belong in this file.
         #
-        # AND THE PRODUCT ALREADY SETS IT, somewhere else, which is where the
-        # next person reaching for a startup.conf knob should be sent:
-        # src/hexash/hexash.py sends sw_interface_set_mtu over the binary API
-        # with the L3 MTU array, on the dataplane interface AND its TAP, and
-        # reads it back. Its own comment there explains why the array and not
-        # the CLI keyword: plain `set interface mtu` changes the hardware max
-        # frame size, which most drivers refuse, and refused while vppctl still
-        # exited 0. So the MTU is a runtime interface property in this product
-        # and not a boot-time one, and that is not an oversight. What #330 was actually seeing is
-        # a log line from rte_eth_dev_set_mtu, which is a complaint and not a
-        # refusal: the device still comes up. A dataplane that starts and
-        # logs about an MTU is strictly better than one that does not start.
+        # The comment this replaces said the opposite - that the MTU is a
+        # runtime property of an interface, set by hexash over the binary
+        # API, and that rte_eth_dev_set_mtu's complaint is a log line about a
+        # device that still comes up. Both halves were measured wrong on a
+        # booted box in #382: the device does NOT come up, and a device whose
+        # PMD init failed cannot be repaired by any runtime call. The
+        # measurements are in render_ethernet().
         #
         # The other half of #330 - the TX queue count - was a real -22 that
         # DID refuse the device, and it stays. That one is measured from the
@@ -930,6 +1025,7 @@ def render_vpp(p):
         f"  main-heap-size {heap_gb}G\n"
         "  main-heap-page-size default-hugepage\n"
         "}\n"
+        + ("\n" + ethernet if ethernet else "")
         + ("\n" + statseg if statseg else "")
     )
 
@@ -980,17 +1076,32 @@ def render_report(p, vpp_base):
     else:
         out.append(f"# NIC queues: {p['nic_tx_queues']}, enough for "
                    f"{_w} worker(s)")
-    if p["nic_max_mtu"] and p["nic_max_mtu"] < 9000:
-        # SAID, AND NOT ACTED ON, which is the honest report of what this
-        # tuner can do. It wrote `mtu <n>` into the dev stanza until that
-        # keyword turned out not to exist and to stop VPP starting at all.
-        # There is no MTU setting in this VPP's dpdk configuration, so the
-        # operator is told what the card is and what VPP will try, and the
-        # log line from rte_eth_dev_set_mtu that follows is a complaint about
-        # a device that still comes up.
+    if p["nic_max_mtu"] and p["nic_max_mtu"] < ETHERNET_DEFAULT_MTU:
+        # SAID AND ACTED ON. It was said and not acted on until #382, on the
+        # reading that VPP's complaint was about a device that still came up.
+        # It does not come up: the port sits in `error` state and the box
+        # forwards nothing. render_ethernet() carries the measurement.
+        # THREE ROWS AND NOT ONE. This report reaches an 80-column serial
+        # console through the journal, and as a single sentence it measured
+        # 162 columns - folded by the terminal at whatever width the window
+        # happens to be, which is where the actionable half lands (#276).
         out.append(f"# NIC max MTU: {p['nic_max_mtu']}, below VPP's default "
-                   f"of 9000. VPP has no MTU setting in its dpdk stanza, so "
-                   f"it will ask for 9000, be refused by the card and log it")
+                   f"of {ETHERNET_DEFAULT_MTU}.")
+        out.append(f"#          Interfaces start at {p['nic_max_mtu']} "
+                   f"instead, so the card accepts the port")
+        out.append("#          and it forwards. 'mtu <n>' in hexash "
+                   "overrides it.")
+    elif p["nic_name"] and not p["nic_max_mtu"]:
+        # UNREAD IS NOT FINE, the same argument the queue count above makes.
+        # A card whose maximum could not be read gets VPP's 9000, and if the
+        # card cannot carry it the port will not start - which is a state
+        # this line is the only warning of.
+        out.append("# NIC max MTU: could not be read, so interfaces start "
+                   f"at VPP's {ETHERNET_DEFAULT_MTU}.")
+        out.append("#          A card that cannot carry that refuses the "
+                   "port: 'show interface'")
+        out.append("#          reports it in 'error' state and it forwards "
+                   "nothing.")
     out.append(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
           f"(sized for {p['subscribers']} subscribers), "
           f"{p['hugepages_reserved']} reserved right now")

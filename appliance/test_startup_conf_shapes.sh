@@ -256,6 +256,17 @@ grep -q "dev 0000:00:12.0" "$WORK/onecard.conf" \
 # meet VPP's parser like every other.
 R=$(mkroot lowmtu 2 "1" 2 8); addcard "$R" ens18 0000:00:12.0 1
 shape lowmtu "$R" 1500 --interface ens18 --keep-management
+# The decision, named. Without this the [ ok ] above is "VPP accepted a file
+# that happens to say nothing about the MTU", which is exactly the state
+# before #382 and is what this shape exists to stop being invisible.
+if grep -q "default-mtu 1500" "$WORK/lowmtu.conf"; then
+  ok "and it carries the card's maximum, so the line above is VPP"
+  echo "         accepting the decision #382 made and not a file that is"
+  echo "         silent about the MTU"
+else
+  bad "the 'lowmtu' shape wrote no default-mtu, so VPP accepting it says"
+  echo "         nothing about a card that cannot do 9000"
+fi
 
 # 5. SEVERAL WORKERS AND SEVERAL QUEUES. corelist-workers with a range, and a
 # queue count taken off the card rather than off the processor (#330).

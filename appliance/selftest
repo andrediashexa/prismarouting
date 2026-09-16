@@ -891,6 +891,34 @@ elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
        | awk 'NR>1 && $1 != "" && $1 != "local0" {found=1} END {exit !found}'
   then
     ok "dataplane NIC: $NICPCI"
+    # AND THE PORT ACTUALLY STARTED (#382).
+    #
+    # An interface the dataplane HOLDS is not an interface that forwards. VPP
+    # puts `error` in the State column of a port whose driver refused to start
+    # it, and every reading above this line is true of such a box: the card is
+    # bound to a driver DPDK can use, the dataplane lists the interface, the
+    # pair is there and the address is on it. The box reports ready and cannot
+    # pass a packet.
+    #
+    # That is the state #382 was reported from - VPP brings a DPDK port up at
+    # 9000 and the card's maximum was 1500 - and it is the shape #297 and #311
+    # are about: a green report about a box whose only interface is dead.
+    #
+    # The state word is column three of `show interface`, and only a name
+    # starts in column one; every counter line is indented.
+    errored=$(vppctl show interface 2>/dev/null \
+              | awk '/^[^ \t]/ && $1 != "Name" && $3 == "error" {print $1}' \
+              | tr '\n' ' ')
+    if [ -n "$errored" ]; then
+      bad "the dataplane holds interface(s) its driver refused to start:"
+      say "       $errored"
+      say_list "        " "'show interface' reports them in error state." \
+        "They carry no traffic, and everything else about this box can look" \
+        "right. 'journalctl -u vpp' has the driver's own reason." \
+        "An MTU above what the card accepts is one: the box sets the card's" \
+        "maximum when nothing names an 'mtu', so a port in this state after" \
+        "an 'mtu' was configured is a value the card cannot carry."
+    fi
   else
     bad "the dataplane has no interface, and one is named"
     say "        $NICPCI"
