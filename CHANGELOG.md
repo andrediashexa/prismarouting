@@ -132,6 +132,22 @@ version has a chance of seeing it.
     `test/test_hexash_complete.py` hold it, shown red against the 0.76.1
     VTY on the two-card box and the one-card box with no address.
 
+  * **The boot replay puts back the way back the tuner computed, and only
+    that.** `read_dataplane_mgmt()` had two sources with a stated
+    precedence - the record the VTY wrote in `tune.env` at a commit, then
+    the one the tuner left in `/run` - and `load()` consulted them only
+    where the saved file named no card. Transitional by design: the computed
+    path had not been seen working on a real box when it was written, and it
+    has now. So `load()` applies the `/run` record on every boot that has
+    one, whatever the saved file says about the card, and `commit` no longer
+    applies the VTY's record at all. That closes a gap the removal of the
+    prompt's refusal opened: `dataplane interface <card>`, `save`, reboot on
+    a box with a spare card was a boot that put nothing back. A `/run` record
+    without a gateway is read as no record, because a box with the address
+    on the pair and no route answers on its own subnet and nowhere else.
+    `test/test_dataplane_if.py` holds it - the saved file that names the
+    card, and the three-field record - shown red against the step before.
+
   **What it costs a box already in service.** Naming the card your session
   arrives on, with `dataplane interface`, is no longer refused on a box that
   has another card: the box takes the card you named at the next start of

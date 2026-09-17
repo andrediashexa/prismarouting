@@ -491,8 +491,10 @@ card whose way back it could not read, a named card is claimed whichever route
 it carries, and the binder binds what the tuner named and decides nothing
 about which.
 
-**And the boot replay reads it from there too, which is
-[#332](https://github.com/andrediashexa/hexarouting/issues/332).** The pair is
+**And the boot replay puts back the record the tuner computed, whatever the
+saved file says, which is
+[#332](https://github.com/andrediashexa/hexarouting/issues/332) and half of
+[#385](https://github.com/andrediashexa/hexarouting/issues/385).** The pair is
 made by `hexash --load`, out of the configuration file
 `hexarouting.service` replays - and `commit` does not write that file. Only
 `save` does. So a box that did what the VTY tells it to do, commit and reboot,
@@ -501,10 +503,14 @@ the three comments the installer ships, which `Config.is_empty()` returns on
 before `apply()` is reached at all. Measured on a booted guest by
 `lab/install-iso.sh`: the bind worked, `virtio-pci` to `uio_pci_generic`, the
 netdev gone, the dataplane holding `GigabitEthernet0/9/0` - and no pair, no
-address on any interface, and nobody able to reach it. `load()` now takes the
-card and the record from their holder when the file being replayed carries
-neither, and puts the management path back even on the empty file, because a
-file with no statements in it is not a box that gave its card away.
+address on any interface, and nobody able to reach it. `load()` takes the
+card from its holder when the file being replayed names none, and puts the
+way back from `/run` on the pair on every boot that has one - on the empty
+file, on a file that names the card, on a file saved before it was named -
+because the record's existence is the tuner's statement that this boot gave
+the card away. Until #385 the VTY's own record in `tune.env` was read first,
+and only where the file named no card, so a file that named the card and
+carried no record was a boot that put nothing back.
 
 **A card the dataplane has not got means two different boots, and they are
 told apart by asking Linux.** While Linux still has the card the handover has

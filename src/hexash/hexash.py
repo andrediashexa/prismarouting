@@ -5876,11 +5876,16 @@ class Shell:
         """
         Put the management address back, on the pair of the card that moved.
 
-        Runs on every apply and does nothing on most of them. At the commit
-        that names the card the dataplane has not got it yet, and saying so is
-        the whole of the work; at the boot after that commit the dataplane
-        does have it, and this is the only thing standing between a box that
-        forwards and a box nobody can reach.
+        Runs at every boot, from load(), with the ONE record there is: the
+        way back hexarouting-tune computed off the live card on this boot
+        (#378), which is a name, an address, a MAC and a gateway. It used to
+        run on every commit as well, with a three-field record the VTY had
+        written at the commit that named the card; that record and its
+        precedence over the computed one went with #385, because the
+        computed one is never older than the boot and the operator's could
+        be. On most boots there is no record and nothing to do; on the boot
+        after the card moved, this is the only thing standing between a box
+        that forwards and a box nobody can reach.
 
         NOT AN ERROR WHEN THE CARD HAS NOT MOVED YET. `hexash --load` runs on
         every boot, including the ones before the operator reboots into the
@@ -5942,13 +5947,8 @@ class Shell:
         # everything on its own wire and nothing beyond it - which on the
         # lab's guest is indistinguishable from a healthy box, because
         # qemu's gateway is on that wire. On a real box it is a machine
-        # somebody drives to.
-        #
-        # ONLY FOR THE RECORD THE TUNER COMPUTED, which is the only one that
-        # carries a gateway. The VTY's own record has three fields and its
-        # route arrives with the saved configuration, put there by
-        # take_management_card at the commit - so this must not fire on that
-        # path and cannot, because `gateway` is absent from it.
+        # somebody drives to. The record always carries the gateway: a /run
+        # file without one is read as no record at all.
         #
         # IN LINUX AND NOT IN FRR, deliberately. FRR is where an operator's
         # routing lives and converging it here would mean handing frr-reload
@@ -5959,19 +5959,18 @@ class Shell:
         # `replace` and not `add`: this runs on every boot and the second one
         # already has the route. An error there would be a box reporting a
         # failure for having succeeded twice.
-        gw = mgmt.get("gateway")
-        if gw:
-            rc, out = self.sys._run(["ip", "route", "replace", "default",
-                                     "via", gw, "dev", mgmt["name"]])
-            if rc != 0:
-                # SAID AND NOT FATAL. The address is already back, so the box
-                # is reachable from its own subnet and an operator on it can
-                # fix this; failing here would abandon a handover that mostly
-                # worked and leave the card in the dataplane anyway.
-                self.err(f"the default route could not be put back: {out}")
-                print_prose(f"this box has {mgmt['address']} on "
-                            f"{mgmt['name']} and no way off that subnet; "
-                            f"the gateway it recorded is {gw}")
+        gw = mgmt["gateway"]
+        rc, out = self.sys._run(["ip", "route", "replace", "default",
+                                 "via", gw, "dev", mgmt["name"]])
+        if rc != 0:
+            # SAID AND NOT FATAL. The address is already back, so the box
+            # is reachable from its own subnet and an operator on it can
+            # fix this; failing here would abandon a handover that mostly
+            # worked and leave the card in the dataplane anyway.
+            self.err(f"the default route could not be put back: {out}")
+            print_prose(f"this box has {mgmt['address']} on "
+                        f"{mgmt['name']} and no way off that subnet; "
+                        f"the gateway it recorded is {gw}")
         return True
 
     def device_linux_names(self) -> dict:
@@ -7251,15 +7250,6 @@ class Shell:
         # the entire reason an operator creates one.
         for ifname, host in d["lcp_set"].items():
             if not self.set_lcp_pair(ifname, host, True):
-                return False
-
-        # The management path of a box that has only one card, which is now
-        # the card the dataplane holds. Before the addresses below, because
-        # this IS an address and the pair it goes on has to exist first, and
-        # before FRR is reloaded, because the default route that comes with it
-        # needs the interface to be there.
-        if target.dataplane_mgmt:
-            if not self.apply_management_path(target.dataplane_mgmt):
                 return False
 
         # Moving an interface between routing tables, addresses and all.
@@ -11219,33 +11209,20 @@ class Shell:
 
     def read_dataplane_mgmt(self):
         """
-        The management path for a card that moved to the dataplane, or {}.
+        The record the VTY wrote beside the card in tune.env, or {}.
 
         THE OPERATOR'S RECORD ONLY, and the computed one is deliberately NOT
-        here (#378).
-
-        This is what `running_config()` reads, so whatever it returns becomes
-        the candidate on the next `configure` and is written back to tune.env
-        by the next commit. The tuner's computed record must not travel that
-        way: it is boot state and not configuration, it is recomputed every
-        boot from the live card, and the VTY's own record has three fields
-        where it has four - so a commit would persist a copy with the gateway
-        dropped, and the NEXT boot would read that copy in preference and put
-        the address back with no route.
-
-        Measured on an installed box: boot one had its default route, PHASE 2
-        created two accounts and committed, and the boot after the power cycle
-        came back with the address on the pair and
-        `ip -4 route list default` empty. The commit was what did it.
-
-        `load()` asks for the computed record explicitly, on the one path that
-        needs it, which is the boot that hands the card over.
+        here (#378): this is what `running_config()` reads, so whatever it
+        returns becomes the candidate on the next `configure` and is written
+        back to tune.env by the next commit, and the computed record is boot
+        state rather than configuration. Nothing applies what this returns
+        any more - load() puts back the computed record and nothing else
+        (#385) - so this exists to render the statement a box already
+        carrying one still has, until the statement itself goes.
 
         Three fields rather than three assignments: they are one fact and a
         file holding two of the three describes a box that cannot exist. A
-        line this cannot read is read as no record at all, which is the safe
-        direction - the box then refuses to hand the card over rather than
-        handing it over with half an answer.
+        line this cannot read is read as no record at all.
         """
         w = self.read_tune_key(self.TUNE_MGMT_KEY).split()
         if len(w) == 3 and "/" in w[1]:
@@ -11256,29 +11233,23 @@ class Shell:
         """
         The way back hexarouting-tune computed on this boot, or {}.
 
-        Four fields - name, address, MAC, gateway - and the gateway is KEPT,
-        because on this path nothing else will put the route back.
-
-        The record the VTY writes carries three, and its route comes from the
-        saved configuration: `take_management_card` appends
-        `ip route 0.0.0.0/0 <gw>` to the candidate at the commit, so the boot
-        after it replays a file that has the route in it. A box that claims
-        its own card never had that commit, so the file is empty and the route
-        has no other author. Measured on an installed box: address back on the
-        pair, `ip -4 route list default` empty, and the box reachable from its
-        own subnet and nowhere else.
+        Four fields - name, address, MAC, gateway - and ALL FOUR, because
+        this is the only record load() applies now and nothing else will put
+        the route back: a box with the address on the pair and no default
+        route answers on its own subnet and nowhere else, measured on an
+        installed box before the gateway was carried (#378). A file holding
+        three of the four describes a box that cannot exist and is read as no
+        record at all, which is the safe direction.
         """
         try:
             with open(self.MGMT_PATH_FILE, encoding="utf-8") as f:
                 w = f.read().split()
         except (OSError, UnicodeDecodeError):
             return {}
-        if len(w) < 3 or "/" not in w[1]:
+        if len(w) != 4 or "/" not in w[1]:
             return {}
-        got = {"name": w[0], "address": w[1], "mac": w[2].lower()}
-        if len(w) > 3:
-            got["gateway"] = w[3]
-        return got
+        return {"name": w[0], "address": w[1], "mac": w[2].lower(),
+                "gateway": w[3]}
 
     def write_dataplane_if(self, name):
         """
@@ -13416,31 +13387,27 @@ class Shell:
         if stale:
             target.drop_lcp_taps(stale)
 
-        # THE TWO STATEMENTS THIS FILE IS NOT THE HOLDER OF, and the whole of
-        # #332. `commit` writes the card and the management path it carries
-        # into the tuner's file, which is what hands the card over at the next
-        # boot; only `save` writes THIS file. So a box that committed the
-        # handover and rebooted - which is exactly what the VTY tells the
-        # operator to do - replays a file that has never heard of the card. On
-        # a fresh appliance that is the three comments the installer ships,
-        # which `is_empty()` below returns on, so apply_management_path() was
-        # not reached at all: the card was in the dataplane, no `linux_cp`
-        # pair was made, the address had nowhere to go, and the box came back
-        # with no address on any interface and nobody could reach it.
-        #
-        # Taken from the holder only where this file is silent. A file that
-        # names a card is the operator's own answer and stays it, which is
-        # what keeps `no dataplane interface`, `save` and a reboot working.
+        # THE STATEMENT THIS FILE IS NOT THE HOLDER OF, and half of #332.
+        # `commit` writes the card into the tuner's file, which is what hands
+        # it over at the next boot; only `save` writes THIS file. So a box
+        # that committed and rebooted replays a file that has never heard of
+        # the card. Taken from the holder only where this file is silent: a
+        # file that names a card is the operator's own answer and stays it,
+        # which is what keeps `no dataplane interface`, `save` and a reboot
+        # working.
         if not target.dataplane_if and not target.dataplane_mgmt:
             target.dataplane_if = self.read_dataplane_if()
-            # THE OPERATOR'S RECORD FIRST, THEN THE TUNER'S. This is the one
-            # path that may see the computed record: it runs at boot, on the
-            # file hexarouting.service replays, and it is where the card is
-            # actually handed over. Everything else reads the operator's
-            # record alone, so the computed one cannot be promoted into the
-            # saved configuration by a commit that was about something else.
-            target.dataplane_mgmt = (self.read_dataplane_mgmt()
-                                     or self.read_computed_mgmt())
+        # THE WAY BACK, FROM THE ONE HOLDER IT HAS (#385). It is the record
+        # hexarouting-tune computed off the live card on THIS boot, in /run,
+        # and it is applied whatever the saved file says about the card: a
+        # file naming the card by hand, a file that never heard of it and the
+        # three comments the installer ships all describe a box that gave its
+        # card away on this boot exactly when that record exists. The VTY's
+        # own record used to be read here in preference, and only where the
+        # file named nothing - so a file that named the card without one,
+        # which every override on a box with a spare card produces, was a
+        # boot that put nothing back. The other half of #332.
+        way_back = self.read_computed_mgmt()
         if target.unknown:
             # Read at BOOT, on a box that is refusing its own saved
             # configuration, which is the worst moment to be handed a broken
@@ -13470,7 +13437,7 @@ class Shell:
         # check is right, the input was not a change.
         #
         # The management path is the one exception, and it is not a change
-        # either: the box is putting back what its own tuner recorded before
+        # either: the box is putting back what its own tuner computed before
         # it gave the card away. An empty file is what every fresh appliance
         # boots with, so without this the boot after the handover is the boot
         # that does nothing at all (#332).
@@ -13478,8 +13445,8 @@ class Shell:
             # The answer is not checked because there is nothing here to
             # abandon: `err` has already counted the failure, which is what
             # hexarouting.service and the exit status read.
-            if target.dataplane_mgmt:
-                self.apply_management_path(target.dataplane_mgmt)
+            if way_back:
+                self.apply_management_path(way_back)
             return
 
         # Checked before it is applied, and refused whole if the check refuses.
@@ -13497,6 +13464,16 @@ class Shell:
             print(f"    {path}")
             return
         self.failed = before
+
+        # BEFORE the file's own statements, because the pair this makes is an
+        # interface the file may address, and the box's way home has to be
+        # there before anything that needs the box. NOT FATAL for the rest of
+        # the file: a box whose pair could not be made has already said so
+        # through `err`, which is what hexarouting.service reads, and it
+        # still wants its pools and its routing - a box that forwards and is
+        # reachable only at its console is better than one that is neither.
+        if way_back:
+            self.apply_management_path(way_back)
 
         if self.apply(target):
             try:

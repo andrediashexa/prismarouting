@@ -705,26 +705,14 @@ with tempfile.TemporaryDirectory() as tmp:
           f"and every commit carry it: "
           f"{sh.running_config().dataplane_mgmt!r}")
 
-print("\n=== and the operator's own record still wins over it ===")
-# A card named by hand is the operator's answer about a box they configured
-# deliberately, and a box mid-handover from an earlier release has that record
-# and no /run file until its next boot.
-with tempfile.TemporaryDirectory() as tmp:
-    sh = shell_on(tmp, tune="HEXA_DATAPLANE_IF=ens18\n"
-                            "HEXA_DATAPLANE_MGMT=ens18 10.0.0.9/24 "
-                            "52:54:00:00:00:99\n")
-    computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:AB:CD:EF 10.95.200.1\n")
-    # The boot path's own precedence: the operator's record first, the tuner's
-    # only where there is none.
-    rec = sh.read_dataplane_mgmt() or sh.read_computed_mgmt()
-    check(rec["address"] == "10.0.0.9/24",
-          f"the computed record overrode the one the operator's own commit "
-          f"wrote, so the box comes back on an address nobody chose: {rec!r}")
-
 print("\n=== a computed record missing a field is no record at all ===")
 # The safe direction, and the same rule the stored one has always had: the box
-# then declines the handover rather than making it with half an answer.
-for _bad in ("ens18\n", "ens18 10.95.200.198\n", "\n"):
+# then declines the handover rather than making it with half an answer. The
+# three-field record is in the list on purpose: it is the shape the VTY used
+# to write, and since #385 a record with no gateway is a box that comes back
+# on its own subnet and nowhere else, so it is no record either.
+for _bad in ("ens18\n", "ens18 10.95.200.198\n", "\n",
+             "ens18 10.95.200.198/24 52:54:00:ab:cd:ef\n"):
     with tempfile.TemporaryDirectory() as tmp:
         sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
         computed_path(tmp, _bad)
@@ -1376,7 +1364,8 @@ with tempfile.TemporaryDirectory() as tmp:
                       dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
     ok = sh.apply_management_path({"name": "ens18",
                                    "address": "10.95.200.198/24",
-                                   "mac": "52:54:00:00:00:01"})
+                                   "mac": "52:54:00:00:00:01",
+                                   "gateway": "10.95.200.1"})
     made = [a for m, a in api.calls if m == "lcp_itf_pair_add_del"]
     addrs = [a for m, a in api.calls if m == "sw_interface_add_del_address"]
     check(ok, "the box could not put its own management path back")
@@ -1401,8 +1390,7 @@ with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp, api=FakeApi(have=("GigabitEthernet0/3/0",)),
                       dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
     computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n")
-    sh.apply_management_path(sh.read_dataplane_mgmt()
-                             or sh.read_computed_mgmt())
+    sh.apply_management_path(sh.read_computed_mgmt())
     _route = [a for a in sh.ran if a[:3] == ["ip", "route", "replace"]]
     check(_route,
           f"nothing put the default route back, so the box is reachable from "
@@ -1411,21 +1399,6 @@ with tempfile.TemporaryDirectory() as tmp:
                                    "via", "10.95.200.1", "dev", "ens18"],
           f"the route was put back with the wrong next hop or on the wrong "
           f"interface: {_route!r}")
-
-print("\n=== and the VTY's own record does not get one invented for it ===")
-# It has three fields and its route arrives with the saved configuration
-# (#303). A route invented here would be a second author for one statement.
-with tempfile.TemporaryDirectory() as tmp:
-    sh = one_card_box(tmp, api=FakeApi(have=("GigabitEthernet0/3/0",)),
-                      dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}),
-                      tune="HEXA_DATAPLANE_IF=ens18\n"
-                           "HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 "
-                           "52:54:00:00:00:01\n")
-    sh.apply_management_path(sh.read_dataplane_mgmt()
-                             or sh.read_computed_mgmt())
-    check(not [a for a in sh.ran if a[:3] == ["ip", "route", "replace"]],
-          f"a route was installed for a record that carries no gateway, so "
-          f"this box has two authors for one statement: {sh.ran!r}")
 
 print("\n=== and on every other boot it does nothing, quietly ===")
 # `hexash --load` runs at every boot, including the ones before the operator
@@ -1439,7 +1412,8 @@ with tempfile.TemporaryDirectory() as tmp:
     with contextlib.redirect_stdout(out):
         ok = sh.apply_management_path({"name": "ens18",
                                        "address": "10.95.200.198/24",
-                                       "mac": "52:54:00:00:00:01"})
+                                       "mac": "52:54:00:00:00:01",
+                                       "gateway": "10.95.200.1"})
     check(ok and not api.calls,
           f"a boot before the card had moved was treated as a failure: "
           f"{ok!r} {api.calls!r}")
@@ -1455,20 +1429,25 @@ with tempfile.TemporaryDirectory() as tmp:
 # the dataplane holding GigabitEthernet0/9/0 - and the box came back with no
 # address on any interface and nobody could reach it. What the box replays at
 # boot is /etc/hexarouting/hexarouting.conf, and `commit` does not write that
-# file: only `save` does. `commit` writes the card AND the path it carries into
-# the tuner's file, which is what performs the handover at the next boot. So
-# the two halves of one decision had two lifetimes, and the half that keeps the
-# box reachable was the one that did not survive.
+# file: only `save` does. `commit` writes the card into the tuner's file,
+# which is what performs the handover at the next boot. So the two halves of
+# one decision had two lifetimes, and the half that keeps the box reachable
+# was the one that did not survive.
+#
+# WHERE THE WAY BACK COMES FROM, since #385: /run, and only /run. The tuner
+# computes it off the live card on the boot that claims it, and load() puts
+# it back whatever the saved file says about the card. The VTY's own record
+# in tune.env was read here in preference until 6b, and only where the file
+# named nothing - so a file that named the card without such a record was a
+# boot that put nothing back.
 #
 # Driven through `load()` against a file on disk rather than by calling
 # apply_management_path() directly, because "never called" is the defect: a
 # case that calls it cannot see it.
 
-#: The tuner's file as the handover commit leaves it.
+#: The tuner's file as the commit that named the card leaves it.
 TUNE_HANDED_OVER = TUNE_ENV_SHIPPED.replace(
-    "HEXA_DATAPLANE_IF=\n",
-    "HEXA_DATAPLANE_IF=ens18\n"
-    "HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 52:54:00:00:00:01\n")
+    "HEXA_DATAPLANE_IF=\n", "HEXA_DATAPLANE_IF=ens18\n")
 #: /proc/net/route on the boot after it: the card is gone and so is the route
 #: that lived on it.
 NO_ROUTE = ("Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask"
@@ -1494,6 +1473,7 @@ def booted_after_handover(tmp, conf, dp=None, api=None):
     sh = shell_on(tmp, route=NO_ROUTE, cards=("lo",), tune=TUNE_HANDED_OVER,
                   api=api or FakeApi(have=("GigabitEthernet0/3/0",)),
                   dp=dp or FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
+    computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n")
     path = os.path.join(tmp, "etc/hexarouting/hexarouting.conf")
     with open(path, "w") as f:
         f.write(conf)
@@ -1546,7 +1526,34 @@ with tempfile.TemporaryDirectory() as tmp:
           and addrs[0]["is_add"],
           f"the pair was made and the management address did not go on it: "
           f"{api.calls!r}")
-    print("  the record is in tune.env, and the file being replayed needs none")
+    print("  the record is in /run, and the file being replayed needs none")
+
+print("\n=== and on a box whose saved file NAMES the card (#385) ===")
+# THE GAP 6b CLOSES. load() took the way back from its holder only where the
+# saved file named no card, and a file that named one was left with whatever
+# record it carried - which until #385 was the VTY's, written beside the card
+# at the commit, and since step 5 is nothing at all on a box with a spare
+# card. So `dataplane interface ens18`, `save`, reboot was a boot that put
+# nothing back. The computed record is applied whatever the file says.
+with tempfile.TemporaryDirectory() as tmp:
+    api = FakeApi(have=("GigabitEthernet0/3/0",))
+    sh, path = booted_after_handover(tmp, "dataplane interface ens18\n",
+                                     api=api)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.load(path)
+    made = [a for m, a in api.calls if m == "lcp_itf_pair_add_del"]
+    addrs = [a for m, a in api.calls if m == "sw_interface_add_del_address"]
+    check(made and made[0]["host_if_name"] == "ens18",
+          f"a saved file naming the card left the boot with no pair, so the "
+          f"way back the tuner computed was never put back: {api.calls!r} "
+          f"{out.getvalue()!r}")
+    check(addrs and addrs[0]["prefix"] == "10.95.200.198/24"
+          and addrs[0]["is_add"],
+          f"the address did not go on the pair: {api.calls!r}")
+    check([a for a in sh.ran if a[:3] == ["ip", "route", "replace"]],
+          f"and the default route was not put back: {sh.ran!r}")
+    print("  the file names the card, and the way back still comes from /run")
 
 print("\n=== and on a box that HAD saved, before the card was named ===")
 # The other file this boot can find: a configuration saved before the handover,
@@ -1567,8 +1574,6 @@ with tempfile.TemporaryDirectory() as tmp:
     check(sh.read_dataplane_if() == "ens18",
           f"and the boot replay un-named the card the box is holding, so the "
           f"next boot gives it back: {sh.read_dataplane_if()!r}")
-    check(sh.read_dataplane_mgmt().get("mac") == "52:54:00:00:00:01",
-          f"and the record went with it: {sh.read_dataplane_mgmt()!r}")
     print("  the card keeps its name, and the address goes on the pair")
 
 print("\n=== a card on neither side is SAID, not returned as success ===")
@@ -1583,7 +1588,7 @@ with tempfile.TemporaryDirectory() as tmp:
         dp=FakeVpp({"show hardware-interfaces": DP_NOTHING}))
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        ok = sh.apply_management_path(sh.read_dataplane_mgmt())
+        ok = sh.apply_management_path(sh.read_computed_mgmt())
     said = out.getvalue()
     check(not ok, "a box with its only card on neither side reported success")
     check(said.startswith("error:"),
@@ -1612,7 +1617,8 @@ with tempfile.TemporaryDirectory() as tmp:
     with contextlib.redirect_stdout(out):
         ok = sh.apply_management_path({"name": "ens18",
                                        "address": "10.95.200.198/24",
-                                       "mac": "52:54:00:00:00:01"})
+                                       "mac": "52:54:00:00:00:01",
+                                       "gateway": "10.95.200.1"})
     check(ok and out.getvalue() == "",
           f"a box whose /sys/class/net cannot be read was told its card had "
           f"been handed over and lost: {ok!r} {out.getvalue()!r}")
