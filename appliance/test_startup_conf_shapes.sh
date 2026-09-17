@@ -118,11 +118,13 @@ mk() { mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }
 # is blind to a name written into the wrong block - the needle-matches-a-
 # label shape appliance/test_tune.py reads per block to avoid, and the same
 # reading is made here so the two harnesses cannot disagree about which
-# block a name is in.
+# block a name is in. A column-0 brace closes the dpdk stanza only OUTSIDE a
+# dev block: the tuner indents a dev block's close, but a file that closes
+# one at column 0 must not hide every dev block after it.
 dev_names() {
   awk '
     /^dpdk \{/ { in_dpdk = 1; next }
-    in_dpdk && /^\}/ { in_dpdk = 0 }
+    in_dpdk && pci == "" && /^\}/ { in_dpdk = 0 }
     in_dpdk && $1 == "dev" && $2 != "default" && $3 == "{" { pci = $2; next }
     in_dpdk && pci != "" && $1 == "}" { pci = "" }
     in_dpdk && pci != "" && $1 == "name" { print pci, $2 }

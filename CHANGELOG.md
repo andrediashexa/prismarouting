@@ -135,6 +135,18 @@ version has a chance of seeing it.
   name on that pair. Each reader is held on both shapes in
   `test/test_hexash_apply.py` and `test/test_hexash_igp.py`.
 
+  Asked with the pair's TAP and no list of the dataplane's names, that rule
+  took the TAP as the interface's own and answered the card - and
+  `interface tap0` is a block the parser takes and apply refuses nowhere,
+  because `vppctl create tap id 0` makes a `tap0` that is nobody's pair. So
+  `interface tap0 / shutdown` ran `ip link set dev GigabitEthernet0/13/0
+  down`, a name Linux has no netdev by, and the Linux end was never touched.
+  Asked with the TAP and no list the rule answers nothing now, and the three
+  `ip link set` mirrors hand it the names `show interface` lists, so keyed
+  by `tap0` they run on `vppwan0` alone on the old shape and on `wan0` alone
+  on `ens19 tap0 wan0`. Held in `test/test_routes.py` and
+  `test/test_hexash_apply.py`, red before the change.
+
   **A name FRR cannot take is refused before anything is applied.** A device
   nobody named - a `startup.conf` edited by hand, a VPP that ignores `name` -
   still gets VPP's spelling, and an `interface` block under it is refused by

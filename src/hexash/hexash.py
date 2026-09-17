@@ -5445,6 +5445,19 @@ class Shell:
                     on.add(name)
         return on
 
+    def dataplane_names(self) -> set:
+        """
+        Every name `show interface` lists, or an empty set if it cannot be
+        asked: the list routes.linux_end() places a pair's members with.
+
+        Read once per mirror rather than asked of the API per member:
+        interface_index() is a whole sw_interface_dump each time.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0:
+            return set()
+        return set(routes.parse_interfaces(out))
+
     def device_admin_down(self) -> set:
         """
         The interfaces that are administratively down.
@@ -5635,10 +5648,13 @@ class Shell:
             return False
         # The Linux side of the pair, which routes.linux_end() names: on the
         # same-name pair (#389) `name != ifname` kept the TAP and skipped
-        # ens19, so the netdev FRR reads never moved.
+        # ens19, so the netdev FRR reads never moved. Handed the dataplane's
+        # names because `interface tap0` is a block this shell takes, and
+        # asked with the TAP and no list the rule answered the card.
         rc, lcp_out = self.dp.run("show lcp")
         if rc == 0:
-            host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname)
+            host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname,
+                                    self.dataplane_names())
             if host:
                 subprocess.run(["ip", "link", "set", "dev", host,
                                 "up" if up else "down"], capture_output=True)
@@ -6287,8 +6303,10 @@ class Shell:
         rc, lcp_out = self.dp.run("show lcp")
         if rc == 0:
             # routes.linux_end(): the same-name pair (#389) has no member
-            # that is `!= ifname` and is not the TAP.
-            host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname)
+            # that is `!= ifname` and is not the TAP. With the dataplane's
+            # names, because keyed by the TAP the rule needs them.
+            host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname,
+                                    self.dataplane_names())
             if host:
                 subprocess.run(["ip", "link", "set", "dev", host,
                                 "alias", text or ""], capture_output=True)
@@ -7777,12 +7795,15 @@ class Shell:
         and the lab assertion was crediting this function for VPP's work. The
         lab now turns lcp-sync off before asserting. The reader that replaced
         it tried every name but `ifname`, which on the same-name pair (#389)
-        is the TAP alone: the same nothing, found the same way.
+        is the TAP alone: the same nothing, found the same way. Asked with
+        the dataplane's names, because `interface tap0` reaches here too
+        and without them the rule answered the card for the TAP.
         """
         rc, out = self.dp.run("show lcp")
         if rc != 0:
             return
-        host = routes.linux_end(routes.lcp_pairs(out), ifname)
+        host = routes.linux_end(routes.lcp_pairs(out), ifname,
+                                self.dataplane_names())
         if host:
             subprocess.run(["ip", "link", "set", "dev", host, "mtu", str(mtu)],
                            capture_output=True)

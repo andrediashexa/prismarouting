@@ -328,6 +328,30 @@ check(routes.linux_end({}, "ens19") is None,
       "an interface with no pair has no Linux end, not a wrong one")
 check(routes.linux_end({"ens19": ["ens19", "tap0"]}, "ens19") is None,
       "a pair whose only other name is the TAP has no Linux end either")
+# ASKED WITH THE TAP AND NO LIST. The three `ip link set` mirrors are keyed
+# by the operator's block name and hold no list, and `interface tap0` is a
+# block the parser takes: without the dataplane's names the TAP cannot be
+# told from the card, and rule 2 took the TAP as the interface's own and
+# answered the CARD - linux_end(OLD, 'tap0') -> 'GigabitEthernet0/13/0', a
+# name Linux has no netdev by, and on the override pair 'ens19 tap0 wan0'
+# it answered 'ens19' where the Linux end is wan0. "Could not place" is
+# None, never a wrong netdev.
+OVERRIDE = "itf-pair: [0] ens19 tap0 wan0 5 type tap\n"
+_over = routes.lcp_pairs(OVERRIDE)
+check(routes.linux_end(pairs, "tap4096") is None,
+      f"asked with the TAP and no list, the old shape: the pair cannot be "
+      f"placed and the answer is None, not "
+      f"{routes.linux_end(pairs, 'tap4096')!r}")
+check(routes.linux_end(_over, "tap0") is None,
+      f"asked with the TAP and no list, the override pair: None, not "
+      f"{routes.linux_end(_over, 'tap0')!r}")
+check(routes.linux_end(_over, "tap0", {"ens19", "tap0"}) == "wan0",
+      f"asked with the TAP and the dataplane's list, the override pair's "
+      f"Linux end is wan0, not "
+      f"{routes.linux_end(_over, 'tap0', {'ens19', 'tap0'})!r}")
+check(routes.linux_end(_over, "ens19", {"ens19", "tap0"}) == "wan0",
+      f"asked with the card, the override pair's Linux end is wan0, not "
+      f"{routes.linux_end(_over, 'ens19', {'ens19', 'tap0'})!r}")
 # And the other half of the rule, the member the dataplane holds: asked with
 # FRR's name and the dataplane's list, which is what `show ospf interface`
 # has in hand. The old-shape fixture is keyed by the Linux name alone, as a
@@ -343,6 +367,20 @@ check(routes.dataplane_end({"vppwan0": ["tap4096", "host-veth-vpp",
       "the old shape, keyed by FRR's name: the card, and never the TAP")
 check(routes.dataplane_end({}, "eth0", {"host-veth-vpp"}) is None,
       "an interface with no pair is nobody's dataplane end")
+# THE LIST IS THE RULE, NOT THE ORDER. `show lcp` happens to print the
+# dataplane's name first, so a reader that took the first non-TAP member
+# answers right on every real line and is wrong the day the order moves -
+# which lcp_pairs() says it must not be relied on. Held with the Linux name
+# first: only `n in dp_names` picks the card out.
+check(routes.dataplane_end({"vppwan0": ["vppwan0", "tap4096",
+                                        "host-veth-vpp"]},
+                           "vppwan0", {"host-veth-vpp", "tap4096"})
+      == "host-veth-vpp",
+      f"the Linux name listed first: the dataplane's end is the member the "
+      f"list holds, not "
+      f"""{routes.dataplane_end({"vppwan0": ["vppwan0", "tap4096",
+                                             "host-veth-vpp"]},
+                                "vppwan0", {"host-veth-vpp", "tap4096"})!r}""")
 print("  ens19 tap0 ens19 -> Linux end ens19; the old shape -> vppwan0")
 
 # --- the interfaces VPP owns, and the faults that depend on knowing them ---
