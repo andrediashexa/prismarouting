@@ -1108,5 +1108,203 @@ temporary directory the trap removes" \
 a release in a directory nobody empties"
 rm -rf "$k"
 
+echo "=== the verdict, one function at a time ==="
+# Everything above drives the suite whole, with stub labs, and reads the
+# summary. What that cannot say is which of the functions between a lab's
+# capture and its line got a case wrong, and there are eight of them between
+# `cat "$OUT/$n.out"` and "pass". Each is cut out of the script and called
+# alone, as _jobs_by_mem and _load_note are above; the captures are literals,
+# the tree with the floors in it is written here, and /proc/loadavg is a file
+# of this suite's own reached through a stub cut on PATH.
+U=$(mktemp -d)
+mkdir -p "$U/bin" "$U/tree/lab" "$U/out"
+unit_of() {  # <name> -> its definition out of tools/run-all-labs.sh
+  if grep -q "^$1() .*}[[:space:]]*$" "$REPO/tools/run-all-labs.sh"; then
+    grep -m1 "^$1() " "$REPO/tools/run-all-labs.sh"
+  else
+    sed -n "/^$1() *{/,/^}/p" "$REPO/tools/run-all-labs.sh"
+  fi
+}
+UNITS=$U/units.sh
+: > "$UNITS"
+for n in _load_now off_arg not_lab_reason lab_no_vpp no_vpp_reason \
+         report report_off judge_batch; do
+  unit_of "$n" >> "$UNITS"
+  grep -q "^$n() " "$UNITS" \
+    || bad "$n() was not found in tools/run-all-labs.sh, so its cases below run nothing"
+done
+
+# cut, with /proc/loadavg swapped for this suite's file and everything else
+# handed to the real one, so the field the function asks for is what is read.
+cat > "$U/bin/cut" <<'STUB'
+#!/bin/sh
+REAL=$(PATH=/usr/bin:/bin command -v cut)
+n=$#; i=0
+while [ "$i" -lt "$n" ]; do
+  a=$1; shift
+  [ "$a" = /proc/loadavg ] && a=$LOADAVG
+  set -- "$@" "$a"; i=$((i + 1))
+done
+exec "$REAL" "$@"
+STUB
+chmod +x "$U/bin/cut"
+export LOADAVG="$U/loadavg"
+printf '7.25 3.10 1.05 2/812 4321\n' > "$LOADAVG"
+got=$(. "$UNITS"; PATH="$U/bin:$PATH"; _load_now)
+[ "$got" = "7.25" ] \
+  && ok "_load_now is the one-minute average, the first field of /proc/loadavg" \
+  || bad "_load_now read '$got' out of '7.25 3.10 1.05 2/812 4321'"
+rm -f "$LOADAVG"
+got=$(. "$UNITS"; PATH="$U/bin:$PATH"; _load_now)
+[ "$got" = "?" ] \
+  && ok "and '?' where there is no /proc/loadavg to read, rather than nothing" \
+  || bad "_load_now with no loadavg gave '$got'"
+
+got=$(. "$UNITS"; OFF_MODES="fragx:no-marker frag:off rtsp:BPA_RTSP_OFF=1"
+      off_arg frag; echo "/$?"
+      off_arg rtsp; echo "/$?"
+      off_arg none; echo "/$?")
+[ "$got" = "off/0
+BPA_RTSP_OFF=1/0
+/1" ] \
+  && ok "off_arg finds a lab's own entry and not the one whose name starts \
+the same way, hands back an environment mode whole, and returns 1 for a lab \
+with no off run" \
+  || bad "off_arg gave:
+$got"
+
+got=$(. "$UNITS"; NOT_LABS="
+lib:sourced by the labs, not run as one
+soak:hours of churn is the point of it, and four minutes is its shortest run
+"
+      not_lab_reason soak; echo "/$?"
+      not_lab_reason frag; echo "/$?")
+[ "$got" = "hours of churn is the point of it, and four minutes is its shortest run
+/0
+/1" ] \
+  && ok "not_lab_reason prints the WHOLE reason, spaces and all, and \
+returns 1 for a name that is a lab" \
+  || bad "not_lab_reason gave:
+$got"
+
+echo "--- lab_no_vpp: a machine that could not run the lab, told from a defect"
+# The refusal sits on line 2 of the guarded capture, as it did in the
+# icmp-tcp run the function's comment measures. A capture whose FIRST line
+# is the refusal is read as half-dead instead: sed's `1,/re/` range does not
+# close on line 1, so everything after it counts as "before". A lab's first
+# line is the container's, never vppctl's, and that limit is noted here
+# rather than asserted as the rule.
+got=$(. "$UNITS"
+      lab_no_vpp "$(printf '  [ ok ] a\nVPP did not start\nvpp exited')"; echo "expired=$?"
+      lab_no_vpp "$(printf 'connect: Connection refused\n  [FAIL] x\nLAB FAILED')"; echo "refused=$?"
+      lab_no_vpp "$(printf 'starting\nconnect: Connection refused\n  [ ok ] guarded\nLAB FAILED')"; echo "guarded=$?"
+      lab_no_vpp "$(printf '  [ ok ] a\nconnect: Connection refused\nLAB FAILED')"; echo "halfdead=$?"
+      lab_no_vpp "$(printf '  [FAIL] a\nLAB FAILED')"; echo "defect=$?")
+[ "$got" = "expired=0
+refused=0
+guarded=0
+halfdead=1
+defect=1" ] \
+  && ok "an expired wait is NO VPP, so is a refusal with nothing green \
+before it even with guarded greens after it, and a box that answered and \
+then went is NOT, nor is a plain failure" \
+  || bad "lab_no_vpp gave:
+$got"
+
+echo "--- no_vpp_reason: the lab's own words under the verdict"
+got=$(. "$UNITS"; no_vpp_reason "$(printf '  [ ok ] a\nVPP did not start\nlog one\nlog two')")
+[ "$got" = "     the wait for the dataplane expired. VPP never answered:
+       VPP did not start
+       log one
+       log two" ] \
+  && ok "an expired wait says so and prints the log from the marker on, indented" \
+  || bad "no_vpp_reason on an expired wait gave:
+$got"
+got=$(. "$UNITS"; no_vpp_reason "$(printf 'NO DATAPLANE\nlog one')")
+[ "$got" = "     the dataplane was gone by the verdict. VPP's log:
+       NO DATAPLANE
+       log one" ] \
+  && ok "a dataplane gone by the verdict says that, which is the other job" \
+  || bad "no_vpp_reason on NO DATAPLANE gave:
+$got"
+got=$(. "$UNITS"; no_vpp_reason "$(printf 'connect: Connection refused')")
+case "$got" in
+  *"carries no VPP log"*"killed"*) ok "and no marker at all says the lab was killed before it could print one" ;;
+  *) bad "no_vpp_reason with no marker gave:
+$got" ;;
+esac
+got=$(. "$UNITS"; no_vpp_reason "$(printf 'VPP did not start\n'; seq 1 40)" | wc -l)
+[ "$got" -eq 22 ] \
+  && ok "and a long log is cut at 21 lines, the marker and the tail -20 the labs write" \
+  || bad "no_vpp_reason printed $got line(s) of a 41-line log and a header"
+
+echo "--- report: one lab's line, and which count it lands in"
+got=$(. "$UNITS"; pass=0; fail=0; ran=0; novpp=0; nomeasure=0
+      report aa "$(printf '  [ ok ] x\nLAB PASSED')" 0
+      report bb "$(printf '  [FAIL] y\nLAB FAILED')" 1
+      report cc "$(printf '  [ ok ] x\nLAB PASSED')" 3
+      report dd "$(printf '  [NOT MEASURED] z\n     by 2 s\nLAB NOT MEASURED')" 1
+      report ee "$(printf 'hello')" 0
+      report ff "$(printf 'VPP did not start\nvpp exited')" 1
+      echo "pass=$pass fail=$fail ran=$ran novpp=$novpp nomeasure=$nomeasure")
+for line in "  aa                 pass" \
+            "  bb                 FAIL" "       [FAIL] y" \
+            "  cc                 FAIL (exit 3)" \
+            "  dd                 NOT MEASURED" "       [NOT MEASURED] z" \
+            "  ee                 ran (no verdict yet)" \
+            "  ff                 NO VPP - the dataplane never came up" \
+            "pass=1 fail=2 ran=1 novpp=1 nomeasure=1"; do
+  printf '%s\n' "$got" | grep -qxF "$line" \
+    && ok "report: '$line'" \
+    || bad "report did not print '$line'; it printed:
+$got"
+done
+
+echo "--- report_off: the same line read backwards, against the header floor"
+printf '# OFF-RED-AT-LEAST: 3\n' > "$U/tree/lab/floor.sh"
+: > "$U/tree/lab/nofloor.sh"
+got=$(. "$UNITS"; REPO=$U/tree; pass=0; fail=0; ran=0; novpp=0; nomeasure=0
+      report_off floor+off "$(printf '  [FAIL] a\n  [FAIL] b\n  [FAIL] c\nLAB FAILED')" 1
+      report_off floor+off "$(printf '  [FAIL] a\n  [FAIL] b\nLAB FAILED')" 1
+      report_off floor+off "$(printf '  [FAIL] a\n  [FAIL] b\n  [FAIL] c\n  [FAIL] d\nLAB FAILED')" 1
+      report_off nofloor+off "$(printf '  [FAIL] a\nLAB FAILED')" 1
+      report_off nofloor+off "$(printf 'LAB PASSED')" 0
+      report_off nofloor+off "$(printf 'nothing')" 0
+      report_off nofloor+off "$(printf 'VPP did not start')" 1
+      echo "pass=$pass fail=$fail ran=$ran novpp=$novpp nomeasure=$nomeasure")
+for line in "  floor+off          pass (3 check(s) red, floor 3)" \
+            "  floor+off          FAIL - 2 check(s) red, and its header floor is 3" \
+            "  floor+off          pass (4 check(s) red, floor 3)" \
+            "     1 more than its header floor, so the floor is behind the" \
+            "  nofloor+off        pass (1 check(s) red)" \
+            "  nofloor+off        FAIL - PASSED with the feature off" \
+            "  nofloor+off        ran (no verdict yet)" \
+            "  nofloor+off        NO VPP - the dataplane never came up" \
+            "pass=3 fail=2 ran=1 novpp=1 nomeasure=0"; do
+  printf '%s\n' "$got" | grep -qxF "$line" \
+    && ok "report_off: '$line'" \
+    || bad "report_off did not print '$line'; it printed:
+$got"
+done
+
+echo "--- judge_batch: each lab in the batch to the right reader, then an empty batch"
+printf 'LAB PASSED\n' > "$U/out/aa.out"; echo 0 > "$U/out/aa.rc"
+printf '  [FAIL] a\nLAB FAILED\n' > "$U/out/bb+off.out"; echo 1 > "$U/out/bb+off.rc"
+printf 'LAB PASSED\n' > "$U/out/cc.out"
+got=$(. "$UNITS"; REPO=$U/tree; OUT=$U/out; BATCH=" aa bb+off cc"
+      pass=0; fail=0; ran=0; novpp=0; nomeasure=0
+      judge_batch
+      echo "batch=[$BATCH] pass=$pass fail=$fail")
+for line in "  aa                 pass" \
+            "  bb+off             pass (1 check(s) red)" \
+            "  cc                 FAIL (exit 1)" \
+            "batch=[] pass=2 fail=1"; do
+  printf '%s\n' "$got" | grep -qxF "$line" \
+    && ok "judge_batch: '$line'" \
+    || bad "judge_batch did not print '$line'; it printed:
+$got"
+done
+rm -rf "$U"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

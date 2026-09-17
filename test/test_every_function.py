@@ -89,7 +89,9 @@ MARKER = "not a unit:"
 # harness files. These go down with every batch of #390 and never up.
 # 2026-09-17, #390 batches A and B: routes.py, config.py, vppapi.py and
 # system.py at 0, with Reply.ok excused (a property is read, not called).
-UNTESTED_AT_MOST = {"python": 215, "c": 195, "shell": 36}
+# 2026-09-17, #390 batch F: shell at 0, with start_frr excused (four daemons
+# by absolute path and /etc/frr written, which no PATH stub reaches).
+UNTESTED_AT_MOST = {"python": 215, "c": 195, "shell": 0}
 MEASURED_ON = "2026-09-17"
 
 # A parse that came back nearly empty would make every count below small and

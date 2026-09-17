@@ -246,5 +246,98 @@ else
   bad "the labs print '$marker' and the suite's classifier does not look for it"
 fi
 
+echo "=== the four helpers a lab calls on a box, with the box stubbed ==="
+# use_binary_api, _rpki_module, box_workers and vc each ask the box one thing
+# and hand the answer to the lab. Every one is a line a lab could get wrong
+# without any lab noticing: a plugin put where vat2 does not look is #99, a
+# worker count that reads the main thread as a worker changes which sections
+# a lab runs, and a carriage return left on a vppctl value is #239. The box is
+# a PATH of stubs, as wait_vpp's is above, and no path on this machine is
+# read or written.
+UB=$(mktemp -d)
+trap 'rm -rf "$WORK" "$VB" "$UB"' EXIT
+mkdir -p "$UB/bin" "$UB/fs"
+# vppctl answers with the file this suite writes, CR+LF and all, and records
+# what it was asked.
+cat > "$UB/bin/vppctl" <<'STUB'
+#!/bin/sh
+echo "$*" >> "$UB/vppctl.args"
+cat "$UB/vppctl.out"
+STUB
+# install records what it was asked to put where, and puts nothing anywhere.
+cat > "$UB/bin/install" <<'STUB'
+#!/bin/sh
+echo "$*" >> "$UB/install.args"
+STUB
+# ls answers from a root of this suite's own, expanding the pattern the
+# function passes it against that root, so both module layouts can exist.
+cat > "$UB/bin/ls" <<'STUB'
+#!/bin/sh
+for a; do
+  for p in "$UB/fs"$a; do
+    [ -e "$p" ] && echo "${p#"$UB/fs"}"
+  done
+done
+STUB
+chmod +x "$UB/bin/vppctl" "$UB/bin/install" "$UB/bin/ls"
+export UB
+
+printf 'show version\r\nvpp v26.06\r\n' > "$UB/vppctl.out"
+got=$(PATH="$UB/bin:$PATH"; vc show version | tr '\r' 'R')
+[ "$got" = "show version
+vpp v26.06" ] && [ "$(cat "$UB/vppctl.args")" = "show version" ] \
+  && ok "vc hands vppctl the command as given and hands back its screen \
+with every carriage return gone" \
+  || bad "vc gave '$got' after asking '$(cat "$UB/vppctl.args" 2>/dev/null)'"
+
+printf 'ID Name Type\r\n0 vpp_main main\r\n1 vpp_wk_0 workers\r\n2 vpp_wk_1 workers\r\n' \
+  > "$UB/vppctl.out"
+got=$(PATH="$UB/bin:$PATH"; box_workers)
+[ "$got" = "2" ] \
+  && ok "box_workers counts the worker threads the box reports and not its \
+main thread: 2" \
+  || bad "box_workers on a two-worker screen gave '$got'"
+printf 'ID Name Type\r\n0 vpp_main main\r\n' > "$UB/vppctl.out"
+got=$(PATH="$UB/bin:$PATH"; box_workers)
+[ "$got" = "0" ] \
+  && ok "and a single-threaded box is 0, which is what a plain lab's \
+worker sections gate on" \
+  || bad "box_workers on a main-only screen gave '$got'"
+
+rm -f "$UB/install.args"
+(PATH="$UB/bin:$PATH"; use_binary_api)
+want="-D -m 0644 /vat2_plugins/bpa_test_plugin_bpa_plugin.so /usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+[ "$(cat "$UB/install.args" 2>/dev/null)" = "$want" ] \
+  && ok "use_binary_api installs the vat2 plugin from the build container's \
+/vat2_plugins to /usr/lib/x86_64-linux-gnu/vat2_plugins" \
+  || bad "use_binary_api asked install for '$(cat "$UB/install.args" 2>/dev/null)'"
+# And that is where appliance/install.sh puts it on a real box, read off the
+# installer rather than retyped: the whole point of the helper is that the
+# labs drive the client in the one configuration an appliance runs.
+grep -q '^VAT2_DIR=${VAT2_DIR:-/usr/lib/x86_64-linux-gnu/vat2_plugins}$' \
+  "$REPO/appliance/install.sh" \
+  && ok "and that is the directory appliance/install.sh installs it to" \
+  || bad "appliance/install.sh no longer installs the vat2 plugin where \
+use_binary_api puts it"
+
+got=$(PATH="$UB/bin:$PATH"; _rpki_module)
+[ "$got" = "" ] \
+  && ok "_rpki_module is nothing on a box with no RPKI module, so bgpd is \
+started without one rather than refusing to start" \
+  || bad "_rpki_module on a box with no module gave '$got'"
+mkdir -p "$UB/fs/usr/lib/frr/modules"
+: > "$UB/fs/usr/lib/frr/modules/bgpd_rpki.so"
+got=$(PATH="$UB/bin:$PATH"; _rpki_module)
+[ "$got" = "/usr/lib/frr/modules/bgpd_rpki.so" ] \
+  && ok "and finds the module under /usr/lib/frr/modules" \
+  || bad "_rpki_module with the module under /usr/lib/frr/modules gave '$got'"
+mkdir -p "$UB/fs/usr/lib/x86_64-linux-gnu/frr/modules"
+: > "$UB/fs/usr/lib/x86_64-linux-gnu/frr/modules/bgpd_rpki.so"
+got=$(PATH="$UB/bin:$PATH"; _rpki_module)
+[ "$got" = "/usr/lib/x86_64-linux-gnu/frr/modules/bgpd_rpki.so" ] \
+  && ok "and under the multiarch layout frr-rpki-rtrlib ships, one path \
+even when both are there" \
+  || bad "_rpki_module with both layouts present gave '$got'"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

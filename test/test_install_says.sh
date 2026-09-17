@@ -63,6 +63,61 @@ said() {  # <haystack> <sentence>
   case "$_h" in *"$_n"*) return 0 ;; *) return 1 ;; esac
 }
 
+echo "=== say, install and keep, on their own ==="
+# Three functions the runs above go through on every file, cut out of the
+# script and called alone the way test/test_run_all_labs.sh cuts _jobs_by_mem
+# out of the lab suite: install.sh starts copying on the line after keep is
+# defined, so sourcing it is running it. DESTDIR is a root of this suite's own.
+unit_of() {  # <name> -> its definition out of appliance/install.sh
+  if grep -q "^$1() .*}[[:space:]]*$" "$REPO/appliance/install.sh"; then
+    grep -m1 "^$1() " "$REPO/appliance/install.sh"
+  else
+    sed -n "/^$1() *{/,/^}/p" "$REPO/appliance/install.sh"
+  fi
+}
+UNITS=$WORK/units.sh
+{ unit_of say; unit_of install; unit_of keep; } > "$UNITS"
+for n in say install keep; do
+  grep -q "^$n() " "$UNITS" \
+    || bad "$n() was not found in appliance/install.sh, so its case below runs nothing"
+done
+UROOT=$WORK/uroot
+mkdir -p "$UROOT/etc/hexarouting"
+echo payload > "$WORK/src.txt"
+
+got=$(. "$UNITS"; say binaries)
+[ "$got" = "==> binaries" ] \
+  && ok "say prints the section behind the '==>' the install log is read by" \
+  || bad "say gave '$got'"
+
+got=$(. "$UNITS"; DESTDIR=$UROOT; BUILD_FILES=
+      install -d -m 0755 "$DESTDIR/usr/lib/hexarouting"
+      install -D -m 0644 "$WORK/src.txt" "$DESTDIR/usr/lib/hexarouting/a.py"
+      install -D -m 0755 "$WORK/src.txt" "$DESTDIR/usr/bin/hexash"
+      echo "files=[$BUILD_FILES]"
+      cat "$DESTDIR/usr/bin/hexash"
+      stat -c %a "$DESTDIR/usr/bin/hexash")
+[ "$got" = "files=[ usr/lib/hexarouting/a.py usr/bin/hexash]
+payload
+755" ] \
+  && ok "install copies with the mode asked for and records each FILE it \
+wrote, relative to the root, and not the directory -d made" \
+  || bad "install gave:
+$got"
+
+got=$(. "$UNITS"; DESTDIR=$UROOT; YOUR_FILES=
+      echo new > "$WORK/tune.env"
+      keep 0644 "$WORK/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
+      first=$(cat "$DESTDIR/etc/hexarouting/tune.env")
+      echo edited > "$DESTDIR/etc/hexarouting/tune.env"
+      keep 0644 "$WORK/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
+      echo "first=$first second=$(cat "$DESTDIR/etc/hexarouting/tune.env") yours=[$YOUR_FILES]")
+[ "$got" = "first=new second=edited yours=[ etc/hexarouting/tune.env etc/hexarouting/tune.env]" ] \
+  && ok "keep writes a file once, leaves the operator's edit alone on the \
+next run, and lists it as theirs both times" \
+  || bad "keep gave:
+$got"
+
 # THE THREE READERS AT THE BOTTOM OF THIS FILE, and the reason every run below
 # hands its output to say_capture (#371).
 #

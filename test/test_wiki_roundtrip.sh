@@ -991,5 +991,39 @@ grep -q "rest of the list is NOT published" "$WORK/stop.log" \
   && ok "and says why the rest was left alone" \
   || bad "nothing explained why it did not carry on"
 
+echo "=== api, on its own ==="
+# The one function every request in tools/wiki-pull.sh goes through, cut out
+# of the script and called alone the way test/test_run_all_labs.sh does with
+# _jobs_by_mem: the script refuses to run without a token and then deletes
+# wiki/, so sourcing it is running it. curl here records what it was handed
+# and answers a body, and no wiki is reached.
+mkdir -p "$WORK/apibin"
+cat > "$WORK/apibin/curl" <<'STUB'
+#!/bin/sh
+for a; do printf '%s\n' "$a"; done > "$API_ARGS"
+printf '{"ok":true}'
+STUB
+chmod +x "$WORK/apibin/curl"
+export API_ARGS=$WORK/api.args
+sed -n '/^api() {/,/^}/p' "$REPO/tools/wiki-pull.sh" > "$WORK/api.sh"
+got=$(. "$WORK/api.sh"; PATH="$WORK/apibin:$PATH"
+      URL=https://wiki.example; WIKI_TOKEN=not-a-real-token
+      api documents.list '{"limit":100}')
+[ "$got" = '{"ok":true}' ] \
+  && ok "api hands back what the service answered" \
+  || bad "api gave '$got'"
+for want in "https://wiki.example/api/documents.list" \
+            "Authorization: Bearer not-a-real-token" \
+            "Content-Type: application/json" \
+            '{"limit":100}' "POST"; do
+  grep -qxF "$want" "$API_ARGS" \
+    && ok "and asked curl for '$want'" \
+    || bad "curl was not handed '$want'; it got:
+$(sed 's/^/    /' "$API_ARGS")"
+done
+grep -qx -- '--max-time' "$API_ARGS" \
+  && ok "with a time limit, so a wiki that hangs does not hang the pull" \
+  || bad "api asked curl for no --max-time"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
