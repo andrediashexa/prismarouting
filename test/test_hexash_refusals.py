@@ -2215,7 +2215,13 @@ print("  fifty digits quotes all fifty back, and that row is not measured "
 # IPv4 peer and left at 87 columns on an IPv6 one.
 # 26 until #385 took out the `expected: dataplane management <name> address
 # <a.b.c.d/len> mac <xx:xx:...>` refusal, whose own words were over.
-OVER_AT_MOST = 25
+# And 26 since #384 drove `commit` over a dataplane answering `remap:` rows:
+# hexash.py's pass-through of the plugin's remap sentence (178 columns at
+# its widest, `moves from ... to ...` with two addresses and two ranges on
+# one row) had never been driven by any box, so the reader could not count
+# it. It is a real row an operator sees; folding it is #391, and this comes
+# back down to 25 with it.
+OVER_AT_MOST = 26
 # 52 until #385 took out the handover headline the prompt printed on a
 # one-card box, which carried the interface name with no widest behind it;
 # and one less again when #389 gave the `linux-name` refusal at the prompt
