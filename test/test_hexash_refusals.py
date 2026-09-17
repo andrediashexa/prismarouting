@@ -1018,9 +1018,9 @@ print("\n=== the box's own settings, refused while the operator is still "
 # BOTH ENDS, and neither is redundant: `apply` refuses these again for
 # `rollback` and `--load`, and this is the copy that reaches somebody who can
 # fix it in the next keystroke rather than hours after committing (#123). The
-# management card is the one with a site visit behind it - a name that is not
-# a card, or a management record the parser cannot read, is a box that hands
-# away the wrong NIC at its next start.
+# dataplane card is the one with a site visit behind it - a name that is not
+# a card is a file the box replays at its next start naming a NIC it has not
+# got, answered with `no-pci` in a journal nobody is reading.
 _settings = [
     ("snmp with no value", "snmp location",
      "error: usage: snmp <setting> <value>"),

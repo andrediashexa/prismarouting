@@ -1573,8 +1573,8 @@ say_widths() {   # <what to call the program in the report>
             # recovered, and on a continued source line the rest of the row
             # carries words the program wrote: `apply the command line from
             # $GRUBFILE` is continued with `in your bootloader and reboot`.
-            # Longest first, so the management record is read whole and a
-            # path is not read as a path followed by a sentence.
+            # Longest first, so a value of several words is read whole and
+            # a path is not read as a path followed by a sentence.
             mw = 0
             for (k = 1; k <= NVALS; k++) {
               t = split(SEEN[n, j, k], aa, " ")

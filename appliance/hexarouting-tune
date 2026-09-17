@@ -326,11 +326,13 @@ class Topology:
         """
         The one global IPv4 address on this card, as `a.b.c.d/nn`, or None.
 
-        THE FIRST AND ONLY, deliberately, which is the same rule the VTY's own
-        reader applies: a card with several is a card whose management address
-        nothing here can choose between, and getting it wrong means the box
-        comes back on an address nobody is trying to reach. None is then the
-        honest answer and the caller refuses the handover rather than guessing.
+        THE FIRST AND ONLY, deliberately: a card with several is a card whose
+        management address nothing here can choose between, and getting it
+        wrong means the box comes back on an address nobody is trying to
+        reach. None is then the honest answer, and the caller declines the
+        card rather than guessing. This is the only reader of that address
+        since #385; the VTY had one of its own, applying the same rule at the
+        prompt, and it went with the record it wrote.
 
         Shelled out for the reason nic_max_mtu() above is: Linux publishes an
         interface's address nowhere under /sys or /proc in a form that names
@@ -655,9 +657,11 @@ def management_path(topo, ifname):
             "gateway": gateway}
 
 
-#: Where the computed way back is left for the two programs that need it:
-#: appliance/bind-dataplane-nic, which will not unbind the last card without
-#: it, and hexash at boot, which puts the address on the linux_cp pair.
+#: Where the computed way back is left for the two readers it has: `hexash
+#: --load` at boot, which puts the address and the default route on the
+#: linux_cp pair, and appliance/selftest, which prints it on a box that gave
+#: its card away and has no pair. The binder reads startup.conf and nothing
+#: else (#385): a card kept out of the stanza here is a card nothing takes.
 #:
 #: IN /run AND NOT IN /etc, and the reason is the defect being designed out.
 #: /run is tmpfs: the file cannot outlive the boot that computed it, so a
@@ -674,18 +678,21 @@ MGMT_PATH_FILE = os.environ.get("HEXA_MGMT_PATH",
 
 def write_management_path(handover, path=None):
     """
-    Leave the computed way back where the binder and the VTY read it, or
-    remove the one a previous boot left. Returns the path written, or None.
+    Leave the computed way back where `hexash --load` and the self-test read
+    it, or remove the one a previous boot left. Returns the path written, or
+    None.
 
-    REWRITTEN OR REMOVED ON EVERY BOOT, never merely left. A file describing a
-    handover THIS boot is not making would be read by
-    appliance/bind-dataplane-nic as permission to take a card whose address it
-    cannot restore - which is the stale-record defect that putting this in
+    REWRITTEN OR REMOVED ON EVERY BOOT, never merely left. Both readers take
+    the file as a fact about THIS boot: one left from an earlier boot would
+    have appliance/selftest report a handover this boot did not make, and
+    would hand `hexash --load` an address read off the card on a day it no
+    longer describes - which is the stale-record defect that putting this in
     /run exists to prevent, arriving by the one route /run does not block.
 
     A function rather than four lines inside main() because it is the holder
-    of the record's SHAPE: the binder reads it with `cat` and hexash parses it
-    into a dict, so what those two agree on is decided here and nowhere else.
+    of the record's SHAPE: hexash.read_computed_mgmt() parses it into a dict
+    of four fields and appliance/selftest reads it with `cat`, so what those
+    two agree on is decided here and nowhere else.
     """
     path = path or MGMT_PATH_FILE
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -781,9 +788,9 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     # one-card box - a box whose default route is on a card nothing reserved
     # is about to give that card away too, and it needs the same way back.
     #
-    # None means the box could not read one of the three, and the binder
-    # refuses on that: a handover whose far side cannot be restored is the
-    # walk to the console.
+    # None means the box could not read one of the three, and the card is
+    # then not claimed, below: a handover whose far side cannot be restored
+    # is the walk to the console, and this is the one place that decides it.
     handover = None
     no_way_back = None
     if mgmt and mgmt in claimed:
@@ -794,8 +801,8 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
             # which card, not that the box may come up unreachable, and
             # since #385 this is the only reader of the way back there is.
             #
-            # The binder refuses this case too and always did, but a refusal
-            # THERE is the wrong place for it to be decided: startup.conf
+            # The binder used to refuse this case as well, and a refusal
+            # THERE was the wrong place for it to be decided: startup.conf
             # would name a device nothing binds, VPP would start with an
             # allowlist it cannot satisfy, and the box would come up with the
             # dataplane holding nothing while its own self-test reports a
@@ -804,9 +811,11 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
             #
             # Deciding it here instead leaves the box exactly where it was
             # before it tried: the card with Linux, no device claimed, and one
-            # [warn] saying so. The binder's refusal stays as the last line of
-            # defence for a startup.conf somebody edited by hand, which is
-            # what that check is for.
+            # [warn] saying so. Nothing downstream decides it again: the
+            # binder binds what startup.conf names and reads nothing else
+            # (#385), so a card kept out of the stanza here is a card nothing
+            # takes, and a startup.conf somebody edited by hand is bound as
+            # written.
             no_way_back = mgmt
             claimed = [c for c in claimed if c != mgmt]
             if not claimed:
@@ -955,8 +964,8 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "host_cards": cards,
         # The address, MAC and gateway of the card this box is reached on,
         # when that card is one of the ones being claimed. None otherwise, and
-        # None when they could not all be read - which the binder treats as a
-        # refusal rather than as "there was nothing to carry".
+        # None when they could not all be read - in which case the card was
+        # taken out of the claim above and `no_way_back` carries its name.
         "handover": handover,
         "handover_if": mgmt if (mgmt and mgmt in claimed) else None,
         # The card this box is reached on that it declined to claim, because
@@ -2258,15 +2267,19 @@ def main():
             print(f"warning: base {a.vpp_base} does not exist; generating tuning only",
                   file=sys.stderr)
         # THE WAY BACK, before startup.conf names the card it is about to
-        # take. Order matters within this block: appliance/bind-dataplane-nic
-        # runs after this program and reads BOTH, and a startup.conf naming a
-        # card with no way back beside it is the one combination that ends
-        # with a box nobody can reach.
+        # take. Order matters within this block: the binder reads startup.conf
+        # and nothing else (#385), so once that file names the card the bind
+        # goes ahead whatever /run holds, and the way back is what `hexash
+        # --load` puts on the pair after it. A startup.conf naming a card with
+        # no way back beside it is the one combination that ends with a box
+        # nobody can reach, and writing the record first is what keeps a boot
+        # that dies between the two writes out of it.
         #
         # REWRITTEN OR REMOVED ON EVERY BOOT, never left. A file describing a
-        # handover this boot is not making would be read by the binder as
-        # permission to take a card whose address it cannot restore, which is
-        # the stale-record defect that putting this in /run exists to prevent.
+        # handover this boot is not making would have the self-test report a
+        # handover that did not happen, and `hexash --load` put back an
+        # address read on another day - the stale-record defect that putting
+        # this in /run exists to prevent.
         if write_management_path(p["handover"]):
             print(f"wrote {MGMT_PATH_FILE}", file=sys.stderr)
         else:

@@ -2363,7 +2363,8 @@ gateway sits on its own wire, and a computed record leaking into the saved
 configuration and winning on the next boot.
 
 **And the apparatus is gone**
-([#385](https://github.com/andrediashexa/hexarouting/issues/385)) - *done*.
+([#385](https://github.com/andrediashexa/hexarouting/issues/385)) - *done on
+the issue branch, awaiting merge*.
 The confirmed-commit window and its restart went in 0.76.0, because they undid
 nothing: the revert cleared the setting and the next boot claimed the card
 again, so the window arrived where it began and charged a reboot for it while

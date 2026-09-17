@@ -678,10 +678,14 @@ printf 'root:x:0:0::/root:/usr/bin/hexash-login\n' > "$FAKE/passwd"
 printf '\n' > "$FAKE/groups"
 : > "$FAKE/vppctl_ok"
 # NEITHER of the two things that make a pair mandatory: no routing protocol
-# configured, and no handover record in the tuner's file. Both are arranged as
-# absences on purpose - this is the box that must STAY a warning, and it is the
-# third state of #334, the one a fix can quietly turn into a new defect.
-rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env"
+# configured, and no way back in /run from a handover on this boot, which is
+# where the tuner leaves it and where the self-test reads it (#385). Both are
+# arranged as absences on purpose - this is the box that must STAY a warning,
+# and it is the third state of #334, the one a fix can quietly turn into a new
+# defect. The /run file is removed here even though no case above writes it,
+# so the absence is this case's own and not the order of the cases.
+rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env" \
+      "$FAKE/root/run/hexarouting/dataplane-management"
 
 # The header is indented, the counter continuation lines are indented, and a
 # name is the only thing in column one. Copied from a real `show interface`
@@ -767,15 +771,16 @@ if said '\[warn\] no linux_cp pair'; then
 else
   ok "and it is not ALSO reported as a warning"
 fi
-# The record, not a wording: the address is the operator's only way back onto
-# a box whose card is in the dataplane, and it comes out of the fixture above
-# rather than out of any sentence this product writes.
+# The way back, not a wording: the address is the operator's only way back
+# onto a box whose card is in the dataplane, and it comes out of the /run
+# fixture above - what the tuner computed on this boot - rather than out of
+# any sentence this product writes.
 #
 # THE KEY THIS READ UNTIL #385 IS NAMED NOWHERE ELSE IN THE TREE NOW, and the
 # fixture is what shows the self-test moved with it: a self-test still
 # reading tune.env finds nothing here and takes the softer branch.
 if said_across '10\.95\.200\.198/24'; then
-  ok "and it prints the management path the box recorded, to put back by hand"
+  ok "and it prints the way back the tuner computed, to put back by hand"
 else
   bad "the failure does not carry the address the box is reached on: $(printf '%s\n' "$OUTPUT" | grep -iE 'management path|recorded' || echo '<nothing>')"
 fi

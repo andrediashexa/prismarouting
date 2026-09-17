@@ -1099,10 +1099,11 @@ if vppctl show version >/dev/null 2>&1; then
     fi
   done
   # WHO NEEDS THIS PAIR, and there are TWO answers rather than one. Asking
-  # only the first is what #334 is: a box that hands its only card over takes
-  # a static default route and has no `router` stanza at all, so the box the
-  # handover was written for took the softer branch - the one box where a
-  # missing pair means nobody can reach it was told so as a nicety.
+  # only the first is what #334 is: a box that hands its only card over gets
+  # its default route put back in Linux by `hexash --load`, off the way back
+  # in /run, and has no `router` stanza at all, so the box the handover was
+  # written for took the softer branch - the one box where a missing pair
+  # means nobody can reach it was told so as a nicety.
   #
   # FIRST: configured routing turns this from something worth knowing into a
   # box that cannot do what it has been told to do. `router bgp`, `router

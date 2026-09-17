@@ -1349,15 +1349,18 @@ with tempfile.TemporaryDirectory() as root:
     check("0102A8C0" not in out,
           "the gateway was printed as the raw hex field rather than decoded")
 
-print("\n=== and it is written where the binder and the VTY read it ===")
+print("\n=== and it is written where hexash --load and the self-test read it "
+      "===")
 # DRIVEN AT THE FUNCTION and not through `--write`, and the reason is not
 # convenience: the tuner's write block puts files in /etc/default/grub.d and
 # /etc/vpp, so it cannot run unprivileged at all - a suite that tried would be
 # asserting on a PermissionError. What is driven here is the holder of the
-# record's SHAPE, which is what appliance/bind-dataplane-nic reads with `cat`
-# and what hexash parses into a dict, so the thing those two have to agree on
-# is exactly what this measures. test/test_bind_nic.sh reads the same four
-# fields back from its own fixture, which is the other half.
+# record's SHAPE, which is what hexash.read_computed_mgmt() parses into a
+# dict of four fields and what appliance/selftest reads with `cat`, so the
+# thing those two have to agree on is exactly what this measures.
+# test/test_dataplane_if.py reads the same four fields back from its own
+# fixture, which is the other half; the binder reads startup.conf and nothing
+# else (#385), and test/test_bind_nic.sh holds that it does not read this.
 #
 # The same two globals the exec further down sets, and for the same reason:
 # the module prefix resolves paths off __file__, so without them the import
@@ -1374,7 +1377,8 @@ with tempfile.TemporaryDirectory() as root:
     check(_said == ["eth0", "192.168.2.50/24", "52:54:00:ab:cd:ef",
                     "192.168.2.1"],
           f"the file does not carry name, address, MAC and gateway in that "
-          f"order, which is what the binder and the VTY both read: {_said!r}")
+          f"order, which is what hexash --load and the self-test read: "
+          f"{_said!r}")
 
 print("\n=== a card whose way back cannot be read is NOT handed over ===")
 # An address the box cannot see is an address it cannot put back, and a
@@ -1406,7 +1410,8 @@ print("\n=== a card with two addresses is one the box will not carry back ===")
 # addresses is a card whose management address nothing here can choose
 # between, and choosing wrong means the box comes back on an address nobody is
 # trying to reach - which is indistinguishable, from outside, from a box that
-# never came back. The same rule the VTY's own reader applies.
+# never came back. The VTY's own reader applied the same rule at the prompt
+# until #385 took it out; this is the one reader there is now.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
@@ -1424,8 +1429,9 @@ with tempfile.TemporaryDirectory() as root:
 
 print("\n=== a stale way back is removed, not left for the next boot ===")
 # THE WHOLE ARGUMENT FOR /run. A file describing a handover THIS boot is not
-# making would be read by the binder as permission to take a card whose
-# address it cannot restore. It is rewritten or removed every boot.
+# making would have the self-test report a handover that did not happen, and
+# hand `hexash --load` an address read on another day. It is rewritten or
+# removed every boot.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
@@ -1446,7 +1452,7 @@ with tempfile.TemporaryDirectory() as root:
     _ns2["write_management_path"](None, path=_f)
     check(not os.path.exists(_f),
           "a way back from an earlier boot survived one that hands over "
-          "nothing, so the binder could take a card on stale permission")
+          "nothing, so its readers would take it for a fact about this boot")
 
 
 print("\n=== the documents do not instruct a step the box no longer needs ===")

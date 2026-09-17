@@ -15,10 +15,11 @@ Before=vpp.service
 # the address, MAC and gateway, read off the live card in the window before
 # anything is unbound. On a box whose management network is DHCP, or static
 # through ifupdown, that address does not exist until networking.service has
-# run - so without this ordering the read returns nothing, the tuner records
-# no way back, and appliance/bind-dataplane-nic correctly refuses to hand over
-# the last card. The box would then come up reachable and not forwarding, for
-# a reason that is a race rather than a fault.
+# run - so without this ordering the read returns nothing, the tuner reads no
+# way back and declines the card it is reached on, leaving it with Linux: on
+# a one-card box that is the only card, and startup.conf says `no-pci`. The
+# box would then come up reachable and not forwarding, for a reason that is
+# a race rather than a fault.
 #
 # After= and not Wants=, which is the same choice hexarouting-selftest.service
 # makes about the same unit and for the same reason: networking.service is

@@ -161,9 +161,11 @@ def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS,
         if not os.path.lexists(link):
             os.symlink(dev, link)
         # The MAC, because a card that is handed over keeps it and it is the
-        # only name the card has on both sides of the handover (#303). A fake
-        # tree without one would make every single-card box refuse for a
-        # reason the real tree never has.
+        # only name the card has on both sides of the handover (#303). The
+        # prompt stopped reading it with #385; the boot replay still matches
+        # the way back's MAC against what /sys lists to tell a card that has
+        # moved from one Linux still holds, and a fake tree without one would
+        # read every card as gone.
         with open(f"{tmp}/sys/class/net/{name}/address", "w") as f:
             f.write(f"52:54:00:00:00:0{i + 1}\n")
     os.makedirs(f"{tmp}/etc/hexarouting", exist_ok=True)
@@ -710,9 +712,10 @@ with tempfile.TemporaryDirectory() as tmp:
     rec = sh.read_computed_mgmt()
     # THE GATEWAY IS PART OF IT, and this asserted three fields until an
     # installed box came back with its address on the pair and
-    # `ip -4 route list default` empty. The VTY record has three because its
-    # route arrives with the saved configuration; a box that claimed its own
-    # card never had that commit, so this record is the route's only author.
+    # `ip -4 route list default` empty. The VTY's record had three because
+    # its route arrived with the saved configuration; a box that claimed its
+    # own card never had that commit, and since #385 no box has that record,
+    # so this one is the route's only author.
     check(rec == {"name": "ens18", "address": "10.95.200.198/24",
                   "mac": "52:54:00:ab:cd:ef", "gateway": "10.95.200.1"},
           f"the box cannot read what its own tuner computed, so a box that "
@@ -927,14 +930,18 @@ with tempfile.TemporaryDirectory() as tmp:
 
 # ------------------------------------------------------ a box with ONE card
 #
-# #303. The refusal above is right about every box that has somewhere else to
-# put the dataplane, and on a box with one card its advice - "name the card
-# carrying subscriber traffic instead" - names a card that does not exist. The
-# box could not forward and could not be told to.
+# #303. The refusal of the card carrying the default route was right about
+# every box that had somewhere else to put the dataplane, and on a box with
+# one card its advice - "name the card carrying subscriber traffic instead" -
+# named a card that does not exist. The box could not forward and could not
+# be told to. #303 opened a way out for this box alone, under a record the
+# prompt wrote and a commit that undid itself; #378 took the window and #385
+# the refusal and the record, from every box.
 #
-# What is asserted here is the way out and its safety, and the two are one
-# thing: the card may move only because the box writes down what has to follow
-# it, and only under a commit that undoes itself if nobody confirms.
+# What is asserted here is what the prompt does NOW on this box: it accepts
+# the only card like any other, writes nothing down for it, arms no window,
+# and leaves the way back to the tuner, which reads it off the live card on
+# the boot that claims it.
 
 #: One card, and it carries the default route because it is the only one there
 #: is. This is the maintainer's box in #303, in a tempdir.
@@ -1225,10 +1232,11 @@ check("commit confirmed 30" not in proc,
       "thirty-minute window, and it does not")
 
 print("\n=== and on the two-card box, no record is written for it ===")
-# The record the VTY writes beside the card is for the box that has no other
-# card (#303). A two-card box naming the card it is reached on is accepted
-# now, and it gets no record here: the tuner reads the way back off the card
-# on the boot that claims it, whichever box it is on.
+# The record the VTY wrote beside the card was for the box that has no other
+# card (#303), and #385 took the writer out. A two-card box naming the card
+# it is reached on is accepted now, and it gets no record here either: the
+# tuner reads the way back off the card on the boot that claims it,
+# whichever box it is on.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     said = drive(sh, ["configure", "dataplane interface enp1s0"])
@@ -1691,7 +1699,7 @@ print("\n=== an unconfirmed revert restarts nothing, because it undoes nothing =
 # where it started and charged a reboot for it.
 #
 # The configuration half of the revert stays and is asserted here: the setting
-# and the record go. What must not happen any more is the restart.
+# goes. What must not happen any more is the restart.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp, api=FakeApi(have=("GigabitEthernet0/3/0",)),
                       dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
@@ -1720,7 +1728,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("card goes back to Linux" not in said,
           f"the console still promises the card returns to Linux, which the "
           f"next start undoes: {said!r}")
-    print("  setting cleared, record gone, and no reboot")
+    print("  setting cleared, and no reboot")
 
 print("\n=== NO revert reboots the box, whatever it reverted (#378) ===")
 # TWO CASES COLLAPSED INTO ONE, because what they bounded is gone. They said
@@ -1780,10 +1788,12 @@ NO_DEFAULT_ROUTE = (
 # restart never touches it, so the operator was told they would lose the box
 # for a change that cannot cost them the box.
 #
-# The product already answers this question correctly in three other places -
-# the refusal offers the other card, the management record is written only for
-# this one, and `commit` arms a confirmed commit only when the card carries
-# the session - so what is asserted here is that the fourth agrees with them.
+# The product answered this question correctly in three other places once -
+# the refusal offered the other card, the management record was written only
+# for this one, and `commit` armed a confirmed commit only when the card
+# carried the session - and all three went, with #378 and #385. This screen
+# is the one left, so what is asserted here is that it asks the box the same
+# pair `show hardware` reads rather than stating one answer for every box.
 print("\n=== what the restart costs is asked, not stated ===")
 with tempfile.TemporaryDirectory() as tmp:
     said = drive(shell_on(tmp),

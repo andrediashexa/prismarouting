@@ -2321,7 +2321,7 @@ check(not any("tune.env" in l for l in r),
 
 r = why("dpdk {\n  no-pci\n}", 'HEXA_DATAPLANE_IF="ens19"\n')
 check(r and "ens19" in r[0],
-      f"a named interface that was refused is quoted back: {r[:1]}")
+      f"a named interface the dataplane was not given is quoted back: {r[:1]}")
 # The three reasons a named interface produces no-pci are different work, so
 # all three are offered rather than one guessed at. The third used to be the
 # tuner's refusal of the card carrying the default route; #385 removed that
