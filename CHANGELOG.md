@@ -75,6 +75,12 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+## 0.77.1 - the box reads 'no shut', and the interface comes up
+
+[#345](https://github.com/andrediashexa/hexarouting/issues/345), [#366](https://github.com/andrediashexa/hexarouting/issues/366), [#384](https://github.com/andrediashexa/hexarouting/issues/384), [#390](https://github.com/andrediashexa/hexarouting/issues/390), [#391](https://github.com/andrediashexa/hexarouting/issues/391), [#393](https://github.com/andrediashexa/hexarouting/issues/393).
+
 ### Added
 
 * **Every function in the product is named by a unit test, or says at its

@@ -2478,8 +2478,8 @@ claimed card up at the console and reading `ens19` off `ip link` and FRR, and
 `appliance/test_startup_conf_shapes.sh` handing the stanza to a real VPP.
 
 **`no shut` was handed to FRR in silence, and the interface stayed down**
-([#393](https://github.com/andrediashexa/hexarouting/issues/393)) - on the
-branch. On the maintainer's box, running 0.77.0, `interface ens18` / `no
+([#393](https://github.com/andrediashexa/hexarouting/issues/393)) - shipped
+in 0.77.1. On the maintainer's box, running 0.77.0, `interface ens18` / `no
 shut` / `commit` left the card down: the VTY had no grammar for any
 abbreviation of its own statements, so `no shut` was staged as an FRR
 statement with nothing printed, FRR accepted it inside its own `interface`
