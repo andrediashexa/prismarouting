@@ -169,28 +169,13 @@ this commit can cut off the session you are using
     applying it as 'commit confirmed 10' rather than as a plain commit
 ```
 
-Há um quarto caso, e ele tem prazo próprio: **entregar ao dataplane a placa por onde esta caixa é alcançada**, o que só acontece numa caixa que tem uma placa só. Vira `commit confirmed 30`, e o trinta tem razão de ser — a janela precisa caber um reinício e um login, não uma reconexão:
+São **três**, e não quatro. Entregar ao dataplane a placa por onde a caixa é alcançada já foi o quarto caso, com uma janela de trinta minutos e um `commit` de confirmação depois do reinício. Deixou de ser: a caixa reivindica a própria placa ao iniciar, e o estado que aquele desfazer produzia — o ajuste vazio, numa caixa de uma placa só — é exatamente o estado que reivindica aquela placa. Quem confirmava e quem não fazia nada terminavam no mesmo lugar, e o segundo pagava um reinício para chegar lá.
 
-```
-this commit hands over the card this box is reached on
-    the box keeps its address, on the dataplane's side of it, and nothing
-    proves that until it has been restarted and answered
-    applying it as 'commit confirmed 30' rather than as a plain commit: restart
-    the box, log in again and type 'commit' to keep it
-```
 
-Esse caso tem duas particularidades em relação aos outros três.
+:::warning
+**Se você tem procedimento escrito dizendo "reinicie, entre de novo e digite** `**commit**` **para manter a placa", apague esse passo.** Não existe janela para confirmar. O `commit` é inofensivo e não faz nada, e nenhum desfazer reinicia a caixa. `commit confirmed <minutos>` continua igual para qualquer mudança em que você queira uma janela.
 
-* **A sessão não cai no** `**commit**`**; cai no reinício seguinte.** É por isso que a janela não pode ser a de sempre, e por isso a confirmação vem depois de você entrar de novo na caixa.
-* **O desfazer reinicia a máquina.** Devolver a placa ao Linux só acontece num novo start do dataplane, então pôr o arquivo de volta sem reiniciar deixaria a caixa desfeita e ainda inalcançável. A caixa avisa no console antes:
-
-```
-restarting the box: the card goes back to Linux at the next start
-    the dataplane holds it until then, so this is the only way back onto the
-    network without a reboot by hand
-```
-
-O reinício só acontece quando a placa **saiu mesmo**: a janela conta a partir do `commit`, e ela pode vencer com a caixa ainda no caminho antigo. Antes de reiniciar qualquer coisa a caixa pergunta ao dataplane se ele está com o MAC que ela anotou — um desfazer que não devolve placa nenhuma não reinicia nada.
+:::
 
 #### Quando a promessa não pode ser feita
 
@@ -250,16 +235,6 @@ Um pool sem um dos dois lados não traduz nada. Não é um ajuste que se complet
 ### `pool '<nome>' would be refused`
 
 O dataplane olhou a definição inteira - tamanho de bloco, sobreposição de prefixo, capacidade, e se a faixa pública colide com um endereço local - e disse que não. A linha seguinte traz o motivo dele, nas palavras dele.
-
-### `block-stride applies to dynamic pools only, not to pool <nome>`
-
-O `block-stride` diz a que distância fica o **segundo** bloco de um assinante que encheu o primeiro, contada ao longo dos blocos **mapeados** do endereço público dele. Num pool `deterministic` o bloco a mais não sai dali: sai da **reserva**, que é um conjunto à parte com regra própria de escolha - um bloco livre da reserva no próprio endereço do assinante, se a fatia daquele worker tiver um; senão, qualquer bloco livre que a fatia daquele worker tenha na reserva, em qualquer endereço, como descreve a página de [configuração de pool](/doc/configuracao-de-pool-btyS572Ih6). Esse caminho nunca passa pelos blocos mapeados, e por isso o `block-stride` nunca é lido ali - em nenhum tamanho, e em nenhuma máquina.
-
-A recusa mostra as duas linhas em conflito, o `mode` e o `block-stride`, porque qualquer uma das duas resolve e qual delas mudar é decisão sua: tire o `block-stride`, ou ponha o pool em `mode dynamic`.
-
-É a mesma simetria da `reserve`, que só existe em pool determinístico: cada um dos dois ajustes pertence a um modo só, e o equipamento prefere dizer isso a guardar um ajuste que nunca teria efeito. Um pool que **era** dinâmico, tinha `block-stride` e passa a `deterministic` cai exatamente aqui - e essa é a hora de ficar sabendo o que ele está perdendo, não meses depois, olhando uma tela que promete uma distribuição que a caixa não faz.
-
-**Um arquivo salvo por uma versão anterior** pode ter os dois no mesmo pool, porque a combinação era aceita e o `block-stride` simplesmente nunca valia ali. No boot a caixa **não recusa** esse arquivo: sobe o pool sem o `block-stride`, exatamente como ele já rodava, e deixa no log do boot a linha `note: block-stride <n> dropped from pool <nome>`. O próximo `save` grava o arquivo sem a linha. Um `rollback` para uma revisão que ainda tem os dois carrega a revisão na candidata e não aplica nada, como qualquer `rollback`; é o `commit` seguinte que cai na recusa acima. Numa caixa que subiu por esse caminho o pool já está rodando **sem** o `block-stride`, então o que esse `commit` recusa é a linha acrescentada a um pool que fica onde está - e não um pool novo. A diferença entre o boot e o prompt é deliberada: no boot ninguém está olhando, e uma caixa que sobe sem pool nenhum por causa de um ajuste que nunca teve efeito é um preço que ninguém pediu para pagar.
 
 ### `this box has no interface <nome>` e `interface <nome>: this box has no such interface`
 
@@ -353,8 +328,6 @@ Quem seria re-mapeado sai do `commit` comum, na recusa que pede `commit remap`.
 A `hexarouting.service` roda `hexash --load /etc/hexarouting/hexarouting.conf` depois que o VPP aceita comandos.
 
 O `--load` **recusa o arquivo inteiro** se houver uma linha que a VTY não consiga interpretar, em vez de aplicar o resto. Isso é deliberado: rodando sem ninguém olhando, aplicar um arquivo *menos uma linha* deixaria a configuração em disco e a em execução diferentes, e alguém descobriria isso lendo as duas muito depois.
-
-Há uma linha, e só uma, que o `--load` deixa de fora em vez de recusar o arquivo: o `block-stride` de um pool `deterministic`, que nunca teve efeito ali. O pool sobe como já rodava, o log do boot diz `note: block-stride <n> dropped from pool <nome>`, e até o próximo `save` o arquivo em disco e a configuração em execução diferem por essa linha. A recusa `block-stride applies to dynamic pools only`, acima, explica por quê.
 
 A recusa é lida no boot, num console de 80 colunas, então ela é quebrada em partes que cabem: o caminho do arquivo e a linha recusada saem **inteiros**, cada um na sua própria linha, para você conseguir copiar e procurar; o motivo vem em texto corrido embaixo.
 

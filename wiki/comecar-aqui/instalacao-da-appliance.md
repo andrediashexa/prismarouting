@@ -97,6 +97,28 @@ Com endereço estático, o instalador ainda pergunta o gateway e os servidores D
 
 `none` também é resposta, e é **gravada**. Sem o arquivo, uma caixa cujo operador escolheu não ter rede de gerência e uma caixa instalada por uma mídia que nunca perguntou são a mesma caixa no disco - e uma das duas precisa ser gritada em todo boot enquanto a outra não.
 
+
+:::warning
+**Responder** `**none**` **decide também quem fica com as placas.** A reserva que impede o dataplane de tomar uma placa **é** esta resposta: sem ela, nada está reservado para o Linux, e placa que nada reserva é placa que o dataplane reivindica no próximo boot — todas elas, inclusive a que você está usando para administrar a caixa.
+
+A caixa não se perde: o endereço passa para o par que o dataplane mantém para aquela placa, e ela passa a ser alcançada **através** do dataplane em vez de ao lado dele. Mas é uma mudança de caminho que ninguém pediu, e o autoteste avisa em todo boot enquanto isso for verdade:
+
+```
+no management network was asked for, and this box is on one anyway
+```
+
+Para guardar uma placa para o Linux depois, escreva a estrofe que o instalador teria escrito:
+
+```
+F=/etc/network/interfaces.d/hexarouting
+echo "auto ens19" >> $F
+echo "iface ens19 inet dhcp" >> $F
+```
+
+Endereço estático leva `inet static` e uma linha `address`.
+
+:::
+
 ### O que a caixa diz depois
 
 O autoteste de boot lê **o mesmo arquivo** de volta em todo boot e conta o que aconteceu com ele:
@@ -109,7 +131,8 @@ O autoteste de boot lê **o mesmo arquivo** de volta em todo boot e conta o que 
 | `[FAIL] ... has no address` | DHCP sem resposta, ou o `ifup` falhou |
 | `[FAIL] this box has no card called ens18` | a placa da instalação não está mais na caixa. Lista as que estão |
 | `[FAIL] no management network: nothing was ever written for one` | mídia até a 0.72.0. A linha traz os comandos que resolvem a partir daquele console |
-| `[info] no management network was asked for at install time` | respondeu `none` |
+| `[info] no management network was asked for at install time` | respondeu `none`, e a caixa está mesmo só no console |
+| `[warn] no management network was asked for, and this box is on one anyway` | respondeu `none`, mas o Linux tem placa com endereço — e é placa que o dataplane reivindica no próximo boot |
 
 
 :::success

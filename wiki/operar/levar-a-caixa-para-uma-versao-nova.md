@@ -15,6 +15,33 @@ Como colocar uma versão nova do HexaRouting numa caixa que já está em produç
 
 **O pacote é o caminho normal.** A reinstalação existe para a máquina nova e para o caso em que a versão nova muda a plataforma por baixo do produto. Você não precisa adivinhar qual é: o pacote confere isso sozinho e **recusa antes de escrever qualquer coisa**, dizendo o que a caixa tem e o que a versão nova precisa.
 
+# Antes de subir para a 0.76.0: as placas mudam de dono
+
+A partir da 0.76.0 o dataplane **reivindica as placas sozinho**. A regra é: ele fica com todas as placas PCI da caixa, exceto uma reservada para o Linux — que é a rede de gerência gravada na instalação —, e nunca a última. Numa instalação nova isso é o que faz a caixa encaminhar sem ninguém dizer nada.
+
+Numa caixa **já em serviço**, isso muda de dono no próximo boot. Leia a sua linha antes de atualizar:
+
+| Se a sua caixa | O que muda no próximo boot |
+|----------------|----------------------------|
+| tem **uma** placa | o dataplane fica com ela. Endereço, MAC e gateway passam para o par `linux_cp`, e a caixa passa a ser alcançada *através* do dataplane. Nada a fazer |
+| tem **várias** e você guardou uma para o Linux só não nomeando ela | **o dataplane vai pegar essa placa.** Só é poupada a que está gravada como rede de gerência da instalação. Uma placa que você usava para VLAN de gerência, caminho de backup ou storage é reivindicada |
+| já nomeia uma placa com `dataplane interface` | não muda, e agora é **exclusivo**: a caixa pega aquela e nenhuma outra. É assim que se guardam placas para o Linux |
+| mistura placa de MTU 1500 com uma que aceita jumbo | toda interface começa no **menor** máximo entre as placas reivindicadas, porque o dataplane usa um valor só para todas. `mtu <n>` dentro de `interface` levanta uma porta depois |
+| foi instalada nomeando uma placa que ela não tem mais | nada fica reservado, então **todas** são reivindicadas |
+| foi instalada respondendo `none` à pergunta da rede de gerência | **nada pode ficar reservado**, porque a reserva É essa resposta: todas as placas são reivindicadas, inclusive a que você administra. A caixa não se perde — o endereço passa para o par do dataplane — mas o caminho muda, e o autoteste passa a avisar em todo boot |
+
+
+:::warning
+O caso do meio é o que morde. Uma caixa com várias placas em que você simplesmente nunca nomeou a de gerência perde essa placa para o dataplane no primeiro boot depois da atualização — e, se não for a que carrega a rota default gravada na instalação, ela não volta sozinha.
+
+Antes de reiniciar, resolva com uma linha: nomeie a placa dos assinantes com `dataplane interface <nome>` e dê `commit`. A partir daí a caixa reivindica só aquela, e todas as outras ficam com o Linux.
+
+:::
+
+`show hardware` diz quais placas foram reivindicadas, qual foi poupada e por quê; o autoteste de boot diz o mesmo no console. Uma placa cujo endereço, MAC e gateway a caixa não consiga ler inteiros **não** é reivindicada — ela prefere manter a placa a entregar uma porta que não saberia devolver.
+
+E um passo que deixou de existir: **naquela caixa de uma placa só, entregar a placa não arma mais um** `**commit confirmed**` **de trinta minutos.** Se o seu procedimento manda reiniciar, entrar de novo e digitar `commit` para manter a placa, apague esse passo — não há janela para confirmar, e o `commit` extra não faz nada.
+
 # O pacote de atualização
 
 ## 1. Anote a versão que está rodando

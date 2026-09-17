@@ -20,7 +20,7 @@ Aplica agora e desfaz sozinho em 5 minutos se você não confirmar. Se a mudanç
 
 O prazo é do **equipamento**, não da sessão: sair da VTY, perder o SSH, fechar o console ou reiniciar a máquina não cancela o desfazer. Só `commit` cancela. E três mudanças viram `commit confirmed 10` mesmo sem você pedir — qualquer coisa em `ssh`, qualquer coisa em `user`, e um `commit cutoff` —, porque são as que podem cortar a sessão em que você está digitando.
 
-Há uma quarta, com prazo maior: **entregar ao dataplane a placa por onde a caixa é alcançada** vira `commit confirmed 30`. Trinta e não dez porque a janela precisa caber um reinício e um login, e não uma reconexão — e o desfazer dessa, além de devolver a configuração, **reinicia a caixa**, porque devolver a placa ao Linux só acontece num novo start.
+Eram quatro: entregar ao dataplane a placa por onde a caixa é alcançada virava `commit confirmed 30`. Não é mais — a caixa reivindica a própria placa ao iniciar, e não há mais janela nenhuma para confirmar essa entrega. **Procedimento que mande reiniciar, entrar de novo e digitar** `**commit**` **para manter a placa não vale mais**, e o `commit` extra não faz nada.
 
 ## `commit` não é `save`
 
@@ -72,18 +72,17 @@ Se o par não existir, não há para onde o endereço voltar. A caixa sobe encam
         anywhere but its console.
         the management path it recorded: ens18 10.95.200.198/24
         52:54:00:00:00:01
-        without a pair: ens18
+        without a pair: GigabitEthernet0/9/0
         give each one a 'linux-name <name>' under 'interface' in
-        hexash, and commit. A card named after its Linux card is
-        paired under that name by any 'interface' block for it.
+        hexash, and commit.
 ```
 
-A linha do caminho de gerência é a que interessa primeiro: ela é o endereço que a caixa tinha, e quem está no console não tem outro lugar de onde tirá-lo. O conserto é dar à porta um bloco `interface`: a placa leva no dataplane o nome que tinha no Linux, e qualquer bloco para ela cria o par com esse mesmo nome. `linux-name` só é preciso para escolher outro:
+A linha do caminho de gerência é a que interessa primeiro: ela é o endereço que a caixa tinha, e quem está no console não tem outro lugar de onde tirá-lo. O conserto é dar um nome de Linux à porta que o dataplane está segurando, que é o que cria o par:
 
 ```
 configure
-interface ens18
- no shutdown
+interface GigabitEthernet0/9/0
+ linux-name wan0
  exit
 commit
 ```

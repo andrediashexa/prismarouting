@@ -35,7 +35,7 @@ nat cgnat pool residencial
  policy interleaved
  mode deterministic
  exit
-nat cgnat interface ens18 inside
+nat cgnat interface TenGigabitEthernet0/0/0 inside
 nat cgnat block-holddown 90
 nat cgnat timeout udp 300
 ```
@@ -85,8 +85,8 @@ no nat cgnat interface <nome>     desabilita CGNAT na interface
 ## Habilitando numa interface
 
 ```
-hexarouting# [edit] nat cgnat interface ens18 inside
-hexarouting# [edit] nat cgnat interface ens19 outside
+hexarouting# [edit] nat cgnat interface TenGigabitEthernet0/0/0 inside
+hexarouting# [edit] nat cgnat interface TenGigabitEthernet0/0/1 outside
 ```
 
 

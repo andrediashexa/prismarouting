@@ -6,8 +6,8 @@ Entra-se numa interface a partir do modo de configuração, e sai-se com `exit`:
 
 ```
 hexarouting> configure
-hexarouting# [edit] interface ens18
-hexarouting# [edit interface ens18]
+hexarouting# [edit] interface GigabitEthernet0/12/0
+hexarouting# [edit interface GigabitEthernet0/12/0]
 ```
 
 O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali dentro e nada além disso.
@@ -23,7 +23,7 @@ O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali den
 | `ipv6 address` | `<prefixo>` | endereço IPv6; pode repetir |
 | `no ipv4 address` | `<prefixo>` | remove **um** endereço, sem tocar nos outros |
 | `mtu`   | `<576-9216>` | MTU, na interface e no par Linux dela |
-| `linux-name` | `<nome>`  | o nome pelo qual o roteamento e o `ip` enxergam esta interface; uma placa já entra com o próprio nome, e **um loopback sem ele o roteamento não enxerga de jeito nenhum** |
+| `linux-name` | `<nome>`  | o nome pelo qual o roteamento e o `ip` enxergam esta interface; **sem ele o roteamento não a enxerga de jeito nenhum** |
 | `vrf`   | `<1-4294967295>` | tabela de roteamento onde os endereços vivem; `0` tira a interface de uma |
 | `vlan`  | `<1-4094> [inner <1-4094>]` | tag da sub-interface |
 | `mac-address` | `<xx:xx:xx:xx:xx:xx>` | o MAC ao qual a interface responde |
@@ -34,7 +34,7 @@ O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali den
 ## Endereços
 
 ```
-interface ens18
+interface GigabitEthernet0/12/0
  ipv4 address 200.150.0.1/24
  ipv4 address 200.150.1.1/24
  ipv6 address 2001:db8::1/64
@@ -57,16 +57,12 @@ Ao trocar um endereço por outro, o antigo sai antes de o novo entrar — quem e
 
 :::
 
-## `linux-name` — o nome pelo qual o roteamento vê a porta
+## `linux-name` — sem ela o roteamento não vê a porta
 
-O dataplane e o sistema operacional são dois mundos, e o roteamento mora no segundo. O que liga os dois é o par: o nome pelo qual o kernel, o `ip` e o FRR enxergam esta interface.
-
-**Uma placa entra no Linux com o próprio nome.** A caixa batiza cada placa que reivindica com o nome que ela tinha no Linux, e assim que a placa tem um bloco `interface` - com qualquer coisa dentro, até só um `no shutdown` - ela aparece no `ip` e no roteamento com esse mesmo nome. A `ens18` do dataplane é a `ens18` do FRR, sem nenhuma linha a mais, e `interface ens18` num bloco de roteamento age sobre a porta.
-
-`linux-name` é o que escolhe **outro** nome para o par, e o que cria o par numa interface que não é placa - um loopback:
+O dataplane e o sistema operacional são dois mundos, e o roteamento mora no segundo. `linux-name` é o que cria o par: o nome pelo qual o kernel, o `ip` e o FRR passam a enxergar esta interface.
 
 ```
-interface ens18
+interface GigabitEthernet0/12/0
  linux-name vppwan0
  ipv4 address 200.150.0.1/24
  exit
@@ -74,19 +70,17 @@ interface ens18
 
 
 :::warning
-**Num loopback sem** `**linux-name**`**, BGP, OSPF e IS-IS são configuráveis e inertes.** A configuração é aceita, commita limpa, a estrofe aparece na configuração em vigor — e nenhuma adjacência sobe, porque o roteamento não tem interface nenhuma com aquele nome para usar.
+**Numa interface sem** `**linux-name**`**, BGP, OSPF e IS-IS são configuráveis e inertes.** A configuração é aceita, commita limpa, a estrofe aparece na configuração em vigor — e nenhuma adjacência sobe, porque o roteamento não tem interface nenhuma com aquele nome para usar.
 
 :::
 
-O nome é do Linux, e as regras dele valem: no máximo 15 caracteres e nenhuma barra. Uma placa que ninguém nomeou fica com a grafia que o dataplane dá a ela - cheia de barras - e copiar essa grafia é o engano óbvio, recusado dizendo por quê:
+O nome é do Linux, e as regras dele valem: no máximo 15 caracteres e nenhuma barra. Copiar o nome do dataplane — que é cheio de barras — é o engano óbvio, e é recusado dizendo por quê:
 
 ```
 error: linux-name: 'GigabitEthernet0/12/0' cannot be a Linux interface name (15 characters, no '/')
 ```
 
-O par é **lido de volta** do equipamento, não lembrado pela VTY: um estado que se liga e não se lê de volta é um estado que o operador não consegue desligar. Por isso o nome que a placa recebeu por padrão aparece na configuração como um `linux-name ens18` escrito: `show configuration` mostra, `save` grava, e trocar por outro nome é trocar essa linha.
-
-Uma porta cujo nome o roteamento não aceita - mais de 16 caracteres, que é o que uma placa sem nome recebe do dataplane - é recusada no `commit`, com o limite na frase, antes de qualquer coisa ser aplicada. Numa caixa instalada isso não acontece: toda placa reivindicada leva o nome que tinha.
+O par é **lido de volta** do equipamento, não lembrado pela VTY: um estado que se liga e não se lê de volta é um estado que o operador não consegue desligar.
 
 ## Loopbacks
 
@@ -113,21 +107,21 @@ configure
 Uma sub-interface é uma interface: tudo da tabela acima vale dentro dela.
 
 ```
-interface ens18.100
+interface GigabitEthernet0/12/0.100
  vlan 100
  ipv4 address 100.64.0.1/22
  exit
 
-interface ens18.200
+interface GigabitEthernet0/12/0.200
  vlan 200 inner 10
  exit
 ```
 
-`no interface ens18.100` remove a sub-interface **e o que estava nela** — um endereço deixado para trás descreveria uma porta que não existe.
+`no interface GigabitEthernet0/12/0.100` remove a sub-interface **e o que estava nela** — um endereço deixado para trás descreveria uma porta que não existe.
 
 
 :::warning
-**O número depois do ponto tem de ser igual à tag externa.** `ens18.7` com `vlan 100` é recusado.
+**O número depois do ponto tem de ser igual à tag externa.** `GigabitEthernet0/12/0.7` com `vlan 100` é recusado.
 
 O equipamento nomeia a sub-interface pela tag, e a configuração em vigor é lida do equipamento. Se os dois nomes pudessem divergir, você leria um nome e a caixa teria outro.
 
@@ -150,7 +144,7 @@ Numa sub-interface de duas tags (`inner`), quadros que chegam com **mais** de du
 ## VRF
 
 ```
-interface ens18
+interface GigabitEthernet0/12/0
  vrf 7
  ipv4 address 10.7.0.1/24
  exit
@@ -173,7 +167,7 @@ Uma interface com endereço IPv6 **não anuncia** esta caixa como roteador. Esse
 Nas portas em que o anúncio faz sentido — um uplink, um trânsito, uma porta voltada para outros roteadores — ligue por exceção:
 
 ```
-interface ens18
+interface GigabitEthernet0/12/0
  no ipv6 nd suppress-ra
  exit
 ```
@@ -196,7 +190,7 @@ A interface carrega dois tipos de linha: as desta caixa - `mtu`, `urpf`, `vlan`,
 
 ### `no vlan` não existe, e a caixa diz o que fazer no lugar
 
-Uma sub-interface **é** a tag dela: o nome `ens18.700` e a VLAN 700 são a mesma informação, e a caixa recusa criar uma em que os dois discordem. Não existe, portanto, sub-interface sem tag - o que se quer é a sub-interface fora:
+Uma sub-interface **é** a tag dela: o nome `GigabitEthernet0/12/0.700` e a VLAN 700 são a mesma informação, e a caixa recusa criar uma em que os dois discordem. Não existe, portanto, sub-interface sem tag - o que se quer é a sub-interface fora:
 
 Digitar `no vlan 700` dentro da sub-interface é recusado, e a recusa diz o que fazer no lugar:
 
@@ -211,15 +205,15 @@ A recusa vem em linhas próprias, dentro da largura do console: o veredito na pr
 
 `no vlan`, sem número, recebe a mesma recusa: não há tag a tirar de qualquer forma.
 
-`no interface ens18.700`, no nível de cima, remove a sub-interface e tudo o que estava nela.
+`no interface GigabitEthernet0/12/0.700`, no nível de cima, remove a sub-interface e tudo o que estava nela.
 
 ## Uma interface em detalhe
 
 `show interface` lista todas. Nomeando uma, a resposta muda de tabela para relatório:
 
 ```
-hexarouting> show interface ens18
-  ens18
+hexarouting> show interface GigabitEthernet0/12/0
+  GigabitEthernet0/12/0
     state       up
     mtu         9000
     addresses   200.150.0.1/24
@@ -235,7 +229,7 @@ hexarouting> show interface ens18
 
 Os contadores são o motivo de o relatório existir. *No ar* e *no ar e descartando quatro por cento do que chega* são idênticos numa tabela, e é o segundo que gera o chamado.
 
-O nome exato tem precedência: pedir `ens18` numa caixa que também tem `ens18.100` traz o relatório da interface, não a lista das duas.
+O nome exato tem precedência: pedir `GigabitEthernet0/12/0` numa caixa que também tem `GigabitEthernet0/12/0.100` traz o relatório da interface, não a lista das duas.
 
 ## A placa entregue ao dataplane não é uma destas
 
