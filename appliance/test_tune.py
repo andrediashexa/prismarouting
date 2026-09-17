@@ -12,6 +12,33 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TUNE = os.path.join(HERE, "hexarouting-tune")
 
 
+def load_tune():
+    """
+    The tuner as a module, loaded once from its path.
+
+    It has no .py suffix and a dash in its name, so `import` cannot reach it
+    and importlib needs to be told the loader. Loaded through THIS function
+    and bound to a name at module level, so that test/test_every_function.py
+    reads `tune.parse_list(...)` as a call into the product: the name the
+    module is bound to roots at a function this file defines, not at a
+    foreign import. HEXA_MGMT_PATH is pointed into a scratch directory before
+    the load because the tuner reads it at import, and its default is /run.
+    """
+    import importlib.machinery
+    import importlib.util
+    if "hexarouting_tune" in sys.modules:
+        return sys.modules["hexarouting_tune"]
+    os.environ.setdefault("HEXA_MGMT_PATH",
+                          os.path.join(tempfile.mkdtemp(), "mgmt"))
+    loader = importlib.machinery.SourceFileLoader("hexarouting_tune", TUNE)
+    spec = importlib.util.spec_from_file_location("hexarouting_tune", TUNE,
+                                                  loader=loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    sys.modules["hexarouting_tune"] = module
+    return module
+
+
 def read_file(path):
     """A whole file, or "" - so a missing one fails a check and not the run."""
     try:
@@ -2297,6 +2324,712 @@ print("  [ ok ] a box that asked for nothing, and a box that cannot be asked")
 
 for _d in (_hw, _took, _vm, _stale, _blind, _plain, _dark):
     shutil.rmtree(_d, ignore_errors=True)
+
+# --------------------------------------------------------------------------
+# Every function in the tuner, called on its own (#390).
+#
+# The cases above drive the tuner as a program and read its screens; these
+# call each function directly with an input built for the rule it holds and
+# assert on what comes back. Each one was run against a mutation of that rule
+# and required to fail before being kept, which is the only evidence a check
+# can offer that it measures anything. Nothing here reads the machine that
+# runs it: every path is under a scratch root, and the two functions that
+# shell out to `ip` are given a stub through HEXA_IP.
+# --------------------------------------------------------------------------
+print("\n=== every function in the tuner, on its own (#390) ===")
+
+tune = load_tune()
+
+
+def ip_stub(addr_lines=(), maxmtu=None):
+    """
+    A stub `ip` on disk for nic_address() and nic_max_mtu(), installed into
+    HEXA_IP. `addr_lines` are the `inet` lines the address question gets, so
+    a case can hand the card two global addresses or one of link scope.
+    """
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "ip"), "w") as f:
+        f.write("#!/bin/sh\ncase \"$*\" in\n  *addr*)\n")
+        for line in addr_lines:
+            f.write(f"    echo '{line}'\n")
+        f.write("    exit 0 ;;\n")
+        if maxmtu is None:
+            f.write("  *) exit 1 ;;\n")
+        else:
+            f.write(f"  *) echo '2: eth0: <BROADCAST> mtu 1400 minmtu 68 "
+                    f"maxmtu {maxmtu}'; exit 0 ;;\n")
+        f.write("esac\n")
+    os.chmod(os.path.join(d, "ip"), 0o755)
+    os.environ["HEXA_IP"] = os.path.join(d, "ip")
+    return d
+
+
+def route_file(root, iface="eth0", gw_hex="0102A8C0"):
+    """
+    /proc/net/route as the kernel prints it: a connected route on another
+    card first, then the default route on `iface`, so a reader that takes
+    the first row is caught.
+    """
+    w(f"{root}/proc/net/route",
+      "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+      "eth7\t0A000000\t00000000\t0001\t0\t0\t0\tFFFFFF00\n"
+      f"{iface}\t00000000\t{gw_hex}\t0003\t0\t0\t0\t00000000\n")
+
+
+# --- the cpu list, both ways ---
+check(tune.parse_list("0-3,8") == [0, 1, 2, 3, 8],
+      f"parse_list('0-3,8') gave {tune.parse_list('0-3,8')}")
+check(tune.parse_list(" 8, 3,0-3 ,,") == [0, 1, 2, 3, 8],
+      "parse_list does not deduplicate and sort, so a list in the order the "
+      "kernel printed it is not the list this compares against")
+check(tune.parse_list("") == [] and tune.parse_list(None) == [],
+      "parse_list of nothing is not the empty list")
+check(tune.fmt_list([0, 1, 2, 3, 8]) == "0-3,8",
+      f"fmt_list([0,1,2,3,8]) gave {tune.fmt_list([0, 1, 2, 3, 8])!r}")
+check(tune.fmt_list([8, 3, 2, 1, 0]) == "0-3,8",
+      "fmt_list of an unsorted list does not sort it first, so the same cpus "
+      "in another order print as a different kernel parameter")
+check(tune.fmt_list([5]) == "5" and tune.fmt_list([]) == "",
+      "a single cpu is not printed bare, or no cpu is not printed empty")
+check(tune.fmt_list([1, 3]) == "1,3",
+      f"two cpus with a gap were folded into a range: "
+      f"{tune.fmt_list([1, 3])!r}")
+check(tune.cpuset("1-3,8") == {1, 2, 3, 8},
+      f"cpuset('1-3,8') gave {tune.cpuset('1-3,8')}")
+check(tune.cpuset("  (null)") == set() and tune.cpuset("") == set()
+      and tune.cpuset(None) == set(),
+      "cpuset of the `(null)` the kernel prints for an empty mask is not the "
+      "empty set: a readback that raises here reports nothing at all")
+check(tune.cpuset("2-x,4") == {4},
+      f"a malformed range was not skipped: {tune.cpuset('2-x,4')}")
+
+# --- the hugepage arithmetic and the pools that exist ---
+check(tune.p_gb_to_pages(4, 1048576) == 4
+      and tune.p_gb_to_pages(4, 2048) == 2048,
+      f"4 GB is 4 pages of 1G and 2048 of 2M; got "
+      f"{tune.p_gb_to_pages(4, 1048576)} and {tune.p_gb_to_pages(4, 2048)}")
+check(tune._hugepage_kb("1G") == 1048576 and tune._hugepage_kb("2M") == 2048
+      and tune._hugepage_kb("4K") is None,
+      "_hugepage_kb does not map 1G and 2M to their kB, and nothing else to "
+      "None")
+with tempfile.TemporaryDirectory() as root:
+    w(f"{root}/sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages", 1536)
+    check(tune.hugepage_supported(root, 2048),
+          "a pool whose directory exists was reported unsupported")
+    check(not tune.hugepage_supported(root, 1048576),
+          "a pool with no directory was reported supported: the parameter "
+          "asking for it is what the kernel silently ignores (#290)")
+    check(tune.hugepages_reserved_for(root, 2048) == 1536,
+          f"nr_hugepages says 1536 and the reader says "
+          f"{tune.hugepages_reserved_for(root, 2048)}")
+    check(tune.hugepages_reserved_for(root, 1048576) == 0,
+          "a pool that is not there has pages reserved")
+    w(f"{root}/sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages", "x")
+    check(tune.hugepages_reserved_for(root, 2048) == 0,
+          "a count that is not a number did not read as none")
+    # Only the 2M pool exists: 1536 pages of 2M is 3 GB, and that is the
+    # size the box is tuned on rather than a 1G pool it cannot have.
+    w(f"{root}/sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages", 1536)
+    check(tune.hugepage_choice(root) == (2048, 3),
+          f"a box with only a 2M pool chose {tune.hugepage_choice(root)}, "
+          f"and (2048, 3) is the page size it can have with the GB of it "
+          f"reserved")
+    w(f"{root}/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages", 5)
+    check(tune.hugepage_choice(root) == (1048576, 5),
+          f"with both pools the 1G one is preferred; got "
+          f"{tune.hugepage_choice(root)}")
+with tempfile.TemporaryDirectory() as root:
+    check(tune.hugepage_choice(root) == (1048576, 0),
+          f"no pool at all chose {tune.hugepage_choice(root)}")
+    w(f"{root}/proc/meminfo", "MemTotal:       67108864 kB\nMemFree: 1 kB")
+    check(tune.total_ram_gb(root) == 64,
+          f"67108864 kB is 64 GB and total_ram_gb says "
+          f"{tune.total_ram_gb(root)}")
+    w(f"{root}/proc/meminfo", "MemTotal:       500000 kB")
+    check(tune.total_ram_gb(root) == 1,
+          "a box under 1 GB reads as 0, which plan() takes for unknown RAM "
+          "and stops capping on")
+    check(tune.total_ram_gb(tempfile.mkdtemp()) == 0,
+          "no meminfo at all did not read as 0")
+    w(f"{root}/sys/devices/system/cpu/isolated", "1-3")
+    check(tune.isolated_now(root) == [1, 2, 3],
+          f"the kernel isolates 1-3 and isolated_now says "
+          f"{tune.isolated_now(root)}")
+    check(tune.isolated_now(tempfile.mkdtemp()) == [],
+          "no isolated file did not read as no cpu isolated")
+
+# --- the statistics segment ---
+check(tune.statseg_mb_for(20000) == 92,
+      f"20,000 interfaces at the measured bytes each is 92 MB; got "
+      f"{tune.statseg_mb_for(20000)}")
+check(tune.statseg_mb_for(3) is None,
+      "three interfaces got a size, and a stanza smaller than VPP's own "
+      "default buys the box nothing")
+# The boundary: the count that needs exactly the default is still None, one
+# more MB is written.
+_at = (tune.STATSEG_DEFAULT_MB << 20) // tune.STATSEG_BYTES_PER_INTERFACE
+check(tune.statseg_mb_for(_at) is None and tune.statseg_mb_for(_at + 300),
+      f"the boundary is wrong: {_at} interfaces fit the default and get "
+      f"{tune.statseg_mb_for(_at)}, {_at + 300} get "
+      f"{tune.statseg_mb_for(_at + 300)}")
+with tempfile.TemporaryDirectory() as root:
+    _conf = interfaces_conf(root, 3)
+    check(tune.configured_interfaces(_conf) == (3, None),
+          f"a file naming three interfaces counted as "
+          f"{tune.configured_interfaces(_conf)}")
+    check(tune.configured_interfaces(f"{root}/nosuch") == (None, "missing"),
+          "a missing configuration did not answer (None, 'missing')")
+    check(tune.configured_interfaces(root) == (None, "unreadable"),
+          f"a path that exists and cannot be read as a file answered "
+          f"{tune.configured_interfaces(root)}")
+    # The parser's modules somewhere this program cannot see: its own
+    # answer, not a broken file.
+    _dirs = tune.HEXASH_DIRS
+    tune.HEXASH_DIRS = (f"{root}/nowhere",)
+    try:
+        check(tune.configured_interfaces(_conf) == (None, "noparser"),
+              f"with no parser installed beside it the count was "
+              f"{tune.configured_interfaces(_conf)}, and telling the "
+              f"operator their file is broken sends them to edit the one "
+              f"thing that is right")
+    finally:
+        tune.HEXASH_DIRS = _dirs
+    # A parser that raises: (None, "unparsed"), and never an exception out of
+    # a program that runs as root before VPP on every boot.
+    import types as _types
+
+    class _Raising:
+        @staticmethod
+        def parse(text):
+            raise ValueError("no")
+    _stub = _types.ModuleType("config")
+    _stub.Config = _Raising
+    _real = sys.modules.get("config")
+    sys.modules["config"] = _stub
+    try:
+        check(tune.configured_interfaces(_conf) == (None, "unparsed"),
+              f"a parser that raises made configured_interfaces answer "
+              f"{tune.configured_interfaces(_conf)}")
+    finally:
+        if _real is not None:
+            sys.modules["config"] = _real
+        else:
+            del sys.modules["config"]
+    w(f"{root}/base.conf", "# put a statseg { size 64M } stanza here\n"
+                           "unix {\n  nodaemon\n}\n")
+    check(not tune.operator_statseg(f"{root}/base.conf"),
+          "a base file that only mentions statseg in a comment was read as "
+          "somebody's decision, so no box would ever be sized")
+    w(f"{root}/base.conf", "unix {\n  nodaemon\n}\n  statseg {\n"
+                           "  size 64M\n}\n")
+    check(tune.operator_statseg(f"{root}/base.conf"),
+          "a real statseg stanza in the base file was not seen, so the "
+          "generated one silently replaces the number the operator chose")
+    check(not tune.operator_statseg(f"{root}/nosuch"),
+          "a missing base file counted as an operator stanza")
+
+# --- the reserve and the way back ---
+with tempfile.TemporaryDirectory() as root:
+    reserve(root, "eth1", "static")
+    _mc = f"{root}/etc/network/interfaces.d/hexarouting"
+    check(tune.reserved_for_linux(_mc) == "eth1",
+          f"the installer recorded eth1 and the reserve read as "
+          f"{tune.reserved_for_linux(_mc)!r}")
+    w(_mc, "# none: the operator manages this box at its console\n")
+    check(tune.reserved_for_linux(_mc) is None,
+          "a file with no iface line reserved a card")
+    check(tune.reserved_for_linux(f"{root}/nosuch") is None,
+          "a missing file reserved a card")
+
+
+class _Card:
+    """A card as management_path() asks about it: three answers, no /sys."""
+
+    def __init__(self, address, mac, gateway):
+        self._a, self._m, self._g = address, mac, gateway
+
+    def nic_address(self, ifname):
+        return self._a
+
+    def nic_mac(self, ifname):
+        return self._m
+
+    def default_gateway(self):
+        return self._g
+
+
+_hand = tune.management_path(
+    _Card("192.168.2.50/24", "52:54:00:ab:cd:ef", "192.168.2.1"), "eth0")
+check(_hand == {"name": "eth0", "address": "192.168.2.50/24",
+                "mac": "52:54:00:ab:cd:ef", "gateway": "192.168.2.1"},
+      f"a card with all three readable gave {_hand}")
+for _label, _card in (("no address", _Card(None, "aa", "1.1.1.1")),
+                      ("no MAC", _Card("10.0.0.1/24", None, "1.1.1.1")),
+                      ("no gateway", _Card("10.0.0.1/24", "aa", None))):
+    check(tune.management_path(_card, "eth0") is None,
+          f"with {_label} a way back was computed anyway, and a handover "
+          f"with no way back is the walk to the console")
+with tempfile.TemporaryDirectory() as root:
+    _f = f"{root}/run/mgmt"
+    check(tune.write_management_path(_hand, path=_f) == _f
+          and open(_f).read() == "eth0 192.168.2.50/24 52:54:00:ab:cd:ef "
+                                 "192.168.2.1\n",
+          f"the record was not written as the four fields on one line: "
+          f"{read_file(_f)!r}")
+    check(tune.write_management_path(None, path=_f) is None
+          and not os.path.exists(_f),
+          "a boot with no handover left the previous boot's record in place, "
+          "which is the stale record /run exists to prevent")
+    check(tune.write_management_path(None, path=_f) is None,
+          "removing a record that is not there did not answer None")
+
+# --- the topology, read off a synthetic tree ---
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=2, nic_node=1,
+          nic_pci="0000:3b:00.0", tx_queues=4)
+    topo = tune.Topology(root)
+    check(topo.p("sys", "class") == os.path.join(root, "sys", "class"),
+          f"p() does not join under the root: {topo.p('sys', 'class')}")
+    check(sorted(topo.cpus) == list(range(8))
+          and topo.cpus[1] == (0, 1, [1, 5]),
+          f"the tree has cpus 0-7 with 1 and 5 siblings; read as "
+          f"{sorted(topo.cpus)} and {topo.cpus.get(1)}")
+    check(topo.nodes == {0: list(range(8))},
+          f"the node's cpulist read as {topo.nodes}")
+    # _load() again after the tree grew: it is what __init__ calls, and it
+    # is the reader of every topology file.
+    w(f"{root}/sys/devices/system/cpu/cpu8/topology/physical_package_id", 0)
+    w(f"{root}/sys/devices/system/cpu/cpu8/topology/core_id", 8)
+    w(f"{root}/sys/devices/system/cpu/cpu9/topology/core_id", 9)
+    topo._load()
+    check(8 in topo.cpus and topo.cpus[8] == (0, 8, [8]),
+          f"a cpu with no thread_siblings_list is its own sibling; got "
+          f"{topo.cpus.get(8)}")
+    check(9 not in topo.cpus,
+          "a cpu directory with no package id was counted as a cpu")
+    check(topo.physical_cores(range(8)) ==
+          [(0, [0, 4]), (1, [1, 5]), (2, [2, 6]), (3, [3, 7])],
+          f"physical_cores grouped the SMT pairs as "
+          f"{topo.physical_cores(range(8))}")
+    check(topo.physical_cores([5, 1]) == [(1, [1, 5])],
+          f"naming only the second thread did not give the core once, led "
+          f"by its first thread: {topo.physical_cores([5, 1])}")
+    check(topo.nic_pci("eth0") == "0000:3b:00.0",
+          f"the card's PCI address read as {topo.nic_pci('eth0')!r}")
+    # And the virtio shape, where `device` is the bus device under the PCI
+    # one: the nearest PCI ancestor is the answer (#286).
+    os.makedirs(f"{root}/sys/devices/pci0000:00/0000:00:12.0/virtio3")
+    os.makedirs(f"{root}/sys/class/net/ens18")
+    os.symlink(f"{root}/sys/devices/pci0000:00/0000:00:12.0/virtio3",
+               f"{root}/sys/class/net/ens18/device")
+    check(topo.nic_pci("ens18") == "0000:00:12.0",
+          f"the virtio card's PCI parent read as {topo.nic_pci('ens18')!r}")
+    check(topo.nic_node("eth0") == 1,
+          f"numa_node says 1 and nic_node says {topo.nic_node('eth0')}")
+    w(f"{root}/sys/devices/pci0000:00/0000:3b:00.0/numa_node", -1)
+    check(topo.nic_node("eth0") is None,
+          "a card declaring -1 has no node, and a -1 handed on selects a "
+          "node the box has not got")
+    check(topo.nic_node("nosuch") is None, "a missing card has a node")
+    check(topo.nic_tx_queues("eth0") == 4,
+          f"four tx-N directories read as {topo.nic_tx_queues('eth0')}")
+    check(topo.nic_tx_queues("nosuch") is None,
+          "a card with no queues directory did not answer None, which is "
+          "what tells 'could not read' from 'read it and it is fine'")
+    os.makedirs(f"{root}/sys/class/net/lo", exist_ok=True)
+    os.makedirs(f"{root}/sys/class/net/eth9", exist_ok=True)
+    os.makedirs(f"{root}/sys/devices/platform/soc/eth-mmio", exist_ok=True)
+    os.symlink(f"{root}/sys/devices/platform/soc/eth-mmio",
+               f"{root}/sys/class/net/eth9/device")
+    check(topo.pci_nics() == ["ens18", "eth0"],
+          f"lo and a platform device were offered to DPDK, or a PCI card was "
+          f"not: {topo.pci_nics()}")
+    w(f"{root}/sys/class/net/eth0/address", "52:54:00:AB:CD:EF")
+    check(topo.nic_mac("eth0") == "52:54:00:ab:cd:ef",
+          f"the MAC was not lowercased: {topo.nic_mac('eth0')!r}")
+    check(topo.nic_mac("nosuch") is None, "a missing card has a MAC")
+    check(topo.default_route_if() is None and topo.default_gateway() is None,
+          "with no route table at all a default route was found")
+    route_file(root, "eth0", "0102A8C0")
+    check(topo.default_route_if() == "eth0",
+          f"the default route is on eth0 and the reader says "
+          f"{topo.default_route_if()!r}")
+    check(topo.default_gateway() == "192.168.2.1",
+          f"0102A8C0 is 192.168.2.1 little-endian and the reader says "
+          f"{topo.default_gateway()!r}")
+    route_file(root, "eth0", "00000000")
+    check(topo.default_gateway() is None,
+          "an on-link default route was given a gateway of 0.0.0.0, which "
+          "cannot be put back on the far side as a next hop")
+    route_file(root, "eth0", "zz")
+    check(topo.default_gateway() is None,
+          "a gateway field that is not hex did not read as none")
+    # The two questions that go to `ip`, against a stub.
+    ip_stub(["2: eth0    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0"],
+            maxmtu=1500)
+    check(topo.nic_address("eth0") == "10.0.0.5/24",
+          f"one global address read as {topo.nic_address('eth0')!r}")
+    check(topo.nic_max_mtu("eth0") == 1500,
+          f"maxmtu 1500 read as {topo.nic_max_mtu('eth0')!r}")
+    ip_stub(["2: eth0    inet 10.0.0.5/24 scope global eth0",
+             "2: eth0    inet 10.0.0.6/24 scope global eth0"])
+    check(topo.nic_address("eth0") is None,
+          "a card with two global addresses had one chosen for it, and the "
+          "box comes back on an address nobody is trying to reach")
+    check(topo.nic_max_mtu("eth0") is None,
+          "an `ip` that says no maxmtu did not read as None")
+    ip_stub(["2: eth0    inet 169.254.1.1/16 scope link eth0"])
+    check(topo.nic_address("eth0") is None,
+          "a link-scope address was taken for the management address")
+    os.environ["HEXA_IP"] = f"{root}/no-such-ip"
+    check(topo.nic_address("eth0") is None
+          and topo.nic_max_mtu("eth0") is None,
+          "with no `ip` to ask, the two readers did not answer None")
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=2, threads=1)
+    shutil.rmtree(f"{root}/sys/devices/system/node")
+    check(tune.Topology(root).nodes == {0: [0, 1]},
+          "a tree with no node directory did not put every cpu on node 0")
+    try:
+        tune.Topology(f"{root}/nowhere")
+        check(False, "a root with no cpu directory did not stop the tuner")
+    except SystemExit:
+        pass
+
+# --- the plan, and the four files rendered from it ---
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3", ram_gb=64,
+          tx_queues=1)
+    ip_stub(maxmtu=1500)
+    topo = tune.Topology(root)
+    p = tune.plan(topo, "eth0", 200000)
+    check(p["workers"] == [1, 2, 3] and p["isolated"] == [1, 2, 3]
+          and p["main_core"] == 0 and p["os_cpus"] == [0],
+          f"four cores: the first stays with the OS and three work; got "
+          f"main {p['main_core']}, workers {p['workers']}, isolated "
+          f"{p['isolated']}")
+    check(p["claim_why"] == "override" and [c["name"] for c in p["cards"]]
+          == ["eth0"] and p["cards"][0]["pci"] == "0000:3b:00.0"
+          and p["cards"][0]["tx_queues"] == 1
+          and p["cards"][0]["max_mtu"] == 1500,
+          f"a named card is claimed alone, with what was read off it: "
+          f"{p['claim_why']} {p['cards']}")
+    # 200,000 subscribers: 3 GB of session table, 1 of buffers, 1 of slack.
+    check(p["hugepages_gb"] == 5 and p["hugepage_count"] == 5
+          and p["hugepage_name"] == "1G" and not p["hugepages_capped"],
+          f"the hugepage arithmetic for 200k subscribers on 64 GB gave "
+          f"{p['hugepages_gb']} GB, {p['hugepage_count']} x "
+          f"{p['hugepage_name']}, capped {p['hugepages_capped']}")
+    check(p["tuned_now"] and p["hugepages_reserved"] == 8,
+          "a box with its pages reserved and its cpus isolated is not tuned")
+    check(tune.plan(topo, "eth0", 200000, max_workers=2)["workers"] == [1, 2],
+          "the worker cap did not shorten the worker list")
+    # The GRUB line, from that plan.
+    g = tune.render_grub(p)
+    check("isolcpus=1-3 nohz_full=1-3 rcu_nocbs=1-3" in g
+          and "default_hugepagesz=1G hugepagesz=1G hugepages=5" in g
+          and "intel_iommu=on iommu=pt" in g
+          and tune.LOW_LATENCY_CMDLINE in g
+          and "GRUB_DISABLE_OS_PROBER=true" in g,
+          f"the kernel command line does not carry the plan: {g!r}")
+    check(tune.LOW_LATENCY_CMDLINE not in
+          tune.render_grub(dict(p, low_latency=False)),
+          "--no-low-latency still turns C-states off on the kernel line")
+    check(tune.render_grub(dict(p, isolated=[])).startswith("# no core")
+          and "isolcpus" not in tune.render_grub(dict(p, isolated=[])),
+          "a box with no core to isolate was given an isolcpus= anyway")
+    # The IRQ ban, from the same isolated set.
+    check("IRQBALANCE_BANNED_CPULIST=1-3\n" in tune.render_irqbalance(p),
+          f"the ban does not name the isolated cpus: "
+          f"{tune.render_irqbalance(p)!r}")
+    check("IRQBALANCE_BANNED_CPULIST" not in
+          tune.render_irqbalance(dict(p, isolated=[])),
+          "with nothing isolated a ban was still written")
+    # The startup.conf stanzas, tuned and first-boot.
+    v = tune.render_vpp(p)
+    check("main-core 0\n" in v and "corelist-workers 1-3\n" in v,
+          f"the cpu stanza does not pin the plan: {v!r}")
+    check("dev 0000:3b:00.0 {\n    name eth0\n    num-rx-queues 1\n"
+          "    num-tx-queues 1\n" in v,
+          f"a one-queue card beside three workers was not capped at the "
+          f"card's count, which is the -22 of #330: {_dpdk_stanza(v)!r}")
+    check("main-heap-size 2G" in v and "buffers-per-numa 49152" in v,
+          f"the heap and the buffers are not sized from the plan: {v!r}")
+    check("default-mtu 1500" in v,
+          "a 1500 card was left on VPP's 9000 in the tuned profile")
+    fb = tune.render_vpp(dict(p, tuned_now=False))
+    check("dpdk_plugin.so { disable }" in fb and "corelist-workers" not in fb
+          and "default-mtu 1500" in fb,
+          f"the first-boot profile pins workers, or enables DPDK before the "
+          f"pages exist, or drops the MTU the card needs: {fb!r}")
+    _none = tune.render_vpp(dict(p, cards=[], claim_why="no-cards"))
+    check("no-pci" in _none and "dev 0000:3b:00.0" not in _none,
+          "a box with no card to claim was given a device, or no allowlist")
+    # The report, which is what the operator reads.
+    r = tune.render_report(p, "/etc/hexarouting/vpp-base.conf")
+    check("# workers (3): 1-3" in r and "# isolated: 1-3" in r
+          and "# operating system and VPP main: 0" in r,
+          f"the report does not say what the plan decided: {r!r}")
+    check("# NIC queues, eth0: 1, and this box has 3 worker(s). Capped at 1"
+          in r,
+          f"a card with fewer queues than workers was not said out loud: "
+          f"{[l for l in r.splitlines() if 'queues' in l]}")
+    check("# interfaces start at: 1500" in r
+          and "# dataplane NIC PCI address(es): 0000:3b:00.0" in r
+          and "named by the configuration" in r,
+          f"the MTU, the address or why it was claimed is missing: {r!r}")
+    check("# state: kernel tuned" in r
+          and "FIRST BOOT" in tune.render_report(dict(p, tuned_now=False),
+                                                 "/x"),
+          "the report does not say which profile the box is on")
+    w(f"{root}/proc/meminfo", "MemTotal:       4194304 kB")
+    small = tune.plan(tune.Topology(root), "eth0", 200000)
+    check(small["hugepages_gb"] == 2 and small["hugepages_capped"]
+          and small["total_gb"] == 4,
+          f"a 4 GB box asked for 5 GB of pages was given "
+          f"{small['hugepages_gb']} (capped {small['hugepages_capped']})")
+    rs = tune.render_report(small, "/x")
+    check("# WARNING: 5 GB of hugepages were needed" in rs
+          and "this machine has 4 GB of RAM" in rs and "Capped at 2 GB" in rs,
+          f"the cap was applied and not announced: "
+          f"{[l for l in rs.splitlines() if 'GB' in l]}")
+    w(f"{root}/proc/meminfo", "MemTotal:       3145728 kB")
+    check(tune.plan(tune.Topology(root), "eth0", 200000)["hugepages_gb"] == 0,
+          "a box with room for one page was asked for one, and one page "
+          "holds no buffers and a heap both")
+
+# The ethernet and statseg stanzas, from plans built by hand.
+_p_eth = {"cards": [{"name": "a", "pci": "0000:01:00.0", "max_mtu": 9000},
+                    {"name": "b", "pci": "0000:02:00.0", "max_mtu": 1500}]}
+check(tune.ethernet_mtu(_p_eth) == 1500,
+      f"a 1500 card beside a 9000 one: the smallest maximum wins, got "
+      f"{tune.ethernet_mtu(_p_eth)}")
+check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": "0000:01:00.0",
+                                    "max_mtu": None}]}) is None,
+      "a card whose maximum could not be read lowered the value, and unread "
+      "is not 1500")
+check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": "0000:01:00.0",
+                                    "max_mtu": 9000}]}) is None,
+      "a card that can do VPP's default was given a stanza anyway")
+check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": None,
+                                    "max_mtu": 1500}]}) is None,
+      "a card with no PCI address, which DPDK is never given, voted")
+check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": "0000:01:00.0",
+                                    "max_mtu": 32}]}) is None,
+      "a maximum below what VPP accepts was written, and VPP refuses the "
+      "whole file for it")
+check("ethernet {\n" in tune.render_ethernet(_p_eth)
+      and "  default-mtu 1500\n}" in tune.render_ethernet(_p_eth),
+      f"the stanza does not carry the value: {tune.render_ethernet(_p_eth)!r}")
+check(tune.render_ethernet({"cards": []}) == "",
+      "a box with no card got an ethernet stanza")
+_p_st = {"statseg_mb": 92, "statseg_operator": False,
+         "configured_interfaces": 20000, "config_path": "/etc/h.conf",
+         "vpp_base": "/etc/base.conf"}
+check("statseg {\n" in tune.render_statseg(_p_st)
+      and "  size 92M\n" in tune.render_statseg(_p_st),
+      f"the stanza does not carry the size: {tune.render_statseg(_p_st)!r}")
+check(tune.render_statseg(dict(_p_st, statseg_operator=True)) == "",
+      "the operator's own stanza was overridden by a generated one")
+check(tune.render_statseg(dict(_p_st, statseg_mb=None)) == "",
+      "a box VPP's default holds was given a stanza")
+
+# --- what the kernel did with the request: the readbacks, one by one ---
+check(tune.cmdline_params("ro quiet isolcpus=1-3 $GRUB_X hugepages=5")
+      == {"ro": "", "quiet": "", "isolcpus": "1-3", "hugepages": "5"},
+      f"cmdline_params gave "
+      f"{tune.cmdline_params('ro quiet isolcpus=1-3 $GRUB_X hugepages=5')}")
+check(tune.cmdline_params("") == {} and tune.cmdline_params(None) == {},
+      "an empty command line did not parse as no parameter")
+with tempfile.TemporaryDirectory() as root:
+    check(tune.requested_params(root) == {},
+          "with no generated GRUB file something was requested")
+    w(f"{root}/etc/default/grub.d/hexarouting.cfg",
+      "# Generated\nGRUB_CMDLINE_LINUX_DEFAULT=\"$GRUB_CMDLINE_LINUX_DEFAULT "
+      "isolcpus=1-3 hugepages=5\"\nGRUB_DISABLE_OS_PROBER=true\n")
+    check(tune.requested_params(root) == {"isolcpus": "1-3", "hugepages": "5"},
+          f"the generated file asks for isolcpus and hugepages and the "
+          f"reader says {tune.requested_params(root)}")
+    # A cpu mask in /sys: the three answers.
+    rb = tune._rb_cpu_mask("sys/devices/system/cpu/isolated", "isolating")
+    check(rb(root, "1-3", {})[0] == tune.EFFECT_UNREADABLE,
+          "with no isolated file the mask readback claimed to know")
+    w(f"{root}/sys/devices/system/cpu/isolated", "1-3")
+    check(rb(root, "1-3", {}) == (tune.EFFECT_TAKEN,
+                                   "the kernel is isolating cpu(s) 1-3"),
+          f"the kernel isolates what was asked and the readback says "
+          f"{rb(root, '1-3', {})}")
+    w(f"{root}/sys/devices/system/cpu/isolated", "1-2")
+    _s, _d = rb(root, "1-3", {})
+    check(_s == tune.EFFECT_REFUSED and "cpu(s) 3 " in _d,
+          f"cpu 3 was asked for and not isolated, and the readback says "
+          f"{_s}: {_d}")
+    # rcu_nocbs: the offload threads are the only readback.
+    check(tune._rb_rcu_nocbs(root, "1-3", {})[0] == tune.EFFECT_UNREADABLE,
+          "with no kernel thread visible the RCU readback guessed")
+    w(f"{root}/proc/3/comm", "rcu_gp")
+    for _pid, _c in ((101, 1), (102, 2)):
+        w(f"{root}/proc/{_pid}/comm", f"rcuop/{_c}")
+    _s, _d = tune._rb_rcu_nocbs(root, "1-3", {})
+    check(_s == tune.EFFECT_REFUSED and "cpu(s) 3 " in _d,
+          f"no rcuop/3 thread runs and the readback says {_s}: {_d}")
+    w(f"{root}/proc/103/comm", "rcuos/3")
+    check(tune._rb_rcu_nocbs(root, "1-3", {})[0] == tune.EFFECT_TAKEN,
+          f"one offload thread per cpu and the readback says "
+          f"{tune._rb_rcu_nocbs(root, '1-3', {})}")
+    # The page size and the pool.
+    check(tune._rb_hugepagesz(root, "1G", {})[0] == tune.EFFECT_REFUSED,
+          "a kernel with no 1G pool reported the parameter taken, which is "
+          "#290 word for word")
+    w(f"{root}/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages", 3)
+    check(tune._rb_hugepagesz(root, "1G", {})[0] == tune.EFFECT_TAKEN
+          and tune._rb_hugepagesz(root, "3G", {})[0] == tune.EFFECT_UNREADABLE,
+          "a pool that exists was not reported taken, or a size this does "
+          "not read was reported on")
+    check(tune._rb_default_hugepagesz(root, "1G", {})[0]
+          == tune.EFFECT_UNREADABLE,
+          "with no Hugepagesize in meminfo the default was reported on")
+    w(f"{root}/proc/meminfo", "MemTotal: 1 kB\nHugepagesize:    2048 kB")
+    check(tune._rb_default_hugepagesz(root, "2M", {})[0] == tune.EFFECT_TAKEN
+          and tune._rb_default_hugepagesz(root, "1G", {})[0]
+          == tune.EFFECT_REFUSED,
+          "meminfo says the default page is 2M and the readback disagrees")
+    # The count is read against the size on the SAME line.
+    _b1 = {"hugepagesz": "1G"}
+    check(tune._rb_hugepages(root, "3", _b1)[0] == tune.EFFECT_TAKEN
+          and tune._rb_hugepages(root, "5", _b1)[0] == tune.EFFECT_REFUSED,
+          "3 pages of 1G reserved: 3 asked is taken, 5 asked is refused, "
+          "and the readback says otherwise")
+    w(f"{root}/sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages", 1536)
+    check(tune._rb_hugepages(root, "1536", {"hugepagesz": "2M"})[0]
+          == tune.EFFECT_TAKEN,
+          "a box that fell back to 2M had its 1536 pages compared against "
+          "the 1G pool, so a correctly tuned box reads as broken")
+    check(tune._rb_hugepages(root, "x", _b1)[0] == tune.EFFECT_UNREADABLE
+          and tune._rb_hugepages(root, "2", {"hugepagesz": "4K"})[0]
+          == tune.EFFECT_REFUSED,
+          "a count that is not a number, or a pool the kernel has not got, "
+          "was reported on as though it were read")
+    # The IOMMU and its groups.
+    check(tune._rb_intel_iommu(root, "on", {})[0] == tune.EFFECT_REFUSED,
+          "a kernel exposing no IOMMU reported intel_iommu=on as taken")
+    os.makedirs(f"{root}/sys/class/iommu/dmar0")
+    check(tune._rb_intel_iommu(root, "on", {})
+          == (tune.EFFECT_TAKEN, "the kernel exposes dmar0"),
+          f"dmar0 is exposed and the readback says "
+          f"{tune._rb_intel_iommu(root, 'on', {})}")
+    check(tune._rb_iommu_pt(root, "pt", {})[0] == tune.EFFECT_UNREADABLE,
+          "with no IOMMU group the passthrough readback guessed")
+    w(f"{root}/sys/kernel/iommu_groups/0/type", "identity")
+    w(f"{root}/sys/kernel/iommu_groups/1/type", "identity")
+    check(tune._rb_iommu_pt(root, "pt", {})[0] == tune.EFFECT_TAKEN
+          and tune._rb_iommu_pt(root, "on", {})[0] == tune.EFFECT_UNREADABLE,
+          "every group in passthrough was not reported taken, or a mode this "
+          "does not read was")
+    w(f"{root}/sys/kernel/iommu_groups/1/type", "DMA")
+    _s, _d = tune._rb_iommu_pt(root, "pt", {})
+    check(_s == tune.EFFECT_REFUSED and "DMA" in _d,
+          f"one group still translating and the readback says {_s}: {_d}")
+    # The idle driver and its states.
+    check(tune._rb_intel_idle(root, "0", {})[0] == tune.EFFECT_UNREADABLE,
+          "a box with no idle driver reported on intel_idle")
+    w(f"{root}/sys/devices/system/cpu/cpuidle/current_driver", "intel_idle")
+    check(tune._rb_intel_idle(root, "0", {})[0] == tune.EFFECT_REFUSED,
+          "intel_idle still driving and the parameter reported taken")
+    w(f"{root}/sys/devices/system/cpu/cpuidle/current_driver", "acpi_idle")
+    check(tune._rb_intel_idle(root, "0", {})[0] == tune.EFFECT_TAKEN,
+          "acpi_idle driving, which is what the parameter produces, was not "
+          "reported taken")
+    check(tune._rb_max_cstate(root, "1", {})[0] == tune.EFFECT_UNREADABLE,
+          "cpu0 exposing no idle state was counted")
+    w(f"{root}/sys/devices/system/cpu/cpu0/cpuidle/state0/name", "POLL")
+    w(f"{root}/sys/devices/system/cpu/cpu0/cpuidle/state1/name", "C1")
+    check(tune._rb_max_cstate(root, "1", {})
+          == (tune.EFFECT_TAKEN, "cpu0 exposes POLL, C1 and nothing deeper"),
+          f"max_cstate=1 leaves POLL and C1, and the readback says "
+          f"{tune._rb_max_cstate(root, '1', {})}")
+    w(f"{root}/sys/devices/system/cpu/cpu0/cpuidle/state2/name", "C6")
+    _s, _d = tune._rb_max_cstate(root, "1", {})
+    check(_s == tune.EFFECT_REFUSED and "C6" in _d,
+          f"C6 still registered under max_cstate=1 and the readback says "
+          f"{_s}: {_d}")
+    check(tune._rb_thp(root, "never", {})[0] == tune.EFFECT_UNREADABLE,
+          "a kernel with no THP control was reported on")
+    w(f"{root}/sys/kernel/mm/transparent_hugepage/enabled",
+      "always madvise [never]")
+    check(tune._rb_thp(root, "never", {})[0] == tune.EFFECT_TAKEN,
+          "the bracketed value is never and the readback disagrees")
+    w(f"{root}/sys/kernel/mm/transparent_hugepage/enabled",
+      "[always] madvise never")
+    _s, _d = tune._rb_thp(root, "never", {})
+    check(_s == tune.EFFECT_REFUSED and "'always'" in _d,
+          f"THP is always and the readback says {_s}: {_d}")
+    # The sysctls, which are a file until /proc/sys agrees.
+    _u = tune.sysctl_rules(root)
+    check(len(_u) == 1 and _u[0][1] == tune.EFFECT_UNASKED,
+          f"with no sysctl file on the box the rules were {_u}")
+    w(f"{root}/{tune.SYSCTL_FILE}", "# knobs\nkernel.numa_balancing = 0\n"
+                                    "vm.swappiness = 0  # trailing\n"
+                                    "net.nosuch = 1\n")
+    w(f"{root}/proc/sys/kernel/numa_balancing", "0")
+    w(f"{root}/proc/sys/vm/swappiness", "60")
+    _got = {k: s for k, s, _ in tune.sysctl_rules(root)}
+    check(_got == {"kernel.numa_balancing": tune.EFFECT_TAKEN,
+                   "vm.swappiness": tune.EFFECT_REFUSED,
+                   "net.nosuch": tune.EFFECT_UNREADABLE},
+          f"one knob taken, one refused and one the kernel has not got, and "
+          f"the rules say {_got}")
+    # The IRQ ban, which is a file until a daemon has read it.
+    check(tune.irqbalance_rule(root)[1] == tune.EFFECT_UNASKED,
+          "with no ban in the file the rule was not 'not requested'")
+    w(f"{root}/etc/default/irqbalance", "# ban\nIRQBALANCE_BANNED_CPULIST=1-3")
+    check(tune.irqbalance_rule(root)[1] == tune.EFFECT_UNREADABLE,
+          "with no irqbalance running the ban was reported taken or refused")
+    w(f"{root}/proc/900/comm", "irqbalance")
+    with open(f"{root}/proc/900/environ", "wb") as _f:
+        _f.write(b"PATH=/usr/bin\0IRQBALANCE_BANNED_CPULIST=1-2\0")
+    _k, _s, _d = tune.irqbalance_rule(root)
+    check(_k == "IRQBALANCE_BANNED_CPULIST" and _s == tune.EFFECT_REFUSED
+          and "restart irqbalance.service" in _d,
+          f"the daemon took 1-2 and the file says 1-3, and the rule says "
+          f"{_s}: {_d}")
+    with open(f"{root}/proc/900/environ", "wb") as _f:
+        _f.write(b"IRQBALANCE_BANNED_CPULIST=1-3\0")
+    check(tune.irqbalance_rule(root)[1] == tune.EFFECT_TAKEN,
+          "the running daemon carries the ban and the rule disagrees")
+
+# The whole list, in the order an operator undoes it, off a box that took
+# everything, and the format the self-test folds it in.
+with tempfile.TemporaryDirectory() as root:
+    _hw2 = tempfile.mkdtemp()
+    build(_hw2, 1, 4, 1, nic_node=0, nic_pci="0000:3b:00.0", hugepages_gb=8,
+          isolated="1-3", ram_gb=64)
+    _ps = grub_params(_hw2)
+    shutil.rmtree(_hw2)
+    booted_box(root, _ps)
+    _rules = tune.effective_tuning(root)
+    _names = [n for n, _, _ in _rules]
+    check(_names[:len(_ps)] == sorted(t.split("=", 1)[0] for t in _ps)
+          and _names[-1] == "IRQBALANCE_BANNED_CPULIST"
+          and "kernel.numa_balancing" in _names[len(_ps):-1],
+          f"the rules are not the command line, then the sysctls, then the "
+          f"IRQ ban: {_names}")
+    check(all(s == tune.EFFECT_TAKEN for _, s, _ in _rules),
+          f"a box that took everything has a rule not in effect: "
+          f"{[(n, s) for n, s, _ in _rules if s != tune.EFFECT_TAKEN]}")
+    os.remove(f"{root}/proc/cmdline")
+    _dark = tune.effective_tuning(root)
+    check(len(_dark) == 1 and _dark[0][1] == tune.EFFECT_UNREADABLE,
+          f"a box whose /proc/cmdline cannot be read reported on its tuning "
+          f"anyway: {_dark}")
+check(tune.render_effective([("isolcpus", "in-effect", "cpus 1-3"),
+                             ("iommu", "cannot-tell", "no group")])
+      == "in-effect isolcpus: cpus 1-3\ncannot-tell iommu: no group",
+      f"the format is `<state> <rule>: <detail>`, one per line, and this "
+      f"rendered {tune.render_effective([('a', 'b', 'c')])!r}")
+check(tune.render_effective([]) == "", "no rule rendered as something")
+print("  [ ok ] every function in the tuner, called on its own")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

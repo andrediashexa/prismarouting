@@ -87,12 +87,10 @@ MARKER = "not a unit:"
 # issue's own grep said 447, 201 and 56: it did not see nested defs, C names
 # with a digit in them, or that fourteen of the shell functions belong to
 # harness files. These go down with every batch of #390 and never up.
-# 2026-09-17, #390 batches A and B: routes.py, config.py, vppapi.py and
-# system.py at 0, with Reply.ok excused (a property is read, not called).
-# 2026-09-17, #390 batch D: the module-level functions of hexash.py at 0,
-# with its six closures excused (a def inside a def is reachable only
-# through its owner); 182 python.
-UNTESTED_AT_MOST = {"python": 182, "c": 195, "shell": 36}
+# 2026-09-17, #390 batches A to D: routes.py, config.py, vppapi.py,
+# system.py, the tuner, the snmp agent and hexash.py's module-level
+# functions at 0; the excusals are printed with their reasons on every run.
+UNTESTED_AT_MOST = {"python": 118, "c": 195, "shell": 36}
 MEASURED_ON = "2026-09-17"
 
 # A parse that came back nearly empty would make every count below small and
