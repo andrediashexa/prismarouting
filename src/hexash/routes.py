@@ -25,6 +25,8 @@ from __future__ import annotations
 import json
 import re
 
+from config import _is_lcp_tap
+
 # A prefix on its own at the start of a line opens an entry in "show ip fib".
 _PREFIX = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3}/\d{1,2})\b")
 # The header "show ip fib" prints above each table, in its two forms.
@@ -635,6 +637,60 @@ def lcp_pairs(show_lcp: str) -> dict:
     return pairs
 
 
+def linux_end(pairs: dict, ifname: str, dp_names=None):
+    """
+    The Linux netdev of the linux_cp pair `ifname` is a member of, or None.
+
+    THE ONE RULE for which end of a pair Linux holds (#389). Five readers
+    found it by `name != ifname` - the MTU stall, the Dataplane column of
+    `show ospf interface`, and the three `ip link set` mirrors - which is
+    right on `GigabitEthernet0/13/0 tap0 vppwan0` and wrong on the pair
+    every claimed card gets now, `ens19 tap0 ens19`: that test skips the one
+    name that IS the Linux end and keeps the TAP, which Linux has no netdev
+    by. So `ip link set dev ens19 mtu 1400` was never run, and the stall
+    warning was silent on exactly the box it was written for.
+
+    In order:
+
+      1. A name the line lists TWICE is on both sides of the pair, and it is
+         the Linux end whatever else is known.
+      2. Otherwise the Linux end is the member that is neither the
+         dataplane's own name nor the TAP's. The dataplane's name is the
+         member `dp_names` holds when the caller has that list, and `ifname`
+         itself when it has not - the readers keyed by the dataplane's name
+         (an MTU map, an `interface` block) are asking about their own key.
+
+    With no pair, or a pair whose only other name is the TAP, None: a
+    reader then has nothing to run `ip` on, which is the legitimate no-TAP
+    box and not an error.
+    """
+    names = list((pairs or {}).get(ifname, ()))
+    for n in names:
+        if names.count(n) > 1:
+            return n
+    own = (dataplane_end(pairs, ifname, dp_names) or ifname) if dp_names \
+        else ifname
+    for n in names:
+        if n != own and not _is_lcp_tap(n):
+            return n
+    return None
+
+
+def dataplane_end(pairs: dict, ifname: str, dp_names):
+    """
+    The member of `ifname`'s pair the dataplane holds under its own name,
+    or None: the one in `dp_names` that is not the TAP, whichever member
+    the caller asked with. The other half of linux_end()'s rule, and the
+    half `show ospf interface` needs - it holds FRR's name and the
+    dataplane's MTU map, and wants the key the map has. On the same-name
+    pair (#389) that key is FRR's name itself, which `name != host` could
+    not return.
+    """
+    names = list((pairs or {}).get(ifname, ()))
+    return next((n for n in names
+                 if n in (dp_names or ()) and not _is_lcp_tap(n)), None)
+
+
 def parse_interface_counters(show_interface: str) -> dict:
     """
     Every counter the dataplane prints, per interface: {name: {counter: int}}.
@@ -707,8 +763,19 @@ def dpdk_name_address(name: str):
     name, a sub-interface (the caller strips the tag first) - and then no
     rename is made: a guess here is a box loading somebody's addresses onto
     the wrong card.
+
+    The bus can START WITH A LETTER: the second socket's cards in a
+    dual-socket server sit at 0xaf, 0xb1, 0xd8, and VPP prints the bus as
+    bare hex, so the name is TenGigabitEthernetd8/0/0. A greedy run of
+    letters for the class word took that 'd' as its own last letter and
+    read the bus as 8, which is a real bus on the same box - so the file
+    was matched to the card at 08:00.0 where there was one, and refused
+    where there was not. The class word is anchored on its last letter,
+    which is never a hex digit (every one of VPP's ends in "Ethernet"),
+    and the hex run after it takes the whole bus.
     """
-    m = re.fullmatch(r"[A-Za-z]+([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)",
+    m = re.fullmatch(r"[A-Za-z]*[G-Zg-z]"
+                     r"([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)",
                      name or "")
     if not m:
         return None

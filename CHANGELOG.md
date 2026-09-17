@@ -117,7 +117,23 @@ version has a chance of seeing it.
   second pair on one interface. A loopback, a sub-interface and a host
   interface are not cards and keep the rule they had: their pair is asked for
   with `linux-name`, which is what `lab/routing.sh` holds a loopback without
-  one to prove.
+  one to prove. `no linux-name` on a card takes an override back and the
+  default returns at the next commit; the prompt says so as it is typed -
+  `warning: no linux-name: the default returns at commit` - because there is
+  no statement that unpairs a card with a block, and `no interface <card>`
+  is refused.
+
+  **One reader of which end of a pair is Linux's.** Five places found it by
+  "the name that is not the interface's own", which on `ens19 tap0 ens19` is
+  the TAP: the OSPF MTU-stall warning was silent for every claimed card with
+  a block, `show ospf interface` printed `-` in its Dataplane column, and
+  the `ip link set` that mirrors an MTU, an admin state or a description
+  onto the Linux end ran against `tap0`, which Linux has no netdev by. The
+  rule is `routes.linux_end()` now - the name a pair lists twice, else the
+  member that is neither the dataplane's nor the TAP's - and every reader
+  asks it, the `passive-interface` warning included, which printed an empty
+  name on that pair. Each reader is held on both shapes in
+  `test/test_hexash_apply.py` and `test/test_hexash_igp.py`.
 
   **A name FRR cannot take is refused before anything is applied.** A device
   nobody named - a `startup.conf` edited by hand, a VPP that ignores `name` -
@@ -142,9 +158,17 @@ version has a chance of seeing it.
   says which interface holds that address now - and loads the file under the
   new name wherever it used the old one: the `interface` block, the
   `nat cgnat interface` attachment, the FRR stanza, a sub-interface keeping
-  its tag. The boot log carries `note: GigabitEthernet0/13/0 is ens19 on this
-  box`, and until the next `save` the file and the running
-  configuration differ by that name; `save` writes the new one. Measured
+  its tag. The bus is hexadecimal and is read whole when it starts with a
+  letter: `TenGigabitEthernetd8/0/0` is the card at `0000:d8:00.0`, the
+  second socket of a dual-socket server. Before release, review found the
+  reader taking that `d` for the last letter of the class word and reading
+  bus 8: such a file went onto the card at `08:00.0` where the box had one -
+  the wrong card, with a note saying so - and was refused where it had not.
+  Rows in `test/test_routes.py` and two `--load` boxes in
+  `test/test_hexash_apply.py` hold it. The boot log carries
+  `note: GigabitEthernet0/13/0 is ens19 on this box`, and until the next
+  `save` the file and the running configuration differ by that name; `save`
+  writes the new one. Measured
   before the decision, on a box holding `ens19` and a file naming
   `GigabitEthernet0/13/0`: `--load` refused the file whole - *this box has no
   such interface* - with no API call made, which is a box coming up with no
@@ -153,7 +177,9 @@ version has a chance of seeing it.
   domains cannot be told apart by the old name, and then nothing is guessed:
   the file is refused naming what the box has, as before. A `rollback` to a
   revision written before the upgrade is refused the same way at the prompt,
-  where the operator is reading; it is not translated.
+  where the operator is reading; it is not translated, and it is refused
+  once: the FRR-limit refusal, whose advice is for a box that has not yet
+  renamed its card, is not printed under a name this box has not got.
 
   Where the box still holds the old name - the device unnamed in
   `startup.conf`, a VPP that ignored `name` - `--load` drops the FRR stanza

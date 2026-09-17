@@ -2821,16 +2821,25 @@ def frr_side_names(name, pairs, dp_names):
     """
     The member(s) of this interface's linux_cp pair that FRR can act on.
 
-    Found by subtracting the dataplane's names from the pair's - and, since
-    #389, by the name a pair carries TWICE. A card named ens19 is paired as
-    ens19, so its `itf-pair` line reads `ens19 tap0 ens19`, and the
-    subtraction alone leaves nothing: ens19 is a dataplane name. The name on
-    both sides of the pair IS the Linux end, whichever other list it is in,
-    and FRR acts on it.
+    routes.linux_end() is the rule - the name a pair carries TWICE, else the
+    member that is neither the dataplane's nor the TAP's - and it is asked
+    with the dataplane's names so that `name` may be ANY member of the pair:
+    `passive-interface tap0` asks with the TAP. This used to be its own
+    subtraction, and the same-name pair (#389) taught it the twice rule on
+    its own while five other readers went on finding the Linux end by
+    `name != ifname`; one owner now, so the next shape teaches one place.
+
+    With no dataplane list there is nothing to tell the members apart, and
+    every one of them is returned: "could not ask" must not become a
+    warning, which frr_acts_on() relies on. A pair the rule cannot place -
+    every member the dataplane's, none listed twice - falls back to the
+    subtraction, which is empty and reads as the same posture.
     """
     names = list((pairs or {}).get(name, ())) or [name]
-    both = {n for n in names if names.count(n) > 1}
-    return (set(names) - set(dp_names or ())) | both
+    if not dp_names:
+        return set(names)
+    end = routes.linux_end(pairs, name, dp_names)
+    return {end} if end else set(names) - set(dp_names)
 
 
 def frr_acts_on(name, pairs, dp_names):
@@ -3070,9 +3079,14 @@ def ospf_findings(routing, addresses, have_interfaces, pools,
     for ifname, stmt in passive:
         if ifname == "default" or acts_on(ifname):
             continue
+        # The name in the sentence is the one acts_on() just judged by, not a
+        # second subtraction: on the same-name pair (#389) that subtraction
+        # is empty, and this row read "FRR knows this interface as , not
+        # tap0".
         out.append(("warning", stmt,
                     "FRR knows this interface as "
-                    + "/".join(sorted(same(ifname) - dp_names))
+                    + "/".join(sorted(frr_side_names(ifname, pairs,
+                                                     dp_names)))
                     + f", not {ifname}: written this way nothing is made "
                     "passive"))
 
@@ -5619,13 +5633,14 @@ class Shell:
             self.err_dataplane(f"interface {ifname}: "
                                f"{'no shutdown' if up else 'shutdown'}: {r.reason}")
             return False
-        # The Linux side of the pair, by every name it answers to.
+        # The Linux side of the pair, which routes.linux_end() names: on the
+        # same-name pair (#389) `name != ifname` kept the TAP and skipped
+        # ens19, so the netdev FRR reads never moved.
         rc, lcp_out = self.dp.run("show lcp")
         if rc == 0:
-            for name in routes.lcp_pairs(lcp_out).get(ifname, []):
-                if name == ifname:
-                    continue
-                subprocess.run(["ip", "link", "set", "dev", name,
+            host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname)
+            if host:
+                subprocess.run(["ip", "link", "set", "dev", host,
                                 "up" if up else "down"], capture_output=True)
         return True
 
@@ -6044,10 +6059,13 @@ class Shell:
         could take. A card's name is free in Linux precisely because the
         card left Linux for the dataplane; a pg, a host interface or a
         loopback has no such name to put back, and the labs that hold a
-        loopback without a pair say so. `no interface <card>` removes the
-        block and the pair with it. A card VPP named for itself - a device
-        no tuner named, GigabitEthernet0/13/0 - is not a name Linux can take
-        and gets no default, which the commit check says out loud.
+        loopback without a pair say so. `no interface <card>` is refused -
+        a physical port is not something a configuration removes - and `no
+        linux-name` on a card takes an OVERRIDE back: the default returns
+        here at the next apply, and the prompt says so as it is typed. A
+        card VPP named for itself - a device no tuner named,
+        GigabitEthernet0/13/0 - is not a name Linux can take and gets no
+        default, which the commit check says out loud.
 
         A block is one the file's device section holds OR one the routing
         section opens: `interface ens19 / no shutdown` - the maintainer's
@@ -6056,10 +6074,19 @@ class Shell:
         expecting FRR to see the port.
         """
         blocks = target.interface_names() | set(target.frr_interface_names())
-        for card in self.dataplane_cards():
-            if (card in blocks and card not in target.linux_names
-                    and not linux_ifname_error(card)):
+        for card in self.defaulted_cards():
+            if card in blocks and card not in target.linux_names:
                 target.linux_names[card] = card
+
+    def defaulted_cards(self) -> set:
+        """
+        The cards whose Linux end defaults to their own name: every card
+        the dataplane holds whose name Linux can take. One owner, because
+        the prompt asks the same question of `no linux-name` (#389) and two
+        copies of the condition would be two answers.
+        """
+        return {card for card in self.dataplane_cards()
+                if not linux_ifname_error(card)}
 
     def card_renames(self, text) -> dict:
         """
@@ -6092,6 +6119,9 @@ class Shell:
         for name, (_domain, bus, slot, func) in held.items():
             by_addr.setdefault((bus, slot, func), []).append(name)
         out = {}
+        # A greedy letter run is right HERE and wrong in the parser: this
+        # one returns the whole span, and routes.dpdk_name_address() is
+        # what splits the class word from a bus that starts with a letter.
         for word in sorted(set(re.findall(
                 r"[A-Za-z]+[0-9a-fA-F]+/[0-9a-fA-F]+/[0-9a-fA-F]+", text))):
             if word in held or self.api.interface_index(word) is not None:
@@ -6256,10 +6286,11 @@ class Shell:
             return False
         rc, lcp_out = self.dp.run("show lcp")
         if rc == 0:
-            for name in routes.lcp_pairs(lcp_out).get(ifname, []):
-                if name == ifname:
-                    continue
-                subprocess.run(["ip", "link", "set", "dev", name,
+            # routes.linux_end(): the same-name pair (#389) has no member
+            # that is `!= ifname` and is not the TAP.
+            host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname)
+            if host:
+                subprocess.run(["ip", "link", "set", "dev", host,
                                 "alias", text or ""], capture_output=True)
         return True
 
@@ -6432,6 +6463,12 @@ class Shell:
             # answer to the second.
             pairs = {}
             dp_interfaces = set()
+            # The names the existence check refused, so the FRR-limit check
+            # below does not refuse them a second time with advice for a
+            # box that has already renamed the card (#389): a `rollback` to
+            # a pre-upgrade revision names GigabitEthernet0/13/0 on a box
+            # holding ens19, and one verdict says what the box has.
+            missing = set()
             rc_i, iface_out = self.dp.run("show interface")
             if rc_i == 0 and iface_out.strip():
                 # BOTH names. A linux_cp pair has a VPP name and a Linux one,
@@ -6528,6 +6565,7 @@ class Shell:
                                         "nothing and never come up")
                             ok = False
                 for name in sorted(named - have):
+                    missing.add(name)
                     self.err(f"interface {name}: this box has no such "
                              "interface")
                     # Wrapped, not one row: the list grows with the box, and
@@ -6555,7 +6593,7 @@ class Shell:
             # routing half changing, which is when FRR is handed the stanza.
             if d["routing_changed"]:
                 for ifname in target.frr_interface_names():
-                    if len(ifname) <= FRR_IFNAME_MAX:
+                    if len(ifname) <= FRR_IFNAME_MAX or ifname in missing:
                         continue
                     self.err(f"interface {ifname}: a name FRR cannot take")
                     print_prose(f"FRR takes an interface name of at most "
@@ -7701,20 +7739,24 @@ class Shell:
             # next commit under a name they had never typed.
             if set(names) & (ignoring | quiet):
                 continue
-            for host in names:
-                if host == ifname:
-                    continue
-                r = subprocess.run(["ip", "-o", "link", "show", "dev", host],
-                                   capture_output=True, text=True)
-                if r.returncode != 0:
-                    continue
-                w = r.stdout.split()
-                try:
-                    there = int(w[w.index("mtu") + 1])
-                except (ValueError, IndexError):
-                    continue
-                if there != here:
-                    found.append((ifname, host, here, there))
+            # The Linux end by routes.linux_end(), not by `host != ifname`:
+            # on the same-name pair (#389) that asked `ip` about tap0, which
+            # Linux has no netdev by, and the stall went unreported on
+            # every claimed card with a block.
+            host = routes.linux_end(pairs, ifname)
+            if not host:
+                continue
+            r = subprocess.run(["ip", "-o", "link", "show", "dev", host],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                continue
+            w = r.stdout.split()
+            try:
+                there = int(w[w.index("mtu") + 1])
+            except (ValueError, IndexError):
+                continue
+            if there != here:
+                found.append((ifname, host, here, there))
         return found
 
     def set_host_mtu(self, ifname, mtu):
@@ -7723,8 +7765,8 @@ class Shell:
         this interface is a legitimate configuration, and failing the commit
         over it would refuse a valid change.
 
-        Every other name the pair answers to is tried, rather than the one in a
-        fixed column. The parse this replaced looked for a literal "host" token
+        The Linux end is routes.linux_end()'s to name, not the one in a fixed
+        column. The parse this replaced looked for a literal "host" token
         and read the field after it; VPP prints
 
             itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
@@ -7733,15 +7775,16 @@ class Shell:
         indistinguishable from the legitimate no-TAP case above, and so was
         never noticed. lcp-sync was mirroring the MTU onto the TAP by itself
         and the lab assertion was crediting this function for VPP's work. The
-        lab now turns lcp-sync off before asserting.
+        lab now turns lcp-sync off before asserting. The reader that replaced
+        it tried every name but `ifname`, which on the same-name pair (#389)
+        is the TAP alone: the same nothing, found the same way.
         """
         rc, out = self.dp.run("show lcp")
         if rc != 0:
             return
-        for name in routes.lcp_pairs(out).get(ifname, []):
-            if name == ifname:
-                continue
-            subprocess.run(["ip", "link", "set", "dev", name, "mtu", str(mtu)],
+        host = routes.linux_end(routes.lcp_pairs(out), ifname)
+        if host:
+            subprocess.run(["ip", "link", "set", "dev", host, "mtu", str(mtu)],
                            capture_output=True)
 
     # The VTY's name for a timeout, and the API field that carries it. The two
@@ -9279,6 +9322,26 @@ class Shell:
             return True
         if iface and neg and dp == "linux-name":
             self.candidate.linux_names.pop(iface, None)
+            # A claimed card with a block is paired as itself by default and
+            # pair_cards() puts that default back at the next apply, so this
+            # statement takes an OVERRIDE back and never unpairs a card.
+            # Typed for the first it is right; typed for the second it does
+            # nothing, silently, and there is no statement that unpairs a
+            # card with a block - `no interface <card>` is refused. Said
+            # here, where the operator is reading (#389). A loopback, a
+            # sub-interface or a host interface gets no default, so on one
+            # of those this does unpair, and nothing is said: a warning
+            # there would be false. Asked of the dataplane, and a dataplane
+            # that cannot be asked defaults nothing at apply either.
+            if iface in self.defaulted_cards():
+                # The name goes in the prose, which folds: on the headline,
+                # driven at the widest interface name, the row measured 82.
+                print("warning: no linux-name: the default returns at commit")
+                print_prose(f"{iface} is a card with an interface block, and "
+                            "such a card is paired into Linux under its own "
+                            "name unless 'linux-name <name>' says otherwise; "
+                            "this takes an override back and does not unpair "
+                            "the card")
             return True
         if iface and not neg and dp == "ipv6 nd suppress-ra":
             # The default already. Accepted so an operator can write it to
@@ -12018,15 +12081,13 @@ class Shell:
 
         VPP's end of a linux_cp pair is an interface too, named tap<n>, and it
         has an MTU - so the pair answers to three names and only one of them is
-        the one an operator can type at this VTY. The same shape rule
-        ospf_mtu_mismatch uses, for the same reason.
+        the one an operator can type at this VTY. routes.dataplane_end() is
+        the rule, the other half of routes.linux_end()'s: the member the MTU
+        map holds that is not the TAP - which on the same-name pair (#389) is
+        `host` itself. `name != host` answered None there, and `show ospf
+        interface` printed '-' for a card whose MTU the dataplane has.
         """
-        for name in pairs.get(host, []):
-            if name == host or (name.startswith("tap") and name[3:].isdigit()):
-                continue
-            if name in mtus:
-                return name
-        return None
+        return routes.dataplane_end(pairs, host, mtus)
 
     # ----------------------------------------------------------------- OSPF
 

@@ -1195,6 +1195,30 @@ _rv, _text = driven(_sh.apply, _target, check_only=True)
 check("a name FRR cannot take" not in _text,
       f"a 16-character name was refused, and FRR takes 16: {_text!r}")
 print("  21 characters refused with the limit; 16 is FRR's own and passes")
+# AND A NAME THIS BOX HAS NOT GOT is refused once, not twice. A `rollback`
+# to a revision saved before the upgrade names GigabitEthernet0/13/0 on a
+# box that holds the card as ens19: the existence check refuses it with
+# what the box has, and the FRR limit refused it again under that, with
+# advice - "from the next start of the dataplane" - for a box that has
+# already renamed the card. Measured on 0dbbf73: both verdicts, one commit.
+_target = config.Config.parse("interface GigabitEthernet0/13/0\n"
+                              " ipv4 address 203.0.113.1/24\n exit\n"
+                              "! routing\ninterface GigabitEthernet0/13/0\n"
+                              "exit\n")
+_sh = shell(Api(have={"ens19": 1}),
+            dp=Dp({"show interface": (0, "Name  Idx State MTU\n"
+                                         "ens19   1   up    9000/0/0/0\n")}),
+            frr=frr_stub(available=True))
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("a pre-upgrade name, once", _text,
+     "error: interface GigabitEthernet0/13/0: this box has no such "
+     "interface", _rv)
+check("a name FRR cannot take" not in _text,
+      f"refused a second time, with advice for a box that has already "
+      f"renamed the card: {_text!r}")
+print("  a name the box has not got: one verdict, the one that says what "
+      "it has")
 
 print("\n=== a policy that would commit and store nothing ===")
 # A route-map is many lines and has no `router` statement of its own, so

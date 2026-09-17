@@ -112,6 +112,23 @@ sh "$SRC/appliance/install.sh" >/dev/null 2>&1 || bad "install.sh failed"
 # result to a binary rather than to an assertion in the same process.
 mk() { mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }
 
+# dev_names <conf>: "<pci> <name>" for every dev block of the dpdk stanza
+# that carries a `name` line, read PER BLOCK. A file-wide grep for
+# "name ens18" is satisfied by a report comment that mentions the card and
+# is blind to a name written into the wrong block - the needle-matches-a-
+# label shape appliance/test_tune.py reads per block to avoid, and the same
+# reading is made here so the two harnesses cannot disagree about which
+# block a name is in.
+dev_names() {
+  awk '
+    /^dpdk \{/ { in_dpdk = 1; next }
+    in_dpdk && /^\}/ { in_dpdk = 0 }
+    in_dpdk && $1 == "dev" && $2 != "default" && $3 == "{" { pci = $2; next }
+    in_dpdk && pci != "" && $1 == "}" { pci = "" }
+    in_dpdk && pci != "" && $1 == "name" { print pci, $2 }
+  ' "$1"
+}
+
 # mkroot <name> <ncpu> <isolated-now> <hugepages-gb-reserved> <ram-gb>
 mkroot() {
   R=$WORK/$1; shift
@@ -271,9 +288,10 @@ grep -q "dev 0000:00:12.0" "$WORK/onecard.conf" \
 # block. VPP's acceptance of the whole file above is the measurement that
 # matters; this says the keyword was in the file it accepted, so a tuner that
 # stopped writing it cannot pass on a file VPP had nothing to refuse in.
-grep -q "name ens18" "$WORK/onecard.conf" \
-  && ok "and the device carries its Linux name" \
-  || bad "the 'onecard' shape names the device after nothing"
+[ "$(dev_names "$WORK/onecard.conf")" = "0000:00:12.0 ens18" ] \
+  && ok "and the device carries its Linux name, inside its own dev block" \
+  || bad "the 'onecard' shape names the device after nothing, or in the" \
+         "wrong block: $(dev_names "$WORK/onecard.conf")"
 
 # 4. A CARD WHOSE MAXIMUM MTU IS BELOW VPP'S DEFAULT. This is #377's box and
 # the shape nothing had ever generated: the tuner reads the maximum off the
@@ -347,12 +365,14 @@ shape twocards "$R" 9000 --interface ens19
 grep -q "dev 0000:00:13.0" "$WORK/twocards.conf" \
   && ok "and it names the second card, not the first" \
   || bad "the 'twocards' shape named the wrong device"
-grep -q "name ens19" "$WORK/twocards.conf" \
-  && ok "and the second card keeps its Linux name" \
-  || bad "the 'twocards' shape names the device after nothing"
-grep -q "name ens18" "$WORK/twocards.conf" \
-  && bad "the 'twocards' shape names a card it did not claim" \
-  || ok "and the card it did not claim is named nowhere"
+dev_names "$WORK/twocards.conf" | grep -qx "0000:00:13.0 ens19" \
+  && ok "and the second card keeps its Linux name, in its own dev block" \
+  || bad "the 'twocards' shape names the device after nothing, or in the" \
+         "wrong block: $(dev_names "$WORK/twocards.conf")"
+dev_names "$WORK/twocards.conf" | grep -q " ens18$" \
+  && bad "the 'twocards' shape names a card it did not claim:" \
+         "$(dev_names "$WORK/twocards.conf")" \
+  || ok "and the card it did not claim is named in no dev block"
 
 echo
 # One of the three verdict lines tools/run-tests.sh reads, so this file can

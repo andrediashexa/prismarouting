@@ -881,6 +881,26 @@ candidate, and every commit would remove the pair. A loopback, a
 sub-interface and a host interface are not cards and keep the rule they had:
 their pair is the operator's to ask for with `linux-name`.
 
+`no linux-name` on a card takes an override back and nothing more: the
+default returns at the next commit, and the prompt says so as the statement
+is typed - `warning: no linux-name: the default returns at commit`. There is
+no statement that leaves a card with an `interface` block unpaired, and
+`no interface <card>` is refused because a physical port is not something a
+configuration removes; a card with no block is not paired. On a loopback,
+whose pair is the operator's to ask for, `no linux-name` does unpair it and
+nothing is said.
+
+**One reader of which end of a pair is Linux's.** Five places found it by
+"the name that is not the interface's own", which on `ens19 tap0 ens19` is
+the TAP: the OSPF MTU-stall warning was silent for every claimed card with a
+block, `show ospf interface` printed `-` in its Dataplane column, and the
+`ip link set` that mirrors an MTU, an admin state or a description onto the
+Linux end ran against `tap0`, which Linux has no netdev by. The rule is
+written once now - the name a pair lists twice, else the member that is
+neither the dataplane's nor the TAP's - and every reader asks it, the
+`passive-interface` warning included, which printed an empty name on that
+pair.
+
 **A name FRR cannot take is refused before anything is applied.** A device
 nobody named - a `startup.conf` edited by hand, a VPP that ignored `name` -
 still gets VPP's own spelling, and an `interface` block under it is refused
@@ -905,7 +925,13 @@ address and `show hardware-interfaces` prints the address of every card the
 box holds, so the file is loaded under the new name wherever it used the old
 one - the block, the CGNAT attachment, a sub-interface keeping its tag - with
 `note: GigabitEthernet0/13/0 is ens19 on this box` in the boot log,
-and the next `save` writes the new name. Two cards at one bus, slot and
+and the next `save` writes the new name. The bus in that name is
+hexadecimal and MUST be read whole when it starts with a letter:
+`TenGigabitEthernetd8/0/0` is the card at `0000:d8:00.0`, a second-socket
+slot in a dual-socket server, and a reader that took the `d` for the last
+letter of the class word matched such a file to the card at bus 8 where the
+box had one - the wrong card, silently - and refused it where the box had
+not. Two cards at one bus, slot and
 function in two PCI domains are not told apart, and then nothing is guessed:
 the file is refused naming what the box has, as before. Where the box still
 holds the old name, the FRR stanza under it - which FRR never held on any

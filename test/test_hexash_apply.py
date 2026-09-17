@@ -1637,6 +1637,192 @@ check("interface GigabitEthernet0/13/0: this box has no such interface" in _out
       f"and the file was not refused with what the box has: {_out!r}")
 print("  a twin in another PCI domain: nothing guessed, the file refused")
 
+print("\n=== a bus spelled with a letter first: the second socket's card "
+      "(#389) ===")
+# MEASURED FIRST, on 0dbbf73: routes.dpdk_name_address("TenGigabitEthernet"
+# "d8/0/0") gave (8, 0, 0). The bus is hexadecimal, VPP prints it without
+# padding, and a greedy run of letters took the 'd' for the last letter of
+# the class word. On a box holding a card at 08:00.0 as well, the saved file
+# was loaded onto THAT card, with a note saying so - the one thing
+# card_renames is written never to do; on a box whose only card is at
+# d8:00.0 the file was refused whole, the box up with nothing on it. Both
+# are the dual-socket server, where the second socket's cards sit at 0xaf,
+# 0xb1 and 0xd8.
+HW_TWO_SOCKETS = """              Name                Idx   Link  Hardware
+ens1f0                             1     up   ens1f0
+  Link speed: 10 Gbps
+  Ethernet address 3c:fd:fe:00:00:01
+  Intel X710
+    pci: device 8086:1572 subsystem 8086:0000 address 0000:08:00.00 numa 0
+ens5f0                             2     up   ens5f0
+  Link speed: 10 Gbps
+  Ethernet address 3c:fd:fe:00:00:02
+  Intel X710
+    pci: device 8086:1572 subsystem 8086:0000 address 0000:d8:00.00 numa 1
+local0                             0    down  local0
+  Link speed: unknown
+"""
+IF_TWO_SOCKETS = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+ens1f0                            1      up          9000/0/0/0
+ens5f0                            2      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+"""
+HW_D8_ONLY = """              Name                Idx   Link  Hardware
+ens5f0                             1     up   ens5f0
+  Link speed: 10 Gbps
+  Ethernet address 3c:fd:fe:00:00:02
+  Intel X710
+    pci: device 8086:1572 subsystem 8086:0000 address 0000:d8:00.00 numa 1
+local0                             0    down  local0
+  Link speed: unknown
+"""
+IF_D8_ONLY = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+ens5f0                            1      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+"""
+SAVED_D8 = """nat cgnat interface TenGigabitEthernetd8/0/0 inside
+interface TenGigabitEthernetd8/0/0
+ ipv4 address 203.0.113.1/24
+ exit
+"""
+
+
+class SocketsVpp(CardVpp):
+    """The cards this box holds, given as the two screens --load reads."""
+
+    def __init__(self, hw, iface):
+        super().__init__()
+        self.hw, self.iface = hw, iface
+
+    def run(self, cmd):
+        if cmd.startswith("show hardware-interfaces"):
+            self.commands.append(cmd)
+            return 0, self.hw
+        if cmd.startswith("show interface"):
+            self.commands.append(cmd)
+            return 0, self.iface
+        return super().run(cmd)
+
+
+_sh = boot_shell()
+_sh.api = FakeDataplane(existing=("ens1f0", "ens5f0"))
+_sh.dp = SocketsVpp(HW_TWO_SOCKETS, IF_TWO_SOCKETS)
+_out = load_text(_sh, SAVED_D8)
+check("note: TenGigabitEthernetd8/0/0 is ens5f0 on this box" in _out,
+      f"the card at d8:00.0 is ens5f0 and the note does not say so: {_out!r}")
+check(not any(a.get("sw_if_index") == 1 for _, a in _sh.api.calls),
+      f"a call reached ens1f0, the card at 08:00.0: the file was loaded "
+      f"onto the wrong card: {_sh.api.calls}")
+_addrs = [a for m, a in _sh.api.calls
+          if m == "sw_interface_add_del_address"]
+check(any(a.get("sw_if_index") == 2 for a in _addrs),
+      f"the address did not land on ens5f0: {_sh.api.calls}")
+print("  ens1f0 at 08:00.0 and ens5f0 at d8:00.0: the file goes to ens5f0")
+
+# And the second socket's card ALONE, where the misread found no card at
+# bus 8 and refused the file - the state the CHANGELOG says is ruled out.
+_sh = boot_shell()
+_sh.api = FakeDataplane(existing=("ens5f0",))
+_sh.dp = SocketsVpp(HW_D8_ONLY, IF_D8_ONLY)
+_out = load_text(_sh, SAVED_D8)
+check("refusing to load this file" not in _out,
+      f"the only card is at d8:00.0 and the file naming it was refused: "
+      f"{_out!r}")
+check("note: TenGigabitEthernetd8/0/0 is ens5f0 on this box" in _out,
+      f"and the note does not name the card it loaded onto: {_out!r}")
+check(any(a.get("sw_if_index") == 1 for m, a in _sh.api.calls
+          if m == "sw_interface_add_del_address"),
+      f"the address did not land on the box's one card: {_sh.api.calls}")
+print("  ens5f0 alone at d8:00.0: the file loads")
+
+print("\n=== the Linux end of the same-name pair, on every reader of it "
+      "(#389) ===")
+# Three readers here found the Linux end by `name != ifname`: right on
+# `GigabitEthernet0/13/0 tap0 vppwan0`, and on `ens19 tap0 ens19` it skips
+# the one name that IS the Linux end and keeps the TAP, which Linux has no
+# netdev by. Measured on 0dbbf73 with the calls recorded: set_host_mtu ran
+# `ip link set dev tap0 mtu 1400` and never ens19, set_admin `ip link set
+# dev tap0 up`, set_description `ip link set dev tap0 alias uplink` - each
+# failing quietly, on every claimed card with a block. routes.linux_end() is
+# the one rule now, and each reader is held on both shapes.
+SAME_LCP = "itf-pair: [0] ens19 tap0 ens19 5 type tap\n"
+OLD_LCP = "itf-pair: [0] GigabitEthernet0/13/0 tap0 vppwan0 5 type tap\n"
+
+
+def ip_devs(fn, *args):
+    """The `dev` every `ip` call named while fn ran, in order."""
+    ran = []
+
+    def fake_run(argv, **kw):
+        ran.append(list(argv))
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    real = hexash.subprocess.run
+    hexash.subprocess.run = fake_run
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            fn(*args)
+    finally:
+        hexash.subprocess.run = real
+    return [argv[argv.index("dev") + 1] for argv in ran if "dev" in argv]
+
+
+for _lcp, _card, _linux in ((SAME_LCP, "ens19", "ens19"),
+                            (OLD_LCP, "GigabitEthernet0/13/0", "vppwan0")):
+    for _label, _verb in (
+            ("set_host_mtu", lambda sh, c=_card: sh.set_host_mtu(c, 1400)),
+            ("set_admin", lambda sh, c=_card: sh.set_admin(c, True)),
+            ("set_description",
+             lambda sh, c=_card: sh.set_description(c, "uplink"))):
+        _sh = card_shell(lcp=_lcp)
+        _sh.api = FakeDataplane(existing=(_card,))
+        _devs = ip_devs(_verb, _sh)
+        check(_devs == [_linux],
+              f"{_label} on {_card}: ip ran on {_devs}, not on "
+              f"[{_linux!r}] alone")
+print("  set_host_mtu, set_admin, set_description: ip runs on ens19, never "
+      "on tap0")
+
+print("\n=== `no linux-name` on a claimed card: the default returns at "
+      "commit, said at the prompt (#389) ===")
+# The candidate drops the name and pair_cards puts the default straight back
+# at apply - measured on 0dbbf73: linux_names {'ens19': 'ens19'} after the
+# pop and one apply. Typed to take an override back, that is what the
+# operator wants; typed to unpair the card, it does nothing, and silently.
+# There is no statement that unpairs a card with a block, and `no interface
+# <card>` is refused, so the prompt says which of the two it is.
+_sh = card_shell()
+_sh.candidate = config.Config.parse("interface ens19\n linux-name wan0\n"
+                                    " exit\n")
+_sh.mode = "config"
+_sh.frr_ctx = ["interface ens19"]
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _rv = _sh.do_config("no linux-name")
+check(_rv is True and "ens19" not in _sh.candidate.linux_names,
+      f"`no linux-name` was not taken: {_rv} {_sh.candidate.linux_names}")
+check("warning: no linux-name: the default returns at commit"
+      in _buf.getvalue().splitlines(),
+      f"the prompt did not say the default comes back: {_buf.getvalue()!r}")
+check("ens19 is a card with an interface block" in flat(_buf.getvalue())
+      and "does not unpair" in _buf.getvalue(),
+      f"and did not name the card, or say what the statement is not: "
+      f"{_buf.getvalue()!r}")
+# A loopback gets no default, so `no linux-name` on one does unpair it and
+# nothing is said - a warning there would be false.
+_sh = card_shell()
+_sh.candidate = config.Config.parse("interface loop0\n linux-name lo9\n"
+                                    " exit\n")
+_sh.mode = "config"
+_sh.frr_ctx = ["interface loop0"]
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.do_config("no linux-name")
+check("warning" not in _buf.getvalue(),
+      f"a loopback, which gets no default, was warned about one: "
+      f"{_buf.getvalue()!r}")
+print("  ens19: the default returns, said; loop0: unpaired, nothing said")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

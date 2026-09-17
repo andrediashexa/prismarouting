@@ -278,6 +278,73 @@ check(_old["host-veth-vpp"]["host"] == "tap4096 vppwan0",
       f"{_old['host-veth-vpp']['host']!r}")
 print("  ens19 tap0 ens19 -> Linux column 'tap0 ens19'")
 
+# --- VPP's DPDK name, read back to an address (#389) ---
+# The bus is hexadecimal and the second socket's cards in a dual-socket
+# server sit at 0xaf, 0xb1, 0xd8: a letter first. The class word is letters
+# too, and a greedy run of letters ate the bus's first digit, so
+# TenGigabitEthernetd8/0/0 read as bus 8. `hexash --load` then matched a
+# saved name to the card at 08:00.0 where the box had one - the wrong card,
+# silently - and refused the file where it had not. Measured on 0dbbf73.
+for _name, _want in (("GigabitEthernet0/13/0", (0, 0x13, 0)),
+                     ("TenGigabitEthernet3b/0/1", (0x3b, 0, 1)),
+                     ("TenGigabitEthernetd8/0/0", (0xd8, 0, 0)),
+                     ("HundredGigabitEthernetaf/0/1", (0xaf, 0, 1)),
+                     ("GigabitEthernete/0/0", (0xe, 0, 0)),
+                     ("VirtualFunctionEthernetaf/0/2", (0xaf, 0, 2))):
+    check(routes.dpdk_name_address(_name) == _want,
+          f"{_name} reads as {routes.dpdk_name_address(_name)}, not "
+          f"{tuple(hex(x) for x in _want)}")
+for _name in ("ens19", "local0", "tap0", "loop0", "host-veth-vpp",
+              "GigabitEthernet0/13/0.100", ""):
+    check(routes.dpdk_name_address(_name) is None,
+          f"{_name!r} is not a DPDK name and must not be read as one: "
+          f"{routes.dpdk_name_address(_name)}")
+print("  TenGigabitEthernetd8/0/0 -> bus 0xd8, not 8")
+
+# --- the Linux end of a pair, ONE owner (#389) ---
+# Five readers in the product found the Linux end by `name != ifname`. Right
+# on `GigabitEthernet0/13/0 tap0 vppwan0`; on the pair every claimed card
+# gets now, `ens19 tap0 ens19`, that test skips the one name that IS the
+# Linux end and keeps the TAP, which Linux has no netdev by. The rule is
+# written here once: the name the line lists twice, else the member that is
+# neither the dataplane's name nor an lcp TAP.
+_same = routes.lcp_pairs(SAME)
+check(routes.linux_end(_same, "ens19") == "ens19",
+      f"a card paired as itself: the Linux end is ens19, not "
+      f"{routes.linux_end(_same, 'ens19')!r}")
+check(routes.linux_end(_same, "tap0", {"ens19", "tap0"}) == "ens19",
+      f"asked with the TAP, the same pair has the same Linux end: "
+      f"{routes.linux_end(_same, 'tap0', {'ens19', 'tap0'})!r}")
+check(routes.linux_end(pairs, "host-veth-vpp") == "vppwan0",
+      f"the old shape: the member that is neither the card nor the TAP: "
+      f"{routes.linux_end(pairs, 'host-veth-vpp')!r}")
+check(routes.linux_end(pairs, "tap4096", {"host-veth-vpp", "tap4096"})
+      == "vppwan0",
+      "asked with the TAP and the dataplane's list, still the Linux end")
+check(routes.linux_end(pairs, "vppwan0", {"host-veth-vpp", "tap4096"})
+      == "vppwan0",
+      "asked with the Linux name itself and the dataplane's list, the same")
+check(routes.linux_end({}, "ens19") is None,
+      "an interface with no pair has no Linux end, not a wrong one")
+check(routes.linux_end({"ens19": ["ens19", "tap0"]}, "ens19") is None,
+      "a pair whose only other name is the TAP has no Linux end either")
+# And the other half of the rule, the member the dataplane holds: asked with
+# FRR's name and the dataplane's list, which is what `show ospf interface`
+# has in hand. The old-shape fixture is keyed by the Linux name alone, as a
+# hand-written pairs dict in test_hexash_igp.py is, and the answer must not
+# depend on the pair being reachable under any other key.
+check(routes.dataplane_end(_same, "ens19", {"ens19", "tap0"}) == "ens19",
+      f"the same-name pair: the dataplane's end is ens19, not "
+      f"{routes.dataplane_end(_same, 'ens19', {'ens19', 'tap0'})!r}")
+check(routes.dataplane_end({"vppwan0": ["tap4096", "host-veth-vpp",
+                                        "vppwan0"]},
+                           "vppwan0", {"tap4096", "host-veth-vpp"})
+      == "host-veth-vpp",
+      "the old shape, keyed by FRR's name: the card, and never the TAP")
+check(routes.dataplane_end({}, "eth0", {"host-veth-vpp"}) is None,
+      "an interface with no pair is nobody's dataplane end")
+print("  ens19 tap0 ens19 -> Linux end ens19; the old shape -> vppwan0")
+
 # --- the interfaces VPP owns, and the faults that depend on knowing them ---
 #
 # The claim "the old positional parse cannot work" was held to account against
