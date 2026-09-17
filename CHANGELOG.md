@@ -75,6 +75,35 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **`ping`, `traceroute` and `mtr` are statements of this VTY**
+  ([#395](https://github.com/andrediashexa/hexarouting/issues/395)). An operator could not answer "does this box
+  reach that next hop?" without leaving the VTY: `start shell` was the only
+  way, it is administrators only, and the image carried neither `traceroute`
+  nor `mtr`. All three are operational statements now, and **every account may
+  run them, read-only included** - they change nothing, and the operator who
+  is asked whether the box reaches something is often the one who may not
+  configure it.
+
+  Each takes `count <n>` and `source <address>`, and each stops by itself: the
+  default is 5 packets, the ceiling 100, and a 300-second deadline ends a tool
+  that hangs. A probe that runs until it is interrupted, typed on the serial
+  console of a racked box by somebody who then walks away, is a console nobody
+  can use until they walk back; Ctrl-C returns to the prompt and ends nothing.
+  `mtr` runs in report mode, because curses on a serial console is unreadable.
+
+  Nothing an operator types reaches a shell: the argument vector is built in
+  `probe_argv` and executed directly, with no shell in the path at all, and
+  the host is validated first - an address of either family, or a hostname in
+  the letters RFC 1123 allows. A source is an address and never a name,
+  because a name with two addresses would answer about whichever one was
+  picked. The tools come from `iputils-ping`, `traceroute` and `mtr-tiny`,
+  which the image now carries; a statement whose tool is missing is refused
+  naming its package, and the boot self-test warns about the same absence
+  without being asked. `lab/install-iso.sh` types `ping <gateway> count 2` at
+  the installed box's own VTY and counts the replies.
+
 ### Changed
 
 * **The installer's management-network default is `none`**
