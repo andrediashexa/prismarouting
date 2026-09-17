@@ -687,7 +687,7 @@ answer, and the two files that know are not where the operator is looking.
 
 | Issue | What it is | State |
 |---|---|---|
-| [#190](https://github.com/andrediashexa/hexarouting/issues/190) | `show interface` says WHY it has no interface — first boot with DPDK off, no interface named, a name that does not resolve, or the interface carrying the default route, refused on purpose | *delivered* |
+| [#190](https://github.com/andrediashexa/hexarouting/issues/190) | `show interface` says WHY it has no interface — first boot with DPDK off, no interface named, a name that does not resolve, or the interface carrying the default route, refused on purpose (until #385 removed that refusal) | *delivered* |
 | [#191](https://github.com/andrediashexa/hexarouting/issues/191) | pipe filters on any `show`: `include`, `match`, `exclude`, `section`, `count`, `first`, `last`, without shelling out to `grep` | *delivered* |
 | [#192](https://github.com/andrediashexa/hexarouting/issues/192) | `show interface terse` / `description` / `utilization`, the last sampling the counters and graphing them | *delivered* |
 | [#193](https://github.com/andrediashexa/hexarouting/issues/193) | CGNAT under `nat`, static routes under `router static`, both old spellings still accepted | *delivered* |
@@ -1693,7 +1693,8 @@ advice naming a card the box has not got. The refusal keeps its ground
 everywhere it can be followed; where it cannot, the card goes to the dataplane
 and the management address goes with it onto the `linux_cp` pair, MAC and all,
 as a confirmed commit that puts the configuration back and restarts the box if
-nobody confirms.
+nobody confirms. All of that is history now: the box claims its cards by itself
+(#378), and the refusal, the record and the confirmed commit went with #385.
 
 **Why the gate never caught it**, measured rather than shrugged at: the gate's
 box has one NIC, it never contacts the box over the network, and it never asks

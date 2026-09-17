@@ -816,10 +816,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print("\n=== and a card nothing reserves is said to be going anyway ===")
 # THE ONE PLACE THE TWO ANSWERS POINT OPPOSITE WAYS. `dataplane interface`
-# still refuses the card carrying the default route while there is another to
-# name (#123), and the box claims every card nothing reserves (#378). On a box
-# whose default route is not on the card the installer recorded, both are true
-# and the operator needs the second: reserving a card happens at install time,
+# accepts any card the box has, the one carrying the default route included
+# (the refusal went with #385), and the box claims every card nothing reserves
+# (#378). On a box whose default route is not on the card the installer
+# recorded, both are true and the operator needs the second: reserving a card
+# happens at install time,
 # and this is the screen where somebody finds out it did not.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, reserve="enp2s0")   # route is on enp1s0, reserve is not
