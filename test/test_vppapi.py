@@ -282,5 +282,170 @@ finally:
     else:
         os.environ["SUDO_USER"] = saved
 
+print("\n=== the units of this module, each called on its own (#390) ===")
+# Every function below is called directly with the input it exists for, and
+# each box was watched going red against a mutation of the rule it reads.
+import grp        # noqa: E402
+import tempfile   # noqa: E402
+
+# Reply.ok is the one question every caller asks of a reply. A property is
+# read and not called, so the reader excuses it at its definition; it is
+# still read both ways here, or a state renamed would make every failure
+# read as a success.
+check(vppapi.Reply(vppapi.OK).ok is True, "a reply in state ok answers ok")
+for state in (vppapi.NO_CLIENT, vppapi.NOT_RUNNING, vppapi.NO_PLUGIN,
+              vppapi.REFUSED, vppapi.BAD_REPLY, vppapi.CANNOT_SEND):
+    check(vppapi.Reply(state).ok is False, f"and {state} answers not ok")
+
+# Reply.__repr__ is what a failed assertion prints, so it has to carry the
+# three things that tell one outcome from another.
+text = vppapi.Reply(vppapi.REFUSED, retval=-7,
+                    reason="not a power of two").__repr__()
+check(vppapi.REFUSED in text and "-7" in text and "not a power of two" in text,
+      f"the repr carries the state, the retval and the reason: {text}")
+print(f"  repr: {text}")
+
+# Vat2._client_failure: the two ways vat2 fails on its own, told apart from
+# a dataplane that failed, on the code and the text alone.
+r = vppapi.Vat2._client_failure("create_subif", -11, "")
+check(r is not None and r.state == vppapi.CANNOT_SEND and "signal 11" in r.reason,
+      f"a negative code is a signal death, named by its number: {r}")
+r = vppapi.Vat2._client_failure("create_subif", 139, "")
+check(r is not None and "signal 11" in r.reason,
+      f"128+n from a shell is the same signal 11: {r}")
+r = vppapi.Vat2._client_failure("create_subif", 0,
+                                "Failed converting JSON to API\n")
+check(r is not None and r.state == vppapi.CANNOT_SEND
+      and "never saw it" in r.reason,
+      f"a refusal to convert, exit 0, is the client's failure: {r}")
+check(vppapi.Vat2._client_failure("bpa_pool_add_del", 1,
+                                  "connect failed") is None,
+      "exit 1 with neither is not the client's failure: None")
+check(vppapi.Vat2._client_failure("bpa_pool_add_del", 0,
+                                  '{"retval": 0}') is None,
+      "and neither is a clean reply")
+
+# Vat2._parse: vat2 prints a JSON object, with noise before it.
+check(vppapi.Vat2._parse('vat2: connecting\n{"_msgname": "x", "retval": 0}')
+      == {"_msgname": "x", "retval": 0},
+      "the object is read from its first brace, the noise before it dropped")
+check(vppapi.Vat2._parse("") is None, "nothing at all is None")
+check(vppapi.Vat2._parse("connect failed") is None, "no brace is None")
+check(vppapi.Vat2._parse("{ this is not json") is None,
+      "a brace with no object behind it is None, not an exception")
+
+# Vat2._last_log_error: the sentence the plugin sent to VPP's log, the LAST
+# bpa error, with the timestamp and severity stripped off.
+LOG = ("2026/09/05 18:00:00:000 notice bpa  pool lab created\n"
+       "2026/09/05 18:00:01:000 err  bpa  block_size 500 is not a power of two\n"
+       "2026/09/05 18:00:02:000 err  bpa  outside 200.150.0.16/30 overlaps pool lab\n"
+       "2026/09/05 18:00:03:000 notice dpdk  link up\n")
+api = vppapi.Vat2(runner=fake({"vppctl show": (0, LOG, "")}))
+detail = api._last_log_error()
+check(detail == "outside 200.150.0.16/30 overlaps pool lab",
+      f"the last bpa error line, prefix stripped: {detail!r}")
+api = vppapi.Vat2(runner=fake({"vppctl show": (0, LOG.splitlines()[0] + "\n", "")}))
+check(api._last_log_error() == "",
+      "a log with no bpa error in it adds nothing, not the last notice")
+api = vppapi.Vat2(runner=fake({"vppctl show": (1, "", "connect failed")}))
+check(api._last_log_error() == "", "a vppctl that failed adds nothing")
+
+# Vat2.interface_index: the name the operator typed to the index the
+# dataplane takes, off a dump, and None for anything that is not an answer.
+ROWS = json.dumps([
+    {"_msgname": "sw_interface_details", "sw_if_index": 0,
+     "interface_name": "local0"},
+    {"_msgname": "sw_interface_details", "sw_if_index": 3,
+     "interface_name": "GigabitEthernet0/8/0"}])
+dumped = []
+
+
+def dumping(argv, timeout=10):
+    dumped.append(argv)
+    return (0, ROWS, "")
+
+
+api = vppapi.Vat2(runner=dumping)
+check(api.interface_index("GigabitEthernet0/8/0") == 3,
+      "the index of the row whose name matches")
+check(api.interface_index("local0") == 0,
+      "index 0 is an answer and not a miss")
+check(api.interface_index("TenGigabitEthernet1/0/0") is None,
+      "a name in no row is None")
+check(dumped and dumped[0][1] == "sw_interface_dump"
+      and json.loads(dumped[0][2])["sw_if_index"] == 0xFFFFFFFF,
+      f"asked as a dump of every interface: {dumped[:1]}")
+api = vppapi.Vat2(runner=fake({"vat2 sw_interface_dump": (-11, "", "")}))
+check(api.interface_index("local0") is None,
+      "a dump that failed is None, never a guess at an index")
+
+# Vat2._keep_segment_reachable: the API segment's group put back after a
+# root client attached, over a file of this suite's own, with chown and
+# chmod recorded rather than done - the one thing this may not touch is
+# the segment on the machine running it.
+seg_dir = tempfile.mkdtemp(prefix="hexash-vppapi-")
+seg = os.path.join(seg_dir, "global_vm")
+open(seg, "w").close()
+gid = os.stat(seg).st_gid
+own_group = grp.getgrgid(gid).gr_name
+
+
+class Segment(vppapi.Vat2):
+    API_SEGMENT = seg
+    API_GROUP = own_group
+
+
+class NoGroup(Segment):
+    API_GROUP = "hexa-no-such-group-390"
+
+
+touched = []
+_real = (vppapi.os.geteuid, vppapi.os.chown, vppapi.os.chmod)
+try:
+    vppapi.os.chown = lambda p, u, g: touched.append(("chown", p, u, g))
+    vppapi.os.chmod = lambda p, m: touched.append(("chmod", p, m))
+    _real[2](seg, 0o644)
+    vppapi.os.geteuid = lambda: 0
+    Segment._keep_segment_reachable()
+    check(touched == [("chown", seg, 0, gid), ("chmod", seg, 0o660)],
+          f"root, segment 0644: chown to root:{own_group} and chmod 0660: "
+          f"{touched}")
+    del touched[:]
+    vppapi.os.geteuid = lambda: 1000
+    Segment._keep_segment_reachable()
+    check(touched == [], f"not root: nothing this can fix, nothing touched: "
+                         f"{touched}")
+    del touched[:]
+    vppapi.os.geteuid = lambda: 0
+    _real[2](seg, 0o660)
+    Segment._keep_segment_reachable()
+    check(touched == [], f"already {own_group} 0660: left alone: {touched}")
+    _real[2](seg, 0o644)
+    NoGroup._keep_segment_reachable()
+    check(touched == [], f"a box without the group: silent, nothing touched: "
+                         f"{touched}")
+finally:
+    vppapi.os.geteuid, vppapi.os.chown, vppapi.os.chmod = _real
+print(f"  segment: {seg} as {own_group}")
+
+# Vat2._subprocess: the three shapes a process comes back in - its status
+# with stdout and stderr apart, a binary that is not there as 127, and a
+# hang as 124 - driven with the interpreter itself so no real client runs.
+# Through Segment, so the finally clause reaches the temporary segment above
+# and not /dev/shm.
+rc, out, err = Segment._subprocess(["/nonexistent/hexa-vat2-390", "--dump-apis"])
+check(rc == 127 and out == "" and "not found" in err,
+      f"a binary that is not there is 127 and says so: {(rc, out, err)}")
+rc, out, err = Segment._subprocess([
+    sys.executable, "-c",
+    "import sys; sys.stdout.write('{\"retval\": 0}'); "
+    "sys.stderr.write('warn'); sys.exit(3)"])
+check((rc, out, err) == (3, '{"retval": 0}', "warn"),
+      f"status, stdout and stderr come back apart: {(rc, out, err)}")
+rc, out, err = Segment._subprocess(
+    [sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.5)
+check(rc == 124 and "timed out" in err,
+      f"a hang is 124 after the timeout, not a hung commit: {(rc, err)}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

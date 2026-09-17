@@ -555,6 +555,387 @@ check(sh.failed == 1 and widest(said) <= config.CONSOLE_COLUMNS,
       f"columns at the widest)")
 
 print()
+print("=== 11. the units of system.py, each called on its own (#390) ===")
+# Every function below is called directly with the input it exists for,
+# over a root of this suite's own and a runner that records, so nothing
+# here reads /etc or runs a command on the machine running it. Each box
+# was watched going red against a mutation of the rule it reads.
+import stat      # noqa: E402
+import system    # noqa: E402
+
+
+class Box:
+    """
+    A System over a root of this suite's own, whose commands are recorded
+    and answered from a table keyed by the argv's prefix, 0 and "" unless
+    the table says otherwise.
+    """
+
+    def __init__(self, answers=None):
+        self.root = tempfile.mkdtemp(prefix="unit-", dir=_root)
+        self.asked = []
+        self.answers = answers or {}
+        self.sys = system.System(runner=self.run, root=self.root)
+
+    def run(self, argv, stdin=None, timeout=30):
+        self.asked.append(list(argv))
+        for prefix, answer in self.answers.items():
+            if tuple(argv[:len(prefix)]) == prefix:
+                return answer
+        return 0, ""
+
+    def write(self, rel, text):
+        path = self.root + rel
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+    def read(self, rel):
+        try:
+            with open(self.root + rel) as f:
+                return f.read()
+        except OSError:
+            return None
+
+    def mode(self, rel):
+        return stat.S_IMODE(os.stat(self.root + rel).st_mode)
+
+
+def account(name, keys=(), password="", role=""):
+    u = system.User(name)
+    u.keys = list(keys)
+    u.password = password
+    u.role = role
+    return u
+
+
+print("--- role_from_groups: the role a set of memberships amounts to")
+check(system.role_from_groups({system.GROUP_ADMIN, system.GROUP_CGNAT,
+                               "vpp"}) == system.ROLE_ADMIN,
+      "both role groups is an administrator: hexa-admin sits on top of "
+      "hexa-cgnat")
+check(system.role_from_groups({system.GROUP_CGNAT, "vpp", "frr"})
+      == system.ROLE_CGNAT, "hexa-cgnat alone is a cgnat operator")
+check(system.role_from_groups({"vpp", "frr", "frrvty", "sudo"}) == "",
+      "the reach groups and sudo are not a role: read-only")
+check(system.role_from_groups(set()) == "", "no group at all is read-only")
+
+print("--- can_anyone_log_in: who still reaches the box over ssh")
+users = {"root": account("root", password="$6$r"),
+         "alice": account("alice", password="$6$a"),
+         "bob": account("bob", keys=["ssh-ed25519 B"]),
+         "carol": account("carol")}
+check(sorted(system.can_anyone_log_in({}, users)) == ["alice", "bob"],
+      "under the defaults a password or a key logs in, and root's password "
+      "does not under prohibit-password")
+check(system.can_anyone_log_in({"permit-root-login": "yes"}, users)
+      == ["root", "alice", "bob"],
+      "permit-root-login yes lets root's password in")
+check(system.can_anyone_log_in({"password-authentication": "no",
+                                "permit-root-login": "yes"}, users)
+      == ["bob"], "password-authentication no leaves only the key")
+users["root"] = account("root", keys=["ssh-ed25519 R"])
+check("root" in system.can_anyone_log_in({}, users),
+      "root with a key logs in under prohibit-password")
+check("root" not in system.can_anyone_log_in({"permit-root-login": "no"},
+                                             users),
+      "and not under permit-root-login no, key or not")
+check(system.can_anyone_log_in({}, {"carol": account("carol")}) == [],
+      "an account with nothing to log in with is a lockout: an empty list")
+
+print("--- can_anyone_configure: who reaches it AND may change it")
+users = {"root": account("root", keys=["R"]),
+         "alice": account("alice", keys=["A"], role=system.ROLE_ADMIN),
+         "bob": account("bob", keys=["B"], role=system.ROLE_CGNAT),
+         "carol": account("carol", keys=["C"]),
+         "dave": account("dave", password="$6$d", role=system.ROLE_ADMIN)}
+check(sorted(system.can_anyone_configure({"permit-root-login": "no"}, users))
+      == ["alice", "dave"], "the administrators who can log in, not the "
+      "cgnat operator, not the read-only account")
+check(sorted(system.can_anyone_configure({}, users))
+      == ["alice", "dave", "root"],
+      "root counts whenever root can log in: root is every capability")
+check(system.can_anyone_configure({"permit-root-login": "no",
+                                   "password-authentication": "no"}, users)
+      == ["alice"], "an administrator who cannot log in cannot configure")
+
+print("--- validate_snmp: the settings refused before anything is written")
+check(system.validate_snmp({"enabled": "yes", "listen-address": "0.0.0.0",
+                            "port": "161", "enterprise-number": "70000"})
+      is None, "a PEN above 65535 is accepted: IANA assigns them (#351)")
+check(system.validate_snmp({"enterprise-number": "4294967295"}) is None,
+      "and so is the top of the arc")
+why = system.validate_snmp({"enterprise-number": "4294967296"})
+check(why == "snmp enterprise-number '4294967296': expected 1-4294967295",
+      f"one past it is refused with the range: {why!r}")
+check(system.validate_snmp({"enterprise-number": "0"}) is not None,
+      "0 is not a PEN")
+check(system.validate_snmp({"enterprise-number": ""}) is None,
+      "and no PEN at all is allowed: the enterprise objects stay dark")
+for port in ("0", "65536", "abc"):
+    check(system.validate_snmp({"port": port})
+          == f"snmp port '{port}': expected 1-65535",
+          f"port {port!r} is refused with the range")
+check(system.validate_snmp({"enabled": "maybe"})
+      == "snmp enabled 'maybe': expected yes or no", "enabled is yes or no")
+check(system.validate_snmp({"community": "public"})
+      == "'community' is not an snmp setting", "an unknown key is named")
+
+print("--- snmp_redact: communities and passphrases are passwords on the wire")
+shown = system.snmp_redact([
+    "snmp enabled yes", "snmp community s3cret", "snmp-user bob",
+    " auth sha pa55", " priv aes cr7pt", " exit", " snmp community indented",
+    " auth sha", "snmp listen-address 0.0.0.0"])
+check(shown == [
+    "snmp enabled yes", "snmp community <set, not shown>", "snmp-user bob",
+    " auth sha <set, not shown>", " priv aes <set, not shown>", " exit",
+    " snmp community <set, not shown>", " auth sha",
+    "snmp listen-address 0.0.0.0"],
+    f"the secret is replaced, the protocol and everything else kept: {shown}")
+check(not any(s in " ".join(shown) for s in ("s3cret", "pa55", "cr7pt",
+                                             "indented")),
+      "and no secret survives on the screen")
+
+print("--- _snmpd_body: the snmpd.conf this VTY owns, generated whole")
+body = system._snmpd_body(
+    {"listen-address": "10.0.0.1", "port": "1161",
+     "enterprise-number": "70000"},
+    ["public", "ops"], {"zed": system.SnmpUser("zed"),
+                        "amy": system.SnmpUser("amy")}, agent="/x/agent")
+check(body.splitlines()[1:] == [
+    "agentAddress udp:10.0.0.1:1161",
+    "view hexa included .1.3.6.1.2.1.123",
+    "view hexa included .1.3.6.1.4.1.70000",
+    "rocommunity public default -V hexa",
+    "rocommunity ops default -V hexa",
+    "rouser amy priv -V hexa",
+    "rouser zed priv -V hexa",
+    "pass_persist .1.3.6.1.2.1.123 /x/agent",
+    "pass_persist .1.3.6.1.4.1.70000 /x/agent"],
+    f"address, both views, every community, users sorted, both agents: "
+    f"{body.splitlines()}")
+check(body.endswith("\n") and "rw" not in body,
+      "ends in a newline and grants nothing writable")
+body = system._snmpd_body({}, ["public"], {})
+check("agentAddress udp:127.0.0.1:161" in body
+      and ".1.3.6.1.4.1." not in body
+      and f"pass_persist .1.3.6.1.2.1.123 {system.SNMP_AGENT}" in body,
+      f"defaults: loopback 161, no enterprise subtree, the shipped agent: "
+      f"{body.splitlines()}")
+
+print("--- User.__eq__: two accounts are equal by what they would write")
+a = account("alice", keys=["k1"], password="$6$h", role=system.ROLE_ADMIN)
+b = account("alice", keys=["k1"], password="$6$h", role=system.ROLE_ADMIN)
+check(a.__eq__(b) is True and a == b, "same name, keys, hash and role")
+check(account("alice", keys=["k2"], password="$6$h",
+              role=system.ROLE_ADMIN).__eq__(a) is False,
+      "a different key is a different account")
+check(account("alice", keys=["k1"], password="$6$h").__eq__(a) is False,
+      "and so is a different role")
+check(a.__eq__("alice") is False, "a string is not an account")
+
+print("--- System._subprocess: status and both streams, 127 and 124")
+rc, out = system.System._subprocess(
+    [sys.executable, "-c",
+     "import sys; sys.stdout.write(sys.stdin.read().upper()); "
+     "sys.stderr.write(' and stderr'); sys.exit(5)"],
+    stdin="alice:hash\n")
+check(rc == 5 and out == "ALICE:HASH\n and stderr",
+      f"stdin reaches the process, stdout and stderr come back as one text "
+      f"with the status: {(rc, out)}")
+rc, out = system.System._subprocess(["/nonexistent/hexa-390-useradd", "x"])
+check(rc == 127 and out == "/nonexistent/hexa-390-useradd: not found",
+      f"a binary that is not there is 127: {(rc, out)}")
+rc, out = system.System._subprocess(
+    [sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.5)
+check(rc == 124 and "timed out" in out, f"a hang is 124: {(rc, out)}")
+
+print("--- System._read_groups: member lists and primary groups, apart")
+box = Box()
+box.write("/etc/group", "root:x:0:\nhexa-admin:x:1001:alice,bob\n"
+                        "hexa-cgnat:x:1002:\nstaff:x:50:alice\nbroken\n")
+members, gid_group = box.sys._read_groups()
+check(members == {"alice": {"hexa-admin", "staff"}, "bob": {"hexa-admin"}},
+      f"name to the groups listing it, empty lists adding nobody: {members}")
+check(gid_group == {"0": "root", "1001": "hexa-admin", "1002": "hexa-cgnat",
+                    "50": "staff"},
+      f"gid to name, the broken line skipped: {gid_group}")
+check(Box().sys._read_groups() == ({}, {}),
+      "no /etc/group is nobody in nothing, not an exception")
+
+print("--- System._read_keys: authorized_keys, comments and blanks out")
+box = Box()
+box.write("/home/alice/.ssh/authorized_keys",
+          "# a comment\n\nssh-ed25519 AAAA one\n  ssh-rsa BBBB two  \n")
+keys = box.sys._read_keys("/home/alice")
+check(keys == ["ssh-ed25519 AAAA one", "ssh-rsa BBBB two"],
+      f"the keys, stripped, and nothing else: {keys}")
+check(box.sys._read_keys("/home/nobody") == [], "no file is no keys")
+
+print("--- System.write_ssh: written, validated, put back on refusal")
+WANT = {"port": "2222", "listen-address": "10.0.0.1",
+        "permit-root-login": "no", "password-authentication": "no"}
+box = Box()
+rv = box.sys.write_ssh(WANT)
+check(rv == (True, ""), f"valid and reloaded: {rv}")
+first = box.read(system.SSHD_DROPIN)
+check(first == "# Generated by hexash. Edit through the VTY, not here.\n"
+               "Port 2222\nListenAddress 10.0.0.1\nPermitRootLogin no\n"
+               "PasswordAuthentication no\n",
+      f"the drop-in holds the four settings: {first!r}")
+check(box.asked == [["sshd", "-t"], ["systemctl", "reload", "ssh"]],
+      f"sshd was asked to check it, then to reload: {box.asked}")
+box.answers[("sshd", "-t")] = (255, "bad directive line 3")
+del box.asked[:]
+rv = box.sys.write_ssh(dict(WANT, port="2223"))
+check(rv[0] is False and "nothing was applied" in rv[1]
+      and "bad directive" in rv[1],
+      f"sshd -t refusing it is a refusal that quotes sshd: {rv}")
+check(box.read(system.SSHD_DROPIN) == first,
+      "and the previous drop-in is back, byte for byte")
+check(["systemctl", "reload", "ssh"] not in box.asked,
+      f"and nothing was reloaded: {box.asked}")
+fresh = Box({("sshd", "-t"): (255, "bad")})
+fresh.sys.write_ssh(WANT)
+check(fresh.read(system.SSHD_DROPIN) is None,
+      "a box that had no drop-in has none after a refusal")
+box = Box({("sshd", "-t"): (127, "sshd: not found")})
+rv = box.sys.write_ssh(WANT)
+check(rv == (True, "sshd is not installed: written but not validated")
+      and box.read(system.SSHD_DROPIN) == first
+      and ["systemctl", "reload", "ssh"] not in box.asked,
+      f"no sshd: written, said so, no reload: {rv} {box.asked}")
+box = Box({("systemctl", "reload"): (1, "Job for ssh.service failed")})
+rv = box.sys.write_ssh(WANT)
+check(rv[0] is True and "did not reload" in rv[1] and "ssh.service" in rv[1],
+      f"a reload that failed is written and valid, and says so: {rv}")
+box = Box()
+rv = box.sys.write_ssh({"port": "99999"})
+check(rv == (False, "ssh port '99999': expected 1-65535")
+      and box.asked == [] and box.read(system.SSHD_DROPIN) is None,
+      f"an invalid setting: refused before anything is written or asked: "
+      f"{rv} {box.asked}")
+
+print("--- System._apply_groups: the memberships a role implies, both ways")
+GROUPS = ("hexa-admin:x:1001:alice\nhexa-cgnat:x:1002:alice\nvpp:x:1003:\n"
+          "frr:x:1004:alice\nfrrvty:x:1005:alice\nsudo:x:27:alice\n")
+box = Box()
+box.write("/etc/group", GROUPS)
+rv = box.sys._apply_groups("alice", system.ROLE_CGNAT)
+check(rv[:2] == (True, ""), f"a demotion to cgnat operator: {rv}")
+check(sorted(box.asked) == [["gpasswd", "-a", "alice", "vpp"],
+                            ["gpasswd", "-d", "alice", "hexa-admin"]],
+      f"leaves hexa-admin, joins the reach group it lacked, and touches "
+      f"neither sudo nor what it already holds: {box.asked}")
+check(sorted(rv[2]) == ["alice: added to group vpp",
+                        "alice: removed from group hexa-admin"],
+      f"and says both: {rv[2]}")
+box = Box()
+box.write("/etc/group", GROUPS)
+rv = box.sys._apply_groups("alice", "")
+check(sorted(a[1:] for a in box.asked)
+      == [["-a", "alice", "vpp"], ["-d", "alice", "hexa-admin"],
+          ["-d", "alice", "hexa-cgnat"]],
+      f"read-only: both role groups left, the reach groups kept: {box.asked}")
+box = Box()
+box.write("/etc/group", GROUPS)
+rv = box.sys._apply_groups("bob", system.ROLE_ADMIN)
+check(box.asked == [["gpasswd", "-a", "bob", g]
+                    for g in system.MANAGED_GROUPS] and rv[0] is True,
+      f"a new administrator joins every managed group, in order: "
+      f"{box.asked}")
+box = Box({("gpasswd", "-a", "bob", "hexa-admin"):
+           (1, "gpasswd: group 'hexa-admin' does not exist")})
+box.write("/etc/group", GROUPS)
+rv = box.sys._apply_groups("bob", system.ROLE_ADMIN)
+check(rv[0] is False and "cannot join group hexa-admin" in rv[1]
+      and "does not exist" in rv[1],
+      f"a role group that cannot be joined fails the change: {rv}")
+box = Box({("gpasswd", "-a", "bob", "frrvty"):
+           (1, "gpasswd: group 'frrvty' does not exist")})
+box.write("/etc/group", GROUPS)
+rv = box.sys._apply_groups("bob", system.ROLE_CGNAT)
+check(rv[0] is True and any("frrvty" in m and "cannot use" in m
+                            for m in rv[2]),
+      f"a reach group that cannot be joined is said and does not stop the "
+      f"account: {rv}")
+
+print("--- System._write_keys: the file, its mode, and the home it goes to")
+box = Box()
+rv = box.sys._write_keys("alice", ["ssh-ed25519 A one", "ssh-rsa B two"])
+check(rv == (True, "") and box.read("/home/alice/.ssh/authorized_keys")
+      == "ssh-ed25519 A one\nssh-rsa B two\n",
+      f"one key per line under the account's home: {rv}")
+check(box.mode("/home/alice/.ssh/authorized_keys") == 0o600
+      and box.mode("/home/alice/.ssh") == 0o700,
+      "0600 on the file, 0700 on the directory, or sshd ignores them")
+box.sys._write_keys("root", ["ssh-ed25519 R"])
+check(box.read("/root/.ssh/authorized_keys") == "ssh-ed25519 R\n",
+      "root's home is /root, not /home/root")
+box.sys._write_keys("alice", [])
+check(box.read("/home/alice/.ssh/authorized_keys") == "",
+      "no keys writes an empty file: a removal, not a leftover")
+blocked = os.path.join(box.root, "not-a-dir")
+with open(blocked, "w") as f:
+    f.write("")
+rv = system.System(runner=box.run, root=blocked)._write_keys("alice", ["k"])
+check(rv[0] is False and rv[1].startswith("authorized_keys for alice: "),
+      f"a home that cannot be made is a refusal naming the account: {rv}")
+
+print("--- SnmpUser.__init__ and __eq__: a v3 user, equal by its lines")
+u = system.SnmpUser("bob")
+check(u.name == "bob" and u.auth == "" and u.priv == ""
+      and u.lines() == ["snmp-user bob", " exit"],
+      f"a new user has a name and no protocols: {u.lines()}")
+v = system.SnmpUser("bob")
+check(u.__eq__(v) is True and u == v, "two bare users of one name are equal")
+v.priv = "aes cr7pt"
+check(u.__eq__(v) is False, "a priv passphrase makes them differ")
+check(u.__eq__(system.SnmpUser("bab")) is False, "and so does the name")
+check(u.__eq__("bob") is False, "a string is not a user")
+
+print("--- SnmpDaemon.__init__: the conf under the root, the runner injected")
+box = Box()
+d = system.SnmpDaemon(runner=box.run, root=box.root)
+check(d.root == box.root and d.conf == box.root + system.SNMPD_CONF
+      and d.agent == system.SNMP_AGENT,
+      f"conf under the root, the shipped agent: {d.conf}")
+d._run(["systemctl", "is-active", "snmpd"])
+check(box.asked == [["systemctl", "is-active", "snmpd"]],
+      f"commands go through the injected runner: {box.asked}")
+d = system.SnmpDaemon(runner=box.run, root=box.root, conf="/etc/snmp/o.conf",
+                      agent="/x/agent")
+check(d.conf == box.root + "/etc/snmp/o.conf" and d.agent == "/x/agent",
+      "a conf and an agent named are taken, the conf still under the root")
+
+print("--- SnmpDaemon._create_v3_users: net-snmp's store, appended once")
+box = Box()
+d = system.SnmpDaemon(runner=box.run, root=box.root)
+bob = system.SnmpUser("bob")
+bob.auth, bob.priv = "sha pw1", "aes pw2"
+carol = system.SnmpUser("carol")
+carol.auth = "sha p"
+dan = system.SnmpUser("dan")
+STORE = "/var/lib/snmp/snmpd.conf"
+d._create_v3_users({"dan": dan, "carol": carol, "bob": bob})
+check(box.read(STORE) == 'createUser bob SHA "pw1" AES "pw2"\n'
+                         'createUser carol SHA "p"\n',
+      f"a createUser per user with an auth passphrase, sorted, priv when "
+      f"set, and none for a user with no auth: {box.read(STORE)!r}")
+check(box.mode(STORE) == 0o600, "0600: the passphrases are in it")
+d._create_v3_users({"bob": bob, "carol": carol})
+check(box.read(STORE).count("createUser bob ") == 1,
+      "a second apply does not create the user twice")
+box.write(STORE, 'usmUser 1 3 0x80001f88 "bob" "bob" NULL .1.3.6.1.6.3.10\n')
+eve = system.SnmpUser("eve")
+eve.auth = "sha e"
+d._create_v3_users({"bob": bob, "eve": eve})
+check(box.read(STORE) == 'usmUser 1 3 0x80001f88 "bob" "bob" NULL '
+                         '.1.3.6.1.6.3.10\ncreateUser eve SHA "e"\n',
+      f"a user net-snmp already rewrote is skipped, the new one appended: "
+      f"{box.read(STORE)!r}")
+
+print()
 if fail:
     print(f"{fail} FAILURES")
     sys.exit(1)

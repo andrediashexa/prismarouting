@@ -87,7 +87,9 @@ MARKER = "not a unit:"
 # issue's own grep said 447, 201 and 56: it did not see nested defs, C names
 # with a digit in them, or that fourteen of the shell functions belong to
 # harness files. These go down with every batch of #390 and never up.
-UNTESTED_AT_MOST = {"python": 272, "c": 195, "shell": 36}
+# 2026-09-17, #390 batch B: 246 python, vppapi.py and system.py at 0 with
+# Reply.ok excused (a property is read, not called).
+UNTESTED_AT_MOST = {"python": 246, "c": 195, "shell": 36}
 MEASURED_ON = "2026-09-17"
 
 # A parse that came back nearly empty would make every count below small and
