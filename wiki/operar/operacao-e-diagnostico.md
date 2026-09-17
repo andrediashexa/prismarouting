@@ -267,20 +267,32 @@ O tuning roda em todo boot justamente para que uma mudança em `tune.env` ou uma
 O autoteste lê, do dataplane em execução, quantas filas de recepção cada placa realmente abriu, e compara com o que o ajuste de boot pediu para aquela placa:
 
 ```
-  [ ok ] rx queues: 1 of 1 on GigabitEthernet0/9/0, as requested (1)
+  [ ok ] rx queues: 1 of 1 on ens9, as requested (1)
 ```
 
-`1 of 1` é o que a placa abriu e o máximo que ela tem; o nome é o que o dataplane dá à placa. Quando o que foi aberto difere do pedido, a linha vira aviso e diz por que isso importa:
+`1 of 1` é o que a placa abriu e o máximo que ela tem; o nome é o que o dataplane dá à placa, que é o nome que ela tinha no Linux. Quando o que foi aberto difere do pedido, a linha vira aviso e diz por que isso importa:
 
 ```
-  [warn] rx queues: 1 of 1 on GigabitEthernet0/9/0, not the 4 requested
-         the dataplane opened a different count than the tuner
-         asked for, and the tuner sized its worker count on the
-         request: only 1 worker(s) receive from this card, and
-         any worker past that polls an empty queue.
+  [warn] rx queues: 1 of 1 on ens9, 4 requested
+         the tuner asked for one queue per worker, capped at
+         what the card reported, and the dataplane opened 1:
+         at most 1 worker(s) receive from this card, and the
+         other workers receive nothing from it.
 ```
 
-Uma placa com menos filas do que o pedido entrega o que tem, e o ajuste de boot dimensionou os workers pelo pedido: só um worker recebe dessa placa e os outros ficam varrendo uma fila vazia. A caixa encaminha, mas com uma fração do que o processador poderia fazer. Há um caso pior, em que a placa recusa a interface inteira — sete filas pedidas numa placa que tem uma — e esse aparece como interface em estado `error`, algumas linhas abaixo.
+O ajuste de boot dimensiona os workers pelo processador e pede uma fila por worker, limitado ao que a placa informou. Cada fila é entregue a um worker: uma placa com menos filas do que o pedido entrega o que tem, só esse número de workers recebe dela, e os outros não recebem nada dessa placa. A caixa encaminha, mas com uma fração do que o processador poderia fazer.
+
+Há um caso pior: o driver recusa a placa e não abre fila nenhuma, embora o dataplane ainda liste a contagem com que ela foi configurada. O autoteste lê o estado do driver junto com a contagem e trata isso como falha, não como fila aberta:
+
+```
+  [FAIL] rx queues: none opened on ens9
+        'show hardware-interfaces' marks the card pmd-init-fail, so the
+        1 of 1 it lists were configured and never opened:
+        the driver refused the port and the card carries no
+        traffic. 'journalctl -u vpp' has the driver's reason.
+```
+
+Essa mesma placa aparece como interface em estado `error`, algumas linhas abaixo.
 
 A palavra `requested` fica só para a caixa em que nada pôde ser lido. O número é o que foi **pedido**, e a linha de baixo diz que é só isso:
 
@@ -290,7 +302,7 @@ A palavra `requested` fica só para a caixa em que nada pôde ser lido. O númer
          answering, so the count in effect is unknown on this box.
 ```
 
-Numa caixa que não pediu nada e cujo dataplane não tem placa que reporte filas (o perfil de primeiro boot, sem DPDK), a linha diz isso por extenso em vez de sair vazia:
+Numa caixa que não entregou placa nenhuma ao dataplane, e por isso não pediu nada, a linha diz isso por extenso em vez de sair vazia:
 
 ```
   [ ok ] rx queues requested: default (1 per interface, one worker takes all)

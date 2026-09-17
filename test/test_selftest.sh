@@ -1258,71 +1258,96 @@ echo "=== the rx-queues row reads what the dataplane OPENED, per card (#345) ===
 # THE CARD'S OWN ANSWER, and not the file's. The row above is the tuner's
 # request; this one is read off `show hardware-interfaces`, which is the only
 # thing on the box that knows how many queues the DPDK driver opened. The
-# listing below is what the guest lab/install-iso.sh boots printed on
-# 2026-09-16 - a virtio card on uio_pci_generic - with the queue rows kept
-# verbatim and the driver's offload rows dropped. The pci row is kept because
-# it is what pairs the card to its own `dev` stanza in startup.conf.
+# listing the guest lab/install-iso.sh boots printed on 2026-09-16 - a virtio
+# card on uio_pci_generic, captured before #389 gave the card its Linux name,
+# so the dataplane still calls it by its bus address - is quoted VERBATIM
+# further down, and it is a card the driver REFUSED. That is the only listing
+# this guest has printed so far. The boxes here that hold a card the driver
+# accepted print that same listing with the refusal's rows taken out: no
+# `flags: pmd-init-fail`, no `Errors:` block, and `carrier up` where the
+# guest said `carrier down` - a row nothing reads, on a card the guest has
+# not shown yet. The pci row is kept because it is what pairs the card to
+# its own `dev` stanza in startup.conf, and the RX/TX Queues tables because
+# the guest prints them and the reader has to walk past them.
 #
 # Every box here also lists the card in `show interface`, so the NIC check
 # further down reads a dataplane that holds it rather than failing over a card
 # named and absent - which would be a different box.
-hw_box() {  # <rx: queues row> ... -> the fake dataplane's listing, one card
+hw_box() {  # <name> <rx: queues row> -> the fake dataplane's listing, one card
   {
     echo '              Name                Idx   Link  Hardware'
-    echo 'GigabitEthernet0/9/0               1     up   GigabitEthernet0/9/0'
+    printf '%-34s 1     up   %s\n' "$1" "$1"
     echo '  Link speed: unknown'
+    echo '  RX Queues:'
+    echo '    queue thread         mode      '
+    echo '    0     vpp_wk_0 (1)   polling   '
+    echo '  TX Queues:'
+    echo '    TX Hash: [name: hash-eth-l34 priority: 50 description: Hash ethernet L34 headers]'
+    echo '    queue shared thread(s)      '
+    echo '    0     yes    0-1'
     echo '  Ethernet address 52:54:00:12:34:56'
     echo '  Red Hat Virtio'
-    echo '    carrier up full duplex mtu 9206'
-    echo "    $1"
+    echo '    carrier up '
+    echo '    Devargs: '
+    echo "    $2"
     echo '    tx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
     echo '    pci: device 1af4:1000 subsystem 1af4:0001 address 0000:00:09.00 numa 0'
     echo 'local0                             0    down  local0'
     echo '  Link speed: unknown'
     echo '  local'
   } > "$FAKE/show_hardware"
-  cat > "$FAKE/show_interface" <<'IFACE'
-              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
-GigabitEthernet0/9/0              1      up          9000/0/0/0
-local0                            0     down          0/0/0/0
-IFACE
+  { echo '              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count'
+    printf '%-33s 1      up          9000/0/0/0\n' "$1"
+    echo 'local0                            0     down          0/0/0/0'
+  } > "$FAKE/show_interface"
 }
-rxq_box() {  # <num-rx-queues asked for 0000:00:09.0>
+rxq_box() {  # <num-rx-queues asked for 0000:00:09.0, named ens9>
   mkcpus "1-3" "0-3" "1-3" 0 1 2 3
-  printf 'dpdk {\n  dev 0000:00:09.0 {\n    num-rx-queues %s\n    num-tx-queues %s\n  }\n  dev default {\n    num-rx-queues %s\n  }\n}\n' \
+  printf 'dpdk {\n  dev 0000:00:09.0 {\n    name ens9\n    num-rx-queues %s\n    num-tx-queues %s\n  }\n  dev default {\n    num-rx-queues %s\n  }\n}\n' \
     "$1" "$1" "$1" >> "$FAKE/root/etc/vpp/startup.conf"
   : > "$FAKE/vppctl_ok"
 }
 # A card that opened FEWER than asked: the shape of #330, one step short of
 # the refusal. Four were asked for, the card has one, and the box forwards on
-# one queue with three workers polling nothing.
+# one queue: one worker receives from the card and the other three receive
+# nothing from it.
 rxq_box 4
-hw_box 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
+hw_box ens9 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
 run
-if said '\[warn\] rx queues: 1 of 1 on GigabitEthernet0/9/0, not the 4 requested'; then
+if said '\[warn\] rx queues: 1 of 1 on ens9, 4 requested'; then
   ok "a card that opened fewer queues than asked is a warning naming both"
 else
   bad "a card with 1 queue asked for 4 was not warned about: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
 fi
 # AND WHY IT MATTERS. The number alone is a curiosity; what the operator needs
-# is that the tuner sized the workers on the request, so the box is polling
-# with workers that receive nothing.
-if said 'tuner sized its worker count on the'; then
-  ok "and it says the worker count was sized on the request"
+# is that the tuner asked for one queue per worker and a worker with no queue
+# on this card receives nothing from it. NOT "polls an empty queue": VPP gives
+# each queue to one worker, and a worker with no queue on a card polls
+# nothing for it. The tuner's docstring has it right and the first draft of
+# this row copied the wrong sentence.
+if said 'one queue per worker' && said 'other workers receive nothing from it'; then
+  ok "and it says the request was one queue per worker, and what the gap costs"
 else
-  bad "the warning does not say what the gap costs: $(printf '%s\n' "$OUTPUT" | grep -A3 'rx queues:' || echo '<nothing>')"
+  bad "the warning does not say what the gap costs: $(printf '%s\n' "$OUTPUT" | grep -A4 'rx queues:' || echo '<nothing>')"
+fi
+if said 'polls an empty'; then
+  bad "and it says a worker polls an empty queue, which VPP never gives one: $(printf '%s\n' "$OUTPUT" | grep 'polls an empty')"
+else
+  ok "and no row says a worker polls a queue it was never given"
 fi
 if said '\[ ok \] rx queues'; then
   bad "and the same box was ALSO told its queues are fine: $(printf '%s\n' "$OUTPUT" | grep '\[ ok \] rx queues')"
 else
   ok "and no green rx-queues row stands beside the warning"
 fi
-# A card that opened WHAT WAS ASKED. This is the guest as it was captured:
-# the tuner read one TX queue off the virtio card and asked for one.
+# A card that opened WHAT WAS ASKED: the tuner read one TX queue off the
+# virtio card and asked for one, and the driver took the card. The guest has
+# not printed this listing yet (see above); the lab reads the guest's own row
+# beside this one when it does.
 rxq_box 1
-hw_box 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
+hw_box ens9 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
 run
-if said '\[ ok \] rx queues: 1 of 1 on GigabitEthernet0/9/0, as requested \(1\)'; then
+if said '\[ ok \] rx queues: 1 of 1 on ens9, as requested \(1\)'; then
   ok "a card that opened what was asked is reported with the count and the max"
 else
   bad "a card that opened its request was not reported so: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
@@ -1332,6 +1357,120 @@ if said '\[warn\] rx queues'; then
 else
   ok "and nothing warned about a card that did what it was asked"
 fi
+# THE GUEST AS IT WAS CAPTURED, verbatim, CR LF and all: `carrier down`,
+# `flags: pmd-init-fail`, an `Errors:` block naming rte_eth_rx_queue_setup
+# errno -22 - and `rx: queues 1 (max 1)` printed under all of it, with
+# `show interface` holding the port in `error` state. The queue row alone
+# says this card opened one queue as requested, and the first reader here
+# said exactly that: a green row over a card that opened nothing, which is
+# the #330 outcome this row exists to stop printing. The card is named by
+# its bus address because the capture predates #389, and that is the one
+# fixture here for a card nobody named: the reader is the same either way.
+rxq_box 1
+sed -i '/^    name ens9$/d' "$FAKE/root/etc/vpp/startup.conf"
+sed 's/$/\r/' > "$FAKE/show_hardware" <<'HW'
+              Name                Idx   Link  Hardware
+GigabitEthernet0/9/0               1    down  GigabitEthernet0/9/0
+  Link speed: unknown
+  RX Queues:
+    queue thread         mode      
+    0     vpp_wk_0 (1)   polling   
+  TX Queues:
+    TX Hash: [name: hash-eth-l34 priority: 50 description: Hash ethernet L34 headers]
+    queue shared thread(s)      
+    0     yes    0-1
+  Ethernet address 52:54:00:12:34:56
+  Red Hat Virtio
+    carrier down 
+    flags: pmd-init-fail
+    Devargs: 
+    rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)
+    tx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)
+    pci: device 1af4:1000 subsystem 1af4:0001 address 0000:00:09.00 numa 0
+    max rx packet len: 9728
+    promiscuous: unicast off all-multicast off
+    vlan offload: strip off filter off qinq off
+    rx offload avail:  vlan-strip vlan-filter scatter 
+    rx offload active: none
+    tx offload avail:  vlan-insert multi-segs 
+    tx offload active: none
+    rss avail:         none
+    rss active:        none
+    tx burst function: (not available)
+    rx burst function: (not available)
+  Errors:
+    rte_eth_tx_queue_setup[port:0, errno:-22]: Unknown error -22
+  rte_eth_rx_queue_setup[port:0, errno:-22]: Unknown error -22
+
+local0                             0    down  local0
+  Link speed: unknown
+  local
+tap4096                            2     up   tap4096
+  Link speed: unknown
+  RX Queues:
+    queue thread         mode      
+    0     vpp_wk_0 (1)   polling   
+  TX Queues:
+    TX Hash: [name: hash-eth-l34 priority: 50 description: Hash ethernet L34 headers]
+    queue shared thread(s)      
+    0     no     0
+    1     no     1
+  Ethernet address 02:fe:d7:00:54:c4
+  VIRTIO interface
+     instance 0
+       RX QUEUE : Total Packets
+              0 : 0
+       TX QUEUE : Total Packets
+              0 : 0
+              1 : 0
+HW
+sed 's/$/\r/' > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count     
+GigabitEthernet0/9/0              1     error        9000/0/0/0     tx-error                       1
+local0                            0     down          0/0/0/0       drops                          1
+tap4096                           2      up          9000/0/0/0     
+IFACE
+run
+if said '\[FAIL\] rx queues: none opened on GigabitEthernet0/9/0'; then
+  ok "the guest's own card, refused by its driver, is a failure that says so"
+else
+  bad "the card the guest's driver refused was reported: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
+if said 'marks the card pmd-init-fail' && said 'configured and never opened'; then
+  ok "and it names the driver's own flag, and that the count was never opened"
+else
+  bad "the row under it does not name the state: $(printf '%s\n' "$OUTPUT" | grep -A4 'rx queues' || echo '<nothing>')"
+fi
+if said 'rx queues: .*as requested'; then
+  bad "and the dead card was ALSO told it opened its request, which is #330 again: $(printf '%s\n' "$OUTPUT" | grep 'as requested')"
+else
+  ok "and no row says the dead card opened what was requested"
+fi
+# The same card with the flag gone and the Errors block still there, which is
+# what a driver that names no flag prints: read the block, not only the flag.
+sed -i '/flags: pmd-init-fail/d' "$FAKE/show_hardware"
+run
+if said '\[FAIL\] rx queues: none opened on GigabitEthernet0/9/0' \
+   && said 'marks the card errors'; then
+  ok "and an Errors: block with no flag under it is read as the refusal too"
+else
+  bad "a card with an Errors: block and no flag was reported: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
+# A CARD NOBODY ASKED ANYTHING OF. A stanza with no num-rx-queues and no
+# `dev default` is a hand-edited file, and VPP opens its own default of one:
+# the row must not call that "as requested", because nobody requested it.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+printf 'dpdk {\n  dev 0000:00:09.0 {\n    name ens9\n  }\n}\n' \
+  >> "$FAKE/root/etc/vpp/startup.conf"
+: > "$FAKE/vppctl_ok"
+hw_box ens9 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
+run
+if said '\[ ok \] rx queues: 1 of 1 on ens9, none requested' \
+   && said_across 'VPP opened its own default of 1\.'; then
+  ok "a card with no request in the file is judged against VPP's default of 1"
+else
+  bad "a card nobody asked anything of was reported: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
 # THE REQUEST IS PER CARD, paired by PCI address. The tuner caps each card at
 # what it can do, so a two-card box carries two different requests and the
 # first num-rx-queues in the file is one card's. Reading it for both would
@@ -1339,11 +1478,11 @@ fi
 # function as two hex digits where the file prints one - so the pairing has
 # to survive that too.
 mkcpus "1-3" "0-3" "1-3" 0 1 2 3
-printf 'dpdk {\n  dev 0000:00:09.0 {\n    num-rx-queues 1\n    num-tx-queues 1\n  }\n  dev 0000:00:0a.0 {\n    num-rx-queues 4\n    num-tx-queues 4\n  }\n  dev default {\n    num-rx-queues 1\n  }\n}\n' \
+printf 'dpdk {\n  dev 0000:00:09.0 {\n    name ens9\n    num-rx-queues 1\n    num-tx-queues 1\n  }\n  dev 0000:00:0a.0 {\n    name ens10\n    num-rx-queues 4\n    num-tx-queues 4\n  }\n  dev default {\n    num-rx-queues 1\n  }\n}\n' \
   >> "$FAKE/root/etc/vpp/startup.conf"
 : > "$FAKE/vppctl_ok"
-hw_box 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
-{ echo 'TenGigabitEthernet0/a/0            2     up   TenGigabitEthernet0/a/0'
+hw_box ens9 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
+{ echo 'ens10                              2     up   ens10'
   echo '  Link speed: 10 Gbps'
   echo '  Intel 82599'
   echo '    rx: queues 4 (max 8), desc 512 (min 32 max 4096 align 8)'
@@ -1351,12 +1490,12 @@ hw_box 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
   echo '    pci: device 8086:10fb subsystem 8086:0003 address 0000:00:0a.00 numa 0'
 } >> "$FAKE/show_hardware"
 run
-if said '\[ ok \] rx queues: 4 of 8 on TenGigabitEthernet0/a/0, as requested \(4\)'; then
+if said '\[ ok \] rx queues: 4 of 8 on ens10, as requested \(4\)'; then
   ok "the second card is judged against its own stanza, not the first one's"
 else
   bad "a card that opened its own request was judged against another's: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queues' || echo '<nothing>')"
 fi
-if said '\[ ok \] rx queues: 1 of 1 on GigabitEthernet0/9/0, as requested \(1\)'; then
+if said '\[ ok \] rx queues: 1 of 1 on ens9, as requested \(1\)'; then
   ok "and the first card is still judged against its own"
 else
   bad "the first card's row went: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queues' || echo '<nothing>')"
@@ -1390,9 +1529,11 @@ else
 fi
 # And a dataplane that ANSWERS and holds no card that reports queues, which
 # is every lab's pg0 - the listing is the one #345 measured in the dev
-# container - and every box on the first-boot profile. There is no count in
-# effect on such a box, and the row says which box it is rather than reading
-# as one where the reading failed.
+# container - and the box with no claimed card, whose file has no `dev`
+# stanza and so no request either (the racking-day box further down prints
+# the `default` screen for it; a FIRST BOOT profile never reaches this row).
+# There is no count in effect on such a box, and the row says which box it
+# is rather than reading as one where the reading failed.
 : > "$FAKE/vppctl_ok"
 cat > "$FAKE/show_hardware" <<'HW'
               Name                Idx   Link  Hardware
@@ -3367,7 +3508,7 @@ $(printf '%s\n' "$OUTPUT" | grep '\[FAIL\]')"
 else
   ok "nothing on it failed"
 fi
-if said '\[warn\] rx queues: 1 of 8 on TenGigabitEthernet3/0/0, not the 4 requested'; then
+if said '\[warn\] rx queues: 1 of 8 on TenGigabitEthernet3/0/0, 4 requested'; then
   ok "and the card that opened 1 of the 4 asked is a warning"
 else
   bad "the card's row: $(printf '%s\n' "$OUTPUT" | grep 'rx queues' || echo '<nothing>')"

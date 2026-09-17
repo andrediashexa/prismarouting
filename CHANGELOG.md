@@ -94,39 +94,67 @@ version has a chance of seeing it.
   interface, and this row printed green about seven queues over a box with
   no dataplane at all. The row is now read off `vppctl show
   hardware-interfaces`, which prints `rx: queues N (max M)` under every DPDK
-  device, and says `rx queues: 1 of 1 on GigabitEthernet0/9/0, as requested
-  (1)`, naming the card as the dataplane names it. A card that opened a
-  different count than the tuner asked for is a `[warn]` naming both
-  numbers and what the gap costs: the tuner sized its worker count on the
-  request, so only as many workers as there are queues receive from that
-  card and the rest poll an empty ring. Each card is judged against its OWN
-  `dev` stanza, paired by PCI address, because the tuner caps the request
-  per card and the first `num-rx-queues` in the file is one card's request
-  and not the box's; VPP prints the function as two hex digits where the
-  file prints one, and both are read as a number before they are compared.
+  device, and says `rx queues: 1 of 1 on ens9, as requested (1)`, naming
+  the card as the dataplane names it, which since
+  [#389](https://github.com/andrediashexa/hexarouting/issues/389) is its
+  Linux name. A card that opened a different count than the tuner asked for
+  is a `[warn]` naming both numbers and what the gap costs: the tuner
+  sizes its workers on the CPUs and asks for one queue per worker, capped
+  at what the card reported, and VPP gives each queue to one worker, so
+  only as many workers as there are queues receive from that card and the
+  other workers receive nothing from it. Each card is judged against its
+  OWN `dev` stanza, paired by PCI address, because the tuner caps the
+  request per card and the first `num-rx-queues` in the file is one card's
+  request and not the box's; VPP prints the function as two hex digits
+  where the file prints one, and both are read as a number before they are
+  compared. A stanza with no request at all is judged against VPP's own
+  default of one, and the row says `none requested` rather than `as
+  requested` over a number nobody asked for.
+
+  The count alone is what VPP was configured with, not what it opened,
+  and the capture this reader was written from proves it: the guest's card
+  was refused by its driver, `carrier down`, `flags: pmd-init-fail`, an
+  `Errors:` block naming `rte_eth_rx_queue_setup` errno -22, and the
+  listing still printed `rx: queues 1 (max 1)`. Read by the count alone, a
+  dead card was `as requested`, which is the #330 row again. So the flags
+  and `Errors:` rows under a card are read with its count, and a card in
+  that state is a `[FAIL] rx queues: none opened on <card>` naming the
+  driver's flag: it forwards nothing, and the row must not say otherwise.
 
   The word `requested` is kept for exactly the box where nothing could be
   read, and the row under it says which box that is: a dataplane that is
   not answering, or one that answers and holds no card that reports queues
-  (the first-boot profile with DPDK off, or a lab's `pg0`). This is
-  deliberately `show hardware-interfaces` where the worker-core readback
-  deliberately refuses `show threads`: that one asks whether the kernel
-  agrees with VPP, and this asks whether the dataplane opened what it was
-  asked for, which only VPP can answer.
+  (the box with no claimed card, which has no `dev` stanza and so no
+  request either, or a lab's `pg0`). This is deliberately `show
+  hardware-interfaces` where the worker-core readback deliberately refuses
+  `show threads`: that one asks whether the kernel agrees with VPP, and
+  this asks whether the dataplane opened what it was asked for, which only
+  VPP can answer.
 
   The format is not fabricated: it is the listing captured off the guest
   `lab/install-iso.sh` booted on 2026-09-16, a virtio card on
-  `uio_pci_generic`, and `test/test_selftest.sh` quotes it for a card that
-  opened fewer queues than asked, one that opened what was asked, a two-card
-  box whose second card would be wrongly warned about if it were judged
-  against the first card's request, a dataplane that cannot be asked and a
-  `pg0`-only one. Shown red five ways: the reader not recognising the row,
-  the comparison passing every count, the pairing reading the first request
-  for every card, the fallback reporting a silent dataplane as one with no
-  card, and the warning printed from a pipeline's subshell, where the
-  closing row's count never learns of it. The proof on a booted box is
-  written into `lab/install-iso.sh`
-  and not yet run: the box's own `rx: queues` rows are read beside the
+  `uio_pci_generic`, before #389 gave the card its Linux name, and
+  `test/test_selftest.sh` quotes it verbatim, CR LF and all, for the card
+  the driver refused, which is also the one fixture for a card the
+  dataplane names by its bus address. The boxes whose driver accepted the
+  card print that listing with the refusal's rows taken out, a shape the
+  guest has not printed yet. Quoted for a card that opened fewer queues
+  than asked, one that opened what was asked, the refused card with and
+  without its flag, a card nobody asked anything of, a two-card box whose
+  second card would be wrongly warned about if it were judged against the
+  first card's request, a dataplane that cannot be asked and a `pg0`-only
+  one. Shown red eleven ways: the reader not recognising the row, the
+  flag not read, the `Errors:` block not read, the refused card's branch
+  skipped, the CR left on the rows, VPP's default read as seven, the
+  wording naming a worker polling an empty queue, the comparison passing
+  every count, the pairing reading the first request for every card, the
+  fallback reporting a silent dataplane as one with no card, and the
+  warning printed from a pipeline's subshell, where the closing row's
+  count never learns of it. The proof
+  on a booted box is written into `lab/install-iso.sh` and not yet run: a
+  card the dataplane holds in `error` state fails the block whatever its
+  queue row says, and reports whether the self-test said so too; on a card
+  that started, the box's own `rx: queues` rows are read beside the
   self-test's, per card, and the lab fails when they disagree or when the
   self-test fell back to `requested` on a box holding a card. The operator
   page that quotes this screen shows the new rows.

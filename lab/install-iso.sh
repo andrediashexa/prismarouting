@@ -1346,12 +1346,14 @@ drive_console() {
   send 'echo "HX""LAB claim-dpif=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ && \$1 != \"Name\" && \$1 != \"local0\" {split(\$4, m, \"/\"); print \$1 \":\" \$3 \":\" m[1]}" | tr "\n" " ")"'
   wait_for "HXLAB claim-dpif=" 60 \
     "the dataplane to list the interfaces it holds unbidden" || return 1
-  # AND HOW MANY RX QUEUES IT OPENED ON EACH, from the one place that knows
-  # (#345): `show hardware-interfaces` prints `rx: queues N (max M)` under
-  # every DPDK device and nothing of the kind for a pg interface, which is
-  # why the self-test's reader waited for this guest. Asked here so that the
-  # self-test's own row can be checked against the dataplane's answer rather
-  # than against a fixture: name:opened:max per card, one card per token.
+  # AND HOW MANY RX QUEUES IT WAS CONFIGURED WITH ON EACH, from the one place
+  # that knows (#345): `show hardware-interfaces` prints `rx: queues N (max
+  # M)` under every DPDK device and nothing of the kind for a pg interface,
+  # which is why the self-test's reader waited for this guest. Asked here so
+  # that the self-test's own row can be checked against the dataplane's
+  # answer rather than against a fixture: name:opened:max per card, one card
+  # per token. "Opened" only for a card whose driver started it - the row is
+  # printed for a refused card too, and claim-dpif above carries the state.
   send 'echo "HX""LAB claim-rxq=$(vppctl show hardware-interfaces 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ {n=\$1} \$1 == \"rx:\" && \$2 == \"queues\" {m=\$5; gsub(/[^0-9]/, \"\", m); print n \":\" \$3 \":\" m}" | tr "\n" " ")"'
   wait_for "HXLAB claim-rxq=" 60 \
     "the dataplane to say how many rx queues it opened on each card" \
@@ -2448,22 +2450,59 @@ if [ "$up" = 1 ]; then
   # (#345). `[ ok ] rx queues requested: num-rx-queues N` was the tuner's
   # request, printed green on the #330 box whose dataplane had refused the
   # card. The self-test now reads `rx: queues N (max M)` off `show
-  # hardware-interfaces` for every card the dataplane holds and prints
-  # `rx queues: N of M on <card>`; this is the one place that assertion can
-  # be made against a real card rather than a fixture, and it is made against
-  # the dataplane's own answer, read above through the same command. The
-  # requested count is checked by name and not asserted here: on a virtio
-  # guest the tuner reads one TX queue off the card and asks for one, so a
-  # warning on this box would be the tuner and the card disagreeing, which is
-  # a defect in one of them and is reported as one.
+  # hardware-interfaces` for every card the dataplane holds, with the
+  # driver's state beside it, and prints `rx queues: N of M on <card>`; this
+  # is the one place that assertion can be made against a real card rather
+  # than a fixture, and it is made against the dataplane's own answer, read
+  # above through the same command. The requested count is checked by name
+  # and not asserted here: on a virtio guest the tuner reads one TX queue off
+  # the card and asks for one, so a warning on this box would be the tuner
+  # and the card disagreeing, which is a defect in one of them and is
+  # reported as one.
+  #
+  # THE CARD'S STATE FIRST, whatever the queue rows say. The listing this
+  # guest printed on 2026-09-16 is of a card the driver REFUSED - `flags:
+  # pmd-init-fail`, an Errors: block, the port in `error` state - and it
+  # still carries `rx: queues 1 (max 1)`: the count VPP was configured with,
+  # not one it opened. Compared by name and number alone, that box was green
+  # here. So a card CLAIM_DPIF holds in `error` state fails this block
+  # outright, and what is then read is whether the self-test said so too or
+  # printed `as requested` over it, which is #330 again.
   #
   # WRITTEN BEFORE IT WAS RUN. The reader was written against the listing
   # this lab captured on 2026-09-16; these rows are what the next run of this
   # lab is expected to print, and the first run is the measurement.
   if [ "$CLAIM_ASKED" != 0 ] && [ -n "$CLAIM_DPIF" ]; then
-    echo "  -- rx queues the dataplane opened (name:opened:max):"
+    echo "  -- rx queues the dataplane was configured with (name:opened:max):"
     echo "       ${CLAIM_RXQ:-<none read>}"
-    if [ -z "$CLAIM_RXQ" ]; then
+    _rxerr=""
+    for _e in $CLAIM_DPIF; do
+      case "$_e" in *:error:*) _rxerr="$_rxerr ${_e%%:*}" ;; esac
+    done
+    if [ -n "$_rxerr" ]; then
+      echo "  [FAIL] the card is in error state, so no queue on it is open,"
+      echo "         whatever its rx row says:$_rxerr"
+      _rxsaid=""
+      for _nm in $_rxerr; do
+        if grep -q "\[FAIL\] rx queues: none opened on $_nm" /tmp/disk-clean.log; then
+          _rxsaid="$_rxsaid $_nm"
+        fi
+      done
+      if grep -q "\[ ok \] rx queues: .* as requested" /tmp/disk-clean.log; then
+        echo "         and the self-test printed a green rx-queues row over it,"
+        echo "         which is the #330 row this reader exists to stop:"
+        grep -o "\[ ok \] rx queues: .* as requested ([0-9]*)" /tmp/disk-clean.log \
+          | head -3 | tr -d '\r' | sed 's/^/         /'
+      elif [ -n "$_rxsaid" ]; then
+        echo "         The self-test read the driver's state and said so, for:"
+        echo "        $_rxsaid"
+      else
+        echo "         and the self-test printed no rx-queues row naming it:"
+        grep "rx queues" /tmp/disk-clean.log | head -3 | tr -d '\r' \
+          | sed 's/^/         /'
+      fi
+      fail=1
+    elif [ -z "$CLAIM_RXQ" ]; then
       echo "  [FAIL] the dataplane holds a card and prints no rx queue row for"
       echo "         it, so the self-test has nothing to read the count off."
       echo "         Either the listing changed shape or the card is not a"
@@ -2486,10 +2525,10 @@ if [ "$up" = 1 ]; then
         echo "  [ ok ] and the self-test read the queues the dataplane opened,"
         echo "         per card, and each agrees with the dataplane's own row:"
         printf '%s\n' "$_rxrow" | grep .
-      elif grep -q "\[warn\] rx queues: .* not the .* requested" /tmp/disk-clean.log; then
+      elif grep -q "\[warn\] rx queues: .* [0-9]* requested" /tmp/disk-clean.log; then
         echo "  [FAIL] the self-test says a card opened a different count than"
         echo "         the tuner asked for:"
-        grep -o "\[warn\] rx queues: .* not the .* requested" /tmp/disk-clean.log \
+        grep -o "\[warn\] rx queues: .* [0-9]* requested" /tmp/disk-clean.log \
           | head -3 | tr -d '\r' | sed 's/^/         /'
         echo "         The tuner reads the card's queue count before asking,"
         echo "         so on this box that is the tuner and the card"
