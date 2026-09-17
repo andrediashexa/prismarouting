@@ -2413,6 +2413,46 @@ mapping afterwards. Record it there and print `GigabitEthernet0/12/0 (ens18)`
 on every screen that names the interface. Not a rename inside VPP: a second
 name for one port is a second thing to keep in step.
 
+**Reboot and shutdown from the VTY, under a `system` menu**
+([#388](https://github.com/andrediashexa/hexarouting/issues/388)) - *done on
+the issue branch, awaiting merge*.
+An operator who needed either dropped to `start shell` and typed `systemctl`,
+which is the shape `docs/context.md` argues against: an operator who has to
+leave the VTY for the thing they came to do is one for whom the VTY is
+decoration. `system reboot` and `system shutdown` are now operational-mode
+statements, offered by `?` and TAB like every other; refused for a read-only
+or CGNAT account in the same rendered sentence `start shell` gives, before
+systemd is asked; and root is the account that can restart the box today,
+because the VTY runs as whoever logged in and the appliance installs neither
+sudo nor polkit (measured over `appliance/build-iso.sh`'s package lists and
+their dependencies), so a `hexa-admin` member who is not root reads the cost
+and then systemd's own refusal. Each says what it costs - every session ends,
+the dataplane stops, and since #378 the box comes back claiming its card by
+itself - before it acts, and two costs are measured rather than recited:
+what is running and the boot's replay of the saved file would not put back is
+lost at boot (measured against the replay, not the file: an empty or absent
+file replays nothing, so a fresh appliance holding root and the installer's
+sshd drop-in is warned of nothing, and the same box with a pool committed
+is), and a `commit confirmed` nobody confirmed brings the box back reverted;
+each is a `warning:` row said before the ask, and neither refuses. The action
+is `systemctl reboot` / `systemctl poweroff` through the `Shell.sys` seam the
+product already calls systemd through, so the suites drive it without
+rebooting the machine running them, and a `systemctl` that fails becomes a
+refusal in systemd's own words rather than a prompt that came back over a box
+that is still up - the verdict on one row, systemd's rows wrapped under it.
+The plain verb is what puts `vpp-stop-drain.conf`'s `ExecStop` on the
+path (measured on systemd 252: `reboot.target` requires `systemd-reboot.service`
+which requires `shutdown.target`, and a default-dependency unit conflicts with
+`shutdown.target`, so vpp.service is stopped and drained on the way down);
+`systemctl reboot --force` would skip it and is not what is asked for. Held by
+`test/test_hexash_system.py` driving both statements through the seam and
+asserting on what was printed and what systemd was asked, the refusals suite,
+the completion suite, and `test/test_hexash_batch.py` for `hexash -c
+"system reboot"` not being gated by #376's commit rule. The end-to-end proof -
+`lab/install-iso.sh` typing `system reboot` at the VTY where PHASE 3 typed
+`systemctl poweroff` at the console, and finding the box back on the network -
+is written and owed a run, like every lab.
+
 **And two the stride work uncovered, both open**
 ([#375](https://github.com/andrediashexa/hexarouting/issues/375),
 [#376](https://github.com/andrediashexa/hexarouting/issues/376)).

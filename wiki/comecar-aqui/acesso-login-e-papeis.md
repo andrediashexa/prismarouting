@@ -64,6 +64,8 @@ Duas capacidades, mapeadas em **grupos do sistema** — não num banco de contas
 
 `root` tem as duas, porque root fala com o socket do dataplane diretamente e fingir o contrário seria teatro.
 
+Uma coisa que `hexa-admin` **não** faz hoje: reiniciar ou desligar a caixa. `system reboot` e `system shutdown` são oferecidos a quem tem o papel, mas quem decide o reinício é o systemd, e a appliance não instala regra nenhuma que conceda isso a uma conta que não é root — uma conta `hexa-admin` lê o aviso do que custa e recebe a recusa do próprio systemd, nas palavras dele. Hoje, quem reinicia a caixa pela VTY é `root`.
+
 As capacidades são lidas da participação em grupos **no momento em que a VTY inicia**, e nunca de algo que o programa guarde: a resposta precisa ser a que o sistema daria, senão desprovisionar uma conta aqui não a desprovisiona de fato.
 
 Uma conta que o sistema não consegue descrever recebe **nada**. Falhar aberto aqui significaria que um NSS quebrado vira direito total de configuração.

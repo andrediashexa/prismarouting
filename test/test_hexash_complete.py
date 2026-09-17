@@ -358,6 +358,56 @@ for caps, who, want in ((set(), "a read-only account", False),
               f"and {who} is told why: {out.getvalue().strip()[:60]}")
 print("  offered at every level, granted only to an administrator")
 
+print("\n=== 'system' is offered, with reboot and shutdown under it ===")
+# The menu the maintainer asked for (#388), offered the way every other
+# statement is: at the top of operational mode, its two verbs one level
+# down, and nothing after either of them. Written out rather than derived
+# from the tree, for the reason the `show cgnat` box gives above.
+o, _, _ = opts("operational", "")
+check("system" in o, f"'system' is offered at the top level: {sorted(o)}")
+o, hint, _ = opts("operational", "system ")
+check(o == {"reboot", "shutdown"},
+      f"and exactly the two verbs under it: {sorted(o)}")
+check(hint is None, f"with no argument hint beside them: {hint!r}")
+o, _, prefix = opts("operational", "syst")
+check(o == {"system"} and prefix == "syst",
+      f"'syst' completes to system alone: {sorted(o)}")
+o, _, _ = opts("operational", "system re")
+check(o == {"reboot"}, f"'system re' completes to reboot alone: {sorted(o)}")
+o, hint, _ = opts("operational", "system reboot ")
+check(not o and hint is None,
+      f"and nothing follows the verb: options={sorted(o)} hint={hint!r}")
+# The help beside each verb has to say what it costs, because `?` is where
+# an operator reads that before typing it. Read through _options, which is
+# what `?` renders, and not off TREE.
+sh = hexash.Shell()
+sh.mode = "operational"
+helps, _, _ = sh._options("system ", False)
+check("every session ends" in helps.get("reboot", ""),
+      f"'?' says what a reboot costs: {helps.get('reboot')!r}")
+check("every session ends" in helps.get("shutdown", ""),
+      f"and what a shutdown costs: {helps.get('shutdown')!r}")
+check("comes back" in helps.get("reboot", "")
+      and "stays off" in helps.get("shutdown", ""),
+      "and what tells the two apart: one comes back, the other stays off")
+check("unsaved" in helps.get("reboot", "")
+      and "unsaved" in helps.get("shutdown", ""),
+      "and the cost that is this box's: what is not saved is lost")
+# Each row `?` prints is two spaces, the widest key, two spaces and the help
+# (display_matches), so the help has that gutter's worth less than the
+# console. 30 older TREE rows are already over it; these three are not
+# allowed to join them. Measured with the gutter the renderer really uses.
+_top, _, _ = sh._options("", False)
+_gutter = 2 + max(len(k) for k in _top) + 2
+_sub_gutter = 2 + max(len(k) for k in helps) + 2
+for _key, _help, _g in (("system", _top["system"], _gutter),
+                        ("reboot", helps["reboot"], _sub_gutter),
+                        ("shutdown", helps["shutdown"], _sub_gutter)):
+    check(_g + len(_help) <= _config.CONSOLE_COLUMNS,
+          f"the '?' row for {_key} fits the console: {_g + len(_help)} of "
+          f"{_config.CONSOLE_COLUMNS} columns")
+print("  offered at the top, two verbs under it, and '?' prices both")
+
 print("\n=== show version ===")
 o, _, _ = opts("operational", "show ")
 check("version" in o, f"'version' should be under show: {sorted(o)}")

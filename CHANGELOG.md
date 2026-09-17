@@ -213,6 +213,55 @@ version has a chance of seeing it.
   has another card: the box takes the card you named at the next start of
   the dataplane and comes back on the `linux_cp` pair, the way a one-card
   box has since 0.76.0. Nothing else you have committed changes.
+### Added
+
+* **`system reboot` and `system shutdown` from the VTY, under a `system`
+  menu** ([#388](https://github.com/andrediashexa/hexarouting/issues/388)).
+  An operator who needed either dropped to `start shell` and typed `systemctl`,
+  which is the shape `docs/context.md` argues against: an operator who has to
+  leave the VTY for the thing they came to do is one for whom the VTY is
+  decoration. Both are operational-mode statements now, offered by `?` and TAB
+  like every other. A read-only or CGNAT account meets the same rendered
+  refusal `start shell` gives, before systemd is asked; and today the account
+  that can actually restart the box is root, because the VTY runs as whoever
+  logged in and the appliance installs neither sudo nor polkit (measured over
+  `appliance/build-iso.sh`'s package lists and their dependencies), so a
+  `hexa-admin` member who is not root reads the cost and then systemd's own
+  refusal. Each says what it costs before it acts: every session on the box
+  ends, the dataplane stops, and since #378 the box comes back claiming its
+  card by itself. Two more costs are this box's and are measured rather than
+  recited, in the `warning:` shape `save` uses: what is running and the
+  boot's replay of the saved file would not put back is lost at boot (`save`
+  keeps it), and a `commit confirmed` nobody confirmed brings the box back
+  reverted (`commit` confirms it). Both are said before the ask, and neither
+  refuses. The first is measured against the replay and not against the
+  file, because the file is not the holder of everything in it: an empty or
+  absent file replays nothing, so a fresh appliance, whose running
+  configuration is root with its hash and the installer's sshd drop-in and
+  whose file is the three shipped comments, keeps both through the boot and
+  is warned of nothing - the first version warned it that "what was
+  committed and not saved is lost", on the box lab's own reboot, and that
+  was false of it. The same box with one pool committed is warned, since
+  the pool is what that boot loses; and a file that does say something is
+  replayed as a diff, accounts included, so there a committed account the
+  file lacks is lost and is said so.
+
+  The action is `systemctl reboot` / `systemctl poweroff` through `Shell.sys`,
+  the seam the product already calls systemd through, so a `systemctl` that
+  refuses becomes a refusal in systemd's own words - the verdict *"the box
+  could not be restarted"* on one row and systemd's rows wrapped under it,
+  the sentence 0.76.0 removed with the handover restart, reused - rather than
+  a prompt that comes back over a box that is still up. The verb is the plain
+  one, so `vpp-stop-drain.conf`'s
+  `ExecStop` runs on the way down and the connection log is left with no
+  allocation open: `systemctl reboot --force` would skip it and is not what is
+  asked for. Measured on systemd 252, which is what this appliance runs:
+  `reboot.target` requires `systemd-reboot.service`, which requires
+  `shutdown.target`, and a unit with default dependencies conflicts with
+  `shutdown.target`, so vpp.service is stopped and drained before the signal.
+
+  A `hexash -c "system reboot"` batch works and is not gated by #376's commit
+  rule, because there is no commit in it to be half of.
 
 ### Fixed
 

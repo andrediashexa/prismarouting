@@ -271,6 +271,83 @@ check("refusing to commit" not in said,
 check("UDP export has no collector" in said,
       "and the check that refused is the one that lab drives, still firing")
 
+print()
+print("=== 7. a batch that reboots the box is not gated: there is no commit "
+      "in it ===")
+# `hexash -c "system reboot"` is what a runbook types (#388), and the rule
+# above is on the COMMIT, so a batch with none has nothing to be gated on.
+# Asserted on what systemd was ASKED and what was printed, never the exit
+# status: the status is 0 either way on an accepted reboot, and 1 either
+# way when a statement before it was refused. Through main(), as every box
+# here is, because the seam is `hexash.System` and main() builds its own.
+_asked = []
+
+
+class FakeSystem(hexash.System):
+    def __init__(self, *a, **k):
+        super().__init__(runner=self.ask)
+
+    def ask(self, argv, **kw):
+        _asked.append(list(argv))
+        return 0, ""
+
+
+_real_system = hexash.System
+hexash.System = FakeSystem
+
+
+def _systemctl():
+    """
+    The systemctl asks alone. The cost prose measures the running
+    configuration the way `save` does, and sshd is read through the same
+    seam, so the whole list here is [['sshd', '-T'], ['systemctl', 'reboot']]
+    - measured, and the reason the filter exists.
+    """
+    return [a for a in _asked if a[:1] == ["systemctl"]]
+
+
+try:
+    rc, said, api = batch("system reboot")
+    print(said.rstrip())
+    check("restarting the box" in said,
+          "the box says what it is doing, in a batch as at the prompt")
+    check(_systemctl() == [["systemctl", "reboot"]],
+          f"and systemd was asked for the reboot: {_systemctl()}")
+    check(["sshd", "-T"] in _asked,
+          f"after the running configuration was read through the same seam, "
+          f"for the unsaved warning: {_asked}")
+    check("refusing to commit" not in said,
+          "with nothing gated, because nothing here commits")
+    check(rc == 0, f"and the exit status is 0, not {rc}")
+    check(pools_added(api) == [],
+          f"and the dataplane was told nothing: {pools_added(api)}")
+
+    # A refused statement ahead of it does not stop it either. The refusal
+    # is still printed and still counted; the reboot is still asked for.
+    # That is load()'s shape - the batch runs to its end - and the rule that
+    # makes commit different is that commit APPLIES what the refused
+    # statement would have been half of. A reboot applies nothing.
+    #
+    # `clear bgp` with no neighbour, and not the `rollback 99` of box 4: a
+    # rollback, refused or not, leaves the session in configuration mode,
+    # where `system` is not a statement, so the box would be measuring the
+    # mode and not the gate.
+    _asked.clear()
+    rc, said, api = batch("clear bgp", "system reboot")
+    print(said.splitlines()[0] if said else "<nothing>")
+    check("usage: clear bgp" in said,
+          "the refused statement before it is still refused")
+    check(_systemctl() == [["systemctl", "reboot"]],
+          f"and the reboot after it is still asked for: {_systemctl()}")
+    check("refusing to commit" not in said,
+          "with no commit gate in sight")
+    check(rc == 1, f"and the exit status still says a statement failed, "
+                   f"not {rc}")
+finally:
+    hexash.System = _real_system
+check(hexash.System is _real_system,
+      "the System seam was put back for whatever runs after this file")
+
 shutil.rmtree(_root, ignore_errors=True)
 
 print()
