@@ -1760,6 +1760,15 @@ TREE = {
         }),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
         "save": ("write the running configuration to disk", None),
+        # The box itself. Both verbs go through systemd, which is what runs
+        # the dataplane's stop-drain on the way down, and each says what it
+        # costs before it asks (#388). do_system() carries the argument.
+        "system": ("the box itself: restart it, or shut it down", {
+            "reboot": ("restart the box; every session ends, and it comes "
+                       "back claiming its card by itself", None),
+            "shutdown": ("power the box off; every session ends, and it "
+                         "stays off until it is powered on again", None),
+        }),
         "exit": ("end the session", None),
     },
     "config": {
@@ -8657,6 +8666,108 @@ class Shell:
         except OSError as e:
             self.err(f"cannot start {INSTALLER}: {e}")
 
+    def do_system(self, rest):
+        """
+        `system reboot` and `system shutdown`: the box itself, from the VTY.
+
+        Until this existed an operator who needed either dropped to `start
+        shell` and typed `systemctl`, which is the shape docs/context.md
+        argues against: an operator who has to leave the VTY for the thing
+        they came to do is one for whom the VTY is decoration (#388).
+
+        ADMINISTRATORS ONLY, through the same `require` every privileged
+        statement goes through, so a read-only account meets the sentence it
+        already knows from `start shell` - and meets it BEFORE systemd is
+        asked anything, which the suite pins by reading what was asked.
+
+        IT SAYS WHAT IT COSTS, THEN IT ASKS. That is the pattern the product
+        had for its one restart, the handover revert 6e removed in 0.76.0: a
+        row saying what is happening, prose under it saying what it costs,
+        then systemd. Not a question to confirm. `commit remap` is gated on a
+        word because a remap is a mistake most times it is typed and
+        deliberate some of them; `system reboot` is not typed by mistake,
+        and a question here would break the `hexash -c "system reboot"` a
+        runbook types, which #376's commit rule leaves alone because there
+        is no commit in it.
+
+        THROUGH SYSTEMD, AND THAT IS THE POINT RATHER THAN PLUMBING. A reboot
+        that stopped the dataplane without draining would leave the retention
+        log with an allocation open for ever (#217), and the drain is
+        vpp.service's ExecStop - appliance/systemd/vpp-stop-drain.conf, which
+        appliance/install.sh writes as hexarouting-stop-drain.conf. That
+        ExecStop runs on any stop of vpp.service, which lab/ipfix-stop.sh
+        drives on a plain `systemctl stop`; the question here is only whether
+        a `systemctl reboot` stops vpp.service at all, and it does because a
+        reboot stops every unit in the shutdown transaction. Measured on
+        systemd 252, which is what bookworm ships and this appliance runs:
+        `systemctl show reboot.target -p Requires` is systemd-reboot.service,
+        `systemctl show systemd-reboot.service -p Requires` names
+        shutdown.target, and poweroff.target is the same chain through
+        systemd-poweroff.service. A unit left with default dependencies is
+        ordered `Before=shutdown.target` and `Conflicts=shutdown.target` -
+        measured on ssh.service here, because vpp.service is the packaged VPP
+        unit and is not on a developer box to query - so it is stopped before
+        the system goes down and its ExecStop runs while the graph is up. The
+        appliance adds four drop-ins to vpp.service and none sets
+        `DefaultDependencies=no` (only hexarouting-installer and
+        hexarouting-selftest do), so nothing here takes vpp.service off that
+        path. What WOULD skip the drain is `systemctl reboot --force`, or a
+        kill; neither is asked for here, and the suite pins the argv to the
+        plain verb. The whole path is exercised on a booted box by
+        lab/install-iso.sh PHASE 3b, which is owed a run.
+
+        THE FAILURE IS A REFUSAL, IN SYSTEMD'S OWN WORDS. The alternative is
+        an operator who believes the box is going down and walks away from
+        one that is not. rc 127 is systemctl not being on the machine at all,
+        which is every developer box and every suite; it is a refusal here
+        and not the "written and not run" apply_dataplane_if gives the tuner,
+        because nothing was written - a reboot that did not happen has no
+        half that did.
+        """
+        if rest == ["reboot"]:
+            if not self.require(CAP_ALL, "system reboot"):
+                return
+            print("restarting the box")
+            self.say_system_cost()
+            print_prose("it comes back by itself, claiming its dataplane card "
+                        "at boot; nothing needs typing at its console")
+            rc, said = self.ask_systemd("reboot")
+            if rc != 0:
+                self.err(f"the box could not be restarted: {said}")
+            return
+        if rest == ["shutdown"]:
+            if not self.require(CAP_ALL, "system shutdown"):
+                return
+            print("shutting the box down")
+            self.say_system_cost()
+            print_prose("it stays off until something powers it on again, and "
+                        "then comes back claiming its card by itself")
+            rc, said = self.ask_systemd("poweroff")
+            if rc != 0:
+                self.err(f"the box could not be shut down: {said}")
+            return
+        self.err("usage: system reboot | system shutdown")
+
+    def say_system_cost(self):
+        """What `system reboot` and `system shutdown` both cost, said once."""
+        print_prose("every session on this box ends, including this one")
+        print_prose("the dataplane stops; systemd runs its stop-drain first, "
+                    "so the connection log is left with no allocation open")
+
+    def ask_systemd(self, verb):
+        """
+        `systemctl <verb>`, and what systemd said about it on one row.
+
+        Collapsed to one row because it lands in a verdict: systemd's refusal
+        is two lines ("Failed to reboot: ...", then "See system logs ..."),
+        and `err` prefixes only the first, so the second would read as prose
+        this VTY wrote. An empty answer is named as such rather than printed
+        as a verdict that ends in a colon.
+        """
+        rc, out = self.sys._run(["systemctl", verb])
+        said = " ".join(out.split())
+        return rc, said or f"systemctl exited {rc} and said nothing"
+
     def do_operational(self, line):
         w = line.split()
         # Checked before the command tree, so it works without appearing in it.
@@ -8722,6 +8833,11 @@ class Shell:
             return False
         elif w[0] == "clear":
             self.do_clear(line)
+        elif w[0] == "system":
+            # Before show_or_pass, which hands every word it does not know to
+            # FRR: typed today, `system reboot` reached vtysh and was refused
+            # in FRR's words, about a command FRR never had.
+            self.do_system(w[1:])
         elif w[0] == "rollback":
             self.candidate = self.running_config()
             self.do_rollback(w[1:])

@@ -93,6 +93,8 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 | `start shell` | abre um shell como processo filho; `exit` volta para a VTY. **Só administradores** — um shell nesta caixa é toda a capacidade de uma vez |
 | `rollback <0-19>` | carrega uma revisão commitada na candidata |
 | `save`  | grava a configuração em vigor em disco |
+| `system reboot` | reinicia a caixa. **Só administradores.** Antes de agir, avisa o que custa: toda sessão nesta caixa termina, o dataplane para, e a caixa volta sozinha assumindo a placa dela — nada precisa ser digitado no console dela |
+| `system shutdown` | desliga a caixa. **Só administradores.** Mesmo aviso do `system reboot`, com uma diferença: ela fica desligada até alguém ligá-la de novo, e só então volta assumindo a placa sozinha |
 | `install` | instala o HexaRouting num disco desta máquina — **só existe rodando a partir da ISO** |
 | `exit`  | encerra a sessão |
 

@@ -75,6 +75,35 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **`system reboot` and `system shutdown` from the VTY, under a `system`
+  menu** ([#388](https://github.com/andrediashexa/hexarouting/issues/388)).
+  An operator who needed either dropped to `start shell` and typed `systemctl`,
+  which is the shape `docs/context.md` argues against: an operator who has to
+  leave the VTY for the thing they came to do is one for whom the VTY is
+  decoration. Both are operational-mode statements now, offered by `?` and TAB
+  like every other, and administrators only - a read-only or CGNAT account
+  meets the same rendered refusal `start shell` gives. Each says what it costs
+  before it acts: every session on the box ends, the dataplane stops, and since
+  #378 the box comes back claiming its card by itself.
+
+  The action is `systemctl reboot` / `systemctl poweroff` through `Shell.sys`,
+  the seam the product already calls systemd through, so a `systemctl` that
+  refuses becomes a refusal in systemd's own words - *"the box could not be
+  restarted: <what systemd said>"*, the sentence 0.76.0 removed with the
+  handover restart, reused - rather than a prompt that comes back over a box
+  that is still up. The verb is the plain one, so `vpp-stop-drain.conf`'s
+  `ExecStop` runs on the way down and the connection log is left with no
+  allocation open: `systemctl reboot --force` would skip it and is not what is
+  asked for. Measured on systemd 252, which is what this appliance runs:
+  `reboot.target` requires `systemd-reboot.service`, which requires
+  `shutdown.target`, and a unit with default dependencies conflicts with
+  `shutdown.target`, so vpp.service is stopped and drained before the signal.
+
+  A `hexash -c "system reboot"` batch works and is not gated by #376's commit
+  rule, because there is no commit in it to be half of.
+
 ### Fixed
 
 

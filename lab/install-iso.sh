@@ -3140,6 +3140,130 @@ fi
 
 
 # =========================================================================
+# PHASE 3b: 'system reboot' typed at the VTY, and the box comes back (#388)
+# =========================================================================
+#
+# PHASE 3 above power-cycles the box the way an operator WITHOUT this feature
+# had to: it drops to a shell and types `systemctl poweroff`, then the disk is
+# cold-booted and found reachable. #388 is that an operator never has to leave
+# the VTY to do it. So this phase types `system reboot` at the `hexarouting> `
+# prompt instead - no shell, no systemctl - and the assertion is the one PHASE
+# 3 makes: the box comes back on the network by itself.
+#
+# WITHOUT -no-reboot, deliberately, and it is the whole difference from every
+# other boot in this lab. boot_vm passes -no-reboot so that a guest which
+# reboots signals a fault by making qemu exit; here the reboot is the thing
+# under test, so qemu must carry the guest down and back up in one process. A
+# run that ended at the first boot would prove the command was accepted and
+# nothing about whether the box returned, which is the half that matters.
+#
+# WHAT IT PROVES BEYOND "the command exists". The offline suite drives
+# `system reboot` through a stub and reads the argv (test/test_hexash_system.py);
+# what a stub cannot show is that `systemctl reboot` on a real box takes it
+# down cleanly - vpp.service's ExecStop draining the connection log on the way
+# (#217) - and that the box boots again to a reachable state. That is an end to
+# end fact about the appliance and belongs at this level.
+#
+# THE ROW THE VTY PRINTS BACK is half the assertion, the way it is in PHASE 4:
+# `system reboot` handed to FRR would answer in vtysh's words about a command
+# it has not got, so "restarting the box" coming from the box is what says the
+# statement is the VTY's own and was dispatched before the FRR pass-through.
+#
+# Runs only when PHASE 3 got the box back, for the reason PHASE 4 states: "it
+# rebooted and came back" about a box that never arrived is a sentence with no
+# subject.
+if [ "$up" = 1 ] && [ "${CONSOLE_DRIVEN:-0}" = 1 ] && [ "${RB_REACHED:-1}" = 0 ]
+then
+  echo
+  echo "=========== PHASE 3b: 'system reboot' at the VTY ==========="
+  CONSOLE_LOG=/tmp/vty-reboot.log
+  CONSOLE_CLEAN=/tmp/vty-reboot-clean.log
+  # boot_vm's body, WITHOUT -no-reboot, because this phase's whole point is a
+  # guest that reboots in place. Everything else matches boot_vm so send(),
+  # wait_for() and stop_vm() work exactly as they do everywhere else.
+  CONSOLE_POS=1
+  : > "$CONSOLE_LOG"
+  rm -f "$CONSOLE_IN"
+  mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
+  # shellcheck disable=SC2086
+  timeout "${VTY_REBOOT_SECS:-1200}" qemu-system-x86_64 \
+    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic \
+    -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET \
+    < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
+  QEMU_PID=$!
+  # Held open for the whole session, like boot_vm: a writer that opens and
+  # closes the pipe per line hands qemu an end-of-file on the console between.
+  exec 3> "$CONSOLE_IN"
+
+  VR_DRIVEN=0
+  # Into the VTY and NOT on to a shell: login_root ends with `start shell`,
+  # and this command has to be typed at `hexarouting> ` to prove it is the
+  # VTY's. So the login is inline here, stopping at the operational prompt.
+  if wait_for "$NEW_HOST login:" 420 "the box to come up for the VTY reboot" \
+     && { send "root"; wait_for "Password:" 60 \
+          "the login to ask for root's password"; } \
+     && { send "$LOGIN_PW"; wait_for "hexarouting> " 180 \
+          "root's login to land at the VTY prompt"; }; then
+    VR_DRIVEN=1
+    send "system reboot"
+    if wait_for "restarting the box" 30 \
+       "the VTY to take 'system reboot' as its own command"; then
+      echo "  [ ok ] the VTY took 'system reboot' and said it is restarting"
+    else
+      echo "  [FAIL] the VTY did not answer 'system reboot' with its own"
+      echo "         'restarting the box'. Either it was handed to FRR or the"
+      echo "         command is not in operational mode; $LOG has what it"
+      echo "         said instead"
+      fail=1
+    fi
+    # The box goes down and, with no -no-reboot on this qemu, comes back up in
+    # the same process. The login prompt returning is the box having rebooted;
+    # the wait above advanced the console position past the first boot's copy
+    # of the same string, so this matches only the second one.
+    if wait_for "$NEW_HOST login:" 600 \
+       "the box to reboot and reach a login prompt again"; then
+      echo "  [ ok ] it rebooted from the VTY and came back to a login prompt"
+      # Reachable from OUTSIDE - the same acceptance PHASE 3 makes for the cold
+      # start, and the whole of what #388 promises an operator: the reboot they
+      # typed at the VTY brought the box back on the network. Independent of
+      # the console, so it does not consume the prompt the clean shutdown below
+      # logs in at.
+      VR_BANNER=$(reachable_over_the_network 300)
+      if [ $? = 0 ]; then
+        echo "  [ ok ] and it answers from outside after a reboot typed at"
+        echo "         the VTY, nothing typed at its console: $VR_BANNER"
+      else
+        echo "  [FAIL] after the VTY reboot the box does not answer on the"
+        echo "         network: ${VR_BANNER:-<nothing at all>}. A reboot that"
+        echo "         does not return is worse than the shell 'systemctl' it"
+        echo "         replaces"
+        fail=1
+      fi
+      # Shut it down cleanly for the phase after this one, logging in at the
+      # prompt it just returned to rather than waiting for a fresh one.
+      if { send "root"; wait_for "Password:" 60 \
+           "the reboot's login to ask for root's password"; } \
+         && { send "$LOGIN_PW"; wait_for "hexarouting> " 180 \
+              "the reboot's login to land at the VTY prompt"; }; then
+        send "start shell"
+        wait_for "entering /bin" 60 "the shell to open for a clean poweroff" \
+          && { send "sync"; send "systemctl poweroff"; }
+      fi
+    else
+      echo "  [FAIL] after 'system reboot' the box did not come back to a"
+      echo "         login prompt; $LOG has the console"
+      fail=1
+    fi
+  fi
+  if [ "$VR_DRIVEN" = 0 ]; then
+    echo "  [FAIL] the box did not come up to a VTY prompt for the reboot test"
+    fail=1
+  fi
+  stop_vm 60
+fi
+
+
+# =========================================================================
 # PHASE 4: the box takes its own card, for real (#329)
 # =========================================================================
 #

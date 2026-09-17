@@ -1340,6 +1340,70 @@ check(hexash.running_from_live_medium is _live,
 print("  a shell that will not start, an installer that is not there, and an "
       "installer that must not run")
 
+print("\n=== the box itself: reboot and shutdown, and what refuses them ===")
+# FOUR REFUSALS AND ONE ORDER. `system reboot` and `system shutdown` go to
+# systemd through Shell.sys (#388), and each can be refused three ways: the
+# account may not, systemd would not, or the verb is not one the menu has.
+# The permission refusal is read together with what systemd was asked,
+# because a refusal printed AFTER the ask is a box going down under a row
+# saying it may not - the order is the assertion, not the sentence. What the
+# statements print when nothing refuses, and that they said it before they
+# asked, is test/test_hexash_system.py's; this file holds the refusals.
+_asked = []
+
+
+def _systemd(rc, says):
+    def run(argv, **kw):
+        _asked.append(list(argv))
+        return rc, says
+    return hexash.System(runner=run)
+
+
+_sh = shell(caps=set())
+_sh.sys = _systemd(0, "")
+_rv, _text = driven(_sh.do_operational, "system reboot")
+says("read-only, reboot", _text,
+     "error: system reboot: permission denied for a read-only account", _rv,
+     expect=True)
+check(_asked == [], f"and systemd was not asked: {_asked}")
+_sh = shell(caps={hexash.CAP_CGNAT})
+_sh.sys = _systemd(0, "")
+_rv, _text = driven(_sh.do_operational, "system shutdown")
+says("cgnat operator, shutdown", _text,
+     f"error: system shutdown: permission denied for a {hexash.ROLE_CGNAT} "
+     f"account", _rv, expect=True)
+check(_asked == [], f"and systemd was not asked: {_asked}")
+
+# systemd refusing, in its own words - the sentence 0.76.0 removed with the
+# restart it belonged to, and the one an operator has to see instead of a
+# prompt that came straight back over a box that is still up.
+_sh = shell()
+_sh.sys = _systemd(1, "Failed to reboot: unit not found")
+_rv, _text = driven(_sh.do_operational, "system reboot")
+says("restart refused", _text,
+     "error: the box could not be restarted: Failed to reboot: unit not found")
+check(_asked == [["systemctl", "reboot"]],
+      f"after asking for exactly 'systemctl reboot': {_asked}")
+_asked.clear()
+_sh = shell()
+_sh.sys = _systemd(1, "Failed to power off: unit not found")
+_rv, _text = driven(_sh.do_operational, "system shutdown")
+says("shutdown refused", _text,
+     "error: the box could not be shut down: Failed to power off: unit not "
+     "found")
+check(_asked == [["systemctl", "poweroff"]],
+      f"after asking for exactly 'systemctl poweroff': {_asked}")
+_asked.clear()
+
+_sh = shell()
+_sh.sys = _systemd(0, "")
+_rv, _text = driven(_sh.do_operational, "system halt")
+says("a verb the menu has not got", _text,
+     "error: usage: system reboot | system shutdown", _rv, expect=True)
+check(_asked == [], f"and systemd was not asked: {_asked}")
+print("  refused by role before the ask, refused by systemd after it, and a "
+      "verb it has not got")
+
 print("\n=== a filter this box has not got ===")
 # A pipe filters a `show` and nothing else, and an unknown filter is REFUSED
 # rather than ignored. Ignoring it would answer the question the operator did

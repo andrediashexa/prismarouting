@@ -358,6 +358,40 @@ for caps, who, want in ((set(), "a read-only account", False),
               f"and {who} is told why: {out.getvalue().strip()[:60]}")
 print("  offered at every level, granted only to an administrator")
 
+print("\n=== 'system' is offered, with reboot and shutdown under it ===")
+# The menu the maintainer asked for (#388), offered the way every other
+# statement is: at the top of operational mode, its two verbs one level
+# down, and nothing after either of them. Written out rather than derived
+# from the tree, for the reason the `show cgnat` box gives above.
+o, _, _ = opts("operational", "")
+check("system" in o, f"'system' is offered at the top level: {sorted(o)}")
+o, hint, _ = opts("operational", "system ")
+check(o == {"reboot", "shutdown"},
+      f"and exactly the two verbs under it: {sorted(o)}")
+check(hint is None, f"with no argument hint beside them: {hint!r}")
+o, _, prefix = opts("operational", "syst")
+check(o == {"system"} and prefix == "syst",
+      f"'syst' completes to system alone: {sorted(o)}")
+o, _, _ = opts("operational", "system re")
+check(o == {"reboot"}, f"'system re' completes to reboot alone: {sorted(o)}")
+o, hint, _ = opts("operational", "system reboot ")
+check(not o and hint is None,
+      f"and nothing follows the verb: options={sorted(o)} hint={hint!r}")
+# The help beside each verb has to say what it costs, because `?` is where
+# an operator reads that before typing it. Read through _options, which is
+# what `?` renders, and not off TREE.
+sh = hexash.Shell()
+sh.mode = "operational"
+helps, _, _ = sh._options("system ", False)
+check("every session ends" in helps.get("reboot", ""),
+      f"'?' says what a reboot costs: {helps.get('reboot')!r}")
+check("every session ends" in helps.get("shutdown", ""),
+      f"and what a shutdown costs: {helps.get('shutdown')!r}")
+check("comes back" in helps.get("reboot", "")
+      and "stays off" in helps.get("shutdown", ""),
+      "and what tells the two apart: one comes back, the other stays off")
+print("  offered at the top, two verbs under it, and '?' prices both")
+
 print("\n=== show version ===")
 o, _, _ = opts("operational", "show ")
 check("version" in o, f"'version' should be under show: {sorted(o)}")
