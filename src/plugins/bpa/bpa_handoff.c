@@ -71,6 +71,7 @@ static char *bpa_handoff_error_strings[] = {
 #undef _
 };
 
+/* not a unit: the handoff node's body; it needs frames and the graph. */
 static_always_inline uword
 bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    vlib_frame_t *frame, u32 fq_index, int is_in2out)

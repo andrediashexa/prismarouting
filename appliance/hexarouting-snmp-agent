@@ -209,6 +209,8 @@ def as_key(oid):
         return None
 
 
+# not a unit: the program's entry, the pass_persist loop snmpd drives over
+# stdin; the OID table and the answers are what a test can hold.
 def main():
     # readline() throughout, never "for line in sys.stdin".
     #

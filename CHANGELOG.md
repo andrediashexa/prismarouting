@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Every function in the product is named by a unit test, or says at its
+  definition why it cannot be, and a reader in `make test` refuses the one
+  that is neither**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390), step 1
+  of 3: the reader). `test/test_every_function.py` parses the definitions out
+  of the product (Python by `ast`, C by the plugin's own definition shape,
+  shell by `name() {`) and the calls out of the tests, and prints by name, on
+  every run, each function no test calls: 272 of 469 in Python, 195 of 210
+  in C, 36 of 40 in shell, measured 2026-09-17. Those three numbers are
+  ceilings written in the file with their date; a function added with no
+  test goes red with nothing to subtract from, and every batch of tests
+  that lands lowers them. Seven entry points say `not a unit:` and why at
+  their definition (the three `main`s, the plugin's two inits, the expire
+  process node and the handoff node's body) and are printed as excused
+  with the reason; a marker with no reason is refused. The batches of tests
+  that bring the ceilings down are the rest of the issue.
+
 * **The screens `docs/` quotes are read against the box, the way the wiki's
   are** ([#384](https://github.com/andrediashexa/hexarouting/issues/384)).
   `test/test_wiki_screens.py` drove the product for every screen the public

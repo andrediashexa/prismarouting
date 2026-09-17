@@ -2211,6 +2211,7 @@ bpa_ip4_address_change (ip4_main_t *im, uword opaque, u32 sw_if_index,
     }
 }
 
+/* not a unit: the plugin's init, called once by VPP with the graph up. */
 static clib_error_t *
 bpa_init (vlib_main_t *vm)
 {
