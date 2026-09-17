@@ -189,7 +189,7 @@ Três coisas que vale saber antes de escolher o número:
 
 # Onde ficam os blocos extras de um assinante
 
-`block-stride <n>` decide a distância entre os blocos que um mesmo assinante segura. Vale só em `mode dynamic`: num pool determinístico o bloco extra vem da reserva, que é um conjunto à parte, e a distância não se aplica a ele.
+`block-stride <n>` decide a distância entre os blocos que um mesmo assinante segura. Vale só em `mode dynamic`: num pool determinístico o bloco extra vem da reserva, que é um conjunto à parte, e a distância não se aplica a ele - e o `commit` recusa a combinação, em vez de guardar um ajuste que nunca teria efeito; a frase está em [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA).
 
 | Valor | O que acontece |
 |-------|----------------|
@@ -373,8 +373,8 @@ configure
   alg pptp on
   bypass destination 198.51.100.0/24
   exit
- nat cgnat interface TenGigabitEthernet0/0/0 inside
- nat cgnat interface TenGigabitEthernet0/0/1 outside
+ nat cgnat interface ens18 inside
+ nat cgnat interface ens19 outside
  show configuration compare
  commit check
  commit comment "pool residencial inicial"

@@ -72,17 +72,18 @@ Se o par não existir, não há para onde o endereço voltar. A caixa sobe encam
         anywhere but its console.
         the management path it recorded: ens18 10.95.200.198/24
         52:54:00:00:00:01
-        without a pair: GigabitEthernet0/9/0
+        without a pair: ens18
         give each one a 'linux-name <name>' under 'interface' in
-        hexash, and commit.
+        hexash, and commit. A card named after its Linux card is
+        paired under that name by any 'interface' block for it.
 ```
 
-A linha do caminho de gerência é a que interessa primeiro: ela é o endereço que a caixa tinha, e quem está no console não tem outro lugar de onde tirá-lo. O conserto é dar um nome de Linux à porta que o dataplane está segurando, que é o que cria o par:
+A linha do caminho de gerência é a que interessa primeiro: ela é o endereço que a caixa tinha, e quem está no console não tem outro lugar de onde tirá-lo. O conserto é dar à porta um bloco `interface`: a placa leva no dataplane o nome que tinha no Linux, e qualquer bloco para ela cria o par com esse mesmo nome. `linux-name` só é preciso para escolher outro:
 
 ```
 configure
-interface GigabitEthernet0/9/0
- linux-name wan0
+interface ens18
+ no shutdown
  exit
 commit
 ```

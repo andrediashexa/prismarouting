@@ -21,7 +21,7 @@ flowchart LR
 | Operacional | `hexarouting> ` | é onde a sessão começa | `exit` encerra a sessão |
 | Configuração | `hexarouting# [edit] ` | `configure` | `exit`    |
 | Pool | `hexarouting# [edit cgnat pool residencial] ` | `nat cgnat pool <nome>` | `exit`    |
-| Interface | `hexarouting# [edit interface GigabitEthernet0/12/0] ` | `interface <nome>` | `exit`    |
+| Interface | `hexarouting# [edit interface ens18] ` | `interface <nome>` | `exit`    |
 | Usuário | `hexarouting# [edit user joao] ` | `user <nome>` | `exit`    |
 | Usuário SNMP | `hexarouting# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`    |
 | Rotas estáticas | `hexarouting# [edit router static] ` | `router static` | `exit`    |
@@ -33,7 +33,7 @@ Blocos aninhados aparecem com o mais interno por último, separados por `/`, par
 
 
 :::warning
-Entrar numa interface **também** mexe no prompt. Antes disso não mexia, e nada na tela dizia que a próxima linha ia cair na `GigabitEthernet0/12/0` — um `mtu 1500` digitado um bloco depois do pretendido ia para a interface errada, sem aviso.
+Entrar numa interface **também** mexe no prompt. Antes disso não mexia, e nada na tela dizia que a próxima linha ia cair na `ens18` — um `mtu 1500` digitado um bloco depois do pretendido ia para a interface errada, sem aviso.
 
 :::
 
@@ -93,6 +93,8 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 | `start shell` | abre um shell como processo filho; `exit` volta para a VTY. **Só administradores** — um shell nesta caixa é toda a capacidade de uma vez |
 | `rollback <0-19>` | carrega uma revisão commitada na candidata |
 | `save`  | grava a configuração em vigor em disco |
+| `system reboot` | reinicia a caixa. **Só root, hoje.** Uma conta `hexa-admin` que não é root passa pela VTY e é recusada pelo próprio systemd, nas palavras dele, porque a appliance não instala regra nenhuma que conceda isso a ela. Antes de agir, avisa o que custa: toda sessão nesta caixa termina; o dataplane para; **se há algo em vigor que o boot não repõe e não foi salvo, isso se perde no boot** (`save` o mantém; contas, SSH e SNMP ficam na caixa e não contam, então uma appliance recém-instalada, sem nada salvo, não é avisada); **se há um `commit confirmed` sem confirmar, a caixa volta revertida** (`commit` confirma). Os dois últimos são medidos na hora e só aparecem quando são verdade. Depois, a caixa volta sozinha assumindo a placa dela — nada precisa ser digitado no console dela |
+| `system shutdown` | desliga a caixa. **Só root, hoje**, como o `system reboot`, e com os mesmos avisos — sessões, dataplane, o que não foi salvo, o que não foi confirmado. Uma diferença: ela fica desligada até alguém ligá-la de novo, e só então volta assumindo a placa sozinha |
 | `install` | instala o HexaRouting num disco desta máquina — **só existe rodando a partir da ISO** |
 | `exit`  | encerra a sessão |
 
@@ -144,13 +146,13 @@ O `mtu` aqui existe porque um operador que não descobre `mtu` com `?` herda os 
 ## Um nome de interface que não existe é recusado
 
 ```
-error: interface Ten0: this box has no such interface
-    it has: GigabitEthernet0/12/0, TenGigabitEthernet0/8/0, local0
+error: interface ens9: this box has no such interface
+    it has: ens18, ens19, local0
     (a linux_cp pair answers to both its dataplane name and its Linux one)
     the statement would commit and do nothing
 ```
 
-`interface Ten0` — um erro de digitação de `TenGigabitEthernet0/8/0` — commitava limpo, aparecia na configuração em vigor e não fazia nada. A recusa **lista o que a caixa tem**, porque ela já sabe: é a mesma fonte de onde vem a completação, e quem recebe só um "não" tem de ir procurar.
+`interface ens9` — um erro de digitação de `ens19` — commitava limpo, aparecia na configuração em vigor e não fazia nada. A recusa **lista o que a caixa tem**, porque ela já sabe: é a mesma fonte de onde vem a completação, e quem recebe só um "não" tem de ir procurar.
 
 Vale para **todas** as formas de nomear uma interface, e são sete: o bloco do FRR, o `nat cgnat interface`, e as declarações `mtu`, `urpf`, `ipv4 address`/`ipv6 address`, `description` e `shutdown`. Qualquer uma delas sozinha basta para a recusa aparecer - não é preciso que a interface tenha um bloco inteiro.
 
@@ -158,7 +160,7 @@ A exceção é o **loopback**: `interface loop<n>` num nome que a caixa ainda n�
 
 
 :::info
-Uma interface do `linux_cp` atende por **mais de um nome** — o do dataplane (`GigabitEthernet0/12/0`) e o do Linux (`vppwan0`). Os dois são aceitos, porque os dois são reais e o FRR usa o segundo.
+Uma interface do `linux_cp` atende por **mais de um nome** quando o `linux-name` é outro — o do dataplane (`ens18`) e o do Linux (`vppwan0`). Os dois são aceitos, porque os dois são reais e o FRR usa o segundo. Uma placa sem `linux-name` chama-se `ens18` dos dois lados.
 
 :::
 
@@ -188,7 +190,7 @@ O bloco de interface tem onze declarações — endereços IPv4 e IPv6, VLAN, VR
 Dentro de um bloco, apenas o que vale ali:
 
 ```
-hexarouting# [edit interface GigabitEthernet0/12/0] ?
+hexarouting# [edit interface ens18] ?
   description  what this interface is for
   exit         leave the interface
   ip           routing-protocol settings FRR owns on this interface
@@ -210,7 +212,7 @@ Um bloco do FRR oferece `exit` e `show` e nada mais — este VTY não modela as 
 
 Onde a árvore espera um **nome**, quem responde é a caixa: interfaces vêm do dataplane com o estado, e pools, contas e usuários SNMP vêm da **candidata** — completam o que está sendo editado, não só o que já foi commitado.
 
-A completação **ignora maiúsculas e minúsculas** e insere sempre a grafia da máquina: `ten`, `TEN` e `TenGig` completam todos para `TenGigabitEthernet0/8/0`.
+A completação **ignora maiúsculas e minúsculas** e insere sempre a grafia da máquina: `ENS19` e `Ens19` completam para `ens19`.
 
 
 :::info
@@ -218,4 +220,4 @@ Uma fonte que não responde — o dataplane fora, por exemplo — não oferece n
 
 :::
 
-O prompt nomeia onde você está, inclusive qual pool ou qual interface: `[edit interface TenGigabitEthernet0/8/0]`. Sem isso, uma declaração digitada um bloco depois do pretendido cai na interface errada, sem aviso.
+O prompt nomeia onde você está, inclusive qual pool ou qual interface: `[edit interface ens19]`. Sem isso, uma declaração digitada um bloco depois do pretendido cai na interface errada, sem aviso.
