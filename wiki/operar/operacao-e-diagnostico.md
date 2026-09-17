@@ -262,23 +262,41 @@ O limite de 60 segundos é generoso de propósito: o VPP responde em 5 a 21 segu
 
 O tuning roda em todo boot justamente para que uma mudança em `tune.env` ou uma troca de NIC seja honrada.
 
-### `rx queues requested`, e por que a palavra é **requested**
+### `rx queues`: o que a placa abriu, e não só o que foi pedido
 
-O autoteste informa quantas filas de recepção a caixa **pediu** à placa:
+O autoteste lê, do dataplane em execução, quantas filas de recepção cada placa realmente abriu, e compara com o que o ajuste de boot pediu para aquela placa:
+
+```
+  [ ok ] rx queues: 1 of 1 on GigabitEthernet0/9/0, as requested (1)
+```
+
+`1 of 1` é o que a placa abriu e o máximo que ela tem; o nome é o que o dataplane dá à placa. Quando o que foi aberto difere do pedido, a linha vira aviso e diz por que isso importa:
+
+```
+  [warn] rx queues: 1 of 1 on GigabitEthernet0/9/0, not the 4 requested
+         the dataplane opened a different count than the tuner
+         asked for, and the tuner sized its worker count on the
+         request: only 1 worker(s) receive from this card, and
+         any worker past that polls an empty queue.
+```
+
+Uma placa com menos filas do que o pedido entrega o que tem, e o ajuste de boot dimensionou os workers pelo pedido: só um worker recebe dessa placa e os outros ficam varrendo uma fila vazia. A caixa encaminha, mas com uma fração do que o processador poderia fazer. Há um caso pior, em que a placa recusa a interface inteira — sete filas pedidas numa placa que tem uma — e esse aparece como interface em estado `error`, algumas linhas abaixo.
+
+A palavra `requested` fica só para a caixa em que nada pôde ser lido. O número é o que foi **pedido**, e a linha de baixo diz que é só isso:
 
 ```
   [ ok ] rx queues requested: num-rx-queues 4
+         what the dataplane opened could not be read: it is not
+         answering, so the count in effect is unknown on this box.
 ```
 
-Numa caixa que não pediu nada, a linha diz isso por extenso em vez de sair vazia:
+Numa caixa que não pediu nada e cujo dataplane não tem placa que reporte filas (o perfil de primeiro boot, sem DPDK), a linha diz isso por extenso em vez de sair vazia:
 
 ```
   [ ok ] rx queues requested: default (1 per interface, one worker takes all)
+         the dataplane holds no card that reports its queues, so
+         there is no count in effect to read back.
 ```
-
-A palavra `requested` é a linha inteira. Esse número é lido do arquivo que o ajuste de boot escreveu — ou seja, é o que a caixa **pediu** ao dataplane — e não do dataplane rodando. Uma placa com menos filas do que isso entrega o que tem, e há um caso em que ela recusa a interface inteira: sete filas pedidas numa placa que tem uma. Ler essa linha como medição seria ler um pedido como se fosse uma resposta, e é exatamente na diferença entre os dois que aquele defeito morava.
-
-A resposta em vigor — quantas filas a placa realmente deu — não é esta linha, e não é lida aqui. Ela só existe numa caixa com placa de verdade entregue ao dataplane.
 
 Nesse mesmo boot, o que a caixa **pediu** e o que ela **recebeu** são conferidos um contra o outro — e o que é lido de volta é o que o **kernel** está fazendo, não o que o arquivo gerado pediu. Um parâmetro pode se perder em três lugares: o `update-grub` não rodou, a caixa não reiniciou desde então, ou o kernel viu e recusou. Uma appliance que se diz ajustada quando o kernel não aceitou o parâmetro é pior que uma que não diz nada.
 

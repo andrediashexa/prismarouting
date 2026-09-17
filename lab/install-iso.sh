@@ -1346,6 +1346,16 @@ drive_console() {
   send 'echo "HX""LAB claim-dpif=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ && \$1 != \"Name\" && \$1 != \"local0\" {split(\$4, m, \"/\"); print \$1 \":\" \$3 \":\" m[1]}" | tr "\n" " ")"'
   wait_for "HXLAB claim-dpif=" 60 \
     "the dataplane to list the interfaces it holds unbidden" || return 1
+  # AND HOW MANY RX QUEUES IT OPENED ON EACH, from the one place that knows
+  # (#345): `show hardware-interfaces` prints `rx: queues N (max M)` under
+  # every DPDK device and nothing of the kind for a pg interface, which is
+  # why the self-test's reader waited for this guest. Asked here so that the
+  # self-test's own row can be checked against the dataplane's answer rather
+  # than against a fixture: name:opened:max per card, one card per token.
+  send 'echo "HX""LAB claim-rxq=$(vppctl show hardware-interfaces 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ {n=\$1} \$1 == \"rx:\" && \$2 == \"queues\" {m=\$5; gsub(/[^0-9]/, \"\", m); print n \":\" \$3 \":\" m}" | tr "\n" " ")"'
+  wait_for "HXLAB claim-rxq=" 60 \
+    "the dataplane to say how many rx queues it opened on each card" \
+    || return 1
   # What systemd will do when this box is stopped, asked of SYSTEMD and not of
   # the drop-in file. In dynamic mode the block log is the connection record
   # the Marco Civil requires, and a block held when the dataplane stops leaves
@@ -2245,6 +2255,7 @@ if [ "$up" = 1 ]; then
   CLAIM_NOPCI=$(sed -n 's/^HXLAB claim-nopci=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
   CLAIM_DPDK=$(sed -n 's/^HXLAB claim-dpdk=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
   CLAIM_DPIF=$(sed -n 's/^HXLAB claim-dpif=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  CLAIM_RXQ=$(sed -n 's/^HXLAB claim-rxq=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
   # WAS THE BOX ASKED AT ALL. The same distinction the management block above
   # makes and for the same measured reason: on the wrong-password control the
   # driver never reaches a shell, and an absent marker read as an answer would
@@ -2430,6 +2441,75 @@ if [ "$up" = 1 ]; then
       echo "         box with one card means somebody walks to it - and"
       echo "         nobody asked it to take the card at all"
       fail=1
+    fi
+  fi
+
+  # 6. AND THE SELF-TEST READ THE QUEUES OFF THE DATAPLANE, NOT OFF THE FILE
+  # (#345). `[ ok ] rx queues requested: num-rx-queues N` was the tuner's
+  # request, printed green on the #330 box whose dataplane had refused the
+  # card. The self-test now reads `rx: queues N (max M)` off `show
+  # hardware-interfaces` for every card the dataplane holds and prints
+  # `rx queues: N of M on <card>`; this is the one place that assertion can
+  # be made against a real card rather than a fixture, and it is made against
+  # the dataplane's own answer, read above through the same command. The
+  # requested count is checked by name and not asserted here: on a virtio
+  # guest the tuner reads one TX queue off the card and asks for one, so a
+  # warning on this box would be the tuner and the card disagreeing, which is
+  # a defect in one of them and is reported as one.
+  #
+  # WRITTEN BEFORE IT WAS RUN. The reader was written against the listing
+  # this lab captured on 2026-09-16; these rows are what the next run of this
+  # lab is expected to print, and the first run is the measurement.
+  if [ "$CLAIM_ASKED" != 0 ] && [ -n "$CLAIM_DPIF" ]; then
+    echo "  -- rx queues the dataplane opened (name:opened:max):"
+    echo "       ${CLAIM_RXQ:-<none read>}"
+    if [ -z "$CLAIM_RXQ" ]; then
+      echo "  [FAIL] the dataplane holds a card and prints no rx queue row for"
+      echo "         it, so the self-test has nothing to read the count off."
+      echo "         Either the listing changed shape or the card is not a"
+      echo "         DPDK device; 'show hardware-interfaces' on the box says"
+      fail=1
+    else
+      _rxbad=""; _rxrow=""
+      for _e in $CLAIM_RXQ; do
+        _nm=${_e%%:*}; _r=${_e#*:}; _n=${_r%%:*}; _m=${_r#*:}
+        _row=$(grep -o "\[ ok \] rx queues: $_n of $_m on $_nm, as requested ([0-9]*)" \
+                 /tmp/disk-clean.log | head -1 | tr -d '\r')
+        if [ -n "$_row" ]; then
+          _rxrow="$_rxrow
+         $_row"
+        else
+          _rxbad="$_rxbad $_e"
+        fi
+      done
+      if [ -z "$_rxbad" ]; then
+        echo "  [ ok ] and the self-test read the queues the dataplane opened,"
+        echo "         per card, and each agrees with the dataplane's own row:"
+        printf '%s\n' "$_rxrow" | grep .
+      elif grep -q "\[warn\] rx queues: .* not the .* requested" /tmp/disk-clean.log; then
+        echo "  [FAIL] the self-test says a card opened a different count than"
+        echo "         the tuner asked for:"
+        grep -o "\[warn\] rx queues: .* not the .* requested" /tmp/disk-clean.log \
+          | head -3 | tr -d '\r' | sed 's/^/         /'
+        echo "         The tuner reads the card's queue count before asking,"
+        echo "         so on this box that is the tuner and the card"
+        echo "         disagreeing, not an operator's request"
+        fail=1
+      elif grep -q "rx queues requested:" /tmp/disk-clean.log; then
+        echo "  [FAIL] the self-test fell back to the tuner's request on a box"
+        echo "         whose dataplane holds a card and answers:"
+        grep -A2 "rx queues requested:" /tmp/disk-clean.log | head -3 \
+          | tr -d '\r' | sed 's/^/         /'
+        echo "         The row under it says which reading it could not make"
+        fail=1
+      else
+        echo "  [FAIL] the self-test printed no rx-queues row agreeing with the"
+        echo "         dataplane for:$_rxbad"
+        echo "         What it printed instead:"
+        grep "rx queues" /tmp/disk-clean.log | head -3 | tr -d '\r' \
+          | sed 's/^/         /'
+        fail=1
+      fi
     fi
   fi
 fi

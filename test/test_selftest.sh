@@ -184,6 +184,10 @@ case "$*" in
   # dataplane reports them separately and the self-test reads them that way.
   "show interface addr") cat "$FAKE/show_interface_addr" 2>/dev/null ;;
   "show lcp")         cat "$FAKE/show_lcp" 2>/dev/null ;;
+  # The hardware listing, which is the one place the queues a card opened
+  # can be read from (#345). Absent from $FAKE it is empty, which is a
+  # dataplane holding nothing that reports queues.
+  "show hardware-interfaces") cat "$FAKE/show_hardware" 2>/dev/null ;;
   # The plugin listing. Empty in $FAKE is a dataplane that came up without
   # the CGNAT plugin, which is a box that forwards nothing and fails every
   # CGNAT command while answering "show version" perfectly well.
@@ -1249,6 +1253,164 @@ else
 dataplane may have refused reads as one it took: $(printf '%s\n' "$OUTPUT" \
 | grep -i 'rx queue' || echo '<nothing>')"
 fi
+rm -rf "$FAKE/root"
+echo "=== the rx-queues row reads what the dataplane OPENED, per card (#345) ==="
+# THE CARD'S OWN ANSWER, and not the file's. The row above is the tuner's
+# request; this one is read off `show hardware-interfaces`, which is the only
+# thing on the box that knows how many queues the DPDK driver opened. The
+# listing below is what the guest lab/install-iso.sh boots printed on
+# 2026-09-16 - a virtio card on uio_pci_generic - with the queue rows kept
+# verbatim and the driver's offload rows dropped. The pci row is kept because
+# it is what pairs the card to its own `dev` stanza in startup.conf.
+#
+# Every box here also lists the card in `show interface`, so the NIC check
+# further down reads a dataplane that holds it rather than failing over a card
+# named and absent - which would be a different box.
+hw_box() {  # <rx: queues row> ... -> the fake dataplane's listing, one card
+  {
+    echo '              Name                Idx   Link  Hardware'
+    echo 'GigabitEthernet0/9/0               1     up   GigabitEthernet0/9/0'
+    echo '  Link speed: unknown'
+    echo '  Ethernet address 52:54:00:12:34:56'
+    echo '  Red Hat Virtio'
+    echo '    carrier up full duplex mtu 9206'
+    echo "    $1"
+    echo '    tx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
+    echo '    pci: device 1af4:1000 subsystem 1af4:0001 address 0000:00:09.00 numa 0'
+    echo 'local0                             0    down  local0'
+    echo '  Link speed: unknown'
+    echo '  local'
+  } > "$FAKE/show_hardware"
+  cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+GigabitEthernet0/9/0              1      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+IFACE
+}
+rxq_box() {  # <num-rx-queues asked for 0000:00:09.0>
+  mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+  printf 'dpdk {\n  dev 0000:00:09.0 {\n    num-rx-queues %s\n    num-tx-queues %s\n  }\n  dev default {\n    num-rx-queues %s\n  }\n}\n' \
+    "$1" "$1" "$1" >> "$FAKE/root/etc/vpp/startup.conf"
+  : > "$FAKE/vppctl_ok"
+}
+# A card that opened FEWER than asked: the shape of #330, one step short of
+# the refusal. Four were asked for, the card has one, and the box forwards on
+# one queue with three workers polling nothing.
+rxq_box 4
+hw_box 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
+run
+if said '\[warn\] rx queues: 1 of 1 on GigabitEthernet0/9/0, not the 4 requested'; then
+  ok "a card that opened fewer queues than asked is a warning naming both"
+else
+  bad "a card with 1 queue asked for 4 was not warned about: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
+# AND WHY IT MATTERS. The number alone is a curiosity; what the operator needs
+# is that the tuner sized the workers on the request, so the box is polling
+# with workers that receive nothing.
+if said 'tuner sized its worker count on the'; then
+  ok "and it says the worker count was sized on the request"
+else
+  bad "the warning does not say what the gap costs: $(printf '%s\n' "$OUTPUT" | grep -A3 'rx queues:' || echo '<nothing>')"
+fi
+if said '\[ ok \] rx queues'; then
+  bad "and the same box was ALSO told its queues are fine: $(printf '%s\n' "$OUTPUT" | grep '\[ ok \] rx queues')"
+else
+  ok "and no green rx-queues row stands beside the warning"
+fi
+# A card that opened WHAT WAS ASKED. This is the guest as it was captured:
+# the tuner read one TX queue off the virtio card and asked for one.
+rxq_box 1
+hw_box 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
+run
+if said '\[ ok \] rx queues: 1 of 1 on GigabitEthernet0/9/0, as requested \(1\)'; then
+  ok "a card that opened what was asked is reported with the count and the max"
+else
+  bad "a card that opened its request was not reported so: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
+if said '\[warn\] rx queues'; then
+  bad "and it was warned about anyway: $(printf '%s\n' "$OUTPUT" | grep '\[warn\] rx queues')"
+else
+  ok "and nothing warned about a card that did what it was asked"
+fi
+# THE REQUEST IS PER CARD, paired by PCI address. The tuner caps each card at
+# what it can do, so a two-card box carries two different requests and the
+# first num-rx-queues in the file is one card's. Reading it for both would
+# warn about a card that opened exactly what it was asked, and VPP prints the
+# function as two hex digits where the file prints one - so the pairing has
+# to survive that too.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+printf 'dpdk {\n  dev 0000:00:09.0 {\n    num-rx-queues 1\n    num-tx-queues 1\n  }\n  dev 0000:00:0a.0 {\n    num-rx-queues 4\n    num-tx-queues 4\n  }\n  dev default {\n    num-rx-queues 1\n  }\n}\n' \
+  >> "$FAKE/root/etc/vpp/startup.conf"
+: > "$FAKE/vppctl_ok"
+hw_box 'rx: queues 1 (max 1), desc 256 (min 32 max 32768 align 1)'
+{ echo 'TenGigabitEthernet0/a/0            2     up   TenGigabitEthernet0/a/0'
+  echo '  Link speed: 10 Gbps'
+  echo '  Intel 82599'
+  echo '    rx: queues 4 (max 8), desc 512 (min 32 max 4096 align 8)'
+  echo '    tx: queues 4 (max 8), desc 512 (min 32 max 4096 align 8)'
+  echo '    pci: device 8086:10fb subsystem 8086:0003 address 0000:00:0a.00 numa 0'
+} >> "$FAKE/show_hardware"
+run
+if said '\[ ok \] rx queues: 4 of 8 on TenGigabitEthernet0/a/0, as requested \(4\)'; then
+  ok "the second card is judged against its own stanza, not the first one's"
+else
+  bad "a card that opened its own request was judged against another's: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queues' || echo '<nothing>')"
+fi
+if said '\[ ok \] rx queues: 1 of 1 on GigabitEthernet0/9/0, as requested \(1\)'; then
+  ok "and the first card is still judged against its own"
+else
+  bad "the first card's row went: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queues' || echo '<nothing>')"
+fi
+rm -f "$FAKE/vppctl_ok" "$FAKE/show_hardware" "$FAKE/show_interface"
+rm -rf "$FAKE/root"
+
+echo "=== and the word 'requested' is kept for the box that cannot be asked ==="
+# The dataplane is not answering, so the count in effect is unknown and the
+# row must not invent one: it says the request, and says that it is only the
+# request because nothing could be read.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+printf 'dpdk {\n  dev 0000:00:09.0 {\n    num-rx-queues 4\n    num-tx-queues 4\n  }\n}\n' \
+  >> "$FAKE/root/etc/vpp/startup.conf"
+rm -f "$FAKE/vppctl_ok"
+run
+if said '\[ ok \] rx queues requested: num-rx-queues 4'; then
+  ok "a box whose dataplane is not answering reports the request as one"
+else
+  bad "the request was not reported on a box that cannot be asked: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
+if said 'what the dataplane opened could not be read'; then
+  ok "and it says the count in effect could not be read"
+else
+  bad "a request with nothing read behind it was not said to be one: $(printf '%s\n' "$OUTPUT" | grep -A2 -i 'rx queue' || echo '<nothing>')"
+fi
+if said 'rx queues: [0-9]* of [0-9]*'; then
+  bad "and a count in effect was printed off a dataplane that is not answering: $(printf '%s\n' "$OUTPUT" | grep 'rx queues:')"
+else
+  ok "and no count in effect was invented"
+fi
+# And a dataplane that ANSWERS and holds no card that reports queues, which
+# is every lab's pg0 - the listing is the one #345 measured in the dev
+# container - and every box on the first-boot profile. There is no count in
+# effect on such a box, and the row says which box it is rather than reading
+# as one where the reading failed.
+: > "$FAKE/vppctl_ok"
+cat > "$FAKE/show_hardware" <<'HW'
+              Name                Idx   Link  Hardware
+local0                             0    down  local0
+  Link speed: unknown
+  local
+pg0                                1    down  pg0
+  Link speed: unknown
+  Ethernet address 02:fe:50:2d:d6:f6
+HW
+run
+if said '\[ ok \] rx queues requested: num-rx-queues 4' \
+   && said 'holds no card that reports its queues'; then
+  ok "a dataplane with no card to count queues on says so, beside the request"
+else
+  bad "a pg-only dataplane was not told apart from one that could not be asked: $(printf '%s\n' "$OUTPUT" | grep -A2 -i 'rx queue' || echo '<nothing>')"
+fi
+rm -f "$FAKE/vppctl_ok" "$FAKE/show_hardware"
 rm -rf "$FAKE/root"
 
 echo "=== the CGNAT plugin, which is the whole of what this box is for (#222) ==="
@@ -3175,6 +3337,48 @@ if said '^  HexaRouting ready, with 2 warning\(s\) above\.$'; then
 else
   bad "a box with 2 warnings and no failures said: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
 fi
+
+echo "--- and the same box whose card opened fewer rx queues than asked (#345) ---"
+# THE WARNING IS COUNTED. The rx-queues rows are printed from a loop over the
+# cards the dataplane holds, and a loop fed by a pipe runs in a subshell where
+# `warn`'s count is lost: the row prints, and the closing row - the one
+# somebody reading a scrolled console from the bottom sees (#297) - says one
+# fewer. Measured on the healthy box, because only a box with no failure
+# prints the count at all: the card it holds is asked for 4 and opened 1.
+healthy
+printf 'dpdk {\n  dev 0000:03:00.0 {\n    num-rx-queues 4\n    num-tx-queues 4\n  }\n}\n' \
+  >> "$FAKE/root/etc/vpp/startup.conf"
+cat > "$FAKE/show_hardware" <<'HW'
+              Name                Idx   Link  Hardware
+TenGigabitEthernet3/0/0            1     up   TenGigabitEthernet3/0/0
+  Link speed: 10 Gbps
+  Intel 82599
+    rx: queues 1 (max 8), desc 512 (min 32 max 4096 align 8)
+    tx: queues 4 (max 8), desc 512 (min 32 max 4096 align 8)
+    pci: device 8086:10fb subsystem 8086:0003 address 0000:03:00.00 numa 0
+local0                             0    down  local0
+  Link speed: unknown
+  local
+HW
+run
+if said '\[FAIL\]'; then
+  bad "the box failed a check, so its summary is not the one under test:
+$(printf '%s\n' "$OUTPUT" | grep '\[FAIL\]')"
+else
+  ok "nothing on it failed"
+fi
+if said '\[warn\] rx queues: 1 of 8 on TenGigabitEthernet3/0/0, not the 4 requested'; then
+  ok "and the card that opened 1 of the 4 asked is a warning"
+else
+  bad "the card's row: $(printf '%s\n' "$OUTPUT" | grep 'rx queues' || echo '<nothing>')"
+fi
+_nwarn=$(printf '%s\n' "$OUTPUT" | grep -c '^  \[warn\] ')
+if said "^  HexaRouting ready, with $_nwarn warning\(s\) above\.\$"; then
+  ok "and the summary counts it: $_nwarn warning(s) printed, $_nwarn claimed"
+else
+  bad "the summary does not count the $_nwarn [warn] row(s) this box printed; the last line says: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
+fi
+rm -f "$FAKE/show_hardware"
 
 echo "--- and the same box with no NIC to forward on, which is racking day ---"
 # The third branch, and the box #297 was measured on: installed, healthy, and

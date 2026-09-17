@@ -83,6 +83,54 @@ version has a chance of seeing it.
 
 ### Changed
 
+* **The self-test's rx-queues row reads what the dataplane opened, card
+  by card, and no longer only what the tuner asked for**
+  ([#345](https://github.com/andrediashexa/hexarouting/issues/345)).
+  `[ ok ] rx queues requested: num-rx-queues 7` came from
+  `/etc/vpp/startup.conf`, and nothing on an installed box had ever read
+  what the dataplane got:
+  [#330](https://github.com/andrediashexa/hexarouting/issues/330) is the box
+  where seven were asked for on a virtio NIC with one, VPP refused the
+  interface, and this row printed green about seven queues over a box with
+  no dataplane at all. The row is now read off `vppctl show
+  hardware-interfaces`, which prints `rx: queues N (max M)` under every DPDK
+  device, and says `rx queues: 1 of 1 on GigabitEthernet0/9/0, as requested
+  (1)`, naming the card as the dataplane names it. A card that opened a
+  different count than the tuner asked for is a `[warn]` naming both
+  numbers and what the gap costs: the tuner sized its worker count on the
+  request, so only as many workers as there are queues receive from that
+  card and the rest poll an empty ring. Each card is judged against its OWN
+  `dev` stanza, paired by PCI address, because the tuner caps the request
+  per card and the first `num-rx-queues` in the file is one card's request
+  and not the box's; VPP prints the function as two hex digits where the
+  file prints one, and both are read as a number before they are compared.
+
+  The word `requested` is kept for exactly the box where nothing could be
+  read, and the row under it says which box that is: a dataplane that is
+  not answering, or one that answers and holds no card that reports queues
+  (the first-boot profile with DPDK off, or a lab's `pg0`). This is
+  deliberately `show hardware-interfaces` where the worker-core readback
+  deliberately refuses `show threads`: that one asks whether the kernel
+  agrees with VPP, and this asks whether the dataplane opened what it was
+  asked for, which only VPP can answer.
+
+  The format is not fabricated: it is the listing captured off the guest
+  `lab/install-iso.sh` booted on 2026-09-16, a virtio card on
+  `uio_pci_generic`, and `test/test_selftest.sh` quotes it for a card that
+  opened fewer queues than asked, one that opened what was asked, a two-card
+  box whose second card would be wrongly warned about if it were judged
+  against the first card's request, a dataplane that cannot be asked and a
+  `pg0`-only one. Shown red five ways: the reader not recognising the row,
+  the comparison passing every count, the pairing reading the first request
+  for every card, the fallback reporting a silent dataplane as one with no
+  card, and the warning printed from a pipeline's subshell, where the
+  closing row's count never learns of it. The proof on a booted box is
+  written into `lab/install-iso.sh`
+  and not yet run: the box's own `rx: queues` rows are read beside the
+  self-test's, per card, and the lab fails when they disagree or when the
+  self-test fell back to `requested` on a box holding a card. The operator
+  page that quotes this screen shows the new rows.
+
 * **The management-path apparatus is gone, and a card named with
   `dataplane interface` is claimed without being argued with**
   ([#385](https://github.com/andrediashexa/hexarouting/issues/385)). 0.76.0
