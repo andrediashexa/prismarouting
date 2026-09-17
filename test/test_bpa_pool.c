@@ -10,7 +10,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "bpa_shim.h"
-#include "../src/plugins/bpa/bpa_pool.h"
+/* The .c and not the .h: four of the functions under test are static, and
+ * the only way a harness calls a static function is from inside its
+ * translation unit. The Makefile compiles this file alone for that reason. */
+#include "../src/plugins/bpa/bpa_pool.c"
 #include "bpa_vectors.h"
 
 static int failures = 0;
@@ -1770,6 +1773,146 @@ main (void)
 	   "rather than about the pool", bpa_stride_next_ok (&p, 1, 3));
     printf ("  no stride configured places nothing, and a pool with no "
 	    "honourable stride is advised none\n");
+  }
+
+  printf ("\n=== the four helpers bpa_pool_init() is built from ===\n");
+  {
+    /*
+     * Each is a line or two, and each is the reason a value above comes out
+     * the way it does: the comparator qsort orders an address set by before
+     * the overlap test walks it, the two tests that decide whether a divide
+     * is a shift, and the reciprocal that stands in for the divide when it
+     * is not. Until #390 every one of them was executed only through
+     * bpa_addr_set_build() and bpa_pool_init(), which is enough to run them
+     * and not enough to say which one is wrong when a pool is. They are
+     * called by name here, each on inputs chosen for what it decides.
+     */
+    bpa_pfx_t lo = { 0x0a000000u, 256 }, hi = { 0x0a000100u, 1 };
+    bpa_pfx_t same = { 0x0a000000u, 4096 };
+    bpa_pfx_t v[3] = { { 30, 1 }, { 10, 1 }, { 20, 1 } };
+    u32 s, bad;
+
+    printf ("--- bpa_pfx_cmp ---\n");
+    CHECK (bpa_pfx_cmp (&lo, &hi) < 0,
+	   "10.0.0.0/24 does not sort before the 10.0.1.0 that follows it");
+    CHECK (bpa_pfx_cmp (&hi, &lo) > 0,
+	   "10.0.1.0 does not sort after the 10.0.0.0/24 it follows");
+    /* The count is not compared. Two prefixes at one base are an overlap,
+     * and the pass after the sort is what refuses them; a comparator that
+     * ordered them by count would still be a valid total order, so this is
+     * a statement about what the sort is FOR. */
+    CHECK (bpa_pfx_cmp (&lo, &same) == 0,
+	   "two prefixes at one base compare as %d, so the comparator reads "
+	   "something other than the base", bpa_pfx_cmp (&lo, &same));
+    qsort (v, 3, sizeof (v[0]), bpa_pfx_cmp);
+    CHECK (v[0].base == 10 && v[1].base == 20 && v[2].base == 30,
+	   "qsort under the comparator left the bases as %u %u %u", v[0].base,
+	   v[1].base, v[2].base);
+
+    printf ("--- bpa_is_pow2 ---\n");
+    CHECK (bpa_is_pow2 (0) == 0,
+	   "zero was taken for a power of two, and a block size of zero is a "
+	   "pool whose port count it divides");
+    CHECK (bpa_is_pow2 (1) && bpa_is_pow2 (64) && bpa_is_pow2 (0x80000000u),
+	   "1, 64 or 2^31 was refused as a power of two");
+    CHECK (!bpa_is_pow2 (3) && !bpa_is_pow2 (96) && !bpa_is_pow2 (0xffffffffu),
+	   "3, 96 or 2^32-1 was accepted as a power of two");
+
+    printf ("--- bpa_log2_exact ---\n");
+    for (s = 0, bad = 0; s < 32; s++)
+      if (bpa_log2_exact (1u << s) != s)
+	bad++;
+    CHECK (bad == 0,
+	   "%u of the 32 powers of two were given a log2 other than their "
+	   "own shift, and bpa_divide() shifts by it", bad);
+    CHECK (bpa_log2_exact (1) == 0,
+	   "a block of one port shifts by %u rather than by nothing",
+	   bpa_log2_exact (1));
+
+    printf ("--- bpa_divisor_init ---\n");
+    {
+      /*
+       * Every field, against a divide the hardware does. The reciprocal is
+       * asserted through the fields it fills rather than through
+       * bpa_divide(), which takes the shift on a power of two and would leave
+       * magic and shift unread on exactly the divisors where a wrong ceiling
+       * is cheapest to get away with. ref/check_magic.py proves the same
+       * identity over 1074 divisors offline; this is the C that computes it,
+       * on the divisors the vector pools use and on the edges of the range
+       * the comment above the function claims.
+       */
+      static const u32 ds[] = { 1, 2, 3, 5, 7, 31, 126, 1000, 4096,
+				65535, 65536, 0x00ffffffu, 0x0fffffffu };
+      unsigned k;
+
+      for (k = 0; k < sizeof (ds) / sizeof (ds[0]); k++)
+	{
+	  bpa_divisor_t dv;
+	  u32 d = ds[k], bits = 0, n, x = 2463534242u;
+	  u32 edges[8];
+	  int pow2 = (d & (d - 1)) == 0;
+	  unsigned bad_rec = 0, bad_shift = 0, tried = 0, j;
+
+	  memset (&dv, 0xff, sizeof (dv));
+	  bpa_divisor_init (&dv, d);
+	  while (d >> bits)
+	    bits++;
+
+	  CHECK (dv.d == d,
+		 "divisor %u was recorded as %u, and bpa_modulo() multiplies "
+		 "the quotient back by what was recorded", d, dv.d);
+	  CHECK (dv.is_pow2 == pow2,
+		 "%u is%s a power of two and the divisor says %u", d,
+		 pow2 ? "" : " not", dv.is_pow2);
+	  CHECK (dv.shift == 32 + bits,
+		 "divisor %u has %u bits and the shift is %u, not %u", d, bits,
+		 dv.shift, 32 + bits);
+	  /* At most 2^33, and exactly that on a power of two, where the
+	   * shift runs instead and the reciprocal is never multiplied. What
+	   * the bound is FOR is that n * magic stays inside u64 for every n
+	   * below the capacity limit, which 2^28 * 2^33 = 2^61 does. */
+	  CHECK (dv.magic <= (1ull << 33),
+		 "divisor %u: magic %llu is over 2^33, so n * magic can leave "
+		 "u64 before the shift for an n this pool can hold", d,
+		 (unsigned long long) dv.magic);
+
+	  edges[0] = 0;
+	  edges[1] = 1;
+	  edges[2] = d - 1;
+	  edges[3] = d;
+	  edges[4] = d + 1;
+	  edges[5] = BPA_MAX_CAPACITY - 1;
+	  edges[6] = (BPA_MAX_CAPACITY - 1) / d * d;
+	  edges[7] = edges[6] - 1;
+	  for (j = 0; j < 8 + 4096; j++)
+	    {
+	      if (j < 8)
+		n = edges[j];
+	      else
+		{
+		  /* xorshift32: deterministic, and every n below the cap */
+		  x ^= x << 13;
+		  x ^= x >> 17;
+		  x ^= x << 5;
+		  n = x % BPA_MAX_CAPACITY;
+		}
+	      tried++;
+	      if ((u32) (((u64) n * dv.magic) >> dv.shift) != n / d)
+		bad_rec++;
+	      if (pow2 && (n >> dv.log2) != n / d)
+		bad_shift++;
+	    }
+	  CHECK (bad_rec == 0,
+		 "divisor %u: the reciprocal disagreed with n / d on %u of %u "
+		 "values below the capacity limit", d, bad_rec, tried);
+	  if (pow2)
+	    CHECK (bad_shift == 0,
+		   "divisor %u: a shift by log2 %u disagreed with n / d on %u "
+		   "of %u values", d, dv.log2, bad_shift, tried);
+	}
+      printf ("  %u divisors, each field against a hardware divide over "
+	      "4104 values\n", (unsigned) (sizeof (ds) / sizeof (ds[0])));
+    }
   }
 
   return bpa_test_verdict (checks, failures);

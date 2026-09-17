@@ -87,9 +87,10 @@ MARKER = "not a unit:"
 # issue's own grep said 447, 201 and 56: it did not see nested defs, C names
 # with a digit in them, or that fourteen of the shell functions belong to
 # harness files. These go down with every batch of #390 and never up.
-# 2026-09-17, #390 batches A to D, F and H: every module but hexash.py's
-# read-only Shell methods at 0; the excusals print with their reasons.
-UNTESTED_AT_MOST = {"python": 70, "c": 195, "shell": 0}
+# 2026-09-17, #390 batches A to F and H: every module but hexash.py's
+# read-only Shell methods at 0; C holds what the plain-cc harness reaches
+# (bpa_pool.c, bpa_dyn.c), the rest waits for the VPP build.
+UNTESTED_AT_MOST = {"python": 70, "c": 187, "shell": 0}
 MEASURED_ON = "2026-09-17"
 
 # A parse that came back nearly empty would make every count below small and
