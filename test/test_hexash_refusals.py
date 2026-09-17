@@ -1026,10 +1026,14 @@ _settings = [
      "error: usage: snmp <setting> <value>"),
     ("an snmp setting this box has not got", "snmp nonsense rack4",
      "error: 'nonsense' is not an snmp setting"),
-    ("a management record the parser cannot read",
-     "dataplane management name ens18 nonsense",
-     "error: expected: dataplane management <name> address <a.b.c.d/len> mac "
-     "<xx:xx:...>"),
+    # `dataplane management` was a statement until #385, written by the box
+    # itself on a one-card box; it is neither typed nor read now, and a
+    # 0.76.x file pasted at the prompt meets the usage line for the one
+    # statement there is under that word. A saved file carrying it is dropped
+    # with a note rather than refused - test/test_dataplane_if.py holds that.
+    ("a statement this VTY no longer has",
+     "dataplane management ens18 address 10.0.0.2/24 mac 02:00:00:00:00:09",
+     "error: usage: dataplane interface <name>"),
     ("dataplane with no card named", "dataplane interface",
      "error: usage: dataplane interface <name>"),
     ("ssh with no value", "ssh port",
@@ -1930,7 +1934,9 @@ print("  fifty digits quotes all fifty back, and that row is not measured "
 # over the console, which no static walk sees because the f-string
 # interpolates, and the two `neighbour <peer>` verdicts #349 measured on an
 # IPv4 peer and left at 87 columns on an IPv6 one.
-OVER_AT_MOST = 26
+# 26 until #385 took out the `expected: dataplane management <name> address
+# <a.b.c.d/len> mac <xx:xx:...>` refusal, whose own words were over.
+OVER_AT_MOST = 25
 # 52 until #385 took out the handover headline the prompt printed on a
 # one-card box, which carried the interface name with no widest behind it.
 UNSAFE_AT_MOST = 51

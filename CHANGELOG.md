@@ -162,6 +162,21 @@ version has a chance of seeing it.
     the step before; the width ceiling in `test/test_hexash_refusals.py`
     drops by the headline that went.
 
+  * **`dataplane management` is no longer a statement, and `?` no longer
+    offers it.** It was written by the box, never by hand, and it carried the
+    record the prompt has stopped taking. **A saved file from 0.74.x through
+    0.76.1 that carries it still loads**: the line is dropped, the boot log
+    says `note: line N of <file> is dropped: dataplane management ...` with
+    the reason, the rest of the file is applied, and the next `save` writes
+    the file without it. Not refused, on the argument
+    [#375](https://github.com/andrediashexa/hexarouting/issues/375) made for
+    `block-stride` on a deterministic pool: a refusal at boot is a box coming
+    up with no configuration, read by nobody, over a line that was already
+    doing nothing. Pasted at the prompt it meets the usage line for the one
+    statement there is under that word. `test/test_dataplane_if.py` holds
+    the drop, the note and the prompt; `test/test_hexash_refusals.py` the
+    usage line.
+
   **What it costs a box already in service.** Naming the card your session
   arrives on, with `dataplane interface`, is no longer refused on a box that
   has another card: the box takes the card you named at the next start of

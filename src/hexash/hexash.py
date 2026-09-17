@@ -1395,7 +1395,6 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "if_remove", "globals")
 DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
                "snmp_changed", "dataplane_if_changed",
-               "dataplane_mgmt_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -1817,14 +1816,7 @@ TREE = {
         # only way to name one used to be editing a file in Linux (#283).
         "dataplane": ("the card handed to the dataplane", {
             "interface": ("the card carrying subscriber traffic, by the name "
-                          "Linux gives it", ARG_HOST_NIC),
-            # Offered because it is rendered: a line in `show running-config`
-            # that `?` has never heard of is a line the operator cannot check.
-            # It is written by the box when the card being handed over is the
-            # one this box is reached on, and there is nothing here to choose.
-            "management": ("written by the box: the address a handed-over "
-                           "management card keeps, on its pair",
-                           "<name> address <a.b.c.d/len> mac <xx:xx:...>")}),
+                          "Linux gives it", ARG_HOST_NIC)}),
         "ssh": ("the SSH daemon", {
             "port": ("TCP port", ARG_PORT),
             "listen-address": ("address to listen on", ARG_WORD),
@@ -5224,7 +5216,6 @@ class Shell:
         # ONLY way to set this until now, so a box configured the old way shows
         # its card in `show running-config` without anybody re-typing it.
         cfg.dataplane_if = self.read_dataplane_if()
-        cfg.dataplane_mgmt = self.read_dataplane_mgmt()
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
@@ -8884,24 +8875,8 @@ class Shell:
             # setting under that word, so refusing the shorter spelling would
             # be a refusal with nothing behind it.
             self.candidate.dataplane_if = ""
-            # The management record goes with it. It describes a card this box
-            # is no longer handing over, and a box that kept it would put an
-            # address on a pair that will not exist.
-            self.candidate.dataplane_mgmt = {}
             return True
         if w[0] == "dataplane":
-            # The management record the box writes for itself. Accepted here
-            # as well as in the parser, because a configuration this VTY
-            # RENDERS and cannot be fed back to is one an operator cannot
-            # paste, and `rollback` and `--load` would then disagree with the
-            # prompt about the same file.
-            if w[1:2] == ["management"]:
-                one = Config.parse(line + "\n")
-                if one.unknown:
-                    self.err(one.unknown[0][2])
-                else:
-                    self.candidate.dataplane_mgmt = one.dataplane_mgmt
-                return True
             if w[1:2] != ["interface"] or len(w) != 3:
                 self.err("usage: dataplane interface <name>")
                 return True
@@ -11016,28 +10991,6 @@ class Shell:
     #: swapped.
     MGMT_PATH_FILE = os.environ.get(
         "HEXA_MGMT_PATH", "/run/hexarouting/dataplane-management")
-
-    def read_dataplane_mgmt(self):
-        """
-        The record the VTY wrote beside the card in tune.env, or {}.
-
-        THE OPERATOR'S RECORD ONLY, and the computed one is deliberately NOT
-        here (#378): this is what `running_config()` reads, so whatever it
-        returns becomes the candidate on the next `configure` and is written
-        back to tune.env by the next commit, and the computed record is boot
-        state rather than configuration. Nothing applies what this returns
-        any more - load() puts back the computed record and nothing else
-        (#385) - so this exists to render the statement a box already
-        carrying one still has, until the statement itself goes.
-
-        Three fields rather than three assignments: they are one fact and a
-        file holding two of the three describes a box that cannot exist. A
-        line this cannot read is read as no record at all.
-        """
-        w = self.read_tune_key(self.TUNE_MGMT_KEY).split()
-        if len(w) == 3 and "/" in w[1]:
-            return {"name": w[0], "address": w[1], "mac": w[2].lower()}
-        return {}
 
     def read_computed_mgmt(self):
         """
@@ -13180,6 +13133,20 @@ class Shell:
             return
         with open(path) as f:
             target = Config.parse(f.read())
+        # SAID, because the file and the running configuration differ by
+        # these lines until the next `save`, and a difference nobody was told
+        # about is discovered later by somebody reading both. Dropped rather
+        # than refused, for the reason Config says beside `dropped`.
+        # The path and the line each on a row of their own, the split the
+        # refusal below already makes: on the box's own path this would
+        # measure well past the console, and the line is the one thing here
+        # somebody may want to copy (#276).
+        for lineno, text, why in target.dropped:
+            print(f"note: line {lineno} is dropped: this VTY no longer has "
+                  f"the statement")
+            print(f"    {path}")
+            print(f"    {text}")
+            print_prose(f"({why})", indent="    ")
 
         # A `tap<n>` stanza naming an interface this box does NOT have is the
         # Linux end of a pair that existed when the file was saved and does
@@ -13205,7 +13172,7 @@ class Shell:
         # file that names a card is the operator's own answer and stays it,
         # which is what keeps `no dataplane interface`, `save` and a reboot
         # working.
-        if not target.dataplane_if and not target.dataplane_mgmt:
+        if not target.dataplane_if:
             target.dataplane_if = self.read_dataplane_if()
         # THE WAY BACK, FROM THE ONE HOLDER IT HAS (#385). It is the record
         # hexarouting-tune computed off the live card on THIS boot, in /run,
