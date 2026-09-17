@@ -75,6 +75,39 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Changed
+
+* **The management-path apparatus is gone, and a card named with
+  `dataplane interface` is claimed without being argued with**
+  ([#385](https://github.com/andrediashexa/hexarouting/issues/385)). 0.76.0
+  made the box claim its own cards and left the machinery built to protect
+  the management card half present, on the rule that nothing is deleted
+  before what replaces it has been seen working. The replacement - the way
+  back computed off the live card on the boot that claims it - has been seen
+  working on an installed box, so the rest goes, one step per commit, each
+  with its check shown failing. The maintainer's direction, not a
+  refinement: a box is configured at its console when it is new, so a
+  refusal guarding the card it is reached over guards a step nobody takes
+  over the network.
+
+  * **`hexarouting-tune` no longer refuses the card carrying the default
+    route when it is named, and takes no `--keep-management`.** Until now a
+    named management card was overridden with `no-pci` and a `REFUSED` line
+    in the journal, and a one-card box was let through only when
+    `apply-tuning` passed the flag for a record the VTY had written. A named
+    card is claimed whichever route it carries; the override stays exclusive
+    on a box with several; and the way back is read off that card on the
+    same boot, so a card whose address, MAC or gateway cannot be read is not
+    claimed, named or not. `appliance/test_tune.py` holds it, shown red
+    against the 0.76.1 tuner: three checks on the one-card box, two on the
+    two-card box, and the flag refused by the parser.
+
+  **What it costs a box already in service.** Naming the card your session
+  arrives on, with `dataplane interface`, is no longer refused on a box that
+  has another card: the box takes the card you named at the next start of
+  the dataplane and comes back on the `linux_cp` pair, the way a one-card
+  box has since 0.76.0. Nothing else you have committed changes.
+
 ### Fixed
 
 

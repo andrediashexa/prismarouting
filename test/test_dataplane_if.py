@@ -65,8 +65,6 @@ TUNE_ENV_SHIPPED = """\
 #
 # EMPTY ON PURPOSE. It used to ship as "eth0", which does not exist on a Debian
 # 12 box with predictable interface names.
-#
-# The interface carrying the default route is refused even if named here.
 HEXA_DATAPLANE_IF=
 
 # Subscriber target: sizes the hugepages.

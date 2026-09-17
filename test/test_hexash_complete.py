@@ -2323,9 +2323,16 @@ r = why("dpdk {\n  no-pci\n}", 'HEXA_DATAPLANE_IF="ens19"\n')
 check(r and "ens19" in r[0],
       f"a named interface that was refused is quoted back: {r[:1]}")
 # The three reasons a named interface produces no-pci are different work, so
-# all three are offered rather than one guessed at.
-check(any("default route" in l for l in r),
-      "including the one that is a deliberate refusal")
+# all three are offered rather than one guessed at. The third used to be the
+# tuner's refusal of the card carrying the default route; #385 removed that
+# refusal, so the reason a named card can still be left with Linux is a way
+# back the tuner could not read off it.
+check(any("way back" in l for l in r),
+      f"the third reason - the way back could not be read - is not offered: "
+      f"{r!r}")
+check(not any("refused" in l for l in r),
+      f"a refusal the tuner no longer makes is still offered as the reason: "
+      f"{r!r}")
 
 # A NIC that was named and did not appear. This used to end "the usual cause
 # is the NIC still bound to a kernel driver" - a guess printed as a finding,

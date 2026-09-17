@@ -472,12 +472,12 @@ HEXA_DATAPLANE_IF=ens18
 HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 bc:24:11:a1:4f:c0
 ```
 
-`apply-tuning` passes `--keep-management` to the tuner when that second line is
-set, and `bind-dataplane-nic` reads it before it unbinds. Both keep their own
-refusals: each checks for itself that there is no other card, and the bind
-refuses outright when the record is absent. A hand-edited `tune.env` naming the
-management card with no way back is still a box nobody can reach, and all three
-places say so.
+The tuner no longer reads that second line
+([#385](https://github.com/andrediashexa/hexarouting/issues/385)): it computes
+the way back for itself on the boot that claims the card, and a named card is
+claimed whichever route it carries. `bind-dataplane-nic` still refuses the
+card carrying the default route while there is another card, and the last card
+when no way back was computed for it.
 
 **And the boot replay reads it from there too, which is
 [#332](https://github.com/andrediashexa/hexarouting/issues/332).** The pair is

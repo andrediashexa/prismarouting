@@ -98,10 +98,12 @@ test anything.
 
 DPDK binds a NIC away from Linux. Hand over the port you administer the box
 through and it is unreachable, and unreachable is unfixable remotely. So the
-VTY, the tuner and `bind-dataplane-nic` all refuse the card carrying the
-default route **wherever there is another card to name instead**, and the
-refusal names that other card. On the lab machines the management card is
-`ens18`.
+VTY and `bind-dataplane-nic` refuse the card carrying the default route
+**wherever there is another card to name instead**, and the refusal names that
+other card. The tuner stopped refusing it in
+[#385](https://github.com/andrediashexa/hexarouting/issues/385): a card named
+by hand is claimed whichever route it carries, and the way back below is what
+keeps the box reachable. On the lab machines the management card is `ens18`.
 
 **On a box with one card that refusal was a dead end**, and that is
 [#303](https://github.com/andrediashexa/hexarouting/issues/303): it sent the

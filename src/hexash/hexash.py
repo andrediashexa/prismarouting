@@ -10352,12 +10352,18 @@ class Shell:
                         "'show hardware' is where the names come from: it "
                         "lists this box's cards as Linux has them, and marks "
                         "the one carrying the default route."]
+            # THREE REASONS, and the third changed with #385. It used to be
+            # the tuner's refusal of the card carrying the default route;
+            # that refusal is gone, and a named card is claimed whichever
+            # route it carries. What can still leave a named card with Linux
+            # is a way back the tuner could not read off it.
             return [f"'{named}' was named and VPP was given no NIC.",
                     "Either it does not exist on this box, or it could not be "
                     "resolved to a PCI address,",
-                    "or it carries the default route on a box that has "
-                    "another card - which is refused on purpose, so a remote "
-                    "box is not cut off."]
+                    "or it carries the default route and no way back for it "
+                    "could be read,",
+                    "so it stays with Linux rather than leave this box "
+                    "unreachable."]
         if "dev 0000:" in conf:
             return self.why_named_nic_absent(conf)
         return []

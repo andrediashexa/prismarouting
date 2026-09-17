@@ -292,7 +292,7 @@ echo "MemTotal:       8388608 kB" > "$TROOT/proc/meminfo"
 ln -s "$TROOT/sys/devices/pci0000:00/0000:03:00.0/virtio7" \
       "$TROOT/sys/class/net/eth9/device"
 HEXA_IP=/bin/true python3 "$REPO/appliance/hexarouting-tune" \
-  --sysfs-root "$TROOT" --interface eth9 --keep-management \
+  --sysfs-root "$TROOT" --interface eth9 \
   --vpp-base /nonexistent --config /nonexistent 2>/dev/null \
   | sed -n '/### stanzas appended/,$p' | tail -n +2 \
   > "$R/etc/vpp/startup.conf"
