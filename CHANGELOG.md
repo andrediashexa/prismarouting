@@ -275,6 +275,49 @@ version has a chance of seeing it.
   page that quotes this screen shows the new rows.
 
 ### Fixed
+* **`no shut` was handed to FRR in silence, and the interface stayed down**
+  ([#393](https://github.com/andrediashexa/hexarouting/issues/393)). On the
+  maintainer's box, running 0.77.0, `interface ens18` / `no shut` / `commit`
+  left the card down. The VTY had no grammar for any abbreviation of its own
+  statements, so `no shut` was staged as an FRR statement with nothing
+  printed, FRR accepted it inside its own `interface` stanza and kept
+  nothing, and the operator was shown `commit complete` over an interface
+  that had never come up. Measured on the tree: `no shut`, `shut`, `no
+  shutd`, `descr hello` and `mt 9000` all went to FRR, none was refused and
+  none printed anything.
+
+  An unambiguous abbreviation of this VTY's own statement words now resolves
+  to the full word, in operational and in configuration mode. It resolves
+  once, before dispatch, so the handlers, the candidate, `show this` and the
+  file `save` writes all see the full spelling and no abbreviation reaches
+  any of them. The walk is down `TREE`, the same completion tree `?` and TAB
+  answer from, so what the box reads and what the box offers cannot disagree.
+  An ambiguous abbreviation is refused at the prompt naming its candidates -
+  `'i' begins 4 statements here: ip, ipv4, ipv6, isis` - rather than resolved
+  by position, and a node that also takes a value of the operator's resolves
+  nothing, so `show interface Te0` is still a card and not `terse`.
+
+  Three places resolve: the operational prompt, the top level of
+  configuration mode, and an `interface` block. Every other FRR block is
+  handed over untouched, because this tree models a part of each of those
+  grammars and resolving a prefix against a partial model would change a
+  statement FRR was going to act on.
+
+  **Nothing FRR uses is shadowed**, and that was measured rather than argued.
+  Every statement written inside an `interface` block in `lab/`, `docs/` and
+  `wiki/` - 108 rows, in both shapes this repository writes them - plus 41 of
+  FRR's own spellings this tree names, 149 in all and 94 distinct: each is
+  resolved through the new rule and comes back exactly as written.
+  `test/test_hexash_units.py` rebuilds that corpus from the tree on every
+  run, so a statement added later cannot introduce a shadow quietly.
+
+  A saved file goes on refusing an abbreviation, and the argument is beside
+  the refusal in `src/hexash/config.py`: a file is read at every boot with
+  nobody watching, so a resolution there is a guess made where nothing can
+  correct it, and a file whose meaning depended on which statements the tree
+  happens to hold would come back a different configuration the day one was
+  added.
+
 
 * **The rows under the re-mapping refusal did not fit the console**
   ([#391](https://github.com/andrediashexa/hexarouting/issues/391)). `commit`

@@ -1947,6 +1947,81 @@ def walk_from(node, words):
     return node, hint
 
 
+def takes_a_value(node):
+    """
+    Does this node of the tree also accept a word of the OPERATOR's, not only
+    words of the box's?
+
+    A dynamic key - `<interface>`, `<pool>`, `<user>` - rides in the dict
+    beside the keywords, so `show interface` offers `terse` AND every
+    interface on the box. At such a node the box cannot tell its own word from
+    the operator's, and resolving there would eat the operator's: `show
+    interface Te` would become `show interface terse` on a box whose card is
+    called TenGigabitEthernet0/8/0, and the operator would be shown a summary
+    of every interface instead of the one they asked about. Abbreviating a
+    VALUE is not what this does (#393), so a node that takes one resolves
+    nothing and hands the rest over as typed.
+    """
+    return any(k.startswith("<") and k.endswith(">") for k in node)
+
+
+def resolve_statement(node, words):
+    """
+    `words`, with every abbreviation of THIS VTY's own statement words spelled
+    out; or the ambiguity that stopped it.
+
+    Returns `(words, None)` on success and `(None, (typed, candidates))` when
+    one of the words begins more than one statement. The walk is the same one
+    `?` and TAB do, down the same `TREE`, so what the box reads and what the
+    box offers cannot disagree - a second list of abbreviations would be a
+    second list of statements, and would go stale the first time a statement
+    was added (#393).
+
+    Four rules, and the last three are all about NOT resolving:
+
+      * a word the node HAS is that word. Exact wins, always, which is what
+        keeps `snmp` from being read as `snmp-user` and `ip` from being read
+        as `ipv6`.
+      * a word that begins exactly one of the node's is that one.
+      * a word that begins more than one is an ambiguity, and the caller
+        refuses it naming the candidates rather than picking by position.
+      * a word that begins NONE of them, and every word after it, is handed
+        over exactly as typed. That is the whole of the FRR half: this tree
+        holds no entry for `bandwidth` or `link-detect`, so neither is
+        touched, and a statement that stops being the box's stops being
+        resolved with it.
+
+    NOTHING FRR USES MAY BE SHADOWED, and the last rule is what holds it: a
+    shadow needs an FRR statement that is a STRICT PREFIX of one of this
+    tree's own words, and is not itself in the tree. Measured over every
+    statement written inside an `interface` block in lab/, docs/ and wiki/
+    plus FRR's own spellings this tree names, there is none, and
+    test/test_hexash_refusals.py asserts the whole corpus reaches FRR
+    unchanged so that a statement added later cannot introduce one quietly.
+    Where one did appear, the answer is the third rule and not the second:
+    refuse the word and make the operator spell it, because resolving it
+    would silently change a statement FRR was going to act on.
+    """
+    out = []
+    for i, word in enumerate(words):
+        if not isinstance(node, dict) or takes_a_value(node):
+            out.extend(words[i:])       # an argument, or the operator's word
+            return out, None
+        if word in node:
+            spelled = word
+        else:
+            hits = sorted(k for k in node if _starts(k, word))
+            if not hits:
+                out.extend(words[i:])   # FRR territory from here
+                return out, None
+            if len(hits) > 1:
+                return None, (word, hits)
+            spelled = hits[0]
+        out.append(spelled)
+        node = node[spelled][1]
+    return out, None
+
+
 def block_grammar(block, words):
     """
     The grammar this VTY has for the statements of `block`, or None.
@@ -13624,6 +13699,15 @@ class Shell:
         if not line:
             return True
         self.check_confirm_timeout()
+        # ONCE, BEFORE DISPATCH, so every reader downstream - the handlers,
+        # the candidate, `show this`, `save` and the file it writes - sees the
+        # full spelling and no abbreviation ever reaches any of them. `no
+        # shut` was staged as an FRR statement in silence, FRR accepted it
+        # inside its own interface stanza and kept nothing, and the interface
+        # stayed down through a commit that said so only afterwards (#393).
+        line = self.spell_out(line)
+        if line is None:
+            return True
         handler = {"operational": self.do_operational,
                    "config": self.do_config,
                    "pool": self.do_pool,
@@ -13647,6 +13731,56 @@ class Shell:
                     print(l)
             return result
         return handler(line)
+
+    def statement_grammar(self):
+        """
+        The node an abbreviation is resolved against here, or None for none.
+
+        Three places, and the boundary is where this VTY owns the words. The
+        two mode roots are its own grammar whole. The `interface` block is the
+        one FRR block whose statements this box applies itself, which is why a
+        word inside it that begins one of them must never be handed over: that
+        is the silent half of #393, and `dataplane_statement()` downstream can
+        only recognise the statement it is given.
+
+        Every other block - `router bgp`, `route-map`, `router ospf` - answers
+        None on purpose. This tree models a PART of each of those grammars,
+        FRR owns all of it, and resolving a prefix against a partial model is
+        how a statement FRR was going to act on becomes a different one.
+        """
+        if self.mode == "operational":
+            return TREE["operational"]
+        if self.mode != "config":
+            return None
+        if not self.frr_ctx:
+            return TREE["config"]
+        if self.frr_ctx[-1].startswith("interface "):
+            return INTERFACE_BLOCK
+        return None
+
+    def spell_out(self, line):
+        """
+        `line` with this VTY's own words spelled out, or None when refused.
+
+        The refusal names the candidates rather than picking one by position.
+        The word the operator typed goes into the PROSE and not the verdict,
+        for the reason #363 gives: it is their word, so a verdict carrying it
+        has no width at all, while the verdict without it is 25 columns and
+        says the same thing.
+        """
+        node = self.statement_grammar()
+        if node is None:
+            return line
+        spelled, ambiguous = resolve_statement(node, line.split())
+        if ambiguous is None:
+            return " ".join(spelled)
+        word, hits = ambiguous
+        self.err_prose("an ambiguous abbreviation",
+                       f"'{word}' begins {len(hits)} statements here: "
+                       + ", ".join(hits),
+                       "type enough of one to tell them apart, or '?' to "
+                       "read what each does")
+        return None
 
     def feed_batch(self, cmds):
         """

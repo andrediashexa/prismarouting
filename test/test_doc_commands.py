@@ -175,6 +175,13 @@ def markdown_files():
                     yield os.path.join(root, name)
 
 
+# A page may show an ambiguous abbreviation ON PURPOSE, to show the refusal
+# (#393). That line is excused only when the very next line of the block is
+# the refusal itself, so a page that shows one by mistake still fails.
+AMBIGUOUS_VERDICT = "error: an ambiguous abbreviation"
+SHOWN_REFUSED = set()
+
+
 def prompt_lines():
     """(path, mode, context, command) for every prompt line in the docs."""
     out = []
@@ -182,8 +189,12 @@ def prompt_lines():
         for path in markdown_files():
             text = open(path, encoding="utf-8").read()
             for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.S):
-                for line in block.split("\n"):
+                rows = block.split("\n")
+                for i, line in enumerate(rows):
                     line = line.rstrip()
+                    if (i + 1 < len(rows)
+                            and rows[i + 1].startswith(AMBIGUOUS_VERDICT)):
+                        SHOWN_REFUSED.add((path, line))
                     m = re.match(r"^hexarouting> (.+)$", line)
                     if m:
                         out.append((path, "operational", "", m.group(1).strip()))
@@ -248,7 +259,21 @@ for path, mode, context, cmd in lines:
         # the shell has to be put there before the command is looked up.
         with contextlib.redirect_stdout(io.StringIO()):
             sh.feed(context)
-    good, why = walk(sh, cmd)
+    # Read the line the way feed() reads it: an abbreviation of this VTY's
+    # own words is spelled out first (#393), so `no shut` walks as `no
+    # shutdown` and an ambiguous one is refused before anything is walked.
+    with contextlib.redirect_stdout(io.StringIO()), \
+            contextlib.redirect_stderr(io.StringIO()):
+        spelled = sh.spell_out(cmd)
+    if spelled is None:
+        shown_line = (f"hexarouting# [edit{' ' + context if context else ''}]"
+                      f" {cmd}")
+        if (path, shown_line) not in SHOWN_REFUSED:
+            bad(f"{rel}: '{cmd}' ({mode}): an ambiguous abbreviation, and the "
+                f"page does not show it refused")
+        walked += 1
+        continue
+    good, why = walk(sh, spelled)
     walked += 1
     if not good:
         bad(f"{rel}: '{cmd}' ({mode}): {why}")

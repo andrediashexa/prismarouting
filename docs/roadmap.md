@@ -2477,6 +2477,38 @@ What remains is the proof a lab cannot fake: `lab/install-iso.sh` bringing the
 claimed card up at the console and reading `ens19` off `ip link` and FRR, and
 `appliance/test_startup_conf_shapes.sh` handing the stanza to a real VPP.
 
+**`no shut` was handed to FRR in silence, and the interface stayed down**
+([#393](https://github.com/andrediashexa/hexarouting/issues/393)) - on the
+branch. On the maintainer's box, running 0.77.0, `interface ens18` / `no
+shut` / `commit` left the card down: the VTY had no grammar for any
+abbreviation of its own statements, so `no shut` was staged as an FRR
+statement with nothing printed, FRR accepted it inside its own `interface`
+stanza and kept nothing, and the operator was shown a paragraph about
+statements this box never read. The card's name was right - that is #389 -
+and what was wrong is that the box would not read the word.
+
+An unambiguous abbreviation of this VTY's own statement words now resolves to
+the full word, once, before dispatch, so every reader downstream - the
+handlers, the candidate, `show this` and the file `save` writes - sees the
+full spelling and no abbreviation reaches any of them. The resolution walks
+`TREE`, the same completion tree `?` and TAB answer from, so what the box
+reads and what the box offers cannot disagree; an ambiguous abbreviation is
+refused at the prompt naming its candidates rather than resolved by position.
+Three places resolve - the operational prompt, the top level of configuration
+mode and an `interface` block - and every other FRR block is handed over
+untouched, because this tree models a part of each of those grammars and
+resolving a prefix against a partial model would change a statement FRR was
+going to act on.
+
+Nothing FRR uses is shadowed, and that was measured rather than argued: every
+statement written inside an `interface` block in `lab/`, `docs/` and `wiki/`,
+plus FRR's own spellings this tree names, comes back exactly as written.
+`test/test_hexash_units.py` builds that corpus from the tree on every run, so
+a statement added later cannot introduce a shadow quietly. A saved file keeps
+refusing them, and the argument for that is in `config.py` beside the
+refusal. What remains is the proof a lab cannot fake: `lab/install-iso.sh`
+typing the maintainer's own transcript at the console of a real card.
+
 **The operator's card is `ens18` and every screen calls it
 `GigabitEthernet0/12/0`** ([#386](https://github.com/andrediashexa/hexarouting/issues/386))
 - subsumed by #389. Its subject was a box printing both names of one card,

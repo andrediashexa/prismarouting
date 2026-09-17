@@ -25,6 +25,7 @@ at scripts of this suite's own, and puts every file the methods write under
 the suite's directory.
 """
 import os
+import re
 import sys
 import tempfile
 import types
@@ -3593,6 +3594,228 @@ try:
 finally:
     hexash.readline = saved_rl
 ok("what readline shows on a double tab")
+
+# ------------------------------------------------------- abbreviations
+
+print("\n=== takes_a_value: a node that offers the operator's word too ===")
+# Mutation shown red: `k.startswith("<")` changed to `k.startswith("[")`.
+check(hexash.takes_a_value(hexash.SHOW["interface"][1]),
+      "`show interface` offers `terse` and every interface on the box")
+check(not hexash.takes_a_value(hexash.INTERFACE_BLOCK),
+      "an interface block's statements are all the box's own words")
+check(not hexash.takes_a_value(hexash.TREE["operational"]),
+      "so is every statement at the operational prompt")
+ok("a dynamic key is what makes a node the operator's as well as the box's")
+
+print("\n=== resolve_statement: the four rules, one box each ===")
+# Mutation shown red: `if len(hits) > 1` changed to `if len(hits) > 2`, which
+# resolved `ipv address ...` to one of the two families by position.
+_abbrev = [
+    # (node, typed, what the box reads)
+    (hexash.INTERFACE_BLOCK, "no shut", "no shutdown"),
+    (hexash.INTERFACE_BLOCK, "descr hello there", "description hello there"),
+    (hexash.INTERFACE_BLOCK, "mt 9000", "mtu 9000"),
+    (hexash.INTERFACE_BLOCK, "urp str", "urpf strict"),
+    # Exact wins: `ip` is a statement of its own AND the start of three more.
+    (hexash.INTERFACE_BLOCK, "ip ospf area 0", "ip ospf area 0"),
+    # A word the tree has no entry for, and everything after it, verbatim.
+    (hexash.INTERFACE_BLOCK, "bandwidth 1000", "bandwidth 1000"),
+    (hexash.INTERFACE_BLOCK, "link-detect", "link-detect"),
+    (hexash.TREE["operational"], "sho int", "show interface"),
+    (hexash.TREE["operational"], "conf", "configure"),
+    # Past a dynamic key nothing is resolved: `Te0` is a card, not `terse`.
+    (hexash.TREE["operational"], "show interface Te0", "show interface Te0"),
+    (hexash.TREE["config"], "interf ens18", "interface ens18"),
+    (hexash.TREE["config"], "commi", "commit"),
+    # `snmp` is a statement and the start of `snmp-user`; exact wins again.
+    (hexash.TREE["config"], "snmp community public", "snmp community public"),
+]
+for _node, _typed, _want in _abbrev:
+    _spelled, _amb = hexash.resolve_statement(_node, _typed.split())
+    check(_amb is None and " ".join(_spelled) == _want,
+          f"{_typed!r} reads as {_want!r}, got "
+          f"{(_spelled and ' '.join(_spelled), _amb)!r}")
+_spelled, _amb = hexash.resolve_statement(hexash.INTERFACE_BLOCK, ["i", "1"])
+check(_spelled is None and _amb == ("i", ["ip", "ipv4", "ipv6", "isis"]),
+      f"an ambiguity comes back with its candidates, got "
+      f"{(_spelled, _amb)!r}")
+# TWO is already an ambiguity, which is where the rule is: a box that only
+# refused three or more would resolve `ipv` to one of the two families by
+# position, and put an address on the wrong one.
+_spelled, _amb = hexash.resolve_statement(hexash.INTERFACE_BLOCK,
+                                          ["ipv", "address", "10.0.0.1/24"])
+check(_spelled is None and _amb == ("ipv", ["ipv4", "ipv6"]),
+      f"two candidates are an ambiguity too, got {(_spelled, _amb)!r}")
+ok(f"{len(_abbrev)} statements resolved through the completion tree, and one "
+   f"refused")
+
+print("\n=== NOTHING FRR USES IS SHADOWED: every interface statement this "
+      "repository writes ===")
+# THE MEASUREMENT THAT DECIDES THE RULE (#393). A shadow needs an FRR
+# statement that is a STRICT PREFIX of one of this tree's own words and is not
+# itself in the tree; resolving such a word would silently hand FRR a
+# different statement from the one typed, inside a commit. So the corpus is
+# built rather than listed: every statement written inside an `interface`
+# block anywhere in lab/, docs/ and wiki/, in both shapes this repository
+# writes them - the block form a configuration file uses, and the `-c "..."`
+# batches the labs drive the VTY with - plus FRR's own spellings this tree
+# names. Each is resolved and asserted to come back EXACTLY as written.
+#
+# Mutation shown red: the exact-match-first rule in resolve_statement taken
+# out, so `ip` became an ambiguity with `ipv4` and `ipv6` and 26 rows of the
+# corpus - every `ip ospf` and `ip router isis` this repository writes - were
+# refused at the prompt instead of reaching FRR.
+_REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+_CLOSERS = {"exit", "quit", "end", "commit", "configure", "!", "save",
+            "show", "write", "interface"}
+_DASH_C = re.compile(r'-c\s+"([^"]*)"')
+_HEAD = re.compile(r"^(\s*)interface\s+\S+\s*$")
+
+
+def _closes(stmt):
+    w = stmt.split()
+    return (not w) or w[0] in _CLOSERS
+
+
+def _iface_statements(path):
+    """Every statement inside an `interface` block of one file."""
+    try:
+        lines = open(path, encoding="utf-8").readlines()
+    except (UnicodeDecodeError, OSError):
+        return []
+    out = []
+    # The `-c` form, with shell continuations joined so one command survives
+    # a backslash newline.
+    for line in "".join(lines).replace("\\\n", " ").split("\n"):
+        inside = False
+        for stmt in _DASH_C.findall(line):
+            stmt = stmt.strip()
+            if stmt.split()[:1] == ["interface"] and len(stmt.split()) == 2:
+                inside = True
+            elif not inside:
+                continue
+            elif _closes(stmt):
+                inside = False
+            else:
+                out.append(stmt)
+    # The block form: an `interface <name>` header, then the indented rows
+    # under it to the first row that closes the block.
+    i = 0
+    while i < len(lines):
+        if not _HEAD.match(lines[i].rstrip("\n")):
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines):
+            raw = lines[j].rstrip("\n")
+            if _closes(raw.strip()) or not raw.startswith(" "):
+                break
+            out.append(raw.strip())
+            j += 1
+        i = j
+    return out
+
+
+_corpus = []
+for _dir in ("lab", "docs", "wiki"):
+    for _dirpath, _, _names in os.walk(os.path.join(_REPO, _dir)):
+        for _name in sorted(_names):
+            _corpus += _iface_statements(os.path.join(_dirpath, _name))
+check(len(_corpus) > 90,
+      f"the corpus is read from the tree, and it is {len(_corpus)} rows")
+
+#: FRR's own spellings, the ones this tree names and the ones an operator
+#: writes beside them. They are here because a statement FRR takes and this
+#: repository has not written down yet is exactly the one a prefix would
+#: shadow without anybody noticing.
+_FRR = [
+    "ip ospf area 0", "ip ospf cost 10", "ip ospf network point-to-point",
+    "ip ospf authentication message-digest", "ip ospf dead-interval 4",
+    "ip ospf hello-interval 1", "ip ospf priority 0", "ip ospf bfd",
+    "ip ospf retransmit-interval 5", "ipv6 ospf6 area 0",
+    "ipv6 ospf6 cost 10", "ipv6 ospf6 network broadcast",
+    "ip router isis HEXA", "ipv6 router isis HEXA",
+    "isis circuit-type level-2-only", "isis network point-to-point",
+    "isis metric 10", "isis hello-interval 3", "isis passive", "isis bfd",
+    "bandwidth 1000", "link-detect", "multicast", "mpls enable",
+    "ip address 10.0.0.1/24", "ipv6 address 2001:db8::1/64", "ip mtu 1400",
+    "ip igmp", "ip pim", "ip rip split-horizon", "ipv6 nd ra-interval 10",
+    "ipv6 nd prefix 2001:db8::/64", "ipv6 nd router-preference high",
+    "ipv6 nd suppress-ra", "vrrp 1 ip 10.0.0.254", "vrrp 1 priority 200",
+    "description a link", "shutdown", "no shutdown", "ptm-enable",
+    "evpn mh es-id 1",
+]
+_changed = []
+for _stmt in _corpus + _FRR:
+    _spelled, _amb = hexash.resolve_statement(hexash.INTERFACE_BLOCK,
+                                              _stmt.split())
+    _got = f"ambiguous: {_amb[0]}" if _amb else " ".join(_spelled)
+    if _got != _stmt:
+        _changed.append((_stmt, _got))
+check(not _changed, f"the rule changed {len(_changed)} statement(s): "
+                    f"{_changed[:5]!r}")
+ok(f"{len(_corpus) + len(_FRR)} interface statements "
+   f"({len(set(_corpus + _FRR))} distinct) reach FRR exactly as written")
+
+print("\n=== Shell.statement_grammar: where the box owns the words ===")
+# Mutation shown red: the `interface ` test changed to `router `, which put
+# `no shut` back on FRR's pile in silence.
+_sh = shell()
+_sh.mode = "operational"
+check(_sh.statement_grammar() is hexash.TREE["operational"],
+      "the operational prompt resolves against its own mode")
+_sh.mode = "config"
+_sh.frr_ctx = []
+check(_sh.statement_grammar() is hexash.TREE["config"],
+      "and so does the top level of configuration mode")
+_sh.frr_ctx = ["interface pg0"]
+check(_sh.statement_grammar() is hexash.INTERFACE_BLOCK,
+      "an interface block resolves against the block's own statements")
+for _block in ("router bgp 65001", "route-map RM permit 10",
+               "router ospf", "vrf red"):
+    _sh.frr_ctx = [_block]
+    check(_sh.statement_grammar() is None,
+          f"{_block!r} is FRR's whole, so nothing is resolved in it")
+_sh.mode = "pool"
+_sh.frr_ctx = []
+check(_sh.statement_grammar() is None, "and nothing in a pool block yet")
+ok("three places resolve, and every other block is handed over untouched")
+
+print("\n=== Shell.spell_out: once, before dispatch ===")
+# Mutation shown red: `line = self.spell_out(line)` taken out of feed(), which
+# is the product exactly as #393 measured it.
+_sh = shell()
+_sh.mode = "config"
+_sh.candidate = Config()
+with spoken() as o:
+    _sh.feed("interface pg0")
+    _sh.feed("no shut")
+    _sh.feed("descr uplink to the transit")
+check(_sh.candidate.admin_down == set() and _sh.candidate.routing ==
+      ["interface pg0"],
+      f"`no shut` never reached FRR: {_sh.candidate.routing!r}")
+check(_sh.candidate.descriptions == {"pg0": "uplink to the transit"},
+      f"and `descr <text>` is the description: "
+      f"{_sh.candidate.descriptions!r}")
+with spoken() as o:
+    _sh.feed("shut")
+check(_sh.candidate.admin_down == {"pg0"},
+      f"the positive statement too: {_sh.candidate.admin_down!r}")
+# What `show this` and `save` write is the full spelling, never what was
+# typed: the candidate has held nothing else since the resolution moved in
+# front of the handlers.
+with spoken() as o:
+    _sh.feed("show this")
+check(" shutdown" in rows_of(o.getvalue())
+      and " description uplink to the transit" in rows_of(o.getvalue()),
+      f"`show this` writes the statement out whole: {o.getvalue()!r}")
+with spoken() as o:
+    check(_sh.spell_out("i 1") is None,
+          "an ambiguity is refused rather than dispatched")
+check("error: an ambiguous abbreviation" in rows_of(o.getvalue()),
+      o.getvalue())
+ok("the abbreviation is gone before any handler, any screen or any file")
+
 
 # ---------------------------------------------------------- the banner
 
