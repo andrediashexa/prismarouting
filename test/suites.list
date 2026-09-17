@@ -85,3 +85,4 @@ python3 test/test_appliance_paths.py
 python3 test/test_lab_collector_window.py
 python3 test/test_console_width.py
 sh test/test_plugin_says.sh
+python3 test/test_plugin_cli_says.py

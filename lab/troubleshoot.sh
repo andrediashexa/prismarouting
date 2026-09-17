@@ -109,15 +109,25 @@ expect_in "the translation inverts back to the subscriber" "$SUB" "$TR"
 # The point of the command: the two sources are not equal as evidence.
 expect_in "and says the answer comes from the formula" "FORMULA" "$TR"
 expect_in "which holds for a past instant, and says so" "past or present" "$TR"
+# The SENTENCE, not its two keywords. It is what an operator reads before
+# attributing a past complaint to a subscriber, and a keyword survives a
+# rewrite that changes what the sentence promises; test/test_plugin_cli_says.py
+# counts a message as named only when something carries it whole (#366).
+expect_in "in the sentence the operator reads, whole" \
+  "from the FORMULA. It holds for any instant, past or present, as long as this pool's addresses and block size have not changed since. No allocation record is involved." "$TR"
 
 expect "the dynamic subscriber was translated at all" test -n "${DPUB:-}"
 expect_in "a dynamic answer says it is dynamic" "DYNAMIC" "$DTR"
 expect_in "and refuses to be read as evidence about the past" \
   "NOW ONLY" "$DTR"
+expect_in "and says where the past answer is instead, whole" \
+  "this answers for NOW ONLY. The block belonged to somebody else before and will again; for a past instant read the RFC 8158 log, which records when each block was assigned and released." "$DTR"
 expect_not_in "so it must not claim the formula" "FORMULA" "$DTR"
 
 expect_in "top lists the busiest subscriber" "$SUB" "$TOP"
 expect_in "with the ports it holds" "3/512" "$TOP"
+expect_in "and closes with how many hold a block: the three this lab arranged" \
+  "3 subscriber(s) holding blocks" "$TOP"
 
 expect_in "drops names the packet with no pool" "no pool for source address" \
   "$DROP_SECTION"
@@ -128,4 +138,6 @@ expect_not_in "and does NOT count translated packets as drops" \
   "packets translated" "$DROP_SECTION"
 expect_in "which are still reported, under their own heading" \
   "packets translated" "$DROPS"
+expect_in "and the heading says what they are: counted, not dropped" \
+  "everything else it counted" "$DROPS"
 verdict

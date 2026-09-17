@@ -455,8 +455,16 @@ expect_in "the pin is in the configuration trail, as the forward it derives from
 # simply never ran, which is the one way this section could prove nothing.
 expect_in "the hold-down did run: an unpinned block went back to the pool" \
   "no live state" "$CTL_IDLE"
+# The two sentences whole, not their keywords: they are what an operator reads
+# to learn why one block came back and the other did not, and
+# test/test_plugin_cli_says.py counts a message as named only when something
+# carries it whole (#366).
+expect_in "and the screen says so in the sentence the operator reads" \
+  "no live state: this subscriber holds no block and has no sessions on this box" "$CTL_IDLE"
 expect_in "the pinned block is still the subscriber's after ${IDLE}s idle" \
   "PINNED by a forward" "$PIN_IDLE"
+expect_in "and the screen says why it stayed, in the sentence the operator reads" \
+  ", and has no sessions on this box - PINNED by a forward, so no hold-down will take it" "$PIN_IDLE"
 expect_in "so is the block of the subscriber on the other public address" \
   "PINNED by a forward" "$PIN_IDLE_B"
 expect_in "and the pool says so" "2 pinned" "$BLOCKS"

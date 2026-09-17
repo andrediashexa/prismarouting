@@ -417,6 +417,16 @@ expect "the stride under test is one the allocator would not have done anyway" \
 # the gaps are empty strings and every comparison below is comparing nothing.
 expect "the subscriber on the plain pool holds two blocks" \
   test "$(printf '%s\n' "$SUB_PLAIN" | grep -c '^  block ')" -eq 2
+# What the screen SAYS about them, in the words the operator reads: the second
+# block is marked as what it is, and the refusal that earned it is explained
+# as the subscriber's demand rather than as a fault in the box - the sentence
+# that stops a support ticket becoming a hardware RMA. Asserted whole because
+# test/test_plugin_cli_says.py counts a message as named only when something
+# carries it whole (#366).
+expect_in "and the screen marks the second block as an extension" \
+  "(extension)" "$SUB_PLAIN"
+expect_in "and explains the port refusal as demand, not as a box fault" \
+  "port refusals are not a box fault: this subscriber asked for more ports than its block holds" "$SUB_PLAIN"
 expect "the subscriber on the strided pool holds two blocks" \
   test "$(printf '%s\n' "$SUB_STRIDE" | grep -c '^  block ')" -eq 2
 # The control. A build that ignored block-stride puts the second block where

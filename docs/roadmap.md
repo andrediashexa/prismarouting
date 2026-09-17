@@ -2217,10 +2217,27 @@ stated on the issue - but the 36 include `BEYOND CAPACITY: the pool has no
 block for`, `this answers for NOW ONLY. The block belonged to somebody else`
 and `port refusals are not a box fault`, which are the sentences that stop an
 operator attributing traffic to the wrong subscriber and stop a support ticket
-becoming a hardware RMA. The stronger measurement cannot be taken today at
-all: `tools/run-all-labs.sh` writes each lab's output to a `mktemp -d` and
-deletes it on exit, so the corpus that would answer the question does not
-survive the run that makes it. That is the first half of #366.
+becoming a hardware RMA. The stronger measurement could not be taken when
+that was written: `tools/run-all-labs.sh` wrote each lab's output to a
+`mktemp -d` and deleted it on exit, so the corpus that would answer the
+question did not survive the run that made it. That was the first half of
+#366, and it is done: `LAB_OUTPUT=<dir>` keeps every lab's transcript, the
+run names the directory at its end, and `tools/plugin-says.sh` reads it.
+
+**Both measurements are standing checks now, and the weaker one has a
+ceiling.** `test/test_plugin_cli_says.py` reads the same call sites in
+`make test`, searches the tree for each needle whole, and refuses a count
+named by nothing above the number it carries with its date: **28 of 69 on
+2026-09-17**, down from 37 the same day, because `lab/troubleshoot.sh`,
+`lab/extblocks.sh` and `lab/forward.sh` now assert nine of the sentences
+whole on screens the kept corpus of 2026-09-15 shows them printing - the
+formula sentence, the NOW ONLY sentence, `port refusals are not a box
+fault`, `no live state` and the pinned block's reason among them. Over that
+corpus, 13 of the 28 are printed by no lab either; those are the branches
+that need a box arranged, and the list is on the issue. The number only goes
+down, and quoting a sentence in a lab that does not drive it is the one way
+of lowering it this check cannot see, so it is the one way that is refused
+by rule rather than by code.
 
 **And the 79-column budget is a rule about the VTY and about nothing else**
 ([#367](https://github.com/andrediashexa/hexarouting/issues/367)). #359, #362
