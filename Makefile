@@ -16,11 +16,19 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
 vectors:
 	@cd ref && python3 gen_vectors.py
 
+# bpa_pool.c is #included by the harness rather than compiled beside it, and
+# bpa_dyn.c below the same way: four of the functions in each are static, and
+# a static function is reachable from no other translation unit. The reader
+# in test/test_every_function.py names a function only when a harness calls
+# it, and the comparator qsort sorts an address set by, the two tests that
+# decide whether a divide is a shift, and the four operations that move the
+# free stack were named by nothing until #390. The file stays a prerequisite
+# so that a change to it rebuilds the binary, which is the property the
+# bpa_seq.h comment below is about.
 $(BUILD)/test_bpa: test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c \
                    src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vectors.h
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
-	    test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_pool.c
 
 # The dynamic block allocator, driven rather than evaluated. Standalone
 # because paired address pooling (RFC 4787 REQ-2, the required default under
@@ -34,8 +42,7 @@ $(BUILD)/test_bpa_dyn: test/test_bpa_dyn.c src/plugins/bpa/bpa_dyn.c \
                        test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
-	    test/test_bpa_dyn.c src/plugins/bpa/bpa_dyn.c \
-	    src/plugins/bpa/bpa_pool.c
+	    test/test_bpa_dyn.c src/plugins/bpa/bpa_pool.c
 
 $(BUILD)/test_bpa_ports: test/test_bpa_ports.c src/plugins/bpa/bpa_ports.h \
                          test/bpa_shim.h

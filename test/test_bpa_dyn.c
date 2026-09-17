@@ -28,7 +28,10 @@
 #include "bpa_shim.h"
 #include "bpa_vec_shim.h"
 #include "../src/plugins/bpa/bpa_pool.h"
-#include "../src/plugins/bpa/bpa_dyn.h"
+/* The .c and not the .h, for the reason test_bpa_pool.c gives: the four
+ * operations on the free stack are static, and a harness reaches a static
+ * function only from inside its translation unit. */
+#include "../src/plugins/bpa/bpa_dyn.c"
 
 static int failures = 0;
 static unsigned checks = 0;
@@ -1752,6 +1755,204 @@ main (void)
     printf ("  the stride ran off the end of the address, the subscriber got "
 	    "a block anyway, and the box counted the miss\n");
     drv_free (&v);
+  }
+
+  printf ("\n=== the free stack, one operation at a time ===\n");
+  {
+    /*
+     * bpa_dyn_push(), bpa_dyn_pop(), bpa_dyn_unfree() and
+     * bpa_dyn_take_free() are the four functions that move the stack, and
+     * the section above drives them only through the allocator, where a
+     * wrong displacement can be hidden by the next operation putting the
+     * entry back. Here each runs once on a stack in a known state, and what
+     * is asserted is the state it leaves: the block handed out, the entry
+     * moved into the hole, and the index that has to name both.
+     *
+     * Two public addresses of eight blocks under `policy interleaved`, one
+     * worker, so a local index is a block index and (pub, blk) is
+     * blk * 2 + pub. bpa_dyn_init() pushes the sixteen blocks high to low:
+     * from the bottom the stack reads 15 .. 0, and block 0 is on top.
+     */
+    bpa_pool_t ps;
+    bpa_dyn_t d;
+    bpa_block_t b = { 0 };
+    u32 local, k, before, on_stack;
+
+    e = mkpool (&ps, "stack", 2, 1535, 64, BPA_POLICY_INTERLEAVED);
+    CHECK (e == 0, "pool 'stack' rejected");
+    CHECK (ps.capacity == 16 && ps.blocks_mapped == 8,
+	   "pool 'stack' holds %u blocks, %u per address, and the positions "
+	   "below are chosen against 16 and 8", ps.capacity, ps.blocks_mapped);
+    CHECK (bpa_dyn_init (&d, &ps, 0, 1, 0) == 0, "the slice refused");
+    CHECK (d.n_local == 16 && vec_len (d.free_list) == 16,
+	   "the slice holds %u blocks with %u on the stack, not 16 and 16",
+	   d.n_local, (u32) vec_len (d.free_list));
+
+    printf ("--- bpa_dyn_pop ---\n");
+    local = bpa_dyn_pop (&d);
+    CHECK (local == 0,
+	   "the first pop handed out block %u, not the 0 the stack was built "
+	   "to hand out first", local);
+    CHECK (vec_len (d.free_list) == 15,
+	   "after one pop the stack holds %u blocks, not 15",
+	   (u32) vec_len (d.free_list));
+    CHECK (d.free_pos[0] == BPA_NO_BLOCK,
+	   "the popped block still claims stack position %u, so a later "
+	   "bpa_dyn_unfree() of it would delete somebody else's entry",
+	   d.free_pos[0]);
+    d.owner[0] = 1;
+    d.n_alloc++;
+    local = bpa_dyn_pop (&d);
+    CHECK (local == 1,
+	   "the second pop handed out block %u, not the 1 beneath block 0",
+	   local);
+    d.owner[1] = 1;
+    d.n_alloc++;
+
+    printf ("--- bpa_dyn_push ---\n");
+    /* Blocks 0 and 1 are held. Block 0 goes back. */
+    d.owner[0] = BPA_NO_BLOCK;
+    d.n_alloc--;
+    bpa_dyn_push (&d, 0);
+    CHECK (vec_len (d.free_list) == 15,
+	   "after pushing one block back the stack holds %u, not 15",
+	   (u32) vec_len (d.free_list));
+    CHECK (d.free_list[vec_len (d.free_list) - 1] == 0,
+	   "the block pushed back is not on top: block %u is",
+	   d.free_list[vec_len (d.free_list) - 1]);
+    CHECK (d.free_pos[0] == vec_len (d.free_list) - 1,
+	   "block 0 is on top at position %u and its index says %u",
+	   (u32) vec_len (d.free_list) - 1, d.free_pos[0]);
+    CHECK (d.free_list[d.free_pos[0]] == 0,
+	   "block 0's index names position %u, which holds block %u",
+	   d.free_pos[0], d.free_list[d.free_pos[0]]);
+    local = bpa_dyn_pop (&d);
+    CHECK (local == 0,
+	   "the block just pushed was not the next one out: block %u was",
+	   local);
+    d.owner[0] = 1;
+    d.n_alloc++;
+
+    printf ("--- bpa_dyn_unfree ---\n");
+    /* Held: 0 and 1. From the bottom the stack reads 15 .. 2, fourteen
+     * entries: block 7 sits at position 8 and block 2 is on top at 13. */
+    before = vec_len (d.free_list);
+    CHECK (before == 14 && d.free_pos[7] == 8 && d.free_list[13] == 2,
+	   "the stack is not in the state the positions below assume: %u "
+	   "entries, block 7 at %u, position 13 holds %u", before,
+	   d.free_pos[7], d.free_list[13]);
+    bpa_dyn_unfree (&d, 7);
+    CHECK (vec_len (d.free_list) == before - 1,
+	   "taking a named block left the stack at %u entries, not %u",
+	   (u32) vec_len (d.free_list), before - 1);
+    for (k = 0, on_stack = 0; k < vec_len (d.free_list); k++)
+      if (d.free_list[k] == 7)
+	on_stack++;
+    CHECK (on_stack == 0,
+	   "block 7 is still on the stack after being taken, so the next pop "
+	   "can hand it out a second time");
+    CHECK (d.free_pos[7] == BPA_NO_BLOCK,
+	   "block 7 was taken and its index still says position %u",
+	   d.free_pos[7]);
+    CHECK (d.free_list[8] == 2 && d.free_pos[2] == 8,
+	   "the block that was on top did not move into the hole with its "
+	   "index following: position 8 holds %u and block 2's index says %u",
+	   d.free_list[8], d.free_pos[2]);
+    d.owner[7] = 2;
+    d.n_alloc++;
+    local = bpa_dyn_pop (&d);
+    CHECK (local == 3,
+	   "with the top moved into the hole the next pop hands out block %u, "
+	   "not the 3 that was beneath it", local);
+    d.owner[3] = 2;
+    d.n_alloc++;
+
+    /* Block 3 is held: taking it again must change nothing. */
+    before = vec_len (d.free_list);
+    bpa_dyn_unfree (&d, 3);
+    CHECK (vec_len (d.free_list) == before,
+	   "taking a block that is already held shrank the stack from %u to "
+	   "%u entries", before, (u32) vec_len (d.free_list));
+
+    /* Block 4 is on top: there is no hole for anything to move into. */
+    CHECK (d.free_list[before - 1] == 4,
+	   "block %u is on top where the case below expects 4",
+	   d.free_list[before - 1]);
+    bpa_dyn_unfree (&d, 4);
+    CHECK (vec_len (d.free_list) == before - 1 && d.free_pos[4] == BPA_NO_BLOCK,
+	   "taking the top block: the stack holds %u entries and block 4's "
+	   "index says %u", (u32) vec_len (d.free_list), d.free_pos[4]);
+    d.owner[4] = 2;
+    d.n_alloc++;
+    CHECK (index_disagreements (&d) == 0,
+	   "%u disagreements between the stack and its index after a pop, a "
+	   "push and three unfrees", index_disagreements (&d));
+
+    printf ("--- bpa_dyn_take_free ---\n");
+    bpa_dyn_free (&d);
+    CHECK (bpa_dyn_init (&d, &ps, 0, 1, 0) == 0, "the slice refused");
+    local = BPA_NO_BLOCK;
+    bpa_dyn_take_free (&d, &ps, 1, 3, 1, &local);
+    CHECK (local != BPA_NO_BLOCK,
+	   "block 3 of address 1 is free and was not taken");
+    CHECK (local != BPA_NO_BLOCK
+	     && (bpa_dyn_block_addr (&ps, local, &b), b.pub_idx == 1
+					       && b.blk_idx == 3),
+	   "the block taken is index %u, which resolves to address %u block "
+	   "%u rather than to address 1 block 3", local, b.pub_idx, b.blk_idx);
+    CHECK (local != BPA_NO_BLOCK && d.free_pos[local] == BPA_NO_BLOCK
+	     && vec_len (d.free_list) == 15,
+	   "the block was handed out and left on the stack: its index says "
+	   "%u and the stack holds %u entries",
+	   local == BPA_NO_BLOCK ? BPA_NO_BLOCK : d.free_pos[local],
+	   (u32) vec_len (d.free_list));
+    /* What the caller does with it. */
+    if (local != BPA_NO_BLOCK)
+      {
+	d.owner[local] = 5;
+	d.n_alloc++;
+      }
+    local = BPA_NO_BLOCK;
+    bpa_dyn_take_free (&d, &ps, 1, 3, 1, &local);
+    CHECK (local == BPA_NO_BLOCK,
+	   "the same block, now held, was handed out again as index %u",
+	   local);
+    /* The last block of the slice is still inside it. */
+    local = BPA_NO_BLOCK;
+    bpa_dyn_take_free (&d, &ps, 1, 7, 1, &local);
+    CHECK (local == 15,
+	   "block 7 of address 1 is index 15, the last of the slice, and "
+	   "came back as %u", local);
+    if (local != BPA_NO_BLOCK)
+      {
+	d.owner[local] = 6;
+	d.n_alloc++;
+      }
+    /*
+     * One past it: (address 0, block 8) is index 16 on a slice of 16. The
+     * slot past the slice is written to look like a free block first. The
+     * shim's vector has room past its length, and without the sentinel the
+     * bound is refusing a candidate whose owner[] entry is whatever the heap
+     * held, which is nearly always not BPA_NO_BLOCK - so a bound one past
+     * the slice would be refused by luck and this check would stay green.
+     */
+    CHECK (bpa_vec_hdr (d.owner)->cap > 16,
+	   "the owner vector has no room for a sentinel past the slice");
+    d.owner[16] = BPA_NO_BLOCK;
+    local = BPA_NO_BLOCK;
+    bpa_dyn_take_free (&d, &ps, 0, 8, 1, &local);
+    CHECK (local == BPA_NO_BLOCK,
+	   "a block past the end of the slice was handed out as index %u",
+	   local);
+    CHECK (vec_len (d.free_list) == 14,
+	   "two blocks were taken and the stack holds %u entries, not 14",
+	   (u32) vec_len (d.free_list));
+    CHECK (index_disagreements (&d) == 0,
+	   "%u disagreements between the stack and its index after three "
+	   "named takes", index_disagreements (&d));
+    printf ("  a named free block comes off the stack with its index, a held "
+	    "one and one past the slice are left alone\n");
+    bpa_dyn_free (&d);
   }
 
   (void) i;
