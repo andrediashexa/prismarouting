@@ -163,6 +163,39 @@ version has a chance of seeing it.
   driven, 24 by template, 1 skipped; the wiki: 30, 36, 4. 40 scenarios are
   driven.
 
+* **The plugin CLI's messages have a reader in `make test`, and the count
+  nothing names is a ceiling that only goes down**
+  ([#366](https://github.com/andrediashexa/hexarouting/issues/366)).
+  `tools/plugin-says.sh` answers the stronger question, which of
+  `bpa_cli.c`'s messages any lab ever printed, and needs a corpus kept with
+  `LAB_OUTPUT=<dir>` to answer it, so `make test` could not ask it. The
+  weaker question the issue opened with - which of them a lab, a suite, a
+  wiki page or a document names - needs only the tree, and nothing asked it
+  either, so a sentence added to the plugin with nothing naming it arrived
+  in silence. `test/test_plugin_cli_says.py` reads the `vlib_cli_output`
+  sites out of the source through the extraction `test/say-coverage.sh`
+  already owns, takes each site's longest literal run as its needle, and
+  searches the tree for the run whole: **69 sites carry a needle, 28 are
+  named by nothing on 2026-09-17**, and the run refuses more, or fewer,
+  than the number it carries. Whole and not any ten characters of it,
+  because a ten-character rule named 65 of the 69 through slices like
+  ` subscribe`. The readers themselves and `docs/roadmap.md` do not count
+  as naming a sentence: they quote sentences to measure or to report a gap.
+  Pointed at a kept corpus (`PLUGIN_CLI_CORPUS=<dir>`) it asks
+  `tools/plugin-says.sh` as well and says which of the 28 some lab printed
+  all the same (15) and which no box has ever printed (13).
+
+  The number went from 37 to 28 the same day by the only honest route:
+  `lab/troubleshoot.sh`, `lab/extblocks.sh` and `lab/forward.sh` assert nine
+  of the sentences whole - the formula sentence, the NOW ONLY sentence, the
+  drops heading, the block-holder count, `(extension)`, `port refusals are
+  not a box fault`, `no live state` and the pinned block's reason - on
+  screens they already captured and that the corpus of 2026-09-15 shows them
+  printing, each needle checked against that transcript byte for byte. Shown
+  red by a scratch copy of the plugin with one more sentence in it, which the
+  run names by line; by the ceiling left at 30 over a tree with 28; and by a
+  corpus directory with nothing in it.
+
 ### Changed
 
 * **The self-test's rx-queues row reads what the dataplane opened, card
