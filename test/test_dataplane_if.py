@@ -1241,9 +1241,9 @@ with tempfile.TemporaryDirectory() as tmp:
     print("  and a card with two addresses is accepted with nothing guessed")
 
 print("\n=== commit writes the card into tune.env and nothing beside it (#385) ===")
-# It used to write HEXA_DATAPLANE_MGMT beside HEXA_DATAPLANE_IF on this box,
-# so that a later session reading the box back found the way back as well as
-# the card. The way back is the tuner's now, computed on the boot that claims
+# It used to write the management record beside HEXA_DATAPLANE_IF on this
+# box, so that a later session reading the box back found the way back as
+# well as the card. The way back is the tuner's now, computed on the boot that claims
 # the card and left in /run; a copy in tune.env would be read back into the
 # running configuration and written again by the next commit, a day older
 # each time. Held against the file, because "not written" is what this is.
@@ -1254,9 +1254,13 @@ with tempfile.TemporaryDirectory() as tmp:
     tune = open(sh.TUNE_ENV).read()
     check("HEXA_DATAPLANE_IF=ens18" in tune.splitlines(),
           f"the card is not in the tuner's file: {tune!r}")
-    check("HEXA_DATAPLANE_MGMT" not in tune,
-          f"the commit still writes the management path beside the card, "
-          f"which the tuner computes for itself: {tune!r}")
+    # THE WHOLE FILE, not the absence of one key: the shipped file with the
+    # card's line changed and nothing else, so a record written under any
+    # name beside the card is a difference.
+    check(tune == TUNE_ENV_SHIPPED.replace("HEXA_DATAPLANE_IF=\n",
+                                           "HEXA_DATAPLANE_IF=ens18\n"),
+          f"the commit still writes something beside the card, which the "
+          f"tuner computes for itself: {tune!r}")
     # And the prose the file ships with is still there, which is the rule the
     # card's own setting already has.
     check("EMPTY ON PURPOSE" in tune,

@@ -746,14 +746,16 @@ echo "=== the box the handover was written for: no pair, no router stanza (#334)
 # `^router ` line in it and the old check took the softer branch - on the one
 # box where a missing pair means nobody can reach it at all.
 #
-# The handover record is arranged in the tuner's file and read from there by
-# the self-test. It is where the VTY wrote it and the only place the answer
-# exists: between the commit that names the card and this boot there is
-# nothing on the box to read back, which is why this is a file and not a
-# question put to the dataplane.
-mkdir -p "$FAKE/root/etc/hexarouting"
-printf 'HEXA_DATAPLANE_IF=ens18\nHEXA_DATAPLANE_MGMT="ens18 10.95.200.198/24 52:54:00:00:00:01"\n' \
-  > "$FAKE/root/etc/hexarouting/tune.env"
+# The way back is arranged where the tuner leaves it, in /run, and read from
+# there by the self-test (#385). It is the only place the answer exists:
+# after the bind there is nothing on the box to read back, which is why this
+# is a file and not a question put to the dataplane. The VTY's own copy in
+# tune.env was the holder until #385; a self-test still reading that file
+# would report nothing on every box that claimed its card by itself.
+mkdir -p "$FAKE/root/etc/hexarouting" "$FAKE/root/run/hexarouting"
+printf 'HEXA_DATAPLANE_IF=ens18\n' > "$FAKE/root/etc/hexarouting/tune.env"
+printf 'ens18 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n' \
+  > "$FAKE/root/run/hexarouting/dataplane-management"
 run
 if said '\[FAIL\] this box handed its only card over and NO pair carries'; then
   ok "a handover box with no pair is a failed check, with no routing anywhere"
@@ -768,6 +770,10 @@ fi
 # The record, not a wording: the address is the operator's only way back onto
 # a box whose card is in the dataplane, and it comes out of the fixture above
 # rather than out of any sentence this product writes.
+#
+# THE KEY THIS READ UNTIL #385 IS NAMED NOWHERE ELSE IN THE TREE NOW, and the
+# fixture is what shows the self-test moved with it: a self-test still
+# reading tune.env finds nothing here and takes the softer branch.
 if said_across '10\.95\.200\.198/24'; then
   ok "and it prints the management path the box recorded, to put back by hand"
 else
@@ -807,7 +813,8 @@ if said 'BGP, OSPF and IS-IS'; then
 else
   bad "the second reason went unsaid on a box that has both"
 fi
-rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env"
+rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env" \
+      "$FAKE/root/run/hexarouting/dataplane-management"
 
 echo "=== the pair exists, which is the state the product produces ==="
 # `linux-name vppwan0` under `interface host-veth-vpp`, committed. The TAP is

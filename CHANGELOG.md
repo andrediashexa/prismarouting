@@ -177,6 +177,22 @@ version has a chance of seeing it.
     the drop, the note and the prompt; `test/test_hexash_refusals.py` the
     usage line.
 
+  * **`HEXA_DATAPLANE_MGMT` is read by nothing.** It was the VTY's record
+    in `tune.env`: `apply-tuning` passed the tuner a flag on its presence,
+    the binder read it before unbinding, the VTY read it back into the
+    running configuration and the boot self-test read it to say a box had
+    handed its only card over. Each reader went with its step, and the
+    self-test now asks the same question of the record the tuner leaves in
+    `/run/hexarouting/dataplane-management`, which is there exactly when this
+    boot gave the card away: `[FAIL] this box handed its only card over and
+    NO pair carries the address` still prints on that box, with the way back
+    the box computed on this boot rather than one recorded at a commit. A
+    `tune.env` on a box upgraded from 0.74.x through 0.76.1 may still carry
+    the line; it is inert, and `commit` leaves the rest of the file alone as
+    it always did. `test/test_selftest.sh` holds the self-test against the
+    `/run` record, shown red against the 0.76.1 self-test, which read
+    `tune.env` and found nothing there.
+
   **What it costs a box already in service.** Naming the card your session
   arrives on, with `dataplane interface`, is no longer refused on a box that
   has another card: the box takes the card you named at the next start of

@@ -10884,19 +10884,6 @@ class Shell:
     #: the operator is told - and a fourth spelling of either is a fourth
     #: thing to keep true.
     TUNE_KEY = "HEXA_DATAPLANE_IF"
-    #: And the management path that card carries, beside it. In the SAME file
-    #: because it is the same kind of fact and has to survive the same events:
-    #: a property of the machine that no running daemon can be asked for.
-    #:
-    #: It could not live only in the saved configuration. `show
-    #: running-config` and `save` build the running state by READING THE BOX
-    #: (#161), and between the commit that names the card and the boot that
-    #: hands it over there is nothing on the box to read - the dataplane has
-    #: no such interface yet and Linux still holds the address on a card that
-    #: is about to stop existing. Saved from a fresh session, the file came
-    #: out with the card named and no way to keep the box reachable, which is
-    #: the one file where that mistake is unrecoverable.
-    TUNE_MGMT_KEY = "HEXA_DATAPLANE_MGMT"
     TUNE_UNIT = "hexarouting-tune"
 
     # The card list and the default route are read by host_nics() and

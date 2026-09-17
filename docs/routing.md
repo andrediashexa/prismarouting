@@ -436,8 +436,8 @@ address and all - so nothing upstream has to learn a new one.
 moment - the address and prefix from `ip -4 -o addr show dev <card>`, the MAC
 from `/sys/class/net/<card>/address`, the gateway from `/proc/net/route` -
 print them back, add `ip route 0.0.0.0/0 <gw>` to the candidate, and write the
-record beside the card in `tune.env` as `HEXA_DATAPLANE_MGMT`, so the boot
-after the commit could put the address on the pair. The tuner reads the same
+record beside the card in `tune.env` as a second line, so the boot after the
+commit could put the address on the pair. The tuner reads the same
 three things off the live card on the boot that claims it, whichever box it is
 on and whether or not the card was named, and leaves them in
 `/run/hexarouting/dataplane-management`; a record taken at the prompt was a

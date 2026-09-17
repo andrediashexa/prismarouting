@@ -1111,21 +1111,15 @@ if vppctl show version >/dev/null 2>&1; then
   if vtysh -c "show running-config" 2>/dev/null | grep -q "^router "; then
     routing_configured=yes
   fi
-  # SECOND: did this box give away the card it is reached on. The record the
-  # VTY wrote beside the card's name is the holder of that answer and the only
-  # one there is - between the commit that names the card and this boot there
-  # is nothing on the box to read back, because Linux no longer has the netdev
-  # and the dataplane never had the address. bind-dataplane-nic reads the same
-  # key from the same file for the same reason (#303), and apply-tuning acts
-  # on its mere presence; nothing here parses the value, which is the VTY's.
-  #
-  # Read with sed and never sourced, for the reason HEXA_LOW_LATENCY is above:
-  # tune.env is a file an operator edits by hand, and sourcing it would run
-  # whatever is in it as root inside the boot self-test. The quotes come off
-  # and the spaces do NOT - the value is three fields, name address and MAC.
-  handed_over=$(sed -n \
-      's/^[[:space:]]*HEXA_DATAPLANE_MGMT[[:space:]]*=[[:space:]]*//p' \
-      "$TUNEENV" 2>/dev/null | tail -1 | tr -d '"'"'"'')
+  # SECOND: did this box give away the card it is reached on. The way back
+  # hexarouting-tune computed off that card on THIS boot, before the bind, is
+  # the holder of that answer and the only one there is (#378, #385): after
+  # the bind Linux no longer has the netdev and the dataplane never had the
+  # address, so nothing running now can be asked. It lives in /run, so it
+  # cannot outlive the boot that computed it, and it is there exactly when
+  # this boot gave the card away. Nothing here parses it; the VTY does.
+  handed_over=$(cat "$ROOT/run/hexarouting/dataplane-management" 2>/dev/null \
+                | tail -1)
   if [ -z "$unpaired" ] && [ "$npaired" -eq 0 ]; then
     # Nothing but local0. The DPDK block above already said why, in the
     # operator's terms, so this does not say it a second time as a warning.
@@ -1148,13 +1142,13 @@ if vppctl show version >/dev/null 2>&1; then
     # a console somebody has to walk to.
     if [ -n "$handed_over" ]; then
       bad "this box handed its only card over and NO pair carries the address"
-      say_list "        " "The card named in /etc/hexarouting/tune.env was" \
-        "given to the dataplane, and the linux_cp pair is where the address" \
-        "the box answers on goes back. Without one it comes up forwarding" \
-        "and unreachable from anywhere but its console."
+      say_list "        " "The card this box is reached on was given to the" \
+        "dataplane, and the linux_cp pair is where the address the box" \
+        "answers on goes back. Without one it comes up forwarding and" \
+        "unreachable from anywhere but its console."
       # The record itself, because the operator at that console has to put the
       # address back by hand and it is the only place the old one is written.
-      say_list "        " "the management path it recorded: $handed_over"
+      say_list "        " "the way back it computed on this boot: $handed_over"
     else
       bad "routing is configured and NO interface is paired into the kernel"
     fi
