@@ -198,9 +198,11 @@ format_bpa_pool (u8 *s, va_list *args)
    * A promise about layout, and no mode test guarding it, because a pool that
    * carries a stride is a dynamic pool: bpa_pool_init() and
    * bpa_pool_settings_set() are the only two ways a stride is stored and both
-   * refuse it on a deterministic pool (#375). This row printed on such a pool
-   * since 0.67.0 while the allocator never read the setting, which is
-   * the promise the refusal exists to stop the box making.
+   * refuse it on a deterministic pool through the one
+   * bpa_pool_stride_refusal() they share, so that is true by construction
+   * (#375). This row printed on such a pool since 0.67.0 while the allocator
+   * never read the setting, which is the promise the refusal exists to stop
+   * the box making.
    */
   if (p->block_stride)
     s = format (s, "\n%Ustride       %u (%u ports between a subscriber's "

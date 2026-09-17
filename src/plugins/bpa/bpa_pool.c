@@ -131,10 +131,76 @@ bpa_is_pow2 (u32 v)
   return v && ((v & (v - 1)) == 0);
 }
 
+/*
+ * ONE FUNCTION FOR BOTH ROUTES. `block-stride` reaches the plugin on two
+ * messages: bpa_pool_add_del, where the pool is being built and
+ * bpa_pool_init() reads the stride off it, and bpa_pool_settings_set, where
+ * it changes in place on a pool that stays put. Each used to carry its own
+ * copy of these two tests, and the second copy lived in bpa.c, which needs
+ * a VPP to compile - so the settings route's refusal was asserted by
+ * nothing, while three comments rested on both routes refusing the same
+ * pools. Now they refuse through this one function, the harness that
+ * compiles this file measures it on both routes, and "both refuse it" is
+ * true by construction rather than by agreement (#375).
+ *
+ * Both are facts about the POOL - they hold at every worker count, on
+ * every box and after every restart - which is what separates them from
+ * bpa_stride_warn(): refusing over a worker count would stop a pool
+ * accepted on one box from coming up on the same box with more workers.
+ *
+ * A STRIDE ON A POOL WHOSE EXTENSIONS DO NOT COME OFF THE FREE LIST. A
+ * stride steps along the MAPPED blocks of the subscriber's public address,
+ * and bpa_dyn_acquire_extra() applies it only on that walk. A deterministic
+ * pool's extension never makes that walk: it comes out of the reserve, an
+ * index space of its own with a placement rule of its own - the first free
+ * reserve block on the subscriber's own public address in this worker's
+ * slice, and otherwise the top of this worker's reserve free stack, on
+ * whatever address that is. The own address is a preference and not a rule
+ * there, exactly as it is for a dynamic pool; what is fixed is that neither
+ * step reads the stride, so the setting is never read on that pool.
+ * Refused rather than accepted and inert, for the reason the mirror image
+ * is refused in bpa_pool_init(): a pool moved from dynamic to deterministic
+ * says what it is losing, instead of keeping a number that quietly stopped
+ * meaning anything and a "show bpa pool" row still promising the layout.
+ *
+ * AND A STRIDE THAT STEPS OFF THE ADDRESS. blocks_mapped or more steps
+ * past the end of the subscriber's own public address on its very first
+ * extension, so it can never place anything. Refused rather than accepted
+ * and left silently inert. Against blocks_mapped, which is the bound
+ * bpa_stride_block() itself applies; the settings route used to test
+ * blocks_per_ip, and on the one mode that reaches this test the two are
+ * the same number, a dynamic pool having no reserve.
+ *
+ * The mode first: a stride too large for a deterministic pool draws the
+ * mode sentence, because that pool has no stride that fits, of any size.
+ */
+clib_error_t *
+bpa_pool_stride_refusal (const bpa_pool_t *p, u32 stride)
+{
+  if (stride == 0)
+    return 0;
+  if (p->mode != BPA_MODE_DYNAMIC)
+    return clib_error_return (
+      0, "pool '%v': block-stride applies to dynamic pools only; a stride "
+	 "steps along the mapped blocks, and a deterministic pool's extension "
+	 "comes out of the reserve instead, from the subscriber's own address "
+	 "when this worker has one free there and otherwise from wherever "
+	 "this worker's reserve has one, so the setting is never read",
+      p->name);
+  if (stride >= p->blocks_mapped)
+    return clib_error_return (
+      0, "pool '%v': block-stride %u does not fit: a public address holds %u "
+	 "mappable blocks, so a subscriber's second block would land past the "
+	 "end of them",
+      p->name, stride, p->blocks_mapped);
+  return 0;
+}
+
 clib_error_t *
 bpa_pool_init (bpa_pool_t *p)
 {
   u64 capacity;
+  clib_error_t *e;
 
   if (p->inside.count == 0 || p->outside.count == 0)
     return clib_error_return (0, "pool '%v': address sets must be built first",
@@ -201,39 +267,12 @@ bpa_pool_init (bpa_pool_t *p)
     p->max_blocks = 1;
 
   /*
-   * A stride on a pool whose extensions do not come off the free list.
-   *
-   * bpa_dyn_alloc() applies a stride only where it is walking the MAPPED
-   * blocks, and a deterministic pool's allocator never is: its extension
-   * comes out of the reserve, which is an index space of its own, so a
-   * stride applied there would name somebody else's reserve block or none
-   * at all. That is a fact about the pool and not about this box - it holds
-   * at every worker count, on every box and after every restart - which is
-   * what puts it with the refusals rather than with bpa_stride_warn().
-   *
-   * Refused rather than accepted and inert, for the reason the mirror image
-   * above is refused: a pool moved from dynamic to deterministic says what
-   * it is losing, instead of keeping a number that quietly stopped meaning
-   * anything and a "show bpa pool" row still promising the layout (#375).
+   * The stride, on the pool it is arriving with. The two refusals and the
+   * argument for them are on bpa_pool_stride_refusal(), which is shared with
+   * the in-place route so that the two cannot refuse different pools.
    */
-  if (p->block_stride && p->mode != BPA_MODE_DYNAMIC)
-    return clib_error_return (
-      0, "pool '%v': block-stride applies to dynamic pools only; a "
-	 "deterministic subscriber's extension comes from its reserve, at a "
-	 "fixed place",
-      p->name);
-
-  /*
-   * A stride of blocks_per_ip or more steps past the end of the subscriber's
-   * own public address on its very first extension, so it can never place
-   * anything. Refused rather than accepted and left silently inert.
-   */
-  if (p->block_stride >= p->blocks_mapped)
-    return clib_error_return (
-      0, "pool '%v': block-stride %u does not fit: a public address holds %u "
-	 "mappable blocks, so a subscriber's second block would land past the "
-	 "end of them",
-      p->name, p->block_stride, p->blocks_mapped);
+  if ((e = bpa_pool_stride_refusal (p, p->block_stride)))
+    return e;
 
   /*
    * The documented defaults, except where the operator said otherwise. A pool

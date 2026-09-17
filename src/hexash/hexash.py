@@ -6884,11 +6884,14 @@ class Shell:
             # the block-fits check below is written to avoid.
             #
             # The dataplane refuses it too, in bpa_pool_init() and in
-            # bpa_pool_settings_set(), and that is the authority rather than
-            # this: a stride on a deterministic pool is never read, because
-            # that pool's extension comes out of the reserve and a stride
-            # steps along the mapped blocks (#375). This asks first so the
-            # answer arrives before anything has been applied.
+            # bpa_pool_settings_set() - both through the one
+            # bpa_pool_stride_refusal() they share, so "both" is true by
+            # construction - and that is the authority rather than this: a
+            # stride on a deterministic pool is never read, because a stride
+            # steps along the mapped blocks and that pool's extension comes
+            # out of the reserve, own address first and then whatever the
+            # reserve has free (#375). This asks first so the answer arrives
+            # before anything has been applied.
             #
             # NOT AT BOOT. `load()` drops the stride from such a pool before
             # it gets here, and says so, because a file saved before this
@@ -6912,11 +6915,14 @@ class Shell:
                 # them, and which one is their decision and not this box's.
                 print(f"    mode {pool.mode}")
                 print(f"    block-stride {pool.block_stride}")
-                print_prose("a deterministic subscriber's extension comes "
-                            "out of the pool's reserve, at a place the "
-                            "formula fixes, so there is no free block for a "
-                            "stride to choose: drop the block-stride, or put "
-                            "the pool in dynamic mode")
+                print_prose("a stride steps along the mapped blocks of a "
+                            "public address, and a deterministic pool's "
+                            "extension never comes from there: it comes out "
+                            "of the reserve, from the subscriber's own "
+                            "address when its worker has one free there and "
+                            "otherwise from wherever the reserve has one, so "
+                            "the setting is never read; drop the "
+                            "block-stride, or put the pool in dynamic mode")
                 ok = False
 
             for pool in d["pool_add"] + d["pool_replace"]:
@@ -13483,6 +13489,13 @@ class Shell:
         otherwise be applied minus that line, on a box nobody is watching, and
         the difference between the file on disk and the running configuration
         would be discovered later by somebody reading both.
+
+        One trim, and only one, and it is not that rule's case: a
+        `block-stride` on a deterministic pool, which no allocator ever read.
+        The file minus that line is the configuration the box was running, so
+        it is dropped and said rather than refused - the argument is on the
+        loop below, and Pool.stride_inert() decides which pools it means
+        (#375).
         """
         if not os.path.exists(path):
             return

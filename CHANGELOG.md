@@ -82,10 +82,13 @@ version has a chance of seeing it.
   The setting was accepted on a pool in `mode deterministic`, `show bpa pool`
   printed the layout it promises - *"stride 4 (2048 ports between a
   subscriber's blocks, on its own public address)"* - and the allocator never
-  applied it, at any worker count. A deterministic subscriber's extra block
-  comes out of the **reserve**, at a place the reserve's own arithmetic fixes,
-  so there is no free block for a stride to choose and the setting was never
-  read. The counters that would have shown it doing nothing, `show bpa blocks`'
+  applied it, at any worker count. A stride steps along the *mapped* blocks
+  of the subscriber's public address; a deterministic subscriber's extra
+  block comes out of the **reserve**, an index space with a placement rule of
+  its own - a free reserve block on the subscriber's own address first, and
+  otherwise whatever the reserve has free, on any address - and that walk
+  never touches the mapped blocks, so the setting was never read. The
+  counters that would have shown it doing nothing, `show bpa blocks`'
   *"N placed, N fell back"*, printed only for dynamic pools - so the one pool
   where the stride was never applied was also the one pool with no reading to
   discover that from. Both are fixed: the setting is refused, and those two
@@ -101,14 +104,20 @@ version has a chance of seeing it.
 
   It also removes a sentence that was false in both halves. Since the
   unreachable-stride warning reached the prompt, a deterministic pool was told
-  its stride *"cannot be honoured because blocks are sharded N ways"* and given
-  *"the nearest stride that can be"*. The sharding was not the reason, and no
-  stride would have worked on that pool at any worker count; an operator
-  following that advice changed a number and got the same nothing.
+  its stride *"cannot be honoured: blocks are sharded N ways and a stride step
+  moves by M, so every block the stride names belongs to another worker"* and
+  given *"the nearest stride that can be"*. The sharding was not the reason,
+  and no stride would have worked on that pool at any worker count; an
+  operator following that advice changed a number and got the same nothing.
 
   **What it costs a box already in service: nothing it will notice.** The
   pair is refused by the dataplane, and at the prompt before anything is
-  applied - `commit`, `rollback` and a `-c` batch alike. A configuration
+  applied: by `commit`, whether the candidate was typed, built by a `-c`
+  batch or loaded by `rollback` - which loads the revision and applies
+  nothing, so it is the `commit` after it that refuses. On a box that booted
+  through the drop below, the pool is running without the stride, and what
+  that commit refuses is the in-place delta: a stride added to a pool that
+  stays put. A configuration
   saved by 0.67.0 through 0.76.1 can carry both statements on one pool, and
   `hexash --load` does NOT refuse that file at boot: it drops the
   `block-stride` from such a pool, says so, and applies the pool as the box

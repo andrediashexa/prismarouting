@@ -49,8 +49,9 @@
 #      thing that differs between item 7 and item 8 is which way in was used.
 #   9. And what the box says to an operator who sets `block-stride` on such a
 #      pool, which is the one setting that belongs to the other mode. The
-#      extension this file measures comes out of the RESERVE, at a place the
-#      reserve's arithmetic fixes, so a stride has nothing to choose and is
+#      extension this file measures comes out of the RESERVE - own address
+#      first, then whatever the reserve has free - and a stride steps along
+#      the MAPPED blocks, which that walk never touches, so the setting is
 #      never read - it was accepted and inert since 0.67.0, with the pool
 #      screen printing the distance it promises and the warning path blaming
 #      the worker sharding for it (#375). Refused now, at the dataplane and at
@@ -583,20 +584,25 @@ echo "                   one more reserve block per address costs ${VTY_PERADDR:
 
 # 9. THE SETTING THAT DOES NOT BELONG ON THIS POOL AT ALL, at both ways in.
 #
-# `block-stride` says how far along a public address a subscriber's SECOND
-# block sits, counted from the first. A deterministic pool has no such choice
-# to make: every mapped block belongs to somebody by formula, and the extra
-# block comes out of the reserve this whole file is about - at a place the
-# reserve's own arithmetic fixes. So the allocator never reads the setting
-# there, at any worker count and on any box.
+# `block-stride` says how far along the MAPPED blocks of a public address a
+# subscriber's SECOND block sits, counted from the first. A deterministic
+# pool's extension never comes from those: every mapped block belongs to
+# somebody by formula, and the extra block comes out of the reserve this
+# whole file is about - a free reserve block on the subscriber's own address
+# when the worker has one, and otherwise whatever the reserve has free, a
+# preference and not a rule exactly as it is on a dynamic pool. Neither step
+# reads the stride, so the allocator never reads the setting there, at any
+# worker count and on any box.
 #
 # It was accepted anyway since 0.67.0, the pool screen printed the
 # distance it promises, and nothing ever produced it. Since the sharding
 # warning reached the prompt, such a pool was also told the stride "cannot be
-# honoured because blocks are sharded N ways" and given a nearer stride to
-# try - a sentence that is false twice over here, because the sharding is not
-# the reason and no stride works on this pool at any worker count. An operator
-# following that advice changes a number and gets the same nothing.
+# honoured: blocks are sharded N ways and a stride step moves by M, so every
+# block the stride names belongs to another worker" and given "the nearest
+# stride that can be" - a sentence that is false twice over here, because the
+# sharding is not the reason and no stride works on this pool at any worker
+# count. An operator following that advice changes a number and gets the same
+# nothing.
 #
 # A SIZE THAT FITS, on purpose. 1 is a legal stride for this pool - four
 # blocks per public address - so the only thing left to refuse it for is the
@@ -871,9 +877,12 @@ expect_said "the dataplane refuses a stride on a deterministic pool" \
   "block-stride applies to dynamic pools only" "$DET_STRIDE_SAY"
 # The reason, and not only the verdict. An operator who is told a setting does
 # not apply and not WHY goes looking for the box's mood; this one names the
-# reserve, which is the thing that hands out their second block.
+# reserve, which is the thing that hands out their second block, and where in
+# it the block comes from - which is the preference the rest of this file
+# measures, and not a place anything fixes.
 expect_said "and says where a deterministic extension comes from instead" \
-  "extension comes from its reserve, at a fixed place" "$DET_STRIDE_SAY"
+  "comes out of the reserve instead, from the subscriber's own address when \
+this worker has one free there" "$DET_STRIDE_SAY"
 # THAT IT IS REFUSED FOR THE MODE AND NOT FOR THE SIZE is asserted by the
 # control below and not by a check here. "the box did not also say it does not
 # fit" cannot fail: the mode is looked at first, so a stride too large for the

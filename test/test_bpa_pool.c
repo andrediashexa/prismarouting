@@ -1036,13 +1036,15 @@ main (void)
 	  "===\n");
   {
     bpa_pool_t p;
-    unsigned n_det = 0;
+    unsigned n_det = 0, n_built = 0;
 
     /*
      * #375. The stride was accepted here since 0.67.0, "show bpa pool"
-     * printed the layout it promises, and bpa_dyn_alloc() never read it: it
-     * applies a stride only where it is walking the MAPPED blocks, and a
-     * deterministic pool's allocator walks the reserve instead.
+     * printed the layout it promises, and bpa_dyn_acquire_extra() never
+     * read it: it applies a stride only where it is walking the MAPPED
+     * blocks, and a deterministic pool's extension comes out of the reserve
+     * instead - own address first, then whatever the reserve has free -
+     * which is a walk that never touches the mapped blocks.
      *
      * A reserve as well as without one, because the reserve is what makes a
      * deterministic pool able to extend at all - so the pool that has the
@@ -1079,42 +1081,105 @@ main (void)
 	   "to, so the control above is green for the wrong reason");
 
     /*
-     * AND THE INVARIANT THE REST OF THE PLUGIN NOW RESTS ON. bpa_stride_say()
-     * carries no mode test and format_bpa_pool() prints the stride row with
-     * no mode test, both because a built pool that carries a stride is a
-     * dynamic pool. That is a property of every pool this function builds,
-     * so it is asserted over the whole vector set rather than over the three
-     * pools above - and over the strides the vectors themselves use.
+     * AND THE INVARIANT THE REST OF THE PLUGIN RESTS ON, as a sweep over
+     * what bpa_pool_init() ANSWERS: a pool is refused for its stride exactly
+     * when it carries one and is not dynamic, and built otherwise, over
+     * every vector pool, both modes, and strides zero to three - the ones
+     * the vectors themselves use. bpa_stride_say() carries no mode test and
+     * format_bpa_pool() prints the stride row with none, both because a
+     * built pool that carries a stride is a dynamic pool; that is only true
+     * because this refusal makes it true, which is what the sweep measures.
+     *
+     * The expected answer comes from the INPUTS and from nothing else. The
+     * loop this replaces ended in a CHECK that a built pool with a stride
+     * is dynamic, on a pool whose mode the harness had set three lines up:
+     * true by assignment, and under the mode test cut out of the plugin
+     * not one of the reds came from it. A refusal is measured by the pool
+     * that is refused, not by a field the harness wrote.
+     *
+     * Zero is in the sweep on purpose, in both modes: a plugin that refused
+     * every deterministic pool would pass a sweep that started at one. And
+     * the dynamic half drops the vector's reserve, because a reserve on a
+     * dynamic pool is refused one screen up for a reason of its own, and a
+     * refusal there would read here as a stride refused.
      */
     for (i = 0; i < BPA_VEC_N_POOLS; i++)
       {
-	u32 stride;
+	u32 stride, dynamic;
 
-	for (stride = 1; stride <= 3; stride++)
-	  {
-	    load_pool (&p, &bpa_vec_pools[i]);
-	    if (stride >= p.blocks_mapped)
-	      continue;
-	    p.block_stride = (u16) stride;
-	    CHECK (bpa_pool_init (&p) != 0,
-		   "'%s': stride %u was accepted on a deterministic pool",
-		   bpa_vec_pools[i].name, stride);
-	    n_det++;
-	    p.mode = BPA_MODE_DYNAMIC;
-	    p.block_reserve = 0;
-	    CHECK (bpa_pool_init (&p) == 0,
-		   "'%s': stride %u was refused on a dynamic pool",
-		   bpa_vec_pools[i].name, stride);
-	    CHECK (p.block_stride == 0 || p.mode == BPA_MODE_DYNAMIC,
-		   "'%s': a built pool carries stride %u and is not dynamic",
-		   bpa_vec_pools[i].name, p.block_stride);
-	  }
+	for (dynamic = 0; dynamic < 2; dynamic++)
+	  for (stride = 0; stride <= 3; stride++)
+	    {
+	      int want_refused = stride != 0 && !dynamic;
+	      int refused;
+
+	      load_pool (&p, &bpa_vec_pools[i]);
+	      if (stride >= p.blocks_mapped)
+		continue;
+	      p.block_stride = (u16) stride;
+	      p.mode = dynamic ? BPA_MODE_DYNAMIC : BPA_MODE_DETERMINISTIC;
+	      if (dynamic)
+		p.block_reserve = 0;
+	      refused = bpa_pool_init (&p) != 0;
+	      CHECK (refused == want_refused,
+		     "'%s': stride %u in %s mode was %s",
+		     bpa_vec_pools[i].name, stride,
+		     dynamic ? "dynamic" : "deterministic",
+		     refused ? "refused" : "built");
+	      if (want_refused)
+		n_det++;
+	      else
+		n_built++;
+	    }
       }
     CHECK (n_det > 0,
-	   "no vector pool held a stride of 1 to 3, so the invariant above "
+	   "no vector pool held a stride of 1 to 3, so the refusal above "
 	   "was asserted over nothing");
-    printf ("  %u pool/stride combination(s) refused in deterministic mode "
-	    "and built in dynamic mode\n", n_det);
+    CHECK (n_built > 0,
+	   "no vector pool was built in the sweep, so the acceptance above "
+	   "was asserted over nothing");
+    printf ("  %u pool/stride combination(s) refused in deterministic mode, "
+	    "%u built\n", n_det, n_built);
+
+    /*
+     * AND THE SETTINGS ROUTE, which is the other message a stride arrives
+     * on. bpa_pool_settings_set() lives in bpa.c, which needs a VPP to
+     * compile, so the refusal it carried had no red anywhere until the two
+     * routes came to share bpa_pool_stride_refusal(); what settings_set puts
+     * to that function is exactly this - a built pool, asked about a stride
+     * it does not yet carry. The stride is an ARGUMENT there and the pool
+     * keeps its old one, so the field is checked untouched afterwards: a
+     * refusal that stored the stride it refused would be the settings route
+     * accepting it after all.
+     *
+     * Both refusals, and the two answers between them: a deterministic pool
+     * refused for a stride of one and not for none; a dynamic pool accepting
+     * the largest stride that fits, refused one past it.
+     */
+    load_pool (&p, &bpa_vec_pools[0]);
+    CHECK (bpa_pool_stride_refusal (&p, 1) != 0,
+	   "a stride added in place to a built deterministic pool was "
+	   "accepted");
+    CHECK (p.block_stride == 0, "the refusal stored the stride it refused");
+    CHECK (bpa_pool_stride_refusal (&p, 0) == 0,
+	   "no stride at all was refused in place on a deterministic pool, "
+	   "which is every deterministic pool there is");
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.mode = BPA_MODE_DYNAMIC;
+    p.block_reserve = 0;
+    CHECK (bpa_pool_init (&p) == 0, "the dynamic pool did not build");
+    CHECK (bpa_pool_stride_refusal (&p, 1) == 0,
+	   "a stride added in place to a built dynamic pool was refused");
+    CHECK (bpa_pool_stride_refusal (&p, p.blocks_mapped - 1) == 0,
+	   "the largest stride that fits, %u, was refused in place",
+	   p.blocks_mapped - 1);
+    CHECK (bpa_pool_stride_refusal (&p, p.blocks_mapped) != 0,
+	   "a stride of %u was accepted in place on an address of %u "
+	   "mappable blocks, and its first step lands past the end",
+	   p.blocks_mapped, p.blocks_mapped);
+    printf ("  in place: refused for the mode on a deterministic pool, for "
+	    "the fit on a dynamic one\n");
   }
 
   /*
