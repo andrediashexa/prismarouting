@@ -1000,7 +1000,7 @@ print("\n=== the prompt names the hierarchy AND its subject ===")
 sh = shell_with_box()
 check(sh.prompt().endswith("> "), f"operational mode is a > prompt: {sh.prompt()}")
 sh.feed("configure")
-check(sh.prompt() == "prismarouting# [edit] ", f"top of config: {sh.prompt()!r}")
+check(sh.prompt() == "prisma# [edit] ", f"top of config: {sh.prompt()!r}")
 
 sh.feed("cgnat pool residential")
 check("cgnat pool residential" in sh.prompt(),

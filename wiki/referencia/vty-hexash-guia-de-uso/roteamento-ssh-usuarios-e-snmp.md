@@ -88,7 +88,7 @@ flowchart LR
 | `show ip route` | RIB do FRR (repassado ao `vtysh`) | conferir o que o FRR decidiu, não o que a caixa faz |
 
 ```
-prismarouting> show route
+prisma> show route
   Destination          Next hop          Interface    Kind
   0.0.0.0/0            200.150.0.1       ens19        forward
   203.0.113.0/24       200.150.0.1       ens19        forward
@@ -324,9 +324,9 @@ configure
 Prefix-lists e route-maps são escritos na sintaxe do roteamento e guardados por ele. A VTY completa os nomes que a caixa já tem:
 
 ```
-prismarouting# [edit] ip ?
+prisma# [edit] ip ?
   prefix-list  a named list of prefixes, for matching in policy
-prismarouting# [edit] ip prefix-list <TAB>
+prisma# [edit] ip prefix-list <TAB>
   PL-CLIENTES   ip prefix-list
 ```
 

@@ -64,7 +64,7 @@ mkfifo /tmp/boot-in || { echo "cannot create the console pipe"; exit 1; }
   # appearing means there is something to ask.
   _n=0
   while [ "$_n" -lt "${BOOT_SECS:-420}" ]; do
-    grep -q "^prismarouting>" /tmp/boot.log 2>/dev/null && break
+    grep -q "^prisma>" /tmp/boot.log 2>/dev/null && break
     sleep 1; _n=$((_n + 1))
   done
   # Held open to the end: a writer that closes hands qemu an end of file on
@@ -196,7 +196,7 @@ if said_a_verdict /tmp/clean.log; then
   # still hexarouting and the prompt is not, so the two no longer collide;
   # the anchor stays because a prompt is the start of a line and nothing else
   # is.
-  if grep -q "^prismarouting>" /tmp/clean.log; then
+  if grep -q "^prisma>" /tmp/clean.log; then
     #
     # ORDER, not merely presence. Both of these were on the console before
     # #93 and the boot still "passed": the getty drew the VTY prompt first and
@@ -212,7 +212,7 @@ if said_a_verdict /tmp/clean.log; then
     # end - which is the shape of the bug, not the shape of a fix.
     _sel=$(grep -n "boot self-test" /tmp/clean.log | head -1 | cut -d: -f1)
     _end=$(grep -nE "$VERDICT_RE" /tmp/clean.log | tail -1 | cut -d: -f1)
-    _pmt=$(grep -n "^prismarouting>" /tmp/clean.log | head -1 | cut -d: -f1)
+    _pmt=$(grep -n "^prisma>" /tmp/clean.log | head -1 | cut -d: -f1)
     echo
     echo "=========== console order ==========="
     echo "  self-test starts at line $_sel, ends at $_end; the prompt is at $_pmt"

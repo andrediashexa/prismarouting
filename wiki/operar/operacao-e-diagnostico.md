@@ -41,11 +41,11 @@ O `commit check` informa o re-mapeamento: a conta exata e dois assinantes de exe
 Se o dataplane tomou a placa de gerência, a caixa saiu da rede no instante em que o VPP subiu. Pelo console, aponte-a para a placa dos assinantes — ou para nenhuma, até decidir:
 
 ```
-prismarouting> configure
-prismarouting# [edit] dataplane interface enp2s0
-prismarouting# [edit] commit
-prismarouting# [edit] exit
-prismarouting> save
+prisma> configure
+prisma# [edit] dataplane interface enp2s0
+prisma# [edit] commit
+prisma# [edit] exit
+prisma> save
 ```
 
 `no dataplane interface` é a versão sem escolher: a caixa passa a não pegar placa nenhuma, que é o estado seguro e alcançável por rede. **Depois reinicie.**

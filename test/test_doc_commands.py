@@ -19,14 +19,14 @@ What is read is the PROMPT LINES inside fenced blocks, because those are the
 lines a reader retypes. Output lines in the same block are not commands and
 are left alone.
 
-  prismarouting> show route               operational mode
-  prismarouting# [edit] interface Gi0/1   configuration mode, top level
-  prismarouting# [edit interface Gi0/1]   the prompt alone: where you now are,
+  prisma> show route               operational mode
+  prisma# [edit] interface Gi0/1   configuration mode, top level
+  prisma# [edit interface Gi0/1]   the prompt alone: where you now are,
                                           not something anybody typed
 
-The prompt is half the assertion. `prismarouting>` and `prismarouting# [edit]` are
+The prompt is half the assertion. `prisma>` and `prisma# [edit]` are
 what Shell.prompt() returns for the two modes, so a page that shows
-`prismarouting# configure` is showing a transcript the box cannot produce:
+`prisma# configure` is showing a transcript the box cannot produce:
 `configure` is an operational command and `#` means you are already in
 configuration mode, where it is not in the tree at all.
 
@@ -195,11 +195,11 @@ def prompt_lines():
                     if (i + 1 < len(rows)
                             and rows[i + 1].startswith(AMBIGUOUS_VERDICT)):
                         SHOWN_REFUSED.add((path, line))
-                    m = re.match(r"^prismarouting> (.+)$", line)
+                    m = re.match(r"^prisma> (.+)$", line)
                     if m:
                         out.append((path, "operational", "", m.group(1).strip()))
                         continue
-                    m = re.match(r"^prismarouting# \[edit(| [^\]]*)\](.*)$", line)
+                    m = re.match(r"^prisma# \[edit(| [^\]]*)\](.*)$", line)
                     if m:
                         cmd = m.group(2).strip()
                         if cmd:
@@ -208,9 +208,9 @@ def prompt_lines():
                         continue
                     # A prompt with something after it that is neither of the
                     # two shapes above. Worth naming rather than skipping:
-                    # `prismarouting# configure` is exactly that, and it is the
+                    # `prisma# configure` is exactly that, and it is the
                     # defect this half of the file exists for.
-                    m = re.match(r"^prismarouting#\s+([a-z].*)$", line)
+                    m = re.match(r"^prisma#\s+([a-z].*)$", line)
                     if m:
                         out.append((path, "BAD PROMPT", "", m.group(1).strip()))
     return out
@@ -229,8 +229,8 @@ else:
         f"matching the pages, so this file is asserting nothing")
 
 print("\n=== the prompt matches the mode the command lives in ===")
-# `prismarouting>` is operational and `prismarouting# [edit]` is configuration.
-# A command shown at a bare `prismarouting#` is a transcript the box cannot
+# `prisma>` is operational and `prisma# [edit]` is configuration.
+# A command shown at a bare `prisma#` is a transcript the box cannot
 # produce, and the one that matters is `configure`: at `#` you are already in
 # configuration mode, where `configure` is not in the tree at all.
 wrong_prompt = [(p, c) for p, mode, _, c in lines if mode == "BAD PROMPT"]
@@ -239,8 +239,8 @@ if not wrong_prompt:
 else:
     for path, cmd in wrong_prompt:
         rel = os.path.relpath(path, REPO)
-        bad(f"{rel} shows 'prismarouting# {cmd}'. This VTY prints "
-            f"'prismarouting> ' in operational mode and 'prismarouting# [edit] ' "
+        bad(f"{rel} shows 'prisma# {cmd}'. This VTY prints "
+            f"'prisma> ' in operational mode and 'prisma# [edit] ' "
             f"in configuration mode, so that line is a transcript no box "
             f"produces")
 
@@ -266,7 +266,7 @@ for path, mode, context, cmd in lines:
             contextlib.redirect_stderr(io.StringIO()):
         spelled = sh.spell_out(cmd)
     if spelled is None:
-        shown_line = (f"prismarouting# [edit{' ' + context if context else ''}]"
+        shown_line = (f"prisma# [edit{' ' + context if context else ''}]"
                       f" {cmd}")
         if (path, shown_line) not in SHOWN_REFUSED:
             bad(f"{rel}: '{cmd}' ({mode}): an ambiguous abbreviation, and the "
@@ -626,8 +626,8 @@ for _root, _dirs, _files in os.walk(os.path.join(REPO, "wiki")):
                 if not _inblock:
                     continue
                 _s = _line.strip()
-                if _s.startswith("prismarouting>"):
-                    _s = _s[len("prismarouting>"):].strip()
+                if _s.startswith("prisma>"):
+                    _s = _s[len("prisma>"):].strip()
                 if "  " in _s:
                     continue
                 _w = _s.split()

@@ -1,6 +1,6 @@
 # Configuração de pool
 
-Entra-se com `nat cgnat pool <nome>` dentro de `configure`. O prompt vira `prismarouting# [edit cgnat pool residencial] ` — ele nomeia o pool, e mantém a grafia curta `cgnat pool`, sem o `nat`. Sai-se com `exit`.
+Entra-se com `nat cgnat pool <nome>` dentro de `configure`. O prompt vira `prisma# [edit cgnat pool residencial] ` — ele nomeia o pool, e mantém a grafia curta `cgnat pool`, sem o `nat`. Sai-se com `exit`.
 
 
 :::info
@@ -292,7 +292,7 @@ Os cinco vêm **ligados**. `alg <nome> off` é a exceção escrita no pool, e `n
 Dentro do bloco, `no <ajuste>` tira o ajuste. `no ?` lista o que pode ser tirado, e `?` depois da palavra continua oferecendo o argumento:
 
 ```
-prismarouting# [edit cgnat pool residencial] no ?
+prisma# [edit cgnat pool residencial] no ?
   alg                stop choosing for one ALG; the pool takes the device default again
   block-stride       let the pool place a subscriber's extra blocks wherever it has one free
   bypass             stop excluding a prefix from translation

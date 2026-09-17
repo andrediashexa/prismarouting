@@ -77,7 +77,7 @@ echo "=== a box that says neither is still a timeout ==="
 # The distinction has to cost nothing: a driver that reported a refusal for a
 # box that said nothing would turn every hang into a wrong diagnosis.
 CONSOLE_POS=1
-printf 'prismarouting# [edit] \n' > "$CONSOLE_LOG"
+printf 'prisma# [edit] \n' > "$CONSOLE_LOG"
 wait_for_either "commit complete" "commit failed" 2 "a commit" \
   > "$WORK/o" 2>&1 && _rc=0 || _rc=$?
 case $_rc in

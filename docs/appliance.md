@@ -951,9 +951,9 @@ It is now a statement like any other — in the candidate, committed, saved by
 `save`, rendered by `show running-config`:
 
 ```
-prismarouting> configure
-prismarouting# [edit] dataplane interface enp2s0
-prismarouting# [edit] commit
+prisma> configure
+prisma# [edit] dataplane interface enp2s0
+prisma# [edit] commit
 dataplane interface: enp2s0
     stored, and the boot tuning was recomputed for it
     NOT IN EFFECT YET: the dataplane claims its card when it starts, and this
@@ -1527,7 +1527,7 @@ Prisma Routing VTY <version>
 This is the installation medium: nothing here survives a reboot.
 Type 'install' to install Prisma Routing onto a disk.
 
-prismarouting> install
+prisma> install
 ```
 
 `install` exists in the VTY **only when the box is running from the medium**.

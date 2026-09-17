@@ -472,7 +472,7 @@ sh tools/vty.sh -c "show cgnat pool"  # one command and exit
 Tab completes; `?` lists the valid options with descriptions:
 
 ```
-prismarouting# show cgnat ?
+prisma# show cgnat ?
   blocks   blocks allocated in dynamic mode
   logging  IPFIX export state
   pool     configured CGNAT pools
@@ -487,15 +487,15 @@ Configuration follows the Juniper model — edits build a candidate and reach th
 device only on `commit`:
 
 ```
-prismarouting> configure
-prismarouting# [edit] nat cgnat pool alpha
-prismarouting# [edit cgnat pool alpha] inside 100.64.0.0/22
-prismarouting# [edit cgnat pool alpha] exit
-prismarouting# [edit] show configuration compare
-prismarouting# [edit] commit check
-prismarouting# [edit] commit comment "first pool"
-prismarouting# [edit] rollback 1
-prismarouting# [edit] commit
+prisma> configure
+prisma# [edit] nat cgnat pool alpha
+prisma# [edit cgnat pool alpha] inside 100.64.0.0/22
+prisma# [edit cgnat pool alpha] exit
+prisma# [edit] show configuration compare
+prisma# [edit] commit check
+prisma# [edit] commit comment "first pool"
+prisma# [edit] rollback 1
+prisma# [edit] commit
 ```
 
 `commit confirmed <minutes>` applies the change and rolls it back

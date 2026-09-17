@@ -118,7 +118,7 @@ E `commit cutoff` **não** é uma licença para se trancar do lado de fora: ele 
 ### `commit confirmed` — a rede de segurança para mudar remoto
 
 ```
-prismarouting# [edit] commit confirmed 5
+prisma# [edit] commit confirmed 5
 ```
 
 Aplica agora, e desfaz automaticamente em 5 minutos a menos que você confirme. É o que permite mexer em roteamento numa máquina remota: se a mudança cortar seu próprio acesso, a máquina se recupera sozinha.
@@ -139,7 +139,7 @@ rollback at 2026-02-11T14:32:07Z, in 5 minute(s)
 Qualquer `commit` confirma a janela aberta:
 
 ```
-prismarouting# [edit] commit
+prisma# [edit] commit
 confirmed: the box will not roll this change back
 ```
 

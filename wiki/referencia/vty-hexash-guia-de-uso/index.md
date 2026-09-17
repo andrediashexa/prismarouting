@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-    O["operacional<br/><code>prismarouting&gt;</code>"] -->|configure| G["configuração<br/><code>[edit]</code>"]
+    O["operacional<br/><code>prisma&gt;</code>"] -->|configure| G["configuração<br/><code>[edit]</code>"]
     G -->|"nat cgnat pool NOME"| P["pool<br/><code>[edit cgnat pool]</code>"]
     G -->|"user NOME"| U["usuário<br/><code>[edit user]</code>"]
     G -->|"snmp-user NOME"| SU["usuário SNMP<br/><code>[edit snmp user]</code>"]
@@ -18,14 +18,14 @@ flowchart LR
 
 | Modo | Prompt | Como entrar | Como sair |
 |------|--------|-------------|-----------|
-| Operacional | `prismarouting> ` | é onde a sessão começa | `exit` encerra a sessão |
-| Configuração | `prismarouting# [edit] ` | `configure` | `exit`    |
-| Pool | `prismarouting# [edit cgnat pool residencial] ` | `nat cgnat pool <nome>` | `exit`    |
-| Interface | `prismarouting# [edit interface ens18] ` | `interface <nome>` | `exit`    |
-| Usuário | `prismarouting# [edit user joao] ` | `user <nome>` | `exit`    |
-| Usuário SNMP | `prismarouting# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`    |
-| Rotas estáticas | `prismarouting# [edit router static] ` | `router static` | `exit`    |
-| Bloco do FRR | `prismarouting# [edit router bgp 65000] ` | `router bgp <AS>` | `exit`    |
+| Operacional | `prisma> ` | é onde a sessão começa | `exit` encerra a sessão |
+| Configuração | `prisma# [edit] ` | `configure` | `exit`    |
+| Pool | `prisma# [edit cgnat pool residencial] ` | `nat cgnat pool <nome>` | `exit`    |
+| Interface | `prisma# [edit interface ens18] ` | `interface <nome>` | `exit`    |
+| Usuário | `prisma# [edit user joao] ` | `user <nome>` | `exit`    |
+| Usuário SNMP | `prisma# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`    |
+| Rotas estáticas | `prisma# [edit router static] ` | `router static` | `exit`    |
+| Bloco do FRR | `prisma# [edit router bgp 65000] ` | `router bgp <AS>` | `exit`    |
 
 **O prompt nomeia o assunto, não só o tipo de bloco.** `[edit cgnat pool]` seria o mesmo prompt numa caixa com vinte pools: diria que você está *num* pool sem dizer em qual, que é justamente a pergunta que você tem.
 
@@ -55,7 +55,7 @@ Duas ferramentas, sempre disponíveis:
 E onde a árvore espera um **nome**, os dois completam com o que a caixa realmente tem:
 
 ```
-prismarouting# [edit] interface ?
+prisma# [edit] interface ?
   host-veth-vpp  interface (up)
   pg0            interface (up)
   tap4096        interface (up)
@@ -73,10 +73,10 @@ Ambas são contextuais: dentro de um pool, `?` lista os campos do pool, não os 
 Você não precisa digitar a palavra inteira. **Qualquer abreviação que sirva a uma única declaração vale pela declaração inteira** — a caixa completa por você antes de ler a linha:
 
 ```
-prismarouting# [edit] interf ens18
-prismarouting# [edit interface ens18] no shut
-prismarouting# [edit interface ens18] descr uplink da transito
-prismarouting# [edit interface ens18] mt 9000
+prisma# [edit] interf ens18
+prisma# [edit interface ens18] no shut
+prisma# [edit interface ens18] descr uplink da transito
+prisma# [edit interface ens18] mt 9000
 ```
 
 é exatamente o mesmo que `interface ens18`, `no shutdown`, `description uplink da transito` e `mtu 9000`. As palavras que valem são as mesmas que o `?` e o TAB oferecem naquele ponto, então o que a caixa aceita e o que ela oferece nunca discordam.
@@ -86,7 +86,7 @@ prismarouting# [edit interface ens18] mt 9000
 ### Uma abreviação ambígua é recusada, com os candidatos
 
 ```
-prismarouting# [edit interface ens18] i 1
+prisma# [edit interface ens18] i 1
 error: an ambiguous abbreviation
     'i' begins 4 statements here: ip, ipv4, ipv6, isis
     type enough of one to tell them apart, or '?' to read what each does
@@ -138,15 +138,15 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 A primeira pergunta que alguém faz a um roteador é se ele alcança alguma coisa. As três respondem isso **de dentro da VTY**, e **qualquer conta pode rodá-las**, inclusive uma conta só de leitura: elas não mudam nada na caixa, e quem é chamado para dizer se a caixa alcança um destino nem sempre é quem pode configurá-la. Antes desta versão o único caminho era o `start shell`, que é só de administrador e entrega toda a capacidade de uma vez para responder uma pergunta sobre um pacote.
 
 ```
-prismarouting> ping 8.8.8.8
+prisma> ping 8.8.8.8
 PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.
 64 bytes from 8.8.8.8: icmp_seq=1 ttl=117 time=8.44 ms
 ...
 --- 8.8.8.8 ping statistics ---
 5 packets transmitted, 5 received, 0% packet loss, time 4006ms
 
-prismarouting> traceroute 8.8.8.8 source 200.0.113.10
-prismarouting> mtr 8.8.8.8 count 10
+prisma> traceroute 8.8.8.8 source 200.0.113.10
+prisma> mtr 8.8.8.8 count 10
 ```
 
 **Toda sonda termina sozinha.** O padrão são 5 pacotes, o máximo que `count` aceita é 100, e existe um prazo de 300 segundos que interrompe a ferramenta que travar. Isso é deliberado: uma sonda que só para quando alguém interrompe, digitada no console serial de uma caixa no rack por quem depois foi embora, deixa aquele console inutilizável até alguém voltar. Ctrl-C também volta para o prompt, sem encerrar a sessão.
@@ -261,7 +261,7 @@ O bloco de interface tem onze declarações — endereços IPv4 e IPv6, VLAN, VR
 Dentro de um bloco, apenas o que vale ali:
 
 ```
-prismarouting# [edit interface ens18] ?
+prisma# [edit interface ens18] ?
   description  what this interface is for
   exit         leave the interface
   ip           routing-protocol settings FRR owns on this interface

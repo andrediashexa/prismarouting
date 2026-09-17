@@ -30,7 +30,7 @@ Prisma Routing VTY 0.25.0
 This is the installation medium: nothing here survives a reboot.
 Type 'install' to install Prisma Routing onto a disk.
 
-prismarouting> install
+prisma> install
 ```
 
 O comando `install` existe na VTY **somente quando a máquina está rodando a partir do meio**. Em uma appliance já instalada ele não está na árvore de comandos e o instalador se recusa a rodar — um comando que sobrescreve o disco não deve ficar a um TAB de distância de `interface` num roteador em produção.

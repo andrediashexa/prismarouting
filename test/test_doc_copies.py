@@ -861,8 +861,8 @@ def _shell(mode, enter=()):
 #: shape nobody lists is reported rather than skipped, because a transcript
 #: added later and silently unread is this check going quiet.
 _LISTINGS = {
-    "prismarouting> show cgnat ?": ("operational", (), "show cgnat "),
-    "prismarouting# [edit interface GigabitEthernet0/12/0] ?":
+    "prisma> show cgnat ?": ("operational", (), "show cgnat "),
+    "prisma# [edit interface GigabitEthernet0/12/0] ?":
         ("configuration", ("interface GigabitEthernet0/12/0",), ""),
 }
 

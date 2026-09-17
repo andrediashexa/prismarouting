@@ -5351,15 +5351,15 @@ class Shell:
 
     def prompt(self):
         if self.mode == "operational":
-            return "prismarouting> "
+            return "prisma> "
         where = self.where()
         if not where:
-            return "prismarouting# [edit] "
+            return "prisma# [edit] "
         if len(where) > self.PROMPT_MAX:
             # Keep the END: the innermost block is where the next statement
             # lands, and it is the half worth the space.
             where = "..." + where[-(self.PROMPT_MAX - 3):]
-        return f"prismarouting# [edit {where}] "
+        return f"prisma# [edit {where}] "
 
     def require(self, cap, what):
         """

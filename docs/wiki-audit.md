@@ -186,7 +186,7 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 **Renamed to Prisma Routing on the 17 pages that carried the old name or the
 old prompt**, in the mirror only; publication is the maintainer's, at release.
-The prompt `hexarouting> ` became `prismarouting> ` on every quoted screen,
+The prompt `hexarouting> ` became `prisma> ` on every quoted screen,
 `show version` and the medium's login screen quote the new first line, and
 the upgrade page names `prisma-routing-<versão>-upgrade.tar.gz`. Nothing an
 operator types changed: `hexash`, the paths and the units keep their names,

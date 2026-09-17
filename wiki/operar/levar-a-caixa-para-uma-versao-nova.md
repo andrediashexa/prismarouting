@@ -47,7 +47,7 @@ E um passo que deixou de existir: **naquela caixa de uma placa só, entregar a p
 ## 1. Anote a versão que está rodando
 
 ```
-prismarouting> show version
+prisma> show version
 ```
 
 Guarde a saída inteira no chamado de mudança. Ela é o que diz de onde a caixa veio, e é com ela que você compara no fim.
@@ -81,7 +81,7 @@ O pacote troca o dataplane **em disco** e não reinicia nada. Até o próximo re
 Quem conta essa história é a linha `plugin` do `show version`, e **não** a linha `dataplane`:
 
 ```
-prismarouting> show version
+prisma> show version
 Prisma Routing 0.74.2
   dataplane: vpp v24.10-release built by root on box at 2026-01-01
   plugin:    0.40.0
@@ -152,7 +152,7 @@ flowchart TD
 ## 2. Leve a configuração para fora da caixa
 
 ```
-prismarouting> show running-config
+prisma> show running-config
 ```
 
 É o que está em vigor neste instante. Copie a saída inteira para fora da sessão: ela é escrita para ser digitada de volta no prompt, uma linha por vez, e é o único formato de exportação que existe.

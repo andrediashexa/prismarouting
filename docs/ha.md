@@ -133,7 +133,7 @@ perfectly healthy. Configuration equality is a requirement, not a convenience.
 takeover put subscribers where they already are?
 
 ```
-prismarouting> show cgnat ha
+prisma> show cgnat ha
   this box
     mapping fingerprint  50e2b92f23c2707c
     pools                residencial

@@ -82,7 +82,7 @@ Para que a caixa possa comparar, ela precisa ter a configuração da outra. Não
 Quando as duas divergem:
 
 ```
-prismarouting> show cgnat ha
+prisma> show cgnat ha
   this box
     mapping fingerprint  50e2b92f23c2707c
     pools                residencial

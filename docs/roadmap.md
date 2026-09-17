@@ -2912,7 +2912,7 @@ occurrences MUST be checked one at a time rather than swept.
 The rename shipped as **strings only**, which answers the first decision in
 the table above the reversible way: an upgraded box changes what it prints
 and nothing it has on its disk, so there is nothing to migrate and nothing to
-rename back. What moved: the banner, the VTY prompt (`prismarouting> `; it
+rename back. What moved: the banner, the VTY prompt (`prisma> `; it
 was the product name written into the VTY and never the hostname), `show
 version`, the boot self-test's header and its verdict sentences, the
 installer's screens, the unit descriptions, the medium and artifact filenames

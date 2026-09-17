@@ -91,8 +91,10 @@ version has a chance of seeing it.
 
 * **The product is called Prisma Routing**
   ([#202](https://github.com/andrediashexa/hexarouting/issues/202)). Two
-  words. Where a name has to be one token it is `prismarouting`, and in a
-  filename `prisma-routing`. This release renames what a person reads and
+  words. Where a name has to be one token it is `prismarouting` (nothing on
+  a disk takes it yet), in a filename `prisma-routing`, and at the prompt
+  `prisma` - the one word an operator types beside all day, kept short for
+  that reason. This release renames what a person reads and
   nothing a box has on its disk, so a box in service takes it as an ordinary
   upgrade with nothing to migrate and nothing to rename back if the name has
   to change again.
@@ -101,7 +103,7 @@ version has a chance of seeing it.
 
   * the login banner: the brand kit's terminal signature, 42 columns at its
     widest, in place of the old lettering;
-  * the VTY prompt: `prismarouting> ` and `prismarouting# [edit] ` in place
+  * the VTY prompt: `prisma> ` and `prisma# [edit] ` in place
     of `hexarouting> ` and `hexarouting# [edit] `. The prompt was the product
     name written into the VTY and never the box's hostname, which is why it
     moves and the hostname does not;
