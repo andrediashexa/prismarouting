@@ -22,7 +22,20 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/*
+ * Standalone, the same way bpa_log.h now is. Everything in this file below
+ * the includes reads only its own state and the socket: the IPFIX message is
+ * assembled into a vector, the spill file is ordinary POSIX I/O, and neither
+ * needs a packet, a session or the graph. The one function that does is
+ * bpa_log_tcp_enable(), which formats a path with VPP's format() and calls
+ * back into bpa.c to replay the pins; it is not compiled under
+ * BPA_STANDALONE, which is also why "bpa.h" is not needed there. The VPP
+ * build defines BPA_STANDALONE nowhere, so both guards take their `#else`
+ * branch and the file preprocesses exactly as it did before.
+ */
+#ifndef BPA_STANDALONE
 #include "bpa.h"
+#endif
 #include "bpa_log.h"
 
 #define BPA_TCP_TEMPLATE_ID  256
@@ -533,6 +546,8 @@ bpa_log_tcp_flush_exit (void)
   return (u32) (bpa_log_tcp.n_spilled - before);
 }
 
+#ifndef BPA_STANDALONE
+
 clib_error_t *
 bpa_log_tcp_enable (ip4_address_t *collector, u16 port, int enable)
 {
@@ -566,3 +581,5 @@ bpa_log_tcp_enable (ip4_address_t *collector, u16 port, int enable)
   }
   return 0;
 }
+
+#endif /* BPA_STANDALONE */

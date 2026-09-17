@@ -8,8 +8,23 @@
 #ifndef __included_bpa_log_h__
 #define __included_bpa_log_h__
 
+/*
+ * Standalone, the same way bpa_ftp.h is: test/test_bpa_log_tcp.c drives the
+ * TCP exporter's buffer arithmetic, its spill file and its socket handling,
+ * none of which reads a packet or the graph. What this header needs from VPP
+ * is the integer types, f64, ip4_address_t, clib_error_t and a name for
+ * vlib_main_t to point at - the prototypes below take vlib_main_t only by
+ * pointer, so an opaque forward declaration is the whole of it. The VPP build
+ * defines BPA_STANDALONE nowhere and takes the `#else` branch, which is this
+ * header exactly as it was.
+ */
+#ifdef BPA_STANDALONE
+#include "bpa_log_shim.h"
+typedef struct vlib_main_t vlib_main_t;
+#else
 #include <vlib/vlib.h>
 #include <vnet/ip/ip.h>
+#endif
 
 /* RFC 8158, natEvent record */
 #define BPA_NAT_EVENT_PORTS_EXHAUSTED 12

@@ -23,8 +23,21 @@
  * CGNAT that follows the text here breaks against the servers that exist.
  */
 
+/*
+ * Standalone, the same way bpa_ftp.h and bpa_ftp.c are. Three functions here
+ * read nothing but a TCP header and the bytes behind it: the worst-outcome
+ * fold, the checksum-preserving field replacement, and the payload bounds.
+ * Under BPA_STANDALONE the VPP headers are not included and everything that
+ * needs a session pool or a bihash is not compiled. The VPP build defines
+ * BPA_STANDALONE nowhere, so both guards take their `#else` branch and the
+ * file preprocesses exactly as it did before.
+ */
+#ifdef BPA_STANDALONE
+#include "bpa_tcp_shim.h"
+#else
 #include "bpa.h"
 #include "bpa_pptp.h"
+#endif
 
 #define PPTP_MSG_CONTROL 1
 #define PPTP_MAGIC	 0x1a2b3c4d
@@ -99,6 +112,8 @@ pptp_payload (vlib_buffer_t *b, tcp_header_t *tcp, u32 *len)
   *len = (u32) (end - p);
   return p;
 }
+
+#ifndef BPA_STANDALONE
 
 /* The GRE session this call request already created, if it is a retransmit. */
 static bpa_session_t *
@@ -339,3 +354,5 @@ bpa_pptp_in (bpa_per_thread_t *pt, vlib_buffer_t *b, tcp_header_t *tcp,
 
   return result;
 }
+
+#endif /* BPA_STANDALONE */

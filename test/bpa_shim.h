@@ -10,6 +10,7 @@ typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
+typedef int16_t i16;
 typedef int32_t i32;
 
 /* The two VPP spellings a parser reaches for. Plain memmove and memcpy: the
@@ -18,6 +19,7 @@ typedef int32_t i32;
  * datapath would be testing something else. */
 #define clib_memmove	 memmove
 #define clib_memcpy_fast memcpy
+#define clib_memset	 memset
 
 #define PREDICT_TRUE(x)	     __builtin_expect (!!(x), 1)
 #define PREDICT_FALSE(x)     __builtin_expect (!!(x), 0)

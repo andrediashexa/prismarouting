@@ -17,6 +17,19 @@
  * records attaching and detaching it too.
  */
 
+/*
+ * Standalone, the same way bpa_ftp.h is, and for ONE function: the hex
+ * reader. Everything else here formats with VPP's format(), digests with
+ * vppinfra's SHA-2, or writes to the CLI, so under BPA_STANDALONE only
+ * bpa_audit_unhex() is compiled. It earns the guard on its own - it is the
+ * function that decides whether a line of the trail carries a digest at all,
+ * and it is the only place the chain's evidence is turned back into bytes.
+ * The VPP build defines BPA_STANDALONE nowhere, so every guard below takes
+ * its `#else` branch and the file preprocesses exactly as it did before.
+ */
+#ifdef BPA_STANDALONE
+#include "bpa_shim.h"
+#else
 #include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
@@ -217,6 +230,8 @@ bpa_audit_digest (const u8 *prev, const u8 *content, uword len, u8 *out)
   clib_sha2_final (&ctx, out);
 }
 
+#endif /* not BPA_STANDALONE */
+
 /* "<64 hex>" -> 32 bytes. Returns 0 when the text is not a digest. */
 static int
 bpa_audit_unhex (const char *hex, u8 *out)
@@ -247,6 +262,8 @@ bpa_audit_unhex (const char *hex, u8 *out)
     }
   return 1;
 }
+
+#ifndef BPA_STANDALONE
 
 /*
  * Where the chain had got to, read back from the file at startup.
@@ -732,3 +749,5 @@ VLIB_CLI_COMMAND (bpa_audit_path_command, static) = {
   .short_help = "bpa audit-path [<path>]",
   .function = bpa_audit_path_command_fn,
 };
+
+#endif /* not BPA_STANDALONE */

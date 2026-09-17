@@ -8,9 +8,23 @@
  * worse outcome than the one it exists to prevent.
  */
 
+/*
+ * Standalone, the same way bpa_ftp.h already is and for the same reason: the
+ * text half of this ALG - the decimal parser, the two address grammars and
+ * the line parse that refuses - decides whether a subscriber's payload is
+ * touched at all, and none of it reads a packet, a session or a pool. Under
+ * BPA_STANDALONE the VPP headers are not included and the two functions that
+ * DO need them are not compiled; the VPP build defines nothing, so every
+ * guard below takes its `#else` branch and the file preprocesses exactly as
+ * it did before.
+ */
+#ifndef BPA_STANDALONE
 #include "bpa.h"
+#endif
 #include "bpa_ftp.h"
+#ifndef BPA_STANDALONE
 #include "bpa_alg.h"
+#endif
 
 /* Longest replacement: "1|255.255.255.255|65535" for EPRT, 23 bytes. */
 #define BPA_FTP_MAX_ARG 32
@@ -361,6 +375,8 @@ bpa_ftp_keyword_later (const u8 *pl, u32 len, int server_side)
   return 0;
 }
 
+#ifndef BPA_STANDALONE
+
 /* ------------------------------------------------- the data connection */
 
 /*
@@ -544,3 +560,5 @@ bpa_ftp_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 
   return BPA_FTP_REWRITTEN;
 }
+
+#endif /* BPA_STANDALONE */

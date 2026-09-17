@@ -90,7 +90,15 @@ MARKER = "not a unit:"
 # 2026-09-17, #390 batches A to H: every Python and shell function at 0
 # but for the excusals, which print with their reasons; C holds what the
 # plain-cc harness reaches, the rest waits for the VPP build.
-UNTESTED_AT_MOST = {"python": 0, "c": 187, "shell": 0}
+# 2026-09-17, #390 batch I: 187 to 159. Five more product files were brought
+# within reach of the plain-cc harness by the BPA_STANDALONE guards their
+# headers already carried - the FTP ALG's text half (9), the PPTP ALG's three
+# segment-local functions, the IPFIX-over-TCP exporter (15) and the
+# configuration trail's hex reader. What is left in those files needs a
+# buffer, a session pool, a bihash, VPP's format() or the CLI, and waits for
+# the VPP build with bpa_log.c, which needs the ipfix-export infrastructure
+# for all eight of its functions.
+UNTESTED_AT_MOST = {"python": 0, "c": 159, "shell": 0}
 MEASURED_ON = "2026-09-17"
 
 # A parse that came back nearly empty would make every count below small and
