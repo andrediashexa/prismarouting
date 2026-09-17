@@ -148,9 +148,9 @@ got=$(. "$u/iso_name.sh"
       iso_name 0.26.0 ""
       iso_name 0.26.0 a1b2c3d
       iso_name 0.26.0 a1b2c3d-dirty)
-[ "$got" = "hexarouting-0.26.0.iso
-hexarouting-0.26.0-a1b2c3d.iso
-hexarouting-0.26.0-a1b2c3d-dirty.iso" ] \
+[ "$got" = "prisma-routing-0.26.0.iso
+prisma-routing-0.26.0-a1b2c3d.iso
+prisma-routing-0.26.0-a1b2c3d-dirty.iso" ] \
   && ok "iso_name: the bare name for a release, the commit for another tree, \
 and -dirty for one built from uncommitted changes" \
   || bad "iso_name gave:

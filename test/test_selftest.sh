@@ -3558,7 +3558,7 @@ else
   bad "the card's row: $(printf '%s\n' "$OUTPUT" | grep 'rx queues' || echo '<nothing>')"
 fi
 _nwarn=$(printf '%s\n' "$OUTPUT" | grep -c '^  \[warn\] ')
-if said "^  HexaRouting ready, with $_nwarn warning\(s\) above\.\$"; then
+if said "^  Prisma Routing ready, with $_nwarn warning\(s\) above\.\$"; then
   ok "and the summary counts it: $_nwarn warning(s) printed, $_nwarn claimed"
 else
   bad "the summary does not count the $_nwarn [warn] row(s) this box printed; the last line says: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"

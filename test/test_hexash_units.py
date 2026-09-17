@@ -1314,7 +1314,7 @@ try:
     check(argv_of(log) == ["-i"],
           f"the shell is started interactive, as a child: {argv_of(log)}")
     check(rows(text) == [f"entering {login}; type 'exit' to return to the VTY",
-                         "back in the HexaRouting VTY"],
+                         "back in the Prisma Routing VTY"],
           f"said on the way out and on the way back: {text!r}")
 finally:
     del os.environ["HEXA_SHELL"]
@@ -3417,7 +3417,7 @@ with spoken() as o:
     sh.show_plugin_build()
 text = rows_of(o.getvalue())
 check(text[0] == "  plugin:    0.24.0 (abc1234)"
-      and any("not the HexaRouting build above" in r for r in text),
+      and any("not the Prisma Routing build above" in r for r in text),
       f"a different build: the sentence under the row: {text!r}")
 saved = hexash.VERSION_PATH
 try:
@@ -3584,7 +3584,7 @@ try:
     text = o.getvalue()
     check("  pool     the pools\n  session  the sessions\n" in text,
           f"aligned, with what each is: {text!r}")
-    check(text.endswith("hexarouting> show cgnat "),
+    check(text.endswith("prisma> show cgnat "),
           f"the line being typed, redrawn: {text!r}")
     sh._last_opts, sh._last_hint = {}, None
     with spoken() as o:
