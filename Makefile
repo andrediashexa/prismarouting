@@ -10,7 +10,9 @@ BUILD  := .build
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
       $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite \
-      $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn
+      $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn \
+      $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
+      $(BUILD)/test_bpa_audit
 	@sh tools/run-tests.sh
 
 vectors:
@@ -104,7 +106,12 @@ $(BUILD)/test_bpa_auto_mss: test/test_bpa_auto_mss.c \
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_auto_mss.c
 
+# bpa_ftp.c is #included by the harness, the way bpa_pool.c is above: the
+# nine functions of the ALG's text half are static, so nothing compiled beside
+# the file can call one, and until #390 batch I the parse that decides whether
+# a subscriber's payload is touched at all was named by no test.
 $(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
+                       src/plugins/bpa/bpa_ftp.c \
                        test/bpa_shim.h test/bpa_tcp_shim.h \
                        src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
@@ -131,6 +138,45 @@ $(BUILD)/test_bpa_sip: test/test_bpa_sip.c src/plugins/bpa/bpa_sip.h \
                        test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_sip.c
+
+# The PPTP ALG's three segment-local functions: the worst-outcome fold, the
+# checksum-preserving Call ID replacement and the payload bounds. Included by
+# the harness for the reason bpa_pool.c is - all three are static - and
+# standalone because a wrong checksum correction has the peer dropping a
+# segment the counter says was rewritten, which is #63's failure mode in a
+# second ALG.
+$(BUILD)/test_bpa_pptp: test/test_bpa_pptp.c src/plugins/bpa/bpa_pptp.c \
+                        src/plugins/bpa/bpa_pptp.h \
+                        test/bpa_shim.h test/bpa_tcp_shim.h \
+                        src/plugins/bpa/bpa_seq.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_pptp.c
+
+# The IPFIX-over-TCP exporter: the message it assembles, the spill file and
+# the socket. Standalone because what this transport promises - order, and no
+# loss - is kept by arithmetic on one buffer, and every way of getting that
+# arithmetic wrong is silent: #219 spilled 82917 bytes, replayed 82917, and
+# the collector decoded one record out of them. The one socket it opens is on
+# 127.0.0.1 and connects to itself, so this needs no network.
+$(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
+                           src/plugins/bpa/bpa_log_tcp.c \
+                           src/plugins/bpa/bpa_log.h \
+                           test/bpa_shim.h test/bpa_vec_shim.h \
+                           test/bpa_tcp_shim.h test/bpa_log_shim.h \
+                           src/plugins/bpa/bpa_seq.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_log_tcp.c
+
+# The configuration trail's hex reader, which is the one function in
+# bpa_audit.c that touches neither format(), nor vppinfra's SHA-2, nor the
+# CLI. Standalone because its refusals decide whether the chain is verified
+# against bytes or against uninitialised memory, and both readings print a
+# verdict.
+$(BUILD)/test_bpa_audit: test/test_bpa_audit.c src/plugins/bpa/bpa_audit.c \
+                         test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_audit.c
 
 # Tests that need VPP, so they run in the build container.
 test-appliance:

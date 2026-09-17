@@ -240,6 +240,36 @@ typedef struct
   u16 sequence;
 } icmp_echo_header_t;
 
+/* ------------------------------------------------------------- buffers */
+
+/*
+ * A stand-in for the one buffer field a parser reads: where the packet starts
+ * and how long it is. VPP's vlib_buffer_t carries a great deal more, and none
+ * of it is read by a function pure enough to live in this file - what is read
+ * is `vlib_buffer_get_current (b) + b->current_length`, which is where the
+ * packet ends and therefore what every bounds check in a parser is against.
+ *
+ * `data` is a plain array here rather than VPP's pointer into a buffer pool,
+ * so a test can lay a packet out by hand. current_data is signed and may be
+ * negative on the box, after a header has been pushed; it is honoured here
+ * for that reason, so a test may place a packet at a non-zero offset.
+ */
+#define VLIB_BUFFER_NEXT_PRESENT (1 << 1)
+
+typedef struct
+{
+  i16 current_data;
+  u16 current_length;
+  u32 flags;
+  u8 data[2048];
+} vlib_buffer_t;
+
+static inline void *
+vlib_buffer_get_current (vlib_buffer_t *b)
+{
+  return b->data + b->current_data;
+}
+
 /*
  * VPP compiles ASSERT out of a release build, and so does this. The suites
  * assert the same invariants by name, where a broken one prints a red line

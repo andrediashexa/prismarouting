@@ -20,6 +20,9 @@
 .build/test_bpa_rewrite
 .build/test_bpa_auto_mss
 .build/test_bpa_dyn
+.build/test_bpa_pptp
+.build/test_bpa_log_tcp
+.build/test_bpa_audit
 python3 appliance/test_tune.py
 python3 appliance/test_snmp_agent.py
 python3 test/test_hexash_complete.py
