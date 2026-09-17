@@ -38,10 +38,13 @@ E a conta **não é estimativa**: o dataplane segura as duas definições e roda
 
 ```
 error: this change re-maps subscribers that already have mappings
-    1024 of 1024 subscribers change public address or port block; 512 hold live state right now
+    1024 of 1024 subscribers change public address or port block; 512 hold live
+    state right now
     100.64.0.5 moves from 200.150.0.17:1536-2047 to 200.150.0.33:2048-2559
     100.64.0.9 moves from 200.150.0.17:2048-2559 to 200.150.0.34:1536-2047
-    every session on this pool ends when it is applied. Past answers stay resolvable - the configuration trail records which definition was in force - but the subscribers do not.
+    every session on this pool ends when it is applied. Past answers stay
+    resolvable - the configuration trail records which definition was in force
+    - but the subscribers do not.
     if that is what you mean, type: commit remap
 ```
 

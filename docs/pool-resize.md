@@ -16,10 +16,13 @@ because nothing unusual happened.
 
 ```
 error: this change re-maps subscribers that already have mappings
-    1024 of 1024 subscribers change public address or port block; 61 hold live state right now
+    1024 of 1024 subscribers change public address or port block; 61 hold live
+    state right now
     100.64.0.0 moves from 200.150.0.16:1024-1535 to 45.170.16.0:1024-1535
     100.64.0.1 moves from 200.150.0.17:1024-1535 to 45.170.16.1:1024-1535
-    every session on this pool ends when it is applied. Past answers stay resolvable - the configuration trail records which definition was in force - but the subscribers do not.
+    every session on this pool ends when it is applied. Past answers stay
+    resolvable - the configuration trail records which definition was in force
+    - but the subscribers do not.
     if that is what you mean, type: commit remap
 ```
 

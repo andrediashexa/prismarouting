@@ -8198,10 +8198,15 @@ class Shell:
         print_prose("this change RE-MAPS subscribers that already have "
                     "mappings", indent="  ")
         for line in self.remap:
-            # Printed whole, like every other quoted line: these carry counts
-            # and addresses the operator will compare against what they
-            # expected, and a wrapped address is one they cannot grep for.
-            print("    " + line[len("remap:"):].strip())
+            # Each row is one sentence of the plugin's, folded to the console
+            # the way every other paragraph here is (#391). The counts and
+            # addresses on it are what the operator compares against what
+            # they expected, and console_prose never breaks inside a word,
+            # so an address or a port range lands whole on one row and can
+            # still be grepped for; what folds is the sentence around them,
+            # which was 178 columns on one row before this and lost its
+            # shape at whatever width the window happened to be.
+            print_prose(line[len("remap:"):].strip(), indent="    ")
         print_prose("'commit' refuses this until it is asked for by name, "
                     "with 'commit remap'", indent="  ")
 
@@ -8386,7 +8391,8 @@ class Shell:
                 self.err("this change re-maps subscribers that already have "
                          "mappings")
                 for line in self.remap:
-                    print("    " + line[len("remap:"):].strip())
+                    # Folded as report_remap folds the same rows (#391).
+                    print_prose(line[len("remap:"):].strip(), indent="    ")
                 print("    if that is what you mean, type: commit remap")
                 return
             self.remap = []

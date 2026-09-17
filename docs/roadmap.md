@@ -2352,6 +2352,19 @@ with the rows between its two refusals left out, which the template tiling
 accepted because every row was the box's. A run that prints no row and a row
 missing from the middle of the box's screen are each a failure now.
 
+**And the rows that refusal quotes were the plugin's sentences passed through
+whole** ([#391](https://github.com/andrediashexa/hexarouting/issues/391)) -
+*done on the issue branch, awaiting merge*. The moment #384 drove `commit`
+over the fake dataplane, the width reader in `test/test_hexash_refusals.py`
+counted a row nothing had driven before: the VTY printed each `remap:` row as
+it came, and the sentence saying every session on the pool ends is 178
+columns with its indent, on a console of 79. The ceiling went up to 26 with
+that row named and is back at 25. Each row is folded between words now, the
+way every other paragraph the VTY prints is, so an address with its port
+range moves whole to the next row and can still be grepped for; the four
+pages quoting the screen show the fold, and the `folded` finding refused all
+four until they did.
+
 **Two gaps of the same kind, still open**
 ([#383](https://github.com/andrediashexa/hexarouting/issues/383)). The guest
 has two CPUs where the reporting box has eight, so it gets one worker and

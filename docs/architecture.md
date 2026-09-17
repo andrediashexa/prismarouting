@@ -795,16 +795,24 @@ numbers what it would do:
 
 ```
 error: this change re-maps subscribers that already have mappings
-    248 of 256 subscribers change public address or port block; 0 hold live state right now
+    248 of 256 subscribers change public address or port block; 0 hold live
+    state right now
     100.64.64.8 moves from 203.0.113.0:1536-2047 to 203.0.113.0:2048-3071
     100.64.64.9 moves from 203.0.113.1:1536-2047 to 203.0.113.1:2048-3071
-    every session on this pool ends when it is applied. Past answers stay resolvable - the configuration trail records which definition was in force - but the subscribers do not.
+    every session on this pool ends when it is applied. Past answers stay
+    resolvable - the configuration trail records which definition was in force
+    - but the subscribers do not.
     if that is what you mean, type: commit remap
 ```
 
-Every line after the first is printed whole rather than wrapped, because the
-counts and addresses in them are what the operator compares against what they
-expected, and a wrapped address cannot be grepped for.
+Each row after the first is one sentence of the dataplane's, folded to the
+console between words the way every other paragraph the VTY prints is. The
+counts, addresses and port ranges on them are what the operator compares
+against what they expected, and the fold never lands inside one: an address
+with its port range is a single token and moves whole to the next row, so it
+can still be grepped for. Before the fold these rows were printed as they
+came, 178 columns on one row at the widest, and the terminal broke them
+wherever its width happened to fall.
 
 The count comes from the **dataplane**, which holds both definitions and runs
 the same arithmetic it would run afterwards — not from a second implementation
