@@ -310,6 +310,16 @@ fi
 echo "=========== PHASE 1: install onto a blank disk ==========="
 # hexarouting.yes runs it unattended. An interactive installer driven by
 # keystrokes timed against a boot would be testing the timing.
+#
+# hexarouting.mgmt-address=dhcp IS ASKED FOR, and since #394 it has to be: an
+# unattended install that says nothing gets no management network, because a
+# new box is configured at its console and every card it has is the
+# dataplane's. This lab is the other case - it reaches the installed box over
+# ssh, from outside, which is the one assertion the serial console cannot make
+# - so it asks for an address and names no card, and the installer takes the
+# card this medium is reaching the network through. The card is still not
+# spelled out here, for the reason #161 gives: what predictable naming calls
+# qemu's card is the machine's business and not this lab's.
 # shellcheck disable=SC2086
 timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   $ACCEL -m "${BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
@@ -317,6 +327,7 @@ timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   -drive file="$DISK",format=qcow2,if=virtio $MIRROR_DRIVE $MGMT_NET \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
            hexarouting.install=/dev/vda hexarouting.yes \
+           hexarouting.mgmt-address=dhcp \
            hexarouting.log-gb=2 $MIRROR_ANSWER \
            hexarouting.hostname=$NEW_HOST hexarouting.timezone=$NEW_TZ \
            hexarouting.password=$NEW_PW" \
@@ -1956,6 +1967,7 @@ timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   -drive file="$DISK2",format=qcow2,if=virtio $MGMT_NET \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
            hexarouting.install=/dev/vda hexarouting.yes \
+           hexarouting.mgmt-address=dhcp \
            hexarouting.log-gb=2 hexarouting.mirror=$MIRROR_DEV \
            hexarouting.hostname=$NEW_HOST hexarouting.timezone=$NEW_TZ \
            hexarouting.password=$NEW_PW" \

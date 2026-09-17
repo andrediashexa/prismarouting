@@ -934,32 +934,56 @@ run 1 "a DNS server that is not an address: refused" $NOK \
 run 0 "an unattended install that says nothing about the network still runs" \
     $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" HEXA_INSTALL_YES=1
 case "$LAST_OUT" in
-  *"management network: ens18 by DHCP (unattended)"*)
-    ok "and takes DHCP on the default card, saying that it did" ;;
+  *"management network: none (unattended; nothing was asked)"*)
+    ok "and takes none, saying that it did" ;;
   *) bad "the unattended default was taken in silence, or not at all:
 $LAST_OUT" ;;
 esac
-# THE DEFAULT IS THE CARD THE MEDIUM IS REACHING THE NETWORK THROUGH, when
-# there is one - a PXE boot, or somebody who gave the medium an address by
-# hand to install over the network. It is the card they are using right now,
-# and taking a different one takes the box off the network they are on.
+case "$LAST_OUT" in
+  *"hexarouting.mgmt-interface="*)
+    ok "and names the kernel command line that asks for a card instead" ;;
+  *) bad "nothing told an unattended install how to ask for a management
+network at all:
+$LAST_OUT" ;;
+esac
+# AN ADDRESS ASKED FOR WITH NO CARD NAMED is the other unattended answer, and
+# it is NOT none: an install that says which address wants a management
+# network, and the only card anything here knows to be connected is the one
+# this medium is reaching the network through. This is how the release gate
+# installs the box it then reaches over ssh.
+# shellcheck disable=SC2086
+run 0 "an unattended install that asks for an address and names no card" \
+    $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" HEXA_INSTALL_YES=1 \
+    HEXA_MGMT_ADDRESS=dhcp
+case "$LAST_OUT" in
+  *"management network: unattended, and the address was asked for"*"ens18, dhcp"*)
+    ok "takes the card the medium is on, and says why it did" ;;
+  *) bad "an address asked for with no card named must still be given the
+medium's own card, not none:
+$LAST_OUT" ;;
+esac
+
+# AND IT IS STILL NONE ON A MEDIUM THAT IS ITSELF ON THE NETWORK (#394),
+# which is the arm that used to answer differently: a PXE boot, or somebody
+# who gave the medium an address by hand to install over the network, made
+# the card they were using right then the box's management card.
 #
-# The case above is the box with no default route, which the script's own
-# comment calls the usual one: an ordinary live boot has no management
-# configuration either, so the fallback to the first card is what runs. Both
-# arms, because until the stub above existed the answer came from the machine
-# and only ever one of them ran - whichever that machine happened to be.
+# That reading is what changed. The card the MEDIUM is on is a fact about the
+# installation, not a decision about the box, and since 0.76.0 keeping a card
+# back from the dataplane is a decision - the box claims every card it has.
+# An unattended install that wants one says so on the kernel command line,
+# where the rest of its answers already are.
 printf 'default via 10.0.0.1 dev ens19 proto dhcp metric 100\n' \
   > "$netbin/default_route"
 # shellcheck disable=SC2086
-run 0 "and on a medium that IS on the network, the card it is on" \
+run 0 "and a medium that IS on the network installs a box with none too" \
     $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" HEXA_INSTALL_YES=1
 case "$LAST_OUT" in
-  *"management network: ens19 by DHCP (unattended)"*)
-    ok "the default is the card the medium is reaching the network through" ;;
-  *) bad "an unattended install ignored the card the medium is on and took \
-another one, which is the box off the network the operator is installing it \
-over:
+  *"management network: none (unattended; nothing was asked)"*)
+    ok "the card the medium is on is not turned into the box's own" ;;
+  *) bad "an unattended install took the medium's card as the box's \
+management card, which keeps it back from the dataplane with nobody \
+watching:
 $LAST_OUT" ;;
 esac
 : > "$netbin/default_route"
@@ -1079,6 +1103,30 @@ out=$(printf 'a\n' | mask choose_interface ens18)
 out=$(printf 'none\n' | mask choose_interface ens18)
 [ "$out" = none ] && ok "'none' is an answer: no management network" \
   || bad "'none' must answer the question, got '$out'"
+
+# AND THE ANSWER NOBODY TYPES, which is the one most installs give (#394).
+# Enter takes the default, and since this version the default is none: a new
+# box is configured at its console and every card it has is the dataplane's.
+# The old default was the card this medium was reaching the network on, so an
+# operator who answered nothing kept one card back from the dataplane without
+# deciding to.
+out=$(printf '\n' | mask choose_interface none)
+[ "$out" = none ] && ok "an empty answer is none: no card is kept back" \
+  || bad "Enter must answer none, got '$out'"
+msaid "and the question says a new box is configured at its console" \
+  "A NEW BOX IS CONFIGURED AT ITS CONSOLE"
+msaid "and none carries the default marker" \
+  "(this box is reached at its console)   <- default"
+
+# The card this medium is reaching the network on is still NAMED, because an
+# operator who does want a management network wants that card and would
+# otherwise have to work out which it was. It is a row on the list now and not
+# the default.
+MGMT_DEFAULT_IF=ens18
+out=$(printf '\n' | mask choose_interface none)
+MGMT_DEFAULT_IF=
+msaid "and the card this medium is reached on is named, not defaulted to" \
+  "this medium is reaching the network on this one"
 
 # THE ADDRESS, and the mistake that is not a typo: an address typed without
 # its prefix is the commonest thing anybody writes down, and the message says
@@ -3208,7 +3256,7 @@ fi
 
 # WHAT THE WIDTH READER MAY STILL FIND, and it may only go down.
 #
-# 49 rows of this program carry a value with no widest - a disk somebody
+# 48 rows of this program carry a value with no widest - a disk somebody
 # named, a card name, an answer somebody typed - with the words of the program
 # behind it, so the row grows past the console exactly when the value is long.
 # They are NAMED on every run, with the line and the columns before the value,
@@ -3219,7 +3267,10 @@ fi
 # rather than a clean bill: what is fixed here is the 7 rows that do not fit at
 # the widest value that can reach them, which no reading of the source could
 # have found.
-SAY_UNSAFE_AT_MOST=49
+# 48 since #394: the unattended management row no longer prints a card name
+# ("management network: <card> by DHCP (unattended)"). It says none, which is
+# the program's own word, so nothing on that row can grow.
+SAY_UNSAFE_AT_MOST=48
 # TWO printers this pass's boundary rule cannot see, and both are ask()'s own
 # prompt: `if [ -n "$_d" ]; then printf ... else printf ... fi` at 180 and 181.
 # `then` and `else` are words rather than the punctuation the rule matches on.
