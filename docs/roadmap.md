@@ -2311,7 +2311,8 @@ the card already in the dataplane - and passed because its card was easier
 than any real one.
 
 **And a screen quoted in `docs/` was compared against nothing**
-([#384](https://github.com/andrediashexa/hexarouting/issues/384)) - *done*.
+([#384](https://github.com/andrediashexa/hexarouting/issues/384)) - *done on
+the issue branch, awaiting merge*.
 `test/test_wiki_screens.py` drove the product and compared every screen the
 public wiki quotes - 25 character for character, another 34 by template - and
 covered `wiki/` and nothing else. `docs/routing.md` carries a screen verbatim
@@ -2330,8 +2331,15 @@ with where the reading stopped. The 15 were read one at a time: four were
 pages folding rows the box writes whole and are corrected, three are driven,
 two were installer rows the shell reader did not read past, one was history
 and is quoted as history. The fold itself is a finding now, read off the
-driven runs - the shape #365 found on the wiki by hand, twice. Seven remain
-and say why: the row is the value alone, or the dataplane's own sentence.
+driven runs - the shape #365 found on the wiki by hand, twice. Seven remained,
+and the review of the branch attributed four of them by hand in an afternoon,
+which is the reading the file is for: the session-table refusal, the revert
+that could not be armed and the re-mapping refusal are driven now, through the
+product's own API client answering a canned return code and log line and a
+fake dataplane answering `remap:` rows built from the plugin's own format
+strings, and the pool refusal was a fifth fold, quoted as the box prints it.
+Two remain and say why with a line to go and read: a template under the floor,
+and the operator's own line printed whole.
 
 **Two gaps of the same kind, still open**
 ([#383](https://github.com/andrediashexa/hexarouting/issues/383)). The guest

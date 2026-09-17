@@ -1956,8 +1956,7 @@ configuration become indistinguishable. A refusal **MUST** carry the name from
 what was refused - a return value alone is not actionable, and is not shown:
 
 ```
-error: pool 'client-bad': the dataplane refused it: invalid value
-    (bpa_pool_init: pool 'client-bad': block size 500 must be a power of two)
+error: pool 'client-bad': the dataplane refused it: invalid value (bpa_pool_init: pool 'client-bad': block size 500 must be a power of two)
 ```
 
 ### What goes over the API, and what does not
@@ -2784,8 +2783,10 @@ nobody is using. It now **explains itself**, which it did not at first:
 error: cgnat session-table: the dataplane refused it: the change is refused while it is in use (session-table: tables already created; set this before configuring pools)
 ```
 
-One row, 169 columns of it: `err` wraps nothing, and this refusal is the
-dataplane's own sentence handed through it whole.
+One row, 169 columns of it: the refusal goes through `err_dataplane`, which
+wraps nothing and adds `say_version_split`'s paragraph under it only on a box
+whose dataplane is a different build from the rest of it; the sentence is the
+dataplane's own, handed through whole.
 
 The first version returned the code and logged nothing. The client attaches the
 last line of VPP's log to a refusal so the operator gets a sentence instead of
