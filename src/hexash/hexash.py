@@ -8802,7 +8802,8 @@ class Shell:
         as a diff against the box, accounts included - apply_users runs
         `userdel` for an account the file lacks - so there the file is the
         holder of all of it but the card, which load() takes from the tuner
-        when the file is silent about it.
+        when the file is silent about it (the way back is never in the file:
+        the tuner computes it at boot, #385).
         """
         boot = Config()
         if saved.is_empty():
@@ -8813,9 +8814,11 @@ class Shell:
             boot.snmp_users = running.snmp_users
         else:
             boot = saved
-        if not boot.dataplane_if and not boot.dataplane_mgmt:
+        # The card only: since #385 the way back is the tuner's, computed off
+        # the live card at boot and never a statement, so there is nothing
+        # of it in either text to carry over.
+        if not boot.dataplane_if:
             boot.dataplane_if = running.dataplane_if
-            boot.dataplane_mgmt = running.dataplane_mgmt
         return boot
 
     def say_unsaved(self):
