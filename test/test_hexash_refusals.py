@@ -1318,6 +1318,39 @@ for _label, _on, _line, _want in _iface:
     says(_label, _text, _want, _rv, expect=True)
 print(f"  {len(_iface)} interface statements, each kept off FRR's pile")
 
+print("\n=== an abbreviation that begins more than one statement (#393) ===")
+# TYPED, THROUGH `feed`, and not handed to `do_config`: the resolution happens
+# once before dispatch, so a box that called the handler would measure the
+# half that never sees an abbreviation at all.
+#
+# The refusal is the price of the resolution beside it. `no shut` is one
+# statement in an interface block and `i` is four, and a VTY that resolved the
+# second by position would pick a statement the operator did not type and
+# commit it - which is the failure #393 is about, pointing the other way.
+_amb = [
+    ("four statements begin with 'i', inside an interface", "interface pg0",
+     "i 1", "'i' begins 4 statements here: ip, ipv4, ipv6, isis"),
+    ("and the same four under `no`", "interface pg0", "no i",
+     "'i' begins 4 statements here: ip, ipv4, ipv6, isis"),
+    ("three statements begin with 'r' at the top level", None, "r 3",
+     "'r' begins 3 statements here: rollback, router, rpki"),
+]
+for _label, _ctx, _line, _prose in _amb:
+    _sh = cfg_shell()
+    _sh.frr_ctx = [_ctx] if _ctx else []
+    _rv, _text = driven(_sh.feed, _line)
+    says(_label, _text, "error: an ambiguous abbreviation", _rv, expect=True)
+    says(_label + " (candidates)", _text, "    " + _prose)
+
+# And in operational mode, where the same four letters mean four other things.
+_rv, _text = driven(shell().feed, "s")
+says("four operational statements begin with 's'", _text,
+     "error: an ambiguous abbreviation", _rv, expect=True)
+says("four operational statements begin with 's' (candidates)", _text,
+     "    's' begins 4 statements here: save, show, start, system")
+print("  ambiguity is refused with its candidates, never resolved by "
+      "position")
+
 print("\n=== and the two interface statements that are refused outside a "
       "block ===")
 # CGNAT's attachment and `no interface`, which are typed at the top level.

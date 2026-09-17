@@ -3763,6 +3763,65 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send "show interface"
     wait_for "hexarouting> " 120 "the dataplane to list its interfaces" \
       || fail=1
+    # ------------- and the same card in the words an operator types (#393)
+    #
+    # THE MAINTAINER'S OWN TRANSCRIPT, on 0.77.0, on this box's real card:
+    # `interface ens18` / `no shut` / `commit` left the interface down. `no
+    # shut` is an abbreviation every router CLI takes and this VTY had no
+    # grammar for, so it was staged as an FRR statement IN SILENCE, FRR
+    # accepted it inside its own interface stanza and kept nothing, and the
+    # operator was shown `commit complete` over an interface that never came
+    # up. The block above types `no shutdown` whole and cannot see it.
+    #
+    # THE CARD IS TAKEN DOWN FIRST, and that is the assertion, not a
+    # detour: the block above already left it up, so `no shut` typed onto an
+    # interface that is not shut proves nothing at all - it is green on a
+    # box that discards the line. What makes the reading real is a card that
+    # IS administratively down when the abbreviation is typed.
+    #
+    # NOTHING HERE PERFORMS A STEP. Seven lines are the operator's, and
+    # every reading after them is what the box shows.
+    send "configure"
+    wait_for "entering configuration mode" 60 \
+      "the VTY to enter configuration mode for the abbreviation" || fail=1
+    send "interface $HO_CARD"
+    wait_for "[edit interface" 60 "the VTY to open the interface block" \
+      || fail=1
+    send "shutdown"
+    wait_for "[edit interface" 60 "the VTY to take 'shutdown'" || fail=1
+    send "exit"
+    wait_for "[edit]" 60 "the VTY to close the interface block" || fail=1
+    send "commit"
+    wait_for "[edit]" 300 "the commit that takes the card down to answer" \
+      || fail=1
+    send "interface $HO_CARD"
+    wait_for "[edit interface" 60 "the VTY to reopen the block" || fail=1
+    _ab_pos=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+    send "no shut"
+    wait_for "[edit interface" 60 "the VTY to take 'no shut'" || fail=1
+    # WHAT THE BLOCK HOLDS, in the box's own spelling. On 0.77.0 `show this`
+    # answered `no shut  <- not checked` - the marker #141 puts on a
+    # statement that went to FRR word for word - and that row is what says
+    # the box never read the line. The resolution happens once, before
+    # dispatch, so after #393 the candidate holds `no shutdown` and nothing
+    # else, and `save` writes the same.
+    send "show this"
+    wait_for "[edit interface" 60 "the block to print itself back" || fail=1
+    tail -c "+$_ab_pos" "$CONSOLE_LOG" | tr -d '\r' \
+      | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' > /tmp/ab-block.txt
+    send "exit"
+    wait_for "[edit]" 60 "the VTY to close the interface block" || fail=1
+    send "commit"
+    wait_for "[edit]" 300 "the commit of 'no shut' to answer" || fail=1
+    send "exit"
+    wait_for "hexarouting> " 120 "the VTY to leave configuration mode" \
+      || fail=1
+    _ab_show=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+    send "show interface"
+    wait_for "hexarouting> " 120 \
+      "the VTY to list its interfaces after 'no shut'" || fail=1
+    tail -c "+$_ab_show" "$CONSOLE_LOG" | tr -d '\r' \
+      | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' > /tmp/ab-show.txt
     send "start shell"
     wait_for "entering /bin" 60 "the shell to reopen" || fail=1
     # What the box shows after the commit, each asked under the name Linux
@@ -4020,6 +4079,48 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     echo "  [FAIL] $HO_IF is '$HO_UP' after 'no shutdown' / 'commit'"
     fail=1
   fi
+  # AND THE ABBREVIATION (#393). Three readings off the transcript above,
+  # and each is one half of the defect. `show this` says whether the VTY
+  # read the word or carried it; `show interface` says whether the card came
+  # back up; and the marker row says whether the operator was told anything
+  # at all. On 0.77.0 all three are red at once and only the first two are
+  # visible: the box printed `commit complete` and left the card down.
+  if [ ! -s /tmp/ab-block.txt ]; then
+    echo "  [FAIL] 'no shut' was typed and nothing came back from the VTY;"
+    echo "         what the console carried is in $LOG"
+    fail=1
+  elif grep -qF "not checked" /tmp/ab-block.txt; then
+    echo "  [FAIL] 'no shut' went to FRR word for word. 'show this' said:"
+    grep -F "not checked" /tmp/ab-block.txt | head -3 \
+      | sed 's/^/         | /'
+    echo "         This is the maintainer's screen: the VTY has no grammar"
+    echo "         for the word, so nothing on this box ever read it"
+    fail=1
+  elif grep -qE "^ *no shutdown *$" /tmp/ab-block.txt; then
+    echo "  [ ok ] 'no shut' is read as 'no shutdown': the block prints the"
+    echo "         full spelling back, so that is what 'save' writes too"
+  else
+    echo "  [FAIL] 'show this' holds no 'no shutdown' after 'no shut'. It"
+    echo "         said:"
+    sed 's/^/         | /' /tmp/ab-block.txt | head -8
+    fail=1
+  fi
+  AB_STATE=$(tr -s ' ' < /tmp/ab-show.txt 2>/dev/null \
+    | awk -v n="$HO_IF" '$1 == n {print $2}' | head -1)
+  case "$AB_STATE" in
+    up)
+      echo "  [ ok ] and 'show interface' reads $HO_IF up after it: the"
+      echo "         abbreviation reached the dataplane, not FRR" ;;
+    "")
+      echo "  [FAIL] 'show interface' has no row for $HO_IF after 'no shut'"
+      fail=1 ;;
+    *)
+      echo "  [FAIL] $HO_IF is '$AB_STATE' after 'shutdown' / 'commit' /"
+      echo "         'no shut' / 'commit'. The card was taken down and the"
+      echo "         word that brings it back was never read: this is the"
+      echo "         interface the maintainer was left with on 0.77.0"
+      fail=1 ;;
+  esac
   if [ "$HO_LINK" = "$HO_IF" ]; then
     echo "  [ ok ] and Linux has a netdev of that name, the pair: $HO_LINK"
   else

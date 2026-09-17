@@ -1888,6 +1888,27 @@ class Config:
                     else:
                         cfg.urpf[iface] = w[1]
                 else:
+                    # AND A SAVED FILE GOES ON REFUSING AN ABBREVIATION,
+                    # which the prompt now resolves (#393). Decided rather
+                    # than left to fall out: this branch is what a hand-edited
+                    # file meets, and it is the only case, because `save`
+                    # writes what the candidate holds and the candidate has
+                    # held nothing but full spellings since the resolution
+                    # moved in front of the handlers.
+                    #
+                    # Two reasons, and the second is the one that settles it.
+                    # A file is read by `hexash --load` at every boot, on a
+                    # machine nobody is watching, where there is no operator
+                    # to be told that a word began two statements - so a
+                    # resolution there is a guess made at the one moment
+                    # nothing can correct it. And a file is the box's record
+                    # of its own configuration: `shut` resolving today
+                    # because one statement begins with those letters would
+                    # mean something else the day a second one is added, so a
+                    # file that has not changed would come back a different
+                    # configuration. Refusing keeps its meaning fixed, and
+                    # the sentence below already names the full spellings a
+                    # hand-editor should write.
                     cfg.unknown.append(
                         (lineno, s, "an interface understands 'description "
                                     "<text>', 'shutdown', 'mtu <n>' and "

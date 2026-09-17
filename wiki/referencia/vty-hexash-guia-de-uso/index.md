@@ -68,6 +68,38 @@ Uma fonte que não consegue responder simplesmente não oferece nada e deixa a d
 
 Ambas são contextuais: dentro de um pool, `?` lista os campos do pool, não os comandos globais.
 
+## Abreviações
+
+Você não precisa digitar a palavra inteira. **Qualquer abreviação que sirva a uma única declaração vale pela declaração inteira** — a caixa completa por você antes de ler a linha:
+
+```
+hexarouting# [edit] interf ens18
+hexarouting# [edit interface ens18] no shut
+hexarouting# [edit interface ens18] descr uplink da transito
+hexarouting# [edit interface ens18] mt 9000
+```
+
+é exatamente o mesmo que `interface ens18`, `no shutdown`, `description uplink da transito` e `mtu 9000`. As palavras que valem são as mesmas que o `?` e o TAB oferecem naquele ponto, então o que a caixa aceita e o que ela oferece nunca discordam.
+
+**O que fica guardado é sempre a grafia inteira.** `show this`, `show configuration` e o arquivo que o `save` grava mostram `no shutdown`, nunca `no shut`. A abreviação existe para os seus dedos, não para o arquivo.
+
+### Uma abreviação ambígua é recusada, com os candidatos
+
+```
+hexarouting# [edit interface ens18] i 1
+error: an ambiguous abbreviation
+    'i' begins 4 statements here: ip, ipv4, ipv6, isis
+    type enough of one to tell them apart, or '?' to read what each does
+```
+
+A caixa não escolhe por você. `ipv address 10.0.0.1/24` também é recusada: são duas famílias de endereço, e adivinhar poria o endereço na errada.
+
+### O que **não** se abrevia
+
+* **Nomes que são seus**, e não da caixa: o nome de uma interface, de um pool, de uma conta. `show interface Te` procura uma interface chamada `Te`; não vira `show interface terse`.
+* **As declarações do FRR** dentro de um bloco de roteamento (`router bgp`, `route-map`, `router ospf`). Ali vale a sintaxe do FRR inteira, e esta VTY modela só uma parte dela — abreviar contra um modelo parcial trocaria uma declaração que o roteamento ia executar por outra. Dentro de `interface`, ao contrário, a abreviação vale: `no shut` é `no shutdown`, e `bandwidth`, `link-detect` e as demais palavras do FRR seguem intactas para ele.
+* **Um arquivo de configuração** editado à mão. O arquivo é lido a cada boot, sem ninguém olhando, e uma abreviação lá é recusada com a lista do que a interface entende. Grave sempre a palavra inteira — é o que o `save` faz.
+
 ## O ciclo de trabalho
 
 ```
