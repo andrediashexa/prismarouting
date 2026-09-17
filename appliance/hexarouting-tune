@@ -1284,6 +1284,10 @@ def render_vpp(p):
     # each card (#330), and a box with a virtio card beside a 10G one has two
     # different answers - asking the virtio card for the 10G card's count is
     # the -22 that #330 measured, arrived at from the other direction.
+    # A closure over this plan's worker count, reachable only from inside
+    # render_vpp, so appliance/test_tune.py measures the cap it applies on
+    # the stanza render_vpp writes.
+    # not a unit: a closure inside render_vpp, measured on the stanza it writes
     def _queues(card):
         have_q = card["tx_queues"]
         return min(want_q, have_q) if have_q else want_q
