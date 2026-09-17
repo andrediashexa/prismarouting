@@ -2525,6 +2525,16 @@ the completion suite, and `test/test_hexash_batch.py` for `hexash -c
 `systemctl poweroff` at the console, and finding the box back on the network -
 is written and owed a run, like every lab.
 
+**Six report rows carry an unbounded value with the VTY's words behind it**
+([#392](https://github.com/andrediashexa/hexarouting/issues/392)) - *found by
+#390, open*. Four route-table rows and two count rows of `show` screens run
+past the console when their values are widest, and the width reader could not
+count them because no box had ever produced them: the unit tests for the
+Shell's read-only methods drive them now. No product line changed with them
+(the reader run at a ceiling of 0 gives 50 before those tests and 56 after),
+so the ceiling carries the six with that measurement beside it until they are
+folded.
+
 **Every function has a unit test, and a reader refuses the one that does not**
 ([#390](https://github.com/andrediashexa/hexarouting/issues/390)) - *the next
 version's content, by the maintainer's word on 2026-09-17*. The suites here are

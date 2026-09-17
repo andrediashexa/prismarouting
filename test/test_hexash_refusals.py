@@ -2293,7 +2293,15 @@ OVER_AT_MOST = 25
 # and one less again when #389 gave the `linux-name` refusal at the prompt
 # one owner for its sentence, config.linux_ifname_error(), whose value is an
 # interface name the reader bounds.
-UNSAFE_AT_MOST = 50
+#
+# AND 56 SINCE #390: six report rows of `show` screens (a sampling row, a
+# no-prefixes row and four route-table rows whose columns are padded to a
+# width) had never been produced by any box, so this reader could not count
+# them; the unit tests for the Shell's read-only methods drive them now. No
+# product line changed with them: measured by running this file with the
+# ceiling at 0 on the tree before those tests and on the tree with them, 50
+# and 56. Folding the six is #392, and this comes back to 50 with it.
+UNSAFE_AT_MOST = 56
 
 
 def ceiling(found, allowed, what, detail):
