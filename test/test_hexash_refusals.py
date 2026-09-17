@@ -1013,6 +1013,71 @@ says("re-mapping", _text,
 check(any("commit remap" in l for l in _text.splitlines()),
       f"and it must say the word that would allow it: {_text!r}")
 
+# AND THE ROWS UNDER IT FIT THE CONSOLE (#391). They are the plugin's own
+# sentences with the `remap:` tag taken off, and until #391 the VTY printed
+# each as it came: the one saying every session on the pool ends is 178
+# columns with its indent, on a console of 79, so the terminal broke it
+# wherever its width fell. The fake dataplane here answers with bpa_cli.c's
+# format strings read from the source - a sentence the plugin rewrites is
+# then measured, not the one this file remembers - with the widest members in
+# their holes: an IPv6 address exploded, which is what the reader at the end
+# of this file bounds an address at, a ten-digit count, and a five-digit port
+# at each end of each range. Every row printed has to fit, and every word of
+# every sentence has to come out whole: an address with its port range is one
+# token, and a fold inside it would leave nothing to grep for.
+
+
+def plugin_remap_rows():
+    """bpa_cli.c's `remap:` format strings, joined across C's adjacent
+    string literals, each with the widest members in its holes."""
+    src = open(os.path.join(REPO, "src", "plugins", "bpa", "bpa_cli.c")).read()
+    lit = r'"(?:[^"\\]|\\.)*"'
+    v6 = ipaddress.IPv6Address(1).exploded
+    rows = []
+    for m in re.finditer(r'"remap:(?:[^"\\]|\\.)*"(?:\s*' + lit + ")*", src):
+        text = "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(0)))
+
+        def fill(hole):
+            if hole.group(0) == "%U":
+                return v6
+            # A port is the hole after `:` or `-`; the counts are the rest.
+            return "65535" if text[hole.start() - 1] in ":-" else "4294967295"
+        rows.append(re.sub(r"%[uU]", fill, text))
+    return rows
+
+
+_rows = plugin_remap_rows()
+_widest = max((len("    " + r[len("remap:"):].strip()) for r in _rows),
+              default=0)
+check(len(_rows) == 4 and any("moves from" in r for r in _rows)
+      and any("every session on this pool" in r for r in _rows),
+      f"bpa_cli.c's `remap:` format strings were not read, so the fake "
+      f"dataplane answers with nothing the plugin says: {_rows!r}")
+check(_widest > config.CONSOLE_COLUMNS,
+      f"the widest remap row is {_widest} columns unfolded, inside the "
+      f"console already, so this box would measure nothing")
+_sh = shell(dp=Dp({"bpa pool": (0, "\n".join(_rows) + "\n")}))
+_sh.running_config = lambda: _running
+_sh.candidate = cfg(pooled("subs", block_size="1024"))
+_rv, _text = driven(_sh.do_commit, [])
+_printed = _text.splitlines()
+says("re-mapping, widest rows", _text,
+     "error: this change re-maps subscribers that already have mappings")
+_over = [r for r in _printed if len(r) > config.CONSOLE_COLUMNS]
+check(not _over,
+      f"{len(_over)} remap row(s) do not fit the console: "
+      + "; ".join(f"{len(r)} columns {r.strip()[:60]!r}" for r in _over))
+_said = " ".join(_text.split())
+for _row in _rows:
+    _sentence = " ".join(_row[len("remap:"):].split())
+    check(_sentence in _said,
+          f"the plugin's sentence does not survive the fold word for word: "
+          f"{_sentence[:60]!r} in {_text!r}")
+if not _over:
+    ok(f"the widest remap row is {_widest} columns as the plugin answers it "
+       f"and the {len(_printed)} rows printed all fit "
+       f"{config.CONSOLE_COLUMNS}, the words whole")
+
 # `commit confirmed <minutes>` with something that is not minutes. The window
 # is what gives the operator a way back from a change that costs them the
 # session, so a malformed one must not arm silently at the default - the box
@@ -2215,13 +2280,14 @@ print("  fifty digits quotes all fifty back, and that row is not measured "
 # IPv4 peer and left at 87 columns on an IPv6 one.
 # 26 until #385 took out the `expected: dataplane management <name> address
 # <a.b.c.d/len> mac <xx:xx:...>` refusal, whose own words were over.
-# And 26 since #384 drove `commit` over a dataplane answering `remap:` rows:
-# hexash.py's pass-through of the plugin's remap sentence (178 columns at
-# its widest, `moves from ... to ...` with two addresses and two ranges on
-# one row) had never been driven by any box, so the reader could not count
-# it. It is a real row an operator sees; folding it is #391, and this comes
-# back down to 25 with it.
-OVER_AT_MOST = 26
+# 26 while #384 had driven `commit` over a dataplane answering `remap:` rows
+# and hexash.py still passed the plugin's sentences through whole: the row
+# saying every session on the pool ends was 178 columns with its indent, and
+# no box had driven the site before, so the reader could not count it. #391
+# folds each remap row through print_prose, between words, and the box above
+# (`plugin_remap_rows`) holds the widest one inside the console; the ceiling
+# came back down to 25 with it.
+OVER_AT_MOST = 25
 # 52 until #385 took out the handover headline the prompt printed on a
 # one-card box, which carried the interface name with no widest behind it;
 # and one less again when #389 gave the `linux-name` refusal at the prompt

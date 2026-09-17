@@ -226,6 +226,25 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The rows under the re-mapping refusal did not fit the console**
+  ([#391](https://github.com/andrediashexa/hexarouting/issues/391)). `commit`
+  on a change that moves subscribers prints the dataplane's `remap:` rows
+  under its refusal, and printed them as they came: the sentence saying every
+  session on the pool ends is 178 columns with its indent, on a console of
+  79, so the terminal broke it wherever its width fell. Found by the width
+  reader in `test/test_hexash_refusals.py` the moment #384 drove that screen;
+  the ceiling it holds went up to 26 with this row named and is back at 25.
+  Each row is folded between words now, the way every other paragraph the
+  VTY prints is, and an address with its port range is one token that moves
+  whole to the next row. Measured with the plugin's own format strings and
+  the widest members in their holes: 178 for the fixed sentence, 161 for
+  `moves from` with three exploded IPv6 addresses and two five-digit ranges,
+  89 for the IPv4 row the plugin prints today; every row is inside 79 once
+  folded, held by a box that reads the format strings out of `bpa_cli.c`.
+  The four pages quoting the screen - `docs/architecture.md`,
+  `docs/pool-resize.md` and two wiki pages - show the fold, and the `folded`
+  finding of `test/test_wiki_screens.py` refused each of them until they did.
+
 ## 0.77.0 - the interface keeps its Linux name, and the box takes its orders at the prompt
 
 [#375](https://github.com/andrediashexa/hexarouting/issues/375), [#385](https://github.com/andrediashexa/hexarouting/issues/385), [#386](https://github.com/andrediashexa/hexarouting/issues/386), [#388](https://github.com/andrediashexa/hexarouting/issues/388), [#389](https://github.com/andrediashexa/hexarouting/issues/389).
