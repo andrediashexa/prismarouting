@@ -92,10 +92,21 @@ version has a chance of seeing it.
   refusal. Each says what it costs before it acts: every session on the box
   ends, the dataplane stops, and since #378 the box comes back claiming its
   card by itself. Two more costs are this box's and are measured rather than
-  recited, in the `warning:` shape `save` uses: a running configuration that
-  differs from the saved file is lost at boot (`save` keeps it), and a
-  `commit confirmed` nobody confirmed brings the box back reverted (`commit`
-  confirms it). Both are said before the ask, and neither refuses.
+  recited, in the `warning:` shape `save` uses: what is running and the
+  boot's replay of the saved file would not put back is lost at boot (`save`
+  keeps it), and a `commit confirmed` nobody confirmed brings the box back
+  reverted (`commit` confirms it). Both are said before the ask, and neither
+  refuses. The first is measured against the replay and not against the
+  file, because the file is not the holder of everything in it: an empty or
+  absent file replays nothing, so a fresh appliance, whose running
+  configuration is root with its hash and the installer's sshd drop-in and
+  whose file is the three shipped comments, keeps both through the boot and
+  is warned of nothing - the first version warned it that "what was
+  committed and not saved is lost", on the box lab's own reboot, and that
+  was false of it. The same box with one pool committed is warned, since
+  the pool is what that boot loses; and a file that does say something is
+  replayed as a diff, accounts included, so there a committed account the
+  file lacks is lost and is said so.
 
   The action is `systemctl reboot` / `systemctl poweroff` through `Shell.sys`,
   the seam the product already calls systemd through, so a `systemctl` that

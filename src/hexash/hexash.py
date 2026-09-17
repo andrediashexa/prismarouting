@@ -8686,7 +8686,7 @@ class Shell:
         `start shell` - and meets it BEFORE systemd is asked anything, which
         the suite pins by reading what was asked. It is not the last gate.
         hexash runs as the account that logged in (appliance/hexash-login
-        execs it with no setuid and no sudo), `systemctl reboot` from any
+        runs it with no setuid and no sudo), `systemctl reboot` from any
         uid but 0 is decided by systemd, and the appliance grants no other
         account that decision. Measured on the tree and on a box: the two
         package lists in appliance/build-iso.sh (the debootstrap --include
@@ -8816,26 +8816,61 @@ class Shell:
         self.say_unsaved()
         self.say_unconfirmed()
 
+    def after_boot(self, saved: Config, running: Config) -> Config:
+        """
+        What this box holds after replaying `saved`, given it holds
+        `running` now: the same decisions load() takes, on Config objects.
+
+        Not "the file": the file is not the holder of everything in it, and
+        load() says so twice. A file with no statements (the three comments
+        the installer ships, or none at all) is nothing to apply, so the
+        boot changes nothing outside the dataplane and FRR: the accounts
+        stay in /etc/passwd, the sshd drop-in stays, snmpd stays, and the
+        card and its management path come from the tuner's file. What such
+        a boot loses is exactly the pools, the interface blocks, the CGNAT
+        globals and the routing. A file that does say something is replayed
+        as a diff against the box, accounts included - apply_users runs
+        `userdel` for an account the file lacks - so there the file is the
+        holder of all of it but the card, which load() takes from the tuner
+        when the file is silent about it.
+        """
+        boot = Config()
+        if saved.is_empty():
+            boot.users = running.users
+            boot.ssh = running.ssh
+            boot.snmp = running.snmp
+            boot.snmp_communities = running.snmp_communities
+            boot.snmp_users = running.snmp_users
+        else:
+            boot = saved
+        if not boot.dataplane_if and not boot.dataplane_mgmt:
+            boot.dataplane_if = running.dataplane_if
+            boot.dataplane_mgmt = running.dataplane_mgmt
+        return boot
+
     def say_unsaved(self):
         """
         Whether what is running survives the boot, measured as `save` does.
 
         `commit` puts a change on the device and `save` writes the file the
         next boot loads (#212 keeps them apart on purpose), so the fact is
-        the running configuration read off the device against the file at
-        CONFIG_PATH, both through Config so that spelling is not counted as
-        a difference. A file that is not there is a box nobody saved: what
-        it boots into is an empty configuration, and that is what the
-        running one is compared with. A file this account cannot read is
-        said as such and not as "saved": the one answer this may not give
-        is a false "nothing is lost".
+        the running configuration read off the device against what the
+        boot's replay of the file at CONFIG_PATH would leave on the box -
+        after_boot() says which of the file's statements that replay is the
+        holder of - both through Config so that spelling is not counted as
+        a difference. A file that is not there is a box nobody saved, and
+        it is warned only when the box holds something that boot would
+        lose: a fresh appliance holds root and the installer's sshd drop-in,
+        keeps both through the boot, and is warned of nothing. A file this
+        account cannot read is said as such and not as "saved": the one
+        answer this may not give is a false "nothing is lost".
         """
-        running = self.running_config().text()
+        running = self.running_config()
         try:
             with open(CONFIG_PATH) as f:
-                saved = Config.parse(f.read()).text()
+                saved = Config.parse(f.read())
         except FileNotFoundError:
-            saved = Config().text()
+            saved = Config()
         except OSError as e:
             # The path on a row of its own, as save_running prints it: with
             # the errno beside it the row would not fit (#276).
@@ -8844,7 +8879,7 @@ class Shell:
             print(f"    {CONFIG_PATH}")
             print_prose(f"({e.strerror})", indent="        ")
             return
-        if running == saved:
+        if running.text() == self.after_boot(saved, running).text():
             return
         print("warning: the running configuration has NOT been saved")
         print_prose("this box boots into the file 'save' writes, and what is "

@@ -2418,11 +2418,14 @@ sudo nor polkit (measured over `appliance/build-iso.sh`'s package lists and
 their dependencies), so a `hexa-admin` member who is not root reads the cost
 and then systemd's own refusal. Each says what it costs - every session ends,
 the dataplane stops, and since #378 the box comes back claiming its card by
-itself - before it acts, and two costs are measured rather than recited: a
-running configuration that differs from the saved file is lost at boot, and a
-`commit confirmed` nobody confirmed brings the box back reverted; each is a
-`warning:` row said before the ask, and neither refuses. The action is
-`systemctl reboot` / `systemctl poweroff` through the `Shell.sys` seam the
+itself - before it acts, and two costs are measured rather than recited:
+what is running and the boot's replay of the saved file would not put back is
+lost at boot (measured against the replay, not the file: an empty or absent
+file replays nothing, so a fresh appliance holding root and the installer's
+sshd drop-in is warned of nothing, and the same box with a pool committed
+is), and a `commit confirmed` nobody confirmed brings the box back reverted;
+each is a `warning:` row said before the ask, and neither refuses. The action
+is `systemctl reboot` / `systemctl poweroff` through the `Shell.sys` seam the
 product already calls systemd through, so the suites drive it without
 rebooting the machine running them, and a `systemctl` that fails becomes a
 refusal in systemd's own words rather than a prompt that came back over a box

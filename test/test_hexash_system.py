@@ -115,6 +115,22 @@ SAVED = config.Config.parse(
 RUNNING = config.Config.parse(
     "!\nuser alice\n password $1$x$abc\n role administrator\n!\n"
     "user bob\n password $1$x$def\n role administrator\n!\n").text()
+#: A fresh appliance, from install until its first `save`: the running
+#: configuration read off it holds root with the installer's hash and the
+#: sshd drop-in the installer writes, and nothing the dataplane or FRR is
+#: asked for. Every one of those lives in /etc and comes back after a boot.
+FRESH = config.Config.parse(
+    "ssh permit-root-login yes\n"
+    "user root\n password $6$x$installer\n exit\n").text()
+#: The same box after one pool was committed: the one thing on it that the
+#: boot's replay of an empty file does not put back.
+FRESH_POOL = config.Config.parse(
+    "ssh permit-root-login yes\n"
+    "user root\n password $6$x$installer\n exit\n"
+    "cgnat pool p\n inside 100.64.0.0/22\n outside 200.150.0.16/30\n"
+    " exit\n").text()
+#: What the installer ships at CONFIG_PATH: three comments and no statement.
+SHIPPED = "!\n! HexaRouting\n!\n"
 #: The running configuration read OFF THE BOX, rather than a stub: one box
 #: proves the measurement goes through the same seam as the ask.
 REAL = object()
@@ -390,11 +406,31 @@ rv, said, sd, sh = driven(ADMIN, "system reboot", running=SAVED, saved=SAVED)
 check(UNSAVED not in rows(said),
       "a box whose file holds what is running is not warned")
 
-rv, said, sd, sh = driven(ADMIN, "system reboot", running=RUNNING,
-                          saved=ABSENT)
-check(UNSAVED in rows(said),
-      "a box with no file at all and a configuration on it is warned: "
-      "nothing was ever saved")
+# WHAT AN EMPTY FILE LOSES, AND WHAT IT DOES NOT. `hexash --load` applies
+# nothing from a file with no statements (the installer's three comments,
+# or no file at all), so the boot of such a box keeps every account in
+# /etc/passwd, the sshd drop-in and snmpd, and loses only what the
+# dataplane and FRR held. A fresh appliance, from install until its first
+# `save`, is exactly that box: root with a hash and `permit-root-login yes`
+# are in its running configuration and in no file, and nothing of it is
+# lost. It was warned that "what was committed and not saved is lost", on
+# the box lab's own reboot, and that sentence was false of it.
+for on_disk, what in ((SHIPPED, "the installer's three comments"),
+                      (ABSENT, "no file at all")):
+    rv, said, sd, sh = driven(ADMIN, "system reboot", running=FRESH,
+                              saved=on_disk)
+    check(UNSAVED not in rows(said),
+          f"a fresh appliance with {what} is not warned: root and the sshd "
+          f"drop-in come back after the boot")
+    check("lost" not in prose(said),
+          f"and is told nothing is lost, with {what}")
+    rv, said, sd, sh = driven(ADMIN, "system reboot", running=FRESH_POOL,
+                              saved=on_disk)
+    check(UNSAVED in rows(said),
+          f"the same box with one pool committed and {what} is warned: "
+          f"the boot does not put the pool back")
+    check("'save'" in prose(said) and "lost" in prose(said),
+          f"in the same shape, naming 'save', with {what}")
 
 rv, said, sd, sh = driven(ADMIN, "system reboot",
                           running=config.Config().text(), saved=ABSENT)
