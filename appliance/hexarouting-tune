@@ -2196,6 +2196,8 @@ def render_effective(rules):
     return "\n".join(f"{s} {name}: {d}" for name, s, d in rules)
 
 
+# not a unit: the program's entry; it parses the arguments and writes the
+# files, and appliance/test_tune.py drives it as a program.
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)

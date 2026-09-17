@@ -79,6 +79,7 @@ sh test/test_console_driver.sh
 sh test/test_release_gate.sh
 sh test/test_tool_refusals.sh
 sh test/test_off_run_coverage.sh
+python3 test/test_every_function.py
 python3 test/test_hexash_refusals.py
 python3 test/test_collector_stop.py
 python3 test/test_appliance_paths.py

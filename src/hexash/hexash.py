@@ -14098,6 +14098,8 @@ class Shell:
                 return 0
 
 
+# not a unit: the program's entry; it builds the Shell and hands the
+# arguments to feed_batch() or repl(), and those are tested by name.
 def main():
     sh = Shell()
     args = sys.argv[1:]

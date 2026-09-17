@@ -1373,6 +1373,7 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
 #define BPA_EXPIRE_INTERVAL 1.0
 #define BPA_EXPIRE_BUDGET   10000
 
+/* not a unit: a VPP process node; it needs the graph and its clock. */
 static uword
 bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 {

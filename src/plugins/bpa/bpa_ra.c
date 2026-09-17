@@ -170,6 +170,7 @@ VLIB_REGISTER_NODE (bpa_ra_node) = {
   .next_nodes = { [BPA_RA_NEXT_PUNT] = "ip6-punt" },
 };
 
+/* not a unit: the node's init, called once by VPP with the graph up. */
 static clib_error_t *
 bpa_ra_init (vlib_main_t *vm)
 {
