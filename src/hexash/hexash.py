@@ -3051,9 +3051,13 @@ def ospf_findings(routing, addresses, have_interfaces, pools,
     pairs = lcp_pairs or {}
     dp_names = set(device_interfaces or ())
 
+    # not a unit: a closure inside ospf_findings, read through its owner
+    # by test_hexash_units.py
     def same(name):
         return interface_aliases(name, pairs)
 
+    # not a unit: a closure inside ospf_findings, read through its owner
+    # by test_hexash_units.py
     def acts_on(name):
         # The posture the interface-existence check below takes with an empty
         # `have_interfaces`, for the same reason: could not ask is not a
@@ -3338,6 +3342,8 @@ def route_map_findings(routing):
     # FRR's order, not the file's. A clause whose seq is not a number is not
     # one FRR will take at all, and sorting it to the front would invent a
     # catch-all out of a typo: it goes last instead.
+    # not a unit: a sort key inside route_map_findings, read through its
+    # owner by test_hexash_units.py
     def by_seq(c):
         return (0, int(c["seq"])) if c["seq"].isdigit() else (1, 0)
 
@@ -3560,6 +3566,8 @@ def bgp_errors(routing, have_interfaces=None, lcp_pairs=None,
     pairs = lcp_pairs or {}
     dp_names = set(device_interfaces or ())
 
+    # not a unit: a closure inside bgp_errors, read through its owner by
+    # test_hexash_units.py
     def ent(name):
         return entities.setdefault(
             name, {"remote_as": False, "group": None, "stmts": [], "af": False,
@@ -3734,6 +3742,8 @@ def max_prefix_findings(routing):
     #          "stmt": the line it is first named on}
     peers = {}
 
+    # not a unit: a closure inside max_prefix_findings, read through its
+    # owner by test_hexash_units.py
     def ent(name):
         return peers.setdefault(name, {"as": None, "group": None,
                                        "limit": False, "stmt": None})
@@ -4387,6 +4397,8 @@ def prefix_range_error(line):
     top = net.max_prefixlen
     length = net.prefixlen
 
+    # not a unit: a closure inside prefix_range_error, read through its
+    # owner by test_hexash_units.py
     def after(word):
         try:
             return int(w[w.index(word) + 1])

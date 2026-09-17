@@ -41,6 +41,7 @@ python3 test/test_vppapi.py
 python3 test/test_hexash_apply.py
 python3 test/test_hexash_batch.py
 python3 test/test_hexash_system.py
+python3 test/test_hexash_units.py
 python3 test/test_hexash_perms.py
 python3 test/test_hexash_confirm.py
 python3 test/test_hexash_igp.py
