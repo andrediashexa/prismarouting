@@ -2488,10 +2488,10 @@ if [ "$up" = 1 ]; then
           _rxsaid="$_rxsaid $_nm"
         fi
       done
-      if grep -q "\[ ok \] rx queues: .* as requested" /tmp/disk-clean.log; then
+      if grep -q "\[ ok \] rx queues: .* on $_nm, as requested" /tmp/disk-clean.log; then
         echo "         and the self-test printed a green rx-queues row over it,"
         echo "         which is the #330 row this reader exists to stop:"
-        grep -o "\[ ok \] rx queues: .* as requested ([0-9]*)" /tmp/disk-clean.log \
+        grep -o "\[ ok \] rx queues: .* on $_nm, as requested ([0-9]*)" /tmp/disk-clean.log \
           | head -3 | tr -d '\r' | sed 's/^/         /'
       elif [ -n "$_rxsaid" ]; then
         echo "         The self-test read the driver's state and said so, for:"
@@ -2507,6 +2507,7 @@ if [ "$up" = 1 ]; then
       echo "         it, so the self-test has nothing to read the count off."
       echo "         Either the listing changed shape or the card is not a"
       echo "         DPDK device; 'show hardware-interfaces' on the box says"
+      echo "         which, under the card's own name."
       fail=1
     else
       _rxbad=""; _rxrow=""

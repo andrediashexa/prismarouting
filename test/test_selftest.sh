@@ -1451,7 +1451,7 @@ fi
 sed -i '/flags: pmd-init-fail/d' "$FAKE/show_hardware"
 run
 if said '\[FAIL\] rx queues: none opened on GigabitEthernet0/9/0' \
-   && said 'marks the card errors'; then
+   && said 'lists an Errors: block' && said 'under the card'; then
   ok "and an Errors: block with no flag under it is read as the refusal too"
 else
   bad "a card with an Errors: block and no flag was reported: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
@@ -1499,6 +1499,30 @@ if said '\[ ok \] rx queues: 1 of 1 on ens9, as requested \(1\)'; then
   ok "and the first card is still judged against its own"
 else
   bad "the first card's row went: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queues' || echo '<nothing>')"
+fi
+rm -f "$FAKE/vppctl_ok" "$FAKE/show_hardware" "$FAKE/show_interface"
+# A CARD NOBODY NAMED carries VPP's bus-address spelling, 28 characters on a
+# 100G card, and the row with three counts on it would run to 82 columns: the
+# name goes on its own row then. Held here because the guest's card is a Linux
+# name and every other box's row fits, so without this box the fold is a
+# branch nothing ever printed.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+printf 'dpdk {\n  dev 0000:3b:00.1 {\n    num-rx-queues 128\n    num-tx-queues 128\n  }\n  dev default {\n    num-rx-queues 1\n  }\n}\n' \
+  >> "$FAKE/root/etc/vpp/startup.conf"
+: > "$FAKE/vppctl_ok"
+{ echo 'HundredGigabitEthernet3b/0/1       1     up   HundredGigabitEthernet3b/0/1'
+  echo '  Link speed: 100 Gbps'
+  echo '  Mellanox ConnectX-5'
+  echo '    rx: queues 128 (max 1024), desc 1024 (min 0 max 65535 align 1)'
+  echo '    tx: queues 128 (max 1024), desc 1024 (min 0 max 65535 align 1)'
+  echo '    pci: device 15b3:1017 subsystem 15b3:0007 address 0000:3b:00.01 numa 0'
+} > "$FAKE/show_hardware"
+run
+if said '\[ ok \] rx queues: 128 of 1024, as requested \(128\)$' \
+   && said '^         on the card the dataplane calls HundredGigabitEthernet3b/0/1$'; then
+  ok "a card nobody named, 28 characters wide, gets its name on a row of its own"
+else
+  bad "the long-named card's row went: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queues\|HundredGigabit' || echo '<nothing>')"
 fi
 rm -f "$FAKE/vppctl_ok" "$FAKE/show_hardware" "$FAKE/show_interface"
 rm -rf "$FAKE/root"
