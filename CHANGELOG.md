@@ -75,6 +75,12 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+## 0.77.0 - the interface keeps its Linux name, and the box takes its orders at the prompt
+
+[#375](https://github.com/andrediashexa/hexarouting/issues/375), [#385](https://github.com/andrediashexa/hexarouting/issues/385), [#386](https://github.com/andrediashexa/hexarouting/issues/386), [#388](https://github.com/andrediashexa/hexarouting/issues/388), [#389](https://github.com/andrediashexa/hexarouting/issues/389).
+
 ### Changed
 
 * **The management-path apparatus is gone, and a card named with

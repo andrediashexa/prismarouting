@@ -2465,6 +2465,20 @@ the completion suite, and `test/test_hexash_batch.py` for `hexash -c
 `systemctl poweroff` at the console, and finding the box back on the network -
 is written and owed a run, like every lab.
 
+**Every function has a unit test, and a reader refuses the one that does not**
+([#390](https://github.com/andrediashexa/hexarouting/issues/390)) - *the next
+version's content, by the maintainer's word on 2026-09-17*. The suites here are
+by behaviour, so a function can exist with nothing calling it and only a
+skeptic with a profiler finds out; #385 had two checks that stopped running
+without going red, found that way. The rule comes first, as a reader in `make
+test` that enumerates every function (447 Python, 201 C, 56 shell, measured
+that day) and refuses each one no unit test names, with the ones that cannot
+be tested alone saying why at their definition and counted apart; then the
+tests, in batches by file, each shown failing against a mutation of the
+function it holds; the reader's floor moves down with every batch and never
+up. The rename ([#202](https://github.com/andrediashexa/hexarouting/issues/202))
+ships after it, alone.
+
 **And two the stride work uncovered, both open**
 ([#375](https://github.com/andrediashexa/hexarouting/issues/375),
 [#376](https://github.com/andrediashexa/hexarouting/issues/376)).
