@@ -329,9 +329,16 @@ hexarouting> show hardware
       from whether this box has an IOMMU; this VTY could not ask
 
   2 NIC(s) on this box, as Linux has them
-  'eno1' carries the default route: it is how this box is reached, and giving
-  it to the dataplane would take the box off the network. It is refused as a
-  dataplane interface for that reason.
+  The dataplane claims all 2. No card is reserved for Linux: this box was
+  installed with no management network, so it is reached at its console.
+  'dataplane interface <name>' claims that card alone instead.
+  'eno1' carries the default route: it is how this box is reached. If the
+  dataplane takes it, named or claimed, its address moves onto the linux_cp
+  pair the dataplane keeps for it, and this box is then reached through the
+  dataplane rather than beside it.
+  This box will claim 'eno1' anyway when the dataplane next starts, because
+  nothing reserves it: it is not the management network this box was
+  installed with.
 ```
 
 Every value is read from a file, through a seam that a test can point somewhere
@@ -369,13 +376,16 @@ stubbed method.
 
 ### The default-route mark is the point of the screen
 
-Handing the NIC that carries the default route to the dataplane does not
-degrade the box, it **removes** it: no SSH, no ping, nothing but a console
-somebody has to walk to.
+The card carrying the default route is the one this box is reached on, and
+what happens to it when the dataplane takes it is the one thing an operator
+has to know before typing: the address moves onto the `linux_cp` pair, and the
+box is reached through the dataplane afterwards.
 [#123](https://github.com/andrediashexa/hexarouting/issues/123) made the tuner
-refuse that NIC by name for exactly that reason — and the refusal happens after
-the operator has chosen, which is too late to teach anything. Marked here, they
-do not make the choice.
+refuse that NIC by name, and the mark was written so the refusal did not
+arrive after the operator had chosen. The refusal went in
+[#385](https://github.com/andrediashexa/hexarouting/issues/385) - a box is
+configured at its console when it is new - and the mark stays, because the
+choice still has a consequence worth reading first.
 
 It is read from `/proc/net/route`, destination `00000000`, the same file and the
 same field the tuner reads. The route file is ordered in the test so that a
@@ -404,20 +414,22 @@ path", and that reading is the one that costs the box.
 
 ### A box with one NIC: the card moves and the address goes with it
 
-The mark above says what the choice costs. On a box with **one** card it also
+The mark above says what the choice means. On a box with **one** card it also
 used to say the box could never forward: the refusal's advice - name the card
 carrying subscriber traffic instead - named a card that does not exist, and a
 VM with one virtual NIC is how most people first meet this product
 ([#303](https://github.com/andrediashexa/hexarouting/issues/303)).
 
-The refusal stands wherever that advice can be followed. With a second card
-present, naming the management one is refused exactly as before and the
-refusal now names the cards to use instead. With no second card it steps
-aside, because the dataplane has what a real router uses for this: `linux_cp`
-keeps a TAP paired with the port, and the management address lives on the TAP.
-The box is then reached **through** the dataplane rather than beside it. The
-card keeps its MAC across the handover - DPDK takes the device, address and
-all - so nothing upstream has to learn a new one.
+That refusal is gone from every box now
+([#385](https://github.com/andrediashexa/hexarouting/issues/385)): naming the
+card carrying the default route is accepted with a second card present as it
+was without one. What made the one-card box possible is what makes every box
+reachable afterwards: the dataplane has what a real router uses for this,
+`linux_cp` keeps a TAP paired with the port, and the management address lives
+on the TAP. The box is then reached **through** the dataplane rather than
+beside it. The card keeps its MAC across the handover - DPDK takes the device,
+address and all - so nothing upstream has to learn a new one. On the one-card
+box the VTY still says so when the card is named:
 
 ```
 hexarouting> configure

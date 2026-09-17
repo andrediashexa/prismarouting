@@ -94,23 +94,25 @@ test anything.
 *Authoritative:* [CONTRIBUTING.md](../CONTRIBUTING.md),
 [TESTING.md](../TESTING.md).
 
-### 1.5 The management interface MUST NOT be given to VPP, unless it is the only card
+### 1.5 The box stays reachable through the card it claims, and never reserves the last one
 
 DPDK binds a NIC away from Linux. Hand over the port you administer the box
-through and it is unreachable, and unreachable is unfixable remotely. So the
-VTY refuses the card carrying the default route **wherever there is another
-card to name instead**, and the refusal names that other card. The tuner and
-`bind-dataplane-nic` stopped refusing it in
-[#385](https://github.com/andrediashexa/hexarouting/issues/385): a card named
-by hand is claimed whichever route it carries, the binder binds what the tuner
-named, and the way back below is what keeps the box reachable. On the lab
-machines the management card is `ens18`.
+through and it is unreachable, and unreachable is unfixable remotely. For two
+years that argument made the VTY, the tuner and `bind-dataplane-nic` all
+**refuse** the card carrying the default route wherever there was another card
+to name instead ([#123](https://github.com/andrediashexa/hexarouting/issues/123)).
+The refusals went in
+[#385](https://github.com/andrediashexa/hexarouting/issues/385), on the
+maintainer's decision: a box is configured at its console when it is new, so
+a refusal guarding the card it is reached over guards a step nobody takes over
+the network. A card named by hand is claimed whichever route it carries. On
+the lab machines the management card is `ens18`.
 
-**On a box with one card that refusal was a dead end**, and that is
+**On a box with one card the refusal was a dead end anyway**, and that is
 [#303](https://github.com/andrediashexa/hexarouting/issues/303): it sent the
 operator to name a card the box has not got, so the box could not forward and
-could not be told to. There the card **MAY** go, and since
-[#378](https://github.com/andrediashexa/hexarouting/issues/378) it goes
+could not be told to. Since
+[#378](https://github.com/andrediashexa/hexarouting/issues/378) the card goes
 without being named: the box claims every card it has except one reserved for
 Linux - the management network the installer recorded - and **never the last
 one**.

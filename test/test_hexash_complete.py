@@ -2624,9 +2624,10 @@ check("\n  lo " not in _out and "00:00:00:00:00:00" not in _out,
 check("up" in _out and "down" in _out,
       f"the link state of each is there: {_out}")
 
-# The mark is the point of this screen as much as the list is. Handing the
-# NIC carrying the default route to the dataplane removes the box from the
-# network, and the tuner refuses it - after the operator has chosen.
+# The mark is the point of this screen as much as the list is. The card
+# carrying the default route is the one this box is reached on, and what
+# happens to it when the dataplane takes it - the address moves onto the pair
+# - is the one thing an operator has to know before typing (#385).
 check("DEFAULT ROUTE" in _out,
       f"the NIC carrying the default route is marked: {_out}")
 _lines = _out.splitlines()
@@ -2639,9 +2640,19 @@ check(len(_marked) == 1 and
       _rows[max(i for i in _rows if i < _marked[0])] == "eno1",
       f"and it belongs to eno1's block, not the other NIC's: {_out}")
 check("'eno1' carries the default route" in flat(_out) and
-      "off the network" in flat(_out),
-      f"and the screen says what that costs, because the refusal that "
-      f"enforces it comes too late to teach anything: {_out}")
+      "moves onto the linux_cp pair" in flat(_out),
+      f"and the screen says what taking that card means, which is where the "
+      f"address goes: {_out}")
+# AND NOT THAT IT IS REFUSED. The screen said "Naming it by hand with
+# 'dataplane interface' is refused while this box has another card to name
+# instead" until #385 removed that refusal; a screen that goes on saying so
+# sends the operator away from a statement the box accepts.
+# The needle is cut from the sentence that went, not from the word "refused":
+# the same screen still says a name this box has not got is refused, which is
+# the refusal that stays.
+check("is refused while this box has another card" not in flat(_out)
+      and "off the network" not in flat(_out),
+      f"the screen still describes the refusal #385 removed: {_out}")
 
 # The driver verdict, which is the other half of "can I give this away".
 check("kernel driver" in _out and "DPDK cannot" in _out,
@@ -6731,12 +6742,20 @@ check("This box has one NIC" in _t,
 check("'ens18'" in _t,
       f"it does not name the NIC it means, so the operator cannot tell which "
       f"one it is on a box with several: {_r}")
-check("dataplane interface ens18" in _t,
-      f"it does not say what to type, which is the whole of what the operator "
-      f"needs from this screen: {_r}")
-check("confirmed" in _t and "puts the card back" in _t,
-      f"it offers the handover without saying that the box undoes it when "
-      f"nobody confirms, which is the half that makes it safe to try: {_r}")
+# WHAT IT SAYS NOW, AND WHAT IT MAY NOT (#385). It told the operator what to
+# type, and promised a confirmed commit whose window #378 had already removed
+# - a screen saying the old thing for a release. Since #378 the box claims the
+# last card by itself, so what this screen owes the operator is what happens
+# and where the address goes, and no instruction to type a statement the box
+# does not need.
+check("never takes the last card" in _t and "linux_cp" in _t,
+      f"it does not say the box takes the card by itself, or where the "
+      f"address goes: {_r}")
+check("dataplane interface ens18" not in _t,
+      f"it still tells the operator to name a card the box claims by itself: "
+      f"{_r}")
+check("confirmed one" not in _t and "puts the card back" not in _t,
+      f"it still promises the confirmed commit #378 removed: {_r}")
 
 # The other direction, and it is what stops this from being a line on every
 # boot. A box with a free NIC is told nothing extra.
@@ -6749,8 +6768,8 @@ check(not any("This box has one NIC" in l for l in _r),
 # is not the handover advice this is guarding against. The thing that must not
 # appear on a box with another card is the one-NIC note, and the line above
 # already names it.
-check(not any("goes with it" in l or "confirmed one" in l for l in _r),
-      f"a box with a spare NIC was given the handover advice, which is for a "
+check(not any("never takes the last card" in l for l in _r),
+      f"a box with a spare NIC was given the one-card note, which is for a "
       f"box that has no other card: {_r}")
 
 # A box Linux shows no PCI NIC at all is its own answer, and must not read as
@@ -6762,12 +6781,12 @@ check(not any("This box has one NIC" in l for l in _r),
       f"a box with no NIC at all was told it has one: {_r}")
 print("  said at the first screen that mentions it, and only when it is true")
 
-print("\n=== the completion marks the default-route card truthfully (#309) ===")
+print("\n=== the completion marks the default-route card truthfully (#309, #385) ===")
 # It said "carries the default route: refused" unconditionally, and has been
 # wrong since #303 on the box where it matters most: with no other card that
-# name is ACCEPTED and the address moves with it. So on a one-NIC VM - how most
-# people meet this product - the completion told the operator their only card
-# was refused, and then the box took it.
+# name is ACCEPTED and the address moves with it. Then it said so on the box
+# with another card, where the VTY refused the name - and #385 removed that
+# refusal too, so "refused" is a word this mark may not say on any box.
 
 
 def _nic_hints(names, default):
@@ -6782,15 +6801,17 @@ check("refused" not in _h["ens18"],
       f"the only card is not marked refused, because it is not: {_h}")
 # The needle is what the row PROMISES, not the words it promises it in: the
 # hint was reworded to fit the 79-column console (#346) and this went red on
-# correct work. What has to be there is that the card goes and its address
-# goes with it.
-check("handed over" in _h["ens18"] and "address" in _h["ens18"],
+# correct work. What has to be there is that the address goes with the card.
+check("default route" in _h["ens18"] and "address" in _h["ens18"],
       f"and the mark says what does happen to it: {_h}")
 
 _h = _nic_hints(["ens18", "ens19"], "ens18")
-check("refused" in _h["ens18"],
-      f"with a second card the default-route one is still marked refused: "
-      f"{_h}")
+check("refused" not in _h["ens18"],
+      f"with a second card the default-route one is still marked refused, "
+      f"and since #385 the VTY accepts it: {_h}")
+check("default route" in _h["ens18"] and "address" in _h["ens18"],
+      f"and the mark on the two-card box no longer says what taking the "
+      f"card means: {_h}")
 check(_h["ens19"] == "card",
       f"and the other card is just a card: {_h}")
 

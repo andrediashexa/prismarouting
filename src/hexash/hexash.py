@@ -10470,9 +10470,11 @@ class Shell:
         This used to say the box needed a second NIC before it could forward.
         That was true of the product and it was a dead end for the operator: a
         VM with one virtual NIC is how most people first meet this, and being
-        told to add hardware is not an answer they can act on (#303). The card
-        can move, with its address following it onto the pair the dataplane
-        keeps, so what this says now is what to type and what it will cost.
+        told to add hardware is not an answer they can act on (#303). Then it
+        said what to type, and promised a confirmed commit that #378 had
+        already removed. Since #378 the box claims the last card by itself,
+        so what this says now is what will happen and where the address goes
+        - nothing to type, nothing to confirm (#385).
 
         Reads host_nics() and default_route_nic(), which are what
         `show hardware` prints and what the tuner decides on, so this cannot
@@ -10487,15 +10489,13 @@ class Shell:
         if usable or not default:
             return []
         return [f"This box has one NIC, '{default}', and it carries the "
-                "default route, so giving it to the dataplane is also giving "
-                "away the path this box is reached on.",
-                "It can still be done, and the address goes with it: name it "
-                f"with 'configure', 'dataplane interface {default}', "
-                "'commit', and the box keeps that address on the linux_cp "
-                "pair the dataplane holds for the card.",
-                "The commit is a confirmed one whether or not you ask: "
-                "restart the box, log back in and type 'commit' to keep it, "
-                "and if nobody does the box puts the card back on its own."]
+                "default route: it is the path this box is reached on.",
+                "The dataplane claims it at its next start whether or not it "
+                "is named, because a reserve never takes the last card, and "
+                "the address moves onto the linux_cp pair the dataplane keeps "
+                "for it: the box is then reached THROUGH the dataplane rather "
+                "than beside it.",
+                "Nothing is armed and nothing has to be confirmed."]
 
     def why_named_nic_absent(self, conf):
         """
@@ -10585,13 +10585,13 @@ class Shell:
         """
         The interface carrying the default route, or None.
 
-        Same file, same field and the same reason as
-        `appliance/hexarouting-tune`: that script REFUSES to give this NIC to
-        the dataplane, because handing it over does not degrade the box, it
-        removes it - no SSH, no ping, nothing but a console somebody has to
-        walk to (#123). The refusal happens after the operator has chosen,
-        which is too late to be useful, so this screen reads the same source
-        and says which one it is BEFORE they choose.
+        Same file and same field as `appliance/hexarouting-tune`, which
+        reads it to compute the way back for this card on the boot that
+        claims it (#378). The tuner used to REFUSE this NIC (#123), and this
+        screen was written to say which one it was BEFORE the operator chose;
+        the refusal went with #385 and the mark stays, because what happens
+        to the card the box is reached on is still the one thing on this
+        screen an operator has to know before typing.
         """
         try:
             with open(self.PROC_NET_ROUTE) as f:
@@ -10972,33 +10972,25 @@ class Shell:
                         "test.", indent="  ")
         elif any(n["name"] == mgmt for n in nics):
             # Two different sentences, because they are two different boxes.
-            # With another card to name, giving this one away costs the box
-            # its management for nothing and is refused. With no other card,
-            # the mark is a warning about what the handover involves and not a
-            # refusal - the address moves with the card (#303).
+            # With another card, the mark says what taking this one means and
+            # names nothing as refused: since #385 the VTY accepts it, and
+            # the box claims it by itself unless a reserve spares it. With no
+            # other card, the note says the box takes it whether or not it is
+            # named (#303, #378).
             if any(n["name"] != mgmt for n in nics):
-                # TWO DIFFERENT QUESTIONS, and this used to answer only one.
-                # What the box claims by itself is said above; this is what
-                # the `dataplane interface` statement will accept, and on a
-                # box with a spare card it still refuses this one (#123).
-                # Merging them would make the screen contradict itself on a
-                # box whose default route is not on the card the installer
-                # recorded - which is a box that exists.
                 print_prose(f"'{mgmt}' carries the default route: it is how "
-                            f"this box is reached, and giving it to the "
-                            f"dataplane would take the box off the network. "
-                            f"Naming it by hand with 'dataplane interface' is "
-                            f"refused while this box has another card to name "
-                            f"instead.", indent="  ")
-                # AND IF THE BOX IS ABOUT TO TAKE IT ANYWAY, say so here.
+                            f"this box is reached. If the dataplane takes "
+                            f"it, named or claimed, its address moves onto "
+                            f"the linux_cp pair the dataplane keeps for it, "
+                            f"and this box is then reached through the "
+                            f"dataplane rather than beside it.", indent="  ")
+                # AND IF THE BOX IS ABOUT TO TAKE IT BY ITSELF, say so here.
                 #
-                # The refusal above is about the STATEMENT; the claim above
-                # that is about what the box does unbidden, and on a box whose
-                # default route is not on the card the installer recorded
-                # those two point opposite ways. Both are true and the
-                # operator needs the second one most: reserving a card is
-                # done at install time, and this is the screen where somebody
-                # finds out it was not.
+                # What the box does unbidden is decided by the reserve, and
+                # on a box whose default route is not on the card the
+                # installer recorded it is about to take the card it is
+                # reached on. Reserving a card is done at install time, and
+                # this is the screen where somebody finds out it was not.
                 if not self.read_dataplane_if() \
                    and self.reserved_for_linux() != mgmt:
                     print_prose(f"This box will claim '{mgmt}' anyway when "
@@ -11071,21 +11063,20 @@ class Shell:
         """
         Why this box will not hand `name` to the dataplane, or None.
 
-        Returns (headline, [prose]). Both refusals exist somewhere already and
-        are said HERE anyway, at the prompt, because where they are said is the
-        whole difference:
-
-          * the tuner refuses the card carrying the default route (#123), and
-            it does so at the next boot, in a journal, on a box the operator
-            has by then stopped watching. A refusal discovered after committing
-            is one the operator acts on hours later.
-          * `bind-dataplane-nic` refuses it again before unbinding. That one is
-            the last line of defence and it stays; this one is the first.
-
-        A name the box has not got is refused the way every other interface
-        name is in this VTY (#105): by saying what the box DOES have, because
+        Returns (headline, [prose]). ONE refusal now, where there were three:
+        a name this box has not got is refused the way every other interface
+        name is in this VTY (#105), by saying what the box DOES have, because
         a refusal that only says no leaves the operator to guess the spelling
         of a card they cannot see.
+
+        The card carrying the default route was refused here too, while the
+        box had another card to name instead (#123), and on a one-card box
+        when its address, MAC or gateway could not be read (#303). Both went
+        with #385, on the maintainer's decision: a box is configured at its
+        console when it is new, so a refusal guarding the card it is reached
+        over guards a step nobody takes over the network. The tuner reads the
+        way back off that card on the boot that claims it and declines a card
+        it cannot read one for, which is the only reader that question needs.
         """
         have = [n["name"] for n in self.host_nics()]
         # Cannot look is not "the box has none". On anything that is not Linux
@@ -11099,31 +11090,6 @@ class Shell:
                      "the dataplane is handed; 'show interface' lists what "
                      "the dataplane already has, and on a box with no card "
                      "that is nothing"])
-        if name and name == self.default_route_nic():
-            # STILL REFUSED WHEREVER THE ADVICE CAN BE FOLLOWED. A box with
-            # another card has one to name instead, and naming this one there
-            # is the mistake #123 was written for: the box loses its
-            # management for nothing, because the card it should have been
-            # given was sitting beside it.
-            others = [n for n in have if n != name]
-            if others:
-                return ("it carries the default route",
-                        ["handing it to the dataplane takes the card away "
-                         "from Linux, and this box off the network with it",
-                         "the two mistakes do not cost the same: a box with "
-                         "no dataplane card is fixed over the network, and a "
-                         "box that ate its own management is fixed by walking "
-                         "to it",
-                         "name the card carrying subscriber traffic instead: "
-                         + ", ".join(others)])
-            # And here is where that advice named a card this box has not got
-            # (#303). The refusal was a dead end: no second card, no way to
-            # forward, and an operator told to do something impossible. The
-            # card can move, as long as the box can carry the management path
-            # over with it - which is what this decides.
-            hand = self.management_handover(name)
-            if isinstance(hand, tuple):
-                return hand
         return None
 
     def take_management_card(self, name):
@@ -11143,16 +11109,20 @@ class Shell:
         a route that appeared only after the commit would be a change the box
         made without showing it.
         """
-        if name != self.default_route_nic():
+        others = [n["name"] for n in self.host_nics() if n["name"] != name]
+        if name != self.default_route_nic() or others:
             self.candidate.dataplane_mgmt = {}
             return
         hand = self.management_handover(name)
         if isinstance(hand, tuple):
-            # Cannot happen through the prompt - the refusal above returns the
-            # same answer and stops there - but `rollback` and `--load` reach
-            # the candidate by other doors, and a silent empty record is the
-            # one outcome that loses the box.
-            self.say_dataplane_if_refusal(name, hand)
+            # NOT A REFUSAL ANY MORE (#385). The prompt used to refuse a card
+            # whose management state could not be read before this was
+            # reached; now the card is accepted and nothing is recorded, and
+            # the tuner decides at boot, off the live card, whether a way back
+            # can be read - declining the card and saying so in the journal
+            # when it cannot. A second answer to that question here would be
+            # the second copy that comes to disagree.
+            self.candidate.dataplane_mgmt = {}
             return
         self.candidate.dataplane_mgmt = {k: hand[k]
                                          for k in ("name", "address", "mac")}
@@ -11423,11 +11393,9 @@ class Shell:
         written for - the one whose only card carries the management address -
         and false of the two-card box that is the worked example in the
         operator guide, where the session arrives on a card Linux keeps and a
-        dataplane restart never touches it. The product decides that same
-        question correctly in three other places (dataplane_if_refusal offers
-        the other card, take_management_card records a handover only for this
-        one, do_commit arms a confirmed commit only when the card carries the
-        session), and this sentence was the one that did not ask.
+        dataplane restart never touches it. The product reads that same pair
+        - default_route_nic() and host_nics() - wherever it says what a card
+        carries, and this sentence was the one that did not ask.
 
         What it does NOT claim on any of them is what the restart costs the
         traffic. Nothing in this repository has measured that, which is the
@@ -12918,29 +12886,23 @@ class Shell:
         the difference between a refusal they read after typing and a choice
         they never make.
 
-        AND THE MARK IS NOT ALWAYS "REFUSED" (#309). It said so unconditionally
-        and has been wrong since #303 on the box where it matters most: with no
-        other card, that name is ACCEPTED and the address moves with it. So on
-        a one-NIC VM - which is how most people meet this product - the
-        completion told the operator their only card was refused, and then the
-        box took it.
-
-        The condition is the one the refusal itself uses: is there another card
-        to name instead. Read from the same host_nics() the refusal reads, so
-        the hint and the answer cannot disagree about what the box has.
+        AND THE MARK SAYS "REFUSED" NOWHERE (#385). It said so unconditionally
+        once and was wrong on the one-card box (#309); then it said so on the
+        box with another card, where the VTY refused the name. That refusal is
+        gone - a named card is claimed whichever route it carries - so what
+        the mark says is what happens to the card: its address moves with it
+        onto the linux_cp pair, on every box.
         """
         default = self.default_route_nic()
         names = [n["name"] for n in self.host_nics()]
-        alone = len(names) == 1
         # AND IT FITS THE CONSOLE. display_matches puts the name, two spaces
         # and this text on one row, so the text is as wide as itself plus the
         # longest name. "the only card, so it is handed over and its address
         # goes with it" measured 100 columns against a 79-column console
         # (#346), on the row an operator reads BEFORE typing the name - so the
         # sentence telling them what handing this card over means was the one
-        # the terminal broke. The two-card spelling was always 44.
-        return {n: ("the only card: handed over, address and all" if alone
-                    else "carries the default route: refused")
+        # the terminal broke. This one is 51.
+        return {n: "carries the default route: its address moves with it"
                 if n == default else "card"
                 for n in names}
 

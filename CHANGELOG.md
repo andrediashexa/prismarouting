@@ -114,6 +114,24 @@ version has a chance of seeing it.
     the 0.76.1 binder; its width ceiling drops from 5 to 2 with the rows the
     refusal interpolated.
 
+  * **The VTY no longer refuses the card carrying the default route at the
+    prompt, or at `commit`, `rollback` and `--load`.** Two of its three
+    refusals go: the management card while the box has another card (#123),
+    and the card whose address, gateway or MAC the prompt could not read
+    (#303). What stays is the one that is about spelling: a name this box
+    has not got, with the list it does have. Whether a way back can be read
+    is the tuner's question, off the live card on the boot that claims it,
+    and the prompt answering it from a reading taken another day was the
+    pair that comes to disagree. Three screens that described the refusal
+    move with it: the completion's mark on the default-route card no longer
+    says `refused` on any box, `show hardware` says where the address goes
+    instead of that naming the card is refused, and the note a one-card box
+    prints no longer tells the operator to name a card the box claims by
+    itself - nor promises the confirmed commit 0.76.0 removed, which it had
+    gone on saying for a release. `test/test_dataplane_if.py` and
+    `test/test_hexash_complete.py` hold it, shown red against the 0.76.1
+    VTY on the two-card box and the one-card box with no address.
+
   **What it costs a box already in service.** Naming the card your session
   arrives on, with `dataplane interface`, is no longer refused on a box that
   has another card: the box takes the card you named at the next start of

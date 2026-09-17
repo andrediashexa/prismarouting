@@ -11,11 +11,13 @@ out of this VTY to an editor.
 
 What is asserted here, and why each one is worth a suite rather than a lab:
 
-  * THE REFUSALS, which are the reason this cannot be a thin wrapper over the
-    file. The card carrying the default route is refused, and it is refused AT
-    THE PROMPT: the tuner already refuses it at the next boot, in a journal, on
-    a box nobody is watching by then, and a refusal discovered after committing
-    is one the operator acts on hours later. That mistake costs a site visit.
+  * THE REFUSAL, which is the reason this cannot be a thin wrapper over the
+    file: a name this box has not got is refused AT THE PROMPT, with the list
+    of names it does have. The card carrying the default route was refused
+    here too, and that refusal went with #385 - a box is configured at its
+    console when it is new, so it guarded a step nobody takes over the
+    network. What holds now is that the name is ACCEPTED on every box, and
+    the tuner reads the way back off the card on the boot that claims it.
   * THE FILE IS NOT REWRITTEN. tune.env is hand-editable by design and most of
     it is prose - the paragraph on why the field ships empty, the worker cap
     and the argument for leaving it uncapped. A commit that regenerated the
@@ -325,28 +327,30 @@ print(f"  refused with: {_bad.unknown[0][2]!r}")
 
 # ----------------------------------------------------------------- refusals
 
-print("\n=== the card carrying the default route is refused AT THE PROMPT ===")
+print("\n=== the card carrying the default route is ACCEPTED at the prompt (#385) ===")
+# IT WAS REFUSED HERE, with the other card named as the one to use instead
+# (#123), and the refusal went with #385 on the maintainer's decision: a box
+# is configured at its console when it is new, so a refusal guarding the card
+# it is reached over guards a step nobody takes over the network - and it
+# stood between an operator and the card they had just named. This is the
+# box the refusal was written for: two cards, and the named one carries the
+# default route, so the fixture reaches the line the refusal used to fire on.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     said = drive(sh, ["configure", "dataplane interface enp1s0"])
-    check("error:" in said,
-          f"the management card was accepted at the prompt: {said!r}")
-    check("dataplane interface enp1s0" in said,
-          f"the refusal does not quote the name that was refused: {said!r}")
-    check("default route" in said,
-          f"the refusal does not say WHY, so the operator reads it as the "
-          f"box being unable rather than unwilling: {said!r}")
-    check("off the network" in said,
-          f"the refusal does not say what it would have cost: {said!r}")
-    check(sh.candidate.dataplane_if == "",
-          f"refused and stored anyway, so 'commit' would still hand over the "
-          f"management card: {sh.candidate.dataplane_if!r}")
-    print("  refused, named, and kept out of the candidate")
+    check("error:" not in said,
+          f"the card carrying the default route was refused at the prompt, "
+          f"which is the refusal #385 removed: {said!r}")
+    check(sh.candidate.dataplane_if == "enp1s0",
+          f"accepted and not stored, so 'commit' would hand over nothing: "
+          f"{sh.candidate.dataplane_if!r}")
+    print("  accepted, and stored in the candidate")
 
 print("\n=== and again at commit, for the paths that never see the prompt ===")
 # `rollback` to a revision written when this box had a different card, and
 # `--load` of the file hexarouting.service replays at boot, both reach apply()
-# without passing do_config. Driven through apply() rather than the prompt for
+# without passing do_config. The refusal lived there as well, so its absence
+# is held there as well: driven through apply() rather than the prompt for
 # exactly that reason.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
@@ -355,12 +359,13 @@ with tempfile.TemporaryDirectory() as tmp:
     with contextlib.redirect_stdout(out):
         ok = sh.apply(target, check_only=True)
     said = out.getvalue()
-    check(ok is False,
-          f"a configuration naming the management card passed validation: "
+    check(ok is True,
+          f"a configuration naming the card carrying the default route does "
+          f"not validate, so a saved file naming it is refused at boot: "
           f"{said!r}")
-    check("default route" in said,
-          f"and it was refused without saying why: {said!r}")
-    print("  a file naming the management card does not validate")
+    check("default route" not in said,
+          f"and the check still argues about the route it carries: {said!r}")
+    print("  a file naming the card carrying the default route validates")
 
 print("\n=== a card this box has not got is refused, and it says what it has "
       "===")
@@ -412,9 +417,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check(sh.default_route_nic() is None,
           "a routing table that cannot be read must answer 'cannot say', not "
           "raise")
-    said = drive(sh, ["configure", "dataplane interface enp1s0"])
-    check(sh.candidate.dataplane_if == "enp1s0",
-          f"with no routing table to read, the refusal fired anyway: {said!r}")
+    # A third check here drove `dataplane interface enp1s0` with the table
+    # unreadable and asserted the name was accepted. Since #385 it is accepted
+    # with the table readable too, so that check could no longer fail for the
+    # reason it was written and is gone rather than left green about nothing.
     print("  read from /proc/net/route, destination 00000000")
 
 # -------------------------------------------------------------------- commit
@@ -848,7 +854,7 @@ print("  four box shapes, every row of the screen inside 79 columns")
 
 # ------------------------------------------------------------ the completion
 
-print("\n=== '?' offers the cards the box has, and marks the one refused ===")
+print("\n=== '?' offers the cards the box has, and marks the default-route one ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     drive(sh, ["configure"])
@@ -859,7 +865,10 @@ with tempfile.TemporaryDirectory() as tmp:
           f"completion offers {sorted(offered)}, not the cards this box could "
           f"actually hand to the dataplane")
     check("default route" in offered.get("enp1s0", ""),
-          f"the one card that must not be chosen is offered like any other: "
+          f"the card this box is reached on is offered like any other, with "
+          f"nothing saying what taking it means: {offered!r}")
+    check("refused" not in offered.get("enp1s0", ""),
+          f"the mark still calls the card refused, and since #385 it is not: "
           f"{offered!r}")
     print(f"  offers {', '.join(sorted(offered))}, and marks enp1s0")
 
@@ -1207,47 +1216,55 @@ check("commit confirmed 30" not in proc,
       "docs/appliance.md still tells an operator that naming a card arms a "
       "thirty-minute window, and it does not")
 
-print("\n=== and the refusal stands wherever the advice can be followed ===")
-# The two-card box is refused exactly as before - see the refusal section
-# above, which is unchanged - and now it names the card to use instead rather
-# than describing it.
+print("\n=== and on the two-card box, no record is written for it ===")
+# The record the VTY writes beside the card is for the box that has no other
+# card (#303). A two-card box naming the card it is reached on is accepted
+# now, and it gets no record here: the tuner reads the way back off the card
+# on the boot that claims it, whichever box it is on.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     said = drive(sh, ["configure", "dataplane interface enp1s0"])
-    check("error:" in said and "enp2s0" in said,
-          f"the refusal tells the operator to name the subscriber card and "
-          f"does not say which one that is: {said!r}")
+    check("error:" not in said and sh.candidate.dataplane_if == "enp1s0",
+          f"the two-card box refused the card it is reached on: {said!r}")
     check(not sh.candidate.dataplane_mgmt,
-          f"a box with a spare card recorded a management path it will never "
-          f"need: {sh.candidate.dataplane_mgmt!r}")
-    print("  refused, and the card to name instead is named")
+          f"a box with a spare card recorded a management path the tuner "
+          f"computes for itself: {sh.candidate.dataplane_mgmt!r}")
+    print("  accepted, and nothing recorded")
 
-print("\n=== a card whose management state cannot be carried is refused ===")
-# An address this box cannot read is an address it cannot put back, and a
-# handover it cannot undo on the far side is the walk to the console the
-# original refusal exists to prevent.
+print("\n=== a card whose management state cannot be read is accepted too ===")
+# IT WAS REFUSED, saying which of the address, the gateway and the MAC was
+# missing, because an address this box cannot read is one it cannot put back.
+# That is still true and it is the tuner's question now (#385): it reads the
+# same three things off the live card on the boot that claims it and declines
+# the card when one is missing, saying which in the journal. A second answer
+# at the prompt, from a reading taken on a different day, is the pair that
+# comes to disagree - and the prompt no longer refuses a card for what the
+# box may or may not be able to read at its next boot.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp, addrs={})
     said = drive(sh, ["configure", "dataplane interface ens18"])
-    check("error:" in said and "cannot be carried over" in said,
-          f"a card with no address was handed over anyway: {said!r}")
-    check("no single global IPv4 address" in said,
-          f"and the refusal does not say WHICH part is missing: {said!r}")
-    check(sh.candidate.dataplane_if == "" and not sh.candidate.dataplane_mgmt,
-          f"refused and stored anyway: {sh.candidate.dataplane_if!r}")
-    print("  refused, and it says what is missing")
+    check("error:" not in said,
+          f"a card with no address was refused at the prompt, which is the "
+          f"refusal #385 removed: {said!r}")
+    check(sh.candidate.dataplane_if == "ens18",
+          f"accepted and not stored: {sh.candidate.dataplane_if!r}")
+    check(not sh.candidate.dataplane_mgmt,
+          f"a record was written with nothing to put in it: "
+          f"{sh.candidate.dataplane_mgmt!r}")
+    print("  accepted, nothing recorded, and the tuner decides at boot")
 
 with tempfile.TemporaryDirectory() as tmp:
-    # Two addresses is the same answer. Choosing between them is choosing
-    # which address the box comes back on, and a box that guesses that wrong
-    # comes back where nobody is looking for it.
+    # Two addresses is the same answer for the same reason.
     sh = one_card_box(tmp, addrs={
         "ens18": IP_ADDRS["ens18"] + "\n2: ens18    inet 10.0.9.9/24 scope "
                                      "global secondary ens18"})
     said = drive(sh, ["configure", "dataplane interface ens18"])
-    check("error:" in said,
-          f"a card with two addresses was handed over on a guess: {said!r}")
-    print("  and a card with two addresses is not guessed at")
+    check("error:" not in said and sh.candidate.dataplane_if == "ens18",
+          f"a card with two addresses was refused at the prompt: {said!r}")
+    check(not sh.candidate.dataplane_mgmt,
+          f"and a record was written by guessing between them: "
+          f"{sh.candidate.dataplane_mgmt!r}")
+    print("  and a card with two addresses is accepted with nothing guessed")
 
 print("\n=== the record is written where the box can read it back ===")
 # It cannot live only in the saved file. `show running-config` and `save`
