@@ -75,6 +75,19 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **Twenty-eight more C functions are named by a unit test**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390), batch I). The PPTP ALG's three segment-local
+  functions - the worst-outcome fold, the checksum-preserving Call ID
+  replacement and the payload bounds - the TCP log writer's, the audit
+  trail's, and the nine static functions of the FTP ALG's text half, which is
+  the parse that decides whether a subscriber's payload is touched at all.
+  Each file is `#include`d by its harness, the way `bpa_pool.c` already was,
+  because a static function is reachable from no other translation unit. The
+  reader's C ceiling goes from 187 to 159 and the harness count from 10 to 13;
+  neither number ever goes up.
+
 ### Fixed
 
 ## 0.78.0 - the box can reach out, and a new box is configured at its console
