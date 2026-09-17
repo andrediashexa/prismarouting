@@ -1741,6 +1741,20 @@ add` - did not survive the next reboot, because nothing wrote it down. It was
 escalated three times
 ([#303](https://github.com/andrediashexa/hexarouting/issues/303)).
 
+**The default answer is `none` since
+[#394](https://github.com/andrediashexa/hexarouting/issues/394)**, and that is
+not a retreat from the paragraph above: the file is still written, and the
+self-test still reports on every boot what became of it. What changed is which
+arrangement an operator gets by pressing Enter. This box claims every card it
+has for the dataplane since 0.76.0 and is configured at its console when it is
+new, so naming a management card is a decision - that card is the one card the
+dataplane will not claim - and a decision is not something a default should
+make for somebody who said nothing. The card the medium is itself reaching the
+network through is still named on the list, because it is the card an operator
+who wants one wants; it is a row and not the default. An unattended install
+takes `none` too, unless it asks for an address, which is an install saying it
+wants a management network.
+
 | Question | Answer |
 |---|---|
 | Which card | a menu of the machine's cards with what each one IS - up or down, its driver, the address it is carrying now. The default is the card the medium is reaching the network through, or `none` |

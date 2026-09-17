@@ -69,21 +69,34 @@ Enter vazio não é resposta. `y` também não. **Um disco não pode ser destru�
 O instalador pergunta, junto com as outras perguntas e antes de qualquer escrita, **em qual placa** a caixa é gerenciada e **como ela é endereçada**:
 
 ```
-  This box is reached over the network AFTER it reboots, and nothing
-  else arranges that. An install with no answer here comes back with
-  its card down and no address, reachable only at this console - and
-  what is typed at a console does not survive the next reboot.
+  A NEW BOX IS CONFIGURED AT ITS CONSOLE, and that is the default
+  here: every card this machine has goes to the dataplane, and none
+  of them is kept back to be managed on. Answer with a card only if
+  this box is reached over the network after it reboots; that card
+  is then the one card the dataplane will not claim.
 
 Network cards on this machine:
-  a) ens18      up     virtio_net   10.95.200.196/24   <- default
+  a) ens18      up     virtio_net   10.95.200.196/24   <- this medium is reaching the network on this one
   b) ens19      down   virtio_net   none
-  none) no management network   (this box is reached at its console)
+  none) no management network   (this box is reached at its console)   <- default
 
-Which card is this box managed on (letter, or a name) [ens18]:
-Address: 'dhcp', or one like 10.0.0.2/24 [dhcp]:
+Which card is this box managed on (letter, or a name) [none]:
 ```
 
-A lista mostra **o que cada placa é** - se está no ar, qual driver a move, qual endereço ela está carregando neste minuto - porque `ens18` e `ens19` não dizem a ninguém qual cabo está em qual. O padrão é a placa pela qual a própria mídia está alcançando a rede agora.
+A lista mostra **o que cada placa é** - se está no ar, qual driver a move, qual endereço ela está carregando neste minuto - porque `ens18` e `ens19` não dizem a ninguém qual cabo está em qual. A placa pela qual a própria mídia está alcançando a rede agora é apontada na lista, porque é a que o operador quer quando quer uma: ela não é mais o padrão.
+
+:::info
+**O padrão é** `**none**`**.** Desde a 0.76.0 a caixa reivindica sozinha todas as placas que tem, e uma caixa nova é configurada no console dela. Responder uma placa é uma decisão: aquela placa passa a ser a única que o dataplane **não** vai reivindicar. Quem aperta Enter recebe a caixa que este produto descreve, em vez de uma placa guardada de lado sem ninguém ter decidido isso.
+
+Antes desta versão o padrão era a placa da própria mídia, e uma instalação não assistida tomava essa placa sem nada dito - com ninguém olhando, que é justamente quando a decisão não devia ser tomada sozinha.
+
+:::
+
+Ao responder uma placa, o instalador pergunta em seguida como ela é endereçada:
+
+```
+Address: 'dhcp', or one like 10.0.0.2/24 [dhcp]:
+```
 
 
 :::info
@@ -282,6 +295,8 @@ Para laboratório, teste de boot e PXE, as respostas vêm da linha de comando do
 **Atenção com** `**hexarouting.password**`**\*\*\*\*:** a linha de comando do kernel fica legível para todos em `/proc/cmdline` durante toda a vida do sistema que deu boot. Ela não sobrevive para a máquina instalada, mas qualquer um logado no meio durante a instalação consegue lê-la. Para instalação presencial, deixe de fora e responda no prompt.
 
 :::
+
+Com `hexarouting.yes`, a rede de gerência é `none` e o instalador diz isso: uma instalação não assistida que quer rede de gerência passa `hexarouting.mgmt-address=`, e aí o instalador usa a placa pela qual a mídia está alcançando a rede - ou `hexarouting.mgmt-interface=` para escolher outra.
 
 Com `hexarouting.yes` e sem `hexarouting.log-gb`, o instalador toma o padrão **e diz que tomou**. Uma instalação não assistida não tem console de onde responder, e uma pergunta que ninguém pode responder é uma instalação pendurada.
 

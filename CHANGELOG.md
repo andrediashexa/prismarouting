@@ -75,6 +75,30 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Changed
+
+* **The installer's management-network default is `none`**
+  ([#394](https://github.com/andrediashexa/hexarouting/issues/394)). The question offered the card this medium is
+  reaching the network through, and an operator who pressed Enter got a box
+  with a management address and one card kept back from the dataplane. Since
+  0.76.0 this box claims every card it has and is configured at its console
+  when it is new, so naming a management card is a decision - that card is the
+  one card the dataplane will not claim - and a default is the wrong place for
+  a decision. The medium's own card is still named on the list, marked as the
+  one the medium is reaching the network on, because it is the card an
+  operator who wants one wants.
+
+  An unattended install takes `none` as well and prints the kernel command
+  line that asks for a card instead. An unattended install that asks for an
+  ADDRESS and names no card still gets the medium's card: it said it wants a
+  management network, and that is the only card anything at install time knows
+  to be connected. `lab/install-iso.sh` asks for one that way, because
+  reaching the installed box over ssh is the assertion its serial console
+  cannot make.
+
+  Nothing on an installed box changes, and a box already in service is not
+  touched: this is the answer a new install starts from.
+
 ### Fixed
 
 ## 0.77.1 - the box reads 'no shut', and the interface comes up

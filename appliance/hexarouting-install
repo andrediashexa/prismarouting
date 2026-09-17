@@ -531,21 +531,26 @@ choose_interface() {   # <default>; the chosen name on stdout
   _table=$(nic_table)
   _def=$1
   echo >&2
-  echo "  This box is reached over the network AFTER it reboots, and nothing" >&2
-  echo "  else arranges that. An install with no answer here comes back with" >&2
-  echo "  its card down and no address, reachable only at this console - and" >&2
-  echo "  what is typed at a console does not survive the next reboot." >&2
+  echo "  A NEW BOX IS CONFIGURED AT ITS CONSOLE, and that is the default" >&2
+  echo "  here: every card this machine has goes to the dataplane, and none" >&2
+  echo "  of them is kept back to be managed on. Answer with a card only if" >&2
+  echo "  this box is reached over the network after it reboots; that card" >&2
+  echo "  is then the one card the dataplane will not claim." >&2
   echo >&2
   echo "Network cards on this machine:" >&2
   _i=1
   printf '%s\n' "$_table" | while read -r n st drv a; do
     _mark=""
     [ "$n" = "$_def" ] && _mark="   <- default"
+    [ "$n" = "$MGMT_DEFAULT_IF" ] && [ "$_def" = none ] \
+      && _mark="   <- this medium is reaching the network on this one"
     printf '  %s) %-10s %-6s %-12s %s%s\n' \
       "$(letter_at "$_i")" "$n" "$st" "$drv" "$a" "$_mark" >&2
     _i=$((_i + 1))
   done
-  echo "  none) no management network   (this box is reached at its console)" >&2
+  _nmark=""
+  [ "$_def" = none ] && _nmark="   <- default"
+  echo "  none) no management network   (this box is reached at its console)$_nmark" >&2
   echo >&2
 
   while : ; do
@@ -1226,14 +1231,40 @@ elif [ -z "$MGMT_IF" ]; then
     # Unattended, and nothing said. It takes the default and SAYS it took the
     # default, for the reason the log volume does: an unattended install has no
     # console to answer from, and a question nobody can answer is a machine
-    # that hangs. The default is the card this medium is reaching the network
-    # through right now, which is the best answer anything here has.
-    MGMT_IF=$MGMT_DEFAULT_IF
-    say "management network: $MGMT_IF by DHCP (unattended)"
-    say "  (pass hexarouting.mgmt-interface= and hexarouting.mgmt-address= to"
-    say "  choose; hexarouting.mgmt-address=none for no management network)"
+    # that hangs.
+    #
+    # THE DEFAULT IS NONE, here as at the question (#394). It used to be the
+    # card this medium was reaching the network through, which reads like the
+    # best answer anything here has and is the wrong one twice over: it keeps
+    # a card back from the dataplane on a product that claims every card it
+    # has since 0.76.0, and it does it on the install that had nobody
+    # watching. An unattended install that wanted a management network says
+    # which card on the kernel command line, where the rest of its answers
+    # already are.
+    if [ -n "$MGMT_ADDR" ]; then
+      # AN ADDRESS WAS ASKED FOR AND NO CARD NAMED. That is an install that
+      # wants a management network, so `none` is not the answer to it: the
+      # card is the one this medium is reaching the network through, which is
+      # the only card anything here knows to be connected. Named separately
+      # from the silence above because the two are different answers - one
+      # said nothing at all, the other said which address.
+      MGMT_IF=$MGMT_DEFAULT_IF
+      # The two values LAST ON THEIR ROW and nothing behind them, which is
+      # the rule #367 left: a card name and an address are as long as the box
+      # makes them, and a row that carries one in the middle grows past the
+      # console exactly when somebody is reading it.
+      say "management network: unattended, and the address was asked for with"
+      say "  no card named, so the card this medium is reaching the network"
+      say "  through is the one:"
+      say "  $MGMT_IF, $MGMT_ADDR"
+    else
+      MGMT_IF=none
+      say "management network: none (unattended; nothing was asked)"
+      say "  (pass hexarouting.mgmt-interface= and hexarouting.mgmt-address= to"
+      say "  manage this box over the network instead)"
+    fi
   else
-    MGMT_IF=$(choose_interface "$MGMT_DEFAULT_IF") || exit 1
+    MGMT_IF=$(choose_interface none) || exit 1
   fi
 fi
 

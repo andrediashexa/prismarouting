@@ -434,7 +434,7 @@ echo "=== a ceiling that is holding rows names them on the green run ==="
 # corpora it writes itself - the three appliance suites bring real boxes and
 # cannot arrange a ceiling to look at.
 #
-# SAY_UNSAFE_AT_MOST=49 is what test_installer.sh holds, and until now the
+# SAY_UNSAFE_AT_MOST=48 is what test_installer.sh holds, and until now the
 # forty-nine rows under it could only be seen by lowering the variable to
 # provoke a red run. Nobody lowers a variable whose contents they cannot see,
 # and a ceiling nobody reads is an allowlist with a number in front of it.

@@ -2477,6 +2477,17 @@ What remains is the proof a lab cannot fake: `lab/install-iso.sh` bringing the
 claimed card up at the console and reading `ens19` off `ip link` and FRR, and
 `appliance/test_startup_conf_shapes.sh` handing the stanza to a real VPP.
 
+**The installer's management-network default is `none`**
+([#394](https://github.com/andrediashexa/hexarouting/issues/394)) - on the
+branch. The question offered the card the medium is reaching the network
+through, and an operator who pressed Enter got one card kept back from the
+dataplane without having decided that. Since 0.76.0 the box claims every card
+it has and a new box is configured at its console, so the default is `none`
+and naming a card is the decision it always was. The medium's own card is
+still named on the list. An unattended install takes `none` too, unless it
+asks for an address, which is an install saying it wants a management network
+- and is how `lab/install-iso.sh` installs the box it then reaches over ssh.
+
 **`no shut` was handed to FRR in silence, and the interface stayed down**
 ([#393](https://github.com/andrediashexa/hexarouting/issues/393)) - shipped
 in 0.77.1. On the maintainer's box, running 0.77.0, `interface ens18` / `no
