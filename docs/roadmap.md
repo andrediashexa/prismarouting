@@ -2310,17 +2310,28 @@ otherwise in exactly the right place - PHASE 5 boots the installed disk with
 the card already in the dataplane - and passed because its card was easier
 than any real one.
 
-**And a screen quoted in `docs/` is compared against nothing**
-([#384](https://github.com/andrediashexa/hexarouting/issues/384)).
-`test/test_wiki_screens.py` drives the product and compares every screen the
-public wiki quotes - 25 character for character, another 34 by template. It
-covers `wiki/` and nothing else. `docs/routing.md` carries a screen verbatim
+**And a screen quoted in `docs/` was compared against nothing**
+([#384](https://github.com/andrediashexa/hexarouting/issues/384)) - *done*.
+`test/test_wiki_screens.py` drove the product and compared every screen the
+public wiki quotes - 25 character for character, another 34 by template - and
+covered `wiki/` and nothing else. `docs/routing.md` carries a screen verbatim
 and `test/test_doc_copies.py` reads that file only for column-width claims, so
-a transcript there that the box has stopped printing is caught by no one.
+a transcript there that the box has stopped printing was caught by no one.
 Measured while working out what would catch the one #378 is about to make
 obsolete. The same reason put three sections of that file in Portuguese once:
 `docs/` was excused from a check that covered everywhere else, and an excused
 directory is a directory nobody measures.
+
+Sized first: 38 of `docs/`'s 175 fenced blocks carry a verdict the box
+prints, 44 screens on 12 pages, 28 in `docs/routing.md`; the wiki reader
+pointed at it unchanged attributed 29 and skipped 15. The reader reads both
+trees now and says so on every run, per directory, and each skip is printed
+with where the reading stopped. The 15 were read one at a time: four were
+pages folding rows the box writes whole and are corrected, three are driven,
+two were installer rows the shell reader did not read past, one was history
+and is quoted as history. The fold itself is a finding now, read off the
+driven runs - the shape #365 found on the wiki by hand, twice. Seven remain
+and say why: the row is the value alone, or the dataplane's own sentence.
 
 **Two gaps of the same kind, still open**
 ([#383](https://github.com/andrediashexa/hexarouting/issues/383)). The guest

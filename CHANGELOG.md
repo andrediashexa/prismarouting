@@ -215,6 +215,56 @@ version has a chance of seeing it.
   box has since 0.76.0. Nothing else you have committed changes.
 ### Added
 
+* **The screens `docs/` quotes are read against the box, the way the wiki's
+  are** ([#384](https://github.com/andrediashexa/hexarouting/issues/384)).
+  `test/test_wiki_screens.py` drove the product for every screen the public
+  wiki quotes and read nothing under `docs/`, which `CONTRIBUTING.md` calls
+  authoritative about the product: 38 of that directory's 175 fenced blocks
+  carry a verdict the box prints, 44 screens on 12 pages, 28 of them in
+  `docs/routing.md`, and `test/test_doc_copies.py` read that file for
+  column-width claims only. Measured before anything was changed, by pointing
+  the wiki reader at `docs/` unchanged: 29 of 44 attributed, 15 not, and one
+  finding. The reader now reads both trees and says so on every run - the
+  first line names each directory with its page and screen count, every count
+  is per directory, and what it cannot attribute is printed per directory
+  **with where the reading stopped**: which rows were the box's and by which
+  source line, and what the first row nothing accounts for looks like to the
+  corpus (a template under the literal floor, with the share, or nothing at
+  all). A skip list of pages and lines was the honest edge of the rule and it
+  was also 22 lines nobody could act on without re-deriving each one, which
+  #365 did by hand.
+
+  The 15 were read one at a time, the way #365 read the wiki's 22. **Four
+  were `docs/` pages splitting rows the box writes whole:** the announce
+  warning and the cutoff refusal in `docs/routing.md` were hand-folded at 72
+  columns where `commit` prints each row whole, the session-table refusal was
+  folded into three rows where `err` wraps nothing, and `docs/appliance.md`
+  carried the #121 boot failure in the shape of two releases ago - the loader
+  has put the path on a row of its own since #276, and the self-test quotes
+  the service's last lines under *the last thing it said:* now. Each is
+  corrected on the page, at the width the box prints it. Three more are
+  reached by driving: the `cgnat` setting this VTY has not got, the VRF whose
+  table FRR cannot find, and the cutoff with the page's own addresses. Two
+  were rows the installer writes after `&&` and in a `case` arm, which the
+  shell reader did not read past; it does now. One was history - the
+  *warning: no vat2 plugin* line `install.sh` printed before #119 - and is
+  quoted as history, in prose, because a fenced block under `docs/` is read
+  as what the box prints. A fence indented under a list item is read at the
+  item's indent, as Markdown renders it, which put one more screen on the
+  driven list. Seven remain, each printed with its reason: the row is the
+  value alone, or the dataplane's own sentence.
+
+  **And the fold is a finding now rather than something read by hand.** Two
+  of the wiki's 22 skips were this shape and four of `docs/`'s 15: when the
+  words of a quoted screen, whitespace collapsed, are exactly the words of
+  rows a driven run has just printed and the rows are not those rows, the
+  page is quoting the box and folding it - or indenting it - where the box
+  does not. Read off the driven runs only, because a template would accept a
+  page's fold at the console's width and never see that the box writes the
+  row whole. It names the scenario and prints the box's rows under the
+  failure. `docs/`: 10 screens driven, 26 by template, 7 skipped; the wiki's
+  numbers did not move. 30 scenarios are driven, from 27.
+
 * **`system reboot` and `system shutdown` from the VTY, under a `system`
   menu** ([#388](https://github.com/andrediashexa/hexarouting/issues/388)).
   An operator who needed either dropped to `start shell` and typed `systemctl`,
