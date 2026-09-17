@@ -320,6 +320,41 @@ def screens(page_list):
     row and the reason under it - so the grouping is the product's, not a
     guess about the page.
     """
+    return [s for rel, first, block in fenced(page_list)
+            for s in screens_in(rel, first, block)]
+
+
+def runs(page_list):
+    """
+    Every run of consecutive rows in a fenced block that carries a verdict,
+    as (page, line, rows) - the block as the box printed it, markers and
+    all, up to a blank row.
+
+    A screen is one verdict and what is under it, and a block that quotes
+    the self-test's `[FAIL]` with the service's journal under it holds
+    three: the verdict, and each `error:` the journal carries. What is
+    between two of those - a row the box printed after one screen and
+    before the next - is not in any screen, so a page that left it out was
+    read as three honest screens. `gapped` reads these instead.
+    """
+    out = []
+    for rel, first, block in fenced(page_list):
+        n = 0
+        while n < len(block):
+            if not block[n].strip():
+                n += 1
+                continue
+            k = n
+            while k < len(block) and block[k].strip():
+                k += 1
+            if any(MARKED.match(r) for r in block[n:k]):
+                out.append((rel, first + n + 1, block[n:k]))
+            n = k
+    return out
+
+
+def fenced(page_list):
+    """Every fenced block on these pages, as (page, line of the fence, rows)."""
     out = []
     for rel, text in page_list:
         lines = text.split("\n")
@@ -327,7 +362,7 @@ def screens(page_list):
         for n, line in enumerate(lines, 1):
             if line.strip().startswith("```"):
                 if inside:
-                    out.extend(screens_in(rel, first, block))
+                    out.append((rel, first, block))
                     inside, block = False, []
                 else:
                     inside, block, first = True, [], n
@@ -365,10 +400,12 @@ def screens_in(rel, first, block):
 
 PAGES = {}                              # tree -> pages
 SCREENS = []                            # (tree, page, line, rows)
+RUNS = []                               # the same, per block up to a blank
 for _tree, _root, _min_pages, _min_screens in TREES:
     PAGES[_tree] = pages(_root)
     _found = screens(PAGES[_tree])
     SCREENS.extend((_tree,) + s for s in _found)
+    RUNS.extend((_tree,) + s for s in runs(PAGES[_tree]))
     check(len(PAGES[_tree]) >= _min_pages,
           f"only {len(PAGES[_tree])} page(s) were read out of {_root}")
     check(len(_found) >= _min_screens,
@@ -951,6 +988,66 @@ def _remap(moved, total, live, moves):
             + [plugin_row("every session on this pool")])
 
 
+C_CONVERSION = re.compile(r"%[-0-9.*]*[a-zA-Z]")
+
+
+def c_function(rel, name):
+    """The source text of one C function of the plugin's, by name."""
+    src = io.open(os.path.join(REPO, rel), encoding="utf-8").read()
+    start = src.find(f"\n{name} (")
+    check(start >= 0, f"{rel} defines no function {name}: the fake dataplane "
+          f"cannot answer with its words")
+    return src[start:src.find("\n}", start)] if start >= 0 else ""
+
+
+def c_strings(text):
+    """Every run of adjacent string literals in `text`, joined the way the
+    compiler joins them, in source order."""
+    return ["".join(re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(0)))
+            for m in re.finditer(r'(?:"(?:[^"\\]|\\.)*"\s*)+', text)]
+
+
+def timeout_row(name, value):
+    """
+    One row of the dataplane's answer to `show bpa timeouts`, for this
+    timeout at this value, as `bpa_timeouts_show` prints it.
+
+    The VTY relays every row of that answer carrying the floor mark under
+    `warning:` after a commit that set a timeout, and the wiki quotes one.
+    The row is `%-16s %6u%s` - three literal characters, so it is under the
+    floor and `plugin_row` cannot fill it, and the widths are what the
+    operator sees, so a template with its holes stripped of them would not
+    print the row either. The format is read off the function's own source
+    with its widths kept and filled with Python's `%`, which formats these
+    three conversions as C does; the mark is the function's two halves round
+    the RFC, and the floor and the RFC are bpa_pool.h's table entry for this
+    timeout. The `!= 0 && < floor` test is the ternary's, retyped, and the
+    assertion beside it holds it to the source. What is typed here is the
+    timeout's name and the page's value.
+    """
+    body = c_function("src/plugins/bpa/bpa_cli.c", "bpa_timeouts_show")
+    strs = c_strings(body)
+    fmts = [t for t in strs if len(C_CONVERSION.findall(t)) == 3]
+    check(len(fmts) == 1 and "< (floor)" in body,
+          f"bpa_timeouts_show prints {len(fmts)} row shape(s) with three "
+          f"values, not the one marked row this file fills")
+    if len(fmts) != 1:
+        return ""
+    fmt = fmts[0]
+    below, asks = strs[strs.index(fmt) + 1:strs.index(fmt) + 3]
+    hdr = io.open(os.path.join(REPO, "src", "plugins", "bpa", "bpa_pool.h"),
+                  encoding="utf-8").read()
+    m = re.search(r'_ \(\w+, "%s", (\d+), "([^"]+)"' % re.escape(name), hdr)
+    check(m is not None and "BELOW" in below,
+          f"bpa_pool.h sets no floor for the {name!r} timeout, or the mark "
+          f"after the row's format is not the floor mark: {below!r}")
+    if m is None:
+        return ""
+    floor, rfc = int(m.group(1)), m.group(2)
+    mark = below + rfc + asks if value != 0 and value < floor else ""
+    return fmt % (name, value, mark)
+
+
 # ---------------------------------------------------------------------------
 # What the product PRINTS, which is better than what it builds.
 #
@@ -983,15 +1080,16 @@ SCENARIOS = [
      ["start shell"]),
     ("start shell with only the CGNAT rights",
      {"caps": {"cgnat"}, "mode": "operational"}, ["start shell"]),
-    # The two the box can only answer with cards under it, so the cards are
+    # The one the box can only answer with cards under it, so the cards are
     # stubbed and nothing else is: the refusal, the list and the advice are
-    # all the product's.
+    # all the product's. It was two: the card carrying the default route was
+    # refused on a box with another card until #385, and a run typing that
+    # card printed nothing at all for a session with this file green - the
+    # scenario stayed on the list, the wiki kept the refusal, and no check
+    # asked whether a run had printed a row. One does now, under DRIVEN.
     ("a card this box has not got",
      {"nics": ["enp1s0", "enp2s0"], "route": "enp1s0"},
      ["dataplane interface eth9"]),
-    ("the card this box is reached on",
-     {"nics": ["enp1s0", "enp2s0"], "route": "enp1s0"},
-     ["dataplane interface enp1s0"]),
     # The two `commit check` refuses on. `daemons` is what FRR answers `show
     # daemons` with, and it is the whole of what either box is stubbed to say.
     ("a port range with no room for one block", {"daemons": ""},
@@ -1041,6 +1139,16 @@ SCENARIOS = [
            "200.150.0.34", 1536, 2047)])},
      ["nat cgnat pool clientes", " inside 100.64.0.0/22",
       " outside 200.150.0.32/28", "exit", "commit"]),
+    # `commit` over a timeout under the floor its RFC sets. The dataplane
+    # applies it and marks the row in `show bpa timeouts`; the VTY reads that
+    # answer back and prints every marked row under `warning:`. The fake's
+    # answer is the plugin's own row (`timeout_row`, above), so the words,
+    # the widths and the RFC are bpa_cli.c's and bpa_pool.h's, and what is
+    # typed here is the page's value.
+    ("a timeout under the floor its RFC sets",
+     {"daemons": "zebra staticd mgmtd bgpd",
+      "timeouts": [timeout_row("udp", 119)]},
+     ["nat cgnat timeout udp 119", "commit"]),
 ]
 
 # The findings are the other half of the VTY's voice and they are not printed
@@ -1211,7 +1319,36 @@ FINDINGS = [
     # own (#252), and it fits no template because it is all value.
     ("a revert that could not be armed on the box",
      lambda sh: _no_store(sh).arm_confirm(10, None)),
+    # `--load` of a saved file with a line this VTY cannot hold. The path is
+    # printed whole on a row of its own (#276), so the row is the box's own
+    # path or it is not the page's: the file is answered from memory at
+    # CONFIG_PATH (`_load`, below). Row 3 is the operator's line printed
+    # whole, which is the one thing no template reaches, and the two pages
+    # that quote this screen cut the hash at different places - so the run is
+    # taken once per page, with that page's line, as the `remap:` runs are.
+    ("a saved file with a line this VTY cannot hold, as docs/ quotes it",
+     lambda sh: _load(sh, "user joao\n password 6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRf"
+                      "Lb8XkY...\n")),
+    ("a saved file with a line this VTY cannot hold, as the wiki quotes it",
+     lambda sh: _load(sh, "user joao\n password 6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRf"
+                      "Lb8XkY6nAeUoZgC5iMt...\n")),
+    # `--load` of a file that locks everybody out, on a box somebody can log
+    # into today: the #121 shape as the box prints it now, ten rows, of
+    # which the self-test quotes the last six under its verdict. Both the
+    # lockout check and the one behind it fire, because the account the
+    # running configuration has is the administrator too.
+    ("a saved file that locks everybody out",
+     lambda sh: _load(sh, "ssh password-authentication no\n",
+                      running="ssh password-authentication yes\n"
+                      "user noc\n password " + _A_HASH + "\n"
+                      " role administrator\n")),
 ]
+
+#: A crypt hash `Config` accepts on a `password` row: `openssl passwd -6` of
+#: nothing in particular. The running configuration needs one account able
+#: to log in, and a password the parser refuses is an account with none.
+_A_HASH = ("$6$rounds=5000$saltsalt$qFmFH.bQmmtXCsBDTYd.rF7dxJmR/n8pvv8Mh3M5T2"
+           "bl1WV5hsY3W.yg7FyWqA9NnlnYfEzGjFeMwqk9cA6fY0")
 
 _DOC_RUNNING = [l.replace("200.150.0.0/24", "203.0.115.0/24")
                 for l in _CUT_RUNNING]
@@ -1277,10 +1414,19 @@ def a_shell(setup):
         sh.default_route_nic = lambda: setup.get("route")
     if "daemons" in setup:
         _a_box(sh, setup["daemons"])
+    # What the fake dataplane answers, by the question: the `... check` of
+    # a pool change, and `show bpa timeouts` after a commit. Anything else
+    # is answered with nothing, which is what a box with no pools says.
+    answers = []
     if "remap" in setup:
-        answer = "\n".join(setup["remap"]) + "\n"
-        sh.dp.run = lambda cmd: ((0, answer) if cmd.endswith(" check")
-                                 else (0, ""))
+        answers.append((lambda cmd: cmd.endswith(" check"),
+                        "\n".join(setup["remap"]) + "\n"))
+    if "timeouts" in setup:
+        answers.append((lambda cmd: cmd == "show bpa timeouts",
+                        "\n".join(setup["timeouts"]) + "\n"))
+    if answers:
+        sh.dp.run = lambda cmd: next(((0, a) for asks, a in answers
+                                      if asks(cmd)), (0, ""))
     return sh
 
 
@@ -1338,6 +1484,31 @@ def _no_store(sh):
     return sh
 
 
+def _load(sh, text, running=""):
+    """
+    `--load` of a saved file with these lines, on a box running `running`.
+
+    The file is the one thing `load` reads off the box, and it is answered
+    from memory at the box's own CONFIG_PATH, the way `_NoStore` answers the
+    confirm store: the path is printed whole on a row of its own, so a file
+    under /tmp would drive a row no page quotes. `os.path.exists` is the
+    module's, patched for that one path and put back.
+    """
+    _a_box(sh, "zebra staticd mgmtd bgpd")
+    if running:
+        sh.running_config = lambda: _config.Config.parse(running)
+    path = hexash.CONFIG_PATH
+    exists, real_open = os.path.exists, open
+    hexash.os.path.exists = lambda p: p == path or exists(p)
+    hexash.open = (lambda p, *a, **k: io.StringIO(text) if p == path
+                   else real_open(p, *a, **k))
+    try:
+        sh.load(path)
+    finally:
+        hexash.os.path.exists = exists
+        del hexash.open
+
+
 def drive(setup, lines):
     """One scripted session's output, with no box under the VTY."""
     sh = a_shell(setup)
@@ -1362,6 +1533,17 @@ def drive_findings(render):
 
 DRIVEN = [(name, drive(setup, lines)) for name, setup, lines in SCENARIOS]
 DRIVEN += [(name, drive_findings(render)) for name, render in FINDINGS]
+
+# A run that printed nothing drove nothing. `drive` swallows what the VTY
+# raises, so a scenario whose statement the product now accepts in silence -
+# or refuses by raising - is a name on the list, a count of one and no row
+# anywhere: "the card this box is reached on" typed a card #385 stopped
+# refusing and printed nothing for a session, while the wiki kept the
+# refusal. Every run has to have printed a row.
+_SILENT = [name for name, out in DRIVEN if not any(r.strip() for r in out)]
+check(not _SILENT,
+      "a driven run printed no row at all, so its scenario holds no screen "
+      "and nothing says so: " + "; ".join(repr(n) for n in _SILENT))
 
 
 def driven_match(rows):
@@ -1946,6 +2128,56 @@ def folded(rows):
     return None
 
 
+def gapped(rows):
+    """
+    The fifth finding: the box's rows with a row missing from the middle.
+
+    `folded` reads a page that quotes FEWER rows than the box printed as
+    honest, and it is - when what is missing is the tail. What it is not is
+    a page whose two rows the box printed with a row between them: the
+    verdict and the loader's refusal under it, with the advice the check
+    prints between the two left out, is a screen the box does not print,
+    and docs/appliance.md carried the #121 boot failure in that shape while
+    saying it was the shape the box prints today. The template tiling
+    accepted it, because each row is the box's.
+
+    Read against the DRIVEN runs only, on every pair of consecutive page
+    rows: both rows are rows of one run at the same indent, the second is
+    not the row after the first, and it is a row further down before a
+    blank. A pair the run prints adjacent anywhere is not a gap, so a row a
+    run repeats does not make one. The indent is the page's - the self-test
+    quotes the service's journal ten columns in - so the shift is read off
+    the pair rather than tried at two widths.
+
+    Returns (scenario, the box's rows from the first to the second) or None.
+    """
+    def shift(page, box):
+        k = len(page) - len(box)
+        if k >= 0 and page.endswith(box) and not page[:k].strip():
+            return k
+        return None
+
+    for a, b in zip(rows, rows[1:]):
+        for name, out in DRIVEN:
+            gap = None
+            for i in range(len(out) - 1):
+                k = shift(a, out[i])
+                if k is None or not out[i].strip():
+                    continue
+                if shift(b, out[i + 1]) == k:
+                    gap = None
+                    break
+                for j in range(i + 2, len(out)):
+                    if not out[j].strip():
+                        break
+                    if shift(b, out[j]) == k:
+                        gap = gap or (name, out[i:j + 1])
+                        break
+            if gap:
+                return gap
+    return None
+
+
 def diverges(rows):
     """
     Where this screen stops being a screen the box prints, or None.
@@ -2126,12 +2358,22 @@ spaced = []                             # accepted holes holding whitespace
 # again without a reading like that, and a page joining the corpus is not one.
 SPACED_AT_MOST = 4
 
+#: Where the self-test puts the service's journal under its verdict:
+#: `sed 's/^/          /'` at appliance/selftest:1519, ten columns. A screen
+#: the VTY printed at boot is quoted at that indent on a page quoting the
+#: self-test, and it is the box's rows there, not a fold of them.
+JOURNAL_INDENT = 10
+
 for tree, rel, lineno, rows in SCREENS:
     # The self-test's markers carry two leading spaces of their own and some
     # pages quote them without. The offset is uniform when it happens, so it
     # is put back rather than compared away - a row that differs by a space
-    # somewhere in the middle still has to fail.
+    # somewhere in the middle still has to fail. The third shift is the
+    # journal's, the other way: taken off, because the VTY printed the row
+    # without it.
     shifts = [rows, ["  " + r for r in rows]]
+    if all(r.startswith(" " * JOURNAL_INDENT) for r in rows):
+        shifts.append([r[JOURNAL_INDENT:] for r in rows])
     name = None
     for shifted in shifts:
         name = driven_match(shifted)
@@ -2186,6 +2428,13 @@ for tree, rel, lineno, rows in SCREENS:
     else:
         skipped.append((tree, rel, lineno, rows[0], why_skipped(rows)))
 
+# And the blocks, as the box printed them: a row of the box's missing from
+# between two the page kept is not in any screen above.
+for tree, rel, lineno, rows in RUNS:
+    gap = gapped(rows)
+    if gap:
+        findings.append((tree, rel, lineno, rows, ("gapped",) + gap))
+
 print(f"\n  screen(s) matched by DRIVING the product - compared character "
       f"for character: {per_tree(driven)}")
 print(f"  screen(s) matched a TEMPLATE the product builds: "
@@ -2221,6 +2470,16 @@ for tree, rel, lineno, rows, (how, t, *rest) in findings:
         check(False,
               f"{rel}:{lineno} quotes the box's words in rows the box does "
               f"not print: {shape}. Driven as '{t}', the box prints:\n"
+              + "\n".join(f"          |{r}" for r in box))
+        continue
+    if how == "gapped":
+        box = rest[0]
+        check(False,
+              f"{rel}:{lineno} quotes the box's rows with a row missing from "
+              f"the middle: {box[0].strip()[:48]!r} and then "
+              f"{box[-1].strip()[:48]!r}, which the box prints "
+              f"{len(box) - 2} row(s) later. Driven as '{t}', between and "
+              f"including the page's two rows the box prints:\n"
               + "\n".join(f"          |{r}" for r in box))
         continue
     if how == "swallowed":
@@ -2392,6 +2651,25 @@ check(folded(_CUT) and folded(_CUT)[1] == _ANNOUNCE[:1],
       f"a verdict row cut short inside the box's own row is not named: "
       f"{_CUT!r}")
 
+# A row missing from the MIDDLE of the box's screen, which is the shape
+# docs/appliance.md carried the #121 boot failure in: the verdict and the
+# advice with the reason between them left out. `folded` reads a screen cut
+# short at its end as honest, so the gap has its own finding, and the box's
+# own rows and the box's rows cut short at the end have to stay clear of it.
+_GAPPED = [_ANNOUNCE[0], _ANNOUNCE[2]]
+check(not driven_match(_GAPPED),
+      "the announce warning with its reason row left out is driven as the "
+      "box's screen")
+_gap = gapped(_GAPPED)
+check(_gap and _gap[1] == _ANNOUNCE[:3],
+      f"and nothing names the row missing from its middle: {_gap!r}")
+check(gapped(_ANNOUNCE) is None and gapped(_ANNOUNCE[:2]) is None,
+      "the box's rows, whole or cut short at the end, are called a gap")
+check(gapped(["  " + _ANNOUNCE[0], "  " + _ANNOUNCE[2]])
+      and gapped(["  " + _ANNOUNCE[0], _ANNOUNCE[2]]) is None,
+      "the gap is not read at the page's indent, or is read across two "
+      "indents")
+
 # And the headline cut short is said as that. The `folded` finding above
 # fires on `_CUT` with one row against one row, and "folded into 1 row(s)
 # where the box prints 1" reads as no fold at all - which is what the report
@@ -2455,6 +2733,21 @@ for _row in _REMAP_ROWS:
           f"a row the fake dataplane answers is not one the plugin builds: "
           f"{_row!r}")
 
+# The fake dataplane's timeout row is the plugin's, marked exactly when the
+# plugin would mark it: a value under the floor bpa_pool.h sets carries the
+# mark, one at the floor does not, and the run relayed the marked row under
+# `warning:` - which is the row the wiki quotes.
+check("BELOW the floor" in timeout_row("udp", 119)
+      and "BELOW" not in timeout_row("udp", 120),
+      "the fake dataplane marks a timeout the plugin would not, or leaves "
+      "one the plugin marks: the row it answers is not the plugin's")
+_TIMEOUT = next(out for name, out in DRIVEN
+                if name == "a timeout under the floor its RFC sets")
+check(any(r.startswith("warning:  udp") and "BELOW the floor" in r
+          for r in _TIMEOUT),
+      f"the marked timeout row was not relayed under `warning:` by the "
+      f"commit: {_TIMEOUT!r}")
+
 # The shell reader follows a printer call behind a guard and in a `case`
 # arm. Asserted on the corpus: the installer's two rows, which were on the
 # skip list for docs/appliance.md until the reader read past `&&` and `)`.
@@ -2494,9 +2787,11 @@ print("  a glued refusal, a glued pair, an invented one, an empty "
       "token, a screen hand-folded where the box writes it whole, a verdict "
       "cut short inside the box's row, a dataplane refusal split at its "
       "parenthesis or folded at the page's width, a screen one space too far "
-      "right, a fake dataplane answering words the plugin does not build, a "
-      "skip with no line to read and an empty corpus are each refused; a "
-      "printer call behind `&&` or in a `case` arm is read")
+      "right, a screen with a row missing from its middle, a fake dataplane "
+      "answering words the plugin does not build or marking a timeout it "
+      "would not, a run that printed nothing, a skip with no line to read "
+      "and an empty corpus are each refused; a printer call behind `&&` or "
+      "in a `case` arm is read")
 
 print()
 if fail:

@@ -73,7 +73,7 @@ Não precisa decorar o nome. **TAB** e `?` listam as placas que a caixa tem e ma
 ```
 hexarouting# [edit] dataplane interface ?
 
-  enp1s0  carries the default route: refused
+  enp1s0  carries the default route: its address moves with it
   enp2s0  card
   <nic>
 ```
@@ -143,22 +143,16 @@ São quatro respostas para quatro caixas, e a caixa escolhe a sua lendo por onde
 
 Ou seja: **reinicie a caixa numa janela escolhida por você**, e ela sobe encaminhando pela placa nomeada. Enquanto não reiniciar, `show interface` continua sem mostrar nada — e a própria caixa explica por quê, se você perguntar.
 
-### Duas recusas, na hora em que você digita
+### Uma recusa na hora em que você digita, e um aviso no commit
 
-**Numa caixa que tem outra placa, a que carrega a rota default é recusada**, mesmo que você a nomeie. As duas falhas não são simétricas: uma caixa sem interface de dataplane se resolve entrando por rede; uma caixa que engoliu a própria gerência se resolve indo até ela a pé. E havendo outra placa, entregar a de gerência custa a caixa sem ganhar nada, então a recusa diz qual é a outra:
+**Numa caixa que tem outra placa, a que carrega a rota default é aceita**, se for ela que você nomear. Já foi recusada, e a recusa dizia qual era a outra placa. Ela saiu porque uma caixa nova é configurada no console, e uma recusa que guarda a placa pela qual a caixa é alcançada guarda um passo que ninguém dá pela rede. Na hora em que você digita, nada é dito. O que muda é o `commit`: o parágrafo sobre a sua sessão deixa de dizer que ela está a salvo e passa a dizer o que a caixa de uma placa só diz, que ela cai junto:
 
 ```
-hexarouting# [edit] dataplane interface enp1s0
-error: dataplane interface enp1s0: it carries the default route
-    handing it to the dataplane takes the card away from Linux, and this box
-    off the network with it
-    the two mistakes do not cost the same: a box with no dataplane card is
-    fixed over the network, and a box that ate its own management is fixed by
-    walking to it
-    name the card carrying subscriber traffic instead: enp2s0
+    restarting it hands the card over and ends every session on this box,
+    including this one, so it is not done for you
 ```
 
-**Um nome que a caixa não tem também é recusado, e ela diz quais tem:**
+**Um nome que a caixa não tem é recusado, e ela diz quais tem:**
 
 ```
 hexarouting# [edit] dataplane interface eth9
@@ -169,11 +163,11 @@ error: dataplane interface eth9: this box has no such interface
     with no card that is nothing
 ```
 
-Nos dois casos nada entra na candidata: a recusa é no prompt, não depois do `commit`.
+Nada entra na candidata: a recusa é no prompt, não depois do `commit`.
 
 ## 3b. Uma caixa com uma placa só
 
-Numa máquina virtual com uma placa virtual, que é como a maioria das pessoas conhece este produto, não existe segunda placa para nomear. A recusa acima mandaria você fazer uma coisa impossível, então ela não se aplica ali: **a placa vai para o dataplane e o endereço de gerência vai junto com ela**.
+Numa máquina virtual com uma placa virtual, que é como a maioria das pessoas conhece este produto, não existe segunda placa para nomear, e a caixa não pede que você escolha: **a placa vai para o dataplane e o endereço de gerência vai junto com ela**.
 
 Como isso funciona: o dataplane fica com a porta e mantém, do lado do Linux, uma interface emparelhada com ela. O endereço de gerência passa a morar nessa interface. A caixa deixa de ser alcançada *ao lado* do dataplane e passa a ser alcançada *através* dele. A placa mantém o mesmo endereço MAC na travessia, então nada do outro lado do cabo precisa reaprender coisa alguma.
 

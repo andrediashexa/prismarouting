@@ -265,6 +265,25 @@ version has a chance of seeing it.
   failure. `docs/`: 10 screens driven, 26 by template, 7 skipped; the wiki's
   numbers did not move. 30 scenarios are driven, from 27.
 
+  Two reviews of the branch read the skips again. The first attributed four
+  of `docs/`'s seven by hand, and they are driven now, through the product's
+  own API client answering a canned return code and log line and a fake
+  dataplane answering `remap:` rows built from the plugin's own format
+  strings. The second found two more the same machinery reaches - `--load`
+  of a saved file, with the file answered from memory at the box's own path
+  so the path row is the box's, and the wiki's timeout-floor warning, with
+  the fake dataplane answering `show bpa timeouts` in `bpa_timeouts_show`'s
+  own format with bpa_pool.h's floor and RFC - and two pages held by
+  nothing: the wiki quoted a refusal #385 removed, and the run that typed
+  that card had been printing no row for a session with the file green,
+  while `docs/appliance.md` quoted the #121 boot failure with the rows
+  between its two refusals left out, which the template tiling accepted
+  because each row was the box's. A run that prints no row and a row missing
+  from the middle of a screen the box printed are each a failure now, and
+  the self-test's journal indent is read as the self-test's. `docs/`: 18
+  driven, 24 by template, 1 skipped; the wiki: 30, 36, 4. 40 scenarios are
+  driven.
+
 * **`system reboot` and `system shutdown` from the VTY, under a `system`
   menu** ([#388](https://github.com/andrediashexa/hexarouting/issues/388)).
   An operator who needed either dropped to `start shell` and typed `systemctl`,

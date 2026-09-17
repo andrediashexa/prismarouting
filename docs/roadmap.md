@@ -2338,8 +2338,19 @@ that could not be armed and the re-mapping refusal are driven now, through the
 product's own API client answering a canned return code and log line and a
 fake dataplane answering `remap:` rows built from the plugin's own format
 strings, and the pool refusal was a fifth fold, quoted as the box prints it.
-Two remain and say why with a line to go and read: a template under the floor,
-and the operator's own line printed whole.
+A second review attributed two more with the branch's own machinery and the
+wiki's timeout-floor row with them: `--load` of a saved file is driven with
+the file answered from memory at the box's own path, so the operator's line
+printed whole is a driven row, and the fake dataplane answers `show bpa
+timeouts` with `bpa_timeouts_show`'s own format, floor and RFC. What is left
+says why with a line to go and read: one under `docs/` and four on the wiki,
+each a self-test row whose value the shell reader cannot fold or a template
+under the floor. The same reading found two pages held by nothing: a wiki
+screen quoting a refusal #385 removed, which the run that typed it had
+stopped printing without anyone noticing, and the #121 boot failure quoted
+with the rows between its two refusals left out, which the template tiling
+accepted because every row was the box's. A run that prints no row and a row
+missing from the middle of the box's screen are each a failure now.
 
 **Two gaps of the same kind, still open**
 ([#383](https://github.com/andrediashexa/hexarouting/issues/383)). The guest
