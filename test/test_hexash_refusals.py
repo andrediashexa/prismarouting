@@ -1376,22 +1376,29 @@ check(_asked == [], f"and systemd was not asked: {_asked}")
 
 # systemd refusing, in its own words - the sentence 0.76.0 removed with the
 # restart it belonged to, and the one an operator has to see instead of a
-# prompt that came straight back over a box that is still up.
+# prompt that came straight back over a box that is still up. The verdict is
+# one row and systemd's words are prose under it: joined, the row measured
+# 145 columns with a two-line refusal, and the reboot verb prints three.
+#
+# `_asked` is read for its systemctl half only: the cost prose measures the
+# running configuration the way `save` does, and sshd is read through the
+# same seam - measured, the list is [['sshd', '-T'], ['systemctl', ...]].
 _sh = shell()
 _sh.sys = _systemd(1, "Failed to reboot: unit not found")
 _rv, _text = driven(_sh.do_operational, "system reboot")
-says("restart refused", _text,
-     "error: the box could not be restarted: Failed to reboot: unit not found")
-check(_asked == [["systemctl", "reboot"]],
+says("restart refused", _text, "error: the box could not be restarted")
+check("Failed to reboot: unit not found" in _text.replace("\n    ", " "),
+      f"with systemd's words under the verdict: {_text!r}")
+check([a for a in _asked if a[:1] == ["systemctl"]] == [["systemctl", "reboot"]],
       f"after asking for exactly 'systemctl reboot': {_asked}")
 _asked.clear()
 _sh = shell()
 _sh.sys = _systemd(1, "Failed to power off: unit not found")
 _rv, _text = driven(_sh.do_operational, "system shutdown")
-says("shutdown refused", _text,
-     "error: the box could not be shut down: Failed to power off: unit not "
-     "found")
-check(_asked == [["systemctl", "poweroff"]],
+says("shutdown refused", _text, "error: the box could not be shut down")
+check("Failed to power off: unit not found" in _text.replace("\n    ", " "),
+      f"with systemd's words under the verdict: {_text!r}")
+check([a for a in _asked if a[:1] == ["systemctl"]] == [["systemctl", "poweroff"]],
       f"after asking for exactly 'systemctl poweroff': {_asked}")
 _asked.clear()
 

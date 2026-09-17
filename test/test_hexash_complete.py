@@ -390,6 +390,22 @@ check("every session ends" in helps.get("shutdown", ""),
 check("comes back" in helps.get("reboot", "")
       and "stays off" in helps.get("shutdown", ""),
       "and what tells the two apart: one comes back, the other stays off")
+check("unsaved" in helps.get("reboot", "")
+      and "unsaved" in helps.get("shutdown", ""),
+      "and the cost that is this box's: what is not saved is lost")
+# Each row `?` prints is two spaces, the widest key, two spaces and the help
+# (display_matches), so the help has that gutter's worth less than the
+# console. 30 older TREE rows are already over it; these three are not
+# allowed to join them. Measured with the gutter the renderer really uses.
+_top, _, _ = sh._options("", False)
+_gutter = 2 + max(len(k) for k in _top) + 2
+_sub_gutter = 2 + max(len(k) for k in helps) + 2
+for _key, _help, _g in (("system", _top["system"], _gutter),
+                        ("reboot", helps["reboot"], _sub_gutter),
+                        ("shutdown", helps["shutdown"], _sub_gutter)):
+    check(_g + len(_help) <= _config.CONSOLE_COLUMNS,
+          f"the '?' row for {_key} fits the console: {_g + len(_help)} of "
+          f"{_config.CONSOLE_COLUMNS} columns")
 print("  offered at the top, two verbs under it, and '?' prices both")
 
 print("\n=== show version ===")

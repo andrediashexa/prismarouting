@@ -83,17 +83,27 @@ version has a chance of seeing it.
   which is the shape `docs/context.md` argues against: an operator who has to
   leave the VTY for the thing they came to do is one for whom the VTY is
   decoration. Both are operational-mode statements now, offered by `?` and TAB
-  like every other, and administrators only - a read-only or CGNAT account
-  meets the same rendered refusal `start shell` gives. Each says what it costs
-  before it acts: every session on the box ends, the dataplane stops, and since
-  #378 the box comes back claiming its card by itself.
+  like every other. A read-only or CGNAT account meets the same rendered
+  refusal `start shell` gives, before systemd is asked; and today the account
+  that can actually restart the box is root, because the VTY runs as whoever
+  logged in and the appliance installs neither sudo nor polkit (measured over
+  `appliance/build-iso.sh`'s package lists and their dependencies), so a
+  `hexa-admin` member who is not root reads the cost and then systemd's own
+  refusal. Each says what it costs before it acts: every session on the box
+  ends, the dataplane stops, and since #378 the box comes back claiming its
+  card by itself. Two more costs are this box's and are measured rather than
+  recited, in the `warning:` shape `save` uses: a running configuration that
+  differs from the saved file is lost at boot (`save` keeps it), and a
+  `commit confirmed` nobody confirmed brings the box back reverted (`commit`
+  confirms it). Both are said before the ask, and neither refuses.
 
   The action is `systemctl reboot` / `systemctl poweroff` through `Shell.sys`,
   the seam the product already calls systemd through, so a `systemctl` that
-  refuses becomes a refusal in systemd's own words - *"the box could not be
-  restarted: <what systemd said>"*, the sentence 0.76.0 removed with the
-  handover restart, reused - rather than a prompt that comes back over a box
-  that is still up. The verb is the plain one, so `vpp-stop-drain.conf`'s
+  refuses becomes a refusal in systemd's own words - the verdict *"the box
+  could not be restarted"* on one row and systemd's rows wrapped under it,
+  the sentence 0.76.0 removed with the handover restart, reused - rather than
+  a prompt that comes back over a box that is still up. The verb is the plain
+  one, so `vpp-stop-drain.conf`'s
   `ExecStop` runs on the way down and the connection log is left with no
   allocation open: `systemctl reboot --force` would skip it and is not what is
   asked for. Measured on systemd 252, which is what this appliance runs:

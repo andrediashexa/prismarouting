@@ -2410,16 +2410,24 @@ An operator who needed either dropped to `start shell` and typed `systemctl`,
 which is the shape `docs/context.md` argues against: an operator who has to
 leave the VTY for the thing they came to do is one for whom the VTY is
 decoration. `system reboot` and `system shutdown` are now operational-mode
-statements, offered by `?` and TAB like every other; administrators only,
-refused for a read-only account in the same rendered sentence `start shell`
-gives; and each says what it costs - every session ends, the dataplane stops,
-and since #378 the box comes back claiming its card by itself - before it acts.
-The action is `systemctl reboot` / `systemctl poweroff` through the `Shell.sys`
-seam the product already calls systemd through, so the suites drive it without
+statements, offered by `?` and TAB like every other; refused for a read-only
+or CGNAT account in the same rendered sentence `start shell` gives, before
+systemd is asked; and root is the account that can restart the box today,
+because the VTY runs as whoever logged in and the appliance installs neither
+sudo nor polkit (measured over `appliance/build-iso.sh`'s package lists and
+their dependencies), so a `hexa-admin` member who is not root reads the cost
+and then systemd's own refusal. Each says what it costs - every session ends,
+the dataplane stops, and since #378 the box comes back claiming its card by
+itself - before it acts, and two costs are measured rather than recited: a
+running configuration that differs from the saved file is lost at boot, and a
+`commit confirmed` nobody confirmed brings the box back reverted; each is a
+`warning:` row said before the ask, and neither refuses. The action is
+`systemctl reboot` / `systemctl poweroff` through the `Shell.sys` seam the
+product already calls systemd through, so the suites drive it without
 rebooting the machine running them, and a `systemctl` that fails becomes a
 refusal in systemd's own words rather than a prompt that came back over a box
-that is still up - the sentence 0.76.0 removed with the handover restart,
-reused. The plain verb is what puts `vpp-stop-drain.conf`'s `ExecStop` on the
+that is still up - the verdict on one row, systemd's rows wrapped under it.
+The plain verb is what puts `vpp-stop-drain.conf`'s `ExecStop` on the
 path (measured on systemd 252: `reboot.target` requires `systemd-reboot.service`
 which requires `shutdown.target`, and a default-dependency unit conflicts with
 `shutdown.target`, so vpp.service is stopped and drained on the way down);

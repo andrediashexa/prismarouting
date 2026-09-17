@@ -1762,12 +1762,17 @@ TREE = {
         "save": ("write the running configuration to disk", None),
         # The box itself. Both verbs go through systemd, which is what runs
         # the dataplane's stop-drain on the way down, and each says what it
-        # costs before it asks (#388). do_system() carries the argument.
-        "system": ("the box itself: restart it, or shut it down", {
-            "reboot": ("restart the box; every session ends, and it comes "
-                       "back claiming its card by itself", None),
-            "shutdown": ("power the box off; every session ends, and it "
-                         "stays off until it is powered on again", None),
+        # costs before it asks (#388). do_system() carries the argument, and
+        # the measurement behind "(root)": hexash runs as the account that
+        # logged in, and the appliance grants no other account a reboot.
+        # Each help is inside the 67 columns the '?' gutter leaves on a
+        # console of 79, and test_hexash_complete.py measures the three.
+        "system": ("restart or shut down the box (root); it says what it "
+                   "costs first", {
+            "reboot": ("every session ends, unsaved changes are lost; comes "
+                       "back by itself", None),
+            "shutdown": ("every session ends, unsaved changes are lost; the "
+                         "box stays off", None),
         }),
         "exit": ("end the session", None),
     },
@@ -8675,15 +8680,57 @@ class Shell:
         argues against: an operator who has to leave the VTY for the thing
         they came to do is one for whom the VTY is decoration (#388).
 
-        ADMINISTRATORS ONLY, through the same `require` every privileged
-        statement goes through, so a read-only account meets the sentence it
-        already knows from `start shell` - and meets it BEFORE systemd is
-        asked anything, which the suite pins by reading what was asked.
+        WHO CAN, AND TODAY THAT IS ROOT. `require(CAP_ALL)` is the first
+        gate, the same one every privileged statement goes through, so a
+        read-only or CGNAT account meets the sentence it already knows from
+        `start shell` - and meets it BEFORE systemd is asked anything, which
+        the suite pins by reading what was asked. It is not the last gate.
+        hexash runs as the account that logged in (appliance/hexash-login
+        execs it with no setuid and no sudo), `systemctl reboot` from any
+        uid but 0 is decided by systemd, and the appliance grants no other
+        account that decision. Measured on the tree and on a box: the two
+        package lists in appliance/build-iso.sh (the debootstrap --include
+        and the apt-get install under it) name neither sudo nor polkit, and
+        `apt-cache depends --recurse --no-recommends` over every package on
+        them, on the bookworm 12.15 the image is built from, reaches neither
+        - it does reach dbus, through gnupg, so systemctl from a non-root
+        account gets as far as systemd and is refused there. What that
+        refusal says was measured here on systemd 252.39, as uid 1000 with
+        no polkitd installed, with the one verb that is safe to type on a
+        developer box: `systemctl start <unit>` prints "Failed to start
+        <unit>: Access denied" and "See system logs and 'systemctl status
+        <unit>' for details.", exit 4. A box that HAS polkit and no rule
+        for the account - a Debian this was installed onto, with a desktop's
+        polkit - says "Interactive authentication required" in the same
+        place; that is what a non-root administrator gets there, and the
+        reboot verb goes through logind first and adds a row of its own
+        ("Failed to reboot system via logind: ..."). Either way the account
+        reads the cost prose and then systemd's refusal, rendered. NOT fixed
+        by granting it: a sudoers drop-in or a polkit rule needs a package
+        the image has not got, and appliance/systemd/hexarouting-confirm.timer
+        already carries the product's position on handing hexa-admin the
+        ability to make this box run units - "a far larger grant than the
+        feature is worth" (#212). So the wiki says root, and this paragraph
+        is the measurement behind it; which of the two refusals a hexa-admin
+        member sees on an INSTALLED appliance is owed a booted box.
 
-        IT SAYS WHAT IT COSTS, THEN IT ASKS. That is the pattern the product
-        had for its one restart, the handover revert 6e removed in 0.76.0: a
-        row saying what is happening, prose under it saying what it costs,
-        then systemd. Not a question to confirm. `commit remap` is gated on a
+        IT SAYS WHAT IT COSTS, THEN IT ASKS - AND TWO OF THE COSTS ARE
+        MEASURED. Every session ending and the dataplane stopping are true
+        of every box. What ELSE a reboot loses depends on this one: `commit`
+        does not write to disk, so a running configuration that differs
+        from the file at CONFIG_PATH is one the next boot does not load; and
+        a 'commit confirmed' nobody confirmed is reverted by the box itself,
+        restarted or not (ConfirmPending). say_system_cost() reads both the
+        way `save` does - the running configuration off the device, the
+        file off the disk, the window off the confirm store - and says each
+        in the "warning:" shape save_running uses, because neither refuses:
+        a reboot typed inside a window can be exactly what the operator
+        wants, and #212 made save and confirm separate decisions on purpose.
+        Said BEFORE the ask, which the suite measures by reading the screen
+        at the instant systemd is asked. That is the pattern the product had
+        for its one restart, the handover revert 6e removed in 0.76.0: a row
+        saying what is happening, prose under it saying what it costs, then
+        systemd. Not a question to confirm. `commit remap` is gated on a
         word because a remap is a mistake most times it is typed and
         deliberate some of them; `system reboot` is not typed by mistake,
         and a question here would break the `hexash -c "system reboot"` a
@@ -8716,13 +8763,20 @@ class Shell:
         plain verb. The whole path is exercised on a booted box by
         lab/install-iso.sh PHASE 3b, which is owed a run.
 
-        THE FAILURE IS A REFUSAL, IN SYSTEMD'S OWN WORDS. The alternative is
-        an operator who believes the box is going down and walks away from
-        one that is not. rc 127 is systemctl not being on the machine at all,
-        which is every developer box and every suite; it is a refusal here
-        and not the "written and not run" apply_dataplane_if gives the tuner,
-        because nothing was written - a reboot that did not happen has no
-        half that did.
+        THE FAILURE IS A REFUSAL, IN SYSTEMD'S OWN WORDS, AS A PARAGRAPH.
+        The alternative is an operator who believes the box is going down
+        and walks away from one that is not. systemd's refusal is two or
+        three rows, and the first version of this joined them onto the
+        verdict row: 145 columns with the two-row example the suite fed it,
+        past 200 with the three rows the reboot verb really prints, on a
+        console of 79 - and `err` folds nothing, on purpose (#252). So the
+        verdict is one row, "the box could not be restarted", and systemd's
+        rows go under it through err_prose, wrapped, which is the split
+        #355 made for exactly this shape. rc 127 is systemctl not being on
+        the machine at all, which is every developer box and every suite; it
+        is a refusal here and not the "written and not run"
+        apply_dataplane_if gives the tuner, because nothing was written - a
+        reboot that did not happen has no half that did.
         """
         if rest == ["reboot"]:
             if not self.require(CAP_ALL, "system reboot"):
@@ -8733,7 +8787,7 @@ class Shell:
                         "at boot; nothing needs typing at its console")
             rc, said = self.ask_systemd("reboot")
             if rc != 0:
-                self.err(f"the box could not be restarted: {said}")
+                self.err_prose("the box could not be restarted", *said)
             return
         if rest == ["shutdown"]:
             if not self.require(CAP_ALL, "system shutdown"):
@@ -8744,29 +8798,101 @@ class Shell:
                         "then comes back claiming its card by itself")
             rc, said = self.ask_systemd("poweroff")
             if rc != 0:
-                self.err(f"the box could not be shut down: {said}")
+                self.err_prose("the box could not be shut down", *said)
             return
         self.err("usage: system reboot | system shutdown")
 
     def say_system_cost(self):
-        """What `system reboot` and `system shutdown` both cost, said once."""
+        """
+        What `system reboot` and `system shutdown` both cost, said once.
+
+        The first two rows are true of every box. The two after them are
+        this box's, read rather than recited, and each is said only when it
+        is so: a warning printed on every reboot is a warning read on none.
+        """
         print_prose("every session on this box ends, including this one")
         print_prose("the dataplane stops; systemd runs its stop-drain first, "
                     "so the connection log is left with no allocation open")
+        self.say_unsaved()
+        self.say_unconfirmed()
+
+    def say_unsaved(self):
+        """
+        Whether what is running survives the boot, measured as `save` does.
+
+        `commit` puts a change on the device and `save` writes the file the
+        next boot loads (#212 keeps them apart on purpose), so the fact is
+        the running configuration read off the device against the file at
+        CONFIG_PATH, both through Config so that spelling is not counted as
+        a difference. A file that is not there is a box nobody saved: what
+        it boots into is an empty configuration, and that is what the
+        running one is compared with. A file this account cannot read is
+        said as such and not as "saved": the one answer this may not give
+        is a false "nothing is lost".
+        """
+        running = self.running_config().text()
+        try:
+            with open(CONFIG_PATH) as f:
+                saved = Config.parse(f.read()).text()
+        except FileNotFoundError:
+            saved = Config().text()
+        except OSError as e:
+            # The path on a row of its own, as save_running prints it: with
+            # the errno beside it the row would not fit (#276).
+            print("warning: whether the running configuration is saved could "
+                  "not be checked")
+            print(f"    {CONFIG_PATH}")
+            print_prose(f"({e.strerror})", indent="        ")
+            return
+        if running == saved:
+            return
+        print("warning: the running configuration has NOT been saved")
+        print_prose("this box boots into the file 'save' writes, and what is "
+                    "running now is not what that boot would load, so what "
+                    "was committed and not saved is lost. Type 'save' first "
+                    "to keep it")
+
+    def say_unconfirmed(self):
+        """
+        A 'commit confirmed' still open, read off the store the box reverts
+        from.
+
+        The box reverts on its own, from a unit that reads the file
+        (hexarouting-confirm.service), so a restart does not cancel the
+        window: a box back before the deadline reverts at the deadline, one
+        back after it reverts as soon as it is up, and the session that
+        could have confirmed is the one the reboot ends. save_running says
+        the other half of this - a save inside the window - in the same
+        shape.
+        """
+        pending = self.confirm.read()
+        if not pending:
+            return
+        when = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                             time.gmtime(pending["deadline"]))
+        print("warning: the last commit has NOT been confirmed")
+        print_prose(f"this box puts the configuration from before that "
+                    f"commit back at {when}, restarted or not, and at once "
+                    "if it comes back later than that; the session that "
+                    "could confirm it ends here. Type 'commit' to confirm "
+                    "first")
 
     def ask_systemd(self, verb):
         """
-        `systemctl <verb>`, and what systemd said about it on one row.
+        `systemctl <verb>`, and what systemd said about it, a row per line.
 
-        Collapsed to one row because it lands in a verdict: systemd's refusal
-        is two lines ("Failed to reboot: ...", then "See system logs ..."),
-        and `err` prefixes only the first, so the second would read as prose
-        this VTY wrote. An empty answer is named as such rather than printed
-        as a verdict that ends in a colon.
+        Rows and not one string, because they land under a verdict through
+        err_prose: systemd's refusal is two or three lines ("Failed to
+        reboot system via logind: ...", "Failed to start reboot.target:
+        ...", "See system logs ..."), each a sentence of its own, and joined
+        onto the verdict row they measured 145 columns on a console of 79.
+        An empty answer is named as such rather than left as a verdict with
+        nothing under it.
         """
         rc, out = self.sys._run(["systemctl", verb])
-        said = " ".join(out.split())
-        return rc, said or f"systemctl exited {rc} and said nothing"
+        said = [" ".join(line.split()) for line in out.splitlines()
+                if line.strip()]
+        return rc, said or [f"systemctl exited {rc} and said nothing"]
 
     def do_operational(self, line):
         w = line.split()

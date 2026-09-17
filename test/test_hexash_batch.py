@@ -294,13 +294,28 @@ class FakeSystem(hexash.System):
 
 _real_system = hexash.System
 hexash.System = FakeSystem
+
+
+def _systemctl():
+    """
+    The systemctl asks alone. The cost prose measures the running
+    configuration the way `save` does, and sshd is read through the same
+    seam, so the whole list here is [['sshd', '-T'], ['systemctl', 'reboot']]
+    - measured, and the reason the filter exists.
+    """
+    return [a for a in _asked if a[:1] == ["systemctl"]]
+
+
 try:
     rc, said, api = batch("system reboot")
     print(said.rstrip())
     check("restarting the box" in said,
           "the box says what it is doing, in a batch as at the prompt")
-    check(_asked == [["systemctl", "reboot"]],
-          f"and systemd was asked for the reboot: {_asked}")
+    check(_systemctl() == [["systemctl", "reboot"]],
+          f"and systemd was asked for the reboot: {_systemctl()}")
+    check(["sshd", "-T"] in _asked,
+          f"after the running configuration was read through the same seam, "
+          f"for the unsaved warning: {_asked}")
     check("refusing to commit" not in said,
           "with nothing gated, because nothing here commits")
     check(rc == 0, f"and the exit status is 0, not {rc}")
@@ -316,16 +331,14 @@ try:
     # `clear bgp` with no neighbour, and not the `rollback 99` of box 4: a
     # rollback, refused or not, leaves the session in configuration mode,
     # where `system` is not a statement, so the box would be measuring the
-    # mode and not the gate. Only the systemctl calls are read, because
-    # System is also how the VTY reads sshd's settings.
+    # mode and not the gate.
     _asked.clear()
     rc, said, api = batch("clear bgp", "system reboot")
     print(said.splitlines()[0] if said else "<nothing>")
     check("usage: clear bgp" in said,
           "the refused statement before it is still refused")
-    _systemctl = [a for a in _asked if a[:1] == ["systemctl"]]
-    check(_systemctl == [["systemctl", "reboot"]],
-          f"and the reboot after it is still asked for: {_systemctl}")
+    check(_systemctl() == [["systemctl", "reboot"]],
+          f"and the reboot after it is still asked for: {_systemctl()}")
     check("refusing to commit" not in said,
           "with no commit gate in sight")
     check(rc == 1, f"and the exit status still says a statement failed, "
