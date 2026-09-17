@@ -85,6 +85,7 @@ Which card is this box managed on (letter, or a name) [none]:
 
 A lista mostra **o que cada placa é** - se está no ar, qual driver a move, qual endereço ela está carregando neste minuto - porque `ens18` e `ens19` não dizem a ninguém qual cabo está em qual. A placa pela qual a própria mídia está alcançando a rede agora é apontada na lista, porque é a que o operador quer quando quer uma: ela não é mais o padrão.
 
+
 :::info
 **O padrão é** `**none**`**.** Desde a 0.76.0 a caixa reivindica sozinha todas as placas que tem, e uma caixa nova é configurada no console dela. Responder uma placa é uma decisão: aquela placa passa a ser a única que o dataplane **não** vai reivindicar. Quem aperta Enter recebe a caixa que este produto descreve, em vez de uma placa guardada de lado sem ninguém ter decidido isso.
 

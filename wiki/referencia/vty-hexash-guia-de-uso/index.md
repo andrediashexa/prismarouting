@@ -156,10 +156,10 @@ O `mtr` roda em **modo relatório**, não em tela cheia: uma tela curses num con
 **O que é recusado no prompt:**
 
 | Você digitou | A caixa diz |
-|---|---|
-| `ping` | `ping: no host`, com a forma de uso |
+|--------------|-------------|
+| `ping`       | `ping: no host`, com a forma de uso |
 | `ping 1.1.1.1 count` | `not an option of this statement` — a opção veio sem valor |
-| `ping x;rm` | `not a host` — nome é letra, dígito e hífen em rótulos separados por ponto |
+| `ping x;rm`  | `not a host` — nome é letra, dígito e hífen em rótulos separados por ponto |
 | `ping 1.1.1.1 count 0` | `count out of range` — é um inteiro de 1 a 100 |
 | `traceroute 1.1.1.1 source nome` | `not a source address` — a origem é um endereço, não um nome |
 | `mtr ...` numa caixa sem o `mtr` | `this box has no mtr`, dizendo o pacote que o traz |
