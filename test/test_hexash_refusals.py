@@ -1287,6 +1287,70 @@ says("parent at commit", _text,
      "error: interface pg9.10: its parent pg9 is not on this box", _rv)
 print("  a tag that is fine on a port that is not there")
 
+print("\n=== an interface name FRR cannot take, at commit (#389) ===")
+# THE MAINTAINER'S BOX. `interface GigabitEthernet0/13/0 / no shutdown /
+# commit` on 0.76.1: every `interface` line typed at this VTY is staged as an
+# FRR stanza, FRR 10.7.1 refuses a name over 16 characters ("Maximum
+# interface name length is 16 characters", from every daemon at once), the
+# reload failed and the commit rolled back. Said before anything is applied,
+# with the limit. The box here HAS the interface, so the existence check is
+# silent and this refusal is the only one that can fire; the routing half is
+# what changed, which is the gate.
+_target = config.Config.parse("interface GigabitEthernet0/13/0\n"
+                              " ipv4 address 203.0.113.1/24\n exit\n"
+                              "! routing\ninterface GigabitEthernet0/13/0\n"
+                              "exit\n")
+_sh = shell(Api(have={"GigabitEthernet0/13/0": 1}),
+            dp=Dp({"show interface": (0, "Name  Idx State MTU\n"
+                                         "GigabitEthernet0/13/0   1   up"
+                                         "    9000/0/0/0\n")}),
+            frr=frr_stub(available=True))
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("FRR's limit", _text,
+     "error: interface GigabitEthernet0/13/0: a name FRR cannot take", _rv)
+check("at most 16 characters and this one is 21" in _text,
+      f"the limit and the count are not in the sentence: {_text!r}")
+# A name FRR takes is not refused by this: 16 is FRR's own limit, one more
+# than Linux's, and the shortest dataplane name a real card can carry.
+_target = config.Config.parse("interface GigabitEther0/1\n"
+                              " ipv4 address 203.0.113.1/24\n exit\n"
+                              "! routing\ninterface GigabitEther0/1\nexit\n")
+_sh = shell(Api(have={"GigabitEther0/1": 1}),
+            dp=Dp({"show interface": (0, "Name  Idx State MTU\n"
+                                         "GigabitEther0/1   1   up"
+                                         "    9000/0/0/0\n")}),
+            frr=frr_stub(available=True))
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+check("a name FRR cannot take" not in _text,
+      f"a 16-character name was refused, and FRR takes 16: {_text!r}")
+print("  21 characters refused with the limit; 16 is FRR's own and passes")
+# AND A NAME THIS BOX HAS NOT GOT is refused once, not twice. A `rollback`
+# to a revision saved before the upgrade names GigabitEthernet0/13/0 on a
+# box that holds the card as ens19: the existence check refuses it with
+# what the box has, and the FRR limit refused it again under that, with
+# advice - "from the next start of the dataplane" - for a box that has
+# already renamed the card. Measured on 0dbbf73: both verdicts, one commit.
+_target = config.Config.parse("interface GigabitEthernet0/13/0\n"
+                              " ipv4 address 203.0.113.1/24\n exit\n"
+                              "! routing\ninterface GigabitEthernet0/13/0\n"
+                              "exit\n")
+_sh = shell(Api(have={"ens19": 1}),
+            dp=Dp({"show interface": (0, "Name  Idx State MTU\n"
+                                         "ens19   1   up    9000/0/0/0\n")}),
+            frr=frr_stub(available=True))
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("a pre-upgrade name, once", _text,
+     "error: interface GigabitEthernet0/13/0: this box has no such "
+     "interface", _rv)
+check("a name FRR cannot take" not in _text,
+      f"refused a second time, with advice for a box that has already "
+      f"renamed the card: {_text!r}")
+print("  a name the box has not got: one verdict, the one that says what "
+      "it has")
+
 print("\n=== a policy that would commit and store nothing ===")
 # A route-map is many lines and has no `router` statement of its own, so
 # nothing checked it: on a box whose FRR has not finished starting the whole
@@ -2153,8 +2217,11 @@ print("  fifty digits quotes all fifty back, and that row is not measured "
 # <a.b.c.d/len> mac <xx:xx:...>` refusal, whose own words were over.
 OVER_AT_MOST = 25
 # 52 until #385 took out the handover headline the prompt printed on a
-# one-card box, which carried the interface name with no widest behind it.
-UNSAFE_AT_MOST = 51
+# one-card box, which carried the interface name with no widest behind it;
+# and one less again when #389 gave the `linux-name` refusal at the prompt
+# one owner for its sentence, config.linux_ifname_error(), whose value is an
+# interface name the reader bounds.
+UNSAFE_AT_MOST = 50
 
 
 def ceiling(found, allowed, what, detail):

@@ -296,8 +296,8 @@ Não sabe o que digitar? **TAB** completa e `**?**` lista as opções válidas c
 ## 6. Habilitar nas interfaces
 
 ```
-nat cgnat interface TenGigabitEthernet0/0/0 inside
-nat cgnat interface TenGigabitEthernet0/0/1 outside
+nat cgnat interface ens18 inside
+nat cgnat interface ens19 outside
 ```
 
 ## 7. Ver o que vai acontecer, antes de acontecer

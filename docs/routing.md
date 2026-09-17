@@ -175,6 +175,16 @@ configured, the answer was `lo`
 The **Linux** column carries the `linux_cp` pair, because that is the name FRR
 and `ip` know the interface by.
 
+**On an installed box the names are the cards' Linux names.** The tuner names
+every card it claims after the netdev Linux had - `ens19`, `enp3s0f0` - so
+that is what this listing, the prompt and FRR call it, and a card with an
+`interface` block is paired into Linux under that same name
+([#389](https://github.com/andrediashexa/hexarouting/issues/389),
+`docs/appliance.md`). The `GigabitEthernet0/12/0` spelling in the transcripts
+here is VPP's own for a device nobody named, which is what a lab's `pg0` and
+a hand-edited `startup.conf` still get; FRR refuses a name over 16 characters,
+and the commit check says so before FRR is handed one.
+
 * `local0` **is listed** - hiding an interface the dataplane reports would be
   this command deciding what the operator may see - but it is **not offered for
   completion**, because it configures nothing.

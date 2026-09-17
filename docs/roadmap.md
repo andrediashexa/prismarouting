@@ -2402,16 +2402,28 @@ Whether the tuner should also *decline* a card it is about to take from under
 the box's own address is the refusal #123 wrote and #378 removed on the
 maintainer's decision. Reopening it is theirs.
 
+**No interface could leave `shutdown` on an installed box, and the card
+now carries its Linux name**
+([#389](https://github.com/andrediashexa/hexarouting/issues/389)) - on the
+branch. VPP named a claimed card after its PCI address,
+`GigabitEthernet0/13/0`, and FRR 10.7.1 refuses any interface name over 16
+characters, so every `interface` block on a real card failed at the routing
+reload and rolled back; the labs never met it because their interfaces are
+`pg0` and `host-veth-vpp`. The tuner now writes `name <linux name>` into
+every claimed `dev` block, the card with an `interface` block is paired into
+Linux as itself, a name FRR cannot take is refused before FRR is handed it,
+and `--load` matches a saved `GigabitEthernet0/13/0` to the card by address.
+What remains is the proof a lab cannot fake: `lab/install-iso.sh` bringing the
+claimed card up at the console and reading `ens19` off `ip link` and FRR, and
+`appliance/test_startup_conf_shapes.sh` handing the stanza to a real VPP.
+
 **The operator's card is `ens18` and every screen calls it
 `GigabitEthernet0/12/0`** ([#386](https://github.com/andrediashexa/hexarouting/issues/386))
-- open. It is VPP's DPDK naming from the PCI address, and *"Gigabit"* is not a
-measurement: `show hardware` prints the same card's speed as `-`. Since #378
-nobody types a name at all, so the first time an operator sees the dataplane
-interface it has a name they have never typed, for a card they know by another
-one. The box knows both names at the moment it claims the card and loses the
-mapping afterwards. Record it there and print `GigabitEthernet0/12/0 (ens18)`
-on every screen that names the interface. Not a rename inside VPP: a second
-name for one port is a second thing to keep in step.
+- subsumed by #389. Its subject was a box printing both names of one card,
+`GigabitEthernet0/12/0 (ens18)`, because the two were one card and nothing
+said so; with the card carrying its Linux name there is one name and no
+second to print. What survives of its branch is the one reader of VPP's old
+spelling, which `--load` uses to match a saved name to a card.
 
 **Reboot and shutdown from the VTY, under a `system` menu**
 ([#388](https://github.com/andrediashexa/hexarouting/issues/388)) - *done on

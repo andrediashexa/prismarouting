@@ -253,6 +253,136 @@ check("tap" not in pairs and "type" not in pairs,
 check(pairs["host-veth-mgmt"] != pairs["host-veth-vpp"],
       "two pairs stay two pairs")
 
+# A CARD PAIRED AS ITSELF (#389): the tuner names the card ens19 and the
+# pair's Linux end is ens19 too, so the line carries the name twice. Read by
+# `show interface`'s Linux column, which used to drop every occurrence of the
+# interface's own name and would have printed the TAP alone.
+SAME = "itf-pair: [0] ens19 tap0 ens19 5 type tap\n"
+_if = routes.parse_interfaces(
+    "              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)\n"
+    "ens19                             1      up          9000/0/0/0\n"
+    "tap0                              2      up          9000/0/0/0\n",
+    "", SAME)
+check(_if["ens19"]["host"] == "tap0 ens19",
+      f"a card paired as itself does not show its Linux end, only the TAP: "
+      f"{_if['ens19']['host']!r}")
+check(_if["tap0"]["host"] == "ens19",
+      f"and the TAP's row names the card once, not twice: "
+      f"{_if['tap0']['host']!r}")
+_old = routes.parse_interfaces(
+    "              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)\n"
+    "host-veth-vpp                     1      up          9000/0/0/0\n",
+    "", LCP)
+check(_old["host-veth-vpp"]["host"] == "tap4096 vppwan0",
+      f"and a pair with its own Linux name reads as it did: "
+      f"{_old['host-veth-vpp']['host']!r}")
+print("  ens19 tap0 ens19 -> Linux column 'tap0 ens19'")
+
+# --- VPP's DPDK name, read back to an address (#389) ---
+# The bus is hexadecimal and the second socket's cards in a dual-socket
+# server sit at 0xaf, 0xb1, 0xd8: a letter first. The class word is letters
+# too, and a greedy run of letters ate the bus's first digit, so
+# TenGigabitEthernetd8/0/0 read as bus 8. `hexash --load` then matched a
+# saved name to the card at 08:00.0 where the box had one - the wrong card,
+# silently - and refused the file where it had not. Measured on 0dbbf73.
+for _name, _want in (("GigabitEthernet0/13/0", (0, 0x13, 0)),
+                     ("TenGigabitEthernet3b/0/1", (0x3b, 0, 1)),
+                     ("TenGigabitEthernetd8/0/0", (0xd8, 0, 0)),
+                     ("HundredGigabitEthernetaf/0/1", (0xaf, 0, 1)),
+                     ("GigabitEthernete/0/0", (0xe, 0, 0)),
+                     ("VirtualFunctionEthernetaf/0/2", (0xaf, 0, 2))):
+    check(routes.dpdk_name_address(_name) == _want,
+          f"{_name} reads as {routes.dpdk_name_address(_name)}, not "
+          f"{tuple(hex(x) for x in _want)}")
+for _name in ("ens19", "local0", "tap0", "loop0", "host-veth-vpp",
+              "GigabitEthernet0/13/0.100", ""):
+    check(routes.dpdk_name_address(_name) is None,
+          f"{_name!r} is not a DPDK name and must not be read as one: "
+          f"{routes.dpdk_name_address(_name)}")
+print("  TenGigabitEthernetd8/0/0 -> bus 0xd8, not 8")
+
+# --- the Linux end of a pair, ONE owner (#389) ---
+# Five readers in the product found the Linux end by `name != ifname`. Right
+# on `GigabitEthernet0/13/0 tap0 vppwan0`; on the pair every claimed card
+# gets now, `ens19 tap0 ens19`, that test skips the one name that IS the
+# Linux end and keeps the TAP, which Linux has no netdev by. The rule is
+# written here once: the name the line lists twice, else the member that is
+# neither the dataplane's name nor an lcp TAP.
+_same = routes.lcp_pairs(SAME)
+check(routes.linux_end(_same, "ens19") == "ens19",
+      f"a card paired as itself: the Linux end is ens19, not "
+      f"{routes.linux_end(_same, 'ens19')!r}")
+check(routes.linux_end(_same, "tap0", {"ens19", "tap0"}) == "ens19",
+      f"asked with the TAP, the same pair has the same Linux end: "
+      f"{routes.linux_end(_same, 'tap0', {'ens19', 'tap0'})!r}")
+check(routes.linux_end(pairs, "host-veth-vpp") == "vppwan0",
+      f"the old shape: the member that is neither the card nor the TAP: "
+      f"{routes.linux_end(pairs, 'host-veth-vpp')!r}")
+check(routes.linux_end(pairs, "tap4096", {"host-veth-vpp", "tap4096"})
+      == "vppwan0",
+      "asked with the TAP and the dataplane's list, still the Linux end")
+check(routes.linux_end(pairs, "vppwan0", {"host-veth-vpp", "tap4096"})
+      == "vppwan0",
+      "asked with the Linux name itself and the dataplane's list, the same")
+check(routes.linux_end({}, "ens19") is None,
+      "an interface with no pair has no Linux end, not a wrong one")
+check(routes.linux_end({"ens19": ["ens19", "tap0"]}, "ens19") is None,
+      "a pair whose only other name is the TAP has no Linux end either")
+# ASKED WITH THE TAP AND NO LIST. The three `ip link set` mirrors are keyed
+# by the operator's block name and hold no list, and `interface tap0` is a
+# block the parser takes: without the dataplane's names the TAP cannot be
+# told from the card, and rule 2 took the TAP as the interface's own and
+# answered the CARD - linux_end(OLD, 'tap0') -> 'GigabitEthernet0/13/0', a
+# name Linux has no netdev by, and on the override pair 'ens19 tap0 wan0'
+# it answered 'ens19' where the Linux end is wan0. "Could not place" is
+# None, never a wrong netdev.
+OVERRIDE = "itf-pair: [0] ens19 tap0 wan0 5 type tap\n"
+_over = routes.lcp_pairs(OVERRIDE)
+check(routes.linux_end(pairs, "tap4096") is None,
+      f"asked with the TAP and no list, the old shape: the pair cannot be "
+      f"placed and the answer is None, not "
+      f"{routes.linux_end(pairs, 'tap4096')!r}")
+check(routes.linux_end(_over, "tap0") is None,
+      f"asked with the TAP and no list, the override pair: None, not "
+      f"{routes.linux_end(_over, 'tap0')!r}")
+check(routes.linux_end(_over, "tap0", {"ens19", "tap0"}) == "wan0",
+      f"asked with the TAP and the dataplane's list, the override pair's "
+      f"Linux end is wan0, not "
+      f"{routes.linux_end(_over, 'tap0', {'ens19', 'tap0'})!r}")
+check(routes.linux_end(_over, "ens19", {"ens19", "tap0"}) == "wan0",
+      f"asked with the card, the override pair's Linux end is wan0, not "
+      f"{routes.linux_end(_over, 'ens19', {'ens19', 'tap0'})!r}")
+# And the other half of the rule, the member the dataplane holds: asked with
+# FRR's name and the dataplane's list, which is what `show ospf interface`
+# has in hand. The old-shape fixture is keyed by the Linux name alone, as a
+# hand-written pairs dict in test_hexash_igp.py is, and the answer must not
+# depend on the pair being reachable under any other key.
+check(routes.dataplane_end(_same, "ens19", {"ens19", "tap0"}) == "ens19",
+      f"the same-name pair: the dataplane's end is ens19, not "
+      f"{routes.dataplane_end(_same, 'ens19', {'ens19', 'tap0'})!r}")
+check(routes.dataplane_end({"vppwan0": ["tap4096", "host-veth-vpp",
+                                        "vppwan0"]},
+                           "vppwan0", {"tap4096", "host-veth-vpp"})
+      == "host-veth-vpp",
+      "the old shape, keyed by FRR's name: the card, and never the TAP")
+check(routes.dataplane_end({}, "eth0", {"host-veth-vpp"}) is None,
+      "an interface with no pair is nobody's dataplane end")
+# THE LIST IS THE RULE, NOT THE ORDER. `show lcp` happens to print the
+# dataplane's name first, so a reader that took the first non-TAP member
+# answers right on every real line and is wrong the day the order moves -
+# which lcp_pairs() says it must not be relied on. Held with the Linux name
+# first: only `n in dp_names` picks the card out.
+check(routes.dataplane_end({"vppwan0": ["vppwan0", "tap4096",
+                                        "host-veth-vpp"]},
+                           "vppwan0", {"host-veth-vpp", "tap4096"})
+      == "host-veth-vpp",
+      f"the Linux name listed first: the dataplane's end is the member the "
+      f"list holds, not "
+      f"""{routes.dataplane_end({"vppwan0": ["vppwan0", "tap4096",
+                                             "host-veth-vpp"]},
+                                "vppwan0", {"host-veth-vpp", "tap4096"})!r}""")
+print("  ens19 tap0 ens19 -> Linux end ens19; the old shape -> vppwan0")
+
 # --- the interfaces VPP owns, and the faults that depend on knowing them ---
 #
 # The claim "the old positional parse cannot work" was held to account against

@@ -30,6 +30,7 @@ import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
+                    FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
                     strip_nat, as_hierarchy, group_static,
@@ -1898,9 +1899,10 @@ def _starts(candidate, prefix):
     """
     Does `candidate` begin with `prefix`, ignoring case?
 
-    Interface names are GigabitEthernet0/12/0 and TenGigabitEthernet0/8/0.
-    Requiring the capital G before completion will help is completion that only
-    works for somebody who already knows the answer (#112).
+    A card carries its Linux name, `ens19`, and a device nobody named keeps
+    VPP's own spelling, `TenGigabitEthernet0/8/0` (#389). Requiring the
+    capital T before completion will help is completion that only works for
+    somebody who already knows the answer (#112).
 
     The candidate is returned unchanged by the caller, so what gets inserted is
     always the box's own spelling - completing "gig" to "gig" would be worse
@@ -2822,8 +2824,28 @@ def interface_aliases(name, pairs):
 
 
 def frr_side_names(name, pairs, dp_names):
-    """The member(s) of this interface's linux_cp pair that FRR can act on."""
-    return interface_aliases(name, pairs) - set(dp_names or ())
+    """
+    The member(s) of this interface's linux_cp pair that FRR can act on.
+
+    routes.linux_end() is the rule - the name a pair carries TWICE, else the
+    member that is neither the dataplane's nor the TAP's - and it is asked
+    with the dataplane's names so that `name` may be ANY member of the pair:
+    `passive-interface tap0` asks with the TAP. This used to be its own
+    subtraction, and the same-name pair (#389) taught it the twice rule on
+    its own while five other readers went on finding the Linux end by
+    `name != ifname`; one owner now, so the next shape teaches one place.
+
+    With no dataplane list there is nothing to tell the members apart, and
+    every one of them is returned: "could not ask" must not become a
+    warning, which frr_acts_on() relies on. A pair the rule cannot place -
+    every member the dataplane's, none listed twice - falls back to the
+    subtraction, which is empty and reads as the same posture.
+    """
+    names = list((pairs or {}).get(name, ())) or [name]
+    if not dp_names:
+        return set(names)
+    end = routes.linux_end(pairs, name, dp_names)
+    return {end} if end else set(names) - set(dp_names)
 
 
 def frr_acts_on(name, pairs, dp_names):
@@ -3063,9 +3085,14 @@ def ospf_findings(routing, addresses, have_interfaces, pools,
     for ifname, stmt in passive:
         if ifname == "default" or acts_on(ifname):
             continue
+        # The name in the sentence is the one acts_on() just judged by, not a
+        # second subtraction: on the same-name pair (#389) that subtraction
+        # is empty, and this row read "FRR knows this interface as , not
+        # tap0".
         out.append(("warning", stmt,
                     "FRR knows this interface as "
-                    + "/".join(sorted(same(ifname) - dp_names))
+                    + "/".join(sorted(frr_side_names(ifname, pairs,
+                                                     dp_names)))
                     + f", not {ifname}: written this way nothing is made "
                     "passive"))
 
@@ -5423,6 +5450,19 @@ class Shell:
                     on.add(name)
         return on
 
+    def dataplane_names(self) -> set:
+        """
+        Every name `show interface` lists, or an empty set if it cannot be
+        asked: the list routes.linux_end() places a pair's members with.
+
+        Read once per mirror rather than asked of the API per member:
+        interface_index() is a whole sw_interface_dump each time.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0:
+            return set()
+        return set(routes.parse_interfaces(out))
+
     def device_admin_down(self) -> set:
         """
         The interfaces that are administratively down.
@@ -5611,13 +5651,17 @@ class Shell:
             self.err_dataplane(f"interface {ifname}: "
                                f"{'no shutdown' if up else 'shutdown'}: {r.reason}")
             return False
-        # The Linux side of the pair, by every name it answers to.
+        # The Linux side of the pair, which routes.linux_end() names: on the
+        # same-name pair (#389) `name != ifname` kept the TAP and skipped
+        # ens19, so the netdev FRR reads never moved. Handed the dataplane's
+        # names because `interface tap0` is a block this shell takes, and
+        # asked with the TAP and no list the rule answered the card.
         rc, lcp_out = self.dp.run("show lcp")
         if rc == 0:
-            for name in routes.lcp_pairs(lcp_out).get(ifname, []):
-                if name == ifname:
-                    continue
-                subprocess.run(["ip", "link", "set", "dev", name,
+            host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname,
+                                    self.dataplane_names())
+            if host:
+                subprocess.run(["ip", "link", "set", "dev", host,
                                 "up" if up else "down"], capture_output=True)
         return True
 
@@ -5997,6 +6041,131 @@ class Shell:
                 found[w[2]] = w[4]
         return found
 
+    def dataplane_cards(self) -> dict:
+        """
+        {name: (domain, bus, slot, function)} for every interface the
+        dataplane holds as a PCI card, read off `show hardware-interfaces`.
+
+        A card is the interface that carries its Linux name (#389): the
+        tuner names every device it claims after the netdev Linux had, so
+        `show interface` says ens19 and so does `ip link`, once the pair
+        below is made. A pg, a tap, a host interface and a loopback are not
+        cards and nothing here applies to them. Empty when the dataplane
+        cannot be asked, and then nothing is defaulted and nothing renamed.
+        """
+        rc, out = self.dp.run("show hardware-interfaces")
+        if rc != 0:
+            return {}
+        return routes.parse_hardware_pci(out)
+
+    def pair_cards(self, target):
+        """
+        The default a claimed card's Linux end gets when nobody chose one
+        (#389): a card with an `interface` block is paired into Linux under
+        its own name, so FRR and `ip` see ens19 where the dataplane does.
+
+        WRITTEN INTO THE CONFIGURATION rather than implied by it. Before
+        this, `d["lcp_set"]` carried nothing for an interface with no
+        `linux-name` - measured - and the pair simply did not exist; the
+        running configuration is read back from `show lcp` (#161), so a pair
+        that existed only in a rule would be a `linux-name` in the running
+        text and not in the candidate, and every commit would remove it. The
+        default lands in `linux_names` here, at apply, on every path that
+        reaches the box - `commit`, `rollback`, `--load` - and from then on
+        it is an ordinary statement: `show configuration` prints it, `save`
+        writes it and `linux-name <other>` overrides it.
+
+        FOR CARDS WITH A BLOCK, and not every interface whose name Linux
+        could take. A card's name is free in Linux precisely because the
+        card left Linux for the dataplane; a pg, a host interface or a
+        loopback has no such name to put back, and the labs that hold a
+        loopback without a pair say so. `no interface <card>` is refused -
+        a physical port is not something a configuration removes - and `no
+        linux-name` on a card takes an OVERRIDE back: the default returns
+        here at the next apply, and the prompt says so as it is typed. A
+        card VPP named for itself - a device no tuner named,
+        GigabitEthernet0/13/0 - is not a name Linux can take and gets no
+        default, which the commit check says out loud.
+
+        A block is one the file's device section holds OR one the routing
+        section opens: `interface ens19 / no shutdown` - the maintainer's
+        whole transcript - leaves every device dictionary empty and stages
+        the FRR stanza, and the operator who typed it is exactly the one
+        expecting FRR to see the port.
+        """
+        blocks = target.interface_names() | set(target.frr_interface_names())
+        for card in self.defaulted_cards():
+            if card in blocks and card not in target.linux_names:
+                target.linux_names[card] = card
+
+    def defaulted_cards(self) -> set:
+        """
+        The cards whose Linux end defaults to their own name: every card
+        the dataplane holds whose name Linux can take. One owner, because
+        the prompt asks the same question of `no linux-name` (#389) and two
+        copies of the condition would be two answers.
+        """
+        return {card for card in self.dataplane_cards()
+                if not linux_ifname_error(card)}
+
+    def card_renames(self, text) -> dict:
+        """
+        {a name a saved file uses: the name this box holds the same card
+        under}, for a configuration saved before the card carried its Linux
+        name (#389).
+
+        The upgraded box. A file from 0.76.1 says `interface
+        GigabitEthernet0/13/0`; after the upgrade the tuner names the device
+        after its card and the dataplane holds ens19 at that same address.
+        The old name encodes the address - `0/13/0` is bus 0, slot 0x13,
+        function 0 - and `show hardware-interfaces` prints the address of
+        every card the box holds now, so the two are matched with nothing
+        guessed: the box knows both names, and this is the one place it
+        still needs to. Every DPDK-shaped word in the file is a candidate,
+        wherever it stands - an `interface` block, a CGNAT attachment, a
+        `passive-interface` inside `router ospf` - because the rename is
+        made on the text and a name left behind in one statement is a
+        statement about a card the box has not got.
+
+        A name the box still has is not renamed. A card at an address two
+        of the box's cards share - the same bus, slot and function in two
+        PCI domains - is not renamed either: a wrong card is worse than a
+        refused file, and the refusal that follows names what the box has.
+        """
+        held = self.dataplane_cards()
+        if not held:
+            return {}
+        by_addr = {}
+        for name, (_domain, bus, slot, func) in held.items():
+            by_addr.setdefault((bus, slot, func), []).append(name)
+        out = {}
+        # A greedy letter run is right HERE and wrong in the parser: this
+        # one returns the whole span, and routes.dpdk_name_address() is
+        # what splits the class word from a bus that starts with a letter.
+        for word in sorted(set(re.findall(
+                r"[A-Za-z]+[0-9a-fA-F]+/[0-9a-fA-F]+/[0-9a-fA-F]+", text))):
+            if word in held or self.api.interface_index(word) is not None:
+                continue
+            key = routes.dpdk_name_address(word)
+            if key and len(by_addr.get(key, [])) == 1:
+                out[word] = by_addr[key][0]
+        return out
+
+    @staticmethod
+    def renamed_text(text, renames) -> str:
+        """
+        `text` with every whole-word occurrence of each old name replaced.
+
+        A sub-interface keeps its tag: `GigabitEthernet0/13/0.100` becomes
+        `ens19.100`, which is why a following '.' does not end the word
+        while a following '/' or letter does - `TenGigabitEthernet0/13/0`
+        must not lose its `GigabitEthernet0/13/0` to a rename of the latter.
+        """
+        for old, new in renames.items():
+            text = re.sub(r"(?<![A-Za-z0-9_./-])" + re.escape(old)
+                          + r"(?![A-Za-z0-9_/-])", new, text)
+        return text
+
     def device_loopbacks(self) -> set:
         """The loopbacks the dataplane has, by their own names."""
         rc, out = self.dp.run("show interface")
@@ -6137,10 +6306,13 @@ class Shell:
             return False
         rc, lcp_out = self.dp.run("show lcp")
         if rc == 0:
-            for name in routes.lcp_pairs(lcp_out).get(ifname, []):
-                if name == ifname:
-                    continue
-                subprocess.run(["ip", "link", "set", "dev", name,
+            # routes.linux_end(): the same-name pair (#389) has no member
+            # that is `!= ifname` and is not the TAP. With the dataplane's
+            # names, because keyed by the TAP the rule needs them.
+            host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname,
+                                    self.dataplane_names())
+            if host:
+                subprocess.run(["ip", "link", "set", "dev", host,
                                 "alias", text or ""], capture_output=True)
         return True
 
@@ -6174,6 +6346,9 @@ class Shell:
         which the box is half-configured as short as possible.
         """
         running = self.running_config()
+        # The default a claimed card's pair gets, written into the target
+        # before the delta is taken so that the delta carries it (#389).
+        self.pair_cards(target)
         d = running.delta_to(target)
         self.remap = []
         self.cutoff = []
@@ -6310,6 +6485,12 @@ class Shell:
             # answer to the second.
             pairs = {}
             dp_interfaces = set()
+            # The names the existence check refused, so the FRR-limit check
+            # below does not refuse them a second time with advice for a
+            # box that has already renamed the card (#389): a `rollback` to
+            # a pre-upgrade revision names GigabitEthernet0/13/0 on a box
+            # holding ens19, and one verdict says what the box has.
+            missing = set()
             rc_i, iface_out = self.dp.run("show interface")
             if rc_i == 0 and iface_out.strip():
                 # BOTH names. A linux_cp pair has a VPP name and a Linux one,
@@ -6406,6 +6587,7 @@ class Shell:
                                         "nothing and never come up")
                             ok = False
                 for name in sorted(named - have):
+                    missing.add(name)
                     self.err(f"interface {name}: this box has no such "
                              "interface")
                     # Wrapped, not one row: the list grows with the box, and
@@ -6419,6 +6601,36 @@ class Shell:
             # With the dataplane unreachable the check is SKIPPED, not failed.
             # A VTY that cannot commit while the dataplane is down cannot be
             # used to fix it.
+
+            # An interface name FRR cannot take (#389). Every `interface
+            # <name>` typed at this VTY is staged as an FRR stanza whether or
+            # not anything FRR needs follows it, and FRR 10.7.1 refuses a
+            # stanza whose name is over FRR_IFNAME_MAX characters - which is
+            # every name VPP gives a card nobody named. On the maintainer's
+            # box `interface GigabitEthernet0/13/0 / no shutdown / commit`
+            # got "Failure to communicate[13] to ospf6d", "routing reload
+            # failed" and a rollback, from a commit with one statement in
+            # it. Said here, before anything is applied, with the limit and
+            # the way out. Gated the way the daemon checks below are: on the
+            # routing half changing, which is when FRR is handed the stanza.
+            if d["routing_changed"]:
+                for ifname in target.frr_interface_names():
+                    if len(ifname) <= FRR_IFNAME_MAX or ifname in missing:
+                        continue
+                    self.err(f"interface {ifname}: a name FRR cannot take")
+                    print_prose(f"FRR takes an interface name of at most "
+                                f"{FRR_IFNAME_MAX} characters and this one "
+                                f"is {len(ifname)}; the routing daemons "
+                                "refuse the block, the reload fails and the "
+                                "whole commit rolls back")
+                    print_prose("a card this box claims is named after the "
+                                "card's own Linux name from the next start "
+                                "of the dataplane; if 'show interface' "
+                                "still lists this name after one, the "
+                                "device is unnamed in /etc/vpp/startup.conf "
+                                "and wants 'name <linux name>' inside its "
+                                "dev block")
+                    ok = False
 
             # A "router <protocol>" statement for a daemon that is not
             # running commits cleanly and reaches nothing. The box ships with
@@ -7307,6 +7519,16 @@ class Shell:
         # loopback with no pair is invisible to the routing daemons, which is
         # the entire reason an operator creates one.
         for ifname, host in d["lcp_set"].items():
+            # A pair RENAMED, which `linux-name` on a card that already
+            # carries its default pair is (#389). The dataplane answers
+            # "exists" to a second pair on one interface - apply_management_path
+            # relies on exactly that - so the old pair goes before the new
+            # one is made. Read off the running configuration, which is
+            # `show lcp` and not memory (#161).
+            had = running.linux_names.get(ifname)
+            if had and had != host and not self.set_lcp_pair(ifname, "",
+                                                             False):
+                return False
             if not self.set_lcp_pair(ifname, host, True):
                 return False
 
@@ -7583,20 +7805,24 @@ class Shell:
             # next commit under a name they had never typed.
             if set(names) & (ignoring | quiet):
                 continue
-            for host in names:
-                if host == ifname:
-                    continue
-                r = subprocess.run(["ip", "-o", "link", "show", "dev", host],
-                                   capture_output=True, text=True)
-                if r.returncode != 0:
-                    continue
-                w = r.stdout.split()
-                try:
-                    there = int(w[w.index("mtu") + 1])
-                except (ValueError, IndexError):
-                    continue
-                if there != here:
-                    found.append((ifname, host, here, there))
+            # The Linux end by routes.linux_end(), not by `host != ifname`:
+            # on the same-name pair (#389) that asked `ip` about tap0, which
+            # Linux has no netdev by, and the stall went unreported on
+            # every claimed card with a block.
+            host = routes.linux_end(pairs, ifname)
+            if not host:
+                continue
+            r = subprocess.run(["ip", "-o", "link", "show", "dev", host],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                continue
+            w = r.stdout.split()
+            try:
+                there = int(w[w.index("mtu") + 1])
+            except (ValueError, IndexError):
+                continue
+            if there != here:
+                found.append((ifname, host, here, there))
         return found
 
     def set_host_mtu(self, ifname, mtu):
@@ -7605,8 +7831,8 @@ class Shell:
         this interface is a legitimate configuration, and failing the commit
         over it would refuse a valid change.
 
-        Every other name the pair answers to is tried, rather than the one in a
-        fixed column. The parse this replaced looked for a literal "host" token
+        The Linux end is routes.linux_end()'s to name, not the one in a fixed
+        column. The parse this replaced looked for a literal "host" token
         and read the field after it; VPP prints
 
             itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
@@ -7615,15 +7841,19 @@ class Shell:
         indistinguishable from the legitimate no-TAP case above, and so was
         never noticed. lcp-sync was mirroring the MTU onto the TAP by itself
         and the lab assertion was crediting this function for VPP's work. The
-        lab now turns lcp-sync off before asserting.
+        lab now turns lcp-sync off before asserting. The reader that replaced
+        it tried every name but `ifname`, which on the same-name pair (#389)
+        is the TAP alone: the same nothing, found the same way. Asked with
+        the dataplane's names, because `interface tap0` reaches here too
+        and without them the rule answered the card for the TAP.
         """
         rc, out = self.dp.run("show lcp")
         if rc != 0:
             return
-        for name in routes.lcp_pairs(out).get(ifname, []):
-            if name == ifname:
-                continue
-            subprocess.run(["ip", "link", "set", "dev", name, "mtu", str(mtu)],
+        host = routes.linux_end(routes.lcp_pairs(out), ifname,
+                                self.dataplane_names())
+        if host:
+            subprocess.run(["ip", "link", "set", "dev", host, "mtu", str(mtu)],
                            capture_output=True)
 
     # The VTY's name for a timeout, and the API field that carries it. The two
@@ -9407,18 +9637,35 @@ class Shell:
         if iface and not neg and dp == "linux-name":
             if len(w) < 2:
                 self.err("usage: linux-name <name>")
-            elif len(w[1]) > 15 or "/" in w[1]:
-                # Linux refuses a name over 15 characters, and a '/' cannot be
-                # in one at all - which matters here because VPP's own names
-                # are full of them, and copying one across is the obvious
-                # mistake to make.
-                self.err(f"linux-name: '{w[1]}' cannot be a Linux interface "
-                         "name (15 characters, no '/')")
+            elif linux_ifname_error(w[1]):
+                # The limit and the sentence are config.linux_ifname_error's;
+                # this file held a second copy of the 15 (#389).
+                self.err(f"linux-name: {linux_ifname_error(w[1])}")
             else:
                 self.candidate.linux_names[iface] = w[1]
             return True
         if iface and neg and dp == "linux-name":
             self.candidate.linux_names.pop(iface, None)
+            # A claimed card with a block is paired as itself by default and
+            # pair_cards() puts that default back at the next apply, so this
+            # statement takes an OVERRIDE back and never unpairs a card.
+            # Typed for the first it is right; typed for the second it does
+            # nothing, silently, and there is no statement that unpairs a
+            # card with a block - `no interface <card>` is refused. Said
+            # here, where the operator is reading (#389). A loopback, a
+            # sub-interface or a host interface gets no default, so on one
+            # of those this does unpair, and nothing is said: a warning
+            # there would be false. Asked of the dataplane, and a dataplane
+            # that cannot be asked defaults nothing at apply either.
+            if iface in self.defaulted_cards():
+                # The name goes in the prose, which folds: on the headline,
+                # driven at the widest interface name, the row measured 82.
+                print("warning: no linux-name: the default returns at commit")
+                print_prose(f"{iface} is a card with an interface block, and "
+                            "such a card is paired into Linux under its own "
+                            "name unless 'linux-name <name>' says otherwise; "
+                            "this takes an override back and does not unpair "
+                            "the card")
             return True
         if iface and not neg and dp == "ipv6 nd suppress-ra":
             # The default already. Accepted so an operator can write it to
@@ -11894,15 +12141,13 @@ class Shell:
 
         VPP's end of a linux_cp pair is an interface too, named tap<n>, and it
         has an MTU - so the pair answers to three names and only one of them is
-        the one an operator can type at this VTY. The same shape rule
-        ospf_mtu_mismatch uses, for the same reason.
+        the one an operator can type at this VTY. routes.dataplane_end() is
+        the rule, the other half of routes.linux_end()'s: the member the MTU
+        map holds that is not the TAP - which on the same-name pair (#389) is
+        `host` itself. `name != host` answered None there, and `show ospf
+        interface` printed '-' for a card whose MTU the dataplane has.
         """
-        for name in pairs.get(host, []):
-            if name == host or (name.startswith("tap") and name[3:].isdigit()):
-                continue
-            if name in mtus:
-                return name
-        return None
+        return routes.dataplane_end(pairs, host, mtus)
 
     # ----------------------------------------------------------------- OSPF
 
@@ -13470,7 +13715,28 @@ class Shell:
         if not os.path.exists(path):
             return
         with open(path) as f:
-            target = Config.parse(f.read())
+            text = f.read()
+
+        # THE UPGRADED BOX (#389). A file saved before the card carried its
+        # Linux name says `interface GigabitEthernet0/13/0`, and this box
+        # holds that card as ens19. Refusing the file - which is what a name
+        # the box has not got gets below - would be a box coming up with no
+        # pool, no address and no attachment on it, at boot, read by nobody.
+        # The box can match the two names by address with nothing guessed,
+        # so it loads the file under the new name and says so; the next
+        # `save` writes the name it loaded. card_renames() carries the
+        # matching and what it refuses to match.
+        renames = self.card_renames(text)
+        for ifname, host_name in sorted(renames.items()):
+            # Two interface names on one row: at their widest, 78 columns
+            # with no word between them that the row can spare.
+            print(f"note: {ifname} is {host_name} on this box")
+            print_prose(f"the card at that address carries its Linux name "
+                        f"now, so this file is loaded with {host_name} "
+                        f"wherever it said {ifname}; the next 'save' writes "
+                        "the new name")
+        target = Config.parse(self.renamed_text(text, renames))
+
         # SAID, because the file and the running configuration differ by
         # these lines until the next `save`, and a difference nobody was told
         # about is discovered later by somebody reading both. Dropped rather
@@ -13485,6 +13751,31 @@ class Shell:
             print(f"    {path}")
             print(f"    {text}")
             print_prose(f"({why})", indent="    ")
+
+        # AND A STANZA FRR NEVER HELD (#389). A name over FRR_IFNAME_MAX
+        # characters - a card this box still calls by the dataplane's own
+        # name, because the device is unnamed in startup.conf or this VPP
+        # ignored `name` - is refused by FRR, so no version ever had that
+        # stanza in FRR. At the prompt the commit check refuses it with the
+        # limit; here, unattended, the file minus that stanza is the
+        # configuration the box had, and the dataplane half of the interface
+        # - addresses, MTU, the CGNAT attachment - loads. The same trim
+        # `--load` makes for a `block-stride` a deterministic pool never
+        # read, and said out loud for the same reason: until the next
+        # `save`, the file and the running configuration differ by it.
+        over = [n for n in target.frr_interface_names()
+                if len(n) > FRR_IFNAME_MAX]
+        for ifname in target.drop_frr_interface_blocks(over):
+            print(f"note: interface {ifname}: its routing block was not "
+                  "loaded")
+            print_prose(f"FRR takes an interface name of at most "
+                        f"{FRR_IFNAME_MAX} characters and this one is "
+                        f"{len(ifname)}, so FRR held no such block on any "
+                        "version; the interface's addresses and attachments "
+                        "are loaded. A card named after its Linux card does "
+                        "not meet this: the device is unnamed in "
+                        "/etc/vpp/startup.conf and wants 'name <linux name>' "
+                        "inside its dev block")
 
         # A `tap<n>` stanza naming an interface this box does NOT have is the
         # Linux end of a pair that existed when the file was saved and does

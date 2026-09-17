@@ -25,6 +25,8 @@ from __future__ import annotations
 import json
 import re
 
+from config import _is_lcp_tap
+
 # A prefix on its own at the start of a line opens an entry in "show ip fib".
 _PREFIX = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3}/\d{1,2})\b")
 # The header "show ip fib" prints above each table, in its two forms.
@@ -586,7 +588,16 @@ def parse_interfaces(show_interface: str, show_addr: str = "",
 
     for name, names in lcp_pairs(show_lcp).items():
         if name in out:
-            out[name]["host"] = " ".join(n for n in names if n != name)
+            # The other names the pair answers to - the TAP and the Linux
+            # end. A card paired as itself (#389) lists its own name twice,
+            # `ens19 tap0 ens19`, and leaving out every occurrence of it
+            # would print the TAP alone in the Linux column: the name FRR
+            # acts on is the one that is on both sides, and it goes last, in
+            # the position the Linux name has always had.
+            others = list(dict.fromkeys(n for n in names if n != name))
+            if names.count(name) > 1:
+                others.append(name)
+            out[name]["host"] = " ".join(others)
     return out
 
 
@@ -624,6 +635,73 @@ def lcp_pairs(show_lcp: str) -> dict:
         for n in names:
             pairs[n] = names
     return pairs
+
+
+def linux_end(pairs: dict, ifname: str, dp_names=None):
+    """
+    The Linux netdev of the linux_cp pair `ifname` is a member of, or None.
+
+    THE ONE RULE for which end of a pair Linux holds (#389). Five readers
+    found it by `name != ifname` - the MTU stall, the Dataplane column of
+    `show ospf interface`, and the three `ip link set` mirrors - which is
+    right on `GigabitEthernet0/13/0 tap0 vppwan0` and wrong on the pair
+    every claimed card gets now, `ens19 tap0 ens19`: that test skips the one
+    name that IS the Linux end and keeps the TAP, which Linux has no netdev
+    by. So `ip link set dev ens19 mtu 1400` was never run, and the stall
+    warning was silent on exactly the box it was written for.
+
+    In order:
+
+      1. A name the line lists TWICE is on both sides of the pair, and it is
+         the Linux end whatever else is known.
+      2. Otherwise the Linux end is the member that is neither the
+         dataplane's own name nor the TAP's. The dataplane's name is the
+         member `dp_names` holds when the caller has that list, and `ifname`
+         itself when it has not - the readers keyed by the dataplane's name
+         (an MTU map) are asking about their own key.
+
+    Asked with the TAP and no list, None. The `ip link set` mirrors are
+    keyed by the operator's block name and `interface tap0` is a block the
+    parser takes, and with nothing to tell the TAP from the card this rule
+    took the TAP as the interface's own and answered the CARD:
+    linux_end(OLD, 'tap0') was 'GigabitEthernet0/13/0', a name Linux has
+    no netdev by, and on `ens19 tap0 wan0` it was 'ens19' where the Linux
+    end is wan0. "Could not place" is None, never a wrong netdev; a caller
+    that may be asked with the TAP hands the dataplane's names over, as
+    the mirrors and frr_side_names() do.
+
+    With no pair, or a pair whose only other name is the TAP, None: a
+    reader then has nothing to run `ip` on, which is the legitimate no-TAP
+    box and not an error.
+    """
+    names = list((pairs or {}).get(ifname, ()))
+    for n in names:
+        if names.count(n) > 1:
+            return n
+    own = dataplane_end(pairs, ifname, dp_names) if dp_names else None
+    if own is None:
+        if _is_lcp_tap(ifname):
+            return None
+        own = ifname
+    for n in names:
+        if n != own and not _is_lcp_tap(n):
+            return n
+    return None
+
+
+def dataplane_end(pairs: dict, ifname: str, dp_names):
+    """
+    The member of `ifname`'s pair the dataplane holds under its own name,
+    or None: the one in `dp_names` that is not the TAP, whichever member
+    the caller asked with. The other half of linux_end()'s rule, and the
+    half `show ospf interface` needs - it holds FRR's name and the
+    dataplane's MTU map, and wants the key the map has. On the same-name
+    pair (#389) that key is FRR's name itself, which `name != host` could
+    not return.
+    """
+    names = list((pairs or {}).get(ifname, ()))
+    return next((n for n in names
+                 if n in (dp_names or ()) and not _is_lcp_tap(n)), None)
 
 
 def parse_interface_counters(show_interface: str) -> dict:
@@ -677,6 +755,83 @@ def parse_interface_counters(show_interface: str) -> dict:
 #: as a human string ("10 Gbps"), so the only way to a number is this table.
 _SPEED_UNITS = {"bps": 1, "kbps": 10 ** 3, "mbps": 10 ** 6,
                 "gbps": 10 ** 9, "tbps": 10 ** 12}
+
+
+def dpdk_name_address(name: str):
+    """
+    The (bus, slot, function) a DPDK-spelled interface name encodes, or None.
+
+    VPP's DPDK plugin names a device nobody named after its PCI address: the
+    device class as a word, then bus/slot/function in hexadecimal with no
+    padding and no domain, so 0000:00:13.0 comes out as GigabitEthernet0/13/0
+    and 0000:3b:00.1 as TenGigabitEthernet3b/0/1. Since #389 the tuner names
+    every card it claims after the card's Linux name and nothing on a box
+    prints this shape - except a configuration SAVED by a version that did,
+    which is the one reader left: `hexash --load` matches the old name to the
+    card this box now holds under its Linux name, by address. THE ONE COPY of
+    VPP's naming rule in this product, and it reads the rule rather than
+    writes it.
+
+    None for anything else - local0, a tap, a loopback, an operator's own
+    name, a sub-interface (the caller strips the tag first) - and then no
+    rename is made: a guess here is a box loading somebody's addresses onto
+    the wrong card.
+
+    The bus can START WITH A LETTER: the second socket's cards in a
+    dual-socket server sit at 0xaf, 0xb1, 0xd8, and VPP prints the bus as
+    bare hex, so the name is TenGigabitEthernetd8/0/0. A greedy run of
+    letters for the class word took that 'd' as its own last letter and
+    read the bus as 8, which is a real bus on the same box - so the file
+    was matched to the card at 08:00.0 where there was one, and refused
+    where there was not. The class word is anchored on its last letter,
+    which is never a hex digit (every one of VPP's ends in "Ethernet"),
+    and the hex run after it takes the whole bus.
+    """
+    m = re.fullmatch(r"[A-Za-z]*[G-Zg-z]"
+                     r"([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)",
+                     name or "")
+    if not m:
+        return None
+    return tuple(int(g, 16) for g in m.groups())
+
+
+def parse_hardware_pci(show_hardware: str) -> dict:
+    """
+    {name: (domain, bus, slot, function)} for every interface the dataplane
+    holds as a PCI card - the ones with a `pci:` row under them in
+    `show hardware-interfaces`:
+
+        ens19                              1     up   ens19
+          ...
+            pci: device 1af4:1041 subsystem 1af4:1100 address 0000:00:13.00 numa 0
+
+    A pg, a tap, a host interface and a loopback have no such row and are not
+    cards. This is what tells a claimed card - the interface that carries its
+    Linux name and gets a pair under it by default (#389) - from every other
+    interface a box or a lab can have, without a list of driver names.
+
+    VPP prints the function with two digits (`13.00`); read as numbers so a
+    saved name's `0/13/0` and this row compare without a spelling.
+    """
+    out = {}
+    current = None
+    for line in (show_hardware or "").splitlines():
+        w = line.split()
+        if not w:
+            continue
+        if not line[0].isspace():
+            current = None if w[0] == "Name" else w[0]
+            continue
+        if current and w[:1] == ["pci:"] and "address" in w:
+            addr = w[w.index("address") + 1]
+            try:
+                domain, bus, rest = addr.split(":")
+                slot, func = rest.split(".")
+                out[current] = (int(domain, 16), int(bus, 16), int(slot, 16),
+                                int(func, 16))
+            except ValueError:
+                continue
+    return out
 
 
 def parse_hardware(show_hardware: str) -> dict:

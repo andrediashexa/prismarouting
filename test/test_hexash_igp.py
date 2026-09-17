@@ -31,6 +31,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
 import config      # noqa: E402
 import hexash      # noqa: E402
+import routes      # noqa: E402
 
 fail = 0
 
@@ -874,6 +875,67 @@ check(sh.ospf_mtu_mismatch(["router bgp 65000"], MTUS) == [],
       "a box running neither OSPF is not warned about an MTU it does not compare")
 
 
+
+print("\n=== the same-name pair, on the readers keyed by the dataplane's "
+      "name (#389) ===")
+# Every claimed card with a block is paired as itself now - `ens19 tap0
+# ens19` - and the readers here found the Linux end by `name != ifname`,
+# which on that line skips the Linux end and keeps the TAP. Measured on
+# 0dbbf73 with ens19 at 9000 in the dataplane and 1500 in Linux:
+# ospf_mtu_mismatch returned [] and the one `ip` call it made was for tap0;
+# dataplane_name('ens19') was None, so `show ospf interface` printed '-' in
+# the Dataplane column for a card whose MTU the dataplane has; and the
+# passive warning read "FRR knows this interface as , not tap0". The #187
+# stall warning was silent on exactly the box it was written for.
+SAME_LCP = "itf-pair: [0] ens19 tap0 ens19 5 type tap\n"
+SAME_IF = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+ens19                             1      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+tap0                              2      up          9000/0/0/0
+"""
+IP_LINK_ENS19 = IP_LINK_VPPWAN0.replace("vppwan0", "ens19")
+_asked = []
+
+
+def _ip_ens19(argv, **kw):
+    """`ip` on a box whose one Linux netdev is ens19; the TAP is refused."""
+    dev = argv[-1] if isinstance(argv, (list, tuple)) else ""
+    _asked.append(dev)
+    ok = dev == "ens19"
+    return type("R", (), {"returncode": 0 if ok else 1,
+                          "stdout": IP_LINK_ENS19 if ok else "",
+                          "stderr": ""})()
+
+
+sh = shell({}, {"show interface": SAME_IF, "show lcp": SAME_LCP},
+           routing=OSPF_ROUTING)
+hexash.subprocess.run = _ip_ens19
+found = sh.ospf_mtu_mismatch(OSPF_ROUTING, {"ens19": 9000})
+check(found == [("ens19", "ens19", 9000, 1500)],
+      f"the stall on a card paired as itself is not reported: {found}; ip "
+      f"was asked about {_asked}")
+check("tap0" not in _asked,
+      f"ip was asked about the TAP, which Linux has no netdev by: {_asked}")
+_same = routes.lcp_pairs(SAME_LCP)
+check(sh.dataplane_name("ens19", _same, {"ens19": 9000, "tap0": 9000})
+      == "ens19",
+      f"the dataplane's name for the interface FRR calls ens19 is ens19, not "
+      f"{sh.dataplane_name('ens19', _same, {'ens19': 9000, 'tap0': 9000})!r}")
+_found = hexash.ospf_findings(
+    OSPF_ROUTING + [" passive-interface tap0"], {"ens19": ["10.0.0.1/24"]},
+    {"ens19", "tap0", "local0"}, {},
+    lcp_pairs=_same, device_interfaces={"ens19", "tap0", "local0"})
+_said = [why for _, stmt, why in _found if stmt == "passive-interface tap0"]
+check(_said and "FRR knows this interface as ens19, not tap0" in _said[0],
+      f"the passive warning on the same-name pair does not name the Linux "
+      f"end: {_said}")
+# And the old shape, in the same three places, so the rule is one rule.
+sh = shell({}, DP_STALLED, routing=OSPF_ROUTING)
+check(sh.ospf_mtu_mismatch(OSPF_ROUTING, {"host-veth-vpp": 9000})
+      == [("host-veth-vpp", "vppwan0", 9000, 1500)],
+      "the old shape still reports its stall against vppwan0")
+print("  ens19 tap0 ens19: the stall, the Dataplane column and the passive "
+      "warning all name ens19")
 
 print("\n=== 'show interface <name>' keeps the first counter (#280) ===")
 # The counters are relayed "straight from the dataplane, uninterpreted", and

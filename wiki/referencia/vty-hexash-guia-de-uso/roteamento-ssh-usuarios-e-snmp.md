@@ -90,9 +90,9 @@ flowchart LR
 ```
 hexarouting> show route
   Destination          Next hop          Interface    Kind
-  0.0.0.0/0            200.150.0.1       TenGigabitEthernet0/8/0 forward
-  203.0.113.0/24       200.150.0.1       TenGigabitEthernet0/8/0 forward
-  200.150.0.0/24       connected         TenGigabitEthernet0/8/0 connected
+  0.0.0.0/0            200.150.0.1       ens19        forward
+  203.0.113.0/24       200.150.0.1       ens19        forward
+  200.150.0.0/24       connected         ens19        connected
 
   3 entries carrying traffic
 ```

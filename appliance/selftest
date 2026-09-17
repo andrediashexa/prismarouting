@@ -1161,12 +1161,14 @@ if vppctl show version >/dev/null 2>&1; then
     fi
     say "        without a pair:$unpaired"
     say "        give each one a 'linux-name <name>' under 'interface' in"
-    say "        hexash, and commit."
+    say "        hexash, and commit. A card named after its Linux card is"
+    say "        paired under that name by any 'interface' block for it."
   elif [ -n "$unpaired" ]; then
     warn "no linux_cp pair on:$unpaired"
     say "         FRR and 'ip' cannot see these, so no routing protocol can"
     say "         run on them. Set 'linux-name <name>' under 'interface' in"
-    say "         hexash, and commit."
+    say "         hexash, and commit. A card named after its Linux card is"
+    say "         paired under that name by any 'interface' block for it."
   else
     ok "$npaired dataplane interface(s) paired into the kernel, so FRR sees them"
   fi

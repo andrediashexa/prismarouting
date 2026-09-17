@@ -3505,6 +3505,10 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     fail=1
   fi
 
+  # Set before the login so that a box which never came back leaves them
+  # empty rather than unset under `set -u` (#389).
+  HO_CARD=""; HO_COMMIT=""
+  : > /tmp/ho-commit.txt
   if login_root "the box to come back holding its card"; then
     send 'echo "HX""LAB ho-drv2=$([ -e /sys/bus/pci/devices/'"$HO_PCI"'/driver ] && basename $(readlink -f /sys/bus/pci/devices/'"$HO_PCI"'/driver) || echo none)"'
     wait_for "HXLAB ho-drv2=" 60 \
@@ -3563,6 +3567,75 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       "the dataplane to give the state and MTU of its interfaces" || fail=1
     send "exit"
     wait_for "hexarouting> " 60 "the shell to close" || fail=1
+    # ------------------- the card, by its own name, at the console (#389)
+    #
+    # THE ISSUE'S TRANSCRIPT. On the maintainer's box `show interface` said
+    # GigabitEthernet0/13/0, and `interface GigabitEthernet0/13/0` / `no
+    # shutdown` / `commit` got "Failure to communicate[13] to ospf6d",
+    # "routing reload failed" and a rollback: FRR 10.7.1 refuses an
+    # interface name over 16 characters, and every name VPP gives a card
+    # nobody named is over it. No lab met it because their interfaces are
+    # pg0 and host-veth-vpp. This is the one box in the repository with a
+    # real card, so this is where the four lines are typed.
+    #
+    # WHAT IS TYPED IS THE NAME THE BOX SHOWS. An operator reads the card's
+    # name off `show interface` and types it, which is the transcript
+    # above. What #389 promises is that the name they read there is the one
+    # Linux gave the card - so on a box that keeps the promise these are
+    # the same keystrokes as `interface <linux name>`, and on a box that
+    # does not they are the maintainer's, and the commit answers what the
+    # maintainer got. Read live off the ho-dpmtu marker block 5 already
+    # asked for: the first interface that is not the pair's TAP. Nothing
+    # here is spelled by the lab.
+    #
+    # NOTHING HERE PERFORMS A STEP. `configure`, `interface`, `no shutdown`
+    # and `commit` are the operator's four lines; every reading after them
+    # is what the box shows.
+    for _e in $(live_field ho-dpmtu); do
+      case "${_e%%:*}" in
+        tap[0-9]*) ;;
+        *) HO_CARD=${_e%%:*}; break ;;
+      esac
+    done
+    # A dataplane holding nothing has no name to read; the Linux one is
+    # typed and the refusal is the reading.
+    [ -n "$HO_CARD" ] || HO_CARD=$HO_IF
+    send "configure"
+    wait_for "entering configuration mode" 60 \
+      "the VTY to enter configuration mode for the interface block" \
+      || fail=1
+    send "interface $HO_CARD"
+    wait_for "[edit interface" 60 "the VTY to open the interface block" \
+      || fail=1
+    send "no shutdown"
+    wait_for "[edit interface" 60 "the VTY to take 'no shutdown'" || fail=1
+    send "exit"
+    wait_for "[edit]" 60 "the VTY to close the interface block" || fail=1
+    # THREE ANSWERS, not two, and classified from the box's words rather
+    # than waited for one at a time: `commit complete`; `commit failed;
+    # rolling back` - the maintainer's, FRR refusing the stanza at apply -
+    # and `candidate did not pass validation; nothing applied`, the commit
+    # check refusing the name before anything is applied. The prompt comes
+    # back after all three, so that is what is waited for, and what the box
+    # printed in between is kept for the verdict.
+    _ho_pos=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+    send "commit"
+    wait_for "[edit]" 300 "the commit of the interface block to answer" \
+      || fail=1
+    tail -c "+$_ho_pos" "$CONSOLE_LOG" | tr -d '\r' \
+      | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' > /tmp/ho-commit.txt
+    if grep -qF "commit complete" /tmp/ho-commit.txt; then
+      HO_COMMIT=complete
+    elif grep -qF "commit failed" /tmp/ho-commit.txt; then
+      HO_COMMIT=failed
+    elif grep -qF "did not pass validation" /tmp/ho-commit.txt; then
+      HO_COMMIT=refused
+    else
+      HO_COMMIT=unread
+    fi
+    send "exit"
+    wait_for "hexarouting> " 120 "the VTY to leave configuration mode" \
+      || fail=1
     # And in the operator's own words, on the console, so the log carries what
     # they would see. Nothing is armed by this commit since #378, and nothing
     # is written down beside the card since #385: what the box does with the
@@ -3572,6 +3645,32 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       || fail=1
     send "start shell"
     wait_for "entering /bin" 60 "the shell to reopen" || fail=1
+    # What the box shows after the commit, each asked under the name Linux
+    # gave the card and never under one the dataplane may have invented:
+    # the dataplane's state for it, the netdev Linux has by that name,
+    # whether FRR lists it, and the VTY's own row for it (#389).
+    send 'echo "HX""LAB ho-up=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk -v n="'"$HO_IF"'" "\$1 == n {print \$3}")"'
+    wait_for "HXLAB ho-up=" 60 \
+      "the dataplane to give the state of the card under its Linux name" \
+      || fail=1
+    send 'echo "HX""LAB ho-link=$(ip -o link show '"$HO_IF"' 2>/dev/null | cut -d: -f2 | tr -d " ")"'
+    wait_for "HXLAB ho-link=" 30 \
+      "Linux to say whether it has a netdev of the card's name" || fail=1
+    send 'echo "HX""LAB ho-frr=$(vtysh -c "show interface brief" 2>/dev/null | awk -v n="'"$HO_IF"'" "\$1 == n {print \$1, \$2}")"'
+    wait_for "HXLAB ho-frr=" 60 "FRR to say whether it lists the card" \
+      || fail=1
+    send 'echo "HX""LAB ho-shif=$(hexash -c "show interface" 2>/dev/null | tr -d "\r" | awk -v n="'"$HO_IF"'" "\$1 == n" | tr -s " " | sed "s/^ //")"'
+    wait_for "HXLAB ho-shif=" 120 "the VTY to print its own row for the card" \
+      || fail=1
+    # AND THE ROW THE CARD RULE READS. hexash decides which interfaces are
+    # cards - the ones paired under their own name by default - off the
+    # `pci:` row `show hardware-interfaces` prints under each, written from
+    # VPP's format string and never before read off a box here. The row
+    # for the card, under its Linux name, so the fixture the apply suite
+    # holds can be checked against the real one.
+    send 'echo "HX""LAB ho-hwpci=$(vppctl show hardware-interfaces 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ {n=\$1} /^ *pci:/ && n == \"'"$HO_IF"'\" {print}" | tr -s " " | sed "s/^ //")"'
+    wait_for "HXLAB ho-hwpci=" 60 \
+      "the dataplane to print the card's pci row" || fail=1
     send "sync"
     send "systemctl poweroff"
   else
@@ -3726,6 +3825,127 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       echo "         the card and its pair agree"
     fi
   fi
+
+  # 6. AND THE CARD ANSWERS TO ITS OWN NAME - at the console, to FRR and to
+  # Linux (#389). Every reading above is true of the box the maintainer
+  # measured: card bound, pair made, address on it, port up - and no
+  # interface could leave `shutdown`, because the dataplane called the card
+  # GigabitEthernet0/13/0 and FRR refuses the name. So the transcript was
+  # typed above, and what is asserted here is the name on every side of it.
+  HO_UP=$(mfield "$CONSOLE_CLEAN" ho-up)
+  HO_UP_ASKED=$(grep -c "^HXLAB ho-up=" "$CONSOLE_CLEAN")
+  HO_LINK=$(mfield "$CONSOLE_CLEAN" ho-link)
+  HO_FRR=$(mfield "$CONSOLE_CLEAN" ho-frr)
+  HO_SHIF=$(mfield "$CONSOLE_CLEAN" ho-shif)
+  # The state the card was in BEFORE the commit, off the reading block 5
+  # made. On this box the management path brings the card up at boot, so
+  # `up` afterwards is not what the commit changed, and the row says so
+  # when that is what it read. What the commit changes is whether FRR takes
+  # the stanza, and that is the commit's own answer, classified above.
+  _ho_before=""
+  for _e in $HO_DPMTU; do
+    case "$_e" in "$HO_IF":*) _r=${_e#*:}; _ho_before=${_r%%:*} ;; esac
+  done
+  echo "  -- the dataplane's name for the card: ${HO_CARD:-<unread>};"
+  echo "     Linux's: ${HO_IF:-<unread>}"
+  if [ -n "$HO_CARD" ] && [ "$HO_CARD" = "$HO_IF" ]; then
+    echo "  [ ok ] the dataplane calls the card by the name Linux gave it,"
+    echo "         so the operator has one name to learn"
+  else
+    echo "  [FAIL] the dataplane calls the card '${HO_CARD:-<nothing>}' and"
+    echo "         Linux called it '$HO_IF'. The tuner claimed the card and"
+    echo "         did not name it, so VPP named it after its address: a"
+    echo "         name the operator never saw, and one FRR cannot take"
+    fail=1
+  fi
+  case "${HO_COMMIT:-unread}" in
+    complete)
+      echo "  [ ok ] and 'interface $HO_CARD' / 'no shutdown' / 'commit'"
+      echo "         completed at the console" ;;
+    failed)
+      echo "  [FAIL] 'interface $HO_CARD' / 'no shutdown' / 'commit' failed"
+      echo "         and rolled back. The box said:"
+      grep -E "Failure to communicate|routing reload failed|^error:" \
+        /tmp/ho-commit.txt 2>/dev/null | head -5 | sed 's/^/         | /'
+      echo "         This is the maintainer's transcript: FRR refused the"
+      echo "         stanza, and no interface can leave shutdown on this box"
+      fail=1 ;;
+    refused)
+      echo "  [FAIL] the commit check refused 'interface $HO_CARD' before"
+      echo "         anything was applied. The box said:"
+      grep -E "^error:" /tmp/ho-commit.txt 2>/dev/null | head -5 \
+        | sed 's/^/         | /'
+      fail=1 ;;
+    *)
+      echo "  [FAIL] the commit of 'interface $HO_CARD' neither completed"
+      echo "         nor was refused; what the box said is in $LOG"
+      fail=1 ;;
+  esac
+  if [ "$HO_UP_ASKED" = 0 ]; then
+    echo "  [FAIL] the dataplane was never asked for $HO_IF after the commit"
+    fail=1
+  elif [ "$HO_UP" = up ]; then
+    echo "  [ ok ] and 'show interface' lists $HO_IF up after it"
+    if [ "$_ho_before" = up ]; then
+      echo "         (it was up before the commit too: the management path"
+      echo "         of a one-card box brings the card up at boot, so the"
+      echo "         state is not what this commit changed - the name is,"
+      echo "         and the rows above carry it)"
+    fi
+  elif [ -z "$HO_UP" ]; then
+    echo "  [FAIL] the dataplane has no interface called $HO_IF after the"
+    echo "         commit; it holds: ${HO_DPIF:-<nothing>}"
+    fail=1
+  else
+    echo "  [FAIL] $HO_IF is '$HO_UP' after 'no shutdown' / 'commit'"
+    fail=1
+  fi
+  if [ "$HO_LINK" = "$HO_IF" ]; then
+    echo "  [ ok ] and Linux has a netdev of that name, the pair: $HO_LINK"
+  else
+    echo "  [FAIL] Linux has no netdev called $HO_IF after the commit"
+    echo "         (ip link said '${HO_LINK:-<nothing>}'), so the routing"
+    echo "         daemons have nothing by the card's name to bind to"
+    fail=1
+  fi
+  case "$HO_FRR" in
+    "$HO_IF up")
+      echo "  [ ok ] and FRR lists it, up: '$HO_FRR'" ;;
+    "$HO_IF "*)
+      echo "  [FAIL] FRR lists $HO_IF and not up: '$HO_FRR'"; fail=1 ;;
+    *)
+      echo "  [FAIL] FRR's 'show interface brief' does not list $HO_IF"
+      echo "         (it said '${HO_FRR:-<nothing>}'): there is nothing by"
+      echo "         the card's name for a routing protocol to run on"
+      fail=1 ;;
+  esac
+  case "$HO_SHIF" in
+    "$HO_IF "*" $HO_IF")
+      echo "  [ ok ] and the VTY's own 'show interface' has one row for it,"
+      echo "         headed by that name and ending in its Linux end:"
+      echo "         $HO_SHIF" ;;
+    "$HO_IF "*)
+      echo "  [FAIL] the VTY's 'show interface' row for $HO_IF does not end"
+      echo "         in its Linux end: '$HO_SHIF'"
+      fail=1 ;;
+    *)
+      echo "  [FAIL] the VTY's 'show interface' has no row headed $HO_IF"
+      echo "         (it said '${HO_SHIF:-<nothing>}'): the card is listed"
+      echo "         under a name the operator never gave it"
+      fail=1 ;;
+  esac
+  HO_HWPCI=$(mfield "$CONSOLE_CLEAN" ho-hwpci)
+  echo "  -- the dataplane's pci row under $HO_IF:"
+  echo "     ${HO_HWPCI:-<none>}"
+  case "$HO_HWPCI" in
+    "pci: "*" address 0000:"*)
+      echo "  [ ok ] and the dataplane lists the card's PCI address under its"
+      echo "         Linux name, which is the row the card rule reads" ;;
+    *)
+      echo "  [FAIL] 'show hardware-interfaces' has no pci row under $HO_IF,"
+      echo "         so hexash cannot tell that name is a card's"
+      fail=1 ;;
+  esac
 fi
 
 echo

@@ -373,8 +373,8 @@ configure
   alg pptp on
   bypass destination 198.51.100.0/24
   exit
- nat cgnat interface TenGigabitEthernet0/0/0 inside
- nat cgnat interface TenGigabitEthernet0/0/1 outside
+ nat cgnat interface ens18 inside
+ nat cgnat interface ens19 outside
  show configuration compare
  commit check
  commit comment "pool residencial inicial"
