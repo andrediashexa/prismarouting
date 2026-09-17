@@ -385,9 +385,22 @@ echo "=== a published title that stops at the comma ==="
 # The defect this check was written for: four of the eight titles measured on
 # #340 dropped everything after the comma, which is where the second defect
 # that release fixed is named.
+#
+# ON A HEADING GIVEN A COMMA HERE, not on whatever the newest release's
+# heading happens to be. The cut was taken on that heading, and 0.76.1's has
+# no comma: the cut title was the whole heading, the gate accepted it because
+# it was right to, and this case went red measuring the shape of a sentence
+# somebody wrote rather than the gate - on every branch cut after that tag,
+# found by the make test of #375. The fixture's heading is rewritten the way
+# the next case rewrites it, so the cut drops something on every release,
+# and the guard says so if it ever does not.
 reset_fixture
 V=$(cat "$FIX/VERSION")
-printf '%s \342\200\224 %s\n' "$V" "${HEADLINE%%,*}" > "$GHBIN/title"
+COMMA_HEAD="one thing the box said, and the check that held it"
+sed -i "s/^## $V .*/## $V - $COMMA_HEAD/" "$FIX/CHANGELOG.md"
+[ "${COMMA_HEAD%%,*}" != "$COMMA_HEAD" ] \
+  || bad "the cut dropped nothing, so this measures the heading, not the gate"
+printf '%s \342\200\224 %s\n' "$V" "${COMMA_HEAD%%,*}" > "$GHBIN/title"
 retag "v$V"
 run_gate "v$V"
 [ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "does not carry the" \

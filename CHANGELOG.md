@@ -122,6 +122,18 @@ version has a chance of seeing it.
   differ by that one line, which is the one trim `--load` makes on purpose
   and the reason it is said out loud.
 
+* **`test/test_release_gate.sh` measured a heading's punctuation, not the
+  gate.** The case written for
+  [#340](https://github.com/andrediashexa/hexarouting/issues/340) - a
+  published title that stops at the comma - took its cut on whatever the
+  newest release's heading was, and 0.76.1's has no comma: the cut title was
+  the whole heading, the gate accepted it because it was right to, and `make
+  test` went red on every branch cut after that tag. Found by the `make test`
+  of [#375](https://github.com/andrediashexa/hexarouting/issues/375). The
+  case now gives the fixture's heading a comma of its own, so the cut drops
+  something on every release, and it was shown red against a gate whose title
+  comparison cannot refuse. A test-only change; no box behaves differently.
+
 ## 0.76.1 - two things the box said that were not true of the box saying them
 
 [#376](https://github.com/andrediashexa/hexarouting/issues/376), [#387](https://github.com/andrediashexa/hexarouting/issues/387).
