@@ -127,6 +127,44 @@ iso_pin() {  # <variable>
   sed -n "s/^$1=\${$1:-\(.*\)}\$/\1/p" "$REPO/appliance/build-iso.sh" | head -1
 }
 
+echo "=== say and pin, on their own ==="
+# The script refuses a tree with no plugin in it a few lines under them, so
+# both are cut out and called alone, as test/test_run_all_labs.sh does with
+# _jobs_by_mem. pin reads the versions out of a build-iso.sh that this suite
+# writes, with the two spellings that file uses: a default inside ${...:-}
+# and a plain assignment.
+sed -n '/^say() /p' "$REPO/appliance/build-upgrade.sh" > "$WORK/units.sh"
+sed -n '/^pin() /,/^}/p' "$REPO/appliance/build-upgrade.sh" >> "$WORK/units.sh"
+got=$(. "$WORK/units.sh"; say "packing the tree")
+[ "$got" = "==> packing the tree" ] \
+  && ok "say prints the step behind the '==>' the build log is read by" \
+  || bad "say gave '$got'"
+mkdir -p "$WORK/pins/appliance"
+printf '%s\n' 'VPP_VERSION=${VPP_VERSION:-26.06-release}' \
+               'FRR_VERSION=10.7.1-0~deb12u1' \
+               'VPP_VERSION=${VPP_VERSION:-99.99}' \
+  > "$WORK/pins/appliance/build-iso.sh"
+got=$(. "$WORK/units.sh"; REPO=$WORK/pins; pin VPP_VERSION)
+[ "$got" = "26.06-release" ] \
+  && ok "pin reads the default out of \${VPP_VERSION:-...} and takes the \
+first assignment, with none of the shell syntax left on it" \
+  || bad "pin VPP_VERSION gave '$got'"
+got=$(. "$WORK/units.sh"; REPO=$WORK/pins; pin FRR_VERSION)
+[ "$got" = "10.7.1-0~deb12u1" ] \
+  && ok "and a plain assignment comes out as written" \
+  || bad "pin FRR_VERSION gave '$got'"
+got=$(. "$WORK/units.sh"; REPO=$WORK/pins; pin NOT_PINNED)
+[ "$got" = "" ] \
+  && ok "and a variable the file does not pin is nothing, which the script \
+refuses on the next line rather than writing into the artifact" \
+  || bad "pin of an absent variable gave '$got'"
+got=$(. "$WORK/units.sh"; pin VPP_VERSION)
+[ -n "$got" ] && [ "$got" = "$(iso_pin VPP_VERSION)" ] \
+  && ok "and on this tree it agrees with this suite's own reading: $got" \
+  || bad "on this tree pin says '$got' and iso_pin says '$(iso_pin VPP_VERSION)'"
+
+echo
+
 fresh_tree
 
 echo "=== the artifact is built from a tree, with no root and no container ==="
@@ -611,7 +649,6 @@ stopped it: $OUTPUT" ;;
   esac
 fi
 
-echo
 if [ "$fail" -gt 0 ]; then
   echo "$fail FAILURES"
   exit 1

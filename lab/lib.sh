@@ -45,6 +45,7 @@ _rpki_module() {
      2>/dev/null | head -1
 }
 
+# not a unit: starts zebra, mgmtd and staticd by their absolute paths under /usr/lib/frr and writes /etc/frr, so no PATH stub reaches it; every FRR lab drives it in a container
 start_frr() {
   /usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf 2>/dev/null
   /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null

@@ -138,5 +138,24 @@ fi
 rm -rf "$h" "$d3"
 
 rm -rf "$d" "$empty"
+echo "=== iso_name, on its own ==="
+# The three spellings of an image's name, from the function that owns them.
+# It is cut out of the script and called alone, as test/test_run_all_labs.sh
+# does with _jobs_by_mem: the script goes to git on the line after it.
+u=$(mktemp -d)
+sed -n '/^iso_name() {/,/^}/p' "$STAMP" > "$u/iso_name.sh"
+got=$(. "$u/iso_name.sh"
+      iso_name 0.26.0 ""
+      iso_name 0.26.0 a1b2c3d
+      iso_name 0.26.0 a1b2c3d-dirty)
+[ "$got" = "hexarouting-0.26.0.iso
+hexarouting-0.26.0-a1b2c3d.iso
+hexarouting-0.26.0-a1b2c3d-dirty.iso" ] \
+  && ok "iso_name: the bare name for a release, the commit for another tree, \
+and -dirty for one built from uncommitted changes" \
+  || bad "iso_name gave:
+$got"
+rm -rf "$u"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

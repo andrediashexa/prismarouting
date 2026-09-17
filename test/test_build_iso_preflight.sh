@@ -223,6 +223,17 @@ emptied the working tree"
   && ok "and no ISO was written" \
   || bad "a refused build left an ISO at $WORK/out.iso"
 
+echo "=== say, on its own ==="
+# The line after say is defined refuses anyone who is not root, so the
+# function is cut out of the script and called alone, the way
+# test/test_run_all_labs.sh cuts _jobs_by_mem out of the lab suite. It is one
+# line, and every step the build reports goes through it.
+sed -n '/^say() /p' "$REPO/$BISO" > "$WORK/say.sh"
+got=$(. "$WORK/say.sh"; say "VPP 26.06 and FRR 10.7")
+[ "$got" = "==> VPP 26.06 and FRR 10.7" ] \
+  && ok "say prints the step behind the '==>' the build log is read by" \
+  || bad "say gave '$got'"
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
 echo "$fail FAILURES"
