@@ -2487,6 +2487,20 @@ and naming a card is the decision it always was. The medium's own card is
 still named on the list. An unattended install takes `none` too, unless it
 asks for an address, which is an install saying it wants a management network
 - and is how `lab/install-iso.sh` installs the box it then reaches over ssh.
+**`ping`, `traceroute` and `mtr` at the prompt**
+([#395](https://github.com/andrediashexa/hexarouting/issues/395)) - on the
+branch. Reachability is the first question anybody asks of a router and this
+VTY could not answer it: `start shell` was the only way, administrators only,
+every capability at once to ask about a packet. The three statements run
+Debian's own tools through an argument vector built in `probe_argv` and
+executed with no shell in the path, bounded by default and deadlined, with
+`count` and `source`; every account may run them, read-only included. The
+image carries the three packages and the boot self-test warns about one that
+is missing, because a statement whose tool is absent is a promise the box does
+not keep. `lab/install-iso.sh` types `ping <gateway> count 2` at
+the installed box's own VTY and counts the replies, reads back the refusal of
+a count this VTY does not take, and fails the medium that is missing one of
+the three tools - written and owed a run, like every lab.
 
 **`no shut` was handed to FRR in silence, and the interface stayed down**
 ([#393](https://github.com/andrediashexa/hexarouting/issues/393)) - shipped

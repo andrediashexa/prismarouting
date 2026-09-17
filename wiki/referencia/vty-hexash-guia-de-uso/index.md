@@ -123,12 +123,48 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 | `configure` | entra no modo de configuração |
 | `show ...` | exibe informação (ver a página de comandos `show`) |
 | `start shell` | abre um shell como processo filho; `exit` volta para a VTY. **Só administradores** — um shell nesta caixa é toda a capacidade de uma vez |
+| `ping <host>` | manda echo requests e mostra o que voltou. Aceita `count <n>` e `source <endereço>` |
+| `traceroute <host>` | o caminho até um host, uma linha por salto. Aceita `count <n>` (teto de saltos) e `source <endereço>` |
+| `mtr <host>` | pinga todos os saltos do caminho e imprime um relatório. Aceita `count <n>` (ciclos) e `source <endereço>` |
 | `rollback <0-19>` | carrega uma revisão commitada na candidata |
 | `save`  | grava a configuração em vigor em disco |
 | `system reboot` | reinicia a caixa. **Só root, hoje.** Uma conta `hexa-admin` que não é root passa pela VTY e é recusada pelo próprio systemd, nas palavras dele, porque a appliance não instala regra nenhuma que conceda isso a ela. Antes de agir, avisa o que custa: toda sessão nesta caixa termina; o dataplane para; **se há algo em vigor que o boot não repõe e não foi salvo, isso se perde no boot** (`save` o mantém; contas, SSH e SNMP ficam na caixa e não contam, então uma appliance recém-instalada, sem nada salvo, não é avisada); **se há um** `**commit confirmed**` **sem confirmar, a caixa volta revertida** (`commit` confirma). Os dois últimos são medidos na hora e só aparecem quando são verdade. Depois, a caixa volta sozinha assumindo a placa dela — nada precisa ser digitado no console dela |
 | `system shutdown` | desliga a caixa. **Só root, hoje**, como o `system reboot`, e com os mesmos avisos — sessões, dataplane, o que não foi salvo, o que não foi confirmado. Uma diferença: ela fica desligada até alguém ligá-la de novo, e só então volta assumindo a placa sozinha |
 | `install` | instala o HexaRouting num disco desta máquina — **só existe rodando a partir da ISO** |
 | `exit`  | encerra a sessão |
+
+### Alcançabilidade: `ping`, `traceroute` e `mtr`
+
+A primeira pergunta que alguém faz a um roteador é se ele alcança alguma coisa. As três respondem isso **de dentro da VTY**, e **qualquer conta pode rodá-las**, inclusive uma conta só de leitura: elas não mudam nada na caixa, e quem é chamado para dizer se a caixa alcança um destino nem sempre é quem pode configurá-la. Antes desta versão o único caminho era o `start shell`, que é só de administrador e entrega toda a capacidade de uma vez para responder uma pergunta sobre um pacote.
+
+```
+hexarouting> ping 8.8.8.8
+PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.
+64 bytes from 8.8.8.8: icmp_seq=1 ttl=117 time=8.44 ms
+...
+--- 8.8.8.8 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 4006ms
+
+hexarouting> traceroute 8.8.8.8 source 200.0.113.10
+hexarouting> mtr 8.8.8.8 count 10
+```
+
+**Toda sonda termina sozinha.** O padrão são 5 pacotes, o máximo que `count` aceita é 100, e existe um prazo de 300 segundos que interrompe a ferramenta que travar. Isso é deliberado: uma sonda que só para quando alguém interrompe, digitada no console serial de uma caixa no rack por quem depois foi embora, deixa aquele console inutilizável até alguém voltar. Ctrl-C também volta para o prompt, sem encerrar a sessão.
+
+O `mtr` roda em **modo relatório**, não em tela cheia: uma tela curses num console serial a 115200 é ilegível.
+
+**O que é recusado no prompt:**
+
+| Você digitou | A caixa diz |
+|---|---|
+| `ping` | `ping: no host`, com a forma de uso |
+| `ping 1.1.1.1 count` | `not an option of this statement` — a opção veio sem valor |
+| `ping x;rm` | `not a host` — nome é letra, dígito e hífen em rótulos separados por ponto |
+| `ping 1.1.1.1 count 0` | `count out of range` — é um inteiro de 1 a 100 |
+| `traceroute 1.1.1.1 source nome` | `not a source address` — a origem é um endereço, não um nome |
+| `mtr ...` numa caixa sem o `mtr` | `this box has no mtr`, dizendo o pacote que o traz |
+
+Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e executa o programa direto, sem shell nenhum no caminho.
 
 ## Comandos do modo de configuração
 
@@ -145,6 +181,9 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 | `snmp ...` | agente SNMP, somente leitura por construção |
 | `snmp-user <nome>` | um usuário SNMPv3 |
 | `commit ...` | aplica a candidata |
+| `ping <host>` | manda echo requests e mostra o que voltou. Aceita `count <n>` e `source <endereço>` |
+| `traceroute <host>` | o caminho até um host, uma linha por salto. Aceita `count <n>` (teto de saltos) e `source <endereço>` |
+| `mtr <host>` | pinga todos os saltos do caminho e imprime um relatório. Aceita `count <n>` (ciclos) e `source <endereço>` |
 | `rollback <0-19>` | carrega uma revisão commitada na candidata |
 | `show ...` | exibe informação |
 | `exit`  | sai do modo de configuração |

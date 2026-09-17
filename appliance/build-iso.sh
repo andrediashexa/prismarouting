@@ -103,12 +103,20 @@ chroot "$ROOT" /bin/sh -c "
   echo 'deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr bookworm frr-stable' > /etc/apt/sources.list.d/frr.list
 "
 
+# iputils-ping, traceroute and mtr-tiny are the three the VTY's own `ping`,
+# `traceroute` and `mtr` statements run (#395). They are in THIS list and not
+# the debootstrap one above because they are the product's, not the base
+# system's: hexash refuses each statement by naming its package, and the boot
+# self-test reads the same table back, so a tool dropped here is a tool the
+# box says is missing rather than a statement that fails in the tool's own
+# words.
 say "VPP $VPP_VERSION and FRR $FRR_VERSION"
 chroot "$ROOT" /bin/sh -c "
   export DEBIAN_FRONTEND=noninteractive VPP_INSTALL_SKIP_SYSCTL=1
   apt-get update -qq
   apt-get install -y --no-install-recommends \
     squashfs-tools dosfstools parted fdisk mdadm \
+    iputils-ping traceroute mtr-tiny \
     vpp=$VPP_VERSION vpp-plugin-core=$VPP_VERSION vpp-plugin-dpdk=$VPP_VERSION \
     libvppinfra=$VPP_VERSION \
     frr=$FRR_VERSION frr-pythontools=$FRR_VERSION \

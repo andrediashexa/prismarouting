@@ -1278,6 +1278,39 @@ drive_console() {
   send 'echo "HX""LAB mgmt-unit=$(systemctl is-enabled networking 2>&1) $(systemctl is-active networking 2>&1)"'
   wait_for "HXLAB mgmt-unit=" 30 \
     "systemd to say what it did with the management network" || return 1
+  # ------------- can the box reach anything, ASKED OF THE VTY (#395)
+  #
+  # THE STATEMENT AN OPERATOR TYPES, on the box the medium installed, against
+  # a host this lab knows the answer for: the gateway qemu's user network
+  # hands out, which is what the management card just got its default route
+  # to. A unit test can assert the argument vector and nothing else; whether
+  # this appliance can actually send an echo request and read the reply is a
+  # property of the installed image - the tool being in it, the VTY finding
+  # it, and the account being allowed to run it.
+  #
+  # Through `hexash -c` rather than at the prompt, because the statement and
+  # the batch go through the same dispatch and the batch can be read back
+  # from a serial line without timing anything.
+  #
+  # THE COUNT IS 2 and the deadline is the VTY's own: a lab that waited for
+  # five packets against an unreachable host would be waiting on the default.
+  send 'G=$(ip -o -4 route list default | awk "{print \$3}" | head -1); echo "HX""LAB probe-gw=$G"'
+  wait_for "HXLAB probe-gw=" 30 \
+    "the box to say which gateway it would be pinging" || return 1
+  send 'echo "HX""LAB probe-ping=$(hexash -c "ping $G count 2" 2>&1 | tr -d "\r" | grep -c " bytes from ")"'
+  wait_for "HXLAB probe-ping=" 120 \
+    "the VTY's own ping to answer" || return 1
+  # AND THE REFUSAL, from the same box, because a statement that only ever
+  # says yes is one nobody has seen decide. A read-only account is not
+  # arranged here - that is what the unit suite drives - but an answer this
+  # VTY must not accept is, and it must not reach the tool at all.
+  send 'echo "HX""LAB probe-refused=$(hexash -c "ping 1.1.1.1 count 0" 2>&1 | tr -d "\r" | grep -c "count out of range")"'
+  wait_for "HXLAB probe-refused=" 60 \
+    "the VTY to refuse a count it does not take" || return 1
+  send 'echo "HX""LAB probe-tools=$(for t in ping traceroute mtr; do command -v $t >/dev/null 2>&1 || echo $t; done | tr "\n" " ")"'
+  wait_for "HXLAB probe-tools=" 30 \
+    "the box to say which reachability tools it has not got" || return 1
+
   # ------------- the card the box claimed, with nobody having typed (#378)
   #
   # THE ABSENCE OF AN OPERATOR IS THE SUBJECT. Every reading here is taken
@@ -2206,6 +2239,42 @@ if [ "$up" = 1 ]; then
         fail=1 ;;
     esac
   fi
+  # ---- and the VTY could reach something, typed as an operator types it ----
+  PROBE_GW=$(sed -n 's/^HXLAB probe-gw=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  PROBE_PING=$(sed -n 's/^HXLAB probe-ping=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  PROBE_REFUSED=$(sed -n 's/^HXLAB probe-refused=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  PROBE_TOOLS=$(sed -n 's/^HXLAB probe-tools=//p' /tmp/disk-clean.log | head -1 | tr -d '\r' | sed 's/ *$//')
+  if [ -z "$PROBE_TOOLS" ]; then
+    echo "  [ ok ] the image carries ping, traceroute and mtr, which the VTY's"
+    echo "         own statements run"
+  else
+    echo "  [FAIL] the installed image has no: $PROBE_TOOLS"
+    echo "         hexash offers a statement for each, and refuses the ones"
+    echo "         whose tool is not here: that is a promise the medium does"
+    echo "         not keep"
+    fail=1
+  fi
+  case "$PROBE_PING" in
+    ""|0)
+      echo "  [FAIL] 'ping $PROBE_GW count 2' typed at this box's VTY brought"
+      echo "         back no reply at all ('${PROBE_PING:-<unread>}' replies)."
+      echo "         That gateway is the one its own default route points at"
+      fail=1 ;;
+    *)
+      echo "  [ ok ] and 'ping <gateway> count 2' at the VTY brought back"
+      echo "         $PROBE_PING replies, from $PROBE_GW" ;;
+  esac
+  if [ "$PROBE_REFUSED" = 1 ]; then
+    echo "  [ ok ] and a count this VTY does not take is refused at the"
+    echo "         prompt, before any tool is run"
+  else
+    echo "  [FAIL] 'ping 1.1.1.1 count 0' was not refused by the VTY on the"
+    echo "         installed box ('${PROBE_REFUSED:-<unread>}' matches). A"
+    echo "         statement that only ever says yes is one nobody has seen"
+    echo "         decide"
+    fail=1
+  fi
+
   # AND IT ANSWERED FROM OUTSIDE. This is the assertion the other five cannot
   # make: they are the box talking about itself on a serial line, and the
   # release gate has been reading those for the whole life of a product whose

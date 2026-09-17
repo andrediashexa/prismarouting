@@ -823,6 +823,30 @@ else
   esac
 fi
 
+# --- can this box reach anything, and can it say so? ---
+#
+# The three statements the VTY answers reachability with run Debian's own
+# tools (#395), and a statement whose tool is absent is a promise the box does
+# not keep - found by an operator diagnosing something else, at the moment
+# they had a question. The VTY refuses such a statement by naming the package;
+# this says the same thing at boot, where nobody has to ask first.
+#
+# A warning and not a failure: a box with no mtr forwards every packet it is
+# given, and the release this line was written for would rather say what is
+# missing on a box that works than refuse to declare one.
+probe_missing=""
+for _p in ping traceroute mtr; do
+  command -v "$_p" >/dev/null 2>&1 || probe_missing="$probe_missing $_p"
+done
+if [ -z "$probe_missing" ]; then
+  ok "ping, traceroute and mtr are installed, so the VTY can reach out"
+else
+  warn "the VTY cannot run:$probe_missing"
+  say "         each is an operational statement of hexash, and the box"
+  say "         refuses the ones whose tool is not here. They come from"
+  say "         iputils-ping, traceroute and mtr-tiny"
+fi
+
 # --- plano de controle ---
 if vtysh -c "show version" >/dev/null 2>&1; then
   ok "FRR responding"
