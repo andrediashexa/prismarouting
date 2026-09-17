@@ -1698,12 +1698,14 @@ nobody confirms.
 **Why the gate never caught it**, measured rather than shrugged at: the gate's
 box has one NIC, it never contacts the box over the network, and it never asks
 the box to accept a dataplane interface. `lab/install-iso.sh` now power-cycles
-the machine and reaches it from outside, and `lab/one-nic.sh` carries the
-handover against a real dataplane.
+the machine and reaches it from outside, and the one-NIC lab, `one-nic`,
+carried the handover against a real dataplane until
+[#385](https://github.com/andrediashexa/hexarouting/issues/385) removed the
+handover it modelled.
 
 **And nothing had ever performed the bind.** Handing a card over means
 unbinding it from its kernel driver and binding it to `vfio-pci` or
-`uio_pci_generic`. `lab/one-nic.sh` models that step and says so in its own
+`uio_pci_generic`. The `one-nic` lab modelled that step and said so in its own
 header, because a container has no PCI device to give DPDK; `lab/install-iso.sh`
 booted a real guest with a real virtio card and never asked the box to take it.
 So what was proven was the decision and the boot-time replay, and the driver
@@ -2360,16 +2362,22 @@ work - a default route with no author, which nearly hid because the guest's
 gateway sits on its own wire, and a computed record leaking into the saved
 configuration and winning on the next boot.
 
-**And the apparatus is half removed**
-([#385](https://github.com/andrediashexa/hexarouting/issues/385)). The
-confirmed-commit window and its restart went, because they undid nothing: the
-revert cleared the setting and the next boot claimed the card again, so the
-window arrived where it began and charged a reboot for it while the console
-said the card was going back. What is left is the refusals, the commit-time
-writer, the `dataplane management` statement and `HEXA_DATAPLANE_MGMT` itself,
-each a step with its own check. Nothing is deleted before the thing that
-replaces it has been seen working, which is why 0.76.0 ships with it half
-present rather than with a half-removed guard.
+**And the apparatus is gone**
+([#385](https://github.com/andrediashexa/hexarouting/issues/385)) - *done*.
+The confirmed-commit window and its restart went in 0.76.0, because they undid
+nothing: the revert cleared the setting and the next boot claimed the card
+again, so the window arrived where it began and charged a reboot for it while
+the console said the card was going back. The rest went one step per commit,
+each with its check shown failing, once the computed way back had been seen
+working on an installed box: the tuner's refusal of the named management card
+and `--keep-management`, the binder's refusal, the prompt's refusal (the
+spelling one stays), the VTY's own record and its precedence over the
+tuner's, the commit-time writer, the `dataplane management` statement - a
+0.76.x file carrying one loads with the line dropped and a note - the key
+`HEXA_DATAPLANE_MGMT` from every reader, and the `one-nic` lab, whose
+surviving claims are held offline or by the installed box. The maintainer's direction
+throughout: a box is configured at its console when it is new, so a guard on
+the card it is reached over guards a step nobody takes over the network.
 
 **Two more from the maintainer's own box, a day into 0.76.0**
 

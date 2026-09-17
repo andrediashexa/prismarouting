@@ -545,12 +545,18 @@ an ordinary one - the setting goes, and restarting would be this feature
 rebooting a box that was reachable the whole time. The dataplane is asked
 whether it actually holds the recorded MAC before anything is restarted.
 
-`lab/one-nic.sh` measures the whole of it against a real dataplane: a box with
-one card, its address and its default route, the card handed to VPP, the boot
-replay, and an upstream that pings and opens a TCP session to the box from off
-its own subnet afterwards. What that lab does not do - and what the header of
-the file says at length - is any part of the work the product is being measured
-for.
+What proves the whole of it is `lab/install-iso.sh`, PHASE 4 and 5, on an
+installed box: the card claimed and bound by the box itself, the address on the
+pair and the route back after a power cycle, and an SSH banner read from
+outside. The one-NIC lab, `one-nic`, used to model the handover in a container
+- the card named at the prompt, the bind stood in for with a `tc` drop, the
+boot replay, a ping and a TCP session from off the box's subnet - and went with
+[#385](https://github.com/andrediashexa/hexarouting/issues/385): every claim it
+could still make is either the prompt accepting a name, which
+`test/test_dataplane_if.py` holds without a box, or the boot replay putting the
+way back on the pair, which it could only have held by writing the tuner's
+`/run` record itself - the product's work, which its own header forbade it to
+do - and which the installed box holds with the real tuner.
 
 ### What the dataplane holds is said once, and first
 

@@ -3145,8 +3145,9 @@ fi
 #
 # Handing a card to the dataplane means unbinding it from its kernel driver
 # and binding it to vfio-pci or uio_pci_generic. NOTHING IN THIS REPOSITORY
-# HAS EVER PERFORMED THAT BIND. lab/one-nic.sh models it and says so in its
-# own header, because a container has no PCI device to hand DPDK. Every phase
+# HAD EVER PERFORMED THAT BIND before this phase: lab/one-nic.sh modelled it
+# in a container, which has no PCI device to hand DPDK, and that lab went
+# with #385 because this phase is the only place the bind is real. Every phase
 # above this one boots a real guest with a real virtio card and never asks the
 # box to take it - PHASE 2 asserts the opposite, that a box claims a NAMED
 # card or none at all, which is the check that stops a box swallowing its own
@@ -3439,9 +3440,9 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send "exit"
     wait_for "hexarouting> " 60 "the shell to close" || fail=1
     # And in the operator's own words, on the console, so the log carries what
-    # they would see. The confirmed-commit half of this handover is measured
-    # in lab/one-nic.sh, against a real dataplane, including the revert when
-    # nobody confirms; it is not repeated here.
+    # they would see. Nothing is armed by this commit since #378, and nothing
+    # is written down beside the card since #385: what the box does with the
+    # card is decided at the next start, and PHASE 5 reads it there.
     send "show interface"
     wait_for "hexarouting> " 120 "the dataplane to list its interfaces" \
       || fail=1

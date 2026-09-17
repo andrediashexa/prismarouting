@@ -56,8 +56,8 @@
 #
 # What makes it safe: tools/lab.sh runs each lab in its own container WITHOUT
 # --network=host, so each has its own network namespace. The fixed veth and
-# netns names in routing, bgp-policy, lcp, ipfix, ipfix-tcp, ipfix-stop, vty
-# and one-nic do not collide with each other - and routing and bgp-policy use the SAME
+# netns names in routing, bgp-policy, lcp, ipfix, ipfix-tcp, ipfix-stop and
+# vty do not collide with each other - and routing and bgp-policy use the SAME
 # ones, veth-out and the `peer` namespace among them, which is only safe
 # because of that separate namespace. Only hw-vpp uses host networking, and it
 # is already excluded.

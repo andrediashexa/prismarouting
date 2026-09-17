@@ -193,6 +193,21 @@ version has a chance of seeing it.
     `/run` record, shown red against the 0.76.1 self-test, which read
     `tune.env` and found nothing there.
 
+  * **The one-NIC lab, `one-nic`, is deleted.** It was #303's whole proof: a one-card
+    box in a container, the card named at the prompt, the bind stood in for
+    with a `tc` drop, the boot replay, and a ping and a TCP session from off
+    the box's subnet. Each claim it could still make is held elsewhere or
+    could not honestly be made there any more - the prompt accepting the
+    only card is `test/test_dataplane_if.py` without a box; the boot replay
+    putting the way back on the pair it could only have held by writing the
+    tuner's `/run` record itself, the product's work its own header forbade;
+    and the revert it waited a minute for is the window 0.76.0 removed. The
+    installed box in `lab/install-iso.sh` PHASE 4 and 5 holds the whole path
+    with the real tuner and binder. Two readers held the lab's place and
+    went red on its deletion before they were moved: `docs/context.md`
+    named it as authoritative for invariant 1.5, and the off-run floor in
+    `test/test_off_run_coverage.sh` said 32 where the tree had 31.
+
   **What it costs a box already in service.** Naming the card your session
   arrives on, with `dataplane interface`, is no longer refused on a box that
   has another card: the box takes the card you named at the next start of

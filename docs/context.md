@@ -134,7 +134,8 @@ be undone, because the way back is computed on every boot rather than
 remembered from one commit.
 
 *Authoritative:* [appliance.md](appliance.md), [routing.md](routing.md),
-`lab/hw-lab.sh`, `lab/one-nic.sh`.
+`lab/hw-lab.sh`, `lab/install-iso.sh` (PHASE 4 and 5: the box takes its own
+card and answers from outside afterwards).
 
 ### 1.6 The VTY changes the dataplane through vat2 — one process per call
 
