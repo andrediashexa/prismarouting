@@ -830,6 +830,88 @@ card at all, or one whose way back could not be read. The boot self-test still
 says so out loud, because a box that forwards nothing looks like a box that is
 working.
 
+### The card carries its Linux name
+
+Without a name, VPP calls a claimed port after its PCI address:
+`0000:00:13.0` becomes `GigabitEthernet0/13/0`, whatever the card is, and
+`0000:00:08.0` on a 10G card becomes `TenGigabitEthernet0/8/0`. Those are 21
+and 23 characters. FRR 10.7.1 refuses any interface name over 16 - every
+daemon answers *"Maximum interface name length is 16 characters"* - and every
+`interface` block typed at the VTY is staged as an FRR stanza, so on an
+installed box no interface could leave `shutdown`: the commit handed FRR the
+stanza, the routing reload failed and the commit rolled back. Measured on the
+maintainer's box running 0.76.1, from a commit with one statement in it, and
+never in a lab, whose interfaces are `pg0` and `host-veth-vpp`
+([#389](https://github.com/andrediashexa/hexarouting/issues/389)).
+
+The tuner therefore MUST write `name <linux name>` inside the `dev` block of
+every card it claims, and the name MUST be the one Linux gave the card, read
+in the same pass that decided to claim it:
+
+```
+dpdk {
+  dev 0000:00:13.0 {
+    name ens19
+    num-rx-queues 1
+    num-tx-queues 1
+  }
+  dev default {
+    num-rx-queues 1
+  }
+}
+```
+
+`name` is the keyword this VPP takes for it, measured against the real binary
+in the keyword-by-keyword run recorded above the stanza renderer; a Linux
+netdev name is at most 15 characters by construction, so it always fits FRR.
+`show interface` then says `ens19`, the VTY says `interface ens19`, and the
+operator never meets a bus-derived name. The reserved card has no stanza and
+so no name: it is Linux's, under that same name.
+
+**The Linux end of the pair gets the same name.** The card's netdev is gone
+once the card is bound to `vfio-pci`, so the name is free, and a card with an
+`interface` block MUST be paired into Linux as itself - `ip link` and FRR see
+`ens19` where the dataplane does - unless `linux-name` names the pair
+otherwise. That default is written into the configuration at apply time, on
+every path that reaches the box, so `show configuration`, the rollback
+revision and `save` all carry ` linux-name ens19` and the running
+configuration read back from `show lcp` agrees with them; a default that
+lived only in a rule would be a statement in the running text and not in the
+candidate, and every commit would remove the pair. A loopback, a
+sub-interface and a host interface are not cards and keep the rule they had:
+their pair is the operator's to ask for with `linux-name`.
+
+**A name FRR cannot take is refused before anything is applied.** A device
+nobody named - a `startup.conf` edited by hand, a VPP that ignored `name` -
+still gets VPP's own spelling, and an `interface` block under it is refused
+by the commit check with the limit in the sentence:
+
+```
+error: interface GigabitEthernet0/13/0: a name FRR cannot take
+    FRR takes an interface name of at most 16 characters and this one is 21;
+    the routing daemons refuse the block, the reload fails and the whole commit
+    rolls back
+```
+
+The 15 and the 16 each have one owner in `src/hexash/config.py`:
+`LINUX_IFNAME_MAX` is IFNAMSIZ less the terminator and bounds `linux-name`
+and the default above; `FRR_IFNAME_MAX` is FRR's own check and bounds the
+refusal.
+
+**The upgraded box.** A configuration saved by 0.76.1 says `interface
+GigabitEthernet0/13/0`, and after the upgrade the box holds that card as
+`ens19`. `hexash --load` MUST NOT refuse that file: the old name encodes the
+address and `show hardware-interfaces` prints the address of every card the
+box holds, so the file is loaded under the new name wherever it used the old
+one - the block, the CGNAT attachment, a sub-interface keeping its tag - with
+`note: GigabitEthernet0/13/0 is ens19 on this box` in the boot log,
+and the next `save` writes the new name. Two cards at one bus, slot and
+function in two PCI domains are not told apart, and then nothing is guessed:
+the file is refused naming what the box has, as before. Where the box still
+holds the old name, the FRR stanza under it - which FRR never held on any
+version - is dropped with a note and the dataplane half loads, the trim
+`--load` already makes for a `block-stride` nothing read.
+
 ### Naming the card from the VTY
 
 The empty default is the right answer to #123 and it left the other half

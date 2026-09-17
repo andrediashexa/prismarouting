@@ -253,6 +253,31 @@ check("tap" not in pairs and "type" not in pairs,
 check(pairs["host-veth-mgmt"] != pairs["host-veth-vpp"],
       "two pairs stay two pairs")
 
+# A CARD PAIRED AS ITSELF (#389): the tuner names the card ens19 and the
+# pair's Linux end is ens19 too, so the line carries the name twice. Read by
+# `show interface`'s Linux column, which used to drop every occurrence of the
+# interface's own name and would have printed the TAP alone.
+SAME = "itf-pair: [0] ens19 tap0 ens19 5 type tap\n"
+_if = routes.parse_interfaces(
+    "              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)\n"
+    "ens19                             1      up          9000/0/0/0\n"
+    "tap0                              2      up          9000/0/0/0\n",
+    "", SAME)
+check(_if["ens19"]["host"] == "tap0 ens19",
+      f"a card paired as itself does not show its Linux end, only the TAP: "
+      f"{_if['ens19']['host']!r}")
+check(_if["tap0"]["host"] == "ens19",
+      f"and the TAP's row names the card once, not twice: "
+      f"{_if['tap0']['host']!r}")
+_old = routes.parse_interfaces(
+    "              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)\n"
+    "host-veth-vpp                     1      up          9000/0/0/0\n",
+    "", LCP)
+check(_old["host-veth-vpp"]["host"] == "tap4096 vppwan0",
+      f"and a pair with its own Linux name reads as it did: "
+      f"{_old['host-veth-vpp']['host']!r}")
+print("  ens19 tap0 ens19 -> Linux column 'tap0 ens19'")
+
 # --- the interfaces VPP owns, and the faults that depend on knowing them ---
 #
 # The claim "the old positional parse cannot work" was held to account against

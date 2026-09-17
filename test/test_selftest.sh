@@ -706,6 +706,14 @@ if said "linux-name <name>"; then
 else
   bad "the report does not say how to create the pair"
 fi
+# AND THE DEFAULT A CARD GETS (#389): a card named after its Linux card is
+# paired under that name by any 'interface' block, so the operator at this
+# console is told the shortest way there and not only the override.
+if said "paired under that name by any 'interface' block"; then
+  ok "and that a card's own block pairs it under the card's name"
+else
+  bad "the report does not say a card's block pairs it by default"
+fi
 # A box that forwards CGNAT and runs no routing at all is a supported
 # configuration of this product. Failing it over a pair it does not need is
 # how a self-test's failures stop being read.

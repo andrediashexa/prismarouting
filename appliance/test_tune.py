@@ -1163,6 +1163,93 @@ with tempfile.TemporaryDirectory() as root:
           f"naming one card did not stop the box claiming the others, so an "
           f"operator cannot keep a card for anything: {devs}")
 
+print("\n=== every claimed card keeps its Linux name in the dataplane (#389) ===")
+# WHY A NAME AT ALL. Without one VPP calls the port after its PCI address -
+# GigabitEthernet0/13/0, 21 characters - and FRR 10.7.1 refuses any interface
+# name over 16, so on an installed box no interface could leave `shutdown`:
+# every commit of an `interface` block failed at the routing reload and rolled
+# back. Every card gets a name here, and the name is the one Linux gave it,
+# read in the same pass that decided to claim it. The reserved card has no
+# stanza and so no name: it is Linux's, under that same name.
+#
+# READ PER BLOCK, not as "name eth1 somewhere in the file": a name in the
+# wrong block is a card called after another card, which is worse than the
+# PCI spelling it replaces.
+def dev_blocks(out):
+    """{pci: [the lines inside that card's dev block]} of the dpdk stanza."""
+    blocks, pci, acc = {}, None, []
+    for line in _dpdk_stanza(out).splitlines():
+        w = line.split()
+        # `dev default` is the defaults block, not a card.
+        if w[:1] == ["dev"] and len(w) == 3 and w[2] == "{" \
+                and w[1] != "default":
+            pci, acc = w[1], []
+        elif w[:1] == ["}"] and pci is not None:
+            blocks[pci] = acc
+            pci = None
+        elif pci is not None:
+            acc.append(line.strip())
+    return blocks
+
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    add_nic(root, "eth2", "0000:3b:00.2")
+    out = run(root)
+    blocks = dev_blocks(out)
+    for pci, name in (("0000:3b:00.0", "eth0"), ("0000:3b:00.1", "eth1"),
+                      ("0000:3b:00.2", "eth2")):
+        check(f"name {name}" in blocks.get(pci, []),
+              f"the dev block for {pci} does not name the card {name}, so the "
+              f"dataplane calls it after its address and FRR refuses it: "
+              f"{blocks.get(pci)}")
+    print("  " + "; ".join(f"{p} is {[l for l in b if l.startswith('name ')]}"
+                           for p, b in sorted(blocks.items())))
+
+# THE RESERVED CARD IS NAMED NOWHERE. It has no dev block, and a `name eth1`
+# that turned up in another card's block would be the wrong-block defect
+# above.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    add_nic(root, "eth2", "0000:3b:00.2")
+    reserve(root, "eth1")
+    out = run(root)
+    blocks = dev_blocks(out)
+    check("name eth1" not in _dpdk_stanza(out),
+          f"the card reserved for Linux is named in the dataplane's stanza: "
+          f"{_dpdk_stanza(out)}")
+    check(sorted(blocks) == ["0000:3b:00.0", "0000:3b:00.2"]
+          and "name eth0" in blocks["0000:3b:00.0"]
+          and "name eth2" in blocks["0000:3b:00.2"],
+          f"the two claimed cards are not each named in their own block: "
+          f"{blocks}")
+    print("  eth1 reserved: named nowhere; eth0 and eth2 named in their blocks")
+
+# The override names that card and no other, under that same name.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    out = run(root, "--interface", "eth1")
+    blocks = dev_blocks(out)
+    check(list(blocks) == ["0000:3b:00.1"]
+          and "name eth1" in blocks["0000:3b:00.1"],
+          f"the named card is not the one card named in the stanza: {blocks}")
+
+# And the virtio shape, which is every VM this product is first tried on: the
+# name is the netdev's, whatever bus device sits between it and the address.
+_nd = tempfile.mkdtemp()
+build(_nd, 1, 4, 1, nic_node=0, hugepages_gb=8, isolated="1-3",
+      nic_pci="0000:00:13.0", nic_bus="virtio4")
+_nout = run(_nd)
+check("name eth0" in dev_blocks(_nout).get("0000:00:13.0", []),
+      f"a virtio card's block does not carry its Linux name: "
+      f"{dev_blocks(_nout)}")
+print("  and a virtio card is named eth0 in the block for 0000:00:13.0")
+
 print("\n=== each card gets the queue count ITS card reports (#330, plural) ===")
 # One number for the box is the -22 of #330 arrived at from the other side: a
 # virtio card beside a 10G card cannot take the 10G card's queue count.

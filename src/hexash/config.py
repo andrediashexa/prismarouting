@@ -1038,6 +1038,36 @@ def ordered_globals(lines) -> list:
     return sorted(lines, key=lambda l: (global_key(l) == "cgnat logging", l))
 
 
+#: The longest name Linux gives a netdev. IFNAMSIZ is 16 WITH the terminator,
+#: so a name is at most 15 characters, and it never carries a '/'. THE owner
+#: of the 15: the `linux-name` check at the prompt and the one in a saved
+#: file both ask linux_ifname_error() below, and so does the default a
+#: claimed card's pair gets (#389).
+LINUX_IFNAME_MAX = 15
+
+#: The longest interface name FRR takes in a configuration. FRR's own check
+#: says it - "Maximum interface name length is 16 characters", measured on
+#: FRR 10.7.1 refusing `interface GigabitEthernet0/13/0` from every daemon at
+#: once (#389). One more than Linux allows, so a 16-character dataplane name
+#: reaches FRR as a stanza and a 21-character one is refused by hexash before
+#: FRR is handed it. THE owner of the 16: hexash's commit check asks here.
+FRR_IFNAME_MAX = 16
+
+
+def linux_ifname_error(name: str):
+    """
+    Why Linux cannot name a netdev `name`, or None when it can.
+
+    One sentence for the prompt and for a file, because the two had their
+    own copies of the 15 and the reason. VPP's own names are full of '/',
+    and copying one across as a `linux-name` is the obvious mistake to make.
+    """
+    if not name or len(name) > LINUX_IFNAME_MAX or "/" in name:
+        return (f"'{name}' cannot be a Linux interface name "
+                f"({LINUX_IFNAME_MAX} characters, no '/')")
+    return None
+
+
 def _is_loopback(name: str) -> bool:
     """
     Is this VPP's spelling of a loopback?
@@ -1330,6 +1360,60 @@ class Config:
         out.append(ROUTING_HEADER)
         out += group_static(self.routing)
         return "\n".join(out) + "\n"
+
+    def frr_interface_names(self) -> list:
+        """
+        The interfaces the routing section opens a stanza for, in order.
+
+        Every `interface <name>` typed at the VTY is staged as an FRR stanza
+        whether or not anything FRR needs follows it, so this is the list of
+        names FRR is handed - which is where a name FRR cannot take is
+        refused (#389). Read the way the interface-existence check reads
+        them: a column-0 `interface` line with one word after it.
+        """
+        out = []
+        for path, line in zip(block_paths(self.routing), self.routing):
+            w = line.split()
+            if path == [] and len(w) == 2 and w[0] == "interface":
+                out.append(w[1])
+        return out
+
+    def drop_frr_interface_blocks(self, names) -> list:
+        """
+        Take the FRR stanzas for `names` out of the routing section: the
+        header, what was typed inside it, and its own `exit`. Returns the
+        names dropped, in order.
+
+        For `hexash --load` alone (#389). FRR refuses a stanza whose name is
+        over FRR_IFNAME_MAX characters, so a saved file carrying one never
+        had that stanza in FRR on any version; replaying the file minus the
+        stanza is replaying the configuration the box had, and refusing the
+        file whole would be a box coming up with no pool on it over a block
+        FRR was never holding. The dataplane half of the interface - the
+        addresses, the MTU, the CGNAT attachment - is not in here and stays.
+
+        Walked with block_paths() because `routing` arrives in two shapes,
+        indented from FRR and flat from the prompt, and both are read there.
+        """
+        drop = set(names)
+        out, dropped, inside = [], [], None
+        for path, line in zip(block_paths(self.routing), self.routing):
+            stmt = line.strip()
+            w = stmt.split()
+            if (path == [] and len(w) == 2 and w[0] == "interface"
+                    and w[1] in drop):
+                inside, dropped = stmt, dropped + [w[1]]
+                continue
+            if inside is not None:
+                if path is not None and path[:1] == [inside]:
+                    continue                    # a statement of the block
+                if path is None and stmt in FRR_BLOCK_CLOSERS:
+                    inside = None               # the block's own exit
+                    continue
+                inside = None                   # closed by what follows
+            out.append(line)
+        self.routing = out
+        return dropped
 
     def interface_names(self) -> set:
         """
@@ -1709,14 +1793,13 @@ class Config:
                 elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
                     cfg.mtus[iface] = int(w[1])
                 elif w[0] == "linux-name" and len(w) > 1:
-                    # Linux refuses a name over 15 characters, and VPP's own
-                    # API field is 16 with the terminator. Refused here rather
-                    # than at commit, because the message an operator gets from
-                    # the dataplane for this is a bare retval.
-                    if len(w[1]) > 15 or "/" in w[1]:
-                        cfg.unknown.append(
-                            (lineno, s, f"'{w[1]}' cannot be a Linux "
-                             "interface name (15 characters, no '/')"))
+                    # Refused here rather than at commit, because the message
+                    # an operator gets from the dataplane for this is a bare
+                    # retval. The limit and the sentence are
+                    # linux_ifname_error()'s, not a second copy.
+                    why = linux_ifname_error(w[1])
+                    if why:
+                        cfg.unknown.append((lineno, s, why))
                     else:
                         cfg.linux_names[iface] = w[1]
                 elif s == "no linux-name":

@@ -267,6 +267,13 @@ shape onecard "$R" 9000 --interface ens18 --keep-management
 grep -q "dev 0000:00:12.0" "$WORK/onecard.conf" \
   && ok "and it names the device the operator chose" \
   || bad "the 'onecard' shape named no device"
+# AND NAMES IT AFTER ITS LINUX CARD (#389): `name ens18` inside the dev
+# block. VPP's acceptance of the whole file above is the measurement that
+# matters; this says the keyword was in the file it accepted, so a tuner that
+# stopped writing it cannot pass on a file VPP had nothing to refuse in.
+grep -q "name ens18" "$WORK/onecard.conf" \
+  && ok "and the device carries its Linux name" \
+  || bad "the 'onecard' shape names the device after nothing"
 
 # 4. A CARD WHOSE MAXIMUM MTU IS BELOW VPP'S DEFAULT. This is #377's box and
 # the shape nothing had ever generated: the tuner reads the maximum off the
@@ -340,6 +347,12 @@ shape twocards "$R" 9000 --interface ens19
 grep -q "dev 0000:00:13.0" "$WORK/twocards.conf" \
   && ok "and it names the second card, not the first" \
   || bad "the 'twocards' shape named the wrong device"
+grep -q "name ens19" "$WORK/twocards.conf" \
+  && ok "and the second card keeps its Linux name" \
+  || bad "the 'twocards' shape names the device after nothing"
+grep -q "name ens18" "$WORK/twocards.conf" \
+  && bad "the 'twocards' shape names a card it did not claim" \
+  || ok "and the card it did not claim is named nowhere"
 
 echo
 # One of the three verdict lines tools/run-tests.sh reads, so this file can

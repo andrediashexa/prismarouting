@@ -77,6 +77,108 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **No interface could leave `shutdown` on an installed box, and the
+  dataplane interface now carries the card's Linux name**
+  ([#389](https://github.com/andrediashexa/hexarouting/issues/389)). On the
+  maintainer's box, running 0.76.1, `interface GigabitEthernet0/13/0` /
+  `no shutdown` / `commit` answered `Failure to communicate[13] to ospf6d`,
+  `error: routing reload failed` and a rollback, from a commit with one
+  statement in it. Every `interface` block typed at the VTY is staged as an
+  FRR stanza, and FRR 10.7.1 refuses any interface name over 16 characters -
+  *"Maximum interface name length is 16 characters"*, from every daemon at
+  once. Every name VPP gives a card nobody named is over it:
+  `GigabitEthernet0/13/0` is 21, `TenGigabitEthernet0/8/0` is 23. The labs
+  never met it because their interfaces are `pg0`, `pg1`, `dum9` and
+  `host-veth-vpp`.
+
+  **What an operator sees now.** The card keeps the name it had in Linux.
+  `show interface` lists `ens19`, the prompt reads `[edit interface ens19]`,
+  `show hardware` says *the dataplane holds ens19*, and the boot self-test
+  names the same card. The tuner writes `name <linux name>` inside the `dev`
+  block of every card it claims - the name read off `/sys/class/net` in the
+  same pass that claims the card, at most 15 characters by construction - and
+  VPP takes the keyword (measured: `dev { name eth0 } accepted`). The
+  reserved card has no stanza and so no name: it stays Linux's, under that
+  same name. `configure` / `interface ens19` / `no shutdown` / `commit` is the
+  transcript that failed, and it is the one `lab/install-iso.sh` is owed
+  driving on the installed box.
+
+  **The Linux end of the pair is `ens19` too.** A card with an `interface`
+  block is paired into Linux under its own name, so `ip link` and FRR see
+  `ens19` where the dataplane does, and `interface ens19 / ip ospf area 0`
+  acts on the port. Measured before the change: with no `linux-name`,
+  `d["lcp_set"]` carried nothing and the pair simply did not exist. The
+  default is written into the configuration at apply time - `commit`,
+  `rollback` and `--load` alike - so `show configuration` and `save` carry
+  ` linux-name ens19` and the running configuration read off `show lcp`
+  agrees with them. `linux-name <other>` still overrides it, and on a card
+  already carrying its default pair that is a rename: the old pair is removed
+  before the new one is made, because the dataplane answers *exists* to a
+  second pair on one interface. A loopback, a sub-interface and a host
+  interface are not cards and keep the rule they had: their pair is asked for
+  with `linux-name`, which is what `lab/routing.sh` holds a loopback without
+  one to prove.
+
+  **A name FRR cannot take is refused before anything is applied.** A device
+  nobody named - a `startup.conf` edited by hand, a VPP that ignores `name` -
+  still gets VPP's spelling, and an `interface` block under it is refused by
+  the commit check: `error: interface GigabitEthernet0/13/0: a name FRR
+  cannot take`, with the limit and the count in the sentence and what to do -
+  the card takes its Linux name at the next start of the dataplane, and a
+  device still listed by the old name after one wants `name <linux name>` in
+  its `dev` block. Setting `linux-name` is NOT offered as the way out,
+  because it is not one: the block's own header still goes to FRR whatever
+  the pair is called. The 15 and the 16 now each have one owner in
+  `config.py`, `LINUX_IFNAME_MAX` (IFNAMSIZ less the terminator) and
+  `FRR_IFNAME_MAX` (FRR's own check), and the `linux-name` refusal at the
+  prompt and in a file is one sentence.
+
+  **What it costs a box already in service - read this before upgrading.**
+  On the next boot after the upgrade the tuner names the card and the
+  dataplane interface changes name: `GigabitEthernet0/13/0` becomes `ens19`.
+  A configuration saved by 0.76.1 that names the old spelling is loaded all
+  the same. `hexash --load` matches the old name to the card by address -
+  `0/13/0` is bus 0, slot 0x13, function 0, and `show hardware-interfaces`
+  says which interface holds that address now - and loads the file under the
+  new name wherever it used the old one: the `interface` block, the
+  `nat cgnat interface` attachment, the FRR stanza, a sub-interface keeping
+  its tag. The boot log carries `note: GigabitEthernet0/13/0 is ens19 on this
+  box`, and until the next `save` the file and the running
+  configuration differ by that name; `save` writes the new one. Measured
+  before the decision, on a box holding `ens19` and a file naming
+  `GigabitEthernet0/13/0`: `--load` refused the file whole - *this box has no
+  such interface* - with no API call made, which is a box coming up with no
+  pool, no address and no attachment on it, read by nobody. That is what this
+  rules out. Two of the box's cards at one bus, slot and function in two PCI
+  domains cannot be told apart by the old name, and then nothing is guessed:
+  the file is refused naming what the box has, as before. A `rollback` to a
+  revision written before the upgrade is refused the same way at the prompt,
+  where the operator is reading; it is not translated.
+
+  Where the box still holds the old name - the device unnamed in
+  `startup.conf`, a VPP that ignored `name` - `--load` drops the FRR stanza
+  under it, says `note: interface GigabitEthernet0/13/0: its routing block
+  was not loaded`, and loads the dataplane half: FRR never held that stanza
+  on any version, so the file minus it is the configuration the box had,
+  which is the trim `--load` already makes for a `block-stride` nothing read.
+  On 0.76.1 the same boot applied the dataplane half and then failed the
+  unit at the routing reload.
+
+  Subsumes [#386](https://github.com/andrediashexa/hexarouting/issues/386):
+  its subject was a box printing `GigabitEthernet0/12/0 (ens18)` on every
+  screen because the two names were one card, and with one name there is no
+  second to print. What survives of it is the one reader of the old shape,
+  `routes.dpdk_name_address()`, which `--load` uses to match a saved name to
+  a card.
+
+  Every claimed card's `name` is held in `appliance/test_tune.py` per `dev`
+  block, and never for the reserved card; the default pair, the rename, the
+  same-name pair in `frr_acts_on()` and the `--load` decision in
+  `test/test_hexash_apply.py`; the refusal in `test/test_hexash_refusals.py`.
+  Owed to a machine with a container and a booted box:
+  `appliance/test_startup_conf_shapes.sh` handing `name ens19` to the real
+  VPP, and `lab/install-iso.sh` bringing the claimed card up at the console
+  and reading `ens19` off `ip link` and FRR.
 
 * **`block-stride` on a deterministic pool is refused rather than accepted and
   ignored** ([#375](https://github.com/andrediashexa/hexarouting/issues/375)).

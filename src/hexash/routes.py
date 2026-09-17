@@ -586,7 +586,16 @@ def parse_interfaces(show_interface: str, show_addr: str = "",
 
     for name, names in lcp_pairs(show_lcp).items():
         if name in out:
-            out[name]["host"] = " ".join(n for n in names if n != name)
+            # The other names the pair answers to - the TAP and the Linux
+            # end. A card paired as itself (#389) lists its own name twice,
+            # `ens19 tap0 ens19`, and leaving out every occurrence of it
+            # would print the TAP alone in the Linux column: the name FRR
+            # acts on is the one that is on both sides, and it goes last, in
+            # the position the Linux name has always had.
+            others = list(dict.fromkeys(n for n in names if n != name))
+            if names.count(name) > 1:
+                others.append(name)
+            out[name]["host"] = " ".join(others)
     return out
 
 
@@ -677,6 +686,72 @@ def parse_interface_counters(show_interface: str) -> dict:
 #: as a human string ("10 Gbps"), so the only way to a number is this table.
 _SPEED_UNITS = {"bps": 1, "kbps": 10 ** 3, "mbps": 10 ** 6,
                 "gbps": 10 ** 9, "tbps": 10 ** 12}
+
+
+def dpdk_name_address(name: str):
+    """
+    The (bus, slot, function) a DPDK-spelled interface name encodes, or None.
+
+    VPP's DPDK plugin names a device nobody named after its PCI address: the
+    device class as a word, then bus/slot/function in hexadecimal with no
+    padding and no domain, so 0000:00:13.0 comes out as GigabitEthernet0/13/0
+    and 0000:3b:00.1 as TenGigabitEthernet3b/0/1. Since #389 the tuner names
+    every card it claims after the card's Linux name and nothing on a box
+    prints this shape - except a configuration SAVED by a version that did,
+    which is the one reader left: `hexash --load` matches the old name to the
+    card this box now holds under its Linux name, by address. THE ONE COPY of
+    VPP's naming rule in this product, and it reads the rule rather than
+    writes it.
+
+    None for anything else - local0, a tap, a loopback, an operator's own
+    name, a sub-interface (the caller strips the tag first) - and then no
+    rename is made: a guess here is a box loading somebody's addresses onto
+    the wrong card.
+    """
+    m = re.fullmatch(r"[A-Za-z]+([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)",
+                     name or "")
+    if not m:
+        return None
+    return tuple(int(g, 16) for g in m.groups())
+
+
+def parse_hardware_pci(show_hardware: str) -> dict:
+    """
+    {name: (domain, bus, slot, function)} for every interface the dataplane
+    holds as a PCI card - the ones with a `pci:` row under them in
+    `show hardware-interfaces`:
+
+        ens19                              1     up   ens19
+          ...
+            pci: device 1af4:1041 subsystem 1af4:1100 address 0000:00:13.00 numa 0
+
+    A pg, a tap, a host interface and a loopback have no such row and are not
+    cards. This is what tells a claimed card - the interface that carries its
+    Linux name and gets a pair under it by default (#389) - from every other
+    interface a box or a lab can have, without a list of driver names.
+
+    VPP prints the function with two digits (`13.00`); read as numbers so a
+    saved name's `0/13/0` and this row compare without a spelling.
+    """
+    out = {}
+    current = None
+    for line in (show_hardware or "").splitlines():
+        w = line.split()
+        if not w:
+            continue
+        if not line[0].isspace():
+            current = None if w[0] == "Name" else w[0]
+            continue
+        if current and w[:1] == ["pci:"] and "address" in w:
+            addr = w[w.index("address") + 1]
+            try:
+                domain, bus, rest = addr.split(":")
+                slot, func = rest.split(".")
+                out[current] = (int(domain, 16), int(bus, 16), int(slot, 16),
+                                int(func, 16))
+            except ValueError:
+                continue
+    return out
 
 
 def parse_hardware(show_hardware: str) -> dict:

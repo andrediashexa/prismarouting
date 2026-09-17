@@ -57,8 +57,8 @@ E esta é a primeira coisa a estabelecer quando alguém liga dizendo que o encam
 ```
 hexarouting> show route
   Destination          Next hop          Interface    Kind
-  0.0.0.0/0            200.150.0.1       TenGigabitEthernet0/8/0 forward
-  200.150.0.0/24       connected         TenGigabitEthernet0/8/0 connected
+  0.0.0.0/0            200.150.0.1       ens19        forward
+  200.150.0.0/24       connected         ens19        connected
 
   2 entries carrying traffic
 ```
@@ -76,15 +76,18 @@ Quando o tráfego não passa e a rota parece certa, `show route verbose` é o co
 ```
 hexarouting> show interface
   Interface                  State  MTU    Address             Linux
-  GigabitEthernet0/12/0      up     9000   203.0.113.1/24      tap0
-  TenGigabitEthernet0/8/0    up     1500   -                   -
+  ens18                      up     9000   203.0.113.1/24      tap0 ens18
+  ens19                      up     1500   -                   -
   local0                     down   0      -                   -
+  tap0                       up     9000   -                   ens18
 
-  2 interface(s) on the dataplane can forward
+  3 interface(s) on the dataplane can forward
   local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
 Responde pelo **dataplane**, com estado, MTU, endereços e o par do `linux_cp`. Esse último porque é o nome que o FRR e o `ip` usam, e quem transita entre as duas ferramentas precisa dos dois lado a lado.
+
+**A placa aparece com o nome que o Linux dava a ela.** A caixa reivindica as placas sozinha e batiza cada uma, no dataplane, com o nome que ela tinha no Linux: a `ens18` continua sendo `ens18`, e é assim que ela aparece aqui, no prompt e no roteamento. Uma placa com bloco `interface` entra no Linux com esse mesmo nome, e é ele que a coluna **Linux** mostra, ao lado do `tap` interno que o par usa - `linux-name` só é preciso para escolher outro. Uma porta cujo nome tem barras é uma placa que ninguém nomeou; o roteamento recusa nomes acima de 16 caracteres, e o `commit` diz isso antes de tentar.
 
 
 :::warning
@@ -107,13 +110,13 @@ Uma linha por interface, com **duas** colunas de estado:
 ```
 hexarouting> show interface terse
   Interface                  Admin  Link   Proto  Local
-  GigabitEthernet0/12/0      up     up     inet   203.0.113.1/24
-  TenGigabitEthernet0/8/0    up     down   -      -
+  ens18                      up     up     inet   203.0.113.1/24
+  ens19                      up     down   -      -
   local0                     down   down   -      -
 
   2 interface(s) on the dataplane can forward
   local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
-  TenGigabitEthernet0/8/0: configured up, link down - that is the wire or the far end, not this configuration
+  ens19: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
 | `Admin` | `Link` | O que é |
@@ -133,8 +136,8 @@ Um endereço por linha: uma interface com IPv4 e IPv6 aparece em duas linhas, co
 ```
 hexarouting> show interface description
   Interface                  Admin  Link   Description
-  GigabitEthernet0/12/0      up     up     ASSINANTES PON-3
-  TenGigabitEthernet0/8/0    up     down   TRANSITO Vivo AS26599
+  ens18                      up     up     ASSINANTES PON-3
+  ens19                      up     down   TRANSITO Vivo AS26599
   local0                     down   down   
 
   2 of 2 interface(s) described
@@ -158,12 +161,12 @@ hexarouting> show interface utilization
   sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
 
   Interface                             rx            tx  rx history tx history
-  TenGigabitEthernet0/8/0    675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
-  GigabitEthernet0/12/0        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  ens19                      675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
+  ens18                        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
 
   bars are each interface's share of its own line rate
-    TenGigabitEthernet0/8/0   12.4% of 10.00 Gbit/s
-    GigabitEthernet0/12/0      0.8% of 1.00 Gbit/s
+    ens19                     12.4% of 10.00 Gbit/s
+    ens18                      0.8% of 1.00 Gbit/s
 ```
 
 | Argumento | Efeito |
@@ -303,8 +306,8 @@ Sempre, e antes da lista. Uma placa que o **dataplane já tomou** desaparece da 
 
 ```
 hexarouting> show hardware
-  the dataplane holds TenGigabitEthernet0/8/0. A NIC VPP owns is no longer
-  listed by Linux, so it is not in the list below.
+  the dataplane holds ens19. A NIC VPP owns is no longer listed by Linux, so it
+  is not in the list below.
 ```
 
 Quando o dataplane não tem interface nenhuma, a linha é o **mesmo diagnóstico** que o `show interface` e o autoteste de boot dão, lido das mesmas fontes: dois diagnósticos do mesmo fato que discordam entre si são piores que um.
@@ -344,7 +347,7 @@ Dentro de um pool, o bloco sai na forma curta — `cgnat pool residential`, sem 
 
 Na caixa inteira, **os ajustes globais de CGNAT também saem com o** `**nat**` na frente — `nat cgnat timeout udp 300`, `nat cgnat block-holddown 90` — e não só os blocos de pool. Por um tempo os pools saíam na hierarquia nova e os globais na antiga, no mesmo arquivo: quem procurasse um timeout por `nat cgnat timeout` não achava. Agora o arquivo inteiro fala uma língua só.
 
-O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface TenGigabitEthernet0/8/0]` — para que a próxima declaração não caia no bloco errado.
+O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface ens19]` — para que a próxima declaração não caia no bloco errado.
 
 ## O que a caixa conferiu, e o que ela apenas repassou
 

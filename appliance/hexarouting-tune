@@ -1363,8 +1363,26 @@ def render_vpp(p):
         # The other half of #330 - the TX queue count - was a real -22 that
         # DID refuse the device, and it stays. That one is measured from the
         # card, and it works.
+        # THE CARD KEEPS ITS LINUX NAME (#389). Without `name`, VPP names the
+        # port after its PCI address - GigabitEthernet0/13/0, 21 characters -
+        # and FRR 10.7.1 refuses any interface name over 16, so on an
+        # installed box no interface could leave `shutdown`: the commit
+        # handed FRR the stanza, every daemon answered "Maximum interface
+        # name length is 16 characters", the routing reload failed and the
+        # commit rolled back. Measured on the maintainer's box, and never in a
+        # lab, whose interfaces are pg0 and host-veth-vpp.
+        #
+        # `name` is the keyword this VPP takes for it - `dev { name eth0 }
+        # accepted` in the table above - and the name is the one Linux gave
+        # the card, read off /sys/class/net in the same pass that decided to
+        # claim it, so it is at most 15 characters by construction and the
+        # only name the operator has ever seen the card under. `show
+        # interface` then says ens19, the VTY says `interface ens19`, and the
+        # Linux end of the pair is ens19 too. The reserved card has no stanza
+        # and so no name here: it is Linux's, under that same name.
         stanzas = "".join(
             f"  dev {c['pci']} {{\n"
+            f"    name {c['name']}\n"
             f"    num-rx-queues {_queues(c)}\n"
             f"    num-tx-queues {_queues(c)}\n"
             "  }\n" for c in devs)

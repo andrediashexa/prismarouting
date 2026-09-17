@@ -1364,6 +1364,279 @@ check(_ok is True,
       f"{_out.getvalue()!r}")
 print("  refused where it is asked for, and silent about what the box holds")
 
+print("\n=== a claimed card is paired under its own name by default (#389) ===")
+# MEASURED FIRST, on master: `Config.parse("interface ens19\n ipv4 address
+# 203.0.113.1/24\n exit\n")` against an empty running configuration gives
+# d["lcp_set"] == {} and d["lcp_del"] == [] - no `linux-name`, no pair, so
+# FRR and `ip` had no ens19 at all. With `linux-name wan0` it gives
+# {"ens19": "wan0"}. The default lands in the same dictionary: a card the
+# dataplane holds - one with a `pci:` row under it in `show
+# hardware-interfaces` - that has an `interface` block and no `linux-name`
+# is paired under its own name, on the apply path, so `commit`, `rollback`
+# and `--load` all make the pair and the candidate that is committed carries
+# the statement.
+HW_CARD = """              Name                Idx   Link  Hardware
+ens19                              1     up   ens19
+  Link speed: unknown
+  Ethernet address 52:54:00:12:34:56
+  Red Hat Virtio
+    carrier up full duplex mtu 9000
+    pci: device 1af4:1041 subsystem 1af4:1100 address 0000:00:13.00 numa 0
+loop0                              2    down  loop0
+  Link speed: unknown
+local0                             0    down  local0
+  Link speed: unknown
+"""
+IF_CARD = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+ens19                             1      up          9000/0/0/0
+loop0                             2      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+"""
+
+
+class CardVpp(BootVpp):
+    """A dataplane holding one claimed card, named after its Linux card."""
+
+    def __init__(self, lcp=""):
+        super().__init__()
+        self.lcp = lcp
+
+    def run(self, cmd):
+        self.commands.append(cmd)
+        if cmd.startswith("show hardware-interfaces"):
+            return 0, HW_CARD
+        if cmd.startswith("show interface"):
+            return 0, IF_CARD
+        if cmd.startswith("show lcp"):
+            return 0, self.lcp
+        if cmd.startswith("show ip fib"):
+            return 0, self.fib
+        return 0, ""
+
+
+def card_shell(running_text="", lcp=""):
+    sh = boot_shell(running_text=running_text)
+    sh.api = FakeDataplane(existing=("ens19", "loop0"))
+    sh.dp = CardVpp(lcp)
+    return sh
+
+
+def pairs_made(api):
+    """(interface, host name, added?) for every pair call, in order."""
+    return [(a["sw_if_index"], a["host_if_name"], a["is_add"])
+            for m, a in api.calls if m == "lcp_itf_pair_add_del"]
+
+
+_sh = card_shell()
+_target = config.Config.parse("interface ens19\n ipv4 address "
+                              "203.0.113.1/24\n exit\n")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _ok = _sh.apply(_target)
+check(_ok is True, f"the block on a card did not apply: {_buf.getvalue()!r}")
+check(pairs_made(_sh.api) == [(1, "ens19", True)],
+      f"the card was not paired under its own name: {pairs_made(_sh.api)}")
+check(_target.linux_names == {"ens19": "ens19"},
+      f"the default is not written into the configuration that was "
+      f"committed, so `save` and `show lcp` would disagree: "
+      f"{_target.linux_names}")
+check(" linux-name ens19" in _target.text(),
+      f"and the committed text does not carry it: {_target.text()!r}")
+print(f"  interface ens19, no linux-name: pairs {pairs_made(_sh.api)}")
+
+# THE MAINTAINER'S TRANSCRIPT: `interface ens19 / no shutdown / commit`. Every
+# device dictionary is empty after it - `no shutdown` discards from a set -
+# and the block exists only as the FRR stanza the `interface` line staged.
+# That block counts: the operator who typed it is the one expecting FRR to
+# see the port.
+_sh = card_shell()
+_target = config.Config.parse("! routing\ninterface ens19\nexit\n")
+check(not _target.interface_names() and _target.frr_interface_names()
+      == ["ens19"],
+      f"the fixture is not a block held only by the routing section: "
+      f"{_target.interface_names()} {_target.frr_interface_names()}")
+with contextlib.redirect_stdout(io.StringIO()):
+    _ok = _sh.apply(_target)
+check(_ok is True and pairs_made(_sh.api) == [(1, "ens19", True)],
+      f"a block with nothing but its header did not pair the card: "
+      f"{pairs_made(_sh.api)}")
+print("  interface ens19 with nothing in it: paired all the same")
+
+# NOT A LOOPBACK, which is not a card. lab/routing.sh holds a loopback with
+# no `linux-name` and asserts FRR has no real interface for it; the default
+# is the card's name put back where it came from, and a loopback has none.
+_sh = card_shell()
+_target = config.Config.parse("interface loop0\n ipv4 address "
+                              "10.99.0.1/32\n exit\n")
+with contextlib.redirect_stdout(io.StringIO()):
+    _ok = _sh.apply(_target)
+check(_ok is True and pairs_made(_sh.api) == [],
+      f"a loopback with no linux-name was paired anyway: "
+      f"{pairs_made(_sh.api)}")
+print("  interface loop0, no linux-name: no pair, as before")
+
+# THE OVERRIDE STAYS. `linux-name wan0` on the card names the pair, and on a
+# card already carrying its default pair that is a RENAME: the dataplane
+# answers "exists" to a second pair on one interface, so the old one has to
+# go first. The running configuration is read off `show lcp`.
+_sh = card_shell(running_text="interface ens19\n linux-name ens19\n exit\n",
+                 lcp="itf-pair: [0] ens19 tap0 ens19 5 type tap\n")
+_target = config.Config.parse("interface ens19\n linux-name wan0\n exit\n")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _ok = _sh.apply(_target)
+check(_ok is True, f"renaming the pair did not apply: {_buf.getvalue()!r}")
+check(pairs_made(_sh.api) == [(1, "", False), (1, "wan0", True)],
+      f"the old pair was not removed before the new one was made, which the "
+      f"dataplane refuses: {pairs_made(_sh.api)}")
+check(_target.linux_names == {"ens19": "wan0"},
+      f"the override was overwritten by the default: {_target.linux_names}")
+print(f"  linux-name wan0 over the default: pairs {pairs_made(_sh.api)}")
+
+# AND A BOX WHOSE DATAPLANE CANNOT BE ASKED defaults nothing: every case
+# above this section runs against a dataplane that answers "" to `show
+# hardware-interfaces`, and every one of them expects no pair it did not ask
+# for.
+_sh = boot_shell()
+_target = config.Config.parse("interface GigabitEthernet0/12/0\n ipv4 "
+                              "address 203.0.113.1/24\n exit\n")
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh.apply(_target)
+check(pairs_made(_sh.api) == [],
+      f"a dataplane with no card row still got a pair: {pairs_made(_sh.api)}")
+
+print("\n=== the Linux end of a pair whose two ends carry one name (#389) ===")
+# frr_acts_on() finds the Linux end by subtracting the dataplane's names from
+# the pair's, and with both ends called ens19 the subtraction is empty. It
+# must still answer: ens19 IS what FRR acts on, and the tap is not. Both
+# shapes, because the old one is still what an unnamed device gets.
+_old = routes.lcp_pairs("itf-pair: [0] GigabitEthernet0/13/0 tap0 vppwan0 "
+                        "5 type tap\n")
+_dp_old = {"GigabitEthernet0/13/0", "tap0", "local0"}
+check(hexash.frr_side_names("GigabitEthernet0/13/0", _old, _dp_old)
+      == {"vppwan0"},
+      "the old shape: the Linux end is the name that is not the dataplane's")
+check(hexash.frr_acts_on("vppwan0", _old, _dp_old) is True
+      and hexash.frr_acts_on("GigabitEthernet0/13/0", _old, _dp_old) is False,
+      "the old shape: FRR acts on vppwan0 and not on the dataplane's name")
+_new = routes.lcp_pairs("itf-pair: [0] ens19 tap0 ens19 5 type tap\n")
+_dp_new = {"ens19", "tap0", "local0"}
+check(hexash.frr_side_names("ens19", _new, _dp_new) == {"ens19"},
+      f"the same-name pair: the Linux end is ens19, not nothing: "
+      f"{hexash.frr_side_names('ens19', _new, _dp_new)}")
+check(hexash.frr_acts_on("ens19", _new, _dp_new) is True
+      and hexash.frr_acts_on("tap0", _new, _dp_new) is False,
+      "the same-name pair: FRR acts on ens19 and not on the tap")
+print("  GigabitEthernet0/13/0 tap0 vppwan0 -> vppwan0; ens19 tap0 ens19 -> "
+      "ens19")
+
+print("\n=== --load on the upgraded box: the saved name is the card's old "
+      "name (#389) ===")
+# MEASURED FIRST, on master, with a file saying `interface
+# GigabitEthernet0/13/0` against a box holding ens19: "error: interface
+# GigabitEthernet0/13/0: this box has no such interface / it has: ens19,
+# local0 / ... / error: refusing to load this file, the check above says
+# why", and no API call at all - the box came up with nothing on it. The
+# decision: the old name encodes the address, the box holds the card at
+# that address under its Linux name, and the file is loaded under the new
+# name with a note. Every place the file uses the name, not only the block:
+# the CGNAT attachment, the FRR stanza, a sub-interface's tag kept.
+SAVED_OLD = """nat cgnat interface GigabitEthernet0/13/0 inside
+interface GigabitEthernet0/13/0
+ ipv4 address 203.0.113.1/24
+ exit
+interface GigabitEthernet0/13/0.100
+ vlan 100
+ exit
+! routing
+interface GigabitEthernet0/13/0
+ ip ospf area 0
+exit
+"""
+_sh = card_shell()
+_out = load_text(_sh, SAVED_OLD)
+check("refusing to load this file" not in _out,
+      f"the upgraded box refused its own saved configuration: {_out!r}")
+check("note: GigabitEthernet0/13/0 is ens19 on this box" in _out,
+      f"and did not say the name it loaded the file under: {_out!r}")
+_addrs = [a for m, a in _sh.api.calls
+          if m == "sw_interface_add_del_address"]
+check(any(a.get("sw_if_index") == 1 for a in _addrs),
+      f"the address did not land on ens19: {_sh.api.calls}")
+_subs = [a for m, a in _sh.api.calls if m == "create_vlan_subif"]
+check(len(_subs) == 1 and _subs[0].get("sw_if_index") == 1
+      and _subs[0].get("vlan_id") == 100,
+      f"the sub-interface did not keep its tag on the renamed parent: "
+      f"{_subs}")
+_feat = [a for m, a in _sh.api.calls
+         if m == "bpa_interface_add_del_feature"]
+check(any(a.get("sw_if_index") == 1 for a in _feat),
+      f"the CGNAT attachment did not follow the rename: {_sh.api.calls}")
+check(pairs_made(_sh.api) == [(1, "ens19", True)],
+      f"and the renamed card was not paired under its name: "
+      f"{pairs_made(_sh.api)}")
+print(f"  loaded: {_out[:160]!r}")
+
+# A SAVED NAME THE BOX STILL HAS is not renamed: the device is unnamed on
+# this box, the old name is what it holds, and what happens then is the trim
+# below. The rename is decided by what the box holds, not by the shape.
+class OldCardVpp(CardVpp):
+    def run(self, cmd):
+        self.commands.append(cmd)
+        if cmd.startswith("show hardware-interfaces"):
+            return 0, HW_CARD.replace("ens19", "GigabitEthernet0/13/0")
+        if cmd.startswith("show interface"):
+            return 0, IF_CARD.replace("ens19", "GigabitEthernet0/13/0")
+        return super().run(cmd)
+
+
+_sh = boot_shell()
+_sh.api = FakeDataplane(existing=("GigabitEthernet0/13/0",))
+_sh.dp = OldCardVpp()
+_out = load_text(_sh, SAVED_OLD)
+check("is ens19 on this box" not in _out,
+      f"a name the box still holds was renamed anyway: {_out!r}")
+# THE TRIM. FRR never held `interface GigabitEthernet0/13/0` - it refuses
+# the name - so the file minus that stanza is what the box had, and the
+# dataplane half loads rather than the whole file being refused over a
+# block nothing was holding. Said out loud, because until the next `save`
+# the file and the running configuration differ by it.
+check("refusing to load this file" not in _out,
+      f"the file was refused whole over an FRR stanza FRR never held: "
+      f"{_out!r}")
+check("note: interface GigabitEthernet0/13/0: its routing block was not "
+      "loaded" in _out,
+      f"and the trim was not said: {_out!r}")
+check(any(m == "sw_interface_add_del_address" for m, _ in _sh.api.calls),
+      f"the dataplane half was not loaded: {_sh.api.calls}")
+check(pairs_made(_sh.api) == [],
+      f"a name Linux cannot take was paired under itself: "
+      f"{pairs_made(_sh.api)}")
+print(f"  unnamed device: {_out[:160]!r}")
+
+# TWO CARDS THAT DIFFER ONLY IN PCI DOMAIN cannot say which the old name
+# was, and neither is guessed: the refusal that follows names what the box
+# has, which is the state master left every such file in.
+class TwinVpp(CardVpp):
+    def run(self, cmd):
+        self.commands.append(cmd)
+        if cmd.startswith("show hardware-interfaces"):
+            return 0, HW_CARD + HW_CARD.replace("ens19", "ens20").replace(
+                "address 0000:00:13.00", "address 0001:00:13.00")
+        return super().run(cmd)
+
+
+_sh = boot_shell()
+_sh.api = FakeDataplane(existing=("ens19", "ens20"))
+_sh.dp = TwinVpp()
+_out = load_text(_sh, SAVED_OLD)
+check("is ens19 on this box" not in _out and "is ens20 on this box" not in _out,
+      f"a twin in another domain and the box picked one: {_out!r}")
+check("interface GigabitEthernet0/13/0: this box has no such interface" in _out
+      and "refusing to load this file" in _out,
+      f"and the file was not refused with what the box has: {_out!r}")
+print("  a twin in another PCI domain: nothing guessed, the file refused")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
