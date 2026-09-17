@@ -1,9 +1,9 @@
 #!/bin/sh
-# Builds the installable HexaRouting ISO.
+# Builds the installable Prisma Routing ISO.
 #
 # Needs root and debootstrap; runs inside the build container with
 # --privileged. The result is a hybrid ISO (BIOS and UEFI) booting a live
-# system with VPP, FRR and HexaRouting already installed.
+# system with VPP, FRR and Prisma Routing already installed.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -124,7 +124,7 @@ chroot "$ROOT" /bin/sh -c "
   apt-get clean
 "
 
-say "HexaRouting"
+say "Prisma Routing"
 mkdir -p "$ROOT/src"
 cp -a "$REPO/src" "$REPO/appliance" "$REPO/tools" "$REPO/docs" "$ROOT/src/"
 mkdir -p "$ROOT/vpp_plugins" "$ROOT/vat2_plugins"
@@ -237,6 +237,10 @@ EOF
 done
 
 say "box identity"
+# The hostname stays "hexarouting" through the rename to Prisma Routing (#202):
+# it is what the installer offers as the default and what every box installed
+# so far answers to, and a hostname is a name on a disk, not a string a
+# person reads on the banner.
 echo hexarouting > "$ROOT/etc/hostname"
 printf '127.0.0.1 localhost\n127.0.1.1 hexarouting\n' > "$ROOT/etc/hosts"
 
@@ -318,19 +322,19 @@ say "bootloader"
 cat > "$WORK/iso/boot/grub/grub.cfg" <<'EOF'
 set default=0
 set timeout=5
-menuentry "HexaRouting installer - start, then type 'install'" {
+menuentry "Prisma Routing installer - start, then type 'install'" {
     linux /live/vmlinuz boot=live components quiet
     initrd /live/initrd
 }
-menuentry "HexaRouting installer - go straight to the questions" {
+menuentry "Prisma Routing installer - go straight to the questions" {
     linux /live/vmlinuz boot=live components hexarouting.install
     initrd /live/initrd
 }
-menuentry "HexaRouting (shell instead of the VTY)" {
+menuentry "Prisma Routing (shell instead of the VTY)" {
     linux /live/vmlinuz boot=live components hexash=off
     initrd /live/initrd
 }
-menuentry "HexaRouting (recovery: single user, shell)" {
+menuentry "Prisma Routing (recovery: single user, shell)" {
     linux /live/vmlinuz boot=live components single hexash=off
     initrd /live/initrd
 }

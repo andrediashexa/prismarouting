@@ -1,5 +1,5 @@
 #!/bin/sh
-# Opens the HexaRouting VTY.
+# Opens the Prisma Routing VTY.
 #
 #   sh tools/vty.sh                 interactive session
 #   sh tools/vty.sh -c "command"    one command, then exit

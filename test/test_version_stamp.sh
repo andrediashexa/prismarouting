@@ -51,7 +51,7 @@ esac
 
 echo
 echo "=== the ISO filename carries the version ==="
-# A file called hexarouting.iso on a USB stick says nothing about what it is,
+# A file called prisma-routing.iso on a USB stick says nothing about what it is,
 # and two of them are indistinguishable at exactly the moment it matters.
 d2=$(mktemp -d); echo "0.9.9" > "$d2/VERSION"
 git -C "$d2" init -q 2>/dev/null
@@ -62,7 +62,7 @@ echo "--- a clean tree standing on its tag: the release name ---"
 git -C "$d2" tag -a v0.9.9 -m r >/dev/null 2>&1
 out=$(sh "$STAMP" --filename "$d2")
 case "$out" in
-  "hexarouting-0.9.9.iso") ok "$out" ;;
+  "prisma-routing-0.9.9.iso") ok "$out" ;;
   *) bad "the released tree must produce the bare versioned name, got '$out'" ;;
 esac
 
@@ -73,9 +73,9 @@ echo x > "$d2/other"; git -C "$d2" add -A >/dev/null 2>&1
 git -C "$d2" commit -qm y >/dev/null 2>&1
 out=$(sh "$STAMP" --filename "$d2")
 case "$out" in
-  "hexarouting-0.9.9-"*.iso)
+  "prisma-routing-0.9.9-"*.iso)
     [ "${out#*dirty}" = "$out" ] && ok "$out" || bad "a clean tree marked dirty: $out" ;;
-  "hexarouting-0.9.9.iso")
+  "prisma-routing-0.9.9.iso")
     bad "a tree that is not the release took the release's name: $out" ;;
   *) bad "expected a versioned name with a commit, got '$out'" ;;
 esac

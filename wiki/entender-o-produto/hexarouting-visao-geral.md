@@ -1,4 +1,4 @@
-# HexaRouting — visão geral
+# Prisma Routing — visão geral
 
 Roteador por software com CGNAT embutido, construído sobre **VPP/DPDK** no plano de dados e **FRR** no plano de controle, entregue como appliance Debian instalável a partir de uma ISO.
 
@@ -16,7 +16,7 @@ O Marco Civil (Lei 12.965/2014) exige um ano de guarda de registros de conexão.
 ```mermaid
 flowchart LR
     SUB["Assinantes<br/>100.64.0.0/10"] -->|LAN| VPP
-    subgraph BOX["Appliance HexaRouting"]
+    subgraph BOX["Appliance Prisma Routing"]
         direction TB
         VPP["VPP / DPDK<br/>plugin bpa"]
         FRR["FRR<br/>bgpd · ospfd · ospf6d · isisd"]

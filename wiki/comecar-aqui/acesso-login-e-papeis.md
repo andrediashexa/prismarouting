@@ -3,7 +3,7 @@
 ```mermaid
 flowchart TD
     L["login por console ou SSH"] --> H{"hexash iniciou?"}
-    H -->|sim| V["VTY hexarouting&gt;"]
+    H -->|sim| V["VTY prismarouting&gt;"]
     H -->|não| F["shell, COM o motivo impresso"]
     V -->|"start shell"| S["shell filho — exit volta"]
     B["boot com hexash=off"] --> F2["shell direto, sem VTY"]

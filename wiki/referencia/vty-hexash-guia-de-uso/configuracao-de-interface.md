@@ -5,9 +5,9 @@ Tudo o que se configura dentro de uma interface: o par que o roteamento enxerga,
 Entra-se numa interface a partir do modo de configuração, e sai-se com `exit`:
 
 ```
-hexarouting> configure
-hexarouting# [edit] interface ens18
-hexarouting# [edit interface ens18]
+prismarouting> configure
+prismarouting# [edit] interface ens18
+prismarouting# [edit interface ens18]
 ```
 
 O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali dentro e nada além disso.
@@ -218,7 +218,7 @@ A recusa vem em linhas próprias, dentro da largura do console: o veredito na pr
 `show interface` lista todas. Nomeando uma, a resposta muda de tabela para relatório:
 
 ```
-hexarouting> show interface ens18
+prismarouting> show interface ens18
   ens18
     state       up
     mtu         9000
@@ -242,9 +242,9 @@ O nome exato tem precedência: pedir `ens18` numa caixa que também tem `ens18.1
 `interface <nome>` configura uma interface que o dataplane **já tem**. Qual placa física ele recebe é outra decisão, um nível abaixo, e mora no topo do modo de configuração:
 
 ```
-hexarouting> configure
-hexarouting# [edit] dataplane interface enp2s0
-hexarouting# [edit] commit
+prismarouting> configure
+prismarouting# [edit] dataplane interface enp2s0
+prismarouting# [edit] commit
 ```
 
 A diferença é prática. Numa caixa que ainda não recebeu placa nenhuma o dataplane não tem interface alguma, então não há `interface <nome>` para entrar — e `show interface` está vazio justamente na hora em que você precisa escolher. Por isso o nome aqui é o que o **Linux** dá à placa, e quem lista os candidatos é o próprio `?`.

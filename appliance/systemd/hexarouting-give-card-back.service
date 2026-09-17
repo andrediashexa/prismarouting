@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - give the dataplane card back to the kernel
+Description=Prisma Routing - give the dataplane card back to the kernel
 Documentation=file:///usr/share/doc/hexarouting/appliance.md
 # No ordering and no Wants: this runs because vpp.service failed, and by then
 # everything it depends on is either up or irrelevant. An After= on vpp.service

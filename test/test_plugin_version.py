@@ -404,10 +404,17 @@ BOX = "0.71.0 (d07ebda)"
 # is the argument unchecked_note() makes for the same decision.
 _agree = screen(show_plugins(BOX), BOX)
 show("the dataplane is the build the box is", _agree)
+# The first line is the one an operator reads out on the phone, and it is the
+# product's name beside the build: "Prisma Routing 0.71.0 (d07ebda)". Held
+# here because nothing else offline reads that row - the wiki quotes it and
+# test_wiki_screens.py cannot drive `show version` - and #202 moved the name.
+check(_agree.splitlines()[0] == f"Prisma Routing {BOX}",
+      "the first line names the product and the build the box is",
+      repr(_agree.splitlines()[:1]))
 check(f"  plugin:    {BOX}" in _agree.splitlines(),
       "the build is on a row of its own, whole", repr(_agree))
 for _alarm in ("not answering", "reports no build", "restart vpp",
-               "not the HexaRouting build", "cannot state its own version"):
+               "not the Prisma Routing build", "cannot state its own version"):
     check(_alarm not in unwrapped(_agree),
           f"and nothing on the screen says {_alarm!r}", repr(_agree))
 
@@ -420,7 +427,7 @@ _split = screen(show_plugins("0.1"), BOX)
 show("upgraded, not yet rebooted", _split)
 check("  plugin:    0.1" in _split.splitlines(),
       "the build the dataplane is actually running is printed", repr(_split))
-check("it is not the HexaRouting build above" in unwrapped(_split),
+check("it is not the Prisma Routing build above" in unwrapped(_split),
       "and the box SAYS they are not the same", repr(_split))
 check("does not restart the dataplane" in unwrapped(_split),
       "it says why that happens rather than leaving it a mystery", repr(_split))
@@ -491,7 +498,7 @@ check("restart vpp" not in unwrapped(_unknown),
 # step quieter.
 _tree = screen(show_plugins(stamp_of(REPO)), FROM_TREE)
 show("hexash run out of a source tree", _tree)
-check("it is not the HexaRouting build above" not in unwrapped(_tree),
+check("it is not the Prisma Routing build above" not in unwrapped(_tree),
       "a source tree is not reported as an upgrade waiting for a reboot",
       repr(_tree))
 check("restart vpp" not in unwrapped(_tree),

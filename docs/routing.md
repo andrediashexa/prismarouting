@@ -1,4 +1,4 @@
-# HexaRouting — Routing and VTY
+# Prisma Routing - Routing and VTY
 
 ## TL;DR
 
@@ -49,7 +49,7 @@ that output says the FIB was ever asked.
 So the VTY has its own:
 
 ```
-hexarouting> show route
+prismarouting> show route
   Destination          Next hop          Interface    Kind
   0.0.0.0/0            10.0.0.2          host-veth-vpp forward
   10.0.0.0/24          connected         host-veth-vpp connected
@@ -94,7 +94,7 @@ statement in the one table whose job is to settle a disagreement.
 words:
 
 ```
-hexarouting# [edit] interface ?
+prismarouting# [edit] interface ?
   TenGigabitEthernet0/8/0  interface (up)
   host-veth-vpp            interface (up)
   pg0                      interface (up)
@@ -115,7 +115,7 @@ the first argument ([#98](https://github.com/andrediashexa/hexarouting/issues/98
 Inside a block, `?` offers **only what is valid there**:
 
 ```
-hexarouting# [edit interface GigabitEthernet0/12/0] ?
+prismarouting# [edit interface GigabitEthernet0/12/0] ?
   description  what this interface is for
   exit         leave the interface
   ip           routing-protocol settings FRR owns on this interface
@@ -156,7 +156,7 @@ nothing, rather than hanging or raising.
 ## `show interface` - the dataplane's own
 
 ```
-hexarouting> show interface
+prismarouting> show interface
   Interface                  State  MTU    Address             Linux
   GigabitEthernet0/12/0      up     9000   203.0.113.1/24      tap0
   TenGigabitEthernet0/8/0    up     1500   -                   -
@@ -201,7 +201,7 @@ answers badly.
 columns:
 
 ```
-hexarouting> show interface terse
+prismarouting> show interface terse
   Interface                  Admin  Link   Proto  Local
   GigabitEthernet0/12/0      up     up     inet   203.0.113.1/24
   TenGigabitEthernet0/8/0    up     down   -      -
@@ -230,7 +230,7 @@ be a blank column everywhere it matters.
 columns:
 
 ```
-hexarouting> show interface description
+prismarouting> show interface description
   Interface                  Admin  Link   Description
   GigabitEthernet0/12/0      up     up     ASSINANTES PON-3
   TenGigabitEthernet0/8/0    up     down   TRANSITO Vivo AS26599
@@ -256,7 +256,7 @@ stops looking for a feature that exists.
 counters and graphs the rate:
 
 ```
-hexarouting> show interface utilization
+prismarouting> show interface utilization
   sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
 
   Interface                             rx            tx  rx history tx history
@@ -316,7 +316,7 @@ that is decoration
 ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
 
 ```
-hexarouting> show hardware
+prismarouting> show hardware
   the dataplane has no interface to forward on: no interface was named, so VPP
   was given no NIC.
   Name it here: 'configure', then 'dataplane interface <name>',
@@ -576,7 +576,7 @@ missing NIC, which is a hardware fault and a different afternoon. So the state
 of the dataplane is stated before the list:
 
 ```
-hexarouting> show hardware
+prismarouting> show hardware
   the dataplane holds TenGigabitEthernet0/8/0. A NIC VPP owns is no longer
   listed by Linux, so it is not in the list below.
 ```
@@ -652,7 +652,7 @@ outside the routing section.
 ## An interface is more than its MTU
 
 ```
-hexarouting# [edit interface GigabitEthernet0/12/0] ?
+prismarouting# [edit interface GigabitEthernet0/12/0] ?
   description  what this interface is for
   exit         leave the interface
   ip           routing-protocol settings FRR owns on this interface
@@ -1119,7 +1119,7 @@ and the code says so.
 The configuration of the hierarchy being edited, and nothing above it:
 
 ```
-hexarouting# [edit cgnat pool residential] show this
+prismarouting# [edit cgnat pool residential] show this
 cgnat pool residential
  inside 100.64.0.0/22
  outside 200.150.0.16/30
@@ -1143,7 +1143,7 @@ Inside an FRR block it shows the block **and everything nested under it**, one
 space per level:
 
 ```
-hexarouting# [edit router bgp 65001] show this
+prismarouting# [edit router bgp 65001] show this
 router bgp 65001
  neighbor 10.0.0.2 remote-as 65002
  address-family ipv4 unicast
@@ -1175,7 +1175,7 @@ to FRR *inside* the block just left.
 Inside `router static` the routes come back in **that block's own words**:
 
 ```
-hexarouting# [edit router static] show this
+prismarouting# [edit router static] show this
 router static
  route 0.0.0.0/0 10.0.0.2
 ```
@@ -1202,7 +1202,7 @@ This VTY models part of FRR and forwards the rest. Both halves used to print
 the same way, so a configuration display said nothing about which was which:
 
 ```
-hexarouting# [edit] show configuration
+prismarouting# [edit] show configuration
 ...
 ! routing
 router bgp 65000
@@ -1278,7 +1278,7 @@ mark, because *nothing in here was read* is different news from *this one
 statement was not*:
 
 ```
-hexarouting# [edit vrf red] show this
+prismarouting# [edit vrf red] show this
 vrf red  <- not checked
  ip route 10.9.0.0/16 10.0.0.9  <- not checked
 ! hexash: 2 statement(s) above are marked '<- not checked': this VTY has no
@@ -1332,7 +1332,7 @@ chose to ask, and its whole subject is how much was verified. It already said
 number. Now it names one:
 
 ```
-hexarouting# [edit] commit check
+prismarouting# [edit] commit check
 configuration check succeeds for CGNAT and the box's own configuration
   2 routing statement(s) have no grammar in this VTY and were not read at all
     'show configuration' marks them; they go to FRR exactly as typed
@@ -1487,7 +1487,7 @@ concludes `bgpd` is fine.
 It now prints both halves:
 
 ```
-HexaRouting 0.67.0
+Prisma Routing 0.67.0
   dataplane: vpp v26.06-release
   routing:   FRRouting 10.7.1 (hexarouting).
   daemons:   running  mgmtd ospfd staticd watchfrr zebra
@@ -1631,11 +1631,11 @@ stripped off - and position is the whole question for a static route
 ## Static routes
 
 ```
-hexarouting# [edit] router static
-hexarouting# [edit router static] route 0.0.0.0/0 200.150.0.1
-hexarouting# [edit router static] route 2001:db8::/32 2001:db8:0:1::1
-hexarouting# [edit router static] exit
-hexarouting# [edit] commit
+prismarouting# [edit] router static
+prismarouting# [edit router static] route 0.0.0.0/0 200.150.0.1
+prismarouting# [edit router static] route 2001:db8::/32 2001:db8:0:1::1
+prismarouting# [edit router static] exit
+prismarouting# [edit] commit
 ```
 
 There is **one** `route` keyword rather than `ip route` and `ipv6 route`: the
@@ -1726,7 +1726,7 @@ was found by.
 | VPP | Dataplane: forwarding and CGNAT (`bpa` plugin) |
 | FRR | Control plane: `bgpd`, `ospfd`, `ospf6d`, `isisd`, `zebra` |
 | `linux_cp` + `linux_nl` | The glue between them |
-| `hexash` | HexaRouting's configuration shell |
+| `hexash` | Prisma Routing's configuration shell |
 
 ```mermaid
 flowchart TB
@@ -1789,10 +1789,10 @@ right. An alarm that is always on is one nobody reads.
 ### Configuring it
 
 ```
-hexarouting# [edit] interface host-veth-vpp
-hexarouting# [edit interface host-veth-vpp] mtu 1500
-hexarouting# [edit interface host-veth-vpp] exit
-hexarouting# [edit] commit
+prismarouting# [edit] interface host-veth-vpp
+prismarouting# [edit interface host-veth-vpp] mtu 1500
+prismarouting# [edit interface host-veth-vpp] exit
+prismarouting# [edit] commit
 ```
 
 Accepted range 576-9216, refused by the parser rather than by the device, so
@@ -2507,7 +2507,7 @@ identifies the build, and an operator on the phone needs the second.
 Tab completes; `?` lists the valid options at the cursor with a description:
 
 ```
-hexarouting> show cgnat ?
+prismarouting> show cgnat ?
   alg          which ALGs the dataplane has on, per pool
   blocks       blocks allocated in dynamic mode, and how many a forward pins
   drops        why packets did not get through
@@ -2521,7 +2521,7 @@ hexarouting> show cgnat ?
   top          subscribers closest to exhausting their blocks
   translation  who was behind a public address and port
 
-hexarouting# [edit cgnat pool residential] inside ?
+prismarouting# [edit cgnat pool residential] inside ?
   <A.B.C.D/M>
 ```
 
@@ -3906,9 +3906,9 @@ no red is the trap this project keeps rediscovering.
 ## Prefix-lists
 
 ```
-hexarouting# [edit] ip ?
+prismarouting# [edit] ip ?
   prefix-list  a named list of prefixes, for matching in policy
-hexarouting# [edit] ip prefix-list <TAB>
+prismarouting# [edit] ip prefix-list <TAB>
   PL-BOGONS    ip prefix-list
   PL-CLIENTES  ip prefix-list
   <prefix-list>
@@ -4077,7 +4077,7 @@ and it carries the same `<- not checked` mark
 ([#227](https://github.com/andrediashexa/hexarouting/issues/227)):
 
 ```
-hexarouting# [edit] commit
+prismarouting# [edit] commit
 error: FRR accepted 1 statement(s) of this commit and did not keep them
     coalesce-time 2000  <- not checked
     a statement marked '<- not checked' has no grammar in this VTY: it went to

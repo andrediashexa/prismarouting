@@ -5,9 +5,9 @@ Como configurar sessões BGP pelo `hexash`: vizinhos, peer groups, famílias de 
 Entra-se no BGP a partir do modo de configuração:
 
 ```
-hexarouting> configure
-hexarouting# [edit] router bgp 65000
-hexarouting# [edit router bgp 65000]
+prismarouting> configure
+prismarouting# [edit] router bgp 65000
+prismarouting# [edit router bgp 65000]
 ```
 
 `?` ou TAB listam o que vale ali dentro. Dentro de uma família de endereço, listam outro conjunto — são gramáticas diferentes, porque a mesma palavra significa coisas diferentes nos dois lugares.
@@ -272,7 +272,7 @@ Em `show rpki cache-connection`, a linha de cabeçalho `**Connected to group 1**
 ## `show bgp summary`
 
 ```
-hexarouting> show bgp summary
+prismarouting> show bgp summary
   Neighbour          AS       State          Prefixes  Up
   200.150.0.2        65001    Established    412       03:11:55
   200.150.1.2        65002    Established    398       01:02:37
@@ -349,8 +349,8 @@ Uma tabela vazia numa caixa dessas é o plano de controle da **sua** caixa fora 
 ## `clear`
 
 ```
-hexarouting> clear bgp 200.150.0.2
-hexarouting> clear bgp 200.150.0.2 soft in
+prismarouting> clear bgp 200.150.0.2
+prismarouting> clear bgp 200.150.0.2 soft in
 ```
 
 É operacional: não muda nada em disco. Exige conta de administrador, porque reiniciar sessão é uma queda de propósito.

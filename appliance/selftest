@@ -1,5 +1,5 @@
 #!/bin/sh
-# HexaRouting boot self-test, written to the console.
+# Prisma Routing boot self-test, written to the console.
 #
 # A racked appliance is seen through a serial console or IPMI, not through
 # journalctl. If something essential did not come up, it has to be on the
@@ -68,14 +68,14 @@ say_list() {  # <indent> <text...>
 }
 
 say ""
-say "================ HexaRouting: boot self-test ================"
+say "=============== Prisma Routing: boot self-test =============="
 
 # The first thing on the screen is the version. Whoever is at the console of a
 # faulty box has to say what is running before anything else, and "unknown" is
 # an answer too - worse is the line not being there at all.
 ver=$(cat "$ROOT/usr/share/hexarouting/VERSION" 2>/dev/null || echo "")
 if [ -n "$ver" ]; then
-  ok "HexaRouting $ver"
+  ok "Prisma Routing $ver"
 else
   bad "no version stamp in /usr/share/hexarouting/VERSION"
 fi
@@ -2116,12 +2116,12 @@ say "-------------------------------------------------------------"
 if [ "$fail" != 0 ]; then
   say "  $fail check(s) failed. The box is NOT ready."
 elif [ -n "$noforward" ]; then
-  say "  HexaRouting is installed and healthy, and has $noforward:"
+  say "  Prisma Routing is installed and healthy, and has $noforward:"
   say "  it is not forwarding. See the [warn] above for the one step left."
 elif [ "$warns" != 0 ]; then
-  say "  HexaRouting ready, with $warns warning(s) above."
+  say "  Prisma Routing ready, with $warns warning(s) above."
 else
-  say "  HexaRouting ready."
+  say "  Prisma Routing ready."
 fi
 say "============================================================="
 say ""

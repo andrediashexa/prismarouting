@@ -64,7 +64,7 @@ mkfifo /tmp/boot-in || { echo "cannot create the console pipe"; exit 1; }
   # appearing means there is something to ask.
   _n=0
   while [ "$_n" -lt "${BOOT_SECS:-420}" ]; do
-    grep -q "^hexarouting>" /tmp/boot.log 2>/dev/null && break
+    grep -q "^prismarouting>" /tmp/boot.log 2>/dev/null && break
     sleep 1; _n=$((_n + 1))
   done
   # Held open to the end: a writer that closes hands qemu an end of file on
@@ -117,7 +117,7 @@ sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -120
 # WHAT THE COMMAND ANSWERED, and not the whole session. The needle below is
 # "installation medium|'install'", and the medium's LOGIN BANNER says both of
 # those things - "This is the installation medium: nothing here survives a
-# reboot." and "Type 'install' to install HexaRouting onto a disk." - several
+# reboot." and "Type 'install' to install Prisma Routing onto a disk." - several
 # lines before this command is typed. The writer above waits for the prompt,
 # and the prompt comes after the banner, so the banner is in the log by
 # construction on every run.
@@ -170,7 +170,7 @@ if said_a_failed_verdict /tmp/clean.log; then
 fi
 
 if said_a_verdict /tmp/clean.log; then
-  if ! grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
+  if ! grep -qE "\[ ok \] Prisma Routing [0-9]" /tmp/clean.log; then
     echo
     echo "=========== READY, BUT NO VERSION STAMP ==========="
     grep -i "version" /tmp/clean.log | tail -5 | sed 's/^/  /'
@@ -189,11 +189,14 @@ if said_a_verdict /tmp/clean.log; then
     echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
     exit 1
   fi
-  # ANCHORED. "hexarouting>" unanchored also matches systemd's own line
-  # "Hostname set to <hexarouting>." - so this check, which is the one that
-  # proves a login LANDS in the VTY, could be satisfied by a boot that never
-  # reached the VTY at all. It has been able to since it was written.
-  if grep -q "^hexarouting>" /tmp/clean.log; then
+  # ANCHORED. The prompt was "hexarouting>" until #202, and unanchored that
+  # also matched systemd's own line "Hostname set to <hexarouting>." - so this
+  # check, which is the one that proves a login LANDS in the VTY, could be
+  # satisfied by a boot that never reached the VTY at all. The hostname is
+  # still hexarouting and the prompt is not, so the two no longer collide;
+  # the anchor stays because a prompt is the start of a line and nothing else
+  # is.
+  if grep -q "^prismarouting>" /tmp/clean.log; then
     #
     # ORDER, not merely presence. Both of these were on the console before
     # #93 and the boot still "passed": the getty drew the VTY prompt first and
@@ -209,7 +212,7 @@ if said_a_verdict /tmp/clean.log; then
     # end - which is the shape of the bug, not the shape of a fix.
     _sel=$(grep -n "boot self-test" /tmp/clean.log | head -1 | cut -d: -f1)
     _end=$(grep -nE "$VERDICT_RE" /tmp/clean.log | tail -1 | cut -d: -f1)
-    _pmt=$(grep -n "^hexarouting>" /tmp/clean.log | head -1 | cut -d: -f1)
+    _pmt=$(grep -n "^prismarouting>" /tmp/clean.log | head -1 | cut -d: -f1)
     echo
     echo "=========== console order ==========="
     echo "  self-test starts at line $_sel, ends at $_end; the prompt is at $_pmt"

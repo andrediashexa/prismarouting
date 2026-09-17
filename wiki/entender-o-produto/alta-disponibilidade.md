@@ -82,7 +82,7 @@ Para que a caixa possa comparar, ela precisa ter a configuração da outra. Não
 Quando as duas divergem:
 
 ```
-hexarouting> show cgnat ha
+prismarouting> show cgnat ha
   this box
     mapping fingerprint  50e2b92f23c2707c
     pools                residencial
@@ -160,4 +160,4 @@ O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatór
 
 * [BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que a fórmula dispensa sincronismo
 * [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — o outro lugar onde configuração idêntica importa
-* [HexaRouting — visão geral](/doc/hexarouting-visao-geral-cNtWoccoy5) — o estado de cada componente
+* [Prisma Routing — visão geral](/doc/hexarouting-visao-geral-cNtWoccoy5) — o estado de cada componente

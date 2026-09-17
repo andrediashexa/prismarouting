@@ -1,4 +1,4 @@
-# HexaRouting — Context model
+# Prisma Routing - Context model
 
 ## TL;DR
 

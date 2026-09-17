@@ -351,7 +351,7 @@ print(f"  routing section: {c.routing}")
 # SSH access the installer just set up - so the lockout check refused it and
 # hexarouting.service failed on the first boot of every install (#121).
 print("\n=== the installer's own default configuration ===")
-INSTALLED_DEFAULT = "!\n! HexaRouting\n!\n"
+INSTALLED_DEFAULT = "!\n! Prisma Routing\n!\n"
 check(config.Config.parse(INSTALLED_DEFAULT).is_empty(),
       "the file install.sh writes holds no statements")
 check(config.Config.parse("").is_empty(), "and neither does an empty file")

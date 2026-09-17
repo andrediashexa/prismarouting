@@ -104,7 +104,7 @@ $HX -c "configure" -c "interface host-veth2-vpp" -c "linux-name vppwan1" \
 vppctl set interface mtu 1500 host-veth2-vpp
 vppctl set interface ip address host-veth2-vpp 10.1.0.1/24
 
-# ---------------- HexaRouting ----------------
+# ---------------- Prisma Routing ----------------
 mkdir -p /var/run/frr /etc/frr
 cat > /etc/frr/zebra.conf <<'EOF'
 hostname hexarouting

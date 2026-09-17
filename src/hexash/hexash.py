@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-hexash - the HexaRouting VTY.
+hexash - the Prisma Routing VTY.
 
 One CLI for routing and CGNAT, with a Juniper-style configuration model:
 changes edit a *candidate*, `commit` applies it, and `rollback` returns to any
@@ -501,7 +501,7 @@ SHOW = {
     # operator needs to see what there is to choose from (#283).
     "hardware": ("the box's physical NICs as Linux has them, and which one "
                  "carries the default route", None),
-    "version": ("HexaRouting, VPP and FRR versions", None),
+    "version": ("Prisma Routing, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
 }
 
@@ -1355,18 +1355,35 @@ COMMIT = {
 # not be one keystroke of TAB completion away from "interface".
 # Identifies the product before anything else on the screen.
 #
-# Plain ASCII, 59 columns, six lines. A racked box is reached by serial console
-# and that console is 80 columns of whatever font the BMC decided on; box
-# drawing characters render as noise there, and a banner that wraps is worse
-# than none. It also has to leave room for the version, the hint, and - on the
-# installation medium - the line telling the operator to type "install", which
-# is the one thing on that screen nobody can afford to miss.
-BANNER = r"""  _   _                 ____              _   _
- | | | | _____  ____ _ |  _ \ ___  _   _| |_(_)_ __   __ _
- | |_| |/ _ \ \/ / _` || |_) / _ \| | | | __| | '_ \ / _` |
- |  _  |  __/>  < (_| ||  _ < (_) | |_| | |_| | | | | (_| |
- |_| |_|\___/_/\_\__,_||_| \_\___/ \__,_|\__|_|_| |_|\__, |
-                                                     |___/ """
+# The brand kit's terminal signature, docs/brand/07-ascii/prisma-ascii.txt,
+# copied rather than read at runtime because the kit is not installed on a
+# box. Plain ASCII, 42 columns at its widest, eight lines. A racked box is
+# reached by serial console and that console is 80 columns of whatever font
+# the BMC decided on; box drawing characters render as noise there, and a
+# banner that wraps is worse than none. Measured before it was chosen: the
+# full signature is 42 columns and the compact one 20, so both fit, and the
+# full one is the kit's primary. It also has to leave room for the version,
+# the hint, and - on the installation medium - the line telling the operator
+# to type "install", which is the one thing on that screen nobody can afford
+# to miss.
+#
+# THE NAME IS "Prisma Routing", TWO WORDS (#202). The command is still
+# `hexash`, the paths are still /etc/hexarouting and /var/log/hexarouting, the
+# units are still hexarouting*.service and the environment is still HEXA_*:
+# the rename changed what a person reads and nothing a box already in service
+# has on its disk, because an installed box carries those names in
+# /etc/passwd, in fstab and in a year of connection records under a retention
+# obligation, and a release that moved them would need a migration this one
+# deliberately does not carry.
+BANNER = r"""        /\
+   ____/  \____
+  /    /\      \        o
+ /____/  \______\------o
+ \    \  /      /------o   PRISMA
+  \____\/______/       o    Routing System
+       /\
+      /__\
+""".rstrip("\n")
 
 LIVE_SQUASHFS = os.environ.get(
     "HEXA_LIVE_SQUASHFS", "/run/live/medium/live/filesystem.squashfs")
@@ -1941,7 +1958,7 @@ TREE["user"]["no"] = ("remove a statement from this account",
 
 if running_from_live_medium():
     TREE["operational"]["install"] = (
-        "install HexaRouting onto a disk on this machine", None)
+        "install Prisma Routing onto a disk on this machine", None)
 
 
 def probe_host_ok(host):
@@ -5334,15 +5351,15 @@ class Shell:
 
     def prompt(self):
         if self.mode == "operational":
-            return "hexarouting> "
+            return "prismarouting> "
         where = self.where()
         if not where:
-            return "hexarouting# [edit] "
+            return "prismarouting# [edit] "
         if len(where) > self.PROMPT_MAX:
             # Keep the END: the innermost block is where the next statement
             # lands, and it is the half worth the space.
             where = "..." + where[-(self.PROMPT_MAX - 3):]
-        return f"hexarouting# [edit {where}] "
+        return f"prismarouting# [edit {where}] "
 
     def require(self, cap, what):
         """
@@ -9185,7 +9202,7 @@ class Shell:
         except OSError as e:
             self.err(f"cannot start {shell}: {e}")
             return
-        print("back in the HexaRouting VTY")
+        print("back in the Prisma Routing VTY")
 
     def do_install(self):
         """
@@ -11266,7 +11283,7 @@ class Shell:
                         "one.",
                         "Hugepages are reserved by the tuning an INSTALLED box "
                         "applies at its first boot. Type 'install' to put "
-                        "HexaRouting on a disk, and the card is claimed "
+                        "Prisma Routing on a disk, and the card is claimed "
                         "there.",
                         "'show hardware' lists the cards this box has and "
                         "what will happen to each one when it is installed."]
@@ -12187,7 +12204,7 @@ class Shell:
                 print_prose("this is the installation medium, so the commit "
                             "does not survive a reboot either: there is "
                             "nothing here for the dataplane to come back to")
-                print_prose("type 'install' to put HexaRouting on a disk, and "
+                print_prose("type 'install' to put Prisma Routing on a disk, and "
                             "name the card there")
             else:
                 print_prose("reboot the box in a window you have chosen, and "
@@ -13179,7 +13196,7 @@ class Shell:
         a dead end here costs more than no hint at all: the reader concludes
         the daemon is fine.
         """
-        print(f"HexaRouting {hexarouting_version()}")
+        print(f"Prisma Routing {hexarouting_version()}")
         rc, out = self.dp.run("show version")
         print(f"  dataplane: {out.strip().splitlines()[0] if rc == 0 and out.strip() else 'not responding'}")
         self.show_plugin_build()
@@ -13301,7 +13318,7 @@ class Shell:
         # screen, so the sentence can point at them instead of carrying copies
         # that a wrap could break in half.
         print_prose("this is the build the dataplane was loaded with at the "
-                    "last boot, and it is not the HexaRouting build above. "
+                    "last boot, and it is not the Prisma Routing build above. "
                     "An upgrade replaces bpa_plugin.so on disk and does not "
                     "restart the dataplane, so until this box is rebooted, "
                     "or 'systemctl restart vpp' is run, it goes on "
@@ -14512,7 +14529,7 @@ class Shell:
         # here before the banner was.
         if sys.stdin.isatty():
             print(BANNER)
-            print(f"HexaRouting VTY {hexarouting_version()}")
+            print(f"Prisma Routing VTY {hexarouting_version()}")
             print("'?' for help, TAB to complete, 'configure' to edit, "
                   "'exit' to leave.")
             # An installer nobody can find is not an installer. This medium
@@ -14523,7 +14540,7 @@ class Shell:
                 print()
                 print("This is the installation medium: nothing here survives "
                       "a reboot.")
-                print("Type 'install' to install HexaRouting onto a disk.")
+                print("Type 'install' to install Prisma Routing onto a disk.")
             # The operator this window exists for is the one logging in right
             # now, after losing the session that armed it. Nothing else on
             # this screen would tell them the box is about to undo a change

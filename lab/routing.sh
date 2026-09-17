@@ -6,7 +6,7 @@
 # interface that carries them: MTU, addresses, description, admin state,
 # static routes with rollback, and router advertisements.
 #
-#   [netns peer] AS 65001 / OSPF / IS-IS       [default] HexaRouting
+#   [netns peer] AS 65001 / OSPF / IS-IS       [default] Prisma Routing
 #     dum-bgp   203.0.113.0/24  -- BGP  -->
 #     dum-ospf  198.18.0.0/24   -- OSPF -->    FRR -> kernel -> linux_nl
 #     dum-isis  198.19.0.0/24   -- ISIS -->                  -> the VPP FIB
@@ -124,7 +124,7 @@ ip link set vppwan9 up
 # a CHANGE rather than a state that might have been there all along.
 OSI_BEFORE=$(vat2 lcp_osi_proto_get '{}' 2>/dev/null | grep -c '"0x83"' || true)
 
-# ---------------- HexaRouting ----------------
+# ---------------- Prisma Routing ----------------
 mkdir -p /var/run/frr /etc/frr
 cat > /etc/frr/zebra.conf <<'EOF'
 hostname hexarouting

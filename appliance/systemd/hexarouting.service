@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - apply the CGNAT configuration to the dataplane
+Description=Prisma Routing - apply the CGNAT configuration to the dataplane
 Documentation=file:///usr/share/doc/hexarouting/architecture.md
 # FRR is Wants and not Requires: without routing the box still forwards what
 # static routes cover, and taking CGNAT down with it would only widen the

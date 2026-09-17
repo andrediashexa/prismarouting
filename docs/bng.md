@@ -1,4 +1,4 @@
-# HexaRouting — BNG (PPPoE server and IPoE)
+# Prisma Routing - BNG (PPPoE server and IPoE)
 
 ## TL;DR
 

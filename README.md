@@ -1,11 +1,13 @@
-# HexaRouting
+# Prisma Routing
 
 ## TL;DR
 
 Software router with built-in CGNAT using **BPA** (*Bloco de Portas Alocadas* —
 allocated port blocks). VPP/DPDK dataplane, FRR control plane, IPFIX logging
 per RFC 8158, single VTY. Targets 100 Gbps+ and 200k+ subscribers, shipped as
-an installable Debian appliance.
+an installable Debian appliance. Called HexaRouting until 0.76.1: the name
+changed, and the paths, the units, the `hexash` command and this repository
+kept theirs, on purpose (see `CHANGELOG.md`).
 
 Verified on real hardware with real Internet traffic: subscribers translated
 to the exact public addresses the reference model predicts, ICMP and HTTPS
@@ -37,7 +39,7 @@ make release-gate      # build the installation medium from a tag and boot it
 flowchart LR
     SUB["Subscribers<br/>100.64.0.0/10"] -->|LAN| VPP
 
-    subgraph BOX["HexaRouting appliance"]
+    subgraph BOX["Prisma Routing appliance"]
         VPP["VPP dataplane<br/>bpa plugin"]
         FRR["FRR<br/>bgpd / ospfd / ospf6d / isisd"]
         VTY["hexash<br/>single VTY"]

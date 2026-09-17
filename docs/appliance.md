@@ -1,4 +1,4 @@
-# HexaRouting — Appliance
+# Prisma Routing - Appliance
 
 ## TL;DR
 
@@ -28,7 +28,7 @@ knob at a time rather than switched on and declared an improvement.
 
 | | |
 |---|---|
-| **What** | A bootable Debian appliance carrying VPP, FRR and HexaRouting, with boot tuning computed at first start. |
+| **What** | A bootable Debian appliance carrying VPP, FRR and Prisma Routing, with boot tuning computed at first start. |
 | **Why** | Hand-tuned `isolcpus` and hugepages are the difference between full and half throughput, and getting them wrong produces no error. |
 | **Who** | Whoever racks the box; the self-test speaks to them over serial console or IPMI. |
 | **When** | Tuning is computed on every boot; kernel-level changes take effect on the **next** one. |
@@ -236,7 +236,7 @@ Three fixes, because one would not be enough:
 
 The third matters most. The tuning only takes effect on the next boot anyway,
 so blocking the current one for it is a bad trade in every scenario. **No
-HexaRouting service SHOULD be able to block boot without a limit** — that was a
+Prisma Routing service SHOULD be able to block boot without a limit** - that was a
 design defect, not merely an effect of `update-grub`.
 
 ## Memory requirement
@@ -951,9 +951,9 @@ It is now a statement like any other — in the candidate, committed, saved by
 `save`, rendered by `show running-config`:
 
 ```
-hexarouting> configure
-hexarouting# [edit] dataplane interface enp2s0
-hexarouting# [edit] commit
+prismarouting> configure
+prismarouting# [edit] dataplane interface enp2s0
+prismarouting# [edit] commit
 dataplane interface: enp2s0
     stored, and the boot tuning was recomputed for it
     NOT IN EFFECT YET: the dataplane claims its card when it starts, and this
@@ -1520,14 +1520,14 @@ with no credentials at all, runs the product so you can look at it, and offers
 one command that turns it into a box somebody owns.
 
 ```
-<the HexaRouting banner>
-HexaRouting VTY <version>
+<the Prisma Routing banner>
+Prisma Routing VTY <version>
 '?' for help, TAB to complete, 'configure' to edit, 'exit' to leave.
 
 This is the installation medium: nothing here survives a reboot.
-Type 'install' to install HexaRouting onto a disk.
+Type 'install' to install Prisma Routing onto a disk.
 
-hexarouting> install
+prismarouting> install
 ```
 
 `install` exists in the VTY **only when the box is running from the medium**.

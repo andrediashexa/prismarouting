@@ -1,8 +1,35 @@
 #!/bin/sh
-# Installs HexaRouting onto an existing Debian 12.
+# Installs Prisma Routing onto an existing Debian 12.
 #
 # Does not build an ISO: for a fresh install see build-iso.sh. This path is
 # for updating a box in production without reinstalling it.
+#
+# THE NAMES ON THE DISK ARE STILL THE OLD ONES, and this file is where they
+# are laid down, so this is where the reason is written (#202). The product
+# is Prisma Routing; the banner, the prompt, `show version`, the self-test
+# and the medium's filename say so. Everything below keeps `hexarouting`:
+#
+#   /usr/bin/hexash            the login shell recorded in /etc/passwd for
+#                              every account the VTY created; an account
+#                              whose shell does not exist cannot log in
+#   /etc/hexarouting/*         the saved configuration and its rollback
+#                              store, which an upgrade must still find
+#   /var/log/hexarouting       a mountpoint in fstab holding the connection
+#                              records the Marco Civil requires for a year
+#   /usr/lib/hexarouting,      the runtime and the installer, named by every
+#   /usr/sbin/hexarouting-install
+#                              unit and by the VTY by absolute path
+#   hexarouting*.service       unit names, and the vpp.service drop-ins
+#   hexa-admin, hexa-cgnat     the role groups; membership is by GID and a
+#                              group recreated under a new name takes every
+#                              operator's role away
+#   HEXA_*                     the environment the VTY, the tuner and the
+#                              labs read and set
+#
+# Renaming any of those is a migration of a box in service, not a rename,
+# and this release deliberately makes none: an upgraded box changes what it
+# prints and nothing it has on disk.
+#
 #
 # WHAT THIS SCRIPT NEEDS AND WHERE AN OPERATOR GETS IT. Every install line
 # below copies out of $REPO, and the plugin comes from .build-vpp or from a

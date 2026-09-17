@@ -39,7 +39,7 @@ Dê boot pela ISO e digite `install`. Ele pergunta disco, hostname, fuso e senha
 Console ou SSH caem direto na VTY:
 
 ```
-hexarouting>
+prismarouting>
 ```
 
 Precisa de um shell? `start shell`, e `exit` volta.
@@ -98,9 +98,9 @@ Uma caixa que comesse uma placa em silêncio seria pior do que uma que pergunta;
 O comando continua existindo, e mudou de papel: era passo obrigatório, agora é **override**. Ele é **exclusivo** — nomear uma placa faz a caixa reivindicar aquela e **nenhuma outra**:
 
 ```
-hexarouting> configure
-hexarouting# [edit] dataplane interface enp2s0
-hexarouting# [edit] commit
+prismarouting> configure
+prismarouting# [edit] dataplane interface enp2s0
+prismarouting# [edit] commit
 ```
 
 É assim que se guarda placa para o Linux numa caixa com várias: nomeie a que carrega os assinantes, e todas as demais ficam. `no dataplane interface` devolve a escolha para a caixa.
@@ -108,7 +108,7 @@ hexarouting# [edit] commit
 O nome é o que o **Linux** dá à placa. **TAB** e `?` listam as que a caixa tem e marcam qual carrega a rota default:
 
 ```
-hexarouting# [edit] dataplane interface ?
+prismarouting# [edit] dataplane interface ?
 
   enp1s0  carries the default route: its address moves with it
   enp2s0  card
@@ -129,7 +129,7 @@ Só entram na lista as placas que **têm endereço PCI** — as únicas que o da
 **Um nome que a caixa não tem também é recusado, e ela diz quais tem:**
 
 ```
-hexarouting# [edit] dataplane interface eth9
+prismarouting# [edit] dataplane interface eth9
 error: dataplane interface eth9: this box has no such interface
     the cards it has: enp1s0, enp2s0
     this is the name LINUX gives the card, which is what the dataplane is
@@ -144,7 +144,7 @@ Nos dois casos nada entra na candidata: a recusa é no prompt, não depois do `c
 Mudar o override não move placa nenhuma na hora. A entrega tira a placa do Linux e derruba tudo que chega na caixa por ela, então o `commit` para exatamente antes disso e diz onde está o limite:
 
 ```
-hexarouting# [edit] commit
+prismarouting# [edit] commit
 dataplane interface: enp2s0
     stored, and the boot tuning was recomputed for it
     NOT IN EFFECT YET: the dataplane claims its card when it starts, and this

@@ -337,7 +337,7 @@ sed 's/\x1b\[[0-9;]*m//g' /tmp/install.log > /tmp/install-clean.log
 cp /tmp/install-clean.log "$LOG" 2>/dev/null || true
 sed -n '/install to disk/,/installed on/p' /tmp/install-clean.log | head -30
 
-if ! grep -q "HexaRouting installed to /dev/vda" /tmp/install-clean.log; then
+if ! grep -q "Prisma Routing installed to /dev/vda" /tmp/install-clean.log; then
   echo
   echo "=========== THE INSTALL DID NOT FINISH ==========="
   # systemd skipping the unit looks nothing like the installer failing, and
@@ -368,7 +368,7 @@ if ! grep -q "HexaRouting installed to /dev/vda" /tmp/install-clean.log; then
     echo "  the installer unit never started at all - check"
     echo "  ConditionKernelCommandLine against the -append line."
   fi
-  if grep -q "HexaRouting inst" /tmp/install-clean.log; then
+  if grep -q "Prisma Routing inst" /tmp/install-clean.log; then
     echo "  NOTE: the marker line is present but truncated, so the install"
     echo "  finished and the machine was killed before it could say so."
   fi
@@ -753,7 +753,7 @@ login_root() {  # the first prompt the box offers, and root in the VTY
   send "root"
   wait_for "Password:" 60 "login to ask for root's password" || return 1
   send "$LOGIN_PW"
-  wait_for "HexaRouting VTY" 180 "root's login to land in the VTY" || return 1
+  wait_for "Prisma Routing VTY" 180 "root's login to land in the VTY" || return 1
   send "start shell"
   wait_for "entering /bin" 60 "root's shell escape to open" || return 1
 }
@@ -799,7 +799,7 @@ mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exi
 # \r goes, because a serial console ends every line with one and a pattern
 # anchored on the start of a line would never match otherwise. The escape
 # sequences go with it: readline redraws its prompt with them, so the string
-# "hexarouting> " arrives cut in half by a cursor move often enough to matter.
+# "prismarouting> " arrives cut in half by a cursor move often enough to matter.
 console_since() {
   tail -c "+$CONSOLE_POS" "$CONSOLE_LOG" 2>/dev/null \
     | tr -d '\r' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g'
@@ -1143,7 +1143,7 @@ drive_console() {
   wait_for "Password:" 60 \
     "the first login to ask for root's password" || return 1
   send "$LOGIN_PW"
-  wait_for "HexaRouting VTY" 180 \
+  wait_for "Prisma Routing VTY" 180 \
     "root's first login to land in the VTY" || return 1
 
   # Half two: what that session can actually do.
@@ -1184,7 +1184,7 @@ drive_console() {
     *) return 1 ;;
   esac
   send "exit"
-  wait_for "hexarouting> " 60 \
+  wait_for "prismarouting> " 60 \
     "the first session to leave configuration mode" || return 1
   send "exit"
   wait_for "$NEW_HOST login:" 120 \
@@ -1199,7 +1199,7 @@ drive_console() {
   # driver that waited for a prompt would type its next command at the login
   # prompt that follows a refusal and run the whole lab against it, which is
   # the single most likely way for this to go green proving nothing.
-  wait_for "HexaRouting VTY" 180 "root's login to land in the VTY" || return 1
+  wait_for "Prisma Routing VTY" 180 "root's login to land in the VTY" || return 1
   echo "  -- root is in the VTY; the VTY creates the accounts and grants a role"
 
   send "configure"
@@ -1223,7 +1223,7 @@ drive_console() {
   send "commit"
   wait_for "commit complete" 300 "root's commit to apply the accounts" || return 1
   send "exit"
-  wait_for "hexarouting> " 30 "the VTY to leave configuration mode" || return 1
+  wait_for "prismarouting> " 30 "the VTY to leave configuration mode" || return 1
 
   echo "  -- what the BOX says those accounts got, read off the box"
   send "start shell"
@@ -1475,7 +1475,7 @@ drive_console() {
   send 'echo "HX""LAB section=op"'
   wait_for "HXLAB section=op" 30 "the marker that ends root's session" || return 1
   send "exit"
-  wait_for "back in the HexaRouting VTY" 60 \
+  wait_for "back in the Prisma Routing VTY" 60 \
     "the shell escape to return to the VTY" || return 1
   send "exit"
   wait_for "$NEW_HOST login:" 120 \
@@ -1486,7 +1486,7 @@ drive_console() {
   send "$OP_USER"
   wait_for "Password:" 60 "login to ask for the account's password" || return 1
   send "$OP_PW"
-  wait_for "HexaRouting VTY" 180 \
+  wait_for "Prisma Routing VTY" 180 \
     "the account the VTY created to log in and land in the VTY" || return 1
   send "configure"
   wait_for "entering configuration mode" 60 \
@@ -1515,7 +1515,7 @@ drive_console() {
   wait_for "commit complete" 300 \
     "an administrator's commit to be applied on the installed box" || return 1
   send "exit"
-  wait_for "hexarouting> " 30 "the VTY to leave configuration mode" || return 1
+  wait_for "prismarouting> " 30 "the VTY to leave configuration mode" || return 1
 
   # Read back from FRR and from the dataplane, by the account itself. "commit
   # complete" is this VTY's own sentence; whether the routing daemon and the
@@ -1543,7 +1543,7 @@ drive_console() {
   wait_for "HXLAB section=ro" 30 \
     "the marker that ends the administrator's session" || return 1
   send "exit"
-  wait_for "back in the HexaRouting VTY" 60 \
+  wait_for "back in the Prisma Routing VTY" 60 \
     "the shell escape to return to the VTY" || return 1
   send "exit"
   wait_for "$NEW_HOST login:" 120 \
@@ -1555,7 +1555,7 @@ drive_console() {
   wait_for "Password:" 60 \
     "login to ask the read-only account for its password" || return 1
   send "$RO_PW"
-  wait_for "HexaRouting VTY" 180 \
+  wait_for "Prisma Routing VTY" 180 \
     "the read-only account to log in and land in the VTY" || return 1
   send "configure"
   wait_for "configure: permission denied for a read-only account" 60 \
@@ -1598,14 +1598,14 @@ drive_console() {
   send "root"
   wait_for "Password:" 60 "login to ask for root's password again" || return 1
   send "$LOGIN_PW"
-  wait_for "HexaRouting VTY" 180 "root to land in the VTY again" || return 1
+  wait_for "Prisma Routing VTY" 180 "root to land in the VTY again" || return 1
   send "start shell"
   wait_for "entering /bin" 60 "root's shell escape to open" || return 1
   send 'echo "HX""LAB section=confirm"'
   wait_for "HXLAB section=confirm" 30 \
     "the marker that separates this from the read-only session" || return 1
   send "exit"
-  wait_for "back in the HexaRouting VTY" 60 \
+  wait_for "back in the Prisma Routing VTY" 60 \
     "the shell escape to return to the VTY" || return 1
 
   send "configure"
@@ -1647,7 +1647,7 @@ drive_console() {
     CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
   fi
   send "exit"
-  wait_for "hexarouting> " 30 "the VTY to leave configuration mode" || return 1
+  wait_for "prismarouting> " 30 "the VTY to leave configuration mode" || return 1
   send "start shell"
   wait_for "entering /bin" 60 "root's shell escape to open" || return 1
   # Out of /etc/passwd, not out of what the VTY said. The account has to be
@@ -1664,7 +1664,7 @@ drive_console() {
   wait_for "HXLAB confirm-armed=" 30 \
     "the box to say whether the deadline reached the disk" || return 1
   send "exit"
-  wait_for "back in the HexaRouting VTY" 60 \
+  wait_for "back in the Prisma Routing VTY" 60 \
     "the shell escape to return to the VTY" || return 1
   send "exit"
   wait_for "$NEW_HOST login:" 120 \
@@ -1694,7 +1694,7 @@ drive_console() {
   send "root"
   wait_for "Password:" 60 "login to ask for root's password" || return 1
   send "$LOGIN_PW"
-  wait_for "HexaRouting VTY" 180 \
+  wait_for "Prisma Routing VTY" 180 \
     "root to log back in after the window has passed" || return 1
   send "start shell"
   wait_for "entering /bin" 60 "root's shell escape to open" || return 1
@@ -2007,7 +2007,7 @@ timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   > /tmp/reinstall.log 2>&1
 sed 's/\x1b\[[0-9;]*m//g' /tmp/reinstall.log > /tmp/reinstall-clean.log
 cat /tmp/reinstall-clean.log >> "$LOG" 2>/dev/null || true
-if grep -q "HexaRouting installed to /dev/vda" /tmp/reinstall-clean.log \
+if grep -q "Prisma Routing installed to /dev/vda" /tmp/reinstall-clean.log \
    && grep -q "records mirrored on /dev/md0, 2 of 2 disks present" \
         /tmp/reinstall-clean.log; then
   echo "  [ ok ] a box that already has a records mirror can be reinstalled,"
@@ -3347,7 +3347,7 @@ fi
 # PHASE 3 above power-cycles the box the way an operator WITHOUT this feature
 # had to: it drops to a shell and types `systemctl poweroff`, then the disk is
 # cold-booted and found reachable. #388 is that an operator never has to leave
-# the VTY to do it. So this phase types `system reboot` at the `hexarouting> `
+# the VTY to do it. So this phase types `system reboot` at the `prismarouting> `
 # prompt instead - no shell, no systemctl - and the assertion is the one PHASE
 # 3 makes: the box comes back on the network by itself.
 #
@@ -3398,12 +3398,12 @@ then
 
   VR_DRIVEN=0
   # Into the VTY and NOT on to a shell: login_root ends with `start shell`,
-  # and this command has to be typed at `hexarouting> ` to prove it is the
+  # and this command has to be typed at `prismarouting> ` to prove it is the
   # VTY's. So the login is inline here, stopping at the operational prompt.
   if wait_for "$NEW_HOST login:" 420 "the box to come up for the VTY reboot" \
      && { send "root"; wait_for "Password:" 60 \
           "the login to ask for root's password"; } \
-     && { send "$LOGIN_PW"; wait_for "hexarouting> " 180 \
+     && { send "$LOGIN_PW"; wait_for "prismarouting> " 180 \
           "root's login to land at the VTY prompt"; }; then
     VR_DRIVEN=1
     send "system reboot"
@@ -3444,7 +3444,7 @@ then
       # prompt it just returned to rather than waiting for a fresh one.
       if { send "root"; wait_for "Password:" 60 \
            "the reboot's login to ask for root's password"; } \
-         && { send "$LOGIN_PW"; wait_for "hexarouting> " 180 \
+         && { send "$LOGIN_PW"; wait_for "prismarouting> " 180 \
               "the reboot's login to land at the VTY prompt"; }; then
         send "start shell"
         wait_for "entering /bin" 60 "the shell to open for a clean poweroff" \
@@ -3536,7 +3536,7 @@ then
     wait_for "HXLAB ho-addr0=" 30 "the box to say what address it is on" \
       || fail=1
     send "exit"
-    wait_for "hexarouting> " 60 "the shell to close before the handover" \
+    wait_for "prismarouting> " 60 "the shell to close before the handover" \
       || fail=1
 
     # ------------------------------------------------------- the handover
@@ -3585,7 +3585,7 @@ then
          fail=1 ;;
     esac
     send "exit"
-    wait_for "hexarouting> " 120 "the VTY to leave configuration mode" || fail=1
+    wait_for "prismarouting> " 120 "the VTY to leave configuration mode" || fail=1
 
     # --------------------------------- what the commit itself did to the card
     #
@@ -3767,7 +3767,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     wait_for "HXLAB ho-dpmtu=" 60 \
       "the dataplane to give the state and MTU of its interfaces" || fail=1
     send "exit"
-    wait_for "hexarouting> " 60 "the shell to close" || fail=1
+    wait_for "prismarouting> " 60 "the shell to close" || fail=1
     # ------------------- the card, by its own name, at the console (#389)
     #
     # THE ISSUE'S TRANSCRIPT. On the maintainer's box `show interface` said
@@ -3835,14 +3835,14 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       HO_COMMIT=unread
     fi
     send "exit"
-    wait_for "hexarouting> " 120 "the VTY to leave configuration mode" \
+    wait_for "prismarouting> " 120 "the VTY to leave configuration mode" \
       || fail=1
     # And in the operator's own words, on the console, so the log carries what
     # they would see. Nothing is armed by this commit since #378, and nothing
     # is written down beside the card since #385: what the box does with the
     # card is decided at the next start, and PHASE 5 reads it there.
     send "show interface"
-    wait_for "hexarouting> " 120 "the dataplane to list its interfaces" \
+    wait_for "prismarouting> " 120 "the dataplane to list its interfaces" \
       || fail=1
     # ------------- and the same card in the words an operator types (#393)
     #
@@ -3898,11 +3898,11 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send "commit"
     wait_for "[edit]" 300 "the commit of 'no shut' to answer" || fail=1
     send "exit"
-    wait_for "hexarouting> " 120 "the VTY to leave configuration mode" \
+    wait_for "prismarouting> " 120 "the VTY to leave configuration mode" \
       || fail=1
     _ab_show=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
     send "show interface"
-    wait_for "hexarouting> " 120 \
+    wait_for "prismarouting> " 120 \
       "the VTY to list its interfaces after 'no shut'" || fail=1
     tail -c "+$_ab_show" "$CONSOLE_LOG" | tr -d '\r' \
       | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' > /tmp/ab-show.txt

@@ -26,7 +26,14 @@ version=$(cat "$REPO/VERSION" 2>/dev/null || echo unknown)
 
 # The name of an image built from this tree.
 #
-# An ISO called "hexarouting.iso" on a USB stick, or in somebody's downloads,
+# "prisma-routing": the product is Prisma Routing, two words, and a filename
+# takes the two-word name hyphenated rather than run together, so that the
+# name on a USB stick reads as the name on the banner (#202). This is the only
+# place the product name enters a filename; appliance/build-upgrade.sh and
+# tools/release-gate.sh derive the artifact's name from this one by swapping
+# the extension, and test/test_iso_ready.sh reads it from here.
+#
+# An ISO called "prisma-routing.iso" on a USB stick, or in somebody's downloads,
 # says nothing about what it is - and two of them are indistinguishable. The
 # version goes in the name so that the file keeps its identity after it leaves
 # the release page.
@@ -40,9 +47,9 @@ iso_name() {
   _v=$1
   _extra=$2
   if [ -n "$_extra" ]; then
-    printf 'hexarouting-%s-%s.iso\n' "$_v" "$_extra"
+    printf 'prisma-routing-%s-%s.iso\n' "$_v" "$_extra"
   else
-    printf 'hexarouting-%s.iso\n' "$_v"
+    printf 'prisma-routing-%s.iso\n' "$_v"
   fi
 }
 

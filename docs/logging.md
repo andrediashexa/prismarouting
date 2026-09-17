@@ -1,4 +1,4 @@
-# HexaRouting — BPA Log Export via IPFIX
+# Prisma Routing - BPA Log Export via IPFIX
 
 ## TL;DR
 

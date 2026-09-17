@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Minimal IPFIX collector, only for checking HexaRouting's export.
+Minimal IPFIX collector, only for checking Prisma Routing's export.
 
 Decodes the template and the data records and prints the RFC 8158 block events
 as text. It is not a product: it exists so the tests can prove that what leaves

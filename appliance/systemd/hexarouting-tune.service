@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - compute boot tuning from the hardware
+Description=Prisma Routing - compute boot tuning from the hardware
 Documentation=file:///usr/share/doc/hexarouting/architecture.md
 # Runs before VPP: the generated startup.conf is what VPP reads. Kernel
 # command line changes (isolcpus, hugepages) only apply on the next boot.

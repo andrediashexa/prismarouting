@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - install to disk when the kernel command line asks
+Description=Prisma Routing - install to disk when the kernel command line asks
 Documentation=file:///usr/share/doc/hexarouting/appliance.md
 ConditionKernelCommandLine=hexarouting.install
 # Same dependency shape as the self-test, and for the same reason: ordering

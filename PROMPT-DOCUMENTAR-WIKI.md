@@ -1,6 +1,6 @@
-# Tarefa: documentar todas as features do HexaRouting na wiki
+# Tarefa: documentar todas as features do Prisma Routing na wiki
 
-Você vai escrever documentação de uso na wiki pública do HexaRouting. O
+Você vai escrever documentação de uso na wiki pública do Prisma Routing. O
 repositório está em `/home/hexanetworks/hexarouting` (branch `master`).
 
 ## Leia isto primeiro, nesta ordem
@@ -55,7 +55,7 @@ Referência            VTY hexash — guia de uso (+ 5 subpáginas: Comandos sho
                       Configuração de CGNAT, Configuração de pool, commit
                       rollback e save, Roteamento SSH usuários e SNMP) ·
                       Multi-tenant com VRF · Timeouts e os pisos das RFCs
-Entender o produto    HexaRouting — visão geral · BPA — conceitos e mapeamento ·
+Entender o produto    Prisma Routing — visão geral · BPA — conceitos e mapeamento ·
                       Alta disponibilidade
 ```
 

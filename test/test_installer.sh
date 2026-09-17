@@ -573,7 +573,7 @@ echo "=== answers from a file: the unattended path that publishes nothing ==="
 adir=$(mktemp -d)
 SECRET=s3cr3t-from-the-file
 cat > "$adir/answers" <<ANS
-# HexaRouting install answers
+# Prisma Routing install answers
 hostname = cgnat-file
 timezone = America/Sao_Paulo
 log-gb   = 2
@@ -1455,7 +1455,7 @@ mkroot() {  # <dir>: what a good install leaves behind
   printf 'source /etc/network/interfaces.d/*\n' > "$1/etc/network/interfaces"
   : > "$1/sbin/dhclient"; chmod +x "$1/sbin/dhclient"
   : > "$1/boot/vmlinuz-6.1.0-test"
-  printf 'menuentry "HexaRouting" {\n\tlinux\t/boot/vmlinuz-6.1.0-test root=UUID=11111111-1111-1111-1111-111111111111 ro\n\tinitrd\t/boot/initrd.img-6.1.0-test\n}\n' \
+  printf 'menuentry "Prisma Routing" {\n\tlinux\t/boot/vmlinuz-6.1.0-test root=UUID=11111111-1111-1111-1111-111111111111 ro\n\tinitrd\t/boot/initrd.img-6.1.0-test\n}\n' \
     > "$1/boot/grub/grub.cfg"
   printf 'UUID=11111111-1111-1111-1111-111111111111 / ext4 errors=remount-ro 0 1\n' \
     > "$1/etc/fstab"

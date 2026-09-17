@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - watch for a 'commit confirmed' that was never confirmed
+Description=Prisma Routing - watch for a 'commit confirmed' that was never confirmed
 Documentation=file:///usr/share/doc/hexarouting/routing.md
 
 [Timer]

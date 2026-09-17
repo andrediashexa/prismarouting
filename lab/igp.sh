@@ -6,7 +6,7 @@
 # and every assertion below reads the VPP FIB, an adjacency state, or the punt
 # the dataplane is actually doing - never the text of a configuration file.
 #
-#   [netns peer] OSPF / OSPFv3 / IS-IS         [default] HexaRouting
+#   [netns peer] OSPF / OSPFv3 / IS-IS         [default] Prisma Routing
 #     dum-ospf  198.18.0.0/24    -- OSPF -->   FRR -> kernel -> linux_nl
 #     dum-isis  198.19.0.0/24    -- ISIS -->                 -> FIB do VPP
 #               2001:db8:19::/64 -- ISIS -->
@@ -107,7 +107,7 @@ vppctl set interface ip address host-veth-vpp 10.0.0.1/24
 # has a link-local of its own to answer neighbour solicitations from.
 vppctl set interface ip address host-veth-vpp 2001:db8:0::1/64
 
-# ---------------- HexaRouting ----------------
+# ---------------- Prisma Routing ----------------
 mkdir -p /var/run/frr /etc/frr
 cat > /etc/frr/zebra.conf <<'EOF'
 hostname hexarouting

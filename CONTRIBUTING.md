@@ -1,4 +1,4 @@
-# HexaRouting — Project Rules
+# Prisma Routing - Project Rules
 
 ## TL;DR
 
@@ -26,7 +26,7 @@ document are to be interpreted as described in [RFC 2119][rfc2119].
 | | |
 |---|---|
 | **What** | The rules that govern documentation, issues and branches in this repository. |
-| **Why** | HexaRouting is shipped to several providers as an appliance. Work that is not written down cannot be reviewed, audited or handed over, and a change with no issue behind it has no recorded reason for existing. |
+| **Why** | Prisma Routing is shipped to several providers as an appliance. Work that is not written down cannot be reviewed, audited or handed over, and a change with no issue behind it has no recorded reason for existing. |
 | **Who** | Everyone who commits to this repository, human or agent. |
 | **Where** | This repository and its GitHub issue tracker. The repository is **private** and MUST remain so. |
 | **When** | Before the first commit of any change, not after it. |
@@ -400,8 +400,8 @@ When it happens it **MUST** produce all six of:
    A release whose ISO does not boot **MUST NOT** be published. Fix it, or
    say in the note that this version ships as source only and why.
 
-   **The image's filename MUST carry the version**: `hexarouting-0.23.0.iso`,
-   never `hexarouting.iso`. A file keeps its name and loses its context the
+   **The image's filename MUST carry the version**: `prisma-routing-0.23.0.iso`,
+   never `prisma-routing.iso`. A file keeps its name and loses its context the
    moment it is downloaded, copied to a USB stick or handed to somebody at a
    site, and two images with the same name are indistinguishable at exactly
    the moment it matters — when an operator is deciding which one to install.
@@ -428,7 +428,7 @@ When it happens it **MUST** produce all six of:
    rule rather than by attention. See `TESTING.md`.
 
    `tools/version-stamp.sh --filename` produces the name, and is the only
-   place that calculation lives. The bare `hexarouting-<version>.iso` is
+   place that calculation lives. The bare `prisma-routing-<version>.iso` is
    reserved for the tree that **is** the release: clean, and standing exactly
    on the tag for the version it claims. Any other tree adds its commit, and a
    dirty one says so — because the image nobody must mistake for a release is

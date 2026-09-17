@@ -1,14 +1,14 @@
 #!/bin/sh
 # Builds the upgrade artifact: the file an operator takes a new version from.
 #
-#   sh appliance/build-upgrade.sh     -> hexarouting-<version>-upgrade.tar.gz
+#   sh appliance/build-upgrade.sh     -> prisma-routing-<version>-upgrade.tar.gz
 #
 # Needs the plugin built (tools/build.sh plugin) and nothing else: no root, no
 # debootstrap, no container. That is the whole difference between this and
 # build-iso.sh, and it is why this can be built and verified on every release
 # instead of on the ones somebody had half an hour for.
 #
-# WHAT IT IS. A tarball whose contents are a HexaRouting source tree with the
+# WHAT IT IS. A tarball whose contents are a Prisma Routing source tree with the
 # build already in it, so that appliance/install.sh - the script this
 # repository has always called "for updating a box in production without
 # reinstalling it" - can run out of it on a box that has no repository and no

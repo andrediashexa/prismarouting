@@ -101,7 +101,7 @@ Priority: optional
 Section: net
 Architecture: amd64
 Version: $2
-Maintainer: HexaRouting test fixture <nobody@example.invalid>
+Maintainer: Prisma Routing test fixture <nobody@example.invalid>
 Description: stand-in for the $1 the medium installs
 
 EOF

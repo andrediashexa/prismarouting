@@ -1489,7 +1489,7 @@ NO_ROUTE = ("Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask"
             "\t\tMTU\tWindow\tIRTT\n")
 #: The configuration file every fresh appliance boots with, from
 #: appliance/etc/hexarouting.conf. Three comments and no statement.
-SHIPPED_CONF = "!\n! HexaRouting\n!\n"
+SHIPPED_CONF = "!\n! Prisma Routing\n!\n"
 #: And a dataplane that took nothing, for the case where the card is on
 #: neither side.
 DP_NOTHING = """\

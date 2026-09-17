@@ -1,4 +1,4 @@
-# HexaRouting — Testing
+# Prisma Routing - Testing
 
 ## TL;DR
 
@@ -49,7 +49,7 @@ make model     # validates the reference model itself
 
 `make test` MUST pass on an ordinary developer account. It reads no system
 state — a test that needed the invoking account to be root, or in the
-HexaRouting groups, is a test that is red on every machine but one, and a
+product's role groups, is a test that is red on every machine but one, and a
 suite nobody can run green is a suite whose next real failure is
 indistinguishable from the noise it already prints.
 
@@ -472,7 +472,7 @@ sh tools/vty.sh -c "show cgnat pool"  # one command and exit
 Tab completes; `?` lists the valid options with descriptions:
 
 ```
-hexarouting# show cgnat ?
+prismarouting# show cgnat ?
   blocks   blocks allocated in dynamic mode
   logging  IPFIX export state
   pool     configured CGNAT pools
@@ -487,15 +487,15 @@ Configuration follows the Juniper model — edits build a candidate and reach th
 device only on `commit`:
 
 ```
-hexarouting> configure
-hexarouting# [edit] nat cgnat pool alpha
-hexarouting# [edit cgnat pool alpha] inside 100.64.0.0/22
-hexarouting# [edit cgnat pool alpha] exit
-hexarouting# [edit] show configuration compare
-hexarouting# [edit] commit check
-hexarouting# [edit] commit comment "first pool"
-hexarouting# [edit] rollback 1
-hexarouting# [edit] commit
+prismarouting> configure
+prismarouting# [edit] nat cgnat pool alpha
+prismarouting# [edit cgnat pool alpha] inside 100.64.0.0/22
+prismarouting# [edit cgnat pool alpha] exit
+prismarouting# [edit] show configuration compare
+prismarouting# [edit] commit check
+prismarouting# [edit] commit comment "first pool"
+prismarouting# [edit] rollback 1
+prismarouting# [edit] commit
 ```
 
 `commit confirmed <minutes>` applies the change and rolls it back
@@ -506,7 +506,7 @@ access.
 
 ```sh
 make iso                       # ~10 min, installs the image tools it needs
-make test-iso                  # builds, then boots and demands "HexaRouting ready"
+make test-iso                  # builds, then boots and demands "Prisma Routing ready"
 make test-appliance            # generates startup.conf and starts VPP with it
 make test-install              # installs onto a blank disk, boots that disk
 make upgrade-artifact          # seconds, no root and no container
@@ -557,7 +557,7 @@ a login that fails silently would run the whole session against a login prompt
 and report a pass.
 
 `make test-iso` exits non-zero when the self-test does not report
-`HexaRouting ready`, and dumps the console to `boot-console.log` on failure.
+`Prisma Routing ready`, and dumps the console to `boot-console.log` on failure.
 It refuses to boot an ISO older than the sources — a build that dies halfway
 used to be followed by a green boot of the *previous* image.
 

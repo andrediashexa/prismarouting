@@ -38,7 +38,7 @@ NAME=$(sh "$T/tools/version-stamp.sh" --filename "$T")
 
 echo "=== the name it looks for is the one this tree would build ==="
 case "$NAME" in
-  hexarouting-*.iso) ok "$NAME" ;;
+  prisma-routing-*.iso) ok "$NAME" ;;
   *) bad "version-stamp.sh --filename answered '$NAME'" ;;
 esac
 

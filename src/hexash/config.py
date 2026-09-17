@@ -1257,7 +1257,7 @@ class Config:
 
         An empty file is not a configuration that removes everything; it is a
         configuration nobody has written yet. The installer ships exactly such
-        a file - "!\n! HexaRouting\n!" - and reading it as removal made
+        a file - "!\n! Prisma Routing\n!" - and reading it as removal made
         `hexash --load` refuse it at the first boot of every fresh install:
         the box had SSH access from the installer and the file did not mention
         SSH, so the lockout check saw a change that took the access away.
@@ -1619,7 +1619,7 @@ class Config:
             # section headers above are the only `!` lines that mean anything;
             # the rest are comments and MUST be ignored.
             #
-            # They were not, and install.sh writes "!\n! HexaRouting\n!\n" as
+            # They were not, and install.sh writes "!\n! Prisma Routing\n!\n" as
             # the default configuration. So hexash --load refused to load it -
             # "these lines are not understood" - and exited non-zero, which
             # made hexarouting.service FAIL ON THE FIRST BOOT OF EVERY INSTALL

@@ -19,14 +19,14 @@ What is read is the PROMPT LINES inside fenced blocks, because those are the
 lines a reader retypes. Output lines in the same block are not commands and
 are left alone.
 
-  hexarouting> show route                 operational mode
-  hexarouting# [edit] interface Gi0/1     configuration mode, top level
-  hexarouting# [edit interface Gi0/1]     the prompt alone: where you now are,
+  prismarouting> show route               operational mode
+  prismarouting# [edit] interface Gi0/1   configuration mode, top level
+  prismarouting# [edit interface Gi0/1]   the prompt alone: where you now are,
                                           not something anybody typed
 
-The prompt is half the assertion. `hexarouting>` and `hexarouting# [edit]` are
+The prompt is half the assertion. `prismarouting>` and `prismarouting# [edit]` are
 what Shell.prompt() returns for the two modes, so a page that shows
-`hexarouting# configure` is showing a transcript the box cannot produce:
+`prismarouting# configure` is showing a transcript the box cannot produce:
 `configure` is an operational command and `#` means you are already in
 configuration mode, where it is not in the tree at all.
 
@@ -195,11 +195,11 @@ def prompt_lines():
                     if (i + 1 < len(rows)
                             and rows[i + 1].startswith(AMBIGUOUS_VERDICT)):
                         SHOWN_REFUSED.add((path, line))
-                    m = re.match(r"^hexarouting> (.+)$", line)
+                    m = re.match(r"^prismarouting> (.+)$", line)
                     if m:
                         out.append((path, "operational", "", m.group(1).strip()))
                         continue
-                    m = re.match(r"^hexarouting# \[edit(| [^\]]*)\](.*)$", line)
+                    m = re.match(r"^prismarouting# \[edit(| [^\]]*)\](.*)$", line)
                     if m:
                         cmd = m.group(2).strip()
                         if cmd:
@@ -208,9 +208,9 @@ def prompt_lines():
                         continue
                     # A prompt with something after it that is neither of the
                     # two shapes above. Worth naming rather than skipping:
-                    # `hexarouting# configure` is exactly that, and it is the
+                    # `prismarouting# configure` is exactly that, and it is the
                     # defect this half of the file exists for.
-                    m = re.match(r"^hexarouting#\s+([a-z].*)$", line)
+                    m = re.match(r"^prismarouting#\s+([a-z].*)$", line)
                     if m:
                         out.append((path, "BAD PROMPT", "", m.group(1).strip()))
     return out
@@ -229,8 +229,8 @@ else:
         f"matching the pages, so this file is asserting nothing")
 
 print("\n=== the prompt matches the mode the command lives in ===")
-# `hexarouting>` is operational and `hexarouting# [edit]` is configuration.
-# A command shown at a bare `hexarouting#` is a transcript the box cannot
+# `prismarouting>` is operational and `prismarouting# [edit]` is configuration.
+# A command shown at a bare `prismarouting#` is a transcript the box cannot
 # produce, and the one that matters is `configure`: at `#` you are already in
 # configuration mode, where `configure` is not in the tree at all.
 wrong_prompt = [(p, c) for p, mode, _, c in lines if mode == "BAD PROMPT"]
@@ -239,8 +239,8 @@ if not wrong_prompt:
 else:
     for path, cmd in wrong_prompt:
         rel = os.path.relpath(path, REPO)
-        bad(f"{rel} shows 'hexarouting# {cmd}'. This VTY prints "
-            f"'hexarouting> ' in operational mode and 'hexarouting# [edit] ' "
+        bad(f"{rel} shows 'prismarouting# {cmd}'. This VTY prints "
+            f"'prismarouting> ' in operational mode and 'prismarouting# [edit] ' "
             f"in configuration mode, so that line is a transcript no box "
             f"produces")
 
@@ -266,7 +266,7 @@ for path, mode, context, cmd in lines:
             contextlib.redirect_stderr(io.StringIO()):
         spelled = sh.spell_out(cmd)
     if spelled is None:
-        shown_line = (f"hexarouting# [edit{' ' + context if context else ''}]"
+        shown_line = (f"prismarouting# [edit{' ' + context if context else ''}]"
                       f" {cmd}")
         if (path, shown_line) not in SHOWN_REFUSED:
             bad(f"{rel}: '{cmd}' ({mode}): an ambiguous abbreviation, and the "
@@ -626,8 +626,8 @@ for _root, _dirs, _files in os.walk(os.path.join(REPO, "wiki")):
                 if not _inblock:
                     continue
                 _s = _line.strip()
-                if _s.startswith("hexarouting>"):
-                    _s = _s[len("hexarouting>"):].strip()
+                if _s.startswith("prismarouting>"):
+                    _s = _s[len("prismarouting>"):].strip()
                 if "  " in _s:
                     continue
                 _w = _s.split()

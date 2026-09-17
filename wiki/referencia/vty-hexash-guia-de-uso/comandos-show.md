@@ -27,7 +27,7 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 As duas respondem uma pergunta diferente da que o `show configuration` responde. O arquivo diz o que foi pedido; estas dizem o que a caixa está fazendo, e as duas coisas se separam em silêncio.
 
 ```
-hexarouting> show cgnat alg
+prismarouting> show cgnat alg
 provider-a
   ftp    on   FTP PORT/EPRT and the 227/229 replies
   rtsp   off  RTSP Transport client_port, and the media pair it needs
@@ -39,7 +39,7 @@ provider-a
 São os **cinco** ALGs do produto, um por linha, com a descrição que a caixa imprime em inglês. É a tela para "as transferências FTP deste cliente travam": ela diz se o ALG está ligado **no dataplane**, que não é a mesma pergunta que se ele está no arquivo.
 
 ```
-hexarouting> show cgnat forward
+prismarouting> show cgnat forward
 pool provider-a
   tcp 200.150.0.17:8080 -> 100.64.0.5:80
 ```
@@ -55,7 +55,7 @@ E esta é a primeira coisa a estabelecer quando alguém liga dizendo que o encam
 | `show route <prefixo>` | o mesmo, para um destino |
 
 ```
-hexarouting> show route
+prismarouting> show route
   Destination          Next hop          Interface    Kind
   0.0.0.0/0            200.150.0.1       ens19        forward
   200.150.0.0/24       connected         ens19        connected
@@ -74,7 +74,7 @@ Quando o tráfego não passa e a rota parece certa, `show route verbose` é o co
 ## `show interface` — as do dataplane
 
 ```
-hexarouting> show interface
+prismarouting> show interface
   Interface                  State  MTU    Address             Linux
   ens18                      up     9000   203.0.113.1/24      tap0 ens18
   ens19                      up     1500   -                   -
@@ -108,7 +108,7 @@ A visão do FRR continua em `show ip interface`.
 Uma linha por interface, com **duas** colunas de estado:
 
 ```
-hexarouting> show interface terse
+prismarouting> show interface terse
   Interface                  Admin  Link   Proto  Local
   ens18                      up     up     inet   203.0.113.1/24
   ens19                      up     down   -      -
@@ -134,7 +134,7 @@ Um endereço por linha: uma interface com IPv4 e IPv6 aparece em duas linhas, co
 ### `show interface description` — para que cada porta serve
 
 ```
-hexarouting> show interface description
+prismarouting> show interface description
   Interface                  Admin  Link   Description
   ens18                      up     up     ASSINANTES PON-3
   ens19                      up     down   TRANSITO Vivo AS26599
@@ -157,7 +157,7 @@ show interface utilization [<nome>] [interval <segundos>] [count <n>]
 `show interface` mostra **contador**, que é um total desde o boot. Ninguém quer o total: quer saber se o enlace está cheio **agora**. Para isso são necessárias duas leituras e a divisão pelo tempo entre elas — então este comando **demora**, e diz de quanto é a demora antes de começar:
 
 ```
-hexarouting> show interface utilization
+prismarouting> show interface utilization
   sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
 
   Interface                             rx            tx  rx history tx history
@@ -190,7 +190,7 @@ O que vale saber para ler o gráfico:
 `show interface` responde pelo **dataplane**. Numa caixa recém-instalada o dataplane não recebeu placa nenhuma, então essa tela vem vazia — justamente no momento em que é preciso ver quais placas existem para escolher uma. `show hardware` responde a outra pergunta: **quais placas físicas o Linux enxerga nesta caixa**, com o que basta para decidir.
 
 ```
-hexarouting> show hardware
+prismarouting> show hardware
   the dataplane has no interface to forward on: no interface was named, so VPP
   was given no NIC.
   Name it here: 'configure', then 'dataplane interface <name>',
@@ -305,7 +305,7 @@ O `mlx5` da Mellanox é a exceção: é um driver bifurcado e o dataplane trabal
 Sempre, e antes da lista. Uma placa que o **dataplane já tomou** desaparece da listagem do Linux — ela não está mais lá para ser listada. Sem essa linha, uma placa entregue ao dataplane e uma placa que nunca existiu na caixa ficariam com a mesma cara, e uma dessas duas é defeito de hardware.
 
 ```
-hexarouting> show hardware
+prismarouting> show hardware
   the dataplane holds ens19. A NIC VPP owns is no longer listed by Linux, so it
   is not in the list below.
 ```
@@ -328,7 +328,7 @@ E uma caixa onde o Linux não enxerga placa PCI nenhuma recebe uma frase, não u
 Dentro de um bloco de configuração, mostra o que aquele bloco tem e nada acima dele:
 
 ```
-hexarouting# [edit cgnat pool residential] show this
+prismarouting# [edit cgnat pool residential] show this
 cgnat pool residential
  inside 100.64.0.0/22
  outside 200.150.0.16/30
@@ -354,7 +354,7 @@ O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[ed
 O `hexash` conhece parte das sentenças de roteamento e repassa o resto ao roteamento sem ler. As duas coisas apareciam iguais na tela. Agora não:
 
 ```
-hexarouting# [edit] show configuration
+prismarouting# [edit] show configuration
 ...
 ! routing
 router bgp 65000
@@ -375,7 +375,7 @@ A marcação aparece em `show configuration`, `show running-config` e `show this
 Num bloco que a caixa não modela de jeito nenhum, a marca vem já no cabeçalho - a notícia ali é que nada daquele bloco foi lido:
 
 ```
-hexarouting# [edit vrf red] show this
+prismarouting# [edit vrf red] show this
 vrf red  <- not checked
  ip route 10.9.0.0/16 10.0.0.9  <- not checked
 ```
@@ -391,7 +391,7 @@ São cinco comandos — `show bgp summary`, `show ospf neighbor`, `show ospf int
 `show bgp summary` traz uma linha por sessão — vizinho, AS, estado, prefixos recebidos e há quanto tempo está de pé —, depois a contagem de sessões estabelecidas e então a mesma última linha sobre a tabela que encaminha. O resto de `show bgp` é repassado ao roteamento sem alteração.
 
 ```
-hexarouting> show ospf neighbor
+prismarouting> show ospf neighbor
   Neighbour         Interface      State            Dead       Up
   10.0.0.2          vppwan0        Full/DR          38         00:12:41
 
@@ -419,7 +419,7 @@ A caixa não tem como saber o MTU do outro lado, mas sabe o que **ela** está an
 O que cada protocolo acredita sobre cada interface, ao lado do que o dataplane tem. No IS-IS essa tela responde uma pergunta específica: um circuito `Up` com **zero** vizinhos, e por quê.
 
 ```
-hexarouting> show isis interface
+prismarouting> show isis interface
   Interface      Area       Circuit   State      Level   Metric   Neighbours
   vppwan0        CORE       0x1       Up         L2      10       0
 ```
@@ -433,8 +433,8 @@ Zero vizinhos num circuito que está `Up` é o sintoma do IS-IS não estar sendo
 Quando um `show bgp`, um `show ospf` ou um `show isis` não responde, e quando um `commit` recusa uma instância de roteamento, a caixa manda você para cá. Esta tela responde: ela nomeia os daemons rodando e os parados, um por um.
 
 ```
-hexarouting> show version
-HexaRouting 0.67.0 (a1b2c3d)
+prismarouting> show version
+Prisma Routing 0.67.0 (a1b2c3d)
   dataplane: 26.06
   plugin:    0.67.0 (a1b2c3d)
   routing:   FRRouting 10.7.1
@@ -460,17 +460,17 @@ São falhas diferentes com correções diferentes: um FRR que não responde é o
 
 ### Qual build está encaminhando de verdade
 
-A linha `plugin:` é a versão do **dataplane que está carregado agora**, lida da própria caixa. A primeira linha, `HexaRouting`, é a versão do que está instalado em disco. Na imensa maioria das vezes as duas são iguais e a caixa não diz mais nada a respeito.
+A linha `plugin:` é a versão do **dataplane que está carregado agora**, lida da própria caixa. A primeira linha, `Prisma Routing`, é a versão do que está instalado em disco. Na imensa maioria das vezes as duas são iguais e a caixa não diz mais nada a respeito.
 
 Elas se separam num momento previsível: **entre uma atualização e o próximo boot**. Atualizar troca o dataplane em disco e **não reinicia** o dataplane que está rodando — de propósito, porque reiniciá-lo derruba todas as sessões da caixa. Até o reboot, portanto, a VTY, o autoteste e o coletor já são a versão nova e quem traduz pacotes ainda é a antiga. A tela passa a dizer isso:
 
 ```
-hexarouting> show version
-HexaRouting 0.68.0 (9f8e7d6)
+prismarouting> show version
+Prisma Routing 0.68.0 (9f8e7d6)
   dataplane: 26.06
   plugin:    0.67.0 (a1b2c3d)
              this is the build the dataplane was loaded with at the last boot,
-             and it is not the HexaRouting build above. An upgrade replaces
+             and it is not the Prisma Routing build above. An upgrade replaces
              bpa_plugin.so on disk and does not restart the dataplane, so until
              this box is rebooted, or 'systemctl restart vpp' is run, it goes
              on translating with the old one - and both of those end every
@@ -494,7 +494,7 @@ E se ele responder estando de pé **sem o plugin de CGNAT carregado**, a mensage
 
 ### O que esta tela não confere
 
-A comparação acima é entre **dois** arquivos: o que está em disco e o que o dataplane carregou. A linha `HexaRouting` é uma frase sobre cerca de trinta, e os outros vinte e oito não são conferidos aqui, de propósito: `show version` é rodado o tempo todo enquanto se trabalha, e refazer a conta a cada vez sairia caro para dizer que está tudo certo.
+A comparação acima é entre **dois** arquivos: o que está em disco e o que o dataplane carregou. A linha `Prisma Routing` é uma frase sobre cerca de trinta, e os outros vinte e oito não são conferidos aqui, de propósito: `show version` é rodado o tempo todo enquanto se trabalha, e refazer a conta a cada vez sairia caro para dizer que está tudo certo.
 
 Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista que a instalação deixou na caixa. Se algum arquivo não for da versão que a caixa informa, é lá que aparece, com o nome do arquivo. A página **Operação e diagnóstico** descreve essa linha e o que fazer com ela.
 
@@ -507,7 +507,7 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show running-config` | a configuração em efeito, CGNAT e roteamento |
 | `show rollback` | revisões commitadas disponíveis |
 | `show hardware` | as placas de rede físicas da caixa, com endereço PCI, driver, enlace e **qual delas carrega a rota padrão** |
-| `show version` | versões do HexaRouting, do VPP e do FRR, **qual build o dataplane carregado é** e **quais daemons de roteamento estão rodando** |
+| `show version` | versões do Prisma Routing, do VPP e do FRR, **qual build o dataplane carregado é** e **quais daemons de roteamento estão rodando** |
 | `show ip ...` | informação de IP (repassado ao FRR) |
 | `show bgp summary` | uma linha por sessão BGP, com o que chegou à tabela que encaminha |
 | `show bgp ...` | o restante do BGP (repassado ao FRR) |

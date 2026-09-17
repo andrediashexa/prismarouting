@@ -1,4 +1,4 @@
-# HexaRouting — Architecture
+# Prisma Routing - Architecture
 
 ## TL;DR
 
@@ -599,7 +599,7 @@ ISP.
 ```mermaid
 sequenceDiagram
     participant A as A (100.64.0.5)
-    participant N as HexaRouting
+    participant N as Prisma Routing
     participant B as B (100.64.0.6)
     A->>N: 100.64.0.5:40000 → 200.150.0.18:1536
     Note over N: in2out: source → 200.150.0.17:1536
@@ -1558,7 +1558,7 @@ industrial and legacy equipment moves files.
 ```mermaid
 sequenceDiagram
     participant C as client 100.64.0.5
-    participant N as HexaRouting
+    participant N as Prisma Routing
     participant S as server
     C->>N: PORT 100,64,0,5,1,1
     Note over N: allocate 200.150.0.17:1537 from the subscriber's own block
@@ -1677,7 +1677,7 @@ a support call that is never attributed to the CGNAT.
 ```mermaid
 sequenceDiagram
     participant C as client 100.64.0.5
-    participant N as HexaRouting
+    participant N as Prisma Routing
     participant S as server (internet)
     C->>N: SETUP ... client_port=6970-6971
     Note over N: reserve 10514-10515 in the subscriber's block<br/>open two UDP mappings, RTP even
@@ -1961,7 +1961,7 @@ call without knowing that PPTP exists.
 ```mermaid
 sequenceDiagram
     participant S as Subscriber 100.64.0.5
-    participant B as HexaRouting
+    participant B as Prisma Routing
     participant P as PPTP server
     S->>B: TCP 1723, Outgoing-Call-Request, Call ID 1
     Note over B: allocate 3585 from the subscriber's block

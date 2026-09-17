@@ -1,8 +1,8 @@
-# HexaRouting — CGNAT Roadmap
+# Prisma Routing - CGNAT Roadmap
 
 ## TL;DR
 
-HexaRouting translates, logs and routes, and as of **v0.5.0** the four items the
+Prisma Routing translates, logs and routes, and as of **v0.5.0** the four items the
 maintainer originally named are all delivered: session lifetime control
 (v0.4.0), block sizing under pressure (v0.4.0), the ALGs that matter for a
 residential CGNAT (v0.5.0), and the NAT behaviour that decides whether
@@ -54,7 +54,7 @@ check instead of the code.
 
 | | |
 |---|---|
-| **What** | The list of what an ISP-grade CGNAT needs, what HexaRouting has, and what is missing. |
+| **What** | The list of what an ISP-grade CGNAT needs, what Prisma Routing has, and what is missing. |
 | **Why** | The gaps that matter are not the ones that break a graph. They surface months later as calls the operator cannot connect back to the CGNAT. |
 | **Who** | Written for the maintainer deciding what to build next, and for an operator judging whether the product fits their network. |
 | **Where** | This file. `docs/architecture.md` states how the parts that exist work; this one states what does not exist yet. |
@@ -2906,6 +2906,42 @@ to `sed`:
 
 `Hexanetworks` stays: it is the company and not the product, and its 13
 occurrences MUST be checked one at a time rather than swept.
+
+##### What the first release of it did, and left, 2026-09-16
+
+The rename shipped as **strings only**, which answers the first decision in
+the table above the reversible way: an upgraded box changes what it prints
+and nothing it has on its disk, so there is nothing to migrate and nothing to
+rename back. What moved: the banner, the VTY prompt (`prismarouting> `; it
+was the product name written into the VTY and never the hostname), `show
+version`, the boot self-test's header and its verdict sentences, the
+installer's screens, the unit descriptions, the medium and artifact filenames
+(`prisma-routing-<version>.iso`, from `tools/version-stamp.sh --filename`),
+the documents and the wiki mirror. What stayed, each with a comment at its
+definition site: `hexash`, every path under `/etc`, `/var/log`, `/usr/lib`
+and `/usr/sbin`, every unit name, the role groups, the `HEXA_*` environment,
+the `hexarouting.*` kernel keys, the hostname, the labels, the EFI entry, the
+repository and the remote. **The groups were not renamed**, although the
+table above recommends `groupmod -n`: a release that renames nothing on disk
+is the one a box in service can take without a migration, and the group
+rename belongs with the path migration when, and if, that is decided.
+
+Re-taken on 2026-09-16, on the tree before the edit, with
+`git grep -I -c <name> -- . ':!docs/brand' ':!CHANGELOG.md'`: **181 lines
+across 60 files** carried `HexaRouting`, **1,907 across 167** carried
+`hexarouting` and **4 across 2** carried `Hexanetworks` (the 13 above counted
+the brand kit and the changelog). The 1,907 were classified before anything
+was edited, by the shape of the token and not by a sweep: **153** were the
+prompt, **27** the medium's or the artifact's filename, **1** a prose line,
+and **1,726** a path, a unit, a key, a hostname or an identifier that stays.
+The 181 `HexaRouting` lines were read one at a time; the ones left are
+quotations of what an earlier version printed, kept as history beside the
+issue that changed them. The acceptance test is still
+[#291](https://github.com/andrediashexa/hexarouting/issues/291)'s
+`lab/upgrade.sh`, which puts this tree over an installed v0.68.0 and asserts
+the configuration is still in effect, and `lab/boot-iso.sh` and
+`lab/install-iso.sh` read the renamed console through
+`tools/selftest-verdict.sh`.
 
 #### If only three were possible
 

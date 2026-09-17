@@ -25,12 +25,12 @@ Nenhum byte é escrito antes de **todas** as respostas estarem coletadas e váli
 Dê boot pela ISO. O console cai direto na VTY:
 
 ```
-HexaRouting VTY 0.25.0
+Prisma Routing VTY 0.25.0
 
 This is the installation medium: nothing here survives a reboot.
-Type 'install' to install HexaRouting onto a disk.
+Type 'install' to install Prisma Routing onto a disk.
 
-hexarouting> install
+prismarouting> install
 ```
 
 O comando `install` existe na VTY **somente quando a máquina está rodando a partir do meio**. Em uma appliance já instalada ele não está na árvore de comandos e o instalador se recusa a rodar — um comando que sobrescreve o disco não deve ficar a um TAB de distância de `interface` num roteador em produção.
@@ -310,7 +310,7 @@ Depois do primeiro boot sem a mídia:
 * o console mostra o relatório do self-test, **sem nenhuma linha** `**[FAIL]**`;
 * entre elas, `binary API registered, so pools can be configured` — sem ela a caixa roteia e responde, e nenhum pool pode ser criado;
 * uma linha `managed on <placa>` com o endereço embaixo dela - é por ali que você chega na caixa sem voltar ao console;
-* `show version` responde com a versão do HexaRouting, do VPP e do FRR;
+* `show version` responde com a versão do Prisma Routing, do VPP e do FRR;
 * você consegue entrar com a senha definida durante a instalação.
 
 

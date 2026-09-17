@@ -1,6 +1,6 @@
 # Levar a caixa para uma versão nova
 
-Como colocar uma versão nova do HexaRouting numa caixa que já está em produção. Existem dois caminhos e eles custam coisas muito diferentes: o **pacote de atualização**, que troca os arquivos do produto e não encosta no disco, e a **reinstalação pela mídia**, que apaga o disco inteiro. Esta página diz qual dos dois é o seu, o que cada um custa e em que ordem fazer.
+Como colocar uma versão nova do Prisma Routing numa caixa que já está em produção. Existem dois caminhos e eles custam coisas muito diferentes: o **pacote de atualização**, que troca os arquivos do produto e não encosta no disco, e a **reinstalação pela mídia**, que apaga o disco inteiro. Esta página diz qual dos dois é o seu, o que cada um custa e em que ordem fazer.
 
 # Qual dos dois é o seu
 
@@ -47,7 +47,7 @@ E um passo que deixou de existir: **naquela caixa de uma placa só, entregar a p
 ## 1. Anote a versão que está rodando
 
 ```
-hexarouting> show version
+prismarouting> show version
 ```
 
 Guarde a saída inteira no chamado de mudança. Ela é o que diz de onde a caixa veio, e é com ela que você compara no fim.
@@ -59,8 +59,8 @@ Ele é publicado ao lado da mídia, na mesma página da versão, com o mesmo nú
 ## 3. Descompacte e rode
 
 ```
-tar xzf hexarouting-<versão>-upgrade.tar.gz
-cd hexarouting-<versão>-upgrade
+tar xzf prisma-routing-<versão>-upgrade.tar.gz
+cd prisma-routing-<versão>-upgrade
 sudo sh upgrade
 ```
 
@@ -81,15 +81,15 @@ O pacote troca o dataplane **em disco** e não reinicia nada. Até o próximo re
 Quem conta essa história é a linha `plugin` do `show version`, e **não** a linha `dataplane`:
 
 ```
-hexarouting> show version
-HexaRouting 0.74.2
+prismarouting> show version
+Prisma Routing 0.74.2
   dataplane: vpp v24.10-release built by root on box at 2026-01-01
   plugin:    0.40.0
   routing:   FRRouting 10.7.1 (hexarouting).
   daemons:   running  bgpd mgmtd ospfd staticd zebra
 ```
 
-A linha `dataplane` é a versão do próprio VPP e não se mexe numa troca de versão do HexaRouting. A que fica para trás é `plugin`: é a build com que o dataplane foi carregado no último boot. Compare-a com o número da **primeira** linha - e quando as duas discordam a caixa diz isso em voz alta, com um parágrafo embaixo da linha `plugin` explicando que só um reinício do dataplane as iguala. Quando concordam ela não diz nada, que é o estado normal.
+A linha `dataplane` é a versão do próprio VPP e não se mexe numa troca de versão do Prisma Routing. A que fica para trás é `plugin`: é a build com que o dataplane foi carregado no último boot. Compare-a com o número da **primeira** linha - e quando as duas discordam a caixa diz isso em voz alta, com um parágrafo embaixo da linha `plugin` explicando que só um reinício do dataplane as iguala. Quando concordam ela não diz nada, que é o estado normal.
 
 A linha `plugin` responde de quatro jeitos, e três deles não são divergência: que a build é tal, que o dataplane não está respondendo, que o dataplane respondeu e não informa build nenhuma, ou que não há com o que comparar.
 
@@ -152,7 +152,7 @@ flowchart TD
 ## 2. Leve a configuração para fora da caixa
 
 ```
-hexarouting> show running-config
+prismarouting> show running-config
 ```
 
 É o que está em vigor neste instante. Copie a saída inteira para fora da sessão: ela é escrita para ser digitada de volta no prompt, uma linha por vez, e é o único formato de exportação que existe.
@@ -207,7 +207,7 @@ As contas e suas senhas, e as comunidades SNMP. Nada disso veio na cópia do pas
 
 **Depois do pacote de atualização:**
 
-* `show version` traz a versão nova na primeira linha, a do HexaRouting instalado. A linha `plugin` só acompanha depois que o VPP for reiniciado, e até lá ela fica na build antiga de propósito.
+* `show version` traz a versão nova na primeira linha, a do Prisma Routing instalado. A linha `plugin` só acompanha depois que o VPP for reiniciado, e até lá ela fica na build antiga de propósito.
 * Depois do reinício do dataplane a linha `plugin` passa a bater com a primeira, e o parágrafo de divergência some.
 * A configuração continua lá: `show running-config` traz de volta o que já estava em vigor, sem ninguém digitar nada.
 * Um assinante real navega, e `show cgnat subscriber` com o IP dele responde com o endereço público e a faixa de portas.

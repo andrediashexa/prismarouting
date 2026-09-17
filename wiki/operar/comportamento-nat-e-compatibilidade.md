@@ -21,7 +21,7 @@ Dois assinantes atrás do mesmo CGNAT se alcançando pelo endereço público.
 ```mermaid
 sequenceDiagram
     participant A as A (100.64.0.5)
-    participant N as HexaRouting
+    participant N as Prisma Routing
     participant B as B (100.64.0.6)
     A->>N: 100.64.0.5:40000 → 200.150.0.18:1536
     Note over N: in2out: origem vira 200.150.0.17:1536

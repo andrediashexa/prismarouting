@@ -1,7 +1,7 @@
 #!/bin/sh
 # Lab on real hardware: two VMs, real internet traffic.
 #
-#   [peer 10.95.200.197]                 [HexaRouting 10.95.200.196]
+#   [peer 10.95.200.197]                 [Prisma Routing 10.95.200.196]
 #     ens19 10.95.172.129/31  ──/31──►    ens19 10.95.172.128/31  (LAN, VPP)
 #     subscribers 100.64.0.x               CGNAT -> 198.19.24.0/24
 #     ens18 = management                   tap -> Linux -> ens18 -> internet
@@ -9,7 +9,7 @@
 # RULE: ens18 does NOT go to VPP on either machine. It is how the lab is
 # reached; handing it to the dataplane cuts access to both VMs.
 #
-# Run this on the HexaRouting box. Needs key-based root access to the peer.
+# Run this on the Prisma Routing box. Needs key-based root access to the peer.
 # set -e: without it the script ran to the end printing "ready" even with ssh
 # and iptables missing. A script that declares success after failing is worse
 # than no script at all.
@@ -50,12 +50,12 @@ ssh -o BatchMode=yes "$PEER" "
   # above deletes it: flushing an address removes every route that depended on
   # it. So each run of this script destroyed the route and then told the
   # operator to re-add it by hand. Whoever forgot got a peer that sent the test
-  # traffic out its DEFAULT gateway instead - which looks, from the HexaRouting
+  # traffic out its DEFAULT gateway instead - which looks, from the Prisma Routing
   # side, exactly like a dataplane that receives nothing.
   ip route replace $TEST_DEST via $LINK_LOCAL dev ens19
 "
 
-say "HexaRouting: Linux hands ens19 to VPP and forwards the public block"
+say "Prisma Routing: Linux hands ens19 to VPP and forwards the public block"
 ip addr flush dev ens19 2>/dev/null || true
 ip link set ens19 up
 sysctl -qw net.ipv4.ip_forward=1

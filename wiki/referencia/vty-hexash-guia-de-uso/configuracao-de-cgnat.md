@@ -85,8 +85,8 @@ no nat cgnat interface <nome>     desabilita CGNAT na interface
 ## Habilitando numa interface
 
 ```
-hexarouting# [edit] nat cgnat interface ens18 inside
-hexarouting# [edit] nat cgnat interface ens19 outside
+prismarouting# [edit] nat cgnat interface ens18 inside
+prismarouting# [edit] nat cgnat interface ens19 outside
 ```
 
 

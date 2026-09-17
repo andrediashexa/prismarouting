@@ -1,6 +1,10 @@
 #!/bin/sh
 # Runs the installer when the kernel command line asks for it.
 #
+# The keys are still spelled hexarouting.* after the rename to Prisma Routing
+# (#202): they are an interface a PXE server or a prepared medium already
+# carries, and a key is a name a machine reads, not one a person does.
+#
 #   hexarouting.install             prompt for everything on the console
 #   hexarouting.install=/dev/vda    that disk, still asking for the rest
 #   hexarouting.hostname=<name>     answer the hostname question
@@ -129,9 +133,9 @@ fi
 # the harness times out and kills it mid-line - which is exactly how this was
 # first seen, with the console reading "HexaRouting inst".
 if [ "$rc" = 0 ]; then
-  echo "HexaRouting installed to ${disk:-the chosen disk}"
+  echo "Prisma Routing installed to ${disk:-the chosen disk}"
 else
-  echo "HexaRouting install FAILED on ${disk:-the chosen disk} (status $rc)"
+  echo "Prisma Routing install FAILED on ${disk:-the chosen disk} (status $rc)"
 fi
 sync
 sleep 1

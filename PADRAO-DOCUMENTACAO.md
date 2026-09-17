@@ -1,4 +1,4 @@
-# Padrão de documentação — wiki HexaRouting
+# Padrão de documentação — wiki Prisma Routing
 
 Como as páginas da wiki são escritas. Existe para que qualquer pessoa possa
 acrescentar conteúdo sem que a wiki vire quinze estilos diferentes.

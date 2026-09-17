@@ -399,7 +399,7 @@ run() {  # -> $OUTPUT
     bad_exits=$((bad_exits + 1))
     # The verdict line identifies which box it was refusing to come up for,
     # which is more use than the ordinal of the run.
-    [ -n "$first_bad_exit" ] || first_bad_exit="run $runs exited $rc after: $(printf '%s\n' "$OUTPUT" | grep -E 'check\(s\) failed|HexaRouting ready' | tail -1)"
+    [ -n "$first_bad_exit" ] || first_bad_exit="run $runs exited $rc after: $(printf '%s\n' "$OUTPUT" | grep -E 'check\(s\) failed|Prisma Routing ready' | tail -1)"
   fi
 }
 
@@ -2520,7 +2520,7 @@ hw() {  # <version> <memkb> <cpu flags>
 }
 hw "9.9.9 (abc1234)" 8388608 "fpu sse4_2 avx2"
 run
-if said '\[ ok \] HexaRouting 9.9.9 \(abc1234\)'; then
+if said '\[ ok \] Prisma Routing 9.9.9 \(abc1234\)'; then
   ok "the version stamp on the box is what the report names"
 else
   bad "the version stamp was not reported: $(printf '%s\n' "$OUTPUT" | head -3)"
@@ -3482,8 +3482,8 @@ fi
 # Anchored whole: "ready" appearing somewhere is not the same statement as the
 # summary being that and nothing else, and the two boxes below are exactly the
 # cases where the difference matters.
-if said '^  HexaRouting ready\.$'; then
-  ok "so the last line is 'HexaRouting ready.' and nothing more"
+if said '^  Prisma Routing ready\.$'; then
+  ok "so the last line is 'Prisma Routing ready.' and nothing more"
 else
   bad "a box with nothing wrong did not say it is ready: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
 fi
@@ -3517,7 +3517,7 @@ if [ "$nwarn" = 2 ]; then
 else
   bad "it has $nwarn warnings, not the 2 arranged: $(printf '%s\n' "$OUTPUT" | grep '^  \[warn\] ')"
 fi
-if said '^  HexaRouting ready, with 2 warning\(s\) above\.$'; then
+if said '^  Prisma Routing ready, with 2 warning\(s\) above\.$'; then
   ok "and the last line says it is ready AND how many warnings are above it"
 else
   bad "a box with 2 warnings and no failures said: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
@@ -3596,7 +3596,7 @@ fi
 # the break between them. A needle written against the raw text matches only
 # while the message happens to fold where it folds today, which is the trap
 # this repository has now hit four times (#279, #285).
-if said_across 'HexaRouting is installed and healthy, and has no interface to forward on: it is not forwarding. See the \[warn\] above for the one step left.'; then
+if said_across 'Prisma Routing is installed and healthy, and has no interface to forward on: it is not forwarding. See the \[warn\] above for the one step left.'; then
   ok "it gets a sentence of its own that says which state it is in"
 else
   bad "a box with no interface to forward on said: $(printf '%s\n' "$OUTPUT" | tail -3 | head -2 | tr '\n' ' ')"
@@ -3605,8 +3605,8 @@ fi
 # 10.95.200.198 and had nothing in this suite holding it: the box that
 # prompted the issue printed "HexaRouting ready." with two warnings above it,
 # one of them saying it had no NIC to forward on.
-if said 'HexaRouting ready'; then
-  bad "a box that cannot forward a packet is still called ready: $(printf '%s\n' "$OUTPUT" | grep 'HexaRouting ready')"
+if said 'Prisma Routing ready'; then
+  bad "a box that cannot forward a packet is still called ready: $(printf '%s\n' "$OUTPUT" | grep 'Prisma Routing ready')"
 else
   ok "and the word 'ready' is not applied to a box that cannot forward"
 fi
@@ -4378,7 +4378,7 @@ echo "=== no warning added later can escape the count (#297, #298) ==="
 # did, and both mutations of it stayed green.
 #
 # #298 built the box that can answer them. Three of the four are now
-# measurements on real boxes, three sections up - "HexaRouting ready.", "ready,
+# measurements on real boxes, three sections up - "Prisma Routing ready.", "ready,
 # with N warning(s) above." and the sentence a box that cannot forward gets -
 # and each of those was shown red under a mutation of the summary that
 # produces it. They are gone from here rather than kept alongside, because two
@@ -4431,7 +4431,7 @@ echo "=== the verdict the last line prints, and the lab that reads it ==="
 ST_SRC=$(cat "$ST")
 # The lab's own pattern, read out of the lab, and every sentence the self-test
 # can print tested AGAINST it rather than looked for inside it. One pattern
-# legitimately covers two sentences - "HexaRouting ready" matches both the
+# legitimately covers two sentences - "Prisma Routing ready" matches both the
 # plain verdict and the one with a warning count - so a check that demanded
 # the literal string would report a correct lab as broken. That is the shape
 # this whole run of failures is about, and it happened here too, on the first
@@ -4443,9 +4443,9 @@ if [ -z "$LAB_RE" ]; then
 fi
 # The sentences as the self-test prints them, with the counts filled in: the
 # pattern has to match what reaches a console, not what the source spells.
-for _v in "  HexaRouting ready." \
-          "  HexaRouting ready, with 2 warning(s) above." \
-          "  HexaRouting is installed and healthy, and has no interface to forward on:" \
+for _v in "  Prisma Routing ready." \
+          "  Prisma Routing ready, with 2 warning(s) above." \
+          "  Prisma Routing is installed and healthy, and has no interface to forward on:" \
           "  3 check(s) failed. The box is NOT ready."; do
   case "$ST_SRC" in
     *"$(printf '%s' "$_v" | sed 's/^  //; s/2 warning(s)/$warns warning(s)/; s/3 check(s)/$fail check(s)/; s/no interface to forward on:/$noforward:/')"*) ;;
@@ -4481,7 +4481,7 @@ fi
 # After both fixes there were still two readers spelling the old needle by
 # hand - lab/boot-iso.sh and tools/release-gate.sh - and they went on passing
 # for a reason that is luck rather than design: a LIVE medium takes the branch
-# where DPDK is off deliberately, so it ends with "HexaRouting ready." and the
+# where DPDK is off deliberately, so it ends with "Prisma Routing ready." and the
 # old needle matched. A live image that ever ended any other way would have
 # had the gate refuse the release and name the wrong cause.
 #

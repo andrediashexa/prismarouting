@@ -1,8 +1,8 @@
 #!/bin/sh
 # Takes an installed box to the version in this artifact.
 #
-#   tar xzf hexarouting-0.75.0-upgrade.tar.gz
-#   cd hexarouting-0.75.0-upgrade
+#   tar xzf prisma-routing-<version>-upgrade.tar.gz
+#   cd prisma-routing-<version>-upgrade
 #   sudo sh appliance/upgrade
 #
 # WHAT THIS IS, AND WHY IT IS NOT install.sh. install.sh IS the upgrade: it
@@ -110,7 +110,7 @@ need stamp "$STAMP"
 need vpp "$WANT_VPP"
 need frr "$WANT_FRR"
 
-echo "==> HexaRouting $STAMP"
+echo "==> Prisma Routing $STAMP"
 
 # ------------------------------------------------------------------ the box
 #

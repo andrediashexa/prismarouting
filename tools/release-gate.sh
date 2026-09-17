@@ -78,7 +78,7 @@ esac
 VER=$(tr -d '[:space:]' < "$WORK/VERSION")
 if [ "$TAG" != "v$VER" ]; then
   echo "error: tag $TAG is on a tree whose VERSION is $VER." >&2
-  echo "       The image would be called hexarouting-$VER.iso and published" >&2
+  echo "       The image would be called prisma-routing-$VER.iso and published" >&2
   echo "       under $TAG. Fix VERSION or the tag before releasing." >&2
   exit 1
 fi
@@ -528,11 +528,12 @@ else
         print; exit
       }
     ' "$WORK/CHANGELOG.md")
-    # Both sides normalised for an optional "HexaRouting ", an optional "v",
+    # Both sides normalised for an optional product name, an optional "v",
     # the version and the dash, so this is about the sentence and not about
-    # punctuation somebody typed into a web form.
+    # punctuation somebody typed into a web form. Both spellings of the name:
+    # the releases up to the rename (#202) were published as "HexaRouting".
     norm_title=$(printf '%s' "$rel_title" \
-      | sed -e 's/^HexaRouting[[:space:]]*//' \
+      | sed -e 's/^Prisma Routing[[:space:]]*//' -e 's/^HexaRouting[[:space:]]*//' \
             -e "s/^v\{0,1\}$VER[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*//")
     if [ -z "$head_title" ]; then
       # An empty heading used to satisfy this check rather than fail it: the
@@ -787,6 +788,6 @@ echo "    sha256 $(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
 # only the medium is a release that only people with an empty disk can take.
 echo "    $WORK/$UPGRADE"
 echo "    sha256 $(sha256sum "$WORK/$UPGRADE" | cut -d' ' -f1)"
-grep -E "^\s+\[ ok \] HexaRouting|$VERDICT_RE" "$BOOTLOG" | sed 's/^/    /'
+grep -E "^\s+\[ ok \] Prisma Routing|$VERDICT_RE" "$BOOTLOG" | sed 's/^/    /'
 grep -E "\[ ok \] the installed box can configure a pool" "$WORK/install.log" \
   | sed 's/^/    /'

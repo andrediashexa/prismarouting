@@ -463,20 +463,20 @@ _env = dict(_os.environ, HEXA_VERSION_FILE="/does/not/exist/VERSION")
 _p = _sp.run([sys.executable, _HX], input="show version\nexit\n",
              capture_output=True, text=True, timeout=30, env=_env)
 _piped = _p.stdout + _p.stderr
-check("\\___/" not in _piped,
+check("\\____\\/______/" not in _piped,
       f"banner art leaked into piped output: {_piped[:120]!r}")
-check("HexaRouting VTY" not in _piped,
+check("Prisma Routing VTY" not in _piped,
       "the version line must not reach a pipe either")
 print("  piped commands carry no banner")
 
 _p2 = _sp.run([sys.executable, _HX, "-c", "show version"],
               capture_output=True, text=True, timeout=30, env=_env)
-check("\\___/" not in (_p2.stdout + _p2.stderr),
+check("\\____\\/______/" not in (_p2.stdout + _p2.stderr),
       "banner art leaked into 'hexash -c' output")
 print("  and neither does 'hexash -c'")
 
 
-def _on_a_pty():
+def _on_a_pty(env=None):
     """Run hexash on a real terminal and return what it printed."""
     import pty as _pty, time as _time
     m, sl = _pty.openpty()
@@ -485,7 +485,7 @@ def _on_a_pty():
         _os.close(m)
         for fd in (0, 1, 2):
             _os.dup2(sl, fd)
-        _os.execve(sys.executable, [sys.executable, _HX], _env)
+        _os.execve(sys.executable, [sys.executable, _HX], env or _env)
     _os.close(sl)
     _time.sleep(1.5)
     _os.write(m, b"exit\n")
@@ -501,8 +501,8 @@ def _on_a_pty():
 
 
 _tty = _on_a_pty()
-check("\\___/" in _tty, "the banner must appear on a terminal")
-check("HexaRouting VTY" in _tty,
+check("\\____\\/______/" in _tty, "the banner must appear on a terminal")
+check("Prisma Routing VTY" in _tty,
       "the version line must survive the banner: the banner identifies the "
       "product, the version identifies the build, and an operator on the "
       "phone needs the second")
@@ -511,6 +511,26 @@ check(_widest <= 80,
       f"a line is {_widest} columns; a racked box has an 80-column serial "
       "console and a banner that wraps is worse than none")
 print(f"  banner shown on a terminal, widest line {_widest} columns")
+
+# And on the installation medium, the one line nobody can afford to miss. A
+# medium is a squashfs that exists and an installer that is executable, and
+# both are read from the environment, so a medium is two temporary files.
+# Held here because no offline reader had this sentence: lab/boot-iso.sh
+# reads the medium's console and needs a booted image to do it.
+import tempfile as _tf
+_med = _tf.mkdtemp()
+_sq = _os.path.join(_med, "filesystem.squashfs")
+_ins = _os.path.join(_med, "hexarouting-install")
+open(_sq, "w").close()
+open(_ins, "w").write("#!/bin/sh\nexit 0\n")
+_os.chmod(_ins, 0o755)
+_on_medium = _on_a_pty(dict(_env, HEXA_LIVE_SQUASHFS=_sq, HEXA_INSTALLER=_ins))
+check("Type 'install' to install Prisma Routing onto a disk." in _on_medium,
+      "the medium's login screen tells the operator the one word that makes "
+      "a box out of it, and names the product it installs")
+check("Type 'install'" not in _tty,
+      "and an installed box is not told to install anything")
+print("  the medium's hint names the product")
 
 print("\n=== the tree knows a name goes here; the box knows which names ===")
 #
@@ -980,7 +1000,7 @@ print("\n=== the prompt names the hierarchy AND its subject ===")
 sh = shell_with_box()
 check(sh.prompt().endswith("> "), f"operational mode is a > prompt: {sh.prompt()}")
 sh.feed("configure")
-check(sh.prompt() == "hexarouting# [edit] ", f"top of config: {sh.prompt()!r}")
+check(sh.prompt() == "prismarouting# [edit] ", f"top of config: {sh.prompt()!r}")
 
 sh.feed("cgnat pool residential")
 check("cgnat pool residential" in sh.prompt(),

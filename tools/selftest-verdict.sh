@@ -32,7 +32,8 @@
 #
 #   Welcome to GRUB / Login incorrect / Ordering cycle found
 #                                      not ours: GRUB, login(1), systemd
-#   HexaRouting installed to /dev/vda  composed with the chosen disk
+#   Prisma Routing installed to /dev/vda
+#                                      composed with the chosen disk
 #   dataplane NIC: 0000:               composed, matched as a prefix
 #   entering /bin                      composed, matched as a prefix
 #   records mirrored on /dev/md0, 2 of 2 disks present
@@ -57,8 +58,8 @@
 # the fourth is a box that failed its own checks.
 # One line and over the margin, on purpose: a pattern split across two shell
 # assignments is a pattern somebody edits half of.
-VERDICT_RE="HexaRouting ready|HexaRouting is installed and healthy, and has|check\(s\) failed\. The box is NOT ready\."
-VERDICT_OK_RE="HexaRouting ready|HexaRouting is installed and healthy, and has"
+VERDICT_RE="Prisma Routing ready|Prisma Routing is installed and healthy, and has|check\(s\) failed\. The box is NOT ready\."
+VERDICT_OK_RE="Prisma Routing ready|Prisma Routing is installed and healthy, and has"
 
 # Did the self-test reach a verdict at all, whatever it was?
 said_a_verdict() {  # <file>
@@ -81,7 +82,7 @@ VERDICT_BAD_RE="check\(s\) failed\. The box is NOT ready\."
 # sentence is the box saying it did not - which is the defect, not the state.
 # It is still correct on a box with no NIC at all, so the caller asks what the
 # box has before it asks what the box said.
-VERDICT_NOFWD_RE="HexaRouting is installed and healthy, and has"
+VERDICT_NOFWD_RE="Prisma Routing is installed and healthy, and has"
 
 # Did it end with the one that means it came up and claimed nothing?
 said_a_no_forward_verdict() {  # <file>

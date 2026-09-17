@@ -1,5 +1,5 @@
 #!/bin/sh
-# The HexaRouting VTY: one CLI for both routing and CGNAT.
+# The Prisma Routing VTY: one CLI for both routing and CGNAT.
 set -u
 mkdir -p /run/vpp /vpp_plugins /etc/hexarouting
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {

@@ -1,4 +1,4 @@
-# HexaRouting — High Availability
+# Prisma Routing - High Availability
 
 ## TL;DR
 
@@ -36,7 +36,7 @@ this page says what it measured.
 
 | | |
 |---|---|
-| **What** | Failover between two HexaRouting boxes serving the same subscriber base. |
+| **What** | Failover between two Prisma Routing boxes serving the same subscriber base. |
 | **Why** | A CGNAT box is a single point of failure for every subscriber behind it. |
 | **Who** | The provider's operations team; the subscriber should ideally notice nothing. |
 | **When** | On hardware failure, planned maintenance, or software upgrade. |
@@ -133,7 +133,7 @@ perfectly healthy. Configuration equality is a requirement, not a convenience.
 takeover put subscribers where they already are?
 
 ```
-hexarouting> show cgnat ha
+prismarouting> show cgnat ha
   this box
     mapping fingerprint  50e2b92f23c2707c
     pools                residencial

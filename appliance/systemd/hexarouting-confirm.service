@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - roll back a 'commit confirmed' nobody confirmed
+Description=Prisma Routing - roll back a 'commit confirmed' nobody confirmed
 Documentation=file:///usr/share/doc/hexarouting/routing.md
 # The deadline of a 'commit confirmed' used to live in the hexash process that
 # made the commit, so logging out cancelled it - and the change it guards

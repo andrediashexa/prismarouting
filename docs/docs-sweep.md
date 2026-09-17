@@ -1,4 +1,4 @@
-# HexaRouting - Sweep of the three documents nobody had read end to end
+# Prisma Routing - Sweep of the three documents nobody had read end to end
 
 ## TL;DR
 

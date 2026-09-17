@@ -73,7 +73,7 @@ choices has the shape of the error.
 *Authoritative:* [architecture.md](architecture.md),
 [logging.md](logging.md), `ref/bpa_model.py`.
 
-Note that the two pages most likely to carry it — *HexaRouting — visão geral*
+Note that the two pages most likely to carry it - *Prisma Routing — visão geral*
 and *BPA — conceitos e mapeamento* — were read during the mirror import and
 **appeared correct**: both present deterministic and dynamic as modes of BPA.
 So either the error is elsewhere, or it is subtler than those two openings. Do
@@ -181,6 +181,20 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
   on the internet.**
 
 ## 5. Already corrected, so it is not redone
+
+### 2026-09-16, against v0.76.1 - the product's name
+
+**Renamed to Prisma Routing on the 17 pages that carried the old name or the
+old prompt**, in the mirror only; publication is the maintainer's, at release.
+The prompt `hexarouting> ` became `prismarouting> ` on every quoted screen,
+`show version` and the medium's login screen quote the new first line, and
+the upgrade page names `prisma-routing-<versão>-upgrade.tar.gz`. Nothing an
+operator types changed: `hexash`, the paths and the units keep their names,
+and the pages say so where they name them. The page *Prisma Routing — visão
+geral* keeps its file name and its address in the mirror until the wiki
+renames the document: `tools/wiki-push.sh` refuses a heading that is not the
+live document's title, so the title is renamed in the wiki first and the page
+pushed after.
 
 ### 2026-09-09, against v0.53.0 — listas de AS-path e de comunidade
 
