@@ -1333,13 +1333,8 @@ asking whether the binary API is registered.
 `hexash` creates and changes pools over the binary API, carried by a vat2
 plugin. `appliance/build-iso.sh` copied the VPP plugin into the image and
 **never the vat2 one**, so `install.sh` found neither of the two paths it
-looks in, printed
-
-```
-warning: no vat2 plugin; the binary API will not be reachable
-```
-
-and carried on. That line was in the build log of **every release**
+looks in, printed *warning: no vat2 plugin; the binary API will not be
+reachable* and carried on. That line was in the build log of **every release**
 ([#119](https://github.com/andrediashexa/hexarouting/issues/119)). The
 appliance booted, answered, routed, ran its self-test — and could not be
 configured to do CGNAT at all.
@@ -1363,11 +1358,24 @@ Fixing that let the box get far enough to fail differently
 ([#121](https://github.com/andrediashexa/hexarouting/issues/121)):
 
 ```
-[FAIL] hexarouting.service FAILED: the CGNAT configuration was not applied
-        error: this change locks everybody out
-            no account could log in over SSH afterwards
-        error: /etc/hexarouting/hexarouting.conf: refusing to load
+  [FAIL] hexarouting.service FAILED: the CGNAT configuration was not applied
+        the last thing it said:
+          error: this change leaves nobody able to configure the box
+              afterwards no account that can log in over SSH holds the administrator role
+              give another account 'role administrator' first, or allow root to log in
+              over SSH
+          error: refusing to load this file, the check above says why
+              /etc/hexarouting/hexarouting.conf
 ```
+
+That is the shape the box prints it in today, on a file that does say
+something and says it takes SSH away: the self-test quotes the service's last
+six journal lines under its verdict, the loader puts the path on a row of its
+own since #276, and the lockout check has a second refusal behind the first,
+so the headline it opens with, `error: this change locks everybody out`, and
+the advice under it have already scrolled out of that window. The refusal
+itself read `error: /etc/hexarouting/hexarouting.conf: refusing to load` when
+#121 was filed.
 
 `install.sh` writes the default configuration as three comment lines. Read as
 a complete configuration that says "no SSH access" — and the box **does** have

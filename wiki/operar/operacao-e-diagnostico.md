@@ -66,11 +66,11 @@ Se o par não existir, não há para onde o endereço voltar. A caixa sobe encam
 
 ```
   [FAIL] this box handed its only card over and NO pair carries the address
-        The card named in /etc/hexarouting/tune.env was given to the
-        dataplane, and the linux_cp pair is where the address the box answers
-        on goes back. Without one it comes up forwarding and unreachable from
-        anywhere but its console.
-        the management path it recorded: ens18 10.95.200.198/24
+        The card this box is reached on was given to the dataplane, and the
+        linux_cp pair is where the address the box answers on goes back.
+        Without one it comes up forwarding and unreachable from anywhere but
+        its console.
+        the way back it computed on this boot: ens18 10.95.200.198/24
         52:54:00:00:00:01
         without a pair: ens18
         give each one a 'linux-name <name>' under 'interface' in

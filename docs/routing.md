@@ -1966,8 +1966,7 @@ configuration become indistinguishable. A refusal **MUST** carry the name from
 what was refused - a return value alone is not actionable, and is not shown:
 
 ```
-error: pool 'client-bad': the dataplane refused it: invalid value
-    (bpa_pool_init: pool 'client-bad': block size 500 must be a power of two)
+error: pool 'client-bad': the dataplane refused it: invalid value (bpa_pool_init: pool 'client-bad': block size 500 must be a power of two)
 ```
 
 ### What goes over the API, and what does not
@@ -2791,10 +2790,13 @@ allocated with the first pool, and a new size afterwards would describe a table
 nobody is using. It now **explains itself**, which it did not at first:
 
 ```
-error: cgnat session-table: the dataplane refused it: the change is refused
-while it is in use (session-table: tables already created; set this before
-configuring pools)
+error: cgnat session-table: the dataplane refused it: the change is refused while it is in use (session-table: tables already created; set this before configuring pools)
 ```
+
+One row, 169 columns of it: the refusal goes through `err_dataplane`, which
+wraps nothing and adds `say_version_split`'s paragraph under it only on a box
+whose dataplane is a different build from the rest of it; the sentence is the
+dataplane's own, handed through whole.
 
 The first version returned the code and logged nothing. The client attaches the
 last line of VPP's log to a refusal so the operator gets a sentence instead of
@@ -2872,12 +2874,14 @@ separated" is not a conclusion this supports.
 
 ```
 warning: pool 'clientes': nothing here announces 200.150.0.16/28
-    subscribers behind it would be translated to an address the internet
-    cannot route back to
+    subscribers behind it would be translated to an address the internet cannot route back to
     announce it from another box, or originate it here with
-    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28'
-    under the BGP address family
+    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28' under the BGP address family
 ```
+
+Three rows under the verdict and none of them folded: this is `commit`'s
+announce printer, which writes each row whole, so the two long ones run past
+an 80-column console. They are quoted at the width the box prints them.
 
 The check this product can make and nobody else can.
 
@@ -3728,12 +3732,14 @@ would refuse a commit over a timer and the second over a comment.
 ## A policy that withdraws the prefix carrying this session
 
 ```
-error: 203.0.115.0/24: no neighbour would be sent it after this change, and it
-covers 203.0.115.9 - the address this session arrived on
-    the outbound policy denies it to every neighbour that has one, so nothing
-    would advertise a route back to this box's end of your own session
+error: 203.0.115.0/24: no neighbour would be sent it after this change, and it covers 203.0.115.9 - the address this session arrived on
+    the outbound policy denies it to every neighbour that has one, so nothing would advertise a route back to this box's end of your own session
     if that is what you mean, type: commit cutoff
 ```
+
+Both long rows are printed whole - `err` wraps nothing, and the advice is
+written to be read once - so on a console they run past 80 columns. The
+screen is quoted as the box prints it, not folded to fit this page.
 
 The SSH lockout check refuses a configuration nobody could log in with
 ([#35](https://github.com/andrediashexa/hexarouting/issues/35)). This is the

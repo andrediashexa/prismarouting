@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-The screens the PUBLIC wiki quotes, read against the box that prints them.
+The screens the PUBLIC wiki and `docs/` quote, read against the box that
+prints them.
 
-`wiki/` quotes what the box says, verbatim, inside fenced blocks - 61 of them
+`wiki/` quotes what the box says, verbatim, inside fenced blocks - 71 of them
 carry a verdict marker (`error:`, `warning:`, `[ ok ]`, `[warn]`, `[FAIL]`,
 `[info]`). Until now nothing compared one of them to the product. The sweep of
 2026-09-15 found ten stale by hand, one page at a time, and eight were stale
@@ -14,6 +15,36 @@ reader looking for a fold that no longer happens.
 
 A page that quotes a screen nobody produced is worse than a page with no
 screen on it, because it is read as measurement.
+
+TWO DIRECTORIES, AND THE RUN SAYS SO (#384). `docs/` quotes screens too - 38
+of its 175 fenced blocks carry a verdict marker, 44 screens on 12 pages, 28 of
+them in `docs/routing.md` - and until #384 nothing read one of them:
+test_doc_copies.py reads that directory for column-width claims and nothing
+else. `CONTRIBUTING.md` calls `docs/` authoritative about the product, which
+makes a stale transcript there MORE load-bearing than one on the wiki, not
+less. So this file reads both trees, and it was not widened quietly: the first
+line of every run names each directory with its page and screen count, every
+count below is given per directory, and what could not be attributed is
+printed per directory with the reason the reading stopped where it did.
+
+Pointed at `docs/` unchanged, this file attributed 29 of 44 and skipped 15.
+Read one at a time the way #365 read the wiki's 22: FOUR were pages splitting
+rows the box writes whole - the announce warning and the cutoff refusal
+hand-folded at 72 columns, the session-table refusal folded into three rows,
+and a screen from #121 in the shape of two releases ago; those are corrected
+on the page, and the fold is now a FINDING rather than something read by hand
+(see `folded`). THREE more are reached by driving - the `cgnat` setting this
+VTY has not got, the VRF whose table FRR cannot find, and the cutoff with
+`docs/routing.md`'s own addresses. TWO were rows the installer writes after
+`&&` and in a `case` arm, which the shell reader did not read past. ONE was
+history - what `install.sh` printed before #119 - and is quoted as history
+now, in prose, because a fenced block under `docs/` is read as what the box
+prints. What remains is named on every run, each with where the reading
+stopped.
+
+`docs/` is written in English and `wiki/` in Portuguese, and that costs this
+file nothing: what it compares is the box's own rows, which are English on
+both.
 
 WHY THIS IS NOT IN test_wiki_rules.py. That file's three readers each answer
 "does this text appear anywhere on a page" over the page as a string. This one
@@ -115,6 +146,19 @@ clause is not; under a verdict row, this is only read once the verdict itself
 has been recognised as the box's, so a screen nothing can attribute stays a
 skip rather than becoming a finding about the wrong message.
 
+THE BOX'S OWN WORDS IN ROWS THE BOX DOES NOT PRINT. Two of the 22 skips #365
+read by hand were this: a warning the dataplane writes in three rows of 177,
+42 and 107 columns, hand-folded on the page into six of about 74; and a
+failure quoted one space too far right. Four of the fifteen under `docs/`
+were the same. It is read off the driven runs and nothing else: when the
+words of a quoted screen, whitespace collapsed, are exactly the words of
+rows this file has just watched the product print, and the rows are not
+those rows, the page is quoting the box and folding it - or indenting it -
+where the box does not. Driving is what makes this a finding and not a
+guess: a template could only say the sentence exists, and a page that
+folds a sentence at 79 columns where the box prints it at 140 still says
+that sentence. See `folded`.
+
 A VERDICT ROW A TEMPLATE ACCOUNTS FOR ONLY BECAUSE A HOLE SWALLOWED A WORD.
 Point 7's rule, said out loud instead of silently refusing the match: the
 template fits, most of the row is its literal text, and one hole the source
@@ -135,15 +179,21 @@ runs everywhere and the loud half runs where the evidence is strongest.
 
 ## What it cannot see, and says so
 
-Everything else is a SKIP, printed with its page and line. A screen built
-through a variable, a table the dataplane formats, a shell helper this cannot
-follow: those are named on the screen rather than counted as green. The skip
-list is the honest edge of this check and it belongs where the next person
-sees it. A value in the WRONG PLACE is the other blind spot - the wiki's
-forward refusal named public addresses in the positions that carry private
-ones, and to this file those are both just a wildcard. Only driving sees that.
+Everything else is a SKIP, printed with its page and line AND WHERE THE
+READING STOPPED: which rows were the box's and by which source line, and the
+first row nothing accounts for - or that the verdict row fits a template and
+is under the literal floor, with the share. A screen built through a
+variable, a table the dataplane formats, a row that is the value alone:
+those are named on the screen rather than counted as green, and named with
+the reason so the next person does not have to work out again which of them
+is an edge and which is a page to read. The skip list is the honest edge of
+this check and it belongs where the next person sees it. A value in the
+WRONG PLACE is the other blind spot - the wiki's forward refusal named public
+addresses in the positions that carry private ones, and to this file those
+are both just a wildcard. Only driving sees that.
 """
 import contextlib
+import errno
 import io
 import os
 import re
@@ -153,13 +203,23 @@ REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(REPO, "src", "hexash"))
 import hexash                                                    # noqa: E402
 import config as _config                                         # noqa: E402
+import routes as _routes                                         # noqa: E402
 import vppapi as _vppapi                                         # noqa: E402
 
-# The tree to read. `HEXA_WIKI` exists for one reason and it is the reason
+# The trees to read. `HEXA_WIKI` exists for one reason and it is the reason
 # this file is trusted: pointed at the pages as they were before the sweep of
 # 2026-09-15, it names the stale screens out loud. A check that has only ever
-# been seen green has not been seen.
+# been seen green has not been seen. `HEXA_DOCS` is the same door for the
+# second tree.
+#
+# The floors are the size each tree had the day it was read, rounded down:
+# 32 pages and 71 screens on the wiki, 12 pages and 44 screens under docs/. A
+# run that reads fewer than that is reading something else - an empty
+# checkout, the wrong directory - and every count it then prints is about
+# nothing.
 WIKI = os.environ.get("HEXA_WIKI") or os.path.join(REPO, "wiki")
+DOCS = os.environ.get("HEXA_DOCS") or os.path.join(REPO, "docs")
+TREES = [("wiki", WIKI, 30, 50), ("docs", DOCS, 10, 40)]
 
 # A hole in a template: an interpolated value, whatever the language wrote it
 # with. One character so it can never be confused with the literal text around
@@ -230,16 +290,16 @@ def check(cond, msg):
 # ---------------------------------------------------------------------------
 # What the wiki quotes.
 
-def pages():
-    """Every published page, the way test_wiki_rules.py reads them."""
+def pages(root):
+    """Every page under one tree, the way test_wiki_rules.py reads them."""
     out = []
-    for dirpath, _dirs, files in os.walk(WIKI):
+    for dirpath, _dirs, files in os.walk(root):
         for name in sorted(files):
             if not name.endswith(".md"):
                 continue
             path = os.path.join(dirpath, name)
             rel = os.path.relpath(
-                path, os.path.dirname(WIKI)).replace(os.sep, "/")
+                path, os.path.dirname(root)).replace(os.sep, "/")
             if rel.endswith("/README.md"):
                 continue
             out.append((rel, io.open(path, encoding="utf-8").read()))
@@ -260,19 +320,61 @@ def screens(page_list):
     row and the reason under it - so the grouping is the product's, not a
     guess about the page.
     """
+    return [s for rel, first, block in fenced(page_list)
+            for s in screens_in(rel, first, block)]
+
+
+def runs(page_list):
+    """
+    Every run of consecutive rows in a fenced block that carries a verdict,
+    as (page, line, rows) - the block as the box printed it, markers and
+    all, up to a blank row.
+
+    A screen is one verdict and what is under it, and a block that quotes
+    the self-test's `[FAIL]` with the service's journal under it holds
+    three: the verdict, and each `error:` the journal carries. What is
+    between two of those - a row the box printed after one screen and
+    before the next - is not in any screen, so a page that left it out was
+    read as three honest screens. `gapped` reads these instead.
+    """
+    out = []
+    for rel, first, block in fenced(page_list):
+        n = 0
+        while n < len(block):
+            if not block[n].strip():
+                n += 1
+                continue
+            k = n
+            while k < len(block) and block[k].strip():
+                k += 1
+            if any(MARKED.match(r) for r in block[n:k]):
+                out.append((rel, first + n + 1, block[n:k]))
+            n = k
+    return out
+
+
+def fenced(page_list):
+    """Every fenced block on these pages, as (page, line of the fence, rows)."""
     out = []
     for rel, text in page_list:
         lines = text.split("\n")
-        inside, block, first = False, [], 0
+        inside, block, first, fence = False, [], 0, 0
         for n, line in enumerate(lines, 1):
             if line.strip().startswith("```"):
                 if inside:
-                    out.extend(screens_in(rel, first, block))
+                    out.append((rel, first, block))
                     inside, block = False, []
                 else:
                     inside, block, first = True, [], n
+                    fence = indent_of(line)
             elif inside:
-                block.append(line)
+                # A fence inside a list item is indented with the item, and
+                # Markdown takes that indent off every row when it renders
+                # the block. So does this: docs/routing.md quotes the `nat`
+                # refusal two columns in, under a bullet, and read with the
+                # bullet's indent the screen is the box's rows two columns
+                # to the right of where the box puts them.
+                block.append(line[min(fence, indent_of(line)):])
     return out
 
 
@@ -296,12 +398,20 @@ def screens_in(rel, first, block):
     return out
 
 
-PAGES = pages()
-SCREENS = screens(PAGES)
-check(len(PAGES) >= 30, f"only {len(PAGES)} page(s) were read out of {WIKI}")
-check(len(SCREENS) >= 50,
-      f"only {len(SCREENS)} quoted screen(s) were found on {len(PAGES)} "
-      f"pages, so whatever this run reports it is not reporting on the wiki")
+PAGES = {}                              # tree -> pages
+SCREENS = []                            # (tree, page, line, rows)
+RUNS = []                               # the same, per block up to a blank
+for _tree, _root, _min_pages, _min_screens in TREES:
+    PAGES[_tree] = pages(_root)
+    _found = screens(PAGES[_tree])
+    SCREENS.extend((_tree,) + s for s in _found)
+    RUNS.extend((_tree,) + s for s in runs(PAGES[_tree]))
+    check(len(PAGES[_tree]) >= _min_pages,
+          f"only {len(PAGES[_tree])} page(s) were read out of {_root}")
+    check(len(_found) >= _min_screens,
+          f"only {len(_found)} quoted screen(s) were found on "
+          f"{len(PAGES[_tree])} page(s) under {_root}, so whatever this run "
+          f"reports about {_tree}/ it is not reporting on {_tree}/")
 
 
 # ---------------------------------------------------------------------------
@@ -310,9 +420,14 @@ check(len(SCREENS) >= 50,
 class Template:
     """One string the product builds, with a HOLE where a value goes."""
 
-    def __init__(self, text, origin, slots=()):
+    def __init__(self, text, origin, slots=(), constant=None):
         self.text = text
         self.origin = origin
+        # The NAME this string is assigned to, when it is a module constant
+        # rather than an argument to a printer. `CONFIG_PATH` accounts for a
+        # row on two screens and is not what printed it; the skip list says
+        # which printer did, and this is how it knows to look.
+        self.constant = constant
         self.holes = text.count(HOLE)
         self.literal = len(text) - self.holes
         # What the SOURCE says goes in each hole, in order. A reading this
@@ -408,7 +523,7 @@ TOO_LOOSE = []                          # refused entry: nearly all hole
 LOOSE = []                              # the same, as templates
 
 
-def keep(bucket, text, origin, slots=()):
+def keep(bucket, text, origin, slots=(), constant=None):
     """
     A template enters the corpus only if it says something.
 
@@ -421,7 +536,7 @@ def keep(bucket, text, origin, slots=()):
     row on its own can still be the TAIL of one, under the pair rule in
     `concat_match` and under that rule's own floor.
     """
-    t = Template(text.rstrip("\n"), origin, slots)
+    t = Template(text.rstrip("\n"), origin, slots, constant)
     if t.literal < LITERAL_FLOOR:
         TOO_LOOSE.append((origin, text.replace(HOLE, "{}")))
         LOOSE.append(t)
@@ -429,7 +544,7 @@ def keep(bucket, text, origin, slots=()):
     bucket.append(t)
 
 
-def keep_rows(buckets, text, origin, slots=()):
+def keep_rows(buckets, text, origin, slots=(), constant=None):
     """The same, for a template written as several rows at once.
 
     The slots are handed out row by row, because a hole belongs to the row it
@@ -440,7 +555,7 @@ def keep_rows(buckets, text, origin, slots=()):
     for row in text.split("\n"):
         n = row.count(HOLE)
         for bucket in buckets:
-            keep(bucket, row, origin, slots[used:used + n])
+            keep(bucket, row, origin, slots[used:used + n], constant)
         used += n
 
 
@@ -640,6 +755,18 @@ for path in PY_SOURCES:
             for part in ast.walk(node):
                 if part is not node:
                     inner.add(id(part))
+    # A string assigned to a module constant is a VALUE, not a printer -
+    # `CONFIG_PATH` at the top of hexash.py is the path two screens quote on
+    # a row of their own, and the skip list used to cite that line as "the
+    # box's" as if it printed anything. The name is carried on the template
+    # so the report can say what it is and find the printer that put it on
+    # the screen.
+    named = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            for part in ast.walk(node.value):
+                named[id(part)] = node.targets[0].id
     for node in ast.walk(tree):
         if id(node) in docs or id(node) in inner:
             continue
@@ -647,7 +774,8 @@ for path in PY_SOURCES:
             node, (ast.Constant, ast.JoinedStr)) else (None, [])
         if text is None:
             continue
-        keep_rows((PROSE, ROWS), text, f"{where}:{node.lineno}", slots)
+        keep_rows((PROSE, ROWS), text, f"{where}:{node.lineno}", slots,
+                  named.get(id(node)))
 
 
 # --- the shell: the boot self-test and the installer -----------------------
@@ -669,6 +797,18 @@ SHELL_MARK = {"ok": "  [ ok ] ", "_vok": "  [ ok ] ",
 
 SPROSE = []                             # (indent, Template), folded by fold -s
 
+# A call to one of the printers, wherever on the line it stands. Two shapes
+# were being read past (#384): the installer writes `[ "$_n" -gt 0 ] && _vok
+# "fstab: ..."` and `'$'*) _vok "root has a password, ..."` - a guard and a
+# `case` arm in front of the verb - and both rows were on the skip list as
+# screens this file could not see. Quotes in the prefix have to close, so a
+# verb INSIDE a printed sentence (`say "... and ok to ignore"`) is never
+# taken for a call: the sentence is one quoted unit and the `)` or `&&` that
+# would have to follow it is inside it.
+SH_CALL = re.compile(r"^\s*(?:(?:[^\"'#]|\"[^\"]*\"|'[^']*')*?(?:&&|\|\||\))"
+                     r"\s*)?(ok|bad|warn|say|say_list|_vok|_vbad)\s+(\S.*)$",
+                     re.S)
+
 
 def fold_s(text, width):
     """`fold -s -w <width>`, which is not `textwrap.wrap`.
@@ -689,16 +829,29 @@ def fold_s(text, width):
     return [r[:-1] if r.endswith(" ") else r for r in rows]
 
 
-def sh_unquote(rest):
+def sh_unquote(rest, sep=""):
     """The text a shell call prints, with HOLE where a value goes.
 
     Returns every reading of it: `${x:-default}` prints one of two things and
     both are screens this box produces, and the wiki quotes both of them for
     the rx-queue line.
+
+    `sep` goes between quoted strings that are separate ARGUMENTS - a blank
+    between them in the source. `say_list` prints `"$*"`, which is its
+    arguments joined with a space, and the pair check writes one sentence
+    as four of them across four continued lines; read as four templates it
+    folds four times where the box folds once, and the wiki's correct quote
+    of it sat on the skip list.
     """
-    out = []
+    out, end = [], None
     for m in re.finditer(r'"((?:[^"\\]|\\.)*)"|\'([^\']*)\'', rest):
+        # Blank between two quoted strings, or a backslash and a newline:
+        # either way the shell sees two arguments.
+        if end is not None and m.start() > end \
+                and re.fullmatch(r"[\s\\]+", rest[end:m.start()]):
+            out.append(sep)
         out.append(m.group(1) if m.group(1) is not None else m.group(2))
+        end = m.end()
     text = "".join(out).replace('\\"', '"').replace("\\$", "$")
     readings = [text]
     for _ in range(4):
@@ -723,8 +876,7 @@ for rel in SHELL_SOURCES:
     n = 0
     while n < len(lines):
         line, first = lines[n], n
-        m = re.match(r"^\s*(ok|bad|warn|say|say_list|_vok|_vbad)\s+(\S.*)$",
-                     line, re.S)
+        m = SH_CALL.match(line)
         # A message wider than the source line is written across several of
         # them, so the call is read until its quotes close - but only a CALL
         # is read that way. An odd number of quotes in a comment is not an
@@ -737,12 +889,14 @@ for rel in SHELL_SOURCES:
         # side. Neither line is one this loop wants, so neither is read on
         # from.
         if m:
-            while line.count('"') % 2 and n + 1 < len(lines):
+            # Read on while the quotes are open OR the line is continued
+            # with a backslash: `say_list "  " "one" \` and three more
+            # arguments under it is one call with one sentence.
+            while ((line.count('"') % 2 or line.rstrip().endswith("\\"))
+                   and n + 1 < len(lines)):
                 n += 1
                 line += "\n" + lines[n]
-            m = re.match(
-                r"^\s*(ok|bad|warn|say|say_list|_vok|_vbad)\s+(\S.*)$",
-                line, re.S)
+            m = SH_CALL.match(line)
         n += 1
         if not m:
             continue
@@ -752,12 +906,17 @@ for rel in SHELL_SOURCES:
             ind = re.match(r'\s*"(\s*)"', rest)
             if not ind:
                 continue
-            for text in sh_unquote(rest[ind.end():]):
+            for text in sh_unquote(rest[ind.end():], sep=" "):
                 t = Template(text, origin)
                 if t.literal >= LITERAL_FLOOR:
                     SPROSE.append((len(ind.group(1)), t))
                 else:
+                    # `say_list "          " "$names"` is a value on a row
+                    # of its own, kept as the printer it is for the skip
+                    # list - with its indent, which is the whole of what it
+                    # writes.
                     TOO_LOOSE.append((origin, text.replace(HOLE, "{}")))
+                    LOOSE.append(Template(ind.group(1) + text, origin))
             continue
         for text in sh_unquote(rest):
             for row in (SHELL_MARK[verb] + text).split("\n"):
@@ -784,6 +943,109 @@ for name in sorted(os.listdir(os.path.join(REPO, "src", "plugins", "bpa"))):
         for row in text.split("\\n"):
             keep(ROWS, row, origin)
             keep(PROSE, row, origin)
+
+
+def plugin_format(word):
+    """The plugin's `remap:` format string carrying this word, read above."""
+    for t in ROWS:
+        if (t.origin.startswith("src/plugins/") and t.text.startswith("remap:")
+                and word in t.text):
+            return t
+    return None
+
+
+def plugin_row(word, *values):
+    """
+    One row of the dataplane's answer, built from the plugin's own format
+    string with these values in its holes.
+
+    The fake dataplane under the re-mapping scenarios answers with rows made
+    here, so that the words on them are bpa_cli.c's and not this file's: a
+    fake answering a sentence the plugin does not build would drive a screen
+    nobody prints and call the page that quotes it the box's. Asserted at
+    the point of use, because a format string that stopped being found would
+    otherwise answer an empty row and the scenario would drive nothing.
+    """
+    t = plugin_format(word)
+    check(t is not None and t.holes == len(values),
+          f"no `remap:` format string of the plugin's carries {word!r} with "
+          f"{len(values)} hole(s): the fake dataplane cannot answer with "
+          f"the plugin's words")
+    if t is None or t.holes != len(values):
+        return ""
+    parts = t.text.split(HOLE)
+    out = parts[0]
+    for value, part in zip(values, parts[1:]):
+        out += str(value) + part
+    return out
+
+
+def _remap(moved, total, live, moves):
+    """The dataplane's whole answer for a pool that re-maps `moved` of `total`
+    subscribers, `live` of them with state, and two of the moves by name."""
+    return ([plugin_row("subscribers change", moved, total, live)]
+            + [plugin_row("moves from", *m) for m in moves]
+            + [plugin_row("every session on this pool")])
+
+
+C_CONVERSION = re.compile(r"%[-0-9.*]*[a-zA-Z]")
+
+
+def c_function(rel, name):
+    """The source text of one C function of the plugin's, by name."""
+    src = io.open(os.path.join(REPO, rel), encoding="utf-8").read()
+    start = src.find(f"\n{name} (")
+    check(start >= 0, f"{rel} defines no function {name}: the fake dataplane "
+          f"cannot answer with its words")
+    return src[start:src.find("\n}", start)] if start >= 0 else ""
+
+
+def c_strings(text):
+    """Every run of adjacent string literals in `text`, joined the way the
+    compiler joins them, in source order."""
+    return ["".join(re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(0)))
+            for m in re.finditer(r'(?:"(?:[^"\\]|\\.)*"\s*)+', text)]
+
+
+def timeout_row(name, value):
+    """
+    One row of the dataplane's answer to `show bpa timeouts`, for this
+    timeout at this value, as `bpa_timeouts_show` prints it.
+
+    The VTY relays every row of that answer carrying the floor mark under
+    `warning:` after a commit that set a timeout, and the wiki quotes one.
+    The row is `%-16s %6u%s` - three literal characters, so it is under the
+    floor and `plugin_row` cannot fill it, and the widths are what the
+    operator sees, so a template with its holes stripped of them would not
+    print the row either. The format is read off the function's own source
+    with its widths kept and filled with Python's `%`, which formats these
+    three conversions as C does; the mark is the function's two halves round
+    the RFC, and the floor and the RFC are bpa_pool.h's table entry for this
+    timeout. The `!= 0 && < floor` test is the ternary's, retyped, and the
+    assertion beside it holds it to the source. What is typed here is the
+    timeout's name and the page's value.
+    """
+    body = c_function("src/plugins/bpa/bpa_cli.c", "bpa_timeouts_show")
+    strs = c_strings(body)
+    fmts = [t for t in strs if len(C_CONVERSION.findall(t)) == 3]
+    check(len(fmts) == 1 and "< (floor)" in body,
+          f"bpa_timeouts_show prints {len(fmts)} row shape(s) with three "
+          f"values, not the one marked row this file fills")
+    if len(fmts) != 1:
+        return ""
+    fmt = fmts[0]
+    below, asks = strs[strs.index(fmt) + 1:strs.index(fmt) + 3]
+    hdr = io.open(os.path.join(REPO, "src", "plugins", "bpa", "bpa_pool.h"),
+                  encoding="utf-8").read()
+    m = re.search(r'_ \(\w+, "%s", (\d+), "([^"]+)"' % re.escape(name), hdr)
+    check(m is not None and "BELOW" in below,
+          f"bpa_pool.h sets no floor for the {name!r} timeout, or the mark "
+          f"after the row's format is not the floor mark: {below!r}")
+    if m is None:
+        return ""
+    floor, rfc = int(m.group(1)), m.group(2)
+    mark = below + rfc + asks if value != 0 and value < floor else ""
+    return fmt % (name, value, mark)
 
 
 # ---------------------------------------------------------------------------
@@ -818,15 +1080,16 @@ SCENARIOS = [
      ["start shell"]),
     ("start shell with only the CGNAT rights",
      {"caps": {"cgnat"}, "mode": "operational"}, ["start shell"]),
-    # The two the box can only answer with cards under it, so the cards are
+    # The one the box can only answer with cards under it, so the cards are
     # stubbed and nothing else is: the refusal, the list and the advice are
-    # all the product's.
+    # all the product's. It was two: the card carrying the default route was
+    # refused on a box with another card until #385, and a run typing that
+    # card printed nothing at all for a session with this file green - the
+    # scenario stayed on the list, the wiki kept the refusal, and no check
+    # asked whether a run had printed a row. One does now, under DRIVEN.
     ("a card this box has not got",
      {"nics": ["enp1s0", "enp2s0"], "route": "enp1s0"},
      ["dataplane interface eth9"]),
-    ("the card this box is reached on",
-     {"nics": ["enp1s0", "enp2s0"], "route": "enp1s0"},
-     ["dataplane interface enp1s0"]),
     # The two `commit check` refuses on. `daemons` is what FRR answers `show
     # daemons` with, and it is the whole of what either box is stubbed to say.
     ("a port range with no room for one block", {"daemons": ""},
@@ -836,6 +1099,56 @@ SCENARIOS = [
     ("a router stanza for a daemon that is not running",
      {"daemons": "zebra staticd mgmtd"},
      ["router bgp 65001", "exit", "commit check"]),
+    # A word under `cgnat` this VTY has no setting for: docs/ha.md quotes the
+    # refusal #273 put in front of a statement that used to be accepted and
+    # applied to nothing. The list under it is joined from the VTY's own
+    # table, which no template accounts for and driving does.
+    ("a cgnat setting this VTY has not got", {},
+     ["nat cgnat ha peer 200.150.0.12 priority 200"]),
+    # `commit` over a pool that re-maps subscribers with live mappings. The
+    # dataplane decides it and answers `... check` with `remap:` rows; the
+    # VTY strips the tag and prints them under its own verdict and its own
+    # advice. Every row the fake answers with is the plugin's format string
+    # with the page's numbers in its holes, so the words are bpa_cli.c's and
+    # the numbers are the only thing typed here - once per page that quotes
+    # this screen, because the numbers are what the operator compares.
+    ("a change that re-maps subscribers, as docs/architecture.md quotes it",
+     {"daemons": "zebra staticd mgmtd bgpd",
+      "remap": _remap(248, 256, 0, [
+          ("100.64.64.8", "203.0.113.0", 1536, 2047,
+           "203.0.113.0", 2048, 3071),
+          ("100.64.64.9", "203.0.113.1", 1536, 2047,
+           "203.0.113.1", 2048, 3071)])},
+     ["nat cgnat pool clientes", " inside 100.64.64.0/24",
+      " outside 203.0.113.0/31", "exit", "commit"]),
+    ("a change that re-maps subscribers, as docs/pool-resize.md quotes it",
+     {"daemons": "zebra staticd mgmtd bgpd",
+      "remap": _remap(1024, 1024, 61, [
+          ("100.64.0.0", "200.150.0.16", 1024, 1535,
+           "45.170.16.0", 1024, 1535),
+          ("100.64.0.1", "200.150.0.17", 1024, 1535,
+           "45.170.16.1", 1024, 1535)])},
+     ["nat cgnat pool clientes", " inside 100.64.0.0/22",
+      " outside 45.170.16.0/28", "exit", "commit"]),
+    ("a change that re-maps subscribers, as the wiki quotes it",
+     {"daemons": "zebra staticd mgmtd bgpd",
+      "remap": _remap(1024, 1024, 512, [
+          ("100.64.0.5", "200.150.0.17", 1536, 2047,
+           "200.150.0.33", 2048, 2559),
+          ("100.64.0.9", "200.150.0.17", 2048, 2559,
+           "200.150.0.34", 1536, 2047)])},
+     ["nat cgnat pool clientes", " inside 100.64.0.0/22",
+      " outside 200.150.0.32/28", "exit", "commit"]),
+    # `commit` over a timeout under the floor its RFC sets. The dataplane
+    # applies it and marks the row in `show bpa timeouts`; the VTY reads that
+    # answer back and prints every marked row under `warning:`. The fake's
+    # answer is the plugin's own row (`timeout_row`, above), so the words,
+    # the widths and the RFC are bpa_cli.c's and bpa_pool.h's, and what is
+    # typed here is the page's value.
+    ("a timeout under the floor its RFC sets",
+     {"daemons": "zebra staticd mgmtd bgpd",
+      "timeouts": [timeout_row("udp", 119)]},
+     ["nat cgnat timeout udp 119", "commit"]),
 ]
 
 # The findings are the other half of the VTY's voice and they are not printed
@@ -877,12 +1190,30 @@ def say_cutoff(sh, findings):
             print("    " + line)
 
 
+def say_unplaced(sh, unplaced):
+    """The note `commit check` prints for a VRF whose table it cannot find.
+
+    `routes.unreachable_next_hops` returns what could not be checked and
+    do_commit renders it in three goes: the note, the reason through
+    `print_prose`, and the first statement whole. The last of those is the
+    operator's own row after fifteen literal characters, so no template will
+    reach it and docs/routing.md's screen sat on the skip list until it was
+    driven.
+    """
+    for vrf, why, stmts in unplaced:
+        print(f"note: {len(stmts)} static route(s) in 'vrf {vrf}' were not "
+              "checked for a reachable next hop")
+        hexash.print_prose(why)
+        print(f"    first one: {stmts[0]}")
+
+
 BGP_RM = ["router bgp 65001", " address-family ipv4 unicast",
           "  neighbor 200.150.0.2 route-map RM-TRANSITO-IN in"]
 POOL = _config.Pool("clientes")
 POOL.outside = ["200.150.0.16/28"]
 
 _AS_BAD = "bgp as-path access-list AS-BAD permit ^65001("
+_PL_BAD = "ip prefix-list PL-CLIENTES seq 10 permit 10.12.0.0/8 ge 24 le 16"
 
 # What this box announces now, and the two changes that take the prefix
 # carrying the session away: one stops originating it, the other keeps the
@@ -937,6 +1268,14 @@ FINDINGS = [
     # it. The statement is the operator's, as everywhere here.
     ("an AS-path regex that does not compile", lambda sh: say_findings(
         sh, [("error", _AS_BAD, hexash.as_path_regex_error(_AS_BAD))])),
+    # A prefix-list entry whose range does not hold. The sentence is built
+    # in pieces under an `if` - `(length {}` and then `, ge {}` and `, le
+    # {}` as they apply - so its template ends in a hole and no tiling
+    # reaches the row; and `say_finding` wraps the reason, so the wiki's
+    # two-row quote of it is either the box's fold or a hand one, and only
+    # driving says which.
+    ("a prefix range that does not hold", lambda sh: say_findings(
+        sh, [("error", _PL_BAD, hexash.prefix_range_error(_PL_BAD))])),
     # The two boxes of an HA pair mapping subscribers differently. Two
     # statements under one reason, which is why it has a printer of its own.
     ("a peer that maps subscribers differently", lambda sh: sh.say_divergence(
@@ -951,15 +1290,82 @@ FINDINGS = [
     ("no neighbour would be sent the session's prefix",
      lambda sh: say_cutoff(sh, hexash.session_cut_findings(
          _CUT_RUNNING, _CUT_DENIED, "200.150.0.7"))),
+    # The same refusal with the addresses docs/routing.md quotes it with. The
+    # words are the product's either way; what a second run buys is the row
+    # character for character on the page that carries these values.
+    ("no neighbour would be sent the session's prefix, as docs/ quotes it",
+     lambda sh: say_cutoff(sh, hexash.session_cut_findings(
+         _DOC_RUNNING, _DOC_DENIED, "203.0.115.9"))),
+    # A static route in a VRF FRR reports no table for. `{}` for the tables
+    # is the answer FRR gives before the VRF exists, and the note is the
+    # product's way of saying the check did not run rather than passing it.
+    ("a VRF static route whose table FRR cannot find",
+     lambda sh: say_unplaced(sh, _routes.unreachable_next_hops(
+         _VRF_ROUTE, {}, hexash.block_paths(_VRF_ROUTE), {})[1])),
+    # Three refusals whose sentence is the DATAPLANE's, driven through the
+    # product's own client with a canned return code and log line. `cgnat
+    # session-table: {}` is thirteen percent literal and `pool '{}': {}` is
+    # two characters, so no template reaches either - and until these were
+    # driven the one-row session-table refusal docs/routing.md was corrected
+    # to could be folded back into three with nothing going red.
+    ("the session-table refused once pools exist", lambda sh: _refused(
+        sh, -147, "session-table: tables already created; set this before "
+        "configuring pools").apply_global(
+            "cgnat session-table buckets 1024 memory 64")),
+    ("a pool the dataplane refused, named", lambda sh: _pool_refused(sh)),
+    # The revert that could not be armed: `arm_confirm` with the store
+    # raising EACCES on /etc/hexarouting, which is the whole of what the
+    # page's six rows say. Row 2 is the path and the reason on a row of its
+    # own (#252), and it fits no template because it is all value.
+    ("a revert that could not be armed on the box",
+     lambda sh: _no_store(sh).arm_confirm(10, None)),
+    # `--load` of a saved file with a line this VTY cannot hold. The path is
+    # printed whole on a row of its own (#276), so the row is the box's own
+    # path or it is not the page's: the file is answered from memory at
+    # CONFIG_PATH (`_load`, below). Row 3 is the operator's line printed
+    # whole, which is the one thing no template reaches, and the two pages
+    # that quote this screen cut the hash at different places - so the run is
+    # taken once per page, with that page's line, as the `remap:` runs are.
+    ("a saved file with a line this VTY cannot hold, as docs/ quotes it",
+     lambda sh: _load(sh, "user joao\n password 6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRf"
+                      "Lb8XkY...\n")),
+    ("a saved file with a line this VTY cannot hold, as the wiki quotes it",
+     lambda sh: _load(sh, "user joao\n password 6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRf"
+                      "Lb8XkY6nAeUoZgC5iMt...\n")),
+    # `--load` of a file that locks everybody out, on a box somebody can log
+    # into today: the #121 shape as the box prints it now, ten rows, of
+    # which the self-test quotes the last six under its verdict. Both the
+    # lockout check and the one behind it fire, because the account the
+    # running configuration has is the administrator too.
+    ("a saved file that locks everybody out",
+     lambda sh: _load(sh, "ssh password-authentication no\n",
+                      running="ssh password-authentication yes\n"
+                      "user noc\n password " + _A_HASH + "\n"
+                      " role administrator\n")),
 ]
 
+#: A crypt hash `Config` accepts on a `password` row: `openssl passwd -6` of
+#: nothing in particular. The running configuration needs one account able
+#: to log in, and a password the parser refuses is an account with none.
+_A_HASH = ("$6$rounds=5000$saltsalt$qFmFH.bQmmtXCsBDTYd.rF7dxJmR/n8pvv8Mh3M5T2"
+           "bl1WV5hsY3W.yg7FyWqA9NnlnYfEzGjFeMwqk9cA6fY0")
 
-# A box under the VTY, for the two screens `commit check` refuses on and
-# nothing else. Both of those are decided by the product before anything is
-# sent - the port range is measured against the block size, and the daemon
-# list is read from FRR - so what is stubbed here answers "yes, I am here" and
-# nothing more: no message is answered with a sentence, and none of the text
-# on either screen comes from this.
+_DOC_RUNNING = [l.replace("200.150.0.0/24", "203.0.115.0/24")
+                for l in _CUT_RUNNING]
+_DOC_DENIED = [l.replace("200.150.0.0/24", "203.0.115.0/24")
+               for l in _CUT_DENIED]
+_VRF_ROUTE = ["vrf green", " ip route 10.55.0.0/16 172.31.99.1", "exit-vrf"]
+
+
+# A box under the VTY, for the two screens `commit check` refuses on and the
+# one `commit` refuses on. The first two are decided by the product before
+# anything is sent - the port range is measured against the block size, and
+# the daemon list is read from FRR - so what is stubbed here answers "yes, I
+# am here" and nothing more: no message is answered with a sentence, and none
+# of the text on either screen comes from this. The third is decided by the
+# DATAPLANE, which answers `... check` with `remap:` rows, and the rows the
+# fake answers with are built from the plugin's own format strings - see
+# `plugin_row`.
 #
 # WHY IT IS HERE AT ALL, when the rest of this file drives a Shell with no box
 # under it. `error: router bgp 65001: bgpd is not running` is sixteen literal
@@ -1008,7 +1414,99 @@ def a_shell(setup):
         sh.default_route_nic = lambda: setup.get("route")
     if "daemons" in setup:
         _a_box(sh, setup["daemons"])
+    # What the fake dataplane answers, by the question: the `... check` of
+    # a pool change, and `show bpa timeouts` after a commit. Anything else
+    # is answered with nothing, which is what a box with no pools says.
+    answers = []
+    if "remap" in setup:
+        answers.append((lambda cmd: cmd.endswith(" check"),
+                        "\n".join(setup["remap"]) + "\n"))
+    if "timeouts" in setup:
+        answers.append((lambda cmd: cmd == "show bpa timeouts",
+                        "\n".join(setup["timeouts"]) + "\n"))
+    if answers:
+        sh.dp.run = lambda cmd: next(((0, a) for asks, a in answers
+                                      if asks(cmd)), (0, ""))
     return sh
+
+
+def _refused(sh, retval, logline):
+    """
+    A dataplane that refuses every message with one return code and has
+    one line from the plugin in its log.
+
+    Everything on the row is then the product's: `Vat2.call` parses the
+    reply, names the code from `RETVAL_NAMES`, reads the sentence off `show
+    log` exactly as it does on a box, and `err_dataplane` prints what
+    `vppapi` composed. Nothing here but the number and the plugin's log line.
+    """
+    _a_box(sh, "zebra staticd mgmtd bgpd")
+
+    def run(cmd, timeout=15):
+        if "show" in cmd and "log" in cmd:
+            return (0, "2026/09/14 18:36:13:123 error       bpa " + logline
+                    + "\n", "")
+        return (0, '{"_msgname": "bpa_reply", "retval": %d}' % retval, "")
+    sh.api = _vppapi.Vat2(runner=run)
+    return sh
+
+
+# The pool loop's refusal in `apply`, which names the pool because a commit
+# carrying several has to say which one the dataplane refused. The f-string
+# below is that one line of the product retyped, and the check beside it says
+# so the day the product's stops being this one.
+_POOL_REFUSAL = """self.err_dataplane(f"pool '{pool.name}': {r.reason}")"""
+
+
+def _pool_refused(sh):
+    _refused(sh, -7, "bpa_pool_init: pool 'client-bad': block size 500 must "
+             "be a power of two")
+    r = sh.api_call("bpa_pool_add_del", {"name": "client-bad"})
+    sh.err_dataplane(f"pool 'client-bad': {r.reason}")
+
+
+_HEXASH = os.path.join(REPO, "src", "hexash", "hexash.py")
+check(_POOL_REFUSAL in io.open(_HEXASH, encoding="utf-8").read(),
+      f"the pool refusal driven here is not the line hexash.py prints: "
+      f"{_POOL_REFUSAL!r} is not in src/hexash/hexash.py")
+
+
+class _NoStore:
+    """The confirm store on a directory this account cannot write."""
+    path = "/etc/hexarouting/confirm-pending"
+
+    def arm(self, deadline, backup, minutes):
+        raise OSError(errno.EACCES, "Permission denied", "/etc/hexarouting")
+
+
+def _no_store(sh):
+    sh.confirm = _NoStore()
+    return sh
+
+
+def _load(sh, text, running=""):
+    """
+    `--load` of a saved file with these lines, on a box running `running`.
+
+    The file is the one thing `load` reads off the box, and it is answered
+    from memory at the box's own CONFIG_PATH, the way `_NoStore` answers the
+    confirm store: the path is printed whole on a row of its own, so a file
+    under /tmp would drive a row no page quotes. `os.path.exists` is the
+    module's, patched for that one path and put back.
+    """
+    _a_box(sh, "zebra staticd mgmtd bgpd")
+    if running:
+        sh.running_config = lambda: _config.Config.parse(running)
+    path = hexash.CONFIG_PATH
+    exists, real_open = os.path.exists, open
+    hexash.os.path.exists = lambda p: p == path or exists(p)
+    hexash.open = (lambda p, *a, **k: io.StringIO(text) if p == path
+                   else real_open(p, *a, **k))
+    try:
+        sh.load(path)
+    finally:
+        hexash.os.path.exists = exists
+        del hexash.open
 
 
 def drive(setup, lines):
@@ -1035,6 +1533,17 @@ def drive_findings(render):
 
 DRIVEN = [(name, drive(setup, lines)) for name, setup, lines in SCENARIOS]
 DRIVEN += [(name, drive_findings(render)) for name, render in FINDINGS]
+
+# A run that printed nothing drove nothing. `drive` swallows what the VTY
+# raises, so a scenario whose statement the product now accepts in silence -
+# or refuses by raising - is a name on the list, a count of one and no row
+# anywhere: "the card this box is reached on" typed a card #385 stopped
+# refusing and printed nothing for a session, while the wiki kept the
+# refusal. Every run has to have printed a row.
+_SILENT = [name for name, out in DRIVEN if not any(r.strip() for r in out)]
+check(not _SILENT,
+      "a driven run printed no row at all, so its scenario holds no screen "
+      "and nothing says so: " + "; ".join(repr(n) for n in _SILENT))
 
 
 def driven_match(rows):
@@ -1286,19 +1795,28 @@ def marked_prose(rows):
     return out
 
 
-def attribute(rows):
+def tiling(rows):
     """
-    The templates that account for these rows, tiled left to right, or None.
+    The templates that account for these rows, tiled left to right.
 
     Left to right and first fit: a screen is a verdict row and then whatever
     the printers put under it, so a tiling that reaches the last row is a
     reading of the whole screen. The templates come back because the report
     says how loose the loosest accepted match of the day was, and that number
     is only worth printing if it is the one actually leaned on.
+
+    Returns (ok, used, reached): `reached` is the furthest row the tiling got
+    to, and it is what the skip list prints - a screen this file cannot
+    account for is a screen it read some way into, and WHERE it stopped is
+    the difference between an edge of the rule and a page to go and read.
+    `so_far` is the templates that got it there, kept for the same reason.
     """
     best = {}
+    far = {"row": 0, "used": []}
 
-    def solve(i):
+    def solve(i, so_far):
+        if i > far["row"]:
+            far["row"], far["used"] = i, so_far
         if i in best:
             return best[i]
         if i == len(rows):
@@ -1316,15 +1834,348 @@ def attribute(rows):
                 options.append((1, t))
             options.extend(prose_group(rows, i))
         for option in options:
-            ok, used = solve(i + option[0])
+            ok, used = solve(i + option[0], so_far + list(option[1:]))
             if ok:
                 best[i] = (True, list(option[1:]) + used)
                 return best[i]
         best[i] = (False, [])
         return best[i]
 
-    ok, used = solve(0)
+    ok, used = solve(0, [])
+    return ok, used, far
+
+
+def attribute(rows):
+    """The templates that account for the whole screen, or None."""
+    ok, used, _far = tiling(rows)
     return used if ok else None
+
+
+def loose_fit(text):
+    """The template that fits this text once the literal floor is waived.
+
+    Not a match - the floor is the whole argument - but the reason a row was
+    not attributed, said out loud: `pool '{}': {}` fits every pool refusal
+    and accounts for two characters of it.
+    """
+    best = None
+    for bucket in (ERRS, ROWS, PROSE):
+        for t in bucket:
+            if t.rx.fullmatch(text) and (best is None
+                                         or t.literal > best.literal):
+                best = t
+    return best
+
+
+def near_by(origin, t):
+    """Whether template `t` is written within six lines after `origin`."""
+    path, _, line = origin.rpartition(":")
+    tpath, _, tline = t.origin.rpartition(":")
+    return (tpath == path and line.isdigit() and tline.isdigit()
+            and 0 < int(tline) - int(line) <= 6)
+
+
+def printed_whole(row, near=()):
+    """
+    The printer that put a value on a row of its own, or None.
+
+    `print(f"    {path}")` is four literal characters and was refused entry
+    as a matcher - it accepts every row anybody writes - but as the account
+    of a row it is the right one: the path IS the row, and the printer is
+    where to go and read. Two holes at most, because `%s %s %s %s` is a
+    table row and not a value. There are twenty such printers in hexash.py,
+    so the one written within a few lines of a string already accounting
+    for this screen is the one cited, and the most literal of those: the
+    `    line {}: {}` under the verdict printed the row under the verdict,
+    not the `    {}` beside it.
+    """
+    fits = [t for t in LOOSE if t.literal and t.holes <= 2
+            and t.rx.fullmatch(row)]
+    close = [t for t in fits if any(near_by(o, t) for o in near)]
+    if close:
+        return max(close, key=lambda t: t.literal)
+    return max(fits, key=lambda t: t.literal) if fits else None
+
+
+def printer_under(near):
+    """The printer of a value on a row of its own, near these origins.
+
+    For a row the tiling accounted for with a CONSTANT: the text the tiling
+    kept is the value without its indent, so the printer is found by where
+    it is written and by its shape - one hole, nothing but whitespace round
+    it - rather than by matching.
+    """
+    for o in near:
+        close = [t for t in LOOSE if near_by(o, t) and t.holes == 1
+                 and not t.text.replace(HOLE, "").strip()]
+        if close:
+            return close[0]
+    return None
+
+
+def plugin_fragment(row):
+    """The longest run of the plugin's own words inside this row, or None.
+
+    The dataplane's rows reach the screen through a VTY printer that strips
+    the tag and re-indents (`remap:`), or prefixes a word (`warning:` on the
+    timeout floor), so the plugin's template never fits the row whole. What
+    can be said is which of its strings the row carries, and where.
+    """
+    best = None
+    for t in ROWS + PROSE:
+        if not t.origin.startswith("src/plugins/"):
+            continue
+        for frag in t.text.split(HOLE):
+            frag = frag.strip()
+            if (len(frag) >= LITERAL_FLOOR and frag in row
+                    and (best is None or len(frag) > len(best[1]))):
+                best = (t, frag)
+    return best
+
+
+def opens_as(text):
+    """The product string this row starts with and then goes on past.
+
+    An account and not an acceptance, so a template ending in a hole - which
+    `heads_of` refuses as a first half, because its last wildcard would stop
+    one character in - is allowed here: `prefix range refused for {}: mask
+    length <= ge <= le <= {} does not hold (length {}` is the head of a row
+    the product finishes with two more pieces under an `if`, and the row's
+    account is that head and its line.
+    """
+    best = None
+    for t in ERRS + ROWS + PROSE:
+        if (t.literal >= PREFIX_FLOOR and t.rx.match(text)
+                and (best is None or t.literal > best.literal)):
+            best = t
+    return best
+
+
+def driven_by(row):
+    for name, out in DRIVEN:
+        if row in out:
+            return name
+    return None
+
+
+def accounted(used):
+    """The strings that accounted for the rows read so far, by origin.
+
+    A string that is a module CONSTANT is named as one, with the printer
+    that put it on the screen, rather than cited as if the line it is
+    assigned on printed anything.
+    """
+    out = []
+    for f in used:
+        if f.t.constant:
+            printer = printer_under([g.t.origin for g in used if g is not f])
+            what = f"{f.t.constant}'s value ({f.t.origin})"
+            if printer:
+                what += f", printed whole through {printer.origin}"
+            if what not in out:
+                out.append(what)
+        elif f.t.origin not in out:
+            out.append(f.t.origin)
+    return "; ".join(out)
+
+
+def why_skipped(rows):
+    """
+    Where the reading of a screen nothing attributes stopped, in a sentence.
+
+    Printed beside every skip. A list of pages and lines was the honest edge
+    of the rule and it was also 22 lines nobody could act on without
+    re-deriving each one, which #365 did by hand for the wiki. What is
+    re-derivable is said here instead: how far the tiling got and by whose
+    strings, and what the first row it could not account for looks like to
+    the corpus. Every account names a line to go and read - a template under
+    the literal floor with its share, the printer that put a value on the
+    row whole, the plugin string the row carries, the run that printed the
+    row, or the string the row opens as - and the check at the end holds it
+    to that: "fits no string this product builds" was the label under four
+    docs/ skips the branch review attributed by hand in an afternoon, which
+    is the reading this file exists to do.
+    """
+    far, seen = None, rows
+    # The self-test's markers carry two leading spaces some pages drop, and
+    # the tiling is asked both ways above; the reason has to be read off the
+    # same rows, or a template that fits the shifted row is reported as no
+    # string at all.
+    for shifted in (rows, ["  " + r for r in rows]):
+        _ok, _used, got = tiling(shifted)
+        if far is None or got["row"] > far["row"]:
+            far, seen = got, shifted
+    n, used = far["row"], far["used"]
+    if n >= len(rows):
+        return "accounted for row by row and refused whole"
+    row = seen[n]
+    mark = MARKED.match(row)
+    text = row[row.index(mark.group(1)) + len(mark.group(1)):].lstrip() \
+        if mark else row.strip()
+    fit = over = None
+    for over in (text, row, "  " + row):
+        fit = loose_fit(over)
+        if fit:
+            break
+    # The verdict row is printed by `err` and `bad`, and saying so accounts
+    # for nothing; the rows under it are the ones a value printer puts there.
+    printer = printed_whole(row, [f.t.origin for f in used]) if n else None
+    plugin = plugin_fragment(row)
+    # A shell row ending in a hole is folded by `say_list` at the console's
+    # width, value included, and the value is the one thing this file has
+    # not got: the row under it is the rest of that value, not a row of its
+    # own. The Python side does not reach here - its folds are read whole.
+    tail = used[-1].t if used else None
+    if (tail is not None and tail.origin.startswith("appliance/")
+            and tail.text.endswith(HOLE) and not fit and not plugin):
+        what = (f"is the rest of the value in the last hole of "
+                f"{tail.text.replace(HOLE, '{}')!r} ({tail.origin}), which "
+                f"say_list folds at the console's width; this file cannot "
+                f"fold a value it does not have")
+    elif fit:
+        share = fit.literal / max(1, len(over))
+        what = (f"fits {fit.text.replace(HOLE, '{}')!r} from {fit.origin} "
+                f"and is {share:.0%} literal, under the {LITERAL_SHARE:.0%} "
+                f"floor")
+    elif printer:
+        what = (f"is a value printed whole through {printer.origin} "
+                f"({printer.text.replace(HOLE, '{}')!r})")
+        if plugin:
+            what += (f", and the plugin builds it under the floor "
+                     f"({plugin[0].origin}: {plugin[1]!r})")
+    elif plugin:
+        what = (f"is built by the plugin under the floor ({plugin[0].origin}: "
+                f"{plugin[1]!r})")
+    elif driven_row(row):
+        what = (f"is a row the run {driven_by(row)!r} printed, under rows it "
+                f"did not")
+    else:
+        head = opens_as(text)
+        if head:
+            what = (f"opens as {head.text.replace(HOLE, '{}')!r} from "
+                    f"{head.origin} and goes on in pieces this file does not "
+                    f"join")
+        else:
+            what = "fits no string this product builds"
+    if n == 0:
+        return f"the verdict row {what}"
+    return (f"row(s) 1-{n} are the box's ({accounted(used)}); row {n + 1} "
+            f"{what}: {row.strip()[:48]!r}")
+
+
+def fold_shape(rows, box):
+    """How the page's rows differ from the box's, for the `folded` finding.
+
+    A page whose screen is ONE row against the box's one row is not a fold
+    into one row, which reads as no fold at all: it is the headline cut
+    short at the page's width, with its tail on an unindented row that
+    `screens` does not read as part of the screen. Said as that.
+    """
+    if [r.strip() for r in rows] == [r.strip() for r in box]:
+        return "at an indent the printer does not use"
+    if len(rows) == 1 and len(box) == 1:
+        return (f"the verdict row cut short at {len(rows[0])} columns where "
+                f"the box's runs {len(box[0])}; what the page carries on "
+                f"under an unindented row is not read as this screen")
+    return (f"folded into {len(rows)} row(s) where the box prints "
+            f"{len(box)}, the longest {max(map(len, box))} columns")
+
+
+def folded(rows):
+    """
+    The fourth finding: the box's words, in rows the box does not print.
+
+    Read against the DRIVEN runs only. The words of the quoted screen with
+    its whitespace collapsed are compared with the words of every run of
+    consecutive rows the product printed; when they agree and the rows do
+    not, the page has the sentence and not the screen - folded at the page's
+    width where the box writes the row whole, or set at an indent the
+    printer does not use. Both were on the wiki once and both were found by
+    reading the skip list by hand (#365); four of the fifteen skips under
+    docs/ were the first kind. This is that reading, done by the file.
+
+    A page that quotes FEWER rows than the box printed is not this: the
+    verdict alone, or the verdict and its reason without the advice, agree
+    with the box row for row as far as they go, and the comparison is over
+    exactly as many of the box's rows as it takes to say the page's words.
+    A single row cut short at a blank inside a longer row of the box's is
+    the fold arriving from the other side - the headline itself broken at
+    the page's width - and is read the same way, above AGREE_FLOOR so that a
+    short verdict two screens happen to share is not a finding.
+
+    Returns (scenario, the box's rows) or None.
+    """
+    words = " ".join(" ".join(r.split()) for r in rows)
+    for name, out in DRIVEN:
+        for i, first in enumerate(out):
+            if not first.strip():
+                continue
+            said = []
+            for k in range(i, len(out)):
+                if not out[k].strip():
+                    break
+                said.append(" ".join(out[k].split()))
+                joined = " ".join(said)
+                if joined == words:
+                    if out[i:k + 1] == rows:
+                        return None
+                    return name, out[i:k + 1]
+                if (len(rows) == 1 and k == i and len(words) >= AGREE_FLOOR
+                        and joined.startswith(words + " ")):
+                    return name, out[i:k + 1]
+                if not joined.startswith(words[:len(joined)]):
+                    break
+    return None
+
+
+def gapped(rows):
+    """
+    The fifth finding: the box's rows with a row missing from the middle.
+
+    `folded` reads a page that quotes FEWER rows than the box printed as
+    honest, and it is - when what is missing is the tail. What it is not is
+    a page whose two rows the box printed with a row between them: the
+    verdict and the loader's refusal under it, with the advice the check
+    prints between the two left out, is a screen the box does not print,
+    and docs/appliance.md carried the #121 boot failure in that shape while
+    saying it was the shape the box prints today. The template tiling
+    accepted it, because each row is the box's.
+
+    Read against the DRIVEN runs only, on every pair of consecutive page
+    rows: both rows are rows of one run at the same indent, the second is
+    not the row after the first, and it is a row further down before a
+    blank. A pair the run prints adjacent anywhere is not a gap, so a row a
+    run repeats does not make one. The indent is the page's - the self-test
+    quotes the service's journal ten columns in - so the shift is read off
+    the pair rather than tried at two widths.
+
+    Returns (scenario, the box's rows from the first to the second) or None.
+    """
+    def shift(page, box):
+        k = len(page) - len(box)
+        if k >= 0 and page.endswith(box) and not page[:k].strip():
+            return k
+        return None
+
+    for a, b in zip(rows, rows[1:]):
+        for name, out in DRIVEN:
+            gap = None
+            for i in range(len(out) - 1):
+                k = shift(a, out[i])
+                if k is None or not out[i].strip():
+                    continue
+                if shift(b, out[i + 1]) == k:
+                    gap = None
+                    break
+                for j in range(i + 2, len(out)):
+                    if not out[j].strip():
+                        break
+                    if shift(b, out[j]) == k:
+                        gap = gap or (name, out[i:j + 1])
+                        break
+            if gap:
+                return gap
+    return None
 
 
 def diverges(rows):
@@ -1444,8 +2295,14 @@ def swallows(rows):
 # ---------------------------------------------------------------------------
 # The report.
 
-print(f"=== {len(SCREENS)} quoted screen(s) carrying a verdict, on "
-      f"{len(PAGES)} page(s) ===")
+def per_tree(counts):
+    return ", ".join(f"{tree}/ {counts.get(tree, 0)}" for tree, *_ in TREES)
+
+
+print(f"=== reads {len(TREES)} directories: " + ", ".join(
+    f"{tree}/ ({sum(1 for s in SCREENS if s[0] == tree)} quoted screen(s) "
+    f"carrying a verdict, on {len(PAGES[tree])} page(s))"
+    for tree, *_ in TREES) + " ===")
 print(f"  corpus: {len(ERRS)} refusal headline(s), {len(PROSE) + len(SPROSE)} "
       f"paragraph(s), {len(ROWS)} whole row(s) - from the VTY, the appliance "
       f"scripts and the plugin")
@@ -1479,7 +2336,7 @@ print(f"  {len(OPENS)} template(s) OPEN with a hole, "
       f"{len([t for t in OPENS if t.slots[0].one_value])} of them on a hole "
       f"that holds one value - the shape that swallowed `neighbour `")
 
-driven = matched = 0
+driven, matched = {}, {}                # per tree
 loosest = None
 skipped = []
 findings = []
@@ -1487,26 +2344,60 @@ spaced = []                             # accepted holes holding whitespace
 
 # The ceiling, in the idiom test_hexash_refusals.py argues for: what is left
 # is NAMED on every run and the number it may not exceed is written down,
-# because an allowlist is read once and grown forever. These two are the
-# accepted matches that still lean on a hole holding more than one word, and
-# both are a `${...}` in a shell script - the one language here whose slots
-# this file cannot read, so it asks them for nothing. Reading them would take
-# this to zero; it may not go up.
-SPACED_AT_MOST = 2
+# because an allowlist is read once and grown forever. These four are the
+# accepted matches that still lean on a hole holding more than one word.
+# Three are a `${...}` or a `$var` in a shell script - the one language here
+# whose slots this file cannot read, so it asks them for nothing - and the
+# fourth is `UNCHECKED_MARK.strip()`, a call on a constant whose value is the
+# two words `<- not checked`; a call is a phrase to `py_slot`, and the hole is
+# honest about holding one. It was 2 while this file read the wiki alone and
+# went to 4 when docs/ joined (#384): docs/appliance.md:373 quotes the
+# installer row the wiki quotes twice, and docs/routing.md:4070 is the
+# `<- not checked` mark - the same two shapes on a second tree, not a third
+# one. And 5 when #345 landed beside it: the self-test's `rx queues
+# requested: num-rx-queues $x` row (appliance/selftest) is a fourth shell
+# slot, the one shape this ceiling was written to tolerate, quoted by the
+# wiki's operations page. Reading the shell's slots would take this to one;
+# it may not go up again without a reading like that, and a page joining the
+# corpus is not one.
+SPACED_AT_MOST = 5
 
-for rel, lineno, rows in SCREENS:
+#: Where the self-test puts the service's journal under its verdict:
+#: `sed 's/^/          /'` at appliance/selftest:1519, ten columns. A screen
+#: the VTY printed at boot is quoted at that indent on a page quoting the
+#: self-test, and it is the box's rows there, not a fold of them.
+JOURNAL_INDENT = 10
+
+for tree, rel, lineno, rows in SCREENS:
     # The self-test's markers carry two leading spaces of their own and some
     # pages quote them without. The offset is uniform when it happens, so it
     # is put back rather than compared away - a row that differs by a space
-    # somewhere in the middle still has to fail.
+    # somewhere in the middle still has to fail. The third shift is the
+    # journal's, the other way: taken off, because the VTY printed the row
+    # without it.
     shifts = [rows, ["  " + r for r in rows]]
+    if all(r.startswith(" " * JOURNAL_INDENT) for r in rows):
+        shifts.append([r[JOURNAL_INDENT:] for r in rows])
     name = None
     for shifted in shifts:
         name = driven_match(shifted)
         if name:
             break
     if name:
-        driven += 1
+        driven[tree] = driven.get(tree, 0) + 1
+        continue
+    # Before a template is asked: a screen whose words a driven run printed,
+    # in rows it did not. Driving beats matching here too - a template would
+    # accept the page's fold at the console's width and never see that the
+    # box writes the row whole.
+    found = None
+    for shifted in shifts:
+        bent = folded(shifted)
+        if bent:
+            found = ("folded",) + bent
+            break
+    if found:
+        findings.append((tree, rel, lineno, rows, found))
         continue
     used = None
     for shifted in shifts:
@@ -1514,7 +2405,7 @@ for rel, lineno, rows in SCREENS:
         if used:
             break
     if used:
-        matched += 1
+        matched[tree] = matched.get(tree, 0) + 1
         for f in used:
             t = f.t
             for slot, got in f.holes():
@@ -1524,7 +2415,6 @@ for rel, lineno, rows in SCREENS:
             if loosest is None or (t.holes, -share) > loosest[0]:
                 loosest = ((t.holes, -share), t)
         continue
-    found = None
     for shifted in shifts:
         goes_on, stops = stale(shifted), diverges(shifted)
         if goes_on:
@@ -1538,14 +2428,24 @@ for rel, lineno, rows in SCREENS:
         if found:
             break
     if found:
-        findings.append((rel, lineno, rows[0], found))
+        findings.append((tree, rel, lineno, rows, found))
     else:
-        skipped.append((rel, lineno, rows[0]))
+        skipped.append((tree, rel, lineno, rows[0], why_skipped(rows)))
 
-print(f"\n  {driven} screen(s) matched by DRIVING the product - compared "
-      f"character for character")
-print(f"  {matched} screen(s) matched a TEMPLATE the product builds")
-print(f"  {len(skipped)} screen(s) SKIPPED: nothing here can attribute them")
+# And the blocks, as the box printed them: a row of the box's missing from
+# between two the page kept is not in any screen above.
+for tree, rel, lineno, rows in RUNS:
+    gap = gapped(rows)
+    if gap:
+        findings.append((tree, rel, lineno, rows, ("gapped",) + gap))
+
+print(f"\n  screen(s) matched by DRIVING the product - compared character "
+      f"for character: {per_tree(driven)}")
+print(f"  screen(s) matched a TEMPLATE the product builds: "
+      f"{per_tree(matched)}")
+print(f"  screen(s) SKIPPED, nothing here can attribute them: "
+      + per_tree({t: sum(1 for s in skipped if s[0] == t)
+                  for t, *_ in TREES}))
 if loosest:
     (holes, share), t = loosest
     print(f"  the loosest match any of those leaned on: {holes} hole(s), "
@@ -1553,14 +2453,39 @@ if loosest:
           f"hole counted as twelve, from {t.origin}")
     print(f"    {t.text.replace(HOLE, '{}')!r}")
 
-if skipped:
-    print("\n  what this file cannot see, which is the edge of the rule:")
-    for rel, lineno, row in skipped:
+for tree, *_ in TREES:
+    mine = [s for s in skipped if s[0] == tree]
+    if not mine:
+        print(f"\n  {tree}/: every quoted screen is accounted for")
+        continue
+    print(f"\n  {tree}/: what this file cannot see, which is the edge of the "
+          f"rule, and where the reading stopped:")
+    for _tree, rel, lineno, row, why in mine:
         print(f"    {rel}:{lineno}  {row.strip()[:64]}")
+        print(f"        {why}")
 
 if findings:
     print()
-for rel, lineno, row, (how, t, *rest) in findings:
+for tree, rel, lineno, rows, (how, t, *rest) in findings:
+    row = rows[0]
+    if how == "folded":
+        box = rest[0]
+        shape = fold_shape(rows, box)
+        check(False,
+              f"{rel}:{lineno} quotes the box's words in rows the box does "
+              f"not print: {shape}. Driven as '{t}', the box prints:\n"
+              + "\n".join(f"          |{r}" for r in box))
+        continue
+    if how == "gapped":
+        box = rest[0]
+        check(False,
+              f"{rel}:{lineno} quotes the box's rows with a row missing from "
+              f"the middle: {box[0].strip()[:48]!r} and then "
+              f"{box[-1].strip()[:48]!r}, which the box prints "
+              f"{len(box) - 2} row(s) later. Driven as '{t}', between and "
+              f"including the page's two rows the box prints:\n"
+              + "\n".join(f"          |{r}" for r in box))
+        continue
     if how == "swallowed":
         slot, got = rest
         check(False,
@@ -1693,6 +2618,166 @@ check(not py_slot(ast.parse('"/".join(sorted(n))', mode="eval").body)
 check(not py_slot(ast.parse('f"{a} and {b}"', mode="eval").body).one_value,
       "a phrase composed out of pieces is read as one value")
 
+# The box's words in rows the box does not print. The announce warning as
+# docs/routing.md carried it until #384: the same three rows the product
+# writes whole, hand-folded at 72 columns into five. Nothing may attribute
+# it, and `folded` has to name it - and the box's own rows, and the verdict
+# quoted alone, have to stay clear of it, because a finding that fires on a
+# page quoting less of a screen is a finding people run around.
+_ANNOUNCE = next(out for name, out in DRIVEN if name == "a pool nothing "
+                 "announces")
+_ANNOUNCE = [r for r in _ANNOUNCE if r.strip()]
+_HAND_FOLDED = [
+    "warning: pool 'clientes': nothing here announces 200.150.0.16/28",
+    "    subscribers behind it would be translated to an address the internet",
+    "    cannot route back to",
+    "    announce it from another box, or originate it here with",
+    "    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28'",
+    "    under the BGP address family"]
+check(not driven_match(_HAND_FOLDED) and not attribute(_HAND_FOLDED),
+      "a screen hand-folded where the box writes the row whole is accepted")
+_bent = folded(_HAND_FOLDED)
+check(_bent and _bent[1] == _ANNOUNCE,
+      f"and nothing names it as the box's words in rows the box does not "
+      f"print: {_bent!r}")
+check(folded(_ANNOUNCE) is None,
+      "the rows the box prints are called a fold of themselves")
+check(folded(_ANNOUNCE[:1]) is None and folded(_ANNOUNCE[:2]) is None,
+      "a page quoting the verdict without the advice under it is called a "
+      "fold")
+_SHIFTED = [_ANNOUNCE[0]] + [" " + r for r in _ANNOUNCE[1:]]
+check(folded(_SHIFTED) and folded(_SHIFTED)[1] == _ANNOUNCE,
+      "the box's rows one space too far right are not named")
+# And the headline broken at the page's width, which is the same fold from
+# the other side: the first row alone, cut at a blank.
+_CUT = [_ANNOUNCE[0][:_ANNOUNCE[0].rindex(" ")]]
+check(folded(_CUT) and folded(_CUT)[1] == _ANNOUNCE[:1],
+      f"a verdict row cut short inside the box's own row is not named: "
+      f"{_CUT!r}")
+
+# A row missing from the MIDDLE of the box's screen, which is the shape
+# docs/appliance.md carried the #121 boot failure in: the verdict and the
+# advice with the reason between them left out. `folded` reads a screen cut
+# short at its end as honest, so the gap has its own finding, and the box's
+# own rows and the box's rows cut short at the end have to stay clear of it.
+_GAPPED = [_ANNOUNCE[0], _ANNOUNCE[2]]
+check(not driven_match(_GAPPED),
+      "the announce warning with its reason row left out is driven as the "
+      "box's screen")
+_gap = gapped(_GAPPED)
+check(_gap and _gap[1] == _ANNOUNCE[:3],
+      f"and nothing names the row missing from its middle: {_gap!r}")
+check(gapped(_ANNOUNCE) is None and gapped(_ANNOUNCE[:2]) is None,
+      "the box's rows, whole or cut short at the end, are called a gap")
+check(gapped(["  " + _ANNOUNCE[0], "  " + _ANNOUNCE[2]])
+      and gapped(["  " + _ANNOUNCE[0], _ANNOUNCE[2]]) is None,
+      "the gap is not read at the page's indent, or is read across two "
+      "indents")
+
+# And the headline cut short is said as that. The `folded` finding above
+# fires on `_CUT` with one row against one row, and "folded into 1 row(s)
+# where the box prints 1" reads as no fold at all - which is what the report
+# said for a five-row screen whose tail sat under an unindented row.
+check("cut short" in fold_shape(_CUT, _ANNOUNCE[:1]),
+      f"a verdict row cut short at the page's width is reported as a fold "
+      f"into one row: {fold_shape(_CUT, _ANNOUNCE[:1])!r}")
+
+# The pool refusal docs/routing.md:1959 carried until this branch was
+# reviewed: the box's one row, split at the parenthesis onto a second. The
+# refusal is driven now - `Vat2.call` composes the reason, `err_dataplane`
+# prints it - so the split is a fold and `folded` has to name it, and the
+# box's own row has to be the driven one.
+_POOL = next(out for name, out in DRIVEN
+             if name == "a pool the dataplane refused, named")
+_POOL = [r for r in _POOL if r.strip()]
+check(len(_POOL) == 1 and _POOL[0].startswith(
+    "error: pool 'client-bad': the dataplane refused it: invalid value ("),
+    f"the pool refusal is not driven as the box's one row: {_POOL!r}")
+_SPLIT = [_POOL[0][:_POOL[0].index(" (")],
+          "    " + _POOL[0][_POOL[0].index("("):]]
+check(not driven_match(_SPLIT) and not attribute(_SPLIT),
+      "the pool refusal split at its parenthesis is accepted as a screen")
+_bent = folded(_SPLIT)
+check(_bent and _bent[1] == _POOL,
+      f"and nothing names the split as the box's row in rows the box does "
+      f"not print: {_bent!r}")
+
+# The session-table refusal folded back into the three rows docs/routing.md
+# carried before #384 - the correction the review found held by nothing,
+# because no run drove the row. One row of 169 columns, driven now.
+_TABLE = next(out for name, out in DRIVEN
+              if name == "the session-table refused once pools exist")
+_TABLE = [r for r in _TABLE if r.strip()]
+_TABLE_FOLDED = [
+    "error: cgnat session-table: the dataplane refused it: the change is "
+    "refused",
+    "while it is in use (session-table: tables already created; set this "
+    "before",
+    "configuring pools)"]
+check(len(_TABLE) == 1 and len(_TABLE[0]) == 169,
+      f"the session-table refusal is not driven as one row of 169 columns: "
+      f"{_TABLE!r}")
+_bent = folded(_TABLE_FOLDED)
+check(_bent and _bent[1] == _TABLE,
+      f"the session-table refusal folded at the page's width is not named "
+      f"as a fold: {_bent!r}")
+
+# The fake dataplane's `remap:` rows are the plugin's format strings filled
+# in, and the reading that makes them so is asserted: a row built here has
+# to be one the plugin's own template accepts, and the plugin's templates
+# have to be in the corpus at all.
+_REMAP_ROWS = [row for _name, setup, _lines in SCENARIOS
+               for row in setup.get("remap", [])]
+check(len(_REMAP_ROWS) == 12,
+      f"the re-mapping scenarios answer {len(_REMAP_ROWS)} rows, not the "
+      f"twelve three pages quote")
+for _row in _REMAP_ROWS:
+    check(any(t.origin.startswith("src/plugins/") and t.rx.fullmatch(_row)
+              for t in ROWS),
+          f"a row the fake dataplane answers is not one the plugin builds: "
+          f"{_row!r}")
+
+# The fake dataplane's timeout row is the plugin's, marked exactly when the
+# plugin would mark it: a value under the floor bpa_pool.h sets carries the
+# mark, one at the floor does not, and the run relayed the marked row under
+# `warning:` - which is the row the wiki quotes.
+check("BELOW the floor" in timeout_row("udp", 119)
+      and "BELOW" not in timeout_row("udp", 120),
+      "the fake dataplane marks a timeout the plugin would not, or leaves "
+      "one the plugin marks: the row it answers is not the plugin's")
+_TIMEOUT = next(out for name, out in DRIVEN
+                if name == "a timeout under the floor its RFC sets")
+check(any(r.startswith("warning:  udp") and "BELOW the floor" in r
+          for r in _TIMEOUT),
+      f"the marked timeout row was not relayed under `warning:` by the "
+      f"commit: {_TIMEOUT!r}")
+
+# The shell reader follows a printer call behind a guard and in a `case`
+# arm. Asserted on the corpus: the installer's two rows, which were on the
+# skip list for docs/appliance.md until the reader read past `&&` and `)`.
+_GUARDED = "  [ ok ] fstab: " + HOLE + " UUID(s), every one of them resolves"
+_ARM = "  [ ok ] root has a password, so somebody can log into this box"
+check(any(t.text == _GUARDED for t in ROWS),
+      "a printer call written after `&&` is not in the corpus")
+check(any(t.text == _ARM for t in ROWS),
+      "a printer call written in a `case` arm is not in the corpus")
+check(SH_CALL.match('  say "        and ok to ignore"').group(1) == "say",
+      "a verb inside a printed sentence is taken for the call")
+
+# And every skip says where the reading stopped, in words that name a row.
+check(all(re.search(r"the verdict row|row\(s\) 1-\d+ are the box's", why)
+          for *_, why in skipped),
+      "a skipped screen is printed with no account of where its reading "
+      "stopped")
+# And names a line to go and read: a skip whose reason is a label is a skip
+# somebody re-derives by hand, which is what the review of this branch did
+# for four of them.
+_unread = [f"{rel}:{lineno}  {why}" for _t, rel, lineno, _row, why in skipped
+           if not re.search(r"\S+:\d+", why)]
+check(not _unread,
+      "a skipped screen is printed with no source line to go and read:\n"
+      + "\n".join("          " + u for u in _unread))
+
 # And the corpus is not empty, which is the last way all of this reads green
 # over nothing at all.
 check(len(ERRS) > 100 and len(PROSE) > 100 and len(ROWS) > 100,
@@ -1703,7 +2788,14 @@ check(len(ONE_VALUE) > 1000,
       f"so whatever the rule above is reading it is not this product")
 print("  a glued refusal, a glued pair, an invented one, an empty "
       "template, a wrong fold, a swallowed word, a sentence asked for one "
-      "token and an empty corpus are each refused")
+      "token, a screen hand-folded where the box writes it whole, a verdict "
+      "cut short inside the box's row, a dataplane refusal split at its "
+      "parenthesis or folded at the page's width, a screen one space too far "
+      "right, a screen with a row missing from its middle, a fake dataplane "
+      "answering words the plugin does not build or marking a timeout it "
+      "would not, a run that printed nothing, a skip with no line to read "
+      "and an empty corpus are each refused; a printer call behind `&&` or "
+      "in a `case` arm is read")
 
 print()
 if fail:

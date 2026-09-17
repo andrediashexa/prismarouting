@@ -110,26 +110,20 @@ O nome é o que o **Linux** dá à placa. **TAB** e `?` listam as que a caixa te
 ```
 hexarouting# [edit] dataplane interface ?
 
-  enp1s0  carries the default route: refused
+  enp1s0  carries the default route: its address moves with it
   enp2s0  card
   <nic>
 ```
 
 Só entram na lista as placas que **têm endereço PCI** — as únicas que o dataplane pode receber. `lo`, uma ponte, um *bond* e um *veth* não aparecem: oferecer um nome que a caixa recusaria em seguida é o contrário do que essa lista serve para fazer.
 
-### Duas recusas, na hora em que você digita
+### Uma recusa na hora em que você digita, e um aviso no commit
 
-**Numa caixa que tem outra placa, a que carrega a rota default é recusada**, mesmo que você a nomeie. As duas falhas não são simétricas: uma caixa sem interface de dataplane se resolve entrando por rede; uma caixa que engoliu a própria gerência se resolve indo até ela a pé.
+**Numa caixa que tem outra placa, a que carrega a rota default é aceita**, se for ela que você nomear. Já foi recusada, e a recusa dizia qual era a outra placa. Ela saiu porque uma caixa nova é configurada no console, e uma recusa que guarda a placa pela qual a caixa é alcançada guarda um passo que ninguém dá pela rede. Na hora em que você digita, nada é dito. O que muda é o `commit`: o parágrafo sobre a sua sessão deixa de dizer que ela está a salvo e passa a dizer o que a caixa de uma placa só diz, que ela cai junto:
 
 ```
-hexarouting# [edit] dataplane interface enp1s0
-error: dataplane interface enp1s0: it carries the default route
-    handing it to the dataplane takes the card away from Linux, and this box
-    off the network with it
-    the two mistakes do not cost the same: a box with no dataplane card is
-    fixed over the network, and a box that ate its own management is fixed by
-    walking to it
-    name the card carrying subscriber traffic instead: enp2s0
+    restarting it hands the card over and ends every session on this box,
+    including this one, so it is not done for you
 ```
 
 **Um nome que a caixa não tem também é recusado, e ela diz quais tem:**

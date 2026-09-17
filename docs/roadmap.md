@@ -2310,17 +2310,47 @@ otherwise in exactly the right place - PHASE 5 boots the installed disk with
 the card already in the dataplane - and passed because its card was easier
 than any real one.
 
-**And a screen quoted in `docs/` is compared against nothing**
-([#384](https://github.com/andrediashexa/hexarouting/issues/384)).
-`test/test_wiki_screens.py` drives the product and compares every screen the
-public wiki quotes - 25 character for character, another 34 by template. It
-covers `wiki/` and nothing else. `docs/routing.md` carries a screen verbatim
+**And a screen quoted in `docs/` was compared against nothing**
+([#384](https://github.com/andrediashexa/hexarouting/issues/384)) - *done on
+the issue branch, awaiting merge*.
+`test/test_wiki_screens.py` drove the product and compared every screen the
+public wiki quotes - 25 character for character, another 34 by template - and
+covered `wiki/` and nothing else. `docs/routing.md` carries a screen verbatim
 and `test/test_doc_copies.py` reads that file only for column-width claims, so
-a transcript there that the box has stopped printing is caught by no one.
+a transcript there that the box has stopped printing was caught by no one.
 Measured while working out what would catch the one #378 is about to make
 obsolete. The same reason put three sections of that file in Portuguese once:
 `docs/` was excused from a check that covered everywhere else, and an excused
 directory is a directory nobody measures.
+
+Sized first: 38 of `docs/`'s 175 fenced blocks carry a verdict the box
+prints, 44 screens on 12 pages, 28 in `docs/routing.md`; the wiki reader
+pointed at it unchanged attributed 29 and skipped 15. The reader reads both
+trees now and says so on every run, per directory, and each skip is printed
+with where the reading stopped. The 15 were read one at a time: four were
+pages folding rows the box writes whole and are corrected, three are driven,
+two were installer rows the shell reader did not read past, one was history
+and is quoted as history. The fold itself is a finding now, read off the
+driven runs - the shape #365 found on the wiki by hand, twice. Seven remained,
+and the review of the branch attributed four of them by hand in an afternoon,
+which is the reading the file is for: the session-table refusal, the revert
+that could not be armed and the re-mapping refusal are driven now, through the
+product's own API client answering a canned return code and log line and a
+fake dataplane answering `remap:` rows built from the plugin's own format
+strings, and the pool refusal was a fifth fold, quoted as the box prints it.
+A second review attributed two more with the branch's own machinery and the
+wiki's timeout-floor row with them: `--load` of a saved file is driven with
+the file answered from memory at the box's own path, so the operator's line
+printed whole is a driven row, and the fake dataplane answers `show bpa
+timeouts` with `bpa_timeouts_show`'s own format, floor and RFC. What is left
+says why with a line to go and read: one under `docs/` and four on the wiki,
+each a self-test row whose value the shell reader cannot fold or a template
+under the floor. The same reading found two pages held by nothing: a wiki
+screen quoting a refusal #385 removed, which the run that typed it had
+stopped printing without anyone noticing, and the #121 boot failure quoted
+with the rows between its two refusals left out, which the template tiling
+accepted because every row was the box's. A run that prints no row and a row
+missing from the middle of the box's screen are each a failure now.
 
 **Two gaps of the same kind, still open**
 ([#383](https://github.com/andrediashexa/hexarouting/issues/383)). The guest
