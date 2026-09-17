@@ -792,6 +792,363 @@ check(" reserve 0" not in config.Pool("plain").lines(),
       "a pool with no reserve emits no reserve line")
 print("  parsed, read back, in the mapping half, and only in the creation "
       "message")
+print("\n=== every function named, one at a time (#390) ===")
+# The reader in test_every_function.py lists the functions no unit test
+# names. Each block below calls one of them directly, on inputs the function
+# exists for, and asserts what it answers: a test that only mentions the
+# name would keep the reader quiet and prove nothing.
+import hashlib  # noqa: E402
+from system import User, ROLES  # noqa: E402
+
+# mapping_digest: sha256 over the lines joined by newline, cut to sixteen
+# characters. The separator is part of the rule: without it two different
+# mappings could hash the same.
+_D = config.mapping_digest(["cgnat pool a", " inside 100.64.0.0/22"])
+check(_D == hashlib.sha256(
+          b"cgnat pool a\n inside 100.64.0.0/22").hexdigest()[:16],
+      f"sha256 of the newline-joined text, cut to 16: {_D}")
+check(len(_D) == config.MAPPING_DIGEST_CHARS, f"sixteen characters: {_D}")
+check(config.mapping_digest(["ab"]) != config.mapping_digest(["a", "b"]),
+      "the line break is part of the text, so two lines are not one")
+
+# strip_nat: the `nat` hierarchy taken off in both spellings, and a line
+# outside it returned as it was, indentation and all.
+check(config.strip_nat("nat cgnat pool p") == "cgnat pool p",
+      f"nat cgnat -> cgnat: {config.strip_nat('nat cgnat pool p')!r}")
+check(config.strip_nat("no nat cgnat pool p") == "no cgnat pool p",
+      f"no nat cgnat -> no cgnat: {config.strip_nat('no nat cgnat pool p')!r}")
+check(config.strip_nat(" nat ") == "", "the bare hierarchy word is nothing")
+check(config.strip_nat(" interface x") == " interface x",
+      "a line outside the hierarchy is returned verbatim")
+check(config.strip_nat("nature is not nat") == "nature is not nat",
+      "a word that starts with nat is not the hierarchy")
+
+# opens_frr_block: the openers, and rpki as the one with no name.
+check(config.opens_frr_block("router bgp 65000"), "router opens a block")
+check(config.opens_frr_block(" interface vppwan0"),
+      "so does interface, indented or not")
+check(config.opens_frr_block("rpki"), "rpki opens a block with no name")
+check(not config.opens_frr_block("rpki cache 10.0.0.1 3323 preference 1"),
+      "a statement that starts with rpki and carries more is not the block")
+check(not config.opens_frr_block("ip route 10.0.0.0/8 10.0.0.1"),
+      "a static route opens nothing")
+
+# block_of: the path of the FIRST line equal to the stripped statement.
+_ROUTING = ["router bgp 65000",
+            " neighbor 10.0.0.2 remote-as 65001",
+            "exit",
+            "vrf red",
+            " ip route 10.0.0.0/8 10.0.0.1",
+            "exit-vrf",
+            "ip route 10.0.0.0/8 10.0.0.1"]
+check(config.block_of(_ROUTING, "neighbor 10.0.0.2 remote-as 65001")
+      == ["router bgp 65000"],
+      f"a stripped statement finds its indented line: "
+      f"{config.block_of(_ROUTING, 'neighbor 10.0.0.2 remote-as 65001')}")
+check(config.block_of(_ROUTING, "ip route 10.0.0.0/8 10.0.0.1")
+      == ["vrf red"],
+      f"the same route in a VRF and at the top: the first occurrence: "
+      f"{config.block_of(_ROUTING, 'ip route 10.0.0.0/8 10.0.0.1')}")
+check(config.block_of(_ROUTING, "ip route 10.9.0.0/16 10.0.0.1") == [],
+      "a statement the configuration does not hold has no path")
+
+# is_static_route: the statement, not the position.
+check(config.is_static_route("ip route 10.0.0.0/8 10.0.0.1"),
+      "ip route is a static route")
+check(config.is_static_route("ipv6 route 2001:db8::/32 2001:db8::1"),
+      "and so is ipv6 route")
+check(config.is_static_route("  ip route 10.0.0.0/8 10.0.0.1"),
+      "indented is still the statement")
+check(not config.is_static_route("ip ospf area 0"),
+      "another ip statement is not")
+check(not config.is_static_route(""), "an empty line is not")
+
+# ungroup_static: the router static block back into FRR's words, family by
+# the prefix, with everything outside the block untouched.
+_GROUPED = ["router static",
+            " route 10.0.0.0/8 10.0.0.1",
+            " route 2001:db8::/32 2001:db8::1",
+            " no route 10.1.0.0/16 10.0.0.1",
+            "exit",
+            "interface vppwan0",
+            " ip ospf area 0",
+            "exit"]
+check(config.ungroup_static(_GROUPED) == [
+          "ip route 10.0.0.0/8 10.0.0.1",
+          "ipv6 route 2001:db8::/32 2001:db8::1",
+          "no ip route 10.1.0.0/16 10.0.0.1",
+          "interface vppwan0",
+          " ip ospf area 0",
+          "exit"],
+      f"the block flattened, the family from the prefix: "
+      f"{config.ungroup_static(_GROUPED)}")
+
+# _address_family_error: the keyword against the prefix's own family.
+check(config._address_family_error("ipv6", "10.0.0.1/24")
+      == "'10.0.0.1/24' is not an IPv6 prefix",
+      f"ipv6 with a v4 prefix: "
+      f"{config._address_family_error('ipv6', '10.0.0.1/24')!r}")
+check(config._address_family_error("ipv4", "2001:db8::1/64")
+      == "'2001:db8::1/64' is not an IPv4 prefix",
+      "ipv4 with a v6 prefix")
+check(config._address_family_error("ipv4", "10.0.0.1")
+      == "'10.0.0.1' has no prefix length",
+      "a bare address has no length")
+check(config._address_family_error("ipv4", "10.0.0.1/24") is None
+      and config._address_family_error("ipv6", "2001:db8::1/64") is None,
+      "the matching pairs are fine")
+
+# vlan_tag_error: 1 to 4094, both ends in, 0 and 4095 out, and the half
+# named in the refusal.
+check(config.vlan_tag_error("1") is None
+      and config.vlan_tag_error("4094") is None,
+      "1 and 4094 are tags")
+check(config.vlan_tag_error("0") ==
+      "vlan 0 out of range (1-4094): 802.1Q reserves 0 and 4095",
+      f"0 is refused with both ends: {config.vlan_tag_error('0')!r}")
+check(config.vlan_tag_error("4095", "inner") ==
+      "inner 4095 out of range (1-4094): 802.1Q reserves 0 and 4095",
+      f"4095 refused, and the inner half named: "
+      f"{config.vlan_tag_error('4095', 'inner')!r}")
+check(config.vlan_tag_error("x") == "vlan 'x': expected a VLAN tag <1-4094>",
+      f"a word is refused with the range: {config.vlan_tag_error('x')!r}")
+
+# ordered_globals: alphabetical, except that the export state goes last so
+# `cgnat logging enable` follows the collector line it depends on.
+_G = config.ordered_globals(["cgnat logging udp 10.0.0.9 src 10.0.0.1",
+                             "cgnat logging enable",
+                             "cgnat alg ftp off"])
+check(_G == ["cgnat alg ftp off",
+             "cgnat logging udp 10.0.0.9 src 10.0.0.1",
+             "cgnat logging enable"],
+      f"alphabetical with the enable last: {_G}")
+
+# linux_ifname_error: fifteen characters, no slash, not empty.
+check(config.linux_ifname_error("vppwan0") is None, "an ordinary name")
+check(config.linux_ifname_error("a" * 15) is None,
+      "fifteen characters is the longest Linux allows, and is allowed")
+check(config.linux_ifname_error("a" * 16) ==
+      "'aaaaaaaaaaaaaaaa' cannot be a Linux interface name "
+      "(15 characters, no '/')",
+      f"sixteen is refused: {config.linux_ifname_error('a' * 16)!r}")
+check(config.linux_ifname_error("GigabitEthernet0/13/0") is not None,
+      "a VPP name with slashes is refused")
+check(config.linux_ifname_error("") is not None, "and so is nothing")
+
+# Pool.check_range: the statement's own range, both ends in.
+check(config.Pool.check_range("block-size", "64") is None
+      and config.Pool.check_range("block-size", "32768") is None,
+      "both ends of block-size are in range")
+check(config.Pool.check_range("block-size", "63") ==
+      "block-size 63: expected 64-32768",
+      f"one below: {config.Pool.check_range('block-size', '63')!r}")
+check(config.Pool.check_range("block-size", "x") ==
+      "block-size 'x': expected a number 64-32768",
+      f"not a number: {config.Pool.check_range('block-size', 'x')!r}")
+check(config.Pool.check_range("ports", "0", "min") ==
+      "ports min 0: expected 1-65535",
+      f"the half named: {config.Pool.check_range('ports', '0', 'min')!r}")
+
+# Pool.check_pow2: a power of two, or the two nearest.
+check(config.Pool.check_pow2("block-size", "512") is None,
+      "512 is a power of two")
+check(config.Pool.check_pow2("block-size", "100") ==
+      "block-size 100 is not a power of two: the nearest are 64 and 128",
+      f"100 is refused with 64 and 128: "
+      f"{config.Pool.check_pow2('block-size', '100')!r}")
+check(config.Pool.check_pow2("block-size", "x") is None,
+      "not a number is check_range's refusal, not this one's")
+try:
+    config.Pool.check_pow2("ports", "8")
+    check(False, "a statement with no power-of-two rule must raise")
+except KeyError:
+    pass
+
+# Pool.check_order: first <= second, or the ordering named.
+check(config.Pool.check_order("ports", "1024", "65535") is None,
+      "min below max is fine")
+check(config.Pool.check_order("ports", "1024", "1024") is None,
+      "equal is fine: one port is a range of one")
+check(config.Pool.check_order("ports", "9000", "100") ==
+      "ports 9000 100: the max is below the min",
+      f"the wrong way round: "
+      f"{config.Pool.check_order('ports', '9000', '100')!r}")
+check(config.Pool.check_order("ports", "x", "100") is None,
+      "not a number is check_range's refusal, not this one's")
+try:
+    config.Pool.check_order("block-size", "1", "2")
+    check(False, "a statement with no ordering rule must raise")
+except KeyError:
+    pass
+
+# Pool._fwd_key: by public port, then TCP before UDP.
+check(config.Pool._fwd_key(("udp", 80, "10.0.0.1", 8080)) == (80, 1),
+      f"udp 80 keys as (80, 1): "
+      f"{config.Pool._fwd_key(('udp', 80, '10.0.0.1', 8080))}")
+_FWDS = [("udp", 80, "10.0.0.1", 80), ("tcp", 443, "10.0.0.1", 443),
+         ("tcp", 80, "10.0.0.1", 80)]
+check([f[:2] for f in sorted(_FWDS, key=config.Pool._fwd_key)]
+      == [("tcp", 80), ("udp", 80), ("tcp", 443)],
+      f"port first, then TCP before UDP: "
+      f"{[f[:2] for f in sorted(_FWDS, key=config.Pool._fwd_key)]}")
+
+# Pool.limits_api_args: both bounds, always, as numbers.
+_L = base_pool("lim")
+_L.max_sessions, _L.max_rate = 1000, 50
+check(_L.limits_api_args() == {"name": "lim", "max_sessions": 1000,
+                               "max_rate": 50},
+      f"name and both bounds: {_L.limits_api_args()}")
+check(config.Pool("z").limits_api_args() == {"name": "z", "max_sessions": 0,
+                                             "max_rate": 0},
+      "a pool with neither bound still sends both, as zero")
+
+# Pool.forward_command: the add form, the checked add, and the delete.
+_F = ("tcp", 80, "10.0.0.5", 8080)
+check(_L.forward_command(_F) == "bpa forward lim tcp 80 to 10.0.0.5 8080",
+      f"the add: {_L.forward_command(_F)!r}")
+check(_L.forward_command(_F, check=True)
+      == "bpa forward lim tcp 80 to 10.0.0.5 8080 check",
+      f"the checked add: {_L.forward_command(_F, check=True)!r}")
+check(_L.forward_command(_F, is_add=False) == "bpa forward lim tcp 80 del",
+      f"the delete names the port and no target: "
+      f"{_L.forward_command(_F, is_add=False)!r}")
+
+# Pool.stride_inert: a stride on a pool that is not dynamic.
+_S = base_pool("s")
+_S.block_stride = 2
+check(_S.stride_inert(), "a deterministic pool with a stride: inert")
+_S.mode = "dynamic"
+check(not _S.stride_inert(), "a dynamic pool with a stride: read")
+_S.block_stride = 0
+_S.mode = "deterministic"
+check(not _S.stride_inert(), "a deterministic pool with no stride: nothing")
+
+# Pool.__eq__: by rendered text, and never equal to something that is not a
+# pool. Called by name because the reader does not see an operator.
+# Two assignments, not one tuple: the reader files a name bound from a
+# tuple as foreign and would not see the call.
+_P1 = base_pool("q")
+_P2 = base_pool("q")
+check(_P1.__eq__(_P2), "two pools with the same fields are equal")
+_P2.block_size = "1024"
+check(not _P1.__eq__(_P2), "and not once a field differs")
+check(not _P1.__eq__("cgnat pool q"), "a string is not a pool")
+
+# Config.interface_lines: every field an interface has, in the order the
+# configuration writes them, and nothing for an interface that has none.
+_C = config.Config()
+_C.linux_names["e"] = "wan0"
+_C.macs["e"] = "52:54:00:00:00:01"
+_C.ra_enabled.add("e")
+_C.vrfs["e"] = 10
+_C.vlans["e"] = {"outer": 100, "inner": 200}
+_C.descriptions["e"] = "uplink"
+_C.addresses["e"] = ["10.0.0.1/24", "2001:db8::1/64"]
+_C.admin_down.add("e")
+_C.mtus["e"] = 9000
+_C.urpf["e"] = "loose"
+check(_C.interface_lines("e") == [
+          " linux-name wan0",
+          " mac-address 52:54:00:00:00:01",
+          " no ipv6 nd suppress-ra",
+          " vrf 10",
+          " vlan 100 inner 200",
+          " description uplink",
+          " ipv4 address 10.0.0.1/24",
+          " ipv6 address 2001:db8::1/64",
+          " shutdown",
+          " mtu 9000",
+          " urpf loose"],
+      f"all eleven fields, in order: {_C.interface_lines('e')}")
+_C.vlans["e"] = {"outer": 100, "inner": None}
+check(" vlan 100" in _C.interface_lines("e")
+      and not any(l.startswith(" vlan 100 inner")
+                  for l in _C.interface_lines("e")),
+      "a single tag has no inner half")
+check(_C.interface_lines("nothing") == [],
+      "an interface the configuration says nothing about has no lines")
+
+# Config.drop_frr_interface_blocks: the stanza, its statements and its own
+# exit go; the next block and everything else stay. In both shapes.
+_C.routing = ["interface GigabitEthernet0/13/0",
+              "ip ospf area 0",
+              "exit",
+              "interface vppwan0",
+              "ip ospf area 0",
+              "exit",
+              "router ospf",
+              "network 10.0.0.0/24 area 0",
+              "exit"]
+check(_C.drop_frr_interface_blocks(["GigabitEthernet0/13/0"])
+      == ["GigabitEthernet0/13/0"],
+      "the name dropped is returned")
+check(_C.routing == ["interface vppwan0", "ip ospf area 0", "exit",
+                     "router ospf", "network 10.0.0.0/24 area 0", "exit"],
+      f"the flat shape: the stanza, its statement and its exit are gone, "
+      f"the rest is not: {_C.routing}")
+_C.routing = ["interface GigabitEthernet0/13/0",
+              " ip ospf area 0",
+              "exit",
+              "!",
+              "interface vppwan0",
+              " ip ospf area 0",
+              "exit",
+              "!"]
+check(_C.drop_frr_interface_blocks(["GigabitEthernet0/13/0", "none"])
+      == ["GigabitEthernet0/13/0"],
+      "a name the routing does not hold is not reported as dropped")
+check(_C.routing == ["!", "interface vppwan0", " ip ospf area 0", "exit",
+                     "!"],
+      f"the indented shape, as FRR writes it: {_C.routing}")
+
+# Config.interface_addresses_v4: (interface, address) for every v4 address,
+# the host address as written and the v6 ones left out.
+_C.addresses = {"a": ["10.0.0.1/24", "2001:db8::1/64"],
+                "b": ["192.0.2.7/32"], "c": ["2001:db8::2/64"]}
+check(_C.interface_addresses_v4() == [("a", "10.0.0.1/24"),
+                                      ("b", "192.0.2.7/32")],
+      f"the v4 addresses by interface, unmasked: "
+      f"{_C.interface_addresses_v4()}")
+
+# Config._user_line: one line of a user block into the User, or why not.
+_U = User("ops")
+check(config.Config._user_line(_U, "ssh-key ssh-ed25519 AAAA ops@box")
+      is None and _U.keys == ["ssh-ed25519 AAAA ops@box"],
+      f"an ssh-key line is kept whole: {_U.keys}")
+check(config.Config._user_line(_U, "password hunter2") ==
+      "password: expected a crypt hash such as $y$... or $6$... "
+      "(openssl passwd -6), not a plaintext password"
+      and _U.password == "",
+      f"a plaintext password is refused and not stored: {_U.password!r}")
+check(config.Config._user_line(_U, "password $6$salt$hash") is None
+      and _U.password == "$6$salt$hash",
+      "a crypt hash is stored")
+check(config.Config._user_line(_U, f"role {ROLES[0]}") is None
+      and _U.role == ROLES[0], f"a known role is stored: {_U.role!r}")
+check(config.Config._user_line(_U, "role bogus")
+      == f"role 'bogus': expected one of {', '.join(ROLES)}"
+      and _U.role == ROLES[0],
+      "an unknown role is refused in one row and the old role stays")
+check(config.Config._user_line(_U, "exit") is None
+      and config.Config._user_line(_U, "") is None,
+      "exit and a blank line are nothing to refuse")
+check(config.Config._user_line(_U, "shell /bin/sh")
+      == "'shell /bin/sh' is not something a user block understands",
+      "an unknown statement is refused by name")
+
+# Config.mapping_lines: every pool's mapping half, in NAME order whatever
+# the order they were typed in, and none of the in-place half.
+_M = config.Config()
+_M.pools["b"] = base_pool("b")
+_M.pools["a"] = base_pool("a")
+_M.pools["a"].timeouts["udp"] = 30
+check(_M.mapping_lines() == base_pool("a").lines(in_place=False)
+      + base_pool("b").lines(in_place=False),
+      f"a before b, typed b then a: {_M.mapping_lines()}")
+check(not any("timeout" in l for l in _M.mapping_lines()),
+      "an in-place setting is not part of the mapping")
+print("  twenty-three functions, each asked what it is for")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

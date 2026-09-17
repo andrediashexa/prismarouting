@@ -531,6 +531,121 @@ check(sorted(_v.get(7, {})) == ["10.7.0.0/24"],
 print("  a named table lands under its own id, and under its name when "
       "nobody can be asked")
 
+print("\n=== every function named, one at a time (#390) ===")
+# The reader in test_every_function.py lists the functions no unit test
+# names. Each block below calls one of them directly, on inputs the function
+# exists for, and asserts what it answers: a test that only mentions the
+# name would keep the reader quiet and prove nothing.
+
+# _sort_key: an ADDRESS order, and the length as the tie-break. As strings
+# "10" sorts before "9", and a routing table listed that way puts 10/8 above
+# 9/8, which nobody reads as ordered.
+check(routes._sort_key("10.0.0.0/8") == (10, 0, 0, 0, 8),
+      f"the octets and then the length: {routes._sort_key('10.0.0.0/8')}")
+check(routes._sort_key("9.255.255.255/32") < routes._sort_key("10.0.0.0/8"),
+      "9.x sorts before 10.x, which a string order gets wrong")
+check(routes._sort_key("10.0.0.0/8") < routes._sort_key("10.0.0.0/32"),
+      "on the same network the shorter prefix comes first")
+check(routes._sort_key("not-a-prefix") == (0, 0, 0, 0, 0),
+      "a line that is not a prefix sorts to the front, and does not raise")
+
+# parse_vrf_tables: the TABLE id, not the vrf id, because the FIB is keyed by
+# the table linux_nl creates from the kernel's table id; and an inactive VRF
+# has no table and is left out rather than given one.
+_VRFS = ("vrf red id 3 table 10 (configured)\n"
+         "vrf green inactive (configured)\n"
+         "vrf blue id 5 table 20 (configured)\n")
+check(routes.parse_vrf_tables(_VRFS) == {"red": 10, "blue": 20},
+      f"name to TABLE id, the inactive one left out: "
+      f"{routes.parse_vrf_tables(_VRFS)}")
+check(routes.parse_vrf_tables("") == {}, "no output is no VRFs")
+
+# _vrf_of: the name after `vrf` in the enclosing path, and "" for the global
+# table, which `router static` also is.
+check(routes._vrf_of(["router bgp 65000", "vrf red"]) == "red",
+      f"the VRF block names the table: "
+      f"{routes._vrf_of(['router bgp 65000', 'vrf red'])!r}")
+check(routes._vrf_of(["router static"]) == "",
+      "router static is this VTY's word for the global table")
+check(routes._vrf_of([]) == "" and routes._vrf_of(None) == "",
+      "a top-level statement and no path at all are both the global table")
+
+# _addr_int: a dotted quad as a number, and None for anything that is not
+# one, INCLUDING an octet past 255, which int() takes happily.
+check(routes._addr_int("10.0.0.1") == 0x0A000001,
+      f"10.0.0.1 is 0x0A000001: {routes._addr_int('10.0.0.1'):#x}")
+check(routes._addr_int("256.0.0.1") is None,
+      "an octet over 255 is not an address")
+check(routes._addr_int("10.0.0") is None, "three octets are not an address")
+check(routes._addr_int("a.b.c.d") is None, "letters are not an address")
+
+# covers_prefix: containment of a whole prefix, which the address test
+# cannot answer alone. 200.150.0.0/24 holds 200.150.0.16/28, and /28 does
+# not hold the /24 even though it holds the /24's first address.
+check(routes.covers_prefix("200.150.0.0/24", "200.150.0.16/28"),
+      "the /24 covers its own /28")
+check(not routes.covers_prefix("200.150.0.16/28", "200.150.0.0/24"),
+      "the /28 does not cover the /24 it sits in, though it holds its "
+      "first address")
+check(not routes.covers_prefix("200.150.0.0/24", "200.151.0.0/28"),
+      "a /28 on another network is not covered")
+check(not routes.covers_prefix("200.150.0.0/x", "200.150.0.16/28"),
+      "a prefix with no readable length covers nothing")
+
+# covers_address: the public name of the address question.
+check(routes.covers_address("10.0.0.0/8", "10.200.1.1"),
+      "an address inside the prefix")
+check(not routes.covers_address("10.0.0.0/8", "11.0.0.1"),
+      "and one outside it")
+
+# _covers: the mask arithmetic itself, at both ends of the length.
+check(routes._covers("10.0.0.0/24", "10.0.0.255"),
+      "the last address of a /24 is inside it")
+check(not routes._covers("10.0.0.0/24", "10.0.1.0"),
+      "the next network over is outside it")
+check(routes._covers("0.0.0.0/0", "203.0.113.9"),
+      "a /0 covers every address")
+check(not routes._covers("10.0.0.0/33", "10.0.0.1"),
+      "a length past 32 covers nothing")
+check(not routes._covers("10.0.0.0/24", "10.0.0.x"),
+      "an unreadable address is not covered")
+
+# connected_from_fib: the connected prefixes per table, and a table with no
+# connected prefix is still a key with an empty list, because "connects
+# nothing" and "no such table" are different answers (#255).
+_FIBS = {0: {"200.150.0.0/24": {"kind": routes.CONNECTED},
+             "200.150.0.1/32": {"kind": routes.LOCAL},
+             "0.0.0.0/0": {"kind": routes.FORWARD}},
+         7: {"10.7.0.0/24": {"kind": routes.CONNECTED}},
+         9: {"0.0.0.0/0": {"kind": routes.FORWARD}}}
+_CONN = routes.connected_from_fib(_FIBS)
+check(_CONN == {0: ["200.150.0.0/24"], 7: ["10.7.0.0/24"], 9: []},
+      f"only the connected prefixes, every table a key: {_CONN}")
+
+# parse_hardware_pci: the pci row under a card, read as numbers and in hex,
+# and no row for the interfaces that are not cards.
+_HW = """              Name                Idx   Link  Hardware
+ens19                              1     up   ens19
+  Link speed: 10 Gbps
+  Ethernet address 52:54:00:12:34:56
+    pci: device 1af4:1041 subsystem 1af4:1100 address 0000:00:13.00 numa 0
+TenGigabitEthernetd8/0/0           2     up   TenGigabitEthernetd8/0/0
+    pci: device 8086:1572 subsystem 8086:0000 address 0000:d8:00.01 numa 1
+tap0                               3     up   tap0
+  Link speed: unknown
+local0                             0    down  local0
+"""
+_PCI = routes.parse_hardware_pci(_HW)
+check(_PCI.get("ens19") == (0, 0, 0x13, 0),
+      f"the card's row read as numbers, slot 13 in hex: {_PCI.get('ens19')}")
+check(_PCI.get("TenGigabitEthernetd8/0/0") == (0, 0xd8, 0, 1),
+      f"a bus with a letter in it is hex, not a parse failure: "
+      f"{_PCI.get('TenGigabitEthernetd8/0/0')}")
+check(set(_PCI) == {"ens19", "TenGigabitEthernetd8/0/0"},
+      f"the tap and local0 have no pci row and are not cards: {sorted(_PCI)}")
+check(routes.parse_hardware_pci("") == {}, "no output is no cards")
+print("  nine functions, each asked what it is for")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
