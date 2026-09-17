@@ -955,15 +955,20 @@ order.
 
 **It binds what `startup.conf` names**, and that is the design rather than a
 convenience. The tuner has already applied every rule about which NIC the
-dataplane may have, including the default-route refusal above, so reading its
-output inherits those rules instead of restating them. A second copy of "which
-NIC may the dataplane have" is a second copy that can disagree, and the way
-this one would disagree is by taking the box off the network.
+dataplane may have - every card but a reserve, or the one that was named, and
+never a card whose way back it could not read - so reading its output inherits
+those rules instead of restating them. A second copy of "which NIC may the
+dataplane have" is a second copy that can disagree.
 
-It reads the default route again anyway, immediately before unbinding. Not as
-a second opinion but as a last one: `startup.conf` is a file and a person can
-edit it, and this is the one mistake here that cannot be undone from another
-city.
+It used to read the default route again immediately before unbinding, as a
+last line of defence for a `startup.conf` somebody edited by hand, and refuse
+the card carrying it unless it was the last card and a way back sat beside it.
+That went with [#385](https://github.com/andrediashexa/hexarouting/issues/385)
+for the reason the tuner's refusal went: the guard was on a step nobody takes
+over the network, and the one fact it needed - is there a way back - is
+decided before the file it reads is written. The binder now reads nothing to
+decide which card; it binds every device the file names, whichever route the
+card carries, and leaves the rest alone.
 
 | | why |
 |---|---|

@@ -472,12 +472,12 @@ HEXA_DATAPLANE_IF=ens18
 HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 bc:24:11:a1:4f:c0
 ```
 
-The tuner no longer reads that second line
-([#385](https://github.com/andrediashexa/hexarouting/issues/385)): it computes
-the way back for itself on the boot that claims the card, and a named card is
-claimed whichever route it carries. `bind-dataplane-nic` still refuses the
-card carrying the default route while there is another card, and the last card
-when no way back was computed for it.
+Neither the tuner nor `bind-dataplane-nic` reads that second line any more
+([#385](https://github.com/andrediashexa/hexarouting/issues/385)): the tuner
+computes the way back for itself on the boot that claims the card and names no
+card whose way back it could not read, a named card is claimed whichever route
+it carries, and the binder binds what the tuner named and decides nothing
+about which.
 
 **And the boot replay reads it from there too, which is
 [#332](https://github.com/andrediashexa/hexarouting/issues/332).** The pair is

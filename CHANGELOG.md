@@ -102,6 +102,18 @@ version has a chance of seeing it.
     against the 0.76.1 tuner: three checks on the one-card box, two on the
     two-card box, and the flag refused by the parser.
 
+  * **`bind-dataplane-nic` no longer refuses the card carrying the default
+    route, and reads nothing to decide which card.** It was the last line of
+    defence for a hand-edited `startup.conf`: refuse the management card
+    while there is another, and the last card unless a way back sat in
+    `/run`. The tuner names no card whose way back it could not read, so the
+    one fact the refusal needed is settled before the file it reads is
+    written; the binder binds every device that file names and leaves the
+    rest alone. `test/test_bind_nic.sh` holds it on the one-card box, the
+    two-card box and a box with the `/run` record present, shown red against
+    the 0.76.1 binder; its width ceiling drops from 5 to 2 with the rows the
+    refusal interpolated.
+
   **What it costs a box already in service.** Naming the card your session
   arrives on, with `dataplane interface`, is no longer refused on a box that
   has another card: the box takes the card you named at the next start of

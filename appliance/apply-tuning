@@ -178,10 +178,10 @@ printf 'kernel cmdline hugepages: %s\n' \
 # THE DIRECTION TO BE WRONG IN, when this cannot be told. Skipping a bind that
 # should have happened leaves a box that forwards nothing and is reachable, and
 # the self-test says so on the console. Performing one that should not leaves a
-# box nobody can reach. This file already carries that trade, in the refusal
-# #123 is about: a box with no dataplane card is fixed over the network, and a
-# box that ate its own management is fixed by walking to it. So the bind runs
-# only when the dataplane is positively known NOT to be up.
+# box nobody can reach. That is the trade #123 named: a box with no dataplane
+# card is fixed over the network, and a box that ate its own management is
+# fixed by walking to it. So the bind runs only when the dataplane is
+# positively known NOT to be up.
 # Three answers, not two, because "the dataplane is not up" and "nobody here
 # can be asked" are different boxes and only one of them is the boot. Without
 # systemd this is not an appliance starting: it is a chroot during the install
