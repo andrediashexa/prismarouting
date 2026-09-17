@@ -3803,8 +3803,11 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     # answered `no shut  <- not checked` - the marker #141 puts on a
     # statement that went to FRR word for word - and that row is what says
     # the box never read the line. The resolution happens once, before
-    # dispatch, so after #393 the candidate holds `no shutdown` and nothing
-    # else, and `save` writes the same.
+    # dispatch, so after #393 `no shut` clears the block's `shutdown` row.
+    # An interface that is up prints NO row for it - the block writes
+    # ` shutdown` only when it is down, and never `no shutdown` - so the
+    # reading is the ABSENCE of that row, which the `shutdown` committed
+    # above had put there.
     send "show this"
     wait_for "[edit interface" 60 "the block to print itself back" || fail=1
     tail -c "+$_ab_pos" "$CONSOLE_LOG" | tr -d '\r' \
@@ -4096,14 +4099,19 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     echo "         This is the maintainer's screen: the VTY has no grammar"
     echo "         for the word, so nothing on this box ever read it"
     fail=1
-  elif grep -qE "^ *no shutdown *$" /tmp/ab-block.txt; then
-    echo "  [ ok ] 'no shut' is read as 'no shutdown': the block prints the"
-    echo "         full spelling back, so that is what 'save' writes too"
-  else
-    echo "  [FAIL] 'show this' holds no 'no shutdown' after 'no shut'. It"
+  elif ! grep -qE "^ *interface $HO_CARD *$" /tmp/ab-block.txt; then
+    echo "  [FAIL] 'show this' did not print the interface block after"
+    echo "         'no shut'. It said:"
+    sed 's/^/         | /' /tmp/ab-block.txt | head -8
+    fail=1
+  elif grep -qE "^ *shutdown *$" /tmp/ab-block.txt; then
+    echo "  [FAIL] 'show this' still holds 'shutdown' after 'no shut'. It"
     echo "         said:"
     sed 's/^/         | /' /tmp/ab-block.txt | head -8
     fail=1
+  else
+    echo "  [ ok ] 'no shut' is read as 'no shutdown': the block's"
+    echo "         'shutdown' row is gone, so 'save' writes the card up"
   fi
   AB_STATE=$(tr -s ' ' < /tmp/ab-show.txt 2>/dev/null \
     | awk -v n="$HO_IF" '$1 == n {print $2}' | head -1)

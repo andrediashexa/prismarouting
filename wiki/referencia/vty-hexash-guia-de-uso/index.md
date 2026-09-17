@@ -81,7 +81,7 @@ hexarouting# [edit interface ens18] mt 9000
 
 é exatamente o mesmo que `interface ens18`, `no shutdown`, `description uplink da transito` e `mtu 9000`. As palavras que valem são as mesmas que o `?` e o TAB oferecem naquele ponto, então o que a caixa aceita e o que ela oferece nunca discordam.
 
-**O que fica guardado é sempre a grafia inteira.** `show this`, `show configuration` e o arquivo que o `save` grava mostram `no shutdown`, nunca `no shut`. A abreviação existe para os seus dedos, não para o arquivo.
+**O que fica guardado é sempre a grafia inteira.** `show this`, `show configuration` e o arquivo que o `save` grava nunca mostram `no shut`: `mt 9000` aparece como `mtu 9000`, e uma interface ligada com `no shut` simplesmente deixa de ter a linha `shutdown` - a caixa só escreve `shutdown` quando a interface está desligada. A abreviação existe para os seus dedos, não para o arquivo.
 
 ### Uma abreviação ambígua é recusada, com os candidatos
 
