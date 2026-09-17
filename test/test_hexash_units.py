@@ -3817,6 +3817,192 @@ check("error: an ambiguous abbreviation" in rows_of(o.getvalue()),
 ok("the abbreviation is gone before any handler, any screen or any file")
 
 
+# ------------------------------------------------- reachability (#395)
+
+print("\n=== probe_host_ok: an address, or a hostname, and nothing else ===")
+for _good in ("1.1.1.1", "10.0.0.1", "2001:db8::1", "::1", "example.com",
+              "a.example.com.", "x-1.co", "a" * 63 + ".com"):
+    check(hexash.probe_host_ok(_good), f"{_good!r} is a host and was refused")
+for _bad in ("", " ", "a b", "x;rm -rf /", "$(id)", "a..b", "-lead.com",
+             "trail-.com", "a" * 64 + ".com", "a" * 254, "10.0.0.1/24",
+             "hosté.com", "a|b"):
+    check(not hexash.probe_host_ok(_bad), f"{_bad!r} is not a host and passed")
+ok("a name is labels of letters, digits and hyphens; a shell's punctuation "
+   "is not one")
+
+print("\n=== probe_source_ok: an address, and not a name or a prefix ===")
+check(hexash.probe_source_ok("10.0.0.1")
+      and hexash.probe_source_ok("2001:db8::1"),
+      "an address of either family is a source")
+check(not hexash.probe_source_ok("10.0.0.1/24")
+      and not hexash.probe_source_ok("example.com")
+      and not hexash.probe_source_ok(""),
+      "a prefix, a name and nothing are not")
+ok("what goes in the packet's source field is one address, decided here")
+
+print("\n=== probe_count_ok: a whole number inside the range, or None ===")
+check(hexash.probe_count_ok("1") == 1
+      and hexash.probe_count_ok("5") == 5
+      and hexash.probe_count_ok(str(hexash.PROBE_COUNT_MAX))
+      == hexash.PROBE_COUNT_MAX,
+      "the ends of the range are inside it")
+for _bad in ("0", str(hexash.PROBE_COUNT_MAX + 1), "+5", " 5", "5\n", "five",
+             "", "5.0", "-1"):
+    check(hexash.probe_count_ok(_bad) is None,
+          f"{_bad!r} is not a count and was taken as one")
+ok("the number the operator sees and the number the tool gets are the same")
+
+print("\n=== probe_argv: the flags, which are asserted without running ===")
+_p = hexash.PROBE_TOOLS["ping"][0]
+check(hexash.probe_argv("ping", "1.1.1.1")
+      == [_p, "-c", str(hexash.PROBE_COUNT_DEFAULT), "-n", "1.1.1.1"],
+      f"ping, bounded and numeric: {hexash.probe_argv('ping', '1.1.1.1')}")
+check(hexash.probe_argv("ping", "h", count=2, source="10.0.0.1")
+      == [_p, "-c", "2", "-n", "-I", "10.0.0.1", "h"],
+      "ping carries its source as -I")
+_t = hexash.PROBE_TOOLS["traceroute"][0]
+check(hexash.probe_argv("traceroute", "h", count=20, source="10.0.0.1")
+      == [_t, "-q", "1", "-m", "20", "-n", "-s", "10.0.0.1", "h"],
+      "traceroute counts hops, one query each, and carries -s")
+_m = hexash.PROBE_TOOLS["mtr"][0]
+check(hexash.probe_argv("mtr", "h", count=3)
+      == [_m, "--report", "--report-cycles", "3", "-n", "h"],
+      "mtr reports rather than opening curses on a serial console")
+check(hexash.probe_argv("ping", "h")[-1] == "h"
+      and hexash.probe_argv("traceroute", "h")[-1] == "h"
+      and hexash.probe_argv("mtr", "h")[-1] == "h",
+      "the host is last on every one, after every flag")
+try:
+    hexash.probe_argv("nmap", "h")
+    check(False, "a tool this table has not got must not build a vector")
+except KeyError:
+    pass
+ok("three vectors, built here, and a fourth tool cannot be asked for")
+
+print("\n=== probe_options: pairs off the tail, and the word that is not ===")
+check(hexash.probe_options([]) == (None, None, None), "nothing is nothing")
+check(hexash.probe_options(["count", "3"]) == ("3", None, None), "count alone")
+check(hexash.probe_options(["source", "10.0.0.1"]) == (None, "10.0.0.1", None),
+      "source alone")
+check(hexash.probe_options(["count", "3", "source", "10.0.0.1"])
+      == ("3", "10.0.0.1", None), "both, in the order they were typed")
+check(hexash.probe_options(["source", "10.0.0.1", "count", "3"])
+      == ("3", "10.0.0.1", None), "and in the other order")
+check(hexash.probe_options(["count"]) == (None, None, "count"),
+      "an option with no value comes back as the word, not as a default")
+check(hexash.probe_options(["-c", "3"]) == (None, None, "-c"),
+      "a flag of the tool's own is not an option of this statement")
+ok("an option missing its value is refused, never run with the default")
+
+print("\n=== Shell.do_probe: the refusals, before anything is executed ===")
+
+
+def _probe_says(line, needle, caps=None):
+    # Through `feed`, because the resolution of an abbreviation and the
+    # dispatch are both in front of this statement and a test that called the
+    # method would measure neither. do_probe is ALSO called by name below, for
+    # the reader that asks which functions no test names.
+    _sh = shell()
+    if caps is not None:
+        _sh.caps = caps
+    with spoken() as o:
+        _sh.feed(line)
+    check(needle in o.getvalue(),
+          f"{line!r} did not say {needle!r}: {o.getvalue()!r}")
+
+
+_probe_says("ping", "error: ping: no host")
+_probe_says("traceroute", "usage: traceroute <host> [count <n>]")
+_probe_says("ping x;rm", "error: ping: not a host")
+_probe_says("ping 1.1.1.1 count 0", "error: ping: count out of range")
+_probe_says("mtr 1.1.1.1 count 0", "mtr counts cycles and traceroute counts")
+_probe_says("ping 1.1.1.1 count", "error: ping: not an option of this "
+                                  "statement")
+_probe_says("traceroute 1.1.1.1 source nope", "error: traceroute: not a "
+                                              "source address")
+# A READ-ONLY ACCOUNT MAY, which is the decision #395 records: these change
+# nothing, and the operator asked whether the box reaches something is often
+# the one who may not configure it.
+_probe_says("ping", "error: ping: no host", caps=set())
+# And by name, with the tool word this VTY dispatches on rather than the line
+# an operator types: do_probe is one method serving three statements, so what
+# it does with its FIRST argument is the half `feed` cannot vary.
+_sh = shell()
+with spoken() as o:
+    _sh.do_probe("mtr", [])
+check("error: mtr: no host" in o.getvalue()
+      and "usage: mtr <host>" in o.getvalue(), o.getvalue())
+with spoken() as o:
+    _sh.do_probe("traceroute", ["1.1.1.1", "count", "999"])
+check("error: traceroute: count out of range" in o.getvalue(), o.getvalue())
+ok("every refusal is at the prompt, and a read-only account reaches them")
+
+print("\n=== and a tool this box has not got is named with its package ===")
+_saved_tools = dict(hexash.PROBE_TOOLS)
+try:
+    hexash.PROBE_TOOLS["mtr"] = (os.path.join(_root, "no-such-mtr"),
+                                 "mtr-tiny")
+    _probe_says("mtr 1.1.1.1", "error: mtr: this box has no mtr")
+    _probe_says("mtr 1.1.1.1", "it comes from the 'mtr-tiny' package")
+finally:
+    hexash.PROBE_TOOLS.update(_saved_tools)
+ok("a statement whose tool is absent says which package carries it")
+
+print("\n=== Shell.run_probe: what it does with the tool it runs ===")
+_sh = shell()
+_out = script("probe-echo", "#!/bin/sh\nprintf 'ran: %s\\n' \"$*\"\n")
+with spoken() as o:
+    _sh.run_probe("ping", [_out, "-c", "1", "1.1.1.1"])
+# NOT CAPTURED: the tool writes to this process's own stdout, which the
+# redirect above is. What matters here is that the VTY added nothing of its
+# own around it.
+check(o.getvalue().strip() in ("", "ran: -c 1 1.1.1.1"),
+      f"the VTY wrapped the tool's output: {o.getvalue()!r}")
+_slow = script("probe-slow", "#!/bin/sh\nsleep 5\n")
+_saved_deadline = hexash.PROBE_DEADLINE
+try:
+    hexash.PROBE_DEADLINE = 1
+    with spoken() as o:
+        _sh.run_probe("ping", [_slow])
+    check("error: ping: stopped after 1s" in o.getvalue(),
+          f"a tool that hangs is stopped and said so: {o.getvalue()!r}")
+finally:
+    hexash.PROBE_DEADLINE = _saved_deadline
+# AND THE ONE THAT IS NOT THE TOOL'S FAULT: a vector whose program is not
+# there at all. Driven because a refusal nobody has watched fire is one this
+# repository cannot tell from a refusal that does not fire.
+with spoken() as o:
+    _sh.run_probe("ping", [os.path.join(_root, "no-such-probe"), "1.1.1.1"])
+check("error: ping: cannot run its program" in o.getvalue(),
+      f"a missing program is a refusal, not a traceback: {o.getvalue()!r}")
+
+
+class _Interrupted:
+    """`subprocess.run` as Ctrl-C at the console: the probe took the signal."""
+
+    def __init__(self):
+        self.called = 0
+
+    def run(self, *a, **k):
+        self.called += 1
+        raise KeyboardInterrupt
+
+
+_saved_run = hexash.subprocess.run
+_int = _Interrupted()
+try:
+    hexash.subprocess.run = _int.run
+    with spoken() as o:
+        _sh.run_probe("ping", ["/bin/true"])
+    check(_int.called == 1 and o.getvalue() == "\n",
+          f"Ctrl-C comes back to the prompt and ends nothing: "
+          f"{o.getvalue()!r}")
+finally:
+    hexash.subprocess.run = _saved_run
+ok("the tool's output is the operator's, and neither a hang nor a Ctrl-C "
+   "takes the session with it")
+
+
 # ---------------------------------------------------------- the banner
 
 print("\n=== Shell.say_handed_ssh_host_keys: only when it is true ===")

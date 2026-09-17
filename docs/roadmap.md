@@ -2477,6 +2477,20 @@ What remains is the proof a lab cannot fake: `lab/install-iso.sh` bringing the
 claimed card up at the console and reading `ens19` off `ip link` and FRR, and
 `appliance/test_startup_conf_shapes.sh` handing the stanza to a real VPP.
 
+**`ping`, `traceroute` and `mtr` at the prompt**
+([#395](https://github.com/andrediashexa/hexarouting/issues/395)) - on the
+branch. Reachability is the first question anybody asks of a router and this
+VTY could not answer it: `start shell` was the only way, administrators only,
+every capability at once to ask about a packet. The three statements run
+Debian's own tools through an argument vector built in `probe_argv` and
+executed with no shell in the path, bounded by default and deadlined, with
+`count` and `source`; every account may run them, read-only included. The
+image carries the three packages and the boot self-test warns about one that
+is missing, because a statement whose tool is absent is a promise the box does
+not keep. What remains is the proof a unit test cannot give: the statements
+typed at the console of an installed box, against a host whose reachability
+the lab arranged.
+
 **`no shut` was handed to FRR in silence, and the interface stayed down**
 ([#393](https://github.com/andrediashexa/hexarouting/issues/393)) - shipped
 in 0.77.1. On the maintainer's box, running 0.77.0, `interface ens18` / `no

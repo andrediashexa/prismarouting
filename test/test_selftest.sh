@@ -45,6 +45,17 @@ cat > "$BIN/runuser" <<'EOF'
 echo "${2:-}" >> "$FAKE/runuser.log"
 exit "$(cat "$FAKE/api_rc" 2>/dev/null || echo 0)"
 EOF
+# The three reachability tools, stubbed so that every box in this file has
+# them and the ones that must NOT are arranged by taking this directory away.
+# They are never run by the self-test - it asks whether they are there - so the
+# stub answers nothing.
+PROBE_DIR=$FAKE/probebin
+mkdir -p "$PROBE_DIR"
+for _p in ping traceroute mtr; do
+  printf '#!/bin/sh\nexit 0\n' > "$PROBE_DIR/$_p"
+  chmod 755 "$PROBE_DIR/$_p"
+done
+
 # Present so that using it is visible rather than impossible: an assertion that
 # passes because a command is missing would pass on the old self-test too.
 cat > "$BIN/setpriv" <<'EOF'
@@ -363,7 +374,16 @@ run() {  # -> $OUTPUT
   # only by the two boxes that have to arrange a tuner which is not there, and
   # one that answers nothing, neither of which can be arranged by a tuner that
   # works.
-  OUTPUT=$(PATH="$BIN:${RUN_PATH:-$PATH}" HEXA_SELFTEST_OUT=/dev/stdout \
+  # PROBE_PATH is the three reachability tools (#395), in a directory of
+  # their own rather than in $BIN. They have to be REMOVABLE: the self-test
+  # warns about the ones a box has not got, and a stub in $BIN would win over
+  # any farm arranged without them, so that branch could never be reached.
+  # The machine running this suite has ping and traceroute and generally not
+  # mtr, which is exactly the box this arranges away.
+  _ppath=${PROBE_PATH-$PROBE_DIR}
+  _runpath=${RUN_PATH:-$PATH}
+  [ -z "$_ppath" ] || _runpath="$_ppath:$_runpath"
+  OUTPUT=$(PATH="$BIN:$_runpath" HEXA_SELFTEST_OUT=/dev/stdout \
            HEXA_TUNE="${HEXA_TUNE:-hexarouting-tune}" \
            HEXA_SELFTEST_ROOT="$FAKE/root" sh "$ST" 2>/dev/null)
   rc=$?
@@ -4221,6 +4241,28 @@ fi
 # nothing can make red is an assertion nobody should believe. The PATH is a
 # farm of symlinks to the real commands with that one taken out, so the box is
 # ordinary in every other respect.
+echo "=== and a box the VTY cannot reach anything from (#395) ==="
+# The three statements an operator answers "can this box reach it?" with run
+# Debian's own tools, and a statement whose tool is absent is a promise the box
+# does not keep. A warning and not a failure: this box forwards every packet it
+# is given, and what is missing is the ability to ASK.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root"
+PROBE_FARM=$FAKE/no-probes
+rm -rf "$PROBE_FARM"
+cp -as /usr/bin "$PROBE_FARM" 2>/dev/null || true
+rm -f "$PROBE_FARM/ping" "$PROBE_FARM/traceroute" "$PROBE_FARM/mtr"
+if [ ! -x "$PROBE_FARM/grep" ]; then
+  bad "the PATH farm could not be built, so the box with no reachability \
+tools was never arranged and the branch that reports it is still unmeasured"
+else
+  PROBE_PATH= RUN_PATH=$PROBE_FARM run
+  RUN_PATH=
+  said "the box says which of them it cannot run" \
+    "[warn] the VTY cannot run: ping traceroute mtr"
+  said "and names the packages they come from" \
+    "iputils-ping, traceroute and mtr-tiny"
+fi
+
 echo "=== and a box with no sha256sum to check the manifest with ==="
 FARM=$FAKE/no-sha256sum
 rm -rf "$FARM"

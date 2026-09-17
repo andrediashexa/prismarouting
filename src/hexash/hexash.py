@@ -118,6 +118,43 @@ VPPCTL = os.environ.get("VPPCTL", "vppctl")
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 
+# The three reachability tools, each with the package that carries it (#395).
+#
+# NAMED WITH THEIR PACKAGE because the refusal an operator meets when one is
+# missing has to name what to install, and this is the only place that pairing
+# is written down: appliance/build-iso.sh installs these three and the boot
+# self-test reads this table back, so a tool dropped from the image cannot go
+# unnoticed on one side and promised on the other.
+#
+# Full paths, and no $PATH lookup. The argument vector this VTY builds is
+# handed to execve through subprocess with no shell anywhere in it, so nothing
+# an operator types is ever a word a shell could read; a tool found by
+# searching a PATH an environment could rewrite would give that back.
+PROBE_TOOLS = {
+    "ping": (os.environ.get("HEXA_PING", "/usr/bin/ping"), "iputils-ping"),
+    "traceroute": (os.environ.get("HEXA_TRACEROUTE", "/usr/bin/traceroute"),
+                   "traceroute"),
+    "mtr": (os.environ.get("HEXA_MTR", "/usr/bin/mtr"), "mtr-tiny"),
+}
+
+# What a probe may be asked to do, and the ceiling on each.
+#
+# BOUNDED BY DEFAULT, and that is the whole argument for these numbers. A
+# `ping` that runs until it is interrupted, typed on a serial console by
+# somebody who then walks away, leaves a console that cannot be used for
+# anything else until somebody walks back to it - and the console is where
+# this box is configured when it is new. Every probe here stops by itself.
+#
+# The ceiling is what an operator may raise the count to. It is not a
+# judgement about how many packets are useful; it is the point past which a
+# probe stops being a question and becomes a session.
+PROBE_COUNT_DEFAULT = 5
+PROBE_COUNT_MAX = 100
+# The wall clock each probe gets, whatever it was asked for. A tool that hangs
+# - a DNS server that never answers, an mtr against a host that black-holes
+# every cycle - must not take the VTY with it.
+PROBE_DEADLINE = 300
+
 # Which FRR daemon serves each "router" statement. Written as data rather than
 # guessed from the keyword, because the two only look alike: "router ospf" is
 # served by ospfd, and "router isis" by isisd, but the mapping is a fact about
@@ -366,6 +403,9 @@ ARG_PEER_GROUP = "<peer-group>"
 ARG_AREA = "<area>"
 ARG_ISIS_TAG = "<isis-instance>"
 ARG_REV = "<0-19>"
+# The operator's own word, so the tree enumerates nothing under it and TAB
+# offers nothing: a hostname is not this box's to complete.
+ARG_HOST = "<host>"
 
 SHOW_CGNAT = {
     # The four that answer an operator's question rather than reporting a
@@ -1745,6 +1785,15 @@ TREE = {
             "shell": ("a login shell; administrators only, because a shell "
                       "on this box is every capability at once", None),
         }),
+        # REACHABILITY, which is the first question anybody asks of a router
+        # and which this VTY could not answer at all until #395: the only way
+        # was `start shell`, which is administrators only and is every
+        # capability at once. Every account may run these three; they change
+        # nothing, and a diagnosis an operator cannot make is a call to
+        # somebody who can.
+        "ping": ("send echo requests and say what came back", ARG_HOST),
+        "traceroute": ("the path to a host, one row per hop", ARG_HOST),
+        "mtr": ("ping every hop of the path, as a report", ARG_HOST),
         "show": ("display information", SHOW),
         "clear": ("reset a session, without changing the configuration", {
             "bgp": ("a BGP session", ARG_NEIGHBOUR),
@@ -1893,6 +1942,147 @@ TREE["user"]["no"] = ("remove a statement from this account",
 if running_from_live_medium():
     TREE["operational"]["install"] = (
         "install HexaRouting onto a disk on this machine", None)
+
+
+def probe_host_ok(host):
+    """
+    Is `host` something this VTY will hand to a reachability tool (#395)?
+
+    An address of either family, or a hostname in the letters RFC 1123 allows:
+    labels of letters, digits and hyphens, none of them empty, none longer
+    than 63, and 253 characters in all. Nothing else - and in particular
+    nothing carrying a space, a slash, a quote or a shell's punctuation.
+
+    THE VALIDATION IS NOT WHAT KEEPS A SHELL OUT. There is no shell in the
+    path at all: the argument vector goes to execve as it is built. This is
+    the second wall, and it is here for the operator rather than for the
+    attacker - a typo reaching `ping` becomes that tool's own error message
+    about a name it could not resolve, where a refusal at the prompt says
+    which word this box could not read.
+    """
+    if not host or len(host) > 253:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    # A trailing dot is a fully qualified name and resolvers take it.
+    name = host[:-1] if host.endswith(".") else host
+    if not name:
+        return False
+    for label in name.split("."):
+        if not label or len(label) > 63:
+            return False
+        if label.startswith("-") or label.endswith("-"):
+            return False
+        for ch in label:
+            if not (ch.isascii() and (ch.isalnum() or ch == "-")):
+                return False
+    return True
+
+
+def probe_source_ok(addr):
+    """
+    Is `addr` an address a probe may be sent FROM?
+
+    An address and not a prefix, and not a hostname either: this is what goes
+    into the packet's source field, and a name that resolves to two addresses
+    would leave the operator reading a reply about whichever one was picked.
+    """
+    try:
+        ipaddress.ip_address(addr)
+        return True
+    except ValueError:
+        return False
+
+
+def probe_count_ok(word):
+    """
+    `word` as a probe count, or None.
+
+    None for anything that is not a whole number in 1..PROBE_COUNT_MAX, so the
+    caller refuses with the range in the sentence. `int()` alone would take
+    "+5", " 5" and "5\n"; the digits check is what keeps the number the
+    operator sees and the number the tool gets the same.
+    """
+    if not word or not word.isdigit():
+        return None
+    n = int(word)
+    if n < 1 or n > PROBE_COUNT_MAX:
+        return None
+    return n
+
+
+def probe_argv(tool, host, count=None, source=None):
+    """
+    The argument vector for one probe, and the only place these flags live.
+
+    A function of its arguments and nothing else, so what this VTY runs can be
+    asserted without running it - which matters more here than usual: a wrong
+    flag on `mtr` is a curses session on a serial console, and a wrong one on
+    `ping` is a probe that never stops.
+
+      ping        -c <count>  -n            [-I <source>]  <host>
+      traceroute  -q 1 -m <count> -n        [-s <source>]  <host>
+      mtr         --report --report-cycles <count> -n [-a <source>] <host>
+
+    `-n` on all three: a reverse lookup per hop, against a DNS server that may
+    be exactly what is broken, is how a traceroute takes a minute per line to
+    print what it already knew. The addresses are what the operator is reading
+    anyway.
+
+    `traceroute`'s count is the hop CEILING rather than a number of probes,
+    which is the same question asked of that tool: how far to go before giving
+    up. One query per hop, because three is three times the wait for a row
+    that is already printed as it arrives.
+    """
+    path = PROBE_TOOLS[tool][0]
+    n = PROBE_COUNT_DEFAULT if count is None else count
+    if tool == "ping":
+        argv = [path, "-c", str(n), "-n"]
+        if source:
+            argv += ["-I", source]
+    elif tool == "traceroute":
+        argv = [path, "-q", "1", "-m", str(n), "-n"]
+        if source:
+            argv += ["-s", source]
+    elif tool == "mtr":
+        argv = [path, "--report", "--report-cycles", str(n), "-n"]
+        if source:
+            argv += ["-a", source]
+    else:
+        raise KeyError(tool)
+    return argv + [host]
+
+
+def probe_options(words):
+    """
+    `count <n>` and `source <a>` off the tail of a probe statement.
+
+    Returns `(count, source, bad)`, where `bad` is the first word that is not
+    one of those pairs and None when every word was read. The caller decides
+    what to say about `bad`, because what is wrong with it differs per tool:
+    `mtr` counts cycles and `traceroute` counts hops.
+
+    Written as a reader of PAIRS rather than a flag parser: an option whose
+    value is missing is the word itself coming back as `bad`, so `ping 1.1.1.1
+    count` is refused for the count it did not carry instead of silently
+    running with the default.
+    """
+    count = source = None
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w in ("count", "source") and i + 1 < len(words):
+            if w == "count":
+                count = words[i + 1]
+            else:
+                source = words[i + 1]
+            i += 2
+            continue
+        return count, source, w
+    return count, source, None
 
 
 def _starts(candidate, prefix):
@@ -9028,6 +9218,121 @@ class Shell:
         except OSError as e:
             self.err(f"cannot start {INSTALLER}: {e}")
 
+    def do_probe(self, tool, rest):
+        """
+        `ping`, `traceroute` and `mtr`, which are one statement three ways.
+
+        One method and not three, because the differences between them are
+        two words of prose and a flag table that already lives in
+        `probe_argv`. Three methods would be three places for the refusals to
+        drift apart, and the refusals are most of this.
+
+        WHO MAY: everybody, read-only accounts included, and that is a
+        decision rather than an omission. These three change nothing on the
+        box. An operator who may not configure anything is exactly the
+        operator who is asked whether the box can reach something, and until
+        #395 the only way to find out was `start shell` - which is
+        administrators only, and hands over every capability at once to answer
+        a question about a packet.
+
+        BOUNDED, ALWAYS. The count defaults to PROBE_COUNT_DEFAULT and stops
+        there; the deadline stops a tool that hangs. A probe that runs until
+        it is interrupted, typed on the serial console of a racked box by
+        somebody who then walks away, is a console nobody can use until they
+        walk back.
+        """
+        path, package = PROBE_TOOLS[tool]
+        what = {"ping": "an address to ping",
+                "traceroute": "an address to trace the path to",
+                "mtr": "an address to report the path to"}[tool]
+        if not rest:
+            self.err_prose(f"{tool}: no host", f"usage: {tool} <host> "
+                           f"[count <n>] [source <address>]", what)
+            return
+        host = rest[0]
+        count_word, source, bad = probe_options(rest[1:])
+        if bad is not None:
+            # The operator's own word goes into the PROSE and not the verdict,
+            # for #363's reason: it is as long as they typed it, so a verdict
+            # carrying it has no width, and the verdict without it is 24
+            # columns and says the same thing.
+            self.err_prose(f"{tool}: not an option of this statement",
+                           f"'{bad}' is not one, or it is missing its value",
+                           f"usage: {tool} <host> [count <n>] "
+                           f"[source <address>]")
+            return
+        if not probe_host_ok(host):
+            self.err_prose(f"{tool}: not a host",
+                           f"'{host}' is neither an address nor a hostname",
+                           "a hostname is letters, digits and hyphens in "
+                           "labels separated by dots")
+            return
+        count = PROBE_COUNT_DEFAULT
+        if count_word is not None:
+            count = probe_count_ok(count_word)
+            if count is None:
+                self.err_prose(f"{tool}: count out of range",
+                               f"'{count_word}' is not a whole number between "
+                               f"1 and {PROBE_COUNT_MAX}",
+                               "mtr counts cycles and traceroute counts hops; "
+                               "ping counts packets"
+                               if tool != "ping" else
+                               f"the default is {PROBE_COUNT_DEFAULT}")
+                return
+        if source is not None and not probe_source_ok(source):
+            self.err_prose(f"{tool}: not a source address",
+                           f"'{source}' is not an address",
+                           "the source is an address this box holds, and not "
+                           "a name: a name with two addresses would answer "
+                           "about whichever one was picked")
+            return
+        if not os.path.exists(path):
+            # A statement whose tool is absent is a promise the box does not
+            # keep, and the refusal names the package rather than the path:
+            # the operator's next move is to install it, and on this appliance
+            # that is the only move there is.
+            self.err_prose(f"{tool}: this box has no {tool}",
+                           f"{path} is not installed",
+                           f"it comes from the '{package}' package, which "
+                           f"this image normally carries")
+            return
+        self.run_probe(tool, probe_argv(tool, host, count, source))
+
+    def run_probe(self, tool, argv):
+        """
+        Run one probe, with its output going where the operator is looking.
+
+        NOT CAPTURED. Every other program this VTY runs is read back and
+        rewritten into this box's own sentences, because what vppctl and vtysh
+        print is this product's business to present. These three are the
+        opposite case: what `ping` prints IS the answer, an operator already
+        knows how to read it, and holding it back until the run finishes would
+        turn a probe whose whole value is arriving row by row into a wait
+        ending in a paragraph.
+
+        Ctrl-C belongs to the probe and comes back HERE. `ping -c 5` against a
+        host that is not answering still costs five seconds, and an operator
+        who has seen enough interrupts it - which must return to the prompt
+        rather than end the session, the way it does inside `start shell`.
+        """
+        try:
+            subprocess.run(argv, timeout=PROBE_DEADLINE, check=False)
+        except subprocess.TimeoutExpired:
+            self.err_prose(f"{tool}: stopped after {PROBE_DEADLINE}s",
+                           "the tool had not finished, so this box stopped it",
+                           "a probe that does not end by itself is usually a "
+                           "name that cannot be resolved")
+        except KeyboardInterrupt:
+            print()
+        except OSError as e:
+            # The program and the reason go on a row of their OWN, with
+            # nothing of this VTY's behind them: a path and an errno string
+            # are as long as the system makes them, and a row that carries one
+            # in the middle folds inside the words (#363).
+            self.err_prose(f"{tool}: cannot run its program",
+                           "this box has the file and could not start it:",
+                           f"{argv[0]}: {e}")
+
     def do_system(self, rest):
         """
         `system reboot` and `system shutdown`: the box itself, from the VTY.
@@ -9352,6 +9657,14 @@ class Shell:
             print("entering configuration mode")
         elif w[0] in ("exit", "quit", "logout"):
             return False
+        elif w[0] in PROBE_TOOLS:
+            # Before show_or_pass, which hands a word it does not know to FRR.
+            # FRR has a `ping` and a `traceroute` of its own, and they are not
+            # these: they run in FRR's world, answer in FRR's words and take
+            # FRR's flags, so a box that let them through here would answer the
+            # same question two ways depending on which one the operator
+            # reached (#395).
+            self.do_probe(w[0], w[1:])
         elif w[0] == "clear":
             self.do_clear(line)
         elif w[0] == "system":
