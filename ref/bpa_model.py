@@ -222,6 +222,24 @@ class PoolConfig:
 
         if self.block_stride < 0:
             raise BpaError(f"block_stride must not be negative, got {self.block_stride}")
+        # AND NO REFUSAL OF A STRIDE ON A DETERMINISTIC POOL, which the plugin
+        # does refuse and this deliberately does not. The two are not the same
+        # kind of statement. A reserve is part of the MAPPING - it moves
+        # blocks_mapped, capacity and the reverse direction - so the model
+        # owns it and refuses it above. A stride is provably not part of the
+        # mapping: ref/validate.py measures 0 subscribers moved across every
+        # pool and every stride, which is the property the box rests on. What
+        # the plugin refuses is a stride reaching an ALLOCATOR that will never
+        # read it, and this model has no allocator; extension_block() is the
+        # arithmetic of where a stride would put the nth block, which is what
+        # the plugin's own bpa_stride_block() computes and which is equally
+        # blind to the mode.
+        #
+        # Refusing it here would also make the vectors unbuildable:
+        # ref/gen_vectors.py generates the stride table for the three RESERVED
+        # pools, and a reserved pool is deterministic by definition - so the
+        # combination this forbids is exactly the one that proves the
+        # arithmetic on a pool with a reserve.
         # A stride of blocks_per_ip or more steps past the last block on the
         # subscriber's own public address on its very first extension, so it
         # can never place anything. Refused rather than accepted and silently

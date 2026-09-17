@@ -251,6 +251,16 @@ Um pool sem um dos dois lados não traduz nada. Não é um ajuste que se complet
 
 O dataplane olhou a definição inteira - tamanho de bloco, sobreposição de prefixo, capacidade, e se a faixa pública colide com um endereço local - e disse que não. A linha seguinte traz o motivo dele, nas palavras dele.
 
+### `block-stride applies to dynamic pools only, not to pool <nome>`
+
+O `block-stride` diz a que distância fica o **segundo** bloco de um assinante que encheu o primeiro, contada ao longo dos blocos **mapeados** do endereço público dele. Num pool `deterministic` o bloco a mais não sai dali: sai da **reserva**, que é um conjunto à parte com regra própria de escolha - um bloco livre da reserva no próprio endereço do assinante, se a fatia daquele worker tiver um; senão, qualquer bloco livre que a fatia daquele worker tenha na reserva, em qualquer endereço, como descreve a página de [configuração de pool](/doc/configuracao-de-pool-btyS572Ih6). Esse caminho nunca passa pelos blocos mapeados, e por isso o `block-stride` nunca é lido ali - em nenhum tamanho, e em nenhuma máquina.
+
+A recusa mostra as duas linhas em conflito, o `mode` e o `block-stride`, porque qualquer uma das duas resolve e qual delas mudar é decisão sua: tire o `block-stride`, ou ponha o pool em `mode dynamic`.
+
+É a mesma simetria da `reserve`, que só existe em pool determinístico: cada um dos dois ajustes pertence a um modo só, e o equipamento prefere dizer isso a guardar um ajuste que nunca teria efeito. Um pool que **era** dinâmico, tinha `block-stride` e passa a `deterministic` cai exatamente aqui - e essa é a hora de ficar sabendo o que ele está perdendo, não meses depois, olhando uma tela que promete uma distribuição que a caixa não faz.
+
+**Um arquivo salvo por uma versão anterior** pode ter os dois no mesmo pool, porque a combinação era aceita e o `block-stride` simplesmente nunca valia ali. No boot a caixa **não recusa** esse arquivo: sobe o pool sem o `block-stride`, exatamente como ele já rodava, e deixa no log do boot a linha `note: block-stride <n> dropped from pool <nome>`. O próximo `save` grava o arquivo sem a linha. Um `rollback` para uma revisão que ainda tem os dois carrega a revisão na candidata e não aplica nada, como qualquer `rollback`; é o `commit` seguinte que cai na recusa acima. Numa caixa que subiu por esse caminho o pool já está rodando **sem** o `block-stride`, então o que esse `commit` recusa é a linha acrescentada a um pool que fica onde está - e não um pool novo. A diferença entre o boot e o prompt é deliberada: no boot ninguém está olhando, e uma caixa que sobe sem pool nenhum por causa de um ajuste que nunca teve efeito é um preço que ninguém pediu para pagar.
+
 ### `this box has no interface <nome>` e `interface <nome>: this box has no such interface`
 
 Um statement nomeia uma interface que não existe aqui. A primeira forma vem de uma linha de roteamento ou de CGNAT que aponta para ela; a segunda, de entrar num bloco `interface` que a caixa não tem. `show interface` lista os nomes que ela tem, e é dali que o nome deve sair - inventar um é como o problema começa.
@@ -343,6 +353,8 @@ Quem seria re-mapeado sai do `commit` comum, na recusa que pede `commit remap`.
 A `hexarouting.service` roda `hexash --load /etc/hexarouting/hexarouting.conf` depois que o VPP aceita comandos.
 
 O `--load` **recusa o arquivo inteiro** se houver uma linha que a VTY não consiga interpretar, em vez de aplicar o resto. Isso é deliberado: rodando sem ninguém olhando, aplicar um arquivo *menos uma linha* deixaria a configuração em disco e a em execução diferentes, e alguém descobriria isso lendo as duas muito depois.
+
+Há uma linha, e só uma, que o `--load` deixa de fora em vez de recusar o arquivo: o `block-stride` de um pool `deterministic`, que nunca teve efeito ali. O pool sobe como já rodava, o log do boot diz `note: block-stride <n> dropped from pool <nome>`, e até o próximo `save` o arquivo em disco e a configuração em execução diferem por essa linha. A recusa `block-stride applies to dynamic pools only`, acima, explica por quê.
 
 A recusa é lida no boot, num console de 80 colunas, então ela é quebrada em partes que cabem: o caminho do arquivo e a linha recusada saem **inteiros**, cada um na sua própria linha, para você conseguir copiar e procurar; o motivo vem em texto corrido embaixo.
 

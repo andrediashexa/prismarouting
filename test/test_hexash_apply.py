@@ -633,6 +633,68 @@ print(f"  tap0 mtu calls: {mtus}")
 os.unlink(saved)
 os.unlink(own)
 
+print("\n=== a saved file carrying block-stride on a deterministic pool "
+      "(#375) ===")
+# The pair has been accepted since 0.67.0 and the allocator never read the
+# stride, so a file saved by any version since can carry it - on a box that
+# ran on that file yesterday. The commit check refuses it at the prompt; at
+# boot a refusal is a box coming up with no pools on it, read by nobody, to
+# enforce a property about a setting that was already inert. So Shell.load
+# drops the stride from such a pool, says so, and applies the pool as the box
+# was running it.
+#
+# THE CONTROL IS THE SECOND POOL. The same stride on a dynamic pool in the
+# same file is the configuration the setting exists for, and it MUST reach
+# the dataplane whole: without it every check below passes on a load() that
+# strips every stride there is.
+api = FakeDataplane()
+sh = shell_with(api)
+sh.running_config = lambda: config.Config()
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("""cgnat pool det
+ inside 100.64.0.0/22
+ outside 200.150.0.16/30
+ mode deterministic
+ max-blocks 2
+ block-stride 3
+ exit
+cgnat pool dyn
+ inside 100.64.4.0/22
+ outside 200.150.0.20/30
+ mode dynamic
+ max-blocks 2
+ block-stride 3
+ exit
+""")
+    saved = fh.name
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.load(saved)
+out = buf.getvalue()
+check("refusing to load" not in out,
+      f"a box must load its own saved file: {out!r}")
+check("block-stride applies to dynamic pools only" not in out,
+      f"and must not refuse the pair at boot: {out!r}")
+# The note whole and on a row of its own, the pool named last: a pool name
+# has no widest, and last on the row the fold lands after the words (#363).
+check("note: block-stride 3 dropped from pool det" in out.splitlines(),
+      f"the boot says which statement it left out and from where: {out!r}")
+check("pool dyn" not in out,
+      f"and names only the pool it dropped from: {out!r}")
+adds = {a["name"]: a for m, a in api.calls
+        if m == "bpa_pool_add_del" and a.get("is_add")}
+check(set(adds) == {"det", "dyn"},
+      f"both pools reached the dataplane: {sorted(adds)}")
+# What was APPLIED, not what was printed: the deterministic pool arrives as
+# the box was running it, and the dynamic one arrives with its stride.
+check(adds.get("det", {}).get("block_stride") == 0,
+      f"the deterministic pool arrived without the stride: {adds.get('det')}")
+check(adds.get("dyn", {}).get("block_stride") == 3,
+      f"the dynamic pool kept its stride: {adds.get('dyn')}")
+print(f"  loaded; strides applied: "
+      f"{ {n: a.get('block_stride') for n, a in sorted(adds.items())} }")
+os.unlink(saved)
+
 print("\n=== a file's own address makes its own static route reachable (#294) ===")
 # The most serious shape this repository has had: `hexash --load` refusing a
 # box's ENTIRE configuration over a static route that is correct.

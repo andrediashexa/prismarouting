@@ -582,6 +582,17 @@ typedef struct
 } bpa_block_t;
 
 clib_error_t *bpa_pool_init (bpa_pool_t *p);
+/*
+ * The two stride refusals that are facts about the pool rather than about
+ * this box's thread count, for a pool that is past the point where
+ * blocks_mapped is known: `stride` on a pool that is not dynamic, and one
+ * that steps off the subscriber's own public address. Shared by the two
+ * messages a stride arrives on - bpa_pool_init() for a pool being built,
+ * bpa_pool_settings_set() for one that stays put - and `stride` is an
+ * argument rather than p->block_stride because on the second route the pool
+ * still carries its old one. Nothing is written; zero is never refused.
+ */
+clib_error_t *bpa_pool_stride_refusal (const bpa_pool_t *p, u32 stride);
 clib_error_t *bpa_addr_set_build (bpa_addr_set_t *s, const u32 *bases,
 				  const u32 *counts, u32 n);
 

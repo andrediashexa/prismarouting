@@ -364,6 +364,34 @@ it. Contiguity therefore does not make the log smaller - it makes the ranges in
 it adjacent, which is a different and smaller claim than the one the feature was
 first asked for under.
 
+**A stride applies to a dynamic pool, and is refused on any other.** A stride
+steps along the *mapped* blocks of the subscriber's public address. A
+deterministic pool's extension never makes that walk: it comes out of the
+reserve, an index space of its own with a placement rule of its own - the
+bullets under the reserve, above: a free reserve block on the subscriber's own
+address first, and otherwise whatever its worker's slice of the reserve has
+free - so the setting is never read there, at any worker count and on any box.
+That is a fact about the pool rather than about the machine, which is what
+puts it with the refusals rather than with the sharding warning below; it is
+the mirror of the reserve on a dynamic pool, refused in that same list of
+bullets, and for the same reason. Accepted and inert, it left `show bpa pool`
+printing a layout the allocator was not producing, and a pool moved from
+dynamic to deterministic saying nothing about what it had just lost.
+
+Refused at `commit`, wherever the candidate came from - typed at the prompt,
+built by a `-c` batch, or loaded by `rollback`, which loads a revision and
+applies nothing, so it is the commit after it that refuses - and dropped at
+boot. A file saved before the refusal existed can carry the pair, on a box that
+ran on that file yesterday, and `hexash --load` takes the stride off that pool
+rather than refusing the file: the pool never read it, so the file minus the
+line is the configuration the box was running, and a refusal would have been a
+box coming up with no pools on it, read by nobody, to enforce a property about
+a setting that was already inert. The boot says which statement it left out,
+and the next `save` writes the file without it. On a box that booted through
+that drop the pool is running without the stride, so a revision that still
+carries the pair differs from the box by one in-place statement, and what the
+commit after a `rollback` refuses is a stride added to a pool that stays put.
+
 **A stride is a preference, never a refusal.** The block it names may be held by
 another subscriber, or the stride may step off the end of the subscriber's own
 public address; the allocator then falls back to the free list and counts it.

@@ -47,6 +47,18 @@
 #      that is printed on one path and not the other has reached nobody the
 #      product ships for (#372). Same box, same workers, same run: the only
 #      thing that differs between item 7 and item 8 is which way in was used.
+#   9. And what the box says to an operator who sets `block-stride` on such a
+#      pool, which is the one setting that belongs to the other mode. The
+#      extension this file measures comes out of the RESERVE - own address
+#      first, then whatever its worker's slice of the reserve has free - and
+#      a stride steps along the MAPPED blocks, which that walk never touches,
+#      so the setting is never read - it was accepted and inert since 0.67.0,
+#      with the pool screen printing the distance it promises and the
+#      warning path blaming the worker sharding for it (#375). Refused now,
+#      at the dataplane and at the prompt, with the same stride in dynamic
+#      mode as the control both times. Unlike items 7 and 8 this one needs
+#      no workers and is asserted on every run: it is a fact about the pool
+#      rather than about the box.
 #
 # AND IT RUNS WITH THE FEATURE OFF. `sh tools/lab.sh detreserve off` builds
 # the same pool with `reserve 0`, which is what every configuration written
@@ -571,6 +583,99 @@ echo "  pool vtyres holds $VTY_RES_BLOCKS reserve block(s) against ${WK:-0} work
 echo "  the prompt said: ${VTY_NOHOLD:--} worker(s) hold none, raise to ${VTY_RAISE:--},"
 echo "                   one more reserve block per address costs ${VTY_PERADDR:--}"
 
+# 9. THE SETTING THAT DOES NOT BELONG ON THIS POOL AT ALL, at both ways in.
+#
+# `block-stride` says how far along the MAPPED blocks of a public address a
+# subscriber's SECOND block sits, counted from the first. A deterministic
+# pool's extension never comes from those: every mapped block belongs to
+# somebody by formula, and the extra block comes out of the reserve this
+# whole file is about - a free reserve block on the subscriber's own address
+# when the worker has one, and otherwise whatever that worker's slice of the
+# reserve has free, a preference and not a rule exactly as it is on a dynamic
+# pool. Neither step reads the stride, so the allocator never reads the
+# setting there, at any worker count and on any box.
+#
+# It was accepted anyway since 0.67.0, the pool screen printed the
+# distance it promises, and nothing ever produced it. Since the sharding
+# warning reached the prompt, such a pool was also told the stride "cannot be
+# honoured: blocks are sharded N ways and a stride step moves by M, so every
+# block the stride names belongs to another worker" and given "the nearest
+# stride that can be" - a sentence that is false twice over here, because the
+# sharding is not the reason and no stride works on this pool at any worker
+# count. An operator following that advice changes a number and gets the same
+# nothing.
+#
+# A SIZE THAT FITS, on purpose. 1 is a legal stride for this pool - four
+# blocks per public address - so the only thing left to refuse it for is the
+# mode. A stride too large for the pool is refused by a different sentence,
+# and a section that used one would be green with the mode never looked at.
+STRIDE=1
+# Fresh prefixes, because every pool above is still standing and this file's
+# earlier measurements are not to be disturbed by it.
+DET_STRIDE_SAY=$(vppctl bpa pool detstride inside 100.64.14.0/28 \
+    outside 200.150.10.16/32 ports $PORTS block $BSZ mode deterministic \
+    max-blocks 2 block-stride $STRIDE 2>&1 | tr -d '\r')
+printf '%s\n' "$DET_STRIDE_SAY" | sed 's/^/  /'
+# THE CONTROL, and it is the same pool with one word different. Without it
+# every check below passes on a box that refuses every stride there is, which
+# would take the feature away from the pools it was written for.
+DYN_STRIDE_SAY=$(vppctl bpa pool dynstride inside 100.64.15.0/28 \
+    outside 200.150.11.16/32 ports $PORTS block $BSZ mode dynamic \
+    max-blocks 2 block-stride $STRIDE 2>&1 | tr -d '\r')
+printf '%s\n' "$DYN_STRIDE_SAY" | sed 's/^/  | /'
+
+# The pool screen, per pool rather than whole: the row that promises the
+# layout is printed under the pool it belongs to, and a grep over every pool
+# on the box cannot tell which one made it.
+POOLS_NOW=$(vppctl show bpa pool 2>&1 | tr -d '\r')
+stanza() { printf '%s\n' "$POOLS_NOW" | awk -v n="$1" '$1=="pool"{f=($2==n)} f'; }
+DYN_STRIDE_ROWS=$(stanza dynstride)
+# Which pools the screen makes the layout promise about, and in which mode.
+# The header carries the mode in brackets - "pool dynstride [dynamic /
+# interleaved]" - so the pool and its mode are read off the same screen that
+# made the promise, rather than out of what this file asked for.
+STRIDE_ROWS=$(printf '%s\n' "$POOLS_NOW" \
+  | awk '$1=="pool"{n=$2; m=$3} /^ *stride /{print n, m}')
+STRIDE_ROW_N=$(printf '%s\n' "$STRIDE_ROWS" | grep -c '[^ ]')
+STRIDE_ROW_NOT_DYN=$(printf '%s\n' "$STRIDE_ROWS" | grep '[^ ]' \
+  | grep -vc '\[dynamic')
+echo "  the pool screen promises a stride on: ${STRIDE_ROWS:-(nothing)}"
+
+# AND THE SAME TWO POOLS AT THE PROMPT, which is where an operator is. The
+# pool screen is a readback; this is the commit itself, and a refusal that
+# reaches the dataplane console and not the prompt has reached nobody.
+#
+# `mode` and `block-stride` are typed in that order here and the opposite
+# order would be just as correct, which is why the answer comes at the commit
+# and not at either line.
+VTY_STRIDE_SAY=$($HX -c "configure" \
+    -c "cgnat pool vtystride" \
+    -c "inside 100.64.16.0/28" \
+    -c "outside 200.150.12.16/32" \
+    -c "block-size $VTY_BSZ" \
+    -c "ports $VTY_PORTS" \
+    -c "policy interleaved" \
+    -c "mode deterministic" \
+    -c "max-blocks 2" \
+    -c "block-stride $STRIDE" \
+    -c "exit" \
+    -c "commit" 2>&1)
+printf '%s\n' "$VTY_STRIDE_SAY" | sed 's/^/  /'
+VTY_DYNSTRIDE_SAY=$($HX -c "configure" \
+    -c "cgnat pool vtydynstride" \
+    -c "inside 100.64.17.0/28" \
+    -c "outside 200.150.13.16/32" \
+    -c "block-size $VTY_BSZ" \
+    -c "ports $VTY_PORTS" \
+    -c "policy interleaved" \
+    -c "mode dynamic" \
+    -c "max-blocks 2" \
+    -c "block-stride $STRIDE" \
+    -c "exit" \
+    -c "commit" 2>&1)
+printf '%s\n' "$VTY_DYNSTRIDE_SAY" | sed 's/^/  | /'
+POOLS_AFTER=$(vppctl show bpa pool 2>&1 | tr -d '\r')
+
 echo
 echo "=========== VERDICT ==========="
 echo "  run mode: $MODE (reserve $RESERVE)"
@@ -760,6 +865,96 @@ else
   echo "  [ -- ] the warning cannot arise at the prompt on this run either:"
   echo "         $VTY_RES_BLOCKS reserve block(s) against ${WK:-0} worker(s)"
 fi
+
+# 9. THE STRIDE THAT DOES NOT APPLY TO THIS POOL, refused at both ways in.
+#
+# UNGUARDED, unlike items 7 and 8, and that is the difference between the two
+# kinds of statement. Those two are about the workers this box happened to
+# start with, so they say nothing on a box that has none. This one is about
+# the pool: it holds at every worker count, on every box and after every
+# restart, which is why it is a refusal and why there is no arrangement under
+# which "the box said nothing" would be the right answer here.
+expect_said "the dataplane refuses a stride on a deterministic pool" \
+  "block-stride applies to dynamic pools only" "$DET_STRIDE_SAY"
+# The reason, and not only the verdict. An operator who is told a setting does
+# not apply and not WHY goes looking for the box's mood; this one names the
+# reserve, which is the thing that hands out their second block, and where in
+# it the block comes from - which is the preference the rest of this file
+# measures, and not a place anything fixes.
+expect_said "and says where a deterministic extension comes from instead" \
+  "comes out of this worker's reserve instead, own address first" \
+  "$DET_STRIDE_SAY"
+# THAT IT IS REFUSED FOR THE MODE AND NOT FOR THE SIZE is asserted by the
+# control below and not by a check here. "the box did not also say it does not
+# fit" cannot fail: the mode is looked at first, so a stride too large for the
+# pool draws the mode sentence anyway. What proves the mode was the reason is
+# the SAME stride being accepted one pool over in dynamic mode.
+# THE SENTENCE THAT MUST NEVER BE SAID HERE. It is the one the box printed at
+# the prompt before this: the stride cannot be honoured BECAUSE blocks are
+# sharded N ways, with the nearest stride that can be. Both halves are false
+# on this pool - the sharding is not the reason, and no stride works at any
+# worker count - and the second half is advice that costs an operator a
+# configuration change and buys them nothing.
+expect_not_said "and never blames the worker sharding, which is not the reason" \
+  "cannot be honoured" "$DET_STRIDE_SAY"
+expect_not_said "and never names a nearer stride, because none would work" \
+  "the nearest stride that can be" "$DET_STRIDE_SAY"
+# Refused means not created. A box that printed the refusal and built the pool
+# anyway would pass every check above.
+expect_not_in "and the pool was not created" "pool detstride" "$POOLS_NOW"
+expect_in "while the pool the refusal is about was reached at all" \
+  "pool det " "$POOLS_NOW"
+# THE CONTROL. The same pool with `mode dynamic` is the configuration this
+# setting exists for, and it MUST still be built - with the row that promises
+# the layout printed under it, because there the box does produce it.
+expect_in "the same stride in dynamic mode is accepted" "pool dynstride" \
+  "$POOLS_NOW"
+expect_in "and that pool carries the layout the stride promises" \
+  "stride       $STRIDE (" "$DYN_STRIDE_ROWS"
+# AND THE PROMISE IS ONLY EVER MADE BY A POOL THAT KEEPS IT, read off the
+# whole screen rather than off one pool. This is the row the issue is about -
+# "stride 4 (2048 ports between a subscriber's blocks, on its own public
+# address)" printed under a pool whose allocator never places one - and the
+# check is written as a property of every pool on the box so that the next
+# pool to carry a stride is measured by it without anybody adding a line.
+expect "some pool on this box makes the promise, so this measured something" \
+  test "${STRIDE_ROW_N:-0}" -ge 1
+expect "and every pool that makes it is a dynamic one" \
+  test "${STRIDE_ROW_NOT_DYN:-1}" -eq 0
+
+# AND THE SAME TWO AT THE PROMPT, which is where an operator types it. Item 9
+# above asserts what the dataplane's own console printed; this asserts what
+# the product printed on the path hexash uses, and they are different code.
+expect_said "the prompt refuses it too, before anything is applied" \
+  "error: block-stride applies to dynamic pools only, not to pool vtystride" \
+  "$VTY_STRIDE_SAY"
+# The two statements whole and on their own rows. Either one resolves it and
+# which to change is the operator's decision, so the box shows both rather
+# than choosing for them.
+expect_in "and shows the two statements that disagree, mode first" \
+  "    mode deterministic" "$VTY_STRIDE_SAY"
+expect_in "and the stride under it, as typed" \
+  "    block-stride $STRIDE" "$VTY_STRIDE_SAY"
+expect_said "and says what to do about it" \
+  "drop the block-stride, or put the pool in dynamic mode" "$VTY_STRIDE_SAY"
+# ONCE, not twice. The dataplane refuses this pool as well, and the commit
+# check asks it about every pool it is about to build - so a commit that went
+# on to ask would print a second verdict and a second paragraph for one fault,
+# and leave the operator working out whether they are the same one.
+expect_not_said "and says it once, not again in the dataplane's words" \
+  "would be refused" "$VTY_STRIDE_SAY"
+expect_not_said "and the commit did not go through" "commit complete" \
+  "$VTY_STRIDE_SAY"
+expect_not_in "so the prompt created no pool either" "pool vtystride" \
+  "$POOLS_AFTER"
+expect_not_said "and the prompt never blames the worker sharding" \
+  "cannot be honoured" "$VTY_STRIDE_SAY"
+# THE CONTROL AT THE PROMPT. Same file, same box, same run: the only thing
+# that differs is the mode.
+expect_said "the same stride in dynamic mode commits at the prompt" \
+  "commit complete" "$VTY_DYNSTRIDE_SAY"
+expect_in "and that pool is in the dataplane" "pool vtydynstride" \
+  "$POOLS_AFTER"
 
 # And what the box does INSTEAD with no reserve, which the assertions above
 # cannot say: it must do what it did before this feature existed rather than

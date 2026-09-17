@@ -891,6 +891,25 @@ class Pool:
         # VTY on one box and from the plugin on the next reads one sentence.
         return f"block-size {size} exceeds the {count} usable ports"
 
+    def stride_inert(self) -> bool:
+        """
+        Whether this pool carries a `block-stride` no allocator will read.
+
+        A stride steps along the MAPPED blocks of a public address, which is
+        the walk a dynamic pool's extension makes. A deterministic pool's
+        extension comes out of the reserve, an index space of its own, so the
+        setting is never read there - at any worker count and on any box -
+        and the dataplane refuses the pair in bpa_pool_init() and in
+        bpa_pool_settings_set() (#375).
+
+        THE ONE PYTHON OWNER of that rule. The commit check refuses on it and
+        `--load` drops on it, and they have to agree on which pools they mean:
+        a pool the check would refuse at the prompt and the boot would then
+        apply, or the other way round, is a file `save` writes and `--load`
+        cannot take. Two copies of the test is how they stop agreeing.
+        """
+        return bool(self.block_stride) and self.mode != "dynamic"
+
     def __eq__(self, other):
         return isinstance(other, Pool) and self.lines() == other.lines()
 

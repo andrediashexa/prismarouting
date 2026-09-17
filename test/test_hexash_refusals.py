@@ -467,6 +467,150 @@ says("half a pool", _text, "error: pool 'subs': inside and outside required",
      _rv)
 print("  a pool with an inside and no outside is refused at check time")
 
+print("\n=== a block-stride on a deterministic pool, by all three routes ===")
+# #375. The setting was accepted, `show bpa pool` printed the layout it
+# promises, and the allocator never read it: a deterministic subscriber's
+# extension comes out of the reserve, which is an index space no stride steps
+# along. The dataplane refuses it now, and this asks first - before the pools
+# are rebuilt - because one of the three routes never reaches the device check
+# at all.
+#
+# THREE BOXES AND NOT ONE, because the three are different deltas and only one
+# of them is covered by anything else. A pool being created and a pool being
+# rebuilt carry the stride on the creation message and are handed to the
+# device's own `check`; a stride added to a pool that STAYS PUT is a
+# settings_set, which no check reaches, so without the loop it would fail at
+# the write with the candidate half applied.
+#
+# AND A FOURTH BOX, below the control, for `rollback`: it loads a revision and
+# applies nothing, so the refusal is the commit after it, on the delta the
+# ordinary box has - which is the third of the three.
+_STRIDE_ROW = ("error: block-stride applies to dynamic pools only, not to "
+               "pool subs")
+
+
+def _strided(mode="deterministic", stride=3, name="subs"):
+    p = config.Pool(name)
+    p.inside = ["100.64.0.0/22"]
+    p.outside = ["200.150.0.16/30"]
+    p.mode = mode
+    p.block_stride = stride
+    return p
+
+
+# a pool being created
+_cfg = config.Config()
+_cfg.pools["subs"] = _strided()
+_sh = shell()
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _cfg, check_only=True)
+says("stride on a new pool", _text, _STRIDE_ROW, _rv)
+says("stride on a new pool: the mode row", _text, "    mode deterministic")
+says("stride on a new pool: the stride row", _text, "    block-stride 3")
+
+# THE CASE THE ISSUE IS NAMED FOR: a pool that was dynamic, carrying a stride
+# that worked, moved to deterministic and keeping it. `mode` is outside
+# Pool.lines(in_place=False), so this is a pool_replace. An operator doing
+# this is losing the stride, and the whole argument for refusing rather than
+# accepting-and-ignoring is that they are told so here rather than finding out
+# from a layout the box stopped producing.
+_running = config.Config()
+_running.pools["subs"] = _strided(mode="dynamic")
+_target = config.Config()
+_target.pools["subs"] = _strided()
+_sh = shell()
+_sh.running_config = lambda: _running
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+check([p.name for p in _running.delta_to(_target)["pool_replace"]] == ["subs"],
+      "the mode-change box is not a pool_replace delta, so it is not "
+      "measuring the route it was written for")
+says("stride kept across a move to deterministic", _text, _STRIDE_ROW, _rv)
+
+# a pool already on the box, taking the stride in place: this is the delta
+# that never meets the device's own check
+_running = config.Config()
+_running.pools["subs"] = _strided(stride=0)
+_target = config.Config()
+_target.pools["subs"] = _strided()
+_sh = shell()
+_sh.running_config = lambda: _running
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+check(_running.delta_to(_target)["settings_set"].keys() == {"subs"},
+      "the in-place box is not a settings_set delta, so it is not measuring "
+      "the route it was written for")
+says("stride added in place", _text, _STRIDE_ROW, _rv)
+
+# THE CONTROL, and the section is worth nothing without it: the same stride on
+# a dynamic pool is a supported configuration and MUST still commit. Without
+# this the three boxes above pass on a VTY that refuses every stride there is.
+_cfg = config.Config()
+_cfg.pools["subs"] = _strided(mode="dynamic")
+_sh = shell()
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _cfg, check_only=True)
+check("block-stride" not in _text,
+      f"a stride on a dynamic pool was argued with: {_text!r}")
+check(_rv is True, f"a stride on a dynamic pool was refused: {_rv!r}")
+
+# THE ROLLBACK ROUTE, end to end. `rollback N` loads a revision into the
+# candidate and applies nothing - "load complete" is all it says, whatever the
+# revision carries - so the refusal is the COMMIT after it, and this box is
+# the ordinary one: a box that booted through --load's drop is running the
+# pool WITHOUT the stride, so a revision saved before the refusal existed
+# differs from it by one in-place statement, and the delta that commit
+# refuses is the settings_set above, not a new pool. Asserted as the operator
+# would see it: the rollback says nothing about the stride, the commit prints
+# the row and the two statements, nothing reaches the dataplane and no
+# revision is pushed - a commit refused at the check is a commit that did not
+# happen, and a store that recorded it would offer `rollback 1` back to the
+# very pair the box refuses.
+
+
+class _Store:
+    """A rollback store holding one revision, remembering every push."""
+
+    def __init__(self, text):
+        self.text = text
+        self.pushed = []
+
+    def load(self, n):
+        return self.text
+
+    def push(self, text, comment=""):
+        self.pushed.append(comment)
+
+
+_running = config.Config()
+_running.pools["subs"] = _strided(stride=0)
+_revision = config.Config()
+_revision.pools["subs"] = _strided()
+_sh = shell()
+_sh.running_config = lambda: _running
+_sh.rb = _Store(_revision.text())
+_rv, _text = driven(_sh.do_rollback, ["1"])
+says("rollback loads the revision", _text, "load complete (revision 1)")
+check("block-stride" not in _text,
+      f"rollback argued with the revision, and it applies nothing: {_text!r}")
+check(_sh.candidate.pools["subs"].block_stride == 3,
+      "the revision's stride did not reach the candidate, so the commit "
+      "below has nothing to refuse")
+check(_running.delta_to(_sh.candidate)["settings_set"].keys() == {"subs"},
+      "the box after the boot drop does not see the revision as an in-place "
+      "delta, so this is not measuring the route it was written for")
+_rv, _text = driven(_sh.do_commit, [])
+says("the commit after the rollback", _text, _STRIDE_ROW)
+says("the commit after the rollback: the mode row", _text,
+     "    mode deterministic")
+says("the commit after the rollback: the stride row", _text,
+     "    block-stride 3")
+_pool_msgs = [m for m, _ in _sh.api.calls if m.startswith("bpa_pool")]
+check(_pool_msgs == [],
+      f"the refused commit reached the dataplane: {_pool_msgs}")
+check(_sh.rb.pushed == [],
+      f"the refused commit was recorded as a revision: {_sh.rb.pushed}")
+print("  refused on a pool created, on a pool rebuilt, on one that stays "
+      "put, and at the commit after a rollback; accepted in dynamic mode")
+
 print("\n=== a pool the dataplane itself would refuse ===")
 # The device validates for real - block size, overlap, capacity, collision
 # with a local address - and creates nothing doing it. What changed in #119's

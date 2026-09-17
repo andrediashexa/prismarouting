@@ -1240,6 +1240,17 @@ bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
  * would be a second thing to keep in step with this one. A worker-less box is never
  * short: bpa_stride_reachable() answers yes at one worker, which is why `nw`
  * is floored here and not at each caller.
+ *
+ * AND NO TEST OF THE MODE, because a pool that reaches here with a stride is
+ * a dynamic pool. Every sentence below is about worker sharding - blocks are
+ * sharded N ways, the nearest stride that is a multiple - and all of it is
+ * false on a deterministic pool, where the stride is not read at any worker
+ * count and no stride would work. That pool cannot exist: bpa_pool_init()
+ * and bpa_pool_settings_set() are the only two ways a stride is ever stored
+ * and both refuse it through the one bpa_pool_stride_refusal() they share,
+ * so "both refuse it" is true by construction and not by two copies
+ * agreeing (#375). A mode test here would be a second owner of the same
+ * rule and could never be shown failing.
  */
 static int
 bpa_stride_short (const bpa_pool_t *p, u32 *nwp, u32 *okp)
@@ -1440,15 +1451,21 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 
   p = pool_elt_at_index (bm->pools, q[0]);
 
-  /* The one stride refusal that is a fact about the pool itself rather than
-   * about this box's thread count: a stride at or past the blocks one public
-   * address holds steps off the end on the first extension, on every box and
-   * after every restart. */
-  if (block_stride >= p->blocks_per_ip)
-    return clib_error_return (
-      0, "block-stride %u does not fit pool '%v': a public address holds %u "
-	 "blocks",
-      block_stride, p->name, p->blocks_per_ip);
+  /* THE TWO STRIDE REFUSALS THAT ARE FACTS ABOUT THE POOL ITSELF rather than
+   * about this box's thread count - a stride on a pool that is not dynamic,
+   * and one that steps off the subscriber's own public address - through
+   * the one function bpa_pool_init() refuses them with. Needed here as well
+   * as there, because `block-stride` rides on bpa_pool_add_del as well as on
+   * this message and a pool being created never comes through this call;
+   * and shared rather than copied, because this file needs a VPP to compile
+   * and the copy that lived here was measured by nothing. The argument for
+   * both, and the sentence, are on bpa_pool_stride_refusal() (#375). */
+  {
+    clib_error_t *e = bpa_pool_stride_refusal (p, block_stride);
+
+    if (e)
+      return e;
+  }
 
   /* Under the barrier: the datapath reads the filtering mode, the ALG mask and
    * the clamp on the packet path, and a half-applied set of them is a pool

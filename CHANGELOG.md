@@ -279,6 +279,17 @@ version has a chance of seeing it.
   where the stride was never applied was also the one pool with no reading to
   discover that from. Both are fixed: the setting is refused, and those two
   counters now print wherever a stride is configured.
+  applied it, at any worker count. A stride steps along the *mapped* blocks
+  of the subscriber's public address; a deterministic subscriber's extra
+  block comes out of the **reserve**, an index space with a placement rule of
+  its own - a free reserve block on the subscriber's own address first, and
+  otherwise whatever its worker's slice of the reserve has free, on any
+  address - and that walk never touches the mapped blocks, so the setting was
+  never read. The counters that would have shown it doing nothing, `show bpa
+  blocks`' *"N placed, N fell back"*, printed only for dynamic pools - so the
+  one pool where the stride was never applied was also the one pool with no
+  reading to discover that from. Both are fixed: the setting is refused, and
+  those two counters now print wherever a stride is configured.
 
   Refused rather than made honest, and for the reason the mirror image is
   already refused: a `reserve` on a *dynamic* pool is turned down so that a
@@ -298,6 +309,20 @@ version has a chance of seeing it.
   **What it costs a box already in service: nothing it will notice.** The
   pair is refused by the dataplane, and at the prompt before anything is
   applied - `commit`, `rollback` and a `-c` batch alike. A configuration
+  its stride *"cannot be honoured: blocks are sharded N ways and a stride step
+  moves by M, so every block the stride names belongs to another worker"* and
+  given *"the nearest stride that can be"*. The sharding was not the reason,
+  and no stride would have worked on that pool at any worker count; an
+  operator following that advice changed a number and got the same nothing.
+
+  **What it costs a box already in service: nothing it will notice.** The
+  pair is refused by the dataplane, and at the prompt before anything is
+  applied: by `commit`, whether the candidate was typed, built by a `-c`
+  batch or loaded by `rollback` - which loads the revision and applies
+  nothing, so it is the `commit` after it that refuses. On a box that booted
+  through the drop below, the pool is running without the stride, and what
+  that commit refuses is the in-place delta: a stride added to a pool that
+  stays put. A configuration
   saved by 0.67.0 through 0.76.1 can carry both statements on one pool, and
   `hexash --load` does NOT refuse that file at boot: it drops the
   `block-stride` from such a pool, says so, and applies the pool as the box
