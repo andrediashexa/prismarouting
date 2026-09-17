@@ -1362,14 +1362,29 @@ def render_vpp(p):
         # does not resolve, or a card whose way back could not be read. The
         # comment says which, because "no device is claimed" was equally true
         # of a working box before this and told an operator nothing.
+        #
+        # TWO SENTENCES for the way back, chosen by the card count. The one
+        # written first said "the only card this box has", which was true of
+        # every box that could reach it while only the automatic claim could:
+        # a box with a second card claimed that one instead. Since #385 a
+        # NAMED card is declined here too, and the override is exclusive, so
+        # a two-card box naming the card it is reached on lands here with a
+        # spare card beside it - and a sentence telling that operator there
+        # is no other card sends them to buy hardware they already have.
         _why = {
             "override": "the named card could not be resolved to a PCI\n"
                         "  # address, so there is no device to claim.",
             "no-cards": "this box has no PCI network card for the dataplane\n"
                         "  # to claim.",
-            "no-way-back": "the only card this box has carries its default\n"
-                           "  # route, and no way back to it could be read,\n"
-                           "  # so it stays with Linux.",
+            "no-way-back": (
+                f"'{p['no_way_back']}', the only card this box has,\n"
+                "  # carries its default route, and no way back to it\n"
+                "  # could be read, so it stays with Linux."
+                if len(p["host_cards"]) == 1 else
+                f"'{p['no_way_back']}' carries this box's default route,\n"
+                "  # and no way back to it could be read, so it stays\n"
+                "  # with Linux; no other card was to be claimed on this\n"
+                "  # boot."),
         }.get(p["claim_why"],
               "no card on this box could be claimed.")
         dpdk = ("dpdk {\n"

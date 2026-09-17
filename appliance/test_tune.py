@@ -1059,6 +1059,57 @@ with tempfile.TemporaryDirectory() as root:
           f"{[l for l in out.splitlines() if l.startswith('#')][:8]}")
     print("  " + field(out, "# "))
 
+print("\n=== and a NAMED card whose way back cannot be read is declined, "
+      "not refused ===")
+# THE OTHER HALF OF THE REPLACEMENT, on the fixture the refusal had: eth0
+# named, carrying the default route, and no address to read off it. The
+# refusal answered that with `no-pci` and a REFUSED line whatever the card
+# carried; what answers it now is the decline the automatic claim gets three
+# sections below - `no-pci`, the report saying no way back could be read,
+# and no REFUSED, because nothing refuses: the program that would have taken
+# the card leaves it with Linux. Without this case the decline of a NAMED
+# card is reached by nothing, and a tuner that claimed a named card
+# regardless - master's `--keep-management` posture without the flag - would
+# pass every case above, since each of them gives the card an address.
+#
+# Once on the one-card box and once with a spare card beside it, because the
+# stanza's sentence about it differs between the two: a named card made the
+# two-card shape reachable for the first time, and the sentence written for
+# the one-card box said "the only card this box has" beside a box with two.
+for _label, _spare in (("one card", False), ("two cards", True)):
+    with tempfile.TemporaryDirectory() as root:
+        build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+              nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+        if _spare:
+            add_nic(root, "eth1", "0000:3b:00.1")
+        _routed_named(root)
+        out = run(root, "--interface", "eth0")        # no address to read
+        check("no-pci" in out,
+              f"{_label}: the named card was claimed with no way back to it, "
+              f"so the box comes up forwarding and unreachable: "
+              f"{field(out, '# dataplane NIC PCI address(es):')}")
+        check("dev 0000:3b:00.0" not in out,
+              f"{_label}: and its device is in the stanza, so DPDK takes it "
+              f"whatever the comment says")
+        check("could not read a way back" in " ".join(out.split()),
+              f"{_label}: the card was left with Linux and the report does "
+              f"not say why, which is the one thing an operator can act on: "
+              f"{[l for l in out.splitlines() if l.startswith('#')][:8]}")
+        check("REFUSED" not in out,
+              f"{_label}: the journal still says the card was REFUSED, which "
+              f"is the refusal #385 removed: {field(out, '# ')}")
+        _stanza = _dpdk_stanza(out)
+        if _spare:
+            check("the only card this box has" not in _stanza
+                  and "no other card" in _stanza,
+                  f"the stanza calls eth0 the only card on a box that has "
+                  f"eth1 beside it: {_stanza!r}")
+        else:
+            check("the only card this box has" in _stanza,
+                  f"the stanza does not tell the one-card box there is no "
+                  f"other card to name: {_stanza!r}")
+        print(f"  {_label}: declined with no-pci, said why, and no REFUSED")
+
 print("\n=== and --keep-management is not a flag this program has ===")
 # The flag said "the VTY has recorded a way back, so the last card may go".
 # The way back is computed here on every boot, so there is nothing for a flag

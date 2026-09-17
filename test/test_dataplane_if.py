@@ -367,6 +367,38 @@ with tempfile.TemporaryDirectory() as tmp:
           f"and the check still argues about the route it carries: {said!r}")
     print("  a file naming the card carrying the default route validates")
 
+print("\n=== and a card this box has not got is refused there too ===")
+# THE HALF #385 KEPT, on the paths that never see the prompt. The case above
+# names a card the box HAS, so the refusal it drives through apply() returns
+# nothing and the branch that says no is never entered: a check that only
+# ever walks past a branch cannot notice the branch deleted, and with it
+# deleted a `rollback` to a revision from a box with different cards, or a
+# `--load` of a file edited by hand, would hand the dataplane a name it
+# cannot resolve and say so only in a journal. Driven with a card the box
+# has not got, asserting the refusal and that it names what the box does
+# have, because a refusal at boot that only says no leaves the operator to
+# guess the spelling of a card they cannot see.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp)
+    target = config.Config.parse("dataplane interface enp9s0\n")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        ok = sh.apply(target, check_only=True)
+    said = out.getvalue()
+    check(ok is False,
+          f"a configuration naming a card this box has not got validates, so "
+          f"a rollback or a boot replay would hand the dataplane a name it "
+          f"cannot resolve: {said!r}")
+    check("no such interface" in said,
+          f"and the reason is not the one the prompt gives for the same "
+          f"name: {said!r}")
+    for card in [c for c in CARDS if c != "lo"]:
+        check(card in said,
+              f"the refusal does not name {card!r} among what this box has, "
+              f"so `rollback` says no without saying what yes would be: "
+              f"{said!r}")
+    print("  refused at commit, and the cards the box has are named")
+
 print("\n=== a card this box has not got is refused, and it says what it has "
       "===")
 with tempfile.TemporaryDirectory() as tmp:
