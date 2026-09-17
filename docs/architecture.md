@@ -369,14 +369,14 @@ steps along the *mapped* blocks of the subscriber's public address. A
 deterministic pool's extension never makes that walk: it comes out of the
 reserve, an index space of its own with a placement rule of its own - the
 bullets under the reserve, above: a free reserve block on the subscriber's own
-address first, and otherwise whatever the reserve has free - so the setting is
-never read there, at any worker count and on any box. That is a fact about the
-pool rather than about the machine, which is what puts it with the refusals
-rather than with the sharding warning below; it is the mirror of the reserve
-on a dynamic pool, refused in that same list of bullets, and for the same
-reason. Accepted and inert, it left `show bpa pool` printing a layout the
-allocator was not producing, and a pool moved from dynamic to deterministic
-saying nothing about what it had just lost.
+address first, and otherwise whatever its worker's slice of the reserve has
+free - so the setting is never read there, at any worker count and on any box.
+That is a fact about the pool rather than about the machine, which is what
+puts it with the refusals rather than with the sharding warning below; it is
+the mirror of the reserve on a dynamic pool, refused in that same list of
+bullets, and for the same reason. Accepted and inert, it left `show bpa pool`
+printing a layout the allocator was not producing, and a pool moved from
+dynamic to deterministic saying nothing about what it had just lost.
 
 Refused at `commit`, wherever the candidate came from - typed at the prompt,
 built by a `-c` batch, or loaded by `rollback`, which loads a revision and

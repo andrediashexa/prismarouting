@@ -183,9 +183,8 @@ bpa_pool_stride_refusal (const bpa_pool_t *p, u32 stride)
     return clib_error_return (
       0, "pool '%v': block-stride applies to dynamic pools only; a stride "
 	 "steps along the mapped blocks, and a deterministic pool's extension "
-	 "comes out of the reserve instead, from the subscriber's own address "
-	 "when this worker has one free there and otherwise from wherever "
-	 "this worker's reserve has one, so the setting is never read",
+	 "comes out of this worker's reserve instead, own address first, so "
+	 "the setting is never read",
       p->name);
   if (stride >= p->blocks_mapped)
     return clib_error_return (

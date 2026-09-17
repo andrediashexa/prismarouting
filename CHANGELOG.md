@@ -86,13 +86,13 @@ version has a chance of seeing it.
   of the subscriber's public address; a deterministic subscriber's extra
   block comes out of the **reserve**, an index space with a placement rule of
   its own - a free reserve block on the subscriber's own address first, and
-  otherwise whatever the reserve has free, on any address - and that walk
-  never touches the mapped blocks, so the setting was never read. The
-  counters that would have shown it doing nothing, `show bpa blocks`'
-  *"N placed, N fell back"*, printed only for dynamic pools - so the one pool
-  where the stride was never applied was also the one pool with no reading to
-  discover that from. Both are fixed: the setting is refused, and those two
-  counters now print wherever a stride is configured.
+  otherwise whatever its worker's slice of the reserve has free, on any
+  address - and that walk never touches the mapped blocks, so the setting was
+  never read. The counters that would have shown it doing nothing, `show bpa
+  blocks`' *"N placed, N fell back"*, printed only for dynamic pools - so the
+  one pool where the stride was never applied was also the one pool with no
+  reading to discover that from. Both are fixed: the setting is refused, and
+  those two counters now print wherever a stride is configured.
 
   Refused rather than made honest, and for the reason the mirror image is
   already refused: a `reserve` on a *dynamic* pool is turned down so that a

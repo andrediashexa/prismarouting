@@ -50,14 +50,15 @@
 #   9. And what the box says to an operator who sets `block-stride` on such a
 #      pool, which is the one setting that belongs to the other mode. The
 #      extension this file measures comes out of the RESERVE - own address
-#      first, then whatever the reserve has free - and a stride steps along
-#      the MAPPED blocks, which that walk never touches, so the setting is
-#      never read - it was accepted and inert since 0.67.0, with the pool
-#      screen printing the distance it promises and the warning path blaming
-#      the worker sharding for it (#375). Refused now, at the dataplane and at
-#      the prompt, with the same stride in dynamic mode as the control both
-#      times. Unlike items 7 and 8 this one needs no workers and is asserted
-#      on every run: it is a fact about the pool rather than about the box.
+#      first, then whatever its worker's slice of the reserve has free - and
+#      a stride steps along the MAPPED blocks, which that walk never touches,
+#      so the setting is never read - it was accepted and inert since 0.67.0,
+#      with the pool screen printing the distance it promises and the
+#      warning path blaming the worker sharding for it (#375). Refused now,
+#      at the dataplane and at the prompt, with the same stride in dynamic
+#      mode as the control both times. Unlike items 7 and 8 this one needs
+#      no workers and is asserted on every run: it is a fact about the pool
+#      rather than about the box.
 #
 # AND IT RUNS WITH THE FEATURE OFF. `sh tools/lab.sh detreserve off` builds
 # the same pool with `reserve 0`, which is what every configuration written
@@ -589,10 +590,10 @@ echo "                   one more reserve block per address costs ${VTY_PERADDR:
 # pool's extension never comes from those: every mapped block belongs to
 # somebody by formula, and the extra block comes out of the reserve this
 # whole file is about - a free reserve block on the subscriber's own address
-# when the worker has one, and otherwise whatever the reserve has free, a
-# preference and not a rule exactly as it is on a dynamic pool. Neither step
-# reads the stride, so the allocator never reads the setting there, at any
-# worker count and on any box.
+# when the worker has one, and otherwise whatever that worker's slice of the
+# reserve has free, a preference and not a rule exactly as it is on a dynamic
+# pool. Neither step reads the stride, so the allocator never reads the
+# setting there, at any worker count and on any box.
 #
 # It was accepted anyway since 0.67.0, the pool screen printed the
 # distance it promises, and nothing ever produced it. Since the sharding
@@ -881,8 +882,8 @@ expect_said "the dataplane refuses a stride on a deterministic pool" \
 # it the block comes from - which is the preference the rest of this file
 # measures, and not a place anything fixes.
 expect_said "and says where a deterministic extension comes from instead" \
-  "comes out of the reserve instead, from the subscriber's own address when \
-this worker has one free there" "$DET_STRIDE_SAY"
+  "comes out of this worker's reserve instead, own address first" \
+  "$DET_STRIDE_SAY"
 # THAT IT IS REFUSED FOR THE MODE AND NOT FOR THE SIZE is asserted by the
 # control below and not by a check here. "the box did not also say it does not
 # fit" cannot fail: the mode is looked at first, so a stride too large for the

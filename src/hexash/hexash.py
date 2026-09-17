@@ -6889,9 +6889,9 @@ class Shell:
             # construction - and that is the authority rather than this: a
             # stride on a deterministic pool is never read, because a stride
             # steps along the mapped blocks and that pool's extension comes
-            # out of the reserve, own address first and then whatever the
-            # reserve has free (#375). This asks first so the answer arrives
-            # before anything has been applied.
+            # out of the reserve, own address first and then whatever its
+            # worker's slice of the reserve has free (#375). This asks first
+            # so the answer arrives before anything has been applied.
             #
             # NOT AT BOOT. `load()` drops the stride from such a pool before
             # it gets here, and says so, because a file saved before this
@@ -6920,8 +6920,9 @@ class Shell:
                             "extension never comes from there: it comes out "
                             "of the reserve, from the subscriber's own "
                             "address when its worker has one free there and "
-                            "otherwise from wherever the reserve has one, so "
-                            "the setting is never read; drop the "
+                            "otherwise from wherever its worker's slice of "
+                            "the reserve has one, so the setting is never "
+                            "read; drop the "
                             "block-stride, or put the pool in dynamic mode")
                 ok = False
 

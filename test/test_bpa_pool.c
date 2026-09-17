@@ -1043,8 +1043,8 @@ main (void)
      * printed the layout it promises, and bpa_dyn_acquire_extra() never
      * read it: it applies a stride only where it is walking the MAPPED
      * blocks, and a deterministic pool's extension comes out of the reserve
-     * instead - own address first, then whatever the reserve has free -
-     * which is a walk that never touches the mapped blocks.
+     * instead - own address first, then whatever its worker's slice of the
+     * reserve has free - a walk that never touches the mapped blocks.
      *
      * A reserve as well as without one, because the reserve is what makes a
      * deterministic pool able to extend at all - so the pool that has the
