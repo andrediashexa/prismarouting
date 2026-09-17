@@ -90,7 +90,10 @@ MARKER = "not a unit:"
 # 2026-09-17, #390 batches A to D: routes.py, config.py, vppapi.py,
 # system.py, the tuner, the snmp agent and hexash.py's module-level
 # functions at 0; the excusals are printed with their reasons on every run.
-UNTESTED_AT_MOST = {"python": 118, "c": 195, "shell": 36}
+# 2026-09-17, #390 batch H: the Shell's applying methods (apply_, do_, dyn_,
+# write_, clear_, pair_, the stores and vtysh) at 0, measured on its branch;
+# batch G lowers the read-only half beside it and the merge reconciles.
+UNTESTED_AT_MOST = {"python": 70, "c": 195, "shell": 36}
 MEASURED_ON = "2026-09-17"
 
 # A parse that came back nearly empty would make every count below small and
