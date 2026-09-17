@@ -176,6 +176,8 @@ class Reply:
         self.reason = reason
         self.fields = fields or {}
 
+    # not a unit: a property is read and never called, so no test can name
+    # it for the reader; test_vppapi.py reads it both ways all the same
     @property
     def ok(self):
         return self.state == OK
