@@ -75,6 +75,12 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+## 0.78.0 - the box can reach out, and a new box is configured at its console
+
+[#394](https://github.com/andrediashexa/hexarouting/issues/394), [#395](https://github.com/andrediashexa/hexarouting/issues/395).
+
 ### Added
 
 * **`ping`, `traceroute` and `mtr` are statements of this VTY**

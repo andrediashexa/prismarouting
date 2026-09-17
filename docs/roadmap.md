@@ -2478,8 +2478,8 @@ claimed card up at the console and reading `ens19` off `ip link` and FRR, and
 `appliance/test_startup_conf_shapes.sh` handing the stanza to a real VPP.
 
 **The installer's management-network default is `none`**
-([#394](https://github.com/andrediashexa/hexarouting/issues/394)) - on the
-branch. The question offered the card the medium is reaching the network
+([#394](https://github.com/andrediashexa/hexarouting/issues/394)) - shipped
+in 0.78.0. The question offered the card the medium is reaching the network
 through, and an operator who pressed Enter got one card kept back from the
 dataplane without having decided that. Since 0.76.0 the box claims every card
 it has and a new box is configured at its console, so the default is `none`
@@ -2488,8 +2488,8 @@ still named on the list. An unattended install takes `none` too, unless it
 asks for an address, which is an install saying it wants a management network
 - and is how `lab/install-iso.sh` installs the box it then reaches over ssh.
 **`ping`, `traceroute` and `mtr` at the prompt**
-([#395](https://github.com/andrediashexa/hexarouting/issues/395)) - on the
-branch. Reachability is the first question anybody asks of a router and this
+([#395](https://github.com/andrediashexa/hexarouting/issues/395)) - shipped
+in 0.78.0. Reachability is the first question anybody asks of a router and this
 VTY could not answer it: `start shell` was the only way, administrators only,
 every capability at once to ask about a packet. The three statements run
 Debian's own tools through an argument vector built in `probe_argv` and
