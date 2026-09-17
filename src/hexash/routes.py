@@ -658,7 +658,17 @@ def linux_end(pairs: dict, ifname: str, dp_names=None):
          dataplane's own name nor the TAP's. The dataplane's name is the
          member `dp_names` holds when the caller has that list, and `ifname`
          itself when it has not - the readers keyed by the dataplane's name
-         (an MTU map, an `interface` block) are asking about their own key.
+         (an MTU map) are asking about their own key.
+
+    Asked with the TAP and no list, None. The `ip link set` mirrors are
+    keyed by the operator's block name and `interface tap0` is a block the
+    parser takes, and with nothing to tell the TAP from the card this rule
+    took the TAP as the interface's own and answered the CARD:
+    linux_end(OLD, 'tap0') was 'GigabitEthernet0/13/0', a name Linux has
+    no netdev by, and on `ens19 tap0 wan0` it was 'ens19' where the Linux
+    end is wan0. "Could not place" is None, never a wrong netdev; a caller
+    that may be asked with the TAP hands the dataplane's names over, as
+    the mirrors and frr_side_names() do.
 
     With no pair, or a pair whose only other name is the TAP, None: a
     reader then has nothing to run `ip` on, which is the legitimate no-TAP
@@ -668,8 +678,11 @@ def linux_end(pairs: dict, ifname: str, dp_names=None):
     for n in names:
         if names.count(n) > 1:
             return n
-    own = (dataplane_end(pairs, ifname, dp_names) or ifname) if dp_names \
-        else ifname
+    own = dataplane_end(pairs, ifname, dp_names) if dp_names else None
+    if own is None:
+        if _is_lcp_tap(ifname):
+            return None
+        own = ifname
     for n in names:
         if n != own and not _is_lcp_tap(n):
             return n

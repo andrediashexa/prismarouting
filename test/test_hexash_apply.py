@@ -1397,16 +1397,17 @@ local0                            0     down          0/0/0/0
 class CardVpp(BootVpp):
     """A dataplane holding one claimed card, named after its Linux card."""
 
-    def __init__(self, lcp=""):
+    def __init__(self, lcp="", ifaces=IF_CARD):
         super().__init__()
         self.lcp = lcp
+        self.ifaces = ifaces
 
     def run(self, cmd):
         self.commands.append(cmd)
         if cmd.startswith("show hardware-interfaces"):
             return 0, HW_CARD
         if cmd.startswith("show interface"):
-            return 0, IF_CARD
+            return 0, self.ifaces
         if cmd.startswith("show lcp"):
             return 0, self.lcp
         if cmd.startswith("show ip fib"):
@@ -1414,10 +1415,10 @@ class CardVpp(BootVpp):
         return 0, ""
 
 
-def card_shell(running_text="", lcp=""):
+def card_shell(running_text="", lcp="", ifaces=IF_CARD):
     sh = boot_shell(running_text=running_text)
     sh.api = FakeDataplane(existing=("ens19", "loop0"))
-    sh.dp = CardVpp(lcp)
+    sh.dp = CardVpp(lcp, ifaces)
     return sh
 
 
@@ -1782,6 +1783,49 @@ for _lcp, _card, _linux in ((SAME_LCP, "ens19", "ens19"),
               f"[{_linux!r}] alone")
 print("  set_host_mtu, set_admin, set_description: ip runs on ens19, never "
       "on tap0")
+
+# KEYED BY THE PAIR'S TAP. `interface tap0` is a block the parser takes and
+# apply refuses nowhere: the TAP is an interface the dataplane has, and
+# `vppctl create tap id 0` makes a tap0 that is nobody's pair, so the shape
+# alone cannot be refused (drop_lcp_taps says why). So the three mirrors
+# are asked with the TAP too, and without the dataplane's names
+# routes.linux_end() took the TAP as the interface's own and answered the
+# CARD. Measured on e44f7c0, old shape: `interface tap0 / description
+# uplink / shutdown` ran `ip link set dev GigabitEthernet0/13/0 down` and
+# `... alias uplink` - a name Linux has no netdev by - and vppwan0 was
+# never touched; on 0dbbf73 the same block at least reached vppwan0. On
+# the override pair it ran on ens19 where the Linux end is wan0. Each
+# mirror hands linux_end() the names `show interface` lists now, so the
+# TAP is placed and `ip` runs on the Linux end alone.
+OVERRIDE_LCP = "itf-pair: [0] ens19 tap0 wan0 5 type tap\n"
+
+
+def if_listing(*names):
+    """`show interface` holding exactly these names, plus local0."""
+    head = ("              Name               Idx    State  "
+            "MTU (L3/IP4/IP6/MPLS)     Counter          Count\n")
+    rows = "".join(f"{n:<34}{i:<7}up          9000/0/0/0\n"
+                   for i, n in enumerate(names, start=1))
+    return head + rows + "local0                            0     down" \
+        "          0/0/0/0\n"
+
+
+for _lcp, _card, _linux in ((OLD_LCP, "GigabitEthernet0/13/0", "vppwan0"),
+                            (OVERRIDE_LCP, "ens19", "wan0")):
+    for _label, _verb in (
+            ("set_host_mtu", lambda sh: sh.set_host_mtu("tap0", 1400)),
+            ("set_admin", lambda sh: sh.set_admin("tap0", True)),
+            ("set_description",
+             lambda sh: sh.set_description("tap0", "uplink"))):
+        _sh = card_shell(lcp=_lcp, ifaces=if_listing(_card, "tap0"))
+        _sh.api = FakeDataplane(existing=(_card, "tap0"))
+        _devs = ip_devs(_verb, _sh)
+        check(_devs == [_linux],
+              f"{_label} keyed by tap0 on {_lcp.split()[2]} tap0 "
+              f"{_lcp.split()[4]}: ip ran on {_devs}, not on "
+              f"[{_linux!r}] alone")
+print("  keyed by tap0: ip runs on vppwan0 on the old shape and on wan0 on "
+      "the override, never on the card")
 
 print("\n=== `no linux-name` on a claimed card: the default returns at "
       "commit, said at the prompt (#389) ===")
