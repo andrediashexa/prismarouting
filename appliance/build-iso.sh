@@ -349,6 +349,19 @@ say "no credentials on the medium"
 sh "$REPO/appliance/no-credentials-in-image" "$WORK/iso" || exit 1
 
 say "ISO hibrida"
-grub-mkrescue -o "$OUT" "$WORK/iso" -- -volid HEXAROUTING
+# The volume label is what lsblk, blkid and a desktop file manager show for
+# the stick this medium is written to, so it carries the product's name for
+# the reason the filename does: the name on the stick reads as the name on
+# the banner (#202). ISO 9660 spells a label in A-Z, 0-9 and _, 32 at most,
+# so the two words take an underscore.
+#
+# It missed the rename once. The scope was measured with case-sensitive
+# greps for HexaRouting and hexarouting, and this was the one line in the
+# tree spelt in capitals, so a medium called prisma-routing-<v>.iso mounted
+# as HEXAROUTING. Nothing on a disk reads the label and the medium is rebuilt
+# for every release, so it moves with the filename: test/test_iso_ready.sh
+# derives the label it expects from tools/version-stamp.sh --filename, the
+# filename's one owner, and reads this line.
+grub-mkrescue -o "$OUT" "$WORK/iso" -- -volid PRISMA_ROUTING
 
 say "pronto: $OUT ($(du -h "$OUT" | cut -f1))"

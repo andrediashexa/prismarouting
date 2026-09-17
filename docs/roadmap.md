@@ -2934,6 +2934,15 @@ the brand kit and the changelog). The 1,907 were classified before anything
 was edited, by the shape of the token and not by a sweep: **153** were the
 prompt, **27** the medium's or the artifact's filename, **1** a prose line,
 and **1,726** a path, a unit, a key, a hostname or an identifier that stays.
+**Both greps were case-sensitive, and that count is short by one line.** The
+medium's ISO 9660 volume label, `HEXAROUTING`, is the one line in the tree
+spelt in capitals, so neither count saw it and it was neither renamed nor
+classified; the review below found it. Re-taken case-insensitively on the
+same tree, `git grep -I -i -c hexarouting` with the same exclusions:
+**2,085 lines across 174 files**, which is the 1,907 and the 181, less the
+4 lines that carry both spellings, plus that one. The classification of the
+one-token name therefore reads **153** the prompt, **27** the filename, **1**
+the volume label, **1** a prose line and **1,726** that stay.
 The 181 `HexaRouting` lines were read one at a time; the ones left are
 quotations of what an earlier version printed, kept as history beside the
 issue that changed them. The acceptance test is still
@@ -2942,6 +2951,50 @@ issue that changed them. The acceptance test is still
 the configuration is still in effect, and `lab/boot-iso.sh` and
 `lab/install-iso.sh` read the renamed console through
 `tools/selftest-verdict.sh`.
+
+##### What the review of that release found, and what closed it
+
+Three findings, and they are one defect in three places: a renamed string
+that nothing offline could see go stale, so `make test` stayed green while
+a lab or the release gate would have found it hours later on a booted box.
+Each is fixed on the same branch, and each check was shown red under the
+mutation that had passed before it.
+
+* **The medium's volume label was still `HEXAROUTING`.** It is what
+  `lsblk`, `blkid` and a desktop file manager show for the stick a medium is
+  written to, and the medium had been renamed `prisma-routing-<version>.iso`
+  for the stated reason that the name on the stick reads as the name on the
+  banner. How it escaped is above: a case-sensitive count. It is
+  `PRISMA_ROUTING` now (ISO 9660 spells a label in `A-Z`, `0-9` and `_`, 32
+  characters at most, so the two words take an underscore); nothing on a
+  disk reads the label and the medium is rebuilt for every release, so it
+  moves with the filename. `test/test_iso_ready.sh` derives the label it
+  expects from `tools/version-stamp.sh --filename`, the filename's one
+  owner, and reads the one `appliance/build-iso.sh` passes to
+  `grub-mkrescue`, so the two spellings of the name on one medium cannot
+  part again: the label back at the old name, the filename renamed without
+  it, the label dropped and a hyphen in it each went red.
+* **The operational prompt had no offline reader.**
+  `test/test_hexash_complete.py` held it by `endswith("> ")` and only the
+  configuration prompt by equality, so with the one `return` in
+  `Shell.prompt()` back at `hexarouting> ` this suite, `test_doc_commands.py`
+  and `test_console_driver.sh` all stayed green, and every wait for
+  `prisma> ` in `lab/boot-iso.sh` and `lab/install-iso.sh` would have timed
+  out on a booted box. It is held by equality now, and that one mutation
+  turns it red.
+* **Two of the holder's three renamed patterns had no reader.**
+  `tools/selftest-verdict.sh` spells the renamed sentence in `VERDICT_RE`,
+  `VERDICT_OK_RE` and `VERDICT_NOFWD_RE`, and `test/test_selftest.sh` read
+  only the first. `VERDICT_OK_RE` is what `tools/release-gate.sh` publishes
+  on and `VERDICT_NOFWD_RE` is how `lab/install-iso.sh` knows a box claimed
+  no card, so the two left at the old name kept `make test` green while the
+  gate would have refused every release and the lab never seen a no-forward
+  box. The suite now reads all four patterns out of the holder, the
+  no-product-name `VERDICT_BAD_RE` with them, and holds each to the four
+  sentences its readers decide on, sentence by sentence: the two left at the
+  old name went red on four rows, and so did a `VERDICT_OK_RE` widened to
+  the failed verdict, which is the shape of
+  [#311](https://github.com/andrediashexa/hexarouting/issues/311).
 
 #### If only three were possible
 

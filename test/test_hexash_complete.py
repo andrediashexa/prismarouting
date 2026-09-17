@@ -998,7 +998,12 @@ print("\n=== the prompt names the hierarchy AND its subject ===")
 # "mtu 1500" typed one block later than intended went to the wrong interface
 # with no warning (#108).
 sh = shell_with_box()
-check(sh.prompt().endswith("> "), f"operational mode is a > prompt: {sh.prompt()}")
+# BY EQUALITY, not endswith("> "): "prisma> " is the needle lab/boot-iso.sh
+# anchors on and lab/install-iso.sh waits for eight times, and both need a
+# booted box to notice. Under the endswith a prompt still reading
+# "hexarouting> " passed this suite and would have timed out every lab (#202).
+check(sh.prompt() == "prisma> ",
+      f"operational mode is the prompt the labs wait for: {sh.prompt()!r}")
 sh.feed("configure")
 check(sh.prompt() == "prisma# [edit] ", f"top of config: {sh.prompt()!r}")
 

@@ -4441,12 +4441,44 @@ verdicts_found=0
 if [ -z "$LAB_RE" ]; then
   bad "tools/selftest-verdict.sh has no VERDICT_RE, so nothing reads a verdict by a rule this can check"
 fi
+# AND THE OTHER THREE PATTERNS THE HOLDER CARRIES, read out of it the same
+# way. VERDICT_RE only answers whether the box reached a verdict at all; the
+# readers that DECIDE something use the other three. VERDICT_OK_RE is what
+# tools/release-gate.sh publishes on and what lab/install-iso.sh takes for a
+# box that came up; VERDICT_NOFWD_RE is how that lab knows a box claimed no
+# card; VERDICT_BAD_RE is a box that failed its own checks. Two of the three
+# spell the product's name again, and until the review of #202 only
+# VERDICT_RE was read here: with the other two left at the old name this
+# suite stayed green while the gate refused every release and the lab never
+# saw a no-forward box. So each pattern is held to the sentences its readers
+# decide on, sentence by sentence rather than by comparing the patterns'
+# text, because one pattern legitimately covers two sentences.
+_re_of() {  # <name>: the pattern under that name, never spelled here
+  sed -n "s/^$1=\"\\(.*\\)\"\$/\\1/p" "$REPO/tools/selftest-verdict.sh"
+}
+OK_RE=$(_re_of VERDICT_OK_RE)
+NOFWD_RE=$(_re_of VERDICT_NOFWD_RE)
+BAD_RE=$(_re_of VERDICT_BAD_RE)
+for _n in VERDICT_OK_RE VERDICT_NOFWD_RE VERDICT_BAD_RE; do
+  [ -n "$(_re_of "$_n")" ] \
+    || bad "tools/selftest-verdict.sh has no $_n, so the readers that decide on it have no rule"
+done
+# <sentence> <pattern name> <pattern> <y|n> <why a miss matters> <why a hit
+# matters>: the pattern matches the sentence exactly when the table says so.
+# An empty pattern is refused above and refused again here, because
+# grep -E '' matches every sentence and would hand the y rows a false green.
+misread=0
+_holds() {
+  if [ -n "$3" ] && printf '%s\n' "$1" | grep -qE "$3"; then _got=y; else _got=n; fi
+  [ "$_got" = "$4" ] && return 0
+  misread=$((misread + 1))
+  if [ "$4" = y ]; then bad "$2 does not match '$1': $5"; else bad "$2 matches '$1': $6"; fi
+}
 # The sentences as the self-test prints them, with the counts filled in: the
 # pattern has to match what reaches a console, not what the source spells.
-for _v in "  Prisma Routing ready." \
-          "  Prisma Routing ready, with 2 warning(s) above." \
-          "  Prisma Routing is installed and healthy, and has no interface to forward on:" \
-          "  3 check(s) failed. The box is NOT ready."; do
+# Beside each, whether VERDICT_OK_RE, VERDICT_NOFWD_RE and VERDICT_BAD_RE must
+# match it. Spelled ONCE, in this table; every check below reads it.
+while IFS='|' read -r _v _ok _nofwd _bad; do
   case "$ST_SRC" in
     *"$(printf '%s' "$_v" | sed 's/^  //; s/2 warning(s)/$warns warning(s)/; s/3 check(s)/$fail check(s)/; s/no interface to forward on:/$noforward:/')"*) ;;
     *) bad "appliance/selftest can no longer print '$_v', so the lab reads for a verdict that does not exist"
@@ -4456,11 +4488,25 @@ for _v in "  Prisma Routing ready." \
   if [ -n "$LAB_RE" ] && ! printf '%s\n' "$_v" | grep -qE "$LAB_RE"; then
     bad "the self-test can end with '$_v' and VERDICT_RE does not match it: an installed box printing it is a box the gate reads as never having booted"
   fi
-done
-if [ "$verdicts_found" -eq 4 ]; then
-  ok "all four verdicts the self-test can end with match VERDICT_RE"
-else
+  _holds "$_v" VERDICT_OK_RE "$OK_RE" "$_ok" \
+    "a box that ended so is one tools/release-gate.sh refuses to publish and lab/install-iso.sh reports as never having come up" \
+    "tools/release-gate.sh would publish a medium whose box had just said it was not fit to hand over, which is #311 again"
+  _holds "$_v" VERDICT_NOFWD_RE "$NOFWD_RE" "$_nofwd" \
+    "lab/install-iso.sh never sees a box that claimed no card, on the one machine it exists to catch that on" \
+    "lab/install-iso.sh takes a box that forwards, or failed, for one with no card to forward on"
+  _holds "$_v" VERDICT_BAD_RE "$BAD_RE" "$_bad" \
+    "a box that failed its own checks is sent to the bootloader as one that never reached a verdict" \
+    "a box fit to hand over is reported as having failed its checks"
+done <<'EOF'
+  Prisma Routing ready.|y|n|n
+  Prisma Routing ready, with 2 warning(s) above.|y|n|n
+  Prisma Routing is installed and healthy, and has no interface to forward on:|y|y|n
+  3 check(s) failed. The box is NOT ready.|n|n|y
+EOF
+if [ "$verdicts_found" -ne 4 ]; then
   bad "only $verdicts_found of the four verdicts were found in appliance/selftest, so this check is asserting almost nothing"
+elif [ "$misread" -eq 0 ]; then
+  ok "all four verdicts the self-test can end with match VERDICT_RE, and VERDICT_OK_RE, VERDICT_NOFWD_RE and VERDICT_BAD_RE each pick out the ones their readers decide on"
 fi
 
 # AND IN ONE PLACE IN THAT FILE, which is the half the first version of this

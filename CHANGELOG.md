@@ -123,8 +123,11 @@ version has a chance of seeing it.
     `Type 'install' to install Prisma Routing onto a disk.`;
   * the medium is `prisma-routing-<version>.iso` and the upgrade artifact
     `prisma-routing-<version>-upgrade.tar.gz`, from
-    `tools/version-stamp.sh --filename`, the one place that name is computed.
-    Releases before this one keep the files they were published with;
+    `tools/version-stamp.sh --filename`, the one place that name is computed,
+    and the medium's volume label, what `lsblk`, `blkid` and a file manager
+    show for the stick it is written to, is `PRISMA_ROUTING` (ISO 9660
+    spells a label in `A-Z`, `0-9` and `_`). Releases before this one keep
+    the files they were published with;
   * the comment at the top of a freshly installed configuration file reads
     `! Prisma Routing`. A box that already has a configuration keeps its
     file byte for byte.
@@ -160,8 +163,13 @@ version has a chance of seeing it.
   need the old name back has lost nothing but a banner. Every occurrence was
   classified before it was edited and none was swept: of the 1,907 lines
   carrying `hexarouting`, 153 were the prompt, 27 the medium's or the
-  artifact's filename and 1,726 a path, a unit, a key or a hostname that
-  stays, with a comment at each definition site saying why. The wiki mirror
+  artifact's filename, 1 a prose line and 1,726 a path, a unit, a key or a
+  hostname that stays, with a comment at each definition site saying why.
+  One line escaped that count because it is spelt in capitals and the count
+  was not: the medium's volume label, `HEXAROUTING` until the review of this
+  entry found it. Counted case-insensitively the name was on 2,085 lines,
+  and the roadmap's Phase 8 record carries the corrected classification and
+  the two checks that review found could not go red. The wiki mirror
   under `wiki/` carries the new name and the new prompt on the 17 pages that
   quoted them; it is published at release, and the page whose title carries
   the name has to be renamed in the wiki first, because the push refuses a
