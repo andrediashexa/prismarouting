@@ -583,11 +583,12 @@ print(f"  {len(_writes)} pool writes, each refused by name")
 
 print("\n=== the box's own configuration, which the commit applies after the "
       "dataplane ===")
-# THE MANAGEMENT PATH. An ssh change costs the operator their session if it is
-# wrong, the accounts decide who can get back in at all, and the tuner's file
-# is what the box reads at its next boot to find the card its management moved
-# to. A commit that reported success while any of those was not written is a
-# box nobody can reach.
+# THE BOX'S OWN ACCESS. An ssh change costs the operator their session if it
+# is wrong, and the accounts decide who can get back in at all. A commit that
+# reported success while either was not written is a box nobody can reach.
+# The tuner's file was driven here too, refused by the filesystem, until #385
+# took out the management record the commit wrote into it; the card's own
+# write is refused the same way and test/test_dataplane_if.py drives that.
 _running = config.Config()
 _target = config.Config()
 _target.ssh = {"port": "2222"}
@@ -621,25 +622,7 @@ _sh.sys = type("S", (), {
 _rv, _text = driven(_sh.apply, _target)
 says("accounts", _text, "error: accounts were not fully applied", _rv)
 
-# The tuner's file, refused by the filesystem rather than by a stub: TUNE_ENV
-# is pointed at a path under a FILE, so the directory the write needs cannot be
-# made. Driving it through the real write_tune_key is the point - a stub
-# returning False would assert that `apply` reads a boolean, not that the one
-# refusal an unwritable box produces reaches the operator.
-_notdir = os.path.join(_tmp, "not-a-directory")
-open(_notdir, "w").close()
-_target = config.Config()
-_target.dataplane_mgmt = {"name": "ens18", "address": "10.0.0.2/24",
-                          "mac": "02:00:00:00:00:09"}
-_sh = shell()
-_sh.running_config = lambda: config.Config()
-_sh.TUNE_ENV = os.path.join(_notdir, "tune.env")
-_rv, _text = driven(_sh.apply, _target)
-check(any(l.startswith("error: dataplane management: ") and
-          "tune.env" in l for l in _text.splitlines()),
-      f"an unwritable tuner file must be named: {_text!r}")
-check(_rv is False, f"and the commit must stop: {_rv!r}")
-print("  ssh, snmp, the accounts and the tuner's file, each refused by name")
+print("  ssh, snmp and the accounts, each refused by name")
 
 print("\n=== an MTU the dataplane took and an MTU it did not ===")
 # WHY THE READ-BACK IS AN ASSERTION AND NOT A COURTESY. retval 0 means the
@@ -1948,7 +1931,9 @@ print("  fifty digits quotes all fifty back, and that row is not measured "
 # interpolates, and the two `neighbour <peer>` verdicts #349 measured on an
 # IPv4 peer and left at 87 columns on an IPv6 one.
 OVER_AT_MOST = 26
-UNSAFE_AT_MOST = 52
+# 52 until #385 took out the handover headline the prompt printed on a
+# one-card box, which carried the interface name with no widest behind it.
+UNSAFE_AT_MOST = 51
 
 
 def ceiling(found, allowed, what, detail):

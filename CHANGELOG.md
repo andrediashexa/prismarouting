@@ -148,6 +148,20 @@ version has a chance of seeing it.
     `test/test_dataplane_if.py` holds it - the saved file that names the
     card, and the three-field record - shown red against the step before.
 
+  * **The prompt writes nothing down when a card is named.** On a one-card
+    box `dataplane interface <card>` used to read the address, MAC and
+    gateway off Linux at that moment, print them back with "this box has no
+    other card, so it keeps its management", add `ip route 0.0.0.0/0 <gw>`
+    to the candidate, and write `HEXA_DATAPLANE_MGMT` beside the card at the
+    commit. All of it goes: the tuner reads the same three things off the
+    live card on the boot that claims it, whichever box and whether or not
+    the card was named, so the prompt's copy was a second author for a fact
+    the box recomputes. Naming a card is accepted like any other statement,
+    and the commit says what it says for every card. `test/test_dataplane_if.py`
+    holds it against the candidate and against `tune.env`, shown red against
+    the step before; the width ceiling in `test/test_hexash_refusals.py`
+    drops by the headline that went.
+
   **What it costs a box already in service.** Naming the card your session
   arrives on, with `dataplane interface`, is no longer refused on a box that
   has another card: the box takes the card you named at the next start of

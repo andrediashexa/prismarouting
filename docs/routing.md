@@ -428,68 +428,35 @@ reachable afterwards: the dataplane has what a real router uses for this,
 `linux_cp` keeps a TAP paired with the port, and the management address lives
 on the TAP. The box is then reached **through** the dataplane rather than
 beside it. The card keeps its MAC across the handover - DPDK takes the device,
-address and all - so nothing upstream has to learn a new one. On the one-card
-box the VTY still says so when the card is named:
+address and all - so nothing upstream has to learn a new one.
 
-```
-hexarouting> configure
-hexarouting# [edit] dataplane interface ens18
-dataplane interface ens18: this box has no other card, so it keeps its
-management
-    10.95.200.198/24 moves onto the linux_cp pair the dataplane keeps for
-    ens18, and the box is then reached through the dataplane rather than
-    beside it
-    the card keeps its MAC across the handover, so nothing upstream has to
-    learn a new one
-    'ip route 0.0.0.0/0 10.95.200.1' is added, because the default route this
-    box has now lives on a card Linux is about to lose
-    this does not happen at this commit: the dataplane claims its card when it
-    starts, and the box is on the old path until it is restarted
-```
+**Nothing is written down at the prompt any more**
+([#385](https://github.com/andrediashexa/hexarouting/issues/385)). Until
+0.76.1 naming the only card made the VTY read three things off Linux at that
+moment - the address and prefix from `ip -4 -o addr show dev <card>`, the MAC
+from `/sys/class/net/<card>/address`, the gateway from `/proc/net/route` -
+print them back, add `ip route 0.0.0.0/0 <gw>` to the candidate, and write the
+record beside the card in `tune.env` as `HEXA_DATAPLANE_MGMT`, so the boot
+after the commit could put the address on the pair. The tuner reads the same
+three things off the live card on the boot that claims it, whichever box it is
+on and whether or not the card was named, and leaves them in
+`/run/hexarouting/dataplane-management`; a record taken at the prompt was a
+second copy of a fact the box recomputes, and one that could be a day older
+than the boot that used it. So `dataplane interface <card>` is accepted like
+any other statement, and the commit says what it says for every card: the
+dataplane claims it when it starts, and this commit does not restart it.
 
-Three things are written down at that moment, and all three are the box's own
-reading of Linux rather than anything the operator types:
+A card whose way back the tuner cannot read is **not claimed**, and the
+journal says which of the three was missing. An address it cannot see is an
+address it cannot put back, and a handover it cannot undo on the far side is
+the walk to the console. Two addresses on the card is the same answer: choosing
+between them is choosing which address the box comes back on.
 
-| written | read from | what it is for |
-|---|---|---|
-| the address and prefix | `ip -4 -o addr show dev <card>` | what goes on the pair after the handover |
-| the MAC | `/sys/class/net/<card>/address` | the card has no name in the dataplane until the dataplane has it, and the MAC is the one name it keeps on both sides |
-| `ip route 0.0.0.0/0 <gw>` | `/proc/net/route` | the default route lives on the card Linux is about to lose |
-
-A card whose address the box cannot read back is **refused**, and the refusal
-says which part is missing. An address it cannot see is an address it cannot
-put back, and a handover it cannot undo on the far side is the walk to the
-console the original refusal was written to prevent. Two addresses on the card
-is the same answer: choosing between them is choosing which address the box
-comes back on.
-
-The address reading is the one thing in this path that is not a file. Linux
+The address reading is the one thing in that path that is not a file. Linux
 publishes an interface's own address nowhere under `/sys` or `/proc` in a form
 that names the interface - `/proc/net/route` carries the subnet and not the
 address, `/proc/net/fib_trie` carries the address and not the interface holding
-it - so this asks `ip`, through the same runner every other command on the box
-goes through.
-
-**The record lives in `tune.env`, beside the card.** It could not live only in
-the saved configuration: `show running-config` and `save` build the running
-state by reading the box, and between the commit that names the card and the
-boot that hands it over there is nothing on the box to read - the dataplane has
-no such interface yet, and Linux still holds the address on a card that is
-about to stop existing. Saved from a fresh session, the file came out naming
-the card with no way to keep the box reachable, which is the one file where
-that mistake cannot be recovered.
-
-```
-HEXA_DATAPLANE_IF=ens18
-HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 bc:24:11:a1:4f:c0
-```
-
-Neither the tuner nor `bind-dataplane-nic` reads that second line any more
-([#385](https://github.com/andrediashexa/hexarouting/issues/385)): the tuner
-computes the way back for itself on the boot that claims the card and names no
-card whose way back it could not read, a named card is claimed whichever route
-it carries, and the binder binds what the tuner named and decides nothing
-about which.
+it - so the tuner asks `ip`, through the seam its suite drives.
 
 **And the boot replay puts back the record the tuner computed, whatever the
 saved file says, which is
@@ -560,13 +527,9 @@ and a dataplane that will not start hands the card to Linux
 ([#379](https://github.com/andrediashexa/hexarouting/issues/379)).
 
 So naming the card by hand on a one-card box is a statement of intent and
-nothing else, and the box says so:
-
-```
-    nothing is armed to undo this and nothing needs to be: a reserve never
-    takes the last card, so this box would claim this one whether or not you
-    named it
-```
+nothing else. The box records nothing for it and arms nothing, and the commit
+says what it says for any card: the dataplane claims it when it starts, and
+this commit does not restart it.
 
 `commit confirmed <minutes>` is still there for an operator who wants a window
 around any change, and its revert still puts the configuration back. What it

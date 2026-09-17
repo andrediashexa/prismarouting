@@ -92,7 +92,6 @@ carried, applied to the other two.
 | Variable | Accepted | Shipped | Used when refused |
 |---|---|---|---|
 | `HEXA_DATAPLANE_IF` | an interface name, or empty | empty | any name is accepted; one this box has not got resolves to no device, and `no-pci` is written so nothing is claimed |
-| `HEXA_DATAPLANE_MGMT` | `<name> <address/len> <mac>`, or empty | empty | written by the VTY, not by hand: it is the management path a handed-over card puts back on its `linux_cp` pair ([#303](https://github.com/andrediashexa/hexarouting/issues/303)) |
 | `HEXA_SUBSCRIBERS` | digits only | `200000` | `200000` |
 | `HEXA_LOW_LATENCY` | `1` or `0`, nothing else | `1` | `1`, because this is a router |
 | `HEXA_MAX_WORKERS` | digits only, or empty for no cap | empty | no cap |

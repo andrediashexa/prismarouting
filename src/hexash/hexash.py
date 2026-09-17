@@ -7143,17 +7143,6 @@ class Shell:
         # the box's own configuration because that is what it is, and it goes
         # FIRST of that group so its "not in effect yet" paragraph is not
         # buried under whatever SSH and the accounts printed.
-        # Written BEFORE the card, so the tuner - which is restarted by the
-        # next few lines - never reads a file naming a card whose management
-        # path is not beside it yet.
-        if d["dataplane_mgmt_changed"]:
-            m = target.dataplane_mgmt
-            ok, msg = self.write_tune_key(
-                self.TUNE_MGMT_KEY,
-                f"{m['name']} {m['address']} {m['mac']}" if m else "")
-            if not ok:
-                self.err(f"dataplane management: {msg}")
-                return False
         if d["dataplane_if_changed"]:
             ok, msg = self.apply_dataplane_if(target.dataplane_if)
             if not ok:
@@ -8921,16 +8910,21 @@ class Shell:
             # Both, and neither is redundant. This one is the message that
             # reaches a person who is still typing and can fix it in the next
             # keystroke; the one in apply() covers `rollback` and `--load`,
-            # which reach the same setting without passing through here. A
-            # refusal an operator only discovers after committing is one they
-            # act on hours later, and the mistake this catches costs a site
-            # visit (#123).
+            # which reach the same setting without passing through here.
+            #
+            # AND NOTHING ELSE HAPPENS HERE (#385). The prompt used to write
+            # down, on a one-card box, the address, MAC and gateway the card
+            # carried, so the boot after the commit could put them back. The
+            # tuner reads the same three things off the live card on the boot
+            # that claims it, whichever box it is on and whether or not the
+            # card was named, so a record taken here was a second copy of a
+            # fact the box recomputes - and one that could be a day older than
+            # the boot that used it.
             why = self.dataplane_if_refusal(w[2])
             if why:
                 self.say_dataplane_if_refusal(w[2], why)
                 return True
             self.candidate.dataplane_if = w[2]
-            self.take_management_card(w[2])
             return True
         if w[0] == "ssh":
             if len(w) < 3:
@@ -10595,118 +10589,6 @@ class Shell:
             pass
         return None
 
-    def default_route_gateway(self):
-        """
-        The next hop of the default route, or None.
-
-        Same file and same row as default_route_nic(), read once more rather
-        than returned alongside it, because almost every caller wants only the
-        interface and a two-valued answer would have them unpacking a tuple to
-        throw half of it away.
-        """
-        try:
-            with open(self.PROC_NET_ROUTE) as f:
-                for line in f.readlines()[1:]:
-                    w = line.split()
-                    if len(w) > 2 and w[1] == "00000000":
-                        # Little-endian hex, which is how the kernel writes
-                        # every address in this file. 0100000A is 10.0.0.1.
-                        try:
-                            g = int(w[2], 16)
-                        except ValueError:
-                            return None
-                        if not g:
-                            # A default route with no gateway: the next hop is
-                            # the link itself. Nothing to carry over.
-                            return None
-                        return ".".join(str((g >> b) & 0xFF)
-                                        for b in (0, 8, 16, 24))
-        except OSError:
-            pass
-        return None
-
-    def interface_address(self, name):
-        """
-        The IPv4 address and prefix length Linux has on `name`, or None.
-
-        THE ONE READING IN HERE THAT IS NOT A FILE, and it is not for want of
-        looking: an interface's own address is published nowhere under /sys or
-        /proc in a form that names the interface. /proc/net/route carries the
-        subnet and not the address, /proc/net/fib_trie carries the address and
-        not the interface that holds it, and the kernel's answer to the
-        question is a netlink dump. So this asks `ip`, through the same runner
-        every other command on this box goes through - which is also what lets
-        it be driven in a suite without a box.
-
-        The FIRST global address, deliberately. A card with several is a card
-        whose management address this cannot choose between, and the caller
-        refuses rather than guessing: getting it wrong here means the box
-        comes back on an address nobody is trying to reach.
-        """
-        rc, out = self.sys._run(["ip", "-4", "-o", "addr", "show", "dev", name])
-        if rc != 0:
-            return None
-        found = []
-        for line in (out or "").splitlines():
-            w = line.split()
-            if "inet" not in w:
-                continue
-            pfx = w[w.index("inet") + 1]
-            if "scope" in w and w[w.index("scope") + 1] != "global":
-                continue
-            if "/" not in pfx:
-                continue
-            found.append(pfx)
-        if len(found) != 1:
-            return None
-        return found[0]
-
-    def management_handover(self, name):
-        """
-        What has to be carried over for `name` to become a dataplane card, or
-        a (headline, [prose]) refusal saying what is missing.
-
-        THIS IS THE ANSWER #303 ASKS FOR, and the refusal it replaces is still
-        right about every box it was written for. A box with a second card is
-        refused exactly as before: handing away the management card when there
-        is a subscriber card to name instead is the mistake #123 exists for,
-        and nothing here touches it. What changes is the box where that advice
-        names a card that does not exist.
-
-        On such a box the card can move, because the dataplane has the thing a
-        real router uses for this: linux_cp keeps a TAP paired with the port,
-        and the management address goes on that. The box is then reached
-        THROUGH the dataplane instead of beside it. The upstream router does
-        not even re-ARP: DPDK takes the device and keeps its MAC.
-
-        What it will not do is move a card whose management state it cannot
-        read back. An address it cannot see is an address it cannot put back,
-        and a handover that cannot be undone on the far side is the walk to
-        the console this refusal was written to prevent.
-        """
-        address = self.interface_address(name)
-        gateway = self.default_route_gateway()
-        mac = self._sysfs(os.path.join(self.SYS_CLASS_NET, name, "address"))
-        missing = []
-        if not address:
-            missing.append("no single global IPv4 address on it that this box "
-                           "could put back on the far side")
-        if not gateway:
-            missing.append("no gateway on the default route, so there would "
-                           "be nothing to route through afterwards")
-        if not mac:
-            missing.append("no MAC, which is the only name this card keeps "
-                           "on both sides of the handover")
-        if missing:
-            return ("its management state cannot be carried over",
-                    missing + [
-                        "the card would go to the dataplane and the box would "
-                        "have no way back to the network",
-                        "give it an address and a default route from Linux "
-                        "first, then name it here"])
-        return {"name": name, "address": address, "mac": mac.lower(),
-                "gateway": gateway}
-
     def host_nics(self):
         """
         The box's physical NICs, as Linux has them.
@@ -11081,78 +10963,6 @@ class Shell:
                      "the dataplane already has, and on a box with no card "
                      "that is nothing"])
         return None
-
-    def take_management_card(self, name):
-        """
-        Write down the management path of a card that is about to move, and
-        say what the box has just taken on.
-
-        Only for THE card carrying the default route, which on a box that got
-        this far means the box has no other. Naming an ordinary card records
-        nothing: it takes no management with it, and a box carrying a
-        management record for a card that never had one would put an address
-        on the wrong pair at its next boot.
-
-        The default route is added HERE rather than at the commit, because the
-        operator has to be able to read it before they commit it. `show
-        configuration compare` is where a change of this size is checked, and
-        a route that appeared only after the commit would be a change the box
-        made without showing it.
-        """
-        others = [n["name"] for n in self.host_nics() if n["name"] != name]
-        if name != self.default_route_nic() or others:
-            self.candidate.dataplane_mgmt = {}
-            return
-        hand = self.management_handover(name)
-        if isinstance(hand, tuple):
-            # NOT A REFUSAL ANY MORE (#385). The prompt used to refuse a card
-            # whose management state could not be read before this was
-            # reached; now the card is accepted and nothing is recorded, and
-            # the tuner decides at boot, off the live card, whether a way back
-            # can be read - declining the card and saying so in the journal
-            # when it cannot. A second answer to that question here would be
-            # the second copy that comes to disagree.
-            self.candidate.dataplane_mgmt = {}
-            return
-        self.candidate.dataplane_mgmt = {k: hand[k]
-                                         for k in ("name", "address", "mac")}
-        route = f"ip route 0.0.0.0/0 {hand['gateway']}"
-        has_default = any(l.split()[:3] == ["ip", "route", "0.0.0.0/0"]
-                          for l in self.candidate.routing if l.split())
-        if not has_default:
-            self.candidate.routing.append(route)
-        # Inside the console, and the arithmetic is the reason rather than the
-        # look of it: Linux carries interface names up to fifteen characters,
-        # so a headline is as wide as its words plus fifteen. The old one was
-        # "this box has no other card, so it keeps its management", which is
-        # 81 columns on `ens18` and 91 on the longest name a card can have -
-        # the one line an operator reads before handing over the card their
-        # session is on, wrapped by the terminal in the middle of a word
-        # (#346). The refusal headline beside this one carries the same
-        # argument in as many words and has always fitted.
-        print(f"dataplane interface {name}: this box has no other card")
-        print_prose("so it keeps its management, and the address moves with "
-                    "the card")
-        print_prose(f"{hand['address']} moves onto the linux_cp pair the "
-                    f"dataplane keeps for {name}, and the box is then reached "
-                    f"through the dataplane rather than beside it")
-        print_prose("the card keeps its MAC across the handover, so nothing "
-                    "upstream has to learn a new one")
-        if not has_default:
-            print_prose(f"'{route}' is added, because the default route this "
-                        f"box has now lives on a card Linux is about to lose")
-        print_prose("this does not happen at this commit: the dataplane "
-                    "claims its card when it starts, and the box is on the "
-                    "old path until it is restarted")
-        # AND WHY THERE IS NO SAFETY NET, which is the sentence that replaces
-        # the confirmed-commit paragraph (#378). An operator who typed this on
-        # a one-card box used to be told to come back and confirm it or lose
-        # the card; both halves were false once the box began claiming its own
-        # card. Saying nothing at all would leave them looking for the window
-        # the documentation used to promise.
-        print_prose("nothing is armed to undo this and nothing needs to be: "
-                    "a reserve never takes the last card, so this box would "
-                    "claim this one whether or not you named it")
 
     def say_dataplane_if_refusal(self, name, why):
         """One refusal, printed: the statement's own words, then the reason."""
