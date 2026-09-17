@@ -11,11 +11,13 @@ out of this VTY to an editor.
 
 What is asserted here, and why each one is worth a suite rather than a lab:
 
-  * THE REFUSALS, which are the reason this cannot be a thin wrapper over the
-    file. The card carrying the default route is refused, and it is refused AT
-    THE PROMPT: the tuner already refuses it at the next boot, in a journal, on
-    a box nobody is watching by then, and a refusal discovered after committing
-    is one the operator acts on hours later. That mistake costs a site visit.
+  * THE REFUSAL, which is the reason this cannot be a thin wrapper over the
+    file: a name this box has not got is refused AT THE PROMPT, with the list
+    of names it does have. The card carrying the default route was refused
+    here too, and that refusal went with #385 - a box is configured at its
+    console when it is new, so it guarded a step nobody takes over the
+    network. What holds now is that the name is ACCEPTED on every box, and
+    the tuner reads the way back off the card on the boot that claims it.
   * THE FILE IS NOT REWRITTEN. tune.env is hand-editable by design and most of
     it is prose - the paragraph on why the field ships empty, the worker cap
     and the argument for leaving it uncapped. A commit that regenerated the
@@ -65,8 +67,6 @@ TUNE_ENV_SHIPPED = """\
 #
 # EMPTY ON PURPOSE. It used to ship as "eth0", which does not exist on a Debian
 # 12 box with predictable interface names.
-#
-# The interface carrying the default route is refused even if named here.
 HEXA_DATAPLANE_IF=
 
 # Subscriber target: sizes the hugepages.
@@ -161,9 +161,11 @@ def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS,
         if not os.path.lexists(link):
             os.symlink(dev, link)
         # The MAC, because a card that is handed over keeps it and it is the
-        # only name the card has on both sides of the handover (#303). A fake
-        # tree without one would make every single-card box refuse for a
-        # reason the real tree never has.
+        # only name the card has on both sides of the handover (#303). The
+        # prompt stopped reading it with #385; the boot replay still matches
+        # the way back's MAC against what /sys lists to tell a card that has
+        # moved from one Linux still holds, and a fake tree without one would
+        # read every card as gone.
         with open(f"{tmp}/sys/class/net/{name}/address", "w") as f:
             f.write(f"52:54:00:00:00:0{i + 1}\n")
     os.makedirs(f"{tmp}/etc/hexarouting", exist_ok=True)
@@ -327,28 +329,30 @@ print(f"  refused with: {_bad.unknown[0][2]!r}")
 
 # ----------------------------------------------------------------- refusals
 
-print("\n=== the card carrying the default route is refused AT THE PROMPT ===")
+print("\n=== the card carrying the default route is ACCEPTED at the prompt (#385) ===")
+# IT WAS REFUSED HERE, with the other card named as the one to use instead
+# (#123), and the refusal went with #385 on the maintainer's decision: a box
+# is configured at its console when it is new, so a refusal guarding the card
+# it is reached over guards a step nobody takes over the network - and it
+# stood between an operator and the card they had just named. This is the
+# box the refusal was written for: two cards, and the named one carries the
+# default route, so the fixture reaches the line the refusal used to fire on.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     said = drive(sh, ["configure", "dataplane interface enp1s0"])
-    check("error:" in said,
-          f"the management card was accepted at the prompt: {said!r}")
-    check("dataplane interface enp1s0" in said,
-          f"the refusal does not quote the name that was refused: {said!r}")
-    check("default route" in said,
-          f"the refusal does not say WHY, so the operator reads it as the "
-          f"box being unable rather than unwilling: {said!r}")
-    check("off the network" in said,
-          f"the refusal does not say what it would have cost: {said!r}")
-    check(sh.candidate.dataplane_if == "",
-          f"refused and stored anyway, so 'commit' would still hand over the "
-          f"management card: {sh.candidate.dataplane_if!r}")
-    print("  refused, named, and kept out of the candidate")
+    check("error:" not in said,
+          f"the card carrying the default route was refused at the prompt, "
+          f"which is the refusal #385 removed: {said!r}")
+    check(sh.candidate.dataplane_if == "enp1s0",
+          f"accepted and not stored, so 'commit' would hand over nothing: "
+          f"{sh.candidate.dataplane_if!r}")
+    print("  accepted, and stored in the candidate")
 
 print("\n=== and again at commit, for the paths that never see the prompt ===")
 # `rollback` to a revision written when this box had a different card, and
 # `--load` of the file hexarouting.service replays at boot, both reach apply()
-# without passing do_config. Driven through apply() rather than the prompt for
+# without passing do_config. The refusal lived there as well, so its absence
+# is held there as well: driven through apply() rather than the prompt for
 # exactly that reason.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
@@ -357,12 +361,45 @@ with tempfile.TemporaryDirectory() as tmp:
     with contextlib.redirect_stdout(out):
         ok = sh.apply(target, check_only=True)
     said = out.getvalue()
-    check(ok is False,
-          f"a configuration naming the management card passed validation: "
+    check(ok is True,
+          f"a configuration naming the card carrying the default route does "
+          f"not validate, so a saved file naming it is refused at boot: "
           f"{said!r}")
-    check("default route" in said,
-          f"and it was refused without saying why: {said!r}")
-    print("  a file naming the management card does not validate")
+    check("default route" not in said,
+          f"and the check still argues about the route it carries: {said!r}")
+    print("  a file naming the card carrying the default route validates")
+
+print("\n=== and a card this box has not got is refused there too ===")
+# THE HALF #385 KEPT, on the paths that never see the prompt. The case above
+# names a card the box HAS, so the refusal it drives through apply() returns
+# nothing and the branch that says no is never entered: a check that only
+# ever walks past a branch cannot notice the branch deleted, and with it
+# deleted a `rollback` to a revision from a box with different cards, or a
+# `--load` of a file edited by hand, would hand the dataplane a name it
+# cannot resolve and say so only in a journal. Driven with a card the box
+# has not got, asserting the refusal and that it names what the box does
+# have, because a refusal at boot that only says no leaves the operator to
+# guess the spelling of a card they cannot see.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp)
+    target = config.Config.parse("dataplane interface enp9s0\n")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        ok = sh.apply(target, check_only=True)
+    said = out.getvalue()
+    check(ok is False,
+          f"a configuration naming a card this box has not got validates, so "
+          f"a rollback or a boot replay would hand the dataplane a name it "
+          f"cannot resolve: {said!r}")
+    check("no such interface" in said,
+          f"and the reason is not the one the prompt gives for the same "
+          f"name: {said!r}")
+    for card in [c for c in CARDS if c != "lo"]:
+        check(card in said,
+              f"the refusal does not name {card!r} among what this box has, "
+              f"so `rollback` says no without saying what yes would be: "
+              f"{said!r}")
+    print("  refused at commit, and the cards the box has are named")
 
 print("\n=== a card this box has not got is refused, and it says what it has "
       "===")
@@ -414,9 +451,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check(sh.default_route_nic() is None,
           "a routing table that cannot be read must answer 'cannot say', not "
           "raise")
-    said = drive(sh, ["configure", "dataplane interface enp1s0"])
-    check(sh.candidate.dataplane_if == "enp1s0",
-          f"with no routing table to read, the refusal fired anyway: {said!r}")
+    # A third check here drove `dataplane interface enp1s0` with the table
+    # unreadable and asserted the name was accepted. Since #385 it is accepted
+    # with the table readable too, so that check could no longer fail for the
+    # reason it was written and is gone rather than left green about nothing.
     print("  read from /proc/net/route, destination 00000000")
 
 # -------------------------------------------------------------------- commit
@@ -664,63 +702,50 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print("\n=== the VTY reads the way back the tuner computed at boot (#378) ===")
 # On a box that claims its own card nobody typed, so nothing was ever written
-# at a commit and HEXA_DATAPLANE_MGMT does not exist. The tuner computed the
-# address off the live card in the window before the bind and left it in
-# /run; this is the only account of that address there is, and without it the
-# boot that hands the card over is the boot that puts nothing on the pair.
+# at a commit. The tuner computed the address off the live card in the window
+# before the bind and left it in /run; this is the only account of that
+# address there is, and without it the boot that hands the card over is the
+# boot that puts nothing on the pair.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
     computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:AB:CD:EF 10.95.200.1\n")
     rec = sh.read_computed_mgmt()
     # THE GATEWAY IS PART OF IT, and this asserted three fields until an
     # installed box came back with its address on the pair and
-    # `ip -4 route list default` empty. The VTY record has three because its
-    # route arrives with the saved configuration; a box that claimed its own
-    # card never had that commit, so this record is the route's only author.
+    # `ip -4 route list default` empty. The VTY's record had three because
+    # its route arrived with the saved configuration; a box that claimed its
+    # own card never had that commit, and since #385 no box has that record,
+    # so this one is the route's only author.
     check(rec == {"name": "ens18", "address": "10.95.200.198/24",
                   "mac": "52:54:00:ab:cd:ef", "gateway": "10.95.200.1"},
           f"the box cannot read what its own tuner computed, so a box that "
           f"claimed its own card comes back with no address or no way off "
           f"its own subnet: {rec!r}")
     # AND IT IS NOT CONFIGURATION. Whatever running_config() returns becomes
-    # the candidate at the next `configure` and is written back to tune.env by
-    # the next commit - in the VTY's three-field form, with the gateway
-    # dropped. The boot after that reads the three-field copy in preference
-    # and puts the address back with no route.
+    # the candidate at the next `configure` and is written by the next
+    # `save`, and this record is boot state: recomputed every boot from the
+    # live card, and stale the moment it is copied anywhere else.
     #
-    # MEASURED ON AN INSTALLED BOX, which is why this check exists in this
-    # shape: boot one had its default route, the lab created two accounts and
-    # committed, and the boot after the power cycle came back with the address
-    # on the pair and `ip -4 route list default` empty. The commit did it.
-    check(sh.read_dataplane_mgmt() == {},
-          f"the computed record is visible as configuration, so the next "
-          f"commit persists a copy of it with the gateway dropped: "
-          f"{sh.read_dataplane_mgmt()!r}")
-    check(sh.running_config().dataplane_mgmt == {},
+    # MEASURED ON AN INSTALLED BOX, which is why this check exists: while the
+    # VTY still had a record of its own, boot one had its default route, the
+    # lab created two accounts and committed, and the boot after the power
+    # cycle came back with the address on the pair and `ip -4 route list
+    # default` empty - the commit had persisted a copy with the gateway
+    # dropped, and the next boot read the copy. The record and the statement
+    # are gone (#385); this holds the computed one out of the configuration.
+    check("10.95.200.198" not in sh.running_config().text(),
           f"the computed record reaches the running configuration, so `save` "
-          f"and every commit carry it: "
-          f"{sh.running_config().dataplane_mgmt!r}")
-
-print("\n=== and the operator's own record still wins over it ===")
-# A card named by hand is the operator's answer about a box they configured
-# deliberately, and a box mid-handover from an earlier release has that record
-# and no /run file until its next boot.
-with tempfile.TemporaryDirectory() as tmp:
-    sh = shell_on(tmp, tune="HEXA_DATAPLANE_IF=ens18\n"
-                            "HEXA_DATAPLANE_MGMT=ens18 10.0.0.9/24 "
-                            "52:54:00:00:00:99\n")
-    computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:AB:CD:EF 10.95.200.1\n")
-    # The boot path's own precedence: the operator's record first, the tuner's
-    # only where there is none.
-    rec = sh.read_dataplane_mgmt() or sh.read_computed_mgmt()
-    check(rec["address"] == "10.0.0.9/24",
-          f"the computed record overrode the one the operator's own commit "
-          f"wrote, so the box comes back on an address nobody chose: {rec!r}")
+          f"carries it and the next boot reads a stale copy: "
+          f"{sh.running_config().text()!r}")
 
 print("\n=== a computed record missing a field is no record at all ===")
 # The safe direction, and the same rule the stored one has always had: the box
-# then declines the handover rather than making it with half an answer.
-for _bad in ("ens18\n", "ens18 10.95.200.198\n", "\n"):
+# then declines the handover rather than making it with half an answer. The
+# three-field record is in the list on purpose: it is the shape the VTY used
+# to write, and since #385 a record with no gateway is a box that comes back
+# on its own subnet and nowhere else, so it is no record either.
+for _bad in ("ens18\n", "ens18 10.95.200.198\n", "\n",
+             "ens18 10.95.200.198/24 52:54:00:ab:cd:ef\n"):
     with tempfile.TemporaryDirectory() as tmp:
         sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
         computed_path(tmp, _bad)
@@ -791,10 +816,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print("\n=== and a card nothing reserves is said to be going anyway ===")
 # THE ONE PLACE THE TWO ANSWERS POINT OPPOSITE WAYS. `dataplane interface`
-# still refuses the card carrying the default route while there is another to
-# name (#123), and the box claims every card nothing reserves (#378). On a box
-# whose default route is not on the card the installer recorded, both are true
-# and the operator needs the second: reserving a card happens at install time,
+# accepts any card the box has, the one carrying the default route included
+# (the refusal went with #385), and the box claims every card nothing reserves
+# (#378). On a box whose default route is not on the card the installer
+# recorded, both are true and the operator needs the second: reserving a card
+# happens at install time,
 # and this is the screen where somebody finds out it did not.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, reserve="enp2s0")   # route is on enp1s0, reserve is not
@@ -850,7 +876,7 @@ print("  four box shapes, every row of the screen inside 79 columns")
 
 # ------------------------------------------------------------ the completion
 
-print("\n=== '?' offers the cards the box has, and marks the one refused ===")
+print("\n=== '?' offers the cards the box has, and marks the default-route one ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     drive(sh, ["configure"])
@@ -861,7 +887,10 @@ with tempfile.TemporaryDirectory() as tmp:
           f"completion offers {sorted(offered)}, not the cards this box could "
           f"actually hand to the dataplane")
     check("default route" in offered.get("enp1s0", ""),
-          f"the one card that must not be chosen is offered like any other: "
+          f"the card this box is reached on is offered like any other, with "
+          f"nothing saying what taking it means: {offered!r}")
+    check("refused" not in offered.get("enp1s0", ""),
+          f"the mark still calls the card refused, and since #385 it is not: "
           f"{offered!r}")
     print(f"  offers {', '.join(sorted(offered))}, and marks enp1s0")
 
@@ -902,14 +931,18 @@ with tempfile.TemporaryDirectory() as tmp:
 
 # ------------------------------------------------------ a box with ONE card
 #
-# #303. The refusal above is right about every box that has somewhere else to
-# put the dataplane, and on a box with one card its advice - "name the card
-# carrying subscriber traffic instead" - names a card that does not exist. The
-# box could not forward and could not be told to.
+# #303. The refusal of the card carrying the default route was right about
+# every box that had somewhere else to put the dataplane, and on a box with
+# one card its advice - "name the card carrying subscriber traffic instead" -
+# named a card that does not exist. The box could not forward and could not
+# be told to. #303 opened a way out for this box alone, under a record the
+# prompt wrote and a commit that undid itself; #378 took the window and #385
+# the refusal and the record, from every box.
 #
-# What is asserted here is the way out and its safety, and the two are one
-# thing: the card may move only because the box writes down what has to follow
-# it, and only under a commit that undoes itself if nobody confirms.
+# What is asserted here is what the prompt does NOW on this box: it accepts
+# the only card like any other, writes nothing down for it, arms no window,
+# and leaves the way back to the tuner, which reads it off the live card on
+# the boot that claims it.
 
 #: One card, and it carries the default route because it is the only one there
 #: is. This is the maintainer's box in #303, in a tempdir.
@@ -986,8 +1019,17 @@ def one_card_box(tmp, frr=True, **kw):
     return sh
 
 
-print("\n=== a box with ONE card is not refused: the card takes its "
-      "management with it (#303) ===")
+print("\n=== a box with ONE card is accepted, and nothing is written down for it "
+      "(#385) ===")
+# #303 made the prompt write down, on this box, the address, the MAC and the
+# gateway the card carried, and add the default route to the candidate, so
+# the boot after the commit could put them back. The tuner reads the same
+# three things off the live card on the boot that claims it, whichever box it
+# is on and whether or not the card was named (#378), so the record taken here
+# was a second copy of a fact the box recomputes - and one that could be a
+# day older than the boot that used it. The writer is gone: naming the only
+# card is accepted like any other statement, and the prompt says nothing more
+# than it says for one.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp)
     said = drive(sh, ["configure", "dataplane interface ens18"])
@@ -996,41 +1038,29 @@ with tempfile.TemporaryDirectory() as tmp:
           f"is about: {said!r}")
     check(sh.candidate.dataplane_if == "ens18",
           f"accepted and not stored: {sh.candidate.dataplane_if!r}")
-    check(sh.candidate.dataplane_mgmt == {
-              "name": "ens18", "address": "10.95.200.198/24",
-              "mac": "52:54:00:00:00:01"},
-          f"the management path the card carries was not written down, so the "
-          f"box would come up with the card in the dataplane and no address "
-          f"anywhere: {sh.candidate.dataplane_mgmt!r}")
-    check("ip route 0.0.0.0/0 10.95.200.1" in sh.candidate.routing,
-          f"the default route lives on the card Linux is about to lose and "
-          f"nothing replaced it: {sh.candidate.routing!r}")
-    check("10.95.200.198/24" in said,
-          f"the box did not say which address it is carrying over, which is "
-          f"the one fact the operator has to check before committing: {said!r}")
-    # The reboot is the whole of the risk and it is stated at the prompt, not
-    # discovered at the restart.
-    check("restarted" in said,
-          f"it does not say the card moves at a restart and not at this "
-          f"commit: {said!r}")
-    print("  accepted, with the address, the MAC and the route written down")
+    check("10.95.200.198" not in sh.candidate.text(),
+          f"the prompt still writes the management path down, which the "
+          f"tuner computes for itself at boot: {sh.candidate.text()!r}")
+    check("ip route 0.0.0.0/0 10.95.200.1" not in sh.candidate.routing,
+          f"the prompt still adds the default route to the configuration, and "
+          f"the boot replay puts it back in Linux from the computed record: "
+          f"{sh.candidate.routing!r}")
+    check("10.95.200.198/24" not in said and "no other card" not in said,
+          f"the prompt still prints the handover screen the writer printed: "
+          f"{said!r}")
+    print("  accepted, and nothing recorded or added")
 
-print("\n=== and this box's lines fit the console too (#346) ===")
+print("\n=== and the completion rows for this box fit the console (#346) ===")
 # THE WIDTH SWEEP ABOVE COLLECTS FROM THE TWO-CARD BOX ONLY, because
-# one_card_box() is defined three hundred lines below it. So the path a VM
-# operator meets first - the one where the box hands over the card the session
-# is on - was the one path nobody measured, and it printed an 81-column
-# headline and a 100-column completion row on a 79-column console.
+# one_card_box() is defined three hundred lines below it. The row the
+# completion offers BEFORE the name is typed tells the operator what taking
+# this card means, so it is the one that must not be broken by the terminal in
+# the middle of a word - it measured 100 columns once. The prompt's own
+# handover screen was measured here too, until #385 took the screen out.
 #
-# Both halves: what the box says when the name is typed, and what the
-# completion offers BEFORE it is typed. The second is the row that tells the
-# operator what handing this card over means, so it is the one that must not
-# be broken by the terminal in the middle of a word.
-#
-# With the longest name Linux can carry, not with `ens18`, because the name is
-# interpolated into the headline and IFNAMSIZ is 16 with the terminator.
-# IFNAMSIZ is 16 with the terminator, so fifteen characters is the longest
-# name that can reach here at all, and the headline interpolates it.
+# With the longest name Linux can carry as well as with `ens18`, because the
+# name is interpolated into the row and IFNAMSIZ is 16 with the terminator, so
+# fifteen characters is the longest name that can reach here at all.
 _LONG = "e" * 15
 _LONG_ROUTE = ONE_ROUTE.replace("ens18", _LONG)
 _LONG_ADDRS = dict(IP_ADDRS)
@@ -1042,26 +1072,19 @@ for _name, _cards, _route, _addrs in (
     with tempfile.TemporaryDirectory() as tmp:
         sh = one_card_box(tmp, cards=_cards, route=_route, addrs=_addrs)
         _said = drive(sh, ["configure", f"dataplane interface {_name}"])
-        # The box has to have ACCEPTED it, or the widest line measured is a
-        # refusal and this case is about a path it never took.
+        # The box has to have ACCEPTED it, or the rows measured below are
+        # offered for a name the box then turns down.
         check("error:" not in _said,
-              f"the one-card box refused {_name!r}, so the width below is of "
-              f"a refusal and not of the handover: {_said!r}")
-        _one_wide += [l for l in _said.splitlines()
-                      if len(l) > CONSOLE_COLUMNS]
-# And the completion rows, rendered the way the VTY renders them.
-with tempfile.TemporaryDirectory() as tmp:
-    sh = one_card_box(tmp)
-    _rows = sh.dynamic_options(hexash.ARG_HOST_NIC, "")
-    for _n, _hint in _rows.items():
-        _row = f"  {_n}  {_hint}"
-        if len(_row) > CONSOLE_COLUMNS:
-            _one_wide.append(_row)
+              f"the one-card box refused {_name!r}: {_said!r}")
+        _rows = sh.dynamic_options(hexash.ARG_HOST_NIC, "")
+        for _n, _hint in _rows.items():
+            _row = f"  {_n}  {_hint}"
+            if len(_row) > CONSOLE_COLUMNS:
+                _one_wide.append(_row)
 check(not _one_wide,
-      f"the one-card handover wraps on a serial console: "
+      f"the one-card completion row wraps on a serial console: "
       f"{[(len(l), l) for l in _one_wide]}")
-print(f"  the one-card path and its completion rows fit "
-      f"{CONSOLE_COLUMNS} columns")
+print(f"  the completion rows fit {CONSOLE_COLUMNS} columns on both names")
 
 print("\n=== a statement FRR already carries does not block every commit (#358) ===")
 # `set local-preference banana` was accepted at this prompt and committed
@@ -1209,101 +1232,117 @@ check("commit confirmed 30" not in proc,
       "docs/appliance.md still tells an operator that naming a card arms a "
       "thirty-minute window, and it does not")
 
-print("\n=== and the refusal stands wherever the advice can be followed ===")
-# The two-card box is refused exactly as before - see the refusal section
-# above, which is unchanged - and now it names the card to use instead rather
-# than describing it.
+print("\n=== and on the two-card box, no record is written for it ===")
+# The record the VTY wrote beside the card was for the box that has no other
+# card (#303), and #385 took the writer out. A two-card box naming the card
+# it is reached on is accepted now, and it gets no record here either: the
+# tuner reads the way back off the card on the boot that claims it,
+# whichever box it is on.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     said = drive(sh, ["configure", "dataplane interface enp1s0"])
-    check("error:" in said and "enp2s0" in said,
-          f"the refusal tells the operator to name the subscriber card and "
-          f"does not say which one that is: {said!r}")
-    check(not sh.candidate.dataplane_mgmt,
-          f"a box with a spare card recorded a management path it will never "
-          f"need: {sh.candidate.dataplane_mgmt!r}")
-    print("  refused, and the card to name instead is named")
+    check("error:" not in said and sh.candidate.dataplane_if == "enp1s0",
+          f"the two-card box refused the card it is reached on: {said!r}")
+    check("192.168.2.50" not in sh.candidate.text(),
+          f"a box with a spare card recorded a management path the tuner "
+          f"computes for itself: {sh.candidate.text()!r}")
+    print("  accepted, and nothing recorded")
 
-print("\n=== a card whose management state cannot be carried is refused ===")
-# An address this box cannot read is an address it cannot put back, and a
-# handover it cannot undo on the far side is the walk to the console the
-# original refusal exists to prevent.
+print("\n=== a card whose management state cannot be read is accepted too ===")
+# IT WAS REFUSED, saying which of the address, the gateway and the MAC was
+# missing, because an address this box cannot read is one it cannot put back.
+# That is still true and it is the tuner's question now (#385): it reads the
+# same three things off the live card on the boot that claims it and declines
+# the card when one is missing, saying which in the journal. A second answer
+# at the prompt, from a reading taken on a different day, is the pair that
+# comes to disagree - and the prompt no longer refuses a card for what the
+# box may or may not be able to read at its next boot.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp, addrs={})
     said = drive(sh, ["configure", "dataplane interface ens18"])
-    check("error:" in said and "cannot be carried over" in said,
-          f"a card with no address was handed over anyway: {said!r}")
-    check("no single global IPv4 address" in said,
-          f"and the refusal does not say WHICH part is missing: {said!r}")
-    check(sh.candidate.dataplane_if == "" and not sh.candidate.dataplane_mgmt,
-          f"refused and stored anyway: {sh.candidate.dataplane_if!r}")
-    print("  refused, and it says what is missing")
+    check("error:" not in said,
+          f"a card with no address was refused at the prompt, which is the "
+          f"refusal #385 removed: {said!r}")
+    check(sh.candidate.dataplane_if == "ens18",
+          f"accepted and not stored: {sh.candidate.dataplane_if!r}")
+    print("  accepted, and the tuner decides at boot")
 
 with tempfile.TemporaryDirectory() as tmp:
-    # Two addresses is the same answer. Choosing between them is choosing
-    # which address the box comes back on, and a box that guesses that wrong
-    # comes back where nobody is looking for it.
+    # Two addresses is the same answer for the same reason.
     sh = one_card_box(tmp, addrs={
         "ens18": IP_ADDRS["ens18"] + "\n2: ens18    inet 10.0.9.9/24 scope "
                                      "global secondary ens18"})
     said = drive(sh, ["configure", "dataplane interface ens18"])
-    check("error:" in said,
-          f"a card with two addresses was handed over on a guess: {said!r}")
-    print("  and a card with two addresses is not guessed at")
+    check("error:" not in said and sh.candidate.dataplane_if == "ens18",
+          f"a card with two addresses was refused at the prompt: {said!r}")
+    check("10.0.9.9" not in sh.candidate.text()
+          and "10.95.200.198" not in sh.candidate.text(),
+          f"and a record was written by guessing between them: "
+          f"{sh.candidate.text()!r}")
+    print("  and a card with two addresses is accepted with nothing guessed")
 
-print("\n=== the record is written where the box can read it back ===")
-# It cannot live only in the saved file. `show running-config` and `save`
-# build the running state by reading the BOX, and between the commit that
-# names the card and the boot that hands it over there is nothing on the box
-# to read: the dataplane has no such interface yet and Linux still holds the
-# address on a card that is about to stop existing. Saved from a fresh
-# session, the file came out naming the card with no way to keep the box
-# reachable - which is the one file where that mistake cannot be recovered.
+print("\n=== commit writes the card into tune.env and nothing beside it (#385) ===")
+# It used to write the management record beside HEXA_DATAPLANE_IF on this
+# box, so that a later session reading the box back found the way back as
+# well as the card. The way back is the tuner's now, computed on the boot that claims
+# the card and left in /run; a copy in tune.env would be read back into the
+# running configuration and written again by the next commit, a day older
+# each time. Held against the file, because "not written" is what this is.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp)
     said = drive(sh, ["configure", "dataplane interface ens18", "commit"])
     check("commit complete" in said, f"the commit did not complete: {said!r}")
     tune = open(sh.TUNE_ENV).read()
-    check("HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 52:54:00:00:00:01"
-          in tune,
-          f"the management path is not in the tuner's file, so a later "
-          f"session reading the box finds the card named and nothing to keep "
-          f"it reachable: {tune!r}")
-    check(sh.read_dataplane_mgmt() == sh.candidate.dataplane_mgmt,
-          f"written and not read back the same: {sh.read_dataplane_mgmt()!r}")
+    check("HEXA_DATAPLANE_IF=ens18" in tune.splitlines(),
+          f"the card is not in the tuner's file: {tune!r}")
+    # THE WHOLE FILE, not the absence of one key: the shipped file with the
+    # card's line changed and nothing else, so a record written under any
+    # name beside the card is a difference.
+    check(tune == TUNE_ENV_SHIPPED.replace("HEXA_DATAPLANE_IF=\n",
+                                           "HEXA_DATAPLANE_IF=ens18\n"),
+          f"the commit still writes something beside the card, which the "
+          f"tuner computes for itself: {tune!r}")
     # And the prose the file ships with is still there, which is the rule the
     # card's own setting already has.
     check("EMPTY ON PURPOSE" in tune,
           f"the file was rewritten from the settings this VTY models: {tune!r}")
-    print("  in tune.env, beside the card, and read back the same")
+    print("  the card, the prose, and no record")
 
-print("\n=== rendered, and parsed back, so a saved file replays it ===")
-_cfg = config.Config()
-_cfg.dataplane_if = "ens18"
-_cfg.dataplane_mgmt = {"name": "ens18", "address": "10.95.200.198/24",
-                       "mac": "52:54:00:00:00:01"}
-_back = config.Config.parse(_cfg.text())
-check(_back.dataplane_mgmt == _cfg.dataplane_mgmt,
-      f"rendered and not parsed back: {_back.dataplane_mgmt!r}")
-check(not _back.unknown,
-      f"the box renders a line it then refuses to load, which is a box that "
-      f"cannot boot on its own file: {_back.unknown!r}")
-_bad = config.Config.parse(
-    "dataplane management ens18 address 10.95.200.198 mac 52:54:00:00:00:01\n")
-check(_bad.unknown and not _bad.dataplane_mgmt,
-      f"an address with no prefix length was accepted, and the box cannot "
-      f"tell which addresses are on its own subnet: {_bad.unknown!r}")
-print(f"  round-trips, and refuses: {_bad.unknown[0][2]!r}")
-
-print("\n=== the gateway makes its own next hop connected ===")
-# Otherwise the default route that comes with the handover has a next hop
-# nothing in the file appears to connect - the card has no dataplane interface
-# to carry an address on until the reboot - and the check from #294 refuses
-# the whole configuration at the commit that names the card.
-check(_cfg.connected_prefixes().get(0) == ["10.95.200.198/24"],
-      f"the management address connects nothing, so its own default route is "
-      f"refused: {_cfg.connected_prefixes()!r}")
-print("  table 0 carries the address the card will have")
+print("\n=== a saved file from 0.76.x still loads, with its record dropped (#385) ===")
+# `dataplane management <card> address <a/len> mac <xx>` was written by `save`
+# on every one-card box set up from 0.74.x to 0.76.1, under the card, and
+# hexarouting.service replays that file at every boot. The statement is gone:
+# the way back is computed by the tuner on the boot that claims the card, and
+# a line the box no longer reads was doing nothing. A file carrying one is
+# NOT refused - a refusal at boot is a box coming up with no pools on it, read
+# by nobody, over a line that changed nothing - it is loaded minus that line,
+# the boot log says so, and the next `save` writes the file without it.
+_old = ("dataplane interface ens18\n"
+        "dataplane management ens18 address 10.95.200.198/24 "
+        "mac 52:54:00:00:00:01\n"
+        "ssh port 22\n")
+_cfg = config.Config.parse(_old)
+check(not _cfg.unknown,
+      f"a 0.76.x saved file is refused over the statement it was told to "
+      f"write: {_cfg.unknown!r}")
+check(len(_cfg.dropped) == 1 and _cfg.dropped[0][0] == 2,
+      f"the line is not reported as dropped, so the file and the running "
+      f"configuration differ with nobody told: {_cfg.dropped!r}")
+check(_cfg.dataplane_if == "ens18" and "management" not in _cfg.text(),
+      f"the card survives the drop and the record does not get rendered "
+      f"again: {_cfg.text()!r}")
+# AND AT THE PROMPT it is not a statement at all: an operator pasting a
+# 0.76.x file gets the usage line, which names the one statement there is.
+# The boot's own reading of such a file is driven through load() further
+# down, beside the other boots after a handover, where the fixture for a box
+# replaying a saved file lives.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = one_card_box(tmp)
+    said = drive(sh, ["configure", "dataplane management ens18 address "
+                                   "10.95.200.198/24 mac 52:54:00:00:00:01"])
+    check("error: usage: dataplane interface <name>" in said,
+          f"the prompt still takes the statement: {said!r}")
+print("  parsed minus the line, and refused at the prompt")
 
 print("\n=== handing over the management card arms NO window (#378) ===")
 # IT USED TO, and the window stopped undoing anything. It was armed because
@@ -1326,18 +1365,17 @@ with tempfile.TemporaryDirectory() as tmp:
           f"box promises to give a card back that it re-claims: {said!r}")
     check("rollback at" not in said and "30 minute" not in said,
           f"the screen still offers a window the box does not have: {said!r}")
-    # AND WHAT IT SAYS INSTEAD. Removing a promise is not enough; an operator
-    # who names a card by hand needs to know there is no safety net because
-    # none is needed.
-    # KEYED ON THE NEW SENTENCE AND NOT ON A WORD IT SHARES. The first
-    # version looked for "claim", which the screen says two paragraphs up
-    # about something else - so deleting the sentence this is about left the
-    # check green. That is TESTING.md's fourth lie with the needle cut from
-    # the wrong message.
-    check("nothing is armed to undo this" in " ".join(said.split()),
+    # AND WHAT IT SAYS INSTEAD. The prompt's own sentence about there being
+    # no safety net went with the writer that printed it (#385); what the
+    # operator is told now is what every card is told at the commit - the
+    # dataplane claims it when it starts, and this commit does not restart it.
+    # KEYED ON THE SENTENCE AND NOT ON A WORD IT SHARES, which is the lesson
+    # the first version of this check taught: it looked for "claim", which the
+    # screen says elsewhere about something else.
+    check("NOT IN EFFECT YET" in said and "does not restart" in said,
           f"nothing on the screen tells the operator what happens to the card "
           f"they just named: {said!r}")
-    print("  no window, and the screen says why none is needed")
+    print("  no window, and the commit says when the card moves")
 
 print("\n=== the dataplane's name for the card is found by its MAC ===")
 # Nothing carries the Linux name across: `ens18` becomes whatever DPDK calls
@@ -1361,7 +1399,8 @@ with tempfile.TemporaryDirectory() as tmp:
                       dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
     ok = sh.apply_management_path({"name": "ens18",
                                    "address": "10.95.200.198/24",
-                                   "mac": "52:54:00:00:00:01"})
+                                   "mac": "52:54:00:00:00:01",
+                                   "gateway": "10.95.200.1"})
     made = [a for m, a in api.calls if m == "lcp_itf_pair_add_del"]
     addrs = [a for m, a in api.calls if m == "sw_interface_add_del_address"]
     check(ok, "the box could not put its own management path back")
@@ -1386,8 +1425,7 @@ with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp, api=FakeApi(have=("GigabitEthernet0/3/0",)),
                       dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
     computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n")
-    sh.apply_management_path(sh.read_dataplane_mgmt()
-                             or sh.read_computed_mgmt())
+    sh.apply_management_path(sh.read_computed_mgmt())
     _route = [a for a in sh.ran if a[:3] == ["ip", "route", "replace"]]
     check(_route,
           f"nothing put the default route back, so the box is reachable from "
@@ -1396,21 +1434,6 @@ with tempfile.TemporaryDirectory() as tmp:
                                    "via", "10.95.200.1", "dev", "ens18"],
           f"the route was put back with the wrong next hop or on the wrong "
           f"interface: {_route!r}")
-
-print("\n=== and the VTY's own record does not get one invented for it ===")
-# It has three fields and its route arrives with the saved configuration
-# (#303). A route invented here would be a second author for one statement.
-with tempfile.TemporaryDirectory() as tmp:
-    sh = one_card_box(tmp, api=FakeApi(have=("GigabitEthernet0/3/0",)),
-                      dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}),
-                      tune="HEXA_DATAPLANE_IF=ens18\n"
-                           "HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 "
-                           "52:54:00:00:00:01\n")
-    sh.apply_management_path(sh.read_dataplane_mgmt()
-                             or sh.read_computed_mgmt())
-    check(not [a for a in sh.ran if a[:3] == ["ip", "route", "replace"]],
-          f"a route was installed for a record that carries no gateway, so "
-          f"this box has two authors for one statement: {sh.ran!r}")
 
 print("\n=== and on every other boot it does nothing, quietly ===")
 # `hexash --load` runs at every boot, including the ones before the operator
@@ -1424,7 +1447,8 @@ with tempfile.TemporaryDirectory() as tmp:
     with contextlib.redirect_stdout(out):
         ok = sh.apply_management_path({"name": "ens18",
                                        "address": "10.95.200.198/24",
-                                       "mac": "52:54:00:00:00:01"})
+                                       "mac": "52:54:00:00:00:01",
+                                       "gateway": "10.95.200.1"})
     check(ok and not api.calls,
           f"a boot before the card had moved was treated as a failure: "
           f"{ok!r} {api.calls!r}")
@@ -1440,20 +1464,25 @@ with tempfile.TemporaryDirectory() as tmp:
 # the dataplane holding GigabitEthernet0/9/0 - and the box came back with no
 # address on any interface and nobody could reach it. What the box replays at
 # boot is /etc/hexarouting/hexarouting.conf, and `commit` does not write that
-# file: only `save` does. `commit` writes the card AND the path it carries into
-# the tuner's file, which is what performs the handover at the next boot. So
-# the two halves of one decision had two lifetimes, and the half that keeps the
-# box reachable was the one that did not survive.
+# file: only `save` does. `commit` writes the card into the tuner's file,
+# which is what performs the handover at the next boot. So the two halves of
+# one decision had two lifetimes, and the half that keeps the box reachable
+# was the one that did not survive.
+#
+# WHERE THE WAY BACK COMES FROM, since #385: /run, and only /run. The tuner
+# computes it off the live card on the boot that claims it, and load() puts
+# it back whatever the saved file says about the card. The VTY's own record
+# in tune.env was read here in preference until 6b, and only where the file
+# named nothing - so a file that named the card without such a record was a
+# boot that put nothing back.
 #
 # Driven through `load()` against a file on disk rather than by calling
 # apply_management_path() directly, because "never called" is the defect: a
 # case that calls it cannot see it.
 
-#: The tuner's file as the handover commit leaves it.
+#: The tuner's file as the commit that named the card leaves it.
 TUNE_HANDED_OVER = TUNE_ENV_SHIPPED.replace(
-    "HEXA_DATAPLANE_IF=\n",
-    "HEXA_DATAPLANE_IF=ens18\n"
-    "HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 52:54:00:00:00:01\n")
+    "HEXA_DATAPLANE_IF=\n", "HEXA_DATAPLANE_IF=ens18\n")
 #: /proc/net/route on the boot after it: the card is gone and so is the route
 #: that lived on it.
 NO_ROUTE = ("Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask"
@@ -1479,6 +1508,7 @@ def booted_after_handover(tmp, conf, dp=None, api=None):
     sh = shell_on(tmp, route=NO_ROUTE, cards=("lo",), tune=TUNE_HANDED_OVER,
                   api=api or FakeApi(have=("GigabitEthernet0/3/0",)),
                   dp=dp or FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
+    computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n")
     path = os.path.join(tmp, "etc/hexarouting/hexarouting.conf")
     with open(path, "w") as f:
         f.write(conf)
@@ -1531,7 +1561,62 @@ with tempfile.TemporaryDirectory() as tmp:
           and addrs[0]["is_add"],
           f"the pair was made and the management address did not go on it: "
           f"{api.calls!r}")
-    print("  the record is in tune.env, and the file being replayed needs none")
+    print("  the record is in /run, and the file being replayed needs none")
+
+print("\n=== and on a box whose saved file NAMES the card (#385) ===")
+# THE GAP 6b CLOSES. load() took the way back from its holder only where the
+# saved file named no card, and a file that named one was left with whatever
+# record it carried - which until #385 was the VTY's, written beside the card
+# at the commit, and since step 5 is nothing at all on a box with a spare
+# card. So `dataplane interface ens18`, `save`, reboot was a boot that put
+# nothing back. The computed record is applied whatever the file says.
+with tempfile.TemporaryDirectory() as tmp:
+    api = FakeApi(have=("GigabitEthernet0/3/0",))
+    sh, path = booted_after_handover(tmp, "dataplane interface ens18\n",
+                                     api=api)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.load(path)
+    made = [a for m, a in api.calls if m == "lcp_itf_pair_add_del"]
+    addrs = [a for m, a in api.calls if m == "sw_interface_add_del_address"]
+    check(made and made[0]["host_if_name"] == "ens18",
+          f"a saved file naming the card left the boot with no pair, so the "
+          f"way back the tuner computed was never put back: {api.calls!r} "
+          f"{out.getvalue()!r}")
+    check(addrs and addrs[0]["prefix"] == "10.95.200.198/24"
+          and addrs[0]["is_add"],
+          f"the address did not go on the pair: {api.calls!r}")
+    check([a for a in sh.ran if a[:3] == ["ip", "route", "replace"]],
+          f"and the default route was not put back: {sh.ran!r}")
+    print("  the file names the card, and the way back still comes from /run")
+
+print("\n=== and on a box whose saved file carries the 0.76.x record (#385) ===")
+# The other half of the drop case above, through load() on the box that has
+# such a file: the way back comes from /run as on every boot, the rest of the
+# file is applied, and the note is on the console rather than a refusal.
+with tempfile.TemporaryDirectory() as tmp:
+    api = FakeApi(have=("GigabitEthernet0/3/0",))
+    sh, path = booted_after_handover(tmp, _old, api=api)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.load(path)
+    said = out.getvalue()
+    check("refusing to load" not in said,
+          f"the boot refused a 0.76.x saved file over the dropped statement: "
+          f"{said!r}")
+    check("note:" in said and "dropped" in said
+          and "dataplane management" in said,
+          f"the boot log does not say the line was dropped: {said!r}")
+    made = [a for m, a in api.calls if m == "lcp_itf_pair_add_del"]
+    check(made and made[0]["host_if_name"] == "ens18",
+          f"and the way back was not put on the pair from /run: {api.calls!r}")
+    # The rows this VTY composes fit the console; the path and the file's
+    # own line are quoted whole on rows of their own, where a fold costs
+    # nothing, and are not measured (#276).
+    _wide = [l for l in said.splitlines() if len(l) > CONSOLE_COLUMNS
+             and l.strip() != path and not l.startswith("    dataplane ")]
+    check(not _wide, f"the note does not fit the console: {_wide!r}")
+    print("  loaded minus the line, and said on the console")
 
 print("\n=== and on a box that HAD saved, before the card was named ===")
 # The other file this boot can find: a configuration saved before the handover,
@@ -1552,8 +1637,6 @@ with tempfile.TemporaryDirectory() as tmp:
     check(sh.read_dataplane_if() == "ens18",
           f"and the boot replay un-named the card the box is holding, so the "
           f"next boot gives it back: {sh.read_dataplane_if()!r}")
-    check(sh.read_dataplane_mgmt().get("mac") == "52:54:00:00:00:01",
-          f"and the record went with it: {sh.read_dataplane_mgmt()!r}")
     print("  the card keeps its name, and the address goes on the pair")
 
 print("\n=== a card on neither side is SAID, not returned as success ===")
@@ -1568,7 +1651,7 @@ with tempfile.TemporaryDirectory() as tmp:
         dp=FakeVpp({"show hardware-interfaces": DP_NOTHING}))
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        ok = sh.apply_management_path(sh.read_dataplane_mgmt())
+        ok = sh.apply_management_path(sh.read_computed_mgmt())
     said = out.getvalue()
     check(not ok, "a box with its only card on neither side reported success")
     check(said.startswith("error:"),
@@ -1597,7 +1680,8 @@ with tempfile.TemporaryDirectory() as tmp:
     with contextlib.redirect_stdout(out):
         ok = sh.apply_management_path({"name": "ens18",
                                        "address": "10.95.200.198/24",
-                                       "mac": "52:54:00:00:00:01"})
+                                       "mac": "52:54:00:00:00:01",
+                                       "gateway": "10.95.200.1"})
     check(ok and out.getvalue() == "",
           f"a box whose /sys/class/net cannot be read was told its card had "
           f"been handed over and lost: {ok!r} {out.getvalue()!r}")
@@ -1616,7 +1700,7 @@ print("\n=== an unconfirmed revert restarts nothing, because it undoes nothing =
 # where it started and charged a reboot for it.
 #
 # The configuration half of the revert stays and is asserted here: the setting
-# and the record go. What must not happen any more is the restart.
+# goes. What must not happen any more is the restart.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp, api=FakeApi(have=("GigabitEthernet0/3/0",)),
                       dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
@@ -1645,7 +1729,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("card goes back to Linux" not in said,
           f"the console still promises the card returns to Linux, which the "
           f"next start undoes: {said!r}")
-    print("  setting cleared, record gone, and no reboot")
+    print("  setting cleared, and no reboot")
 
 print("\n=== NO revert reboots the box, whatever it reverted (#378) ===")
 # TWO CASES COLLAPSED INTO ONE, because what they bounded is gone. They said
@@ -1705,10 +1789,12 @@ NO_DEFAULT_ROUTE = (
 # restart never touches it, so the operator was told they would lose the box
 # for a change that cannot cost them the box.
 #
-# The product already answers this question correctly in three other places -
-# the refusal offers the other card, the management record is written only for
-# this one, and `commit` arms a confirmed commit only when the card carries
-# the session - so what is asserted here is that the fourth agrees with them.
+# The product answered this question correctly in three other places once -
+# the refusal offered the other card, the management record was written only
+# for this one, and `commit` armed a confirmed commit only when the card
+# carried the session - and all three went, with #378 and #385. This screen
+# is the one left, so what is asserted here is that it asks the box the same
+# pair `show hardware` reads rather than stating one answer for every box.
 print("\n=== what the restart costs is asked, not stated ===")
 with tempfile.TemporaryDirectory() as tmp:
     said = drive(shell_on(tmp),

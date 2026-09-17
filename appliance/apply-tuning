@@ -22,12 +22,6 @@ LIVEDIR=$ROOT/run/live
 : "${HEXA_SUBSCRIBERS:=200000}"
 : "${HEXA_LOW_LATENCY:=1}"
 : "${HEXA_MAX_WORKERS:=}"
-# Written by the VTY beside the card's own name, and never without the address
-# and MAC to put back. Its PRESENCE is the whole of what the tuner is told:
-# the tuner refuses the card carrying the default route, and this is the one
-# thing that says the box has recorded a way to stay reachable without it
-# (#303). Nothing here parses it - the VTY wrote it and the VTY reads it.
-: "${HEXA_DATAPLANE_MGMT:=}"
 
 # tune.env is a file an operator edits by hand, and every value in it used to
 # be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
@@ -125,7 +119,6 @@ before=$(cat "$GRUBFILE" 2>/dev/null || true)
 
 set -- --write --subscribers "$HEXA_SUBSCRIBERS"
 [ -n "$HEXA_DATAPLANE_IF" ] && set -- "$@" --interface "$HEXA_DATAPLANE_IF"
-[ -n "$HEXA_DATAPLANE_MGMT" ] && set -- "$@" --keep-management
 [ "$HEXA_LOW_LATENCY" = 1 ] || set -- "$@" --no-low-latency
 # The tuner has always accepted --max-workers; nothing ever passed it, so the
 # only reachable behaviour was "every core but one is a worker" and the cap
@@ -185,10 +178,10 @@ printf 'kernel cmdline hugepages: %s\n' \
 # THE DIRECTION TO BE WRONG IN, when this cannot be told. Skipping a bind that
 # should have happened leaves a box that forwards nothing and is reachable, and
 # the self-test says so on the console. Performing one that should not leaves a
-# box nobody can reach. This file already carries that trade, in the refusal
-# #123 is about: a box with no dataplane card is fixed over the network, and a
-# box that ate its own management is fixed by walking to it. So the bind runs
-# only when the dataplane is positively known NOT to be up.
+# box nobody can reach. That is the trade #123 named: a box with no dataplane
+# card is fixed over the network, and a box that ate its own management is
+# fixed by walking to it. So the bind runs only when the dataplane is
+# positively known NOT to be up.
 # Three answers, not two, because "the dataplane is not up" and "nobody here
 # can be asked" are different boxes and only one of them is the boot. Without
 # systemd this is not an appliance starting: it is a chroot during the install

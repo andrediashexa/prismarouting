@@ -81,7 +81,9 @@ echo "=== and every other lab is named, with the count as a floor ==="
 # THE FLOOR IS THE HIGHEST THE UNACCOUNTED MAY BE. Not the exact number: a lab
 # that gains a reason lowers it, and requiring equality would make doing the
 # right thing turn this red.
-UNACCOUNTED_AT_MOST=32
+# 32 until #385 deleted lab/one-nic.sh, which was #303's proof and had no off
+# run; a lab that leaves lowers the floor, which is the ratchet.
+UNACCOUNTED_AT_MOST=31
 unaccounted=""
 for f in "$REPO"/lab/*.sh; do
   n=$(basename "$f" .sh)

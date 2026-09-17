@@ -255,10 +255,9 @@ class Topology:
 
         The cards DPDK could be given, which is not the same as the netdevs
         Linux has: `lo`, a bridge, a bond and a veth have no PCI address, so
-        the dataplane could not be handed any of them. Used to tell a box with
-        a spare card from one with none, which is the difference between the
-        refusal below standing and its advice naming a card that does not
-        exist (#303).
+        the dataplane could not be handed any of them. Used to decide which
+        cards the box claims, and whether the one it is reached on is the
+        last one it has (#378).
         """
         out = []
         try:
@@ -274,10 +273,13 @@ class Topology:
         """
         The interface carrying the default route, from /proc/net/route.
 
-        Read so that the box can refuse to hand VPP the path the operator is
-        reaching it over. Handing that NIC to the dataplane does not degrade
-        the box, it removes it: no SSH, no ping, nothing but a console
-        somebody has to walk to. https://github.com/andrediashexa/hexarouting/issues/123
+        Read so that the box can work out, before anything is unbound, how to
+        stay reachable once the dataplane holds the card it is reached on:
+        the way back is computed off this card on the boot that claims it
+        (#378). It was first read to REFUSE that card when it was named
+        (#123), and the refusal went with #385 - a box is configured at its
+        console when it is new, so a refusal guarding the card it is reached
+        over guards a step nobody takes over the network.
         """
         try:
             with open(self.p("proc/net/route")) as f:
@@ -324,11 +326,13 @@ class Topology:
         """
         The one global IPv4 address on this card, as `a.b.c.d/nn`, or None.
 
-        THE FIRST AND ONLY, deliberately, which is the same rule the VTY's own
-        reader applies: a card with several is a card whose management address
-        nothing here can choose between, and getting it wrong means the box
-        comes back on an address nobody is trying to reach. None is then the
-        honest answer and the caller refuses the handover rather than guessing.
+        THE FIRST AND ONLY, deliberately: a card with several is a card whose
+        management address nothing here can choose between, and getting it
+        wrong means the box comes back on an address nobody is trying to
+        reach. None is then the honest answer, and the caller declines the
+        card rather than guessing. This is the only reader of that address
+        since #385; the VTY had one of its own, applying the same rule at the
+        prompt, and it went with the record it wrote.
 
         Shelled out for the reason nic_max_mtu() above is: Linux publishes an
         interface's address nowhere under /sys or /proc in a form that names
@@ -653,9 +657,11 @@ def management_path(topo, ifname):
             "gateway": gateway}
 
 
-#: Where the computed way back is left for the two programs that need it:
-#: appliance/bind-dataplane-nic, which will not unbind the last card without
-#: it, and hexash at boot, which puts the address on the linux_cp pair.
+#: Where the computed way back is left for the two readers it has: `hexash
+#: --load` at boot, which puts the address and the default route on the
+#: linux_cp pair, and appliance/selftest, which prints it on a box that gave
+#: its card away and has no pair. The binder reads startup.conf and nothing
+#: else (#385): a card kept out of the stanza here is a card nothing takes.
 #:
 #: IN /run AND NOT IN /etc, and the reason is the defect being designed out.
 #: /run is tmpfs: the file cannot outlive the boot that computed it, so a
@@ -672,18 +678,21 @@ MGMT_PATH_FILE = os.environ.get("HEXA_MGMT_PATH",
 
 def write_management_path(handover, path=None):
     """
-    Leave the computed way back where the binder and the VTY read it, or
-    remove the one a previous boot left. Returns the path written, or None.
+    Leave the computed way back where `hexash --load` and the self-test read
+    it, or remove the one a previous boot left. Returns the path written, or
+    None.
 
-    REWRITTEN OR REMOVED ON EVERY BOOT, never merely left. A file describing a
-    handover THIS boot is not making would be read by
-    appliance/bind-dataplane-nic as permission to take a card whose address it
-    cannot restore - which is the stale-record defect that putting this in
+    REWRITTEN OR REMOVED ON EVERY BOOT, never merely left. Both readers take
+    the file as a fact about THIS boot: one left from an earlier boot would
+    have appliance/selftest report a handover this boot did not make, and
+    would hand `hexash --load` an address read off the card on a day it no
+    longer describes - which is the stale-record defect that putting this in
     /run exists to prevent, arriving by the one route /run does not block.
 
     A function rather than four lines inside main() because it is the holder
-    of the record's SHAPE: the binder reads it with `cat` and hexash parses it
-    into a dict, so what those two agree on is decided here and nowhere else.
+    of the record's SHAPE: hexash.read_computed_mgmt() parses it into a dict
+    of four fields and appliance/selftest reads it with `cat`, so what those
+    two agree on is decided here and nowhere else.
     """
     path = path or MGMT_PATH_FILE
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -698,38 +707,19 @@ def write_management_path(handover, path=None):
 
 
 def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
-         keep_management=False, config_path=None, vpp_base=None,
-         mgmt_conf=None):
-    # Never the management path, even when it was named on purpose.
-    #
-    # Handing VPP the interface carrying the default route does not degrade
-    # the box, it removes it: the operator loses SSH the instant the dataplane
-    # starts and gets it back by walking to a console. A refusal that keeps
-    # the box reachable is recoverable in a sentence; the alternative is a
-    # site visit. So this overrides the setting rather than warning about it.
-    #
-    # It is not a guess about intent: an interface can carry subscriber
-    # traffic AND the default route only on a box that has one NIC.
-    # https://github.com/andrediashexa/hexarouting/issues/123
-    #
-    # And a box with one NIC is exactly the box that could then never forward,
-    # which is the dead end #303 was filed for. So the refusal keeps its
-    # ground wherever the advice behind it can be followed - another card
-    # means there is one to name instead - and steps aside only when there is
-    # no other card AND the box has written down how to stay reachable
-    # without it. `keep_management` is that record: apply-tuning passes it
-    # when HEXA_DATAPLANE_MGMT is set, which the VTY writes beside the card's
-    # own name and never without the address and MAC to put back.
-    # https://github.com/andrediashexa/hexarouting/issues/303
+         config_path=None, vpp_base=None, mgmt_conf=None):
+    # The card this box is reached on, read for one reason: so the way back
+    # can be computed off it below, before the bind takes it. It used to be
+    # read to REFUSE that card when it was named (#123), and to let it
+    # through on a one-card box only when the VTY had written a way back down
+    # beforehand (#303, `--keep-management`). Both went with #385, on the
+    # maintainer's decision: a box is configured at its console when it is
+    # new, so a refusal guarding the card it is reached over guards a step
+    # nobody takes over the network, and it stood between an operator and the
+    # card they had just named. A named card is claimed whichever route it
+    # carries; what keeps the box reachable is computed here on every boot,
+    # so nothing has to be recorded before the card may go.
     mgmt = topo.default_route_if()
-    refused = None
-    named_handover = False
-    if ifname and mgmt and ifname == mgmt:
-        others = [n for n in topo.pci_nics() if n != ifname]
-        if others or not keep_management:
-            refused, ifname = ifname, None
-        else:
-            named_handover = True
 
     # ------------------------------------- WHICH CARDS THE BOX CLAIMS (#378)
     #
@@ -768,11 +758,6 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         # subscribers.
         claimed = [ifname]
         claim_why = "override"
-    elif refused:
-        # The refusal above took the card away, and auto-claiming would hand
-        # back the very device it just refused.
-        claimed = []
-        claim_why = "refused"
     elif not cards:
         claimed = []
         claim_why = "no-cards"
@@ -803,24 +788,21 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     # one-card box - a box whose default route is on a card nothing reserved
     # is about to give that card away too, and it needs the same way back.
     #
-    # None means the box could not read one of the three, and the binder
-    # refuses on that: a handover whose far side cannot be restored is the
-    # walk to the console.
+    # None means the box could not read one of the three, and the card is
+    # then not claimed, below: a handover whose far side cannot be restored
+    # is the walk to the console, and this is the one place that decides it.
     handover = None
     no_way_back = None
     if mgmt and mgmt in claimed:
         handover = management_path(topo, mgmt)
-        # NOT ON THE PATH THE VTY ALREADY ANSWERED FOR. `--keep-management`
-        # says the operator named this card by hand and the box wrote the way
-        # back down at that commit (#303). That record is elsewhere and this
-        # program cannot see it, so a card declined here because THIS reader
-        # came up empty would be the tuner overruling an answer that exists.
-        # The automatic path is the one with nothing behind it.
-        if handover is None and not keep_management:
-            # AND THEN IT IS NOT CLAIMED. The card stays with Linux.
+        if handover is None:
+            # AND THEN IT IS NOT CLAIMED. The card stays with Linux, whether
+            # the box chose it or the operator named it: an override says
+            # which card, not that the box may come up unreachable, and
+            # since #385 this is the only reader of the way back there is.
             #
-            # The binder refuses this case too and always did, but a refusal
-            # THERE is the wrong place for it to be decided: startup.conf
+            # The binder used to refuse this case as well, and a refusal
+            # THERE was the wrong place for it to be decided: startup.conf
             # would name a device nothing binds, VPP would start with an
             # allowlist it cannot satisfy, and the box would come up with the
             # dataplane holding nothing while its own self-test reports a
@@ -829,9 +811,11 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
             #
             # Deciding it here instead leaves the box exactly where it was
             # before it tried: the card with Linux, no device claimed, and one
-            # [warn] saying so. The binder's refusal stays as the last line of
-            # defence for a startup.conf somebody edited by hand, which is
-            # what that check is for.
+            # [warn] saying so. Nothing downstream decides it again: the
+            # binder binds what startup.conf names and reads nothing else
+            # (#385), so a card kept out of the stanza here is a card nothing
+            # takes, and a startup.conf somebody edited by hand is bound as
+            # written.
             no_way_back = mgmt
             claimed = [c for c in claimed if c != mgmt]
             if not claimed:
@@ -880,19 +864,6 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     elif claim_why == "all" and claimed:
         nic_note = (f"claiming all {len(claimed)} card(s) on this box; none "
                     f"is reserved for Linux; node {node}")
-    # After the note above is decided, not inside it: the refusal is about
-    # which device is claimed, and the NUMA choice still has to happen.
-    if refused:
-        nic_note = (f"REFUSED to give '{refused}' to the dataplane: it carries "
-                    f"the default route, and the box would lose management. "
-                    f"No device is claimed; using node {node}")
-    elif named_handover:
-        # Said as plainly as the refusal, and for the same reason: this is the
-        # line in the journal that explains a box which came back on a
-        # different path than it left on.
-        nic_note = (f"'{ifname}' carries the default route and is the only "
-                    f"card this box has, so it is being handed over with its "
-                    f"management path kept on its linux_cp pair; node {node}")
 
     node_cpus = [c for c in topo.nodes[node] if c in topo.cpus]
     cores = topo.physical_cores(node_cpus)
@@ -993,8 +964,8 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "host_cards": cards,
         # The address, MAC and gateway of the card this box is reached on,
         # when that card is one of the ones being claimed. None otherwise, and
-        # None when they could not all be read - which the binder treats as a
-        # refusal rather than as "there was nothing to carry".
+        # None when they could not all be read - in which case the card was
+        # taken out of the claim above and `no_way_back` carries its name.
         "handover": handover,
         "handover_if": mgmt if (mgmt and mgmt in claimed) else None,
         # The card this box is reached on that it declined to claim, because
@@ -1397,19 +1368,32 @@ def render_vpp(p):
         # AND THIS IS NOW THE UNUSUAL BOX, not every fresh install (#378).
         # The box claims its cards by itself, so reaching here means it found
         # none it could claim: no PCI network card at all, a named card that
-        # does not resolve, or a named card the refusal above took away. The
+        # does not resolve, or a card whose way back could not be read. The
         # comment says which, because "no device is claimed" was equally true
         # of a working box before this and told an operator nothing.
+        #
+        # TWO SENTENCES for the way back, chosen by the card count. The one
+        # written first said "the only card this box has", which was true of
+        # every box that could reach it while only the automatic claim could:
+        # a box with a second card claimed that one instead. Since #385 a
+        # NAMED card is declined here too, and the override is exclusive, so
+        # a two-card box naming the card it is reached on lands here with a
+        # spare card beside it - and a sentence telling that operator there
+        # is no other card sends them to buy hardware they already have.
         _why = {
-            "refused": "the named card carries the default route and was\n"
-                       "  # refused, so no device is claimed.",
             "override": "the named card could not be resolved to a PCI\n"
                         "  # address, so there is no device to claim.",
             "no-cards": "this box has no PCI network card for the dataplane\n"
                         "  # to claim.",
-            "no-way-back": "the only card this box has carries its default\n"
-                           "  # route, and no way back to it could be read,\n"
-                           "  # so it stays with Linux.",
+            "no-way-back": (
+                f"'{p['no_way_back']}', the only card this box has,\n"
+                "  # carries its default route, and no way back to it\n"
+                "  # could be read, so it stays with Linux."
+                if len(p["host_cards"]) == 1 else
+                f"'{p['no_way_back']}' carries this box's default route,\n"
+                "  # and no way back to it could be read, so it stays\n"
+                "  # with Linux; no other card was to be claimed on this\n"
+                "  # boot."),
         }.get(p["claim_why"],
               "no card on this box could be claimed.")
         dpdk = ("dpdk {\n"
@@ -2200,10 +2184,6 @@ def main():
     ap.add_argument("--interface", help="dataplane NIC, to choose the NUMA node")
     ap.add_argument("--subscribers", type=int, default=200000)
     ap.add_argument("--max-workers", type=int)
-    ap.add_argument("--keep-management", action="store_true",
-                    help="the box has recorded the management path of the "
-                         "card being handed over, so a single-NIC box may "
-                         "give up the card carrying its default route")
     ap.add_argument("--no-low-latency", action="store_true",
                     help="do not disable C-states or THP on the kernel line")
     ap.add_argument("--sysfs-root", default="/")
@@ -2245,7 +2225,6 @@ def main():
     topo = Topology(a.sysfs_root)
     p = plan(topo, a.interface, a.subscribers, a.max_workers,
              low_latency=not a.no_low_latency,
-             keep_management=a.keep_management,
              config_path=a.config, vpp_base=a.vpp_base,
              mgmt_conf=a.mgmt_conf)
 
@@ -2288,15 +2267,19 @@ def main():
             print(f"warning: base {a.vpp_base} does not exist; generating tuning only",
                   file=sys.stderr)
         # THE WAY BACK, before startup.conf names the card it is about to
-        # take. Order matters within this block: appliance/bind-dataplane-nic
-        # runs after this program and reads BOTH, and a startup.conf naming a
-        # card with no way back beside it is the one combination that ends
-        # with a box nobody can reach.
+        # take. Order matters within this block: the binder reads startup.conf
+        # and nothing else (#385), so once that file names the card the bind
+        # goes ahead whatever /run holds, and the way back is what `hexash
+        # --load` puts on the pair after it. A startup.conf naming a card with
+        # no way back beside it is the one combination that ends with a box
+        # nobody can reach, and writing the record first is what keeps a boot
+        # that dies between the two writes out of it.
         #
         # REWRITTEN OR REMOVED ON EVERY BOOT, never left. A file describing a
-        # handover this boot is not making would be read by the binder as
-        # permission to take a card whose address it cannot restore, which is
-        # the stale-record defect that putting this in /run exists to prevent.
+        # handover this boot is not making would have the self-test report a
+        # handover that did not happen, and `hexash --load` put back an
+        # address read on another day - the stale-record defect that putting
+        # this in /run exists to prevent.
         if write_management_path(p["handover"]):
             print(f"wrote {MGMT_PATH_FILE}", file=sys.stderr)
         else:

@@ -995,77 +995,141 @@ with tempfile.TemporaryDirectory() as root:
     check("no-pci" in out, "an empty setting must claim nothing either")
     check("dev default" not in out, "and must not fall back to probing")
 
-print("\n=== the interface carrying the default route is refused ===")
-# Even when it is named on purpose. Handing VPP the management path does not
-# degrade the box, it removes it: the operator loses SSH the instant the
-# dataplane starts, and gets it back by walking to a console.
-with tempfile.TemporaryDirectory() as root:
-    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
-          hugepages_gb=8, isolated="1-3")
+print("\n=== the card carrying the default route is CLAIMED when it is named ===")
+# IT USED TO BE REFUSED, and the refusal went with #385. The argument for it
+# (#123) was that handing VPP the box's management path removes the box from
+# the network; the maintainer's answer is that a box is configured at its
+# console when it is new, so the refusal guarded a step nobody takes over the
+# network - and it stood between an operator and the card they had just
+# named, overriding the setting with `no-pci` and a REFUSED line in a journal
+# read hours later. What keeps the box reachable is below and not here: the
+# way back is read off that card on this boot, the same reading the automatic
+# claim gets, and a card whose way back cannot be read is not claimed whether
+# it was chosen or named.
+def _routed_named(root):
+    """One card, eth0, carrying the default route, with a MAC to read."""
+    with open(f"{root}/sys/class/net/eth0/address", "w") as f:
+        f.write("52:54:00:AB:CD:EF\n")
     os.makedirs(f"{root}/proc/net", exist_ok=True)
     with open(f"{root}/proc/net/route", "w") as f:
         f.write("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n")
         f.write("eth0\t00000000\t0102A8C0\t0003\t0\t0\t0\t00000000\n")
-    out = run(root, "--interface", "eth0")
-    check("no-pci" in out,
-          "the management interface must not be handed to the dataplane")
-    check("REFUSED" in out,
-          "and the refusal must be stated, not silent")
-    print("  " + field(out, "# "))
 
-print("\n=== a box with ONE card may give it up, with the way back written "
-      "down (#303) ===")
-# The refusal above is right about every box with somewhere else to put the
-# dataplane. On a box with one card its advice - name the other one - named a
-# card that does not exist, and the box could never forward. It steps aside
-# there, and only there, and only when the box has recorded the management
-# path it is going to put back: `--keep-management`, which apply-tuning passes
-# when the VTY has written HEXA_DATAPLANE_MGMT beside the card's name.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
-    os.makedirs(f"{root}/proc/net", exist_ok=True)
-    with open(f"{root}/proc/net/route", "w") as f:
-        f.write("Iface\tDestination\tGateway\tFlags\n")
-        f.write("eth0\t00000000\t0102A8C0\t0003\n")
-    # Without the record: refused, exactly as before. A hand-edited tune.env
-    # naming the management card must not take the box off the network.
-    out = run(root, "--interface", "eth0")
-    check("no-pci" in out and "REFUSED" in out,
-          "the only card was handed over with no record of how to get the box "
-          "back, which is a box nobody can reach")
-    # With it: claimed, and the journal says what happened and why.
-    out = run(root, "--interface", "eth0", "--keep-management")
-    check("no-pci" not in out,
-          "a box with one card and a recorded management path still could not "
-          "be given a dataplane, which is the dead end #303 is about")
-    check("dev 0000:3b:00.0" in out,
-          f"and the card was not named: "
+    _routed_named(root)
+    out = run(root, "--interface", "eth0", addr="192.168.2.50/24")
+    check("REFUSED" not in out,
+          f"the card the operator named was refused for carrying the default "
+          f"route, which is the refusal #385 removed: {field(out, '# ')}")
+    check("dev 0000:3b:00.0" in out and "no-pci" not in out,
+          f"and it was not claimed, so naming a card is still argued with: "
           f"{field(out, '# dataplane NIC PCI address(es):')}")
-    check("only card" in out and "linux_cp" in out,
-          f"the journal does not say the box handed over its management card "
-          f"or what keeps it reachable: {field(out, '# ')}")
+    # THE REPLACEMENT, on the same box: a named card that carries the box's
+    # route gets the same way back an automatically claimed one does.
+    check("192.168.2.50/24" in out and "192.168.2.1" in out,
+          f"the named card is the one this box is reached on and no way back "
+          f"was computed for it, so the box comes up forwarding and "
+          f"unreachable: {[l for l in out.splitlines() if l.startswith('#')][:8]}")
     print("  " + field(out, "# "))
 
-print("\n=== and a box with a SECOND card is refused even with the record ===")
-# The record says the box knows how to come back on the pair. It does not say
-# the box should: with a spare card there is one to name instead, and giving
-# away the management card for nothing is the mistake #123 exists for.
+print("\n=== and on a box with a SECOND card, naming it is the override ===")
+# The refusal was strongest here: with a spare card there was one to name
+# instead, so giving the management card away cost the box its management for
+# nothing (#123). It is gone here too, and deliberately not narrowed to the
+# one-card box: `dataplane interface` is an override, the override is
+# exclusive, and a box told which card to take takes that one. The way back
+# computed beside it is what keeps the operator's session from being the last
+# one anybody gets on this box.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
-    spare = f"{root}/sys/devices/pci0000:00/0000:3b:00.1"
-    os.makedirs(spare, exist_ok=True)
-    os.makedirs(f"{root}/sys/class/net/eth1", exist_ok=True)
-    os.symlink(spare, f"{root}/sys/class/net/eth1/device")
-    os.makedirs(f"{root}/proc/net", exist_ok=True)
-    with open(f"{root}/proc/net/route", "w") as f:
-        f.write("Iface\tDestination\tGateway\tFlags\n")
-        f.write("eth0\t00000000\t0102A8C0\t0003\n")
-    out = run(root, "--interface", "eth0", "--keep-management")
-    check("no-pci" in out and "REFUSED" in out,
-          "a box with a spare card gave away its management card anyway")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    _routed_named(root)
+    out = run(root, "--interface", "eth0", addr="192.168.2.50/24")
+    check("REFUSED" not in out and "dev 0000:3b:00.0" in out,
+          f"with a spare card beside it, the named card was still refused: "
+          f"{field(out, '# ')}")
+    check("dev 0000:3b:00.1" not in out,
+          f"the override is exclusive and the spare card was claimed beside "
+          f"the named one: {field(out, '# dataplane NIC PCI address(es):')}")
+    check("192.168.2.50/24" in out,
+          f"and the way back was not computed for the named card: "
+          f"{[l for l in out.splitlines() if l.startswith('#')][:8]}")
     print("  " + field(out, "# "))
+
+print("\n=== and a NAMED card whose way back cannot be read is declined, "
+      "not refused ===")
+# THE OTHER HALF OF THE REPLACEMENT, on the fixture the refusal had: eth0
+# named, carrying the default route, and no address to read off it. The
+# refusal answered that with `no-pci` and a REFUSED line whatever the card
+# carried; what answers it now is the decline the automatic claim gets three
+# sections below - `no-pci`, the report saying no way back could be read,
+# and no REFUSED, because nothing refuses: the program that would have taken
+# the card leaves it with Linux. Without this case the decline of a NAMED
+# card is reached by nothing, and a tuner that claimed a named card
+# regardless - master's `--keep-management` posture without the flag - would
+# pass every case above, since each of them gives the card an address.
+#
+# Once on the one-card box and once with a spare card beside it, because the
+# stanza's sentence about it differs between the two: a named card made the
+# two-card shape reachable for the first time, and the sentence written for
+# the one-card box said "the only card this box has" beside a box with two.
+for _label, _spare in (("one card", False), ("two cards", True)):
+    with tempfile.TemporaryDirectory() as root:
+        build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+              nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+        if _spare:
+            add_nic(root, "eth1", "0000:3b:00.1")
+        _routed_named(root)
+        out = run(root, "--interface", "eth0")        # no address to read
+        check("no-pci" in out,
+              f"{_label}: the named card was claimed with no way back to it, "
+              f"so the box comes up forwarding and unreachable: "
+              f"{field(out, '# dataplane NIC PCI address(es):')}")
+        check("dev 0000:3b:00.0" not in out,
+              f"{_label}: and its device is in the stanza, so DPDK takes it "
+              f"whatever the comment says")
+        check("could not read a way back" in " ".join(out.split()),
+              f"{_label}: the card was left with Linux and the report does "
+              f"not say why, which is the one thing an operator can act on: "
+              f"{[l for l in out.splitlines() if l.startswith('#')][:8]}")
+        check("REFUSED" not in out,
+              f"{_label}: the journal still says the card was REFUSED, which "
+              f"is the refusal #385 removed: {field(out, '# ')}")
+        _stanza = _dpdk_stanza(out)
+        if _spare:
+            check("the only card this box has" not in _stanza
+                  and "no other card" in _stanza,
+                  f"the stanza calls eth0 the only card on a box that has "
+                  f"eth1 beside it: {_stanza!r}")
+        else:
+            check("the only card this box has" in _stanza,
+                  f"the stanza does not tell the one-card box there is no "
+                  f"other card to name: {_stanza!r}")
+        print(f"  {_label}: declined with no-pci, said why, and no REFUSED")
+
+print("\n=== and --keep-management is not a flag this program has ===")
+# The flag said "the VTY has recorded a way back, so the last card may go".
+# The way back is computed here on every boot, so there is nothing for a flag
+# to vouch for - and a flag that is accepted and ignored is one apply-tuning
+# could go on passing for a record nothing reads, which is the shape of a
+# check that stopped checking. Refused by the parser, so a caller still
+# passing it fails loudly rather than being humoured.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    _p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root,
+                         "--interface", "eth0", "--keep-management"],
+                        capture_output=True, text=True,
+                        env=dict(os.environ, HEXA_IP="/bin/true"))
+    check(_p.returncode != 0
+          and "unrecognized arguments: --keep-management" in _p.stderr,
+          f"the tuner still takes --keep-management, so a record nothing "
+          f"reads can still be vouched for: rc={_p.returncode} "
+          f"{_p.stderr.strip()[-120:]!r}")
+    print("  refused by the parser, which is the only reader it has left")
 
 print("\n=== the box claims every card it has, with nobody having typed (#378) ===")
 # THE RULE, and the state it replaces: a fresh install came up with `no-pci`
@@ -1285,15 +1349,18 @@ with tempfile.TemporaryDirectory() as root:
     check("0102A8C0" not in out,
           "the gateway was printed as the raw hex field rather than decoded")
 
-print("\n=== and it is written where the binder and the VTY read it ===")
+print("\n=== and it is written where hexash --load and the self-test read it "
+      "===")
 # DRIVEN AT THE FUNCTION and not through `--write`, and the reason is not
 # convenience: the tuner's write block puts files in /etc/default/grub.d and
 # /etc/vpp, so it cannot run unprivileged at all - a suite that tried would be
 # asserting on a PermissionError. What is driven here is the holder of the
-# record's SHAPE, which is what appliance/bind-dataplane-nic reads with `cat`
-# and what hexash parses into a dict, so the thing those two have to agree on
-# is exactly what this measures. test/test_bind_nic.sh reads the same four
-# fields back from its own fixture, which is the other half.
+# record's SHAPE, which is what hexash.read_computed_mgmt() parses into a
+# dict of four fields and what appliance/selftest reads with `cat`, so the
+# thing those two have to agree on is exactly what this measures.
+# test/test_dataplane_if.py reads the same four fields back from its own
+# fixture, which is the other half; the binder reads startup.conf and nothing
+# else (#385), and test/test_bind_nic.sh holds that it does not read this.
 #
 # The same two globals the exec further down sets, and for the same reason:
 # the module prefix resolves paths off __file__, so without them the import
@@ -1310,7 +1377,8 @@ with tempfile.TemporaryDirectory() as root:
     check(_said == ["eth0", "192.168.2.50/24", "52:54:00:ab:cd:ef",
                     "192.168.2.1"],
           f"the file does not carry name, address, MAC and gateway in that "
-          f"order, which is what the binder and the VTY both read: {_said!r}")
+          f"order, which is what hexash --load and the self-test read: "
+          f"{_said!r}")
 
 print("\n=== a card whose way back cannot be read is NOT handed over ===")
 # An address the box cannot see is an address it cannot put back, and a
@@ -1342,7 +1410,8 @@ print("\n=== a card with two addresses is one the box will not carry back ===")
 # addresses is a card whose management address nothing here can choose
 # between, and choosing wrong means the box comes back on an address nobody is
 # trying to reach - which is indistinguishable, from outside, from a box that
-# never came back. The same rule the VTY's own reader applies.
+# never came back. The VTY's own reader applied the same rule at the prompt
+# until #385 took it out; this is the one reader there is now.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
@@ -1360,8 +1429,9 @@ with tempfile.TemporaryDirectory() as root:
 
 print("\n=== a stale way back is removed, not left for the next boot ===")
 # THE WHOLE ARGUMENT FOR /run. A file describing a handover THIS boot is not
-# making would be read by the binder as permission to take a card whose
-# address it cannot restore. It is rewritten or removed every boot.
+# making would have the self-test report a handover that did not happen, and
+# hand `hexash --load` an address read on another day. It is rewritten or
+# removed every boot.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
@@ -1382,7 +1452,7 @@ with tempfile.TemporaryDirectory() as root:
     _ns2["write_management_path"](None, path=_f)
     check(not os.path.exists(_f),
           "a way back from an earlier boot survived one that hands over "
-          "nothing, so the binder could take a card on stale permission")
+          "nothing, so its readers would take it for a fact about this boot")
 
 
 print("\n=== the documents do not instruct a step the box no longer needs ===")

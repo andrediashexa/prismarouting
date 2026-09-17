@@ -70,7 +70,8 @@ grammar.
 `Shell.PCI_DEVICES`, `Shell.PCI_DRIVERS` and
 `Shell.why_no_dataplane_interface()` are where `routing.md` says they are, and
 so are `HEXA_DATAPLANE_IF`, `HEXA_DATAPLANE_MGMT`, `--keep-management` and
-`/etc/hexarouting/confirm-pending`.
+`/etc/hexarouting/confirm-pending` (the last three were removed by #385 since
+this sweep; `routing.md` no longer names them).
 
 **Every timeout and limit.** The four RFC floors in `architecture.md:888-891`
 are the X-macro in `bpa_pool.h:109-119`, value for value and reference for

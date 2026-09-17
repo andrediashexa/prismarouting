@@ -246,7 +246,7 @@ echo "=== every shape the tuner can write, given to the real VPP ==="
 # 1. FIRST BOOT. Nothing reserved and nothing isolated, which is every box on
 # the boot after an install. No dpdk stanza at all, 4k pages, no pinning.
 R=$(mkroot firstboot 2 "" 0 8); addcard "$R" ens18 0000:00:12.0 1
-shape firstboot "$R" 1500 --interface ens18 --keep-management
+shape firstboot "$R" 1500 --interface ens18
 grep -q "FIRST BOOT MODE" "$WORK/firstboot.conf" \
   && ok "and it really is the conservative profile" \
   || bad "the 'firstboot' shape did not produce the conservative profile"
@@ -263,7 +263,7 @@ grep -q "no-pci" "$WORK/nopci.conf" \
 # 3. TUNED WITH ONE CARD, the ordinary small virtual machine: one worker, one
 # queue, one device named.
 R=$(mkroot onecard 2 "1" 2 8); addcard "$R" ens18 0000:00:12.0 1
-shape onecard "$R" 9000 --interface ens18 --keep-management
+shape onecard "$R" 9000 --interface ens18
 grep -q "dev 0000:00:12.0" "$WORK/onecard.conf" \
   && ok "and it names the device the operator chose" \
   || bad "the 'onecard' shape named no device"
@@ -273,7 +273,7 @@ grep -q "dev 0000:00:12.0" "$WORK/onecard.conf" \
 # card, and what it does with a maximum below 9000 is a decision that has to
 # meet VPP's parser like every other.
 R=$(mkroot lowmtu 2 "1" 2 8); addcard "$R" ens18 0000:00:12.0 1
-shape lowmtu "$R" 1500 --interface ens18 --keep-management
+shape lowmtu "$R" 1500 --interface ens18
 # The decision, named. Without this the [ ok ] above is "VPP accepted a file
 # that happens to say nothing about the MTU", which is exactly the state
 # before #382 and is what this shape exists to stop being invisible.
@@ -289,7 +289,7 @@ fi
 # 5. SEVERAL WORKERS AND SEVERAL QUEUES. corelist-workers with a range, and a
 # queue count taken off the card rather than off the processor (#330).
 R=$(mkroot manyworkers 8 "1-7" 4 16); addcard "$R" ens18 0000:00:12.0 4
-shape manyworkers "$R" 9000 --interface ens18 --keep-management
+shape manyworkers "$R" 9000 --interface ens18
 grep -q "corelist-workers" "$WORK/manyworkers.conf" \
   && ok "and it pins workers to a list of cores" \
   || bad "the 'manyworkers' shape pinned nothing"
@@ -297,7 +297,7 @@ grep -q "corelist-workers" "$WORK/manyworkers.conf" \
 # 6. A BOX WITH ONE CORE. There is no worker to give, so the cpu stanza is a
 # comment and nothing else - which is a stanza VPP still has to accept.
 R=$(mkroot noworkers 1 "" 2 8); addcard "$R" ens18 0000:00:12.0 1
-shape noworkers "$R" 9000 --interface ens18 --keep-management
+shape noworkers "$R" 9000 --interface ens18
 
 # 7. A STATISTICS SEGMENT SIZED BY THE TUNER. It appears only when the box's
 # own configuration names more interfaces than VPP's default segment holds
@@ -316,7 +316,7 @@ while [ "$i" -lt 9000 ]; do
   i=$((i + 1))
 done
 R=$(mkroot statseg 2 "1" 2 8); addcard "$R" ens18 0000:00:12.0 1
-CONF=$CONFFILE shape statseg "$R" 9000 --interface ens18 --keep-management
+CONF=$CONFFILE shape statseg "$R" 9000 --interface ens18
 grep -q "^statseg {" "$WORK/statseg.conf" \
   && ok "and it sized the statistics segment for them" \
   || bad "the 'statseg' shape wrote no statseg stanza"
@@ -328,7 +328,7 @@ OPBASE=$WORK/operator-base.conf
   echo "  size 96M"; echo "}"; } > "$OPBASE"
 R=$(mkroot opbase 2 "1" 2 8); addcard "$R" ens18 0000:00:12.0 1
 BASE=$OPBASE CONF=$CONFFILE shape opbase "$R" 9000 \
-  --interface ens18 --keep-management
+  --interface ens18
 
 # 9. TWO CARDS, one of them carrying nothing. The tuner picks the NUMA node
 # off the named card and leaves the other alone, and a box with a spare card

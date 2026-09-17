@@ -1325,20 +1325,6 @@ say_widths() {   # <what to call the program in the report>
       for (k = 1; k <= NVALS; k++) if (VALS[k] !~ re) return 0
       return 1
     }
-    # THE RECORD src/hexash/hexash.py WRITES BESIDE THE CARD, recognised by
-    # its shape because that is what the VTY itself recognises: three fields,
-    # and read_dataplane_mgmt() refuses anything that is not a name, a prefix
-    # and a MAC. The name is a LINUX one - it comes off /sys/class/net - and
-    # Linux carries fifteen characters, which is the limit config.py enforces
-    # on linux-name in as many words. The address is IPv4 because
-    # interface_address() asks `ip -4` and takes one global address or none.
-    function isrecord(   k, a, m) {
-      for (k = 1; k <= NVALS; k++) {
-        m = split(VALS[k], a, " ")
-        if (m != 3 || a[2] !~ RE_IPP || a[3] !~ RE_MAC) return 0
-      }
-      return 1
-    }
     # A PATH THIS PROGRAM NAMES, and the widest of them that any value ends
     # with. The suffix is the whole trick: every one of these programs takes a
     # root - HEXA_ROOT, HEXA_INSTALL_SRC, a mount point - so that a suite can
@@ -1403,7 +1389,6 @@ say_widths() {   # <what to call the program in the report>
       if (allre(RE_IPP)) return "an IPv4 prefix|" W_IPP
       if (allre(RE_IP))  return "an IPv4 address|" W_IP
       if (allre(RE_UUID)) return "a UUID|" W_UUID
-      if (isrecord()) return "the management record|" W_REC
       if (allre("^[0-9]+$")) return "a decimal|" W_DEC
       k = pathwidest()
       if (k > 0) return "a path this program names|" k
@@ -1452,7 +1437,6 @@ say_widths() {   # <what to call the program in the report>
       W_IP = length("255.255.255.255"); W_IPP = length("255.255.255.255/32")
       W_UUID = length("abcdef25-1111-2222-3333-444444444444")
       W_DEC = length("4294967295"); W_IFNAME = 15
-      W_REC = W_IFNAME + 1 + W_IPP + 1 + W_MAC
     }
     # ---------------------------------------------------- the product itself
     FILENAME == src {
@@ -1589,8 +1573,8 @@ say_widths() {   # <what to call the program in the report>
             # recovered, and on a continued source line the rest of the row
             # carries words the program wrote: `apply the command line from
             # $GRUBFILE` is continued with `in your bootloader and reboot`.
-            # Longest first, so the management record is read whole and a
-            # path is not read as a path followed by a sentence.
+            # Longest first, so a value of several words is read whole and
+            # a path is not read as a path followed by a sentence.
             mw = 0
             for (k = 1; k <= NVALS; k++) {
               t = split(SEEN[n, j, k], aa, " ")

@@ -91,8 +91,7 @@ carried, applied to the other two.
 
 | Variable | Accepted | Shipped | Used when refused |
 |---|---|---|---|
-| `HEXA_DATAPLANE_IF` | an interface name, or empty | empty | any name is possible, and the one carrying the default route is refused by the tuner itself unless it is the only card on the box and `HEXA_DATAPLANE_MGMT` is set beside it |
-| `HEXA_DATAPLANE_MGMT` | `<name> <address/len> <mac>`, or empty | empty | written by the VTY, not by hand: it is the management path a handed-over card puts back on its `linux_cp` pair ([#303](https://github.com/andrediashexa/hexarouting/issues/303)) |
+| `HEXA_DATAPLANE_IF` | an interface name, or empty | empty | any name is accepted; one this box has not got resolves to no device, and `no-pci` is written so nothing is claimed |
 | `HEXA_SUBSCRIBERS` | digits only | `200000` | `200000` |
 | `HEXA_LOW_LATENCY` | `1` or `0`, nothing else | `1` | `1`, because this is a router |
 | `HEXA_MAX_WORKERS` | digits only, or empty for no cap | empty | no cap |
@@ -904,34 +903,23 @@ The running configuration is **read back** from `tune.env`, not remembered, so
 a box set up the old way shows its own card in `show running-config` and a
 second commit of the same value is `no changes to commit`.
 
-These fire at the prompt, before anything is stored. The count is not stated
-here on purpose: the table is the list, and a number in the sentence above a
-table is a number that outlives the table it describes - this one said **two**
-over three rows from the moment #303 added the third.
+One refusal fires at the prompt, before anything is stored: **a name this box
+has not got**, with the list of names it does have. The card carrying the
+default route was refused here too, while the box had another card to name
+instead, and on a one-card box when its address, gateway or MAC could not be
+read - three rows in this table until
+[#385](https://github.com/andrediashexa/hexarouting/issues/385), which took
+two of them out on the maintainer's decision. A box is configured at its
+console when it is new, so a refusal guarding the card it is reached over
+guards a step nobody takes over the network; and whether a way back can be
+read is the tuner's question, answered off the live card on the boot that
+claims it, not the prompt's to answer from a reading taken on another day.
 
-| typed | refused because |
-|---|---|
-| the card carrying the default route, **on a box that has another card** | it is how the box is reached, and there is one to name instead; the refusal names it |
-| the card carrying the default route, when its management state cannot be carried over: no single global IPv4 address on it, **or** no gateway on the default route, **or** no MAC | an address the box cannot see is one it cannot put back, and a handover with no way back is the walk to the console the first refusal exists to prevent |
-| a name this box has not got | with the list of names it does have |
-
-The first already existed in `hexarouting-tune` and in `bind-dataplane-nic`.
-It is said here as well because *where* it is said is the difference: a
-refusal in a journal at the next boot is one the operator reads hours later,
-and this mistake costs a site visit. The default route is read from
-`/proc/net/route` — the same source the tuner and the bind script read, so the
-three cannot come to disagree about which card the box is reached over.
-
-**On a box with one card it is not refused at all**, and that is
-[#303](https://github.com/andrediashexa/hexarouting/issues/303): the advice
-behind the refusal - name the subscriber card instead - named a card that does
-not exist, so the box could not forward and could not be told to. The card
-moves, with its address following it onto the `linux_cp` pair the dataplane
-keeps for it, under a commit that undoes itself if nobody confirms.
-`docs/routing.md` carries the whole of it; what matters on this side of the
-product is that all three places make the same decision from the same two
-facts - is there another card, and has the box written down the management
-path - and that `HEXA_DATAPLANE_MGMT` is what carries the second one.
+So a card is accepted whichever route it carries, on every box.
+`docs/routing.md` carries what happens next: the tuner reads the address, MAC
+and gateway off the card before the bind, declines the card when one of them
+is missing, and the VTY puts them back on the `linux_cp` pair at the boot
+that hands the card over.
 
 ### Naming it was never enough
 
@@ -955,15 +943,20 @@ order.
 
 **It binds what `startup.conf` names**, and that is the design rather than a
 convenience. The tuner has already applied every rule about which NIC the
-dataplane may have, including the default-route refusal above, so reading its
-output inherits those rules instead of restating them. A second copy of "which
-NIC may the dataplane have" is a second copy that can disagree, and the way
-this one would disagree is by taking the box off the network.
+dataplane may have - every card but a reserve, or the one that was named, and
+never a card whose way back it could not read - so reading its output inherits
+those rules instead of restating them. A second copy of "which NIC may the
+dataplane have" is a second copy that can disagree.
 
-It reads the default route again anyway, immediately before unbinding. Not as
-a second opinion but as a last one: `startup.conf` is a file and a person can
-edit it, and this is the one mistake here that cannot be undone from another
-city.
+It used to read the default route again immediately before unbinding, as a
+last line of defence for a `startup.conf` somebody edited by hand, and refuse
+the card carrying it unless it was the last card and a way back sat beside it.
+That went with [#385](https://github.com/andrediashexa/hexarouting/issues/385)
+for the reason the tuner's refusal went: the guard was on a step nobody takes
+over the network, and the one fact it needed - is there a way back - is
+decided before the file it reads is written. The binder now reads nothing to
+decide which card; it binds every device the file names, whichever route the
+card carries, and leaves the rest alone.
 
 | | why |
 |---|---|
@@ -973,29 +966,20 @@ city.
 | the bind is verified | a bind that did not take names the driver the device is on now. A device left on none at all is the worst outcome to be quiet about: the kernel no longer has the NIC and neither does the dataplane |
 | a failure here does not fail the tuning | a box that could not bind its NIC still wants its hugepages, its `isolcpus` and its governor, and above all wants to come up far enough for somebody to log in and read why |
 
-**The default route is refused even when named**, wherever there is another
-card to name instead. The refusal overrides the setting rather than warning
-about it, and it is printed:
-
-```
-REFUSED to give 'eth0' to the dataplane: it carries the default route,
-and the box would lose management. No device is claimed; using node 0
-```
-
-An interface can carry subscriber traffic *and* the default route only on a
-box with one NIC. That box used to be one this product could not run at all;
-since [#303](https://github.com/andrediashexa/hexarouting/issues/303) it is
-the one case where the card may go, and `apply-tuning` says so by passing
-`--keep-management` when `HEXA_DATAPLANE_MGMT` is set:
-
-```
-'ens18' carries the default route and is the only card this box has, so it is
-being handed over with its management path kept on its linux_cp pair; node 0
-```
-
-The tuner checks for itself that there is no other card, from `/sys/class/net`,
-rather than taking the flag as permission - the flag says the box recorded a
-way back, not that it should use one.
+**The default route is no longer refused when it is named**
+([#385](https://github.com/andrediashexa/hexarouting/issues/385)). Until
+0.76.1 the tuner overrode the setting with `no-pci` and wrote `REFUSED to
+give 'eth0' to the dataplane` into the journal, and let a one-card box
+through only when `apply-tuning` passed `--keep-management` for a record the
+VTY had written beforehand. Both went, on the maintainer's decision: a box is
+configured at its console when it is new, so a refusal guarding the card it
+is reached over guards a step nobody takes over the network - and it stood
+between an operator and the card they had just named. A named card is claimed
+whichever route it carries, and the override is exclusive on a box with
+several. What keeps the box reachable is the way back, read off that card on
+the boot that claims it, the same reading an automatic claim gets; a card
+whose way back cannot be read is not claimed, named or not, and the journal
+says which of the address, MAC and gateway was missing.
 
 The test that had to change is the finding worth keeping. `test_tune.py`
 asserted:

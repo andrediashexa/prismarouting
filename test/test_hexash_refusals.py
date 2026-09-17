@@ -583,11 +583,12 @@ print(f"  {len(_writes)} pool writes, each refused by name")
 
 print("\n=== the box's own configuration, which the commit applies after the "
       "dataplane ===")
-# THE MANAGEMENT PATH. An ssh change costs the operator their session if it is
-# wrong, the accounts decide who can get back in at all, and the tuner's file
-# is what the box reads at its next boot to find the card its management moved
-# to. A commit that reported success while any of those was not written is a
-# box nobody can reach.
+# THE BOX'S OWN ACCESS. An ssh change costs the operator their session if it
+# is wrong, and the accounts decide who can get back in at all. A commit that
+# reported success while either was not written is a box nobody can reach.
+# The tuner's file was driven here too, refused by the filesystem, until #385
+# took out the management record the commit wrote into it; the card's own
+# write is refused the same way and test/test_dataplane_if.py drives that.
 _running = config.Config()
 _target = config.Config()
 _target.ssh = {"port": "2222"}
@@ -621,25 +622,7 @@ _sh.sys = type("S", (), {
 _rv, _text = driven(_sh.apply, _target)
 says("accounts", _text, "error: accounts were not fully applied", _rv)
 
-# The tuner's file, refused by the filesystem rather than by a stub: TUNE_ENV
-# is pointed at a path under a FILE, so the directory the write needs cannot be
-# made. Driving it through the real write_tune_key is the point - a stub
-# returning False would assert that `apply` reads a boolean, not that the one
-# refusal an unwritable box produces reaches the operator.
-_notdir = os.path.join(_tmp, "not-a-directory")
-open(_notdir, "w").close()
-_target = config.Config()
-_target.dataplane_mgmt = {"name": "ens18", "address": "10.0.0.2/24",
-                          "mac": "02:00:00:00:00:09"}
-_sh = shell()
-_sh.running_config = lambda: config.Config()
-_sh.TUNE_ENV = os.path.join(_notdir, "tune.env")
-_rv, _text = driven(_sh.apply, _target)
-check(any(l.startswith("error: dataplane management: ") and
-          "tune.env" in l for l in _text.splitlines()),
-      f"an unwritable tuner file must be named: {_text!r}")
-check(_rv is False, f"and the commit must stop: {_rv!r}")
-print("  ssh, snmp, the accounts and the tuner's file, each refused by name")
+print("  ssh, snmp and the accounts, each refused by name")
 
 print("\n=== an MTU the dataplane took and an MTU it did not ===")
 # WHY THE READ-BACK IS AN ASSERTION AND NOT A COURTESY. retval 0 means the
@@ -1035,18 +1018,22 @@ print("\n=== the box's own settings, refused while the operator is still "
 # BOTH ENDS, and neither is redundant: `apply` refuses these again for
 # `rollback` and `--load`, and this is the copy that reaches somebody who can
 # fix it in the next keystroke rather than hours after committing (#123). The
-# management card is the one with a site visit behind it - a name that is not
-# a card, or a management record the parser cannot read, is a box that hands
-# away the wrong NIC at its next start.
+# dataplane card is the one with a site visit behind it - a name that is not
+# a card is a file the box replays at its next start naming a NIC it has not
+# got, answered with `no-pci` in a journal nobody is reading.
 _settings = [
     ("snmp with no value", "snmp location",
      "error: usage: snmp <setting> <value>"),
     ("an snmp setting this box has not got", "snmp nonsense rack4",
      "error: 'nonsense' is not an snmp setting"),
-    ("a management record the parser cannot read",
-     "dataplane management name ens18 nonsense",
-     "error: expected: dataplane management <name> address <a.b.c.d/len> mac "
-     "<xx:xx:...>"),
+    # `dataplane management` was a statement until #385, written by the box
+    # itself on a one-card box; it is neither typed nor read now, and a
+    # 0.76.x file pasted at the prompt meets the usage line for the one
+    # statement there is under that word. A saved file carrying it is dropped
+    # with a note rather than refused - test/test_dataplane_if.py holds that.
+    ("a statement this VTY no longer has",
+     "dataplane management ens18 address 10.0.0.2/24 mac 02:00:00:00:00:09",
+     "error: usage: dataplane interface <name>"),
     ("dataplane with no card named", "dataplane interface",
      "error: usage: dataplane interface <name>"),
     ("ssh with no value", "ssh port",
@@ -1947,8 +1934,12 @@ print("  fifty digits quotes all fifty back, and that row is not measured "
 # over the console, which no static walk sees because the f-string
 # interpolates, and the two `neighbour <peer>` verdicts #349 measured on an
 # IPv4 peer and left at 87 columns on an IPv6 one.
-OVER_AT_MOST = 26
-UNSAFE_AT_MOST = 52
+# 26 until #385 took out the `expected: dataplane management <name> address
+# <a.b.c.d/len> mac <xx:xx:...>` refusal, whose own words were over.
+OVER_AT_MOST = 25
+# 52 until #385 took out the handover headline the prompt printed on a
+# one-card box, which carried the interface name with no widest behind it.
+UNSAFE_AT_MOST = 51
 
 
 def ceiling(found, allowed, what, detail):

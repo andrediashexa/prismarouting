@@ -1395,7 +1395,6 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "if_remove", "globals")
 DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
                "snmp_changed", "dataplane_if_changed",
-               "dataplane_mgmt_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -1817,14 +1816,7 @@ TREE = {
         # only way to name one used to be editing a file in Linux (#283).
         "dataplane": ("the card handed to the dataplane", {
             "interface": ("the card carrying subscriber traffic, by the name "
-                          "Linux gives it", ARG_HOST_NIC),
-            # Offered because it is rendered: a line in `show running-config`
-            # that `?` has never heard of is a line the operator cannot check.
-            # It is written by the box when the card being handed over is the
-            # one this box is reached on, and there is nothing here to choose.
-            "management": ("written by the box: the address a handed-over "
-                           "management card keeps, on its pair",
-                           "<name> address <a.b.c.d/len> mac <xx:xx:...>")}),
+                          "Linux gives it", ARG_HOST_NIC)}),
         "ssh": ("the SSH daemon", {
             "port": ("TCP port", ARG_PORT),
             "listen-address": ("address to listen on", ARG_WORD),
@@ -5224,7 +5216,6 @@ class Shell:
         # ONLY way to set this until now, so a box configured the old way shows
         # its card in `show running-config` without anybody re-typing it.
         cfg.dataplane_if = self.read_dataplane_if()
-        cfg.dataplane_mgmt = self.read_dataplane_mgmt()
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
@@ -5876,11 +5867,16 @@ class Shell:
         """
         Put the management address back, on the pair of the card that moved.
 
-        Runs on every apply and does nothing on most of them. At the commit
-        that names the card the dataplane has not got it yet, and saying so is
-        the whole of the work; at the boot after that commit the dataplane
-        does have it, and this is the only thing standing between a box that
-        forwards and a box nobody can reach.
+        Runs at every boot, from load(), with the ONE record there is: the
+        way back hexarouting-tune computed off the live card on this boot
+        (#378), which is a name, an address, a MAC and a gateway. It used to
+        run on every commit as well, with a three-field record the VTY had
+        written at the commit that named the card; that record and its
+        precedence over the computed one went with #385, because the
+        computed one is never older than the boot and the operator's could
+        be. On most boots there is no record and nothing to do; on the boot
+        after the card moved, this is the only thing standing between a box
+        that forwards and a box nobody can reach.
 
         NOT AN ERROR WHEN THE CARD HAS NOT MOVED YET. `hexash --load` runs on
         every boot, including the ones before the operator reboots into the
@@ -5942,13 +5938,8 @@ class Shell:
         # everything on its own wire and nothing beyond it - which on the
         # lab's guest is indistinguishable from a healthy box, because
         # qemu's gateway is on that wire. On a real box it is a machine
-        # somebody drives to.
-        #
-        # ONLY FOR THE RECORD THE TUNER COMPUTED, which is the only one that
-        # carries a gateway. The VTY's own record has three fields and its
-        # route arrives with the saved configuration, put there by
-        # take_management_card at the commit - so this must not fire on that
-        # path and cannot, because `gateway` is absent from it.
+        # somebody drives to. The record always carries the gateway: a /run
+        # file without one is read as no record at all.
         #
         # IN LINUX AND NOT IN FRR, deliberately. FRR is where an operator's
         # routing lives and converging it here would mean handing frr-reload
@@ -5959,19 +5950,18 @@ class Shell:
         # `replace` and not `add`: this runs on every boot and the second one
         # already has the route. An error there would be a box reporting a
         # failure for having succeeded twice.
-        gw = mgmt.get("gateway")
-        if gw:
-            rc, out = self.sys._run(["ip", "route", "replace", "default",
-                                     "via", gw, "dev", mgmt["name"]])
-            if rc != 0:
-                # SAID AND NOT FATAL. The address is already back, so the box
-                # is reachable from its own subnet and an operator on it can
-                # fix this; failing here would abandon a handover that mostly
-                # worked and leave the card in the dataplane anyway.
-                self.err(f"the default route could not be put back: {out}")
-                print_prose(f"this box has {mgmt['address']} on "
-                            f"{mgmt['name']} and no way off that subnet; "
-                            f"the gateway it recorded is {gw}")
+        gw = mgmt["gateway"]
+        rc, out = self.sys._run(["ip", "route", "replace", "default",
+                                 "via", gw, "dev", mgmt["name"]])
+        if rc != 0:
+            # SAID AND NOT FATAL. The address is already back, so the box
+            # is reachable from its own subnet and an operator on it can
+            # fix this; failing here would abandon a handover that mostly
+            # worked and leave the card in the dataplane anyway.
+            self.err(f"the default route could not be put back: {out}")
+            print_prose(f"this box has {mgmt['address']} on "
+                        f"{mgmt['name']} and no way off that subnet; "
+                        f"the gateway it recorded is {gw}")
         return True
 
     def device_linux_names(self) -> dict:
@@ -7144,17 +7134,6 @@ class Shell:
         # the box's own configuration because that is what it is, and it goes
         # FIRST of that group so its "not in effect yet" paragraph is not
         # buried under whatever SSH and the accounts printed.
-        # Written BEFORE the card, so the tuner - which is restarted by the
-        # next few lines - never reads a file naming a card whose management
-        # path is not beside it yet.
-        if d["dataplane_mgmt_changed"]:
-            m = target.dataplane_mgmt
-            ok, msg = self.write_tune_key(
-                self.TUNE_MGMT_KEY,
-                f"{m['name']} {m['address']} {m['mac']}" if m else "")
-            if not ok:
-                self.err(f"dataplane management: {msg}")
-                return False
         if d["dataplane_if_changed"]:
             ok, msg = self.apply_dataplane_if(target.dataplane_if)
             if not ok:
@@ -7251,15 +7230,6 @@ class Shell:
         # the entire reason an operator creates one.
         for ifname, host in d["lcp_set"].items():
             if not self.set_lcp_pair(ifname, host, True):
-                return False
-
-        # The management path of a box that has only one card, which is now
-        # the card the dataplane holds. Before the addresses below, because
-        # this IS an address and the pair it goes on has to exist first, and
-        # before FRR is reloaded, because the default route that comes with it
-        # needs the interface to be there.
-        if target.dataplane_mgmt:
-            if not self.apply_management_path(target.dataplane_mgmt):
                 return False
 
         # Moving an interface between routing tables, addresses and all.
@@ -8905,24 +8875,8 @@ class Shell:
             # setting under that word, so refusing the shorter spelling would
             # be a refusal with nothing behind it.
             self.candidate.dataplane_if = ""
-            # The management record goes with it. It describes a card this box
-            # is no longer handing over, and a box that kept it would put an
-            # address on a pair that will not exist.
-            self.candidate.dataplane_mgmt = {}
             return True
         if w[0] == "dataplane":
-            # The management record the box writes for itself. Accepted here
-            # as well as in the parser, because a configuration this VTY
-            # RENDERS and cannot be fed back to is one an operator cannot
-            # paste, and `rollback` and `--load` would then disagree with the
-            # prompt about the same file.
-            if w[1:2] == ["management"]:
-                one = Config.parse(line + "\n")
-                if one.unknown:
-                    self.err(one.unknown[0][2])
-                else:
-                    self.candidate.dataplane_mgmt = one.dataplane_mgmt
-                return True
             if w[1:2] != ["interface"] or len(w) != 3:
                 self.err("usage: dataplane interface <name>")
                 return True
@@ -8931,16 +8885,21 @@ class Shell:
             # Both, and neither is redundant. This one is the message that
             # reaches a person who is still typing and can fix it in the next
             # keystroke; the one in apply() covers `rollback` and `--load`,
-            # which reach the same setting without passing through here. A
-            # refusal an operator only discovers after committing is one they
-            # act on hours later, and the mistake this catches costs a site
-            # visit (#123).
+            # which reach the same setting without passing through here.
+            #
+            # AND NOTHING ELSE HAPPENS HERE (#385). The prompt used to write
+            # down, on a one-card box, the address, MAC and gateway the card
+            # carried, so the boot after the commit could put them back. The
+            # tuner reads the same three things off the live card on the boot
+            # that claims it, whichever box it is on and whether or not the
+            # card was named, so a record taken here was a second copy of a
+            # fact the box recomputes - and one that could be a day older than
+            # the boot that used it.
             why = self.dataplane_if_refusal(w[2])
             if why:
                 self.say_dataplane_if_refusal(w[2], why)
                 return True
             self.candidate.dataplane_if = w[2]
-            self.take_management_card(w[2])
             return True
         if w[0] == "ssh":
             if len(w) < 3:
@@ -10352,12 +10311,18 @@ class Shell:
                         "'show hardware' is where the names come from: it "
                         "lists this box's cards as Linux has them, and marks "
                         "the one carrying the default route."]
+            # THREE REASONS, and the third changed with #385. It used to be
+            # the tuner's refusal of the card carrying the default route;
+            # that refusal is gone, and a named card is claimed whichever
+            # route it carries. What can still leave a named card with Linux
+            # is a way back the tuner could not read off it.
             return [f"'{named}' was named and VPP was given no NIC.",
                     "Either it does not exist on this box, or it could not be "
                     "resolved to a PCI address,",
-                    "or it carries the default route on a box that has "
-                    "another card - which is refused on purpose, so a remote "
-                    "box is not cut off."]
+                    "or it carries the default route and no way back for it "
+                    "could be read,",
+                    "so it stays with Linux rather than leave this box "
+                    "unreachable."]
         if "dev 0000:" in conf:
             return self.why_named_nic_absent(conf)
         return []
@@ -10464,9 +10429,11 @@ class Shell:
         This used to say the box needed a second NIC before it could forward.
         That was true of the product and it was a dead end for the operator: a
         VM with one virtual NIC is how most people first meet this, and being
-        told to add hardware is not an answer they can act on (#303). The card
-        can move, with its address following it onto the pair the dataplane
-        keeps, so what this says now is what to type and what it will cost.
+        told to add hardware is not an answer they can act on (#303). Then it
+        said what to type, and promised a confirmed commit that #378 had
+        already removed. Since #378 the box claims the last card by itself,
+        so what this says now is what will happen and where the address goes
+        - nothing to type, nothing to confirm (#385).
 
         Reads host_nics() and default_route_nic(), which are what
         `show hardware` prints and what the tuner decides on, so this cannot
@@ -10481,15 +10448,13 @@ class Shell:
         if usable or not default:
             return []
         return [f"This box has one NIC, '{default}', and it carries the "
-                "default route, so giving it to the dataplane is also giving "
-                "away the path this box is reached on.",
-                "It can still be done, and the address goes with it: name it "
-                f"with 'configure', 'dataplane interface {default}', "
-                "'commit', and the box keeps that address on the linux_cp "
-                "pair the dataplane holds for the card.",
-                "The commit is a confirmed one whether or not you ask: "
-                "restart the box, log back in and type 'commit' to keep it, "
-                "and if nobody does the box puts the card back on its own."]
+                "default route: it is the path this box is reached on.",
+                "The dataplane claims it at its next start whether or not it "
+                "is named, because a reserve never takes the last card, and "
+                "the address moves onto the linux_cp pair the dataplane keeps "
+                "for it: the box is then reached THROUGH the dataplane rather "
+                "than beside it.",
+                "Nothing is armed and nothing has to be confirmed."]
 
     def why_named_nic_absent(self, conf):
         """
@@ -10579,13 +10544,13 @@ class Shell:
         """
         The interface carrying the default route, or None.
 
-        Same file, same field and the same reason as
-        `appliance/hexarouting-tune`: that script REFUSES to give this NIC to
-        the dataplane, because handing it over does not degrade the box, it
-        removes it - no SSH, no ping, nothing but a console somebody has to
-        walk to (#123). The refusal happens after the operator has chosen,
-        which is too late to be useful, so this screen reads the same source
-        and says which one it is BEFORE they choose.
+        Same file and same field as `appliance/hexarouting-tune`, which
+        reads it to compute the way back for this card on the boot that
+        claims it (#378). The tuner used to REFUSE this NIC (#123), and this
+        screen was written to say which one it was BEFORE the operator chose;
+        the refusal went with #385 and the mark stays, because what happens
+        to the card the box is reached on is still the one thing on this
+        screen an operator has to know before typing.
         """
         try:
             with open(self.PROC_NET_ROUTE) as f:
@@ -10598,118 +10563,6 @@ class Shell:
         except OSError:
             pass
         return None
-
-    def default_route_gateway(self):
-        """
-        The next hop of the default route, or None.
-
-        Same file and same row as default_route_nic(), read once more rather
-        than returned alongside it, because almost every caller wants only the
-        interface and a two-valued answer would have them unpacking a tuple to
-        throw half of it away.
-        """
-        try:
-            with open(self.PROC_NET_ROUTE) as f:
-                for line in f.readlines()[1:]:
-                    w = line.split()
-                    if len(w) > 2 and w[1] == "00000000":
-                        # Little-endian hex, which is how the kernel writes
-                        # every address in this file. 0100000A is 10.0.0.1.
-                        try:
-                            g = int(w[2], 16)
-                        except ValueError:
-                            return None
-                        if not g:
-                            # A default route with no gateway: the next hop is
-                            # the link itself. Nothing to carry over.
-                            return None
-                        return ".".join(str((g >> b) & 0xFF)
-                                        for b in (0, 8, 16, 24))
-        except OSError:
-            pass
-        return None
-
-    def interface_address(self, name):
-        """
-        The IPv4 address and prefix length Linux has on `name`, or None.
-
-        THE ONE READING IN HERE THAT IS NOT A FILE, and it is not for want of
-        looking: an interface's own address is published nowhere under /sys or
-        /proc in a form that names the interface. /proc/net/route carries the
-        subnet and not the address, /proc/net/fib_trie carries the address and
-        not the interface that holds it, and the kernel's answer to the
-        question is a netlink dump. So this asks `ip`, through the same runner
-        every other command on this box goes through - which is also what lets
-        it be driven in a suite without a box.
-
-        The FIRST global address, deliberately. A card with several is a card
-        whose management address this cannot choose between, and the caller
-        refuses rather than guessing: getting it wrong here means the box
-        comes back on an address nobody is trying to reach.
-        """
-        rc, out = self.sys._run(["ip", "-4", "-o", "addr", "show", "dev", name])
-        if rc != 0:
-            return None
-        found = []
-        for line in (out or "").splitlines():
-            w = line.split()
-            if "inet" not in w:
-                continue
-            pfx = w[w.index("inet") + 1]
-            if "scope" in w and w[w.index("scope") + 1] != "global":
-                continue
-            if "/" not in pfx:
-                continue
-            found.append(pfx)
-        if len(found) != 1:
-            return None
-        return found[0]
-
-    def management_handover(self, name):
-        """
-        What has to be carried over for `name` to become a dataplane card, or
-        a (headline, [prose]) refusal saying what is missing.
-
-        THIS IS THE ANSWER #303 ASKS FOR, and the refusal it replaces is still
-        right about every box it was written for. A box with a second card is
-        refused exactly as before: handing away the management card when there
-        is a subscriber card to name instead is the mistake #123 exists for,
-        and nothing here touches it. What changes is the box where that advice
-        names a card that does not exist.
-
-        On such a box the card can move, because the dataplane has the thing a
-        real router uses for this: linux_cp keeps a TAP paired with the port,
-        and the management address goes on that. The box is then reached
-        THROUGH the dataplane instead of beside it. The upstream router does
-        not even re-ARP: DPDK takes the device and keeps its MAC.
-
-        What it will not do is move a card whose management state it cannot
-        read back. An address it cannot see is an address it cannot put back,
-        and a handover that cannot be undone on the far side is the walk to
-        the console this refusal was written to prevent.
-        """
-        address = self.interface_address(name)
-        gateway = self.default_route_gateway()
-        mac = self._sysfs(os.path.join(self.SYS_CLASS_NET, name, "address"))
-        missing = []
-        if not address:
-            missing.append("no single global IPv4 address on it that this box "
-                           "could put back on the far side")
-        if not gateway:
-            missing.append("no gateway on the default route, so there would "
-                           "be nothing to route through afterwards")
-        if not mac:
-            missing.append("no MAC, which is the only name this card keeps "
-                           "on both sides of the handover")
-        if missing:
-            return ("its management state cannot be carried over",
-                    missing + [
-                        "the card would go to the dataplane and the box would "
-                        "have no way back to the network",
-                        "give it an address and a default route from Linux "
-                        "first, then name it here"])
-        return {"name": name, "address": address, "mac": mac.lower(),
-                "gateway": gateway}
 
     def host_nics(self):
         """
@@ -10966,33 +10819,25 @@ class Shell:
                         "test.", indent="  ")
         elif any(n["name"] == mgmt for n in nics):
             # Two different sentences, because they are two different boxes.
-            # With another card to name, giving this one away costs the box
-            # its management for nothing and is refused. With no other card,
-            # the mark is a warning about what the handover involves and not a
-            # refusal - the address moves with the card (#303).
+            # With another card, the mark says what taking this one means and
+            # names nothing as refused: since #385 the VTY accepts it, and
+            # the box claims it by itself unless a reserve spares it. With no
+            # other card, the note says the box takes it whether or not it is
+            # named (#303, #378).
             if any(n["name"] != mgmt for n in nics):
-                # TWO DIFFERENT QUESTIONS, and this used to answer only one.
-                # What the box claims by itself is said above; this is what
-                # the `dataplane interface` statement will accept, and on a
-                # box with a spare card it still refuses this one (#123).
-                # Merging them would make the screen contradict itself on a
-                # box whose default route is not on the card the installer
-                # recorded - which is a box that exists.
                 print_prose(f"'{mgmt}' carries the default route: it is how "
-                            f"this box is reached, and giving it to the "
-                            f"dataplane would take the box off the network. "
-                            f"Naming it by hand with 'dataplane interface' is "
-                            f"refused while this box has another card to name "
-                            f"instead.", indent="  ")
-                # AND IF THE BOX IS ABOUT TO TAKE IT ANYWAY, say so here.
+                            f"this box is reached. If the dataplane takes "
+                            f"it, named or claimed, its address moves onto "
+                            f"the linux_cp pair the dataplane keeps for it, "
+                            f"and this box is then reached through the "
+                            f"dataplane rather than beside it.", indent="  ")
+                # AND IF THE BOX IS ABOUT TO TAKE IT BY ITSELF, say so here.
                 #
-                # The refusal above is about the STATEMENT; the claim above
-                # that is about what the box does unbidden, and on a box whose
-                # default route is not on the card the installer recorded
-                # those two point opposite ways. Both are true and the
-                # operator needs the second one most: reserving a card is
-                # done at install time, and this is the screen where somebody
-                # finds out it was not.
+                # What the box does unbidden is decided by the reserve, and
+                # on a box whose default route is not on the card the
+                # installer recorded it is about to take the card it is
+                # reached on. Reserving a card is done at install time, and
+                # this is the screen where somebody finds out it was not.
                 if not self.read_dataplane_if() \
                    and self.reserved_for_linux() != mgmt:
                     print_prose(f"This box will claim '{mgmt}' anyway when "
@@ -11039,19 +10884,6 @@ class Shell:
     #: the operator is told - and a fourth spelling of either is a fourth
     #: thing to keep true.
     TUNE_KEY = "HEXA_DATAPLANE_IF"
-    #: And the management path that card carries, beside it. In the SAME file
-    #: because it is the same kind of fact and has to survive the same events:
-    #: a property of the machine that no running daemon can be asked for.
-    #:
-    #: It could not live only in the saved configuration. `show
-    #: running-config` and `save` build the running state by READING THE BOX
-    #: (#161), and between the commit that names the card and the boot that
-    #: hands it over there is nothing on the box to read - the dataplane has
-    #: no such interface yet and Linux still holds the address on a card that
-    #: is about to stop existing. Saved from a fresh session, the file came
-    #: out with the card named and no way to keep the box reachable, which is
-    #: the one file where that mistake is unrecoverable.
-    TUNE_MGMT_KEY = "HEXA_DATAPLANE_MGMT"
     TUNE_UNIT = "hexarouting-tune"
 
     # The card list and the default route are read by host_nics() and
@@ -11065,21 +10897,20 @@ class Shell:
         """
         Why this box will not hand `name` to the dataplane, or None.
 
-        Returns (headline, [prose]). Both refusals exist somewhere already and
-        are said HERE anyway, at the prompt, because where they are said is the
-        whole difference:
-
-          * the tuner refuses the card carrying the default route (#123), and
-            it does so at the next boot, in a journal, on a box the operator
-            has by then stopped watching. A refusal discovered after committing
-            is one the operator acts on hours later.
-          * `bind-dataplane-nic` refuses it again before unbinding. That one is
-            the last line of defence and it stays; this one is the first.
-
-        A name the box has not got is refused the way every other interface
-        name is in this VTY (#105): by saying what the box DOES have, because
+        Returns (headline, [prose]). ONE refusal now, where there were three:
+        a name this box has not got is refused the way every other interface
+        name is in this VTY (#105), by saying what the box DOES have, because
         a refusal that only says no leaves the operator to guess the spelling
         of a card they cannot see.
+
+        The card carrying the default route was refused here too, while the
+        box had another card to name instead (#123), and on a one-card box
+        when its address, MAC or gateway could not be read (#303). Both went
+        with #385, on the maintainer's decision: a box is configured at its
+        console when it is new, so a refusal guarding the card it is reached
+        over guards a step nobody takes over the network. The tuner reads the
+        way back off that card on the boot that claims it and declines a card
+        it cannot read one for, which is the only reader that question needs.
         """
         have = [n["name"] for n in self.host_nics()]
         # Cannot look is not "the box has none". On anything that is not Linux
@@ -11093,100 +10924,7 @@ class Shell:
                      "the dataplane is handed; 'show interface' lists what "
                      "the dataplane already has, and on a box with no card "
                      "that is nothing"])
-        if name and name == self.default_route_nic():
-            # STILL REFUSED WHEREVER THE ADVICE CAN BE FOLLOWED. A box with
-            # another card has one to name instead, and naming this one there
-            # is the mistake #123 was written for: the box loses its
-            # management for nothing, because the card it should have been
-            # given was sitting beside it.
-            others = [n for n in have if n != name]
-            if others:
-                return ("it carries the default route",
-                        ["handing it to the dataplane takes the card away "
-                         "from Linux, and this box off the network with it",
-                         "the two mistakes do not cost the same: a box with "
-                         "no dataplane card is fixed over the network, and a "
-                         "box that ate its own management is fixed by walking "
-                         "to it",
-                         "name the card carrying subscriber traffic instead: "
-                         + ", ".join(others)])
-            # And here is where that advice named a card this box has not got
-            # (#303). The refusal was a dead end: no second card, no way to
-            # forward, and an operator told to do something impossible. The
-            # card can move, as long as the box can carry the management path
-            # over with it - which is what this decides.
-            hand = self.management_handover(name)
-            if isinstance(hand, tuple):
-                return hand
         return None
-
-    def take_management_card(self, name):
-        """
-        Write down the management path of a card that is about to move, and
-        say what the box has just taken on.
-
-        Only for THE card carrying the default route, which on a box that got
-        this far means the box has no other. Naming an ordinary card records
-        nothing: it takes no management with it, and a box carrying a
-        management record for a card that never had one would put an address
-        on the wrong pair at its next boot.
-
-        The default route is added HERE rather than at the commit, because the
-        operator has to be able to read it before they commit it. `show
-        configuration compare` is where a change of this size is checked, and
-        a route that appeared only after the commit would be a change the box
-        made without showing it.
-        """
-        if name != self.default_route_nic():
-            self.candidate.dataplane_mgmt = {}
-            return
-        hand = self.management_handover(name)
-        if isinstance(hand, tuple):
-            # Cannot happen through the prompt - the refusal above returns the
-            # same answer and stops there - but `rollback` and `--load` reach
-            # the candidate by other doors, and a silent empty record is the
-            # one outcome that loses the box.
-            self.say_dataplane_if_refusal(name, hand)
-            return
-        self.candidate.dataplane_mgmt = {k: hand[k]
-                                         for k in ("name", "address", "mac")}
-        route = f"ip route 0.0.0.0/0 {hand['gateway']}"
-        has_default = any(l.split()[:3] == ["ip", "route", "0.0.0.0/0"]
-                          for l in self.candidate.routing if l.split())
-        if not has_default:
-            self.candidate.routing.append(route)
-        # Inside the console, and the arithmetic is the reason rather than the
-        # look of it: Linux carries interface names up to fifteen characters,
-        # so a headline is as wide as its words plus fifteen. The old one was
-        # "this box has no other card, so it keeps its management", which is
-        # 81 columns on `ens18` and 91 on the longest name a card can have -
-        # the one line an operator reads before handing over the card their
-        # session is on, wrapped by the terminal in the middle of a word
-        # (#346). The refusal headline beside this one carries the same
-        # argument in as many words and has always fitted.
-        print(f"dataplane interface {name}: this box has no other card")
-        print_prose("so it keeps its management, and the address moves with "
-                    "the card")
-        print_prose(f"{hand['address']} moves onto the linux_cp pair the "
-                    f"dataplane keeps for {name}, and the box is then reached "
-                    f"through the dataplane rather than beside it")
-        print_prose("the card keeps its MAC across the handover, so nothing "
-                    "upstream has to learn a new one")
-        if not has_default:
-            print_prose(f"'{route}' is added, because the default route this "
-                        f"box has now lives on a card Linux is about to lose")
-        print_prose("this does not happen at this commit: the dataplane "
-                    "claims its card when it starts, and the box is on the "
-                    "old path until it is restarted")
-        # AND WHY THERE IS NO SAFETY NET, which is the sentence that replaces
-        # the confirmed-commit paragraph (#378). An operator who typed this on
-        # a one-card box used to be told to come back and confirm it or lose
-        # the card; both halves were false once the box began claiming its own
-        # card. Saying nothing at all would leave them looking for the window
-        # the documentation used to promise.
-        print_prose("nothing is armed to undo this and nothing needs to be: "
-                    "a reserve never takes the last card, so this box would "
-                    "claim this one whether or not you named it")
 
     def say_dataplane_if_refusal(self, name, why):
         """One refusal, printed: the statement's own words, then the reason."""
@@ -11241,68 +10979,27 @@ class Shell:
     MGMT_PATH_FILE = os.environ.get(
         "HEXA_MGMT_PATH", "/run/hexarouting/dataplane-management")
 
-    def read_dataplane_mgmt(self):
-        """
-        The management path for a card that moved to the dataplane, or {}.
-
-        THE OPERATOR'S RECORD ONLY, and the computed one is deliberately NOT
-        here (#378).
-
-        This is what `running_config()` reads, so whatever it returns becomes
-        the candidate on the next `configure` and is written back to tune.env
-        by the next commit. The tuner's computed record must not travel that
-        way: it is boot state and not configuration, it is recomputed every
-        boot from the live card, and the VTY's own record has three fields
-        where it has four - so a commit would persist a copy with the gateway
-        dropped, and the NEXT boot would read that copy in preference and put
-        the address back with no route.
-
-        Measured on an installed box: boot one had its default route, PHASE 2
-        created two accounts and committed, and the boot after the power cycle
-        came back with the address on the pair and
-        `ip -4 route list default` empty. The commit was what did it.
-
-        `load()` asks for the computed record explicitly, on the one path that
-        needs it, which is the boot that hands the card over.
-
-        Three fields rather than three assignments: they are one fact and a
-        file holding two of the three describes a box that cannot exist. A
-        line this cannot read is read as no record at all, which is the safe
-        direction - the box then refuses to hand the card over rather than
-        handing it over with half an answer.
-        """
-        w = self.read_tune_key(self.TUNE_MGMT_KEY).split()
-        if len(w) == 3 and "/" in w[1]:
-            return {"name": w[0], "address": w[1], "mac": w[2].lower()}
-        return {}
-
     def read_computed_mgmt(self):
         """
         The way back hexarouting-tune computed on this boot, or {}.
 
-        Four fields - name, address, MAC, gateway - and the gateway is KEPT,
-        because on this path nothing else will put the route back.
-
-        The record the VTY writes carries three, and its route comes from the
-        saved configuration: `take_management_card` appends
-        `ip route 0.0.0.0/0 <gw>` to the candidate at the commit, so the boot
-        after it replays a file that has the route in it. A box that claims
-        its own card never had that commit, so the file is empty and the route
-        has no other author. Measured on an installed box: address back on the
-        pair, `ip -4 route list default` empty, and the box reachable from its
-        own subnet and nowhere else.
+        Four fields - name, address, MAC, gateway - and ALL FOUR, because
+        this is the only record load() applies now and nothing else will put
+        the route back: a box with the address on the pair and no default
+        route answers on its own subnet and nowhere else, measured on an
+        installed box before the gateway was carried (#378). A file holding
+        three of the four describes a box that cannot exist and is read as no
+        record at all, which is the safe direction.
         """
         try:
             with open(self.MGMT_PATH_FILE, encoding="utf-8") as f:
                 w = f.read().split()
         except (OSError, UnicodeDecodeError):
             return {}
-        if len(w) < 3 or "/" not in w[1]:
+        if len(w) != 4 or "/" not in w[1]:
             return {}
-        got = {"name": w[0], "address": w[1], "mac": w[2].lower()}
-        if len(w) > 3:
-            got["gateway"] = w[3]
-        return got
+        return {"name": w[0], "address": w[1], "mac": w[2].lower(),
+                "gateway": w[3]}
 
     def write_dataplane_if(self, name):
         """
@@ -11417,11 +11114,9 @@ class Shell:
         written for - the one whose only card carries the management address -
         and false of the two-card box that is the worked example in the
         operator guide, where the session arrives on a card Linux keeps and a
-        dataplane restart never touches it. The product decides that same
-        question correctly in three other places (dataplane_if_refusal offers
-        the other card, take_management_card records a handover only for this
-        one, do_commit arms a confirmed commit only when the card carries the
-        session), and this sentence was the one that did not ask.
+        dataplane restart never touches it. The product reads that same pair
+        - default_route_nic() and host_nics() - wherever it says what a card
+        carries, and this sentence was the one that did not ask.
 
         What it does NOT claim on any of them is what the restart costs the
         traffic. Nothing in this repository has measured that, which is the
@@ -12912,29 +12607,23 @@ class Shell:
         the difference between a refusal they read after typing and a choice
         they never make.
 
-        AND THE MARK IS NOT ALWAYS "REFUSED" (#309). It said so unconditionally
-        and has been wrong since #303 on the box where it matters most: with no
-        other card, that name is ACCEPTED and the address moves with it. So on
-        a one-NIC VM - which is how most people meet this product - the
-        completion told the operator their only card was refused, and then the
-        box took it.
-
-        The condition is the one the refusal itself uses: is there another card
-        to name instead. Read from the same host_nics() the refusal reads, so
-        the hint and the answer cannot disagree about what the box has.
+        AND THE MARK SAYS "REFUSED" NOWHERE (#385). It said so unconditionally
+        once and was wrong on the one-card box (#309); then it said so on the
+        box with another card, where the VTY refused the name. That refusal is
+        gone - a named card is claimed whichever route it carries - so what
+        the mark says is what happens to the card: its address moves with it
+        onto the linux_cp pair, on every box.
         """
         default = self.default_route_nic()
         names = [n["name"] for n in self.host_nics()]
-        alone = len(names) == 1
         # AND IT FITS THE CONSOLE. display_matches puts the name, two spaces
         # and this text on one row, so the text is as wide as itself plus the
         # longest name. "the only card, so it is handed over and its address
         # goes with it" measured 100 columns against a 79-column console
         # (#346), on the row an operator reads BEFORE typing the name - so the
         # sentence telling them what handing this card over means was the one
-        # the terminal broke. The two-card spelling was always 44.
-        return {n: ("the only card: handed over, address and all" if alone
-                    else "carries the default route: refused")
+        # the terminal broke. This one is 51.
+        return {n: "carries the default route: its address moves with it"
                 if n == default else "card"
                 for n in names}
 
@@ -13431,6 +13120,20 @@ class Shell:
             return
         with open(path) as f:
             target = Config.parse(f.read())
+        # SAID, because the file and the running configuration differ by
+        # these lines until the next `save`, and a difference nobody was told
+        # about is discovered later by somebody reading both. Dropped rather
+        # than refused, for the reason Config says beside `dropped`.
+        # The path and the line each on a row of their own, the split the
+        # refusal below already makes: on the box's own path this would
+        # measure well past the console, and the line is the one thing here
+        # somebody may want to copy (#276).
+        for lineno, text, why in target.dropped:
+            print(f"note: line {lineno} is dropped: this VTY no longer has "
+                  f"the statement")
+            print(f"    {path}")
+            print(f"    {text}")
+            print_prose(f"({why})", indent="    ")
 
         # A `tap<n>` stanza naming an interface this box does NOT have is the
         # Linux end of a pair that existed when the file was saved and does
@@ -13448,31 +13151,27 @@ class Shell:
         if stale:
             target.drop_lcp_taps(stale)
 
-        # THE TWO STATEMENTS THIS FILE IS NOT THE HOLDER OF, and the whole of
-        # #332. `commit` writes the card and the management path it carries
-        # into the tuner's file, which is what hands the card over at the next
-        # boot; only `save` writes THIS file. So a box that committed the
-        # handover and rebooted - which is exactly what the VTY tells the
-        # operator to do - replays a file that has never heard of the card. On
-        # a fresh appliance that is the three comments the installer ships,
-        # which `is_empty()` below returns on, so apply_management_path() was
-        # not reached at all: the card was in the dataplane, no `linux_cp`
-        # pair was made, the address had nowhere to go, and the box came back
-        # with no address on any interface and nobody could reach it.
-        #
-        # Taken from the holder only where this file is silent. A file that
-        # names a card is the operator's own answer and stays it, which is
-        # what keeps `no dataplane interface`, `save` and a reboot working.
-        if not target.dataplane_if and not target.dataplane_mgmt:
+        # THE STATEMENT THIS FILE IS NOT THE HOLDER OF, and half of #332.
+        # `commit` writes the card into the tuner's file, which is what hands
+        # it over at the next boot; only `save` writes THIS file. So a box
+        # that committed and rebooted replays a file that has never heard of
+        # the card. Taken from the holder only where this file is silent: a
+        # file that names a card is the operator's own answer and stays it,
+        # which is what keeps `no dataplane interface`, `save` and a reboot
+        # working.
+        if not target.dataplane_if:
             target.dataplane_if = self.read_dataplane_if()
-            # THE OPERATOR'S RECORD FIRST, THEN THE TUNER'S. This is the one
-            # path that may see the computed record: it runs at boot, on the
-            # file hexarouting.service replays, and it is where the card is
-            # actually handed over. Everything else reads the operator's
-            # record alone, so the computed one cannot be promoted into the
-            # saved configuration by a commit that was about something else.
-            target.dataplane_mgmt = (self.read_dataplane_mgmt()
-                                     or self.read_computed_mgmt())
+        # THE WAY BACK, FROM THE ONE HOLDER IT HAS (#385). It is the record
+        # hexarouting-tune computed off the live card on THIS boot, in /run,
+        # and it is applied whatever the saved file says about the card: a
+        # file naming the card by hand, a file that never heard of it and the
+        # three comments the installer ships all describe a box that gave its
+        # card away on this boot exactly when that record exists. The VTY's
+        # own record used to be read here in preference, and only where the
+        # file named nothing - so a file that named the card without one,
+        # which every override on a box with a spare card produces, was a
+        # boot that put nothing back. The other half of #332.
+        way_back = self.read_computed_mgmt()
         if target.unknown:
             # Read at BOOT, on a box that is refusing its own saved
             # configuration, which is the worst moment to be handed a broken
@@ -13502,7 +13201,7 @@ class Shell:
         # check is right, the input was not a change.
         #
         # The management path is the one exception, and it is not a change
-        # either: the box is putting back what its own tuner recorded before
+        # either: the box is putting back what its own tuner computed before
         # it gave the card away. An empty file is what every fresh appliance
         # boots with, so without this the boot after the handover is the boot
         # that does nothing at all (#332).
@@ -13510,8 +13209,8 @@ class Shell:
             # The answer is not checked because there is nothing here to
             # abandon: `err` has already counted the failure, which is what
             # hexarouting.service and the exit status read.
-            if target.dataplane_mgmt:
-                self.apply_management_path(target.dataplane_mgmt)
+            if way_back:
+                self.apply_management_path(way_back)
             return
 
         # Checked before it is applied, and refused whole if the check refuses.
@@ -13529,6 +13228,16 @@ class Shell:
             print(f"    {path}")
             return
         self.failed = before
+
+        # BEFORE the file's own statements, because the pair this makes is an
+        # interface the file may address, and the box's way home has to be
+        # there before anything that needs the box. NOT FATAL for the rest of
+        # the file: a box whose pair could not be made has already said so
+        # through `err`, which is what hexarouting.service reads, and it
+        # still wants its pools and its routing - a box that forwards and is
+        # reachable only at its console is better than one that is neither.
+        if way_back:
+            self.apply_management_path(way_back)
 
         if self.apply(target):
             try:

@@ -11,32 +11,29 @@
 # looked like it worked on some hardware and not others (issue #283).
 #
 # WHAT IT BINDS IS WHAT startup.conf NAMES, and that is deliberate. The tuner
-# has already decided which interface the dataplane gets, and it REFUSES the
-# one carrying the default route so a remote box is not cut off (#123).
-# Reading its output rather than tune.env means that refusal is inherited
+# has already decided which cards the dataplane gets - every card but a
+# reserve, or the one the operator named - and whether the card this box is
+# reached on may go at all: it reads that card's address, MAC and gateway on
+# this boot and names no card whose way back it could not read (#378).
+# Reading its output rather than tune.env means those decisions are inherited
 # rather than reimplemented: a second copy of "which NIC may the dataplane
-# have" is a second copy that can disagree with the first, and this one would
-# disagree by taking the box off the network.
+# have" is a second copy that can disagree with the first.
 #
-# It still checks the default route itself before unbinding. Not as a second
-# opinion but as a last one: startup.conf is a file, a person can edit it, and
-# the cost of being wrong here is a box somebody has to walk to.
-#
-# The ONE other file it reads is the way back hexarouting-tune computed for
-# the card it is about to claim, in /run (#378). The tuner's output says which
-# device to bind; it has no way to say "and the box knows how to stay
-# reachable", which is the fact the last-card case needs.
+# It decides NOTHING about which card. It used to read the default route
+# itself and refuse the card carrying it (#123), letting the last card through
+# only beside a way back (#303, then #378). That went with #385, on the
+# maintainer's decision: a box is configured at its console when it is new,
+# so a guard on the card it is reached over guards a step nobody takes over
+# the network, and the one fact the guard needed - is there a way back - is
+# the tuner's to decide before it names the card, not this program's to
+# second-guess after.
 set -u
 
 ROOT=${HEXA_ROOT:-}
 VPPCONF=${HEXA_STARTUP_CONF:-$ROOT/etc/vpp/startup.conf}
 SYSBUS=${HEXA_PCI_BUS:-$ROOT/sys/bus/pci}
 SYSNET=${HEXA_SYS_NET:-$ROOT/sys/class/net}
-PROCROUTE=${HEXA_PROC_ROUTE:-$ROOT/proc/net/route}
 IOMMU=${HEXA_IOMMU_GROUPS:-$ROOT/sys/kernel/iommu_groups}
-# Where hexarouting-tune leaves the way back it computed for a card it is
-# about to claim (#378). In /run, so it cannot outlive the boot that wrote it.
-MGMTPATH=${HEXA_MGMT_PATH:-$ROOT/run/hexarouting/dataplane-management}
 
 say() { echo "$@" >&2; }
 
@@ -84,9 +81,9 @@ fi
 # The NEAREST PCI ancestor, not the basename of the link. A virtio NIC's
 # `device` points at .../0000:00:12.0/virtio3, so the basename is `virtio3`
 # and every comparison against a PCI address fails - which is #286 one
-# directory short, and here it fails in the dangerous direction: the check
-# below could not recognise the management card on any VM, so the last line of
-# defence was not there on exactly the machines this product is first tried on.
+# directory short. Here it costs the bind line the one word an operator
+# recognises, the interface name, on exactly the machines this product is
+# first tried on.
 pci_addr_of() {  # <netdev path>
   _p=$(readlink -f "$1/device" 2>/dev/null) || return 1
   while [ -n "$_p" ] && [ "$_p" != "/" ]; do
@@ -181,85 +178,13 @@ bind_one() {  # <pci address> <driver to use>
     fi
   done
 
-  # The last check before the irreversible part. `ip route` is not used because
-  # this runs before the network is necessarily up and because /proc/net/route
-  # is what the tuner reads - one source, one answer.
-  defif=$(awk 'NR>1 && $2 == "00000000" { print $1; exit }' "$PROCROUTE" \
-          2>/dev/null)
-  if [ -n "$defif" ] && [ -e "$SYSNET/$defif/device" ]; then
-    defaddr=$(pci_addr_of "$SYSNET/$defif")
-    if [ "$defaddr" = "$ADDR" ]; then
-      # A BOX WITH ONE CARD IS THE CASE THIS REFUSAL COULD NOT ANSWER (#303),
-      # and the answer it was given has now moved (#378). Everywhere else the
-      # refusal stands exactly as before: another card means the operator has
-      # one to name instead, giving this one away costs the box its management
-      # for nothing, and the advice can name a card that really exists.
-      #
-      # WHAT CHANGED IS WHERE THE WAY BACK COMES FROM. It used to be
-      # HEXA_DATAPLANE_MGMT, which only existed if somebody had already typed
-      # `dataplane interface` at the VTY - so on a box that claims its own card
-      # the record was never there, this refused, and the advice it printed
-      # told the operator to type the card the tuner had just named. A loop is
-      # worse than a gap.
-      #
-      # hexarouting-tune now computes that way back on THIS boot, off the live
-      # card, in the window before anything is unbound, and leaves it in
-      # /run. So the two things that have to be true before the last card may
-      # go are unchanged in substance - there must be no other card, and the
-      # box must have a way back - and only the second one's source moved.
-      #
-      # /run AND NOT tune.env, which is the point rather than a detail: a file
-      # in /run cannot outlive the boot that wrote it, so this can never be
-      # reading a way back computed for a card that has since been swapped.
-      # The tuner rewrites or removes it every boot.
-      others=""
-      for n in "$SYSNET"/*; do
-        [ -e "$n/device" ] || continue
-        a=$(pci_addr_of "$n") || continue
-        [ "$a" = "$ADDR" ] && continue
-        others="$others $(basename "$n")"
-      done
-      keep=$(cat "$MGMTPATH" 2>/dev/null | tail -1)
-      if [ -n "$others" ] || [ -z "$keep" ]; then
-        say "bind: REFUSING $ADDR: it is $defif, which carries this box's default"
-        say "      route. Binding it would take the box off the network and leave"
-        say "      a console somebody has to walk to."
-        if [ -n "$others" ]; then
-          say "      This box has another card:$others. Name one of those with"
-          say "      'dataplane interface' in the VTY instead."
-        else
-          # NO LONGER AN INSTRUCTION, because there is nothing the operator
-          # could usefully type: the box already claimed this card and the
-          # thing that is missing is a way back it computes for itself. What
-          # they need is which of the three could not be read, and the tuner
-          # said that in the journal a few lines above this one.
-          say "      It is the only card this box has, so it CAN be handed"
-          say "      over - but this box could not work out how to stay"
-          say "      reachable without it. hexarouting-tune says above which"
-          say "      of the address, MAC or gateway it could not read."
-        fi
-        return 1
-      fi
-      # THE RECORD ON A ROW OF ITS OWN. It is a name, an address, a MAC and a
-      # gateway, which is more than fits beside a sentence on an 80-column
-      # console (#367). It is also the one thing on this screen somebody may
-      # want to copy, so it is the whole of the last row.
-      say "bind: $ADDR is $defif, the only card this box has. Handing it"
-      say "      over, with the way back this box computed on this boot:"
-      say "        $keep"
-    fi
-  fi
-
   # The interface name, for the messages, while it still has one: once the
   # device is bound to vfio-pci the kernel netdev is gone.
   #
   # Through pci_addr_of() and not the basename of the link, for the reason that
   # function was written: on a virtio guest the basename is `virtio7` and never
-  # equals a PCI address. The defence above was the dangerous half of that and is
-  # fixed; this is the same comparison thirty lines later, and it fails quietly -
-  # every bind message on every VM lost the interface name, which is the one word
-  # in it an operator recognises. Two readers of one fact, and only one of them
-  # was corrected, is how the release gate refused 0.72.0 twice.
+  # equals a PCI address, so every bind message on every VM lost the interface
+  # name, which is the one word in it an operator recognises.
   ifname=""
   for n in "$SYSNET"/*; do
     [ -e "$n/device" ] || continue

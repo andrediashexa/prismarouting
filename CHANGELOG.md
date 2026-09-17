@@ -75,6 +75,145 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Changed
+
+* **The management-path apparatus is gone, and a card named with
+  `dataplane interface` is claimed without being argued with**
+  ([#385](https://github.com/andrediashexa/hexarouting/issues/385)). 0.76.0
+  made the box claim its own cards and left the machinery built to protect
+  the management card half present, on the rule that nothing is deleted
+  before what replaces it has been seen working. The replacement - the way
+  back computed off the live card on the boot that claims it - has been seen
+  working on an installed box, so the rest goes, one step per commit, each
+  with its check shown failing. The maintainer's direction, not a
+  refinement: a box is configured at its console when it is new, so a
+  refusal guarding the card it is reached over guards a step nobody takes
+  over the network.
+
+  * **`hexarouting-tune` no longer refuses the card carrying the default
+    route when it is named, and takes no `--keep-management`.** Until now a
+    named management card was overridden with `no-pci` and a `REFUSED` line
+    in the journal, and a one-card box was let through only when
+    `apply-tuning` passed the flag for a record the VTY had written. A named
+    card is claimed whichever route it carries; the override stays exclusive
+    on a box with several; and the way back is read off that card on the
+    same boot, so a card whose address, MAC or gateway cannot be read is not
+    claimed, named or not. `appliance/test_tune.py` holds it, shown red
+    against the 0.76.1 tuner: three checks on the one-card box, two on the
+    two-card box, and the flag refused by the parser.
+
+  * **`bind-dataplane-nic` no longer refuses the card carrying the default
+    route, and reads nothing to decide which card.** It was the last line of
+    defence for a hand-edited `startup.conf`: refuse the management card
+    while there is another, and the last card unless a way back sat in
+    `/run`. The tuner names no card whose way back it could not read, so the
+    one fact the refusal needed is settled before the file it reads is
+    written; the binder binds every device that file names and leaves the
+    rest alone. `test/test_bind_nic.sh` holds it on the one-card box, the
+    two-card box and a box with the `/run` record present, shown red against
+    the 0.76.1 binder; its width ceiling drops from 5 to 2 with the rows the
+    refusal interpolated.
+
+  * **The VTY no longer refuses the card carrying the default route at the
+    prompt, or at `commit`, `rollback` and `--load`.** Two of its three
+    refusals go: the management card while the box has another card (#123),
+    and the card whose address, gateway or MAC the prompt could not read
+    (#303). What stays is the one that is about spelling: a name this box
+    has not got, with the list it does have. Whether a way back can be read
+    is the tuner's question, off the live card on the boot that claims it,
+    and the prompt answering it from a reading taken another day was the
+    pair that comes to disagree. Three screens that described the refusal
+    move with it: the completion's mark on the default-route card no longer
+    says `refused` on any box, `show hardware` says where the address goes
+    instead of that naming the card is refused, and the note a one-card box
+    prints no longer tells the operator to name a card the box claims by
+    itself - nor promises the confirmed commit 0.76.0 removed, which it had
+    gone on saying for a release. `test/test_dataplane_if.py` and
+    `test/test_hexash_complete.py` hold it, shown red against the 0.76.1
+    VTY on the two-card box and the one-card box with no address.
+
+  * **The boot replay puts back the way back the tuner computed, and only
+    that.** `read_dataplane_mgmt()` had two sources with a stated
+    precedence - the record the VTY wrote in `tune.env` at a commit, then
+    the one the tuner left in `/run` - and `load()` consulted them only
+    where the saved file named no card. Transitional by design: the computed
+    path had not been seen working on a real box when it was written, and it
+    has now. So `load()` applies the `/run` record on every boot that has
+    one, whatever the saved file says about the card, and `commit` no longer
+    applies the VTY's record at all. That closes a gap the removal of the
+    prompt's refusal opened: `dataplane interface <card>`, `save`, reboot on
+    a box with a spare card was a boot that put nothing back. A `/run` record
+    without a gateway is read as no record, because a box with the address
+    on the pair and no route answers on its own subnet and nowhere else.
+    `test/test_dataplane_if.py` holds it - the saved file that names the
+    card, and the three-field record - shown red against the step before.
+
+  * **The prompt writes nothing down when a card is named.** On a one-card
+    box `dataplane interface <card>` used to read the address, MAC and
+    gateway off Linux at that moment, print them back with "this box has no
+    other card, so it keeps its management", add `ip route 0.0.0.0/0 <gw>`
+    to the candidate, and write `HEXA_DATAPLANE_MGMT` beside the card at the
+    commit. All of it goes: the tuner reads the same three things off the
+    live card on the boot that claims it, whichever box and whether or not
+    the card was named, so the prompt's copy was a second author for a fact
+    the box recomputes. Naming a card is accepted like any other statement,
+    and the commit says what it says for every card. `test/test_dataplane_if.py`
+    holds it against the candidate and against `tune.env`, shown red against
+    the step before; the width ceiling in `test/test_hexash_refusals.py`
+    drops by the headline that went.
+
+  * **`dataplane management` is no longer a statement, and `?` no longer
+    offers it.** It was written by the box, never by hand, and it carried the
+    record the prompt has stopped taking. **A saved file from 0.74.x through
+    0.76.1 that carries it still loads**: the line is dropped, the boot log
+    says `note: line N of <file> is dropped: dataplane management ...` with
+    the reason, the rest of the file is applied, and the next `save` writes
+    the file without it. Not refused, on the argument
+    [#375](https://github.com/andrediashexa/hexarouting/issues/375) made for
+    `block-stride` on a deterministic pool: a refusal at boot is a box coming
+    up with no configuration, read by nobody, over a line that was already
+    doing nothing. Pasted at the prompt it meets the usage line for the one
+    statement there is under that word. `test/test_dataplane_if.py` holds
+    the drop, the note and the prompt; `test/test_hexash_refusals.py` the
+    usage line.
+
+  * **`HEXA_DATAPLANE_MGMT` is read by nothing.** It was the VTY's record
+    in `tune.env`: `apply-tuning` passed the tuner a flag on its presence,
+    the binder read it before unbinding, the VTY read it back into the
+    running configuration and the boot self-test read it to say a box had
+    handed its only card over. Each reader went with its step, and the
+    self-test now asks the same question of the record the tuner leaves in
+    `/run/hexarouting/dataplane-management`, which is there exactly when this
+    boot gave the card away: `[FAIL] this box handed its only card over and
+    NO pair carries the address` still prints on that box, with the way back
+    the box computed on this boot rather than one recorded at a commit. A
+    `tune.env` on a box upgraded from 0.74.x through 0.76.1 may still carry
+    the line; it is inert, and `commit` leaves the rest of the file alone as
+    it always did. `test/test_selftest.sh` holds the self-test against the
+    `/run` record, shown red against the 0.76.1 self-test, which read
+    `tune.env` and found nothing there.
+
+  * **The one-NIC lab, `one-nic`, is deleted.** It was #303's whole proof: a one-card
+    box in a container, the card named at the prompt, the bind stood in for
+    with a `tc` drop, the boot replay, and a ping and a TCP session from off
+    the box's subnet. Each claim it could still make is held elsewhere or
+    could not honestly be made there any more - the prompt accepting the
+    only card is `test/test_dataplane_if.py` without a box; the boot replay
+    putting the way back on the pair it could only have held by writing the
+    tuner's `/run` record itself, the product's work its own header forbade;
+    and the revert it waited a minute for is the window 0.76.0 removed. The
+    installed box in `lab/install-iso.sh` PHASE 4 and 5 holds the whole path
+    with the real tuner and binder. Two readers held the lab's place and
+    went red on its deletion before they were moved: `docs/context.md`
+    named it as authoritative for invariant 1.5, and the off-run floor in
+    `test/test_off_run_coverage.sh` said 32 where the tree had 31.
+
+  **What it costs a box already in service.** Naming the card your session
+  arrives on, with `dataplane interface`, is no longer refused on a box that
+  has another card: the box takes the card you named at the next start of
+  the dataplane and comes back on the `linux_cp` pair, the way a one-card
+  box has since 0.76.0. Nothing else you have committed changes.
+
 ### Fixed
 
 
