@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.88.0 - the checklist and the wiki index know it too
+
+[#6](https://github.com/andrediashexa/hexarouting/issues/6).
+
+### Fixed
+
 * **The last three places that said this box has no failover**
   ([#6](https://github.com/andrediashexa/hexarouting/issues/6)). `docs/architecture.md`'s
   checklist - the list a reader scans to see what the product has - carried
