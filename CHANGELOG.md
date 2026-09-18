@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.84.0 - a pair of boxes, and the address that moves between them
+
+[#7](https://github.com/andrediashexa/hexarouting/issues/7).
+
+### Added
+
 * **A pair of boxes can hold a service address between them**
   ([#7](https://github.com/andrediashexa/hexarouting/issues/7)), and it runs where the
   packets are:
