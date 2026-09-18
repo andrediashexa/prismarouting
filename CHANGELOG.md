@@ -91,6 +91,24 @@ version has a chance of seeing it.
   and that `--load` puts it back - because a file that does not carry it and a
   loader that ignores it fail identically from the outside.
 
+* **The boot self-test says whether this box is in a pair, and whether it
+  really is** ([#7](https://github.com/andrediashexa/hexarouting/issues/7)). The saved
+  file says `vrrp 1 address ...`; the dataplane took that statement or refused
+  it, and until now nothing on the box said which. `show running-config` reads
+  the dataplane, so it would simply not mention the router - an operator
+  comparing the file against the screen sees a statement they wrote and a
+  screen that does not argue with it, while the peer holds the service address
+  alone and there is no standby at all. That is discovered the day the peer
+  dies.
+
+  It is the same comparison the self-test already makes for pools, addresses
+  and the MTU - what the box was TOLD at boot against what it HAS - applied to
+  the one thing whose absence has no counter behind it. A box with every
+  router in place gets the line an operator actually wants at the console:
+  how many are holding an address and how many are standing by. A box with no
+  `vrrp` statement hears nothing, because an alarm that is always on is one
+  nobody reads.
+
 ### Fixed
 
 ## 0.88.0 - the checklist and the wiki index know it too
