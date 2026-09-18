@@ -75,6 +75,12 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+## 0.82.0 - the log can name the subscriber, not only the address
+
+[#21](https://github.com/andrediashexa/hexarouting/issues/21).
+
 ### Added
 
 * **The block log can name the subscriber, not only the address**

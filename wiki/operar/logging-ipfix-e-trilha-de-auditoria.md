@@ -210,7 +210,7 @@ O arquivo é um assinante por linha, escrito pelo seu sistema de provisionamento
 
 **A identidade é tomada no instante da alocação**, não na hora em que o registro sai. Entre uma coisa e outra o lease pode ter mudado de dono, e um registro nomeando quem tem o endereço depois é um registro bem formado, guardado, e errado.
 
-**Endereço que a caixa não conhece vira `unknown`, e o registro sai assim mesmo.** Registro faltando é pior que registro incompleto, e o coletor precisa distinguir "a caixa não sabe" de "a caixa não disse".
+**Endereço que a caixa não conhece vira** `**unknown**`**, e o registro sai assim mesmo.** Registro faltando é pior que registro incompleto, e o coletor precisa distinguir "a caixa não sabe" de "a caixa não disse".
 
 **É dado pessoal, e nada imprime uma entrada.** O `show cgnat identity` diz quantas entradas existem e quando o arquivo foi lido:
 
@@ -221,7 +221,7 @@ identity table: 3 entry(s), read 2026-09-18T06:41:02Z
 
 Nenhuma outra tela desta caixa carrega identidade. A presença dela no log é a razão pela qual o log é protegido.
 
-**Nos dois transportes:** no syslog ela vai como `subscriberId` dentro do dado estruturado; no IPFIX sobre TCP vai como elemento **371 `userName`**. O id do template do registro de bloco passou de 256 para 258 por causa disso — o IPFIX não permite que um id signifique dois conjuntos de campos, e um coletor com o 256 em cache leria os primeiros bytes da identidade como id de pool. Se o seu coletor guarda templates, ele vai simplesmente esperar o novo, que a caixa reenvia a cada minuto.
+**Nos dois transportes:** no syslog ela vai como `subscriberId` dentro do dado estruturado; no IPFIX sobre TCP vai como elemento **371** `**userName**`. O id do template do registro de bloco passou de 256 para 258 por causa disso — o IPFIX não permite que um id signifique dois conjuntos de campos, e um coletor com o 256 em cache leria os primeiros bytes da identidade como id de pool. Se o seu coletor guarda templates, ele vai simplesmente esperar o novo, que a caixa reenvia a cada minuto.
 
 O exportador **UDP** não mudou: ele continua com os sete campos da RFC 8158 e sem identidade.
 
