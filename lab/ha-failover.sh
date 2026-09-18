@@ -89,6 +89,15 @@
 # Nothing in the verdict names VRRP, keepalived or any configuration syntax.
 # Only configure_ha() below mentions a spelling, and it asserts nothing, for a
 # reason measured and written above it.
+#
+# OFF-RED-AT-LEAST: 8
+#
+#   sh tools/lab.sh ha-failover        -> LAB PASSED
+#   sh tools/lab.sh ha-failover off    -> LAB FAILED (no pair is configured)
+#
+# The off run is what says this lab can fail at all: with `off` the boxes get
+# their own addresses and no virtual router, which is the box this lab was
+# written against and every check of it was red on.
 set -u
 . /src/lab/lib.sh      # startup_conf, use_binary_api
 mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/prisma-routing /etc/prisma-routing
@@ -98,6 +107,7 @@ mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/prisma-routing /etc/prisma-
 cd /src
 use_binary_api
 
+MODE=${1:-on}
 FLOW=/src/lab/haflow.py
 SUB_SERVICE=100.64.0.5     # the subscriber whose service has to survive
 SUB_FIXTURE=100.64.0.9     # the subscriber that proves the topology works
@@ -263,15 +273,36 @@ in_block() {   # <ip:port>
 #
 # The lab does not decide this and must not. Whose address it is is the
 # product's answer; all the lab does is break whoever turns out to have it.
-PROBE_PORT=41000
+rm -f /tmp/probe-port          # the counter next_port() keeps, below
 sessions_on() {   # <box> -> the total session count, or nothing if it is dead
   # A box this lab has just killed answers "connect: Connection refused" on
   # stderr, which is the expected answer and not a fault to report.
   vb "$1" show bpa session 2>/dev/null \
     | sed -n 's/^total: \([0-9]*\) sessions.*/\1/p'
 }
+# A SOURCE PORT NOBODY HAS USED YET, kept in a FILE and not in a variable.
+#
+# The instrument this lab reads with was wrong, and it was wrong in the way
+# that reports the product as broken: `receiving_box` is called as
+# `$(receiving_box)`, which is a SUBSHELL, so `PROBE_PORT=$((PROBE_PORT + 1))`
+# incremented a copy that died with the subshell. Every reading after the
+# first one probed from the SAME source port, the session for it already
+# existed on whichever box had answered the first time, and no session count
+# moved anywhere - so the reading came back `none` and the verdict said "the
+# service came back and nothing is receiving it", which is not a state that
+# exists.
+#
+# It cost one red check in the run that measured it and it would have cost an
+# investigation of the product. A counter that has to survive a subshell lives
+# where subshells can see it.
+next_port() {
+  _p=$(cat /tmp/probe-port 2>/dev/null || echo 41000)
+  _p=$((_p + 1))
+  echo "$_p" > /tmp/probe-port
+  echo "$_p"
+}
 receiving_box() {   # -> a | b | none
-  PROBE_PORT=$((PROBE_PORT + 1))
+  PROBE_PORT=$(next_port)
   _a0=$(sessions_on a); _b0=$(sessions_on b)
   probe "$SUB_SERVICE" "$PROBE_PORT" 1 >/dev/null 2>&1
   _a1=$(sessions_on a); _b1=$(sessions_on b)
@@ -326,10 +357,16 @@ echo "  and a held one, with nothing broken under it: ${FIX_HOLD:-(no answer)}"
 # organised against (docs/context.md 1.4). That silent acceptance is a defect
 # of its own and is filed separately; it is not #9.
 #
-# What is printed here is evidence for whoever implements #7, not a check. It
-# is also the only place in this file that names a syntax: #7 MAY change what
-# configure_ha() types. #7 MUST NOT change anything below the verdict line,
-# because that is the requirement and this is only how it is asked for.
+# What is printed here is evidence, not a check. It is also the only place in
+# this file that names a syntax: #7 MAY change what configure_ha() types. #7
+# MUST NOT change anything below the verdict line, because that is the
+# requirement and this is only how it is asked for.
+#
+# EACH SIDE TRACKS THE OTHER, which is what makes stage 4 a failure rather
+# than a cable nobody reacts to: a box whose uplink is gone drops from 200 to
+# 50 and loses the subscriber-side address to a healthy peer advertising 100.
+# A pair configured without tracking survives a dead box and not a deaf one,
+# and that difference is the whole reason stage 4 is asked separately.
 configure_ha() {   # <box> <api prefix> <priority>
   cat > "/usr/local/bin/vppctl-$1" <<EOF
 #!/bin/sh
@@ -344,8 +381,10 @@ EOF
   PRISMA_API_SEGMENT="/dev/shm/$2-global_vm" PRISMA_CONFIG="/etc/prisma-routing/$1.conf" \
   python3 /src/src/prismash/prismash.py \
     -c "configure" \
-    -c "interface host-$1-in"  -c "vrrp 1 address $VIP_IN"  -c "vrrp 1 priority $3" -c "exit" \
-    -c "interface host-$1-out" -c "vrrp 2 address $VIP_OUT" -c "vrrp 2 priority $3" -c "exit" \
+    -c "interface host-$1-in"  -c "vrrp 1 address $VIP_IN"  -c "vrrp 1 priority $3" \
+    -c "vrrp 1 track host-$1-out decrement 150" -c "exit" \
+    -c "interface host-$1-out" -c "vrrp 2 address $VIP_OUT" -c "vrrp 2 priority $3" \
+    -c "vrrp 2 track host-$1-in decrement 150" -c "exit" \
     -c "commit" 2>&1
 }
 # The other shape somebody would reach for, kept beside the first because the
@@ -360,8 +399,14 @@ ask_cgnat_ha() {   # <box> <api prefix> <peer address>
 echo
 echo "=== stage 2: what happens when the product is asked for a pair ==="
 echo "  an address on the interface, which is where VRRP would live:"
-echo "  box a:"; configure_ha a hxa 200 | sed 's/^/    /'
-echo "  box b:"; configure_ha b hxb 100 | sed 's/^/    /'
+if [ "$MODE" = "off" ]; then
+  echo "  off: no virtual router is configured on either box, which is the"
+  echo "  box this lab was written against. Every check about the service"
+  echo "  address has to go red."
+else
+  echo "  box a:"; configure_ha a hxa 200 | sed 's/^/    /'
+  echo "  box b:"; configure_ha b hxb 100 | sed 's/^/    /'
+fi
 echo "  Since #7 the VTY has a 'vrrp' of its own and it goes to the DATAPLANE,"
 echo "  over the binary API, onto the interface that carries the packets - not"
 echo "  to FRR and not onto the linux_cp TAP. lab/vrrp.sh measures the election,"
@@ -449,8 +494,28 @@ EXECSTOP=$(sed -n 's/^ExecStop=-\{0,1\}//p' \
            /src/appliance/systemd/vpp-stop-drain.conf)
 
 fail_link() {   # the uplink goes away and the box stays up
+  #
+  # TWO COMMANDS FOR ONE FAILURE, and the second one is here because of a
+  # measurement rather than for convenience. The cable is pulled at the
+  # bridge, which is what an operator's cable is - and this VPP does not see
+  # it: an af_packet host interface goes on reporting "up" with the veth's
+  # peer down, with its own port down in Linux, and with the veth deleted
+  # (lab/vrrp.sh prints all three readings on every run, and a VPP tap
+  # behaves the same). A pulled cable the dataplane cannot see is not the
+  # failure this stage is about - it is a lab with no failure in it, which
+  # reports the product as broken for a reason that has nothing to do with
+  # the product.
+  #
+  # So the port is taken down in the dataplane as well, which is the state a
+  # card whose cable is out reports on real hardware. That is CAUSING the
+  # failure, which this lab may do; it is not configuring the box out of it,
+  # and nothing is typed at the other box. The one question left for hardware
+  # (#28) is whether a driver notices the cable itself.
   echo "  pulling box $1's uplink: ip link set $1-out-br down"
   ip link set "$1-out-br" down
+  echo "  and down in the dataplane, which is what a real card would report:"
+  echo "    set interface state host-$1-out down"
+  vb "$1" set interface state "host-$1-out" down
 }
 fail_service() {   # planned maintenance: the dataplane is stopped properly
   _p=$(pid_of "$1")
@@ -513,9 +578,10 @@ echo "  box is healthy, still holds the inside address, and has no path"
 echo "  upstream. It is asked separately for exactly that reason."
 round "pulled uplink" link
 LINK_OK=$AWAIT_OK; LINK_SRC=$AWAIT_SRC; LINK_MOVED=$MOVED; LINK_VICTIM=$VICTIM
-echo "  restoring box $LINK_VICTIM's uplink"
+echo "  restoring box $LINK_VICTIM's uplink, at the bridge and in the dataplane"
 ip link set "$LINK_VICTIM-out-br" up
-sleep 3
+vb "$LINK_VICTIM" set interface state "host-$LINK_VICTIM-out" up
+sleep 5
 
 echo
 echo "=== stage 5: the dataplane is stopped the way an appliance stops it ==="
@@ -528,7 +594,8 @@ case "$STOP_VICTIM" in
   a) configure_box a 100.64.3.252/22 200.150.0.11/24 ;;
   b) configure_box b 100.64.3.251/22 200.150.0.12/24 ;;
 esac
-configure_ha "$STOP_VICTIM" "hx$STOP_VICTIM" 200 >/dev/null 2>&1
+[ "$MODE" = "off" ] || configure_ha "$STOP_VICTIM" "hx$STOP_VICTIM" 200 \
+  >/dev/null 2>&1
 sleep 3
 
 echo

@@ -77,7 +77,50 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The HA acceptance test passes, and it is a member of the suite**
+  ([#9](https://github.com/andrediashexa/hexarouting/issues/9)). `lab/ha-failover.sh`
+  was written before any of high availability existed, so that #7 and #8 would
+  be judged against the requirement rather than the requirement written to fit
+  them. Every check in it was red at 0.67.0. All 22 are green now, and
+  `tools/run-all-labs.sh` runs it like any other lab, with an `off` run that
+  takes the virtual routers away and puts it back where it started - which is
+  what says it can still fail.
+
+  What that green run measures: a subscriber's **translated** round trip
+  through a service address neither box owns, surviving a **pulled uplink**, a
+  **stopped dataplane** and a **killed dataplane**, each time coming back on
+  the same public address and a port in the same block, with an in-flight TCP
+  connection gone and a new one landing in the same block.
+
 ### Fixed
+
+* **The lab could not say which box had received the traffic, and reported
+  that as the product losing the service** ([#9](https://github.com/andrediashexa/hexarouting/issues/9)).
+  `receiving_box()` probes from a source port nobody has used yet and watches
+  which box's session count moves. It is called as `$(receiving_box)` - a
+  **subshell** - so `PROBE_PORT=$((PROBE_PORT + 1))` incremented a copy that
+  died with it, and every reading after the first probed from the same port.
+  The session for it already existed, no count moved anywhere, and the verdict
+  read "the service came back and nothing is receiving it", which is not a
+  state that exists. The counter lives in a file now, where a subshell can
+  keep it.
+
+* **A pulled uplink was a failure the dataplane never saw** ([#9](https://github.com/andrediashexa/hexarouting/issues/9)).
+  The lab pulled the cable at the bridge, which is what an operator's cable
+  is - and an af_packet host interface goes on reporting `up` with the veth's
+  peer down, with its own port down in Linux, and with the veth deleted
+  outright. A VPP `tap` behaves the same. So the stage had no failure in it
+  and reported the product as broken for a reason that had nothing to do with
+  the product. It now takes the port down in the dataplane as well, which is
+  the state a card whose cable is out reports on hardware, and the narrow
+  question left for [#28](https://github.com/andrediashexa/hexarouting/issues/28) is
+  whether a driver notices the cable itself.
+
+* **The pair in that lab was configured without tracking**, so it could
+  survive a dead box and not a deaf one ([#9](https://github.com/andrediashexa/hexarouting/issues/9)).
+  Each side tracks the other's port now, which is what the uplink stage is
+  about: a box whose uplink is gone drops from 200 to 50 and loses the
+  subscriber-side address to a healthy peer advertising 100.
 
 ## 0.85.0 - the pair refuses to drift apart
 
