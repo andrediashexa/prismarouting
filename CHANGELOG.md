@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`commit check` said a virtual-router configuration was fine and the commit
+  then failed part-way through applying it**
+  ([#7](https://github.com/andrediashexa/hexarouting/issues/7)). Two refusals lived only
+  in `set_vrrp`, which runs while the commit is APPLYING: a virtual router
+  with no address, and one told to track an interface the dataplane has not
+  got. So `check` printed *configuration check succeeds*, and the commit
+  behind it stopped half-way, on a box the earlier steps had already changed.
+
+  A check that passes a configuration the commit cannot apply is worth less
+  than no check at all: it is the sentence an operator acts on in a
+  maintenance window. Both refusals are made at check time now, against the
+  candidate, and the interface a virtual router sits on joined the list of
+  names the check already reads - so `vrrp` on an interface this box does not
+  have is refused in the same words as every other statement on a missing
+  interface.
+
+  `set_vrrp` keeps its own guards. They are the last line of defence on the
+  path that does not go through `check` at all, which is `prismash --load` at
+  boot.
+
 ## 0.90.0 - the appliance page lists the check the box gained
 
 [#7](https://github.com/andrediashexa/hexarouting/issues/7).

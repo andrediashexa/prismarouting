@@ -7266,6 +7266,9 @@ class Shell:
                 named |= set(target.addresses)
                 named |= set(target.descriptions)
                 named |= set(target.admin_down)
+                # And the interface a virtual router sits on, which was the
+                # one name in this list that `commit check` did not read.
+                named |= set(target.vrrp)
                 # And a sub-interface whose PARENT is not on the box is a
                 # different error, worth its own sentence: the tag is fine and
                 # the port it was meant to sit on is not there.
@@ -7275,6 +7278,36 @@ class Shell:
                         self.err(f"interface {sub}: its parent {parent} is "
                                  "not on this box")
                         ok = False
+                # WHAT A VIRTUAL ROUTER NEEDS BEFORE IT CAN BE STARTED, read
+                # here rather than only at the moment of applying it.
+                #
+                # `set_vrrp` refuses both of these, and until now that was the
+                # only place they were refused - so `commit check` said
+                # "configuration check succeeds" and the commit then failed
+                # part-way through, on a box the earlier steps had already
+                # changed. A check that passes a configuration the commit
+                # cannot apply is worth less than no check: it is the sentence
+                # an operator acts on in a maintenance window.
+                for vr_if in sorted(target.vrrp):
+                    for vrid in sorted(target.vrrp[vr_if]):
+                        vr = target.vrrp[vr_if][vrid]
+                        if not vr["addresses"]:
+                            self.err_prose(
+                                f"interface {vr_if}: vrrp {vrid} has no "
+                                "address",
+                                "a virtual router with nothing to stand for "
+                                "would elect a master that answers for "
+                                "nothing")
+                            ok = False
+                        for tracked in sorted(vr["track"]):
+                            if tracked not in have:
+                                self.err_prose(
+                                    f"interface {vr_if}: vrrp {vrid}: no "
+                                    f"interface {tracked}",
+                                    "the dataplane does not have the "
+                                    "interface this virtual router was told "
+                                    "to track")
+                                ok = False
                 for line in target.routing:
                     w = line.split()
                     if len(w) == 2 and w[0] == "interface":
