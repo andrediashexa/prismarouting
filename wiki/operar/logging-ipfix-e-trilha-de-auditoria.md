@@ -206,6 +206,16 @@ O arquivo é um assinante por linha, escrito pelo seu sistema de provisionamento
 100.64.0.6   pppoe-4471
 ```
 
+**Ou direto do arquivo de lease do seu DHCP**, se você roda IPoE e já tem a resposta:
+
+```
+nat cgnat identity dhcp-leases /var/lib/dhcp/dhcpd.leases
+```
+
+A gramática é a do ISC dhcpd. A identidade é o `client-hostname` quando o lease tem um, e o endereço `hardware ethernet` quando não tem — o primeiro é o que o suporte reconhece, o segundo é o que sempre existe. Lease sem nenhum dos dois não vira entrada, e aquele endereço fica `unknown` em vez de ganhar algo inventado.
+
+**Só lease `active` conta.** O arquivo guarda todo lease que o servidor já escreveu, e um `free` ainda carrega o nome do último cliente — nomear um assinante a partir de um desses é dar a resposta errada a uma ordem judicial com cara de certa. Endereço renovado aparece várias vezes e **vence o último**, que é o contrário da regra do mapa estático; por isso são dois comandos e não um que adivinha pelo começo do arquivo.
+
 **Ele é lido inteiro ou recusado inteiro.** Uma linha que não é comentário nem `<endereço> <identidade>` é recusada dizendo qual linha, e a tabela em vigor não muda — um provisionamento que escreveu uma linha torta pode ter escrito outra, e uma tabela faltando um assinante em silêncio é justamente a falha que isso existe para evitar. Endereço repetido também é recusado: duas identidades para um endereço são duas respostas para a pergunta que o juiz faz, e escolher uma seria a caixa decidindo qual assinante nomear.
 
 **A identidade é tomada no instante da alocação**, não na hora em que o registro sai. Entre uma coisa e outra o lease pode ter mudado de dono, e um registro nomeando quem tem o endereço depois é um registro bem formado, guardado, e errado.

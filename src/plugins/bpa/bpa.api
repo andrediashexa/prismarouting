@@ -79,6 +79,11 @@
  * version of itself that the option had never reached.
  */
 /*
+ * 0.16.0 adds bpa_identity_source_set: the same identity table, from an ISC
+ * dhcpd lease file rather than a static map (issue #21). A new message, so no
+ * existing layout moves.
+ */
+/*
  * 0.15.0 adds bpa_identity_set: where this box reads who held a private
  * address, for the log (issue #21). A new message, so no existing layout
  * moves.
@@ -118,7 +123,7 @@
  * than discovered by a client that silently stops working; lab/api.sh pins
  * the JSON shape and is what fails when this happens.
  */
-option version = "0.15.0";
+option version = "0.16.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -492,6 +497,31 @@ autoreply define bpa_identity_set
   u32 client_index;
   u32 context;
 
+  string path[256];
+};
+
+/** \brief The same table, from a DHCP lease file (issue #21)
+
+    A MESSAGE OF ITS OWN rather than a field on bpa_identity_set, which is
+    already shipped: a new message moves no existing layout and no client has
+    to be rebuilt for it. The kind is carried and not sniffed from the file's
+    first line - a file's first line is a poor thing to bet a court record on.
+
+    A lease that is not `active` yields nothing, whatever name it still
+    carries: a lease file holds every lease the server ever wrote, and naming
+    a subscriber from a freed one is the wrong answer with a straight face.
+    An address renewed appears again, and the later lease is the one that
+    counts - unlike the static map, where a repeated address is refused.
+
+    @param kind - 0 for the static map, 1 for an ISC dhcpd lease file
+    @param path - the file to read, or empty for none
+*/
+autoreply define bpa_identity_source_set
+{
+  u32 client_index;
+  u32 context;
+
+  u8 kind;
   string path[256];
 };
 

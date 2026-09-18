@@ -75,6 +75,32 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **The identity table can be read from the DHCP server's own lease file**
+  ([#21](https://github.com/andrediashexa/hexarouting/issues/21)). A provider running IPoE already has the answer and
+  should not be asked to transcribe it into a second file that goes stale:
+
+  ```
+  nat cgnat identity dhcp-leases /var/lib/dhcp/dhcpd.leases
+  ```
+
+  ISC dhcpd's grammar. The identity is the `client-hostname` when the lease
+  carries one and the `hardware ethernet` address otherwise - a hostname is
+  what a support desk recognises, a MAC is what is always there - and a lease
+  with neither yields no entry, so that address reads `unknown` rather than
+  something invented.
+
+  **Only an `active` lease counts.** A lease file holds every lease the server
+  ever wrote; `free` and `expired` ones still carry the last client's name,
+  and naming a subscriber from one of those is the wrong answer to a court
+  order with a straight face. An address renewed appears several times and the
+  **last** lease wins - the opposite of the static map, where a repeated
+  address is refused as two answers to one question. That is why they are two
+  statements and not one that guesses from the file's first line, and why the
+  sort carries each entry's line number: `qsort` is not stable, so "the last
+  lease wins" would otherwise be whichever the sort happened to leave.
+
 ### Fixed
 
 ## 0.82.0 - the log can name the subscriber, not only the address

@@ -372,6 +372,26 @@ comments and blank lines ignored:
 100.64.0.6   pppoe-4471
 ```
 
+**Or from the DHCP server's own lease file**, for a provider running IPoE who
+already has the answer and should not be asked to transcribe it into a second
+file that goes stale:
+
+```
+nat cgnat identity dhcp-leases /var/lib/dhcp/dhcpd.leases
+```
+
+The grammar is ISC dhcpd's. The identity is the `client-hostname` when the
+lease carries one and the `hardware ethernet` address otherwise - a hostname
+is what a support desk recognises, a MAC is what is always there - and a lease
+with neither yields no entry, so that address reads `unknown` rather than
+something invented. **Only an `active` lease counts**: a lease file holds
+every lease the server ever wrote, `free` and `expired` ones still carry the
+last client's name, and naming a subscriber from one of those is the wrong
+answer to a court order with a straight face. An address renewed appears
+several times and the **last** lease wins, which is the opposite of the static
+map's rule below and is why the two are different statements rather than one
+that guesses from the file's first line.
+
 **It is read whole or not at all.** A line that is neither a comment nor an
 address and an identity is refused, naming the line, and the table in force
 does not change: a provisioning system that writes one malformed line may

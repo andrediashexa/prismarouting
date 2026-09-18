@@ -46,6 +46,16 @@
  */
 const char bpa_identity_unknown[] = "unknown";
 
+/* (address, line order) packed into a u64, so the sort is stable by
+ * construction: see bpa_identity_load_kind. */
+int
+bpa_identity_key_cmp (const void *a, const void *b)
+{
+  u64 x = *(const u64 *) a, y = *(const u64 *) b;
+
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
 int
 bpa_identity_cmp (const void *a, const void *b)
 {
@@ -103,6 +113,106 @@ bpa_identity_parse_line (const char *line, bpa_identity_entry_t *out)
   }
   return 1;
 }
+
+/*
+ * One line of an ISC dhcpd lease file, read as a small state machine.
+ *
+ * WHY A SECOND GRAMMAR AT ALL. The static map is what a provider writes when
+ * they have a provisioning database; a provider running IPoE has the answer
+ * already, in the lease file their DHCP server maintains, and asking them to
+ * transcribe it into a second file is asking for a copy that goes stale (#21).
+ *
+ *   lease 100.64.0.5 {
+ *     starts 4 2026/09/18 06:00:00;
+ *     binding state active;
+ *     hardware ethernet bc:24:11:ea:db:12;
+ *     client-hostname "cpe-12345";
+ *   }
+ *
+ * WHAT IS TAKEN AS THE IDENTITY, in this order: the client-hostname, then the
+ * hardware address. A hostname is what a support desk recognises; a MAC is
+ * what is always there. Nothing is invented when neither is: the lease
+ * yields no entry, and the record for that address says `unknown` - which is
+ * the honest answer and is a value the log already carries.
+ *
+ * BINDING STATE IS READ AND NOT ASSUMED. A lease file holds every lease the
+ * server has ever written, including `free` and `expired` ones with the old
+ * client's name still in them, and naming a subscriber from one of those is
+ * the wrong answer to a court order with a straight face. Only `active`
+ * yields an entry.
+ *
+ * Returns 1 when a lease closed and yielded an entry, 0 otherwise, and -1 for
+ * a line this parser cannot make sense of inside a lease block.
+ */
+int
+bpa_identity_lease_line (const char *line, bpa_identity_entry_t *out,
+			 int *in_block)
+{
+  static bpa_identity_entry_t pending;
+  static char host[BPA_IDENTITY_MAX], mac[BPA_IDENTITY_MAX];
+  static int active;
+  unsigned a, b, c, d;
+  const char *p = line;
+
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  if (!*in_block)
+    {
+      if (sscanf (p, "lease %u.%u.%u.%u {", &a, &b, &c, &d) == 4)
+	{
+	  if (a > 255 || b > 255 || c > 255 || d > 255)
+	    return -1;
+	  pending.ip = (a << 24) | (b << 16) | (c << 8) | d;
+	  pending.name[0] = host[0] = mac[0] = 0;
+	  active = 0;
+	  *in_block = 1;
+	}
+      return 0;
+    }
+
+  if (*p == '}')
+    {
+      *in_block = 0;
+      if (!active)
+	return 0;
+      /* The hostname first, then the hardware address: a support desk
+       * recognises the first and the second is always there. */
+      snprintf (pending.name, sizeof (pending.name), "%s",
+		host[0] ? host : mac);
+      if (!pending.name[0])
+	return 0;
+      *out = pending;
+      return 1;
+    }
+
+  if (!strncmp (p, "binding state ", 14))
+    active = !strncmp (p + 14, "active", 6);
+  else if (!strncmp (p, "client-hostname ", 16))
+    {
+      const char *q = strchr (p, '"');
+      u32 n = 0;
+
+      if (q)
+	{
+	  q++;
+	  while (*q && *q != '"' && n < sizeof (host) - 1)
+	    host[n++] = *q++;
+	}
+      host[n] = 0;
+    }
+  else if (!strncmp (p, "hardware ethernet ", 18))
+    {
+      u32 n = 0;
+      const char *q = p + 18;
+
+      while (*q && *q != ';' && n < sizeof (mac) - 1)
+	mac[n++] = *q++;
+      mac[n] = 0;
+    }
+  return 0;
+}
+
 
 /*
  * The identity in force for `ip`, copied into `out`, or the unknown marker.
@@ -165,9 +275,16 @@ bpa_identity_lookup (const bpa_identity_table_t *t, u32 ip, char *out, u32 cap)
 clib_error_t *
 bpa_identity_load (const char *path)
 {
+  return bpa_identity_load_kind (path, BPA_IDENTITY_MAP);
+}
+
+clib_error_t *
+bpa_identity_load_kind (const char *path, bpa_identity_kind_t kind)
+{
   bpa_main_t *bm = &bpa_main;
   bpa_identity_entry_t *fresh = 0, e;
   u32 line_no = 0, truncated = 0;
+  int in_lease = 0;
   clib_error_t *err = 0;
   char line[512];
   FILE *f;
@@ -195,13 +312,18 @@ bpa_identity_load (const char *path)
       int rc;
 
       line_no++;
-      rc = bpa_identity_parse_line (line, &e);
+      rc = kind == BPA_IDENTITY_DHCP_LEASES
+	     ? bpa_identity_lease_line (line, &e, &in_lease)
+	     : bpa_identity_parse_line (line, &e);
       if (rc == 0)
 	continue;
       if (rc < 0)
 	{
 	  err = clib_error_return (
-	    0, "'%s' line %u is neither a comment nor '<address> <identity>'",
+	    0,
+	    kind == BPA_IDENTITY_DHCP_LEASES
+	      ? "'%s' line %u is not a lease this box can read"
+	      : "'%s' line %u is neither a comment nor '<address> <identity>'",
 	    path, line_no);
 	  goto done;
 	}
@@ -210,8 +332,34 @@ bpa_identity_load (const char *path)
       vec_add1 (fresh, e);
     }
 
+  /*
+   * SORTED BY ADDRESS, AND THEN BY WHERE THE LINE WAS, which qsort alone
+   * cannot give: it is not stable, so a lease file whose address appears
+   * twice would keep whichever of the two the sort happened to leave last.
+   * For a renewal that is the difference between the current subscriber and
+   * the one before them.
+   *
+   * The keys are (address << 32 | line order) in a u64, sorted as numbers, so
+   * the tiebreak is exact and costs eight bytes per entry for the length of
+   * this function rather than four in every entry for the life of the table.
+   */
   if (vec_len (fresh) > 1)
-    qsort (fresh, vec_len (fresh), sizeof (fresh[0]), bpa_identity_cmp);
+    {
+      u64 *keys = 0;
+      bpa_identity_entry_t *sorted = 0;
+      u32 i;
+
+      vec_validate (keys, vec_len (fresh) - 1);
+      for (i = 0; i < vec_len (fresh); i++)
+	keys[i] = ((u64) fresh[i].ip << 32) | i;
+      qsort (keys, vec_len (keys), sizeof (keys[0]), bpa_identity_key_cmp);
+      vec_validate (sorted, vec_len (fresh) - 1);
+      for (i = 0; i < vec_len (keys); i++)
+	sorted[i] = fresh[keys[i] & 0xffffffffu];
+      vec_free (keys);
+      vec_free (fresh);
+      fresh = sorted;
+    }
   /* A duplicate address is refused rather than resolved by position: two
    * lines claiming one address are two answers to the question a court asks,
    * and picking the later one would be this box deciding which subscriber to
@@ -219,7 +367,23 @@ bpa_identity_load (const char *path)
   {
     u32 i;
 
-    for (i = 1; i < vec_len (fresh); i++)
+    /*
+     * A LEASE FILE NAMES AN ADDRESS AGAIN EVERY TIME IT IS RENEWED, and the
+     * later entry is the current one - so a duplicate there is ordinary and
+     * the last one wins. In a static MAP a duplicate is two answers to one
+     * question and is refused, which is the paragraph below. Two grammars,
+     * two meanings for the same shape, and this is where they part.
+     */
+    if (kind == BPA_IDENTITY_DHCP_LEASES)
+      {
+	u32 w = 0;
+
+	for (i = 0; i < vec_len (fresh); i++)
+	  if (i + 1 == vec_len (fresh) || fresh[i].ip != fresh[i + 1].ip)
+	    fresh[w++] = fresh[i];
+	vec_set_len (fresh, w);
+      }
+    for (i = 1; kind == BPA_IDENTITY_MAP && i < vec_len (fresh); i++)
       if (fresh[i].ip == fresh[i - 1].ip)
 	{
 	  err = clib_error_return (

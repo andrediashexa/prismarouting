@@ -1226,9 +1226,17 @@ api = RecApi()
 sh = shell(api=api)
 sh.apply_identity(["identity", "identity", "file",
                    "/etc/prisma-routing/subscribers.map"])
-check(api.calls[-1] == ("bpa_identity_set",
-                        {"path": "/etc/prisma-routing/subscribers.map"}),
-      f"the statement carries the path and nothing else: {api.calls[-1]}")
+check(api.calls[-1] == ("bpa_identity_source_set",
+                        {"kind": 0,
+                         "path": "/etc/prisma-routing/subscribers.map"}),
+      f"the statement carries the path and which grammar to read it with: "
+      f"{api.calls[-1]}")
+sh.apply_identity(["identity", "identity", "dhcp-leases",
+                   "/var/lib/dhcp/dhcpd.leases"])
+check(api.calls[-1] == ("bpa_identity_source_set",
+                        {"kind": 1, "path": "/var/lib/dhcp/dhcpd.leases"}),
+      f"a lease file is the same table read with the other grammar: "
+      f"{api.calls[-1]}")
 sh.apply_identity(["identity", "identity", "file", "/tmp/a file.map"])
 check(api.calls[-1][1]["path"] == "/tmp/a file.map",
       f"a path with a space in it is one path: {api.calls[-1]}")
@@ -1247,7 +1255,7 @@ check(len(api.calls) == n,
       f"'file' with no path is not a path: {text!r}")
 # THE DATAPLANE READS THE FILE, NOT THIS VTY: a refusal about a line comes
 # back from there, and is printed as the dataplane's.
-api = RecApi(refuse={"bpa_identity_set"})
+api = RecApi(refuse={"bpa_identity_source_set"})
 sh = shell(api=api)
 rv, text = driven(sh.apply_identity, ["identity", "identity", "file", "/x"])
 check(any(r.startswith("error: cgnat identity: ") for r in rows(text)),

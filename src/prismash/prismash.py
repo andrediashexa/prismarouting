@@ -1356,7 +1356,7 @@ CGNAT_CONFIG = {
     # provisioning system and can hold one line per customer, and a
     # configuration carrying 200000 of them is one nobody can read.
     "identity": ("where this box reads who held a private address",
-                 "file <path> | none"),
+                 "file <path> | dhcp-leases <path> | none"),
     "session-table": ("session table sizing", "buckets <n> memory <MB>"),
 }
 
@@ -8419,17 +8419,24 @@ class Shell:
         about to act on, and the two would disagree the first time one of them
         was changed.
         """
+        # THE KIND IS CARRIED AND NOT SNIFFED. A static map and a lease file
+        # are two grammars, and a repeated address means opposite things in
+        # them - two answers to refuse in one, a renewal to take in the other.
+        # A file's first line is a poor thing to bet a court record on.
         if len(w) >= 3 and w[2] == "none":
-            args = {"path": ""}
+            args = {"kind": 0, "path": ""}
         elif len(w) >= 4 and w[2] == "file":
-            args = {"path": " ".join(w[3:])}
+            args = {"kind": 0, "path": " ".join(w[3:])}
+        elif len(w) >= 4 and w[2] == "dhcp-leases":
+            args = {"kind": 1, "path": " ".join(w[3:])}
         else:
             self.err_prose(
                 "cgnat identity: not a shape this box takes",
                 f"{NAT_HIERARCHY} cgnat identity file <path>",
+                f"{NAT_HIERARCHY} cgnat identity dhcp-leases <path>",
                 f"{NAT_HIERARCHY} cgnat identity none")
             return
-        r = self.api_call("bpa_identity_set", args)
+        r = self.api_call("bpa_identity_source_set", args)
         if r.state != vppapi.OK:
             self.err_dataplane(f"cgnat identity: {r.reason}")
 

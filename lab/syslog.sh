@@ -155,6 +155,38 @@ vppctl packet-generator enable >/dev/null; sleep 1
 for sub in 5 6 9; do vppctl packet-generator delete s$sub >/dev/null 2>&1; done
 
 echo
+echo "=== and the same table from a DHCP lease file (#21) ==="
+# The other grammar, on a box that already has the answer. Two leases that
+# count and two that must not: one freed with the old client's name still in
+# it, and one renewed - where the LAST lease is the current subscriber.
+cat > /tmp/dhcpd.leases <<'LEASES'
+lease 100.64.0.5 {
+  starts 4 2026/09/18 06:00:00;
+  binding state active;
+  hardware ethernet bc:24:11:ea:db:12;
+  client-hostname "cpe-OLD";
+}
+lease 100.64.0.5 {
+  starts 4 2026/09/18 07:00:00;
+  binding state active;
+  hardware ethernet bc:24:11:ea:db:12;
+  client-hostname "cpe-RENEWED";
+}
+lease 100.64.0.6 {
+  binding state free;
+  hardware ethernet 02:00:00:00:00:07;
+  client-hostname "gone-last-week";
+}
+lease 100.64.0.9 {
+  binding state active;
+  hardware ethernet 02:00:00:00:00:09;
+}
+LEASES
+$HX -c "configure" -c "cgnat identity dhcp-leases /tmp/dhcpd.leases" \
+    -c "commit" 2>&1 | tail -1 | sed 's/^/  leases: /'
+vppctl show bpa identity | tee /tmp/identity-leases.txt | sed 's/^/  /'
+
+echo
 echo "=== the file is rewritten before the records go out ==="
 # Everything moves to a different name. A record naming one of THESE is a
 # record resolved at drain time, which is the defect #21 is about.
@@ -223,8 +255,23 @@ if [ "$MODE" != no-syslog ]; then
   # THE IDENTITY, and the instant it belongs to.
   expect "the allocation lines name who held the address then" \
     grep -q 'subscriberId="joao.silva@isp"' "$LINES_FILE"
-  expect "and not the identity that replaced it before the record went out" \
-    sh -c "! grep -q 'SOMEBODY-ELSE' '$LINES_FILE'"
+  # ON THE ALLOCATION LINES, and that is the whole precision of it. A
+  # release is a different event at a different instant, and what it names
+  # is what the table says THEN - see the note on #21 about whether that is
+  # the right answer for a release. The allocation is what this issue's
+  # requirement is about, and it must never name the replacement.
+  grep BLOCK-ALLOC "$LINES_FILE" > /tmp/alloc-lines.txt 2>/dev/null || true
+  expect "and no allocation line names the identity that replaced it" \
+    sh -c "! grep -q 'SOMEBODY-ELSE' /tmp/alloc-lines.txt"
+  expect "the allocation lines are the three subscribers, each named" \
+    sh -c "test $(grep -c 'subscriberId=' /tmp/alloc-lines.txt) = 3"
+  # THE LEASE FILE'S OWN RULES, read off the box: two of the four leases
+  # count - the renewed one and the one with no hostname - and the freed
+  # lease's name is not among them.
+  expect "a lease file yields one entry per active lease, renewals folded" \
+    grep -q "2 entry(s)" /tmp/identity-leases.txt
+  expect "and no lease that is not active is in it" \
+    sh -c "! grep -q 'gone-last-week' /tmp/identity-leases.txt"
   expect "'show bpa identity' counts the entries and prints none of them" \
     sh -c "grep -q '3 entry(s)' /tmp/identity-show.txt && ! grep -q '@isp' /tmp/identity-show.txt"
 else
