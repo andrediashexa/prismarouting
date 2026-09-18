@@ -2510,9 +2510,12 @@ an atomic upgrade with a rollback - and what it costs is written on the issue:
 the linux_cp pairs decide the namespace, so `--net=host` and the isolation is
 mostly nominal; the VTY is a host tool; the tuner, the bind and the self-test
 cannot be containers at all; and the medium would have to carry the images,
-because an appliance installs with no network guaranteed. The NUMA gap the
-reading found is real, is not a container question, and is worth more to
-forwarding than any of it.
+because an appliance installs with no network guaranteed. The NUMA gap that reading claimed to find was
+not one: the tuner has taken its workers from the NIC's own node since it was
+written, and `appliance/test_tune.py` drives it. What is not placed per node
+is finer - the 1G reservation is global on the kernel command line and VPP is
+told `buffers-per-numa` - and whether that is worth anything is a throughput
+question behind #28.
 
 **The block log as RFC 5424 syslog**
 ([#20](https://github.com/andrediashexa/hexarouting/issues/20)) - on the
