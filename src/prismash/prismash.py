@@ -37,7 +37,11 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
                     is_static_route,
                     _address_family_error, _is_loopback, _is_lcp_tap,
-                    global_key, ordered_globals)
+                    global_key, ordered_globals,
+                    VRID_MIN, VRID_MAX, VRRP_PRIORITY_MIN, VRRP_PRIORITY_MAX,
+                    VRRP_PRIORITY_DEFAULT,
+                    VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
+                    vrrp_statement, vrrp_remove)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
@@ -116,6 +120,14 @@ SSH_HOST_KEY_ORIGIN = os.environ.get("PRISMA_SSH_HOST_KEY_ORIGIN",
                                      "/usr/lib/prisma-routing/"
                                      "ssh-host-key-origin")
 VPPCTL = os.environ.get("VPPCTL", "vppctl")
+
+# The advertisement interval, in centiseconds: RFC 5798's default of one
+# second. Not configurable, and that is a decision rather than an omission -
+# the interval MUST be the same on both boxes or the election never settles,
+# and a per-box statement is a per-box way to get it wrong. A pair that needs
+# a faster takeover than three and a half seconds wants BFD, which is a
+# different mechanism and a different issue.
+VRRP_INTERVAL_CS = 100
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 
@@ -798,6 +810,15 @@ INTERFACE_BLOCK = {
         "loose": ("the source MUST have a route somewhere", None),
         "off": ("no check (the default)", None),
     }),
+    # The ranges come from config.py, which is also what refuses one outside
+    # them - at the prompt and in a saved file - for the reason `vlan` says
+    # two lines up.
+    "vrrp": ("stand for a service address together with the peer (RFC 5798), "
+             "on the dataplane interface where the packets are",
+             f"<{VRID_MIN}-{VRID_MAX}> address <A.B.C.D> | "
+             f"priority <{VRRP_PRIORITY_MIN}-{VRRP_PRIORITY_MAX}> | "
+             f"track <interface> decrement "
+             f"<{VRRP_DECREMENT_MIN}-{VRRP_DECREMENT_MAX}>"),
     "exit": ("leave the interface", None),
 }
 
@@ -832,6 +853,7 @@ INTERFACE_DATAPLANE = (
     ("mtu",),
     ("urpf",),
     ("vlan",),
+    ("vrrp",),
     ("vrf",),
 )
 
@@ -1477,7 +1499,8 @@ def capabilities():
 DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "limits_set", "bypass_set", "fwd_add", "fwd_del", "if_add",
                "if_remove", "globals")
-DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
+DELTA_ADMIN = ("vrrp_set", "vrrp_del",
+               "routing_changed", "ssh_changed", "users_changed",
                "snmp_changed", "dataplane_if_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
@@ -5639,6 +5662,7 @@ class Shell:
         cfg.loopbacks = self.device_loopbacks()
         cfg.admin_down = self.device_admin_down()
         cfg.ra_enabled = self.device_ra_enabled()
+        cfg.vrrp = self.device_vrrp()
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
         cfg.ssh = self.sys.read_ssh()
@@ -5840,6 +5864,249 @@ class Shell:
                 if name:
                     on.add(name)
         return on
+
+    def device_vrrp(self) -> dict:
+        """
+        The virtual routers the DATAPLANE holds, shaped like Config.vrrp.
+
+        Read rather than remembered, for the reason `device_ra_enabled` gives:
+        a setting this VTY only remembers is one an operator cannot turn off,
+        and one `show running-config` would deny was on.
+
+        Two dumps, because VPP keeps the tracked interfaces apart from the
+        virtual router: `vrrp_vr_dump` carries the addresses and the priority,
+        `vrrp_vr_track_if_dump` carries what each one watches. A VR read
+        without its tracking would come back as a change on the next delta and
+        the commit would remove the tracking nobody touched.
+        """
+        r = self.api.dump("vrrp_vr_dump", {"sw_if_index": 0xFFFFFFFF})
+        if r.state != vppapi.OK:
+            return {}
+        names = self.interface_names_by_index()
+        out = {}
+        for row in r.fields.get("rows", []):
+            conf = row.get("config", {})
+            name = names.get(conf.get("sw_if_index"))
+            if name is None:
+                continue
+            vrid = conf.get("vr_id")
+            addrs = [a for a in row.get("addrs", []) if ":" not in str(a)]
+            out.setdefault(name, {})[vrid] = {
+                "addresses": addrs,
+                "priority": conf.get("priority", VRRP_PRIORITY_DEFAULT),
+                "track": self.device_vrrp_track(conf.get("sw_if_index"),
+                                                vrid, names),
+            }
+        return out
+
+    def device_vrrp_track(self, idx, vrid, names) -> dict:
+        """What one virtual router watches: interface name -> decrement."""
+        r = self.api.dump("vrrp_vr_track_if_dump",
+                          {"sw_if_index": idx, "vr_id": vrid, "is_ipv6": 0,
+                           "dump_all": 0})
+        if r.state != vppapi.OK:
+            return {}
+        out = {}
+        for row in r.fields.get("rows", []):
+            for t in row.get("ifs", []):
+                name = names.get(t.get("sw_if_index"))
+                if name:
+                    out[name] = t.get("priority")
+        return out
+
+    #: What VPP's state numbers mean, in the words an operator uses. The
+    #: dataplane's own spelling is VRRP_API_VR_STATE_MASTER; nobody says that.
+    VRRP_STATE = {
+        "VRRP_API_VR_STATE_INIT": "init (not started)",
+        "VRRP_API_VR_STATE_BACKUP": "backup",
+        "VRRP_API_VR_STATE_MASTER": "master, holding the address",
+        "VRRP_API_VR_STATE_INTF_DOWN": "the interface is down",
+    }
+
+    def device_vrrp_state(self) -> list:
+        """
+        One row per virtual router: interface, id, role, the MAC it answers
+        with, and the priority it is advertising RIGHT NOW.
+
+        The advertised priority is not the configured one when an interface
+        being tracked is down, and that difference is the whole point of
+        tracking - so the screen prints what the box is advertising and says
+        what was configured beside it when the two differ.
+        """
+        r = self.api.dump("vrrp_vr_dump", {"sw_if_index": 0xFFFFFFFF})
+        if r.state != vppapi.OK:
+            return []
+        names = self.interface_names_by_index()
+        rows = []
+        for row in r.fields.get("rows", []):
+            conf = row.get("config", {})
+            run = row.get("runtime", {})
+            rows.append({
+                "interface": names.get(conf.get("sw_if_index"),
+                                       f"sw_if_index {conf.get('sw_if_index')}"),
+                "vr_id": conf.get("vr_id"),
+                "configured": conf.get("priority"),
+                "advertising": run.get("tracking", {}).get(
+                    "priority", conf.get("priority")),
+                "state": self.VRRP_STATE.get(str(run.get("state")),
+                                             str(run.get("state"))),
+                "mac": run.get("mac"),
+                "addresses": [a for a in row.get("addrs", [])],
+            })
+        return sorted(rows, key=lambda x: (x["interface"], x["vr_id"] or 0))
+
+    def interface_names_by_index(self) -> dict:
+        """
+        sw_if_index -> name, for every interface `show interface` lists.
+
+        One dump for the whole map rather than interface_index() per name,
+        which is a sw_interface_dump each time.
+        """
+        names = {}
+        rc, out = self.dp.run("show interface")
+        if rc != 0:
+            return names
+        for name in routes.parse_interfaces(out):
+            idx = self.api.interface_index(name)
+            if idx is not None:
+                names[idx] = name
+        return names
+
+    def say_vrrp_refusal(self, refusal):
+        """
+        The verdict on its own row, the reason folded under it.
+
+        config.py hands both halves back rather than one sentence, because a
+        verdict long enough to carry the reason reaches the console folded at
+        whatever width the window happens to be (#355).
+        """
+        verdict, prose = refusal
+        if prose:
+            self.err_prose(verdict, prose)
+        else:
+            self.err(verdict)
+
+    def set_vrrp(self, ifname, vrid, vr) -> bool:
+        """
+        Put one virtual router on a dataplane interface, over the binary API.
+
+        REPLACED WHOLE, not edited: the existing router is deleted and built
+        again from what the configuration says. VPP's own `vrrp_vr_update`
+        takes the addresses, the priority and the flags together for the same
+        reason - an election in progress is not a thing to walk through three
+        intermediate states of, and a VR that is master with the old address
+        while the new one is being added would answer for both.
+
+        `PREEMPT` is on, and it is ONE flag because the client can carry one.
+
+        Measured, not assumed: `vrrp_vr_flags` is declared in `vrrp.api` as an
+        `enum` rather than an `enumflags`, so vat2 encodes exactly one of its
+        names. `"VRRP_API_VR_PREEMPT|VRRP_API_VR_ACCEPT"` comes back "Failed
+        converting JSON to API", a list of two names SEGFAULTS the client, and
+        so does the integer 3 - which is a client defect worth knowing about
+        and not something to route around by guessing.
+
+        So the choice is preempt or accept, and it is preempt: the priorities
+        in the configuration are the operator's statement of which box should
+        hold the service when both are healthy, and without preempt a box that
+        comes back from maintenance stays backup until the other one fails -
+        the pair drifts away from what the configuration says and nothing
+        reports it.
+
+        WHAT NOT HAVING ACCEPT COSTS, stated because an operator will meet it:
+        the virtual address does not answer ICMP. RFC 5798 section 6.4.3 makes
+        that the DEFAULT behaviour of a router that is not the address owner,
+        so this is the RFC's answer rather than a shortcut, but a monitoring
+        system that pings the gateway to decide whether the network is up will
+        see nothing. It should ping each box's own address, which is what says
+        whether that box is alive - the virtual address only says which of
+        them is holding it. Forwarding THROUGH the virtual address is
+        unaffected and is what lab/vrrp.sh measures, because that is the
+        service: a CPE sends to the virtual MAC and the master routes it.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        if not vr["addresses"]:
+            self.err_prose(f"interface {ifname}: vrrp {vrid} has no address",
+                           "a virtual router with nothing to stand for would "
+                           "elect a master that answers for nothing")
+            return False
+        self.del_vrrp(ifname, vrid, quiet=True)
+        r = self.api_call("vrrp_vr_add_del",
+                          {"is_add": 1, "sw_if_index": idx, "vr_id": vrid,
+                           "priority": vr["priority"],
+                           "interval": VRRP_INTERVAL_CS,
+                           "flags": "VRRP_API_VR_PREEMPT",
+                           "n_addrs": len(vr["addresses"]),
+                           "addrs": vr["addresses"]})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"interface {ifname}: vrrp {vrid}: {r.reason}")
+            return False
+        for tracked, dec in sorted(vr["track"].items()):
+            t_idx = self.api.interface_index(tracked)
+            if t_idx is None:
+                self.err_prose(f"interface {ifname}: vrrp {vrid}: no "
+                               f"interface {tracked}",
+                               "the dataplane does not have the interface "
+                               "this virtual router was told to track")
+                return False
+            r = self.api_call("vrrp_vr_track_if_add_del",
+                              {"is_add": 1, "sw_if_index": idx,
+                               "vr_id": vrid, "is_ipv6": 0, "n_ifs": 1,
+                               "ifs": [{"sw_if_index": t_idx,
+                                        "priority": dec}]})
+            if r.state != vppapi.OK:
+                # The tracked interface and not this one, because two
+                # interface names on one row put it past the console's width
+                # and the fold lands inside them (#355). The interface this
+                # virtual router is on is the block the operator is in.
+                self.err_dataplane(f"vrrp {vrid} track {tracked}: {r.reason}")
+                return False
+        # STARTED HERE and not by the operator. A virtual router that is
+        # configured and not started is a box that took the statement, says it
+        # has it, and never sends an advertisement - so the peer with the
+        # lower priority holds the address and the operator's configuration is
+        # a description of a takeover that will not happen.
+        r = self.api_call("vrrp_vr_start_stop",
+                          {"sw_if_index": idx, "vr_id": vrid, "is_ipv6": 0,
+                           "is_start": 1})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"interface {ifname}: vrrp {vrid}: "
+                               f"start: {r.reason}")
+            return False
+        return True
+
+    def del_vrrp(self, ifname, vrid, quiet=False) -> bool:
+        """
+        Take a virtual router off an interface: stopped first, then deleted.
+
+        Stopping first is what makes a withdrawal orderly. A master that is
+        deleted while it is still advertising leaves the peer waiting out the
+        master-down interval; one that is stopped sends a zero-priority
+        advertisement, which is RFC 5798's way of saying "take it now".
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            if quiet:
+                return True
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        self.api_call("vrrp_vr_start_stop",
+                      {"sw_if_index": idx, "vr_id": vrid, "is_ipv6": 0,
+                       "is_start": 0})
+        r = self.api_call("vrrp_vr_add_del",
+                          {"is_add": 0, "sw_if_index": idx, "vr_id": vrid,
+                           "priority": VRRP_PRIORITY_DEFAULT,
+                           "interval": VRRP_INTERVAL_CS,
+                           "flags": "VRRP_API_VR_PREEMPT",
+                           "n_addrs": 0, "addrs": []})
+        if r.state != vppapi.OK and not quiet:
+            self.err_dataplane(f"interface {ifname}: no vrrp {vrid}: "
+                               f"{r.reason}")
+            return False
+        return True
 
     def dataplane_names(self) -> set:
         """
@@ -8035,6 +8302,38 @@ class Shell:
                     self.err(f"interface {ifname}: uRPF is still on after "
                              "being removed")
                     return False
+
+        # Virtual routers after the addresses and before the interfaces are
+        # brought up, and the order is the requirement: VRRP advertises FROM
+        # the interface's own address, so a router started on an interface
+        # that has none is a router whose advertisements go nowhere and whose
+        # peer therefore elects itself as well. Two masters for one service
+        # address is the failure a pair exists to avoid.
+        for ifname, vrs in sorted(d["vrrp_del"].items()):
+            for vrid in vrs:
+                if not self.del_vrrp(ifname, vrid):
+                    return False
+        for ifname, vrs in sorted(d["vrrp_set"].items()):
+            for vrid in sorted(vrs):
+                if not self.set_vrrp(ifname, vrid, vrs[vrid]):
+                    return False
+        if d["vrrp_set"]:
+            # Read back rather than trust the exit status, the way uRPF and
+            # the MTU do: a virtual router that was asked for and is not on
+            # the box is a takeover the operator believes in and will not get.
+            have = self.device_vrrp()
+            for ifname, vrs in d["vrrp_set"].items():
+                for vrid in vrs:
+                    if vrid not in have.get(ifname, {}):
+                        # The interface name in the prose and not in the
+                        # verdict: both on one row is 89 columns and folds
+                        # inside the name (#355).
+                        self.err_prose(f"the dataplane did not take vrrp "
+                                       f"{vrid}",
+                                       f"it was asked for on {ifname}, the "
+                                       "call was accepted, and the box comes "
+                                       "back without it")
+                        return False
 
         for ifname in d["admin_up"]:
             if not self.set_admin(ifname, True):
@@ -10505,6 +10804,25 @@ class Shell:
             return True
         if iface and neg and dp == "urpf":
             self.candidate.urpf.pop(iface, None)
+            return True
+
+        # `vrrp` is the device's, and that is the decision #7 turns on rather
+        # than an assignment that fell out. FRR ships VRRP and would run it on
+        # the linux_cp TAP; the virtual address has to answer where the
+        # packets arrive, which is the VPP interface.
+        #
+        # The statement is taken by config.vrrp_statement, which is the same
+        # function the file parser calls, so the prompt and a saved file
+        # refuse the same things in the same words.
+        if iface and not neg and dp == "vrrp":
+            why = vrrp_statement(self.candidate.vrrp, iface, w)
+            if why:
+                self.say_vrrp_refusal(why)
+            return True
+        if iface and neg and dp == "vrrp":
+            why = vrrp_remove(self.candidate.vrrp, iface, w[1:])
+            if why:
+                self.say_vrrp_refusal(why)
             return True
 
         # THE HOLE THIS CLOSES: every `no <dataplane statement>` with a
@@ -13820,10 +14138,28 @@ class Shell:
 
         print()
         print("  role")
-        print_prose("neither box elects one: this VTY has no virtual router "
-                    "and nothing here takes a service address over. What is "
-                    "checked below is whether a takeover WOULD land "
-                    "subscribers where they already are.")
+        rows = self.device_vrrp_state()
+        if not rows:
+            print_prose("no virtual router on this box, so it elects nothing "
+                        "and takes no service address over. What is checked "
+                        "below is whether a takeover WOULD land subscribers "
+                        "where they already are.")
+        for row in rows:
+            print(f"    {row['interface']} vrrp {row['vr_id']}   "
+                  f"{row['state']}")
+            print(f"      address(es)        "
+                  + ", ".join(str(a) for a in row["addresses"]))
+            print(f"      virtual mac        {row['mac']}")
+            # Both numbers, and only when they differ. A box advertising less
+            # than it was configured for is a box with a tracked interface
+            # down, and that is the reading an operator needs before they
+            # start looking for a VRRP problem that is really a cable.
+            if row["advertising"] != row["configured"]:
+                print(f"      priority           {row['advertising']} "
+                      f"(configured {row['configured']}, and something it "
+                      f"tracks is down)")
+            else:
+                print(f"      priority           {row['configured']}")
 
         print()
         peer, why = read_peer_config(path)

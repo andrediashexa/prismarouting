@@ -131,12 +131,13 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   urpf         drop packets whose source does not route back this way
   vlan         VLAN tag, on a sub-interface
   vrf          the routing table this interface's addresses live in; 0 takes the interface back out of one
+  vrrp         stand for a service address together with the peer (RFC 5798), on the dataplane interface where the packets are
 ```
 
 It used to offer the whole configuration tree - fifteen options, of which
 three were valid there. Offering the level above invites somebody to type
 `cgnat pool` inside an interface and find out afterwards what that meant. The
-fifteen it offers today are a different fifteen: every one of them is valid
+sixteen it offers today are a different list: every one of them is valid
 inside an interface, because the interface became a first-class object.
 
 An FRR block offers `exit` and `show` and nothing else. This VTY does not model
@@ -668,6 +669,7 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   urpf         drop packets whose source does not route back this way
   vlan         VLAN tag, on a sub-interface
   vrf          the routing table this interface's addresses live in; 0 takes the interface back out of one
+  vrrp         stand for a service address together with the peer (RFC 5798), on the dataplane interface where the packets are
 ```
 
 **`description` lives in the dataplane**, as a VPP interface tag returned by

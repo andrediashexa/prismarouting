@@ -344,8 +344,8 @@ EOF
   PRISMA_API_SEGMENT="/dev/shm/$2-global_vm" PRISMA_CONFIG="/etc/prisma-routing/$1.conf" \
   python3 /src/src/prismash/prismash.py \
     -c "configure" \
-    -c "interface host-$1-in"  -c "vrrp 1 ip $VIP_IN"  -c "vrrp 1 priority $3" -c "exit" \
-    -c "interface host-$1-out" -c "vrrp 2 ip $VIP_OUT" -c "vrrp 2 priority $3" -c "exit" \
+    -c "interface host-$1-in"  -c "vrrp 1 address $VIP_IN"  -c "vrrp 1 priority $3" -c "exit" \
+    -c "interface host-$1-out" -c "vrrp 2 address $VIP_OUT" -c "vrrp 2 priority $3" -c "exit" \
     -c "commit" 2>&1
 }
 # The other shape somebody would reach for, kept beside the first because the
@@ -362,9 +362,11 @@ echo "=== stage 2: what happens when the product is asked for a pair ==="
 echo "  an address on the interface, which is where VRRP would live:"
 echo "  box a:"; configure_ha a hxa 200 | sed 's/^/    /'
 echo "  box b:"; configure_ha b hxb 100 | sed 's/^/    /'
-echo "  The VTY has no 'vrrp' of its own, so it hands the statement to FRR word"
-echo "  for word - and FRR's VRRP runs on the linux_cp TAP, not on the dataplane"
-echo "  interface that carries the packets. That incoherence is what #7 names."
+echo "  Since #7 the VTY has a 'vrrp' of its own and it goes to the DATAPLANE,"
+echo "  over the binary API, onto the interface that carries the packets - not"
+echo "  to FRR and not onto the linux_cp TAP. lab/vrrp.sh measures the election,"
+echo "  the virtual MAC and the takeover; what is still missing here is what"
+echo "  THIS lab is about, which is the CGNAT half surviving it (#9)."
 echo
 echo "  and under the CGNAT hierarchy, where an operator would look for it:"
 echo "  box a:"; ask_cgnat_ha a hxa 200.150.0.12 | sed 's/^/    /'
@@ -396,7 +398,19 @@ echo
 echo "=== stage 3: the service, through an address the product has to own ==="
 ip netns exec sub ip route replace default via "$VIP_IN"
 ip netns exec net ip route replace 200.150.16.0/28 via "$VIP_OUT"
-sleep 2
+# A BOUNDED WAIT AND NOT A SLEEP, since #7 made the service addresses answer.
+# An election at the RFC's default interval takes about three and a half
+# seconds and two ARP exchanges follow it, so the two-second sleep that stood
+# here - written when nothing ever answered and any wait was as good as any
+# other - measured the election rather than the service. Nothing is typed at
+# either box in here and nothing is moved: it waits for the product to be
+# ready and then asks it the question.
+_settle=0
+while [ "$_settle" -lt 20 ]; do
+  case "$(probe "$SUB_SERVICE" 40000 1)" in 1/1\ *) break ;; esac
+  _settle=$((_settle + 1))
+done
+echo "  the pair answered for the service address after ${_settle}s"
 BEFORE=$(probe "$SUB_SERVICE" 40001 4)
 BEFORE_SRC=$(echo "$BEFORE" | cut -d' ' -f2)
 ACTIVE_BEFORE=$(receiving_box)

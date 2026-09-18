@@ -309,7 +309,7 @@ is committed until the maintainer says so.
 | Item | Why | Effort |
 |---|---|---|
 | **Syslog export as an alternative to IPFIX** | Many ISP log collectors speak only syslog. Today the log is IPFIX-only, which can rule the product out of a deployment for a reason that has nothing to do with the CGNAT. | M |
-| **Subscriber identity in the log** (RADIUS / DHCP correlation) | A court order names a person, not an IP. Without correlation, answering it takes a second system and a manual join. With it, the answer is one query. | L |
+| **Subscriber identity in the log** (RADIUS / DHCP correlation) - *delivered, v0.82.0 and v0.83.0, [#21](https://github.com/andrediashexa/hexarouting/issues/21)* | A court order names a person, not an IP. Without correlation, answering it takes a second system and a manual join. With it, the answer is one query. All three sources ship: a static map, an ISC dhcpd lease file, and the accounting a BNG already sends - the last one a listener that authenticates nobody, checks the shared secret on every packet and answers a packet that fails it with silence. The identity is taken at the instant of the allocation and reaches both wires, `subscriberId` on syslog and element 371 `userName` on IPFIX over TCP. What a **release** record should name when the table changed in between is [#397](https://github.com/andrediashexa/hexarouting/issues/397): this row's requirement was about the allocation, the lab asserts it there, and the release records were a consequence rather than a decision until that issue makes them one. | L |
 | **Documented pool-resize migration** — *delivered, v0.19.0, [#23](https://github.com/andrediashexa/hexarouting/issues/23)* | Adding a public prefix changes the deterministic mapping for **every** subscriber. [pool-resize.md](pool-resize.md) carries the procedure, including the migration that costs no outage, and `commit` refuses the change until it is asked for by name. | M |
 | **Log integrity** — *delivered, v0.23.0, [#22](https://github.com/andrediashexa/hexarouting/issues/22)* | The trail is append-only with `fsync`, and each entry now carries a SHA-256 over the one before it. `show bpa pool history verify` names the first entry that does not match and tells alteration, removal and truncation apart. | M |
 
@@ -1446,6 +1446,29 @@ peers — the one part of HA that cannot wait, because in deterministic mode two
 peers with different configuration fail **silently**: the failover maps
 subscribers to the wrong blocks and both boxes log nothing.
 
+**#7 is delivered, and it is neither of the two candidates the issue named.**
+FRR's VRRP and `keepalived` both run in Linux, which on this box is the
+`linux_cp` TAP - and the TAP is not where the packets are, so a pair built on
+either of them moves an address in Linux and leaves the FIB and the CGNAT
+feature arcs on the box that died. The dataplane had already shipped the
+answer: VPP's `vrrp_plugin.so`, RFC 5798, on every box, with no virtual router
+on it because nothing asked for one. `interface <name>` now takes
+`vrrp <vrid> address|priority|track`, over the binary API, onto the interface
+that carries the packets.
+
+**The lab written first did its job.** `lab/ha-failover.sh` was all red at
+0.67.0 and is 18 of 22 green against a pair carrying virtual routers: a
+stopped dataplane and a killed one are both survived, every subscriber keeping
+the same public address and a port in the same block, and an in-flight
+connection dropping - which is what this design claims and says out loud, so
+that nobody reads the green run as "connections survived". The four still red
+are the pulled-uplink trio, which needs a NIC whose link state the dataplane
+can see ([#28](https://github.com/andrediashexa/hexarouting/issues/28)), and one reading
+of which box received the traffic afterwards, which is the lab's instrument
+rather than the product's behaviour. `lab/vrrp.sh` measures the mechanism
+under it: the election, the virtual MAC, the takeover with the subscriber's
+ARP cache never flushed, and the service moving when the priority moves.
+
 #### Phase 7 — performance, which needs hardware
 
 [#28](https://github.com/andrediashexa/hexarouting/issues/28) on a real NIC
@@ -1954,14 +1977,17 @@ question. Six statements did not hold, and they are release 0.74.2:
   later.
 
 **Still not read end to end:** `docs/bng.md`, `docs/ha.md` and
-`docs/pool-resize.md` - 1,140 lines. Both of the first two describe something
-that does not exist yet (HA is
-[#6](https://github.com/andrediashexa/hexarouting/issues/6) to
-[#9](https://github.com/andrediashexa/hexarouting/issues/9), BNG is
-[#170](https://github.com/andrediashexa/hexarouting/issues/170)), so the shape
-to expect there is a page written in the present tense about a feature nobody
-has built: a sentence true of a box somebody imagined and false of every box
-that exists.
+`docs/pool-resize.md` - 1,140 lines. `docs/bng.md` still describes something
+that does not exist ([#170](https://github.com/andrediashexa/hexarouting/issues/170)),
+so the shape to expect there is a page written in the present tense about a
+feature nobody has built: a sentence true of a box somebody imagined and false
+of every box that exists. `docs/ha.md` is now half of each - the virtual
+router ([#7](https://github.com/andrediashexa/hexarouting/issues/7)) and the
+configuration comparison ([#8](https://github.com/andrediashexa/hexarouting/issues/8))
+exist and are measured, and everything the page says about session
+synchronisation is still a design nobody has built - which is the harder
+version of the same risk, because a reader cannot tell the halves apart by
+tone.
 
 
 #### A box in a VM, which is where most of these will run

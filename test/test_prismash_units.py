@@ -4290,5 +4290,182 @@ finally:
     prismash.SSH_HOST_KEY_ORIGIN = saved_origin
 ok("a banner, not a health line")
 
+# ------------------------------------------------------------------ VRRP (#7)
+#
+# The virtual router is the DATAPLANE's, so every one of these goes through
+# the binary API and the refusals are the ones an operator meets when it is
+# not there, or not where they said it was.
+
+VRRP_ROWS = [{
+    "config": {"sw_if_index": 1, "vr_id": 1, "priority": 200,
+               "interval": 100, "flags": "VRRP_API_VR_PREEMPT"},
+    "runtime": {"state": "VRRP_API_VR_STATE_MASTER", "mac": "00:00:5e:00:01:01",
+                "tracking": {"interfaces_dec": 0, "priority": 200}},
+    "n_addrs": 1, "addrs": ["100.64.3.254"],
+}]
+TRACK_ROWS = [{"ifs": [{"sw_if_index": 2, "priority": 150}]}]
+
+print("\n=== Shell.device_vrrp: the virtual routers the BOX holds ===")
+# Mutation shown red: the tracking dump left out, which would make every
+# commit after a reboot remove the tracking nobody touched.
+api = Api(have={"pg0": 1, "pg1": 2},
+          rows={"vrrp_vr_dump": VRRP_ROWS,
+                "vrrp_vr_track_if_dump": TRACK_ROWS})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+have = sh.device_vrrp()
+check(have == {"pg0": {1: {"addresses": ["100.64.3.254"], "priority": 200,
+                           "track": {"pg1": 150}}}},
+      f"the address, the priority and what it watches: {have!r}")
+sh = shell(dp=Dp({"show interface": IFACES}),
+           api=Api(have={"pg0": 1}, refuse_dump={"vrrp_vr_dump"}))
+check(sh.device_vrrp() == {}, "a refused dump is no virtual router, not a lie")
+ok("read from the box, so an operator can take one off again")
+
+print("\n=== Shell.device_vrrp_state: the role, and what it is advertising ===")
+# Mutation shown red: `advertising` taken from the config rather than from
+# the runtime, which is exactly the number tracking changes.
+rows = [dict(VRRP_ROWS[0])]
+rows[0] = dict(rows[0], runtime=dict(rows[0]["runtime"],
+                                     tracking={"interfaces_dec": 1,
+                                               "priority": 50}))
+api = Api(have={"pg0": 1}, rows={"vrrp_vr_dump": rows})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+state = sh.device_vrrp_state()
+check(len(state) == 1 and state[0]["advertising"] == 50
+      and state[0]["configured"] == 200,
+      f"advertising 50 against a configured 200: {state!r}")
+check(state[0]["state"] == "master, holding the address",
+      f"the state in the words an operator uses: {state[0]['state']!r}")
+ok("a row per virtual router, with the number the election actually uses")
+
+print("\n=== Shell.set_vrrp: the calls, in the order an election survives ===")
+# Mutation shown red: vrrp_vr_start_stop dropped, which is a box that took
+# the statement and never sends an advertisement.
+api = Api(have={"pg0": 1, "pg1": 2})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+vr = {"addresses": ["100.64.3.254"], "priority": 200, "track": {"pg1": 150}}
+check(sh.set_vrrp("pg0", 1, vr) is True, "it goes through")
+sent = [m for m, _ in api.calls]
+check(sent == ["vrrp_vr_start_stop", "vrrp_vr_add_del", "vrrp_vr_add_del",
+               "vrrp_vr_track_if_add_del", "vrrp_vr_start_stop"],
+      f"stopped and deleted, built, tracked, started: {sent!r}")
+args = dict(api.calls[2][1])
+check(args["flags"] == "VRRP_API_VR_PREEMPT",
+      f"one flag, which is all the client can encode: {args['flags']!r}")
+check(args["priority"] == 200 and args["addrs"] == ["100.64.3.254"],
+      f"the priority and the address as configured: {args!r}")
+check(api.calls[-1][1]["is_start"] == 1, "and it is started, not just built")
+ok("replaced whole and started, because a VR nobody started elects nothing")
+
+print("\n=== Shell.set_vrrp: what it refuses, and in whose words ===")
+sh = shell(dp=Dp({"show interface": IFACES}), api=Api(have={}))
+with spoken() as o:
+    r = sh.set_vrrp("pg0", 1, vr)
+check(r is False and "the dataplane does not have it" in o.getvalue(),
+      f"an interface the box does not have: {o.getvalue()!r}")
+sh = shell(dp=Dp({"show interface": IFACES}), api=Api(have={"pg0": 1}))
+with spoken() as o:
+    r = sh.set_vrrp("pg0", 1, {"addresses": [], "priority": 100, "track": {}})
+check(r is False and "has no address" in o.getvalue(),
+      f"a virtual router standing for nothing: {o.getvalue()!r}")
+sh = shell(dp=Dp({"show interface": IFACES}),
+           api=Api(have={"pg0": 1}, refuse={"vrrp_vr_add_del"}))
+with spoken() as o:
+    r = sh.set_vrrp("pg0", 1, vr)
+check(r is False and "vrrp 1" in o.getvalue(),
+      f"a dataplane that refused it: {o.getvalue()!r}")
+sh = shell(dp=Dp({"show interface": IFACES}), api=Api(have={"pg0": 1}))
+with spoken() as o:
+    r = sh.set_vrrp("pg0", 1, vr)
+check(r is False and "no interface pg1" in o.getvalue()
+      and "was told to" in o.getvalue(),
+      f"a tracked interface the box does not have: {o.getvalue()!r}")
+sh = shell(dp=Dp({"show interface": IFACES}),
+           api=Api(have={"pg0": 1, "pg1": 2},
+                   refuse={"vrrp_vr_track_if_add_del"}))
+with spoken() as o:
+    r = sh.set_vrrp("pg0", 1, vr)
+check(r is False and "vrrp 1 track pg1" in o.getvalue(),
+      f"a refused tracking call: {o.getvalue()!r}")
+sh = shell(dp=Dp({"show interface": IFACES}),
+           api=Api(have={"pg0": 1, "pg1": 2},
+                   refuse={"vrrp_vr_start_stop"}))
+with spoken() as o:
+    r = sh.set_vrrp("pg0", 1, vr)
+check(r is False and "start:" in o.getvalue(),
+      f"a router that could not be started: {o.getvalue()!r}")
+ok("six refusals, each naming the interface and the virtual router")
+
+print("\n=== Shell.del_vrrp: stopped first, then deleted ===")
+# Mutation shown red: the start_stop call dropped, which leaves the peer
+# waiting out the master-down interval instead of taking it at once.
+api = Api(have={"pg0": 1})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+check(sh.del_vrrp("pg0", 1) is True, "it goes through")
+check([m for m, _ in api.calls] == ["vrrp_vr_start_stop", "vrrp_vr_add_del"],
+      f"stopped, then deleted: {[m for m, _ in api.calls]!r}")
+check(api.calls[0][1]["is_start"] == 0 and api.calls[1][1]["is_add"] == 0,
+      f"and both in the removing direction: {api.calls!r}")
+sh = shell(dp=Dp({"show interface": IFACES}), api=Api(have={}))
+with spoken() as o:
+    r = sh.del_vrrp("pg0", 1)
+check(r is False and "the dataplane does not have it" in o.getvalue(),
+      f"an interface that is not there: {o.getvalue()!r}")
+sh = shell(dp=Dp({"show interface": IFACES}), api=Api(have={}))
+check(sh.del_vrrp("pg0", 1, quiet=True) is True,
+      "quiet: removing from an interface that is gone is not a failure")
+sh = shell(dp=Dp({"show interface": IFACES}),
+           api=Api(have={"pg0": 1}, refuse={"vrrp_vr_add_del"}))
+with spoken() as o:
+    r = sh.del_vrrp("pg0", 1)
+check(r is False and "no vrrp 1" in o.getvalue(),
+      f"a dataplane that refused the removal: {o.getvalue()!r}")
+ok("an orderly withdrawal, and a refusal that names it")
+
+print("\n=== Shell.device_vrrp_track: what one virtual router watches ===")
+# Mutation shown red: the name lookup dropped, which would key the map by
+# sw_if_index and make every commit see a change nobody made.
+api = Api(have={"pg0": 1, "pg1": 2},
+          rows={"vrrp_vr_track_if_dump": TRACK_ROWS})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+names = sh.interface_names_by_index()
+check(sh.device_vrrp_track(1, 1, names) == {"pg1": 150},
+      f"the interface by name, and the decrement: "
+      f"{sh.device_vrrp_track(1, 1, names)!r}")
+sh = shell(dp=Dp({"show interface": IFACES}),
+           api=Api(have={"pg0": 1}, refuse_dump={"vrrp_vr_track_if_dump"}))
+check(sh.device_vrrp_track(1, 1, {}) == {},
+      "a refused dump is nothing watched")
+print("  the half VPP keeps apart from the virtual router itself")
+
+print("\n=== Shell.say_vrrp_refusal: the verdict, and the reason under it ===")
+# Mutation shown red: err() for both halves, which is the 92-column row #355
+# is about.
+sh = shell()
+with spoken() as o:
+    sh.say_vrrp_refusal(("a verdict", "a reason that is long enough to be "
+                                      "folded under it by the console"))
+rows = rows_of(o.getvalue())
+check(rows[0] == "error: a verdict", f"the verdict alone: {rows[0]!r}")
+check(len(rows) >= 2 and rows[1].startswith("    "),
+      f"the reason folded under it: {rows[1:]!r}")
+sh = shell()
+with spoken() as o:
+    sh.say_vrrp_refusal(("a verdict on its own", ""))
+check(rows_of(o.getvalue()) == ["error: a verdict on its own"],
+      f"and one row when there is no prose: {o.getvalue()!r}")
+print("  what config.py hands back, printed the way a console can take it")
+
+print("\n=== Shell.interface_names_by_index: one dump for the whole map ===")
+sh = shell(dp=Dp({"show interface": IFACES}),
+           api=Api(have={"pg0": 1, "pg1": 2, "loop0": 3, "local0": 0}))
+check(sh.interface_names_by_index() == {1: "pg0", 2: "pg1", 3: "loop0",
+                                        0: "local0"},
+      f"index to name: {sh.interface_names_by_index()!r}")
+sh = shell(dp=Dp({"show interface": (1, "")}))
+check(sh.interface_names_by_index() == {},
+      "a dataplane that cannot be asked is an empty map")
+ok("what a dump's sw_if_index is turned back into")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
