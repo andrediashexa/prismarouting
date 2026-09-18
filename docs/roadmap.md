@@ -1328,9 +1328,9 @@ actually start.
 | | |
 |---|---|
 | [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
-| [#226](https://github.com/andrediashexa/hexarouting/issues/226) whether a dynamic pool's pairing rate is high enough | the mechanism is in: the allocator prefers a free block on the subscriber's own public address, measured at 100%, 99.6% and 99.2% over three arrival patterns against 0.0%, 0.0% and 0.2% before. **The container work is done**: `lab/crossaddr.sh` has been rewritten against a running box, is in the suite at 28 checks, and states the property as floors on a rate rather than as a guarantee - each arrival pattern pairing at least 3 of its 4, and the run losing at most one of sixteen. It measured 16 of 16, and 0 of 16 with the preference removed. What is left is the judgement alone: a preference cannot be a guarantee without refusing extensions, which costs a customer traffic rather than an address |
+| [#226](https://github.com/andrediashexa/hexarouting/issues/226) whether a dynamic pool's pairing rate is high enough | **delivered.** The allocator prefers a free block on the subscriber's own public address before it takes one off the free stack, and the rate is asserted rather than claimed: 100%, 99.6% and 99.2% at the worst cell of three arrival patterns over 1 to 256 public addresses and 1 to 8 workers, against 0.0%, 0.0% and 0.2% on the allocator it replaced. `n_paired_placed` and `n_paired_missed` are what an operator reads |
 | [#337](https://github.com/andrediashexa/hexarouting/issues/337) the disclosure for boxes already in the field | the repair is done ([#248](https://github.com/andrediashexa/hexarouting/issues/248)): a box tells whoever logs in that its host keys were not made on it, names them, says the private half is in the published download and that the session being read can be impersonated, and gives the three commands that fix it. What is left is not code. Nothing here names which releases shipped those keys, and a box that is never taken to a new version never runs the code that would tell it, so where the disclosure is said and whether it names the releases is the maintainer's |
-| [#340](https://github.com/andrediashexa/hexarouting/issues/340) the eight release titles that are not their heading | the gate refuses a new one now, and it can only check the release being cut. Measured over all 74 published: 66 titles are the CHANGELOG heading and 8 are not. Four are truncations - 0.46.0, 0.69.0, 0.70.0 and 0.71.0 each drop the second half, which is where the second defect that release fixed is named - and rewriting those four costs a moment. The other four are a judgement: 0.2.0's extra clause is a fact the CHANGELOG does not carry and should stay, and 0.3.0, 0.38.1 and 0.61.2 are old enough that changing a published note changes what somebody may have linked to |
+| [#340](https://github.com/andrediashexa/hexarouting/issues/340) the eight release titles that are not their heading | **delivered in 0.80.0.** `tools/release-titles.sh` compares every published release with its CHANGELOG heading, accepts a title that extends the heading and refuses one that is shorter; the three that still differed are corrected and 83 of 83 agree |
 | [#345](https://github.com/andrediashexa/hexarouting/issues/345) the rx queues the dataplane really opened, read on a booted box | **delivered.** The reader is in `appliance/selftest`, written from a capture of `show hardware-interfaces`, and the assertion in `lab/install-iso.sh` ran on the gate's own guest in 0.79.0: `rx queues: 1 of 1 on ens9, as requested (1)`, against the dataplane's own row |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
 | [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
@@ -2499,6 +2499,21 @@ and naming a card is the decision it always was. The medium's own card is
 still named on the list. An unattended install takes `none` too, unless it
 asks for an address, which is an install saying it wants a management network
 - and is how `lab/install-iso.sh` installs the box it then reaches over ssh.
+**Docker: the control plane, the agent and the dataplane in containers**
+([#396](https://github.com/andrediashexa/hexarouting/issues/396)) - proposed,
+and the decisions are the maintainer's. Most of what the proposal asks for is
+already here without Docker: dedicated cores, hugepages, `vfio-pci`, FRR as
+control plane, VPP as dataplane, an agent that touches no packet, and a
+failure boundary that keeps forwarding up when the control plane restarts.
+What Docker would add is packaging - dependency pinning as an image digest and
+an atomic upgrade with a rollback - and what it costs is written on the issue:
+the linux_cp pairs decide the namespace, so `--net=host` and the isolation is
+mostly nominal; the VTY is a host tool; the tuner, the bind and the self-test
+cannot be containers at all; and the medium would have to carry the images,
+because an appliance installs with no network guaranteed. The NUMA gap the
+reading found is real, is not a container question, and is worth more to
+forwarding than any of it.
+
 **The block log as RFC 5424 syslog**
 ([#20](https://github.com/andrediashexa/hexarouting/issues/20)) - on the
 branch. Many ISP collectors speak syslog and nothing else. The event set does
