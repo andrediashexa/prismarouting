@@ -376,6 +376,37 @@ reply:
  * Refusing at configuration time is the whole point: the alternative is a
  * year of lines a collector silently misparses.
  */
+/*
+ * The identity table's source (issue #21).
+ *
+ * The path is copied out of the message and handed to the loader, which reads
+ * the file whole or refuses it whole. The refusal's sentence goes to the log
+ * where the client reads it back, the way every refusal here does.
+ */
+static void
+vl_api_bpa_identity_set_t_handler (vl_api_bpa_identity_set_t *mp)
+{
+  vl_api_bpa_identity_set_reply_t *rmp;
+  clib_error_t *e;
+  char path[256];
+  int rv = 0;
+
+  /* Read the way every other string on this API is read - the generated
+   * accessor, not the wire layout - so a VPP bump that changes that layout
+   * changes it in one place. */
+  snprintf (path, sizeof (path), "%s", (const char *) mp->path);
+
+  e = bpa_identity_load (path[0] ? path : 0);
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+
+  REPLY_MACRO (VL_API_BPA_IDENTITY_SET_REPLY);
+}
+
 static void
 vl_api_bpa_logging_syslog_set_t_handler (vl_api_bpa_logging_syslog_set_t *mp)
 {

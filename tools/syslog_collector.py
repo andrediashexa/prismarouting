@@ -13,7 +13,7 @@ a decimal length, a space, then exactly that many bytes. Framing by newline
 would be a second opinion about the wire, and one that disagrees the first
 time a message carries a delimiter.
 
-    python3 tools/syslog_collector.py <port> <seconds> [report-file]
+    python3 tools/syslog_collector.py <port> <seconds> [report-file] [lines-file]
 
 It prints, and writes to the report file when one is named:
 
@@ -63,8 +63,9 @@ def msgid(line):
     return parts[5].decode("ascii", "replace")
 
 
-def serve(port, secs, report=None):
+def serve(port, secs, report=None, lines_file=None):
     counts = collections.Counter()
+    kept = []
     lines = 0
     malformed = 0
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -103,6 +104,12 @@ def serve(port, secs, report=None):
                 lines += 1
                 m = msgid(line)
                 counts[m if m else "unparsed"] += 1
+                # KEPT ONLY WHEN ASKED. A line carries a subscriber's
+                # identity, which is why the log that holds it is protected -
+                # so this writes one to disk only for a caller that named a
+                # file for them, and never as a side effect of counting.
+                if lines_file:
+                    kept.append(line)
 
     out = [f"lines {lines}"]
     for name, n in sorted(counts.items()):
@@ -114,6 +121,10 @@ def serve(port, secs, report=None):
     if report:
         with open(report, "w") as f:
             f.write(text)
+    if lines_file:
+        with open(lines_file, "wb") as f:
+            for line in kept:
+                f.write(line + b"\n")
     return 0
 
 
@@ -121,7 +132,8 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 601
     secs = float(sys.argv[2]) if len(sys.argv) > 2 else 30
     report = sys.argv[3] if len(sys.argv) > 3 else None
-    return serve(port, secs, report)
+    lines_file = sys.argv[4] if len(sys.argv) > 4 else None
+    return serve(port, secs, report, lines_file)
 
 
 if __name__ == "__main__":

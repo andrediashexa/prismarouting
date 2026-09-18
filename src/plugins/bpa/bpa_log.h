@@ -26,6 +26,8 @@ typedef struct vlib_main_t vlib_main_t;
 #include <vnet/ip/ip.h>
 #endif
 
+#include "bpa_identity.h"
+
 /* RFC 8158, natEvent record */
 #define BPA_NAT_EVENT_PORTS_EXHAUSTED 12
 #define BPA_NAT_EVENT_BLOCK_ALLOC     16
@@ -120,6 +122,17 @@ typedef struct
   u16 port_lo;
   u16 port_hi;
   u8 event;
+  /*
+   * WHO HELD THE ADDRESS, copied HERE rather than looked up when the queue is
+   * drained (#21). The lease may have moved in between, and a record naming
+   * whoever holds the address by drain time is well-formed, stored, and the
+   * wrong answer to a court order - which is the whole of what this field
+   * costs BPA_IDENTITY_MAX bytes per queued event to prevent.
+   *
+   * "unknown" when this box has no identity for the address, because a
+   * collector has to tell a box that does not know from one that did not say.
+   */
+  char identity[BPA_IDENTITY_MAX];
 } bpa_log_event_t;
 
 /* Per-thread queue ceiling: if the process falls behind, the excess is lost
@@ -161,7 +174,8 @@ clib_error_t *bpa_log_enable (int enable);
  * VPP started, and it was the value at hand at both call sites.
  */
 void bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub,
-		   u16 port_lo, u16 port_hi, u32 pool_id);
+		   u16 port_lo, u16 port_hi, u32 pool_id,
+		   const char *identity);
 
 /* Actually emits over UDP. May only be called from process context.
  * wall is seconds since the UNIX epoch, not since VPP started. */
@@ -232,7 +246,7 @@ extern bpa_log_stream_t bpa_log_syslog;
  */
 void bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event,
 			    u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,
-			    u32 pool_id);
+			    u32 pool_id, const char *identity);
 void bpa_log_stream_marker (bpa_log_stream_t *s, f64 wall, f64 init);
 void bpa_log_stream_service (bpa_log_stream_t *s, f64 now);
 u32 bpa_log_stream_flush_exit (bpa_log_stream_t *s);
@@ -249,7 +263,8 @@ u32 bpa_syslog_marker_line (char *out, u32 cap, f64 wall, f64 init,
 			    const char *hostname, u32 pen, u32 pri);
 u32 bpa_syslog_line (char *out, u32 cap, f64 wall, u8 event, u32 ip_priv,
 		     u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
-		     const char *hostname, u32 pen, u32 pri);
+		     const char *hostname, u32 pen, u32 pri,
+		     const char *identity);
 
 clib_error_t *bpa_log_tcp_enable (ip4_address_t *collector, u16 port,
 				  int enable);

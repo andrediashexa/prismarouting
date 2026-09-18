@@ -17,6 +17,7 @@ IE = {
     323: ("observationTimeMilliseconds", "u64"),
     361: ("portRangeStart", "u16"),
     362: ("portRangeEnd", "u16"),
+    371: ("userName", "str"),
 }
 EVENT = {12: "EXHAUSTION", 16: "ALLOCATION", 17: "DEALLOCATION"}
 
@@ -33,6 +34,8 @@ pending = []     # data sets seen before their template
 held_before_template = 0
 
 def decode(kind, raw):
+    if kind == "str":
+        return raw.decode("utf-8", "replace")
     if kind == "ip":
         return ".".join(str(b) for b in raw)
     v = int.from_bytes(raw, "big")
@@ -40,13 +43,31 @@ def decode(kind, raw):
 
 def emit(tid, body, late=False):
     fields = templates[tid]
-    size = sum(l for _, l in fields)
+    # THE FIXED PART ONLY. A template may carry a variable-length field - 65535
+    # in the template means "one length octet, then that many bytes" (RFC 7011
+    # section 7) - and a record holding one is not a fixed size, so the loop
+    # below reads until the body runs out rather than in fixed strides. The
+    # block record has carried userName that way since #21.
+    size = sum(l for _, l in fields if l != 65535)
     b = 0
     while b + size <= len(body):
         rec = {}
+        short = False
         for ie, ln in fields:
             name, kind = IE.get(ie, (f"ie{ie}", "u32"))
+            if ln == 65535:
+                if b >= len(body):
+                    short = True
+                    break
+                n = body[b]; b += 1
+                if b + n > len(body):
+                    short = True
+                    break
+                rec[name] = body[b:b+n].decode("utf-8", "replace"); b += n
+                continue
             rec[name] = decode(kind, body[b:b+ln]); b += ln
+        if short:
+            break
         records.append(rec)
         ts = rec.get("observationTimeMilliseconds", 0) / 1000.0
         tag = " (reprocessed)" if late else ""

@@ -1346,6 +1346,12 @@ CGNAT_CONFIG = {
         "syslog": ("export as RFC 5424 syslog lines",
                    "<collector> enterprise <n> [options] | disable"),
     }),
+    # Who held a private address, for the log and for nothing else (#21).
+    # A file rather than a statement per subscriber: the list is written by a
+    # provisioning system and can hold one line per customer, and a
+    # configuration carrying 200000 of them is one nobody can read.
+    "identity": ("where this box reads who held a private address",
+                 "file <path> | none"),
     "session-table": ("session table sizing", "buckets <n> memory <MB>"),
 }
 
@@ -8288,6 +8294,8 @@ class Shell:
                 self.err_dataplane(f"cgnat block-holddown {w[2]}: {r.reason}")
         elif w[1] == "logging" and len(w) >= 3:
             self.apply_logging(w)
+        elif w[1] == "identity" and len(w) >= 3:
+            self.apply_identity(w)
         elif w[1] not in CGNAT_CONFIG:
             # Unreachable from the VTY, which refuses these at entry now. It is
             # here because --load and the binary API reach this function too,
@@ -8389,6 +8397,36 @@ class Shell:
         r = self.api_call("bpa_logging_set", args)
         if r.state != vppapi.OK:
             self.err_dataplane(f"cgnat {' '.join(w[1:])}: {r.reason}")
+
+    def apply_identity(self, w):
+        """
+        `cgnat identity file <path>` - where the identities come from.
+
+        THE PATH IS CONFIGURATION AND THE FILE IS NOT. The statement carries a
+        path, the dataplane reads the file, and `show configuration` gives the
+        path back: what is IN the file is personal data, is written by a
+        provisioning system rather than by an operator at this prompt, and is
+        never printed by anything on this box (#21).
+
+        The dataplane reads it whole or refuses it whole, and its refusal
+        names the line - so this VTY does not read the file to check it. A
+        second reader would be a second opinion about a file the dataplane is
+        about to act on, and the two would disagree the first time one of them
+        was changed.
+        """
+        if len(w) >= 3 and w[2] == "none":
+            args = {"path": ""}
+        elif len(w) >= 4 and w[2] == "file":
+            args = {"path": " ".join(w[3:])}
+        else:
+            self.err_prose(
+                "cgnat identity: not a shape this box takes",
+                f"{NAT_HIERARCHY} cgnat identity file <path>",
+                f"{NAT_HIERARCHY} cgnat identity none")
+            return
+        r = self.api_call("bpa_identity_set", args)
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"cgnat identity: {r.reason}")
 
     def apply_logging_syslog(self, w):
         """

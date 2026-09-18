@@ -8,6 +8,7 @@
 #include <vnet/ip/ip.h>
 #include <vnet/feature/feature.h>
 
+#include "bpa_identity.h"
 #include "bpa_pool.h"
 #include "bpa_ports.h"
 #include "bpa_session.h"
@@ -186,6 +187,12 @@ typedef struct
   u16 msg_id_base;
   vlib_main_t *vlib_main;
   vnet_main_t *vnet_main;
+  /*
+   * Who held a private address, for the log (#21). Written whole by the
+   * control plane and read on the allocation path; see bpa_identity.c for why
+   * it is a sorted array and for the rule that keeps it off every screen.
+   */
+  bpa_identity_table_t identity;
 } bpa_main_t;
 
 extern bpa_main_t bpa_main;

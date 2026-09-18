@@ -67,21 +67,21 @@ main (void)
 
   printf ("\n--- one allocation, byte for byte ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "cgnat-sp-01", 44444, 134);
+		       1024, 1027, 0, "cgnat-sp-01", 44444, 134, "joao.silva@isp");
   CHECK (n == strlen (line)
 	   && strcmp (line,
 		      "<134>1 2026-09-18T02:40:59.123Z cgnat-sp-01 "
 		      "prisma-cgnat - BLOCK-ALLOC "
 		      "[cgnat@44444 natEvent=\"16\" subscriber=\"100.64.0.5\" "
 		      "public=\"200.150.0.16\" portStart=\"1024\" "
-		      "portEnd=\"1027\" pool=\"0\"] "
+		      "portEnd=\"1027\" pool=\"0\" subscriberId=\"joao.silva@isp\"] "
 		      "100.64.0.5 -> 200.150.0.16 ports 1024-1027 pool 0")
 	     == 0,
 	 "the line is what a collector will store:\n         %s", line);
 
   printf ("\n--- and one release, which reads as one to a person ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 17, 0x64400005, 0xC8960010,
-		       1024, 1027, 3, "cgnat-sp-01", 44444, 134);
+		       1024, 1027, 3, "cgnat-sp-01", 44444, 134, "joao.silva@isp");
   CHECK (n && strstr (line, "BLOCK-RELEASE ") != 0
 	   && strstr (line, "natEvent=\"17\"") != 0
 	   && strstr (line, "100.64.0.5 released 200.150.0.16") != 0
@@ -90,30 +90,47 @@ main (void)
 
   printf ("\n--- a line that would not fit is refused, never cut ---\n");
   CHECK (bpa_syslog_line (line, 40, WALL, 16, 0x64400005, 0xC8960010, 1024,
-			  1027, 0, "cgnat-sp-01", 44444, 134) == 0,
+			  1027, 0, "cgnat-sp-01", 44444, 134, "joao.silva@isp") == 0,
 	 "a collector storing half a record has stored a wrong one");
   CHECK (bpa_syslog_line (line, sizeof (line), WALL, 18, 0x64400005,
-			  0xC8960010, 1024, 1027, 0, "h", 44444, 134) == 0,
+			  0xC8960010, 1024, 1027, 0, "h", 44444, 134, "joao.silva@isp") == 0,
 	 "and so is an event with no name, rather than one invented here");
 
   printf ("\n--- the enterprise number is the operator's, and it is in the "
 	  "SD-ID ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "h", 9, 134);
+		       1024, 1027, 0, "h", 9, 134, "joao.silva@isp");
   CHECK (n && strstr (line, "[cgnat@9 ") != 0,
 	 "RFC 5424 allows a bare SD-ID only to IANA, so this box asks");
 
   printf ("\n--- the priority is the caller's, and it reaches the wire ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "h", 9, 190);
+		       1024, 1027, 0, "h", 9, 190, "joao.silva@isp");
   CHECK (n && strncmp (line, "<190>1 ", 7) == 0,
 	 "facility and severity are one number and this file does not pick it");
 
   printf ("\n--- a hostname carrying a delimiter cannot break the SD ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "od]d\"one", 9, 134);
+		       1024, 1027, 0, "od]d\"one", 9, 134, "joao.silva@isp");
   CHECK (n && strstr (line, "od\\]d\\\"one") != 0,
 	 "escaped where it stands: %s", line);
+
+  printf ("\n--- who held the address, and what is said when nobody knows ---\n");
+  n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
+		       1024, 1027, 0, "h", 9, 134, 0);
+  CHECK (n && strstr (line, "subscriberId=\"unknown\"") != 0,
+	 "no identity is the unknown MARKER, never an empty field: a collector "
+	 "must tell a box that does not know from one that did not say");
+  n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
+		       1024, 1027, 0, "h", 9, 134, "");
+  CHECK (n && strstr (line, "subscriberId=\"unknown\"") != 0,
+	 "and so is an empty one, which is what a truncated table yields");
+  n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
+		       1024, 1027, 0, "h", 9, 134, "od]d\"name");
+  CHECK (n && strstr (line, "od\\]d\\\"name") != 0,
+	 "an identity comes from a provisioning system, so it is escaped "
+	 "where it stands: %s",
+	 line);
 
   printf ("\n--- the boot marker, in the same grammar as a block line ---\n");
   n = bpa_syslog_marker_line (line, sizeof (line), WALL, 1789600000.0,

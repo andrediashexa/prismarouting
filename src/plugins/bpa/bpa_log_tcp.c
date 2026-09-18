@@ -37,8 +37,22 @@
 #include "bpa.h"
 #endif
 #include "bpa_log.h"
+#include "bpa_identity.h"
+#include <string.h>
 
-#define BPA_TCP_TEMPLATE_ID  256
+/*
+ * 258 AND NOT 256, and the number is the point rather than a detail (#21).
+ *
+ * The block record carries an eighth element now - userName, the subscriber
+ * who held the address - and IPFIX does not let a Template ID mean two
+ * different sets of fields: a collector caches a template by id, and one that
+ * still holds 256 from a box of an earlier version would read the new record
+ * as the old one and report the identity's first bytes as a pool id. Changing
+ * the id means a cached 256 is never matched by anything this box sends, so a
+ * stale cache cannot misparse - it simply waits for the template it does not
+ * have, which arrives within the minute.
+ */
+#define BPA_TCP_TEMPLATE_ID  258
 /* The boot marker's template. See bpa_log.h for what it carries and why. */
 #define BPA_TCP_MARKER_TEMPLATE_ID 257
 #define BPA_TCP_DOMAIN	     1
@@ -50,10 +64,25 @@
 bpa_log_stream_t bpa_log_tcp;
 bpa_log_stream_t bpa_log_syslog;
 
-/* RFC 8158 Table 21 elements, in the same order as the record. */
+/*
+ * RFC 8158 Table 21 elements, in the same order as the record, and since #21
+ * one more: 371 userName, the subscriber this box knew at the instant of the
+ * allocation.
+ *
+ * 371 IS READ OFF THE IANA REGISTRY and not chosen: `userName`, dataType
+ * `string`, taken from iana.org/assignments/ipfix on 2026-09-18. A private
+ * enterprise element would have been this product inventing a number every
+ * collector would then have to be taught; a wrong standard one is worse
+ * still, because it parses.
+ *
+ * 65535 is IPFIX's length for a VARIABLE-length field: the record carries one
+ * length octet before the value. An identity is at most BPA_IDENTITY_MAX - 1
+ * characters, so the short form is always enough.
+ */
+#define BPA_IPFIX_VARLEN 65535
 static const u16 bpa_tcp_ies[][2] = {
   { 323, 8 }, { 230, 1 }, { 8, 4 }, { 225, 4 }, { 361, 2 }, { 362, 2 },
-  { 283, 4 },
+  { 283, 4 }, { 371, BPA_IPFIX_VARLEN },
 };
 
 /* observationTimeMilliseconds, systemInitTimeMilliseconds. */
@@ -168,8 +197,9 @@ bpa_tcp_prepend_template (bpa_log_stream_t *s, f64 now)
 }
 
 void
-bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
-		    u16 port_hi, u32 pool_id)
+bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv,
+		       u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
+		       const char *identity)
 {
   u8 **b = &s->outbuf;
   u32 at, set_at;
@@ -195,7 +225,7 @@ bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv, u32
       u32 n = bpa_syslog_line (line, sizeof (line), wall, event, ip_priv,
 			       ip_pub, port_lo, port_hi, pool_id,
 			       s->hostname ? (const char *) s->hostname : "-",
-			       s->pen, s->pri);
+			       s->pen, s->pri, identity);
       int hn;
 
       if (!n)
@@ -229,6 +259,24 @@ bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv, u32
   bpa_tcp_put_u16 (b, port_lo);
   bpa_tcp_put_u16 (b, port_hi);
   bpa_tcp_put_u32 (b, pool_id);
+  /*
+   * userName, variable length: one octet of length, then the value. The
+   * identity the caller was holding, or the unknown marker - never an empty
+   * string, because a collector has to tell a box that does not know from one
+   * that did not say (#21).
+   */
+  {
+    const char *who = identity && identity[0] ? identity
+					      : bpa_identity_unknown;
+    u32 len = (u32) strlen (who);
+    u8 l8;
+
+    if (len > 254)
+      len = 254;
+    l8 = (u8) len;
+    bpa_tcp_put (b, &l8, 1);
+    bpa_tcp_put (b, who, len);
+  }
 
   {
     u16 slen = clib_host_to_net_u16 (vec_len (*b) - set_at);
@@ -680,8 +728,12 @@ void
 bpa_log_tcp_record (f64 wall, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
 		    u16 port_hi, u32 pool_id)
 {
+  /* The IPFIX record carries no identity field yet - the element has to be
+   * chosen rather than guessed at, and a wrong one is worse than none (#21
+   * step 4). The stream takes the parameter all the same, so the two wires
+   * differ in what they can express and not in what they are given. */
   bpa_log_stream_record (&bpa_log_tcp, wall, event, ip_priv, ip_pub, port_lo,
-			 port_hi, pool_id);
+			 port_hi, pool_id, 0);
 }
 
 void
@@ -701,3 +753,21 @@ bpa_log_tcp_flush_exit (void)
 {
   return bpa_log_stream_flush_exit (&bpa_log_tcp);
 }
+
+#ifndef BPA_STANDALONE
+
+/*
+ * The IPFIX stream's enable, under the name its callers already use.
+ *
+ * It was missing for one commit and the plugin would not LOAD: the .so links
+ * lazily, so the build was green, the unit suites were green - they are
+ * standalone and never see this half - and VPP failed at start with
+ * "undefined symbol: bpa_log_tcp_enable". lab/ipfix-tcp.sh is what said so.
+ */
+clib_error_t *
+bpa_log_tcp_enable (ip4_address_t *collector, u16 port, int enable)
+{
+  return bpa_log_stream_enable (&bpa_log_tcp, collector, port, enable);
+}
+
+#endif /* not BPA_STANDALONE */

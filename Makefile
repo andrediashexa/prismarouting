@@ -12,7 +12,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite \
       $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn \
       $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
-      $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog
+      $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog \
+      $(BUILD)/test_bpa_identity
 	@sh tools/run-tests.sh
 
 vectors:
@@ -166,28 +167,47 @@ $(BUILD)/test_bpa_pptp: test/test_bpa_pptp.c src/plugins/bpa/bpa_pptp.c \
 $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
                            src/plugins/bpa/bpa_log_tcp.c \
                            src/plugins/bpa/bpa_log_syslog.c \
+                           src/plugins/bpa/bpa_identity.c \
                            src/plugins/bpa/bpa_log.h \
                            test/bpa_shim.h test/bpa_vec_shim.h \
                            test/bpa_tcp_shim.h test/bpa_log_shim.h \
                            src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
-	    test/test_bpa_log_tcp.c src/plugins/bpa/bpa_log_syslog.c
+	    test/test_bpa_log_tcp.c src/plugins/bpa/bpa_log_syslog.c \
+	    src/plugins/bpa/bpa_identity.c
 
 # The configuration trail's hex reader, which is the one function in
 # bpa_audit.c that touches neither format(), nor vppinfra's SHA-2, nor the
 # CLI. Standalone because its refusals decide whether the chain is verified
 # against bytes or against uninitialised memory, and both readings print a
 # verdict.
+# Who held a private address at the instant a block was allocated to it. The
+# parse, the search and the unknown marker are standalone because none of them
+# reads a packet, a session or a pool - and because a wrong one is invisible in
+# a log that parses.
+$(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
+                            src/plugins/bpa/bpa_identity.c \
+                            src/plugins/bpa/bpa_identity.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_identity.c
+
 # The syslog line, which is the half of a second transport that decides what a
 # court-ordered lookup reads. Standalone because none of it needs a socket, a
 # collector or a VPP - and a wrong field is invisible in a capture that parses.
+# bpa_identity.c is compiled beside it since #21: the line carries the
+# subscriber's identity, and the unknown marker it falls back to lives there -
+# one holder, so the wire and the table cannot disagree about what "nobody
+# knows" looks like.
 $(BUILD)/test_bpa_log_syslog: test/test_bpa_log_syslog.c \
                               src/plugins/bpa/bpa_log_syslog.c \
+                              src/plugins/bpa/bpa_identity.c \
+                              src/plugins/bpa/bpa_identity.h \
                               src/plugins/bpa/bpa_log.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
-	    test/test_bpa_log_syslog.c
+	    test/test_bpa_log_syslog.c src/plugins/bpa/bpa_identity.c
 
 $(BUILD)/test_bpa_audit: test/test_bpa_audit.c src/plugins/bpa/bpa_audit.c \
                          test/bpa_shim.h

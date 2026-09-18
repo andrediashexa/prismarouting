@@ -2517,6 +2517,17 @@ is finer - the 1G reservation is global on the kernel command line and VPP is
 told `buffers-per-numa` - and whether that is worth anything is a throughput
 question behind #28.
 
+**The log can name the subscriber**
+([#21](https://github.com/andrediashexa/hexarouting/issues/21)) - on the
+branch, in the half that needs no second system: a static map a provisioning
+system writes, read whole or refused whole, and the identity copied into the
+record at the instant of the allocation rather than resolved when the log is
+drained. `lab/syslog.sh` rewrites every name between the allocation and the
+drain and asserts the records carry the first set. It is personal data, so the
+count is all any screen says. What remains is the other two sources - a DHCP
+lease file and RADIUS accounting - and the IPFIX element, which has to be
+chosen rather than guessed at.
+
 **The block log as RFC 5424 syslog**
 ([#20](https://github.com/andrediashexa/hexarouting/issues/20)) - on the
 branch. Many ISP collectors speak syslog and nothing else. The event set does
