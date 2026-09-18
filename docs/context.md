@@ -192,7 +192,7 @@ and stops checking.
 ### 1.9 The wiki is a usage layer, not a second design
 
 `docs/`, `README.md` and `TESTING.md` are authoritative about the product. The
-wiki at `prisma-routing.hexanetworks.com.br` says how somebody *uses* it, and
+wiki at `hexarouting.hexanetworks.com.br` says how somebody *uses* it, and
 `wiki/` here is its mirror, so it can be read and diffed without leaving the
 repository.
 

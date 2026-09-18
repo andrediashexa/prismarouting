@@ -103,7 +103,7 @@ The repository's **About** carries three things, and they are documentation:
 | | |
 |---|---|
 | description | one line, what the product is |
-| website | <https://prisma-routing.hexanetworks.com.br> — the wiki, as the external documentation |
+| website | <https://hexarouting.hexanetworks.com.br> — the wiki, as the external documentation |
 | topics | what somebody would search for to find this |
 
 They **MUST** stay true. A topic that is not a claim this project makes does not

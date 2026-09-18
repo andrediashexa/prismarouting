@@ -116,8 +116,8 @@ Mídias anteriores à **0.37.0** não instalavam o componente que atende essa ch
 
 | Tipo de mudança | Capacidade exigida |
 |-----------------|--------------------|
-| Pools, interfaces CGNAT, timeouts, limites, bypass, forwards | `prisma-cgnat`       |
-| Roteamento, SSH, contas de usuário, SNMP, MTU, uRPF | `prisma-admin`       |
+| Pools, interfaces CGNAT, timeouts, limites, bypass, forwards | `prisma-cgnat`     |
+| Roteamento, SSH, contas de usuário, SNMP, MTU, uRPF | `prisma-admin`     |
 
 ## Invocando o prismash
 

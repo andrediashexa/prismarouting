@@ -26,7 +26,10 @@
 # reused to log in anywhere.
 set -eu
 
-URL=${WIKI_URL:-https://prisma-routing.hexanetworks.com.br}
+# THE HOST IS INFRASTRUCTURE and did not move with the product name
+# (#202): this is the machine the wiki runs on, and renaming it here
+# gave curl a host that does not resolve.
+URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
 [ -n "${WIKI_TOKEN:-}" ] || {
   echo "error: set WIKI_TOKEN to an Outline API token." >&2
   echo "       No token or address is kept in this repository on purpose." >&2

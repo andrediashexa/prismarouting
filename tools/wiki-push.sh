@@ -32,7 +32,10 @@
 # and the same applies to the repository that mirrors it.
 set -eu
 
-URL=${WIKI_URL:-https://prisma-routing.hexanetworks.com.br}
+# THE HOST IS INFRASTRUCTURE and did not move with the product name
+# (#202): this is the machine the wiki runs on, and renaming it here
+# gave curl a host that does not resolve.
+URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 STAMP="$REPO/wiki/.pulled"
 INDEX="$REPO/wiki/.ids"

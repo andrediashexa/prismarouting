@@ -3,7 +3,7 @@
 Como as páginas da wiki são escritas. Existe para que qualquer pessoa possa
 acrescentar conteúdo sem que a wiki vire quinze estilos diferentes.
 
-A wiki fica em <https://prisma-routing.hexanetworks.com.br> (Outline). A raiz do
+A wiki fica em <https://hexarouting.hexanetworks.com.br> (Outline). A raiz do
 domínio abre a leitura pública; quem vai editar entra por `/entrar`.
 
 > **A wiki é pública na internet.** Escreva sempre para alguém de fora — um
