@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.93.0 - the pair screen reads both boxes' routers
+
+[#8](https://github.com/andrediashexa/hexarouting/issues/8).
+
+### Added
+
 * **`show cgnat ha` reads both boxes' virtual routers, not only their
   mappings** ([#8](https://github.com/andrediashexa/hexarouting/issues/8)). The peer's
   configuration is what `save` wrote on the other box, so it carries that
