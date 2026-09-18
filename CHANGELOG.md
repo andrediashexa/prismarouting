@@ -79,6 +79,57 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`docs/ha.md` opened by saying that nothing in it was implemented, three
+  releases after it was** ([#6](https://github.com/andrediashexa/hexarouting/issues/6),
+  [#7](https://github.com/andrediashexa/hexarouting/issues/7),
+  [#8](https://github.com/andrediashexa/hexarouting/issues/8),
+  [#9](https://github.com/andrediashexa/hexarouting/issues/9)). The page's own TL;DR said
+  *"Nothing here is implemented. This is analysis and a plan"*, that the
+  configuration comparison was the only thing on the box, and that the
+  acceptance test *"is red on `master`"*. All three were true when they were
+  written and none of them is now.
+
+  This is the failure this repository files against itself more than any
+  other: a document that describes a smaller product than the one that exists.
+  It is worse here than usual, because a reader deciding whether to put two
+  boxes in front of subscribers reads the first paragraph and stops.
+
+  The page now opens with what is built, each part linked to the section that
+  measures it, and with what is still a plan - session synchronisation, and
+  anything that would carry the peer's configuration between the boxes by
+  itself. The 0.67.0 readings are kept, under a heading that says they are
+  from before any of it existed, because the section that follows them means
+  nothing without them.
+
+  **The three wiki pages an operator actually reads said it too**, and those
+  are the ones that matter most: *Alta disponibilidade* opened with a warning
+  box reading "Alta disponibilidade não está implementada. [...] Não dimensione
+  um projeto contando com failover automático", and the "known absences" lists
+  on *Prisma Routing - visão geral* and *Operação e diagnóstico* both carried
+  "analisado, não implementado". The HA page now carries how to build the pair,
+  what the acceptance test measures, what the virtual address does not do
+  (answer ICMP), and what is still refused by cost - session synchronisation -
+  and the two absence lists name that refusal instead of the feature.
+
+  Three more copies in the tree went with them: `README.md`'s file index
+  called the page an analysis of something not implemented, `docs/context.md`
+  said the acceptance lab is red on purpose and excluded from the suite, and
+  `docs/roadmap.md` listed HA under work blocked on hardware this box does not
+  have. The pair runs as two dataplanes in one container, each in its own
+  namespace with its own API segment, so a second machine was never the
+  requirement; what needs hardware is the one narrow question
+  [#28](https://github.com/andrediashexa/hexarouting/issues/28) owns.
+
+* **A reader printed the opposite of what it had just measured.**
+  `test_doc_copies.py` pairs `tools/run-all-labs.sh`'s exclusion of
+  `lab/ha-failover.sh` with `README.md`'s state table, so that a product which
+  gained HA could not keep a README saying it had none. Both sides moved
+  together, which left it in its `else` branch printing *"the acceptance test
+  for HA is outside the suite because the feature is missing, and the state
+  table says so"* - about a lab that is in the suite and a table that says the
+  opposite. The branch it needed is the one where both agree that the feature
+  is there.
+
 ## 0.86.0 - the failover test is green, and in the suite
 
 [#9](https://github.com/andrediashexa/hexarouting/issues/9).

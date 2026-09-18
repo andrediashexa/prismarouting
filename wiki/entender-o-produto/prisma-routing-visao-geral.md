@@ -58,7 +58,7 @@ O projeto permanece em `0.x.x` até ser declarado pronto para produção. Mudan�
 
 Não são lacunas — são decisões registradas:
 
-* **Alta disponibilidade** — analisada, não implementada.
+* **Sincronismo de sessão entre as caixas de um par** — recusado por custo: numa caixa de 200 mil assinantes, replicar toda criação e remoção de sessão é um fluxo comparável ao próprio log. O ativo/standby existe e preserva endereço e bloco; conexões em curso caem.
 * **Números de throughput** — nada é afirmado sem medição em hardware.
 * **Log por fluxo** — recusado. É exatamente o que o BPA existe para evitar.
 * **NPTv6 e DPI** além do que um ALG precisa reescrever — fora de escopo.
