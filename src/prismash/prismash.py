@@ -2547,6 +2547,77 @@ def console_prose(text, indent="    "):
                          break_long_words=False, break_on_hyphens=False)
 
 
+#: The two words this box prints in a column instead of a value it has not
+#: got. Declared rather than typed at each site so the width reader can see
+#: that the column holds an address or one of these and nothing else.
+COLUMN_NONE = "-"
+COLUMN_UNKNOWN = "?"
+
+
+#: Whether FRR holds a route, as the `FRR` column spells it. A pair rather
+#: than a conditional at the site: the width reader bounds a slot by the
+#: tightest declared collection that holds every value it saw, and a column
+#: that is one of two words has a widest of four characters.
+RIB_COLUMN = ("yes", COLUMN_NONE)
+
+
+def rib_column(in_rib):
+    """`RIB_COLUMN`'s word for a route FRR holds, or does not."""
+    return RIB_COLUMN[0] if in_rib else RIB_COLUMN[1]
+
+
+def next_hop_column(via):
+    """
+    What goes in a route screen's `Next hop` column for `via`.
+
+    VPP's FIB names the path where a next hop would be for a route that has
+    none: `connected` for a prefix on an interface, `local` for the box's own
+    address. Printed in that column they are two things at once - they are not
+    next hops, and they are already what the `VPP` column says about the same
+    route - and they are what took the column's widest away, because a column
+    of addresses with two English words in it has no widest at all (#392).
+
+    So the column carries an address or `-`, and what kind of route it is
+    stays in the one column that is about that.
+    """
+    try:
+        ipaddress.ip_address(via)
+        return via
+    except ValueError:
+        return COLUMN_NONE
+
+
+def route_column_widths(rows, headings, indent=2, gutter=1, tail=0):
+    """
+    Column widths for a route screen, or None when the widest row cannot fit.
+
+    MEASURED OFF THE ROWS THE BOX ACTUALLY HAS, which is the whole of it. The
+    route screens padded their columns to 20, 17 and 12, numbers that fit an
+    IPv4 box and nothing else: an IPv6 prefix is 43 columns at its widest, a
+    next hop 39 and an interface name 28, so one v6 route ran past the console
+    and the terminal folded it INSIDE the columns - where a wrapped next hop
+    and a second route look the same (#392).
+
+    A screen with nothing in it wider than the console is a table, and that is
+    what an operator reads down. A screen with one route too wide for it is
+    not a narrower table - the value is the value - so the caller is told None
+    and prints each entry as a block whose rows end in their value, where a
+    fold costs nothing.
+
+    `tail` is what the caller puts after the last column - the `** in FRR, NOT
+    forwarding` mark - counted here because a table that fits until the mark
+    appears is a table that does not fit.
+    """
+    if not rows:
+        return None
+    widths = [max(len(str(h)), max(len(str(r[i])) for r in rows))
+              for i, h in enumerate(headings)]
+    if indent + sum(widths) + gutter * (len(widths) - 1) + tail \
+            > CONSOLE_COLUMNS:
+        return None
+    return widths
+
+
 def print_prose(text, indent="    "):
     """`console_prose`, printed. The refusals say a paragraph at a time."""
     for line in console_prose(text, indent):
@@ -11047,8 +11118,13 @@ class Shell:
         _, hw = self.dp.run("show hardware-interfaces brief")
         hardware = routes.parse_hardware(hw)
 
-        print(f"  sampling every {interval:g}s, {count} time(s) - "
-              f"{interval * count:g}s in total; Ctrl-C stops early")
+        # print_prose and not print: the interval and the count are the
+        # operator's, so this row grows with what they typed and the words
+        # after it are the VTY's own - a fold would land inside them (#392).
+        # Folded here, it lands between words wherever the value ends.
+        print_prose(f"sampling every {interval:g}s, {count} time(s) - "
+                    f"{interval * count:g}s in total; Ctrl-C stops early",
+                    indent="  ")
         samples = []
         try:
             for n in range(count + 1):
@@ -12517,8 +12593,8 @@ class Shell:
             print_prose("the dataplane is not answering, so what reached "
                         "the forwarding table is unknown", indent="  ")
         elif not prefixes:
-            print(f"  no {what} prefixes to check against the forwarding "
-                  "table")
+            print_prose(f"no {what} prefixes to check against the "
+                        f"forwarding table", indent="  ")
         elif [p for p in prefixes if p not in in_fib]:
             missing = [p for p in prefixes if p not in in_fib]
             # The number that is worth the line. A route FRR holds and VPP
@@ -13137,15 +13213,48 @@ class Shell:
             print("  no matching entry in the forwarding table")
             return
 
-        print(f"  {'Destination':<20} {'Next hop':<17} {'Interface':<12} Kind")
-        for prefix in sorted(rows, key=routes._sort_key):
-            e = rows[prefix]
-            via, iface = e["via"][0] if e["via"] else ("-", "-")
-            print(f"  {prefix:<20} {via:<17} {iface:<12} {e['kind']}")
-            for via, iface in e["via"][1:]:
-                print(f"  {'':<20} {via:<17} {iface:<12} (also)")
-        print(f"\n  {len(rows)} entr{'y' if len(rows) == 1 else 'ies'} "
-              "carrying traffic")
+        # MEASURED, not padded to a guess (#392). The columns were fixed at
+        # 20, 17 and 12, which fits an IPv4 box and nothing else: an IPv6
+        # prefix is 43 columns at its widest, a next hop 39 and an interface
+        # name 28, so a v6 route ran past the console and the fold landed
+        # inside the columns - where a reader cannot tell a wrapped next hop
+        # from a second route.
+        #
+        # Two shapes, and which one is used is decided by what the box
+        # actually holds rather than by a flag: while the widest row fits, it
+        # is the table an operator reads down; when it does not, each entry
+        # becomes a small block whose every row ends in its value, so there is
+        # nothing behind a fold to break.
+        widths = route_column_widths(
+            [(p, next_hop_column(v), i) for p, e in rows.items()
+             for v, i in (e["via"] or [(COLUMN_NONE, COLUMN_NONE)])],
+            ["Destination", "Next hop", "Interface"])
+        if widths:
+            pw, vw, iw = widths
+            print(f"  {'Destination':<{pw}} {'Next hop':<{vw}} "
+                  f"{'Interface':<{iw}} Kind")
+            for prefix in sorted(rows, key=routes._sort_key):
+                e = rows[prefix]
+                via, iface = e["via"][0] if e["via"] \
+                    else (COLUMN_NONE, COLUMN_NONE)
+                via = next_hop_column(via)
+                print(f"  {prefix:<{pw}} {via:<{vw}} {iface:<{iw}} "
+                      f"{e['kind']}")
+                for via, iface in e["via"][1:]:
+                    via = next_hop_column(via)
+                    print(f"  {'':<{pw}} {via:<{vw}} {iface:<{iw}} (also)")
+        else:
+            for prefix in sorted(rows, key=routes._sort_key):
+                e = rows[prefix]
+                print(f"  {prefix}")
+                for via, iface in (e["via"]
+                                   or [(COLUMN_NONE, COLUMN_NONE)]):
+                    print(f"      via:  {next_hop_column(via)}")
+                    print(f"      on:   {iface}")
+                print(f"      kind: {e['kind']}")
+        print()
+        print_prose(f"{len(rows)} entr{'y' if len(rows) == 1 else 'ies'} "
+                    f"carrying traffic", indent="  ")
 
     def _route_rows_verbose(self, table, rib, wanted):
         rows = routes.compare(table, rib, getattr(self, "_vpp_hosts", None))
@@ -13157,22 +13266,58 @@ class Shell:
             print("  no matching entry in either table")
             return
 
-        print(f"  {'Destination':<20} {'FRR':<5} {'VPP':<10} "
-              f"{'Next hop':<17} {'Interface':<12}")
+        # The same measurement, over this screen's five columns. The mark is
+        # the VTY's own words and it goes LAST on the row, which is where it
+        # already was: a fold that lands in it costs a reader nothing, and it
+        # is the one thing here that is not a value.
+        # THE COLUMNS ARE ORDERED SO THE UNBOUNDED ONE IS LAST (#392). A
+        # prefix, a next hop and an interface name all have a widest; what VPP
+        # calls the route does not, because it is VPP's word and not this
+        # box's. Last on the row, a fold in it costs a reader nothing.
+        widths = route_column_widths(
+            [(p, rib_column(r), next_hop_column(v), i)
+             for p, r, _f, _k, v, i in rows],
+            ["Destination", "FRR", "Next hop", "Interface"])
+        if widths:
+            pw, rw, vw, iw = widths
+            print(f"  {'Destination':<{pw}} {'FRR':<{rw}} "
+                  f"{'Next hop':<{vw}} {'Interface':<{iw}} VPP")
+        else:
+            print("  Destination, and under each what holds it")
         missing = []
         for prefix, in_rib, in_fib, kind, via, iface in rows:
             mark = ""
             if in_rib and not in_fib:
                 mark = "  ** in FRR, NOT forwarding"
                 missing.append(prefix)
-            print(f"  {prefix:<20} {'yes' if in_rib else '-':<5} "
-                  f"{kind:<10} {via:<17} {iface:<12}{mark}")
+            if not widths:
+                print(f"  {prefix}")
+                print(f"      FRR:  {rib_column(in_rib)}")
+                print(f"      via:  {next_hop_column(via)}")
+                print(f"      on:   {iface}")
+                print(f"      VPP:  {kind}")
+                if mark:
+                    print(f"     {mark.strip()}")
+                continue
+            pw, rw, vw, iw = widths
+            print(f"  {prefix:<{pw}} {rib_column(in_rib):<{rw}} "
+                  f"{next_hop_column(via):<{vw}} {iface:<{iw}} {kind}")
+            # THE MARK ON A ROW OF ITS OWN, under the route it is about. It is
+            # the VTY's own words, and behind a value with no widest they are
+            # what a fold lands in; under the row they are also what an
+            # operator's eye goes to.
+            if mark:
+                print(f"     {mark.strip()}")
+
 
         if missing:
             # The whole reason this command exists. Two lists side by side and
             # a reader left to compare them is not an answer.
-            print(f"\n  {len(missing)} prefix{'' if len(missing) == 1 else 'es'} "
-                  "in FRR's table and not in the forwarding table.")
+            print()
+            print_prose(
+                f"{len(missing)} prefix"
+                f"{'' if len(missing) == 1 else 'es'} in FRR's table and not "
+                f"in the forwarding table.", indent="  ")
             print("  Traffic to " + ("it" if len(missing) == 1 else "them")
                   + " is dropped. FRR installs routes into the kernel and")
             print("  linux_nl carries them into VPP; a route that stops half "

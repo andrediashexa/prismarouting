@@ -3332,8 +3332,11 @@ check(any(r.split() == ["10.0.0.0/8", "200.150.0.2", "pg0", "forward"]
 with spoken() as o:
     sh.show_route(["verbose"])
 text = rows_of(o.getvalue())
-check(any(r.startswith("  198.19.0.0/24") and "** in FRR, NOT forwarding"
-          in r for r in text), f"verbose compares the two: {text!r}")
+# The mark is on a row of its OWN since #392, under the route it is about:
+# behind a value with no widest it was what a fold landed in.
+_at = [i for i, r in enumerate(text) if r.startswith("  198.19.0.0/24")]
+check(_at and text[_at[0] + 1].strip() == "** in FRR, NOT forwarding",
+      f"verbose compares the two, and marks the route under it: {text!r}")
 sh = shell(dp=Dp({"show ip fib": FIB}), frr=frr_stub({}))
 with spoken() as o:
     sh.show_route(["verbose"])
@@ -3367,6 +3370,74 @@ check(rows_of(o.getvalue()) == ["  no matching entry in the forwarding table"],
       o.getvalue())
 ok("what an operator configured, not what VPP resolved")
 
+print("\n=== route_column_widths: measured, or None when it cannot fit ===")
+check(prismash.route_column_widths([], ["Destination"]) is None,
+      "nothing to measure is not a table")
+check(prismash.route_column_widths([("10.0.0.0/8", "10.0.0.1", "pg0")],
+                                   ["Destination", "Next hop", "Interface"])
+      == [11, 8, 9],
+      "each column is the widest of its own values and its own heading")
+check(prismash.route_column_widths([("10.0.0.0/8", "x", "y")],
+                                 ["Destination", "Next hop", "Interface"])
+      == [11, 8, 9],
+      "a heading wider than every value under it is the width")
+_v6 = ("2001:0db8:0000:0000:0000:0000:0000:0001/128",
+       "2001:0db8:0000:0000:0000:0000:0000:0002",
+       "GigabitEthernet0/13/0.4094")
+check(prismash.route_column_widths([_v6],
+                                 ["Destination", "Next hop", "Interface"])
+      is None,
+      "an IPv6 route at its widest does not fit, and is not squeezed")
+check(prismash.route_column_widths(
+          [("10.0.0.0/8", "10.0.0.1", "pg0")],
+          ["Destination", "Next hop", "Interface"],
+          tail=60) is None,
+      "and what the caller puts after the last column is counted too")
+ok("the columns are the box's own values, and None means print blocks")
+
+print("\n=== next_hop_column and rib_column: what goes in a column ===")
+check(prismash.next_hop_column("10.0.0.1") == "10.0.0.1"
+      and prismash.next_hop_column("2001:db8::1") == "2001:db8::1",
+      "an address is itself")
+check(prismash.next_hop_column("connected") == prismash.COLUMN_NONE
+      and prismash.next_hop_column("local") == prismash.COLUMN_NONE
+      and prismash.next_hop_column("-") == prismash.COLUMN_NONE,
+      "VPP's word for a route with no next hop is not a next hop")
+check(prismash.rib_column(True) == "yes"
+      and prismash.rib_column(False) == prismash.COLUMN_NONE
+      and set(prismash.RIB_COLUMN) == {"yes", prismash.COLUMN_NONE},
+      "the FRR column is one of two words, and both are declared")
+ok("a column of addresses stays a column of addresses")
+
+print("\n=== and a route at its widest is printed in blocks, not folded ===")
+# THE GUARANTEE #392 RESTS ON, asserted where a runtime decision can be. The
+# width reader cannot know what `{via:<{vw}}` pads to, so it measures these
+# rows as they are driven; what keeps them inside the console is this.
+_wide_fib = {
+    "2001:db8::1/128": {
+        "via": [("2001:0db8:0000:0000:0000:0000:0000:0002",
+                 "GigabitEthernet0/13/0.4094")],
+        "kind": "forward",
+    },
+}
+with spoken() as o:
+    shell()._route_rows(_wide_fib, [])
+_wide = rows_of(o.getvalue())
+check(all(len(r) <= prismash.CONSOLE_COLUMNS for r in _wide),
+      f"a v6 route at its widest is over the console: "
+      f"{[r for r in _wide if len(r) > prismash.CONSOLE_COLUMNS]!r}")
+check(any(r.strip() == "2001:db8::1/128" for r in _wide)
+      and any(r.strip().startswith("via:") for r in _wide),
+      f"and it is printed as a block, each row ending in its value: {_wide!r}")
+with spoken() as o:
+    shell()._route_rows_verbose(
+        _wide_fib, {"2001:db8::1/128": {}}, [])
+_wide = rows_of(o.getvalue())
+check(all(len(r) <= prismash.CONSOLE_COLUMNS for r in _wide),
+      f"the verbose screen is over the console: "
+      f"{[r for r in _wide if len(r) > prismash.CONSOLE_COLUMNS]!r}")
+ok("what the reader measures as driven is what this keeps inside the console")
+
 print("\n=== Shell._route_rows_verbose: in FRR and not forwarding ===")
 # Mutation shown red: `if in_rib and in_fib` for the mark.
 rib = routes.parse_rib(RIB)
@@ -3374,10 +3445,11 @@ sh = shell()
 with spoken() as o:
     sh._route_rows_verbose(table, rib, [])
 text = rows_of(o.getvalue())
-marked = [r for r in text if "** in FRR, NOT forwarding" in r]
-check(len(marked) == 2 and all(r.startswith(("  198.19.0.0/24",
-                                              "  10.9.0.0/16"))
-                                for r in marked),
+# The mark is a row of its own now (#392), so what is asserted is the route
+# it sits UNDER: it is the row before each mark.
+marked = [text[i - 1].split()[0] for i, r in enumerate(text)
+          if r.strip() == "** in FRR, NOT forwarding"]
+check(sorted(marked) == ["10.9.0.0/16", "198.19.0.0/24"],
       f"the two FRR holds and VPP has not: {marked!r}")
 check("  2 prefixes in FRR's table and not in the forwarding table." in text,
       f"and the conclusion drawn for the reader: {text!r}")

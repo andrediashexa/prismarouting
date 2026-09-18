@@ -2477,6 +2477,14 @@ What remains is the proof a lab cannot fake: `lab/install-iso.sh` bringing the
 claimed card up at the console and reading `ens19` off `ip link` and FRR, and
 `appliance/test_startup_conf_shapes.sh` handing the stanza to a real VPP.
 
+**Eight published release titles were not the CHANGELOG heading**
+([#340](https://github.com/andrediashexa/hexarouting/issues/340)) - on the
+branch. The gate compares the release it is cutting and said nothing about the
+eighty already published, four of which were truncations announcing half of
+what the release fixed. `tools/release-titles.sh` reads them all; a title that
+extends the heading is right and one that is shorter is the defect; the three
+that still differed are corrected on their pages and 83 of 83 agree.
+
 **The installer's management-network default is `none`**
 ([#394](https://github.com/andrediashexa/hexarouting/issues/394)) - shipped
 in 0.78.0. The question offered the card the medium is reaching the network

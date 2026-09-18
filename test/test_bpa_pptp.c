@@ -83,12 +83,19 @@ full_checksum (const u8 *p, unsigned len, unsigned csum_off)
 static tcp_header_t *
 segment (vlib_buffer_t *b, u32 plen, u8 data_offset_words)
 {
-  tcp_header_t *tcp = (tcp_header_t *) vlib_buffer_get_current (b);
+  tcp_header_t *tcp;
 
+  /* THE BUFFER IS PUT IN A KNOWN STATE FIRST, and the order is the whole of
+   * it: `vlib_buffer_get_current` is `b->data + b->current_data`, and this
+   * file's buffer lives on main's stack. Reading it before current_data is
+   * set pointed the segment at data plus whatever the stack held, which
+   * segfaulted on roughly one run in six - a flake in `make test` that says
+   * nothing about the product. */
   memset (b->data, 0, sizeof (b->data));
   b->current_data = 0;
   b->flags = 0;
   b->current_length = (u16) (data_offset_words * 4 + plen);
+  tcp = (tcp_header_t *) vlib_buffer_get_current (b);
   tcp->src_port = clib_host_to_net_u16 (1723);
   tcp->dst_port = clib_host_to_net_u16 (49152);
   tcp->data_offset_and_reserved = (u8) (data_offset_words << 4);
