@@ -2514,6 +2514,7 @@ prisma> show cgnat ?
   forward      the port forwards the dataplane holds
   ha           whether this box and its peer map subscribers the same way
   history      dated configuration trail
+  identity     how many identities this box holds, and when it read them
   logging      IPFIX export state
   pool         configured CGNAT pools
   session      active sessions per thread

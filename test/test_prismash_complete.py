@@ -50,7 +50,10 @@ check(o == {"pool", "session", "blocks", "logging", "history",
             # The one that is NOT the dataplane's: a comparison between two
             # boxes, which the dataplane cannot answer because it holds one
             # of them (#8).
-            "ha"}, f"got {o}")
+            "ha",
+            # The count of subscriber identities and when they were read -
+            # never an entry, which is why this screen exists at all (#21).
+            "identity"}, f"got {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== a partial prefix completes ===")

@@ -187,6 +187,44 @@ Por isso o `natEvent 17` na liberação é correção, não capricho.
 
 A mesma lacuna aparece no reinício, e por um motivo mais comum do que a ociosidade: **todo reboot planejado** deixava para trás um bloco segurado no instante da parada, sem liberação nenhuma. E reboot planejado inclui o que inicia uma troca de versão, porque levar a caixa para uma versão nova começa bootando pela mídia nova.
 
+## Dar nome ao assinante no registro
+
+Uma ordem judicial nomeia uma pessoa. O registro nomeia um endereço privado num instante. Juntar os dois exigia um segundo sistema e um passo manual, feito sob pressão por quem está de plantão — que é exatamente a condição em que se manda a resposta errada.
+
+A caixa passa a carregar a identidade no próprio registro:
+
+```
+nat cgnat identity file /etc/prisma-routing/subscribers.map
+nat cgnat identity none
+```
+
+O arquivo é um assinante por linha, escrito pelo seu sistema de provisionamento:
+
+```
+# comentários e linhas em branco são ignorados
+100.64.0.5   joao.silva@isp
+100.64.0.6   pppoe-4471
+```
+
+**Ele é lido inteiro ou recusado inteiro.** Uma linha que não é comentário nem `<endereço> <identidade>` é recusada dizendo qual linha, e a tabela em vigor não muda — um provisionamento que escreveu uma linha torta pode ter escrito outra, e uma tabela faltando um assinante em silêncio é justamente a falha que isso existe para evitar. Endereço repetido também é recusado: duas identidades para um endereço são duas respostas para a pergunta que o juiz faz, e escolher uma seria a caixa decidindo qual assinante nomear.
+
+**A identidade é tomada no instante da alocação**, não na hora em que o registro sai. Entre uma coisa e outra o lease pode ter mudado de dono, e um registro nomeando quem tem o endereço depois é um registro bem formado, guardado, e errado.
+
+**Endereço que a caixa não conhece vira `unknown`, e o registro sai assim mesmo.** Registro faltando é pior que registro incompleto, e o coletor precisa distinguir "a caixa não sabe" de "a caixa não disse".
+
+**É dado pessoal, e nada imprime uma entrada.** O `show cgnat identity` diz quantas entradas existem e quando o arquivo foi lido:
+
+```
+prisma> show cgnat identity
+identity table: 3 entry(s), read 2026-09-18T06:41:02Z
+```
+
+Nenhuma outra tela desta caixa carrega identidade. A presença dela no log é a razão pela qual o log é protegido.
+
+**Nos dois transportes:** no syslog ela vai como `subscriberId` dentro do dado estruturado; no IPFIX sobre TCP vai como elemento **371 `userName`**. O id do template do registro de bloco passou de 256 para 258 por causa disso — o IPFIX não permite que um id signifique dois conjuntos de campos, e um coletor com o 256 em cache leria os primeiros bytes da identidade como id de pool. Se o seu coletor guarda templates, ele vai simplesmente esperar o novo, que a caixa reenvia a cada minuto.
+
+O exportador **UDP** não mudou: ele continua com os sete campos da RFC 8158 e sem identidade.
+
 ## Quando o seu coletor só fala syslog
 
 A maioria dos coletores de ISP lê syslog e mais nada. Os mesmos eventos saem como linhas **RFC 5424**, sem mudar o que é registrado: um registro por alocação e por liberação, nunca por fluxo.

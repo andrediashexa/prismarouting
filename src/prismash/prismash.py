@@ -428,6 +428,11 @@ SHOW_CGNAT = {
     "blocks": ("blocks allocated in dynamic mode, and how many a forward pins",
                None),
     "logging": ("IPFIX export state", None),
+    # The COUNT and the instant it was read. Not the entries: an identity is
+    # personal data, and its presence in the log is the reason the log is
+    # protected (#21).
+    "identity": ("how many identities this box holds, and when it read them",
+                 None),
     "history": ("dated configuration trail", {
         # The tamper check the operator documentation sends people to, and
         # until #313 there was no VTY spelling that reached it. The dataplane
@@ -10832,6 +10837,9 @@ class Shell:
             "show cgnat history verify": "show bpa pool history verify",
             "show cgnat drops": "show bpa drops",
             "show cgnat alg": "show bpa alg",
+            # How many identities this box holds and when it read them - never
+            # an entry, here or anywhere (#21).
+            "show cgnat identity": "show bpa identity",
         }
         if line in m:
             self.vpp(m[line])
