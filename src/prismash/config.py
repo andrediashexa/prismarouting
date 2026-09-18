@@ -41,6 +41,22 @@ def mapping_digest(lines) -> str:
 # absence of an entry: a configuration that lists every default would diff
 # against every device that changes one.
 URPF_MODES = ("strict", "loose", "off")
+
+# VRRP, RFC 5798. The numbers are the RFC's, not this product's choice, and
+# they are here rather than beside the parser because the VTY's help table
+# prints them and a second copy would drift from the check.
+#
+# 255 is NOT accepted although the field takes it: the RFC reserves it for the
+# router that OWNS the virtual address, and a box sharing a service address
+# with a peer is never that. A configuration that claims ownership wins every
+# election and never gives the address back, which on a pair is not a priority
+# but a permanent split.
+VRID_MIN, VRID_MAX = 1, 255
+VRRP_PRIORITY_MIN, VRRP_PRIORITY_MAX = 1, 254
+VRRP_PRIORITY_DEFAULT = 100        # RFC 5798 section 6.1
+# What an interface going down takes off the priority. The RFC leaves this to
+# the implementation; VPP takes it per tracked interface.
+VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX = 1, 254
 ROUTING_HEADER = "! routing"
 
 #: The hierarchy CGNAT lives under, and the block static routes live in.
@@ -933,6 +949,152 @@ def _address_family_error(keyword: str, prefix: str):
     return None
 
 
+VRRP_USAGE = ("vrrp <vrid> address <a.b.c.d> | priority <n> | "
+              "track <interface> decrement <n>")
+
+#: The same thing as a refusal, split so that it FITS: the whole grammar on
+#: one row reaches a console at 92 columns and folds inside the words (#355).
+#: The verdict carries the statement an operator most often means, the prose
+#: carries the other two.
+VRRP_USAGE_REFUSAL = (
+    "usage: vrrp <vrid> address <a.b.c.d>",
+    "or 'vrrp <vrid> priority <n>', or 'vrrp <vrid> track <interface> "
+    "decrement <n>'")
+
+
+def vrrp_statement(vrrp: dict, iface: str, words: list):
+    """
+    Apply one `vrrp ...` statement to a configuration's virtual routers.
+
+    Returns None when it was taken and `(verdict, prose)` when it was not,
+    and the caller decides what a refusal looks like - the VTY prints the
+    verdict and folds the prose under it, the file parser files both under
+    `unknown` with the line number. ONE implementation for both, because a
+    statement a running box takes and a saved file refuses is a box that
+    cannot reload its own configuration (#121 is that shape).
+
+    Two parts and not one sentence, because a refusal has to FIT: a verdict
+    long enough to carry the reason reaches the console at whatever width the
+    operator's window happens to be and folds inside the words (#355). The
+    verdict says what was refused; the prose says why.
+
+    `no vrrp <vrid>` removes the whole virtual router and is handled here too:
+    removing one address of two is a different statement, and an operator who
+    means "this box stops standing for that service" means all of it.
+    """
+    if len(words) < 2:
+        return VRRP_USAGE_REFUSAL
+    try:
+        vrid = int(words[1])
+    except ValueError:
+        return (f"vrrp '{words[1]}': the virtual router id is a number", "")
+    if not VRID_MIN <= vrid <= VRID_MAX:
+        return (f"vrrp {vrid}: the virtual router id is "
+                f"{VRID_MIN} to {VRID_MAX}", "")
+    vr = vrrp.get(iface, {}).get(vrid)
+    rest = words[2:]
+
+    # not a unit: a closure over this statement's interface and id, measured
+    # through vrrp_statement, which is the only thing that can call it
+    def make():
+        return vrrp.setdefault(iface, {}).setdefault(
+            vrid, {"addresses": [], "priority": VRRP_PRIORITY_DEFAULT,
+                   "track": {}})
+
+    if rest[:1] == ["address"] and len(rest) == 2:
+        a = rest[1]
+        if ":" in a:
+            return ("vrrp: this box takes IPv4 virtual routers only",
+                    "an IPv6 virtual router is RFC 5798 section 5.2.2 and a "
+                    "second election to test. It is not refused here because "
+                    "it cannot work, but because nothing has measured it")
+        if "/" in a:
+            return (f"vrrp {vrid} address '{a}': write it without a prefix "
+                    "length",
+                    "the virtual address is one of the addresses on this "
+                    "interface's subnet, not a subnet of its own")
+        if not _is_ipv4_address(a):
+            return (f"vrrp {vrid} address '{a}': not an IPv4 address", "")
+        entry = make()
+        if a not in entry["addresses"]:
+            entry["addresses"].append(a)
+        return None
+    if rest[:1] == ["priority"] and len(rest) == 2:
+        try:
+            p = int(rest[1])
+        except ValueError:
+            return (f"vrrp {vrid} priority '{rest[1]}': a number", "")
+        if p == 255:
+            return ("vrrp: priority 255 is RFC 5798's address owner",
+                    "a box that shares a service address with a peer is not "
+                    "one. It would win every election and never hand the "
+                    "address back")
+        if not VRRP_PRIORITY_MIN <= p <= VRRP_PRIORITY_MAX:
+            return (f"vrrp {vrid} priority {p}: the range is "
+                    f"{VRRP_PRIORITY_MIN} to {VRRP_PRIORITY_MAX}", "")
+        make()["priority"] = p
+        return None
+    if rest[:1] == ["track"] and len(rest) == 4 and rest[2] == "decrement":
+        try:
+            d = int(rest[3])
+        except ValueError:
+            return (f"vrrp {vrid} track: decrement '{rest[3]}': a number",
+                    "")
+        if not VRRP_DECREMENT_MIN <= d <= VRRP_DECREMENT_MAX:
+            return (f"vrrp {vrid} track: decrement {d}: the range is "
+                    f"{VRRP_DECREMENT_MIN} to {VRRP_DECREMENT_MAX}", "")
+        if rest[1] == iface:
+            return (f"vrrp {vrid} track {rest[1]}: an interface cannot "
+                    "track itself",
+                    "a virtual router on an interface that went down has "
+                    "already stopped advertising. What is worth tracking is "
+                    "the OTHER side - the uplink whose loss leaves this box "
+                    "alive and useless")
+        make()["track"][rest[1]] = d
+        return None
+    return VRRP_USAGE_REFUSAL
+
+
+def vrrp_remove(vrrp: dict, iface: str, words: list):
+    """`no vrrp <vrid>`: the whole virtual router, or `(verdict, prose)`."""
+    if len(words) != 2:
+        return ("usage: no vrrp <vrid>", "")
+    try:
+        vrid = int(words[1])
+    except ValueError:
+        return (f"no vrrp '{words[1]}': the virtual router id is a number",
+                "")
+    if vrid not in vrrp.get(iface, {}):
+        return (f"{iface} has no virtual router {vrid}", "")
+    del vrrp[iface][vrid]
+    if not vrrp[iface]:
+        del vrrp[iface]
+    return None
+
+
+def vrrp_why(refusal) -> str:
+    """
+    A refusal as ONE sentence, for the reader that has no console to fold in.
+
+    `prismash --load` files this under `unknown` with the line number, and a
+    file is read by a person looking at a log rather than at a prompt.
+    """
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
+
+
+def _is_ipv4_address(a: str) -> bool:
+    """A dotted quad, each octet in range. No prefix length, no name."""
+    parts = a.split(".")
+    if len(parts) != 4:
+        return False
+    for p in parts:
+        if not p.isdigit() or not 0 <= int(p) <= 255 or (
+                len(p) > 1 and p[0] == "0"):
+            return False
+    return True
+
+
 #: The two ends of a VLAN tag, and the only place they are written down.
 #:
 #: 802.1Q numbers a VLAN 1 to 4094. Zero is the priority tag - a frame with a
@@ -1186,6 +1348,17 @@ class Config:
         # nothing else to create it from - and an ISP router needs one for a
         # router-id and an update-source that do not disappear with a port.
         self.loopbacks: set = set()
+        # Virtual routers on an interface: name -> {vrid -> vr}, where a vr
+        # is {"addresses": [...], "priority": int, "track": {ifname: dec}}.
+        #
+        # THE VIRTUAL ROUTER IS THE DATAPLANE'S, and that is the whole of #7.
+        # FRR ships VRRP and would run it on the linux_cp TAP, which is not
+        # where the packets are: an implementation built that way moves an
+        # address in Linux and leaves the VPP FIB - and the CGNAT feature arcs
+        # - on the box that died. The dataplane already ships the other half,
+        # `vrrp_plugin.so`, RFC 5798, loaded on every box with no virtual
+        # router on it because nothing asked for one. This is what asks.
+        self.vrrp: dict[str, dict] = {}
         # Interfaces where router advertisements are ENABLED.
         #
         # The default is suppressed, which is the opposite of VPP's. Measured:
@@ -1310,6 +1483,18 @@ class Config:
             out.append(f" mtu {self.mtus[ifname]}")
         if ifname in self.urpf:
             out.append(f" urpf {self.urpf[ifname]}")
+        # Last, and each virtual router's statements together: an operator
+        # reading a port wants to know what it IS before being told which
+        # service address it may take over.
+        for vrid in sorted(self.vrrp.get(ifname, {})):
+            vr = self.vrrp[ifname][vrid]
+            for a in vr["addresses"]:
+                out.append(f" vrrp {vrid} address {a}")
+            if vr["priority"] != VRRP_PRIORITY_DEFAULT:
+                out.append(f" vrrp {vrid} priority {vr['priority']}")
+            for tracked in sorted(vr["track"]):
+                out.append(f" vrrp {vrid} track {tracked} "
+                           f"decrement {vr['track'][tracked]}")
         return out
 
     def text(self) -> str:
@@ -1436,7 +1621,8 @@ class Config:
         return (set(self.mtus) | set(self.urpf) | set(self.descriptions)
                 | set(self.admin_down) | set(self.addresses) | set(self.vlans)
                 | set(self.vrfs) | set(self.macs) | set(self.linux_names)
-                | set(self.loopbacks) | set(self.ra_enabled))
+                | set(self.loopbacks) | set(self.ra_enabled)
+                | set(self.vrrp))
 
     def connected_prefixes(self) -> dict:
         """
@@ -1775,6 +1961,7 @@ class Config:
                 cfg.macs.pop(gone, None)
                 cfg.vrfs.pop(gone, None)
                 cfg.ra_enabled.discard(gone)
+                cfg.vrrp.pop(gone, None)
             elif s.startswith("interface "):
                 iface = s.split()[1]
                 # A loopback is created by being named, the way a
@@ -1878,6 +2065,14 @@ class Config:
                     cfg.admin_down.add(iface)
                 elif s == "no shutdown":
                     cfg.admin_down.discard(iface)
+                elif w[0] == "vrrp":
+                    why = vrrp_statement(cfg.vrrp, iface, w)
+                    if why:
+                        cfg.unknown.append((lineno, s, vrrp_why(why)))
+                elif w[:1] == ["no"] and w[1:2] == ["vrrp"]:
+                    why = vrrp_remove(cfg.vrrp, iface, w[1:])
+                    if why:
+                        cfg.unknown.append((lineno, s, vrrp_why(why)))
                 elif w[0] == "urpf" and len(w) > 1:
                     if w[1] not in URPF_MODES:
                         cfg.unknown.append(
@@ -1911,8 +2106,9 @@ class Config:
                     # hand-editor should write.
                     cfg.unknown.append(
                         (lineno, s, "an interface understands 'description "
-                                    "<text>', 'shutdown', 'mtu <n>' and "
-                                    "'urpf <strict|loose|off>'"))
+                                    "<text>', 'shutdown', 'mtu <n>', "
+                                    "'urpf <strict|loose|off>' and "
+                                    "'" + VRRP_USAGE + "'"))
             elif s.startswith("cgnat "):
                 cfg.globals.append(s)
             else:
@@ -2346,6 +2542,21 @@ class Config:
         # the last committed mode running. A rollback that cannot undo is not a
         # rollback - the same reason mtu_del exists.
         urpf_del = [k for k in self.urpf if k not in other.urpf]
+        # A virtual router is replaced whole rather than field by field. VPP's
+        # own message says why: `vrrp_vr_update` takes the addresses, the
+        # priority and the flags together, and an election in progress is not
+        # a thing to walk through three states of.
+        vrrp_set = {k: v for k, v in other.vrrp.items()
+                    if self.vrrp.get(k) != v}
+        # Both directions, for the reason uRPF's removal exists: a rollback
+        # that cannot take a virtual router off an interface is a box still
+        # standing for a service address the operator withdrew it from.
+        vrrp_del = {k: sorted(v) for k, v in self.vrrp.items()
+                    if k not in other.vrrp}
+        for k, v in self.vrrp.items():
+            gone = sorted(set(v) - set(other.vrrp.get(k, {})))
+            if gone and k in other.vrrp:
+                vrrp_del[k] = gone
         # Removing the statement has to put the interface back to the driver
         # default, not leave the last committed value behind. A rollback that
         # cannot undo is not a rollback.
@@ -2404,6 +2615,8 @@ class Config:
             "mtu_del": mtu_del,
             "urpf_set": urpf_set,
             "urpf_del": urpf_del,
+            "vrrp_set": vrrp_set,
+            "vrrp_del": vrrp_del,
             "globals": [g for g in other.globals if g not in self.globals],
             "routing_changed": self.routing != other.routing,
         }

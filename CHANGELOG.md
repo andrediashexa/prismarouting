@@ -77,6 +77,76 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A pair of boxes can hold a service address between them**
+  ([#7](https://github.com/andrediashexa/hexarouting/issues/7)), and it runs where the
+  packets are:
+
+  ```
+  interface ens18
+   ipv4 address 100.64.3.252/22
+   vrrp 1 address 100.64.3.254
+   vrrp 1 priority 200
+   vrrp 1 track ens19 decrement 150
+   exit
+  ```
+
+  **Neither of the two implementations the issue named.** FRR ships VRRP and
+  `keepalived` was the alternative, and both run in Linux - which on this box
+  means the `linux_cp` TAP. The TAP is not on the packet path: the dataplane
+  interface is. A pair built on either of them moves an address in Linux and
+  leaves the VPP FIB and the CGNAT feature arcs on the box that died. The
+  dataplane had already shipped the answer - `vrrp_plugin.so`, RFC 5798,
+  loaded on every box this product ever installed, with no virtual router on
+  it because nothing asked for one. The VTY asks now, over the binary API.
+
+  What that buys, measured on a running pair in the new `lab/vrrp.sh`: the
+  virtual address answers ARP with RFC 5798's virtual MAC on the dataplane
+  interface; the box that takes over takes that MAC with it, so **a CPE that
+  never flushed its ARP cache goes on sending to the same MAC** and the frames
+  arrive at the other box - the lab flushes nothing, at any point, so that a
+  product which never sent a gratuitous ARP could not pass; and the priorities
+  in the configuration decide, with preempt on, so a box that comes back takes
+  the service back rather than leaving the pair where the last failure left it.
+
+  **One flag, and the cost of that is stated rather than hidden.**
+  `vrrp_vr_flags` is an `enum` and not an `enumflags`, so vat2 encodes exactly
+  one of its names - two names refused, a list of two segfaults the client,
+  and so does the integer 3. Preempt is the one that ships, so accept mode is
+  off and **the virtual address does not answer ICMP**. That is RFC 5798
+  section 6.4.3's default for a router that is not the address owner, but a
+  monitoring system that pings the gateway sees nothing: it should ping each
+  box's own address, which is what says whether that box is alive. Forwarding
+  *through* the address is unaffected and is what the lab measures.
+
+  `show cgnat ha` gained the role: which virtual router is on which interface,
+  its addresses, its virtual MAC, and the priority the box is **advertising**,
+  which is not the configured one when something it tracks is down. A box
+  advertising less than it was configured for has a cable out, not a VRRP
+  problem, and the screen says so in that many words.
+
+  **The acceptance test written before the feature did its job.**
+  `lab/ha-failover.sh` was written for
+  [#9](https://github.com/andrediashexa/hexarouting/issues/9) at 0.67.0, all of it red
+  because nothing answered for a service address. Against a pair carrying
+  virtual routers it is 18 of its 22 checks green: **a stopped dataplane and a
+  killed one are both survived, with every subscriber keeping the same public
+  address and a port in the same block**, and an in-flight TCP connection
+  dropping - which is this design's claim, stated in the lab's own words so
+  that nobody reads a green run as "connections survived". The four still red
+  are the pulled-uplink trio and one reading of which box received the traffic
+  afterwards; the first needs a NIC whose link state the dataplane can see
+  ([#28](https://github.com/andrediashexa/hexarouting/issues/28)) and the second is
+  the lab's instrument rather than the product's behaviour.
+
+  **What a container could not measure, said out loud.** Interface tracking is
+  configured, reaches the dataplane and comes back from it, and the lab
+  asserts that. What no container can do is make the dataplane *see* a cable
+  go: these labs forward over af_packet host interfaces and this VPP never
+  reports one as link down - measured three ways, all printed by every run.
+  So the lab measures the half tracking rests on instead: it lowers a box's
+  priority through the VTY, watches the service move, raises it, and watches
+  it come back.
+
 ### Fixed
 
 ## 0.83.0 - the identity table's other two sources

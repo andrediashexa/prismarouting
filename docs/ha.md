@@ -110,6 +110,8 @@ CGNAT failover.
 To be built:
 
 1. Integration with `keepalived` or FRR's VRRP, coherent with `linux_cp`.
+   **Done, and with neither of them** - the section *Where the virtual router
+   runs* below says what was built instead and why.
 2. Verification that both boxes carry the **same** pool configuration.
    **Done**, as far as a box with no peer session can take it
    ([#8](https://github.com/andrediashexa/hexarouting/issues/8)) - the section
@@ -117,15 +119,100 @@ To be built:
 3. A `show cgnat ha` comparing a configuration hash between peers. **Done**,
    and spelled `cgnat` rather than `bpa` for a reason recorded below.
 4. A lab test with two instances and a forced failure, confirming the
-   subscriber keeps address and block. **Done, and red**: `lab/ha-failover.sh`
-   ([#9](https://github.com/andrediashexa/hexarouting/issues/9)), written before
+   subscriber keeps address and block. **Done, and 18 of its 22 checks are
+   now green**: `lab/ha-failover.sh` ([#9](https://github.com/andrediashexa/hexarouting/issues/9)), written before
    items 1 to 3 so that they are judged against the requirement rather than the
-   requirement being written to fit them.
+   requirement being written to fit them. What it measures today is in *What
+   the acceptance test measures now*, at the end of this page.
 
 Item 2 **MUST NOT** be skipped. In deterministic mode, two boxes with different
 configuration fail silently: the failover starts mapping subscribers to the
 wrong blocks with no visible error, and the logs of both boxes will look
 perfectly healthy. Configuration equality is a requirement, not a convenience.
+
+## Where the virtual router runs, and why it is neither of the two candidates
+
+The question [#7](https://github.com/andrediashexa/hexarouting/issues/7) exists to answer is not
+"which VRRP implementation", it is **where the virtual address answers ARP**.
+A CPE reaches its gateway by MAC. If the address moves in Linux and the
+dataplane knows nothing about it, the box that took the address does not
+receive the frames, because the frames go to a MAC on the box that died.
+
+FRR ships VRRP and `keepalived` is the other candidate, and **both run in
+Linux**, which on this box means the `linux_cp` TAP. The TAP is not on the
+packet path: the dataplane interface is. A pair built on either of them moves
+an address in Linux and leaves the VPP FIB and the CGNAT feature arcs behind.
+
+**So it is neither. The dataplane already shipped the answer**: VPP's own
+`vrrp_plugin.so`, RFC 5798, loaded on every box this product has ever
+installed, with no virtual router on it because nothing asked for one. The VTY
+now asks, over the binary API, and the virtual router lives on the interface
+that carries the packets:
+
+```
+interface ens18
+ ipv4 address 100.64.3.252/22
+ vrrp 1 address 100.64.3.254
+ vrrp 1 priority 200
+ vrrp 1 track ens19 decrement 150
+ exit
+```
+
+What that buys, measured on a running pair in `lab/vrrp.sh`:
+
+* the virtual address answers ARP **with RFC 5798's virtual MAC**,
+  `00:00:5e:00:01:<vrid>`, on the dataplane interface;
+* the box that takes over takes the MAC with it, so **a CPE that never
+  flushed its ARP cache goes on sending to the same MAC** and the frames
+  arrive at the other box. The lab flushes nothing, at any point, precisely so
+  that a product which never sent a gratuitous ARP could not pass;
+* the priorities in the configuration decide, and **preempt is on**: a box
+  that comes back takes the service back, so the pair ends where the
+  configuration says rather than where the last failure left it.
+
+**One flag, and it is preempt.** `vrrp_vr_flags` is declared in `vrrp.api` as
+an `enum` rather than an `enumflags`, and vat2 encodes exactly one of its
+names: `"VRRP_API_VR_PREEMPT|VRRP_API_VR_ACCEPT"` is refused, a list of two
+segfaults the client, and so does the integer 3. So accept mode is not
+available through the binary API, and the cost is stated rather than hidden:
+**the virtual address does not answer ICMP**. That is RFC 5798 section 6.4.3's
+default for a router that does not own the address, so it is the RFC's answer
+and not a shortcut - but a monitoring system that pings the gateway sees
+nothing. It should ping each box's own address, which is what says whether
+that box is alive; the virtual address only says which of them is holding it.
+Forwarding **through** it is unaffected, and that is what the lab measures.
+
+**The advertisement interval is not configurable**, and that is a decision
+rather than an omission: it MUST be the same on both boxes or the election
+never settles, and a per-box statement is a per-box way to get it wrong. It is
+RFC 5798's default of one second, which puts a takeover at about three and a
+half seconds. A pair that needs faster than that wants BFD, which is a
+different mechanism and a different issue.
+
+**What is configured and what is in force are two screens, not one.**
+`show cgnat ha` prints the role, the addresses, the virtual MAC and the
+priority the box is **advertising** - which is not the configured one when
+something it tracks is down, and that difference is the whole point of
+tracking. A box advertising less than it was configured for has a cable out,
+not a VRRP problem.
+
+### What could not be measured in a container
+
+Interface tracking is on the box and comes back from the dataplane, and the
+lab asserts that. What a container cannot do is make the dataplane **see** the
+cable go: these labs forward over af_packet host interfaces, and this VPP
+never reports one of those as link down. Measured three ways, all in
+`lab/vrrp.sh` and printed by every run - the bridge side of the veth taken
+down, the box's own port taken down in Linux, and the veth deleted outright -
+and `show hardware` says `up` in all three.
+
+So the lab measures the half that tracking rests on instead: an election that
+follows the numbers. It lowers box a's priority through the VTY, watches the
+service move to box b, raises it again, and watches it come back. A pair whose
+service does not move when the priority moves would not fail over on a tracked
+interface either. The pulled-uplink measurement itself belongs with the other
+readings that need a real NIC, which is
+[#28](https://github.com/andrediashexa/hexarouting/issues/28).
 
 ## Configuration equality: what exists
 
@@ -193,9 +280,10 @@ and warning about them would be a warning an operator learns to skip.
 
 The comparison is between two configurations. Getting the peer's configuration
 to this box is a **separate problem**, and it is not solved here: there is no
-session between the two boxes, because VRRP is
-[#7](https://github.com/andrediashexa/hexarouting/issues/7) and does not exist
-yet, so nothing can ask the peer anything.
+session between the two boxes. VRRP now exists
+([#7](https://github.com/andrediashexa/hexarouting/issues/7)) and it carries no
+configuration - RFC 5798 advertises a priority and an address, and nothing
+else - so there is still nothing to ask the peer with.
 
 So the peer's configuration arrives as a file, `/etc/prisma-routing/peer.conf`
 (`PRISMA_PEER_CONFIG` overrides it), which is the same artefact `save` writes and
@@ -295,3 +383,23 @@ from what the box says it takes. The lab's stage 2 still carries the old
 measurement in a comment, and its verdict is unaffected - it asserted nothing
 about acceptance then and asserts nothing about it now, which is exactly why
 the finding changing underneath it cost nothing.
+
+## What the acceptance test measures now
+
+The readings above were taken at 0.67.0, when nothing on either box answered
+for a service address. Re-taken against a pair carrying the virtual routers
+[#7](https://github.com/andrediashexa/hexarouting/issues/7) built, **18 of the lab's 22 checks
+are green**:
+
+| What was measured | Result |
+|---|---|
+| The subscriber's translated round trip through the service address, before any failure | Works, and the upstream sees the address and block the formula gives - read off the box rather than typed in the lab |
+| **A stopped dataplane**, stopped the way the appliance's own `ExecStop` stops it | Survived: the service comes back in about four seconds, **on the same public address and a port in the same block**, and it is no longer the stopped box receiving it |
+| **A killed dataplane**, SIGKILL | Survived: the service comes back in about three seconds, same address, same block |
+| An in-flight TCP connection across the takeover | Gone, and a new one from the same subscriber gets the same public address and a port in the same block. That is the claim this page makes and the lab states it in those words, so nobody reads a green run as "connections survived" |
+| **A pulled uplink** | **Still red, and not because of the product**: a container cannot make the dataplane see a link go down (see above). Three checks hang off that one failure |
+| Which box received the traffic after the kill | One reading the lab could not take: the service came back, and the lab's own session-count probe reported neither box as the receiver. That is the lab's instrument rather than the product's behaviour, and it is [#9](https://github.com/andrediashexa/hexarouting/issues/9)'s to settle |
+
+The lab is still excluded from `tools/run-all-labs.sh` for the ordinary
+reason: it is red, and a red lab in the suite is a suite nobody trusts. What
+changed is why it is red.

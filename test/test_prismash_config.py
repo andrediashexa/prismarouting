@@ -1150,5 +1150,88 @@ check(not any("timeout" in l for l in _M.mapping_lines()),
 print("  twenty-three functions, each asked what it is for")
 
 
+# --------------------------------------------------------------- VRRP (#7)
+
+print("\n=== config.vrrp_statement: one statement, taken or refused ===")
+# Mutation shown red: the range check dropped, which stages a vrid the
+# dataplane's u8 cannot hold and a peer would never match.
+v = {}
+check(config.vrrp_statement(v, "pg0", ["vrrp", "1", "address",
+                                       "100.64.3.254"]) is None,
+      "an address is taken")
+check(config.vrrp_statement(v, "pg0", ["vrrp", "1", "priority", "200"])
+      is None, "a priority is taken")
+check(config.vrrp_statement(v, "pg0", ["vrrp", "1", "track", "pg1",
+                                       "decrement", "150"]) is None,
+      "and what it watches")
+check(v == {"pg0": {1: {"addresses": ["100.64.3.254"], "priority": 200,
+                        "track": {"pg1": 150}}}},
+      f"one virtual router, built up statement by statement: {v!r}")
+# A second address on the same router, because a VR MAY stand for more than
+# one address and RFC 5798 says so; a second statement, not a replacement.
+config.vrrp_statement(v, "pg0", ["vrrp", "1", "address", "100.64.3.253"])
+check(v["pg0"][1]["addresses"] == ["100.64.3.254", "100.64.3.253"],
+      f"a second address is added, not swapped in: {v['pg0'][1]!r}")
+config.vrrp_statement(v, "pg0", ["vrrp", "1", "address", "100.64.3.253"])
+check(v["pg0"][1]["addresses"] == ["100.64.3.254", "100.64.3.253"],
+      "and the same one twice is once")
+check(config.vrrp_statement({}, "pg0", ["vrrp", "1"])
+      == config.VRRP_USAGE_REFUSAL, "a vrid and nothing else is the usage")
+for words, want in (
+        (["vrrp", "x"], "the virtual router id is a number"),
+        (["vrrp", "300", "address", "1.2.3.4"], "the virtual router id is 1"),
+        (["vrrp", "1", "address", "2001:db8::1"], "IPv4 virtual routers only"),
+        (["vrrp", "1", "address", "1.2.3.4/24"], "without a prefix length"),
+        (["vrrp", "1", "address", "1.2.3"], "not an IPv4 address"),
+        (["vrrp", "1", "priority", "255"], "RFC 5798's address owner"),
+        (["vrrp", "1", "priority", "0"], "the range is 1 to 254"),
+        (["vrrp", "1", "track", "pg0", "decrement", "5"],
+         "cannot track itself"),
+        (["vrrp", "1", "track", "pg1", "decrement", "255"],
+         "the range is 1 to 254")):
+    refusal = config.vrrp_statement({}, "pg0", words)
+    check(refusal is not None and want in refusal[0] + refusal[1],
+          f"{' '.join(words)}: expected {want!r}, got {refusal!r}")
+check(config.vrrp_statement({}, "pg0", ["vrrp", "1", "address"])[0]
+      == config.VRRP_USAGE_REFUSAL[0], "a half-typed statement is the usage")
+print("  the ONE reader of this statement, so the prompt and a saved file agree")
+
+print("\n=== config.vrrp_remove: the whole router, or a reason ===")
+# Mutation shown red: leaving the empty interface entry behind, which makes
+# interface_names() name a port with nothing on it.
+v = {"pg0": {1: {"addresses": ["1.2.3.4"], "priority": 100, "track": {}},
+             2: {"addresses": ["1.2.3.5"], "priority": 100, "track": {}}}}
+check(config.vrrp_remove(v, "pg0", ["vrrp", "1"]) is None, "it goes")
+check(list(v["pg0"]) == [2], f"and the other stays: {v!r}")
+check(config.vrrp_remove(v, "pg0", ["vrrp", "2"]) is None, "the last one too")
+check(v == {}, f"and the interface entry goes with it: {v!r}")
+check(config.vrrp_remove(v, "pg0", ["vrrp", "1"])[0]
+      == "pg0 has no virtual router 1", "removing one that is not there")
+check(config.vrrp_remove(v, "pg0", ["vrrp"])[0] == "usage: no vrrp <vrid>",
+      "with no id at all")
+check("is a number" in config.vrrp_remove(v, "pg0", ["vrrp", "all"])[0],
+      "with an id that is not one")
+print("  all of a virtual router, because half of one stands for nothing")
+
+print("\n=== config.vrrp_why: the refusal as one sentence, for a log ===")
+# Mutation shown red: the prose dropped, which leaves `--load` printing a
+# verdict with no reason on a box nobody is watching.
+check(config.vrrp_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "both halves joined")
+check(config.vrrp_why(("a verdict", "")) == "a verdict",
+      "and nothing added when there is no prose")
+print("  what a file's reader gets, who has no console to fold in")
+
+print("\n=== config._is_ipv4_address: a dotted quad and nothing else ===")
+# Mutation shown red: the leading-zero check dropped. 010.1.1.1 is octal to
+# some resolvers and decimal to others, so it is two addresses depending on
+# who reads it.
+for good in ("0.0.0.0", "1.2.3.4", "255.255.255.255", "100.64.3.254"):
+    check(config._is_ipv4_address(good), f"{good} is one")
+for bad in ("1.2.3", "1.2.3.4.5", "1.2.3.256", "1.2.3.-1", "010.1.1.1",
+            "1.2.3.4/24", "gateway", "", "1.2.3.a"):
+    check(not config._is_ipv4_address(bad), f"{bad!r} is not")
+print("  each octet in range, written the way one reader would read it")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

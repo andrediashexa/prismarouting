@@ -326,7 +326,7 @@ OFF_MODES="audit:off detreserve:off ipfix-outbuf:no-stall ipfix-stop:no-marker b
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
-           utilisation:off vrf:off"
+           utilisation:off vrf:off vrrp:off"
 
 # What a lab is given for its off run, or nothing when it has none.
 #
@@ -359,7 +359,7 @@ hw-lab:needs a real NIC bound to vfio-pci
 hw-vpp:needs a real NIC, and uses host networking
 boot-iso:the release gate runs this, against a tag
 install-iso:the release gate runs this, against a tag
-ha-failover:the acceptance test for HA, written before HA exists (#9), so it is red because the feature is MISSING and not because anything is broken
+ha-failover:the acceptance test for HA (#9). Since #7 put a virtual router on the dataplane interface it is 18 of 22 green - a stopped dataplane and a killed one are both survived, on the same public address and the same port block - and the four still red are the pulled-uplink trio, which needs a NIC whose link state the dataplane can see (#28), and one reading of which box received the traffic afterwards. It is still red, so it is still not a suite member
 soak:hours of churn is the point of it (#30), and four minutes is its SHORTEST run. The longest lab here is about two minutes, and a suite that waited on this one would stop being run - which is how a suite loses the assertion instead of the lab losing it. Run it deliberately: sh tools/lab.sh soak, or sh tools/lab.sh soak 28800 for the eight hours it is for
 "
 

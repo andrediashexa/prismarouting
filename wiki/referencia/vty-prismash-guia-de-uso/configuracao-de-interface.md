@@ -29,6 +29,10 @@ O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali den
 | `mac-address` | `<xx:xx:xx:xx:xx:xx>` | o MAC ao qual a interface responde |
 | `no ipv6 nd suppress-ra` |           | anuncia esta caixa como roteador nesta porta (por padrão não anuncia) |
 | `urpf`  | `strict\|loose\|off` | descarta pacotes cuja origem não volta por aqui |
+| `vrrp`  | `<1-255> address <A.B.C.D>` | um endereço de serviço que esta caixa disputa com o par (RFC 5798) |
+| `vrrp`  | `<1-255> priority <1-254>` | quem fica com o endereço quando as duas estão boas; maior ganha |
+| `vrrp`  | `<1-255> track <interface> decrement <1-254>` | quanto a prioridade cai quando aquela outra porta cai |
+| `no vrrp` | `<1-255>` | tira o roteador virtual inteiro desta interface |
 | `exit`  |           | sai da interface |
 
 ## Endereços
@@ -185,6 +189,63 @@ Ligado, o anúncio sai a cada 200 segundos com validade de 600 segundos, e mais 
 `ipv6 nd suppress-ra` também é aceito. Ele não muda nada — diz em voz alta o que já vale — e serve para deixar a intenção escrita na configuração, ou para desfazer a exceção numa interface onde ela foi ligada.
 
 :::
+
+## Um par de caixas e o endereço que passa de uma para a outra
+
+Duas caixas, um endereço de serviço, e o assinante apontado para ele em vez de para qualquer uma das duas. É o VRRP da RFC 5798, e aqui ele roda **na interface do dataplane**, que é onde os pacotes chegam:
+
+```
+interface ens18
+ ipv4 address 100.64.3.252/22
+ vrrp 1 address 100.64.3.254
+ vrrp 1 priority 200
+ vrrp 1 track ens19 decrement 150
+ exit
+```
+
+Na outra caixa, o mesmo com o endereço dela e prioridade menor:
+
+```
+interface ens18
+ ipv4 address 100.64.3.251/22
+ vrrp 1 address 100.64.3.254
+ vrrp 1 priority 100
+ vrrp 1 track ens19 decrement 150
+ exit
+```
+
+**O `vrid` tem que ser o mesmo nas duas caixas**, e diferente do de qualquer outro par no mesmo domínio de broadcast: é ele que diz de qual eleição cada anúncio fala, e é dele que sai o MAC virtual (`00:00:5e:00:01:<vrid>`).
+
+**O MAC virtual é o que faz o assinante não precisar saber de nada.** Quem assume o endereço assume também esse MAC e manda um ARP gratuito. O CPE que estava com aquele endereço na tabela ARP continua mandando para o mesmo MAC, e o quadro passa a chegar na outra caixa — sem ninguém limpar cache em lugar nenhum.
+
+**`priority` é a sua afirmação de quem deve ficar com o serviço.** Maior ganha, e a caixa que volta de uma manutenção **retoma** o endereço, porque é isso que a configuração diz. 255 é recusado: a RFC reserva esse valor para quem é dono do endereço, e uma caixa que divide o endereço com outra não é.
+
+**`track` é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: ela segura o endereço do gateway e não alcança nada. Com `track`, a prioridade dela cai pelo decremento e o par assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da do outro — 200 com decremento 150 vira 50, contra os 100 do par.
+
+**Cada lado quer o seu.** Um endereço que se move no lado do assinante e nada no lado do uplink é um failover que o tráfego de volta não acompanha: configure um roteador virtual em cada lado, com `vrid` diferente.
+
+### O que o endereço virtual não faz
+
+**Ele não responde ping.** Quem não é dono do endereço não responde ICMP por ele, que é o comportamento padrão da RFC 5798 (seção 6.4.3) — e é o que esta caixa faz. O monitoramento deve pingar o endereço **próprio** de cada caixa, que é o que diz se aquela caixa está viva; o endereço virtual só diz qual das duas está com ele. Encaminhar **através** dele funciona normalmente, e é para isso que ele existe.
+
+**Ele não sincroniza sessão nenhuma.** Conexões em curso caem no failover, como caem em qualquer NAT. O que não muda é o endereço público do assinante, porque em modo determinístico o mapeamento é função da configuração — a página de alta disponibilidade explica o que isso preserva e o que não preserva.
+
+### Vendo o papel de cada caixa
+
+```
+prisma> show cgnat ha
+  this box
+    mapping fingerprint  e3b0c44298fc1c14
+    pools                residencial
+
+  role
+    ens18 vrrp 1   master, holding the address
+      address(es)        100.64.3.254
+      virtual mac        00:00:5e:00:01:01
+      priority           200
+```
+
+Quando alguma porta rastreada está fora, a linha da prioridade diz as duas coisas — o que está sendo anunciado e o que foi configurado — porque uma caixa anunciando menos do que foi configurado é uma caixa com um cabo fora, e não um problema de VRRP.
 
 ## Removendo um ajuste: `no`
 

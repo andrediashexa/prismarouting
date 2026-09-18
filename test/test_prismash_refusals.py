@@ -1307,6 +1307,44 @@ _iface = [
      "error: usage: description <text>"),
     ("a uRPF mode the dataplane has not got", "pg0", "urpf sideways",
      "error: usage: urpf <" + "|".join(prismash.URPF_MODES) + ">"),
+    # VRRP (#7). One refusal per site rather than per sentence, the way the
+    # VLAN rows above are written: the statement is taken by ONE function
+    # that both the prompt and the file parser call, and what is checked here
+    # is that the prompt prints what that function says.
+    ("a virtual router with no id", "pg0", "vrrp",
+     "error: " + config.VRRP_USAGE_REFUSAL[0]),
+    ("an id that is not a number", "pg0", "vrrp one address 100.64.3.254",
+     "error: vrrp 'one': the virtual router id is a number"),
+    ("an id outside RFC 5798's range", "pg0", "vrrp 0 address 100.64.3.254",
+     "error: vrrp 0: the virtual router id is 1 to 255"),
+    ("an address with a prefix length on it", "pg0",
+     "vrrp 1 address 100.64.3.254/22",
+     "error: vrrp 1 address '100.64.3.254/22': write it without a prefix "
+     "length"),
+    ("something that is not an address", "pg0", "vrrp 1 address gateway",
+     "error: vrrp 1 address 'gateway': not an IPv4 address"),
+    ("the priority RFC 5798 keeps for the address owner", "pg0",
+     "vrrp 1 priority 255",
+     "error: vrrp: priority 255 is RFC 5798's address owner"),
+    ("a priority outside the range", "pg0", "vrrp 1 priority 300",
+     "error: vrrp 1 priority 300: the range is 1 to 254"),
+    ("a priority that is not a number", "pg0", "vrrp 1 priority high",
+     "error: vrrp 1 priority 'high': a number"),
+    ("a decrement that is not a number", "pg0",
+     "vrrp 1 track pg1 decrement lots",
+     "error: vrrp 1 track: decrement 'lots': a number"),
+    ("a decrement outside the range", "pg0",
+     "vrrp 1 track pg1 decrement 0",
+     "error: vrrp 1 track: decrement 0: the range is 1 to 254"),
+    ("an interface tracking itself", "pg0",
+     "vrrp 1 track pg0 decrement 50",
+     "error: vrrp 1 track pg0: an interface cannot track itself"),
+    ("removing a virtual router that is not there", "pg0", "no vrrp 2",
+     "error: pg0 has no virtual router 2"),
+    ("removing one with no id", "pg0", "no vrrp",
+     "error: usage: no vrrp <vrid>"),
+    ("removing one whose id is not a number", "pg0", "no vrrp all",
+     "error: no vrrp 'all': the virtual router id is a number"),
 ]
 for _label, _on, _line, _want in _iface:
     _sh = cfg_shell()
@@ -1384,6 +1422,24 @@ _rv, _text = driven(_sh.apply, _target, check_only=True)
 says("parent at commit", _text,
      "error: interface pg9.10: its parent pg9 is not on this box", _rv)
 print("  a tag that is fine on a port that is not there")
+
+print("\n=== a virtual router the dataplane did not take, at commit (#7) ===")
+# THE READ-BACK, not the call's exit status. vat2 answering 0 says the message
+# was accepted, not that the box has a virtual router - and a VR that was
+# asked for and is not there is a takeover the operator believes in and will
+# not get. The box here takes every call and comes back with an empty dump,
+# which is exactly that shape.
+_target = config.Config()
+_target.vrrp["pg0"] = {1: {"addresses": ["100.64.3.254"], "priority": 200,
+                           "track": {}}}
+_sh = shell(Api(have={"pg0": 1}),
+            dp=Dp({"show interface": (0, "Name  Idx State MTU\n"
+                                         "pg0   1   up    9000/0/0/0\n")}))
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target)
+says("vrrp at commit", _text,
+     "error: the dataplane did not take vrrp 1", _rv)
+print("  asked for, accepted, and absent from the box that answered")
 
 print("\n=== an interface name FRR cannot take, at commit (#389) ===")
 # THE MAINTAINER'S BOX. `interface GigabitEthernet0/13/0 / no shutdown /
@@ -1950,7 +2006,8 @@ WIDEST["an interface name"] = (len("TenGigabitEthernet0/0/0") + 1
 #: vocabulary and not a list of sites: it is six words for the whole file, and
 #: a site that starts carrying an interface name under one of them is bounded
 #: on the next run with nothing added here.
-IFNAMES = ("ifname", "iface", "parent", "sub", "host_name", "src")
+IFNAMES = ("ifname", "iface", "parent", "sub", "host_name", "src",
+           "tracked")
 
 #: Every collection of strings the product declares at module level, which is
 #: where its closed sets live - URPF_MODES, the role names, the daemons, the
