@@ -422,6 +422,47 @@ Written after reading every open issue rather than their titles, and ordered by
 what each one costs while it is absent. Phases, not dates — the only honest
 schedule is the one produced after the work.
 
+**Where the plan stands, as of 0.100.0**, because eight phases are a long way to
+read before learning that: phases 1 to 6 and phase 8 are **delivered**, high
+availability last. What remains of the plan is **phase 7, and it needs hardware
+this project does not have**: bits per second on a NIC DPDK drives natively
+([#28](https://github.com/andrediashexa/hexarouting/issues/28)) and the symmetric
+hashing that depends on it ([#29](https://github.com/andrediashexa/hexarouting/issues/29)).
+
+Everything else still open is one of three things, and none of them is work
+waiting for somebody to start it:
+
+* **a decision the maintainer has not taken**, with the evidence already on the
+  issue - [#396](https://github.com/andrediashexa/hexarouting/issues/396) containers,
+  [#390](https://github.com/andrediashexa/hexarouting/issues/390) the C functions behind
+  the VPP boundary, [#210](https://github.com/andrediashexa/hexarouting/issues/210) the
+  per-worker partition, [#337](https://github.com/andrediashexa/hexarouting/issues/337)
+  the disclosure, [#397](https://github.com/andrediashexa/hexarouting/issues/397) what a
+  release record should name;
+* **blocked on the same hardware as phase 7**, or on Debian
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163),
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172)'s last half,
+  [#36](https://github.com/andrediashexa/hexarouting/issues/36));
+* **deferred by its own issue until there is demand for it** -
+  [#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP and
+  [#80](https://github.com/andrediashexa/hexarouting/issues/80) pool selection by ACL both
+  say so in as many words, and [#170](https://github.com/andrediashexa/hexarouting/issues/170)
+  BNG says why it is a second product rather than a feature.
+
+A plan that says this out loud is worth more than one that reads as if work
+were queued: what this product needs next is a box with a real NIC in it and a
+maintainer's answer to five questions, not another phase.
+
+**What the releases since have been, so the sentence above is not read as
+"nothing is happening":** the work that arrives once a plan is delivered is
+the work the plan cannot schedule - a defect the suite found, a document that
+describes a smaller product than the one that exists, a check that passes a
+configuration the commit cannot apply. 0.91.0 to 0.99.0 are nine of those,
+and the two largest came from the same full suite run: `lab/upgrade.sh` had
+been measuring nothing for eleven releases, and the gate now takes the upgrade
+an operator takes ([#398](https://github.com/andrediashexa/hexarouting/issues/398))
+rather than only the one a fixed tag describes.
+
 #### Phase 1 — pay the debt before it multiplies
 
 | Issue | Why it goes first |
