@@ -217,6 +217,10 @@ case "$*" in
   # the same way as "no interface has uRPF enabled" - both mean the dataplane
   # has none.
   "show bpa urpf")    cat "$FAKE/bpa_urpf" 2>/dev/null ;;
+  # The virtual routers. Absent from $FAKE it answers nothing, which is a
+  # dataplane holding none - the state a box is in when its saved `vrrp`
+  # statements were refused, and the one the check below exists for.
+  "show vrrp vr")     cat "$FAKE/show_vrrp" 2>/dev/null ;;
 esac
 exit 0
 EOF
@@ -2831,6 +2835,80 @@ else
   ok "a box that never asked for uRPF is not told about it"
 fi
 rm -f "$FAKE/bpa_urpf"
+
+echo "=== the virtual routers in the file, against the ones the box has ==="
+# A BOX THAT IS IN A PAIR ON PAPER. The saved file says `vrrp 1 address ...`,
+# the dataplane refused it, and nothing else on this box says so: `show
+# running-config` reads the dataplane and simply does not mention it, so an
+# operator comparing the file with the screen sees a statement they wrote and
+# a screen that does not argue. The peer holds the service address alone and
+# there is no standby - discovered the day the peer dies.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet0/0/0           2      up          1500/0/0/0     rx packets                  12
+host-veth-vpp                     1      up          1500/0/0/0
+IFACE
+printf 'nat cgnat pool alpha\n exit\ninterface TenGigabitEthernet0/0/0\n vrrp 1 address 100.64.3.254\n exit\n' \
+  > "$FAKE/prisma-routing.conf"
+printf 'pool alpha [deterministic / interleaved]\n' > "$FAKE/bpa_pools"
+# Copied from a real `show vrrp vr` rather than invented: the check reads the
+# header line, and the header carries the interface as an INDEX.
+cat > "$FAKE/show_vrrp" <<'VRRP'
+[0] sw_if_index 2 VR ID 1 IPv4
+   state Master flags: preempt yes accept no unicast no
+   priority: configured 200 adjusted 200
+   timers: adv interval 100 master adv 100 skew 21 master down 321
+   virtual MAC 00:00:5e:00:01:01
+   addresses 100.64.3.254
+   peer addresses
+   tracked interfaces
+VRRP
+run
+if said 'every virtual router the saved configuration names is on the'; then
+  ok "a pair whose routers are really there is reported so"
+else
+  bad "a healthy pair said nothing: $(printf '%s\n' "$OUTPUT" | grep -i vrrp || echo '<nothing>')"
+fi
+if said '1 holding an address, 0 standing by'; then
+  ok "and the line says which of them is holding the service address"
+else
+  bad "the role is missing: $(printf '%s\n' "$OUTPUT" | grep -i 'holding' || echo '<nothing>')"
+fi
+# The one that matters: the file names it and the dataplane has none.
+: > "$FAKE/show_vrrp"
+run
+if said '\[FAIL\] the saved configuration has virtual router\(s\) the dataplane does'; then
+  ok "a virtual router asked for and absent is a FAILED check"
+else
+  bad "a box standing for nothing passed: $(printf '%s\n' "$OUTPUT" | grep -i 'virtual router' || echo '<nothing>')"
+fi
+if said 'in a pair on'; then
+  ok "and the failure says what it costs, which is a pair with no standby"
+else
+  bad "the failure does not say what an absent virtual router means"
+fi
+# The same absence for a different reason: the interface itself is gone, so
+# there is no index to look the router up by. It is the same fault to the
+# operator - this box stands for nothing - and must not pass quietly.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+host-veth-vpp                     1      up          1500/0/0/0
+IFACE
+run
+if said '\[FAIL\] the saved configuration has virtual router\(s\) the dataplane does'; then
+  ok "and so is one whose interface is not on the box at all"
+else
+  bad "a router on a missing interface passed: $(printf '%s\n' "$OUTPUT" | grep -i 'virtual router' || echo '<nothing>')"
+fi
+# A box that is not in a pair hears nothing about pairs.
+printf 'nat cgnat pool alpha\n exit\n' > "$FAKE/prisma-routing.conf"
+run
+if said 'virtual router'; then
+  bad "a box with no vrrp statement was told about one: $(printf '%s\n' "$OUTPUT" | grep -i 'virtual router' | head -1)"
+else
+  ok "a box that is not in a pair is not told about virtual routers"
+fi
+rm -f "$FAKE/show_vrrp"
 
 echo "=== the addresses in the file, against the ones the dataplane has (#172) ==="
 # The one that can leave the box unreachable. An address the dataplane did not

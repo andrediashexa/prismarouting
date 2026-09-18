@@ -77,6 +77,38 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The lab asserts that a virtual router survives what a boot does to it**
+  ([#7](https://github.com/andrediashexa/hexarouting/issues/7)). Every check in
+  `lab/vrrp.sh` drove a box that had just been committed to, and a commit is
+  not what happens at four in the morning: `prismash --load` is, replaying the
+  saved file. A pair whose virtual routers came back only because somebody
+  typed a commit is a pair that holds no service address after a power cut,
+  with `show running-config` saying it does because the file says it does.
+
+  So the lab now saves box b's configuration, takes the virtual router off the
+  box, replays the file the way every boot replays it, and asserts the router
+  is back. Both halves are checked - that `save` writes the statement at all,
+  and that `--load` puts it back - because a file that does not carry it and a
+  loader that ignores it fail identically from the outside.
+
+* **The boot self-test says whether this box is in a pair, and whether it
+  really is** ([#7](https://github.com/andrediashexa/hexarouting/issues/7)). The saved
+  file says `vrrp 1 address ...`; the dataplane took that statement or refused
+  it, and until now nothing on the box said which. `show running-config` reads
+  the dataplane, so it would simply not mention the router - an operator
+  comparing the file against the screen sees a statement they wrote and a
+  screen that does not argue with it, while the peer holds the service address
+  alone and there is no standby at all. That is discovered the day the peer
+  dies.
+
+  It is the same comparison the self-test already makes for pools, addresses
+  and the MTU - what the box was TOLD at boot against what it HAS - applied to
+  the one thing whose absence has no counter behind it. A box with every
+  router in place gets the line an operator actually wants at the console:
+  how many are holding an address and how many are standing by. A box with no
+  `vrrp` statement hears nothing, because an alarm that is always on is one
+  nobody reads.
+
 ### Fixed
 
 ## 0.88.0 - the checklist and the wiki index know it too

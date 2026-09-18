@@ -1845,6 +1845,61 @@ ADDRS
     say "        when the two ends disagree, and neither end logs anything."
     say "        'journalctl -u prisma-routing' has why it was refused."
   fi
+
+  # --- and the virtual routers, which are what a pair IS ---
+  #
+  # THE FAILURE THIS CATCHES IS A BOX THAT IS IN A PAIR ON PAPER. The saved
+  # file says `vrrp 1 address ...`, the dataplane took it or refused it, and
+  # nothing else on this box would say which: `show running-config` reads the
+  # dataplane and would simply not mention it, so an operator comparing the
+  # file with the screen sees a statement they wrote and a screen that does
+  # not argue. Meanwhile the peer is holding the service alone and there is no
+  # standby at all - which is discovered the day the peer dies.
+  #
+  # It is the same comparison as the pools, the addresses and the MTU above,
+  # against the one thing whose absence has no counter behind it.
+  want_vrs=$(awk '/^interface /{ifn=$2}
+                  /^ *vrrp [0-9]+ address /{if (ifn != "") print ifn"/"$2}' \
+             "$LOGCONF" | sort -u)
+  if [ -n "$want_vrs" ]; then
+    # `show vrrp vr` heads each router with "[n] sw_if_index <i> VR ID <v>",
+    # and the interface is an index there rather than a name - so the name is
+    # taken from `show interface`, which is already read above.
+    vrs=$(vppctl show vrrp vr 2>/dev/null)
+    vr_missing=""
+    for _w in $want_vrs; do
+      # `##*/` and `%/*`, not `#*/`: a dataplane interface name has slashes
+      # in it - TenGigabitEthernet0/0/0 - so the shortest-prefix form takes
+      # "0/0/1" for the id and the check then looks for a router nobody ever
+      # configured. It went green as a FAILED check, which is the worst way
+      # for a bug like this to behave.
+      _if=${_w%/*}; _vrid=${_w##*/}
+      _idx=$(printf '%s' "$ifaces" | awk -v n="$_if" '$1 == n {print $2; exit}')
+      if [ -z "$_idx" ]; then
+        vr_missing="$vr_missing $_w"
+        continue
+      fi
+      printf '%s' "$vrs" \
+        | grep -q "sw_if_index $_idx VR ID $_vrid " \
+        || vr_missing="$vr_missing $_w"
+    done
+    if [ -n "$vr_missing" ]; then
+      bad "the saved configuration has virtual router(s) the dataplane does"
+      say "        not:$vr_missing (interface/id). This box is in a pair on"
+      say "        paper and stands for nothing: the peer holds the service"
+      say "        address alone, and there is no standby to find that out"
+      say "        until the peer dies. 'journalctl -u prisma-routing' has the"
+      say "        reason it was refused."
+    else
+      # THE ROLE, and not just the count. Which box is holding the service
+      # address is the first thing anybody asks about a pair, and the boot
+      # console is where they are already looking.
+      _master=$(printf '%s' "$vrs" | grep -c "state Master")
+      _backup=$(printf '%s' "$vrs" | grep -c "state Backup")
+      ok "every virtual router the saved configuration names is on the"
+      say "         dataplane: $_master holding an address, $_backup standing by"
+    fi
+  fi
 fi
 
 # --- the network this box is managed on (#303) ---
