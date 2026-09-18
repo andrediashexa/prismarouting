@@ -79,6 +79,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The last three places that said this box has no failover**
+  ([#6](https://github.com/andrediashexa/hexarouting/issues/6)). `docs/architecture.md`'s
+  checklist - the list a reader scans to see what the product has - carried
+  `[ ] HA / failover - analysed in ha.md, not implemented`. The wiki's
+  *Entender o produto* index described the HA page as "what deterministic mode
+  gives, and what is missing for failover". And the HA page itself, which now
+  opens by saying the pair exists, still showed a `show cgnat ha` screen from
+  a box with no virtual router - *"neither box elects one: this VTY has no
+  virtual router"* - in the middle of a section about a configured pair, and
+  still told the reader in an info box that the divergence warning **never**
+  refuses a commit.
+
+  That last one had become the opposite of true on exactly the boxes the page
+  is about: a box in a pair refuses it and takes `commit diverge`, and a box
+  that is not in one still only warns. Both halves are on the page now, which
+  is the distinction the product makes.
+
 ## 0.87.0 - the documentation says what the box does
 
 [#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9).

@@ -6,7 +6,7 @@ Por que o produto é assim. Leia quando precisar decidir arquitetura ou avaliar 
 |--------|----------|
 | [Prisma Routing — visão geral](/doc/prisma-routing-visao-geral-cNtWoccoy5) | O que é o produto, do que é feito e o que ainda não existe |
 | [BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) | A aritmética que substitui a tabela de alocação |
-| [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) | O que o modo determinístico já dá, e o que falta para failover |
+| [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) | Como montar o par, o que a troca preserva e o que ela derruba |
 
 # A ideia em uma frase
 

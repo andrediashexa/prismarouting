@@ -125,9 +125,10 @@ prisma> show cgnat ha
     pools                residencial
 
   role
-    neither box elects one: this VTY has no virtual router and nothing here
-    takes a service address over. What is checked below is whether a takeover
-    WOULD land subscribers where they already are.
+    ens18 vrrp 1   master, holding the address
+      address(es)        100.64.3.254
+      virtual mac        00:00:5e:00:01:01
+      priority           200
 
   peer, from /etc/prisma-routing/peer.conf
     mapping fingerprint  9e7394fc505d2eff
@@ -148,11 +149,13 @@ A caixa diz **qual pool** difere e **quais linhas** diferem, não só que os nú
   port block
 ```
 
-A mesma comparação roda em `commit check` e em `commit`: uma alteração que afasta o par avisa na hora em que é feita, e não na hora em que a outra caixa é necessária.
+A mesma comparação roda em `commit check` e em `commit`: uma alteração que afasta o par aparece na hora em que é feita, e não na hora em que a outra caixa é necessária.
 
 
 :::info
-O aviso **nunca recusa o commit**, e isso é de propósito. As duas caixas não podem ser alteradas no mesmo instante: toda ampliação de capacidade legítima afasta o par entre o primeiro commit e o segundo. Uma recusa dispararia em todo procedimento correto, e o jeito de escapar dela seria parar de copiar a configuração da parceira — o que tira a conferência, não a divergência.
+**Numa caixa que não faz par, isto é um aviso e nunca uma recusa**, e é de propósito: sem `vrrp` em interface nenhuma, um `peer.conf` ali é material de comparação, e um arquivo em `/etc` não cria um relacionamento que a configuração não declara.
+
+**Numa caixa que faz par, é recusa — com uma palavra que passa por cima.** As duas caixas não podem ser alteradas no mesmo instante: toda ampliação de capacidade legítima afasta o par entre o primeiro commit e o segundo. Uma recusa sem saída dispararia em todo procedimento correto, e o jeito de escapar dela viraria parar de copiar a configuração da parceira — o que tira a conferência, não a divergência. Por isso existe o `commit diverge`.
 
 :::
 
