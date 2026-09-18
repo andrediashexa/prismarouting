@@ -296,6 +296,18 @@ prisma> show interface ens18
 
 Os contadores são o motivo de o relatório existir. *No ar* e *no ar e descartando quatro por cento do que chega* são idênticos numa tabela, e é o segundo que gera o chamado.
 
+**Numa caixa que faz par, o relatório diz o papel da porta**, logo abaixo do CGNAT:
+
+```
+    cgnat       in2out
+    vrrp 1      master, holding the address
+                100.64.3.254 on 00:00:5e:00:01:01
+```
+
+É a primeira coisa que importa sobre uma porta quando existe parceira: se os assinantes estão nesta caixa ou na outra. `show cgnat ha` responde isso para a caixa inteira; aqui é para a porta que você já está olhando.
+
+O que aparece é o **papel em vigor**, lido do dataplane — o que foi *configurado* está em `show this` e no arquivo salvo. Porta sem roteador virtual não mostra linha nenhuma: a maioria não tem, e aviso que aparece sempre é aviso que ninguém lê.
+
 O nome exato tem precedência: pedir `ens18` numa caixa que também tem `ens18.100` traz o relatório da interface, não a lista das duas.
 
 ## A placa entregue ao dataplane não é uma destas

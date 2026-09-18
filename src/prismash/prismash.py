@@ -128,6 +128,22 @@ VPPCTL = os.environ.get("VPPCTL", "vppctl")
 # a faster takeover than three and a half seconds wants BFD, which is a
 # different mechanism and a different issue.
 VRRP_INTERVAL_CS = 100
+
+#: What VPP's four VRRP states mean, in the words an operator uses - the
+#: dataplane's own spelling is VRRP_API_VR_STATE_MASTER and nobody says that.
+#:
+#: A module-level TUPLE beside the mapping, and not only the mapping's values,
+#: because a screen that prints one of these is a screen whose width can be
+#: bounded: test_prismash_refusals.py reads the product's closed sets off the
+#: module and a dict gives it the keys, which are the names nobody prints.
+VRRP_STATE_WORDS = ("init (not started)", "backup",
+                    "master, holding the address", "the interface is down")
+VRRP_STATE_SAYS = {
+    "VRRP_API_VR_STATE_INIT": VRRP_STATE_WORDS[0],
+    "VRRP_API_VR_STATE_BACKUP": VRRP_STATE_WORDS[1],
+    "VRRP_API_VR_STATE_MASTER": VRRP_STATE_WORDS[2],
+    "VRRP_API_VR_STATE_INTF_DOWN": VRRP_STATE_WORDS[3],
+}
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 
@@ -5921,14 +5937,6 @@ class Shell:
                     out[name] = t.get("priority")
         return out
 
-    #: What VPP's state numbers mean, in the words an operator uses. The
-    #: dataplane's own spelling is VRRP_API_VR_STATE_MASTER; nobody says that.
-    VRRP_STATE = {
-        "VRRP_API_VR_STATE_INIT": "init (not started)",
-        "VRRP_API_VR_STATE_BACKUP": "backup",
-        "VRRP_API_VR_STATE_MASTER": "master, holding the address",
-        "VRRP_API_VR_STATE_INTF_DOWN": "the interface is down",
-    }
 
     def device_vrrp_state(self) -> list:
         """
@@ -5955,7 +5963,7 @@ class Shell:
                 "configured": conf.get("priority"),
                 "advertising": run.get("tracking", {}).get(
                     "priority", conf.get("priority")),
-                "state": self.VRRP_STATE.get(str(run.get("state")),
+                "state": VRRP_STATE_SAYS.get(str(run.get("state")),
                                              str(run.get("state"))),
                 "mac": run.get("mac"),
                 "addresses": [a for a in row.get("addrs", [])],
@@ -11971,6 +11979,29 @@ class Shell:
             on = "in2out" if "bpa-in2out" in feat else (
                  "out2in" if "bpa-out2in" in feat else None)
             print(f"    cgnat       {on or 'not attached'}")
+
+        # THE VIRTUAL ROUTER, on the screen that answers "what is this port".
+        # An operator looking at one interface during a fault is looking here,
+        # and whether this port is holding a service address is the first
+        # thing that matters about a box in a pair - it is the difference
+        # between "the subscribers are on this box" and "they are on the other
+        # one". `show cgnat ha` answers it for the whole box; this answers it
+        # for the port they are already looking at.
+        #
+        # The ROLE and not the configuration: what a virtual router is
+        # configured to be is in `show this` and in the saved file, and what
+        # it IS can only be read from the dataplane.
+        for row in self.device_vrrp_state():
+            if row["interface"] != name:
+                continue
+            # The role on one row and each address on its own, rather than a
+            # list joined into the first: a slot holding "however many
+            # addresses this router stands for" has no width, and a row whose
+            # width nobody can state is a row that folds inside an address at
+            # whatever the operator's window happens to be (#355, #363).
+            print(f"    vrrp {row['vr_id']:<6} {row['state']}")
+            for addr in row["addresses"]:
+                print(f"                {addr} on {row['mac']}")
 
         # Straight from the dataplane, uninterpreted. A counter this VTY
         # summarised would be a counter an operator could not compare with
