@@ -25,12 +25,12 @@ Nenhum byte é escrito antes de **todas** as respostas estarem coletadas e váli
 Dê boot pela ISO. O console cai direto na VTY:
 
 ```
-HexaRouting VTY 0.25.0
+Prisma Routing VTY 0.25.0
 
 This is the installation medium: nothing here survives a reboot.
-Type 'install' to install HexaRouting onto a disk.
+Type 'install' to install Prisma Routing onto a disk.
 
-hexarouting> install
+prisma> install
 ```
 
 O comando `install` existe na VTY **somente quando a máquina está rodando a partir do meio**. Em uma appliance já instalada ele não está na árvore de comandos e o instalador se recusa a rodar — um comando que sobrescreve o disco não deve ficar a um TAB de distância de `interface` num roteador em produção.
@@ -124,7 +124,7 @@ no management network was asked for, and this box is on one anyway
 Para guardar uma placa para o Linux depois, escreva a estrofe que o instalador teria escrito:
 
 ```
-F=/etc/network/interfaces.d/hexarouting
+F=/etc/network/interfaces.d/prisma-routing
 echo "auto ens19" >> $F
 echo "iface ens19 inet dhcp" >> $F
 ```
@@ -196,7 +196,7 @@ O disco é dividido em **três** partições, não duas:
 |----------|----------|
 | ESP      | 512 MB   |
 | raiz     | o resto, menos os registros |
-| `/var/log/hexarouting` | o que o operador pediu |
+| `/var/log/prisma-routing` | o que o operador pediu |
 
 Em modo dinâmico o log de alocação **é** o registro de conexão que o Marco Civil exige guardar por um ano. No sistema de arquivos raiz ele divide espaço com tudo que a caixa precisa para funcionar — um log que enche para a caixa de escrever a própria configuração, porque ela estava ocupada registrando quem se conectou.
 
@@ -209,7 +209,7 @@ O padrão é conta, não chute, e a conta aparece na tela:
   cannot stop the box working. One year at 200k subscribers in dynamic
   mode is about 29 GB; deterministic mode logs no allocations and
   needs almost none. The arithmetic is in
-  /usr/share/doc/hexarouting/logging.md once this box is installed.
+  /usr/share/doc/prisma-routing/logging.md once this box is installed.
   This disk is 240 GB; at most 231 GB can go to records.
 Gigabytes for connection records [30]:
 ```
@@ -278,28 +278,28 @@ Para laboratório, teste de boot e PXE, as respostas vêm da linha de comando do
 
 | Parâmetro | Efeito |
 |-----------|--------|
-| `hexarouting.install` | pergunta tudo no console |
-| `hexarouting.install=/dev/vda` | usa esse disco, ainda perguntando o resto |
-| `hexarouting.hostname=<nome>` | responde a pergunta do hostname |
-| `hexarouting.timezone=<zona>` | responde a pergunta do fuso |
-| `hexarouting.password=<senha>` | responde a pergunta da senha de root |
-| `hexarouting.log-gb=<n>` | gigabytes para os registros de conexão |
-| `hexarouting.mirror=<disco>` | espelha os registros nesse segundo disco |
-| `hexarouting.mgmt-interface=<placa>` | placa pela qual a caixa é gerenciada |
-| `hexarouting.mgmt-address=<a>` | `dhcp`, `a.b.c.d/nn`, ou `none` |
-| `hexarouting.mgmt-gateway=<ip>` | só com endereço estático |
-| `hexarouting.mgmt-dns=<ip>[,<ip>]` | só com endereço estático |
-| `hexarouting.yes` | pula as confirmações e depois **desliga a máquina** |
+| `prisma-routing.install` | pergunta tudo no console |
+| `prisma-routing.install=/dev/vda` | usa esse disco, ainda perguntando o resto |
+| `prisma-routing.hostname=<nome>` | responde a pergunta do hostname |
+| `prisma-routing.timezone=<zona>` | responde a pergunta do fuso |
+| `prisma-routing.password=<senha>` | responde a pergunta da senha de root |
+| `prisma-routing.log-gb=<n>` | gigabytes para os registros de conexão |
+| `prisma-routing.mirror=<disco>` | espelha os registros nesse segundo disco |
+| `prisma-routing.mgmt-interface=<placa>` | placa pela qual a caixa é gerenciada |
+| `prisma-routing.mgmt-address=<a>` | `dhcp`, `a.b.c.d/nn`, ou `none` |
+| `prisma-routing.mgmt-gateway=<ip>` | só com endereço estático |
+| `prisma-routing.mgmt-dns=<ip>[,<ip>]` | só com endereço estático |
+| `prisma-routing.yes` | pula as confirmações e depois **desliga a máquina** |
 
 
 :::warning
-**Atenção com** `**hexarouting.password**`**\*\*\*\*:** a linha de comando do kernel fica legível para todos em `/proc/cmdline` durante toda a vida do sistema que deu boot. Ela não sobrevive para a máquina instalada, mas qualquer um logado no meio durante a instalação consegue lê-la. Para instalação presencial, deixe de fora e responda no prompt.
+**Atenção com** `**prisma-routing.password**`**\*\*\*\*:** a linha de comando do kernel fica legível para todos em `/proc/cmdline` durante toda a vida do sistema que deu boot. Ela não sobrevive para a máquina instalada, mas qualquer um logado no meio durante a instalação consegue lê-la. Para instalação presencial, deixe de fora e responda no prompt.
 
 :::
 
-Com `hexarouting.yes`, a rede de gerência é `none` e o instalador diz isso: uma instalação não assistida que quer rede de gerência passa `hexarouting.mgmt-address=`, e aí o instalador usa a placa pela qual a mídia está alcançando a rede - ou `hexarouting.mgmt-interface=` para escolher outra.
+Com `prisma-routing.yes`, a rede de gerência é `none` e o instalador diz isso: uma instalação não assistida que quer rede de gerência passa `prisma-routing.mgmt-address=`, e aí o instalador usa a placa pela qual a mídia está alcançando a rede - ou `prisma-routing.mgmt-interface=` para escolher outra.
 
-Com `hexarouting.yes` e sem `hexarouting.log-gb`, o instalador toma o padrão **e diz que tomou**. Uma instalação não assistida não tem console de onde responder, e uma pergunta que ninguém pode responder é uma instalação pendurada.
+Com `prisma-routing.yes` e sem `prisma-routing.log-gb`, o instalador toma o padrão **e diz que tomou**. Uma instalação não assistida não tem console de onde responder, e uma pergunta que ninguém pode responder é uma instalação pendurada.
 
 O desligamento ao final não é conveniência: sem ele a máquina fica num prompt de login até o harness matá-la, e a mensagem de conclusão sai truncada.
 
@@ -310,7 +310,7 @@ Depois do primeiro boot sem a mídia:
 * o console mostra o relatório do self-test, **sem nenhuma linha** `**[FAIL]**`;
 * entre elas, `binary API registered, so pools can be configured` — sem ela a caixa roteia e responde, e nenhum pool pode ser criado;
 * uma linha `managed on <placa>` com o endereço embaixo dela - é por ali que você chega na caixa sem voltar ao console;
-* `show version` responde com a versão do HexaRouting, do VPP e do FRR;
+* `show version` responde com a versão do Prisma Routing, do VPP e do FRR;
 * você consegue entrar com a senha definida durante a instalação.
 
 

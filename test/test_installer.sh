@@ -6,9 +6,9 @@
 # every refusal here is a case where the installer must stop BEFORE it
 # partitions anything, and each one costs a full boot cycle to reach in a VM.
 #
-# HEXA_INSTALL_CHECK=1 collects and validates and writes nothing, which is why
+# PRISMA_INSTALL_CHECK=1 collects and validates and writes nothing, which is why
 # this runs as an ordinary user in a couple of milliseconds.
-INSTALLER=$(cd "$(dirname "$0")/.." && pwd)/appliance/hexarouting-install
+INSTALLER=$(cd "$(dirname "$0")/.." && pwd)/appliance/prisma-routing-install
 # The self-test, because the installer writes one file the self-test reads back
 # and the two have to name it identically (#303).
 SELFTEST=$(cd "$(dirname "$0")/.." && pwd)/appliance/selftest
@@ -91,7 +91,7 @@ export PATH="$GLOBALBIN:$PATH"
 
 run() {  # <expected exit 0|1> <description> <env assignments...>
   _want=$1; _desc=$2; shift 2
-  out=$(env HEXA_INSTALL_CHECK=1 "$@" sh "$INSTALLER" </dev/null 2>&1)
+  out=$(env PRISMA_INSTALL_CHECK=1 "$@" sh "$INSTALLER" </dev/null 2>&1)
   rc=$?
   LAST_OUT=$out
   printf '%s\n' "$out" | say_box
@@ -107,12 +107,12 @@ run() {  # <expected exit 0|1> <description> <env assignments...>
   echo "  [ ok ] $_desc"
 }
 
-OK="HEXA_DISK=$DISK HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo"
+OK="PRISMA_DISK=$DISK PRISMA_HOSTNAME=cgnat01 PRISMA_TIMEZONE=America/Sao_Paulo"
 
 echo "=== a complete set of answers is accepted ==="
 # shellcheck disable=SC2086
 run 0 "disk, hostname, timezone and password are enough" $OK \
-    HEXA_ROOT_PASSWORD=s3cr3t
+    PRISMA_ROOT_PASSWORD=s3cr3t
 case "$LAST_OUT" in
   *"root password  set"*) echo "  [ ok ] the summary says the password was answered" ;;
   *) echo "  FAIL: the summary does not report the password"; fail=$((fail + 1)) ;;
@@ -136,14 +136,14 @@ run 1 "no root password: refused rather than defaulted" $OK
 # stdin is closed above, so this also proves the empty-password retry loop
 # terminates instead of spinning on "may not be empty".
 
-run 1 "unknown timezone: refused" HEXA_DISK=$DISK HEXA_HOSTNAME=cgnat01 \
-    HEXA_TIMEZONE=Mars/Olympus HEXA_ROOT_PASSWORD=s3cr3t
+run 1 "unknown timezone: refused" PRISMA_DISK=$DISK PRISMA_HOSTNAME=cgnat01 \
+    PRISMA_TIMEZONE=Mars/Olympus PRISMA_ROOT_PASSWORD=s3cr3t
 run 1 "hostname with characters a hostname may not have: refused" \
-    HEXA_DISK=$DISK HEXA_HOSTNAME="cgnat 01!" \
-    HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t
+    PRISMA_DISK=$DISK PRISMA_HOSTNAME="cgnat 01!" \
+    PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t
 run 1 "a target that is not a block device: refused" \
-    HEXA_DISK=/tmp/not-a-disk HEXA_HOSTNAME=cgnat01 \
-    HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t
+    PRISMA_DISK=/tmp/not-a-disk PRISMA_HOSTNAME=cgnat01 \
+    PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t
 
 echo
 ok()  { echo "  [ ok ] $*"; }
@@ -151,7 +151,7 @@ bad() { echo "  FAIL: $*"; fail=$((fail + 1)); }
 
 echo "=== the two questions an answer file always answers ==="
 #
-# HEXA_HOSTNAME and HEXA_TIMEZONE are set by every other case in this file, by
+# PRISMA_HOSTNAME and PRISMA_TIMEZONE are set by every other case in this file, by
 # lab/install-iso.sh and by every unattended install, because an answer file is
 # how this program is driven when nobody is watching. The consequence was that
 # the two PROMPTS behind them had been printed by nothing here: #367 found them
@@ -160,11 +160,11 @@ echo "=== the two questions an answer file always answers ==="
 # A prompt that is missing, or that offers the wrong default, is read by
 # somebody who is about to type an answer to it.
 idout=$(printf 'cgnat02\nAmerica/Sao_Paulo\ns3cr3t\ns3cr3t\n' \
-        | env HEXA_INSTALL_CHECK=1 HEXA_INSTALL_YES=1 HEXA_DISK="$DISK" \
-              HEXA_LOG_GB=1 sh "$INSTALLER" 2>&1)
+        | env PRISMA_INSTALL_CHECK=1 PRISMA_INSTALL_YES=1 PRISMA_DISK="$DISK" \
+              PRISMA_LOG_GB=1 sh "$INSTALLER" 2>&1)
 printf '%s\n' "$idout" | say_box
 case "$idout" in
-  *"Hostname [hexarouting]"*)
+  *"Hostname [prisma-routing]"*)
     ok "the hostname is asked at the console, with the shipped default" ;;
   *) bad "the hostname question was never printed:
 $idout" ;;
@@ -195,15 +195,15 @@ echo "=== the password is asked twice, and BOTH answers can run out ==="
 # gone away would spin on "may not be empty" for ever instead of failing - and
 # only one of them had ever been run.
 #
-# HEXA_INSTALL_YES=1 so that the password prompt is the ONLY prompt: it takes
+# PRISMA_INSTALL_YES=1 so that the password prompt is the ONLY prompt: it takes
 # the defaults for the log volume, the mirror and the management network,
 # which would otherwise eat the lines typed here and make this measure the
 # question they were eaten by. The password loop does not look at it.
 pwrun() {  # <what is typed at the prompts> -> $PWOUT, $PWRC
   PWRC=0
-  PWOUT=$(printf '%s' "$1" | env HEXA_INSTALL_CHECK=1 HEXA_INSTALL_YES=1 \
-      HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
-      HEXA_TIMEZONE=America/Sao_Paulo HEXA_LOG_GB=1 \
+  PWOUT=$(printf '%s' "$1" | env PRISMA_INSTALL_CHECK=1 PRISMA_INSTALL_YES=1 \
+      PRISMA_DISK="$DISK" PRISMA_HOSTNAME=cgnat01 \
+      PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_LOG_GB=1 \
       sh "$INSTALLER" 2>&1) || PWRC=$?
   printf '%s\n' "$PWOUT" | say_box
 }
@@ -277,8 +277,8 @@ echo "=== the log volume: sizes the installer must refuse ==="
 # The one question whose wrong answer is not destructive but is permanent: a
 # box installed with the records on a 1 GB volume fills it in twelve days at
 # the rate docs/logging.md measures, and the fix is a reinstall.
-run 1 "a log size that is not a number" $OK HEXA_ROOT_PASSWORD=s3cr3t \
-    HEXA_LOG_GB=lots
+run 1 "a log size that is not a number" $OK PRISMA_ROOT_PASSWORD=s3cr3t \
+    PRISMA_LOG_GB=lots
 # The MESSAGE, not just the refusal. Without the shape check the number still
 # gets refused - by the shell failing to compare "lots" against 1 - and the
 # operator is shown an arithmetic error instead of what they typed wrong.
@@ -286,10 +286,10 @@ case "$LAST_OUT" in
   *"whole number of gigabytes"*) ok "and says what a size looks like" ;;
   *) bad "refused with a shell error rather than a reason: $LAST_OUT" ;;
 esac
-run 1 "a log size of zero" $OK HEXA_ROOT_PASSWORD=s3cr3t HEXA_LOG_GB=0
+run 1 "a log size of zero" $OK PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_LOG_GB=0
 # 8 TB of records on any disk this test can see leaves the system nothing.
-run 1 "a log that leaves the system no room" $OK HEXA_ROOT_PASSWORD=s3cr3t \
-    HEXA_LOG_GB=8192
+run 1 "a log that leaves the system no room" $OK PRISMA_ROOT_PASSWORD=s3cr3t \
+    PRISMA_LOG_GB=8192
 
 # A DISK WHOSE SIZE NOTHING HERE CAN READ, which is the other arm of every
 # check above and had never run. The fit between the records and the disk is
@@ -304,12 +304,12 @@ run 1 "a log that leaves the system no room" $OK HEXA_ROOT_PASSWORD=s3cr3t \
 # box where /sys cannot answer it is privileges that stop blockdev, and this
 # suite has none to hand it.
 szdir=$(mktemp -d); szbin=$(mktemp -d)
-ln -s "$DISK" "$szdir/hexa-nameless"
+ln -s "$DISK" "$szdir/prisma-nameless"
 printf '#!/bin/sh\nexit 1\n' > "$szbin/blockdev"; chmod +x "$szbin/blockdev"
 run 0 "a disk whose size cannot be read is still installable" \
-    PATH="$szbin:$PATH" HEXA_DISK="$szdir/hexa-nameless" \
-    HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo \
-    HEXA_ROOT_PASSWORD=s3cr3t
+    PATH="$szbin:$PATH" PRISMA_DISK="$szdir/prisma-nameless" \
+    PRISMA_HOSTNAME=cgnat01 PRISMA_TIMEZONE=America/Sao_Paulo \
+    PRISMA_ROOT_PASSWORD=s3cr3t
 case "$LAST_OUT" in
   *"could not be read, so the fit is not checked"*)
     ok "and it says the fit was not checked rather than saying nothing" ;;
@@ -371,7 +371,7 @@ printf '/dev/sdc
 FINDMNT
 chmod +x "$fake/lsblk" "$fake/findmnt"
 
-INST=$(cd "$(dirname "$0")/.." && pwd)/appliance/hexarouting-install
+INST=$(cd "$(dirname "$0")/.." && pwd)/appliance/prisma-routing-install
 pick() {  # <answer on stdin> -> the chosen path
   # The MENU goes to a file rather than to /dev/null, because the menu is the
   # screen: every line of it is one of the messages the reader at the bottom
@@ -380,8 +380,8 @@ pick() {  # <answer on stdin> -> the chosen path
   printf '%s
 ' "$1" | (
     PATH="$fake:$PATH"
-    HEXA_INSTALL_LIB=1
-    export HEXA_INSTALL_LIB
+    PRISMA_INSTALL_LIB=1
+    export PRISMA_INSTALL_LIB
     . "$INST"
     choose_disk 2>"$SAY_DIR/box.err"
   )
@@ -417,7 +417,7 @@ esac
 # the disk somebody in a hurry picks, because it is the one they just plugged
 # in.
 menu=$(printf '
-' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
+' | (PATH="$fake:$PATH"; PRISMA_INSTALL_LIB=1; export PRISMA_INSTALL_LIB;
                       . "$INST"; choose_disk 2>&1 >/dev/null))
 printf '%s\n' "$menu" | say_box
 case "$menu" in
@@ -479,8 +479,8 @@ case "${MODE:-human}" in
 esac
 NONE
 chmod +x "$fake/lsblk"
-nodisk=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1
-                        export HEXA_INSTALL_LIB; . "$INST"
+nodisk=$(printf '\n' | (PATH="$fake:$PATH"; PRISMA_INSTALL_LIB=1
+                        export PRISMA_INSTALL_LIB; . "$INST"
                         choose_disk 2>&1 >/dev/null); echo "rc=$?")
 printf '%s\n' "$nodisk" | say_box
 case "$nodisk" in
@@ -510,11 +510,11 @@ echo "=== 'install' exists only on the installation medium ==="
 # running FROM the medium, so both answers are worth asserting.
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 probe() {  # <squashfs path> <installer path>
-  HEXA_LIVE_SQUASHFS="$1" HEXA_INSTALLER="$2" python3 - "$REPO" <<'PY'
+  PRISMA_LIVE_SQUASHFS="$1" PRISMA_INSTALLER="$2" python3 - "$REPO" <<'PY'
 import sys, os
-sys.path.insert(0, os.path.join(sys.argv[1], "src", "hexash"))
-import hexash
-print("yes" if "install" in hexash.TREE["operational"] else "no")
+sys.path.insert(0, os.path.join(sys.argv[1], "src", "prismash"))
+import prismash
+print("yes" if "install" in prismash.TREE["operational"] else "no")
 PY
 }
 SQ=$(mktemp); IN=$(mktemp); chmod +x "$IN"
@@ -539,9 +539,9 @@ echo "=== the boot medium is still refused when it is named outright ==="
 # stick: the refusal matches on the prefix, and a check narrowed to the whole
 # disk would let the medium through.
 printf '%s1\n' "$DISK" > "$BOOT_MEDIUM"
-out=$(env HEXA_INSTALL_CHECK=1 HEXA_DISK="$DISK" \
-      HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo \
-      HEXA_ROOT_PASSWORD=s3cr3t sh "$INSTALLER" </dev/null 2>&1)
+out=$(env PRISMA_INSTALL_CHECK=1 PRISMA_DISK="$DISK" \
+      PRISMA_HOSTNAME=cgnat01 PRISMA_TIMEZONE=America/Sao_Paulo \
+      PRISMA_ROOT_PASSWORD=s3cr3t sh "$INSTALLER" </dev/null 2>&1)
 # The status FIRST: say_box is a pipeline, and a $? read after one is the
 # recorder's status and not the installer's.
 brc=$?
@@ -560,12 +560,12 @@ fi
 : > "$BOOT_MEDIUM"
 # shellcheck disable=SC2086
 run 0 "and the same disk is accepted on a box that is not live-booted" $OK \
-    HEXA_ROOT_PASSWORD=s3cr3t
+    PRISMA_ROOT_PASSWORD=s3cr3t
 
 echo
 echo "=== answers from a file: the unattended path that publishes nothing ==="
 #
-# hexarouting.password= on the kernel command line is world-readable in
+# prisma-routing.password= on the kernel command line is world-readable in
 # /proc/cmdline for the life of the live medium. The file does the same job
 # without that (#83), so what has to be asserted is not only that the answers
 # arrive but that the secret does not come back out.
@@ -573,7 +573,7 @@ echo "=== answers from a file: the unattended path that publishes nothing ==="
 adir=$(mktemp -d)
 SECRET=s3cr3t-from-the-file
 cat > "$adir/answers" <<ANS
-# HexaRouting install answers
+# Prisma Routing install answers
 hostname = cgnat-file
 timezone = America/Sao_Paulo
 log-gb   = 2
@@ -581,7 +581,7 @@ password = $SECRET
 ANS
 
 run 0 "a file answers every question, the password among them" \
-    HEXA_DISK="$DISK" HEXA_ANSWERS="$adir/answers"
+    PRISMA_DISK="$DISK" PRISMA_ANSWERS="$adir/answers"
 case "$LAST_OUT" in
   *cgnat-file*) ok "the answers in the file reached the summary" ;;
   *) bad "the file's hostname never arrived: $LAST_OUT" ;;
@@ -598,7 +598,7 @@ esac
 # install it does - otherwise a medium could not be reused for a second box
 # without rewriting it.
 run 0 "an answer given on the command line overrides the file" \
-    HEXA_DISK="$DISK" HEXA_ANSWERS="$adir/answers" HEXA_HOSTNAME=cgnat-typed
+    PRISMA_DISK="$DISK" PRISMA_ANSWERS="$adir/answers" PRISMA_HOSTNAME=cgnat-typed
 case "$LAST_OUT" in
   *cgnat-typed*) ok "the typed hostname won" ;;
   *) bad "the file overrode an answer that was already given: $LAST_OUT" ;;
@@ -609,8 +609,8 @@ esac
 # later, and not as a typo.
 printf 'passwrod = %s\n' "$SECRET" > "$adir/typo"
 run 1 "a key the installer does not know: refused, not ignored" \
-    HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
-    HEXA_TIMEZONE=America/Sao_Paulo HEXA_ANSWERS="$adir/typo"
+    PRISMA_DISK="$DISK" PRISMA_HOSTNAME=cgnat01 \
+    PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ANSWERS="$adir/typo"
 case "$LAST_OUT" in
   *"'passwrod' is not an answer"*) ok "and it names the key it could not use" ;;
   *) bad "refused without saying which key was wrong: $LAST_OUT" ;;
@@ -623,9 +623,9 @@ esac
 # A file that is not there must stop the install. Falling through to the
 # prompts is the same hang by another route.
 run 1 "an answer file that is not on the medium: refused" \
-    HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
-    HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
-    HEXA_ANSWERS="$adir/absent"
+    PRISMA_DISK="$DISK" PRISMA_HOSTNAME=cgnat01 \
+    PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
+    PRISMA_ANSWERS="$adir/absent"
 case "$LAST_OUT" in
   *"no answer file at"*) ok "and says which file it looked for" ;;
   *) bad "refused without naming the file: $LAST_OUT" ;;
@@ -645,9 +645,9 @@ else
   printf 'hostname = cgnat01\n' > "$adir/unreadable"
   chmod 000 "$adir/unreadable"
   run 1 "an answer file that cannot be read: refused" \
-      HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
-      HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
-      HEXA_ANSWERS="$adir/unreadable"
+      PRISMA_DISK="$DISK" PRISMA_HOSTNAME=cgnat01 \
+      PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
+      PRISMA_ANSWERS="$adir/unreadable"
   case "$LAST_OUT" in
     *"cannot be read"*) ok "and says it was found and not readable, which is"\
 " a different thing to go and look at than a file that is not there" ;;
@@ -662,8 +662,8 @@ fi
 # hang hours later and not as the typo it is.
 printf 'hostname cgnat01\n' > "$adir/noequals"
 run 1 "a line with no '=' in it: refused, not skipped" \
-    HEXA_DISK="$DISK" HEXA_TIMEZONE=America/Sao_Paulo \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_ANSWERS="$adir/noequals"
+    PRISMA_DISK="$DISK" PRISMA_TIMEZONE=America/Sao_Paulo \
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_ANSWERS="$adir/noequals"
 case "$LAST_OUT" in
   *"expected 'key = value'"*) ok "and says what a line looks like" ;;
   *) bad "refused without saying what was wrong with the line: $LAST_OUT" ;;
@@ -682,8 +682,8 @@ esac
 # for it.
 printf 'hostname = cgnat01\nyes = maybe\n' > "$adir/maybe"
 run 1 "'yes = maybe': refused rather than read as one of the two" \
-    HEXA_DISK="$DISK" HEXA_TIMEZONE=America/Sao_Paulo \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_ANSWERS="$adir/maybe"
+    PRISMA_DISK="$DISK" PRISMA_TIMEZONE=America/Sao_Paulo \
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_ANSWERS="$adir/maybe"
 case "$LAST_OUT" in
   *"'yes' takes yes or no, got 'maybe'"*)
     ok "and names the value it would not take" ;;
@@ -699,12 +699,12 @@ hostname = cgnat-file
 yes      = yes
 ANS
 cat > "$adir/source-lib" <<'LIB'
-HEXA_INSTALL_LIB=1 . "$1"
-unset HEXA_INSTALL_LIB
-printf '%s|%s|%s\n' "${HEXA_HOSTNAME:-}" "${HEXA_INSTALL_YES:-}" \
-    "${HEXA_ROOT_PASSWORD:+set}"
+PRISMA_INSTALL_LIB=1 . "$1"
+unset PRISMA_INSTALL_LIB
+printf '%s|%s|%s\n' "${PRISMA_HOSTNAME:-}" "${PRISMA_INSTALL_YES:-}" \
+    "${PRISMA_ROOT_PASSWORD:+set}"
 LIB
-got=$(HEXA_ANSWERS="$adir/unattended" sh "$adir/source-lib" "$INSTALLER" 2>/dev/null | tail -1)
+got=$(PRISMA_ANSWERS="$adir/unattended" sh "$adir/source-lib" "$INSTALLER" 2>/dev/null | tail -1)
 case "$got" in
   "cgnat-file|1|") ok "sourcing the installer hands the answers to the caller" ;;
   *) bad "install-from-cmdline would not learn the answers: got '$got'" ;;
@@ -720,11 +720,11 @@ esac
 #
 # The caller prints a word AFTER the source. An exit never reaches it.
 cat > "$adir/source-bad" <<'LIB'
-HEXA_INSTALL_LIB=1 . "$1" || echo "returned"
+PRISMA_INSTALL_LIB=1 . "$1" || echo "returned"
 echo "still here"
 LIB
 printf 'passwrod = x\n' > "$adir/badkey"
-got=$(HEXA_ANSWERS="$adir/badkey" sh "$adir/source-bad" "$INSTALLER" 2>/dev/null)
+got=$(PRISMA_ANSWERS="$adir/badkey" sh "$adir/source-bad" "$INSTALLER" 2>/dev/null)
 case "$got" in
   *returned*"still here"*)
     ok "and a file it refuses RETURNS to the caller instead of exiting" ;;
@@ -749,14 +749,14 @@ echo "=== the management network: the answers, and what they refuse (#303) ==="
 # anything, because an answer refused after the disk is written is an answer
 # refused too late.
 #
-# HEXA_NET_SYS is what lets a machine with one card be asked the questions a
+# PRISMA_NET_SYS is what lets a machine with one card be asked the questions a
 # machine with two would be. It is set by nothing on a real box.
 netsys=$(mktemp -d)
 mkdir -p "$netsys/ens18/device" "$netsys/ens19/device" "$netsys/lo"
 echo up > "$netsys/ens18/operstate"
 echo down > "$netsys/ens19/operstate"
 
-# THE ROUTING TABLE, answered from the fake box. HEXA_NET_SYS stands in for
+# THE ROUTING TABLE, answered from the fake box. PRISMA_NET_SYS stands in for
 # /sys/class/net, and nothing stood in for `ip` - so the addresses the
 # installer printed for these two cards, and the card it takes as the default,
 # came from the machine running the suite.
@@ -764,10 +764,10 @@ echo down > "$netsys/ens19/operstate"
 # That is not theoretical. This suite asserts that an unattended install takes
 # ens18, and it passed because the developer box these fixtures were written
 # on routes out of a card of that name. On a machine whose default route is on
-# eno1 the installer picks eno1, finds no such card under HEXA_NET_SYS, and
+# eno1 the installer picks eno1, finds no such card under PRISMA_NET_SYS, and
 # refuses the install - so the suite goes red over a product nobody changed.
 # And on every machine that has a default route, which is every machine, the
-# fallback at hexarouting-install:1170 - "no default route, so take the first
+# fallback at prisma-routing-install:1170 - "no default route, so take the first
 # card", which is the one-NIC box #303 is about - had never run at all.
 netbin=$(mktemp -d)
 cat > "$netbin/ip" <<'IPSTUB'
@@ -785,13 +785,13 @@ IPSTUB
 chmod +x "$netbin/ip"
 : > "$netbin/default_route"
 
-NOK="HEXA_DISK=$DISK HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo \
+NOK="PRISMA_DISK=$DISK PRISMA_HOSTNAME=cgnat01 PRISMA_TIMEZONE=America/Sao_Paulo \
 PATH=$netbin:$PATH netbin=$netbin"
 # shellcheck disable=SC2086
 run 0 "a static address, its gateway and a resolver are accepted" $NOK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
-    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
-    HEXA_MGMT_GATEWAY=192.0.2.1 HEXA_MGMT_DNS=192.0.2.53,198.51.100.53
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" \
+    PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=192.0.2.10/24 \
+    PRISMA_MGMT_GATEWAY=192.0.2.1 PRISMA_MGMT_DNS=192.0.2.53,198.51.100.53
 case "$LAST_OUT" in
   *"management     ens18, 192.0.2.10/24 via 192.0.2.1"*)
     ok "and the summary repeats the whole answer back" ;;
@@ -800,8 +800,8 @@ $LAST_OUT" ;;
 esac
 
 # shellcheck disable=SC2086
-run 0 "DHCP on a named card is accepted" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
-    HEXA_NET_SYS="$netsys" HEXA_MGMT_INTERFACE=ens19 HEXA_MGMT_ADDRESS=dhcp
+run 0 "DHCP on a named card is accepted" $NOK PRISMA_ROOT_PASSWORD=s3cr3t \
+    PRISMA_NET_SYS="$netsys" PRISMA_MGMT_INTERFACE=ens19 PRISMA_MGMT_ADDRESS=dhcp
 case "$LAST_OUT" in
   *"management     ens19, by DHCP"*) ok "and the summary says which card" ;;
   *) bad "the summary does not name the card DHCP was asked for:
@@ -813,8 +813,8 @@ esac
 # write an address the box does not need - and it has to be DISTINGUISHABLE
 # from the absent answer, which is what the file written for it is for.
 # shellcheck disable=SC2086
-run 0 "'none' is an answer, not an omission" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
-    HEXA_NET_SYS="$netsys" HEXA_MGMT_ADDRESS=none
+run 0 "'none' is an answer, not an omission" $NOK PRISMA_ROOT_PASSWORD=s3cr3t \
+    PRISMA_NET_SYS="$netsys" PRISMA_MGMT_ADDRESS=none
 case "$LAST_OUT" in
   *"management     none: this box is reached at its console only"*)
     ok "and the summary says so in as many words" ;;
@@ -830,9 +830,9 @@ esac
 # to the site by the time anybody finds out.
 # shellcheck disable=SC2086
 run 1 "a gateway that is not on the address's subnet: refused" $NOK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
-    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
-    HEXA_MGMT_GATEWAY=198.51.100.1
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" \
+    PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=192.0.2.10/24 \
+    PRISMA_MGMT_GATEWAY=198.51.100.1
 # BOTH ANSWERS, on the row of their own they were moved to (#367): an address
 # is fifteen columns and a prefix eighteen, and on the verdict row the two of
 # them made it 88 on an 80-column console. What is asserted is unchanged - that
@@ -849,9 +849,9 @@ esac
 # the two cases differ by one octet.
 # shellcheck disable=SC2086
 run 0 "and a gateway that IS on it is accepted" $NOK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
-    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
-    HEXA_MGMT_GATEWAY=192.0.2.254
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" \
+    PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=192.0.2.10/24 \
+    PRISMA_MGMT_GATEWAY=192.0.2.254
 
 # And a gateway that is not an address AT ALL, which is a different mistake
 # and reaches a different line. What is asserted is the DIAGNOSIS and not the
@@ -868,9 +868,9 @@ run 0 "and a gateway that IS on it is accepted" $NOK \
 # The check that runs first is what names the thing they actually typed.
 # shellcheck disable=SC2086
 run 1 "a gateway that is not an address at all: refused" $NOK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
-    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
-    HEXA_MGMT_GATEWAY=gw.example.net
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" \
+    PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=192.0.2.10/24 \
+    PRISMA_MGMT_GATEWAY=gw.example.net
 case "$LAST_OUT" in
   *"the gateway 'gw.example.net' is not an address"*)
     ok "and quotes back what was given for it" ;;
@@ -879,8 +879,8 @@ esac
 
 # shellcheck disable=SC2086
 run 1 "a card this machine has not got: refused" $NOK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
-    HEXA_MGMT_INTERFACE=ens99 HEXA_MGMT_ADDRESS=dhcp
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" \
+    PRISMA_MGMT_INTERFACE=ens99 PRISMA_MGMT_ADDRESS=dhcp
 case "$LAST_OUT" in
   *"no card called 'ens99'"*) ok "and names the card it was asked for" ;;
   *) bad "refused without naming the card: $LAST_OUT" ;;
@@ -894,37 +894,37 @@ case "$LAST_OUT" in
 esac
 
 # shellcheck disable=SC2086
-run 1 "an address with no prefix: refused" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
-    HEXA_NET_SYS="$netsys" HEXA_MGMT_INTERFACE=ens18 \
-    HEXA_MGMT_ADDRESS=192.0.2.10
+run 1 "an address with no prefix: refused" $NOK PRISMA_ROOT_PASSWORD=s3cr3t \
+    PRISMA_NET_SYS="$netsys" PRISMA_MGMT_INTERFACE=ens18 \
+    PRISMA_MGMT_ADDRESS=192.0.2.10
 case "$LAST_OUT" in
   *"address with a prefix"*) ok "and says what an address looks like" ;;
   *) bad "refused with no shape to compare against: $LAST_OUT" ;;
 esac
 # shellcheck disable=SC2086
-run 1 "an address that is not one: refused" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
-    HEXA_NET_SYS="$netsys" HEXA_MGMT_INTERFACE=ens18 \
-    HEXA_MGMT_ADDRESS=192.0.2.300/24
+run 1 "an address that is not one: refused" $NOK PRISMA_ROOT_PASSWORD=s3cr3t \
+    PRISMA_NET_SYS="$netsys" PRISMA_MGMT_INTERFACE=ens18 \
+    PRISMA_MGMT_ADDRESS=192.0.2.300/24
 # A prefix outside 1..32 is an address nobody can be reached at, and /0 is the
 # one that reads as a typo for /8 rather than as nonsense.
 # shellcheck disable=SC2086
-run 1 "a prefix outside 1..32: refused" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
-    HEXA_NET_SYS="$netsys" HEXA_MGMT_INTERFACE=ens18 \
-    HEXA_MGMT_ADDRESS=192.0.2.10/33
+run 1 "a prefix outside 1..32: refused" $NOK PRISMA_ROOT_PASSWORD=s3cr3t \
+    PRISMA_NET_SYS="$netsys" PRISMA_MGMT_INTERFACE=ens18 \
+    PRISMA_MGMT_ADDRESS=192.0.2.10/33
 # shellcheck disable=SC2086
 run 1 "a gateway given with the DHCP answer: refused" $NOK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
-    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=dhcp \
-    HEXA_MGMT_GATEWAY=192.0.2.1
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" \
+    PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=dhcp \
+    PRISMA_MGMT_GATEWAY=192.0.2.1
 case "$LAST_OUT" in
   *"DHCP carries its own"*) ok "and says why the two disagree" ;;
   *) bad "refused without saying which answer wins: $LAST_OUT" ;;
 esac
 # shellcheck disable=SC2086
 run 1 "a DNS server that is not an address: refused" $NOK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
-    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
-    HEXA_MGMT_DNS=192.0.2.53,nameserver
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" \
+    PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=192.0.2.10/24 \
+    PRISMA_MGMT_DNS=192.0.2.53,nameserver
 
 # The unattended path, which is how the release gate installs a box. Nothing
 # about the management network may be REQUIRED of it: every existing caller
@@ -932,7 +932,7 @@ run 1 "a DNS server that is not an address: refused" $NOK \
 # stop them dead at a prompt with no console to answer from.
 # shellcheck disable=SC2086
 run 0 "an unattended install that says nothing about the network still runs" \
-    $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" HEXA_INSTALL_YES=1
+    $NOK PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" PRISMA_INSTALL_YES=1
 case "$LAST_OUT" in
   *"management network: none (unattended; nothing was asked)"*)
     ok "and takes none, saying that it did" ;;
@@ -940,7 +940,7 @@ case "$LAST_OUT" in
 $LAST_OUT" ;;
 esac
 case "$LAST_OUT" in
-  *"hexarouting.mgmt-interface="*)
+  *"prisma-routing.mgmt-interface="*)
     ok "and names the kernel command line that asks for a card instead" ;;
   *) bad "nothing told an unattended install how to ask for a management
 network at all:
@@ -953,8 +953,8 @@ esac
 # installs the box it then reaches over ssh.
 # shellcheck disable=SC2086
 run 0 "an unattended install that asks for an address and names no card" \
-    $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" HEXA_INSTALL_YES=1 \
-    HEXA_MGMT_ADDRESS=dhcp
+    $NOK PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" PRISMA_INSTALL_YES=1 \
+    PRISMA_MGMT_ADDRESS=dhcp
 case "$LAST_OUT" in
   *"management network: unattended, and the address was asked for"*"ens18, dhcp"*)
     ok "takes the card the medium is on, and says why it did" ;;
@@ -977,7 +977,7 @@ printf 'default via 10.0.0.1 dev ens19 proto dhcp metric 100\n' \
   > "$netbin/default_route"
 # shellcheck disable=SC2086
 run 0 "and a medium that IS on the network installs a box with none too" \
-    $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" HEXA_INSTALL_YES=1
+    $NOK PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" PRISMA_INSTALL_YES=1
 case "$LAST_OUT" in
   *"management network: none (unattended; nothing was asked)"*)
     ok "the card the medium is on is not turned into the box's own" ;;
@@ -995,8 +995,8 @@ printf '2: ens18    inet 192.0.2.77/24 brd 192.0.2.255 scope global ens18\n' \
   > "$netbin/addr.ens18"
 # shellcheck disable=SC2086
 run 1 "a card this machine has not got, with the cards it has beside it" \
-    $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
-    HEXA_MGMT_INTERFACE=ens99 HEXA_MGMT_ADDRESS=dhcp
+    $NOK PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$netsys" \
+    PRISMA_MGMT_INTERFACE=ens99 PRISMA_MGMT_ADDRESS=dhcp
 case "$LAST_OUT" in
   *"192.0.2.77/24"*)
     ok "and the list says what each card already carries" ;;
@@ -1030,7 +1030,7 @@ $WIDE"
 nonic=$(mktemp -d)
 # shellcheck disable=SC2086
 run 0 "a machine with no network card is installed without being asked" $OK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$nonic"
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$nonic"
 case "$LAST_OUT" in
   *"management network: this machine has no network card"*)
     ok "and it says why it did not ask" ;;
@@ -1056,9 +1056,9 @@ echo "=== the three management questions, TYPED at, which is how they are met ==
 # was told. An install per answer would be a boot cycle per answer.
 mask() {  # <function and its arguments>: the prompts on stdin, screen kept
   ( PATH="$netbin:$PATH"
-    HEXA_INSTALL_LIB=1
-    HEXA_NET_SYS=$netsys
-    export HEXA_INSTALL_LIB HEXA_NET_SYS
+    PRISMA_INSTALL_LIB=1
+    PRISMA_NET_SYS=$netsys
+    export PRISMA_INSTALL_LIB PRISMA_NET_SYS
     . "$INSTALLER"
     "$@" 2>"$SAY_DIR/box.err" )
   say_box < "$SAY_DIR/box.err"
@@ -1170,19 +1170,19 @@ echo "=== the file the answer becomes, written into a root (#303) ==="
 # THE CENTRAL FACT, shown against a directory rather than a disk. Before this
 # existed the whole of an install left nothing under /etc/network at all:
 #
-#   $ grep -c 'etc/network' appliance/hexarouting-install    ->  0
+#   $ grep -c 'etc/network' appliance/prisma-routing-install    ->  0
 #
 # so the checks below are the ones that would have been red for the life of
 # the product. They drive write_network_config() at the library seam, which is
 # there for the reason verify_installed() is: the alternative is a boot cycle
 # per case, and the cases that matter are the unusual answers.
 wnc() {  # <root> <interface> <address> <gateway> <dns>
-  ( HEXA_INSTALL_LIB=1
-    export HEXA_INSTALL_LIB
+  ( PRISMA_INSTALL_LIB=1
+    export PRISMA_INSTALL_LIB
     . "$INSTALLER"
     write_network_config "$@" )
 }
-NETF=/etc/network/interfaces.d/hexarouting
+NETF=/etc/network/interfaces.d/prisma-routing
 
 w=$(mktemp -d); mkdir -p "$w/etc/network/interfaces.d"
 printf 'source /etc/network/interfaces.d/*\n' > "$w/etc/network/interfaces"
@@ -1298,7 +1298,7 @@ rm -rf "$w"
 # with a history: the rule is that one holds it and the other reads it, and
 # where that is impossible - a path is a filesystem contract, not a message -
 # the agreement is asserted.
-if grep -q "interfaces\.d/hexarouting" "$SELFTEST" 2>/dev/null; then
+if grep -q "interfaces\.d/prisma-routing" "$SELFTEST" 2>/dev/null; then
   ok "the self-test reads the same path the installer writes"
 else
   bad "appliance/selftest does not read $NETF, so the box would be installed"\
@@ -1423,7 +1423,7 @@ rm -rf "$netsys"
 echo
 echo "=== the disk that was just written is verified before success ==="
 #
-# hexarouting-selftest runs on the LIVE MEDIUM, before the installer, so until
+# prisma-routing-selftest runs on the LIVE MEDIUM, before the installer, so until
 # now nothing had ever looked at the result of an install. The failure mode is
 # a box that reports success and then boots to a "grub>" prompt in front of
 # whoever is standing there, with the medium already back in its box (#83).
@@ -1451,11 +1451,11 @@ mkroot() {  # <dir>: what a good install leaves behind
   # the stanza, an /etc/network/interfaces that reads the directory it is in,
   # and something on the disk able to carry out a DHCP answer.
   printf 'auto ens18\niface ens18 inet dhcp\n' \
-    > "$1/etc/network/interfaces.d/hexarouting"
+    > "$1/etc/network/interfaces.d/prisma-routing"
   printf 'source /etc/network/interfaces.d/*\n' > "$1/etc/network/interfaces"
   : > "$1/sbin/dhclient"; chmod +x "$1/sbin/dhclient"
   : > "$1/boot/vmlinuz-6.1.0-test"
-  printf 'menuentry "HexaRouting" {\n\tlinux\t/boot/vmlinuz-6.1.0-test root=UUID=11111111-1111-1111-1111-111111111111 ro\n\tinitrd\t/boot/initrd.img-6.1.0-test\n}\n' \
+  printf 'menuentry "Prisma Routing" {\n\tlinux\t/boot/vmlinuz-6.1.0-test root=UUID=11111111-1111-1111-1111-111111111111 ro\n\tinitrd\t/boot/initrd.img-6.1.0-test\n}\n' \
     > "$1/boot/grub/grub.cfg"
   printf 'UUID=11111111-1111-1111-1111-111111111111 / ext4 errors=remount-ro 0 1\n' \
     > "$1/etc/fstab"
@@ -1470,9 +1470,9 @@ vnet=$(mktemp -d); mkdir -p "$vnet/ens18/device"; echo up > "$vnet/ens18/opersta
 verify() {  # <root> -> output on stdout, status in $?
   _vrc=0
   _vout=$( ( PATH="$vbin:$PATH"
-    HEXA_INSTALL_LIB=1
-    HEXA_NET_SYS=$vnet
-    export HEXA_INSTALL_LIB HEXA_NET_SYS
+    PRISMA_INSTALL_LIB=1
+    PRISMA_NET_SYS=$vnet
+    export PRISMA_INSTALL_LIB PRISMA_NET_SYS
     . "$INSTALLER"
     verify_installed "$1" 2>&1 ) ) || _vrc=$?
   printf '%s\n' "$_vout" | say_box
@@ -1535,13 +1535,13 @@ vcase "there is no root account" \
 # the operator is still standing in front of the machine with the medium in
 # the drive, rather than after the drive to the site.
 vcase "no management network was written at all" \
-      "was not written" 'rm -f etc/network/interfaces.d/hexarouting'
+      "was not written" 'rm -f etc/network/interfaces.d/prisma-routing'
 vcase "the stanza was written where nothing sources it" \
       "does not read interfaces.d" \
       'printf "auto lo\n" > etc/network/interfaces'
 vcase "the management card is not on this machine" \
       "is not on this machine" \
-      'printf "auto ens99\niface ens99 inet dhcp\n" > etc/network/interfaces.d/hexarouting'
+      'printf "auto ens99\niface ens99 inet dhcp\n" > etc/network/interfaces.d/prisma-routing'
 # THE ONE THAT WAS TRUE OF THE PUBLISHED MEDIUM. ifupdown only RECOMMENDS a
 # DHCP client and debootstrap installs no Recommends, so the 0.73.0 squashfs
 # carried no dhclient, no udhcpc and no dhcpcd - and "iface ens18 inet dhcp"
@@ -1561,7 +1561,7 @@ vcase "DHCP is asked for and the disk has no DHCP client" \
 # wrote it down.
 vnone=$(mktemp -d); mkroot "$vnone"
 printf '# no management network was asked for\n' \
-  > "$vnone/etc/network/interfaces.d/hexarouting"
+  > "$vnone/etc/network/interfaces.d/prisma-routing"
 out=$(verify "$vnone"); rc=$?
 if [ "$rc" = 0 ]; then
   case "$out" in
@@ -1596,13 +1596,13 @@ echo "=== the records mirror: the answer, and what it refuses (#83) ==="
 # disks - which is the same question as "can its size be read".
 PART=$(lsblk -rno NAME,TYPE 2>/dev/null | awk '$2 == "part" { print $1; exit }')
 run 1 "the mirror named as the disk being installed: refused" $OK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR="$DISK"
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_MIRROR="$DISK"
 case "$LAST_OUT" in
   *"has to be a SECOND disk"*) ok "and says a mirror needs a second disk" ;;
   *) bad "refused without saying why: $LAST_OUT" ;;
 esac
 run 1 "a mirror that is not a block device: refused" $OK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR=/tmp/not-a-disk
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_MIRROR=/tmp/not-a-disk
 
 # THE MEDIUM, OFFERED AS THE MIRROR. The menu already leaves it out (further
 # down), and a device path typed by hand or given on the kernel command line
@@ -1617,7 +1617,7 @@ run 1 "a mirror that is not a block device: refused" $OK \
 # matches on the prefix.
 printf '/dev/loop0p1\n' > "$BOOT_MEDIUM"
 run 1 "the medium this system booted from, named as the mirror: refused" $OK \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR=/dev/loop0
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_MIRROR=/dev/loop0
 case "$LAST_OUT" in
   *"/dev/loop0 is the medium this system booted from"*)
     ok "and says it is the medium, not that it is the wrong size or shape" ;;
@@ -1626,7 +1626,7 @@ esac
 : > "$BOOT_MEDIUM"
 if [ -n "$PART" ]; then
   run 1 "a mirror that is a partition rather than a whole disk: refused" $OK \
-      HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR="/dev/$PART"
+      PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_MIRROR="/dev/$PART"
   case "$LAST_OUT" in
     *"not a whole disk"*) ok "and says the mirror takes a whole disk" ;;
     *) bad "refused, but not for being a partition: $LAST_OUT" ;;
@@ -1644,7 +1644,7 @@ fi
 # leg gets under a 1 TB answer.
 if [ -b /dev/loop0 ] && [ "$(cat /sys/block/loop0/size 2>/dev/null || echo 1)" = 0 ]; then
   run 1 "a mirror disk too small for the records: refused" $OK \
-      HEXA_ROOT_PASSWORD=s3cr3t HEXA_LOG_GB=2 HEXA_MIRROR=/dev/loop0
+      PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_LOG_GB=2 PRISMA_MIRROR=/dev/loop0
   case "$LAST_OUT" in
     *"a mirror is as big as its smallest disk"*)
       ok "and says why a short disk is not a mirror" ;;
@@ -1669,9 +1669,9 @@ else
 fi
 if [ -n "$M_MIRROR" ]; then
   run 0 "a second whole disk is accepted as the records mirror" \
-      HEXA_DISK="$M_TARGET" HEXA_HOSTNAME=cgnat01 \
-      HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
-      HEXA_LOG_GB=1 HEXA_MIRROR="$M_MIRROR"
+      PRISMA_DISK="$M_TARGET" PRISMA_HOSTNAME=cgnat01 \
+      PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
+      PRISMA_LOG_GB=1 PRISMA_MIRROR="$M_MIRROR"
   case "$LAST_OUT" in
     *"records mirror $M_MIRROR"*)
       ok "and the summary repeats back the disk that will be destroyed too" ;;
@@ -1687,7 +1687,7 @@ fi
 # single disk and that is worth one line.
 # shellcheck disable=SC2086
 run 0 "an install with no mirror answer is accepted exactly as before" $OK \
-    HEXA_ROOT_PASSWORD=s3cr3t
+    PRISMA_ROOT_PASSWORD=s3cr3t
 case "$LAST_OUT" in
   *"records mirror none (one disk"*)
     ok "and the summary says the records will be on one disk" ;;
@@ -1719,7 +1719,7 @@ TWO
 chmod +x "$twodisk/lsblk"
 # shellcheck disable=SC2086
 run 0 "an unattended install on a two-disk machine still installs" $OK \
-    PATH="$twodisk:$PATH" HEXA_ROOT_PASSWORD=s3cr3t HEXA_INSTALL_YES=1
+    PATH="$twodisk:$PATH" PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_INSTALL_YES=1
 case "$LAST_OUT" in
   *"records: not mirrored, and this machine has /dev/vdz"*)
     ok "and it names the disk the records could have been mirrored onto" ;;
@@ -1728,7 +1728,7 @@ nobody learns the records are on one until one of them fails:
 $LAST_OUT" ;;
 esac
 case "$LAST_OUT" in
-  *"hexarouting.mirror=<disk>"*)
+  *"prisma-routing.mirror=<disk>"*)
     ok "and says what to pass to get a mirror on the next one" ;;
   *) bad "it named the disk and not what to do about it: $LAST_OUT" ;;
 esac
@@ -1741,8 +1741,8 @@ rm -rf "$twodisk"
 mdir=$(mktemp -d)
 printf 'hostname = cgnat-file\nmirror   = %s\n' "$DISK" > "$mdir/answers"
 run 1 "the mirror can be answered from the file, and is still validated" \
-    HEXA_DISK="$DISK" HEXA_TIMEZONE=America/Sao_Paulo \
-    HEXA_ROOT_PASSWORD=s3cr3t HEXA_ANSWERS="$mdir/answers"
+    PRISMA_DISK="$DISK" PRISMA_TIMEZONE=America/Sao_Paulo \
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_ANSWERS="$mdir/answers"
 case "$LAST_OUT" in
   *"not an answer this installer knows"*)
     bad "the answer file does not know the mirror key at all" ;;
@@ -1793,8 +1793,8 @@ chmod +x "$fake/lsblk" "$fake/findmnt"
 mpick() {  # <answer on stdin> <target disk> -> the chosen mirror, or nothing
   printf '%s\n' "$1" | (
     PATH="$fake:$PATH"
-    HEXA_INSTALL_LIB=1
-    export HEXA_INSTALL_LIB
+    PRISMA_INSTALL_LIB=1
+    export PRISMA_INSTALL_LIB
     . "$INSTALLER"
     choose_mirror "$2" 2>"$SAY_DIR/box.err"
   )
@@ -1833,7 +1833,7 @@ case "$out" in
 esac
 # The target must not be offerable as its own mirror, and neither must the
 # medium: both are already destroyed or already being read.
-menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
+menu=$(printf '\n' | (PATH="$fake:$PATH"; PRISMA_INSTALL_LIB=1; export PRISMA_INSTALL_LIB;
                       . "$INSTALLER"; choose_mirror /dev/sdb 2>&1 >/dev/null))
 printf '%s\n' "$menu" | say_box
 case "$menu" in
@@ -1876,7 +1876,7 @@ case "${MODE:-human}" in
 esac
 VIRT
 chmod +x "$fake/lsblk"
-menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
+menu=$(printf '\n' | (PATH="$fake:$PATH"; PRISMA_INSTALL_LIB=1; export PRISMA_INSTALL_LIB;
                       . "$INSTALLER"; choose_mirror /dev/sdb 2>&1))
 printf '%s\n' "$menu" | say_box
 if [ -z "$menu" ]; then
@@ -1886,7 +1886,7 @@ else
 onto one:
 $menu"
 fi
-tbl=$(PATH="$fake:$PATH" sh -c 'HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB
+tbl=$(PATH="$fake:$PATH" sh -c 'PRISMA_INSTALL_LIB=1; export PRISMA_INSTALL_LIB
                                 . "'"$INSTALLER"'"; disk_table')
 case "$tbl" in
   *ram0*|*zram0*|*loop0*)
@@ -1907,7 +1907,7 @@ case "${MODE:-human}" in
 esac
 ONE
 chmod +x "$fake/lsblk"
-menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
+menu=$(printf '\n' | (PATH="$fake:$PATH"; PRISMA_INSTALL_LIB=1; export PRISMA_INSTALL_LIB;
                       . "$INSTALLER"; choose_mirror /dev/sdb 2>&1))
 printf '%s\n' "$menu" | say_box
 if [ -z "$menu" ]; then
@@ -1931,8 +1931,8 @@ echo "=== the mirror is verified before the install reports success ==="
 mstat=$(mktemp -d)
 vmirror() {  # <mdstat file> <device> -> output on stdout, status in $?
   _mrc=0
-  _mout=$( ( HEXA_INSTALL_LIB=1
-    export HEXA_INSTALL_LIB
+  _mout=$( ( PRISMA_INSTALL_LIB=1
+    export PRISMA_INSTALL_LIB
     . "$INSTALLER"
     verify_mirror "$1" "$2" 2>&1 ) ) || _mrc=$?
   printf '%s\n' "$_mout" | say_box
@@ -2099,7 +2099,7 @@ fi
 echo
 echo "=== the ssh host keys: what the medium handed over does not reach the disk (#248) ==="
 #
-# Measured on the published hexarouting-0.37.0-ab23bd7-dirty.iso, which is the
+# Measured on the published prisma-routing-0.37.0-ab23bd7-dirty.iso, which is the
 # shape every medium up to 0.66.0 has: its squashfs carries
 # ssh_host_{rsa,ecdsa,ed25519}_key, the installer's own `unsquashfs -f -d`
 # line restores them onto the target, and `ssh-keygen -A` over that tree
@@ -2165,8 +2165,8 @@ CHROOT
   drive_keys() {  # <target>; output in $KOUT, exit status in $KRC
     KRC=0
     KOUT=$( ( PATH="$kfake:$PATH"
-              HEXA_INSTALL_LIB=1
-              export HEXA_INSTALL_LIB
+              PRISMA_INSTALL_LIB=1
+              export PRISMA_INSTALL_LIB
               . "$INSTALLER"
               install_ssh_host_keys "$1" ) 2>&1 ) || KRC=$?
     printf '%s\n' "$KOUT" | say_box
@@ -2305,7 +2305,7 @@ echo "=== the confirmation, on a run that would really write (#83) ==="
 #
 # THE ONE ANSWER BETWEEN AN OPERATOR AND A DESTROYED DISK, and nothing had
 # ever run it on either arm. Every case above this line is
-# HEXA_INSTALL_CHECK=1, and check mode exits at the summary - forty lines
+# PRISMA_INSTALL_CHECK=1, and check mode exits at the summary - forty lines
 # before the prompt. The prompt is reached only by a run that means it: root,
 # the tools present, a live filesystem to unpack. So the one question in this
 # program whose wrong answer cannot be undone had no test at all, and neither
@@ -2314,7 +2314,7 @@ echo "=== the confirmation, on a run that would really write (#83) ==="
 # half written, and every one of them was unrun.
 #
 # lab/install-iso.sh cannot reach them either. It drives an install that
-# SUCCEEDS, unattended, with HEXA_INSTALL_YES=1 - which skips this prompt by
+# SUCCEEDS, unattended, with PRISMA_INSTALL_YES=1 - which skips this prompt by
 # design - and a passing install cannot demonstrate a refusal.
 #
 # HOW THIS RUN IS ARRANGED, in full, because it is a test that drives a disk
@@ -2338,7 +2338,7 @@ echo "=== the confirmation, on a run that would really write (#83) ==="
 #      standing in for would be refused by the kernel.
 #
 # `unshare -m` and a /tmp of its own come with it: the installer writes
-# /tmp/sfdisk.log and unpacks into /tmp/hexa-install, and both belong in this
+# /tmp/sfdisk.log and unpacks into /tmp/prisma-install, and both belong in this
 # suite's directory rather than on the machine running it. It also means the
 # log can be READ BACK, which the sfdisk case below does - the installer
 # quotes that file to the console, and a refusal that names a log it did not
@@ -2356,7 +2356,7 @@ else
   # hidden by its own mount: the stubs would be gone from PATH the moment the
   # namespace started, and the installer would refuse for "missing tools"
   # while every case here read as a refusal that fired.
-  rwork=$(mktemp -d -p /var/tmp hexa-install-rig.XXXXXX)
+  rwork=$(mktemp -d -p /var/tmp prisma-install-rig.XXXXXX)
   rbin=$rwork/bin
   mkdir -p "$rbin" "$rwork/tmp" "$rwork/net/ens18/device"
   # AND THE INSTALLER ITSELF, for the same reason one step further out. The
@@ -2367,20 +2367,20 @@ else
   #     $ git clone --no-local . /tmp/gateprobe && cd /tmp/gateprobe
   #     $ sh test/test_installer.sh
   #     FAIL: the refusal does not name update-grub by itself ...
-  #           sh: 0: cannot open /tmp/gateprobe/appliance/hexarouting-install
+  #           sh: 0: cannot open /tmp/gateprobe/appliance/prisma-routing-install
   #     17 FAILURES
   #
   # The same clone under /home is green. Seventeen failures that read as
   # product defects and are a property of where somebody put the tree, and a
   # check that goes red on correct work is one people learn to run around.
-  # tools/release-gate.sh clones to /tmp/hexa-release by default, so this is
+  # tools/release-gate.sh clones to /tmp/prisma-release by default, so this is
   # not a hypothetical location.
   #
   # A COPY and not a bind, because the copy is the same bytes and needs no
   # second mount inside a namespace that already has two. The installer never
   # resolves anything from its own directory - no `dirname "$0"`, measured -
   # so it runs identically from here.
-  RINST=$rwork/hexarouting-install
+  RINST=$rwork/prisma-routing-install
   cp "$INSTALLER" "$RINST"
   # It must BE the program, or every case below measures a stale copy.
   cmp -s "$INSTALLER" "$RINST" || {
@@ -2440,10 +2440,10 @@ RLSBLK
         shift 2
         exec env "$@"' _ "$rwork/tmp" "$RBIND" \
         PATH="$rbin:$PATH" \
-        HEXA_INSTALL_SRC="$rwork/filesystem.squashfs" \
-        HEXA_DISK=/dev/loop0 HEXA_HOSTNAME=cgnat01 \
-        HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
-        HEXA_LOG_GB=1 HEXA_NET_SYS="$rwork/net" HEXA_MGMT_ADDRESS=none \
+        PRISMA_INSTALL_SRC="$rwork/filesystem.squashfs" \
+        PRISMA_DISK=/dev/loop0 PRISMA_HOSTNAME=cgnat01 \
+        PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
+        PRISMA_LOG_GB=1 PRISMA_NET_SYS="$rwork/net" PRISMA_MGMT_ADDRESS=none \
         "$@" sh "$RINST" 2>&1)
     RRRC=$?
     RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
@@ -2520,7 +2520,7 @@ list or this case's rig is not what it says it is: $RROUT" ;;
   # The full PATH here, so every tool is present and the only thing left to
   # stop the run is the medium. The path named is inside this suite's own
   # directory and was never created, so it cannot exist by accident.
-  real yes 0 HEXA_INSTALL_SRC="$rwork/there-is-no-medium-here.squashfs"
+  real yes 0 PRISMA_INSTALL_SRC="$rwork/there-is-no-medium-here.squashfs"
   [ "$RRRC" != 0 ] && [ "$RRSFDISK" = 0 ] \
     && ok "a run with no live filesystem to unpack refuses, disk untouched" \
     || bad "the install carried on with nothing to unpack: rc=$RRRC, the \
@@ -2565,7 +2565,7 @@ the stub set is not what this case assumed: $RROUT" ;;
   # a machine with nothing in it to install onto. That is what the last arm
   # here catches. It used to be caught by "no disk given", which was a line
   # this program could not reach on any input and is gone (#364).
-  real yes 0 HEXA_DISK=
+  real yes 0 PRISMA_DISK=
   case "$RROUT" in
     *"is not a block device"*)
       bad "the menu refused and the run carried on to the check below it, so \
@@ -2606,7 +2606,7 @@ something else: $RROUT" ;;
     # a whole second disk wide enough for the records. A size that did not take
     # or a mirror refused for some other reason would stop here, and the
     # refusal below would be measuring a machine with no mirror answer at all.
-    real yes 0 HEXA_MIRROR=/dev/loop1
+    real yes 0 PRISMA_MIRROR=/dev/loop1
     case "$RROUT" in
       *"has no mdadm"*)
         bad "the control run had mdadm on its PATH and was told it had none, \
@@ -2617,7 +2617,7 @@ so the stub set is not what this case assumed: $RROUT" ;;
 measure a machine that was never asked for one: $RROUT" ;;
     esac
     mv "$rbin/mdadm" "$rwork/mdadm.away"
-    real yes 0 HEXA_MIRROR=/dev/loop1
+    real yes 0 PRISMA_MIRROR=/dev/loop1
     mv "$rwork/mdadm.away" "$rbin/mdadm"
     RBIND=""
     [ "$RRRC" != 0 ] && [ "$RRSFDISK" = 0 ] \
@@ -2684,10 +2684,10 @@ md0 : active raid1 loop0p1[0]
       shift 2
       exec env "$@"' _ "$rwork/tmp" "$rwork/mdstat" \
       PATH="$rbin:$PATH" \
-      HEXA_INSTALL_SRC="$rwork/filesystem.squashfs" \
-      HEXA_DISK=/dev/loop0 HEXA_HOSTNAME=cgnat01 \
-      HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
-      HEXA_LOG_GB=1 HEXA_NET_SYS="$rwork/net" HEXA_MGMT_ADDRESS=none \
+      PRISMA_INSTALL_SRC="$rwork/filesystem.squashfs" \
+      PRISMA_DISK=/dev/loop0 PRISMA_HOSTNAME=cgnat01 \
+      PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
+      PRISMA_LOG_GB=1 PRISMA_NET_SYS="$rwork/net" PRISMA_MGMT_ADDRESS=none \
       sh "$RINST" 2>&1)
   RRRC=$?
   RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
@@ -2816,14 +2816,14 @@ disk: $RROUT" ;;
   esac
 
   # THE UNATTENDED PATH, which is how the release gate and lab/install-iso.sh
-  # install a box: HEXA_INSTALL_YES=1 skips this prompt, and it is the only
+  # install a box: PRISMA_INSTALL_YES=1 skips this prompt, and it is the only
   # thing that may. Without this the refusals above are satisfied by an
   # installer that has stopped being able to install unattended at all.
-  real "" 0 HEXA_INSTALL_YES=1
+  real "" 0 PRISMA_INSTALL_YES=1
   [ "$RRSFDISK" = 1 ] \
     && ok "and an unattended install is not asked, so it does not hang on a \
 console that is not there" \
-    || bad "HEXA_INSTALL_YES=1 stopped at the confirmation: an unattended \
+    || bad "PRISMA_INSTALL_YES=1 stopped at the confirmation: an unattended \
 install would sit at a prompt with nobody to answer it: $RROUT"
 
   rm -rf "$rwork"
@@ -2869,7 +2869,7 @@ elif [ ! -b /dev/loop0 ] \
      || [ "$(cat /sys/block/loop0/size 2>/dev/null || echo 1)" != 0 ]; then
   echo "  SKIP: /dev/loop0 is not an unbound (zero-byte) loop device"
 else
-  iwork=$(mktemp -d -p /var/tmp hexa-install-write.XXXXXX)
+  iwork=$(mktemp -d -p /var/tmp prisma-install-write.XXXXXX)
   ibin=$iwork/bin
   mkdir -p "$ibin" "$iwork/tmp" "$iwork/rc" "$iwork/net/ens18/device"
   echo up > "$iwork/net/ens18/operstate"
@@ -2954,7 +2954,7 @@ d=""
 while [ \$# -gt 0 ]; do [ "\$1" = -d ] && { d=\$2; break; }; shift; done
 [ -n "\$d" ] || exit 1
 mkdir -p "\$d/boot/grub" "\$d/etc/ssh" "\$d/sbin" "\$d/etc/network/interfaces.d" \\
-         "\$d/etc/systemd/system" "\$d/etc/default" "\$d/usr/lib/hexarouting"
+         "\$d/etc/systemd/system" "\$d/etc/default" "\$d/usr/lib/prisma-routing"
 [ -f "$iwork/rc/no-kernel" ] || { : > "\$d/boot/vmlinuz-6.1.0"
   echo 'linux /boot/vmlinuz-6.1.0 root=UUID=x' > "\$d/boot/grub/grub.cfg" ; }
 printf 'root:!:19000:0:99999:7:::\n' > "\$d/etc/shadow"
@@ -3023,11 +3023,11 @@ ISFDISK
         exec env "$@"' _ "$iwork/tmp" "$iwork/mdstat" "$IEFI" "$IPARTS" \
         "${IMIRRORSYS:-}" \
         PATH="$ibin" \
-        HEXA_INSTALL_SRC="$iwork/filesystem.squashfs" \
-        HEXA_DISK=/tmp/disk HEXA_HOSTNAME=cgnat01 \
-        HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
-        HEXA_LOG_GB=1 HEXA_NET_SYS="$iwork/net" \
-        HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=dhcp \
+        PRISMA_INSTALL_SRC="$iwork/filesystem.squashfs" \
+        PRISMA_DISK=/tmp/disk PRISMA_HOSTNAME=cgnat01 \
+        PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
+        PRISMA_LOG_GB=1 PRISMA_NET_SYS="$iwork/net" \
+        PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=dhcp \
         "$@" sh "$INSTALLER" 2>&1)
     IWRC=$?
     printf '%s\n' "$IWOUT" | say_box
@@ -3060,14 +3060,14 @@ $IWOUT"
   # closing screens. An operator who chose no management network has to be
   # told that is what they get, on the same screen.
   iwrite 'yes
-' HEXA_MGMT_ADDRESS=none HEXA_MGMT_INTERFACE=
+' PRISMA_MGMT_ADDRESS=none PRISMA_MGMT_INTERFACE=
   isaid "an install answered 'none' says so where it is written" \
         "management network: none, by answer"
   isaid "and again on the closing screen, with where the box IS reached" \
         "No management network was asked for"
   iwrite 'yes
-' HEXA_MGMT_ADDRESS=10.0.0.2/24 HEXA_MGMT_GATEWAY=10.0.0.1 \
-  HEXA_MGMT_DNS=192.0.2.53
+' PRISMA_MGMT_ADDRESS=10.0.0.2/24 PRISMA_MGMT_GATEWAY=10.0.0.1 \
+  PRISMA_MGMT_DNS=192.0.2.53
   isaid "and a static answer closes with the address it was given" \
         "Managed on ens18 at 10.0.0.2/24 via 10.0.0.1"
   # A STATIC ADDRESS WITH NO GATEWAY, typed rather than passed: an empty
@@ -3077,7 +3077,7 @@ $IWOUT"
   iwrite '
 
 yes
-' HEXA_MGMT_ADDRESS=10.0.0.2/24
+' PRISMA_MGMT_ADDRESS=10.0.0.2/24
   isaid "an empty gateway is taken, and the summary says what it costs" \
         "no gateway: its own subnet reaches it, nothing else"
 
@@ -3161,7 +3161,7 @@ $IWOUT"
   IPARTS="disk disk1 disk2 disk3 mirror mirror1"
   IMIRRORSYS=mirror
   iwrite 'yes
-' HEXA_MIRROR=/tmp/mirror
+' PRISMA_MIRROR=/tmp/mirror
   [ "$IWRC" = 0 ] \
     && ok "an install with a records mirror runs to the end" \
     || bad "the mirrored install failed: rc=$IWRC
@@ -3180,7 +3180,7 @@ $IWOUT"
   # refused on this one.
   echo 124 > "$iwork/rc/sfdisk.2"
   iwrite 'yes
-' HEXA_MIRROR=/tmp/mirror
+' PRISMA_MIRROR=/tmp/mirror
   rm -f "$iwork/rc/sfdisk.2"
   [ "$IWRC" = 0 ] \
     && bad "the mirror's partitioner was killed and the install went on" \
@@ -3188,7 +3188,7 @@ $IWOUT"
              "sfdisk timed out on /tmp/mirror after 90s"
   IPARTS="disk disk1 disk2 disk3 mirror"
   iwrite 'yes
-' HEXA_MIRROR=/tmp/mirror
+' PRISMA_MIRROR=/tmp/mirror
   [ "$IWRC" = 0 ] \
     && bad "the mirror produced no partition and the install went on" \
     || isaid "and a mirror disk whose table produced nothing stops by name" \
@@ -3196,16 +3196,16 @@ $IWOUT"
   IPARTS="disk disk1 disk2 disk3 mirror mirror1"
   ifail "an mdadm that cannot create the array stops the install" \
         mdadm "mdadm could not create the records mirror" \
-        HEXA_MIRROR=/tmp/mirror
+        PRISMA_MIRROR=/tmp/mirror
   ifail "and a records-array unit that will not enable stops it too" \
         chroot-systemctl "could not enable the records array unit" \
-        HEXA_MIRROR=/tmp/mirror
+        PRISMA_MIRROR=/tmp/mirror
   # update-initramfs is the one step here that is NOT fatal: nothing at boot
   # depends on the initramfs copy of mdadm.conf, and an install refused over
   # it would be an install refused over a file that is read by nothing.
   echo 1 > "$iwork/rc/chroot-update-initramfs"
   iwrite 'yes
-' HEXA_MIRROR=/tmp/mirror
+' PRISMA_MIRROR=/tmp/mirror
   rm -f "$iwork/rc/chroot-update-initramfs"
   [ "$IWRC" = 0 ] \
     && isaid "an update-initramfs that does not run is said out loud and the
@@ -3229,8 +3229,8 @@ echo "=== a real run that is not root refuses before it asks anything ==="
 if [ "$(id -u)" = 0 ]; then
   echo "  SKIP: this suite is running as root"
 else
-  nrout=$(env HEXA_DISK=/tmp/not-a-disk HEXA_HOSTNAME=cgnat01 \
-      HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
+  nrout=$(env PRISMA_DISK=/tmp/not-a-disk PRISMA_HOSTNAME=cgnat01 \
+      PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
       sh "$INSTALLER" </dev/null 2>&1)
   nrrc=$?
   printf '%s\n' "$nrout" | say_box
@@ -3283,7 +3283,7 @@ SAY_UNSAFE_AT_MOST=48
 # Held at two rather than excused, because a third appearing somewhere that
 # say_row_enders does not scan would be a screen nothing counts at all.
 SAY_UNSEEN_AT_MOST=2
-say_report appliance/hexarouting-install
+say_report appliance/prisma-routing-install
 rm -rf "$SAY_DIR" "$GLOBALBIN"
 
 echo

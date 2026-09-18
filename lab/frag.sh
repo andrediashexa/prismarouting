@@ -43,7 +43,7 @@ vppctl set interface bpa in2out pg0
 vppctl set interface bpa out2in pg1
 
 echo "=========== 2. pg2, attached over the binary API ==========="
-# Exactly the message hexash sends, on the wire, with every field spelled out
+# Exactly the message prismash sends, on the wire, with every field spelled out
 # - not the CLI command with a different spelling. If the handler diverges
 # from the CLI's again, it diverges here.
 PG2=$(vppctl show interface | awk '$1=="pg2" {print $2}')

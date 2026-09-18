@@ -26,7 +26,7 @@
 # reused to log in anywhere.
 set -eu
 
-URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
+URL=${WIKI_URL:-https://prisma-routing.hexanetworks.com.br}
 [ -n "${WIKI_TOKEN:-}" ] || {
   echo "error: set WIKI_TOKEN to an Outline API token." >&2
   echo "       No token or address is kept in this repository on purpose." >&2

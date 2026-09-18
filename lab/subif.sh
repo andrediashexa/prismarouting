@@ -22,7 +22,7 @@ vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl set interface state pg0 up
 
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 
 echo "=========== creating a sub-interface through the VTY ==========="
 $HX -c "configure" -c "interface pg0.100" -c "vlan 100" \

@@ -38,8 +38,44 @@ NAME=$(sh "$T/tools/version-stamp.sh" --filename "$T")
 
 echo "=== the name it looks for is the one this tree would build ==="
 case "$NAME" in
-  hexarouting-*.iso) ok "$NAME" ;;
+  prisma-routing-*.iso) ok "$NAME" ;;
   *) bad "version-stamp.sh --filename answered '$NAME'" ;;
+esac
+
+echo
+echo "=== and the medium's volume label spells the same name ==="
+# The label is what lsblk, blkid and a file manager show for the stick, and
+# the filename is what the release page shows: two spellings of one name on
+# one medium. The rename in #202 moved the filename and not the label, because
+# the label is spelt in capitals and the scope was measured with
+# case-sensitive greps, so a medium called prisma-routing-<v>.iso mounted as
+# HEXAROUTING. The label expected here is DERIVED from the filename's owner,
+# tools/version-stamp.sh, in ISO 9660's spelling (A-Z, 0-9 and _, 32 at most):
+# the product's part of the filename, upper-cased, hyphens to underscores. A
+# label typed here would be a second copy of the name, which is the shape
+# that let the two part in the first place.
+PRODUCT=${NAME%-$(cat "$T/VERSION")*}
+WANT=$(printf '%s' "$PRODUCT" | tr 'a-z-' 'A-Z_')
+VOLID=$(sed -n 's/^grub-mkrescue .* -volid \([^ ]*\).*$/\1/p' \
+          "$REPO/appliance/build-iso.sh")
+case "$VOLID" in
+  "") bad "appliance/build-iso.sh hands grub-mkrescue no -volid, so the"\
+" medium is labelled whatever the tool picks" ;;
+  "$WANT") ok "grub-mkrescue labels the medium $VOLID, as $PRODUCT reads"\
+" in ISO 9660" ;;
+  *) bad "the medium is labelled '$VOLID' and its filename says '$PRODUCT':"\
+" a stick called $NAME mounts under another name" ;;
+esac
+# And a label the tool would rewrite is a label the check above read and no
+# stick carries: xorriso maps a character outside the set to _ and truncates.
+case "$VOLID" in
+  "") ;;
+  *[!A-Z0-9_]*) bad "'$VOLID' is not an ISO 9660 label: A-Z, 0-9 and _"\
+" only" ;;
+  *) [ ${#VOLID} -le 32 ] \
+       && ok "and it is spelt the way ISO 9660 allows, ${#VOLID} of 32" \
+       || bad "'$VOLID' is ${#VOLID} characters and an ISO 9660 label"\
+" holds 32" ;;
 esac
 
 echo

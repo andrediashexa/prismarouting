@@ -17,7 +17,7 @@
 # broke is the one that matters here: a lab that configures the box under
 # test cannot notice the box failing to configure itself.
 #
-# So every line below that sets up the EXPORT goes through hexash, exactly as
+# So every line below that sets up the EXPORT goes through prismash, exactly as
 # an operator types it. The topology - interfaces, routes, the pool - is still
 # vppctl, because the topology is not what is under test.
 #
@@ -38,9 +38,9 @@ set -u
 # the assertions at the bottom must go red - that is the only way to know they
 # can.
 MODE=${1:-with-exporter}
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }

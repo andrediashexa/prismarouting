@@ -24,11 +24,11 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 . "$REPO/tools/selftest-verdict.sh"
 
-printf '  [ ok ] dataplane forwarding on 0000:01:00.0\n  HexaRouting ready.\n' > "$WORK/ready"
-printf '  [ ok ] records volume\n  HexaRouting ready, with 2 warning(s) above.\n' > "$WORK/warned"
-printf '  HexaRouting is installed and healthy, and has no NIC to forward on:\n' > "$WORK/nofwd"
+printf '  [ ok ] dataplane forwarding on 0000:01:00.0\n  Prisma Routing ready.\n' > "$WORK/ready"
+printf '  [ ok ] records volume\n  Prisma Routing ready, with 2 warning(s) above.\n' > "$WORK/warned"
+printf '  Prisma Routing is installed and healthy, and has no NIC to forward on:\n' > "$WORK/nofwd"
 printf '  [FAIL] vpp.service\n  2 check(s) failed. The box is NOT ready.\n' > "$WORK/failed"
-printf '  [ ok ] something\nhexarouting login: \n' > "$WORK/none"
+printf '  [ ok ] something\nprisma-routing login: \n' > "$WORK/none"
 
 # What each reader answers, as yes/no, on its own line so the call stands in
 # command position for test/test_every_function.py.
@@ -84,7 +84,7 @@ echo "=== and the sentences are the self-test's own ==="
 # Each fixture above is checked against appliance/selftest's text, so that a
 # reworded sentence there does not leave these five consoles asserting a
 # product that no longer exists.
-for s in "HexaRouting ready." "HexaRouting is installed and healthy, and has" \
+for s in "Prisma Routing ready." "Prisma Routing is installed and healthy, and has" \
          "check(s) failed. The box is NOT ready."; do
   grep -qF "$s" "$REPO/appliance/selftest" \
     && ok "appliance/selftest still says '$s'" \

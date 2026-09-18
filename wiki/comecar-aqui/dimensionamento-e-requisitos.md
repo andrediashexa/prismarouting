@@ -139,7 +139,7 @@ Numa caixa de 4 ou 8 núcleos isso é equilibrado. Num processador de 32 núcleo
 
 ## Devolvendo núcleos
 
-`HEXA_MAX_WORKERS`, em `/etc/hexarouting/tune.env`, limita quantos núcleos físicos viram threads de encaminhamento. Ele **vem vazio**, e vazio significa sem limite - exatamente o comportamento acima. Preenchendo, os núcleos liberados deixam de ser isolados e voltam para o escalonador, onde o roteamento e a VTY podem usá-los de fato.
+`PRISMA_MAX_WORKERS`, em `/etc/prisma-routing/tune.env`, limita quantos núcleos físicos viram threads de encaminhamento. Ele **vem vazio**, e vazio significa sem limite - exatamente o comportamento acima. Preenchendo, os núcleos liberados deixam de ser isolados e voltam para o escalonador, onde o roteamento e a VTY podem usá-los de fato.
 
 Cada núcleo devolvido é aquela fatia da capacidade de encaminhamento. Não existe um valor padrão porque a troca depende de quanto trabalho de controle a caixa carrega: uma caixa que só recebe rota padrão quase não tem plano de controle; uma que recebe duas tabelas cheias, refaz política BGP e ainda serve consultas tem bastante.
 
@@ -164,22 +164,22 @@ O modo conservador do segundo caso não é um defeito: o equipamento não pode f
 
 **Herdado não é o mesmo que imposto.** Na mesma caixa, um processo que pede explicitamente para rodar no núcleo isolado **consegue**. Quem escreve numa sessão de shell que quer um núcleo de encaminhamento pediu aquilo de propósito, e nada que o produto instala faz isso sozinho, mas vale saber que a proteção é por herança e não por cerca.
 
-Quem decide quanto de CPU o plano de controle tem é `HEXA_MAX_WORKERS`, e isso é uma decisão de dimensionamento, não um limite de processo.
+Quem decide quanto de CPU o plano de controle tem é `PRISMA_MAX_WORKERS`, e isso é uma decisão de dimensionamento, não um limite de processo.
 
 :::
 
 ## O que o arquivo de ajuste aceita
 
-`/etc/hexarouting/tune.env` é lido a cada boot, e cada valor dele tem uma forma. Um valor fora dessa forma é **recusado em voz alta**, com o nome da variável e o valor entre aspas, e a caixa usa o padrão de fábrica no lugar.
+`/etc/prisma-routing/tune.env` é lido a cada boot, e cada valor dele tem uma forma. Um valor fora dessa forma é **recusado em voz alta**, com o nome da variável e o valor entre aspas, e a caixa usa o padrão de fábrica no lugar.
 
 | Variável | Aceita | De fábrica | Se for recusado |
 |----------|--------|------------|-----------------|
-| `HEXA_DATAPLANE_IF` | nome de interface, ou vazio | vazio      | —               |
-| `HEXA_SUBSCRIBERS` | só dígitos | `200000`   | `200000`        |
-| `HEXA_LOW_LATENCY` | `1` ou `0`, mais nada | `1`        | `1`             |
-| `HEXA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio      | sem limite      |
+| `PRISMA_DATAPLANE_IF` | nome de interface, ou vazio | vazio      | —               |
+| `PRISMA_SUBSCRIBERS` | só dígitos | `200000`   | `200000`        |
+| `PRISMA_LOW_LATENCY` | `1` ou `0`, mais nada | `1`        | `1`             |
+| `PRISMA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio      | sem limite      |
 
-`HEXA_LOW_LATENCY=1` desliga os estados profundos de economia de energia do processador, desliga as páginas grandes transparentes e mantém o governador de frequência em `performance`. Custa energia e compra rajada previsível, e é por isso que vem `1`: isto é um roteador. `0` deixa os três em paz, para uma caixa que precisa economizar mais do que precisa encaminhar.
+`PRISMA_LOW_LATENCY=1` desliga os estados profundos de economia de energia do processador, desliga as páginas grandes transparentes e mantém o governador de frequência em `performance`. Custa energia e compra rajada previsível, e é por isso que vem `1`: isto é um roteador. `0` deixa os três em paz, para uma caixa que precisa economizar mais do que precisa encaminhar.
 
 
 :::warning
@@ -249,13 +249,13 @@ O self-test de boot imprime quanto do segmento está gasto, sobre quantas interf
         size: VPP's own default, which this product does not set
 ```
 
-São três respostas possíveis nessa última linha: o padrão do dataplane, `chosen by hexarouting-tune from this box's configuration` quando foi a caixa que calculou, e `set in /etc/hexarouting/vpp-base.conf` quando foi você.
+São três respostas possíveis nessa última linha: o padrão do dataplane, `chosen by prisma-routing-tune from this box's configuration` quando foi a caixa que calculou, e `set in /etc/prisma-routing/vpp-base.conf` quando foi você.
 
 Passando da metade isso vira um aviso. Passando de três quartos vira uma **falha**, com o que acontece quando enche e com o que fazer a respeito. Três quartos, e não noventa por cento, porque o último pedaço não é aproveitável: a tabela de contadores é um bloco só de memória, e crescer significa copiá-la inteira, o que exige a cópia velha e a nova ao mesmo tempo.
 
 ## Como escolher o tamanho você mesmo
 
-Em `/etc/hexarouting/vpp-base.conf`, que é o arquivo base que você edita:
+Em `/etc/prisma-routing/vpp-base.conf`, que é o arquivo base que você edita:
 
 ```
 statseg {
@@ -345,7 +345,7 @@ Premissas explícitas, para ordem de grandeza e não para precisão: 200 mil ass
 
 ## Os registros têm sistema de arquivos próprio
 
-Em modo dinâmico o log de alocação **é** o registro de conexão que o Marco Civil exige guardar por um ano. Por isso o instalador cria três partições — ESP, raiz e `/var/log/hexarouting` — em vez de deixar tudo junto.
+Em modo dinâmico o log de alocação **é** o registro de conexão que o Marco Civil exige guardar por um ano. Por isso o instalador cria três partições — ESP, raiz e `/var/log/prisma-routing` — em vez de deixar tudo junto.
 
 
 :::warning
@@ -355,7 +355,7 @@ Compartilhando o sistema de arquivos com o resto, um log que enche impede a máq
 
 O tamanho padrão é aritmético e a conta aparece na tela: \~80 MB por dia para 200 mil assinantes em modo dinâmico, ou cerca de **29 GB por ano**. Modo determinístico não registra alocação nenhuma e quase não precisa de espaço — que é por que isso é uma pergunta e não uma constante. A raiz nunca fica com menos de 8 GB.
 
-Em instalação não assistida, `hexarouting.log-gb=` responde essa pergunta na linha de comando do kernel.
+Em instalação não assistida, `prisma-routing.log-gb=` responde essa pergunta na linha de comando do kernel.
 
 O volume é montado com `nofail`: uma máquina que não dá boot porque o volume de registros sumiu é uma máquina em que ninguém consegue entrar para descobrir o porquê. Por isso o self-test de boot **reporta onde os registros estão** — sem isso, uma caixa cujo volume não montou sobe caladinha gravando na raiz.
 

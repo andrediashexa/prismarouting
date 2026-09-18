@@ -2,7 +2,7 @@
 """
 The kernel command line, written down twice, and nothing compared the two.
 
-`appliance/hexarouting-tune` builds the line in `render_grub()` and
+`appliance/prisma-routing-tune` builds the line in `render_grub()` and
 `LOW_LATENCY_CMDLINE`. `docs/appliance.md` states the same line parameter by
 parameter, and states a second list of parameters this appliance deliberately
 does NOT set. A reader diagnosing a box reads the document; a booting box reads
@@ -22,7 +22,7 @@ So four things are asserted here, and each of them can fail:
      documented and not set is a document promising tuning that is not there.
   2. Where the document states a literal value, it is the value the tuner
      emits. `iommu=pt` and `iommu=on` are different machines.
-  3. The parameters the document marks as conditional on HEXA_LOW_LATENCY are
+  3. The parameters the document marks as conditional on PRISMA_LOW_LATENCY are
      exactly the ones that disappear with --no-low-latency. This is the rule
      that "anything costing power or a diagnostic goes behind the switch",
      turned into something that fails when it is broken.
@@ -60,7 +60,7 @@ def ok(msg):
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TUNE = os.path.join(REPO, "appliance", "hexarouting-tune")
+TUNE = os.path.join(REPO, "appliance", "prisma-routing-tune")
 DOC = os.path.join(REPO, "docs", "appliance.md")
 
 
@@ -248,11 +248,11 @@ if line_on and line_off:
 
     dropped = set(emitted) - set(emitted_off)
     check(dropped == low_latency_only,
-          f"HEXA_LOW_LATENCY=0 does not drop what the document says it does.\n"
+          f"PRISMA_LOW_LATENCY=0 does not drop what the document says it does.\n"
           f"    documented as conditional: {sorted(low_latency_only)}\n"
           f"    actually dropped:          {sorted(dropped)}")
     if dropped == low_latency_only:
-        ok(f"HEXA_LOW_LATENCY=0 drops exactly the {len(dropped)} parameters "
+        ok(f"PRISMA_LOW_LATENCY=0 drops exactly the {len(dropped)} parameters "
            f"marked conditional: {', '.join(sorted(dropped))}")
 
 print("\n=== and the tuning the document says is NOT applied ===")
@@ -288,7 +288,7 @@ for cells in CAND:
 # the same table was already swept across the whole of appliance/. The
 # asymmetry was the hole: a candidate parameter can reach a box from a systemd
 # unit's ExecStartPre, from the installer, from build-iso.sh writing a boot
-# line into the medium, or from a branch of hexarouting-tune that this file's
+# line into the medium, or from a branch of prisma-routing-tune that this file's
 # one synthetic topology never takes - and none of those was being read. The
 # tuner's own source is included for exactly that last reason: rendering one
 # topology proves what that topology emits, not what the tuner can emit.
@@ -322,13 +322,13 @@ check(len(SHIPPED) >= 10,
 # actually about are named, and one that is not in the sweep is a failure.
 MUST_SWEEP = [
     os.path.join("appliance", "apply-tuning"),
-    os.path.join("appliance", "hexarouting-tune"),
+    os.path.join("appliance", "prisma-routing-tune"),
     os.path.join("appliance", "selftest"),
     os.path.join("appliance", "build-iso.sh"),
     os.path.join("appliance", "install.sh"),
     os.path.join("appliance", "etc", "sysctl.conf"),
     os.path.join("appliance", "etc", "tune.env"),
-    os.path.join("appliance", "systemd", "hexarouting-tune.service"),
+    os.path.join("appliance", "systemd", "prisma-routing-tune.service"),
 ]
 swept = {name for name, _ in SHIPPED}
 absent = [m for m in MUST_SWEEP if m not in swept]

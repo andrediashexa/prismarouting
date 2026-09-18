@@ -11,7 +11,7 @@ and the logs on both boxes look perfectly healthy (docs/ha.md).
 WHICH FIELDS MUST MATCH IS NOT DECIDED HERE, and that is the design. It is
 decided by `Pool.lines(in_place=False)`, which is what `Config.delta_to`
 already uses to decide a pool must be rebuilt, and
-`test/test_hexash_config.py` asserts that classification field by field AND
+`test/test_prismash_config.py` asserts that classification field by field AND
 asserts the table covers every field a pool has. This file asserts the two
 never drift apart: the fingerprint and the comparison an operator is shown
 must agree with each other and with that classification.
@@ -34,9 +34,9 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import config      # noqa: E402
-import hexash      # noqa: E402
+import prismash      # noqa: E402
 
 fail = 0
 
@@ -87,14 +87,14 @@ class FakeVpp:
 
 
 def shell(text=RUNNING, up=True):
-    sh = hexash.Shell()
+    sh = prismash.Shell()
     # Stated outright rather than inherited from whoever runs the suite, for
-    # the reason test_hexash_apply.py gives: Shell() reads the invoking
+    # the reason test_prismash_apply.py gives: Shell() reads the invoking
     # account's real groups, and a suite that depends on them fails on any
     # developer machine.
-    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
     sh.dp = FakeVpp(text, up)
-    sh.frr = type("F", (hexash.Frr,), {
+    sh.frr = type("F", (prismash.Frr,), {
         "available": lambda self: False,
         "show": lambda self, c: (1, ""),
         "reload": lambda self, lines, check_only=False: (0, "")})()
@@ -245,7 +245,7 @@ print("\n=== the peer file is what `save` writes, not what the device says ===")
 # where nothing at all is wrong.
 _device = config.Config.parse(RUNNING)
 _as_saved = peer_file(_device.text(), "as-saved.conf")
-_read, _why = hexash.read_peer_config(_as_saved)
+_read, _why = prismash.read_peer_config(_as_saved)
 check(_read is not None, f"a saved configuration must be readable: {_why}")
 check(_read is not None
       and _read.mapping_fingerprint() == _device.mapping_fingerprint(),
@@ -270,7 +270,7 @@ _unreadable = {
                   "unknown.conf"),
 }
 for label, path in _unreadable.items():
-    cfg, why = hexash.read_peer_config(path)
+    cfg, why = prismash.read_peer_config(path)
     check(cfg is None, f"{label} must not parse as a peer configuration")
     check(bool(why), f"{label} must come with a reason")
     out = said(shell().show_ha, ["peer", path])
@@ -283,7 +283,7 @@ print(f"  {len(_unreadable)} unreadable peers, none of them a match")
 # A directory is the case an exception would escape from rather than the
 # reason arriving at the prompt, which is where somebody is standing in a
 # maintenance window.
-_cfg, _why = hexash.read_peer_config(WORK)
+_cfg, _why = prismash.read_peer_config(WORK)
 check(_cfg is None and _why, f"a directory must be refused with a reason: "
                              f"{_why!r}")
 print(f"  and a directory reads as: {_why}")
@@ -302,8 +302,8 @@ check("corporate" not in out,
 print("  the report stops at this box and says so")
 
 print("\n=== with no peer configuration, the box says it cannot tell ===")
-_saved = hexash.PEER_CONFIG_PATH
-hexash.PEER_CONFIG_PATH = os.path.join(WORK, "absent.conf")
+_saved = prismash.PEER_CONFIG_PATH
+prismash.PEER_CONFIG_PATH = os.path.join(WORK, "absent.conf")
 out = said(shell().show_ha, [])
 check("nothing here says the two boxes agree" in out,
       f"a box with no peer configuration must say so:\n{out}")
@@ -318,7 +318,7 @@ print("\n=== commit warns about a divergence and never refuses it ===")
 # A refusal would fire on every correct procedure, and the way past it would
 # be to stop copying the peer's configuration - which removes the check
 # instead of the divergence.
-hexash.PEER_CONFIG_PATH = _peer
+prismash.PEER_CONFIG_PATH = _peer
 sh = shell()
 target = config.Config.parse(RUNNING)
 out = said(sh.apply, target, True)
@@ -332,15 +332,15 @@ check(ok is True, "the commit must still be allowed through")
 print(f"  commit check -> {ok}, errors recorded: {sh.failed}")
 
 print("\n=== and says nothing about a pair that agrees ===")
-hexash.PEER_CONFIG_PATH = _agree
+prismash.PEER_CONFIG_PATH = _agree
 out = said(shell().apply, config.Config.parse(RUNNING), True)
 check("does not map subscribers the same way" not in out,
       f"a pair that agrees must draw no warning at commit:\n{out}")
-hexash.PEER_CONFIG_PATH = os.path.join(WORK, "absent.conf")
+prismash.PEER_CONFIG_PATH = os.path.join(WORK, "absent.conf")
 out = said(shell().apply, config.Config.parse(RUNNING), True)
 check("does not map subscribers the same way" not in out,
       f"and a box with no peer configuration must not warn at all:\n{out}")
-hexash.PEER_CONFIG_PATH = _saved
+prismash.PEER_CONFIG_PATH = _saved
 print("  silent on an agreeing pair, and on a box that has no peer")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

@@ -2,22 +2,22 @@
 
 ```mermaid
 flowchart TD
-    L["login por console ou SSH"] --> H{"hexash iniciou?"}
-    H -->|sim| V["VTY hexarouting&gt;"]
+    L["login por console ou SSH"] --> H{"prismash iniciou?"}
+    H -->|sim| V["VTY prisma&gt;"]
     H -->|não| F["shell, COM o motivo impresso"]
     V -->|"start shell"| S["shell filho — exit volta"]
-    B["boot com hexash=off"] --> F2["shell direto, sem VTY"]
+    B["boot com prismash=off"] --> F2["shell direto, sem VTY"]
 ```
 
 ## Onde você cai ao entrar
 
 | Situação | O que acontece |
 |----------|----------------|
-| Login por console ou SSH | Cai no `hexash` |
+| Login por console ou SSH | Cai no `prismash` |
 | `start shell` dentro da VTY | Abre um shell como filho; `exit` volta para a VTY |
 | `scp`, `rsync`, `git` por SSH | Chegam a um shell real — shell de login invocado com `-c` passa direto |
-| `hexash` falha ao iniciar | Cai num shell **com o motivo impresso** |
-| Boot com `hexash=off` | Pula a VTY inteiramente; a ISO oferece isso como entrada de menu |
+| `prismash` falha ao iniciar | Cai num shell **com o motivo impresso** |
+| Boot com `prismash=off` | Pula a VTY inteiramente; a ISO oferece isso como entrada de menu |
 
 Na **ISO** o console tem autologin — a conta root está travada, não há o que autenticar. Na máquina **instalada** não há autologin e a senha é a definida durante a instalação.
 
@@ -25,17 +25,17 @@ O autologin de console é feito **apenas pela ISO**, e o instalador o remove do 
 
 ### `start shell`
 
-Está na árvore de comandos: TAB e `?` oferecem. E é **restrito a administradores** — um shell nesta caixa é todas as capacidades de uma vez, então quem não tem `hexa-admin` é recusado pelo nome do papel que tem:
+Está na árvore de comandos: TAB e `?` oferecem. E é **restrito a administradores** — um shell nesta caixa é todas as capacidades de uma vez, então quem não tem `prisma-admin` é recusado pelo nome do papel que tem:
 
 ```
 error: start shell: permission denied for a read-only account
-    membership of hexa-cgnat allows CGNAT configuration, hexa-admin allows
+    membership of prisma-cgnat allows CGNAT configuration, prisma-admin allows
     everything
 ```
 
 ```
 error: start shell: permission denied for a cgnat-operator account
-    this change needs hexa-admin
+    this change needs prisma-admin
 ```
 
 Esconder nunca foi a fronteira; a verificação de capacidade é. E um comando que o administrador não consegue encontrar é um comando que ele vai pedir a alguém — por isso ele é oferecido em vez de escondido.
@@ -44,11 +44,11 @@ O shell abre como processo **filho** da VTY: sair dele volta para a VTY, não en
 
 ### Por que existe saída de emergência
 
-Apontar o shell de login para uma aplicação cria risco de travamento total: um `hexash` que falhasse ao iniciar deixaria ninguém capaz de alcançar a máquina, nem por console nem por SSH. Por isso há **duas saídas independentes**, e a segunda (`hexash=off` no boot) não depende do `hexash` funcionar.
+Apontar o shell de login para uma aplicação cria risco de travamento total: um `prismash` que falhasse ao iniciar deixaria ninguém capaz de alcançar a máquina, nem por console nem por SSH. Por isso há **duas saídas independentes**, e a segunda (`prismash=off` no boot) não depende do `prismash` funcionar.
 
 
 :::info
-`install.sh` **não** troca o shell de login de ninguém, a menos que `HEXA_VTY_LOGIN=1` esteja setado. Numa Debian existente a máquina pode ter outras funções, e trocar o shell do root silenciosamente é o tipo de surpresa que o operador descobre no pior momento.
+`install.sh` **não** troca o shell de login de ninguém, a menos que `PRISMA_VTY_LOGIN=1` esteja setado. Numa Debian existente a máquina pode ter outras funções, e trocar o shell do root silenciosamente é o tipo de surpresa que o operador descobre no pior momento.
 
 :::
 
@@ -58,13 +58,13 @@ Duas capacidades, mapeadas em **grupos do sistema** — não num banco de contas
 
 | Grupo | Pode alterar |
 |-------|--------------|
-| `hexa-admin` | tudo: roteamento, configuração da própria máquina e CGNAT |
-| `hexa-cgnat` | somente configuração de CGNAT |
+| `prisma-admin` | tudo: roteamento, configuração da própria máquina e CGNAT |
+| `prisma-cgnat` | somente configuração de CGNAT |
 | nenhum dos dois | somente leitura |
 
 `root` tem as duas, porque root fala com o socket do dataplane diretamente e fingir o contrário seria teatro.
 
-Uma coisa que `hexa-admin` **não** faz hoje: reiniciar ou desligar a caixa. `system reboot` e `system shutdown` são oferecidos a quem tem o papel, mas quem decide o reinício é o systemd, e a appliance não instala regra nenhuma que conceda isso a uma conta que não é root — uma conta `hexa-admin` lê o aviso do que custa e recebe a recusa do próprio systemd, nas palavras dele. Hoje, quem reinicia a caixa pela VTY é `root`.
+Uma coisa que `prisma-admin` **não** faz hoje: reiniciar ou desligar a caixa. `system reboot` e `system shutdown` são oferecidos a quem tem o papel, mas quem decide o reinício é o systemd, e a appliance não instala regra nenhuma que conceda isso a uma conta que não é root — uma conta `prisma-admin` lê o aviso do que custa e recebe a recusa do próprio systemd, nas palavras dele. Hoje, quem reinicia a caixa pela VTY é `root`.
 
 As capacidades são lidas da participação em grupos **no momento em que a VTY inicia**, e nunca de algo que o programa guarde: a resposta precisa ser a que o sistema daria, senão desprovisionar uma conta aqui não a desprovisiona de fato.
 
@@ -116,25 +116,25 @@ Mídias anteriores à **0.37.0** não instalavam o componente que atende essa ch
 
 | Tipo de mudança | Capacidade exigida |
 |-----------------|--------------------|
-| Pools, interfaces CGNAT, timeouts, limites, bypass, forwards | `hexa-cgnat`       |
-| Roteamento, SSH, contas de usuário, SNMP, MTU, uRPF | `hexa-admin`       |
+| Pools, interfaces CGNAT, timeouts, limites, bypass, forwards | `prisma-cgnat`       |
+| Roteamento, SSH, contas de usuário, SNMP, MTU, uRPF | `prisma-admin`       |
 
-## Invocando o hexash
+## Invocando o prismash
 
 ```sh
-hexash                       # sessão interativa
-hexash -c "show cgnat pool"  # um comando e sai
-hexash -c "cmd1" -c "cmd2"   # vários comandos em sequência
-hexash --load [arquivo]      # aplica um arquivo de configuração salvo
+prismash                       # sessão interativa
+prismash -c "show cgnat pool"  # um comando e sai
+prismash -c "cmd1" -c "cmd2"   # vários comandos em sequência
+prismash --load [arquivo]      # aplica um arquivo de configuração salvo
 ```
 
-`--load` sem argumento usa `/etc/hexarouting/hexarouting.conf`. É o que roda no boot, pela `hexarouting.service`.
+`--load` sem argumento usa `/etc/prisma-routing/prisma-routing.conf`. É o que roda no boot, pela `prisma-routing.service`.
 
-O código de saída é **1** se qualquer comando falhou, **0** caso contrário - o que permite usar `hexash -c` em script sem depender de casar padrões de texto na saída.
+O código de saída é **1** se qualquer comando falhou, **0** caso contrário - o que permite usar `prismash -c` em script sem depender de casar padrões de texto na saída.
 
 ### Um comando recusado recusa o `commit` do mesmo lote
 
-Se qualquer comando de uma mesma invocação `hexash -c` for recusado, o `commit` daquela invocação é recusado junto: a caixa nomeia os comandos que não entraram e **não aplica nada**. Ou o lote inteiro entra, ou nada entra.
+Se qualquer comando de uma mesma invocação `prismash -c` for recusado, o `commit` daquela invocação é recusado junto: a caixa nomeia os comandos que não entraram e **não aplica nada**. Ou o lote inteiro entra, ou nada entra.
 
 ```
 error: invalid argument: block-size 16: expected 64-32768
@@ -148,16 +148,16 @@ A razão é a mesma do `--load`, que recusa um arquivo inteiro em vez de aplicá
 
 O lote continua rodando até o fim, de propósito: assim todas as recusas aparecem de uma vez e você corrige todas antes de rodar de novo. Nada que venha depois alcança a caixa, porque a caixa só muda no `commit` e o `commit` foi recusado.
 
-Isso vale só para `hexash -c`. Numa sessão interativa quem está lendo a recusa decide o que fazer com ela, e o `commit` digitado depois é aplicado normalmente. Um `hexash -c` que só faz perguntas também não é afetado: não há `commit` nele.
+Isso vale só para `prismash -c`. Numa sessão interativa quem está lendo a recusa decide o que fazer com ela, e o `commit` digitado depois é aplicado normalmente. Um `prismash -c` que só faz perguntas também não é afetado: não há `commit` nele.
 
 ### Caminhos
 
 | Caminho | Conteúdo |
 |---------|----------|
-| `/etc/hexarouting/hexarouting.conf` | configuração salva, aplicada no boot |
-| `/etc/hexarouting/rollback/` | revisões commitadas (as 20 mais recentes) |
+| `/etc/prisma-routing/prisma-routing.conf` | configuração salva, aplicada no boot |
+| `/etc/prisma-routing/rollback/` | revisões commitadas (as 20 mais recentes) |
 
-Variáveis de ambiente `HEXA_CONFIG` e `HEXA_ROLLBACK` sobrescrevem esses caminhos.
+Variáveis de ambiente `PRISMA_CONFIG` e `PRISMA_ROLLBACK` sobrescrevem esses caminhos.
 
 Em arquivos de configuração, `!` inicia comentário — o resto da linha é ignorado.
 

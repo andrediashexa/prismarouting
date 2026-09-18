@@ -5,7 +5,7 @@
 # this pair for appliance/selftest after a hand sweep found seven branches
 # nothing in this repository had ever executed - one of them the VTY dying at
 # start, which is the defect of 0.2.0. #364 measured the same gap on
-# appliance/hexarouting-install: nearly every message it can print had been
+# appliance/prisma-routing-install: nearly every message it can print had been
 # produced by none of the four suites that drive it, and the ones that had not
 # run are the screens an operator meets after mistyping a letter at a prompt.
 # appliance/bind-dataplane-nic and appliance/apply-tuning are the same shape
@@ -40,7 +40,7 @@ SAY_MIN=${SAY_MIN:-8}
 # the reason appliance/selftest's say_list already folds to 79: a terminal that
 # writes the 80th column of an 80-column line has nowhere to put the newline,
 # and a serial console then either wraps or swallows it depending on the
-# firmware. The same budget src/hexash/config.py declares for the VTY, because
+# firmware. The same budget src/prismash/config.py declares for the VTY, because
 # it is the same screen an operator reads at.
 SAY_COLUMNS=${SAY_COLUMNS:-79}
 
@@ -1216,7 +1216,7 @@ has ever seen the program not print them:"
 # is NAMED on every run, with the program, the line and the column count, and
 # the number it may not exceed is written down beside the boxes. Every row
 # that gains a fix lowers one of these, and they may only go down - which is
-# the idiom test/test_hexash_refusals.py uses for the same measurement on the
+# the idiom test/test_prismash_refusals.py uses for the same measurement on the
 # VTY, and test/test_off_run_coverage.sh before it.
 #
 # They live in the SUITE and not here because they are a statement about one
@@ -1327,7 +1327,7 @@ say_widths() {   # <what to call the program in the report>
     }
     # A PATH THIS PROGRAM NAMES, and the widest of them that any value ends
     # with. The suffix is the whole trick: every one of these programs takes a
-    # root - HEXA_ROOT, HEXA_INSTALL_SRC, a mount point - so that a suite can
+    # root - PRISMA_ROOT, PRISMA_INSTALL_SRC, a mount point - so that a suite can
     # point it at a tree shaped like /etc, and what the rig prints is
     # /tmp/tmp.XXXXXX in front of the path the box would print. Measuring what
     # came out would report a width that depends on where mktemp put its
@@ -1673,7 +1673,7 @@ say_widths() {   # <what to call the program in the report>
       # reads green on an empty corpus: no row measured is no row over, and
       # the two ceilings below would both sit at zero and agree with
       # themselves. It is the same floor test_console_width.py and
-      # test_hexash_refusals.py each put under their own walk, and for the
+      # test_prismash_refusals.py each put under their own walk, and for the
       # same reason - the day the segments stop arriving, the recorder is
       # what is broken and not the widths.
       printf "%d %d\n", measured, widestfit > stat

@@ -1,14 +1,41 @@
 #!/bin/sh
-# Installs HexaRouting onto an existing Debian 12.
+# Installs Prisma Routing onto an existing Debian 12.
 #
 # Does not build an ISO: for a fresh install see build-iso.sh. This path is
 # for updating a box in production without reinstalling it.
+#
+# THE NAMES ON THE DISK ARE STILL THE OLD ONES, and this file is where they
+# are laid down, so this is where the reason is written (#202). The product
+# is Prisma Routing; the banner, the prompt, `show version`, the self-test
+# and the medium's filename say so. Everything below keeps `prisma-routing`:
+#
+#   /usr/bin/prismash            the login shell recorded in /etc/passwd for
+#                              every account the VTY created; an account
+#                              whose shell does not exist cannot log in
+#   /etc/prisma-routing/*         the saved configuration and its rollback
+#                              store, which an upgrade must still find
+#   /var/log/prisma-routing       a mountpoint in fstab holding the connection
+#                              records the Marco Civil requires for a year
+#   /usr/lib/prisma-routing,      the runtime and the installer, named by every
+#   /usr/sbin/prisma-routing-install
+#                              unit and by the VTY by absolute path
+#   prisma-routing*.service       unit names, and the vpp.service drop-ins
+#   prisma-admin, prisma-cgnat     the role groups; membership is by GID and a
+#                              group recreated under a new name takes every
+#                              operator's role away
+#   PRISMA_*                     the environment the VTY, the tuner and the
+#                              labs read and set
+#
+# Renaming any of those is a migration of a box in service, not a rename,
+# and this release deliberately makes none: an upgraded box changes what it
+# prints and nothing it has on disk.
+#
 #
 # WHAT THIS SCRIPT NEEDS AND WHERE AN OPERATOR GETS IT. Every install line
 # below copies out of $REPO, and the plugin comes from .build-vpp or from a
 # build container's /vpp_plugins, so this script cannot run where those are
 # not. A box installed from a published medium has none of them - measured on
-# one: /usr/lib/hexarouting holds the runtime files and no install.sh, there is
+# one: /usr/lib/prisma-routing holds the runtime files and no install.sh, there is
 # no repository and there is no toolchain (#295). For most of this project's
 # life that meant this path served the release gate and lab/upgrade.sh, which
 # have a build tree, while five sentences in the product told an operator
@@ -26,7 +53,7 @@
 # product files and no packages, so it cannot move the VPP or FRR that
 # appliance/build-iso.sh pins. A release that changes either is refused by
 # appliance/upgrade, naming both versions, and the operator reinstalls from the
-# medium - which erases the disk and takes /var/log/hexarouting with it, a year
+# medium - which erases the disk and takes /var/log/prisma-routing with it, a year
 # of connection records. The wiki page on taking a new version states both
 # routes and what each costs.
 set -eu
@@ -40,7 +67,7 @@ say() { echo "==> $*"; }
 # WHAT WAS HERE BEFORE, read before a single byte of it is overwritten.
 #
 # This is the only moment the question can be asked. Forty lines down this
-# script writes /usr/share/hexarouting/VERSION with the build it is putting on
+# script writes /usr/share/prisma-routing/VERSION with the build it is putting on
 # the box, and from then on there is nothing left that remembers what the box
 # used to be - the stamp is the one file that answers it, and this script is
 # what destroys the answer. Read late, it reads back what this run just wrote
@@ -53,7 +80,7 @@ say() { echo "==> $*"; }
 # running services is the quiet failure, and saying they are the old build
 # when there is no evidence of an older build would be a claim this script
 # cannot support.
-PREV_STAMP=$(cat "$DESTDIR/usr/share/hexarouting/VERSION" 2>/dev/null || true)
+PREV_STAMP=$(cat "$DESTDIR/usr/share/prisma-routing/VERSION" 2>/dev/null || true)
 
 # EVERY COMPONENT THIS BUILD IS MADE OF, RESOLVED BEFORE ANY OF IT IS WRITTEN.
 #
@@ -63,7 +90,7 @@ PREV_STAMP=$(cat "$DESTDIR/usr/share/hexarouting/VERSION" 2>/dev/null || true)
 # tree that has bpa_plugin.so and no vat2 plugin beside it is not a tree
 # somebody chose to build that way, it is a build that did not finish. And
 # there is no box that wants one and not the other: the vat2 plugin is what
-# lets anything outside VPP speak this plugin's binary API, which is how hexash
+# lets anything outside VPP speak this plugin's binary API, which is how prismash
 # learns that a configuration was REFUSED rather than applied. #119 is what a
 # medium without it cost - every release shipped with that API unregistered and
 # no CGNAT pool configurable on the installed box, which is the one thing the
@@ -84,7 +111,7 @@ PREV_STAMP=$(cat "$DESTDIR/usr/share/hexarouting/VERSION" 2>/dev/null || true)
 # WHY IT IS UP HERE AND NOT WHERE THE PLUGINS ARE INSTALLED. A refusal is only
 # worth taking while it still costs nothing, and it costs nothing only while
 # nothing has been written. The bpa_plugin.so refusal used to sit forty lines
-# down, past the whole of src/hexash: a tree with no dataplane plugin left a
+# down, past the whole of src/prismash: a tree with no dataplane plugin left a
 # box carrying a NEW VTY over an OLD dataplane and told the reader to run
 # tools/build.sh, which is this same half state with one component swapped.
 # Resolved up here, a box whose upgrade is refused is still wholly the build it
@@ -149,7 +176,7 @@ fi
 # ------------------------------------------- what this run leaves on the box
 #
 # WHAT THE VERSION STAMP IS A CLAIM ABOUT. A hundred lines down this script
-# writes one line into /usr/share/hexarouting/VERSION, and that line is what
+# writes one line into /usr/share/prisma-routing/VERSION, and that line is what
 # every reader of this box then believes: `show version` prints it, the boot
 # self-test puts it at the top of the console report, and it is the first
 # thing anybody asks for on the telephone. It is a sentence about the thirty
@@ -157,7 +184,7 @@ fi
 # #291 gave the dataplane plugin a build stamp that `show version` compares
 # against the box's own. The other thirty carry no version of any kind.
 #
-# So a box stamped 0.70.0 carrying 0.71.0's hexarouting-tune reads as a 0.70.0
+# So a box stamped 0.70.0 carrying 0.71.0's prisma-routing-tune reads as a 0.70.0
 # box, to every command and to every operator, permanently. That is not
 # hypothetical: it is the state the appliance supplied for the #290 work was
 # found in, and it got there honestly - somebody copied one file onto it to
@@ -206,7 +233,7 @@ install() {  # shadows /usr/bin/install for the rest of this script
 #
 # This script writes two kinds of file. Most of them it overwrites on every
 # run, because they ARE the build. Three it writes once and then never touches
-# again - tune.env, vpp-base.conf and hexarouting.conf - because the operator
+# again - tune.env, vpp-base.conf and prisma-routing.conf - because the operator
 # edits them, and an installer that overwrote an edited tune.env would undo a
 # tuning decision in the middle of an upgrade run at two in the morning.
 #
@@ -235,8 +262,8 @@ keep() {  # <mode> <source> <destination> - a file this installer writes once
 }
 
 say "binaries"
-# hexash imports config.py from its own directory, so both have to travel
-# together. Installing only hexash.py put a VTY on the box that raised
+# prismash imports config.py from its own directory, so both have to travel
+# together. Installing only prismash.py put a VTY on the box that raised
 # ModuleNotFoundError on every start - the product's front door, broken on
 # every installed box and every ISO, and invisible because the labs run it
 # from the source tree where config.py sits next to it.
@@ -247,26 +274,26 @@ say "binaries"
 # box, and vppapi.py was missing the moment the binary API landed. A list that
 # has to be updated whenever an import is added is a list that will be wrong
 # again.
-install -d -m 0755 "$DESTDIR/usr/lib/hexarouting"
-for f in "$REPO"/src/hexash/*.py; do
-  install -D -m 0644 "$f" "$DESTDIR/usr/lib/hexarouting/$(basename "$f")"
+install -d -m 0755 "$DESTDIR/usr/lib/prisma-routing"
+for f in "$REPO"/src/prismash/*.py; do
+  install -D -m 0644 "$f" "$DESTDIR/usr/lib/prisma-routing/$(basename "$f")"
 done
-chmod 0755 "$DESTDIR/usr/lib/hexarouting/hexash.py"
-install -D -m 0755 "$REPO/appliance/hexash-launcher" "$DESTDIR/usr/bin/hexash"
-install -D -m 0755 "$REPO/appliance/hexarouting-tune" "$DESTDIR/usr/bin/hexarouting-tune"
-install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/hexarouting/wait-for-vpp"
-install -D -m 0755 "$REPO/appliance/apply-tuning"     "$DESTDIR/usr/lib/hexarouting/apply-tuning"
-install -D -m 0755 "$REPO/appliance/bind-dataplane-nic" "$DESTDIR/usr/lib/hexarouting/bind-dataplane-nic"
-install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/hexarouting/selftest"
+chmod 0755 "$DESTDIR/usr/lib/prisma-routing/prismash.py"
+install -D -m 0755 "$REPO/appliance/prismash-launcher" "$DESTDIR/usr/bin/prismash"
+install -D -m 0755 "$REPO/appliance/prisma-routing-tune" "$DESTDIR/usr/bin/prisma-routing-tune"
+install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/prisma-routing/wait-for-vpp"
+install -D -m 0755 "$REPO/appliance/apply-tuning"     "$DESTDIR/usr/lib/prisma-routing/apply-tuning"
+install -D -m 0755 "$REPO/appliance/bind-dataplane-nic" "$DESTDIR/usr/lib/prisma-routing/bind-dataplane-nic"
+install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/prisma-routing/selftest"
 # Beside the self-test, which finds it with `dirname "$0"`, and named by the
 # VTY banner by absolute path. Two readers of one answer (#248).
 install -D -m 0755 "$REPO/appliance/ssh-host-key-origin" \
-    "$DESTDIR/usr/lib/hexarouting/ssh-host-key-origin"
-install -D -m 0755 "$REPO/appliance/hexarouting-install" "$DESTDIR/usr/sbin/hexarouting-install"
-install -D -m 0755 "$REPO/appliance/install-from-cmdline" "$DESTDIR/usr/lib/hexarouting/install-from-cmdline"
-install -D -m 0755 "$REPO/tools/ipfix_collector.py"   "$DESTDIR/usr/lib/hexarouting/ipfix-collector"
-install -D -m 0755 "$REPO/appliance/hexarouting-snmp-agent" \
-    "$DESTDIR/usr/lib/hexarouting/snmp-agent"
+    "$DESTDIR/usr/lib/prisma-routing/ssh-host-key-origin"
+install -D -m 0755 "$REPO/appliance/prisma-routing-install" "$DESTDIR/usr/sbin/prisma-routing-install"
+install -D -m 0755 "$REPO/appliance/install-from-cmdline" "$DESTDIR/usr/lib/prisma-routing/install-from-cmdline"
+install -D -m 0755 "$REPO/tools/ipfix_collector.py"   "$DESTDIR/usr/lib/prisma-routing/ipfix-collector"
+install -D -m 0755 "$REPO/appliance/prisma-routing-snmp-agent" \
+    "$DESTDIR/usr/lib/prisma-routing/snmp-agent"
 
 say "dataplane plugin"
 # Both paths were resolved by the preflight, which refused if either was
@@ -278,53 +305,53 @@ install -D -m 0644 "$SO" "$DESTDIR$PLUGIN_DIR/bpa_plugin.so"
 install -D -m 0644 "$VSO" "$DESTDIR$VAT2_DIR/bpa_test_plugin_bpa_plugin.so"
 
 say "systemd"
-for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.service \
-         hexarouting-installer.service hexarouting-confirm.service \
-         hexarouting-confirm.timer; do
+for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selftest.service \
+         prisma-routing-installer.service prisma-routing-confirm.service \
+         prisma-routing-confirm.timer; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
 # dataplane starts, including a restart nobody ordered, and ordering a separate
 # unit after vpp.service would put it in the wrong place on exactly that path.
 install -D -m 0644 "$REPO/appliance/systemd/vpp-api-access.conf" \
-  "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-api-access.conf"
+  "$DESTDIR/etc/systemd/system/vpp.service.d/prisma-routing-api-access.conf"
 # Same reason it is a drop-in and not a unit of ours, plus one more: a
 # protection that only applies to the VPP this boot started is no protection.
 # vpp.service carries Restart=always, and the restart after an OOM kill is
 # exactly the moment the box must not be choosable again.
 install -D -m 0644 "$REPO/appliance/systemd/vpp-oom-protect.conf" \
-  "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-oom-protect.conf"
+  "$DESTDIR/etc/systemd/system/vpp.service.d/prisma-routing-oom-protect.conf"
 # And the third, for the same reason again: the retention log has to be closed
 # by the dataplane that is stopping, on every stop, including the restart after
 # an upgrade that no unit of ours is ordered around.
 # The card comes back when the dataplane will not start (#379). Two files:
 # the drop-in that arms it on vpp.service, and the unit it names.
 install -D -m 0644 "$REPO/appliance/systemd/vpp-give-card-back.conf" \
-  "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-give-card-back.conf"
-install -D -m 0644 "$REPO/appliance/systemd/hexarouting-give-card-back.service" \
-  "$DESTDIR/lib/systemd/system/hexarouting-give-card-back.service"
+  "$DESTDIR/etc/systemd/system/vpp.service.d/prisma-routing-give-card-back.conf"
+install -D -m 0644 "$REPO/appliance/systemd/prisma-routing-give-card-back.service" \
+  "$DESTDIR/lib/systemd/system/prisma-routing-give-card-back.service"
 install -D -m 0755 "$REPO/appliance/give-the-card-back" \
-  "$DESTDIR/usr/lib/hexarouting/give-the-card-back"
+  "$DESTDIR/usr/lib/prisma-routing/give-the-card-back"
 install -D -m 0644 "$REPO/appliance/systemd/vpp-stop-drain.conf" \
-  "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-stop-drain.conf"
+  "$DESTDIR/etc/systemd/system/vpp.service.d/prisma-routing-stop-drain.conf"
 
 say "login shell"
-install -D -m 0755 "$REPO/appliance/hexash-login" "$DESTDIR/usr/bin/hexash-login"
+install -D -m 0755 "$REPO/appliance/prismash-login" "$DESTDIR/usr/bin/prismash-login"
 # Opt-in on purpose. On an existing Debian the machine may have other jobs, and
 # silently replacing root's login shell is hostile - the operator would discover
-# it at the worst moment, on the next login. The ISO sets HEXA_VTY_LOGIN=1.
-if [ "${HEXA_VTY_LOGIN:-0}" = 1 ]; then
-  grep -qx /usr/bin/hexash-login "$DESTDIR/etc/shells" 2>/dev/null || \
-    echo /usr/bin/hexash-login >> "$DESTDIR/etc/shells"
+# it at the worst moment, on the next login. The ISO sets PRISMA_VTY_LOGIN=1.
+if [ "${PRISMA_VTY_LOGIN:-0}" = 1 ]; then
+  grep -qx /usr/bin/prismash-login "$DESTDIR/etc/shells" 2>/dev/null || \
+    echo /usr/bin/prismash-login >> "$DESTDIR/etc/shells"
   if [ -n "$DESTDIR" ]; then
-    sed -i 's|^root:\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):.*|root:\1:\2:\3:\4:\5:/usr/bin/hexash-login|' \
+    sed -i 's|^root:\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):.*|root:\1:\2:\3:\4:\5:/usr/bin/prismash-login|' \
       "$DESTDIR/etc/passwd"
   else
-    chsh -s /usr/bin/hexash-login root
+    chsh -s /usr/bin/prismash-login root
   fi
-  say "  root logs into the VTY; 'start shell' escapes, 'hexash=off' bypasses"
+  say "  root logs into the VTY; 'start shell' escapes, 'prismash=off' bypasses"
 else
-  say "  not changing any login shell (set HEXA_VTY_LOGIN=1 to land in the VTY)"
+  say "  not changing any login shell (set PRISMA_VTY_LOGIN=1 to land in the VTY)"
 fi
 
 say "version stamp"
@@ -333,23 +360,23 @@ say "version stamp"
 # on the phone. And if the tree had uncommitted changes, the file says so - an
 # ISO that declares itself v0.4.1 without being it sends the whole
 # investigation the wrong way.
-if [ -n "${HEXA_VERSION_STAMP:-}" ]; then
-  stamp=$HEXA_VERSION_STAMP
+if [ -n "${PRISMA_VERSION_STAMP:-}" ]; then
+  stamp=$PRISMA_VERSION_STAMP
 else
   stamp=$(sh "$REPO/tools/version-stamp.sh" "$REPO")
 fi
-install -d -m 0755 "$DESTDIR/usr/share/hexarouting"
-printf '%s\n' "$stamp" > "$DESTDIR/usr/share/hexarouting/VERSION"
-chmod 0644 "$DESTDIR/usr/share/hexarouting/VERSION"
+install -d -m 0755 "$DESTDIR/usr/share/prisma-routing"
+printf '%s\n' "$stamp" > "$DESTDIR/usr/share/prisma-routing/VERSION"
+chmod 0644 "$DESTDIR/usr/share/prisma-routing/VERSION"
 
 say "kernel knobs"
 install -D -m 0644 "$REPO/appliance/etc/sysctl.conf" \
-    "$DESTDIR/etc/sysctl.d/99-hexarouting.conf"
+    "$DESTDIR/etc/sysctl.d/99-prisma-routing.conf"
 
 say "configuration"
 # Group-readable, never world-readable. Since accounts became part of the
 # configuration (#45) this directory holds password hashes - in
-# hexarouting.conf and in every rollback revision under it - and a
+# prisma-routing.conf and in every rollback revision under it - and a
 # world-readable copy hands every local account an offline cracking target.
 # The group is a role group, so seeing them requires being trusted to change
 # the configuration in the first place (#35).
@@ -358,7 +385,7 @@ say "configuration"
 # is one where every account falls back to read-only and the operator concludes
 # the box is broken. Empty until somebody is added to them; root always has
 # both.
-for g in hexa-admin hexa-cgnat; do
+for g in prisma-admin prisma-cgnat; do
   if [ -z "${DESTDIR:-}" ]; then
     getent group "$g" >/dev/null 2>&1 || groupadd --system "$g" 2>/dev/null || true
   fi
@@ -369,8 +396,8 @@ done
 # configuration - password hashes included. Granting the capability grants
 # sight of them, which is why the group is a role group and not "users".
 #
-# hexa-cgnat owns it and hexa-admin is ADDITIVE on top: an administrator is a
-# member of both. Owning it with hexa-admin instead would leave a CGNAT
+# prisma-cgnat owns it and prisma-admin is ADDITIVE on top: an administrator is a
+# member of both. Owning it with prisma-admin instead would leave a CGNAT
 # operator unable to record a rollback revision for the change it just made.
 #
 # THIS FILE IS THE ONLY PLACE THESE MODES ARE STATED. The VTY does not restate
@@ -383,17 +410,17 @@ done
 #
 # 2770 rather than 0770. The group is not enough on its own: a revision root
 # writes at boot would be group root, and one operator's revision would be
-# unreadable to the next. setgid makes the kernel put hexa-cgnat on everything
+# unreadable to the next. setgid makes the kernel put prisma-cgnat on everything
 # created in here - including the rollback directory, since a directory made
 # inside a setgid directory inherits the bit - so "rollback 1" works whoever
 # made the revision.
 #
 # install -d re-states it on an upgrade as well as a first install, which is
 # what repairs a box the old VTY already narrowed.
-install -d -m 2770 "$DESTDIR/etc/hexarouting"
-install -d -m 2770 "$DESTDIR/etc/hexarouting/rollback"
-if [ -z "${DESTDIR:-}" ] && getent group hexa-cgnat >/dev/null 2>&1; then
-  chgrp hexa-cgnat /etc/hexarouting /etc/hexarouting/rollback 2>/dev/null || true
+install -d -m 2770 "$DESTDIR/etc/prisma-routing"
+install -d -m 2770 "$DESTDIR/etc/prisma-routing/rollback"
+if [ -z "${DESTDIR:-}" ] && getent group prisma-cgnat >/dev/null 2>&1; then
+  chgrp prisma-cgnat /etc/prisma-routing /etc/prisma-routing/rollback 2>/dev/null || true
 fi
 # The configuration trail. The plugin opens it with O_CREAT and cannot create
 # the directory, so without this the trail exists in every lab - where the lab
@@ -401,23 +428,23 @@ fi
 # mode that trail is the record of which pool definition was in force at a
 # given instant, which is what makes an answer to a court order defensible.
 # 0750: it names subscribers and their public addresses.
-install -d -m 0750 "$DESTDIR/var/log/hexarouting"
-keep 0644 "$REPO/appliance/etc/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
+install -d -m 0750 "$DESTDIR/var/log/prisma-routing"
+keep 0644 "$REPO/appliance/etc/tune.env" "$DESTDIR/etc/prisma-routing/tune.env"
 keep 0644 "$REPO/appliance/etc/vpp-base.conf" \
-     "$DESTDIR/etc/hexarouting/vpp-base.conf"
+     "$DESTDIR/etc/prisma-routing/vpp-base.conf"
 # The empty configuration is a FILE in the tree rather than a printf here, and
 # it moved for the manifest's sake: keep() is the one place a file the
 # operator owns may be written, so the thing it writes has to be a file. It is
-# read back by test/test_hexash_config.py, which loads it through the VTY's
-# own parser - "!" was not a comment there once, and hexarouting.service
+# read back by test/test_prismash_config.py, which loads it through the VTY's
+# own parser - "!" was not a comment there once, and prisma-routing.service
 # FAILED on the first boot of every install for it (#94).
-keep 0660 "$REPO/appliance/etc/hexarouting.conf" \
-     "$DESTDIR/etc/hexarouting/hexarouting.conf"
+keep 0660 "$REPO/appliance/etc/prisma-routing.conf" \
+     "$DESTDIR/etc/prisma-routing/prisma-routing.conf"
 # 0660 for the same reason as the directory: an account that may configure
 # saves it, and it holds hashes. Never world-readable.
-chmod 0660 "$DESTDIR/etc/hexarouting/hexarouting.conf"
-if [ -z "${DESTDIR:-}" ] && getent group hexa-cgnat >/dev/null 2>&1; then
-  chgrp hexa-cgnat "$DESTDIR/etc/hexarouting/hexarouting.conf" 2>/dev/null || true
+chmod 0660 "$DESTDIR/etc/prisma-routing/prisma-routing.conf"
+if [ -z "${DESTDIR:-}" ] && getent group prisma-cgnat >/dev/null 2>&1; then
+  chgrp prisma-cgnat "$DESTDIR/etc/prisma-routing/prisma-routing.conf" 2>/dev/null || true
 fi
 
 # ------------------------------------------------------------ routing daemons
@@ -506,7 +533,7 @@ grep -E "^bgpd_options=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
 
 say "documentation"
 for d in architecture routing logging; do
-  install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/hexarouting/$d.md"
+  install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/prisma-routing/$d.md"
 done
 
 # In a chroot or container there is no systemd running; installing is still
@@ -517,15 +544,15 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   LIVE_BOX=1
   say "enabling services"
   systemctl daemon-reload
-  systemctl enable hexarouting-tune.service hexarouting.service \
-    hexarouting-selftest.service hexarouting-installer.service \
-    hexarouting-confirm.timer
+  systemctl enable prisma-routing-tune.service prisma-routing.service \
+    prisma-routing-selftest.service prisma-routing-installer.service \
+    prisma-routing-confirm.timer
 else
   LIVE_BOX=0
   # offline enablement: creates the link systemctl enable would create
   install -d -m 0755 "$DESTDIR/etc/systemd/system/multi-user.target.wants"
-  for u in hexarouting-tune.service hexarouting.service \
-           hexarouting-selftest.service hexarouting-installer.service; do
+  for u in prisma-routing-tune.service prisma-routing.service \
+           prisma-routing-selftest.service prisma-routing-installer.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done
@@ -534,8 +561,8 @@ else
   # that exists, parses, and never elapses - and the feature it enforces is
   # one nobody notices working, so nobody would notice that either.
   install -d -m 0755 "$DESTDIR/etc/systemd/system/timers.target.wants"
-  ln -sf "/lib/systemd/system/hexarouting-confirm.timer" \
-    "$DESTDIR/etc/systemd/system/timers.target.wants/hexarouting-confirm.timer"
+  ln -sf "/lib/systemd/system/prisma-routing-confirm.timer" \
+    "$DESTDIR/etc/systemd/system/timers.target.wants/prisma-routing-confirm.timer"
   say "installed into ${DESTDIR:-/} (services enabled offline)"
 fi
 
@@ -557,7 +584,7 @@ say "manifest"
 #
 # WHY sha256 AND NOT A TIMESTAMP OR A SIZE. Both of those are properties of
 # the copy rather than of the contents, and both are what the reader of #302
-# had to work with: mtimes told that hexarouting-tune was written at 04:06 and
+# had to work with: mtimes told that prisma-routing-tune was written at 04:06 and
 # everything else at 02:38, which is evidence and not an answer, because the
 # same reading appears on a box whose files are all correct and were installed
 # in two passes.
@@ -596,9 +623,9 @@ say "manifest"
     # shellcheck disable=SC2086
     ( cd "${DESTDIR:-/}" && sha256sum $BUILD_FILES )
   fi
-} > "$DESTDIR/usr/share/hexarouting/MANIFEST"
-chmod 0644 "$DESTDIR/usr/share/hexarouting/MANIFEST"
-echo "  $(grep -c '^[^#]' "$DESTDIR/usr/share/hexarouting/MANIFEST") file(s) of this build, in /usr/share/hexarouting/MANIFEST"
+} > "$DESTDIR/usr/share/prisma-routing/MANIFEST"
+chmod 0644 "$DESTDIR/usr/share/prisma-routing/MANIFEST"
+echo "  $(grep -c '^[^#]' "$DESTDIR/usr/share/prisma-routing/MANIFEST") file(s) of this build, in /usr/share/prisma-routing/MANIFEST"
 
 # THE CLOSING WORDS. Nothing below this line installs anything.
 #
@@ -652,7 +679,7 @@ if [ -z "$PREV_STAMP" ]; then
   # sentence has always been printed and this change does not move it.
   if [ "$LIVE_BOX" = 1 ]; then
     echo
-    echo "Installed. Adjust /etc/hexarouting/tune.env and reboot so that"
+    echo "Installed. Adjust /etc/prisma-routing/tune.env and reboot so that"
     echo "isolcpus and hugepages take effect."
   fi
 else
@@ -693,13 +720,13 @@ if [ -n "$PREV_STAMP" ] && [ "$LIVE_BOX" = 1 ]; then
   echo
   # RemainAfterExit=yes is why the oneshot can be asked this at all: it reports
   # active for as long as the configuration it applied is the one in force.
-  if systemctl is-active --quiet hexarouting.service 2>/dev/null; then
-    echo "  hexarouting.service is active. It is a Type=oneshot: it applied"
-    echo "  /etc/hexarouting/hexarouting.conf at the last boot, with the VTY"
+  if systemctl is-active --quiet prisma-routing.service 2>/dev/null; then
+    echo "  prisma-routing.service is active. It is a Type=oneshot: it applied"
+    echo "  /etc/prisma-routing/prisma-routing.conf at the last boot, with the VTY"
     echo "  that was installed then, and exited."
   else
-    echo "  hexarouting.service is NOT active, so nothing has applied"
-    echo "  /etc/hexarouting/hexarouting.conf to the dataplane. It is a"
+    echo "  prisma-routing.service is NOT active, so nothing has applied"
+    echo "  /etc/prisma-routing/prisma-routing.conf to the dataplane. It is a"
     echo "  Type=oneshot and it runs at boot; it has not run on this one."
   fi
   echo
@@ -717,21 +744,21 @@ if [ -n "$PREV_STAMP" ] && [ "$LIVE_BOX" = 1 ]; then
   echo "  systemctl restart vpp.service"
   echo "      picks up the new plugin, and DROPS EVERY SESSION AND EVERY PORT"
   echo "      BLOCK on this box: every subscriber behind it is translated"
-  echo "      from nothing again. hexarouting.service is PartOf=vpp.service,"
+  echo "      from nothing again. prisma-routing.service is PartOf=vpp.service,"
   echo "      so it is stopped and started with it and re-applies the"
   echo "      configuration to the new dataplane."
   echo
-  echo "  systemctl restart hexarouting.service"
-  echo "      re-applies /etc/hexarouting/hexarouting.conf through the new"
+  echo "  systemctl restart prisma-routing.service"
+  echo "      re-applies /etc/prisma-routing/prisma-routing.conf through the new"
   echo "      VTY and exits. It drops no session. It also does not change"
   echo "      which plugin the dataplane is running, so on its own the split"
   echo "      above stays exactly where it is."
   echo
-  echo "  a reboot does both, and takes any /etc/hexarouting/tune.env change"
+  echo "  a reboot does both, and takes any /etc/prisma-routing/tune.env change"
   echo "  with it."
   echo
   # AND THE ONE THING NEITHER RESTART DOES, which is the half this paragraph
-  # was missing. /etc/vpp/startup.conf is written by hexarouting-tune.service,
+  # was missing. /etc/vpp/startup.conf is written by prisma-routing-tune.service,
   # a Type=oneshot with RemainAfterExit=yes that runs at BOOT. Restarting
   # vpp.service does not re-run it, so a box that upgrades onto a version
   # whose tuner writes something new keeps the file the old tuner wrote and
@@ -743,12 +770,12 @@ if [ -n "$PREV_STAMP" ] && [ "$LIVE_BOX" = 1 ]; then
   # forwarding nothing. An operator who upgraded for that fix and restarted
   # vpp.service alone would get the same dead port and no reason for it.
   echo "  NEITHER restart rewrites /etc/vpp/startup.conf. It is generated by"
-  echo "  hexarouting-tune.service, which runs at BOOT, so a dataplane"
+  echo "  prisma-routing-tune.service, which runs at BOOT, so a dataplane"
   echo "  restarted without one starts on the file the PREVIOUS version"
   echo "  generated. If you upgraded for something the tuner decides - what"
   echo "  the card's MTU is, how many queues it gets, how the CPUs are"
   echo "  pinned - reboot, or run it yourself first:"
   echo
-  echo "  systemctl restart hexarouting-tune.service"
+  echo "  systemctl restart prisma-routing-tune.service"
   echo "  systemctl restart vpp.service"
 fi

@@ -27,7 +27,7 @@ set -eu
 . "$(dirname "$0")/selftest-verdict.sh"
 TAG=${1:-}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-WORK=${RELEASE_WORK:-/tmp/hexa-release}
+WORK=${RELEASE_WORK:-/tmp/prisma-release}
 
 if [ -z "$TAG" ]; then
   TAG=$(git -C "$REPO" describe --exact-match --tags HEAD 2>/dev/null || true)
@@ -78,7 +78,7 @@ esac
 VER=$(tr -d '[:space:]' < "$WORK/VERSION")
 if [ "$TAG" != "v$VER" ]; then
   echo "error: tag $TAG is on a tree whose VERSION is $VER." >&2
-  echo "       The image would be called hexarouting-$VER.iso and published" >&2
+  echo "       The image would be called prisma-routing-$VER.iso and published" >&2
   echo "       under $TAG. Fix VERSION or the tag before releasing." >&2
   exit 1
 fi
@@ -188,7 +188,7 @@ fi
 #
 # Only the angle brackets are searched for. A bare '=======' is also a
 # Markdown heading underline, and this tree already carries one such row of
-# '=' (test/test_hexash_complete.py, a copy of frr-reload's own report), so a
+# '=' (test/test_prismash_complete.py, a copy of frr-reload's own report), so a
 # pattern that counted it would refuse a release over a quoted report. Nothing
 # is lost by leaving it out: git writes all three markers together, so a file
 # that really carries a conflict is named by the brackets alone.
@@ -267,9 +267,9 @@ if [ -n "$prev" ]; then
     echo "       Most likely a branch cut before the rename filed its entry" >&2
     echo "       there. Move it under '## Unreleased'. If it is a correction," >&2
     echo "       put it in the current section and say what it corrects." >&2
-    printf '%s\n' "$cur_sect" > /tmp/hexa-sect-now
-    printf '%s\n' "$was_sect" > /tmp/hexa-sect-was
-    diff -u /tmp/hexa-sect-was /tmp/hexa-sect-now 2>/dev/null | head -20 >&2
+    printf '%s\n' "$cur_sect" > /tmp/prisma-sect-now
+    printf '%s\n' "$was_sect" > /tmp/prisma-sect-was
+    diff -u /tmp/prisma-sect-was /tmp/prisma-sect-now 2>/dev/null | head -20 >&2
     exit 1
   fi
 fi
@@ -503,7 +503,7 @@ if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
   # all, so its verdict was indistinguishable from the run where it passed.
   echo "==> the release title was NOT checked: gh cannot answer"
 else
-  gh_err=/tmp/hexa-release-title-err
+  gh_err=/tmp/prisma-release-title-err
   if rel_title=$(gh release view "$TAG" --json name -q .name 2>"$gh_err"); then
     rel_state=ok
   elif grep -qi "release not found" "$gh_err"; then
@@ -528,11 +528,12 @@ else
         print; exit
       }
     ' "$WORK/CHANGELOG.md")
-    # Both sides normalised for an optional "HexaRouting ", an optional "v",
+    # Both sides normalised for an optional product name, an optional "v",
     # the version and the dash, so this is about the sentence and not about
-    # punctuation somebody typed into a web form.
+    # punctuation somebody typed into a web form. Both spellings of the name:
+    # the releases up to the rename (#202) were published as "Prisma Routing".
     norm_title=$(printf '%s' "$rel_title" \
-      | sed -e 's/^HexaRouting[[:space:]]*//' \
+      | sed -e 's/^Prisma Routing[[:space:]]*//' -e 's/^Prisma Routing[[:space:]]*//' \
             -e "s/^v\{0,1\}$VER[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*//")
     if [ -z "$head_title" ]; then
       # An empty heading used to satisfy this check rather than fail it: the
@@ -612,7 +613,7 @@ sh "$WORK/tools/build.sh" plugin >/dev/null
 # a loop, and the box forwarded nothing (#377). The gate passed it.
 echo "==> the generated startup.conf, read by the VPP that reads it"
 ( cd "$WORK" && sg docker -c "docker run --rm --privileged \
-    -v $WORK:/src -w /src hexarouting-dev:26.06 \
+    -v $WORK:/src -w /src prisma-routing-dev:26.06 \
     sh /src/appliance/test_startup_conf_shapes.sh" ) \
   > "$WORK/shapes.log" 2>&1 || {
   echo "error: VPP refuses a startup.conf this tuner can generate. An" >&2
@@ -665,7 +666,7 @@ echo "==> booting it"
 # so an operator reading a lab run is not handed the whole report twice. The
 # verdict is the LAST line of that report. The report grew past forty lines in
 # 0.75.0, the cap swallowed the verdict, and this gate refused a medium that
-# had booted and said "HexaRouting ready, with 3 warning(s) above." on line 704
+# had booted and said "Prisma Routing ready, with 3 warning(s) above." on line 704
 # of its console. The refusal was not true of the box.
 #
 # That is the shape #369 is about, in the gate rather than in a reader: the
@@ -712,7 +713,7 @@ said_a_good_verdict "$BOOTLOG" || {
 #
 # Two defects lived in that gap for the life of the project. The ISO never
 # carried the vat2 plugin, so an installed box had no binary API and could not
-# be configured to do CGNAT at all (#119). Behind it, hexarouting.service
+# be configured to do CGNAT at all (#119). Behind it, prisma-routing.service
 # failed on the first boot of every install (#121). Neither was visible from a
 # live boot, and both were found the first time this ran.
 #
@@ -730,7 +731,7 @@ echo "==> installing it to a disk and booting the disk"
 #
 # A release that publishes only a medium publishes only a route that erases the
 # disk. Every box installed from a previous one has a year of connection
-# records on /var/log/hexarouting and no way to keep them across a version
+# records on /var/log/prisma-routing and no way to keep them across a version
 # change, which is #295: the in-place path existed for this script and for
 # lab/upgrade.sh, both of which have a build tree, and for nobody who bought
 # the product.
@@ -787,6 +788,6 @@ echo "    sha256 $(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
 # only the medium is a release that only people with an empty disk can take.
 echo "    $WORK/$UPGRADE"
 echo "    sha256 $(sha256sum "$WORK/$UPGRADE" | cut -d' ' -f1)"
-grep -E "^\s+\[ ok \] HexaRouting|$VERDICT_RE" "$BOOTLOG" | sed 's/^/    /'
+grep -E "^\s+\[ ok \] Prisma Routing|$VERDICT_RE" "$BOOTLOG" | sed 's/^/    /'
 grep -E "\[ ok \] the installed box can configure a pool" "$WORK/install.log" \
   | sed 's/^/    /'

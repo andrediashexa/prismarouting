@@ -30,7 +30,7 @@
 # everything after that is the box's own behaviour.
 set -u
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }

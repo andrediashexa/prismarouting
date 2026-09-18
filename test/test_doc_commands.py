@@ -19,14 +19,14 @@ What is read is the PROMPT LINES inside fenced blocks, because those are the
 lines a reader retypes. Output lines in the same block are not commands and
 are left alone.
 
-  hexarouting> show route                 operational mode
-  hexarouting# [edit] interface Gi0/1     configuration mode, top level
-  hexarouting# [edit interface Gi0/1]     the prompt alone: where you now are,
+  prisma> show route               operational mode
+  prisma# [edit] interface Gi0/1   configuration mode, top level
+  prisma# [edit interface Gi0/1]   the prompt alone: where you now are,
                                           not something anybody typed
 
-The prompt is half the assertion. `hexarouting>` and `hexarouting# [edit]` are
+The prompt is half the assertion. `prisma>` and `prisma# [edit]` are
 what Shell.prompt() returns for the two modes, so a page that shows
-`hexarouting# configure` is showing a transcript the box cannot produce:
+`prisma# configure` is showing a transcript the box cannot produce:
 `configure` is an operational command and `#` means you are already in
 configuration mode, where it is not in the tree at all.
 
@@ -44,8 +44,8 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
-import hexash                                                   # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
+import prismash                                                   # noqa: E402
 
 fail = 0
 
@@ -94,8 +94,8 @@ def shell(mode):
     product, and a command missing because this test logged in as a read-only
     account would be a failure about the test rather than about the page.
     """
-    sh = hexash.Shell()
-    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    sh = prismash.Shell()
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
 
     def run(_self, cmd):
         if cmd.startswith("show interface"):
@@ -112,7 +112,7 @@ def shell(mode):
     # marker enumerates nothing and the walk stops at it, which is exactly
     # how `<pool>`, `<user>` and every other per-box argument are treated.
     sh.SYS_CLASS_NET = "/nonexistent/sys/class/net"
-    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
+    sh.frr = type("F", (prismash.Frr,), {"available": lambda s: False,
                             "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
     if mode == "configuration":
@@ -195,11 +195,11 @@ def prompt_lines():
                     if (i + 1 < len(rows)
                             and rows[i + 1].startswith(AMBIGUOUS_VERDICT)):
                         SHOWN_REFUSED.add((path, line))
-                    m = re.match(r"^hexarouting> (.+)$", line)
+                    m = re.match(r"^prisma> (.+)$", line)
                     if m:
                         out.append((path, "operational", "", m.group(1).strip()))
                         continue
-                    m = re.match(r"^hexarouting# \[edit(| [^\]]*)\](.*)$", line)
+                    m = re.match(r"^prisma# \[edit(| [^\]]*)\](.*)$", line)
                     if m:
                         cmd = m.group(2).strip()
                         if cmd:
@@ -208,9 +208,9 @@ def prompt_lines():
                         continue
                     # A prompt with something after it that is neither of the
                     # two shapes above. Worth naming rather than skipping:
-                    # `hexarouting# configure` is exactly that, and it is the
+                    # `prisma# configure` is exactly that, and it is the
                     # defect this half of the file exists for.
-                    m = re.match(r"^hexarouting#\s+([a-z].*)$", line)
+                    m = re.match(r"^prisma#\s+([a-z].*)$", line)
                     if m:
                         out.append((path, "BAD PROMPT", "", m.group(1).strip()))
     return out
@@ -229,8 +229,8 @@ else:
         f"matching the pages, so this file is asserting nothing")
 
 print("\n=== the prompt matches the mode the command lives in ===")
-# `hexarouting>` is operational and `hexarouting# [edit]` is configuration.
-# A command shown at a bare `hexarouting#` is a transcript the box cannot
+# `prisma>` is operational and `prisma# [edit]` is configuration.
+# A command shown at a bare `prisma#` is a transcript the box cannot
 # produce, and the one that matters is `configure`: at `#` you are already in
 # configuration mode, where `configure` is not in the tree at all.
 wrong_prompt = [(p, c) for p, mode, _, c in lines if mode == "BAD PROMPT"]
@@ -239,8 +239,8 @@ if not wrong_prompt:
 else:
     for path, cmd in wrong_prompt:
         rel = os.path.relpath(path, REPO)
-        bad(f"{rel} shows 'hexarouting# {cmd}'. This VTY prints "
-            f"'hexarouting> ' in operational mode and 'hexarouting# [edit] ' "
+        bad(f"{rel} shows 'prisma# {cmd}'. This VTY prints "
+            f"'prisma> ' in operational mode and 'prisma# [edit] ' "
             f"in configuration mode, so that line is a transcript no box "
             f"produces")
 
@@ -266,7 +266,7 @@ for path, mode, context, cmd in lines:
             contextlib.redirect_stderr(io.StringIO()):
         spelled = sh.spell_out(cmd)
     if spelled is None:
-        shown_line = (f"hexarouting# [edit{' ' + context if context else ''}]"
+        shown_line = (f"prisma# [edit{' ' + context if context else ''}]"
                       f" {cmd}")
         if (path, shown_line) not in SHOWN_REFUSED:
             bad(f"{rel}: '{cmd}' ({mode}): an ambiguous abbreviation, and the "
@@ -314,7 +314,7 @@ print("\n=== every quotation of the unchecked marker is the one the box emits ==
 # test_context_map.py guards for paths: confidently wrong, and silent until
 # somebody meets it. Labs are the ones that matter, because a lab quoting a
 # marker the box no longer prints is a check that cannot pass.
-sys.path.insert(0, os.path.join(REPO, "src", "hexash"))
+sys.path.insert(0, os.path.join(REPO, "src", "prismash"))
 from config import UNCHECKED_MARK                                # noqa: E402
 
 _mark = UNCHECKED_MARK.strip()
@@ -349,7 +349,7 @@ else:
 
 print("\n=== the BGP page's table is what the VTY actually checks ===")
 #
-# The page says of that table, in as many words, "essa tabela e o que o hexash
+# The page says of that table, in as many words, "essa tabela e o que o prismash
 # confere" - and then explains that what is NOT in it is passed through unread
 # and comes back marked `<- not checked`. So the table is a claim about the
 # grammar, and a reader uses it to predict what their own `show this` will
@@ -360,9 +360,9 @@ print("\n=== the BGP page's table is what the VTY actually checks ===")
 # on the page claimed a statement the box lacks, which is the safer direction,
 # but the sentence "this table is what it checks" was false either way and an
 # operator would have expected a marker that does not appear.
-from hexash import BGP_NEIGHBOUR, BGP_AF_NEIGHBOUR                # noqa: E402
+from prismash import BGP_NEIGHBOUR, BGP_AF_NEIGHBOUR                # noqa: E402
 
-_bgp_page = os.path.join(REPO, "wiki", "referencia", "vty-hexash-guia-de-uso",
+_bgp_page = os.path.join(REPO, "wiki", "referencia", "vty-prismash-guia-de-uso",
                          "configuracao-de-bgp.md")
 _text = open(_bgp_page, encoding="utf-8").read()
 # The first word of the first cell of each row: the page writes
@@ -410,9 +410,9 @@ print("\n=== every statement a block takes is named on that block's page ===")
 # `alg` and `timeout` in sub-tables keyed by protocol - and a guard that
 # demanded one shape would fail on prose that is perfectly clear. What it
 # catches is the statement nobody wrote about at all.
-from hexash import CGNAT_POOL, INTERFACE_BLOCK                    # noqa: E402
+from prismash import CGNAT_POOL, INTERFACE_BLOCK                    # noqa: E402
 
-_ref = os.path.join(REPO, "wiki", "referencia", "vty-hexash-guia-de-uso")
+_ref = os.path.join(REPO, "wiki", "referencia", "vty-prismash-guia-de-uso")
 for _page, _grammar, _what in (
         ("configuracao-de-pool.md", CGNAT_POOL, "a CGNAT pool"),
         ("configuracao-de-interface.md", INTERFACE_BLOCK, "an interface")):
@@ -448,7 +448,7 @@ print("\n=== every show command is named somewhere in the wiki ===")
 # which names `interval` and `count` perfectly well without ever writing them
 # as a command. Demanding the leaf string would go red on a page that is
 # right, which is how a check gets switched off.
-from hexash import SHOW                                           # noqa: E402
+from prismash import SHOW                                           # noqa: E402
 
 _wiki_text = ""
 for _root, _dirs, _files in os.walk(os.path.join(REPO, "wiki")):
@@ -486,25 +486,25 @@ print("\n=== every commit refusal an operator can meet is on the commit page ===
 # no interpolation are demanded: shorter ones like "is not on this box" are too
 # generic to be a useful needle, and demanding them would make this check go
 # red on a page that is right.
-_hexash = open(os.path.join(REPO, "src", "hexash", "hexash.py"),
+_prismash = open(os.path.join(REPO, "src", "prismash", "prismash.py"),
                encoding="utf-8").read().split("\n")
-_page = open(os.path.join(REPO, "wiki", "referencia", "vty-hexash-guia-de-uso",
+_page = open(os.path.join(REPO, "wiki", "referencia", "vty-prismash-guia-de-uso",
                           "commit-rollback-e-save.md"), encoding="utf-8").read()
 _wanted = []
-for _i, _l in enumerate(_hexash):
+for _i, _l in enumerate(_prismash):
     if "ok = False" not in _l:
         continue
     # Walk back to the message this refusal prints. A commit refusal is an
     # err() followed by ok = False; the two are never far apart.
     for _j in range(_i - 1, max(0, _i - 16), -1):
-        if not (re.search(r"self\.err\(\s*f?\"", _hexash[_j])
-                or re.search(r"said = \(\s*\"", _hexash[_j])):
+        if not (re.search(r"self\.err\(\s*f?\"", _prismash[_j])
+                or re.search(r"said = \(\s*\"", _prismash[_j])):
             continue
         _text, _k = "", _j
         while _k < _i:
-            for _q in re.findall(r'"([^"]*)"', _hexash[_k]):
+            for _q in re.findall(r'"([^"]*)"', _prismash[_k]):
                 _text += _q
-            if _hexash[_k].rstrip().endswith(")") and _text:
+            if _prismash[_k].rstrip().endswith(")") and _text:
                 break
             _k += 1
         _runs = [r.strip() for r in re.split(r"\{[^}]*\}", _text)
@@ -610,7 +610,7 @@ print("\n=== the wiki names no command from the dataplane's own CLI ===")
 # the prose beside it in a help table - is the word after `show` one the VTY
 # offers? Measured: 62 such lines, 0 unknown. The dataplane's `show bpa ...`
 # fails it on the first word, which is the whole class this is for.
-_SHOW = hexash.TREE["operational"]["show"][1]
+_SHOW = prismash.TREE["operational"]["show"][1]
 _lines, _unknown = 0, {}
 for _root, _dirs, _files in os.walk(os.path.join(REPO, "wiki")):
     for _f in _files:
@@ -626,8 +626,8 @@ for _root, _dirs, _files in os.walk(os.path.join(REPO, "wiki")):
                 if not _inblock:
                     continue
                 _s = _line.strip()
-                if _s.startswith("hexarouting>"):
-                    _s = _s[len("hexarouting>"):].strip()
+                if _s.startswith("prisma>"):
+                    _s = _s[len("prisma>"):].strip()
                 if "  " in _s:
                     continue
                 _w = _s.split()

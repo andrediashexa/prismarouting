@@ -21,7 +21,7 @@
 # workers, same run: the only thing that differs is which way in was used.
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
-mkdir -p /run/vpp /vpp_plugins /etc/hexarouting /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -169,7 +169,7 @@ echo "=========== the same stride, applied through the VTY ==========="
 # stride step is one block index and a stride of 1 is exactly the unreachable
 # case at two workers. The VTY also refuses a block smaller than 64 ports, so
 # the 4-port blocks other labs use cannot be typed at the prompt at all.
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 VTY_STRIDE=1
 VTY_SAY=$($HX -c "configure" \
     -c "cgnat pool vtystride" \
@@ -290,7 +290,7 @@ expect_in "and that pool is valid too, so this is a warning and not a refusal" \
 # AND THE SAME WARNING AT THE VTY PROMPT, which is where an operator is.
 #
 # The checks above assert what the dataplane's own console printed. These
-# assert what the PRODUCT printed, on the path hexash uses - and the two are
+# assert what the PRODUCT printed, on the path prismash uses - and the two are
 # different claims about different code, which is the whole reason both are
 # here. A box that tells the person at `vppctl` and says nothing to the person
 # at the prompt has told nobody: the VTY exists so that nobody has to drop to

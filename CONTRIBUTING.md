@@ -1,4 +1,4 @@
-# HexaRouting — Project Rules
+# Prisma Routing - Project Rules
 
 ## TL;DR
 
@@ -26,7 +26,7 @@ document are to be interpreted as described in [RFC 2119][rfc2119].
 | | |
 |---|---|
 | **What** | The rules that govern documentation, issues and branches in this repository. |
-| **Why** | HexaRouting is shipped to several providers as an appliance. Work that is not written down cannot be reviewed, audited or handed over, and a change with no issue behind it has no recorded reason for existing. |
+| **Why** | Prisma Routing is shipped to several providers as an appliance. Work that is not written down cannot be reviewed, audited or handed over, and a change with no issue behind it has no recorded reason for existing. |
 | **Who** | Everyone who commits to this repository, human or agent. |
 | **Where** | This repository and its GitHub issue tracker. The repository is **private** and MUST remain so. |
 | **When** | Before the first commit of any change, not after it. |
@@ -103,7 +103,7 @@ The repository's **About** carries three things, and they are documentation:
 | | |
 |---|---|
 | description | one line, what the product is |
-| website | <https://hexarouting.hexanetworks.com.br> — the wiki, as the external documentation |
+| website | <https://prisma-routing.hexanetworks.com.br> — the wiki, as the external documentation |
 | topics | what somebody would search for to find this |
 
 They **MUST** stay true. A topic that is not a claim this project makes does not
@@ -381,7 +381,7 @@ When it happens it **MUST** produce all six of:
    carried the vat2 plugin, so an installed box had no binary API and could
    not be configured to do CGNAT at all
    ([#119](https://github.com/andrediashexa/hexarouting/issues/119)); and
-   behind it, `hexarouting.service` failed on the first boot of every install
+   behind it, `prisma-routing.service` failed on the first boot of every install
    ([#121](https://github.com/andrediashexa/hexarouting/issues/121)). Neither
    was visible from a live boot. They were also hiding each other — the second
    could not be seen until the first was fixed.
@@ -400,8 +400,8 @@ When it happens it **MUST** produce all six of:
    A release whose ISO does not boot **MUST NOT** be published. Fix it, or
    say in the note that this version ships as source only and why.
 
-   **The image's filename MUST carry the version**: `hexarouting-0.23.0.iso`,
-   never `hexarouting.iso`. A file keeps its name and loses its context the
+   **The image's filename MUST carry the version**: `prisma-routing-0.23.0.iso`,
+   never `prisma-routing.iso`. A file keeps its name and loses its context the
    moment it is downloaded, copied to a USB stick or handed to somebody at a
    site, and two images with the same name are indistinguishable at exactly
    the moment it matters — when an operator is deciding which one to install.
@@ -428,7 +428,7 @@ When it happens it **MUST** produce all six of:
    rule rather than by attention. See `TESTING.md`.
 
    `tools/version-stamp.sh --filename` produces the name, and is the only
-   place that calculation lives. The bare `hexarouting-<version>.iso` is
+   place that calculation lives. The bare `prisma-routing-<version>.iso` is
    reserved for the tree that **is** the release: clean, and standing exactly
    on the tag for the version it claims. Any other tree adds its commit, and a
    dirty one says so — because the image nobody must mistake for a release is
@@ -489,7 +489,7 @@ A version that lives only in git identifies the release to whoever has the
 repository open, which is not the person reporting a fault. Therefore:
 
 * The boot self-test **MUST** print the version.
-* `hexash` **MUST** report it under `show version`, alongside the VPP and FRR
+* `prismash` **MUST** report it under `show version`, alongside the VPP and FRR
   versions it drives.
 * An artifact built from a tree with uncommitted changes **MUST** say so, and
   **MUST NOT** claim to be a released version. An ISO that reports `v0.4.1`

@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""
+SNMP agent for the CGNAT, spoken over net-snmp's pass_persist protocol.
+
+Why an agent at all: every ISP already has an NMS, and it is where somebody
+actually looks. A CGNAT whose only observability is vppctl on the box is a
+CGNAT nobody watches until a customer calls.
+
+Two rules shape everything below.
+
+READ-ONLY. Every SET is refused. Configuration belongs to the VTY, where it is
+validated, committed and rollback-able; an SNMP SET that reconfigures a CGNAT
+is an outage one typo away.
+
+NO STALE NUMBERS. If the dataplane is not answering, this returns NOTHING
+rather than the last values it saw. A monitoring system that keeps reporting
+yesterday's numbers through an outage is worse than one that reports none: the
+first hides the outage, the second shows it as a gap.
+"""
+
+import os
+import subprocess
+import sys
+import time
+
+# Absolute: snmpd hands a pass_persist helper a minimal environment, and a
+# PATH lookup that works from a shell can fail there.
+VPPCTL = os.environ.get("VPPCTL", "/usr/bin/vppctl")
+CACHE_SECONDS = float(os.environ.get("PRISMA_SNMP_CACHE", "10"))
+
+# RFC 4008, natDefTimeouts. Exact mappings, which is the whole reason to use a
+# standard MIB: an NMS understands these without a custom template.
+NAT_DEF_TIMEOUTS = "1.3.6.1.2.1.123.1.1"
+_TIMEOUT_OIDS = [
+    (1, "port-holddown"),      # natBindDefIdleTimeout
+    (2, "udp"),                # natUdpDefIdleTimeout
+    (3, "icmp"),               # natIcmpDefIdleTimeout
+    (4, "gre"),                # natOtherDefIdleTimeout
+    (5, "tcp-established"),    # natTcpDefIdleTimeout
+    (6, "tcp-transitory"),     # natTcpDefNegTimeout
+]
+
+# The numbers an operator actually watches have no standard OID, so they live
+# under the operator's own IANA Private Enterprise Number. There is no default
+# and there cannot be one: an OID under somebody else's PEN is a lie about who
+# the object belongs to, and it collides the day that organisation uses the
+# same subtree. Until "snmp enterprise-number" is set, this half is dark and
+# "show snmp" says so.
+def _enterprise():
+    """
+    The PEN, read from the snmpd.conf this VTY generates.
+
+    Not from the environment: snmpd spawns a pass_persist helper with none, so
+    an environment variable would work in a test and be empty on the box.
+    """
+    override = os.environ.get("PRISMA_SNMP_ENTERPRISE", "").strip()
+    if override:
+        return override
+    try:
+        with open(os.environ.get("PRISMA_SNMPD_CONF", "/etc/snmp/snmpd.conf")) as f:
+            for line in f:
+                w = line.split()
+                if not w or w[0] != "view":
+                    continue
+                # Scanned rather than indexed. "view hexa included <oid>" puts
+                # the OID in the FOURTH field, and reading the third gave
+                # "included" - so the enterprise subtree was silently dark
+                # while every standard object answered normally.
+                for field in w[1:]:
+                    if field.startswith(".1.3.6.1.4.1."):
+                        return field.rsplit(".", 1)[-1]
+    except OSError:
+        pass
+    return ""
+
+
+ENTERPRISE = _enterprise()
+
+_ENTERPRISE_OBJECTS = [
+    (1, "subscribers", "the subscribers holding a block right now"),
+    (2, "portsUsed", "ports allocated across all subscribers"),
+    (3, "portsTotal", "ports in the blocks currently held"),
+    (4, "subscribersAtLimit", "subscribers at 90% of their blocks or more"),
+    (5, "portRefusals", "times a subscriber was refused a port"),
+    (6, "packetsDropped", "packets the CGNAT did not pass"),
+]
+
+
+def vppctl(cmd):
+    try:
+        p = subprocess.run([VPPCTL] + cmd.split(), capture_output=True,
+                           text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if p.returncode != 0:
+        return None
+    # vppctl exits 0 for a command it did not understand and says so on
+    # stdout. Without this the agent parsed an error message into no values at
+    # all and served nothing, which is indistinguishable from a dataplane that
+    # is down - and that is exactly what happened while this was written.
+    if "unknown input" in p.stdout or p.stdout.startswith(("show bpa:", "bpa:")):
+        return None
+    return p.stdout
+
+
+class Values:
+    def __init__(self):
+        self.at = 0.0
+        self.data = {}
+
+    def refresh(self):
+        # The liveness check runs on EVERY poll, before the cache is consulted.
+        #
+        # Caching it too would be the obvious saving and it is the whole bug:
+        # with a ten-second cache, the first ten seconds of an outage are
+        # served as though nothing had happened. Measured - the lab killed the
+        # dataplane and SNMP went on reporting a subscriber. One extra vppctl
+        # per poll is what "no stale numbers" costs.
+        if not vppctl("show version"):
+            self.data = {}
+            self.at = 0.0
+            return self.data
+
+        if time.time() - self.at < CACHE_SECONDS and self.data:
+            return self.data
+
+        d = {}
+        t = vppctl("bpa timeouts") or ""
+        w = t.split()
+        for i in range(0, len(w) - 1):
+            if w[i] in ("udp", "icmp", "tcp-syn", "tcp-transitory",
+                        "tcp-established", "gre", "port-holddown",
+                        "alg-expect") and w[i + 1].isdigit():
+                d[w[i]] = int(w[i + 1])
+
+        subs = used = total = at_limit = refusals = 0
+        for line in (vppctl("show bpa top 100000") or "").splitlines():
+            f = line.split()
+            # "<ip> <pool> <used>/<total> <pct>% <blocks> <refusals>"
+            if len(f) < 6 or "/" not in f[2] or not f[3].endswith("%"):
+                continue
+            try:
+                u, tt = f[2].split("/")
+                pct = int(f[3].rstrip("%"))
+                subs += 1
+                used += int(u)
+                total += int(tt)
+                refusals += int(f[5])
+                if pct >= 90:
+                    at_limit += 1
+            except ValueError:
+                continue
+        d.update({"subscribers": subs, "portsUsed": used, "portsTotal": total,
+                  "subscribersAtLimit": at_limit, "portRefusals": refusals})
+
+        dropped = 0
+        counting = False
+        for line in (vppctl("show bpa drops") or "").splitlines():
+            if "did not get through" in line:
+                counting = True
+                continue
+            if "everything else" in line or not line.startswith("  "):
+                counting = False
+                continue
+            f = line.split()
+            if counting and f and f[0].isdigit():
+                dropped += int(f[0])
+        d["packetsDropped"] = dropped
+
+        self.data = d
+        self.at = time.time()
+        return d
+
+
+VALUES = Values()
+
+
+def oid_table():
+    """Every OID this agent serves, in lexicographic order."""
+    d = VALUES.refresh()
+    if not d:
+        return []                       # dataplane silent: serve nothing
+    out = []
+    for n, key in _TIMEOUT_OIDS:
+        if key in d:
+            out.append((f"{NAT_DEF_TIMEOUTS}.{n}.0", "gauge", d[key]))
+    if ENTERPRISE.isdigit():
+        base = f"1.3.6.1.4.1.{ENTERPRISE}.1"
+        for n, key, _desc in _ENTERPRISE_OBJECTS:
+            if key in d:
+                out.append((f"{base}.{n}.0", "counter", d[key]))
+    return sorted(out, key=lambda r: [int(x) for x in r[0].split(".")])
+
+
+def reply(oid, typ, value):
+    sys.stdout.write(f"{oid}\n{typ}\n{value}\n")
+    sys.stdout.flush()
+
+
+def none():
+    sys.stdout.write("NONE\n")
+    sys.stdout.flush()
+
+
+def as_key(oid):
+    try:
+        return [int(x) for x in oid.strip().lstrip(".").split(".")]
+    except ValueError:
+        return None
+
+
+# not a unit: the program's entry, the pass_persist loop snmpd drives over
+# stdin; the OID table and the answers are what a test can hold.
+def main():
+    # readline() throughout, never "for line in sys.stdin".
+    #
+    # File iteration reads ahead into a buffer, so a readline() inside the loop
+    # - which this protocol needs, because "get" is followed by its OID on the
+    # next line - sees nothing. The agent answered PING and returned NONE to
+    # every request, which looks exactly like a dataplane that is not running.
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        cmd = line.strip().upper()
+        if cmd == "PING":
+            sys.stdout.write("PONG\n")
+            sys.stdout.flush()
+        elif cmd == "SET":
+            sys.stdin.readline()        # oid
+            sys.stdin.readline()        # type and value
+            # Refused, always. See the module docstring.
+            sys.stdout.write("not-writable\n")
+            sys.stdout.flush()
+        elif cmd in ("GET", "GETNEXT"):
+            want = sys.stdin.readline()
+            key = as_key(want)
+            if key is None:
+                none()
+                continue
+            rows = oid_table()
+            hit = None
+            for oid, typ, val in rows:
+                k = as_key(oid)
+                if cmd == "GET" and k == key:
+                    hit = (oid, typ, val)
+                    break
+                if cmd == "GETNEXT" and k > key:
+                    hit = (oid, typ, val)
+                    break
+            if hit:
+                reply(*hit)
+            else:
+                none()
+        elif cmd == "":
+            continue
+        else:
+            none()
+
+
+if __name__ == "__main__":
+    main()

@@ -3,11 +3,11 @@
 #
 # systemd considers vpp.service started as soon as the process exists, but the
 # CLI socket and the plugins take longer: applying configuration before that
-# fails intermittently. So hexarouting.service waits here first.
+# fails intermittently. So prisma-routing.service waits here first.
 #
 # The wait is legitimate. What was not is the screen. systemd prints
 #
-#   [  **] Job hexarouting.service/start running (22s / no limit)
+#   [  **] Job prisma-routing.service/start running (22s / no limit)
 #
 # and "no limit" is its phrasing for a unit with no timeout. On a box somebody
 # is watching for the first time that reads as "this is not going to finish",
@@ -25,12 +25,12 @@
 # box that gives up on a dataplane that was coming.
 set -u
 TIMEOUT=${1:-30}
-OUT=${HEXA_WAIT_OUT:-/dev/console}
+OUT=${PRISMA_WAIT_OUT:-/dev/console}
 
 # Nothing is printed for the first few seconds. A boot where VPP answers
 # straight away should be silent: a message about a wait that did not happen
 # teaches the reader that these messages are noise.
-QUIET=${HEXA_WAIT_QUIET:-3}
+QUIET=${PRISMA_WAIT_QUIET:-3}
 
 # Appends. With ">" every line truncates what came before - invisible on
 # /dev/console, where truncation means nothing, and total on anything else.

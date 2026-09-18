@@ -14,7 +14,7 @@ WHAT DOES NOT WORK, measured three times, so nobody spends the afternoon on it
 again. Comparing a MESSAGE against the source that prints it is unsound in both
 directions, and every variant tried here was rejected on its own numbers:
 
-  * the wiki's quoted messages against `hexash.py`: 14 headings, 11 reported
+  * the wiki's quoted messages against `prismash.py`: 14 headings, 11 reported
     missing, ALL 11 false positives. Real messages are split across two string
     literals, so a whole-sentence match cannot find them, and Portuguese prose
     headings are not messages at all.
@@ -235,7 +235,7 @@ print("\n=== the VPP version is pinned in one place and quoted in another ===")
 # copies must move. The README's number is the one an operator builds from.
 README = read("README.md")
 BUILD = read("tools/build.sh")
-pinned = re.search(r"IMAGE=\$\{IMAGE:-hexarouting-dev:([0-9.]+)\}", BUILD)
+pinned = re.search(r"IMAGE=\$\{IMAGE:-prisma-routing-dev:([0-9.]+)\}", BUILD)
 quoted = re.findall(r"VPP pinned to ([0-9.]+)", README)
 if not pinned:
     bad("tools/build.sh no longer pins an image version, so the line below is "
@@ -321,6 +321,7 @@ else:
 
     def issues(text):
         return set(int(n) for n in
+                   # The REPOSITORY, which #202 did not rename.
                    re.findall(r"/hexarouting/issues/(\d+)\)", text))
 
     blocked = issues(table)
@@ -526,7 +527,7 @@ print("\n=== the RFC timeout floors, in three places ===")
 # on the wiki. Nothing compared them.
 #
 # The macro is the one that decides. `show bpa timeouts` marks a value below a
-# floor by asking the dataplane, and hexash reads the answer back rather than
+# floor by asking the dataplane, and prismash reads the answer back rather than
 # recomputing it - which is right, and is why a wrong number in a DOCUMENT is
 # the failure mode here rather than a wrong refusal. An operator who shortens
 # a timeout because a pool is filling reads the page, not the header, and a
@@ -814,10 +815,10 @@ print("\n=== a '?' listing a document prints, against the tree that answers it =
 # and TAB both answer from; the document is the second copy. This compares a
 # set of names against a set of names, so it is sound where this file's header
 # rejects comparing prose against the source that prints it.
-_sys_path_added = os.path.join(REPO, "src", "hexash")
+_sys_path_added = os.path.join(REPO, "src", "prismash")
 if _sys_path_added not in sys.path:
     sys.path.insert(0, _sys_path_added)
-import hexash                                                    # noqa: E402
+import prismash                                                    # noqa: E402
 
 #: The box behind the walk. Interfaces come from the dataplane, so a listing
 #: taken inside `interface <name>` needs one to enter - and the names here are
@@ -832,9 +833,9 @@ local0                            0     down            0/0/0/0
 
 def _shell(mode, enter=()):
     """A Shell parked where a transcript's prompt says it is."""
-    sh = hexash.Shell()
+    sh = prismash.Shell()
     # Wide on purpose: a page documents the product, not one account (#35).
-    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
     sh.dp = type("D", (), {
         "TRACE": False,
         "run": lambda _s, c: (0, _IFACES) if c.startswith("show interface")
@@ -844,7 +845,7 @@ def _shell(mode, enter=()):
     # suite, not of the product: left reachable, `dataplane interface` would
     # enumerate them and this check would pass or fail on whose laptop it ran.
     sh.SYS_CLASS_NET = "/nonexistent/sys/class/net"
-    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
+    sh.frr = type("F", (prismash.Frr,), {"available": lambda s: False,
                                        "running": lambda s: [],
                                        "show": lambda s, c: (1, "")})()
     _quiet = io.StringIO()
@@ -861,8 +862,8 @@ def _shell(mode, enter=()):
 #: shape nobody lists is reported rather than skipped, because a transcript
 #: added later and silently unread is this check going quiet.
 _LISTINGS = {
-    "hexarouting> show cgnat ?": ("operational", (), "show cgnat "),
-    "hexarouting# [edit interface GigabitEthernet0/12/0] ?":
+    "prisma> show cgnat ?": ("operational", (), "show cgnat "),
+    "prisma# [edit interface GigabitEthernet0/12/0] ?":
         ("configuration", ("interface GigabitEthernet0/12/0",), ""),
 }
 
@@ -1158,22 +1159,22 @@ print("\n=== the filesystem the connection records are promised ===")
 # does is held; what the installer WRITES is not, and that is the half the
 # README row rests on.
 #
-# ONE OWNER: the fstab appliance/hexarouting-install writes. Two mount points
+# ONE OWNER: the fstab appliance/prisma-routing-install writes. Two mount points
 # with two different UUID variables is the whole of the claim - one variable
 # for both, or no line for the records at all, and the records are on the root
 # filesystem with the README still promising otherwise.
-_install = read("appliance/hexarouting-install")
+_install = read("appliance/prisma-routing-install")
 # The variable and not its value: the value is a UUID blkid answers with at
 # install time, and there is nothing in the tree to compare it against.
 _mounts = {}
 for _var, _at in re.findall(r'echo "UUID=\$(\w+) (\S+) ', _install):
     _mounts.setdefault(_at, _var)
 _root_var = _mounts.get("/")
-_rec_var = _mounts.get("/var/log/hexarouting")
+_rec_var = _mounts.get("/var/log/prisma-routing")
 _separate = bool(_root_var and _rec_var and _root_var != _rec_var)
 _says_own = "own filesystem, so a full log cannot stop the box working" in README
 if not _root_var:
-    bad("no fstab line mounting / was found in appliance/hexarouting-install, "
+    bad("no fstab line mounting / was found in appliance/prisma-routing-install, "
         "so this check cannot tell a records volume from the root filesystem "
         "and is comparing nothing")
 elif _separate and not _says_own:
@@ -1182,12 +1183,12 @@ elif _separate and not _says_own:
         "reader learns a full log cannot stop this box")
 elif not _separate and _says_own:
     bad(f"README.md says the connection records are on their own filesystem, "
-        f"and appliance/hexarouting-install mounts /var/log/hexarouting from "
+        f"and appliance/prisma-routing-install mounts /var/log/prisma-routing from "
         f"{_rec_var or 'nothing'} against / from {_root_var}: a log that fills "
         f"would take the box's own configuration with it")
 else:
     ok(f"the installer mounts / from ${_root_var} and "
-       f"/var/log/hexarouting from ${_rec_var}, which is the row's claim")
+       f"/var/log/prisma-routing from ${_rec_var}, which is the row's claim")
 
 # tools/run-all-labs.sh holds, as data, which labs the release suite does NOT
 # run and why. test/test_run_all_labs.sh already reads it, so it is a list

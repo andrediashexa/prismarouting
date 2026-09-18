@@ -15,7 +15,7 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import routes      # noqa: E402
 
 fail = 0
@@ -282,7 +282,7 @@ print("  ens19 tap0 ens19 -> Linux column 'tap0 ens19'")
 # The bus is hexadecimal and the second socket's cards in a dual-socket
 # server sit at 0xaf, 0xb1, 0xd8: a letter first. The class word is letters
 # too, and a greedy run of letters ate the bus's first digit, so
-# TenGigabitEthernetd8/0/0 read as bus 8. `hexash --load` then matched a
+# TenGigabitEthernetd8/0/0 read as bus 8. `prismash --load` then matched a
 # saved name to the card at 08:00.0 where the box had one - the wrong card,
 # silently - and refused the file where it had not. Measured on 0dbbf73.
 for _name, _want in (("GigabitEthernet0/13/0", (0, 0x13, 0)),
@@ -355,7 +355,7 @@ check(routes.linux_end(_over, "ens19", {"ens19", "tap0"}) == "wan0",
 # And the other half of the rule, the member the dataplane holds: asked with
 # FRR's name and the dataplane's list, which is what `show ospf interface`
 # has in hand. The old-shape fixture is keyed by the Linux name alone, as a
-# hand-written pairs dict in test_hexash_igp.py is, and the answer must not
+# hand-written pairs dict in test_prismash_igp.py is, and the answer must not
 # depend on the pair being reachable under any other key.
 check(routes.dataplane_end(_same, "ens19", {"ens19", "tap0"}) == "ens19",
       f"the same-name pair: the dataplane's end is ens19, not "

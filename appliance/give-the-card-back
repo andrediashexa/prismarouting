@@ -31,9 +31,9 @@
 # again. Undoing the bind is the whole job: the operator gets a box they can
 # log into, and everything that says WHY is already in the journal.
 set -u
-ROOT=${HEXA_ROOT:-}
-VPPCONF=${HEXA_STARTUP_CONF:-$ROOT/etc/vpp/startup.conf}
-SYSBUS=${HEXA_PCI_BUS:-$ROOT/sys/bus/pci}
+ROOT=${PRISMA_ROOT:-}
+VPPCONF=${PRISMA_STARTUP_CONF:-$ROOT/etc/vpp/startup.conf}
+SYSBUS=${PRISMA_PCI_BUS:-$ROOT/sys/bus/pci}
 say() { echo "$@" >&2; }
 
 # The device the tuner named, read from the file the binder binds FROM. One

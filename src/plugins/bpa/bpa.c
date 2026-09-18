@@ -481,7 +481,7 @@ bpa_static_first_in_block (const bpa_pool_t *p, const bpa_static_t *sf)
  * A pin is made once, by a configuration change, and then holds a block for as
  * long as the forward exists. On a box that has just booted, the configuration
  * replay creates the pools - and their pins - BEFORE it turns the export on,
- * which is the order hexash applies a configuration in. Without this, every
+ * which is the order prismash applies a configuration in. Without this, every
  * pinned block on that box is held from then on with no allocation record
  * anywhere, which is the one outcome docs/logging.md exists to prevent: a
  * mapping nobody can attribute to a subscriber later.
@@ -1272,7 +1272,7 @@ bpa_stride_short (const bpa_pool_t *p, u32 *nwp, u32 *okp)
  * SEPARATE FROM THE RECORD, because the two have different occasions. The
  * record belongs to the event - a stride was applied that this box cannot
  * honour, once - and the rows belong to whoever is looking. "show bpa pool" is
- * the readback hexash uses to put this in front of an operator who applied the
+ * the readback prismash uses to put this in front of an operator who applied the
  * pool over the API and has no terminal on the box, and a show that wrote a
  * log line every time somebody ran it would fill the log with one event
  * repeated by its own reader.
@@ -1309,7 +1309,7 @@ bpa_stride_say (vlib_main_t *vm, const bpa_pool_t *p)
  * The rows plus the record.
  *
  * `vm` may be null, and then only the log hears about it - the API path has an
- * operator at the other end of a message rather than a terminal, and hexash
+ * operator at the other end of a message rather than a terminal, and prismash
  * relays the rows from "show bpa pool" instead.
  */
 void
@@ -1381,7 +1381,7 @@ bpa_reserve_short (const bpa_pool_t *p, u32 *nwp)
  * SEPARATE FROM THE RECORD, because the two have different occasions. The
  * record belongs to the event - a pool was created with a reserve that does
  * not reach every worker, once - and the rows belong to whoever is looking.
- * "show bpa pool" is the readback hexash uses to put this in front of an
+ * "show bpa pool" is the readback prismash uses to put this in front of an
  * operator who applied the pool over the API and has no terminal on the box,
  * and a show that wrote a log line every time somebody ran it would fill the
  * log with one event repeated by its own reader.
@@ -1487,12 +1487,12 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 
   /* The VTY changes per-pool timeouts here, so this is where that change is
    * warned about. No vlib_main_t: the operator is at the other end of an API
-   * call, and hexash relays it from "show bpa timeouts". */
+   * call, and prismash relays it from "show bpa timeouts". */
   bpa_timeouts_warn (0, timeouts, p->name);
   /* And the stride, which reaches a live pool through this call and a new one
    * through bpa_pool_add(). Both are needed and neither covers the other: a
    * pool being created carries its stride on the creation message and never
-   * comes through here at all. hexash relays the rows from "show bpa pool"
+   * comes through here at all. prismash relays the rows from "show bpa pool"
    * after either. */
   bpa_stride_warn (0, p);
 
@@ -1693,7 +1693,7 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
    *
    * No vlib_main_t, for the reason bpa_pool_settings_set() gives above: the
    * operator is at the other end of an API call rather than at a terminal, so
-   * this goes to the log, and hexash relays it from "show bpa pool" - which
+   * this goes to the log, and prismash relays it from "show bpa pool" - which
    * says the same sentence through the same function.
    *
    * After the barrier and after bpa_pool_init(), because reserve_count is
@@ -1715,7 +1715,7 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
    *
    * No vlib_main_t, for the reason bpa_pool_settings_set() gives above: the
    * operator is at the other end of an API call rather than at a terminal, so
-   * this goes to the log, and hexash relays the rows from "show bpa pool" -
+   * this goes to the log, and prismash relays the rows from "show bpa pool" -
    * which says the same sentence through the same function.
    *
    * After the barrier and after bpa_pool_init(), because the arithmetic reads
@@ -2057,7 +2057,7 @@ bpa_blocks_log_all (u8 event)
  *     async-signal-safe. And it would buy nothing the exit hook does not
  *     already have, because it still could not run the graph.
  *
- *   - An ExecStop in hexarouting.service rather than in a vpp.service drop-in
+ *   - An ExecStop in prisma-routing.service rather than in a vpp.service drop-in
  *     would be in the wrong unit twice over: that unit is a oneshot that
  *     applies a configuration and holds no blocks, and it says in as many
  *     words why it has no ExecStop - stopping the control plane must not touch
@@ -2224,7 +2224,7 @@ bpa_init (vlib_main_t *vm)
   bm->vnet_main = vnet_get_main ();
   bm->pool_by_name = hash_create_vec (0, sizeof (u8), sizeof (uword));
   bm->log_class = vlib_log_register_class ("bpa", 0);
-  bm->audit_path = format (0, "/var/log/hexarouting/config-history.log%c", 0);
+  bm->audit_path = format (0, "/var/log/prisma-routing/config-history.log%c", 0);
   vec_dec_len (bm->audit_path, 1);
   /*
    * Explicitly, because zero is a real uid. bpa_main starts zeroed, so
@@ -2335,7 +2335,7 @@ VLIB_INIT_FUNCTION (bpa_init);
  *
  * The bound is measured, not chosen. VPP 26.06 lays `show plugins` out in
  * fixed columns - the name starts at 5, the version at 46, the description at
- * 79 - so the version has 33 columns, and hexash reads the field by finding
+ * 79 - so the version has 33 columns, and prismash reads the field by finding
  * the run of two or more spaces that ends it. A stamp of 32 or more leaves
  * fewer than two and the field silently runs into the description. Failing
  * the BUILD is the only place that can be said out loud; failing at the

@@ -1,4 +1,4 @@
-# HexaRouting - Sweep of the three documents nobody had read end to end
+# Prisma Routing - Sweep of the three documents nobody had read end to end
 
 ## TL;DR
 
@@ -62,15 +62,15 @@ requires of them.
 plugin were listed and compared against what the three documents name.
 `bpa stop-drain`, `bpa audit-path`, `bpa logging tcp` and
 `show bpa pool history` all exist, and the VTY spellings beside them
-(`nat cgnat logging udp ... src ...`, `show cgnat logging`) are in `hexash`'s
+(`nat cgnat logging udp ... src ...`, `show cgnat logging`) are in `prismash`'s
 grammar.
 
 **Every Python seam and environment variable.** `Shell.SYS_CLASS_NET`,
 `Shell.PROC_NET_ROUTE`, `Shell.STARTUP_CONF`, `Shell.TUNE_ENV`,
 `Shell.PCI_DEVICES`, `Shell.PCI_DRIVERS` and
 `Shell.why_no_dataplane_interface()` are where `routing.md` says they are, and
-so are `HEXA_DATAPLANE_IF`, `HEXA_DATAPLANE_MGMT`, `--keep-management` and
-`/etc/hexarouting/confirm-pending` (the last three were removed by #385 since
+so are `PRISMA_DATAPLANE_IF`, `PRISMA_DATAPLANE_MGMT`, `--keep-management` and
+`/etc/prisma-routing/confirm-pending` (the last three were removed by #385 since
 this sweep; `routing.md` no longer names them).
 
 **Every timeout and limit.** The four RFC floors in `architecture.md:888-891`
@@ -100,7 +100,7 @@ and `no chained entries: nothing here is covered` is at `:634`.
 
 **The SNMP surface.** Six `natDefTimeouts` objects and six enterprise objects,
 in the order `routing.md:2279-2286` gives them, are `_TIMEOUT_OIDS` and
-`_ENTERPRISE_OBJECTS` in `appliance/hexarouting-snmp-agent`.
+`_ENTERPRISE_OBJECTS` in `appliance/prisma-routing-snmp-agent`.
 
 **The console arithmetic that is right.** `UNCHECKED_MARK` is sixteen
 characters; `neighbor 2001:db8:aaaa:bbbb::1 soft-reconfiguration inbound` is

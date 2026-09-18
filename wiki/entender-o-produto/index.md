@@ -4,7 +4,7 @@ Por que o produto é assim. Leia quando precisar decidir arquitetura ou avaliar 
 
 | Página | Responde |
 |--------|----------|
-| [HexaRouting — visão geral](/doc/hexarouting-visao-geral-cNtWoccoy5) | O que é o produto, do que é feito e o que ainda não existe |
+| [Prisma Routing — visão geral](/doc/prisma-routing-visao-geral-cNtWoccoy5) | O que é o produto, do que é feito e o que ainda não existe |
 | [BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) | A aritmética que substitui a tabela de alocação |
 | [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) | O que o modo determinístico já dá, e o que falta para failover |
 

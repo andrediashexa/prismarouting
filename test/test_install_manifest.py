@@ -168,7 +168,7 @@ print("\n=== nothing is written before the installer can still refuse ===")
 # WHY IT MATTERS. install.sh refuses when it cannot find one of the two plugins
 # the build produces, and a refusal is only worth taking while it still costs
 # nothing - which is true only while nothing has been written. Both refusals
-# used to sit forty lines down, past the whole of src/hexash: a tree with no
+# used to sit forty lines down, past the whole of src/prismash: a tree with no
 # dataplane plugin left a box carrying a NEW VTY over an OLD dataplane, and a
 # tree with no vat2 plugin left one carrying a new dataplane behind the
 # PREVIOUS version's vat2 plugin with the new version stamped on it (#301).
@@ -246,7 +246,7 @@ elif marker_at:
 
 print("\n=== the file list the box keeps is written after the last write ===")
 # WHY THIS IS A PROPERTY OF THE TEXT. install.sh writes
-# /usr/share/hexarouting/MANIFEST, which is what the box compares itself
+# /usr/share/prisma-routing/MANIFEST, which is what the box compares itself
 # against at every boot (#302), and it can only be a complete list of what
 # this run installed if it is written after this run has installed it. An
 # install line added below that block puts a file on the box that the manifest
@@ -293,7 +293,7 @@ print("\n=== and a file the operator owns is guarded in exactly one place ===")
 # THE DECISION THE MANIFEST RESTS ON. install.sh writes two kinds of file:
 # those it overwrites on every run, which ARE the build, and those it writes
 # once and never touches again because the operator edits them - tune.env,
-# vpp-base.conf and hexarouting.conf. The boot self-test reports the first kind
+# vpp-base.conf and prisma-routing.conf. The boot self-test reports the first kind
 # when it does not match and says nothing about the second, because an edited
 # tune.env is the file working rather than the file broken, and a check that
 # shouted about it is a check somebody switches off - taking the file that
@@ -349,11 +349,11 @@ print("\n=== every answer the installer knows is in the reference tables ===")
 # has to print them when it rejects one. So the list cannot drift from what the
 # installer accepts without the refusal drifting too, and that is a message an
 # operator reads.
-_INST = open(os.path.join(REPO, "appliance", "hexarouting-install"),
+_INST = open(os.path.join(REPO, "appliance", "prisma-routing-install"),
              encoding="utf-8").read()
 _m = re.search(r'echo "  known: (.*?)"\s*>&2\n(.*?)_rc=1', _INST, re.S)
 if not _m:
-    bad("appliance/hexarouting-install no longer prints the keys it knows "
+    bad("appliance/prisma-routing-install no longer prints the keys it knows "
         "when it refuses one, so this check has nothing to read them from")
 else:
     _known = set(re.findall(r"[a-z][a-z-]+",
@@ -378,10 +378,10 @@ else:
     # in the answer file, so the two tables are searched together.
     _missing = sorted(k for k in _known
                       if f"`{k}`" not in _tables
-                      and f"hexarouting.{k}=" not in _tables
-                      and f"`hexarouting.{k}" not in _tables)
+                      and f"prisma-routing.{k}=" not in _tables
+                      and f"`prisma-routing.{k}" not in _tables)
     if _missing:
-        bad(f"appliance/hexarouting-install accepts {_missing} and "
+        bad(f"appliance/prisma-routing-install accepts {_missing} and "
             f"docs/appliance.md's unattended-install tables do not list them: "
             f"an install written from the page answers nothing about them and "
             f"takes the default the same page warns about")

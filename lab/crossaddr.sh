@@ -111,7 +111,7 @@
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -161,7 +161,7 @@ vppctl bpa pool a16 inside 100.64.1.0/25   outside 200.150.1.0/28 \
 vppctl bpa pool b16 inside 100.64.1.128/25 outside 200.150.2.0/28 \
     ports 1024-1039 block 4 mode dynamic max-blocks 2
 
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 $HX -c "configure" -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
     -c "cgnat logging enable" -c "commit" >/dev/null 2>&1
 # THE COLLECTOR IS TOLD WHEN TO STOP, and the number behind it is a ceiling

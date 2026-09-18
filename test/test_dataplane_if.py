@@ -3,7 +3,7 @@
 Naming the card the dataplane forwards on, from the VTY.
 
 Until this existed the only way to give an appliance a card was to edit
-HEXA_DATAPLANE_IF in the tuner's file from a Linux shell. Every fresh install
+PRISMA_DATAPLANE_IF in the tuner's file from a Linux shell. Every fresh install
 comes up with that field empty - deliberately, because the alternative is VPP
 probing and taking whatever NIC it finds, which on a single-NIC box is the
 management port - so every fresh install forwards nothing until somebody drops
@@ -39,9 +39,9 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import config                                                   # noqa: E402
-import hexash                                                   # noqa: E402
+import prismash                                                   # noqa: E402
 import system                                                   # noqa: E402
 import vppapi                                                   # noqa: E402
 
@@ -67,16 +67,16 @@ TUNE_ENV_SHIPPED = """\
 #
 # EMPTY ON PURPOSE. It used to ship as "eth0", which does not exist on a Debian
 # 12 box with predictable interface names.
-HEXA_DATAPLANE_IF=
+PRISMA_DATAPLANE_IF=
 
 # Subscriber target: sizes the hugepages.
-HEXA_SUBSCRIBERS=200000
+PRISMA_SUBSCRIBERS=200000
 
 # Low latency: disables deep C-states and transparent hugepages.
-HEXA_LOW_LATENCY=1
+PRISMA_LOW_LATENCY=1
 
 # Worker cap: the most physical cores handed to VPP as forwarding workers.
-HEXA_MAX_WORKERS=
+PRISMA_MAX_WORKERS=
 """
 
 #: /proc/net/route as Linux writes it. The default route is the row whose
@@ -168,20 +168,20 @@ def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS,
         # read every card as gone.
         with open(f"{tmp}/sys/class/net/{name}/address", "w") as f:
             f.write(f"52:54:00:00:00:0{i + 1}\n")
-    os.makedirs(f"{tmp}/etc/hexarouting", exist_ok=True)
+    os.makedirs(f"{tmp}/etc/prisma-routing", exist_ok=True)
     with open(f"{tmp}/net_route", "w") as f:
         f.write(route)
     if tune is not None:
-        with open(f"{tmp}/etc/hexarouting/tune.env", "w") as f:
+        with open(f"{tmp}/etc/prisma-routing/tune.env", "w") as f:
             f.write(tune)
-    elif os.path.exists(f"{tmp}/etc/hexarouting/tune.env"):
-        os.unlink(f"{tmp}/etc/hexarouting/tune.env")
+    elif os.path.exists(f"{tmp}/etc/prisma-routing/tune.env"):
+        os.unlink(f"{tmp}/etc/prisma-routing/tune.env")
     # The management network the installer recorded, which is the card the
     # dataplane reserves for Linux (#378). None means the box was installed
     # with no management network - the "none" answer, which is a decision
     # somebody made and reserves nothing.
     os.makedirs(f"{tmp}/etc/network/interfaces.d", exist_ok=True)
-    mgmt = f"{tmp}/etc/network/interfaces.d/hexarouting"
+    mgmt = f"{tmp}/etc/network/interfaces.d/prisma-routing"
     if reserve:
         with open(mgmt, "w") as f:
             f.write(f"auto {reserve}\niface {reserve} inet dhcp\n")
@@ -190,8 +190,8 @@ def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS,
 
 
 def computed_path(tmp, line):
-    """What hexarouting-tune left in /run on the boot that claimed a card."""
-    d = f"{tmp}/run/hexarouting"
+    """What prisma-routing-tune left in /run on the boot that claimed a card."""
+    d = f"{tmp}/run/prisma-routing"
     os.makedirs(d, exist_ok=True)
     with open(f"{d}/dataplane-management", "w") as f:
         f.write(line)
@@ -221,9 +221,9 @@ def shell_on(tmp, addrs=None, dp=None, api=None, **kw):
     other suites' subject and a real one would make this file need a box.
     """
     make_box(tmp, **kw)
-    sh = hexash.Shell()
+    sh = prismash.Shell()
     # Stated outright rather than inherited from whoever runs the suite (#35).
-    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
     sh.api = api or FakeApi()
     sh.dp = dp or FakeVpp()
     sh.ran = []
@@ -239,7 +239,7 @@ def shell_on(tmp, addrs=None, dp=None, api=None, **kw):
         return 127, f"{argv[0]}: not found"
 
     sh.sys = system.System(runner=runner, root=tmp)
-    sh.frr = type("F", (hexash.Frr,), {
+    sh.frr = type("F", (prismash.Frr,), {
         "available": lambda self: False,
         "show": lambda self, c: (1, ""),
         "running": lambda self: [],
@@ -249,16 +249,16 @@ def shell_on(tmp, addrs=None, dp=None, api=None, **kw):
     # OUT OF THE TREE, never off the machine running this suite. Without it
     # `show hardware` would reserve whatever card the developer's own box was
     # installed to be managed on, and the cases below would measure that
-    # machine instead of the fixture - which is the trap HEXA_IP's comment in
+    # machine instead of the fixture - which is the trap PRISMA_IP's comment in
     # appliance/test_tune.py describes, in this file's own seams.
-    sh.MGMT_CONF = f"{tmp}/etc/network/interfaces.d/hexarouting"
-    # And the way back hexarouting-tune computes on the boot that claims a
+    sh.MGMT_CONF = f"{tmp}/etc/network/interfaces.d/prisma-routing"
+    # And the way back prisma-routing-tune computes on the boot that claims a
     # card (#378). Its real path is /run, which a suite cannot own and must
     # not share between fixtures.
-    sh.MGMT_PATH_FILE = f"{tmp}/run/hexarouting/dataplane-management"
-    sh.TUNE_ENV = f"{tmp}/etc/hexarouting/tune.env"
-    sh.rb = hexash.Rollback(path=f"{tmp}/rollback")
-    sh.confirm = hexash.ConfirmPending(path=f"{tmp}/confirm")
+    sh.MGMT_PATH_FILE = f"{tmp}/run/prisma-routing/dataplane-management"
+    sh.TUNE_ENV = f"{tmp}/etc/prisma-routing/tune.env"
+    sh.rb = prismash.Rollback(path=f"{tmp}/rollback")
+    sh.confirm = prismash.ConfirmPending(path=f"{tmp}/confirm")
     return sh
 
 
@@ -287,7 +287,7 @@ with tempfile.TemporaryDirectory() as tmp:
     print(f"  candidate holds {sh.candidate.dataplane_if!r} and renders it")
 
 print("\n=== and survives the round trip through the configuration file ===")
-# The file hexarouting.service replays at every boot. A statement that renders
+# The file prisma-routing.service replays at every boot. A statement that renders
 # and does not parse is one the box refuses to load at the next reboot, on a
 # machine nobody is watching.
 _cfg = config.Config()
@@ -350,7 +350,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print("\n=== and again at commit, for the paths that never see the prompt ===")
 # `rollback` to a revision written when this box had a different card, and
-# `--load` of the file hexarouting.service replays at boot, both reach apply()
+# `--load` of the file prisma-routing.service replays at boot, both reach apply()
 # without passing do_config. The refusal lived there as well, so its absence
 # is held there as well: driven through apply() rather than the prompt for
 # exactly that reason.
@@ -466,14 +466,14 @@ with tempfile.TemporaryDirectory() as tmp:
     said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
     check("commit complete" in said, f"the commit did not complete: {said!r}")
     after = open(sh.TUNE_ENV).read()
-    check("HEXA_DATAPLANE_IF=enp2s0" in after.splitlines(),
+    check("PRISMA_DATAPLANE_IF=enp2s0" in after.splitlines(),
           f"the tuner's input was not set: {after!r}")
     # EVERY other line, in order, byte for byte. Not "the other settings are
     # still there": what a regenerated file loses first is the prose, and a
     # check that only looked at the settings would pass over a file with every
     # comment stripped out of it.
-    expect = [l if not l.startswith("HEXA_DATAPLANE_IF=")
-              else "HEXA_DATAPLANE_IF=enp2s0" for l in before.splitlines()]
+    expect = [l if not l.startswith("PRISMA_DATAPLANE_IF=")
+              else "PRISMA_DATAPLANE_IF=enp2s0" for l in before.splitlines()]
     check(after.splitlines() == expect,
           f"the file was rewritten rather than edited; a hand-editable file "
           f"full of comments lost them: {after!r}")
@@ -486,7 +486,7 @@ print("\n=== commit runs the tuner, and does NOT restart the dataplane ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
-    check(["systemctl", "restart", "hexarouting-tune"] in sh.ran,
+    check(["systemctl", "restart", "prisma-routing-tune"] in sh.ran,
           f"the tuner was never run, so startup.conf still names no device "
           f"and the operator would have to run it themselves: {sh.ran!r}")
     # THE assertion this whole design turns on. Handing a card to the
@@ -572,7 +572,7 @@ print("\n=== the running configuration is READ from the box, not remembered "
 # last wrote is a VTY that cannot notice being wrong.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, tune=TUNE_ENV_SHIPPED.replace(
-        "HEXA_DATAPLANE_IF=", "HEXA_DATAPLANE_IF=enp2s0"))
+        "PRISMA_DATAPLANE_IF=", "PRISMA_DATAPLANE_IF=enp2s0"))
     running = sh.running_config()
     check(running.dataplane_if == "enp2s0",
           f"a card set by hand in the file is invisible to the VTY: "
@@ -585,26 +585,26 @@ with tempfile.TemporaryDirectory() as tmp:
 print("\n=== so a commit that changes nothing writes nothing ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, tune=TUNE_ENV_SHIPPED.replace(
-        "HEXA_DATAPLANE_IF=", "HEXA_DATAPLANE_IF=enp2s0"))
+        "PRISMA_DATAPLANE_IF=", "PRISMA_DATAPLANE_IF=enp2s0"))
     said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
     check("no changes to commit" in said,
           f"setting the card the box already has was treated as a change, so "
           f"every commit would re-run the tuner: {said!r}")
-    check(["systemctl", "restart", "hexarouting-tune"] not in sh.ran,
+    check(["systemctl", "restart", "prisma-routing-tune"] not in sh.ran,
           f"and it ran the tuner for a change nobody made: {sh.ran!r}")
     print("  idempotent: the box already had it, so nothing ran")
 
 print("\n=== and 'save' writes it to the file the box replays at boot ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, tune=TUNE_ENV_SHIPPED.replace(
-        "HEXA_DATAPLANE_IF=", "HEXA_DATAPLANE_IF=enp2s0"))
-    _was = hexash.CONFIG_PATH
-    hexash.CONFIG_PATH = f"{tmp}/etc/hexarouting/hexarouting.conf"
+        "PRISMA_DATAPLANE_IF=", "PRISMA_DATAPLANE_IF=enp2s0"))
+    _was = prismash.CONFIG_PATH
+    prismash.CONFIG_PATH = f"{tmp}/etc/prisma-routing/prisma-routing.conf"
     try:
         drive(sh, ["save"])
-        saved = open(hexash.CONFIG_PATH).read()
+        saved = open(prismash.CONFIG_PATH).read()
     finally:
-        hexash.CONFIG_PATH = _was
+        prismash.CONFIG_PATH = _was
     check("dataplane interface enp2s0" in saved.splitlines(),
           f"'save' wrote a file that does not name the box's card, so the "
           f"next boot replays a configuration missing it: {saved!r}")
@@ -617,12 +617,12 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print("\n=== a tuner file with no such setting in it gains one ===")
 with tempfile.TemporaryDirectory() as tmp:
-    sh = shell_on(tmp, tune="# nothing but a comment\nHEXA_SUBSCRIBERS=10\n")
+    sh = shell_on(tmp, tune="# nothing but a comment\nPRISMA_SUBSCRIBERS=10\n")
     drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
     after = open(sh.TUNE_ENV).read()
-    check("HEXA_DATAPLANE_IF=enp2s0" in after.splitlines(),
+    check("PRISMA_DATAPLANE_IF=enp2s0" in after.splitlines(),
           f"a file that never had the setting did not gain it: {after!r}")
-    check("HEXA_SUBSCRIBERS=10" in after.splitlines(),
+    check("PRISMA_SUBSCRIBERS=10" in after.splitlines(),
           f"and the settings it did have were lost: {after!r}")
     print("  appended, and what was there stayed")
 
@@ -643,7 +643,7 @@ with tempfile.TemporaryDirectory() as tmp:
 print("\n=== a file that cannot be written fails the commit, and says so ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    sh.TUNE_ENV = f"{tmp}/etc/hexarouting"      # a directory, not a file
+    sh.TUNE_ENV = f"{tmp}/etc/prisma-routing"      # a directory, not a file
     said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
     check("commit complete" not in said,
           f"the write failed and the commit reported success: {said!r}")
@@ -675,8 +675,8 @@ print("\n=== the LAST assignment wins, as systemd reads it ===")
 # and two answers to "which card is this box set to" is one that can disagree
 # with the box's own diagnosis.
 with tempfile.TemporaryDirectory() as tmp:
-    sh = shell_on(tmp, tune="HEXA_DATAPLANE_IF=enp1s0\n"
-                            "HEXA_DATAPLANE_IF=enp2s0\n")
+    sh = shell_on(tmp, tune="PRISMA_DATAPLANE_IF=enp1s0\n"
+                            "PRISMA_DATAPLANE_IF=enp2s0\n")
     check(sh.read_dataplane_if() == "enp2s0",
           f"read as {sh.read_dataplane_if()!r}, which is not what the unit "
           f"would use")
@@ -684,7 +684,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print("\n=== a quoted value reads back as the name, not as the quotes ===")
 with tempfile.TemporaryDirectory() as tmp:
-    sh = shell_on(tmp, tune='HEXA_DATAPLANE_IF="enp2s0"\n')
+    sh = shell_on(tmp, tune='PRISMA_DATAPLANE_IF="enp2s0"\n')
     check(sh.read_dataplane_if() == "enp2s0",
           f"read as {sh.read_dataplane_if()!r}, so a quoted file would look "
           f"like a change on every commit")
@@ -692,7 +692,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print("\n=== a commented-out setting is not a setting ===")
 with tempfile.TemporaryDirectory() as tmp:
-    sh = shell_on(tmp, tune="# HEXA_DATAPLANE_IF=enp1s0\nHEXA_SUBSCRIBERS=1\n")
+    sh = shell_on(tmp, tune="# PRISMA_DATAPLANE_IF=enp1s0\nPRISMA_SUBSCRIBERS=1\n")
     check(sh.read_dataplane_if() == "",
           f"a commented line was read as configuration: "
           f"{sh.read_dataplane_if()!r}")
@@ -707,7 +707,7 @@ print("\n=== the VTY reads the way back the tuner computed at boot (#378) ===")
 # address there is, and without it the boot that hands the card over is the
 # boot that puts nothing on the pair.
 with tempfile.TemporaryDirectory() as tmp:
-    sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
+    sh = shell_on(tmp, tune="PRISMA_SUBSCRIBERS=1\n")
     computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:AB:CD:EF 10.95.200.1\n")
     rec = sh.read_computed_mgmt()
     # THE GATEWAY IS PART OF IT, and this asserted three fields until an
@@ -747,7 +747,7 @@ print("\n=== a computed record missing a field is no record at all ===")
 for _bad in ("ens18\n", "ens18 10.95.200.198\n", "\n",
              "ens18 10.95.200.198/24 52:54:00:ab:cd:ef\n"):
     with tempfile.TemporaryDirectory() as tmp:
-        sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
+        sh = shell_on(tmp, tune="PRISMA_SUBSCRIBERS=1\n")
         computed_path(tmp, _bad)
         check(sh.read_computed_mgmt() == {},
               f"a half-written record was read as a way back: {_bad!r} gave "
@@ -755,7 +755,7 @@ for _bad in ("ens18\n", "ens18 10.95.200.198\n", "\n",
 with tempfile.TemporaryDirectory() as tmp:
     # And no file at all is the ordinary box: nothing claimed, nothing to put
     # back, and no complaint.
-    sh = shell_on(tmp, tune="HEXA_SUBSCRIBERS=1\n")
+    sh = shell_on(tmp, tune="PRISMA_SUBSCRIBERS=1\n")
     check(sh.read_computed_mgmt() == {},
           "a box with no computed record was given one from somewhere")
 
@@ -805,7 +805,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print("\n=== an override says it was named, not chosen ===")
 with tempfile.TemporaryDirectory() as tmp:
-    sh = shell_on(tmp, tune="HEXA_DATAPLANE_IF=enp2s0\n")
+    sh = shell_on(tmp, tune="PRISMA_DATAPLANE_IF=enp2s0\n")
     joined = " ".join(sh.claim_note(sh.host_nics()))
     check("enp2s0" in joined and "no other" in joined,
           f"a box told which card to take does not say it was told: "
@@ -880,7 +880,7 @@ print("\n=== '?' offers the cards the box has, and marks the default-route one =
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     drive(sh, ["configure"])
-    offered = sh.dynamic_options(hexash.ARG_HOST_NIC, "")
+    offered = sh.dynamic_options(prismash.ARG_HOST_NIC, "")
     # The PCI cards, and not `lo`: completion is an offer, and offering a name
     # the dataplane cannot be given is one the box would then refuse.
     check(set(offered) == {c for c in CARDS if c != "lo"},
@@ -897,12 +897,12 @@ with tempfile.TemporaryDirectory() as tmp:
 print("\n=== the tree's marker has a source behind it ===")
 # A marker added to the tree with nothing in DYNAMIC answers "<nic>" and
 # nothing else, which is the bare placeholder this VTY exists to replace.
-check(hexash.ARG_HOST_NIC in hexash.Shell.DYNAMIC,
+check(prismash.ARG_HOST_NIC in prismash.Shell.DYNAMIC,
       "the argument marker has no source, so '?' offers the placeholder")
-_source = hexash.Shell.DYNAMIC.get(hexash.ARG_HOST_NIC, "")
-check(_source and hasattr(hexash.Shell, _source),
+_source = prismash.Shell.DYNAMIC.get(prismash.ARG_HOST_NIC, "")
+check(_source and hasattr(prismash.Shell, _source),
       f"DYNAMIC names {_source!r}, which is not a method on the Shell")
-print(f"  {hexash.ARG_HOST_NIC} -> {_source or '(nothing)'}")
+print(f"  {prismash.ARG_HOST_NIC} -> {_source or '(nothing)'}")
 
 print("\n=== the change is an administrator's, not a CGNAT operator's ===")
 # Handing a card to the dataplane is not a CGNAT setting, and a cgnat-operator
@@ -912,12 +912,12 @@ _d = config.Config().delta_to(config.Config.parse(
 check(_d["dataplane_if_changed"] is True,
       f"the delta does not report the change at all, so nothing would apply "
       f"it: {_d['dataplane_if_changed']!r}")
-check(hexash.cap_needed(_d) == hexash.CAP_ALL,
-      f"this change needs {hexash.cap_needed(_d)!r}, so an account that may "
+check(prismash.cap_needed(_d) == prismash.CAP_ALL,
+      f"this change needs {prismash.cap_needed(_d)!r}, so an account that may "
       f"only configure CGNAT could hand over the card")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    sh.caps = {hexash.CAP_CGNAT}
+    sh.caps = {prismash.CAP_CGNAT}
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         ok = sh.apply(config.Config.parse("dataplane interface enp2s0\n"))
@@ -988,7 +988,7 @@ def one_card_box(tmp, frr=True, **kw):
         # afterwards and reports any statement FRR did not keep (#184). A stub
         # that forgot every reload would report the handover's own default
         # route as lost on a box where nothing was wrong.
-        class OkFrr(hexash.Frr):
+        class OkFrr(prismash.Frr):
             def __init__(self):
                 self.held = []
 
@@ -1076,7 +1076,7 @@ for _name, _cards, _route, _addrs in (
         # offered for a name the box then turns down.
         check("error:" not in _said,
               f"the one-card box refused {_name!r}: {_said!r}")
-        _rows = sh.dynamic_options(hexash.ARG_HOST_NIC, "")
+        _rows = sh.dynamic_options(prismash.ARG_HOST_NIC, "")
         for _n, _hint in _rows.items():
             _row = f"  {_n}  {_hint}"
             if len(_row) > CONSOLE_COLUMNS:
@@ -1282,7 +1282,7 @@ with tempfile.TemporaryDirectory() as tmp:
     print("  and a card with two addresses is accepted with nothing guessed")
 
 print("\n=== commit writes the card into tune.env and nothing beside it (#385) ===")
-# It used to write the management record beside HEXA_DATAPLANE_IF on this
+# It used to write the management record beside PRISMA_DATAPLANE_IF on this
 # box, so that a later session reading the box back found the way back as
 # well as the card. The way back is the tuner's now, computed on the boot that claims
 # the card and left in /run; a copy in tune.env would be read back into the
@@ -1293,13 +1293,13 @@ with tempfile.TemporaryDirectory() as tmp:
     said = drive(sh, ["configure", "dataplane interface ens18", "commit"])
     check("commit complete" in said, f"the commit did not complete: {said!r}")
     tune = open(sh.TUNE_ENV).read()
-    check("HEXA_DATAPLANE_IF=ens18" in tune.splitlines(),
+    check("PRISMA_DATAPLANE_IF=ens18" in tune.splitlines(),
           f"the card is not in the tuner's file: {tune!r}")
     # THE WHOLE FILE, not the absence of one key: the shipped file with the
     # card's line changed and nothing else, so a record written under any
     # name beside the card is a difference.
-    check(tune == TUNE_ENV_SHIPPED.replace("HEXA_DATAPLANE_IF=\n",
-                                           "HEXA_DATAPLANE_IF=ens18\n"),
+    check(tune == TUNE_ENV_SHIPPED.replace("PRISMA_DATAPLANE_IF=\n",
+                                           "PRISMA_DATAPLANE_IF=ens18\n"),
           f"the commit still writes something beside the card, which the "
           f"tuner computes for itself: {tune!r}")
     # And the prose the file ships with is still there, which is the rule the
@@ -1311,7 +1311,7 @@ with tempfile.TemporaryDirectory() as tmp:
 print("\n=== a saved file from 0.76.x still loads, with its record dropped (#385) ===")
 # `dataplane management <card> address <a/len> mac <xx>` was written by `save`
 # on every one-card box set up from 0.74.x to 0.76.1, under the card, and
-# hexarouting.service replays that file at every boot. The statement is gone:
+# prisma-routing.service replays that file at every boot. The statement is gone:
 # the way back is computed by the tuner on the boot that claims the card, and
 # a line the box no longer reads was doing nothing. A file carrying one is
 # NOT refused - a refusal at boot is a box coming up with no pools on it, read
@@ -1436,7 +1436,7 @@ with tempfile.TemporaryDirectory() as tmp:
           f"interface: {_route!r}")
 
 print("\n=== and on every other boot it does nothing, quietly ===")
-# `hexash --load` runs at every boot, including the ones before the operator
+# `prismash --load` runs at every boot, including the ones before the operator
 # reboots into the handover and the ones after it has been rolled back. A
 # commit that failed because a card had not moved yet would be a box that
 # cannot be configured at all.
@@ -1463,7 +1463,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # only card, the bind worked - virtio-pci to uio_pci_generic, the netdev gone,
 # the dataplane holding GigabitEthernet0/9/0 - and the box came back with no
 # address on any interface and nobody could reach it. What the box replays at
-# boot is /etc/hexarouting/hexarouting.conf, and `commit` does not write that
+# boot is /etc/prisma-routing/prisma-routing.conf, and `commit` does not write that
 # file: only `save` does. `commit` writes the card into the tuner's file,
 # which is what performs the handover at the next boot. So the two halves of
 # one decision had two lifetimes, and the half that keeps the box reachable
@@ -1482,14 +1482,14 @@ with tempfile.TemporaryDirectory() as tmp:
 
 #: The tuner's file as the commit that named the card leaves it.
 TUNE_HANDED_OVER = TUNE_ENV_SHIPPED.replace(
-    "HEXA_DATAPLANE_IF=\n", "HEXA_DATAPLANE_IF=ens18\n")
+    "PRISMA_DATAPLANE_IF=\n", "PRISMA_DATAPLANE_IF=ens18\n")
 #: /proc/net/route on the boot after it: the card is gone and so is the route
 #: that lived on it.
 NO_ROUTE = ("Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask"
             "\t\tMTU\tWindow\tIRTT\n")
 #: The configuration file every fresh appliance boots with, from
-#: appliance/etc/hexarouting.conf. Three comments and no statement.
-SHIPPED_CONF = "!\n! HexaRouting\n!\n"
+#: appliance/etc/prisma-routing.conf. Three comments and no statement.
+SHIPPED_CONF = "!\n! Prisma Routing\n!\n"
 #: And a dataplane that took nothing, for the case where the card is on
 #: neither side.
 DP_NOTHING = """\
@@ -1503,13 +1503,13 @@ def booted_after_handover(tmp, conf, dp=None, api=None):
     """
     The box on the boot after the handover: Linux has no card at all, the
     tuner still names the one it gave away, and `conf` is what
-    hexarouting.service replays.
+    prisma-routing.service replays.
     """
     sh = shell_on(tmp, route=NO_ROUTE, cards=("lo",), tune=TUNE_HANDED_OVER,
                   api=api or FakeApi(have=("GigabitEthernet0/3/0",)),
                   dp=dp or FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
     computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n")
-    path = os.path.join(tmp, "etc/hexarouting/hexarouting.conf")
+    path = os.path.join(tmp, "etc/prisma-routing/prisma-routing.conf")
     with open(path, "w") as f:
         f.write(conf)
     return sh, path
@@ -1527,10 +1527,10 @@ print("\n=== load() uses the computed record on a box nobody typed at ===")
 with tempfile.TemporaryDirectory() as tmp:
     api = FakeApi(have=("GigabitEthernet0/3/0",))
     sh = shell_on(tmp, route=NO_ROUTE, cards=("lo",),
-                  tune="HEXA_SUBSCRIBERS=200000\n", api=api,
+                  tune="PRISMA_SUBSCRIBERS=200000\n", api=api,
                   dp=FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
     computed_path(tmp, "ens18 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n")
-    path = os.path.join(tmp, "etc/hexarouting/hexarouting.conf")
+    path = os.path.join(tmp, "etc/prisma-routing/prisma-routing.conf")
     with open(path, "w") as f:
         f.write(SHIPPED_CONF)
     out = io.StringIO()
@@ -1695,7 +1695,7 @@ print("\n=== an unconfirmed revert restarts nothing, because it undoes nothing =
 # that claims its own card ships with.
 #
 # Measured across both programs before this was changed: the revert leaves
-# HEXA_DATAPLANE_IF empty and reboots, and appliance/hexarouting-tune on a
+# PRISMA_DATAPLANE_IF empty and reboots, and appliance/prisma-routing-tune on a
 # one-card box with that file answers `dev 0000:00:09.0`. The reboot arrived
 # where it started and charged a reboot for it.
 #

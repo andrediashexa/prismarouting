@@ -23,8 +23,8 @@ vppctl show api message-table 2>/dev/null | grep -i bpa | head -6 | sed 's/^/  /
 
 echo
 echo "=== creating a pool through the binary API ==="
-# Every field spelled out, including the ones hexash would fill in. That is
-# the point of this lab: it drives the WIRE FORMAT, not hexash's model of it,
+# Every field spelled out, including the ones prismash would fill in. That is
+# the point of this lab: it drives the WIRE FORMAT, not prismash's model of it,
 # so a field added to one and forgotten in the other is caught here.
 vat2 bpa_pool_add_del '{
   "is_add": true,
@@ -136,7 +136,7 @@ expect "an invalid pool returns an error code" \
   sh -c "[ -n '${BAD_RETVAL}' ] && [ '${BAD_RETVAL}' != '0' ]"
 expect_not_in "and is not created" "pool z " "$(vppctl show bpa pool)"
 
-# --- the client hexash will use, against a real dataplane ---
+# --- the client prismash will use, against a real dataplane ---
 # The client deliberately takes no plugin path: on an appliance there is none
 # to give. use_binary_api, at the top of this file, set up the layout a real
 # box runs - and every vat2 call above now uses it too.

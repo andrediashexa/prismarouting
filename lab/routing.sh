@@ -6,7 +6,7 @@
 # interface that carries them: MTU, addresses, description, admin state,
 # static routes with rollback, and router advertisements.
 #
-#   [netns peer] AS 65001 / OSPF / IS-IS       [default] HexaRouting
+#   [netns peer] AS 65001 / OSPF / IS-IS       [default] Prisma Routing
 #     dum-bgp   203.0.113.0/24  -- BGP  -->
 #     dum-ospf  198.18.0.0/24   -- OSPF -->    FRR -> kernel -> linux_nl
 #     dum-isis  198.19.0.0/24   -- ISIS -->                  -> the VPP FIB
@@ -73,12 +73,12 @@ n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
 # The BPA plugin, installed where vat2 looks for it on a real box. Nothing
-# below sends a bpa_ message, but hexash asks vat2 which messages are
+# below sends a bpa_ message, but prismash asks vat2 which messages are
 # registered before it touches the dataplane and calls it unusable when
 # bpa_pool_add_del is not among them - so without this every interface commit
 # here fails for a reason that has nothing to do with the interface.
 use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
@@ -124,25 +124,25 @@ ip link set vppwan9 up
 # a CHANGE rather than a state that might have been there all along.
 OSI_BEFORE=$(vat2 lcp_osi_proto_get '{}' 2>/dev/null | grep -c '"0x83"' || true)
 
-# ---------------- HexaRouting ----------------
+# ---------------- Prisma Routing ----------------
 mkdir -p /var/run/frr /etc/frr
 cat > /etc/frr/zebra.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 # Deliberately EMPTY of BGP. This side's session is configured through the VTY
 # further down, so the routes that arrive are evidence that the VTY configured
 # a working peering - not that a file written by the lab did (#142).
 cat > /etc/frr/bgpd.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 cat > /etc/frr/ospfd.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 router ospf
  ospf router-id 10.0.0.1
  network 10.0.0.0/24 area 0
 EOF
 cat > /etc/frr/isisd.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 interface vppwan0
  ip router isis HEXA
 exit
@@ -485,7 +485,7 @@ $HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1450" -c "exit" \
 tail -2 /tmp/mtu2.log | sed 's/^/  commit: /'
 expect "with lcp-sync off, the dataplane still took the MTU" \
   test "$(mtu_of)" = "1450"
-expect "with lcp-sync off, the TAP took it too - so hexash moved it, not VPP" \
+expect "with lcp-sync off, the TAP took it too - so prismash moved it, not VPP" \
   sh -c "ip link show vppwan0 | grep -q 'mtu 1450'"
 
 vppctl lcp lcp-sync on
@@ -950,9 +950,9 @@ expect_in "commit check now refuses the bad range itself" \
 # The needle here carried a trailing NEWLINE - it was written across two source
 # lines, with the closing quote in column 1 - and that made it unmatchable
 # against either sentence the product can print. `CHECKOUT=$(...)` strips
-# trailing newlines, so the bare sentence, which hexash.py:7611 prints as the
+# trailing newlines, so the bare sentence, which prismash.py:7611 prints as the
 # last thing before it returns, loses the very byte the needle needed; and the
-# other branch (hexash.py:7583) continues the line with " for CGNAT and the
+# other branch (prismash.py:7583) continues the line with " for CGNAT and the
 # box's own configuration", so no newline follows "succeeds" there either. The
 # same sentence is spelled correctly, without the newline, at line 280 of this
 # file.
@@ -960,8 +960,8 @@ expect_in "commit check now refuses the bad range itself" \
 # Without the newline it now matches EITHER sentence, and that is right rather
 # than merely simpler: both are success claims, and neither may be printed
 # beside a refusal. It cannot go red on a correct box, because both prints sit
-# inside `if self.apply(self.candidate, check_only=True):` (hexash.py:7563) and
-# a candidate carrying a bad prefix range sets ok = False (hexash.py:6269-6272),
+# inside `if self.apply(self.candidate, check_only=True):` (prismash.py:7563) and
+# a candidate carrying a bad prefix range sets ok = False (prismash.py:6269-6272),
 # so a box that refuses prints neither.
 #
 # Driven on 2026-09-15 over three commit-check outputs: a refusal alone, a
@@ -1210,7 +1210,7 @@ expect_not_in "and the running configuration drops the exception" \
 # the Linux side instead propagates back into VPP even with lcp-sync off - the
 # two ended up equal and the check correctly said nothing, which is how this
 # was found. And it cannot be made with `mtu` at the VTY either, because
-# hexash sets both sides itself.
+# prismash sets both sides itself.
 echo "=========== the OSPF MTU stall ==========="
 vppctl lcp lcp-sync off
 THERE=$(ip -o link show dev vppwan0 | awk '{for(i=1;i<=NF;i++) if($i=="mtu") print $(i+1)}')

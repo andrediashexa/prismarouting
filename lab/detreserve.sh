@@ -141,7 +141,7 @@ MODE=${1:-on}
 RESERVE=1
 [ "$MODE" = "off" ] && RESERVE=0
 
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -252,7 +252,7 @@ send() {   # inside address, source port
 # that performs the product's own step proves nothing about the product, which
 # is the rule lab/ipfix.sh records after UDP export shipped for the life of
 # the project with a green lab beside it.
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 $HX -c "configure" \
     -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
     -c "cgnat logging enable" \
@@ -507,7 +507,7 @@ echo "=========== the same reserve, created through the VTY ==========="
 # sections is which way in was used.
 #
 # A POOL OF ITS OWN, not `det` re-committed. Committing a change to `det` would
-# make hexash rebuild a pool this file has already measured, and every
+# make prismash rebuild a pool this file has already measured, and every
 # assertion above it would then be about a pool that had been taken down and
 # put back. This one is built at the end, carries nothing but its reserve, and
 # nothing else reads it.
@@ -807,7 +807,7 @@ fi
 # 8. AND THE SAME WARNING AT THE VTY PROMPT, which is where an operator is.
 #
 # Item 7 asserts what the dataplane's own console printed. This asserts what
-# the product printed, on the path hexash uses - and the two are different
+# the product printed, on the path prismash uses - and the two are different
 # claims about different code, which is the whole reason both are here. A box
 # that tells the person at `vppctl` and says nothing to the person at the
 # prompt has told nobody: the VTY exists so that nobody has to drop to the
@@ -924,7 +924,7 @@ expect "and every pool that makes it is a dynamic one" \
 
 # AND THE SAME TWO AT THE PROMPT, which is where an operator types it. Item 9
 # above asserts what the dataplane's own console printed; this asserts what
-# the product printed on the path hexash uses, and they are different code.
+# the product printed on the path prismash uses, and they are different code.
 expect_said "the prompt refuses it too, before anything is applied" \
   "error: block-stride applies to dynamic pools only, not to pool vtystride" \
   "$VTY_STRIDE_SAY"

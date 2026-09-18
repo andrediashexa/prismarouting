@@ -5,27 +5,27 @@
 # then roll back to the previous revision and confirm the device followed.
 set -u
 . /src/lab/verdict.sh
-mkdir -p /run/vpp /vpp_plugins /etc/hexarouting /var/run/frr /etc/frr
+mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing /var/run/frr /etc/frr
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
-export HEXA_ROLLBACK=/tmp/rollback HEXA_CONFIG=/tmp/hexarouting.conf
+export PRISMA_ROLLBACK=/tmp/rollback PRISMA_CONFIG=/tmp/prisma-routing.conf
 rm -rf /tmp/rollback
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 wait_vpp
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl set interface state pg0 up
-printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
-printf 'hostname hexarouting\n' > /etc/frr/bgpd.conf
+printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
+printf 'hostname prisma-routing\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
 pgrep zebra >/dev/null || start_frr bgpd
 sleep 2
 
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 
 echo "=========== 1. candidate edits do NOT touch the device ==========="
 $HX -c "configure" \
@@ -83,7 +83,7 @@ echo "=========== 7. a check MUST NOT mutate the device ==========="
 # An earlier version deleted and recreated the running pool to work around a
 # name check. It "worked", and put a production pool one failed command away
 # from disappearing during a read-only operation.
-TRACE=$(HEXA_TRACE=1 $HX -c "configure" -c "cgnat pool alpha" \
+TRACE=$(PRISMA_TRACE=1 $HX -c "configure" -c "cgnat pool alpha" \
         -c "block-size 2048" -c "exit" -c "commit check" 2>&1 >/dev/null \
         | grep "^\[device\]")
 echo "$TRACE" | sed 's/^/  /'

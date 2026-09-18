@@ -25,8 +25,8 @@
 .build/test_bpa_audit
 python3 appliance/test_tune.py
 python3 appliance/test_snmp_agent.py
-python3 test/test_hexash_complete.py
-python3 test/test_hexash_config.py
+python3 test/test_prismash_complete.py
+python3 test/test_prismash_config.py
 python3 test/test_ssh_settings.py
 python3 test/test_ha_equality.py
 python3 test/test_dataplane_if.py
@@ -42,15 +42,15 @@ python3 test/test_wiki_rules.py
 python3 test/test_wiki_screens.py
 python3 test/test_doc_commands.py
 python3 test/test_vppapi.py
-python3 test/test_hexash_apply.py
-python3 test/test_hexash_batch.py
-python3 test/test_hexash_system.py
-python3 test/test_hexash_units.py
-python3 test/test_hexash_perms.py
-python3 test/test_hexash_confirm.py
-python3 test/test_hexash_igp.py
-python3 test/test_hexash_bgp.py
-sh test/test_hexash_login.sh
+python3 test/test_prismash_apply.py
+python3 test/test_prismash_batch.py
+python3 test/test_prismash_system.py
+python3 test/test_prismash_units.py
+python3 test/test_prismash_perms.py
+python3 test/test_prismash_confirm.py
+python3 test/test_prismash_igp.py
+python3 test/test_prismash_bgp.py
+sh test/test_prismash_login.sh
 python3 test/test_collector_marker.py
 python3 test/test_ipfix_record.py
 python3 test/test_kernel_tuning.py
@@ -87,7 +87,7 @@ sh test/test_release_gate.sh
 sh test/test_tool_refusals.sh
 sh test/test_off_run_coverage.sh
 python3 test/test_every_function.py
-python3 test/test_hexash_refusals.py
+python3 test/test_prismash_refusals.py
 python3 test/test_collector_stop.py
 python3 test/test_appliance_paths.py
 python3 test/test_lab_collector_window.py

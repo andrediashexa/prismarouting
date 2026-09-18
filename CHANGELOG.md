@@ -87,6 +87,60 @@ version has a chance of seeing it.
   because a static function is reachable from no other translation unit. The
   reader's C ceiling goes from 187 to 159 and the harness count from 10 to 13;
   neither number ever goes up.
+### Changed
+
+* **The product is called Prisma Routing, and this is a CLEAN BREAK for a box
+  in service** ([#202](https://github.com/andrediashexa/hexarouting/issues/202)).
+  Two words for a person to read, `prisma-routing` where a machine reads it -
+  paths, unit names, the group prefix - and `prisma` at the prompt, the one
+  word an operator types beside all day.
+
+  **A BOX RUNNING HexaRouting DOES NOT UPGRADE INTO THIS. Nothing migrates,
+  and that is a decision rather than an omission.** Everything an installed
+  box holds carries the old name, and the new names are laid down beside
+  nothing: the upgrade artifact refuses such a box outright, before it writes
+  anything, and says what the route is instead. That route is a reinstall from
+  the medium, which erases the disk.
+
+  | on a box in service | on a box installed from this medium |
+  |---|---|
+  | `/etc/hexarouting/hexarouting.conf`, the saved configuration | `/etc/prisma-routing/prisma-routing.conf` |
+  | `/etc/hexarouting/rollback/` | `/etc/prisma-routing/rollback/` |
+  | `hexarouting.service` and every other unit | `prisma-routing.service`, and the rest by the same rule |
+  | `hexash`, the login shell in `/etc/passwd` | `prismash` |
+  | `hexa-admin`, `hexa-cgnat` | `prisma-admin`, `prisma-cgnat` |
+  | `HEXA_*` in `tune.env` | `PRISMA_*` |
+  | `hexarouting.*` kernel command-line keys | `prisma-routing.*` |
+  | `/var/log/hexarouting`, a separate filesystem | `/var/log/prisma-routing` |
+
+  **What an operator has to do before reinstalling**, and the wiki page
+  *Levar a caixa para uma versao nova* carries it step by step: take the
+  configuration off the box, because the statements are the same statements
+  and the new VTY reads them back; write down who has an account and in which
+  role, because an account created by the old version has a login shell that
+  no longer exists and the list survives nowhere else; and keep the records
+  volume out of the install, then mount it at `/var/log/prisma-routing` and
+  write that into `fstab`. The connection record the Marco Civil requires for
+  a year is not erased by the reinstall and its files do not change format -
+  what changes is the path the box looks for it under, and moving a mountpoint
+  under a retention obligation is a procedure somebody performs rather than
+  something a package does while nobody is watching.
+
+  **What a person reads**, on the box this medium installs: the login banner,
+  the prompt (`prisma> ` and `prisma# [edit] `), `show version`, the boot
+  self-test's header and its four verdict sentences (`Prisma Routing ready.`
+  and the rest, in `tools/selftest-verdict.sh`, which every reader in this
+  repository takes them from - anything of yours grepping a console for
+  `HexaRouting ready` has to be re-pointed), the installer's screens, the
+  medium's boot menu and its `PRISMA_ROUTING` volume label, the unit
+  descriptions `systemctl` shows, and the medium and artifact filenames
+  `prisma-routing-<version>.iso` and
+  `prisma-routing-<version>-upgrade.tar.gz`. Releases published before this
+  one keep the files and the names they shipped with.
+
+  **What does not change**: the repository and every issue URL already written
+  down, so the record this project keeps goes on resolving; and `Hexanetworks`,
+  which is the company and not the product.
 
 ### Fixed
 

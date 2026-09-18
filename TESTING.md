@@ -1,4 +1,4 @@
-# HexaRouting — Testing
+# Prisma Routing - Testing
 
 ## TL;DR
 
@@ -49,7 +49,7 @@ make model     # validates the reference model itself
 
 `make test` MUST pass on an ordinary developer account. It reads no system
 state — a test that needed the invoking account to be root, or in the
-HexaRouting groups, is a test that is red on every machine but one, and a
+product's role groups, is a test that is red on every machine but one, and a
 suite nobody can run green is a suite whose next real failure is
 indistinguishable from the noise it already prints.
 
@@ -77,7 +77,7 @@ lab is going to notice it:
 | `test_run_tests.sh` | That `make test` tells a failed assertion apart from a suite that never reached one. A killed suite, and one that could not start at all, are reported `NO VERDICT` with how far they got; a suite that prints a pass and then exits non-zero is not a pass. Driven with stub suites written to end in each of those ways. Also that the run names the harness files it did **not** read: a harness the list does not name is named, one it does name is not accused, the source of a binary the list names is not accused, and the discovery finds at least the harnesses `suites.list` itself names. |
 | `test_boot_wait.sh` | The three outcomes of the boot wait, and - since #218 - the difference between the quiet period being too short and the machine being unable to time it. The check stimulates a two-second wait against a three-second quiet period and measures when the fake dataplane actually answered: on time and announced anyway is a defect, a margin late is `NOT MEASURED`. |
 | `test_stop_is_not_a_teardown.py` | What this appliance is allowed to do to itself on the way down. A stop-time command MAY ask a running process to flush state it is already holding and MUST NOT reach the configuration surface - so `vppctl bpa stop-drain` on `vpp.service` is allowed and an `ExecStop` that deletes a pool is not, wherever it is typed, including in the drop-in that already has one. The line is drawn on the command and not on the file name, because the file-name rule is silent on the mutation that matters most. Silent in the worst way: an `ExecStop` fires on every RESTART, so it would arrive during an ordinary upgrade on a box that had been working [#238](https://github.com/andrediashexa/hexarouting/issues/238). |
-| `test_hexash_config.py` | Which changes rebuild a pool and which apply in place. Classified as a table, with an assertion that the table **covers every field a pool has** — so a field added later is a failure rather than a silent default. |
+| `test_prismash_config.py` | Which changes rebuild a pool and which apply in place. Classified as a table, with an assertion that the table **covers every field a pool has** — so a field added later is a failure rather than a silent default. |
 | `test_lab_workers.sh` | The lab machinery in `lab/lib.sh` that no container is needed to check, and both halves of it are the same defect twice: a lab that asked for something, did not read the answer, and measured whatever it got. That `LAB_WORKERS` is a **count** and not a flag, so `LAB_WORKERS=4` does not quietly give a single-threaded box; and that every `vpp -c` in `lab/` is followed by something that prints `VPP did not start`, because that line is what `tools/run-all-labs.sh` classifies `NO VPP` on. Ten labs carried the wait loop and not the line that reads its result, so a machine that never brought a dataplane up was reported as a defect in the product ([#261](https://github.com/andrediashexa/hexarouting/issues/261)). |
 | `test_feature_order.py` | That every BPA feature node on the `ip4-unicast` arc declares `runs_after` on `ip4-sv-reassembly-feature`. A node ahead of reassembly reads ports that have not been recovered yet and burns one port of the subscriber's block per fragment. It is checked over the source because the box cannot see it: with all four declarations deleted VPP still computes the same arc — the order is right by accident, and `lab/frag.sh` stays green. What the deletion removes is the guarantee that a VPP upgrade or another plugin's constraints cannot reorder them ([#239](https://github.com/andrediashexa/hexarouting/issues/239)). |
 | `test_plugin_cli_says.py` | Which of the plugin CLI's messages anything in this repository names. Every `vlib_cli_output` site of `src/plugins/bpa/bpa_cli.c` is read out of the source, its needle is the longest literal run with no value in it, and the tree is searched for the run whole: a lab, a suite, a wiki page or a document. The count named by nothing is a ceiling that may only go down, measured with its date, and the way down is a lab asserting the sentence on a screen it prints - not quoting it. Pointed at a corpus kept with `LAB_OUTPUT=<dir> sh tools/run-all-labs.sh` (`PLUGIN_CLI_CORPUS=<dir>`), it also says which of those some lab printed all the same and which no box has ever printed, through `tools/plugin-says.sh` ([#366](https://github.com/andrediashexa/hexarouting/issues/366)). |
@@ -151,7 +151,7 @@ in this repository, each after a stretch of work built on the wrong reading.
 campaign that applies one three-character change, runs, restores, and applies
 the next one inside the same second leaves a file of the same size with the
 same mtime, and the second run silently executes the FIRST mutation's
-bytecode. Measured over 101 automated mutations of `src/hexash/*.py`: 40 sites
+bytecode. Measured over 101 automated mutations of `src/prismash/*.py`: 40 sites
 reported blind, and re-run under `PYTHONDONTWRITEBYTECODE=1` the count fell to
 13 - every one of the 27 was the cache, not the test. Export it for any
 mutation run over Python.
@@ -316,7 +316,7 @@ The most instructive to run:
 | `vty-ssh` | Produces the lockout — a change leaving nobody able to log in — and watches the commit refuse it |
 | `snmp` | Kills the dataplane mid-run and asserts the agent serves *nothing* rather than the numbers it last saw |
 | `throughput` | Prints the conditions above the numbers, and asserts the packets were **translated** rather than dropped — its first version measured a drop path and reported it as the cost of translating |
-| `upgrade` | The only lab that puts one version of the product on top of another. It compiles `v0.68.0`'s plugin, runs **that tag's** `appliance/install.sh`, configures the box through the VTY the install put there — pool, attachments, a static forward, addresses, a static route, `save`, three rollback revisions — then runs this tree's `install.sh` over it and asserts the box is still configured: the file the old version saved is accepted **whole** by `hexash --load`, the pool is in the dataplane, the forward still forwards a real packet, the old version's revisions still load, and the configuration trail was appended to rather than restarted. Removing one statement's spelling from the new grammar turns 17 of its 35 checks red, which is the blast radius [#291](https://github.com/andrediashexa/hexarouting/issues/291) is about. It also measures what an upgrade does **not** do: the installer replaces `bpa_plugin.so` under a running VPP — `/proc/<pid>/maps` shows it `(deleted)` — restarts nothing, and in that window the new VTY can change a setting on an existing pool and **cannot create one**, because the API message grew fields the running plugin does not have |
+| `upgrade` | The only lab that puts one version of the product on top of another. It compiles `v0.68.0`'s plugin, runs **that tag's** `appliance/install.sh`, configures the box through the VTY the install put there — pool, attachments, a static forward, addresses, a static route, `save`, three rollback revisions — then runs this tree's `install.sh` over it and asserts the box is still configured: the file the old version saved is accepted **whole** by `prismash --load`, the pool is in the dataplane, the forward still forwards a real packet, the old version's revisions still load, and the configuration trail was appended to rather than restarted. Removing one statement's spelling from the new grammar turns 17 of its 35 checks red, which is the blast radius [#291](https://github.com/andrediashexa/hexarouting/issues/291) is about. It also measures what an upgrade does **not** do: the installer replaces `bpa_plugin.so` under a running VPP — `/proc/<pid>/maps` shows it `(deleted)` — restarts nothing, and in that window the new VTY can change a setting on an existing pool and **cannot create one**, because the API message grew fields the running plugin does not have |
 
 Several labs take an argument that runs them with the feature switched off, so
 the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An
@@ -472,7 +472,7 @@ sh tools/vty.sh -c "show cgnat pool"  # one command and exit
 Tab completes; `?` lists the valid options with descriptions:
 
 ```
-hexarouting# show cgnat ?
+prisma# show cgnat ?
   blocks   blocks allocated in dynamic mode
   logging  IPFIX export state
   pool     configured CGNAT pools
@@ -487,15 +487,15 @@ Configuration follows the Juniper model — edits build a candidate and reach th
 device only on `commit`:
 
 ```
-hexarouting> configure
-hexarouting# [edit] nat cgnat pool alpha
-hexarouting# [edit cgnat pool alpha] inside 100.64.0.0/22
-hexarouting# [edit cgnat pool alpha] exit
-hexarouting# [edit] show configuration compare
-hexarouting# [edit] commit check
-hexarouting# [edit] commit comment "first pool"
-hexarouting# [edit] rollback 1
-hexarouting# [edit] commit
+prisma> configure
+prisma# [edit] nat cgnat pool alpha
+prisma# [edit cgnat pool alpha] inside 100.64.0.0/22
+prisma# [edit cgnat pool alpha] exit
+prisma# [edit] show configuration compare
+prisma# [edit] commit check
+prisma# [edit] commit comment "first pool"
+prisma# [edit] rollback 1
+prisma# [edit] commit
 ```
 
 `commit confirmed <minutes>` applies the change and rolls it back
@@ -506,7 +506,7 @@ access.
 
 ```sh
 make iso                       # ~10 min, installs the image tools it needs
-make test-iso                  # builds, then boots and demands "HexaRouting ready"
+make test-iso                  # builds, then boots and demands "Prisma Routing ready"
 make test-appliance            # generates startup.conf and starts VPP with it
 make test-install              # installs onto a blank disk, boots that disk
 make upgrade-artifact          # seconds, no root and no container
@@ -557,7 +557,7 @@ a login that fails silently would run the whole session against a login prompt
 and report a pass.
 
 `make test-iso` exits non-zero when the self-test does not report
-`HexaRouting ready`, and dumps the console to `boot-console.log` on failure.
+`Prisma Routing ready`, and dumps the console to `boot-console.log` on failure.
 It refuses to boot an ISO older than the sources — a build that dies halfway
 used to be followed by a green boot of the *previous* image.
 

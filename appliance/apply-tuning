@@ -7,28 +7,28 @@
 # and regenerates GRUB only on a difference.
 set -u
 
-# HEXA_ROOT is empty on every box and is set only by test/test_apply_tuning.sh.
+# PRISMA_ROOT is empty on every box and is set only by test/test_apply_tuning.sh.
 # This script runs as root before VPP and writes the kernel command line, so
 # the only way to read what it decides without rewriting the machine's own
 # /etc, /proc and /sys is to point it at a tree shaped like them - the same
 # reason appliance/bind-dataplane-nic takes one.
-ROOT=${HEXA_ROOT:-}
-GRUBFILE=$ROOT/etc/default/grub.d/hexarouting.cfg
+ROOT=${PRISMA_ROOT:-}
+GRUBFILE=$ROOT/etc/default/grub.d/prisma-routing.cfg
 PROCCMDLINE=$ROOT/proc/cmdline
 CPUFREQ=$ROOT/sys/devices/system/cpu/cpufreq
 HUGEPAGES=$ROOT/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
 LIVEDIR=$ROOT/run/live
-: "${HEXA_DATAPLANE_IF:=}"
-: "${HEXA_SUBSCRIBERS:=200000}"
-: "${HEXA_LOW_LATENCY:=1}"
-: "${HEXA_MAX_WORKERS:=}"
+: "${PRISMA_DATAPLANE_IF:=}"
+: "${PRISMA_SUBSCRIBERS:=200000}"
+: "${PRISMA_LOW_LATENCY:=1}"
+: "${PRISMA_MAX_WORKERS:=}"
 
 # tune.env is a file an operator edits by hand, and every value in it used to
 # be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
-# HEXA_LOW_LATENCY=true silently produced a kernel command line with the
+# PRISMA_LOW_LATENCY=true silently produced a kernel command line with the
 # C-state and THP parameters REMOVED - the opposite of what it says - and the
-# journal reported "HEXA_LOW_LATENCY=0", naming a value the operator never
-# wrote. HEXA_SUBSCRIBERS='200k' was worse: the tuner's own argument parser
+# journal reported "PRISMA_LOW_LATENCY=0", naming a value the operator never
+# wrote. PRISMA_SUBSCRIBERS='200k' was worse: the tuner's own argument parser
 # refused it, this script exited non-zero, and the unit failed with no tuning
 # written at all.
 #
@@ -53,32 +53,38 @@ say_refused() {  # <variable> <value>
   # (#367). The first row now fits whatever is in the file - it holds a
   # variable name and nothing else that varies - and the value is the whole of
   # the second, quoted, where a fold costs a closing quote and no words.
-  echo "REFUSED $1 in /etc/hexarouting/tune.env. The value there is:" >&2
+  # The PATH moved down a row when the product was renamed (#202): the name
+  # is two characters longer, and the widest variable this reads pushed the
+  # old single row to 80 columns on a console of 79. The variable name stays
+  # on the verdict, because that is what the operator has to find in the file.
+  echo "REFUSED $1, in tune.env. The file is:" >&2
+  echo "  /etc/prisma-routing/tune.env" >&2
+  echo "The value there is:" >&2
   echo "  '$2'" >&2
 }
 say_using() {    # <what is used instead>
   echo "  Using $1." >&2
-  echo "  Fix the file and restart hexarouting-tune.service." >&2
+  echo "  Fix the file and restart prisma-routing-tune.service." >&2
 }
 
-case "$HEXA_LOW_LATENCY" in
+case "$PRISMA_LOW_LATENCY" in
   0|1) ;;
-  *) say_refused HEXA_LOW_LATENCY "$HEXA_LOW_LATENCY"
+  *) say_refused PRISMA_LOW_LATENCY "$PRISMA_LOW_LATENCY"
      echo "  Two values are accepted, and nothing else:" >&2
      echo "    1  deep C-states off, transparent hugepages off, and the" >&2
      echo "       cpufreq governor held on performance" >&2
      echo "    0  leave all three alone, for a box that must save power" >&2
      say_using "1, the shipped default, because this is a router"
-     HEXA_LOW_LATENCY=1 ;;
+     PRISMA_LOW_LATENCY=1 ;;
 esac
 
-case "$HEXA_SUBSCRIBERS" in
+case "$PRISMA_SUBSCRIBERS" in
   *[!0-9]*|"")
-    say_refused HEXA_SUBSCRIBERS "$HEXA_SUBSCRIBERS"
+    say_refused PRISMA_SUBSCRIBERS "$PRISMA_SUBSCRIBERS"
     echo "  It is the subscriber count that sizes the 1G hugepage pool, so" >&2
     echo "  it is digits only: 200000, not 200k and not 200.000." >&2
     say_using "200000, the shipped default"
-    HEXA_SUBSCRIBERS=200000 ;;
+    PRISMA_SUBSCRIBERS=200000 ;;
 esac
 
 # The governor is runtime state, not a kernel parameter: asking for it in
@@ -109,17 +115,17 @@ governor_performance() {
   fi
 }
 
-if [ "$HEXA_LOW_LATENCY" = 1 ]; then
+if [ "$PRISMA_LOW_LATENCY" = 1 ]; then
   governor_performance
 else
-  echo "HEXA_LOW_LATENCY=0: leaving the cpufreq governor alone"
+  echo "PRISMA_LOW_LATENCY=0: leaving the cpufreq governor alone"
 fi
 
 before=$(cat "$GRUBFILE" 2>/dev/null || true)
 
-set -- --write --subscribers "$HEXA_SUBSCRIBERS"
-[ -n "$HEXA_DATAPLANE_IF" ] && set -- "$@" --interface "$HEXA_DATAPLANE_IF"
-[ "$HEXA_LOW_LATENCY" = 1 ] || set -- "$@" --no-low-latency
+set -- --write --subscribers "$PRISMA_SUBSCRIBERS"
+[ -n "$PRISMA_DATAPLANE_IF" ] && set -- "$@" --interface "$PRISMA_DATAPLANE_IF"
+[ "$PRISMA_LOW_LATENCY" = 1 ] || set -- "$@" --no-low-latency
 # The tuner has always accepted --max-workers; nothing ever passed it, so the
 # only reachable behaviour was "every core but one is a worker" and the cap
 # existed on paper (#172). Empty stays uncapped, so a box that sets nothing
@@ -130,19 +136,19 @@ set -- --write --subscribers "$HEXA_SUBSCRIBERS"
 # leave the kernel command line at whatever the previous boot wrote - a
 # mismatch between isolcpus and startup.conf that is far worse than an ignored
 # setting.
-case "$HEXA_MAX_WORKERS" in
+case "$PRISMA_MAX_WORKERS" in
   "") ;;
   *[!0-9]*)
-    say_refused HEXA_MAX_WORKERS "$HEXA_MAX_WORKERS"
+    say_refused PRISMA_MAX_WORKERS "$PRISMA_MAX_WORKERS"
     echo "  It is a number of physical cores, so it is digits only - or" >&2
     echo "  empty, which is the shipped value and means no cap." >&2
     say_using "no cap: every physical core on the dataplane node but the first" ;;
-  *) set -- "$@" --max-workers "$HEXA_MAX_WORKERS" ;;
+  *) set -- "$@" --max-workers "$PRISMA_MAX_WORKERS" ;;
 esac
 # The decision goes to the journal. Diagnosing a box whose profile did not
 # match its hardware meant guessing across whole build cycles, because the one
 # component that knew why was throwing its reasoning away.
-report=$(hexarouting-tune "$@" 2>&1) || { printf '%s\n' "$report" >&2; exit 1; }
+report=$(prisma-routing-tune "$@" 2>&1) || { printf '%s\n' "$report" >&2; exit 1; }
 printf '%s\n' "$report" | grep -E "^# |WARNING" >&2
 printf 'kernel cmdline hugepages: %s\n' \
   "$(tr ' ' '\n' < "$PROCCMDLINE" | grep '^hugepages=' || echo '(none)')" >&2
@@ -187,15 +193,15 @@ printf 'kernel cmdline hugepages: %s\n' \
 # systemd this is not an appliance starting: it is a chroot during the install
 # or a container, and a bind there takes a card off whichever machine is
 # really running.
-# HEXA_SYSTEMCTL is the same kind of seam as HEXA_ROOT above and as HEXA_IP and
-# HEXA_MEMINFO in hexarouting-tune: the one external command whose answer
+# PRISMA_SYSTEMCTL is the same kind of seam as PRISMA_ROOT above and as PRISMA_IP and
+# PRISMA_MEMINFO in prisma-routing-tune: the one external command whose answer
 # changes the decision, named so a synthetic box can give it. Without it the
 # answer would come from whatever machine is running the suite, and a developer
 # box with a vpp.service would measure something the build runner does not.
-: "${HEXA_SYSTEMCTL:=systemctl}"
+: "${PRISMA_SYSTEMCTL:=systemctl}"
 may_bind() {  # 0 only when the dataplane is positively known NOT to be up
-  command -v "$HEXA_SYSTEMCTL" >/dev/null 2>&1 || return 2
-  "$HEXA_SYSTEMCTL" is-active --quiet vpp.service 2>/dev/null && return 1
+  command -v "$PRISMA_SYSTEMCTL" >/dev/null 2>&1 || return 2
+  "$PRISMA_SYSTEMCTL" is-active --quiet vpp.service 2>/dev/null && return 1
   return 0
 }
 may_bind; bind_verdict=$?
@@ -207,10 +213,10 @@ if [ "$bind_verdict" = 1 ]; then
 elif [ "$bind_verdict" = 2 ]; then
   echo "bind: nothing here can say whether the dataplane is running, so the" >&2
   echo "      card is left where it is. This is not a box starting up." >&2
-elif command -v hexarouting-bind-nic >/dev/null 2>&1; then
-  hexarouting-bind-nic || true
-elif [ -x "$ROOT/usr/lib/hexarouting/bind-dataplane-nic" ]; then
-  "$ROOT/usr/lib/hexarouting/bind-dataplane-nic" || true
+elif command -v prisma-routing-bind-nic >/dev/null 2>&1; then
+  prisma-routing-bind-nic || true
+elif [ -x "$ROOT/usr/lib/prisma-routing/bind-dataplane-nic" ]; then
+  "$ROOT/usr/lib/prisma-routing/bind-dataplane-nic" || true
 fi
 
 printf 'reserved 1G pages now: %s\n' \

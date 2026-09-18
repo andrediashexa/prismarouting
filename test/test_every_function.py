@@ -15,7 +15,7 @@ names is printed by name on every run.
 
 WHAT A FUNCTION IS, per language, measured against this tree:
 
-  python  every `def` the `ast` module finds in src/hexash/*.py and in the
+  python  every `def` the `ast` module finds in src/prismash/*.py and in the
           scripts under appliance/ whose shebang names python3, methods and
           nested functions included, harness files (test_*) excluded.
   c       the plugin's own definition shape in src/plugins/bpa/*.c: a return
@@ -65,7 +65,7 @@ forever. So the functions no test names are NAMED on every run, the number
 per language they may not exceed is written down with the date it was
 measured, and lowering it is the only way to change it - the idiom
 test_off_run_coverage.sh uses for labs with no off run and
-test_hexash_refusals.py for refusals nothing has printed. A batch of tests
+test_prismash_refusals.py for refusals nothing has printed. A batch of tests
 that lands lowers the number; a function added with no test goes red with
 nothing to subtract from.
 """
@@ -171,8 +171,8 @@ def marker_above(lines, idx, is_comment):
 # ------------------------------------------------------------------ python
 
 def python_files():
-    out = sorted(os.path.join(REPO, "src", "hexash", f)
-                 for f in os.listdir(os.path.join(REPO, "src", "hexash"))
+    out = sorted(os.path.join(REPO, "src", "prismash", f)
+                 for f in os.listdir(os.path.join(REPO, "src", "prismash"))
                  if f.endswith(".py"))
     adir = os.path.join(REPO, "appliance")
     for f in sorted(os.listdir(adir)):
@@ -228,7 +228,7 @@ def python_tests():
     out += sorted(os.path.join(adir, f) for f in os.listdir(adir)
                   if f.startswith("test_") and f.endswith(".py"))
     # This file is not its own witness: it calls `where()` on what it
-    # found, and hexash.py has a `where` too.
+    # found, and prismash.py has a `where` too.
     return [t for t in out if os.path.abspath(t) != SELF]
 
 

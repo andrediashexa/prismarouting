@@ -42,7 +42,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src",
-                                "hexash"))
+                                "prismash"))
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 HOLDER = os.path.join(REPO, "appliance", "ssh-host-key-origin")
@@ -235,8 +235,8 @@ print("\n=== and none of it is decided on the key's comment ===")
 # is the obvious signal and reads as the right one. `chroot "$MNT" ssh-keygen
 # -A` stamps the LIVE MEDIUM's hostname into a key generated on the target,
 # because gethostname() is not a filesystem property: a correctly installed
-# box named "cgnat-rj-01" carries "root@hexarouting", measured. Reading the
-# comment would report it, with hexarouting-install manufacturing the
+# box named "cgnat-rj-01" carries "root@prisma-routing", measured. Reading the
+# comment would report it, with prisma-routing-install manufacturing the
 # evidence. A list of published fingerprints was rejected for a second reason
 # on top of that one: it is key material back in the tree, which is what #245
 # removed.
@@ -260,7 +260,7 @@ else:
 
 # --- the second reader: the VTY an operator reaches this box through --------
 
-import hexash                                                   # noqa: E402
+import prismash                                                   # noqa: E402
 
 # A wrapper, because the holder takes the root as an argument and the VTY
 # calls it with none - a real box's root is /. The wrapper is also where the
@@ -270,12 +270,12 @@ WRAPPER = os.path.join(WORK, "origin-over-the-fixture")
 with open(WRAPPER, "w") as fh:
     fh.write(f'#!/bin/sh\nPATH="{BIN}:$PATH" exec "{HOLDER}" "{ROOT}"\n')
 os.chmod(WRAPPER, 0o755)
-hexash.SSH_HOST_KEY_ORIGIN = WRAPPER
+prismash.SSH_HOST_KEY_ORIGIN = WRAPPER
 
 
 def login():
     """What a login draws, which is the banner and nothing after it."""
-    sh = hexash.Shell()
+    sh = prismash.Shell()
     sh.feed = lambda line: False
     buf = io.StringIO()
     real = sys.stdin
@@ -354,10 +354,10 @@ print("\n=== a banner that cannot ask says nothing, rather than guessing ===")
 # is to report on the box, so a check it could not run is a finding. A banner
 # that announced a weakness it had not measured would be teaching operators to
 # read past it.
-hexash.SSH_HOST_KEY_ORIGIN = os.path.join(WORK, "no-such-program")
+prismash.SSH_HOST_KEY_ORIGIN = os.path.join(WORK, "no-such-program")
 box({k: (FROM_IMAGE, INSTALLED) for k in THREE})
 said = login()
-hexash.SSH_HOST_KEY_ORIGIN = WRAPPER
+prismash.SSH_HOST_KEY_ORIGIN = WRAPPER
 if "host key" in said.lower():
     bad(f"the banner accused a box it could not measure: {said[-400:]!r}")
 else:
@@ -369,7 +369,7 @@ print("\n=== the commands are written in one place and read from it ===")
 # can go on printing the old repair after the holder's is corrected.
 spelled = []
 seen = set()
-for rel in ("appliance/selftest", "src/hexash/hexash.py"):
+for rel in ("appliance/selftest", "src/prismash/prismash.py"):
     for n, line in enumerate(open(os.path.join(REPO, rel)).read().splitlines(),
                              1):
         s = line.strip()
@@ -393,8 +393,8 @@ print("\n=== and the holder reaches the box ===")
 # is to check.
 installed = [ln for ln in open(os.path.join(REPO, "appliance/install.sh"))
              if "ssh-host-key-origin" in ln and not ln.strip().startswith("#")]
-if any("/usr/lib/hexarouting/ssh-host-key-origin" in ln for ln in installed):
-    ok("appliance/install.sh puts it in /usr/lib/hexarouting")
+if any("/usr/lib/prisma-routing/ssh-host-key-origin" in ln for ln in installed):
+    ok("appliance/install.sh puts it in /usr/lib/prisma-routing")
 else:
     bad("nothing installs appliance/ssh-host-key-origin, so the banner and "
         "the boot report would both be pointing at a file the box lacks")

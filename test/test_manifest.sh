@@ -2,13 +2,13 @@
 # The list of what is on the box, written by one file and read by another.
 #
 # THE MEASUREMENT THIS EXISTS FOR. `show version` and the first line of the
-# boot self-test print /usr/share/hexarouting/VERSION, which is one sentence
+# boot self-test print /usr/share/prisma-routing/VERSION, which is one sentence
 # about the thirty-odd files appliance/install.sh puts on a box. Exactly one
 # of them could answer for itself - #291 gave the dataplane plugin a build
 # stamp - and the other thirty carried no version of any kind. So this, taken
 # on a root installed by this repository before anything changed:
 #
-#   the box is stamped 0.70.0 (f10a3ed), /usr/bin/hexarouting-tune is
+#   the box is stamped 0.70.0 (f10a3ed), /usr/bin/prisma-routing-tune is
 #   v0.68.0's, and the self-test's forty-two lines are identical, line for
 #   line, to the same box with the right file on it.
 #
@@ -99,8 +99,8 @@ done
 chmod +x "$BIN"/*
 
 selftest() {  # -> $OUTPUT, and every line kept for the width check at the end
-  OUTPUT=$(PATH="$BIN:$PATH" HEXA_SELFTEST_OUT=/dev/stdout \
-           HEXA_SELFTEST_ROOT="$DEST" sh "$REPO/appliance/selftest" 2>/dev/null)
+  OUTPUT=$(PATH="$BIN:$PATH" PRISMA_SELFTEST_OUT=/dev/stdout \
+           PRISMA_SELFTEST_ROOT="$DEST" sh "$REPO/appliance/selftest" 2>/dev/null)
   printf '%s\n' "$OUTPUT" >> "$EVERY"
 }
 
@@ -108,8 +108,8 @@ selftest() {  # -> $OUTPUT, and every line kept for the width check at the end
 # files with a checksum, and the files named without one. Read with the same
 # rule the self-test reads them by - a '#' line is not a checksum line - so
 # that a manifest this suite can read and the self-test cannot does not exist.
-checked()  { grep '^[^#]' "$DEST/usr/share/hexarouting/MANIFEST" | awk '{print $2}'; }
-yours()    { sed -n 's/^# yours: //p' "$DEST/usr/share/hexarouting/MANIFEST"; }
+checked()  { grep '^[^#]' "$DEST/usr/share/prisma-routing/MANIFEST" | awk '{print $2}'; }
+yours()    { sed -n 's/^# yours: //p' "$DEST/usr/share/prisma-routing/MANIFEST"; }
 
 fresh_tree() {
   rm -rf "$TREE"
@@ -137,7 +137,7 @@ fresh_root() {
 }
 
 install_run() {  # <version stamp>
-  env DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" \
+  env DESTDIR="$DEST" PRISMA_VERSION_STAMP="$1" \
       PLUGIN_DIR=/usr/lib/vpp_plugins VAT2_DIR=/usr/lib/vat2_plugins \
       sh "$TREE/appliance/install.sh" > "$WORK/install.out" 2>&1
   # The status FIRST, because say_capture below is a command and would
@@ -162,8 +162,8 @@ else
   echo "1 FAILURES"
   exit 1
 fi
-if [ -f "$DEST/usr/share/hexarouting/MANIFEST" ]; then
-  ok "and left /usr/share/hexarouting/MANIFEST beside the version stamp"
+if [ -f "$DEST/usr/share/prisma-routing/MANIFEST" ]; then
+  ok "and left /usr/share/prisma-routing/MANIFEST beside the version stamp"
 else
   bad "there is no manifest on the installed root, so every check below this \
 one is about a box that cannot answer for itself"
@@ -201,7 +201,7 @@ echo "=== and the list is of the root, not of a list somebody kept ==="
 # nothing would say so.
 ( cd "$DEST" && find . -type f | sed 's|^\./||' | sort ) > "$WORK/on-root"
 { checked; yours; } | sort > "$WORK/in-manifest"
-# usr/share/hexarouting/VERSION is the claim itself rather than one of the
+# usr/share/prisma-routing/VERSION is the claim itself rather than one of the
 # files the claim is about, and a checksum of it would be a checksum of the
 # line being questioned. MANIFEST cannot contain its own checksum.
 # etc/frr/daemons is the Debian package's file, which this installer edits in
@@ -209,8 +209,8 @@ echo "=== and the list is of the root, not of a list somebody kept ==="
 # upgrade as this product's corruption would be a check nobody believes.
 cat > "$WORK/expected-absent" <<'ABSENT'
 etc/frr/daemons
-usr/share/hexarouting/MANIFEST
-usr/share/hexarouting/VERSION
+usr/share/prisma-routing/MANIFEST
+usr/share/prisma-routing/VERSION
 ABSENT
 UNNAMED=$(comm -23 "$WORK/on-root" "$WORK/in-manifest" | sort)
 if [ "$UNNAMED" = "$(cat "$WORK/expected-absent")" ]; then
@@ -257,12 +257,12 @@ fi
 
 echo
 echo "=== a file from another release, which is the measurement above ==="
-# v0.68.0's hexarouting-tune on a box stamped 0.72.0, which is #302's own
+# v0.68.0's prisma-routing-tune on a box stamped 0.72.0, which is #302's own
 # reproduction with the versions moved: "put a file from another release on a
 # box and see nothing notice."
-git -C "$REPO" show v0.68.0:appliance/hexarouting-tune \
-  > "$DEST/usr/bin/hexarouting-tune" 2>/dev/null \
-  || cp "$REPO/appliance/selftest" "$DEST/usr/bin/hexarouting-tune"
+git -C "$REPO" show v0.68.0:appliance/prisma-routing-tune \
+  > "$DEST/usr/bin/prisma-routing-tune" 2>/dev/null \
+  || cp "$REPO/appliance/selftest" "$DEST/usr/bin/prisma-routing-tune"
 selftest
 if said '\[FAIL\] 1 file\(s\) on this box are not from '"$(re_quote "$STAMP")"':'; then
   ok "the box says one of its files is not from the version it claims"
@@ -271,8 +271,8 @@ else
 fi
 # BY NAME. "Something is wrong" sends the reader nowhere, and the reader is at
 # a serial console because the box is behaving unlike its release notes.
-if said 'usr/bin/hexarouting-tune'; then
-  ok "and names it: usr/bin/hexarouting-tune"
+if said 'usr/bin/prisma-routing-tune'; then
+  ok "and names it: usr/bin/prisma-routing-tune"
 else
   bad "it did not name which file: $(printf '%s\n' "$OUTPUT" | grep -A2 'not from' | tr '\n' ' ')"
 fi
@@ -301,10 +301,10 @@ echo
 echo "=== a file that is not there at all ==="
 # Different from a file with the wrong contents and worse: an install that
 # stopped half way leaves this, and the box still boots.
-rm -f "$DEST/usr/lib/hexarouting/vppapi.py"
+rm -f "$DEST/usr/lib/prisma-routing/vppapi.py"
 selftest
 if said '\[FAIL\] 2 file\(s\) on this box are not from ' \
-   && said 'usr/lib/hexarouting/vppapi.py'; then
+   && said 'usr/lib/prisma-routing/vppapi.py'; then
   ok "a missing file is counted and named beside the changed one"
 else
   bad "a file removed from the box was not reported: $(printf '%s\n' "$OUTPUT" | grep -iE 'not from|vppapi' | tr '\n' ' ')"
@@ -320,9 +320,9 @@ echo "=== and the operator's own files, which are none of its business ==="
 # file that really is from another release goes quiet along with it (#302).
 fresh_root
 install_run "$STAMP" >/dev/null 2>&1
-echo 'HEXA_SUBSCRIBERS=40000' >> "$DEST/etc/hexarouting/tune.env"
-echo '# an operator changed this' >> "$DEST/etc/hexarouting/vpp-base.conf"
-echo '! an operator line' >> "$DEST/etc/hexarouting/hexarouting.conf"
+echo 'PRISMA_SUBSCRIBERS=40000' >> "$DEST/etc/prisma-routing/tune.env"
+echo '# an operator changed this' >> "$DEST/etc/prisma-routing/vpp-base.conf"
+echo '! an operator line' >> "$DEST/etc/prisma-routing/prisma-routing.conf"
 selftest
 # The positive FIRST. A negative needle passes whether or not the box said the
 # thing, and one of #279's three broken needles was exactly that - so the same
@@ -334,9 +334,9 @@ else
   bad "the check did not run or did not pass, so the silence below proves \
 nothing: $(printf '%s\n' "$OUTPUT" | grep -iE 'that build|not from' | tr '\n' ' ')"
 fi
-if said 'tune\.env|vpp-base\.conf|hexarouting\.conf'; then
+if said 'tune\.env|vpp-base\.conf|prisma-routing\.conf'; then
   bad "the box reported an edit to a file the installer deliberately leaves \
-alone: $(printf '%s\n' "$OUTPUT" | grep -E 'tune.env|vpp-base|hexarouting.conf' | tr '\n' ' ')"
+alone: $(printf '%s\n' "$OUTPUT" | grep -E 'tune.env|vpp-base|prisma-routing.conf' | tr '\n' ' ')"
 else
   ok "and said nothing about the three files it does not own"
 fi
@@ -348,11 +348,11 @@ echo "=== an upgrade, which is where the stamp and the files part company ==="
 # where it was - which is how a box comes to assert a build it only partly
 # has. The manifest has to be the NEW one, covering what is there now.
 install_run "0.73.0 (cafe123)" >/dev/null 2>&1
-if grep -q '^# 0\.73\.0 (cafe123)\.$' "$DEST/usr/share/hexarouting/MANIFEST"; then
+if grep -q '^# 0\.73\.0 (cafe123)\.$' "$DEST/usr/share/prisma-routing/MANIFEST"; then
   ok "the second run rewrote the manifest for the version it stamped"
 else
   bad "the manifest still names an older build than the stamp beside it: \
-$(head -2 "$DEST/usr/share/hexarouting/MANIFEST" | tr '\n' ' ')"
+$(head -2 "$DEST/usr/share/prisma-routing/MANIFEST" | tr '\n' ' ')"
 fi
 selftest
 if said '\[ ok \] all '"$NCHECKED"' files of that build are the ones it shipped'; then
@@ -363,7 +363,7 @@ fi
 # The operator's lines survived the upgrade AND are still not checked, which
 # is the two halves of keep() meeting: the guard that does not overwrite, and
 # the class that is not reported.
-if grep -q '^HEXA_SUBSCRIBERS=40000$' "$DEST/etc/hexarouting/tune.env"; then
+if grep -q '^PRISMA_SUBSCRIBERS=40000$' "$DEST/etc/prisma-routing/tune.env"; then
   ok "with the operator's tune.env line still in place under it"
 else
   bad "the upgrade overwrote the operator's tune.env, which keep() exists to \
@@ -382,7 +382,7 @@ fresh_root
 mkdir -p "$DEST/etc"
 printf 'root:x:0:0::/root:/bin/sh\n' > "$DEST/etc/passwd"
 : > "$DEST/etc/shells"
-if env HEXA_VTY_LOGIN=1 DESTDIR="$DEST" HEXA_VERSION_STAMP="$STAMP" \
+if env PRISMA_VTY_LOGIN=1 DESTDIR="$DEST" PRISMA_VERSION_STAMP="$STAMP" \
      PLUGIN_DIR=/usr/lib/vpp_plugins VAT2_DIR=/usr/lib/vat2_plugins \
      sh "$TREE/appliance/install.sh" > "$WORK/iso.out" 2>&1; then
   say_capture "$REPO/appliance/install.sh" "$WORK/iso.out" "iso"
@@ -436,8 +436,8 @@ FARM=$WORK/no-sha256sum
 rm -rf "$FARM"
 cp -as /usr/bin "$FARM" 2>/dev/null || true
 rm -f "$FARM/sha256sum"
-OUTPUT=$(PATH="$BIN:$FARM" HEXA_SELFTEST_OUT=/dev/stdout \
-         HEXA_SELFTEST_ROOT="$DEST" sh "$REPO/appliance/selftest" 2>/dev/null)
+OUTPUT=$(PATH="$BIN:$FARM" PRISMA_SELFTEST_OUT=/dev/stdout \
+         PRISMA_SELFTEST_ROOT="$DEST" sh "$REPO/appliance/selftest" 2>/dev/null)
 printf '%s\n' "$OUTPUT" >> "$EVERY"
 if said '\[warn\] no sha256sum here'; then
   ok "it says so, rather than passing a box it did not look at"
@@ -456,9 +456,9 @@ echo "=== a box with no manifest is not a box that failed ==="
 # saying nothing about that would be the quiet failure this file is against.
 # It is a warning and not a failure because no file of the build has been shown
 # to be wrong: nothing has been measured at all, which is a different thing.
-rm -f "$DEST/usr/share/hexarouting/MANIFEST"
+rm -f "$DEST/usr/share/prisma-routing/MANIFEST"
 selftest
-if said '\[warn\] no /usr/share/hexarouting/MANIFEST, so nothing checked'; then
+if said '\[warn\] no /usr/share/prisma-routing/MANIFEST, so nothing checked'; then
   ok "it warns that nothing checked the version line"
 else
   bad "a box with no manifest said: $(printf '%s\n' "$OUTPUT" | grep -iE 'manifest' | tr '\n' ' ')"
@@ -489,10 +489,10 @@ echo "=== and a manifest that names nothing is not a box that failed either ==="
 # installer's recording was mutated away.
 fresh_root
 install_run "$STAMP" >/dev/null 2>&1
-grep '^#' "$DEST/usr/share/hexarouting/MANIFEST" > "$WORK/comments-only"
-cp "$WORK/comments-only" "$DEST/usr/share/hexarouting/MANIFEST"
+grep '^#' "$DEST/usr/share/prisma-routing/MANIFEST" > "$WORK/comments-only"
+cp "$WORK/comments-only" "$DEST/usr/share/prisma-routing/MANIFEST"
 selftest
-if said '\[warn\] /usr/share/hexarouting/MANIFEST names no files'; then
+if said 'the manifest names no files'; then
   ok "it says the manifest names nothing, rather than judging the box on it"
 else
   bad "a manifest with no checksum lines produced: $(printf '%s\n' "$OUTPUT" | grep -iE 'manifest|that build|not from' | tr '\n' ' ')"
@@ -523,7 +523,7 @@ BYTES=$(cd "$DEST" && checked | xargs stat -c %s 2>/dev/null | awk '{s+=$1} END 
 S=$(date +%s%N)
 i=0
 while [ "$i" -lt 10 ]; do
-  ( cd "$DEST" && sha256sum --quiet -c usr/share/hexarouting/MANIFEST ) \
+  ( cd "$DEST" && sha256sum --quiet -c usr/share/prisma-routing/MANIFEST ) \
     >/dev/null 2>&1
   i=$((i + 1))
 done

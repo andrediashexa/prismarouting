@@ -182,51 +182,51 @@ $(BUILD)/test_bpa_audit: test/test_bpa_audit.c src/plugins/bpa/bpa_audit.c \
 test-appliance:
 	@sh tools/build.sh plugin >/dev/null
 	@sg docker -c "docker run --rm --privileged -v $$(pwd):/src -w /src \
-	    hexarouting-dev:26.06 sh /src/appliance/test_startup_conf.sh"
+	    prisma-routing-dev:26.06 sh /src/appliance/test_startup_conf.sh"
 	@echo
 	@sg docker -c "docker run --rm --privileged -v $$(pwd):/src -w /src \
-	    hexarouting-dev:26.06 sh /src/appliance/test_tuned_conf.sh"
+	    prisma-routing-dev:26.06 sh /src/appliance/test_tuned_conf.sh"
 	@echo
 # The third profile is not a third box, it is every box: the two above start
 # VPP on ONE generated file each, and the tuner has nine branches. #377 shipped
 # in the branch neither of them renders - a card whose maximum MTU is below
 # 9000 - and VPP answered "unknown input `mtu 1500'" on an installed box.
 	@sg docker -c "docker run --rm --privileged -v $$(pwd):/src -w /src \
-	    hexarouting-dev:26.06 sh /src/appliance/test_startup_conf_shapes.sh"
+	    prisma-routing-dev:26.06 sh /src/appliance/test_startup_conf_shapes.sh"
 
-# The hardware lab keeps a container alive so that hexash and vppctl have a VPP
+# The hardware lab keeps a container alive so that prismash and vppctl have a VPP
 # to talk to. Long-lived means somebody has to stop it: hw-down exists so that
 # "somebody" is a command rather than a memory.
 hw-up:
-	@sg docker -c "docker rm -f hexa-vpp >/dev/null 2>&1; \
-	    docker run -d --name hexa-vpp --privileged --network=host \
+	@sg docker -c "docker rm -f prisma-vpp >/dev/null 2>&1; \
+	    docker run -d --name prisma-vpp --privileged --network=host \
 	      -v $$(pwd):/src -v $$HOME/.ssh:/root/.ssh:ro \
-	      -w /src hexarouting-dev:26.06 sleep infinity" >/dev/null
-	@sg docker -c "docker exec hexa-vpp sh -c 'apt-get update -qq >/dev/null 2>&1; \
+	      -w /src prisma-routing-dev:26.06 sleep infinity" >/dev/null
+	@sg docker -c "docker exec prisma-vpp sh -c 'apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq iproute2 iptables openssh-client tcpdump \
 	      >/dev/null 2>&1'"
-	@echo "hexa-vpp is up. Remember: make hw-down when you are finished."
+	@echo "prisma-vpp is up. Remember: make hw-down when you are finished."
 
 # The topology: addresses and routes on both machines. Separate from hw-vpp
 # because it touches the PEER, and because getting it wrong is what made the
 # lab look like a dataplane fault for a long time.
 hw-lab:
-	@sg docker -c "docker exec hexa-vpp sh /src/lab/hw-lab.sh"
+	@sg docker -c "docker exec prisma-vpp sh /src/lab/hw-lab.sh"
 
 hw-vpp:
-	@sg docker -c "docker exec hexa-vpp sh /src/lab/hw-vpp.sh"
+	@sg docker -c "docker exec prisma-vpp sh /src/lab/hw-vpp.sh"
 
 # Safe when it is not there, so it can be run without checking first.
 hw-down:
-	@sg docker -c "docker rm -f hexa-vpp >/dev/null 2>&1" || true
-	@echo "hexa-vpp removed."
+	@sg docker -c "docker rm -f prisma-vpp >/dev/null 2>&1" || true
+	@echo "prisma-vpp removed."
 
 # ISO: needs root and the image tools, so it runs in the container.
 # The dependencies live here on purpose - build-iso.sh only checks them.
 ISO_DEPS := debootstrap xorriso squashfs-tools dosfstools mtools \
               grub-common grub-pc-bin grub-efi-amd64-bin
 ISO_RUN = sg docker -c "docker run --rm --privileged --device=/dev/kvm \
-	    -v $$(pwd):/src -w /src hexarouting-dev:26.06 sh -c '$(1)'"
+	    -v $$(pwd):/src -w /src prisma-routing-dev:26.06 sh -c '$(1)'"
 
 iso:
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \

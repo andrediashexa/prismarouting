@@ -1,11 +1,11 @@
-# HexaRouting — BNG (PPPoE server and IPoE)
+# Prisma Routing - BNG (PPPoE server and IPoE)
 
 ## TL;DR
 
 **Nothing here is implemented and nothing here is proposed for implementation.**
 This is the evidence behind
 [#170](https://github.com/andrediashexa/hexarouting/issues/170), taken against
-VPP `26.06-release` in `hexarouting-dev:26.06` on 2026-09-14.
+VPP `26.06-release` in `prisma-routing-dev:26.06` on 2026-09-14.
 
 The finding that matters is not the one the issue's title predicts. **The
 dataplane half works, today, and it is cheap.** `lab/bng.sh` terminates a real
@@ -53,7 +53,7 @@ it did claim:
   attach, so N attaches cost O(N²). The same operation for a policer costs
   42 µs. That defect is worth its own issue and it is not a BNG question.
 * **A shipped box aborts between 7,000 and 8,000 PPPoE sessions.** At the time
-  this was measured `appliance/hexarouting-tune` emitted no `statseg` stanza,
+  this was measured `appliance/prisma-routing-tune` emitted no `statseg` stanza,
   so an installed appliance ran on VPP's default 32 MB stats segment
   (measured). Each session calls `vnet_register_interface`, each interface adds
   stats symlinks, and the stats heap runs out: `os_panic` → `SIGABRT`, the
@@ -87,7 +87,7 @@ it did claim:
 
 | | |
 |---|---|
-| Image | `hexarouting-dev:26.06` |
+| Image | `prisma-routing-dev:26.06` |
 | Dataplane | `vpp v26.06-release built by root on e43f10b19765 at 2026-06-24T09:27:28` |
 | Packages | `vpp`, `vpp-dev`, `vpp-plugin-core`, `vpp-plugin-dpdk`, all `26.06-release` |
 | Plugin source | `FDio/vpp`, branch `stable/2606`, `src/plugins/pppoe` and `src/plugins/linux-cp` |
@@ -103,7 +103,7 @@ the way [ha.md](ha.md) and `lab/pool-del.sh` read the same kind of number.
 ### 1.1 The PPPoE plugin is the data-plane half, and that half is complete
 
 `pppoe_plugin.so` and `ppp_plugin.so` both ship in `vpp-plugin-core`, and
-`hexarouting-tune` generates `plugin default { enable }`, so both already load
+`prisma-routing-tune` generates `plugin default { enable }`, so both already load
 on every installed box.
 
 The whole of `pppoe_plugin.so`, from `nm -D --defined-only`:
@@ -239,7 +239,7 @@ vpp[21]: received signal SIGABRT
   #9 vnet_register_interface
 ```
 
-`appliance/hexarouting-tune` emitted no `statseg` stanza when this was
+`appliance/prisma-routing-tune` emitted no `statseg` stanza when this was
 measured, and now writes one only for interfaces a box is configured for, which
 a PPPoE session never is. The default, measured from a VPP booted on a config
 with none, is `total: 32.00M`. Every
@@ -264,8 +264,8 @@ the measurement stopped, **not** a limit that was found.
 
 | Command | Time | Lines |
 |---|---|---|
-| `show route verbose` (hexash) | 2,089 ms | 40,010 |
-| `show interfaces` (hexash) | 1,151 ms | 40,007 |
+| `show route verbose` (prismash) | 2,089 ms | 40,010 |
+| `show interfaces` (prismash) | 1,151 ms | 40,007 |
 | `vppctl show interface` | 308 ms | 40,012 |
 
 `show route verbose` still ends with *"every route FRR holds is in the
@@ -365,7 +365,7 @@ PPPoE session was performed.
 
 ### 3.4 The control plane's model of the world
 
-`hexash` is a candidate/commit/rollback/audit VTY over configuration text.
+`prismash` is a candidate/commit/rollback/audit VTY over configuration text.
 `cgnat interface TenGigabitEthernet0/8/0` is a line somebody committed, and
 [logging.md](logging.md) requires that attaching it be recorded with who did
 it. `pppoe_session4711` is none of those things: it appears at three in the
@@ -373,7 +373,7 @@ morning because a CPE rebooted and it is gone twenty minutes later.
 
 Measured, and this is the missing product step the whole question hangs on:
 **nothing in this repository enables a feature on an interface that appears at
-runtime.** `grep -rin "pppoe\|bng\|radius" src/hexash/` returns two source
+runtime.** `grep -rin "pppoe\|bng\|radius" src/prismash/` returns two source
 *comments* referring to `lab/bng.sh` and no grammar at all. In `lab/bng.sh`
 the one thing the lab does by hand is `set interface bpa in2out` on the session
 interface, precisely because no product code does it.
@@ -496,10 +496,10 @@ It is a different product that happens to share a dataplane.
 
 | | Calibration |
 |---|---|
-| A control-plane supervisor that owns `accel-ppp`'s lifecycle, its configuration file and its failures, inside `hexash`'s commit/rollback/audit model | `accel-ppp` brings a second configuration file that `hexash` does not model at all |
+| A control-plane supervisor that owns `accel-ppp`'s lifecycle, its configuration file and its failures, inside `prismash`'s commit/rollback/audit model | `accel-ppp` brings a second configuration file that `prismash` does not model at all |
 | Product code that enables per-interface features on an interface that appears at runtime, and removes them when it goes | Does not exist anywhere in this repository today (3.4) |
 | A fix for `bpa_auto_mss_update()`'s walk over every interface on every attach | O(N²) attach, measured (3.4). Worth doing regardless of any BNG |
-| A statistics segment sized for one interface per subscriber | Without it the box aborts at ~7,500 sessions (2.1). [#288](https://github.com/andrediashexa/hexarouting/issues/288) sized it from the interfaces a box is **configured** for, at 4,793 bytes each, and a session interface is in no configuration file - so a BNG gets nothing from that and must set the size in `/etc/hexarouting/vpp-base.conf`, which means knowing its own subscriber ceiling. The boot self-test reports how much of the segment is spent either way |
+| A statistics segment sized for one interface per subscriber | Without it the box aborts at ~7,500 sessions (2.1). [#288](https://github.com/andrediashexa/hexarouting/issues/288) sized it from the interfaces a box is **configured** for, at 4,793 bytes each, and a session interface is in no configuration file - so a BNG gets nothing from that and must set the size in `/etc/prisma-routing/vpp-base.conf`, which means knowing its own subscriber ceiling. The boot self-test reports how much of the segment is spent either way |
 | A RADIUS client with accounting and CoA/DM, and an append-only retained store for what it records, to `logging.md`'s standard | This is [#21](https://github.com/andrediashexa/hexarouting/issues/21)'s work plus a retention obligation |
 | Per-subscriber shaping | VPP 26.06 has no shaper (2.2). This is not integration work; it is a queueing discipline that is not there |
 | A VTY model for operational, non-configuration state | `show interfaces` returning 40,007 lines is the symptom (2.1) |
@@ -508,7 +508,7 @@ It is a different product that happens to share a dataplane.
 | Lawful intercept | Nothing in VPP, nothing here |
 
 For calibration in this repository's own units: the `bpa` plugin is 18,936
-lines and does one thing; `hexash` is 15,181 lines.
+lines and does one thing; `prismash` is 15,181 lines.
 
 ### What would have to be measured
 
@@ -596,7 +596,7 @@ and buy the remaining evidence before anything else.
 Stated plainly, because a document that mixes the two is worth less than one
 that measures less and says so.
 
-**Measured** (image `hexarouting-dev:26.06`, VPP `26.06-release`, 2026-09-14):
+**Measured** (image `prisma-routing-dev:26.06`, VPP `26.06-release`, 2026-09-14):
 
 * the plugin, API, symbol and string inventory in section 1;
 * the link-table and session-table keys, the single-VLAN parse, the fixed
@@ -669,7 +669,7 @@ To take them again, in the build image with `--privileged`:
    subscriber, fed through `vppctl exec` so the measurement is not dominated by
    process startup.
 4. For the abort in 2.1, boot with **no** `statseg` stanza, which is what
-   `hexarouting-tune` generated then and still generates for a box whose
+   `prisma-routing-tune` generated then and still generates for a box whose
    configuration names no interfaces, and create sessions in batches of 1,000 until
    `vppctl show version` stops answering. Read the reason from VPP's stdout.
 5. For 3.4, create N sessions, then time `set interface bpa in2out` over them

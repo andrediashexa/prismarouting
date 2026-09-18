@@ -1,10 +1,10 @@
-# HexaRouting — Appliance
+# Prisma Routing - Appliance
 
 ## TL;DR
 
 Installing VPP and FRR is the easy part. What decides whether the box delivers
 100 Gbps or half of it is **boot tuning**, and it fails invisibly: the box
-comes up, forwards, and underperforms. `hexarouting-tune` computes CPU
+comes up, forwards, and underperforms. `prisma-routing-tune` computes CPU
 isolation, hugepages and pinning from the actual hardware instead of copied
 values.
 
@@ -28,11 +28,11 @@ knob at a time rather than switched on and declared an improvement.
 
 | | |
 |---|---|
-| **What** | A bootable Debian appliance carrying VPP, FRR and HexaRouting, with boot tuning computed at first start. |
+| **What** | A bootable Debian appliance carrying VPP, FRR and Prisma Routing, with boot tuning computed at first start. |
 | **Why** | Hand-tuned `isolcpus` and hugepages are the difference between full and half throughput, and getting them wrong produces no error. |
 | **Who** | Whoever racks the box; the self-test speaks to them over serial console or IPMI. |
 | **When** | Tuning is computed on every boot; kernel-level changes take effect on the **next** one. |
-| **Where** | `/etc/vpp/startup.conf` and `/etc/default/grub.d/hexarouting.cfg`, both generated. |
+| **Where** | `/etc/vpp/startup.conf` and `/etc/default/grub.d/prisma-routing.cfg`, both generated. |
 | **How** | Reads `/sys` topology, NIC NUMA affinity, reserved hugepages and isolated CPUs. |
 | **How much** | 200k subscribers on an eight-core box ⇒ roughly 6 × 1 GB hugepages, computed from the subscriber count and the worker count rather than guessed. |
 
@@ -40,7 +40,7 @@ knob at a time rather than switched on and declared an improvement.
 
 ```mermaid
 flowchart TB
-    A["/sys topology<br/>NIC NUMA affinity"] --> B["hexarouting-tune"]
+    A["/sys topology<br/>NIC NUMA affinity"] --> B["prisma-routing-tune"]
     C["reserved hugepages<br/>isolated CPUs"] --> B
     B --> D{"kernel already tuned?"}
     D -->|no| E["conservative startup.conf<br/>no pinning, 4k pages, DPDK off"]
@@ -66,7 +66,7 @@ Rules applied, each with its reason:
 | `net.ipv6.conf.{all,default}.accept_ra = 0` | A neighbour's Router Advertisement reaches the kernel over a `linux_cp` pair since [#213](https://github.com/andrediashexa/hexarouting/issues/213), because FRR needs it for BGP unnumbered. With the kernel's default the box takes the default route in it, and `linux_nl` syncs that into the VPP FIB: measured. FRR reads advertisements on a socket of its own, so unnumbered is unaffected |
 
 The latency knobs cost power, so they are a switch, not a law:
-`HEXA_LOW_LATENCY=0` in `/etc/hexarouting/tune.env` drops the C-state and THP
+`PRISMA_LOW_LATENCY=0` in `/etc/prisma-routing/tune.env` drops the C-state and THP
 parameters from the kernel command line and leaves the governor alone. The
 default is `1`, because this is a router.
 
@@ -78,23 +78,23 @@ went wrong were measured by running the script:
 
 | Written | What the box did | What it does now |
 |---|---|---|
-| `HEXA_LOW_LATENCY=true` | Took the "not `1`" branch: the C-state and THP parameters were **removed** from the kernel command line and the governor left alone — the opposite of what it says — while the journal reported `HEXA_LOW_LATENCY=0`, naming a value nobody wrote | Refused by name, and read as `1` |
-| `HEXA_SUBSCRIBERS=200k` | The tuner's argument parser refused it with a usage dump naming neither the variable nor the file; `apply-tuning` exited non-zero and the unit failed, so **no tuning was written at all** and the kernel command line stayed at whatever the previous boot put there, disagreeing with the `startup.conf` beside it | Refused by name, and read as `200000` |
+| `PRISMA_LOW_LATENCY=true` | Took the "not `1`" branch: the C-state and THP parameters were **removed** from the kernel command line and the governor left alone — the opposite of what it says — while the journal reported `PRISMA_LOW_LATENCY=0`, naming a value nobody wrote | Refused by name, and read as `1` |
+| `PRISMA_SUBSCRIBERS=200k` | The tuner's argument parser refused it with a usage dump naming neither the variable nor the file; `apply-tuning` exited non-zero and the unit failed, so **no tuning was written at all** and the kernel command line stayed at whatever the previous boot put there, disagreeing with the `startup.conf` beside it | Refused by name, and read as `200000` |
 
 So each value is checked before it is used, and one this box does not accept is
 **refused out loud and replaced by the shipped default** — never by the
 opposite of what it says, and never by failing the unit. A typo **MUST NOT**
 cost the box its tuning: an ignored setting is recoverable by editing one line,
 while a failed tuning unit leaves `isolcpus` and `startup.conf` describing
-different machines. That is the same reasoning `HEXA_MAX_WORKERS` already
+different machines. That is the same reasoning `PRISMA_MAX_WORKERS` already
 carried, applied to the other two.
 
 | Variable | Accepted | Shipped | Used when refused |
 |---|---|---|---|
-| `HEXA_DATAPLANE_IF` | an interface name, or empty | empty | any name is accepted; one this box has not got resolves to no device, and `no-pci` is written so nothing is claimed |
-| `HEXA_SUBSCRIBERS` | digits only | `200000` | `200000` |
-| `HEXA_LOW_LATENCY` | `1` or `0`, nothing else | `1` | `1`, because this is a router |
-| `HEXA_MAX_WORKERS` | digits only, or empty for no cap | empty | no cap |
+| `PRISMA_DATAPLANE_IF` | an interface name, or empty | empty | any name is accepted; one this box has not got resolves to no device, and `no-pci` is written so nothing is claimed |
+| `PRISMA_SUBSCRIBERS` | digits only | `200000` | `200000` |
+| `PRISMA_LOW_LATENCY` | `1` or `0`, nothing else | `1` | `1`, because this is a router |
+| `PRISMA_MAX_WORKERS` | digits only, or empty for no cap | empty | no cap |
 
 **A refusal says what the box does accept**, with what each value would do, not
 only that this one was wrong: it is read on a serial console by somebody who
@@ -103,7 +103,7 @@ columns and the refused value is quoted and printed whole, so it can be grepped
 for and typed back.
 
 `test/test_apply_tuning.sh` drives `apply-tuning` against fake `/etc`, `/proc`
-and `/sys` trees through its `HEXA_ROOT` seam, with the tuner, `update-grub`
+and `/sys` trees through its `PRISMA_ROOT` seam, with the tuner, `update-grub`
 and the NIC binder stubbed on `PATH`. Before it existed **nothing ran this
 script at all**: `test/test_kernel_tuning.py` reads it as text looking for
 candidate knobs, and `appliance/test_tune.py` tests the tuner it calls, so the
@@ -118,23 +118,23 @@ turn every error into a shrug.
 ### The kernel command line, parameter by parameter
 
 The rules above are the reasons. This is the line the tuner actually writes
-into `/etc/default/grub.d/hexarouting.cfg`, parameter by parameter, because a
+into `/etc/default/grub.d/prisma-routing.cfg`, parameter by parameter, because a
 reader diagnosing a box has the line in front of them and not the reasons.
 
 It is deliberately a **second copy** of something `render_grub()` already says,
 so `test/test_kernel_tuning.py` renders the line and compares the two. A
 parameter added to the tuner and not to this table, a value changed on one
-side, or a knob quietly promoted out of the `HEXA_LOW_LATENCY` half is a test
+side, or a knob quietly promoted out of the `PRISMA_LOW_LATENCY` half is a test
 failure rather than a document that stopped being true without telling anyone.
 
-| Parameter | Value | Only with `HEXA_LOW_LATENCY=1` | What it is for |
+| Parameter | Value | Only with `PRISMA_LOW_LATENCY=1` | What it is for |
 |---|---|---|---|
 | `isolcpus` | computed | no | The worker cores and their SMT siblings, from the topology |
 | `nohz_full` | computed | no | The same list: an isolated core still taking the timer tick is not isolated |
 | `rcu_nocbs` | computed | no | The same list again: otherwise RCU callbacks run on the worker |
 | `default_hugepagesz` | `1G` | no | So that `hugepages=` below is counted in 1 GB units and not 2 MB ones |
 | `hugepagesz` | `1G` | no | Reserves the 1 GB pool |
-| `hugepages` | computed | no | Sized from `HEXA_SUBSCRIBERS`, then capped by the RAM the box actually has |
+| `hugepages` | computed | no | Sized from `PRISMA_SUBSCRIBERS`, then capped by the RAM the box actually has |
 | `intel_iommu` | `on` | no | `vfio-pci` hands the NIC to userspace, and it needs an IOMMU to do that safely |
 | `iommu` | `pt` | no | Pass-through: the IOMMU is here for the device assignment, and full translation on the DMA path costs throughput for a protection a single-purpose appliance does not buy |
 | `intel_idle.max_cstate` | `0` | **yes** | Deep C-states off, for the `intel_idle` driver |
@@ -152,11 +152,11 @@ belongs in `LOW_LATENCY_CMDLINE`, never in the unconditional line — see
 *Boot tuning still on the table* below, where every candidate is classified
 that way before it is measured, let alone shipped.
 
-`HEXA_MAX_WORKERS` in the same file caps how many physical cores become
+`PRISMA_MAX_WORKERS` in the same file caps how many physical cores become
 forwarding workers. It ships **empty**, which means no cap and is exactly the
 behaviour above: every core on the dataplane node except the first. The cap
 exists because "all but the first" scales the wrong way — on a 32-core socket
-it leaves **one** physical core carrying FRR, `frr-reload`, `vtysh`, `hexash`,
+it leaves **one** physical core carrying FRR, `frr-reload`, `vtysh`, `prismash`,
 `sshd` and VPP's main thread together, and the main thread takes the worker
 barrier once a second for `bpa-expire-process`. Setting it hands cores back to
 the control plane, and the cores it frees leave `isolcpus` so the scheduler can
@@ -180,7 +180,7 @@ only on the **next** boot. The first implementation generated a
 `startup.conf` demanding `default-hugepage` that did not yet exist, and VPP
 entered a restart loop — which would break every first start after installation.
 
-`hexarouting-tune` now reads the kernel's actual state:
+`prisma-routing-tune` now reads the kernel's actual state:
 
 ```
 /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
@@ -208,8 +208,8 @@ The effect is the worst kind for a product: no error, no warning, the box comes
 up and forwards. It merely delivers half the throughput, with no way for the
 operator to know why.
 
-`hexarouting-tune` therefore generates the file VPP actually reads,
-concatenating `/etc/hexarouting/vpp-base.conf` — operator-editable, holding
+`prisma-routing-tune` therefore generates the file VPP actually reads,
+concatenating `/etc/prisma-routing/vpp-base.conf` — operator-editable, holding
 `unix`, `linux-cp` and so on — with the computed `plugins`, `cpu`, `buffers`
 and `memory` stanzas.
 
@@ -221,7 +221,7 @@ and `memory` stanzas.
 
 ## Tuning must not block boot
 
-`hexarouting-tune.service` once sat for **five minutes** with systemd waiting
+`prisma-routing-tune.service` once sat for **five minutes** with systemd waiting
 `no limit`, holding the rest of the boot behind it. The immediate cause was
 `update-grub`: on a live system GRUB is not even installed to disk, and
 `os-prober` scans every block device looking for other operating systems.
@@ -236,7 +236,7 @@ Three fixes, because one would not be enough:
 
 The third matters most. The tuning only takes effect on the next boot anyway,
 so blocking the current one for it is a bad trade in every scenario. **No
-HexaRouting service SHOULD be able to block boot without a limit** — that was a
+Prisma Routing service SHOULD be able to block boot without a limit** - that was a
 design defect, not merely an effect of `update-grub`.
 
 ## Memory requirement
@@ -264,14 +264,14 @@ eventually touched and a small box does not have it.
 
 Raising the floor to 4 GB did nothing for the victim. `vpp.service` therefore
 carries `OOMScoreAdjust=-1000`, shipped as the drop-in
-`/etc/systemd/system/vpp.service.d/hexarouting-oom-protect.conf`, which takes
+`/etc/systemd/system/vpp.service.d/prisma-routing-oom-protect.conf`, which takes
 the dataplane out of the kernel's selection instead of merely lowering its
 score: a box that has lost `bgpd` still forwards on what it learned, and a box
 that has lost VPP forwards nothing. It does **not** protect VPP from its own
 allocations — if VPP is genuinely the process consuming the machine, the kernel
 still kills it.
 
-`hexarouting.service` carries `MemoryMax=512M` for the other side of the same
+`prisma-routing.service` carries `MemoryMax=512M` for the other side of the same
 event: the control plane must not be what empties a box sized to the floor. On
 4 GB the tuner leaves a quarter of RAM outside the hugepage pool, and 512M is a
 quarter of that — against a measured 13 MB peak for loading a configuration,
@@ -383,8 +383,8 @@ Two of those are failures when they do not hold, because both are silent:
   counter is clean, and the core is shared with everything the scheduler has to
   place - while a poll-mode thread never yields. The loss appears as burst
   drops with no counter behind them. Reachable whenever the kernel command line
-  and `startup.conf` come apart: `hexarouting-tune.service` failing, a
-  hand-edited `/etc/default/grub.d/hexarouting.cfg`, an `update-grub` that was
+  and `startup.conf` come apart: `prisma-routing-tune.service` failing, a
+  hand-edited `/etc/default/grub.d/prisma-routing.cfg`, an `update-grub` that was
   never run.
 * **A dataplane older than the profile it is judged against.** VPP is pinned to
   whatever it read when it started, so a restart-less configuration change
@@ -398,13 +398,13 @@ the memory one.
 
 **One cpu for everything that is not a worker.** The tuner gives the OS the
 dataplane node's first physical core and isolates the rest, so on a 32-core
-socket FRR, `frr-reload`, `vtysh`, `hexash`, `sshd` **and** VPP's main thread
+socket FRR, `frr-reload`, `vtysh`, `prismash`, `sshd` **and** VPP's main thread
 share one core - and the main thread is the one that takes the worker barrier
 once a second for `bpa-expire-process`. The self-test warns when the control
 plane has exactly one cpu **and more than one core is isolated**, which is the
 arithmetic statement that cores could have been handed back and were not. A box
 with one isolated core has nothing to give back and is not warned. The remedy
-is `HEXA_MAX_WORKERS`, and each core handed back is that share of forwarding
+is `PRISMA_MAX_WORKERS`, and each core handed back is that share of forwarding
 capacity - so the box states the number and the trade stays the operator's.
 
 **Changing the cap is not symmetric, and the expensive direction is the one an
@@ -553,7 +553,7 @@ what a larger `statseg` costs an idle box.
 
 ### The budget the tuner uses, and why it is not 2.9 kB
 
-`hexarouting-tune` sizes the segment at **4,793 bytes per interface**, which is
+`prisma-routing-tune` sizes the segment at **4,793 bytes per interface**, which is
 the measurement divided rather than a figure anybody chose: the run above
 printed `after 7000: 7000 live` and then died creating the next batch, so
 **7,000** interfaces is the density that 32 MiB segment was measured surviving,
@@ -582,7 +582,7 @@ in no configuration file. A box that makes them **MUST** set the size itself.
 ### What the tuner sizes it from
 
 Every other figure the tuner writes comes from ground truth or from a number
-the operator set: hugepages from `HEXA_SUBSCRIBERS` and then from the RAM the
+the operator set: hugepages from `PRISMA_SUBSCRIBERS` and then from the RAM the
 machine has, `buffers-per-numa` from the worker count, `main-heap-size` from
 the pages the kernel **actually reserved**, the NIC's queue count and maximum
 MTU from the card itself. The statistics segment now has such an input too -
@@ -591,13 +591,13 @@ that were each rejected on their own arithmetic:
 
 | Option | Cost |
 |---|---|
-| Size it from `HEXA_SUBSCRIBERS` | Wrong units. A CGNAT subscriber is a translation, not an interface: 200,000 of them share a handful of ports. The shipped default would ask for roughly 540 MB of segment for interfaces that never appear, on a box whose RAM floor is 4 GB |
+| Size it from `PRISMA_SUBSCRIBERS` | Wrong units. A CGNAT subscriber is a translation, not an interface: 200,000 of them share a handful of ports. The shipped default would ask for roughly 540 MB of segment for interfaces that never appear, on a box whose RAM floor is 4 GB |
 | Size it from a constant — 256 MB, 1 GB | A number nobody can justify, which is exactly what `main-heap-size` stopped being when it started reading the reserved pages. It is also not free: the segment is what the operator's RAM is not |
-| Add a `HEXA_INTERFACES` to `tune.env` | A knob whose correct value the operator cannot know before the box is configured, on a product that today creates interfaces from a configuration the tuner never reads. A refusal path, a document and a wiki page for a number that would be guessed |
+| Add a `PRISMA_INTERFACES` to `tune.env` | A knob whose correct value the operator cannot know before the box is configured, on a product that today creates interfaces from a configuration the tuner never reads. A refusal path, a document and a wiki page for a number that would be guessed |
 | Leave it to VPP and say nothing | The status quo, and the reason the report was filed: the box meets the limit as a `SIGABRT` |
-| **Count the interfaces the box is configured for, and write a stanza only when they need more than 32 MB** | The count is read from `/etc/hexarouting/hexarouting.conf`, which is the file `hexarouting.service` hands to `hexash --load` at every boot, so the interfaces in it are the interfaces the box will create. Nothing is reserved on a box that does not need it, and no number is invented |
+| **Count the interfaces the box is configured for, and write a stanza only when they need more than 32 MB** | The count is read from `/etc/prisma-routing/prisma-routing.conf`, which is the file `prisma-routing.service` hands to `prismash --load` at every boot, so the interfaces in it are the interfaces the box will create. Nothing is reserved on a box that does not need it, and no number is invented |
 
-The last one is what ships, and the count is taken with **hexash's own parser**
+The last one is what ships, and the count is taken with **prismash's own parser**
 rather than a grep for `^interface `: a second reader of that grammar answers
 the same until the VTY learns another way to name an interface, and the box
 that would find out is the one with twenty thousand of them. The routing half
@@ -609,18 +609,18 @@ Three things the tuner will not do with that number:
 * **write a stanza smaller than VPP's own default.** Below 7,000 interfaces the
   arithmetic asks for less than 32 MB, and a box already has 32 MB;
 * **override an operator's own stanza.** `statseg` belongs in
-  `/etc/hexarouting/vpp-base.conf`, the operator-editable base the tuner
+  `/etc/prisma-routing/vpp-base.conf`, the operator-editable base the tuner
   concatenates **ahead** of the stanzas it generates - the same seam that
   already carries `unix`, `linux-cp` and `socksvr` - so a generated one would
   be the last word on every boot. A stanza there means nothing is generated;
 * **say anything about a size to a box with no interfaces to size for.** A box
   with no saved configuration, one whose configuration could not be read, and
-  one this program could not reach hexash's parser from are three different
+  one this program could not reach prismash's parser from are three different
   sentences, and none of them is a number.
 
 The stanza is written in the conservative first-boot profile as well as the
 tuned one. The hugepages and the pinning wait for a reboot because the kernel
-has to grant them; the statistics segment does not, and `hexash --load` creates
+has to grant them; the statistics segment does not, and `prismash --load` creates
 the configured interfaces on that first boot too.
 
 **A box that creates an interface per subscriber still has to be told**, and the
@@ -631,26 +631,26 @@ in no file the tuner reads.
 saved.** `statseg` is read at startup and the segment never grows, so an
 operator who adds several thousand sub-interfaces to a running box is spending
 the segment that box booted with. The tuner writes the new size into
-`startup.conf` at the next run of `hexarouting-tune.service`; the dataplane
+`startup.conf` at the next run of `prisma-routing-tune.service`; the dataplane
 takes it at the next `vpp.service` start. Until then the boot self-test's
 reading is the only thing between that box and the abort, which is why it warns
 at half.
 
 ### What the box says
 
-`hexarouting-tune` says what it found and what it did about it, beside the
+`prisma-routing-tune` says what it found and what it did about it, beside the
 figures it computes from the hardware. A box configured for 20,000
 sub-interfaces, on **one socket, eight cores and 64 GB**:
 
 ```
 # 1G hugepages: 6 GB requested (sized for 200000 subscribers), 6 reserved right now
 # statistics segment: 92M, for the 20000 interface(s) configured in
-#          /etc/hexarouting/hexarouting.conf, at 4793 bytes each.
+#          /etc/prisma-routing/prisma-routing.conf, at 4793 bytes each.
 #          That is the density a box on VPP's 32 MB default was measured
 #          surviving: 7,000 interfaces live, aborting before 8,000.
 #          Interfaces created while the box runs - a PPPoE session, a pair
 #          made from the VTY - are not in that file nor in this number.
-#          Put your own statseg in /etc/hexarouting/vpp-base.conf
+#          Put your own statseg in /etc/prisma-routing/vpp-base.conf
 #          to choose the size instead.
 ```
 
@@ -668,8 +668,8 @@ and the stanza that reaches `/etc/vpp/startup.conf`:
 
 ```
 statseg {
-  # sized for the 20000 interface(s) in /etc/hexarouting/hexarouting.conf, at
-  # 4793 bytes each. Put your own statseg in /etc/hexarouting/vpp-base.conf
+  # sized for the 20000 interface(s) in /etc/prisma-routing/prisma-routing.conf, at
+  # 4793 bytes each. Put your own statseg in /etc/prisma-routing/vpp-base.conf
   # to choose the size yourself: this one steps aside for it.
   size 92M
 }
@@ -681,7 +681,7 @@ why:
 ```
 # statistics segment: VPP's built-in 32 MB, which was measured holding
 #          7,000 interfaces. This box is configured for 3, in
-#          /etc/hexarouting/hexarouting.conf: nothing is written, because a
+#          /etc/prisma-routing/prisma-routing.conf: nothing is written, because a
 #          stanza smaller than what VPP gives away would buy the box
 #          nothing and cost it the counters.
 ```
@@ -701,9 +701,9 @@ last part of a segment cannot be spent on a growth that has to hold two copies.
 
 Where the size came from is read off the box too, and there are **three**
 answers since the tuner started writing stanzas of its own: a `statseg` in
-`/etc/hexarouting/vpp-base.conf` is the operator's (`set in
-/etc/hexarouting/vpp-base.conf`), one that reached `startup.conf` without being
-in the base is the tuner's (`chosen by hexarouting-tune from this box's
+`/etc/prisma-routing/vpp-base.conf` is the operator's (`set in
+/etc/prisma-routing/vpp-base.conf`), one that reached `startup.conf` without being
+in the base is the tuner's (`chosen by prisma-routing-tune from this box's
 configuration`), and neither is VPP's default. Reading only `startup.conf`
 would tell a box the tuner sized that its operator had sized it.
 
@@ -731,10 +731,10 @@ the journal showed `code=killed, signal=ILL`.
 
 ```mermaid
 flowchart LR
-    T["hexarouting-tune<br/>Before=vpp"] --> V["vpp.service"]
-    V --> H["hexarouting.service<br/>After=vpp,frr"]
+    T["prisma-routing-tune<br/>Before=vpp"] --> V["vpp.service"]
+    V --> H["prisma-routing.service<br/>After=vpp,frr"]
     F["frr.service"] --> H
-    H --> S["hexarouting-selftest<br/>console report"]
+    H --> S["prisma-routing-selftest<br/>console report"]
 ```
 
 Two decisions worth explaining:
@@ -742,7 +742,7 @@ Two decisions worth explaining:
 * **FRR is `Wants`, not `Requires`.** Without routing the box still forwards
   whatever static routes exist; taking CGNAT down with it would only widen the
   damage.
-* **No `ExecStop` on `hexarouting.service`.** The configuration lives in VPP.
+* **No `ExecStop` on `prisma-routing.service`.** The configuration lives in VPP.
   Stopping the service **MUST NOT** delete production pools; removing a pool is
   the operator's action, through the VTY. A stop-time command also runs on every
   **restart**, so it would fire on any of them rather than only when somebody
@@ -750,7 +750,7 @@ Two decisions worth explaining:
   vpp` is one, which is the command `show version` tells an operator to run to
   pick up a new dataplane build.
 * **There is one on `vpp.service`**, shipped as the drop-in
-  `/etc/systemd/system/vpp.service.d/hexarouting-stop-drain.conf`. It runs
+  `/etc/systemd/system/vpp.service.d/prisma-routing-stop-drain.conf`. It runs
   `vppctl bpa stop-drain` before the signal, so every block the dataplane is
   holding is released in the retention log while the graph is still running to
   carry the records. That is a different unit for a measured reason: the blocks
@@ -766,7 +766,7 @@ the configuration surface is refused, including on the drop-in that is allowed
 to have one. It also fails when the drain goes missing, because a box that stops
 without it reopens the open-allocation defect above.
 
-`hexarouting.service` waits for VPP to accept commands before applying
+`prisma-routing.service` waits for VPP to accept commands before applying
 configuration: systemd considers `vpp.service` started once the process is up,
 but the CLI socket and plugins take a moment longer, and applying before that
 fails intermittently.
@@ -777,8 +777,8 @@ comparing before regenerating.
 
 ## Which NIC the dataplane is allowed to claim
 
-The appliance shipped `HEXA_DATAPLANE_IF=eth0`. On Debian 12 with predictable
-interface names that interface does not exist, so `hexarouting-tune` could not
+The appliance shipped `PRISMA_DATAPLANE_IF=eth0`. On Debian 12 with predictable
+interface names that interface does not exist, so `prisma-routing-tune` could not
 resolve a PCI address and generated
 
 ```
@@ -794,7 +794,7 @@ about it by losing the session
 asked, and the installer never asks which interface carries subscriber
 traffic, so this was the ordinary case rather than the exception.
 
-**Unknown MUST mean claim nothing**, and it still does: `hexarouting-tune`
+**Unknown MUST mean claim nothing**, and it still does: `prisma-routing-tune`
 emits `dpdk { no-pci }` when it cannot resolve a device. What changed is
 **when** that happens, not whether. The two outcomes are still not symmetric:
 
@@ -912,14 +912,14 @@ error: interface GigabitEthernet0/13/0: a name FRR cannot take
     rolls back
 ```
 
-The 15 and the 16 each have one owner in `src/hexash/config.py`:
+The 15 and the 16 each have one owner in `src/prismash/config.py`:
 `LINUX_IFNAME_MAX` is IFNAMSIZ less the terminator and bounds `linux-name`
 and the default above; `FRR_IFNAME_MAX` is FRR's own check and bounds the
 refusal.
 
 **The upgraded box.** A configuration saved by 0.76.1 says `interface
 GigabitEthernet0/13/0`, and after the upgrade the box holds that card as
-`ens19`. `hexash --load` MUST NOT refuse that file: the old name encodes the
+`ens19`. `prismash --load` MUST NOT refuse that file: the old name encodes the
 address and `show hardware-interfaces` prints the address of every card the
 box holds, so the file is loaded under the new name wherever it used the old
 one - the block, the CGNAT attachment, a sub-interface keeping its tag - with
@@ -942,7 +942,7 @@ version - is dropped with a note and the dataplane half loads, the trim
 The empty default is the right answer to #123 and it left the other half
 missing: **there was no way to name the card that was not an editor in Linux.**
 Every fresh install came up forwarding nothing, and the remedy the box printed
-was `vi /etc/hexarouting/tune.env`. `docs/context.md` argues that an operator
+was `vi /etc/prisma-routing/tune.env`. `docs/context.md` argues that an operator
 who has to drop to `vppctl` is one for whom this VTY is decoration; the same
 holds for one who has to drop to an editor
 ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
@@ -951,9 +951,9 @@ It is now a statement like any other — in the candidate, committed, saved by
 `save`, rendered by `show running-config`:
 
 ```
-hexarouting> configure
-hexarouting# [edit] dataplane interface enp2s0
-hexarouting# [edit] commit
+prisma> configure
+prisma# [edit] dataplane interface enp2s0
+prisma# [edit] commit
 dataplane interface: enp2s0
     stored, and the boot tuning was recomputed for it
     NOT IN EFFECT YET: the dataplane claims its card when it starts, and this
@@ -984,8 +984,8 @@ session it was never going to lose spends a maintenance window it did not
 need, and a box told the session was safe and losing it is a box nobody can
 reach.
 
-`commit` writes `HEXA_DATAPLANE_IF` into `tune.env` and restarts
-`hexarouting-tune`, which regenerates `startup.conf`. **It does not bind the
+`commit` writes `PRISMA_DATAPLANE_IF` into `tune.env` and restarts
+`prisma-routing-tune`, which regenerates `startup.conf`. **It does not bind the
 NIC and it does not restart VPP.** The bind used to happen there, and that was
 the defect in #336: `apply-tuning` performs it, `commit` restarts the unit that
 runs `apply-tuning`, and nothing restarts VPP afterwards - so the card came off
@@ -1167,7 +1167,7 @@ The last two are the controls. Without them "VPP did not complain" is what an
 ignored section looks like as well as what an accepted one does.
 
 **And it could not have been done at runtime**, which is what the first
-attempt at #382 assumed. `hexash` sets an MTU over the binary API with
+attempt at #382 assumed. `prismash` sets an MTU over the binary API with
 `sw_interface_set_mtu`, and that is the right tool for the L3 MTU of a port
 that **is** running. It cannot start a port that never started. Measured on
 the booted box above, through both of VPP's runtime doors:
@@ -1200,8 +1200,8 @@ and always exits zero: **the diagnostic MUST NOT bring down the boot**.
 
 That rule has two halves, and both are asserted by `test/test_selftest.sh`.
 The script's last line is one; what systemd is told to do with the status is
-the other. `hexarouting-selftest.service` **MUST** carry
-`ExecStart=-/usr/lib/hexarouting/selftest`, and nothing **MAY** declare
+the other. `prisma-routing-selftest.service` **MUST** carry
+`ExecStart=-/usr/lib/prisma-routing/selftest`, and nothing **MAY** declare
 `Requires=`, `Requisite=`, `BindsTo=` or `PartOf=` on it. Measured on systemd
 252 with transient units of that exact shape: without the leading `-`, a
 command exiting 3 gives `Result=exit-code` and `ActiveState=failed`, a command
@@ -1229,8 +1229,8 @@ An appliance that says it is tuned when the kernel did not take the parameter
 is worse than one that says nothing
 ([#163](https://github.com/andrediashexa/hexarouting/issues/163)). Everything
 this product does about tuning until the reboot is a **request**, written into
-`/etc/default/grub.d/hexarouting.cfg`, `/etc/default/irqbalance` and
-`/etc/sysctl.d/99-hexarouting.conf`, and a file is not a machine. Four things
+`/etc/default/grub.d/prisma-routing.cfg`, `/etc/default/irqbalance` and
+`/etc/sysctl.d/99-prisma-routing.conf`, and a file is not a machine. Four things
 stand between them:
 
 * `update-grub` was never run, so the bootloader never saw the request;
@@ -1245,7 +1245,7 @@ line carried `hugepagesz=1G hugepages=5`, the CPU does not advertise
 `/proc/cmdline` went on carrying that parameter for the life of the box, with
 every reader of it reporting a tuned machine.
 
-So `hexarouting-tune --report-effective` reads each rule back off the running
+So `prisma-routing-tune --report-effective` reads each rule back off the running
 box, and the self-test prints the answer. **The reading is the tuner's**: it
 writes those parameters, so it is the one component that knows what they are,
 and a second list of them in the self-test would be the same truth in two
@@ -1253,17 +1253,17 @@ places with nothing comparing them.
 
 | Rule | Requested in | Read back from |
 |---|---|---|
-| `isolcpus` | `grub.d/hexarouting.cfg` | `/sys/devices/system/cpu/isolated` |
-| `nohz_full` | `grub.d/hexarouting.cfg` | `/sys/devices/system/cpu/nohz_full` |
-| `rcu_nocbs` | `grub.d/hexarouting.cfg` | the `rcuop/<cpu>` offload threads in `/proc` - nothing in `/sys` answers for it |
-| `default_hugepagesz` | `grub.d/hexarouting.cfg` | `Hugepagesize:` in `/proc/meminfo` |
-| `hugepagesz`, `hugepages` | `grub.d/hexarouting.cfg` | `/sys/kernel/mm/hugepages/hugepages-<size>/nr_hugepages`, and whether that directory exists at all |
-| `intel_iommu` | `grub.d/hexarouting.cfg` | `/sys/class/iommu` |
-| `iommu=pt` | `grub.d/hexarouting.cfg` | `type` of every group in `/sys/kernel/iommu_groups` |
-| `intel_idle.max_cstate` | `grub.d/hexarouting.cfg` | `/sys/devices/system/cpu/cpuidle/current_driver` |
-| `processor.max_cstate` | `grub.d/hexarouting.cfg` | how many `state*` cpu0 exposes under `cpuidle` |
-| `transparent_hugepage` | `grub.d/hexarouting.cfg` | `/sys/kernel/mm/transparent_hugepage/enabled` |
-| the sysctls | `/etc/sysctl.d/99-hexarouting.conf` | `/proc/sys/...` |
+| `isolcpus` | `grub.d/prisma-routing.cfg` | `/sys/devices/system/cpu/isolated` |
+| `nohz_full` | `grub.d/prisma-routing.cfg` | `/sys/devices/system/cpu/nohz_full` |
+| `rcu_nocbs` | `grub.d/prisma-routing.cfg` | the `rcuop/<cpu>` offload threads in `/proc` - nothing in `/sys` answers for it |
+| `default_hugepagesz` | `grub.d/prisma-routing.cfg` | `Hugepagesize:` in `/proc/meminfo` |
+| `hugepagesz`, `hugepages` | `grub.d/prisma-routing.cfg` | `/sys/kernel/mm/hugepages/hugepages-<size>/nr_hugepages`, and whether that directory exists at all |
+| `intel_iommu` | `grub.d/prisma-routing.cfg` | `/sys/class/iommu` |
+| `iommu=pt` | `grub.d/prisma-routing.cfg` | `type` of every group in `/sys/kernel/iommu_groups` |
+| `intel_idle.max_cstate` | `grub.d/prisma-routing.cfg` | `/sys/devices/system/cpu/cpuidle/current_driver` |
+| `processor.max_cstate` | `grub.d/prisma-routing.cfg` | how many `state*` cpu0 exposes under `cpuidle` |
+| `transparent_hugepage` | `grub.d/prisma-routing.cfg` | `/sys/kernel/mm/transparent_hugepage/enabled` |
+| the sysctls | `/etc/sysctl.d/99-prisma-routing.conf` | `/proc/sys/...` |
 | `IRQBALANCE_BANNED_CPULIST` | `/etc/default/irqbalance` | the environment of the **running** `irqbalance` |
 
 **Four answers, and not two.** "Requested and **not** in effect" is a state of
@@ -1330,7 +1330,7 @@ sentence.
 Not by creating one — this runs at every boot on a production box — but by
 asking whether the binary API is registered.
 
-`hexash` creates and changes pools over the binary API, carried by a vat2
+`prismash` creates and changes pools over the binary API, carried by a vat2
 plugin. `appliance/build-iso.sh` copied the VPP plugin into the image and
 **never the vat2 one**, so `install.sh` found neither of the two paths it
 looks in, printed *warning: no vat2 plugin; the binary API will not be
@@ -1358,14 +1358,14 @@ Fixing that let the box get far enough to fail differently
 ([#121](https://github.com/andrediashexa/hexarouting/issues/121)):
 
 ```
-  [FAIL] hexarouting.service FAILED: the CGNAT configuration was not applied
+  [FAIL] prisma-routing.service FAILED: the CGNAT configuration was not applied
         the last thing it said:
           error: this change leaves nobody able to configure the box
               afterwards no account that can log in over SSH holds the administrator role
               give another account 'role administrator' first, or allow root to log in
               over SSH
           error: refusing to load this file, the check above says why
-              /etc/hexarouting/hexarouting.conf
+              /etc/prisma-routing/prisma-routing.conf
 ```
 
 That is the shape the box prints it in today, on a file that does say
@@ -1374,7 +1374,7 @@ six journal lines under its verdict, the loader puts the path on a row of its
 own since #276, and the lockout check has a second refusal behind the first,
 so the headline it opens with, `error: this change locks everybody out`, and
 the advice under it have already scrolled out of that window. The refusal
-itself read `error: /etc/hexarouting/hexarouting.conf: refusing to load` when
+itself read `error: /etc/prisma-routing/prisma-routing.conf: refusing to load` when
 #121 was filed.
 
 `install.sh` writes the default configuration as three comment lines. Read as
@@ -1384,7 +1384,7 @@ check saw a change that would take it away, and refused. Correctly. The error
 was upstream: **an empty file is not a configuration that removes everything,
 it is a configuration nobody has written yet.**
 
-`Config` now counts the statements it parsed, and `hexash --load` returns when
+`Config` now counts the statements it parsed, and `prismash --load` returns when
 there were none. Counted rather than inferred from the fields: `ssh` and
 `snmp` start as copies of their defaults, so a file setting one of them to its
 default value would look identical to a file that said nothing — and a file
@@ -1411,7 +1411,7 @@ sh tools/lab.sh boot-iso             # boot it and check the self-test
 ```
 
 After installing, adjust the subscriber target in
-`/etc/hexarouting/tune.env` and reboot: `isolcpus` and hugepages only apply on
+`/etc/prisma-routing/tune.env` and reboot: `isolcpus` and hugepages only apply on
 the next boot, and so does the handover of the card. **Nobody has to name the
 dataplane NIC** — the box claims every card it has but the one it was
 installed with a management network on, and never the last one
@@ -1453,7 +1453,7 @@ box that was working and waiting for input
 ([#93](https://github.com/andrediashexa/hexarouting/issues/93)).
 
 `getty@tty1` and `serial-getty@ttyS0` are therefore ordered after
-`hexarouting-selftest.service` **and** after `hexarouting-installer.service`,
+`prisma-routing-selftest.service` **and** after `prisma-routing-installer.service`,
 so that an unattended install owns the console rather than running behind a
 login prompt. None of the three may be ordered after `multi-user.target`:
 `getty.target` is pulled in by it, and that closes a cycle — which systemd
@@ -1461,14 +1461,14 @@ breaks by dropping an edge, making the console come out right on some boots and
 wrong on others. Right sometimes is worse than wrong always: it cannot be
 reproduced, and it gets blamed on the hardware.
 
-The self-test **MUST** check `hexarouting.service`, the unit that applies the
+The self-test **MUST** check `prisma-routing.service`, the unit that applies the
 configuration. It did not, and a box whose configuration was never applied
 reported itself ready to the one person standing at the console
 ([#94](https://github.com/andrediashexa/hexarouting/issues/94)).
 
 ## The wait before the configuration is applied
 
-`hexarouting.service` waits for VPP to accept commands before applying the
+`prisma-routing.service` waits for VPP to accept commands before applying the
 configuration: systemd considers `vpp.service` started as soon as the process
 exists, while the CLI socket and the plugins take longer, and applying
 configuration before that fails intermittently.
@@ -1476,7 +1476,7 @@ configuration before that fails intermittently.
 The wait is legitimate. What was not is the screen — systemd prints
 
 ```
-[  **] Job hexarouting.service/start running (22s / no limit)
+[  **] Job prisma-routing.service/start running (22s / no limit)
 ```
 
 and *"no limit"* is its phrasing for a unit with no timeout. On a box somebody
@@ -1520,14 +1520,14 @@ with no credentials at all, runs the product so you can look at it, and offers
 one command that turns it into a box somebody owns.
 
 ```
-<the HexaRouting banner>
-HexaRouting VTY <version>
+<the Prisma Routing banner>
+Prisma Routing VTY <version>
 '?' for help, TAB to complete, 'configure' to edit, 'exit' to leave.
 
 This is the installation medium: nothing here survives a reboot.
-Type 'install' to install HexaRouting onto a disk.
+Type 'install' to install Prisma Routing onto a disk.
 
-hexarouting> install
+prisma> install
 ```
 
 `install` exists in the VTY **only when the box is running from the medium**.
@@ -1586,7 +1586,7 @@ The disk is laid out in **three** partitions, not two:
 |---|---|
 | ESP | 512 MB |
 | root | the rest, minus the records |
-| `/var/log/hexarouting` | what the operator asked for |
+| `/var/log/prisma-routing` | what the operator asked for |
 
 In dynamic mode the allocation log **is** the connection record the Marco Civil
 requires this box to keep for a year. On the root filesystem it shares space
@@ -1622,7 +1622,7 @@ is refused with the arithmetic rather than accepted and discovered later.
   that, a box whose volume failed to mount comes up quietly writing records
   onto the root filesystem, which is the arrangement this replaced.
 * The size is read from `/sys/block/<disk>/size`, which is world-readable, so
-  the fit is checked in `HEXA_INSTALL_CHECK` mode too. A check that skipped it
+  the fit is checked in `PRISMA_INSTALL_CHECK` mode too. A check that skipped it
   for want of privileges would be more permissive than the real run.
 
 ### The records on two disks, and the system on one
@@ -1640,7 +1640,7 @@ argued:
 
 | Which disk dies | What was measured, on a box that was installed and then booted with that disk detached |
 |---|---|
-| the mirror disk | the box boots, `/proc/mdstat` reads `md0 : active raid1 vda3[0] ... [2/1] [U_]`, `/var/log/hexarouting` is still mounted from `/dev/md0`, a record written before the disk died reads back, and the boot self-test says `[FAIL] the records mirror is DEGRADED: 1 of 2 disks (vda3)` with nobody logged in |
+| the mirror disk | the box boots, `/proc/mdstat` reads `md0 : active raid1 vda3[0] ... [2/1] [U_]`, `/var/log/prisma-routing` is still mounted from `/dev/md0`, a record written before the disk died reads back, and the boot self-test says `[FAIL] the records mirror is DEGRADED: 1 of 2 disks (vda3)` with nobody logged in |
 | the system disk | no bootloader, no kernel and no prompt: the machine sat at the firmware until the lab stopped it. **And the records on the survivor were read back on another machine**, out of the leg alone, with that box switched off |
 
 The second row is the whole of the trade: what mirroring the system would have
@@ -1652,7 +1652,7 @@ bootloader on both disks. What is not lost either way is the records.
 |---|---|
 | Question | asked only when the machine HAS a second disk |
 | Default | `none`, taken by a bare Enter |
-| Answer, unattended | `hexarouting.mirror=<disk>`, or `mirror = <disk>` in the answers file |
+| Answer, unattended | `prisma-routing.mirror=<disk>`, or `mirror = <disk>` in the answers file |
 | Refused when | it is the target disk, the boot medium, not a whole disk, or smaller than the records answer |
 | Layout on the second disk | one partition, whole disk, type Linux RAID |
 | The array | `raid1`, metadata 1.2, named `<hostname>:records` |
@@ -1761,9 +1761,9 @@ wants a management network.
 | How it is addressed | `dhcp`, an address with a prefix (`10.0.0.2/24`), or `none` |
 | Default gateway | static only, empty accepted, refused when it is not on the address's own subnet |
 | DNS servers | static only, written to `/etc/resolv.conf` |
-| Unattended | `hexarouting.mgmt-interface=`, `.mgmt-address=`, `.mgmt-gateway=`, `.mgmt-dns=`, or the same keys in the answers file |
+| Unattended | `prisma-routing.mgmt-interface=`, `.mgmt-address=`, `.mgmt-gateway=`, `.mgmt-dns=`, or the same keys in the answers file |
 
-**It is written to `/etc/network/interfaces.d/hexarouting`, and `ifupdown` is
+**It is written to `/etc/network/interfaces.d/prisma-routing`, and `ifupdown` is
 the mechanism because it is the one the box already has.** The image
 installs `iproute2` and `ifupdown` and nothing else that touches an interface:
 no NetworkManager, no `systemd-networkd` configuration, no netplan, all three
@@ -1874,7 +1874,7 @@ reachable once, it is whether it is reachable tomorrow.
 The live image's root account is **locked** and `ssh.service` is **masked** on
 it. Console autologin does not authenticate, so nothing is lost.
 
-This replaced a real exposure. The image used to ship `root:hexarouting` with
+This replaced a real exposure. The image used to ship `root:prisma-routing` with
 `PermitRootLogin yes`, and `openssh-server` is installed — so a booted ISO on a
 network was remotely rootable with a password printed in the release notes.
 Worse, it did not stay on the medium: the installer unpacks the live squashfs
@@ -1902,14 +1902,14 @@ it refuses:
 
 | What | Why it is refused |
 |---|---|
-| a file whose name contains `answers` | `hexarouting.answers` with no argument reads `/run/live/medium/hexarouting.answers`, so such a file needs nobody to name it. An empty one still proves the build put one there |
-| a file whose every line parses as an install answer | That is the file `HEXA_ANSWERS=<path>` installs from, whatever it is called |
+| a file whose name contains `answers` | `prisma-routing.answers` with no argument reads `/run/live/medium/prisma-routing.answers`, so such a file needs nobody to name it. An empty one still proves the build put one there |
+| a file whose every line parses as an install answer | That is the file `PRISMA_ANSWERS=<path>` installs from, whatever it is called |
 | a private key | See below |
 | a non-empty `authorized_keys` | A login on every box installed from the image, for whoever holds the matching key |
 | an `/etc/shadow` entry that is not locked | The hash the locked live root account exists to keep out of the image |
 
 A file that merely *mentions* an answer key is not an answer file: every line
-has to parse, which is what keeps the rule off `hexarouting-install`, off
+has to parse, which is what keeps the rule off `prisma-routing-install`, off
 `install-from-cmdline` and off this document, all three of which describe the
 format at length.
 
@@ -1938,18 +1938,18 @@ Three changes, and all three **MUST** hold, because any one alone is a defect:
 
 * `build-iso.sh` removes the host keys before squashing. Nothing is lost on the
   live image, where `sshd` is masked.
-* `hexarouting-install` removes whatever `/etc/ssh/ssh_host_*` the medium
+* `prisma-routing-install` removes whatever `/etc/ssh/ssh_host_*` the medium
   handed over, on the target, before it generates anything. `ssh-keygen -A`
   generates only the key types that are **missing**, so on a tree that already
   has a set it is a no-op that exits 0 and prints nothing. Measured on the
-  published `hexarouting-0.37.0-ab23bd7-dirty.iso`: unpacking its squashfs with
+  published `prisma-routing-0.37.0-ab23bd7-dirty.iso`: unpacking its squashfs with
   the installer's own `unsquashfs -f -d` line and then running `ssh-keygen -A`
   over the result left all three fingerprints exactly as the medium had them,
   ed25519 `SHA256:hwhc4Nfxh3lzwZNoIlON9ehRISKN1BBeo1wcEQi/DJg`, comment
   `root@a3bcac8dc76e`. Without this removal the generation step has no opinion
   of its own: it cannot fail, and the guarantee is a property of the medium
   rather than of the install.
-* `hexarouting-install` then runs `ssh-keygen -A` on the target before it
+* `prisma-routing-install` then runs `ssh-keygen -A` on the target before it
   enables `ssh.service`, and **fails the install** if it cannot. `sshd` does not
   start without a host key, and that `sshd` is how a racked appliance is
   reached: an install that finished with no management path is found by somebody
@@ -1976,7 +1976,7 @@ condition itself. `appliance/ssh-host-key-origin` compares each key's mtime
 with the moment its file was created on the filesystem, because `unsquashfs`
 restores the build container's mtime onto an inode made at install time and a
 key generated here cannot be older than its own file. Driving it against a root
-unpacked from `hexarouting-0.37.0-ab23bd7-dirty.iso` names
+unpacked from `prisma-routing-0.37.0-ab23bd7-dirty.iso` names
 `ssh_host_ecdsa_key ssh_host_ed25519_key ssh_host_rsa_key`. The reasoning for
 using the timestamp rather than the key comment or a list of published
 fingerprints is recorded in that file, with the three commands that regenerate
@@ -1988,7 +1988,7 @@ it into the report it writes to `/dev/console`, which reaches whoever is at the
 console of a box that is booting. A racked appliance is reached over `ssh`, and
 that report is not in the journal either: the self-test's `say()` falls back to
 stdout only when the write to the console fails, so on a box whose console
-write succeeds `journalctl -u hexarouting-selftest` has nothing to show. The
+write succeeds `journalctl -u prisma-routing-selftest` has nothing to show. The
 operator whose session can be sat in the middle of is the one logged in over
 it, so the VTY banner renders the same answer at every login, on a box that is
 affected and on no other. The commands are in neither reader: a repair printed
@@ -1997,7 +1997,7 @@ and `test/test_ssh_host_key_origin.py` refuses a reader that spells it.
 
 ### The disk is verified before the install reports success
 
-`hexarouting-selftest.service` runs on the **live medium**, before the
+`prisma-routing-selftest.service` runs on the **live medium**, before the
 installer, so until
 [#83](https://github.com/andrediashexa/hexarouting/issues/83) nothing had ever
 looked at the result of an install. The failure mode is a box that reports
@@ -2045,21 +2045,21 @@ command line:
 
 | Parameter | Effect |
 |---|---|
-| `hexarouting.install` | prompt for everything on the console |
-| `hexarouting.install=/dev/vda` | that disk, still asking for the rest |
-| `hexarouting.hostname=<name>` | answer the hostname question |
-| `hexarouting.timezone=<zone>` | answer the timezone question |
-| `hexarouting.password=<pw>` | answer the root password question |
-| `hexarouting.log-gb=<n>` | gigabytes for the connection records |
-| `hexarouting.mirror=<disk>` | the second disk the records are mirrored onto |
-| `hexarouting.mgmt-interface=<card>` | the card this box is managed on |
-| `hexarouting.mgmt-address=<a>` | `dhcp`, `a.b.c.d/nn`, or `none` |
-| `hexarouting.mgmt-gateway=<ip>` | with a static address only |
-| `hexarouting.mgmt-dns=<ip>[,<ip>]` | with a static address only |
-| `hexarouting.answers[=<file>]` | read the answers from a file instead |
-| `hexarouting.yes` | skip the confirmations, then **power off** |
+| `prisma-routing.install` | prompt for everything on the console |
+| `prisma-routing.install=/dev/vda` | that disk, still asking for the rest |
+| `prisma-routing.hostname=<name>` | answer the hostname question |
+| `prisma-routing.timezone=<zone>` | answer the timezone question |
+| `prisma-routing.password=<pw>` | answer the root password question |
+| `prisma-routing.log-gb=<n>` | gigabytes for the connection records |
+| `prisma-routing.mirror=<disk>` | the second disk the records are mirrored onto |
+| `prisma-routing.mgmt-interface=<card>` | the card this box is managed on |
+| `prisma-routing.mgmt-address=<a>` | `dhcp`, `a.b.c.d/nn`, or `none` |
+| `prisma-routing.mgmt-gateway=<ip>` | with a static address only |
+| `prisma-routing.mgmt-dns=<ip>[,<ip>]` | with a static address only |
+| `prisma-routing.answers[=<file>]` | read the answers from a file instead |
+| `prisma-routing.yes` | skip the confirmations, then **power off** |
 
-`hexarouting.password` has a real cost: the kernel command line is
+`prisma-routing.password` has a real cost: the kernel command line is
 world-readable in `/proc/cmdline` for the life of the booted system. It does
 not survive onto the installed box — that system has its own command line — but
 anyone logged into the medium while it installs can read it. For a hands-on
@@ -2072,7 +2072,7 @@ The **RECOMMENDED** unattended path. The same answers, the password among them,
 read from a file instead of published to every process on the running medium.
 
 ```
-# /run/live/medium/hexarouting.answers
+# /run/live/medium/prisma-routing.answers
 disk     = /dev/sda
 hostname = cgnat01
 timezone = America/Sao_Paulo
@@ -2081,10 +2081,10 @@ password = <the root password for this box>
 yes      = yes
 ```
 
-Point the installer at it with `hexarouting.answers=<path>` on the kernel
-command line, or with `HEXA_ANSWERS=<path>` in the environment.
-`hexarouting.answers` with no value means
-`/run/live/medium/hexarouting.answers`, so that whoever writes the medium and
+Point the installer at it with `prisma-routing.answers=<path>` on the kernel
+command line, or with `PRISMA_ANSWERS=<path>` in the environment.
+`prisma-routing.answers` with no value means
+`/run/live/medium/prisma-routing.answers`, so that whoever writes the medium and
 whoever boots it do not have to agree on a path from memory.
 
 | Key | Answers |
@@ -2129,7 +2129,7 @@ whole of the improvement — anyone who can read the medium can read the file.
 The installer says so when the file answers the password:
 
 ```
-==> answers from /run/live/medium/hexarouting.answers
+==> answers from /run/live/medium/prisma-routing.answers
 ==>   it carries the root password, so the medium is itself a credential
 ```
 
@@ -2150,7 +2150,7 @@ prompt until the harness kills it and the completion message is truncated
 mid-line — which is how the first version reported a finished install as a
 failure.
 
-`HEXA_INSTALL_CHECK=1` collects and validates the answers and writes nothing,
+`PRISMA_INSTALL_CHECK=1` collects and validates the answers and writes nothing,
 which is how `test/test_installer.sh` covers every refusal above in
 milliseconds instead of a boot cycle each.
 
@@ -2161,12 +2161,12 @@ somewhere other than its cause:
 
 | Symptom | Actual cause |
 |---|---|
-| The installer never ran | `After=hexarouting-selftest.service` together with `WantedBy=multi-user.target` is an ordering cycle; systemd broke it by dropping the job |
+| The installer never ran | `After=prisma-routing-selftest.service` together with `WantedBy=multi-user.target` is an ordering cycle; systemd broke it by dropping the job |
 | GRUB reached a `grub>` prompt | The squashfs was built with `-e boot`, so the installed system had no kernel, no initrd and no GRUB modules. The bootloader installed correctly and had nothing to boot |
 | The installed system booted silently | The live ISO is handed `console=ttyS0` by the boot loader; an installed system configures its own. It was booting fine and saying nothing, which is indistinguishable from not booting |
 | VPP segfaulted in a restart loop | The tuner sized hugepages from the subscriber target alone, and the main heap was a fixed 2G. A pool smaller than the heap starts VPP on memory that is not there |
 
-The last one is the one to remember. `hexarouting-tune` exists to prevent quiet
+The last one is the one to remember. `prisma-routing-tune` exists to prevent quiet
 half-throughput failures, and it was producing a dataplane that did not run at
 all. Three changes, all of which **MUST** hold:
 
@@ -2358,7 +2358,7 @@ Two rules bind whatever eventually ships, and they are not new — both already
 have a worked example in the tuning that is live:
 
 * **Anything that costs power or costs a diagnostic MUST go behind
-  `HEXA_LOW_LATENCY`**, alongside the C-state and THP parameters, and **MUST
+  `PRISMA_LOW_LATENCY`**, alongside the C-state and THP parameters, and **MUST
   NOT** go into the unconditional command line. The right-hand column of *The
   kernel command line, parameter by parameter* is that switch, and
   `test/test_kernel_tuning.py` asserts the split is where this document says it
@@ -2382,7 +2382,7 @@ It used to read three files: the generated line, `apply-tuning` and
 across the whole of `appliance/`. The asymmetry was the hole, and it is now
 closed both ways. A candidate parameter can reach a box from a systemd unit's
 `ExecStartPre`, from the installer, from `build-iso.sh` writing a boot line
-into the medium, or from a branch of `hexarouting-tune` that the one synthetic
+into the medium, or from a branch of `prisma-routing-tune` that the one synthetic
 topology the suite renders never takes — and none of those was being read. The
 tuner's own source is swept for exactly that last reason: rendering one
 topology proves what **that topology** emits, not what the tuner can emit.
@@ -2462,9 +2462,9 @@ got wrong.** The C-state line read `/proc/cmdline` and nothing else, and
 `/proc/cmdline` is a **request**: it is what the bootloader asked for. Two
 consequences, both measured by driving the self-test:
 
-* A box with `HEXA_LOW_LATENCY=0` — deep C-states left on, deliberately — was
+* A box with `PRISMA_LOW_LATENCY=0` — deep C-states left on, deliberately — was
   warned that deep C-states were still enabled and advised to *"set
-  `HEXA_LOW_LATENCY=0`"*. The console was telling the operator to do the thing
+  `PRISMA_LOW_LATENCY=0`"*. The console was telling the operator to do the thing
   they had already done, about a state they had chosen.
 * The case worth the most had **no line at all**: `tune.env` saying one thing
   while this boot's command line says the other. That is a box running a
@@ -2472,7 +2472,7 @@ consequences, both measured by driving the self-test:
   "the tuning in effect is not the tuning requested".
 
 So the line now reads **two** sources and says which is which: `/proc/cmdline`
-for what this boot got, `/etc/hexarouting/tune.env` for what was asked. The
+for what this boot got, `/etc/prisma-routing/tune.env` for what was asked. The
 four combinations are four different sentences, and the two that disagree are
 reported as a disagreement with the reason, not as a tuned or an untuned box.
 `tune.env` is read, never sourced — sourcing a file an operator edits would run
@@ -2505,17 +2505,17 @@ proves it took, not with the parameter that requested it.
 
 The ISO boots straight into the VTY: the console is autologged in — the root
 account is locked, so there is nothing to authenticate against — and root's
-login shell is `/usr/bin/hexash-login`, which starts `hexash`. On an
+login shell is `/usr/bin/prismash-login`, which starts `prismash`. On an
 **installed** box there is no autologin and the password is the one given
 during the install.
 
 | Situation | What happens |
 |---|---|
-| Console or SSH login | Lands in `hexash` |
+| Console or SSH login | Lands in `prismash` |
 | `start shell` inside the VTY | Opens a shell as a child; `exit` returns to the VTY |
 | `scp`, `rsync`, `git` over SSH | Reach a real shell — a login shell invoked with `-c` passes through |
-| `hexash` fails to start | Falls back to a shell **with the reason printed** |
-| Boot with `hexash=off` | Skips the VTY entirely; the ISO offers it as a menu entry |
+| `prismash` fails to start | Falls back to a shell **with the reason printed** |
+| Boot with `prismash=off` | Skips the VTY entirely; the ISO offers it as a menu entry |
 
 `start shell` is **in** the command tree: completion and `?` offer it, and it is
 **restricted to administrators** — a read-only or CGNAT account that types it is
@@ -2524,14 +2524,14 @@ refused by name. Hiding it was never the boundary; the role check is
 administrator cannot find is a command they ask for, which is why it stopped
 being hidden ([#194](https://github.com/andrediashexa/hexarouting/issues/194)).
 
-The fallback and the `hexash=off` escape exist because pointing a login shell
-at an application creates a lockout risk: a `hexash` that fails to start would
+The fallback and the `prismash=off` escape exist because pointing a login shell
+at an application creates a lockout risk: a `prismash` that fails to start would
 otherwise leave nobody able to reach the box, over console or SSH. That is a
 worse failure than the one landing in the VTY solves, so there are two
-independent ways out, and the second does not depend on `hexash` working at
+independent ways out, and the second does not depend on `prismash` working at
 all.
 
-`install.sh` does **not** change any login shell unless `HEXA_VTY_LOGIN=1` is
+`install.sh` does **not** change any login shell unless `PRISMA_VTY_LOGIN=1` is
 set. On an existing Debian the machine may have other jobs, and silently
 replacing root's shell is the kind of surprise an operator discovers at the
 worst moment.

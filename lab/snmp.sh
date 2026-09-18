@@ -14,14 +14,14 @@
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 . /src/lab/verdict.sh
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting /etc/snmp /var/lib/snmp
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/prisma-routing /etc/snmp /var/lib/snmp
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
-HX="python3 /src/src/hexash/hexash.py"
-export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
-install -D -m 0755 /src/appliance/hexarouting-snmp-agent /usr/lib/hexarouting/snmp-agent
+HX="python3 /src/src/prismash/prismash.py"
+export PRISMA_CONFIG=/etc/prisma-routing/prisma-routing.conf
+install -D -m 0755 /src/appliance/prisma-routing-snmp-agent /usr/lib/prisma-routing/snmp-agent
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 wait_vpp
@@ -51,8 +51,8 @@ snmpd -Lo -f -C -c /etc/snmp/snmpd.conf > /tmp/snmpd.log 2>&1 &
 sleep 2
 
 echo "  --- what the agent itself serves, run by hand ---"
-printf 'getnext\n1.3.6.1.4.1\n' | /usr/lib/hexarouting/snmp-agent | sed 's/^/    /'
-printf 'get\n1.3.6.1.4.1.99999.1.1.0\n' | /usr/lib/hexarouting/snmp-agent | sed 's/^/    /'
+printf 'getnext\n1.3.6.1.4.1\n' | /usr/lib/prisma-routing/snmp-agent | sed 's/^/    /'
+printf 'get\n1.3.6.1.4.1.99999.1.1.0\n' | /usr/lib/prisma-routing/snmp-agent | sed 's/^/    /'
 
 echo
 echo "=========== 2. poll it ==========="

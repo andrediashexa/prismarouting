@@ -10,7 +10,7 @@ installs.
 
 That is [#348](https://github.com/andrediashexa/hexarouting/issues/348): the
 installer's connection-records question said "see docs/logging.md" while
-`appliance/install.sh` puts that file under `/usr/share/doc/hexarouting/`. The
+`appliance/install.sh` puts that file under `/usr/share/doc/prisma-routing/`. The
 public installation page quotes that screen verbatim, because the rule there is
 that box output is what the box prints, so the path an operator cannot follow
 reached a reader who had not installed anything yet.
@@ -21,7 +21,7 @@ TWO RULES, and neither needs an allowlist:
      first component being a top-level directory of this repository, which is
      the rule doc_paths.py already established and measured - it replaced an
      allowlist rather than being a shortcut past one.
-  2. A path under /usr/share/doc/hexarouting/ must be a file install.sh puts
+  2. A path under /usr/share/doc/prisma-routing/ must be a file install.sh puts
      there. That list is read out of install.sh rather than copied here, so a
      document added or dropped moves both sides at once.
 """
@@ -116,26 +116,26 @@ print("=== and a document it names is one install.sh installs ===")
 # The list install.sh actually installs, read from the loop that installs it.
 _ins = open(os.path.join(APPLIANCE, "install.sh"), encoding="utf-8").read()
 _m = re.search(r"for d in ([a-z ]+); do\n\s*install -D[^\n]*"
-               r"usr/share/doc/hexarouting", _ins)
+               r"usr/share/doc/prisma-routing", _ins)
 check(_m, "the loop in install.sh that installs the documents could not be "
           "read, so the list below would be empty and this check vacuous")
 _installed = set(_m.group(1).split()) if _m else set()
 check(_installed, "install.sh installs no document, which is either true and "
                   "a defect, or this reader is looking in the wrong place")
 _named = [(n, i, q) for n, i, q in printed
-          if "/usr/share/doc/hexarouting/" in q]
+          if "/usr/share/doc/prisma-routing/" in q]
 _missing = [(n, i, q) for n, i, q in _named
             if os.path.basename(q)[:-3] not in _installed]
 check(not _missing,
-      f"these name a document under /usr/share/doc/hexarouting that "
+      f"these name a document under /usr/share/doc/prisma-routing that "
       f"install.sh does not put there: {_missing}, which installs "
       f"{sorted(_installed)}")
 if _named and not _missing:
-    ok(f"{len(_named)} path(s) under /usr/share/doc/hexarouting, all of them "
+    ok(f"{len(_named)} path(s) under /usr/share/doc/prisma-routing, all of them "
        f"in install.sh's list: {sorted(_installed)}")
 elif not _named:
     ok(f"no appliance script names a document under "
-       f"/usr/share/doc/hexarouting; install.sh installs {sorted(_installed)}")
+       f"/usr/share/doc/prisma-routing; install.sh installs {sorted(_installed)}")
 
 print()
 if fail:

@@ -86,12 +86,12 @@ ONLY=${1:-}
 # should use it, and the point here is that the DEFAULT stops over-subscribing
 # a machine it was never measured on.
 #
-# HEXA_MEMINFO is empty on every real run and is set only by
-# test/test_run_all_labs.sh, for the same reason HEXA_SELFTEST_ROOT exists:
+# PRISMA_MEMINFO is empty on every real run and is set only by
+# test/test_run_all_labs.sh, for the same reason PRISMA_SELFTEST_ROOT exists:
 # a machine cannot be made to have 8 GB, or 512 GB, without being a different
 # machine, and the arithmetic is the whole of what is being checked.
 _jobs_by_mem() {
-  _kb=$(awk '/^MemTotal:/ {print $2}' "${HEXA_MEMINFO:-/proc/meminfo}" 2>/dev/null)
+  _kb=$(awk '/^MemTotal:/ {print $2}' "${PRISMA_MEMINFO:-/proc/meminfo}" 2>/dev/null)
   [ -n "${_kb:-}" ] || { echo 16; return; }
   # LAB_MEM is a limit rather than a reservation, so a lab does not hold all
   # of it all the time; two thirds is what this box was measured surviving.
@@ -210,7 +210,7 @@ echo
 
 # Labs that are run a SECOND time with workers.
 #
-# hexarouting-tune gives every appliance with more than one core at least two
+# prisma-routing-tune gives every appliance with more than one core at least two
 # workers, and a box too small for that everything on the main thread. Both are
 # configurations the product ships and neither proves the other: #199 was a
 # translation that was correct single-threaded and blackholed with workers,

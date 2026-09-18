@@ -29,11 +29,11 @@
 # second-guess after.
 set -u
 
-ROOT=${HEXA_ROOT:-}
-VPPCONF=${HEXA_STARTUP_CONF:-$ROOT/etc/vpp/startup.conf}
-SYSBUS=${HEXA_PCI_BUS:-$ROOT/sys/bus/pci}
-SYSNET=${HEXA_SYS_NET:-$ROOT/sys/class/net}
-IOMMU=${HEXA_IOMMU_GROUPS:-$ROOT/sys/kernel/iommu_groups}
+ROOT=${PRISMA_ROOT:-}
+VPPCONF=${PRISMA_STARTUP_CONF:-$ROOT/etc/vpp/startup.conf}
+SYSBUS=${PRISMA_PCI_BUS:-$ROOT/sys/bus/pci}
+SYSNET=${PRISMA_SYS_NET:-$ROOT/sys/class/net}
+IOMMU=${PRISMA_IOMMU_GROUPS:-$ROOT/sys/kernel/iommu_groups}
 
 say() { echo "$@" >&2; }
 
@@ -48,7 +48,7 @@ DPDK_DRIVERS="vfio-pci uio_pci_generic"
 # `show hardware` tells an operator what will happen to each NIC when the box
 # claims it, and the honest way to know is to ask the thing that decides. The
 # alternative was a third copy of the IOMMU rule inside the VTY, and there are
-# already two copies of the driver list - this file's and hexash.py's - which
+# already two copies of the driver list - this file's and prismash.py's - which
 # is how a screen comes to promise vfio-pci on a box that will fall back
 # (#328).
 #

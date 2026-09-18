@@ -5,7 +5,7 @@
 #
 # The labs used to pass "vat2 -p /vat2_plugins" instead. That proves the client
 # works in a configuration no appliance ever runs, and this project has already
-# shipped one defect of exactly that shape: hexash had never been started from
+# shipped one defect of exactly that shape: prismash had never been started from
 # its installed location, so a missing config.py reached every ISO. Any lab that
 # drives the binary API calls this.
 use_binary_api() {
@@ -51,7 +51,7 @@ start_frr() {
   /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
   /usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
   for _d in "$@"; do
-    [ -f "/etc/frr/$_d.conf" ] || printf 'hostname hexarouting\n' > "/etc/frr/$_d.conf"
+    [ -f "/etc/frr/$_d.conf" ] || printf 'hostname prisma-routing\n' > "/etc/frr/$_d.conf"
     chown frr:frr "/etc/frr/$_d.conf" 2>/dev/null
     # bgpd carries the RPKI module when it is installed; without the module
     # bgpd REFUSES TO START, so it is only asked for when it is there.
@@ -151,7 +151,7 @@ wait_vpp() {
 #
 # This exists because of #199, and #199 is the reason to read the rest of this
 # comment. Every lab that asserted a packet LEAVING the box ran single-threaded,
-# while hexarouting-tune gives every appliance with more than one core two or
+# while prisma-routing-tune gives every appliance with more than one core two or
 # more workers. On a worker box the node on the ip4-unicast arc is the handoff
 # node, not the translation node, so the translated packet was sent to
 # error-drop and nothing left. Every counter said it was working, and the one
@@ -182,7 +182,7 @@ startup_conf() {
   _base=${1:-test}
   # LAB_SRC so the three cases below can be read without a container. It is
   # /src everywhere a lab actually runs, and the same arrangement
-  # HEXA_SELFTEST_ROOT and HEXA_MEMINFO already have, for the same reason: a
+  # PRISMA_SELFTEST_ROOT and PRISMA_MEMINFO already have, for the same reason: a
   # rule about how an argument is read is checkable by arithmetic and should
   # not need a VM to check it.
   _src=${LAB_SRC:-/src}/lab/startup-$_base.conf

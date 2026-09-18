@@ -15,8 +15,8 @@ was not running and nothing on it could contradict the claim.
 WHAT IS ASSERTED HERE, and why each half is a unit suite rather than a lab:
 
   * THE SOURCE OF TRUTH IS ONE. The stamp compiled into the plugin and the
-    stamp written into /usr/share/hexarouting/VERSION both come from
-    `tools/version-stamp.sh`, and both honour `HEXA_VERSION_STAMP`. That is
+    stamp written into /usr/share/prisma-routing/VERSION both come from
+    `tools/version-stamp.sh`, and both honour `PRISMA_VERSION_STAMP`. That is
     the whole reason the comparison can be an equality: two spellings of one
     truth compare unequal on a box that is perfectly fine, and a warning that
     fires when nothing is wrong is one that gets ignored on the day it means
@@ -39,7 +39,7 @@ four times - `expect_said` in lab/verdict.sh is the shell half of the same
 answer.
 
 The other end of this is measured rather than asserted here: a VPP started
-with the built plugin reports the stamp in `show plugins`, and hexash reads it
+with the built plugin reports the stamp in `show plugins`, and prismash reads it
 off a live dataplane. That needs docker, and this file must not.
 """
 import contextlib
@@ -50,8 +50,8 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
-import hexash                                                   # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
+import prismash                                                   # noqa: E402
 import vppapi                                                   # noqa: E402
 
 from config import CONSOLE_COLUMNS                              # noqa: E402
@@ -81,7 +81,7 @@ def check(cond, msg, detail=""):
 def unwrapped(text):
     """`text` with every run of whitespace collapsed to one space.
 
-    The same function, for the same reason, as in test_hexash_bgp.py: these
+    The same function, for the same reason, as in test_prismash_bgp.py: these
     messages are wrapped to the console by measurement, so where a line breaks
     moves the moment anybody edits a word. A needle straddling the break stops
     matching - loudly for a positive check and SILENTLY for a `not in` one,
@@ -101,7 +101,7 @@ def show(title, text):
 def stamp_of(repo, env=None):
     """What `tools/version-stamp.sh` says about a tree - the one calculation."""
     e = dict(os.environ)
-    e.pop("HEXA_VERSION_STAMP", None)
+    e.pop("PRISMA_VERSION_STAMP", None)
     e.update(env or {})
     return subprocess.run(["sh", os.path.join(repo, "tools", "version-stamp.sh"),
                            repo], capture_output=True, text=True,
@@ -141,7 +141,7 @@ check("version-stamp.sh" in open(GEN).read(),
 
 def generate(repo, out, env=None):
     e = dict(os.environ)
-    e.pop("HEXA_VERSION_STAMP", None)
+    e.pop("PRISMA_VERSION_STAMP", None)
     e.update(env or {})
     return subprocess.run(["sh", GEN, repo, out], capture_output=True,
                           text=True, env=e)
@@ -168,25 +168,25 @@ with tempfile.TemporaryDirectory() as tmp:
     # mount, so the stamp read in there is "not a git tree" while the one
     # written on the host is the commit. Measured on this tree while #291 was
     # being built, which is why tools/build.sh passes it in.
-    generate(REPO, hdr, {"HEXA_VERSION_STAMP": "9.9.9 (feedbee)"})
+    generate(REPO, hdr, {"PRISMA_VERSION_STAMP": "9.9.9 (feedbee)"})
     check(defined(hdr) == "9.9.9 (feedbee)",
-          "HEXA_VERSION_STAMP overrides it the way it overrides the VERSION "
+          "PRISMA_VERSION_STAMP overrides it the way it overrides the VERSION "
           "file", repr(defined(hdr)))
 
     # Only when it changed. This header is a compile dependency of every
     # object in the plugin, and forty labs run ninja before they start.
     os.utime(hdr, ns=(0, 0))
-    generate(REPO, hdr, {"HEXA_VERSION_STAMP": "9.9.9 (feedbee)"})
+    generate(REPO, hdr, {"PRISMA_VERSION_STAMP": "9.9.9 (feedbee)"})
     check(os.stat(hdr).st_mtime_ns == 0,
           "an unchanged stamp does not rewrite the header, so the plugin does "
           "not relink on every build", str(os.stat(hdr).st_mtime_ns))
-    generate(REPO, hdr, {"HEXA_VERSION_STAMP": "9.9.9 (0ddba11)"})
+    generate(REPO, hdr, {"PRISMA_VERSION_STAMP": "9.9.9 (0ddba11)"})
     check(defined(hdr) == "9.9.9 (0ddba11)",
           "and a changed one does", repr(defined(hdr)))
 
     # A stamp that cannot become a C string literal is refused HERE, where the
     # cause is, and not by the compiler inside a generated file nobody wrote.
-    r = generate(REPO, hdr, {"HEXA_VERSION_STAMP": '9.9.9 ("x)'})
+    r = generate(REPO, hdr, {"PRISMA_VERSION_STAMP": '9.9.9 ("x)'})
     check(r.returncode != 0 and "quote" in r.stderr,
           "a stamp carrying a quote is refused, by name",
           f"rc={r.returncode} {r.stderr!r}")
@@ -194,7 +194,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # character: a lone backslash closes nothing, it ESCAPES the quote that
     # ends the literal, so the compiler swallows the next line as well and the
     # error it reports is about a token further down a file nobody wrote.
-    r = generate(REPO, hdr, {"HEXA_VERSION_STAMP": "9.9.9 (x\\)"})
+    r = generate(REPO, hdr, {"PRISMA_VERSION_STAMP": "9.9.9 (x\\)"})
     check(r.returncode != 0 and "backslash" in r.stderr,
           "and so is one carrying a backslash",
           f"rc={r.returncode} {r.stderr!r}")
@@ -250,11 +250,11 @@ def show_plugins(version, name="bpa_plugin.so"):
             + head + "\n" + other + "\n" + row + "\n")
 
 
-class Dp(hexash.Vpp):
+class Dp(prismash.Vpp):
     """A dataplane answering canned text, with the product's own reader on top.
 
-    Derived from `hexash.Vpp` and not free-standing, for the reason `_Frr271`
-    in test_hexash_complete.py writes out: a stub that reimplements the method
+    Derived from `prismash.Vpp` and not free-standing, for the reason `_Frr271`
+    in test_prismash_complete.py writes out: a stub that reimplements the method
     under test asserts the stub. `plugin_build()` and its regex are the real
     ones here; only `run()` is canned.
     """
@@ -330,16 +330,16 @@ class Frr:
     """Answers `show version` and `show daemons`, and nothing else is asked."""
 
     def show(self, what):
-        return 0, "FRRouting 10.7.1 (hexarouting)\n"
+        return 0, "FRRouting 10.7.1 (prisma-routing)\n"
 
     def daemons(self):
         return {"zebra", "mgmtd", "staticd", "bgpd", "ospfd", "ospf6d",
                 "isisd"}
 
 
-_REAL_SOURCE = hexash.hexarouting_version_source
+_REAL_SOURCE = prismash.prisma_routing_version_source
 
-#: The box is not installed and hexash is being run out of a source tree.
+#: The box is not installed and prismash is being run out of a source tree.
 #
 # Nothing is replaced for this one: VERSION_PATH is pointed at a file that is
 # not there, so the product's OWN fallback runs and reaches the same file it
@@ -359,7 +359,7 @@ def box_at(box_version):
     is one reading with two readers now (#293), and a second copy of this swap
     is a second place for the NOWHERE case to be got subtly wrong.
     """
-    real = hexash.VERSION_PATH
+    real = prismash.VERSION_PATH
     with tempfile.TemporaryDirectory() as tmp:
         if box_version is NOWHERE:
             # There is no seam for "no VERSION file anywhere": the fallback
@@ -368,24 +368,24 @@ def box_at(box_version):
             # back, rather than this suite asserting a branch nothing can
             # reach. It is the READING that is replaced and not the comparison
             # - the product still decides for itself what to do with it.
-            hexash.hexarouting_version_source = (
-                lambda: (hexash.VERSION_UNKNOWN, hexash.VERSION_FROM_NOWHERE))
+            prismash.prisma_routing_version_source = (
+                lambda: (prismash.VERSION_UNKNOWN, prismash.VERSION_FROM_NOWHERE))
         elif box_version is FROM_TREE:
-            hexash.VERSION_PATH = os.path.join(tmp, "not-installed")
+            prismash.VERSION_PATH = os.path.join(tmp, "not-installed")
         else:
             path = os.path.join(tmp, "VERSION")
             open(path, "w").write(box_version + "\n")
-            hexash.VERSION_PATH = path
+            prismash.VERSION_PATH = path
         try:
             yield
         finally:
-            hexash.VERSION_PATH = real
-            hexash.hexarouting_version_source = _REAL_SOURCE
+            prismash.VERSION_PATH = real
+            prismash.prisma_routing_version_source = _REAL_SOURCE
 
 
 def screen(plugins_out, box_version, rc=0):
     """`show version`, driven whole, with the VERSION file at `box_version`."""
-    sh = hexash.Shell.__new__(hexash.Shell)
+    sh = prismash.Shell.__new__(prismash.Shell)
     sh.dp, sh.frr = Dp(plugins_out, rc), Frr()
     buf = io.StringIO()
     with box_at(box_version):
@@ -404,10 +404,17 @@ BOX = "0.71.0 (d07ebda)"
 # is the argument unchecked_note() makes for the same decision.
 _agree = screen(show_plugins(BOX), BOX)
 show("the dataplane is the build the box is", _agree)
+# The first line is the one an operator reads out on the phone, and it is the
+# product's name beside the build: "Prisma Routing 0.71.0 (d07ebda)". Held
+# here because nothing else offline reads that row - the wiki quotes it and
+# test_wiki_screens.py cannot drive `show version` - and #202 moved the name.
+check(_agree.splitlines()[0] == f"Prisma Routing {BOX}",
+      "the first line names the product and the build the box is",
+      repr(_agree.splitlines()[:1]))
 check(f"  plugin:    {BOX}" in _agree.splitlines(),
       "the build is on a row of its own, whole", repr(_agree))
 for _alarm in ("not answering", "reports no build", "restart vpp",
-               "not the HexaRouting build", "cannot state its own version"):
+               "not the Prisma Routing build", "cannot state its own version"):
     check(_alarm not in unwrapped(_agree),
           f"and nothing on the screen says {_alarm!r}", repr(_agree))
 
@@ -420,7 +427,7 @@ _split = screen(show_plugins("0.1"), BOX)
 show("upgraded, not yet rebooted", _split)
 check("  plugin:    0.1" in _split.splitlines(),
       "the build the dataplane is actually running is printed", repr(_split))
-check("it is not the HexaRouting build above" in unwrapped(_split),
+check("it is not the Prisma Routing build above" in unwrapped(_split),
       "and the box SAYS they are not the same", repr(_split))
 check("does not restart the dataplane" in unwrapped(_split),
       "it says why that happens rather than leaving it a mystery", repr(_split))
@@ -469,29 +476,29 @@ check("cannot state its own version" in unwrapped(_unknown),
 check("restart vpp" not in unwrapped(_unknown),
       "rather than sending anybody to restart the dataplane", repr(_unknown))
 
-# --- hexash run out of a source tree, on a box that was never installed ---
+# --- prismash run out of a source tree, on a box that was never installed ---
 #
 # MEASURED before it was fixed, on a real VPP in a lab container with the real
-# plugin loaded and no /usr/share/hexarouting/VERSION on the box at all:
+# plugin loaded and no /usr/share/prisma-routing/VERSION on the box at all:
 #
-#   HexaRouting 0.71.0
+#   Prisma Routing 0.71.0
 #     plugin:    0.71.0 (4a7044e)
 #                this is the build the dataplane was loaded with at the last
-#                boot, and it is not the HexaRouting build above.
+#                boot, and it is not the Prisma Routing build above.
 #
 # Nothing had been upgraded. The reading had fallen back to the repository's
 # own VERSION, which is "0.71.0" - the number the NEXT release will carry, and
 # not a build stamp of anything. Comparing it against one is comparing two
 # different kinds of thing, which is the defect class this repository is
 # organised against, and the people it landed on were every developer running
-# hexash out of the tree.
+# prismash out of the tree.
 #
 # It must not go SILENT either. "the two agree" and "there was nothing to
 # compare" are different answers, and conflating them is the same mistake one
 # step quieter.
 _tree = screen(show_plugins(stamp_of(REPO)), FROM_TREE)
-show("hexash run out of a source tree", _tree)
-check("it is not the HexaRouting build above" not in unwrapped(_tree),
+show("prismash run out of a source tree", _tree)
+check("it is not the Prisma Routing build above" not in unwrapped(_tree),
       "a source tree is not reported as an upgrade waiting for a reboot",
       repr(_tree))
 check("restart vpp" not in unwrapped(_tree),
@@ -559,8 +566,8 @@ def candidate():
     window - measured, and recorded in #293 - so a candidate that edited a
     running pool would assert nothing.
     """
-    cfg = hexash.Config()
-    p = hexash.Pool("split291")
+    cfg = prismash.Config()
+    p = prismash.Pool("split291")
     p.inside = ["100.64.0.0/22"]
     p.outside = ["200.150.0.16/30"]
     p.block_size = "512"
@@ -575,12 +582,12 @@ def refused(plugins_out, box_version, caps=None, rc=0):
     only things replaced here are the two subprocesses, which is what decides
     whether this asserts the product or a rewrite of it.
     """
-    sh = hexash.Shell.__new__(hexash.Shell)
+    sh = prismash.Shell.__new__(prismash.Shell)
     sh.dp, sh.frr = Dp(plugins_out, rc), Frr()
     sh.api = vppapi.Vat2(runner=vat2_answers)
     sh.failed = 0
-    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT} if caps is None else caps
-    sh.running_config = lambda: hexash.Config()
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT} if caps is None else caps
+    sh.running_config = lambda: prismash.Config()
     buf = io.StringIO()
     with box_at(box_version):
         with contextlib.redirect_stdout(buf):
@@ -635,7 +642,7 @@ for _alarm in ("not the build the rest of this box is", "An upgrade replaces",
 # #291 shipped that as a false "reboot me" once already and this must not be
 # the door it comes back through.
 for _what, _plugins, _box, _rc in (
-        ("hexash run out of a source tree", show_plugins("0.1"), FROM_TREE, 0),
+        ("prismash run out of a source tree", show_plugins("0.1"), FROM_TREE, 0),
         ("no VERSION file on the box", show_plugins("0.1"), NOWHERE, 0),
         ("the dataplane did not answer 'show plugins'", "", BOX, 1),
         ("VPP up without bpa_plugin.so", _no_bpa, BOX, 0)):
@@ -671,7 +678,7 @@ _r_widest = refused(show_plugins(_fits), BOX)
 
 # ----------------------------------------------------------------------------
 print("\n=== and every one of those screens fits the console ===")
-# 79 columns, for the reason test_hexash_complete.py pins the constant on: 80
+# 79 columns, for the reason test_prismash_complete.py pins the constant on: 80
 # is what a serial console gives an appliance and the last column is left free
 # so an auto-wrapping terminal does not break the line itself. Pinned here too
 # because every width assertion below is written against it, and a check

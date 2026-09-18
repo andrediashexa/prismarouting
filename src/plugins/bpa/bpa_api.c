@@ -528,7 +528,7 @@ bpa_api_hookup (vlib_main_t *vm)
    * This one message runs without the API dispatcher's barrier, and takes its
    * own around each thing it changes.
    *
-   * It is the message `hexash commit` deletes a pool with, and a delete frees
+   * It is the message `prismash commit` deletes a pool with, and a delete frees
    * that pool's sessions in budgeted chunks so the datapath keeps running in
    * between. A chunk cannot release a barrier the dispatcher took on its
    * behalf: the release is a no-op at recursion depth, and the commit would

@@ -555,7 +555,7 @@ echo "=== how many labs at once is bounded by memory, not only by cores ==="
 sed -n '/^_jobs_by_mem()/,/^}/p' "$REPO/tools/run-all-labs.sh" > "$d/jobs.sh"
 jobs_at() {  # <MemTotal in kB> -> the default job count
   printf 'MemTotal: %s kB\n' "$1" > "$d/meminfo"
-  HEXA_MEMINFO="$d/meminfo" sh -c ". $d/jobs.sh; _jobs_by_mem"
+  PRISMA_MEMINFO="$d/meminfo" sh -c ". $d/jobs.sh; _jobs_by_mem"
 }
 got=$(jobs_at 8388608)
 [ "$got" = "1" ] && ok "an 8 GB box runs one lab at a time" \

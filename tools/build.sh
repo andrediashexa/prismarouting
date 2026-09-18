@@ -6,7 +6,7 @@
 set -e
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-IMAGE=${IMAGE:-hexarouting-dev:26.06}
+IMAGE=${IMAGE:-prisma-routing-dev:26.06}
 TARGET=${1:-plugin}
 
 if ! docker ps >/dev/null 2>&1; then
@@ -21,16 +21,16 @@ fi
 # tree:
 #
 #   on this host                        0.71.0 (d07ebda)
-#   inside hexarouting-dev:26.06        0.71.0 (not a git tree)
+#   inside prisma-routing-dev:26.06        0.71.0 (not a git tree)
 #
 # The second one would be stamped into every plugin built here, would differ
 # from the VERSION file install.sh writes on the host, and `show version`
 # would report a pending reboot on a box that owes nobody one.
 #
-# HEXA_VERSION_STAMP is not a new knob: it is the override install.sh already
+# PRISMA_VERSION_STAMP is not a new knob: it is the override install.sh already
 # honours for the same file, so an ISO build that pins a stamp pins both.
-HEXA_VERSION_STAMP=${HEXA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
-export HEXA_VERSION_STAMP
+PRISMA_VERSION_STAMP=${PRISMA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
+export PRISMA_VERSION_STAMP
 
 case "$TARGET" in
   image)
@@ -38,7 +38,7 @@ case "$TARGET" in
     ;;
   plugin)
     docker run --rm -v "$REPO:/src" -w /src \
-      -e "HEXA_VERSION_STAMP=$HEXA_VERSION_STAMP" "$IMAGE" sh -c \
+      -e "PRISMA_VERSION_STAMP=$PRISMA_VERSION_STAMP" "$IMAGE" sh -c \
       "set -e
        mkdir -p .build-vpp && cd .build-vpp && cmake -G Ninja .. >/dev/null && ninja
        # VPP's macros link straight into /vpp_plugins, which belongs to the

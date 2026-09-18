@@ -3,7 +3,7 @@
 #
 # For the whole life of this product the installer behaved identically on
 # every run and closed with a first install's sentence: "Installed. Adjust
-# /etc/hexarouting/tune.env and reboot so that isolcpus and hugepages take
+# /etc/prisma-routing/tune.env and reboot so that isolcpus and hugepages take
 # effect." An operator upgrading a box they tuned a year ago reads "and reboot
 # so that isolcpus and hugepages take effect" as "nothing to do here", and
 # walks away from a box whose control plane is the new build and whose
@@ -82,7 +82,7 @@ for n in say install keep; do
     || bad "$n() was not found in appliance/install.sh, so its case below runs nothing"
 done
 UROOT=$WORK/uroot
-mkdir -p "$UROOT/etc/hexarouting"
+mkdir -p "$UROOT/etc/prisma-routing"
 echo payload > "$WORK/src.txt"
 
 got=$(. "$UNITS"; say binaries)
@@ -91,13 +91,13 @@ got=$(. "$UNITS"; say binaries)
   || bad "say gave '$got'"
 
 got=$(. "$UNITS"; DESTDIR=$UROOT; BUILD_FILES=
-      install -d -m 0755 "$DESTDIR/usr/lib/hexarouting"
-      install -D -m 0644 "$WORK/src.txt" "$DESTDIR/usr/lib/hexarouting/a.py"
-      install -D -m 0755 "$WORK/src.txt" "$DESTDIR/usr/bin/hexash"
+      install -d -m 0755 "$DESTDIR/usr/lib/prisma-routing"
+      install -D -m 0644 "$WORK/src.txt" "$DESTDIR/usr/lib/prisma-routing/a.py"
+      install -D -m 0755 "$WORK/src.txt" "$DESTDIR/usr/bin/prismash"
       echo "files=[$BUILD_FILES]"
-      cat "$DESTDIR/usr/bin/hexash"
-      stat -c %a "$DESTDIR/usr/bin/hexash")
-[ "$got" = "files=[ usr/lib/hexarouting/a.py usr/bin/hexash]
+      cat "$DESTDIR/usr/bin/prismash"
+      stat -c %a "$DESTDIR/usr/bin/prismash")
+[ "$got" = "files=[ usr/lib/prisma-routing/a.py usr/bin/prismash]
 payload
 755" ] \
   && ok "install copies with the mode asked for and records each FILE it \
@@ -107,12 +107,12 @@ $got"
 
 got=$(. "$UNITS"; DESTDIR=$UROOT; YOUR_FILES=
       echo new > "$WORK/tune.env"
-      keep 0644 "$WORK/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
-      first=$(cat "$DESTDIR/etc/hexarouting/tune.env")
-      echo edited > "$DESTDIR/etc/hexarouting/tune.env"
-      keep 0644 "$WORK/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
-      echo "first=$first second=$(cat "$DESTDIR/etc/hexarouting/tune.env") yours=[$YOUR_FILES]")
-[ "$got" = "first=new second=edited yours=[ etc/hexarouting/tune.env etc/hexarouting/tune.env]" ] \
+      keep 0644 "$WORK/tune.env" "$DESTDIR/etc/prisma-routing/tune.env"
+      first=$(cat "$DESTDIR/etc/prisma-routing/tune.env")
+      echo edited > "$DESTDIR/etc/prisma-routing/tune.env"
+      keep 0644 "$WORK/tune.env" "$DESTDIR/etc/prisma-routing/tune.env"
+      echo "first=$first second=$(cat "$DESTDIR/etc/prisma-routing/tune.env") yours=[$YOUR_FILES]")
+[ "$got" = "first=new second=edited yours=[ etc/prisma-routing/tune.env etc/prisma-routing/tune.env]" ] \
   && ok "keep writes a file once, leaves the operator's edit alone on the \
 next run, and lists it as theirs both times" \
   || bad "keep gave:
@@ -121,7 +121,7 @@ $got"
 # THE THREE READERS AT THE BOTTOM OF THIS FILE, and the reason every run below
 # hands its output to say_capture (#371).
 #
-# #364 gave appliance/hexarouting-install, appliance/bind-dataplane-nic and
+# #364 gave appliance/prisma-routing-install, appliance/bind-dataplane-nic and
 # appliance/apply-tuning a message-coverage reader over test/say-coverage.sh.
 # appliance/install.sh did not get one, and it is the program that puts the
 # files on the box - on a first install and on every upgrade, which is the path
@@ -172,7 +172,7 @@ OLD_V="0.68.0"
 NEW_V="0.72.0 (beefcaf)"
 
 install_run() {  # <version stamp> <output file>
-  DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
+  DESTDIR="$DEST" PRISMA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
     VAT2_DIR=/usr/lib/vat2_plugins \
     sh "$TREE/appliance/install.sh" > "$2" 2>&1
   # THE STATUS FIRST. say_capture is a command, and every caller of this
@@ -189,7 +189,7 @@ install_run() {  # <version stamp> <output file>
 # cannot ask the question: a warning on stderr followed by exit 0 and a
 # refusal on stderr followed by exit 1 are the same text in one file.
 install_try() {  # <version stamp> <stdout file> <stderr file>
-  DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
+  DESTDIR="$DEST" PRISMA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
     VAT2_DIR=/usr/lib/vat2_plugins \
     sh "$TREE/appliance/install.sh" > "$2" 2> "$3"
   _rc=$?
@@ -216,10 +216,10 @@ else
 fi
 RUN1=$(cat "$WORK/run1")
 
-[ "$(cat "$DEST/usr/share/hexarouting/VERSION" 2>/dev/null)" = "$OLD_V" ] \
+[ "$(cat "$DEST/usr/share/prisma-routing/VERSION" 2>/dev/null)" = "$OLD_V" ] \
   && ok "and stamped the box $OLD_V" \
   || bad "the version stamp is not $OLD_V, so the fixture below is not an \
-upgrade at all: $(cat "$DEST/usr/share/hexarouting/VERSION" 2>/dev/null)"
+upgrade at all: $(cat "$DEST/usr/share/prisma-routing/VERSION" 2>/dev/null)"
 
 # The whole point of the change, in the direction that is easy to get wrong.
 # A script that decided "upgrade" by looking for the stamp AFTER writing it
@@ -239,8 +239,8 @@ echo "=== the second run: the same root, a different build ==="
 # Anything the operator wrote is put back first, because an installer that
 # silently rewrites a conffile on an upgrade is the other half of this
 # question and this is the cheapest place to hold it.
-echo "HEXA_SUBSCRIBERS=40000" >> "$DEST/etc/hexarouting/tune.env"
-echo "! an operator's line" >> "$DEST/etc/hexarouting/hexarouting.conf"
+echo "PRISMA_SUBSCRIBERS=40000" >> "$DEST/etc/prisma-routing/tune.env"
+echo "! an operator's line" >> "$DEST/etc/prisma-routing/prisma-routing.conf"
 
 if install_run "$NEW_V" "$WORK/run2"; then
   ok "it ran again over the root the first run left"
@@ -268,19 +268,19 @@ said "$RUN2" "and now says $NEW_V" \
   || bad "the upgrade notice does not name $NEW_V, the version this run \
 installed"
 
-[ "$(cat "$DEST/usr/share/hexarouting/VERSION" 2>/dev/null)" = "$NEW_V" ] \
+[ "$(cat "$DEST/usr/share/prisma-routing/VERSION" 2>/dev/null)" = "$NEW_V" ] \
   && ok "and the stamp on the box is the new one" \
   || bad "the box is not stamped $NEW_V after the upgrade"
 
 echo
 echo "=== what the second run must NOT have done to the operator's files ==="
-grep -q "^HEXA_SUBSCRIBERS=40000$" "$DEST/etc/hexarouting/tune.env" \
+grep -q "^PRISMA_SUBSCRIBERS=40000$" "$DEST/etc/prisma-routing/tune.env" \
   && ok "tune.env still has the line the operator put in it" \
-  || bad "the upgrade overwrote /etc/hexarouting/tune.env, which is the file \
+  || bad "the upgrade overwrote /etc/prisma-routing/tune.env, which is the file \
 the closing sentence has always told the operator to edit"
-grep -q "^! an operator's line$" "$DEST/etc/hexarouting/hexarouting.conf" \
-  && ok "and hexarouting.conf is the configuration the box was carrying" \
-  || bad "the upgrade overwrote /etc/hexarouting/hexarouting.conf, which is \
+grep -q "^! an operator's line$" "$DEST/etc/prisma-routing/prisma-routing.conf" \
+  && ok "and prisma-routing.conf is the configuration the box was carrying" \
+  || bad "the upgrade overwrote /etc/prisma-routing/prisma-routing.conf, which is \
 the whole configuration of the box"
 
 echo
@@ -290,7 +290,7 @@ echo "=== and it is no noisier on the path that has no services ==="
 # systemd under it and no process running out of it, so a paragraph about
 # vpp.service still carrying traffic would be a paragraph about some other
 # machine - the one running this suite.
-for n in "vpp.service" "hexarouting.service" "systemctl restart" \
+for n in "vpp.service" "prisma-routing.service" "systemctl restart" \
          "show version"; do
   said "$RUN2" "$n" \
     && bad "installing into a \$DESTDIR talked about '$n'. Nothing is running \
@@ -345,7 +345,7 @@ BUILT_VAT2=$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so
 BUILT_DP=$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so
 ROOT_VAT2=$DEST/usr/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so
 ROOT_DP=$DEST/usr/lib/vpp_plugins/bpa_plugin.so
-STAMP_FILE=$DEST/usr/share/hexarouting/VERSION
+STAMP_FILE=$DEST/usr/share/prisma-routing/VERSION
 
 sum() { md5sum "$1" 2>/dev/null | cut -d' ' -f1; }
 
@@ -520,7 +520,7 @@ here, so the refused run moved the stamp after all: $RUN5"
 echo
 echo "=== the arm the ISO takes, where root lands in the VTY ==="
 #
-# HEXA_VTY_LOGIN=1 is the one branch of this installer that an operator never
+# PRISMA_VTY_LOGIN=1 is the one branch of this installer that an operator never
 # takes and every shipped box is built by: appliance/build-iso.sh sets it in
 # the chroot, and it is what makes the console of a racked appliance the VTY
 # rather than a root shell. Opt-in on an existing Debian on purpose, because
@@ -535,21 +535,21 @@ echo "=== the arm the ISO takes, where root lands in the VTY ==="
 printf 'root:x:0:0::/root:/bin/sh\n' > "$DEST/etc/passwd"
 : > "$DEST/etc/shells"
 install_run_vty() {  # <version stamp> <output file>
-  DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
-    VAT2_DIR=/usr/lib/vat2_plugins HEXA_VTY_LOGIN=1 \
+  DESTDIR="$DEST" PRISMA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
+    VAT2_DIR=/usr/lib/vat2_plugins PRISMA_VTY_LOGIN=1 \
     sh "$TREE/appliance/install.sh" > "$2" 2>&1
   _rc=$?
   say_capture "$INSTALL" "$2" "$(basename "$2")"
   return "$_rc"
 }
 if install_run_vty "$NEXT_V" "$WORK/run7"; then
-  ok "the installer ran the way build-iso.sh runs it, with HEXA_VTY_LOGIN=1"
+  ok "the installer ran the way build-iso.sh runs it, with PRISMA_VTY_LOGIN=1"
 else
   bad "the installer failed on the ISO's own arm:"
   sed 's/^/        /' "$WORK/run7"
 fi
 RUN7=$(cat "$WORK/run7")
-said "$RUN7" "root logs into the VTY; 'start shell' escapes, 'hexash=off' \
+said "$RUN7" "root logs into the VTY; 'start shell' escapes, 'prismash=off' \
 bypasses" \
   && ok "and says so, with both ways out of it" \
   || bad "the arm that puts root in the VTY says nothing about it. An operator \
@@ -559,19 +559,19 @@ said "$RUN7" "not changing any login shell" \
   && bad "it said it was leaving the login shell alone on the run that \
 changed it" \
   || ok "and not the sentence the other arm prints"
-grep -qx /usr/bin/hexash-login "$DEST/etc/shells" \
+grep -qx /usr/bin/prismash-login "$DEST/etc/shells" \
   && ok "/etc/shells names the VTY launcher, so it is a shell root may have" \
   || bad "the VTY launcher is not in /etc/shells, so chsh would refuse it and \
 the sentence above describes something that did not happen"
 case "$(cat "$DEST/etc/passwd")" in
-  *:/usr/bin/hexash-login) ok "and root's shell in /etc/passwd is the VTY" ;;
+  *:/usr/bin/prismash-login) ok "and root's shell in /etc/passwd is the VTY" ;;
   *) bad "root's login shell was not changed: $(cat "$DEST/etc/passwd")" ;;
 esac
 
 echo
 echo "=== the three screens only a running box can reach ==="
 #
-# install.sh says what it says about vpp.service and hexarouting.service only
+# install.sh says what it says about vpp.service and prisma-routing.service only
 # when the root it wrote is this machine's own and systemd is up. Neither this
 # suite nor any lab in this repository can arrange that: installing into / to
 # read a sentence is not something a unit suite may do, and the containers the
@@ -632,10 +632,10 @@ screen() {  # <prev stamp> <live box 0|1> <active units, newline separated> <tag
 }
 
 BOTH_UP="vpp.service
-hexarouting.service"
+prisma-routing.service"
 
 FIRST=$(screen "" 1 "" first)
-said "$FIRST" "Installed. Adjust /etc/hexarouting/tune.env and reboot so \
+said "$FIRST" "Installed. Adjust /etc/prisma-routing/tune.env and reboot so \
 that isolcpus and hugepages take effect." \
   && ok "a first install on a live box still gets the sentence it always got" \
   || bad "the first install's closing sentence is gone from a first install, \
@@ -649,7 +649,7 @@ build on a box that has never had one" \
   || ok "and nothing about a dataplane still running an older build"
 
 UP=$(screen "$OLD_V" 1 "$BOTH_UP" up)
-said "$UP" "Installed. Adjust /etc/hexarouting/tune.env and reboot" \
+said "$UP" "Installed. Adjust /etc/prisma-routing/tune.env and reboot" \
   && bad "an upgrade closed with the first install's sentence. That is #291: \
 an operator who tuned this box a year ago reads 'and reboot so that isolcpus \
 and hugepages take effect' as nothing to do" \
@@ -671,18 +671,18 @@ said "$UP" "DROPS EVERY SESSION AND EVERY PORT BLOCK on this box" \
   && ok "restarting vpp.service is priced: every session, every port block" \
   || bad "the upgrade screen does not say what restarting vpp.service costs, \
 so the operator is told about a split and not about the price of closing it"
-said "$UP" "hexarouting.service is active. It is a Type=oneshot" \
-  && ok "hexarouting.service is named as the Type=oneshot it is" \
-  || bad "the upgrade screen does not say that hexarouting.service is a \
+said "$UP" "prisma-routing.service is active. It is a Type=oneshot" \
+  && ok "prisma-routing.service is named as the Type=oneshot it is" \
+  || bad "the upgrade screen does not say that prisma-routing.service is a \
 Type=oneshot"
-said "$UP" "re-applies /etc/hexarouting/hexarouting.conf through the new VTY \
+said "$UP" "re-applies /etc/prisma-routing/prisma-routing.conf through the new VTY \
 and exits. It drops no session." \
   && ok "and restarting it is priced separately, at nothing" \
-  || bad "the upgrade screen does not say what restarting hexarouting.service \
+  || bad "the upgrade screen does not say what restarting prisma-routing.service \
 does or that it costs no session"
 
 # AND THE ONE THING NEITHER RESTART DOES. /etc/vpp/startup.conf is written by
-# hexarouting-tune.service, which runs at BOOT, so a dataplane restarted
+# prisma-routing-tune.service, which runs at BOOT, so a dataplane restarted
 # without one starts on the file the PREVIOUS version's tuner generated. An
 # operator who upgraded to 0.75.2 for the MTU their card can carry, and then
 # restarted vpp.service alone, would get the same dead port and no reason for
@@ -693,7 +693,7 @@ said "$UP" "NEITHER restart rewrites /etc/vpp/startup.conf" \
   || bad "the upgrade screen prices both restarts and never says that \
 neither rewrites the generated startup.conf, so an operator who upgraded for \
 something the tuner decides restarts into the old file"
-said "$UP" "systemctl restart hexarouting-tune.service" \
+said "$UP" "systemctl restart prisma-routing-tune.service" \
   && ok "and names the unit to run first when a reboot is not wanted" \
   || bad "it says a reboot is needed and does not give the operator the one \
 command that avoids it"

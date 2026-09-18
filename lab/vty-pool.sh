@@ -6,12 +6,12 @@
 # every one of them was unreachable through the VTY, which is the interface an
 # operator actually uses. Their own labs pass because they drive vppctl.
 #
-# The oracle here is the DATAPLANE, never hexash. Asking hexash whether hexash
+# The oracle here is the DATAPLANE, never prismash. Asking prismash whether prismash
 # stored something proves nothing: it stored it before, printed it back, and
 # the device never heard about it.
 set -u
 . /src/lab/verdict.sh
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/prisma-routing /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -19,7 +19,7 @@ cd /src
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
 
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
@@ -95,7 +95,7 @@ $HX -c "configure" \
     -c "forward tcp 1100 to 10.0.0.5 80" \
     -c "exit" \
     -c "commit" 2>&1 | sed 's/^/  /'
-TRAIL=/var/log/hexarouting/config-history.log
+TRAIL=/var/log/prisma-routing/config-history.log
 MARK=$(wc -l < $TRAIL 2>/dev/null || echo 0)
 # A second forward, on a pool that already exists. This one must NOT redefine
 # the pool: redefining it drops every session it holds, which is the whole

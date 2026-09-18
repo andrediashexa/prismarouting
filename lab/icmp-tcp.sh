@@ -216,7 +216,7 @@ echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 expect "the translated ICMP error passed every checksum" sh -c "python3 /src/lab/checkicmp.py /tmp/cap.pcap 200.150.0.17 100.64.0.5 12345 >/dev/null 2>&1"
 
-# This lab runs both ways - plain for a small box, where hexarouting-tune puts
+# This lab runs both ways - plain for a small box, where prisma-routing-tune puts
 # everything on the main thread, and LAB_WORKERS=1 for every appliance with
 # more than one core. Neither configuration proves the other: #201 was a
 # translation that was correct single-threaded and a drop with workers, and

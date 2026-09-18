@@ -9,15 +9,15 @@
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 . /src/lab/verdict.sh
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting /etc/ssh/sshd_config.d
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/prisma-routing /etc/ssh/sshd_config.d
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
-HX="python3 /src/src/hexash/hexash.py"
-export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
+HX="python3 /src/src/prismash/prismash.py"
+export PRISMA_CONFIG=/etc/prisma-routing/prisma-routing.conf
 # The VTY marks its accounts by their login shell, so it has to exist.
-install -D -m 0755 /src/appliance/hexash-login /usr/bin/hexash-login
+install -D -m 0755 /src/appliance/prismash-login /usr/bin/prismash-login
 ssh-keygen -A >/dev/null 2>&1
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
@@ -108,16 +108,16 @@ echo "  sshd -t after the refused commit: ${STILL_VALID:-REFUSED}"
 echo
 echo "=========== 5. secrets ==========="
 $HX -c "save" >/dev/null 2>&1
-CFGMODE=$(stat -c %a "$HEXA_CONFIG" 2>/dev/null || echo none)
-RBMODE=$(stat -c %a /etc/hexarouting/rollback/0.conf 2>/dev/null || echo none)
-ONDISK=$(grep -c '^ password \$' "$HEXA_CONFIG" 2>/dev/null || echo 0)
-echo "  hexarouting.conf mode $CFGMODE, rollback revision mode $RBMODE"
+CFGMODE=$(stat -c %a "$PRISMA_CONFIG" 2>/dev/null || echo none)
+RBMODE=$(stat -c %a /etc/prisma-routing/rollback/0.conf 2>/dev/null || echo none)
+ONDISK=$(grep -c '^ password \$' "$PRISMA_CONFIG" 2>/dev/null || echo 0)
+echo "  prisma-routing.conf mode $CFGMODE, rollback revision mode $RBMODE"
 echo "  password hashes stored in the file: $ONDISK"
 
 echo
 echo "=========== VERDICT ==========="
 expect_in "the account exists as a system account" "noc:" "${PASSWD_LINE:-}"
-expect_in "with the VTY as its login shell" "/usr/bin/hexash-login" \
+expect_in "with the VTY as its login shell" "/usr/bin/prismash-login" \
   "${PASSWD_LINE:-}"
 expect_in "and the key reached authorized_keys" "AAAAC3NzaC1lZDI1NTE5" "${AK:-}"
 expect "which is readable only by its owner" test "$AKMODE" = "600"

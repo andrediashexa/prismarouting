@@ -28,7 +28,7 @@ set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 MODE=${1:-on}
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -231,7 +231,7 @@ echo
 echo "=========== 9. the configuration and the trail ==========="
 CONF=$(vppctl show bpa config)
 echo "$CONF" | grep -E "forward|cgnat pool" | sed 's/^/  /'
-TRAIL=$(cat /var/log/hexarouting/config-history.log 2>/dev/null)
+TRAIL=$(cat /var/log/prisma-routing/config-history.log 2>/dev/null)
 echo "$TRAIL" | grep "forward" | tail -2 | sed 's/^/  /'
 
 echo
@@ -301,7 +301,7 @@ echo "  and on the other address, expected: 203.0.113.16:1100 -> 10.0.0.4:8080"
 tcp 8.8.8.8 203.0.113.16 33000 1100 syn pg1
 DYN_IN_B=$(trace)
 echo "$DYN_IN_B" | sed 's/^/  /'
-DYN_TRAIL=$(grep "forward" /var/log/hexarouting/config-history.log 2>/dev/null | tail -1)
+DYN_TRAIL=$(grep "forward" /var/log/prisma-routing/config-history.log 2>/dev/null | tail -1)
 echo "  trail: $DYN_TRAIL"
 
 echo

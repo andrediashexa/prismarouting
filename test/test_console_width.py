@@ -57,7 +57,7 @@ import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO, "src", "hexash"))
+sys.path.insert(0, os.path.join(REPO, "src", "prismash"))
 import config      # noqa: E402
 
 fail = 0
@@ -73,11 +73,11 @@ def ok(msg):
     print(f"  [ ok ] {msg}")
 
 
-#: Every module of the VTY, not only the one that prints today. hexash.py is
+#: Every module of the VTY, not only the one that prints today. prismash.py is
 #: the only one with a `print()` in it at the moment - measured, all four of
 #: the others are at zero - and a rule scoped to the file that happens to have
 #: the defect is a rule the next module that grows a screen walks past.
-SOURCES = ("hexash.py", "config.py", "routes.py", "system.py", "vppapi.py")
+SOURCES = ("prismash.py", "config.py", "routes.py", "system.py", "vppapi.py")
 
 
 def literal(node):
@@ -103,7 +103,7 @@ print(f"  the budget is config.CONSOLE_COLUMNS = {config.CONSOLE_COLUMNS}, "
 
 measured = valued = blank = 0
 for name in SOURCES:
-    path = os.path.join(REPO, "src", "hexash", name)
+    path = os.path.join(REPO, "src", "prismash", name)
     tree = ast.parse(open(path, encoding="utf-8").read(), filename=path)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -126,7 +126,7 @@ for name in SOURCES:
         for row in text.split("\n"):
             measured += 1
             if len(row) > config.CONSOLE_COLUMNS:
-                bad(f"src/hexash/{name}:{node.lineno}: {len(row)} columns on "
+                bad(f"src/prismash/{name}:{node.lineno}: {len(row)} columns on "
                     f"a console of {config.CONSOLE_COLUMNS} - {row.strip()!r}")
 
 # A sweep that parsed nothing passes, and would have passed on the day the
@@ -168,7 +168,7 @@ def err_prefix():
     to keep in step - one that fails SILENTLY, by measuring seven characters
     the box may have stopped printing.
     """
-    path = os.path.join(REPO, "src", "hexash", "hexash.py")
+    path = os.path.join(REPO, "src", "prismash", "prismash.py")
     tree = ast.parse(open(path, encoding="utf-8").read(), filename=path)
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef) or node.name != "err":
@@ -193,7 +193,7 @@ if PREFIX is None:
     # Loud, not skipped. A walk that cannot find the prefix would measure
     # every verdict seven characters short and pass, which is the shape of
     # failure this whole file exists to refuse.
-    bad("cannot read the verdict prefix out of Shell.err in hexash.py; "
+    bad("cannot read the verdict prefix out of Shell.err in prismash.py; "
         "the walk below would be measuring rows the box does not print")
     PREFIX = ""
 else:
@@ -208,7 +208,7 @@ VERDICTS = ("err", "err_prose", "err_dataplane")
 
 verdicts = interpolated = 0
 for name in SOURCES:
-    path = os.path.join(REPO, "src", "hexash", name)
+    path = os.path.join(REPO, "src", "prismash", name)
     tree = ast.parse(open(path, encoding="utf-8").read(), filename=path)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
@@ -223,7 +223,7 @@ for name in SOURCES:
             verdicts += 1
             width = len(PREFIX + row)
             if width > config.CONSOLE_COLUMNS:
-                bad(f"src/hexash/{name}:{node.lineno}: {width} columns on a "
+                bad(f"src/prismash/{name}:{node.lineno}: {width} columns on a "
                     f"console of {config.CONSOLE_COLUMNS} - "
                     f"{(PREFIX + row).strip()!r}")
 

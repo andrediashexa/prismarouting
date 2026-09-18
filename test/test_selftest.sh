@@ -64,7 +64,7 @@ echo "$*" >> "$FAKE/setpriv.log"
 exit 0
 EOF
 # Where a path is mounted from. The records check compares the source of
-# /var/log/hexarouting with the source of /, and on the machine running
+# /var/log/prisma-routing with the source of /, and on the machine running
 # these tests both are the same disk - which is the WARNING case, so
 # without this stub the passing branch could never be reached.
 cat > "$BIN/findmnt" <<'EOF'
@@ -75,18 +75,18 @@ case "$t" in
   *) cat "$FAKE/mnt_records" 2>/dev/null ;;
 esac
 EOF
-# NOT a stub: the real tuner, reached through $BIN so that HEXA_TUNE can be
+# NOT a stub: the real tuner, reached through $BIN so that PRISMA_TUNE can be
 # pointed elsewhere for the two boxes that need it to be missing or mute. The
 # self-test asks it what tuning is in effect and renders the answer, and a
 # stub here would mean the shape of that answer was agreed between two files
 # with nothing comparing them - which is the defect the whole check is about.
-ln -sf "$REPO/appliance/hexarouting-tune" "$BIN/hexarouting-tune"
+ln -sf "$REPO/appliance/prisma-routing-tune" "$BIN/prisma-routing-tune"
 
 # Only the free-space line matters to the check, and only that it is there.
 cat > "$BIN/df" <<'EOF'
 #!/bin/sh
 echo "Filesystem Size Used Avail Use% Mounted"
-echo "/dev/vdb1 40G 1G 37G 3% /var/log/hexarouting"
+echo "/dev/vdb1 40G 1G 37G 3% /var/log/prisma-routing"
 EOF
 # From the fake box, not a constant, and for the third time in this file:
 # `echo bpa_pool_add_del` here made "binary API NOT registered: no CGNAT pool
@@ -106,7 +106,7 @@ EOF
 # is. This was NOT stubbed, and it is the one command the self-test reaches for
 # that still came from the machine running these tests: swept for with a PATH
 # of loggers, `journalctl -u vpp.service --no-pager -n 20` and `journalctl -u
-# hexarouting.service -n 6 --no-pager -o cat` both went to this box's own
+# prisma-routing.service -n 6 --no-pager -o cat` both went to this box's own
 # systemd. On a developer box that really does run vpp.service, that box's
 # journal is spliced into the report - under a [FAIL] this suite arranged, and
 # into the same text the 80-column check at the bottom reads. A journal line is
@@ -119,7 +119,7 @@ cat > "$BIN/journalctl" <<'EOF'
 #!/bin/sh
 case "$*" in
   *vpp.service*)          cat "$FAKE/journal_vpp" 2>/dev/null ;;
-  *hexarouting.service*)  cat "$FAKE/journal_hexarouting" 2>/dev/null ;;
+  *prisma-routing.service*)  cat "$FAKE/journal_prisma_routing" 2>/dev/null ;;
   *) : ;;
 esac
 exit 0
@@ -305,7 +305,7 @@ run() {  # -> $OUTPUT
   # leaves group.keep behind, because a fixture the harness overwrites is a
   # fixture that measures the harness (#222).
   [ -f "$FAKE/group.keep" ] || \
-  printf 'vpp:x:900:\nfrr:x:901:\nfrrvty:x:902:\nhexa-admin:x:903:\nhexa-cgnat:x:904:\n' \
+  printf 'vpp:x:900:\nfrr:x:901:\nfrrvty:x:902:\nprisma-admin:x:903:\nprisma-cgnat:x:904:\n' \
     > "$FAKE/group"
   [ -f "$FAKE/api_rc" ] || echo 0 > "$FAKE/api_rc"
   # A MANIFEST, on every box, for the same reason the groups above are
@@ -317,7 +317,7 @@ run() {  # -> $OUTPUT
   # A file of its own rather than a checksum of something already in the fake
   # root, because the roots differ from case to case and a manifest naming a
   # file some of them do not have would report those boxes as carrying a file
-  # from another release. usr/share/hexarouting is read by name by the version
+  # from another release. usr/share/prisma-routing is read by name by the version
   # check and the manifest check and globbed by nothing, so a file put there
   # reaches no other check in this file.
   #
@@ -330,12 +330,12 @@ run() {  # -> $OUTPUT
   # group.keep and mgmt.keep already make, and for the same reason: a fixture
   # the harness overwrites is a fixture that measures the harness (#222).
   if [ ! -f "$FAKE/manifest.keep" ] && \
-     [ ! -f "$FAKE/root/usr/share/hexarouting/MANIFEST" ]; then
-    mkdir -p "$FAKE/root/usr/share/hexarouting"
+     [ ! -f "$FAKE/root/usr/share/prisma-routing/MANIFEST" ]; then
+    mkdir -p "$FAKE/root/usr/share/prisma-routing"
     echo "a file of the build this box says it is running" \
-      > "$FAKE/root/usr/share/hexarouting/a-file-of-that-build"
-    ( cd "$FAKE/root" && sha256sum usr/share/hexarouting/a-file-of-that-build ) \
-      > "$FAKE/root/usr/share/hexarouting/MANIFEST"
+      > "$FAKE/root/usr/share/prisma-routing/a-file-of-that-build"
+    ( cd "$FAKE/root" && sha256sum usr/share/prisma-routing/a-file-of-that-build ) \
+      > "$FAKE/root/usr/share/prisma-routing/MANIFEST"
   fi
   # A management network on every box, for the same reason the MANIFEST above
   # is written on every box: no case here is about it, a box that has none is
@@ -350,7 +350,7 @@ run() {  # -> $OUTPUT
     mkdir -p "$FAKE/root/etc/network/interfaces.d" \
              "$FAKE/root/sys/class/net/ens18"
     printf 'auto ens18\niface ens18 inet dhcp\n' \
-      > "$FAKE/root/etc/network/interfaces.d/hexarouting"
+      > "$FAKE/root/etc/network/interfaces.d/prisma-routing"
     printf '2: ens18    inet 10.0.2.15/24 brd 10.0.2.255 scope global ens18\n' \
       > "$FAKE/ip_addr_ens18"
     printf 'default via 10.0.2.2 dev ens18 proto dhcp metric 100\n' \
@@ -367,7 +367,7 @@ run() {  # -> $OUTPUT
   # and the check that says "nothing here could look" is a different branch
   # from the one that says "I looked and it was wrong". Empty is this
   # machine's own PATH, which is every other box in this file.
-  # HEXA_TUNE is the self-test's seam onto hexarouting-tune, the one external
+  # PRISMA_TUNE is the self-test's seam onto prisma-routing-tune, the one external
   # command that decides what it can say about the tuning in effect. Empty is
   # the symlink in $BIN, which is the REAL tuner against the fake root - so
   # every box below reads its own tuning the way a booted one does. It is set
@@ -383,9 +383,9 @@ run() {  # -> $OUTPUT
   _ppath=${PROBE_PATH-$PROBE_DIR}
   _runpath=${RUN_PATH:-$PATH}
   [ -z "$_ppath" ] || _runpath="$_ppath:$_runpath"
-  OUTPUT=$(PATH="$BIN:$_runpath" HEXA_SELFTEST_OUT=/dev/stdout \
-           HEXA_TUNE="${HEXA_TUNE:-hexarouting-tune}" \
-           HEXA_SELFTEST_ROOT="$FAKE/root" sh "$ST" 2>/dev/null)
+  OUTPUT=$(PATH="$BIN:$_runpath" PRISMA_SELFTEST_OUT=/dev/stdout \
+           PRISMA_TUNE="${PRISMA_TUNE:-prisma-routing-tune}" \
+           PRISMA_SELFTEST_ROOT="$FAKE/root" sh "$ST" 2>/dev/null)
   rc=$?
   # Every line the self-test has printed, over every box this suite arranges,
   # kept for the 80-column check at the end. A line only goes over when a
@@ -399,7 +399,7 @@ run() {  # -> $OUTPUT
     bad_exits=$((bad_exits + 1))
     # The verdict line identifies which box it was refusing to come up for,
     # which is more use than the ordinal of the run.
-    [ -n "$first_bad_exit" ] || first_bad_exit="run $runs exited $rc after: $(printf '%s\n' "$OUTPUT" | grep -E 'check\(s\) failed|HexaRouting ready' | tail -1)"
+    [ -n "$first_bad_exit" ] || first_bad_exit="run $runs exited $rc after: $(printf '%s\n' "$OUTPUT" | grep -E 'check\(s\) failed|Prisma Routing ready' | tail -1)"
   fi
 }
 
@@ -414,7 +414,7 @@ mkcpus() {  # <isolated> <online> <corelist-workers> <main-core> <worker cpu>...
   mkdir -p "$R/sys/devices/system/cpu" "$R/etc/vpp" "$R/proc/4242/task/100"
   echo "$1" > "$R/sys/devices/system/cpu/isolated"
   echo "$2" > "$R/sys/devices/system/cpu/online"
-  { echo "# GENERATED by hexarouting-tune"
+  { echo "# GENERATED by prisma-routing-tune"
     echo "cpu {"
     echo "  main-core $4"
     [ -n "$3" ] && echo "  corelist-workers $3"
@@ -438,9 +438,9 @@ echo "=== an account with a role and not the memberships ==="
 # The defect itself: the VTY granted the rank and put the account in no group,
 # so every command it issues comes back "permission denied" and reads as an
 # authorization refusal.
-printf 'root:x:0:0::/root:/usr/bin/hexash-login\nnoc:x:1000:1000::/home/noc:/usr/bin/hexash-login\n' \
+printf 'root:x:0:0::/root:/usr/bin/prismash-login\nnoc:x:1000:1000::/home/noc:/usr/bin/prismash-login\n' \
   > "$FAKE/passwd"
-printf 'noc hexa-admin\n' > "$FAKE/groups"
+printf 'noc prisma-admin\n' > "$FAKE/groups"
 run
 if said '\[FAIL\] noc has role administrator and is in none of:'; then
   ok "it is reported as a failed check, with the rank the box grants it"
@@ -467,7 +467,7 @@ else
 fi
 
 echo "=== an account whose role the box can actually honour ==="
-printf 'noc hexa-admin hexa-cgnat vpp frr frrvty\n' > "$FAKE/groups"
+printf 'noc prisma-admin prisma-cgnat vpp frr frrvty\n' > "$FAKE/groups"
 run
 if said 'noc .*is in none of'; then
   bad "a complete account was reported as broken"
@@ -505,7 +505,7 @@ echo "=== a box with no operator accounts yet ==="
 # The state every freshly installed box is in. It must not fail: the operator
 # has not made an account yet, and a red self-test on first boot is one nobody
 # reads twice.
-printf 'root:x:0:0::/root:/usr/bin/hexash-login\ndaemon:x:1:1::/:/usr/sbin/nologin\n' \
+printf 'root:x:0:0::/root:/usr/bin/prismash-login\ndaemon:x:1:1::/:/usr/sbin/nologin\n' \
   > "$FAKE/passwd"
 printf '\n' > "$FAKE/groups"
 run
@@ -529,7 +529,7 @@ echo "=== the dataplane's place in the OOM killer's selection ==="
 #
 # The self-test must never write that file. These cases therefore arrange it
 # from outside, as the drop-in would, and the self-test only reads.
-printf 'root:x:0:0::/root:/usr/bin/hexash-login\n' > "$FAKE/passwd"
+printf 'root:x:0:0::/root:/usr/bin/prismash-login\n' > "$FAKE/passwd"
 printf '\n' > "$FAKE/groups"
 
 echo 4242 > "$FAKE/mainpid"
@@ -549,7 +549,7 @@ else
   bad "a dataplane the kernel may choose was not reported: $(printf '%s\n' "$OUTPUT" | grep -i oom_score || echo '<nothing>')"
 fi
 # Not "something is wrong". Whoever is at the console has to be able to act.
-if said 'hexarouting-oom-protect.conf' && said 'daemon-reload'; then
+if said 'prisma-routing-oom-protect.conf' && said 'daemon-reload'; then
   ok "and it names the drop-in and what to do about it"
 else
   bad "the failure does not say which file or what to do"
@@ -598,10 +598,10 @@ echo "=== is the allocation log actually leaving the box? (#209) ==="
 # statement the dataplane REFUSED looks, from the configuration, exactly like
 # one that is working. So the self-test reads the file the box was loaded from
 # and the state the dataplane has, and compares them. It configures nothing.
-printf 'root:x:0:0::/root:/usr/bin/hexash-login\n' > "$FAKE/passwd"
+printf 'root:x:0:0::/root:/usr/bin/prismash-login\n' > "$FAKE/passwd"
 printf '\n' > "$FAKE/groups"
 : > "$FAKE/vppctl_ok"
-export HEXA_CONFIG="$FAKE/hexarouting.conf"
+export PRISMA_CONFIG="$FAKE/prisma-routing.conf"
 
 logging() {  # <state> <exporter line body>
   printf 'IPFIX export of block events (RFC 8158)\n  state       %s\n  exporter    %s\n  records     0 emitted, 0 dropped\nTCP transport: disabled\n' \
@@ -611,7 +611,7 @@ logging() {  # <state> <exporter line body>
 
 echo "--- the box was told to export and the dataplane has it off ---"
 printf 'cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 logging disabled "none: nothing is sent over UDP"
 run
 if said '\[FAIL\] the saved configuration names an IPFIX collector and the dataplane'; then
@@ -638,7 +638,7 @@ fi
 echo "--- enabled, and the exporter cleared underneath it ---"
 # Measured: clearing VPP's exporter leaves the export state enabled, so
 # "state enabled" on its own is not evidence that anything is being sent.
-printf '\n' > "$FAKE/hexarouting.conf"
+printf '\n' > "$FAKE/prisma-routing.conf"
 logging enabled "none: nothing is sent over UDP"
 run
 if said '\[FAIL\] UDP export is enabled and the IPFIX exporter has no collector'; then
@@ -649,7 +649,7 @@ fi
 
 echo "--- exporting, which is the only state that passes ---"
 printf 'cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 logging enabled "10.0.0.2:4739 src 10.0.0.1 (path mtu 512, template every 20s)"
 run
 if said_across '\[ ok \] UDP export running 10.0.0.2:4739'; then
@@ -664,7 +664,7 @@ else
 fi
 
 echo "--- a dynamic pool with no transport at all ---"
-printf '\n' > "$FAKE/hexarouting.conf"
+printf '\n' > "$FAKE/prisma-routing.conf"
 logging disabled "none: nothing is sent over UDP"
 printf 'cgnat pool din\n mode dynamic\n' > "$FAKE/bpa_config"
 run
@@ -679,8 +679,8 @@ else
   ok "and it is a warning, not a failure"
 fi
 : > "$FAKE/bpa_config"
-rm -f "$FAKE/vppctl_ok" "$FAKE/hexarouting.conf"
-unset HEXA_CONFIG
+rm -f "$FAKE/vppctl_ok" "$FAKE/prisma-routing.conf"
+unset PRISMA_CONFIG
 
 # There was a SECOND copy of the verdict block here, `exit 0` and all, left
 # behind when the IPFIX section above was inserted. Everything below it - the
@@ -698,7 +698,7 @@ echo "=== a dataplane interface with no linux_cp pair (#182) ==="
 #
 # The listings are ARRANGED HERE and only read by the self-test. A check that
 # creates the pair it is checking for cannot report its absence.
-printf 'root:x:0:0::/root:/usr/bin/hexash-login\n' > "$FAKE/passwd"
+printf 'root:x:0:0::/root:/usr/bin/prismash-login\n' > "$FAKE/passwd"
 printf '\n' > "$FAKE/groups"
 : > "$FAKE/vppctl_ok"
 # NEITHER of the two things that make a pair mandatory: no routing protocol
@@ -708,8 +708,8 @@ printf '\n' > "$FAKE/groups"
 # and it is the third state of #334, the one a fix can quietly turn into a new
 # defect. The /run file is removed here even though no case above writes it,
 # so the absence is this case's own and not the order of the cases.
-rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env" \
-      "$FAKE/root/run/hexarouting/dataplane-management"
+rm -f "$FAKE/frr_running" "$FAKE/root/etc/prisma-routing/tune.env" \
+      "$FAKE/root/run/prisma-routing/dataplane-management"
 
 # The header is indented, the counter continuation lines are indented, and a
 # name is the only thing in column one. Copied from a real `show interface`
@@ -788,10 +788,10 @@ echo "=== the box the handover was written for: no pair, no router stanza (#334)
 # is a file and not a question put to the dataplane. The VTY's own copy in
 # tune.env was the holder until #385; a self-test still reading that file
 # would report nothing on every box that claimed its card by itself.
-mkdir -p "$FAKE/root/etc/hexarouting" "$FAKE/root/run/hexarouting"
-printf 'HEXA_DATAPLANE_IF=ens18\n' > "$FAKE/root/etc/hexarouting/tune.env"
+mkdir -p "$FAKE/root/etc/prisma-routing" "$FAKE/root/run/prisma-routing"
+printf 'PRISMA_DATAPLANE_IF=ens18\n' > "$FAKE/root/etc/prisma-routing/tune.env"
 printf 'ens18 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n' \
-  > "$FAKE/root/run/hexarouting/dataplane-management"
+  > "$FAKE/root/run/prisma-routing/dataplane-management"
 run
 if said '\[FAIL\] this box handed its only card over and NO pair carries'; then
   ok "a handover box with no pair is a failed check, with no routing anywhere"
@@ -850,8 +850,8 @@ if said 'BGP, OSPF and IS-IS'; then
 else
   bad "the second reason went unsaid on a box that has both"
 fi
-rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env" \
-      "$FAKE/root/run/hexarouting/dataplane-management"
+rm -f "$FAKE/frr_running" "$FAKE/root/etc/prisma-routing/tune.env" \
+      "$FAKE/root/run/prisma-routing/dataplane-management"
 
 echo "=== the pair exists, which is the state the product produces ==="
 # `linux-name vppwan0` under `interface host-veth-vpp`, committed. The TAP is
@@ -953,14 +953,14 @@ echo "--- the same box, sized by the tuner, on the same numbers ---"
 # Proves the provenance line is read off the box and is not a constant: only
 # the startup.conf changed.
 #
-# AND IT IS THE TUNER'S, not somebody's. hexarouting-tune writes a statseg
+# AND IT IS THE TUNER'S, not somebody's. prisma-routing-tune writes a statseg
 # stanza for a box whose configuration names more interfaces than VPP's
 # default was measured holding (#288), so a stanza in startup.conf is no
 # longer proof that an operator chose the number - and telling one from the
 # other is the whole of what this line is for.
 printf 'statseg {\n  size 1G\n}\n' >> "$FAKE/root/etc/vpp/startup.conf"
 run
-if said_across "size: chosen by hexarouting-tune from this box's configuration"; then
+if said_across "size: chosen by prisma-routing-tune from this box's configuration"; then
   ok "a box the tuner sized is not reported as running on the default"
 else
   bad "the provenance did not follow the box: $(printf '%s\n' "$OUTPUT" | grep -i 'size:' || echo '<nothing>')"
@@ -971,15 +971,15 @@ echo "--- and the same box, sized by its operator ---"
 # one place the tuner steps aside for. Same startup.conf as the case above -
 # the tuner concatenates the base into it - so the only thing that tells the
 # two boxes apart is which file the number came from.
-mkdir -p "$FAKE/root/etc/hexarouting"
-printf 'statseg {\n  size 1G\n}\n' > "$FAKE/root/etc/hexarouting/vpp-base.conf"
+mkdir -p "$FAKE/root/etc/prisma-routing"
+printf 'statseg {\n  size 1G\n}\n' > "$FAKE/root/etc/prisma-routing/vpp-base.conf"
 run
-if said_across 'size: set in /etc/hexarouting/vpp-base.conf'; then
+if said_across 'size: set in /etc/prisma-routing/vpp-base.conf'; then
   ok "an operator's own stanza is reported as the operator's"
 else
   bad "a box whose operator chose the size was told something else: $(printf '%s\n' "$OUTPUT" | grep -i 'size:' || echo '<nothing>')"
 fi
-rm -f "$FAKE/root/etc/hexarouting/vpp-base.conf"
+rm -f "$FAKE/root/etc/prisma-routing/vpp-base.conf"
 mkcpus "" "0-3" "" 0
 
 echo "--- half spent, which is the last moment a warning is any use ---"
@@ -998,7 +998,7 @@ if said_across 'ABORTS when this fills, it does not refuse the next interface'; 
 else
   bad "the warning did not say what happens when it fills"
 fi
-if said_across "size 256M .* stanza in /etc/hexarouting/vpp-base.conf"; then
+if said_across "size 256M .* stanza in /etc/prisma-routing/vpp-base.conf"; then
   ok "and names the stanza and the file it goes in"
 else
   bad "the warning did not say how to raise it"
@@ -1184,7 +1184,7 @@ if said '\[warn\] the control plane has ONE cpu \(0\), with VPP.s main thread'; 
 else
   bad "a box with one control-plane cpu said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'control plane' || echo '<nothing>')"
 fi
-if said 'HEXA_MAX_WORKERS'; then
+if said 'PRISMA_MAX_WORKERS'; then
   ok "and it names the setting that hands cores back"
 else
   bad "the warning does not name the remedy the product already ships"
@@ -1795,21 +1795,21 @@ fi
 
 echo "=== the C-state line against tune.env, not against the command line alone (#163) ==="
 # /proc/cmdline is what this boot GOT. tune.env is what was ASKED FOR. The
-# line above read only the first, so a box with HEXA_LOW_LATENCY=0 - deep
+# line above read only the first, so a box with PRISMA_LOW_LATENCY=0 - deep
 # C-states left on, on purpose - was warned that deep C-states were still
-# enabled and advised to "set HEXA_LOW_LATENCY=0". The console was telling the
+# enabled and advised to "set PRISMA_LOW_LATENCY=0". The console was telling the
 # operator to do the thing they had already done, about a state they chose.
-mkdir -p "$FAKE/root/etc/hexarouting"
-echo "HEXA_LOW_LATENCY=0" > "$FAKE/root/etc/hexarouting/tune.env"
+mkdir -p "$FAKE/root/etc/prisma-routing"
+echo "PRISMA_LOW_LATENCY=0" > "$FAKE/root/etc/prisma-routing/tune.env"
 echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3" > "$FAKE/root/proc/cmdline"
 run
 if said '\[info\] deep C-states left enabled on purpose'; then
-  ok "HEXA_LOW_LATENCY=0 with no C-state parameter is reported as a choice"
+  ok "PRISMA_LOW_LATENCY=0 with no C-state parameter is reported as a choice"
 else
   bad "a box that turned the latency knobs off was not told it had: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
 fi
 if said '\[warn\] deep C-states still enabled'; then
-  bad "a box that set HEXA_LOW_LATENCY=0 is still warned about the state it chose"
+  bad "a box that set PRISMA_LOW_LATENCY=0 is still warned about the state it chose"
 else
   ok "and not warned about it, nor told to set the value it already set"
 fi
@@ -1835,14 +1835,14 @@ fi
 # A value tune.env must not carry. apply-tuning refuses it and uses 1; the
 # self-test MUST say the same thing, because two components disagreeing about
 # one file is worse than either of them being wrong.
-echo "HEXA_LOW_LATENCY=true" > "$FAKE/root/etc/hexarouting/tune.env"
+echo "PRISMA_LOW_LATENCY=true" > "$FAKE/root/etc/prisma-routing/tune.env"
 echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3 processor.max_cstate=1" \
   > "$FAKE/root/proc/cmdline"
 run
-if said "HEXA_LOW_LATENCY='true'"; then
+if said "PRISMA_LOW_LATENCY='true'"; then
   ok "a value the box does not accept is refused on the console, quoted"
 else
-  bad "HEXA_LOW_LATENCY=true passed silently: $(printf '%s\n' "$OUTPUT" | grep -i low_latency || echo '<nothing>')"
+  bad "PRISMA_LOW_LATENCY=true passed silently: $(printf '%s\n' "$OUTPUT" | grep -i low_latency || echo '<nothing>')"
 fi
 if said "Only 1 .deep C-states off," && said "and 0 .leave all three alone"; then
   ok "and the refusal says what the box does accept, both values"
@@ -1854,7 +1854,7 @@ if said '\[ ok \] deep C-states disabled on the kernel command line'; then
 else
   bad "the refused value was not read as the shipped default: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
 fi
-rm -f "$FAKE/root/etc/hexarouting/tune.env"
+rm -f "$FAKE/root/etc/prisma-routing/tune.env"
 
 # The readback. A parameter the kernel IGNORED leaves /proc/cmdline saying it
 # was asked for and the kernel behaving as though it was not, so the green
@@ -1886,7 +1886,7 @@ echo "=== requested, in effect, and the two states that are neither (#163) ==="
 # here would be the shape of that report agreed between two files with nothing
 # comparing them, which is the shape of the defect this check exists for. Only
 # "there is no tuner" and "the tuner answered nothing" cannot be arranged by a
-# tuner that works, and those two get HEXA_TUNE.
+# tuner that works, and those two get PRISMA_TUNE.
 tuned_root() {  # <isolated> <nohz_full, or - for a kernel that exposes none>
   R=$FAKE/root                    # <extra parameter, or empty>
   rm -rf "$R"
@@ -1898,10 +1898,10 @@ tuned_root() {  # <isolated> <nohz_full, or - for a kernel that exposes none>
   # summary must not appear beside a refusal went green on a self-test that
   # printed it unconditionally, because the box could not reach it either way.
   _cmd="isolcpus=1-3 nohz_full=1-3${3:+ $3}"
-  printf '# Generated by hexarouting-tune. Do not edit by hand.\n' \
-    > "$R/etc/default/grub.d/hexarouting.cfg"
+  printf '# Generated by prisma-routing-tune. Do not edit by hand.\n' \
+    > "$R/etc/default/grub.d/prisma-routing.cfg"
   printf 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT %s"\n' \
-    "$_cmd" >> "$R/etc/default/grub.d/hexarouting.cfg"
+    "$_cmd" >> "$R/etc/default/grub.d/prisma-routing.cfg"
   printf 'BOOT_IMAGE=/vmlinuz ro quiet %s\n' "$_cmd" > "$R/proc/cmdline"
   printf '%s\n' "$1" > "$R/sys/devices/system/cpu/isolated"
   [ "$2" = "-" ] || printf '%s\n' "$2" > "$R/sys/devices/system/cpu/nohz_full"
@@ -1972,10 +1972,10 @@ fi
 # and exits 0, which is the one case a working tuner cannot be made to show:
 # silence must not read as a box with no tuning to report.
 tuned_root "1-3" "1-3" ""
-HEXA_TUNE=true
+PRISMA_TUNE=true
 run
-HEXA_TUNE=
-if said '\[warn\] hexarouting-tune could not say what tuning is in effect'; then
+PRISMA_TUNE=
+if said '\[warn\] prisma-routing-tune could not say what tuning is in effect'; then
   ok "a tuner that answered nothing leaves the box unmeasured, not confirmed"
 else
   bad "a tuner that printed nothing passed as a box with nothing wrong: $(printf '%s\n' "$OUTPUT" | grep -i 'tuning' || echo '<nothing>')"
@@ -1983,13 +1983,13 @@ fi
 
 # And the box that has no tuner on it. Different line from a box whose tuning
 # did not take: one is a machine to look at, the other is an install to repair.
-HEXA_TUNE=hexarouting-tune-is-not-installed
+PRISMA_TUNE=prisma-routing-tune-is-not-installed
 run
-HEXA_TUNE=
-if said '\[warn\] hexarouting-tune is not on this box'; then
+PRISMA_TUNE=
+if said '\[warn\] prisma-routing-tune is not on this box'; then
   ok "a box with no tuner says nothing could look, not that nothing is wrong"
 else
-  bad "a box with no hexarouting-tune reported on its tuning anyway: $(printf '%s\n' "$OUTPUT" | grep -i 'tuning\|hexarouting-tune' || echo '<nothing>')"
+  bad "a box with no prisma-routing-tune reported on its tuning anyway: $(printf '%s\n' "$OUTPUT" | grep -i 'tuning\|prisma-routing-tune' || echo '<nothing>')"
 fi
 
 # And the box that asked for nothing, which is every other box in this file:
@@ -2011,7 +2011,7 @@ echo "=== the records volume, which is a legal requirement here (#222) ==="
 # box working, and fstab mounts it nofail - which means a volume that never
 # mounted leaves the box writing records onto the root filesystem, working
 # perfectly, until the root filesystem fills.
-mkdir -p "$FAKE/root/var/log/hexarouting"
+mkdir -p "$FAKE/root/var/log/prisma-routing"
 echo /dev/vda2 > "$FAKE/mnt_root"
 echo /dev/vdb1 > "$FAKE/mnt_records"
 run
@@ -2061,7 +2061,7 @@ echo "=== the records mirror, the one copy a reinstall cannot rebuild (#83) ==="
 # machine running these tests: the disk has to have died.
 rm -f "$FAKE/mnt_root" "$FAKE/mnt_records"
 rm -rf "$FAKE/root"
-mkdir -p "$FAKE/root/var/log/hexarouting" "$FAKE/root/proc"
+mkdir -p "$FAKE/root/var/log/prisma-routing" "$FAKE/root/proc"
 echo /dev/vda2 > "$FAKE/mnt_root"
 mdstat() { mkdir -p "$FAKE/root/proc"; cat > "$FAKE/root/proc/mdstat"; }
 
@@ -2223,7 +2223,7 @@ rm -rf "$FAKE/root"
 
 echo "=== which NIC the dataplane may claim (#222, #123) ==="
 # The failure this replaces was silent and cost the session it was found on:
-# the box shipped HEXA_DATAPLANE_IF=eth0, which does not exist under
+# the box shipped PRISMA_DATAPLANE_IF=eth0, which does not exist under
 # predictable names, the tuner generated a DPDK stanza with no allowlist, and
 # VPP claimed whatever NIC it found - the management one, on a single-NIC box.
 #
@@ -2276,8 +2276,8 @@ nicconf 'dpdk {
 # before it, this file is deleted and the box under test is one that named no
 # card - which is the box the case above already covers, so the check would
 # have passed by measuring the wrong machine.
-mkdir -p "$FAKE/root/etc/hexarouting"
-printf 'HEXA_DATAPLANE_IF=ens18\n' > "$FAKE/root/etc/hexarouting/tune.env"
+mkdir -p "$FAKE/root/etc/prisma-routing"
+printf 'PRISMA_DATAPLANE_IF=ens18\n' > "$FAKE/root/etc/prisma-routing/tune.env"
 run
 if said "named in the configuration as 'ens18'"; then
   ok "a card named by the configuration is reported as named, not as chosen"
@@ -2290,7 +2290,7 @@ if said 'claimed by this box with nobody asked'; then
 else
   ok "and it does not claim nobody asked"
 fi
-rm -f "$FAKE/root/etc/hexarouting/tune.env"
+rm -f "$FAKE/root/etc/prisma-routing/tune.env"
 
 # MORE THAN ONE CARD, which no fixture in this file could describe before
 # #378 because the tuner could name exactly one. A box claiming two and
@@ -2473,7 +2473,7 @@ fi
 # Named exactly, and not by the file: the worker cap really does live in that
 # file and really is advised there, a few checks up, so a bare match on the
 # filename would be red for a message that is right.
-if said 'HEXA_DATAPLANE_IF'; then
+if said 'PRISMA_DATAPLANE_IF'; then
   bad "the advice still sends the operator to a variable in a Linux file"
 else
   ok "and it does not send them to an editor in Linux"
@@ -2512,15 +2512,15 @@ echo "=== the three statements the whole report rests on (#222) ==="
 # process (vpp)" with VPP holding 19 MB. The floor exists because of that.
 hw() {  # <version> <memkb> <cpu flags>
   mkcpus "1-3" "0-3" "1-3" 0 1 2 3
-  mkdir -p "$FAKE/root/proc" "$FAKE/root/usr/share/hexarouting"
-  [ -n "$1" ] && printf '%s\n' "$1" > "$FAKE/root/usr/share/hexarouting/VERSION"
+  mkdir -p "$FAKE/root/proc" "$FAKE/root/usr/share/prisma-routing"
+  [ -n "$1" ] && printf '%s\n' "$1" > "$FAKE/root/usr/share/prisma-routing/VERSION"
   printf 'MemTotal:       %s kB\n' "$2" > "$FAKE/root/proc/meminfo"
   printf 'model name\t: Synthetic CPU\nflags\t\t: %s\n' "$3" \
     > "$FAKE/root/proc/cpuinfo"
 }
 hw "9.9.9 (abc1234)" 8388608 "fpu sse4_2 avx2"
 run
-if said '\[ ok \] HexaRouting 9.9.9 \(abc1234\)'; then
+if said '\[ ok \] Prisma Routing 9.9.9 \(abc1234\)'; then
   ok "the version stamp on the box is what the report names"
 else
   bad "the version stamp was not reported: $(printf '%s\n' "$OUTPUT" | head -3)"
@@ -2537,7 +2537,7 @@ else
 fi
 hw "" 8388608 "fpu sse4_2 avx2"
 run
-if said '\[FAIL\] no version stamp in /usr/share/hexarouting/VERSION'; then
+if said '\[FAIL\] no version stamp in /usr/share/prisma-routing/VERSION'; then
   ok "a box with no version stamp is a FAILED check, not a blank line"
 else
   bad "a box with no version stamp: $(printf '%s\n' "$OUTPUT" | head -3)"
@@ -2633,7 +2633,7 @@ echo "=== a box with no vpp group at all (#222) ==="
 mkcpus "1-3" "0-3" "1-3" 0 1 2 3
 : > "$FAKE/vppctl_ok"
 printf 'Plugin path\n bpa_plugin.so\n' > "$FAKE/show_plugins"
-printf 'frr:x:901:\nfrrvty:x:902:\nhexa-admin:x:903:\nhexa-cgnat:x:904:\n' \
+printf 'frr:x:901:\nfrrvty:x:902:\nprisma-admin:x:903:\nprisma-cgnat:x:904:\n' \
   > "$FAKE/group"
 : > "$FAKE/group.keep"
 run
@@ -2648,9 +2648,9 @@ echo "=== the API reach, proven and disproven (#222) ==="
 # The account really has the group and the call really is made as that account.
 # Both outcomes matter: a reach that cannot be proven and a reach that was
 # proven to fail are different states, and one of them was unheld.
-printf 'root:x:0:0::/root:/usr/bin/hexash-login\nnoc:x:1000:1000::/home/noc:/usr/bin/hexash-login\n' \
+printf 'root:x:0:0::/root:/usr/bin/prismash-login\nnoc:x:1000:1000::/home/noc:/usr/bin/prismash-login\n' \
   > "$FAKE/passwd"
-printf 'noc hexa-admin hexa-cgnat vpp frr frrvty\n' > "$FAKE/groups"
+printf 'noc prisma-admin prisma-cgnat vpp frr frrvty\n' > "$FAKE/groups"
 echo 1 > "$FAKE/api_rc"
 run
 if said '\[FAIL\] the binary API does not work for noc'; then
@@ -2672,18 +2672,18 @@ else
 fi
 
 echo "=== the service that applies the configuration (#222) ==="
-# hexarouting.service is what puts the saved configuration into the dataplane
+# prisma-routing.service is what puts the saved configuration into the dataplane
 # at boot. When it fails the box comes up forwarding nothing it was configured
 # to forward, while VPP, FRR and the VTY all answer perfectly. The stub
 # answered `inactive` for every run, so this branch had never executed.
 echo failed > "$FAKE/is_failed"
 printf 'bpa_pool_add_del: pool overlaps an existing one\n' \
-  > "$FAKE/journal_hexarouting"
+  > "$FAKE/journal_prisma_routing"
 run
-if said '\[FAIL\] hexarouting.service FAILED: the CGNAT configuration was not applied'; then
+if said '\[FAIL\] prisma-routing.service FAILED: the CGNAT configuration was not applied'; then
   ok "a failed configuration service is a FAILED check"
 else
-  bad "hexarouting.service failed and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i hexarouting.service || echo '<nothing>')"
+  bad "prisma-routing.service failed and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i prisma-routing.service || echo '<nothing>')"
 fi
 # "Failed" without a reason sends whoever is standing there to a journal they
 # may not be able to reach yet, which is why the check prints the last six
@@ -2694,9 +2694,9 @@ else
   bad "the unit failed and the reason was not printed, so the console says \
 the configuration was not applied and not what refused it: $(printf '%s\n' "$OUTPUT" | grep -A3 -i 'the last thing it said' | tr '\n' ' ')"
 fi
-rm -f "$FAKE/is_failed" "$FAKE/journal_hexarouting"
+rm -f "$FAKE/is_failed" "$FAKE/journal_prisma_routing"
 run
-if said '\[FAIL\] hexarouting.service FAILED'; then
+if said '\[FAIL\] prisma-routing.service FAILED'; then
   bad "a box whose configuration service is fine was reported as failed"
 else
   ok "and a box where it is fine is not told about it"
@@ -2734,21 +2734,21 @@ rm -rf "$FAKE/root"
 echo "=== the pools the box was told about, against the ones it has (#172) ==="
 # The same comparison the IPFIX block already makes, for the object this
 # product exists for. A pool in the saved file that the dataplane refused is
-# applied by nobody and reported by nothing: hexarouting.service succeeds
+# applied by nobody and reported by nothing: prisma-routing.service succeeds
 # because the rest of the file applied, and the count above says how many pools
 # are there rather than how many are missing. Every subscriber behind that pool
 # is untranslated, on a box that boots and forwards other people's traffic.
 mkcpus "1-3" "0-3" "1-3" 0 1 2 3
 : > "$FAKE/vppctl_ok"
 printf 'Plugin path\n bpa_plugin.so\n' > "$FAKE/show_plugins"
-# HEXA_CONFIG was unset by the IPFIX section above, which is right for the
+# PRISMA_CONFIG was unset by the IPFIX section above, which is right for the
 # sections between the two: without it the self-test reads the real box's
-# /etc/hexarouting/hexarouting.conf, and this check would then compare a
+# /etc/prisma-routing/prisma-routing.conf, and this check would then compare a
 # developer's own pools against the fake dataplane. Set again here, and unset
 # again at the end, for the same reason it was unset there.
-export HEXA_CONFIG="$FAKE/hexarouting.conf"
+export PRISMA_CONFIG="$FAKE/prisma-routing.conf"
 printf 'nat cgnat pool alpha\n inside 100.64.0.0/24\n exit\nnat cgnat pool beta\n inside 100.64.1.0/24\n exit\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 # The dataplane's own line shape: "pool <name> [<mode> / <policy>]".
 printf 'pool alpha [deterministic / interleaved]\npool beta [dynamic / blocked]\n' \
   > "$FAKE/bpa_pools"
@@ -2782,7 +2782,7 @@ fi
 # A box with no pools in the file at all must say nothing here: an operator who
 # has not configured a pool yet is not a box with a defect, and the [info]
 # above already covers them.
-printf '\n' > "$FAKE/hexarouting.conf"
+printf '\n' > "$FAKE/prisma-routing.conf"
 rm -f "$FAKE/bpa_pools"
 run
 if said 'saved configuration has pool'; then
@@ -2799,7 +2799,7 @@ echo "=== uRPF: on in the file, and on in the dataplane (#172) ==="
 # have it forwards, translates, logs and answers everything, and there is no
 # counter anywhere for a protection that is simply absent.
 printf 'nat cgnat pool alpha\n exit\ninterface TenGigabitEthernet0/0/0\n urpf strict\n exit\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 printf 'pool alpha [deterministic / interleaved]\n' > "$FAKE/bpa_pools"
 printf 'TenGigabitEthernet0/0/0 strict\n' > "$FAKE/bpa_urpf"
 run
@@ -2823,7 +2823,7 @@ else
 fi
 # A box that never asked for uRPF is told nothing: most boxes do not run it,
 # and an alarm that is always on is one nobody reads.
-printf 'nat cgnat pool alpha\n exit\n' > "$FAKE/hexarouting.conf"
+printf 'nat cgnat pool alpha\n exit\n' > "$FAKE/prisma-routing.conf"
 run
 if said 'uRPF'; then
   bad "a box that never configured uRPF was told about it: $(printf '%s\n' "$OUTPUT" | grep -i urpf | head -1)"
@@ -2849,7 +2849,7 @@ host-veth-vpp (up):
   L3 10.0.0.1/30
 ADDR
 printf 'interface TenGigabitEthernet0/0/0\n ipv4 address 200.150.0.1/24\n exit\ninterface host-veth-vpp\n ipv4 address 10.0.0.1/30\n exit\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 run
 if said 'address\(es\) the dataplane does not'; then
   bad "both addresses were there and the box complained: $(printf '%s\n' "$OUTPUT" | grep -i 'address(es)')"
@@ -2858,7 +2858,7 @@ else
 fi
 # The one that matters: the file has an address the dataplane never got.
 printf 'interface TenGigabitEthernet0/0/0\n ipv4 address 200.150.0.1/24\n ipv4 address 203.0.113.1/24\n exit\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 run
 if said_across '\[FAIL\] the saved configuration has address\(es\) the dataplane does not: TenGigabitEthernet0/0/0:203.0.113.1/24'; then
   ok "an address the dataplane did not take is a FAILED check, named with its interface"
@@ -2902,7 +2902,7 @@ TenGigabitEthernet0/0/0           2      up          1500/0/0/0     rx packets  
 host-veth-vpp                     1      up          9000/0/0/0
 IFACE
 printf 'interface TenGigabitEthernet0/0/0\n mtu 1500\n exit\ninterface host-veth-vpp\n mtu 9000\n exit\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 run
 if said 'the saved MTU is not the MTU the dataplane has'; then
   bad "two interfaces at the MTU they were told and the box complained: $(printf '%s\n' "$OUTPUT" | grep -i 'saved MTU')"
@@ -2912,7 +2912,7 @@ fi
 # The one that matters: the file says 9000 and the dataplane kept 1500. This is
 # the box that forwards and whose OSPF never comes up.
 printf 'interface TenGigabitEthernet0/0/0\n mtu 9000\n exit\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 run
 if said_across '\[FAIL\] the saved MTU is not the MTU the dataplane has: TenGigabitEthernet0/0/0\(9000/1500\)'; then
   ok "an MTU the dataplane did not take is a FAILED check, naming both numbers"
@@ -2928,7 +2928,7 @@ fi
 # check's business, not this one: saying it twice, in two different ways, is
 # how a reader learns to skip both.
 printf 'interface TenGigabitEthernet9/9/9\n mtu 9000\n exit\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 run
 if said 'the saved MTU is not the MTU'; then
   bad "an interface the box does not have was reported as an MTU mismatch"
@@ -2937,14 +2937,14 @@ else
 fi
 
 rm -f "$FAKE/show_plugins" "$FAKE/bpa_pools"
-printf '\n' > "$FAKE/hexarouting.conf"
-unset HEXA_CONFIG
+printf '\n' > "$FAKE/prisma-routing.conf"
+unset PRISMA_CONFIG
 rm -rf "$FAKE/root"
 
 # A box's ssh host keys: made here, or handed to it inside the image?
 #
 # Every ISO published up to 0.66.0 carried the host keys its build container
-# generated, private halves included, and hexarouting-install unpacked them
+# generated, private halves included, and prisma-routing-install unpacked them
 # onto the disk. Those boxes are still racked and still answering with a key
 # anybody who downloaded the medium holds (#248). #245 fixed the image and
 # every install after it; this is what tells the ones already in the field.
@@ -2953,7 +2953,7 @@ rm -rf "$FAKE/root"
 # stamps "<user>@<gethostname()>", and chroot does not change gethostname():
 # the installer runs it as `chroot "$MNT" ssh-keygen -A`, so a correctly
 # generated key on a box named anything at all carries the LIVE MEDIUM's
-# hostname, measured as "root@hexarouting". A comment-against-hostname check
+# hostname, measured as "root@prisma-routing". A comment-against-hostname check
 # would report every correctly installed box that was given a name.
 #
 # What is left is that a file cannot have contents older than itself: a key
@@ -3219,20 +3219,20 @@ echo "=== a box with nothing wrong with it, which is every box in the field (#29
 # working appliance looks like: a box this file finds NOTHING wrong with has
 # to answer every check in it at once.
 
-# hexash, which no box above has and none of them should.
+# prismash, which no box above has and none of them should.
 #
-# `command -v hexash` is the first thing the VTY check does, and the machine
-# running this suite has no hexash - so all 105 boxes above say "[FAIL] hexash
+# `command -v prismash` is the first thing the VTY check does, and the machine
+# running this suite has no prismash - so all 105 boxes above say "[FAIL] prismash
 # is not installed". Putting this stub in $BIN at the top of the file would
 # quietly repair a failed check on every one of them, and those boxes are not
 # this issue's to change: this adds a control, it does not soften a fault. So
 # the front door is stubbed here and taken away again at the end of the
 # section.
-cat > "$BIN/hexash" <<'EOF'
+cat > "$BIN/prismash" <<'EOF'
 #!/bin/sh
 echo "no rollback point saved yet"
 EOF
-chmod +x "$BIN/hexash"
+chmod +x "$BIN/prismash"
 
 # What the dataplane reports about the allocation log, with the TCP transport
 # in a state the caller names. ONE producer for every TCP case below, because
@@ -3267,10 +3267,10 @@ healthy() {
   # point of this box is that it has none.
   mkcpus "4-7" "0-7" "4-7" 0 4 5 6 7
   R="$FAKE/root"
-  mkdir -p "$R/usr/share/hexarouting" "$R/proc" "$R/etc/ssh" \
-           "$R/var/log/hexarouting" "$R/sys/devices/system/cpu/cpuidle" \
+  mkdir -p "$R/usr/share/prisma-routing" "$R/proc" "$R/etc/ssh" \
+           "$R/var/log/prisma-routing" "$R/sys/devices/system/cpu/cpuidle" \
            "$R/sys/devices/system/cpu/cpufreq/policy0"
-  printf '0.71.0 (a1b2c3d)\n' > "$R/usr/share/hexarouting/VERSION"
+  printf '0.71.0 (a1b2c3d)\n' > "$R/usr/share/prisma-routing/VERSION"
   printf 'MemTotal:       8388608 kB\n' > "$R/proc/meminfo"
   printf 'model name\t: Synthetic CPU\nflags\t\t: fpu sse4_2 avx2\n' \
     > "$R/proc/cpuinfo"
@@ -3340,8 +3340,8 @@ SEG
   # the export, the MTU, the address and uRPF. Every one of those comparisons
   # has a fixture above where the two sides disagree; this is the box where
   # they agree, which none of them had.
-  export HEXA_CONFIG="$FAKE/hexarouting.conf"
-  cat > "$FAKE/hexarouting.conf" <<'CONF'
+  export PRISMA_CONFIG="$FAKE/prisma-routing.conf"
+  cat > "$FAKE/prisma-routing.conf" <<'CONF'
 nat cgnat pool alpha
  inside 100.64.0.0/24
  exit
@@ -3357,9 +3357,9 @@ CONF
   # An operator account with a role the box granted it AND the memberships
   # that make the role real, which for the whole life of the product was the
   # one thing no box had (#184).
-  printf 'root:x:0:0::/root:/usr/bin/hexash-login\nnoc:x:1000:1000::/home/noc:/usr/bin/hexash-login\n' \
+  printf 'root:x:0:0::/root:/usr/bin/prismash-login\nnoc:x:1000:1000::/home/noc:/usr/bin/prismash-login\n' \
     > "$FAKE/passwd"
-  printf 'noc hexa-admin vpp frr frrvty\n' > "$FAKE/groups"
+  printf 'noc prisma-admin vpp frr frrvty\n' > "$FAKE/groups"
   echo 0 > "$FAKE/api_rc"
 }
 
@@ -3482,8 +3482,8 @@ fi
 # Anchored whole: "ready" appearing somewhere is not the same statement as the
 # summary being that and nothing else, and the two boxes below are exactly the
 # cases where the difference matters.
-if said '^  HexaRouting ready\.$'; then
-  ok "so the last line is 'HexaRouting ready.' and nothing more"
+if said '^  Prisma Routing ready\.$'; then
+  ok "so the last line is 'Prisma Routing ready.' and nothing more"
 else
   bad "a box with nothing wrong did not say it is ready: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
 fi
@@ -3517,7 +3517,7 @@ if [ "$nwarn" = 2 ]; then
 else
   bad "it has $nwarn warnings, not the 2 arranged: $(printf '%s\n' "$OUTPUT" | grep '^  \[warn\] ')"
 fi
-if said '^  HexaRouting ready, with 2 warning\(s\) above\.$'; then
+if said '^  Prisma Routing ready, with 2 warning\(s\) above\.$'; then
   ok "and the last line says it is ready AND how many warnings are above it"
 else
   bad "a box with 2 warnings and no failures said: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
@@ -3558,7 +3558,7 @@ else
   bad "the card's row: $(printf '%s\n' "$OUTPUT" | grep 'rx queues' || echo '<nothing>')"
 fi
 _nwarn=$(printf '%s\n' "$OUTPUT" | grep -c '^  \[warn\] ')
-if said "^  HexaRouting ready, with $_nwarn warning\(s\) above\.\$"; then
+if said "^  Prisma Routing ready, with $_nwarn warning\(s\) above\.\$"; then
   ok "and the summary counts it: $_nwarn warning(s) printed, $_nwarn claimed"
 else
   bad "the summary does not count the $_nwarn [warn] row(s) this box printed; the last line says: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
@@ -3584,7 +3584,7 @@ IFACE
 : > "$FAKE/show_lcp"
 rm -f "$FAKE/show_interface_addr"
 printf 'nat cgnat pool alpha\n inside 100.64.0.0/24\n exit\ncgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
-  > "$FAKE/hexarouting.conf"
+  > "$FAKE/prisma-routing.conf"
 run
 if said '\[FAIL\]'; then
   bad "the no-NIC box failed a check, which would make it the other summary:
@@ -3596,17 +3596,17 @@ fi
 # the break between them. A needle written against the raw text matches only
 # while the message happens to fold where it folds today, which is the trap
 # this repository has now hit four times (#279, #285).
-if said_across 'HexaRouting is installed and healthy, and has no interface to forward on: it is not forwarding. See the \[warn\] above for the one step left.'; then
+if said_across 'Prisma Routing is installed and healthy, and has no interface to forward on: it is not forwarding. See the \[warn\] above for the one step left.'; then
   ok "it gets a sentence of its own that says which state it is in"
 else
   bad "a box with no interface to forward on said: $(printf '%s\n' "$OUTPUT" | tail -3 | head -2 | tr '\n' ' ')"
 fi
 # The measurement from #297, which was taken on a real appliance at
 # 10.95.200.198 and had nothing in this suite holding it: the box that
-# prompted the issue printed "HexaRouting ready." with two warnings above it,
+# prompted the issue printed "Prisma Routing ready." with two warnings above it,
 # one of them saying it had no NIC to forward on.
-if said 'HexaRouting ready'; then
-  bad "a box that cannot forward a packet is still called ready: $(printf '%s\n' "$OUTPUT" | grep 'HexaRouting ready')"
+if said 'Prisma Routing ready'; then
+  bad "a box that cannot forward a packet is still called ready: $(printf '%s\n' "$OUTPUT" | grep 'Prisma Routing ready')"
 else
   ok "and the word 'ready' is not applied to a box that cannot forward"
 fi
@@ -3697,7 +3697,7 @@ fi
 # needle spans the break between them. A needle written against the raw text
 # matches only while the message happens to fold where it folds today, which
 # is the trap this repository has now hit five times (#279, #285).
-if said_across 'records are spilling to /var/log/hexarouting and will be replayed when it comes back'; then
+if said_across 'records are spilling to /var/log/prisma-routing and will be replayed when it comes back'; then
   ok "and it says where the records are going and that they come back"
 else
   bad "the warning does not say what a disconnected collector costs: $(printf '%s\n' "$OUTPUT" | grep -A2 'TCP collector' | tr '\n' ' ')"
@@ -3735,7 +3735,7 @@ if said 'is disconnected'; then
 else
   ok "and it is not reported as the disconnected box above"
 fi
-if said_across 'records are spilling to /var/log/hexarouting'; then
+if said_across 'records are spilling to /var/log/prisma-routing'; then
   ok "and it still says the records are not leaving the box"
 else
   bad "a connecting collector does not say the records are spilling: $(printf '%s\n' "$OUTPUT" | grep -A3 'TCP collector' | tr '\n' ' ')"
@@ -3774,13 +3774,13 @@ fi
 # $BIN is on the PATH of every run, so the VTY stub goes away with the rest:
 # a fixture left behind is a fixture the next section measures by accident,
 # which is #222 in one line.
-rm -f "$BIN/hexash" "$FAKE/vppctl_ok" "$FAKE/show_plugins" "$FAKE/show_interface" \
+rm -f "$BIN/prismash" "$FAKE/vppctl_ok" "$FAKE/show_plugins" "$FAKE/show_interface" \
       "$FAKE/show_interface_addr" "$FAKE/show_lcp" "$FAKE/statseg" \
       "$FAKE/bpa_pools" "$FAKE/bpa_urpf" "$FAKE/bpa_config" "$FAKE/bpa_logging" \
       "$FAKE/frr_running" "$FAKE/rpki" "$FAKE/oom_score_adj" "$FAKE/mainpid" \
       "$FAKE/keytimes" "$FAKE/mnt_root" "$FAKE/mnt_records"
-printf '\n' > "$FAKE/hexarouting.conf"
-unset HEXA_CONFIG
+printf '\n' > "$FAKE/prisma-routing.conf"
+unset PRISMA_CONFIG
 rm -rf "$FAKE/root"
 
 # =========================================================================
@@ -3803,7 +3803,7 @@ mgmt_box() {  # <stanza or ""> <addresses on ens18> <default route>
   rm -rf "$FAKE/root"
   mkdir -p "$FAKE/root/etc/network/interfaces.d" \
            "$FAKE/root/sys/class/net/ens18"
-  if [ -n "$1" ]; then printf '%s\n' "$1" > "$FAKE/root/etc/network/interfaces.d/hexarouting"; fi
+  if [ -n "$1" ]; then printf '%s\n' "$1" > "$FAKE/root/etc/network/interfaces.d/prisma-routing"; fi
   printf '%s' "$2" > "$FAKE/ip_addr_ens18"
   printf '%s' "$3" > "$FAKE/ip_default"
 }
@@ -3901,7 +3901,7 @@ echo "=== a box whose operator said 'none', which is not the same box ==="
 # The installer writes the file even for this answer, and this is the whole
 # reason: without it a chosen absence and a forgotten one are the same box on
 # disk, and one of them must be shouted about while the other must not.
-mgmt_box "# Generated by hexarouting-install. Do not edit by hand.
+mgmt_box "# Generated by prisma-routing-install. Do not edit by hand.
 # NO MANAGEMENT NETWORK was asked for" "" ""
 run
 if said '\[FAIL\].*management'; then
@@ -4070,13 +4070,13 @@ echo "=== and a box carrying a file the build did not ship ==="
 # box, because a reader below refuses a check no box has seen fail - and the
 # honest way to satisfy a rule is to make the data right, not to write an
 # exception into the rule.
-rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/usr/share/hexarouting"
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/usr/share/prisma-routing"
 echo "a file of the build this box says it is running" \
-  > "$FAKE/root/usr/share/hexarouting/a-file-of-that-build"
-( cd "$FAKE/root" && sha256sum usr/share/hexarouting/a-file-of-that-build ) \
-  > "$FAKE/root/usr/share/hexarouting/MANIFEST"
+  > "$FAKE/root/usr/share/prisma-routing/a-file-of-that-build"
+( cd "$FAKE/root" && sha256sum usr/share/prisma-routing/a-file-of-that-build ) \
+  > "$FAKE/root/usr/share/prisma-routing/MANIFEST"
 echo "and something else wrote to it" \
-  >> "$FAKE/root/usr/share/hexarouting/a-file-of-that-build"
+  >> "$FAKE/root/usr/share/prisma-routing/a-file-of-that-build"
 run
 if said '\[ ok \] all .* files of that build are the ones it shipped'; then
   bad "a box carrying a file the build did not ship was reported as shipped"
@@ -4085,7 +4085,7 @@ else
 fi
 
 echo "=== a box whose VTY is installed and dies at start ==="
-# 0.2.0 shipped a hexash that died for want of config.py, and that is the
+# 0.2.0 shipped a prismash that died for want of config.py, and that is the
 # defect this check was written for. Every box above that had a VTY at all was
 # answered by a stub printing one constant line, so the arm that reports a VTY
 # which does NOT start had never run - and the fall-through arm it would have
@@ -4096,26 +4096,26 @@ echo "=== a box whose VTY is installed and dies at start ==="
 # a traceback whose last line is the module it could not find is the only form
 # of this an operator can act on.
 rm -rf "$FAKE/root"; mkdir -p "$FAKE/root"
-cat > "$BIN/hexash" <<'EOF'
+cat > "$BIN/prismash" <<'EOF'
 #!/bin/sh
 echo "Traceback (most recent call last):"
-echo "  File \"/usr/bin/hexash\", line 12, in <module>"
+echo "  File \"/usr/bin/prismash\", line 12, in <module>"
 echo "ModuleNotFoundError: No module named 'config'"
 exit 1
 EOF
-chmod +x "$BIN/hexash"
+chmod +x "$BIN/prismash"
 run
-rm -f "$BIN/hexash"
+rm -f "$BIN/prismash"
 if said '\[ ok \] VTY starts'; then
   bad "a VTY that dies at start was reported as one that starts, which is the \
 box 0.2.0 shipped"
 else
   ok "a VTY that dies at start does not read as one that started"
 fi
-if said '\[FAIL\] hexash does not start'; then
+if said '\[FAIL\] prismash does not start'; then
   ok "and it is a failed check, not a warning"
 else
-  bad "a box whose VTY cannot start was not reported: $(printf '%s\n' "$OUTPUT" | grep -iE 'hexash|VTY' || echo '<nothing about the VTY>')"
+  bad "a box whose VTY cannot start was not reported: $(printf '%s\n' "$OUTPUT" | grep -iE 'prismash|VTY' || echo '<nothing about the VTY>')"
 fi
 if said "No module named 'config'"; then
   ok "and it carries the last line, which is the reason somebody can act on"
@@ -4131,7 +4131,7 @@ echo "=== a box that booted before its tuning did (FIRST BOOT mode) ==="
 # saying so had never been printed by anything here - so the branch beside it,
 # "full tuning active", was the only one any box had seen.
 rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/etc/vpp"
-printf '# GENERATED by hexarouting-tune\n# FIRST BOOT MODE\nunix {\n}\n' \
+printf '# GENERATED by prisma-routing-tune\n# FIRST BOOT MODE\nunix {\n}\n' \
   > "$FAKE/root/etc/vpp/startup.conf"
 run
 if said '\[ ok \] full tuning active'; then
@@ -4156,7 +4156,7 @@ echo "=== a box whose records name an array the kernel has no record of ==="
 # volume missing - and every arm of the mirror check but this one is reading a
 # /proc/mdstat block that exists. This is the arm for a source that names an
 # array and a kernel that does not have it, and nothing had ever run it.
-rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/var/log/hexarouting" "$FAKE/root/proc"
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/var/log/prisma-routing" "$FAKE/root/proc"
 echo /dev/vda2 > "$FAKE/mnt_root"
 echo /dev/md9  > "$FAKE/mnt_records"
 cat > "$FAKE/root/proc/mdstat" <<'MD'
@@ -4197,7 +4197,7 @@ echo "=== the three boxes whose manifest cannot answer for itself (#302) ==="
 rm -rf "$FAKE/root"; mkdir -p "$FAKE/root"
 : > "$FAKE/manifest.keep"
 run
-if said '\[warn\] no /usr/share/hexarouting/MANIFEST'; then
+if said '\[warn\] no /usr/share/prisma-routing/MANIFEST'; then
   ok "a box with no manifest says so rather than saying nothing"
 else
   bad "a box with no manifest was silent about it: $(printf '%s\n' "$OUTPUT" | grep -iE 'manifest|that build' | tr '\n' ' ')"
@@ -4209,11 +4209,11 @@ fi
 # A manifest that is nothing but comments. `grep -c` prints its count AND
 # exits 1 when the count is zero, so this used to fall through to the
 # comparison and the box read as failing a check nothing had run.
-rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/usr/share/hexarouting"
-printf '# yours: etc/hexarouting/tune.env\n' \
-  > "$FAKE/root/usr/share/hexarouting/MANIFEST"
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/usr/share/prisma-routing"
+printf '# yours: etc/prisma-routing/tune.env\n' \
+  > "$FAKE/root/usr/share/prisma-routing/MANIFEST"
 run
-if said '\[warn\] /usr/share/hexarouting/MANIFEST names no files'; then
+if said 'the manifest names no files'; then
   ok "a manifest of nothing but comments is reported as checking nothing"
 else
   bad "a manifest naming no files did not say so: $(printf '%s\n' "$OUTPUT" | grep -iE 'manifest|that build' | tr '\n' ' ')"
@@ -4330,11 +4330,11 @@ echo "=== and what systemd is told to do with that status ==="
 # console getty is such a consumer (#93). So a wrong Type=, a missing "-" or a
 # Requires= somewhere can make a non-zero status matter even while this script
 # exits 0, and can make exiting 0 not help.
-UNIT="$REPO/appliance/systemd/hexarouting-selftest.service"
+UNIT="$REPO/appliance/systemd/prisma-routing-selftest.service"
 EXECSTART=$(grep -E '^ExecStart=' "$UNIT")
 # Anchored on ExecStart= so that the comment block explaining the "-" cannot
 # satisfy this on its own.
-if [ "$EXECSTART" = "ExecStart=-/usr/lib/hexarouting/selftest" ]; then
+if [ "$EXECSTART" = "ExecStart=-/usr/lib/prisma-routing/selftest" ]; then
   ok "ExecStart= ignores the status: $EXECSTART"
 else
   bad "ExecStart= makes the diagnostic's status the unit's verdict: $EXECSTART"
@@ -4357,7 +4357,7 @@ else
 fi
 # And nothing may make its state fatal to anything else. The getty drop-in is
 # written by build-iso.sh rather than shipped as a file, so both are read.
-HARD=$(grep -rnE '^(Requires|Requisite|BindsTo|PartOf)=.*hexarouting-selftest' \
+HARD=$(grep -rnE '^(Requires|Requisite|BindsTo|PartOf)=.*prisma-routing-selftest' \
          "$REPO/appliance/" || true)
 if [ -z "$HARD" ]; then
   ok "nothing Requires=/BindsTo= the self-test, so its state cannot fail another unit"
@@ -4378,7 +4378,7 @@ echo "=== no warning added later can escape the count (#297, #298) ==="
 # did, and both mutations of it stayed green.
 #
 # #298 built the box that can answer them. Three of the four are now
-# measurements on real boxes, three sections up - "HexaRouting ready.", "ready,
+# measurements on real boxes, three sections up - "Prisma Routing ready.", "ready,
 # with N warning(s) above." and the sentence a box that cannot forward gets -
 # and each of those was shown red under a mutation of the summary that
 # produces it. They are gone from here rather than kept alongside, because two
@@ -4411,7 +4411,7 @@ echo "=== the verdict the last line prints, and the lab that reads it ==="
 #
 # lab/install-iso.sh boots an installed box and asserts that the self-test
 # reported itself before the getty offered a login. It anchored that on the
-# literal "HexaRouting ready." - correct when there was one verdict, and #297
+# literal "Prisma Routing ready." - correct when there was one verdict, and #297
 # gave the summary three. A box with no NIC to forward on then reported itself
 # correctly, in the right order, and the release gate refused 0.72.0 over it.
 #
@@ -4421,8 +4421,8 @@ echo "=== the verdict the last line prints, and the lab that reads it ==="
 # to be one the lab knows how to read.
 #
 # FOUR of them, and the fourth was missing from this list until a mutation
-# removed its branch and nothing went red. "HexaRouting ready, with N
-# warning(s) above" is NOT matched by a needle for "HexaRouting ready." - the
+# removed its branch and nothing went red. "Prisma Routing ready, with N
+# warning(s) above" is NOT matched by a needle for "Prisma Routing ready." - the
 # comma is exactly where they part - so the lab knew three of the four and
 # would have failed a healthy box that happened to carry a warning.
 #
@@ -4431,7 +4431,7 @@ echo "=== the verdict the last line prints, and the lab that reads it ==="
 ST_SRC=$(cat "$ST")
 # The lab's own pattern, read out of the lab, and every sentence the self-test
 # can print tested AGAINST it rather than looked for inside it. One pattern
-# legitimately covers two sentences - "HexaRouting ready" matches both the
+# legitimately covers two sentences - "Prisma Routing ready" matches both the
 # plain verdict and the one with a warning count - so a check that demanded
 # the literal string would report a correct lab as broken. That is the shape
 # this whole run of failures is about, and it happened here too, on the first
@@ -4441,12 +4441,44 @@ verdicts_found=0
 if [ -z "$LAB_RE" ]; then
   bad "tools/selftest-verdict.sh has no VERDICT_RE, so nothing reads a verdict by a rule this can check"
 fi
+# AND THE OTHER THREE PATTERNS THE HOLDER CARRIES, read out of it the same
+# way. VERDICT_RE only answers whether the box reached a verdict at all; the
+# readers that DECIDE something use the other three. VERDICT_OK_RE is what
+# tools/release-gate.sh publishes on and what lab/install-iso.sh takes for a
+# box that came up; VERDICT_NOFWD_RE is how that lab knows a box claimed no
+# card; VERDICT_BAD_RE is a box that failed its own checks. Two of the three
+# spell the product's name again, and until the review of #202 only
+# VERDICT_RE was read here: with the other two left at the old name this
+# suite stayed green while the gate refused every release and the lab never
+# saw a no-forward box. So each pattern is held to the sentences its readers
+# decide on, sentence by sentence rather than by comparing the patterns'
+# text, because one pattern legitimately covers two sentences.
+_re_of() {  # <name>: the pattern under that name, never spelled here
+  sed -n "s/^$1=\"\\(.*\\)\"\$/\\1/p" "$REPO/tools/selftest-verdict.sh"
+}
+OK_RE=$(_re_of VERDICT_OK_RE)
+NOFWD_RE=$(_re_of VERDICT_NOFWD_RE)
+BAD_RE=$(_re_of VERDICT_BAD_RE)
+for _n in VERDICT_OK_RE VERDICT_NOFWD_RE VERDICT_BAD_RE; do
+  [ -n "$(_re_of "$_n")" ] \
+    || bad "tools/selftest-verdict.sh has no $_n, so the readers that decide on it have no rule"
+done
+# <sentence> <pattern name> <pattern> <y|n> <why a miss matters> <why a hit
+# matters>: the pattern matches the sentence exactly when the table says so.
+# An empty pattern is refused above and refused again here, because
+# grep -E '' matches every sentence and would hand the y rows a false green.
+misread=0
+_holds() {
+  if [ -n "$3" ] && printf '%s\n' "$1" | grep -qE "$3"; then _got=y; else _got=n; fi
+  [ "$_got" = "$4" ] && return 0
+  misread=$((misread + 1))
+  if [ "$4" = y ]; then bad "$2 does not match '$1': $5"; else bad "$2 matches '$1': $6"; fi
+}
 # The sentences as the self-test prints them, with the counts filled in: the
 # pattern has to match what reaches a console, not what the source spells.
-for _v in "  HexaRouting ready." \
-          "  HexaRouting ready, with 2 warning(s) above." \
-          "  HexaRouting is installed and healthy, and has no interface to forward on:" \
-          "  3 check(s) failed. The box is NOT ready."; do
+# Beside each, whether VERDICT_OK_RE, VERDICT_NOFWD_RE and VERDICT_BAD_RE must
+# match it. Spelled ONCE, in this table; every check below reads it.
+while IFS='|' read -r _v _ok _nofwd _bad; do
   case "$ST_SRC" in
     *"$(printf '%s' "$_v" | sed 's/^  //; s/2 warning(s)/$warns warning(s)/; s/3 check(s)/$fail check(s)/; s/no interface to forward on:/$noforward:/')"*) ;;
     *) bad "appliance/selftest can no longer print '$_v', so the lab reads for a verdict that does not exist"
@@ -4456,11 +4488,25 @@ for _v in "  HexaRouting ready." \
   if [ -n "$LAB_RE" ] && ! printf '%s\n' "$_v" | grep -qE "$LAB_RE"; then
     bad "the self-test can end with '$_v' and VERDICT_RE does not match it: an installed box printing it is a box the gate reads as never having booted"
   fi
-done
-if [ "$verdicts_found" -eq 4 ]; then
-  ok "all four verdicts the self-test can end with match VERDICT_RE"
-else
+  _holds "$_v" VERDICT_OK_RE "$OK_RE" "$_ok" \
+    "a box that ended so is one tools/release-gate.sh refuses to publish and lab/install-iso.sh reports as never having come up" \
+    "tools/release-gate.sh would publish a medium whose box had just said it was not fit to hand over, which is #311 again"
+  _holds "$_v" VERDICT_NOFWD_RE "$NOFWD_RE" "$_nofwd" \
+    "lab/install-iso.sh never sees a box that claimed no card, on the one machine it exists to catch that on" \
+    "lab/install-iso.sh takes a box that forwards, or failed, for one with no card to forward on"
+  _holds "$_v" VERDICT_BAD_RE "$BAD_RE" "$_bad" \
+    "a box that failed its own checks is sent to the bootloader as one that never reached a verdict" \
+    "a box fit to hand over is reported as having failed its checks"
+done <<'EOF'
+  Prisma Routing ready.|y|n|n
+  Prisma Routing ready, with 2 warning(s) above.|y|n|n
+  Prisma Routing is installed and healthy, and has no interface to forward on:|y|y|n
+  3 check(s) failed. The box is NOT ready.|n|n|y
+EOF
+if [ "$verdicts_found" -ne 4 ]; then
   bad "only $verdicts_found of the four verdicts were found in appliance/selftest, so this check is asserting almost nothing"
+elif [ "$misread" -eq 0 ]; then
+  ok "all four verdicts the self-test can end with match VERDICT_RE, and VERDICT_OK_RE, VERDICT_NOFWD_RE and VERDICT_BAD_RE each pick out the ones their readers decide on"
 fi
 
 # AND IN ONE PLACE IN THAT FILE, which is the half the first version of this
@@ -4468,7 +4514,7 @@ fi
 #
 # It asked whether the lab knew each sentence SOMEWHERE, and the lab knew them
 # all - in the ordering assertion, which had just been fixed. Four hundred
-# lines below it a second reader went on grepping for "HexaRouting ready" to
+# lines below it a second reader went on grepping for "Prisma Routing ready" to
 # decide whether the installed box had come up at all, so a box that printed a
 # complete report was reported as a box that never booted, and the release gate
 # refused the medium a second time for the first time's reason.
@@ -4481,7 +4527,7 @@ fi
 # After both fixes there were still two readers spelling the old needle by
 # hand - lab/boot-iso.sh and tools/release-gate.sh - and they went on passing
 # for a reason that is luck rather than design: a LIVE medium takes the branch
-# where DPDK is off deliberately, so it ends with "HexaRouting ready." and the
+# where DPDK is off deliberately, so it ends with "Prisma Routing ready." and the
 # old needle matched. A live image that ever ended any other way would have
 # had the gate refuse the release and name the wrong cause.
 #
@@ -4634,7 +4680,7 @@ echo "=== and no check may have gone unseen: every message has a box ==="
 # by EVERY box, which is a check whose red form nothing has seen. This one
 # refuses a message printed by NO box, which is a whole branch nothing has
 # run - and the two are not the same thing. The vat2 constant showed up as
-# both; the hexash stub showed up only as this, because the line it hid
+# both; the prismash stub showed up only as this, because the line it hid
 # behind was printed by a handful of boxes and not by all of them.
 #
 # Swept by hand once, over 126 boxes, and seven branches of appliance/selftest

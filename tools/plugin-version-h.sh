@@ -12,13 +12,13 @@
 # is a number that does not get bumped, so this one is taken from the build.
 #
 # WHY it is the SAME STRING install.sh writes into
-# /usr/share/hexarouting/VERSION, byte for byte, rather than a spelling of its
+# /usr/share/prisma-routing/VERSION, byte for byte, rather than a spelling of its
 # own: `show version` compares the two and says when they disagree. Two
 # spellings of one truth compare unequal on a box that is perfectly fine, and
 # a warning that fires when nothing is wrong is a warning that gets ignored on
 # the day it means something. tools/version-stamp.sh is where that calculation
 # lives - "so there is one place", as that file puts it - and
-# HEXA_VERSION_STAMP is the same override install.sh honours.
+# PRISMA_VERSION_STAMP is the same override install.sh honours.
 #
 # WHY the caller may have to hand the stamp over instead. Measured on this
 # tree, the same repository read two ways:
@@ -42,8 +42,8 @@ set -eu
 REPO=${1:?usage: plugin-version-h.sh <repo> <header path>}
 OUT=${2:?usage: plugin-version-h.sh <repo> <header path>}
 
-if [ -n "${HEXA_VERSION_STAMP:-}" ]; then
-  stamp=$HEXA_VERSION_STAMP
+if [ -n "${PRISMA_VERSION_STAMP:-}" ]; then
+  stamp=$PRISMA_VERSION_STAMP
 else
   stamp=$(sh "$REPO/tools/version-stamp.sh" "$REPO")
 fi

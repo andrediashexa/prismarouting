@@ -118,7 +118,7 @@ worth its runtime:
      clause of a row built by concatenation, and with the rule on all three
      are read again TIGHTER - through the sentence after the marker, and
      through `concat_match`'s pair. The sixth is `(length {length}` in
-     hexash.py's prefix-range refusal, a row this product builds in FOUR
+     prismash.py's prefix-range refusal, a row this product builds in FOUR
      goes, where the final hole was swallowing `8, ge 24, le 16)` whole;
      no two strings account for that row, so it moved from the matched count
      to the printed skip list. That is the whole cost: one screen, and it was
@@ -200,16 +200,16 @@ import re
 import sys
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-sys.path.insert(0, os.path.join(REPO, "src", "hexash"))
-import hexash                                                    # noqa: E402
+sys.path.insert(0, os.path.join(REPO, "src", "prismash"))
+import prismash                                                    # noqa: E402
 import config as _config                                         # noqa: E402
 import routes as _routes                                         # noqa: E402
 import vppapi as _vppapi                                         # noqa: E402
 
-# The trees to read. `HEXA_WIKI` exists for one reason and it is the reason
+# The trees to read. `PRISMA_WIKI` exists for one reason and it is the reason
 # this file is trusted: pointed at the pages as they were before the sweep of
 # 2026-09-15, it names the stale screens out loud. A check that has only ever
-# been seen green has not been seen. `HEXA_DOCS` is the same door for the
+# been seen green has not been seen. `PRISMA_DOCS` is the same door for the
 # second tree.
 #
 # The floors are the size each tree had the day it was read, rounded down:
@@ -217,8 +217,8 @@ import vppapi as _vppapi                                         # noqa: E402
 # run that reads fewer than that is reading something else - an empty
 # checkout, the wrong directory - and every count it then prints is about
 # nothing.
-WIKI = os.environ.get("HEXA_WIKI") or os.path.join(REPO, "wiki")
-DOCS = os.environ.get("HEXA_DOCS") or os.path.join(REPO, "docs")
+WIKI = os.environ.get("PRISMA_WIKI") or os.path.join(REPO, "wiki")
+DOCS = os.environ.get("PRISMA_DOCS") or os.path.join(REPO, "docs")
 TREES = [("wiki", WIKI, 30, 50), ("docs", DOCS, 10, 40)]
 
 # A hole in a template: an interpolated value, whatever the language wrote it
@@ -571,10 +571,10 @@ def keep_rows(buckets, text, origin, slots=(), constant=None):
 # that describes it.
 import ast                                                       # noqa: E402
 
-PY_SOURCES = [os.path.join(REPO, "src", "hexash", n)
-              for n in sorted(os.listdir(os.path.join(REPO, "src", "hexash")))
+PY_SOURCES = [os.path.join(REPO, "src", "prismash", n)
+              for n in sorted(os.listdir(os.path.join(REPO, "src", "prismash")))
               if n.endswith(".py")]
-PY_SOURCES.append(os.path.join(REPO, "appliance", "hexarouting-tune"))
+PY_SOURCES.append(os.path.join(REPO, "appliance", "prisma-routing-tune"))
 
 
 def py_slot(node):
@@ -756,7 +756,7 @@ for path in PY_SOURCES:
                 if part is not node:
                     inner.add(id(part))
     # A string assigned to a module constant is a VALUE, not a printer -
-    # `CONFIG_PATH` at the top of hexash.py is the path two screens quote on
+    # `CONFIG_PATH` at the top of prismash.py is the path two screens quote on
     # a row of their own, and the skip list used to cite that line as "the
     # box's" as if it printed anything. The name is carried on the template
     # so the report can say what it is and find the printer that put it on
@@ -787,7 +787,7 @@ for path in PY_SOURCES:
 # than approximated, because the whole point of this file is that a fold which
 # is nearly right is what put ten screens on the wiki that nobody produced.
 
-SHELL_SOURCES = ["appliance/selftest", "appliance/hexarouting-install",
+SHELL_SOURCES = ["appliance/selftest", "appliance/prisma-routing-install",
                  "appliance/bind-dataplane-nic", "appliance/wait-for-vpp",
                  "appliance/apply-tuning"]
 
@@ -1203,7 +1203,7 @@ def say_unplaced(sh, unplaced):
     for vrf, why, stmts in unplaced:
         print(f"note: {len(stmts)} static route(s) in 'vrf {vrf}' were not "
               "checked for a reachable next hop")
-        hexash.print_prose(why)
+        prismash.print_prose(why)
         print(f"    first one: {stmts[0]}")
 
 
@@ -1232,23 +1232,23 @@ _CUT_DENIED = _CUT_RUNNING[:5] + [
 
 FINDINGS = [
     ("a route-map that is not defined", lambda sh: say_findings(
-        sh, hexash.route_map_reference_findings(BGP_RM))),
+        sh, prismash.route_map_reference_findings(BGP_RM))),
     ("a call to a route-map that is not defined", lambda sh: say_findings(
-        sh, hexash.route_map_reference_findings(
+        sh, prismash.route_map_reference_findings(
             ["route-map RM-X permit 10", " call RM-COMUNIDADES"]))),
     ("an eBGP session with no maximum-prefix", lambda sh: say_findings(
-        sh, hexash.max_prefix_findings(
+        sh, prismash.max_prefix_findings(
             ["router bgp 65001", " neighbor 200.150.0.2 remote-as 65002"]))),
     ("a permit with no match", lambda sh: say_findings(
-        sh, hexash.route_map_findings(
+        sh, prismash.route_map_findings(
             ["route-map RM-TRANSITO-OUT permit 20"]))),
     ("an AS-path list that is not defined", lambda sh: say_findings(
         sh, [("warning", stmt, why) for stmt, why
-             in hexash.undefined_policy_lists(
+             in prismash.undefined_policy_lists(
                  ["route-map RM-X permit 10",
                   " match as-path AS-CLIENTES"])])),
     ("a pool nothing announces", lambda sh: say_announce(
-        sh, hexash.pool_announce_findings(
+        sh, prismash.pool_announce_findings(
             ["router bgp 65001", " address-family ipv4 unicast"],
             {"clientes": POOL}))),
     # A neighbour written with the name the DATAPLANE reports rather than the
@@ -1256,7 +1256,7 @@ FINDINGS = [
     # joined Linux-side names, and an f-string - so no pair of strings accounts
     # for the row and the template side cannot reach it. Driving can.
     ("a neighbour named by the dataplane's own name", lambda sh: say_findings(
-        sh, hexash.bgp_errors(
+        sh, prismash.bgp_errors(
             ["router bgp 65001",
              " neighbor host-veth-vpp interface remote-as external"],
             have_interfaces={"host-veth-vpp", "vppwan0"},
@@ -1267,7 +1267,7 @@ FINDINGS = [
     # against 40 - so the row is under LITERAL_SHARE and no template may have
     # it. The statement is the operator's, as everywhere here.
     ("an AS-path regex that does not compile", lambda sh: say_findings(
-        sh, [("error", _AS_BAD, hexash.as_path_regex_error(_AS_BAD))])),
+        sh, [("error", _AS_BAD, prismash.as_path_regex_error(_AS_BAD))])),
     # A prefix-list entry whose range does not hold. The sentence is built
     # in pieces under an `if` - `(length {}` and then `, ge {}` and `, le
     # {}` as they apply - so its template ends in a hole and no tiling
@@ -1275,7 +1275,7 @@ FINDINGS = [
     # two-row quote of it is either the box's fold or a hand one, and only
     # driving says which.
     ("a prefix range that does not hold", lambda sh: say_findings(
-        sh, [("error", _PL_BAD, hexash.prefix_range_error(_PL_BAD))])),
+        sh, [("error", _PL_BAD, prismash.prefix_range_error(_PL_BAD))])),
     # The two boxes of an HA pair mapping subscribers differently. Two
     # statements under one reason, which is why it has a printer of its own.
     ("a peer that maps subscribers differently", lambda sh: sh.say_divergence(
@@ -1285,23 +1285,23 @@ FINDINGS = [
     # it. The headline is `f"{pfx}: {why}"`, two literal characters, so the
     # corpus refuses it entry and only driving reaches these.
     ("this change stops originating the session's prefix",
-     lambda sh: say_cutoff(sh, hexash.session_cut_findings(
+     lambda sh: say_cutoff(sh, prismash.session_cut_findings(
          _CUT_RUNNING, _CUT_GONE, "200.150.0.7"))),
     ("no neighbour would be sent the session's prefix",
-     lambda sh: say_cutoff(sh, hexash.session_cut_findings(
+     lambda sh: say_cutoff(sh, prismash.session_cut_findings(
          _CUT_RUNNING, _CUT_DENIED, "200.150.0.7"))),
     # The same refusal with the addresses docs/routing.md quotes it with. The
     # words are the product's either way; what a second run buys is the row
     # character for character on the page that carries these values.
     ("no neighbour would be sent the session's prefix, as docs/ quotes it",
-     lambda sh: say_cutoff(sh, hexash.session_cut_findings(
+     lambda sh: say_cutoff(sh, prismash.session_cut_findings(
          _DOC_RUNNING, _DOC_DENIED, "203.0.115.9"))),
     # A static route in a VRF FRR reports no table for. `{}` for the tables
     # is the answer FRR gives before the VRF exists, and the note is the
     # product's way of saying the check did not run rather than passing it.
     ("a VRF static route whose table FRR cannot find",
      lambda sh: say_unplaced(sh, _routes.unreachable_next_hops(
-         _VRF_ROUTE, {}, hexash.block_paths(_VRF_ROUTE), {})[1])),
+         _VRF_ROUTE, {}, prismash.block_paths(_VRF_ROUTE), {})[1])),
     # Three refusals whose sentence is the DATAPLANE's, driven through the
     # product's own client with a canned return code and log line. `cgnat
     # session-table: {}` is thirteen percent literal and `pool '{}': {}` is
@@ -1314,7 +1314,7 @@ FINDINGS = [
             "cgnat session-table buckets 1024 memory 64")),
     ("a pool the dataplane refused, named", lambda sh: _pool_refused(sh)),
     # The revert that could not be armed: `arm_confirm` with the store
-    # raising EACCES on /etc/hexarouting, which is the whole of what the
+    # raising EACCES on /etc/prisma-routing, which is the whole of what the
     # page's six rows say. Row 2 is the path and the reason on a row of its
     # own (#252), and it fits no template because it is all value.
     ("a revert that could not be armed on the box",
@@ -1372,7 +1372,7 @@ _VRF_ROUTE = ["vrf green", " ip route 10.55.0.0/16 172.31.99.1", "exit-vrf"]
 # characters out of thirty-seven and `pool '{name}': {why}` is two. Neither
 # will ever be reached by a template - `diverges` says why - so either they
 # are driven or they stay on the wiki with nothing reading them.
-# test_hexash_apply.py owns what a refusal at APPLY time does; this is the
+# test_prismash_apply.py owns what a refusal at APPLY time does; this is the
 # check that runs before it, and it sends nothing.
 class _Api:
     def available(self):
@@ -1387,7 +1387,7 @@ class _Api:
 
 def _a_box(sh, daemons):
     sh.api = _Api()
-    sh.dp = type("Dp", (hexash.Vpp,), {
+    sh.dp = type("Dp", (prismash.Vpp,), {
         "TRACE": False,
         "__init__": lambda self: None,
         "run": lambda self, cmd: (0, ""),
@@ -1395,7 +1395,7 @@ def _a_box(sh, daemons):
     # Derived from the real Frr so that `daemons()` is the product's own
     # parser over the product's own `show daemons` answer, which is the half
     # of that screen this file is reading.
-    sh.frr = type("Frr", (hexash.Frr,), {
+    sh.frr = type("Frr", (prismash.Frr,), {
         "available": lambda self: daemons is not None,
         "show": lambda self, cmd: ((0, daemons) if "daemons" in cmd
                                    else (1, "")),
@@ -1404,9 +1404,9 @@ def _a_box(sh, daemons):
 
 
 def a_shell(setup):
-    sh = hexash.Shell()
-    caps = setup.get("caps", {hexash.CAP_ALL, hexash.CAP_CGNAT})
-    sh.caps = {hexash.CAP_CGNAT} if caps == {"cgnat"} else caps
+    sh = prismash.Shell()
+    caps = setup.get("caps", {prismash.CAP_ALL, prismash.CAP_CGNAT})
+    sh.caps = {prismash.CAP_CGNAT} if caps == {"cgnat"} else caps
     sh.mode = setup.get("mode", "config")
     sh.candidate = _config.Config()
     if "nics" in setup:
@@ -1465,18 +1465,18 @@ def _pool_refused(sh):
     sh.err_dataplane(f"pool 'client-bad': {r.reason}")
 
 
-_HEXASH = os.path.join(REPO, "src", "hexash", "hexash.py")
-check(_POOL_REFUSAL in io.open(_HEXASH, encoding="utf-8").read(),
-      f"the pool refusal driven here is not the line hexash.py prints: "
-      f"{_POOL_REFUSAL!r} is not in src/hexash/hexash.py")
+_PRISMASH = os.path.join(REPO, "src", "prismash", "prismash.py")
+check(_POOL_REFUSAL in io.open(_PRISMASH, encoding="utf-8").read(),
+      f"the pool refusal driven here is not the line prismash.py prints: "
+      f"{_POOL_REFUSAL!r} is not in src/prismash/prismash.py")
 
 
 class _NoStore:
     """The confirm store on a directory this account cannot write."""
-    path = "/etc/hexarouting/confirm-pending"
+    path = "/etc/prisma-routing/confirm-pending"
 
     def arm(self, deadline, backup, minutes):
-        raise OSError(errno.EACCES, "Permission denied", "/etc/hexarouting")
+        raise OSError(errno.EACCES, "Permission denied", "/etc/prisma-routing")
 
 
 def _no_store(sh):
@@ -1497,16 +1497,16 @@ def _load(sh, text, running=""):
     _a_box(sh, "zebra staticd mgmtd bgpd")
     if running:
         sh.running_config = lambda: _config.Config.parse(running)
-    path = hexash.CONFIG_PATH
+    path = prismash.CONFIG_PATH
     exists, real_open = os.path.exists, open
-    hexash.os.path.exists = lambda p: p == path or exists(p)
-    hexash.open = (lambda p, *a, **k: io.StringIO(text) if p == path
+    prismash.os.path.exists = lambda p: p == path or exists(p)
+    prismash.open = (lambda p, *a, **k: io.StringIO(text) if p == path
                    else real_open(p, *a, **k))
     try:
         sh.load(path)
     finally:
-        hexash.os.path.exists = exists
-        del hexash.open
+        prismash.os.path.exists = exists
+        del prismash.open
 
 
 def drive(setup, lines):
@@ -1622,7 +1622,7 @@ def verdict_template(row):
     template is what comes AFTER the marker; the self-test's `bad` puts the
     marker in the string. Both spellings are tried, and the sentence-only one
     is tried against every bucket because a refusal written down in one place
-    and printed in another - `system.py` returns this one and `hexash.py`
+    and printed in another - `system.py` returns this one and `prismash.py`
     prints it - is not an emitter call anything can follow.
     """
     got = row_template(row)
@@ -1733,12 +1733,12 @@ def prose_group(rows, i):
             # the tuner's answer. Either one has to reproduce the page exactly
             # - it is still the fold being checked and not waved past.
             if t.match(para) and want in (
-                    hexash.console_prose(para, " " * ind), shell):
+                    prismash.console_prose(para, " " * ind), shell):
                 out.append((k - i + 1, Fill(t, para)))
         for sind, t in SPROSE:
             if sind == ind and t.match(para) and shell == want:
                 out.append((k - i + 1, Fill(t, para)))
-        if want in (hexash.console_prose(para, " " * ind), shell):
+        if want in (prismash.console_prose(para, " " * ind), shell):
             pair = concat_match(para)
             if pair:
                 out.append((k - i + 1, pair[0], pair[1]))
@@ -1761,7 +1761,7 @@ def marked_prose(rows):
     out = []
     for k in range(len(rows)):
         para = " ".join([head] + [r.strip() for r in rows[1:k + 1]])
-        folded = hexash.console_prose(para, wide)
+        folded = prismash.console_prose(para, wide)
         if len(folded) != k + 1 or folded[0].strip() != head:
             continue
         under = [r.strip() for r in folded[1:]]
@@ -1883,7 +1883,7 @@ def printed_whole(row, near=()):
     as a matcher - it accepts every row anybody writes - but as the account
     of a row it is the right one: the path IS the row, and the printer is
     where to go and read. Two holes at most, because `%s %s %s %s` is a
-    table row and not a value. There are twenty such printers in hexash.py,
+    table row and not a value. There are twenty such printers in prismash.py,
     so the one written within a few lines of a string already accounting
     for this screen is the one cited, and the most literal of those: the
     `    line {}: {}` under the verdict printed the row under the verdict,
@@ -2342,7 +2342,7 @@ skipped = []
 findings = []
 spaced = []                             # accepted holes holding whitespace
 
-# The ceiling, in the idiom test_hexash_refusals.py argues for: what is left
+# The ceiling, in the idiom test_prismash_refusals.py argues for: what is left
 # is NAMED on every run and the number it may not exceed is written down,
 # because an allowlist is read once and grown forever. These four are the
 # accepted matches that still lean on a hole holding more than one word.

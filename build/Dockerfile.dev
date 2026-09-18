@@ -1,4 +1,4 @@
-# Ambiente de build do hexarouting. Versao do VPP fixada de proposito:
+# Ambiente de build do Prisma Routing. Versao do VPP fixada de proposito:
 # o dataplane e sensivel a mudanca de API entre releases.
 FROM debian:12
 

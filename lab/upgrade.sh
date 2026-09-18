@@ -11,14 +11,14 @@
 # them puts one version on top of another, and five places in the product
 # assert that doing so is safe.
 #
-# What it costs to be wrong is at the next boot. hexarouting.service runs
+# What it costs to be wrong is at the next boot. prisma-routing.service runs
 #
-#   ExecStart=/usr/bin/hexash --load /etc/hexarouting/hexarouting.conf
+#   ExecStart=/usr/bin/prismash --load /etc/prisma-routing/prisma-routing.conf
 #
-# and `--load` refuses the file WHOLE - deliberately, and src/hexash/config.py
+# and `--load` refuses the file WHOLE - deliberately, and src/prismash/config.py
 # argues for it at length: a file applied minus the one line this VTY cannot
 # hold is a box whose running configuration silently differs from its own
-# file. The consequence is the sentence at src/hexash/config.py:1107, "the box
+# file. The consequence is the sentence at src/prismash/config.py:1107, "the box
 # then comes up with no pools, no addresses and no pair at all". So one
 # statement the new grammar stopped accepting does not degrade an upgraded
 # box. It unconfigures it, at a boot nobody is watching, on a machine carrying
@@ -115,7 +115,7 @@
 #      an argument for SAYING SO, which is acceptance item 3 of #291.
 #
 #      AND IT NOW SAYS SO. The installer used to close every run with a first
-#      install's sentence, "Installed. Adjust /etc/hexarouting/tune.env and
+#      install's sentence, "Installed. Adjust /etc/prisma-routing/tune.env and
 #      reboot so that isolcpus and hugepages take effect.", which an operator
 #      who tuned the box a year ago reads as "nothing to do". It reads the
 #      version stamp before it overwrites it, and on a root that already had
@@ -157,12 +157,12 @@
 #
 # NO-OFF-RUN: the feature here is that a released configuration survives an
 # upgrade, and its opposite is a new tree that lost a statement - an edit to
-# src/hexash/config.py, not an argument to a shell script.
+# src/prismash/config.py, not an argument to a shell script.
 #
 # Every other lab's off run switches off the FEATURE the lab is about, and the
 # feature here is "a released configuration survives an upgrade". Its opposite
 # is not a mode of this file: it is a NEW TREE THAT LOST A STATEMENT, which is
-# an edit to src/hexash/config.py and not an argument to a shell script. So
+# an edit to src/prismash/config.py and not an argument to a shell script. So
 # there is no OFF-RED-AT-LEAST header, because there is no off run to have
 # measured one from. The mutations each assertion was shown failing under are
 # recorded in the commit for #291 instead; the named one is removing the
@@ -199,7 +199,7 @@
 # have not been applied yet. A normal boot survives it because FRR has already
 # read the route out of its own frr.conf, so `routing_changed` is false and
 # the check never runs. Which means a box is one lost frr.conf - or one
-# ordering change between frr.service and hexarouting.service - away from
+# ordering change between frr.service and prisma-routing.service - away from
 # refusing its entire configuration for a static route that is correct.
 #
 # That was filed as #294 and fixed, and section 6 now ASSERTS it rather than
@@ -215,14 +215,14 @@ set -u
 OLD_TAG=${1:-v0.68.0}
 OLD=/tmp/old-tree
 CACHE=/src/.build-old/$OLD_TAG
-HX=/usr/bin/hexash   # the INSTALLED VTY, deliberately: see section 2
+HX=/usr/bin/prismash   # the INSTALLED VTY, deliberately: see section 2
 PLUGIN_DIR=/usr/lib/x86_64-linux-gnu/vpp_plugins
 VAT2_DIR=/usr/lib/x86_64-linux-gnu/vat2_plugins
-CONF=/etc/hexarouting/hexarouting.conf
-TRAIL=/var/log/hexarouting/config-history.log
+CONF=/etc/prisma-routing/prisma-routing.conf
+TRAIL=/var/log/prisma-routing/config-history.log
 
-mkdir -p /run/vpp /vpp_plugins /vat2_plugins /var/log/hexarouting \
-         /etc/hexarouting /var/run/frr /etc/frr
+mkdir -p /run/vpp /vpp_plugins /vat2_plugins /var/log/prisma-routing \
+         /etc/prisma-routing /var/run/frr /etc/frr
 
 # A fixture that could not be built, said in the words tools/run-all-labs.sh
 # buckets separately. Reached only before anything has been measured, which is
@@ -340,17 +340,17 @@ echo "  plugin builds: $OLD_TAG is $OLD_SO_SUM, this tree is $NEW_SO_SUM"
 [ "$OLD_SO_SUM" = "$NEW_SO_SUM" ] && echo "  WARNING: the two builds are byte" \
   "for byte the same plugin"
 
-# The released install, run as the release shipped it. HEXA_VERSION_STAMP
+# The released install, run as the release shipped it. PRISMA_VERSION_STAMP
 # because the extracted tree has no .git and tools/version-stamp.sh would
 # stamp it "0.68.0 (not a git tree)" - true of the extraction and not of the
 # release, and this box's own version is a reading section 4 compares.
-if ! HEXA_VERSION_STAMP="${OLD_TAG#v}" sh "$OLD/appliance/install.sh" \
+if ! PRISMA_VERSION_STAMP="${OLD_TAG#v}" sh "$OLD/appliance/install.sh" \
      > /tmp/old-install.log 2>&1; then
   give_up "${OLD_TAG}'s installer ran" \
     "the released install.sh failed on this machine:" \
     "$(tail -5 /tmp/old-install.log 2>/dev/null | sed 's/^/  | /')"
 fi
-OLD_STAMP=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
+OLD_STAMP=$(cat /usr/share/prisma-routing/VERSION 2>/dev/null || echo "")
 OLD_INSTALLED_SUM=$(sha256sum "$PLUGIN_DIR/bpa_plugin.so" 2>/dev/null | cut -c1-16)
 # Read NOW, and not at the verdict. A precondition about what the OLD
 # installer did has to be taken before the new one runs: the first version of
@@ -363,7 +363,7 @@ OLD_VAT2_BUILT=$(sha256sum "$OLD/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa
                  2>/dev/null | cut -c1-16)
 echo "  installed: version stamp '$OLD_STAMP', plugin $OLD_INSTALLED_SUM"
 
-printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
+printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
 chown -R frr:frr /var/run/frr /etc/frr 2>/dev/null
 start_frr
 
@@ -403,10 +403,10 @@ SAID=/tmp/old-vty-said.txt
 : > "$SAID"
 
 echo "=========== 2. an operator configures the box ==========="
-# Through /usr/bin/hexash, which is the launcher the INSTALL put on the box,
-# reading /usr/lib/hexarouting/hexash.py. Every other lab runs
-# "python3 /src/src/hexash/hexash.py" from the source tree, and that is
-# exactly the shape lab/lib.sh's use_binary_api() was written against: hexash
+# Through /usr/bin/prismash, which is the launcher the INSTALL put on the box,
+# reading /usr/lib/prisma-routing/prismash.py. Every other lab runs
+# "python3 /src/src/prismash/prismash.py" from the source tree, and that is
+# exactly the shape lab/lib.sh's use_binary_api() was written against: prismash
 # had never been started from its installed location, so a missing config.py
 # reached every ISO. Here it would be worse - the whole subject of this lab is
 # which build is on the box, and driving the source tree would drive the NEW
@@ -553,7 +553,7 @@ sh /src/appliance/install.sh > /tmp/new-install.log 2>&1 || {
 # half that was already there and hide the half this lab is holding.
 NEW_INSTALL_SAID=$(cat /tmp/new-install.log)
 sed -n '/^==> documentation/,$p' /tmp/new-install.log | sed 's/^/  | /'
-NEW_STAMP=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
+NEW_STAMP=$(cat /usr/share/prisma-routing/VERSION 2>/dev/null || echo "")
 NEW_INSTALLED_SUM=$(sha256sum "$PLUGIN_DIR/bpa_plugin.so" 2>/dev/null | cut -c1-16)
 AFTER_SUM=$(sha256sum "$CONF" 2>/dev/null | cut -d' ' -f1)
 echo "  version stamp: '$OLD_STAMP' -> '$NEW_STAMP'"
@@ -640,8 +640,8 @@ printf '%s\n' "$SPLIT_ADD" | sed 's/^/    /'
 echo
 echo "=========== 6. the boot ==========="
 echo "the dataplane restarted - BY THIS LAB, which is the step install.sh"
-echo "does not take - and then the one command hexarouting.service runs:"
-echo "  hexash --load $CONF"
+echo "does not take - and then the one command prisma-routing.service runs:"
+echo "  prismash --load $CONF"
 echo "with the file the OLD version wrote, untouched. This is the assertion"
 echo "the whole lab exists for: it is accepted WHOLE, or the box comes up"
 echo "with nothing on it."
@@ -690,7 +690,7 @@ while pgrep -f '/usr/lib/frr/' >/dev/null 2>&1 && [ "$n" -lt 15 ]; do
   sleep 1; n=$((n + 1))
 done
 : > /etc/frr/frr.conf
-printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
+printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
 chown -R frr:frr /var/run/frr /etc/frr 2>/dev/null
 start_frr
 # READ, not assumed. A reset that left the route in place would make the
@@ -745,7 +745,7 @@ printf '%s\n' "$ANSWER_TRACE" | sed 's/^/  /'
 
 echo
 echo "=========== 9. the old version's rollback revisions ==========="
-echo "written by ${OLD_TAG}'s VTY, into /etc/hexarouting/rollback, and read"
+echo "written by ${OLD_TAG}'s VTY, into /etc/prisma-routing/rollback, and read"
 echo "here by this tree's. A store the new version cannot read is a box with"
 echo "no way back, discovered in the maintenance window where somebody needs"
 echo "one."
@@ -822,13 +822,13 @@ expect_not_said "and not over a next hop its own address makes reachable" \
   "this next hop is on no connected network" "$LOAD"
 
 # The upgrade must not have touched the operator's file. install.sh creates
-# hexarouting.conf only when it is absent, and this is what says so on a box
+# prisma-routing.conf only when it is absent, and this is what says so on a box
 # that HAS one - the case a first install never reaches.
 expect "the upgrade left the saved configuration byte for byte" \
   test "$SAVED_SUM" = "$AFTER_SUM"
 # Two halves, and the first one had to be added after a mutation walked
 # through it. An installer that skipped the stamp entirely left
-# /usr/share/hexarouting/VERSION empty, and "the stamp changed" was GREEN for
+# /usr/share/prisma-routing/VERSION empty, and "the stamp changed" was GREEN for
 # a box that had stopped stating a version at all - a box in that state is one
 # nobody on the phone can identify.
 expect "the box still states a version after the upgrade" test -n "$NEW_STAMP"
@@ -859,7 +859,7 @@ expect_said "and the build that is on it now: $NEW_STAMP" \
 # The defect itself. Until #291 item 3 this ran over a configured, tuned,
 # production-shaped box and closed by telling the operator to go and tune it.
 expect_not_said "and did not close with a first install's sentence" \
-  "Adjust /etc/hexarouting/tune.env and reboot so that isolcpus and \
+  "Adjust /etc/prisma-routing/tune.env and reboot so that isolcpus and \
 hugepages take effect." "$NEW_INSTALL_SAID"
 # This container has no systemd, so install.sh takes the offline arm of its
 # own branch and must not describe services out of a root it did not write.

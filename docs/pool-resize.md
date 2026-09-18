@@ -1,4 +1,4 @@
-# HexaRouting — Changing a pool that is carrying traffic
+# Prisma Routing - Changing a pool that is carrying traffic
 
 ## TL;DR
 

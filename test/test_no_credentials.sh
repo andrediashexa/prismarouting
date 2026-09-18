@@ -15,7 +15,7 @@
 # a shell script over a directory, and this suite drives THAT script - the one
 # the build calls, not a copy of its logic - against fake roots in
 # milliseconds. It is the same argument test/test_installer.sh makes for
-# HEXA_INSTALL_CHECK.
+# PRISMA_INSTALL_CHECK.
 #
 # A fast check on its own is not enough, and the failure it would have is
 # specific: it stays green on a build that ships the file anyway, because it
@@ -53,7 +53,7 @@ clean_root() {  # -> prints the path to a fresh clean root
   # The real thing, not a stand-in: the installer describes the answer-file
   # format at length and the medium carries it. If the content rule were loose
   # enough to call the installer an answer file, the build could never pass.
-  cp "$REPO/appliance/hexarouting-install" "$_r/usr/sbin/"
+  cp "$REPO/appliance/prisma-routing-install" "$_r/usr/sbin/"
   cp "$REPO/appliance/install-from-cmdline" "$_r/usr/sbin/"
   cp "$REPO/docs/appliance.md" "$_r/root/"
   printf '%s\n' "$_r"
@@ -93,13 +93,13 @@ case "$OUT" in
 esac
 
 R=$(clean_root)
-: > "$R/hexarouting.answers"
-run 1 "an EMPTY hexarouting.answers: refused on its name alone" "$R"
+: > "$R/prisma-routing.answers"
+run 1 "an EMPTY prisma-routing.answers: refused on its name alone" "$R"
 
 R=$(clean_root)
 mkdir -p "$R/run/live/medium"
 printf 'disk = /dev/vda\npassword = hunter2\nyes = 1\n' \
-  > "$R/run/live/medium/hexarouting.answers"
+  > "$R/run/live/medium/prisma-routing.answers"
 run 1 "the default path the medium is read from" "$R"
 
 # The one that matters most: a real answer file, in the format the installer
@@ -110,7 +110,7 @@ printf '# built by the release script\n\nhostname = cgnat01\ntimezone = America/
   > "$R/var/lib/hexa/install.conf"
 run 1 "a file the installer would parse, under any name at all" "$R"
 case "$OUT" in
-  *HEXA_ANSWERS*) ok "and it says why: HEXA_ANSWERS on that path installs from it" ;;
+  *PRISMA_ANSWERS*) ok "and it says why: PRISMA_ANSWERS on that path installs from it" ;;
   *) bad "the refusal does not explain what makes it an answer file: $OUT" ;;
 esac
 
@@ -125,10 +125,10 @@ esac
 echo
 echo "=== and what is NOT an answer file, which is most of the repository ==="
 R=$(clean_root)
-mkdir -p "$R/etc/hexarouting"
+mkdir -p "$R/etc/prisma-routing"
 # Shell that assigns some of the same names among other lines. Every appliance
 # script does this; a rule that fired on it would be switched off within a week.
-cat > "$R/etc/hexarouting/tune.env" <<'ENV'
+cat > "$R/etc/prisma-routing/tune.env" <<'ENV'
 # tuning
 hostname=$(cat /etc/hostname)
 disk=/dev/vda
@@ -180,7 +180,7 @@ echo "=== the two lists that MUST agree ==="
 # ship, and the whole content rule would be silently one key short.
 # The case arms of read_answers(), at their own indentation: the nested arms
 # that parse the "yes" value sit deeper, and the "*)" default is not a key.
-inst=$(sed -n '/^read_answers()/,/^}/p' "$REPO/appliance/hexarouting-install" \
+inst=$(sed -n '/^read_answers()/,/^}/p' "$REPO/appliance/prisma-routing-install" \
        | sed -n 's/^      \([a-z][a-z-]*\)).*/\1/p' \
        | sort -u | tr '\n' ' ')
 chk=$(sed -n "s/^ANSWER_KEYS='\(.*\)'$/\1/p" "$CHECK" | tr '|' '\n' | sort -u \
@@ -214,7 +214,7 @@ else
 fi
 if [ -z "$n_iso" ]; then
   bad "build-iso.sh never checks the ISO tree, which is the medium's root -"
-  echo "        the path 'hexarouting.answers' reads with no argument"
+  echo "        the path 'prisma-routing.answers' reads with no argument"
 elif [ -z "$n_rescue" ]; then
   bad "could not find the grub-mkrescue line in build-iso.sh"
 elif [ "$n_iso" -lt "$n_rescue" ]; then
@@ -236,8 +236,8 @@ else
         from the release would share one, and its private half is in the
         download"
 fi
-if grep -q 'ssh-keygen -A' "$REPO/appliance/hexarouting-install"; then
-  ok "and hexarouting-install generates this box's own set"
+if grep -q 'ssh-keygen -A' "$REPO/appliance/prisma-routing-install"; then
+  ok "and prisma-routing-install generates this box's own set"
 else
   bad "nothing generates host keys on the target, so an installed box would
         have none and sshd would not start"

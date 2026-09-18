@@ -5,7 +5,7 @@
 # losing one natEvent 17 recreates the gap that makes a court order name the
 # wrong subscriber. Here they have to go to disk and come back on reconnect.
 set -u
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -19,7 +19,7 @@ ip netns exec peer ip link set lo up
 ip netns exec peer ip link set veth-out up
 ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
 
-# hexash reaches the dataplane over the binary API, and this lab now drives it
+# prismash reaches the dataplane over the binary API, and this lab now drives it
 # to reload a saved configuration. Placed where vat2 looks, which is where a
 # correctly installed box has it - see
 # https://github.com/andrediashexa/hexarouting/issues/119, where it turned out
@@ -37,7 +37,7 @@ vppctl set interface state host-veth-vpp up
 # the box creates it, through the VTY over the binary API, rather than with
 # `vppctl lcp create` (#182). While that line was here, this lab proved a
 # transport that worked only on a box somebody had paired by hand.
-python3 /src/src/hexash/hexash.py -c "configure" \
+python3 /src/src/prismash/prismash.py -c "configure" \
     -c "interface host-veth-vpp" -c "linux-name vppmgmt0" \
     -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 vppctl set interface mtu 1500 host-veth-vpp
@@ -88,7 +88,7 @@ sleep 8
 # never showed anything, so the diagnosis came out empty in exactly the phase
 # that kills the collector.
 vppctl show bpa logging | grep -E "collector|spill|pending" | sed 's/^/  /'
-ls -l /var/log/hexarouting/ipfix-spill.bin 2>/dev/null | sed 's/^/  /' || echo "  (nothing on disk yet: the in-memory buffer still fits it)"
+ls -l /var/log/prisma-routing/ipfix-spill.bin 2>/dev/null | sed 's/^/  /' || echo "  (nothing on disk yet: the in-memory buffer still fits it)"
 
 echo
 echo "=========== PHASE 3: collector comes back ==========="
@@ -146,7 +146,7 @@ expect_not_in "the exporter really went away first" "10.0.0.2" \
   "$(vppctl show bpa logging)"
 echo "  the saved configuration being reloaded:"
 sed 's/^/    /' /tmp/logging.conf
-python3 /src/src/hexash/hexash.py --load /tmp/logging.conf > /tmp/reload.log 2>&1
+python3 /src/src/prismash/prismash.py --load /tmp/logging.conf > /tmp/reload.log 2>&1
 sed 's/^/    reload: /' /tmp/reload.log
 expect_in "reloading the saved configuration brought the collector back" \
   "10.0.0.2:4740" "$(vppctl show bpa logging)"
@@ -157,7 +157,7 @@ expect_in "reloading the saved configuration brought the collector back" \
 # left to be discovered, because it is a real consequence of the pair having
 # moved into the product: while `vppctl lcp create` made it, no reload could
 # touch it. The fragment above is deliberately a slice, one grep of the logging
-# lines; hexarouting.service reloads the whole saved file, which names the pair
+# lines; prisma-routing.service reloads the whole saved file, which names the pair
 # and therefore keeps it.
 expect_not_in "and a file that does not name the pair takes the pair down" \
   "vppmgmt0" "$(vppctl show lcp)"

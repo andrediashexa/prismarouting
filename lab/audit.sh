@@ -21,7 +21,7 @@
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 MODE=${1:-on}
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -54,7 +54,7 @@ echo "=== a change through the VTY, which knows who is asking ==="
 # identity travelled with the request" from "the box wrote down whoever it
 # happened to be running as".
 use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 if [ "$MODE" = off ]; then
   echo "  MODE=off: the VTY sends no identity. Every check below that names an"
   echo "  operator MUST fail."
@@ -64,7 +64,7 @@ else
 fi
 env $HX_ENV $HX -c "configure" -c "cgnat pool provider-b" \
     -c "max-sessions 4000" -c "exit" -c "commit" 2>&1 | tail -2 | sed 's/^/  /'
-VTY_LINE=$(grep "limits pool provider-b" /var/log/hexarouting/config-history.log | tail -1)
+VTY_LINE=$(grep "limits pool provider-b" /var/log/prisma-routing/config-history.log | tail -1)
 printf '%s\n' "$VTY_LINE" | sed 's/^/  /'
 
 echo
@@ -72,7 +72,7 @@ echo "=== and one typed at the VPP CLI, which does not ==="
 # There is no session to ask, so there is no operator to name. The line has to
 # say that rather than leave the field off.
 vppctl bpa limits provider-b max-sessions 5000 >/dev/null
-CLI_LINE=$(grep "limits pool provider-b" /var/log/hexarouting/config-history.log | tail -1)
+CLI_LINE=$(grep "limits pool provider-b" /var/log/prisma-routing/config-history.log | tail -1)
 printf '%s\n' "$CLI_LINE" | sed 's/^/  /'
 
 echo
@@ -89,7 +89,7 @@ echo "=== an API client that sends no identity ==="
 vat2 bpa_limits_set \
   '{"name":"provider-b","max_sessions":6000,"max_rate":0,"audit_user":"","audit_uid":0}' \
   2>&1 | sed 's/^/  /'
-BARE_LINE=$(grep "limits pool provider-b" /var/log/hexarouting/config-history.log | tail -1)
+BARE_LINE=$(grep "limits pool provider-b" /var/log/prisma-routing/config-history.log | tail -1)
 printf '%s\n' "$BARE_LINE" | sed 's/^/  /'
 
 echo
@@ -100,7 +100,7 @@ echo "=== attaching CGNAT to an interface (#124) ==="
 # Until #124 the attach went through the binary API with no identity on the
 # message at all, and the trail did not mention it: the box could stop
 # translating with nobody's name against the change.
-LOG=/var/log/hexarouting/config-history.log
+LOG=/var/log/prisma-routing/config-history.log
 vppctl create loopback interface >/dev/null
 echo "  the trail before the attach:"
 echo "    interface entries: $(grep -c 'interface loop0' $LOG)"
@@ -131,14 +131,14 @@ vppctl show bpa pool history | sed 's/^/  /'
 
 echo
 echo "=== the file on disk (append-only, with fsync) ==="
-ls -l /var/log/hexarouting/config-history.log | sed 's/^/  /'
+ls -l /var/log/prisma-routing/config-history.log | sed 's/^/  /'
 echo
 echo "=== the question the trail answers ==="
 echo "  'what block did provider-a use before the last change?'"
-grep "add pool provider-a" /var/log/hexarouting/config-history.log \
+grep "add pool provider-a" /var/log/prisma-routing/config-history.log \
   | head -1 | grep -oE "block [0-9]+" | sed 's/^/    /'
 echo "  'e agora?'"
-grep "add pool provider-a" /var/log/hexarouting/config-history.log \
+grep "add pool provider-a" /var/log/prisma-routing/config-history.log \
   | tail -1 | grep -oE "block [0-9]+" | sed 's/^/    /'
 echo
 echo "  Without the trail, the current formula would answer with block 1024 for"
@@ -152,7 +152,7 @@ vppctl show logging | grep -c "pool provider" | sed 's/^/  lines: /'
 
 echo
 echo "=========== the chain (#22) ==========="
-TRAIL=/var/log/hexarouting/config-history.log
+TRAIL=/var/log/prisma-routing/config-history.log
 CLEAN=$(vppctl show bpa pool history verify)
 printf '%s\n' "$CLEAN" | sed 's/^/  /'
 
@@ -225,7 +225,7 @@ H=$(vppctl show bpa pool history)
 expect_in "an add was recorded" "add pool provider-a" "$H"
 expect_in "a del was recorded" "del pool provider-a" "$H"
 expect_in "entries are dated in UTC" "Z add" "$H"
-expect "the trail survives on disk" test -s /var/log/hexarouting/config-history.log
+expect "the trail survives on disk" test -s /var/log/prisma-routing/config-history.log
 
 # --- who changed it (#34) ---
 #

@@ -23,7 +23,7 @@ set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 MODE=${1:-on}
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -168,7 +168,7 @@ expect_in "the VRF is in the running configuration" " vrf 1" "$CONF"
 # commit that does the move without the addresses: it fails by construction
 # if nothing re-applies them.
 use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 vppctl create packet-generator interface pg9 >/dev/null
 vppctl set interface state pg9 up
 
