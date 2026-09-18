@@ -115,6 +115,24 @@ main (void)
   CHECK (n && strstr (line, "od\\]d\\\"one") != 0,
 	 "escaped where it stands: %s", line);
 
+  printf ("\n--- the boot marker, in the same grammar as a block line ---\n");
+  n = bpa_syslog_marker_line (line, sizeof (line), WALL, 1789600000.0,
+			      "cgnat-sp-01", 44444, 134);
+  CHECK (n == strlen (line)
+	   && strcmp (line,
+		      "<134>1 2026-09-18T02:40:59.123Z cgnat-sp-01 "
+		      "prisma-cgnat - BOOT-MARKER "
+		      "[cgnat@44444 bootTime=\"2026-09-16T23:06:40.000Z\" "
+		      "observedAt=\"2026-09-18T02:40:59.123Z\"] "
+		      "this box has been up since 2026-09-16T23:06:40.000Z")
+	     == 0,
+	 "a collector reads which incarnation of the box it is reading:"
+	 "\n         %s",
+	 line);
+  CHECK (bpa_syslog_marker_line (line, 40, WALL, 1789600000.0, "h", 9, 134)
+	   == 0,
+	 "and a marker that would not fit is refused like any other line");
+
   printf ("\n%s\n", fail ? "FAILURES" : "ALL TESTS PASSED");
   return fail ? 1 : 0;
 }

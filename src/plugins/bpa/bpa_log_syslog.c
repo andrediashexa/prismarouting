@@ -166,3 +166,39 @@ bpa_syslog_line (char *out, u32 cap, f64 wall, u8 event, u32 ip_priv,
     return 0;
   return (u32) n;
 }
+
+
+/*
+ * The boot marker, as a syslog line.
+ *
+ * WHAT IT IS FOR is written in bpa_log.h and does not change with the wire:
+ * an allocation with no release reads two opposite ways - the subscriber
+ * still holds those ports, or the box died and nobody knows when - and the
+ * marker is what tells a collector which incarnation of the box it is reading.
+ *
+ * The same shape as a block line, so a collector parses one grammar: the
+ * MSGID says what it is and the structured data carries both instants at the
+ * resolution the IPFIX marker uses.
+ */
+u32
+bpa_syslog_marker_line (char *out, u32 cap, f64 wall, f64 init,
+			const char *hostname, u32 pen, u32 pri)
+{
+  char ts[32], its[32], host[256];
+  int n;
+
+  if (!bpa_syslog_timestamp (ts, sizeof (ts), wall)
+      || !bpa_syslog_timestamp (its, sizeof (its), init))
+    return 0;
+  if (!bpa_syslog_escape (host, sizeof (host), hostname ? hostname : "-"))
+    return 0;
+
+  n = snprintf (out, cap,
+		"<%u>1 %s %s prisma-cgnat - BOOT-MARKER "
+		"[cgnat@%u bootTime=\"%s\" observedAt=\"%s\"] "
+		"this box has been up since %s",
+		pri, ts, host, pen, its, ts, its);
+  if (n < 0 || (u32) n >= cap)
+    return 0;
+  return (u32) n;
+}

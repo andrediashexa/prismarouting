@@ -158,15 +158,21 @@ $(BUILD)/test_bpa_pptp: test/test_bpa_pptp.c src/plugins/bpa/bpa_pptp.c \
 # arithmetic wrong is silent: #219 spilled 82917 bytes, replayed 82917, and
 # the collector decoded one record out of them. The one socket it opens is on
 # 127.0.0.1 and connects to itself, so this needs no network.
+# bpa_log_syslog.c is compiled BESIDE it since #20: the stream carries either
+# wire, so the exporter's own harness links the line formatter the syslog wire
+# calls. Included files elsewhere in this Makefile, compiled here, because
+# this one is reached by two harnesses and including it twice would be two
+# copies of the same function in one program.
 $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
                            src/plugins/bpa/bpa_log_tcp.c \
+                           src/plugins/bpa/bpa_log_syslog.c \
                            src/plugins/bpa/bpa_log.h \
                            test/bpa_shim.h test/bpa_vec_shim.h \
                            test/bpa_tcp_shim.h test/bpa_log_shim.h \
                            src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
-	    test/test_bpa_log_tcp.c
+	    test/test_bpa_log_tcp.c src/plugins/bpa/bpa_log_syslog.c
 
 # The configuration trail's hex reader, which is the one function in
 # bpa_audit.c that touches neither format(), nor vppinfra's SHA-2, nor the
