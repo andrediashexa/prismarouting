@@ -3,10 +3,10 @@
 O que acontece hoje quando esta caixa cai, o que o modo determinístico já resolve de graça, e o que ainda falta para um failover de verdade. Para quem está desenhando redundância.
 
 
-:::warning
-**Alta disponibilidade não está implementada.** Esta página descreve a análise e o piso que o produto já oferece, não um recurso existente. Não dimensione um projeto contando com failover automático.
+:::info
+**Ativo/standby está implementado.** Duas caixas sustentam um endereço de serviço entre elas com VRRP (RFC 5798) **na interface do dataplane**, e a verificação de aceitação — duas instâncias, três formas de perder a ativa — passa inteira.
 
-O que já existe é a **conferência de igualdade** entre as duas caixas — `show cgnat ha`, descrito mais abaixo. Ele não elege ninguém, não move endereço e não assume serviço: só responde se uma troca colocaria os assinantes onde eles já estão.
+**O que continua não existindo é sincronismo de sessão.** Conexões em curso caem no failover, como caem em qualquer NAT. O que não muda é o endereço público e o bloco de portas do assinante.
 
 :::
 
@@ -53,19 +53,54 @@ O sincronismo de sessão é o único que preserva conexões e o mais caro: numa 
 
 O **modo dinâmico** acrescenta um requisito: a alocação de blocos teria de ser coordenada, ou as duas caixas alocariam blocos diferentes ao mesmo assinante.
 
-# A proposta para uma primeira versão
+# Como montar o par
 
-Ativo/standby com VRRP nos dois lados — público e interno —, **sem** sincronismo de sessão, e configuração idêntica garantida pela trilha que já existe.
+Ativo/standby com VRRP nos dois lados — público e interno —, **sem** sincronismo de sessão. É honesto sobre o que entrega: não preserva conexões, preserva endereços.
 
-É honesto sobre o que entrega: não preserva conexões, preserva endereços. Para um provedor, já remove o pior sintoma de um failover de CGNAT.
+Em cada caixa, um roteador virtual por lado, com o mesmo `vrid` dos dois lados e prioridade diferente:
 
-A construir:
+```
+interface ens18
+ ipv4 address 100.64.3.252/22
+ vrrp 1 address 100.64.3.254
+ vrrp 1 priority 200
+ vrrp 1 track ens19 decrement 150
+ exit
+interface ens19
+ ipv4 address 200.150.0.11/24
+ vrrp 2 address 200.150.0.254
+ vrrp 2 priority 200
+ vrrp 2 track ens18 decrement 150
+ exit
+```
 
+Na outra caixa, os endereços dela e prioridade menor (100, por exemplo). Os assinantes apontam para `100.64.3.254` e o trânsito manda o pool para `200.150.0.254` — endereços que **nenhuma das duas** possui como endereço próprio.
 
-1. Integração com `keepalived` ou o VRRP do FRR, coerente com o `linux_cp`.
-2. Verificação de que as duas caixas carregam a **mesma** configuração de pool. **Já existe**, até onde uma caixa sem sessão com a outra consegue ir.
-3. Um `show cgnat ha` comparando uma impressão digital de configuração entre os pares. **Já existe.**
-4. Uma verificação com duas instâncias e uma falha forçada, confirmando que o assinante mantém endereço e bloco.
+**Onde o roteador virtual roda, e por que isso é a decisão inteira.** O FRR traz VRRP e o `keepalived` era a outra alternativa; os dois rodam no Linux, que nesta caixa é o par `linux_cp`. O par não é por onde os pacotes passam — a interface do dataplane é. Um par montado assim moveria um endereço no Linux e deixaria a FIB e o CGNAT na caixa que morreu. O dataplane já trazia a resposta: o plugin VRRP do próprio VPP, carregado em toda caixa, sem roteador virtual nenhum porque nada pedia um.
+
+**O MAC virtual é o que faz o CPE não precisar saber de nada.** Quem assume o endereço assume o MAC `00:00:5e:00:01:<vrid>` junto e manda um ARP gratuito; o CPE continua mandando para o mesmo MAC e o quadro passa a chegar na outra caixa.
+
+**`track` é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: segura o endereço do gateway e não alcança nada. Com `track`, a prioridade cai pelo decremento e a parceira assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da da outra.
+
+**O endereço virtual não responde ping.** Quem não é dono do endereço não responde ICMP por ele — é o padrão da RFC 5798 (seção 6.4.3). O monitoramento deve pingar o endereço **próprio** de cada caixa, que é o que diz se aquela caixa está viva; o endereço virtual só diz qual das duas está com ele. Encaminhar **através** dele funciona normalmente.
+
+O intervalo de anúncio não é configurável: é o padrão de um segundo da RFC, o que põe uma troca em torno de três segundos e meio. Ele precisa ser igual nas duas caixas, e um ajuste por caixa é um jeito por caixa de errar.
+
+# O que a verificação de aceitação mede
+
+A verificação de aceitação foi escrita **antes** da implementação, para que ela fosse julgada contra o requisito e não o contrário. Todas as 22 conferências dela passam:
+
+| O que foi medido | Resultado |
+|------------------|-----------|
+| O tráfego traduzido do assinante através do endereço de serviço, antes de qualquer falha | Funciona, e o lado de fora vê o endereço e o bloco que a fórmula dá |
+| **Uplink arrancado**, com a caixa viva e segurando o endereço do assinante | Sobrevive: o `track` derruba a prioridade e a parceira assume, no mesmo endereço público e num porta do mesmo bloco |
+| **Dataplane parado** do jeito que o próprio serviço para | Sobrevive, em torno de quatro segundos |
+| **Dataplane morto** com SIGKILL | Sobrevive, em torno de três segundos |
+| Uma conexão TCP em curso na troca | **Cai**, e uma nova do mesmo assinante pega o mesmo endereço e o mesmo bloco |
+
+A última linha é a promessa desta página dita ao contrário: ninguém deve ler uma execução verde como "as conexões sobreviveram".
+
+O que **não** foi medido aqui: se a placa de rede real avisa que o cabo saiu. A interface de laboratório não avisa, então o laboratório derruba a porta no dataplane também — que é o estado que uma placa com o cabo fora reporta em hardware.
 
 
 :::warning
@@ -77,7 +112,9 @@ O item 2 não pode ser pulado. No modo determinístico, duas caixas com configur
 
 A pergunta é uma só: uma troca de caixa deixaria cada assinante no mesmo endereço público e no mesmo bloco de portas? `show cgnat ha` responde isso e nada além disso.
 
-Para que a caixa possa comparar, ela precisa ter a configuração da outra. Não existe sessão entre as duas — o VRRP ainda não existe —, então a configuração da parceira chega como arquivo: salve a configuração da outra caixa e copie o arquivo para `/etc/prisma-routing/peer.conf` desta.
+Para que a caixa possa comparar, ela precisa ter a configuração da outra. **O VRRP não carrega configuração nenhuma** — a RFC anuncia uma prioridade e um endereço, e nada mais —, então a configuração da parceira chega como arquivo: salve a configuração da outra caixa e copie o arquivo para `/etc/prisma-routing/peer.conf` desta.
+
+**Numa caixa que faz par, o `commit` recusa uma mudança que divergiria.** Com `vrrp` em alguma interface e um `peer.conf` legível, uma candidata que mapearia assinantes de forma diferente da parceira é recusada pelo nome do pool, e `commit diverge` é a palavra de quem sabe o que está fazendo — porque duas caixas não se commitam no mesmo instante, e toda ampliação correta diverge o par entre o primeiro commit e o segundo. A página *commit, rollback e save* descreve a recusa inteira.
 
 Quando as duas divergem:
 
@@ -150,10 +187,12 @@ O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatór
 
 :::
 
-# O que fazer enquanto isso
+# Operando o par
 
-* Mantenha a configuração dos pares idêntica e versionada, e confira com `show cgnat ha` depois de toda alteração — a trilha de configuração de cada caixa é a evidência do que foi feito, e a conferência é a evidência de que as duas continuam concordando.
-* Trate uma troca manual como uma janela: os assinantes voltam nos mesmos endereços, mas as conexões em curso caem.
+* Mantenha a configuração das duas caixas idêntica e versionada, e **copie o `peer.conf` de novo sempre que alterar a parceira** — a recusa do `commit` só enxerga o que o arquivo diz, e o arquivo tem idade.
+* Confira com `show cgnat ha` depois de toda alteração: ele diz o papel de cada roteador virtual, o MAC virtual, a prioridade que a caixa está **anunciando** — que não é a configurada quando algo rastreado está fora — e se as duas mapeiam igual.
+* Trate uma troca como uma janela: os assinantes voltam nos mesmos endereços, mas as conexões em curso caem.
+* Monitore o endereço **próprio** de cada caixa, não o virtual.
 * Se você opera modo dinâmico, lembre que o bloco **não** é reproduzível por fórmula: ali o failover muda de fato o bloco do assinante.
 
 # Ver também

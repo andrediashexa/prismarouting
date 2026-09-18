@@ -101,7 +101,17 @@ version has a chance of seeing it.
   from before any of it existed, because the section that follows them means
   nothing without them.
 
-  Three more copies of the same claim went with it: `README.md`'s file index
+  **The three wiki pages an operator actually reads said it too**, and those
+  are the ones that matter most: *Alta disponibilidade* opened with a warning
+  box reading "Alta disponibilidade não está implementada. [...] Não dimensione
+  um projeto contando com failover automático", and the "known absences" lists
+  on *Prisma Routing - visão geral* and *Operação e diagnóstico* both carried
+  "analisado, não implementado". The HA page now carries how to build the pair,
+  what the acceptance test measures, what the virtual address does not do
+  (answer ICMP), and what is still refused by cost - session synchronisation -
+  and the two absence lists name that refusal instead of the feature.
+
+  Three more copies in the tree went with them: `README.md`'s file index
   called the page an analysis of something not implemented, `docs/context.md`
   said the acceptance lab is red on purpose and excluded from the suite, and
   `docs/roadmap.md` listed HA under work blocked on hardware this box does not

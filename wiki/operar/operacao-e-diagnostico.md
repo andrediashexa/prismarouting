@@ -429,7 +429,7 @@ flowchart TD
 
 Não reporte como falha — são decisões registradas:
 
-* **Alta disponibilidade / failover** — analisado, não implementado.
+* **Sincronismo de sessão no failover** — recusado por custo. O par ativo/standby existe e preserva endereço público e bloco de portas; conexões em curso caem, como em qualquer NAT.
 * **Números de throughput** — nada foi medido em hardware. Qualquer figura de desempenho é não verificada.
 * **Log por fluxo** — recusado por projeto.
 * **Migração graciosa de pool** — daria dois mapeamentos para um assinante, e a aritmética reversa não saberia distingui-los, abrindo mão exatamente da propriedade que o modo determinístico existe para fornecer.
