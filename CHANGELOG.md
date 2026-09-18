@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.95.0 - the procedure for the box that is holding the service
+
+[#6](https://github.com/andrediashexa/hexarouting/issues/6).
+
+### Added
+
 * **A recipe for taking a paired box out for maintenance**
   ([#6](https://github.com/andrediashexa/hexarouting/issues/6)). The pair shipped
   without the procedure for the most ordinary thing anybody will do with it:
