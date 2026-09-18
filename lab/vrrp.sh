@@ -47,7 +47,7 @@
 # translated flow surviving the takeover with the same public address is #9,
 # in lab/ha-failover.sh, which is red until the pair exists. This is the
 # mechanism under it.
-# OFF-RED-AT-LEAST: 14
+# OFF-RED-AT-LEAST: 16
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -348,6 +348,27 @@ done
 echo "  box a took it back after $(( $(date +%s) - BACK_AT ))s"
 
 echo
+echo "=== the box is restarted the way a reboot restarts it ==="
+# WHAT A REBOOT ACTUALLY DOES to a virtual router, which no commit can answer.
+# `prismash --load` is what runs at every boot, and a box whose virtual
+# routers came back only because somebody typed a commit is a box that holds
+# no service address after a power cut - with `show running-config` saying it
+# does, because the file says it does.
+#
+# The dataplane is NOT restarted here: this is the VTY replaying the saved
+# file onto a box that has the routers already, which is the half that can be
+# measured without waiting for a boot. lab/install-iso.sh boots the real one.
+hx b -c "save" | sed 's/^/  b: /'
+SAVED=$(grep -c "vrrp 1 address $VIP_IN" /etc/prisma-routing/b.conf)
+vb b vrrp vr del host-b-lan vr_id 1 >/dev/null 2>&1   || hx b -c "configure" -c "interface host-b-lan" -c "no vrrp 1"         -c "exit" -c "commit" >/dev/null 2>&1
+GONE=$(hx b -c "show cgnat ha" | grep -c "host-b-lan vrrp 1")
+echo "  with the virtual router taken off box b, 'show cgnat ha' rows: $GONE"
+RELOAD=$(hx b --load /etc/prisma-routing/b.conf 2>&1)
+echo "$RELOAD" | tail -3 | sed 's/^/  b: /'
+BACK=$(hx b -c "show cgnat ha" | grep -c "host-b-lan vrrp 1")
+echo "  and after the file is replayed: $BACK"
+
+echo
 echo "=== the pair is asked to diverge, and the commit refuses (#8) ==="
 # THE SILENT FAILURE THIS GATE IS ABOUT. In deterministic mode the mapping is
 # a function of the configuration, so two boxes with the same pool agree
@@ -459,6 +480,10 @@ expect_in "'commit check' says it too, in the window where somebody is
 expect_in "and asked for by name it goes through" "commit complete" "$BYNAME"
 expect "so the operator is stopped, not blocked: the change is on the box" \
        test "$POOL_AFTER" -ge 1
+expect "the saved file carries the virtual router, so a box can be rebuilt
+        from it" test "$SAVED" -ge 1
+expect "and replaying that file puts the router back on a box that lost it,
+        which is what every boot does" test "$BACK" -ge 1
 expect_in "and box b now says it is holding the address" \
           "master, holding the address" "$HA_B_AFTER"
 

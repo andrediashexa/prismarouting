@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The lab asserts that a virtual router survives what a boot does to it**
+  ([#7](https://github.com/andrediashexa/hexarouting/issues/7)). Every check in
+  `lab/vrrp.sh` drove a box that had just been committed to, and a commit is
+  not what happens at four in the morning: `prismash --load` is, replaying the
+  saved file. A pair whose virtual routers came back only because somebody
+  typed a commit is a pair that holds no service address after a power cut,
+  with `show running-config` saying it does because the file says it does.
+
+  So the lab now saves box b's configuration, takes the virtual router off the
+  box, replays the file the way every boot replays it, and asserts the router
+  is back. Both halves are checked - that `save` writes the statement at all,
+  and that `--load` puts it back - because a file that does not carry it and a
+  loader that ignores it fail identically from the outside.
+
 ### Fixed
 
 ## 0.88.0 - the checklist and the wiki index know it too
