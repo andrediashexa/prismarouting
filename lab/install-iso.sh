@@ -181,8 +181,16 @@ SSH_PORT=${SSH_PORT:-2222}
 # changed the qemu line - leaving an assertion that compares the box against
 # a number nothing on the box ever had.
 MGMT_MAXMTU=${MGMT_MAXMTU:-1500}
+# WITH A VIRTUAL IOMMU the virtio device has to be told to use it: a guest
+# driver behind an IOMMU programs addresses the device must translate, and a
+# virtio-net that was not given iommu_platform does not - so DMA goes to
+# addresses nothing mapped, silently, and the card carries no traffic at all.
+# Measured: without these two the box with an IOMMU came up with its address
+# and could not ping its own gateway (#383).
+IOMMU_NET=""
+[ "${BOOT_IOMMU:-1}" = 1 ] && IOMMU_NET=",iommu_platform=on,ats=on,disable-legacy=on"
 MGMT_NET="-netdev user,id=mgmt,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
-  -device virtio-net-pci,netdev=mgmt,addr=0x9,host_mtu=$MGMT_MAXMTU"
+  -device virtio-net-pci,netdev=mgmt,addr=0x9,host_mtu=$MGMT_MAXMTU$IOMMU_NET"
 
 # ------------------------------- the guest against a real box, again (#383)
 #
@@ -392,6 +400,42 @@ MGMT_NET="-netdev user,id=mgmt,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
 #      this file that does. Measured <date>: the banner, with no default
 #      route at all.
 
+# ============ WHAT THE MEASUREMENTS SAID, AND WHAT THIS GUEST NOW IS =========
+#
+# Taken 2026-09-18 on the machine that cuts the releases (32 cores, KVM),
+# against the published prisma-routing-0.79.0.iso, one run at a time:
+#
+#   guest                       result       wall clock
+#   -smp 2, no IOMMU            LAB PASSED        687 s
+#   -smp 8, no IOMMU            LAB PASSED          -
+#   -smp 8 with an IOMMU        LAB PASSED        692 s
+#
+# BOTH GAPS ARE CLOSED, and the wall-clock argument for keeping the easier
+# guest turned out to be five seconds - under one per cent of a run.
+#
+#   * -smp 8 gives isolcpus=1-7, seven workers holding the cores the profile
+#     names and a control plane on one CPU. Everything above that needed more
+#     than one worker now runs on a booted box.
+#   * the IOMMU gives 0000:00:09.0:vfio-pci on the installed box, so the bind
+#     this product prefers is measured end to end for the first time.
+#
+# TWO THINGS THE RUNS TAUGHT THAT THE READING ABOVE COULD NOT:
+#
+#   * qemu REFUSES -device intel-iommu on the default machine ("Parameter
+#     'driver' expects a dynamic sysbus device type for the machine") and
+#     refuses intremap with the default irqchip ("Interrupt Remapping cannot
+#     work with kernel-irqchip=on, please use 'split|off'"). A run that passes
+#     the device without q35 and kernel-irqchip=split is a run with no IOMMU
+#     in it, whatever its command line says - and it passes, which is worse.
+#   * without iommu_platform on the card, the box with an IOMMU came up
+#     holding its address and could not ping its own gateway: four checks red,
+#     and every one of them a failure of this lab rather than of the product.
+#     With the card told to use the IOMMU, the same run is green.
+#
+# The card's predictable name is enp0s9 under q35 where it was ens9; nothing
+# in this file assumes either, which is #161's rule paying for itself, but
+# docs/ and CHANGELOG quote ens9 in measurements taken before this.
+
 # Does the box answer on the network? <seconds> to keep trying.
 #
 # The SSH BANNER and not a completed connection. libslirp accepts the host
@@ -437,13 +481,41 @@ fail=0
 # ASKED - run the lab with them and read the result - rather than argued. What
 # the default is, and why, is written at the end of that block from the
 # numbers those runs produced.
-BOOT_SMP=${BOOT_SMP:-2}
+# EIGHT, AND THE NUMBER IS MEASURED. Two gave the box one worker, so the
+# queue cap, corelist-workers and its pinning, and the per-worker block
+# partition were generated in this lab and never run. Eight gives
+# `isolcpus=1-7`, seven workers holding the cores the profile names, and a
+# control plane on one CPU - the shape of the box that reported #380.
+#
+# What it costs, timed back to back on the same host, same ISO, KVM:
+#   -smp 2, no IOMMU          687 s   LAB PASSED
+#   -smp 8 with an IOMMU      692 s   LAB PASSED
+# Five seconds, under one per cent. The argument for keeping the easier guest
+# was wall-clock on every release, and the wall-clock is not there.
+#
+# A host with fewer than eight cores runs this over-committed and slower; the
+# guest is the same shape either way, which is the property worth keeping.
+BOOT_SMP=${BOOT_SMP:-8}
 IOMMU_DEV=""
 IOMMU_ARGS=""
-if [ "${BOOT_IOMMU:-0}" = 1 ]; then
-  # caching-mode=on is what makes vfio inside the guest work at all: without
-  # it the guest's IOMMU driver never sees the mappings qemu makes.
-  IOMMU_DEV="-device intel-iommu,intremap=on,caching-mode=on"
+# AND AN IOMMU BY DEFAULT, for the same reason and with the same measurement.
+# Without one, bind-dataplane-nic always falls back to uio_pci_generic, so
+# vfio-pci - the path this product PREFERS, because the device goes through
+# the IOMMU and a bug in the dataplane cannot write to memory it was never
+# given - was the path nothing ever measured. With one, the installed box
+# binds `0000:00:09.0:vfio-pci` and every check in this file still passes.
+if [ "${BOOT_IOMMU:-1}" = 1 ]; then
+  # THE THREE PARTS, each measured rather than guessed at (#383):
+  #   * -machine q35: the default machine refuses the device outright -
+  #     "Parameter 'driver' expects a dynamic sysbus device type for the
+  #     machine". A run that passes the device to the default machine is a run
+  #     with no IOMMU in it at all, whatever the command line says.
+  #   * kernel-irqchip=split: with the default, qemu refuses intremap -
+  #     "Interrupt Remapping cannot work with kernel-irqchip=on".
+  #   * caching-mode=on: without it the guest's driver never sees the mappings
+  #     qemu makes.
+  IOMMU_DEV="-machine q35,kernel-irqchip=split \
+    -device intel-iommu,intremap=on,caching-mode=on"
   IOMMU_ARGS="intel_iommu=on iommu=pt"
 fi
 
@@ -554,10 +626,10 @@ echo "=========== PHASE 1: install onto a blank disk ==========="
 # qemu's card is the machine's business and not this lab's.
 # shellcheck disable=SC2086
 timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
-  $ACCEL -m "${BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
+  $ACCEL $IOMMU_DEV -m "${BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -drive file="$DISK",format=qcow2,if=virtio $MIRROR_DRIVE $MGMT_NET \
-  -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
+  -append "boot=live components console=ttyS0,115200 systemd.show_status=1 $IOMMU_ARGS \
            prisma-routing.install=/dev/vda prisma-routing.yes \
            prisma-routing.mgmt-address=dhcp \
            prisma-routing.log-gb=2 $MIRROR_ANSWER \
@@ -933,7 +1005,7 @@ boot_vm() {  # <seconds> <qemu arguments...>
   rm -f "$CONSOLE_IN"
   mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
   timeout "$_secs" qemu-system-x86_64 \
-    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot "$@" \
+    $ACCEL $IOMMU_DEV -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot "$@" \
     < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
   QEMU_PID=$!
   # Held open for the whole session: a writer that opens and closes the pipe
@@ -2226,11 +2298,11 @@ echo "=========== PHASE 5: the SECOND install, over a mirror that exists =======
 # phases left behind, which is the only way to have it.
 # shellcheck disable=SC2086
 timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
-  $ACCEL -m "${BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
+  $ACCEL $IOMMU_DEV -m "${BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -drive file="$DISK",format=qcow2,if=virtio \
   -drive file="$DISK2",format=qcow2,if=virtio $MGMT_NET \
-  -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
+  -append "boot=live components console=ttyS0,115200 systemd.show_status=1 $IOMMU_ARGS \
            prisma-routing.install=/dev/vda prisma-routing.yes \
            prisma-routing.mgmt-address=dhcp \
            prisma-routing.log-gb=2 prisma-routing.mirror=$MIRROR_DEV \
@@ -2277,7 +2349,7 @@ fi
 # A minute of that is the product's own deadline and the rest is two more
 # logins around it.
 timeout "${BOOT_SECS:-1200}" qemu-system-x86_64 \
-  $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
+  $ACCEL $IOMMU_DEV -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
   -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET \
   < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
 QEMU_PID=$!
@@ -3620,7 +3692,7 @@ then
   mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
   # shellcheck disable=SC2086
   timeout "${VTY_REBOOT_SECS:-1200}" qemu-system-x86_64 \
-    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic \
+    $ACCEL $IOMMU_DEV -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic \
     -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET \
     < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
   QEMU_PID=$!

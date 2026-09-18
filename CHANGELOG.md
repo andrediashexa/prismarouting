@@ -75,6 +75,37 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Changed
+
+* **The release gate's guest has eight CPUs and an IOMMU**
+  ([#383](https://github.com/andrediashexa/hexarouting/issues/383)). It had two CPUs and no IOMMU, which made it
+  easier than every machine this product runs on in two ways that each hid a
+  path from the lab. With two CPUs the box gets ONE worker, so the queue cap,
+  `corelist-workers` and its pinning, and the per-worker block partition were
+  generated in the lab and never run; with eight it comes up `isolcpus=1-7`,
+  seven workers holding the cores the profile names and a control plane on one
+  CPU - the shape of the box that reported #380. Without an IOMMU
+  `bind-dataplane-nic` always fell back to `uio_pci_generic`, so `vfio-pci` -
+  the bind this product prefers, because the device goes through the IOMMU and
+  a bug in the dataplane cannot write to memory it was never given - was the
+  path nothing measured; the installed box now binds
+  `0000:00:09.0:vfio-pci` and every check still passes.
+
+  **Measured before deciding, which is what the issue asked for.** On the
+  machine that cuts the releases, one run at a time, against the published
+  0.79.0 medium: the old guest 687 s and the new one 692 s, both green. The
+  argument for keeping the easier guest was wall-clock on every release, and
+  it is five seconds.
+
+  Two things only the runs could say. qemu REFUSES `-device intel-iommu` on
+  the default machine and refuses interrupt remapping with the default
+  irqchip, so a run that passes the device without `q35` and
+  `kernel-irqchip=split` has no IOMMU in it at all - and passes, which is
+  worse than failing. And a virtio card that is not told to use the IOMMU
+  takes the box off the network entirely: it came up holding its address and
+  could not ping its own gateway, four checks red, every one of them this
+  lab's fault rather than the product's.
+
 ### Added
 
 * **Every published release title is compared with its CHANGELOG heading**
