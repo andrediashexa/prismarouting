@@ -1331,7 +1331,7 @@ actually start.
 | [#226](https://github.com/andrediashexa/hexarouting/issues/226) whether a dynamic pool's pairing rate is high enough | the mechanism is in: the allocator prefers a free block on the subscriber's own public address, measured at 100%, 99.6% and 99.2% over three arrival patterns against 0.0%, 0.0% and 0.2% before. **The container work is done**: `lab/crossaddr.sh` has been rewritten against a running box, is in the suite at 28 checks, and states the property as floors on a rate rather than as a guarantee - each arrival pattern pairing at least 3 of its 4, and the run losing at most one of sixteen. It measured 16 of 16, and 0 of 16 with the preference removed. What is left is the judgement alone: a preference cannot be a guarantee without refusing extensions, which costs a customer traffic rather than an address |
 | [#337](https://github.com/andrediashexa/hexarouting/issues/337) the disclosure for boxes already in the field | the repair is done ([#248](https://github.com/andrediashexa/hexarouting/issues/248)): a box tells whoever logs in that its host keys were not made on it, names them, says the private half is in the published download and that the session being read can be impersonated, and gives the three commands that fix it. What is left is not code. Nothing here names which releases shipped those keys, and a box that is never taken to a new version never runs the code that would tell it, so where the disclosure is said and whether it names the releases is the maintainer's |
 | [#340](https://github.com/andrediashexa/hexarouting/issues/340) the eight release titles that are not their heading | the gate refuses a new one now, and it can only check the release being cut. Measured over all 74 published: 66 titles are the CHANGELOG heading and 8 are not. Four are truncations - 0.46.0, 0.69.0, 0.70.0 and 0.71.0 each drop the second half, which is where the second defect that release fixed is named - and rewriting those four costs a moment. The other four are a judgement: 0.2.0's extra clause is a fact the CHANGELOG does not carry and should stay, and 0.3.0, 0.38.1 and 0.61.2 are old enough that changing a published note changes what somebody may have linked to |
-| [#345](https://github.com/andrediashexa/hexarouting/issues/345) the rx queues the dataplane really opened, read on a booted box | the reader is written: `appliance/selftest` reads `rx: queues N (max M)` off `show hardware-interfaces` for every card the dataplane holds, with the driver's `flags:` and `Errors:` rows beside it because the count is printed for a refused card too, pairs each card to its own `dev` stanza by PCI address, prints `rx queues: N of M on <card>`, warns when the count differs from the one-queue-per-worker request the tuner capped at the card, and fails a card whose driver refused it; `requested` is kept for the box whose dataplane cannot be asked. The format is the capture from [#329](https://github.com/andrediashexa/hexarouting/issues/329)'s guest of 2026-09-16, quoted in `test/test_selftest.sh`. What remains is the proof on that guest: `lab/install-iso.sh` carries the assertion, written and not yet run, that the self-test's row agrees with the dataplane's own answer on the card the box claimed |
+| [#345](https://github.com/andrediashexa/hexarouting/issues/345) the rx queues the dataplane really opened, read on a booted box | **delivered.** The reader is in `appliance/selftest`, written from a capture of `show hardware-interfaces`, and the assertion in `lab/install-iso.sh` ran on the gate's own guest in 0.79.0: `rx queues: 1 of 1 on ens9, as requested (1)`, against the dataplane's own row |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
 | [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
 
@@ -2382,14 +2382,18 @@ range moves whole to the next row and can still be grepped for; the four
 pages quoting the screen show the fold, and the `folded` finding refused all
 four until they did.
 
-**Two gaps of the same kind, still open**
+**Two gaps of the same kind, closed in 0.80.0**
 ([#383](https://github.com/andrediashexa/hexarouting/issues/383)). The guest
-has two CPUs where the reporting box has eight, so it gets one worker and
-nothing that depends on more than one is exercised on a booted box - the queue
-cap, the pinning, the per-worker partition, the reserve arithmetic. And it has
-no IOMMU, so the bind always falls back to `uio_pci_generic` and the
-`vfio-pci` path, which is the one this product prefers because it takes the
-device through the IOMMU, is never taken. RAM and the hugepage count do agree,
+had two CPUs where the reporting box has eight, so it got one worker, and the
+queue cap, the pinning, the per-worker partition and the reserve arithmetic
+were generated in the lab and never run. And
+it had no IOMMU, so the bind always fell back to `uio_pci_generic` and the
+`vfio-pci` path, the one this product prefers because it takes the device
+through the IOMMU, was never taken. It now has eight CPUs and an IOMMU:
+`isolcpus=1-7` with seven workers, and `0000:00:09.0:vfio-pci` on the
+installed box. Measured before deciding, one run at a time on the machine that
+cuts the releases: 687 s for the old guest and 692 s for the new one, both
+green, so the wall-clock argument for the easier guest was five seconds. RAM and the hugepage count do agree,
 so the memory arithmetic the lab exercises is the one a real box runs.
 
 **The interface comes up in `error` state at 9000**

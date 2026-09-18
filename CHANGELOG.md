@@ -75,6 +75,12 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+## 0.80.0 - the lab's box is shaped like a real one, and a route screen cannot be folded
+
+[#340](https://github.com/andrediashexa/hexarouting/issues/340), [#383](https://github.com/andrediashexa/hexarouting/issues/383), [#390](https://github.com/andrediashexa/hexarouting/issues/390), [#392](https://github.com/andrediashexa/hexarouting/issues/392).
+
 ### Changed
 
 * **The release gate's guest has eight CPUs and an IOMMU**
