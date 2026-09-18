@@ -214,13 +214,13 @@ interface ens18
  exit
 ```
 
-**O `vrid` tem que ser o mesmo nas duas caixas**, e diferente do de qualquer outro par no mesmo domínio de broadcast: é ele que diz de qual eleição cada anúncio fala, e é dele que sai o MAC virtual (`00:00:5e:00:01:<vrid>`).
+**O** `**vrid**` **tem que ser o mesmo nas duas caixas**, e diferente do de qualquer outro par no mesmo domínio de broadcast: é ele que diz de qual eleição cada anúncio fala, e é dele que sai o MAC virtual (`00:00:5e:00:01:<vrid>`).
 
 **O MAC virtual é o que faz o assinante não precisar saber de nada.** Quem assume o endereço assume também esse MAC e manda um ARP gratuito. O CPE que estava com aquele endereço na tabela ARP continua mandando para o mesmo MAC, e o quadro passa a chegar na outra caixa — sem ninguém limpar cache em lugar nenhum.
 
-**`priority` é a sua afirmação de quem deve ficar com o serviço.** Maior ganha, e a caixa que volta de uma manutenção **retoma** o endereço, porque é isso que a configuração diz. 255 é recusado: a RFC reserva esse valor para quem é dono do endereço, e uma caixa que divide o endereço com outra não é.
+`**priority**` **é a sua afirmação de quem deve ficar com o serviço.** Maior ganha, e a caixa que volta de uma manutenção **retoma** o endereço, porque é isso que a configuração diz. 255 é recusado: a RFC reserva esse valor para quem é dono do endereço, e uma caixa que divide o endereço com outra não é.
 
-**`track` é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: ela segura o endereço do gateway e não alcança nada. Com `track`, a prioridade dela cai pelo decremento e o par assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da do outro — 200 com decremento 150 vira 50, contra os 100 do par.
+`**track**` **é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: ela segura o endereço do gateway e não alcança nada. Com `track`, a prioridade dela cai pelo decremento e o par assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da do outro — 200 com decremento 150 vira 50, contra os 100 do par.
 
 **Cada lado quer o seu.** Um endereço que se move no lado do assinante e nada no lado do uplink é um failover que o tráfego de volta não acompanha: configure um roteador virtual em cada lado, com `vrid` diferente.
 
