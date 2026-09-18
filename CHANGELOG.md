@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.89.0 - what a boot does to a pair
+
+[#7](https://github.com/andrediashexa/hexarouting/issues/7).
+
+### Added
+
 * **The lab asserts that a virtual router survives what a boot does to it**
   ([#7](https://github.com/andrediashexa/hexarouting/issues/7)). Every check in
   `lab/vrrp.sh` drove a box that had just been committed to, and a commit is
