@@ -47,7 +47,7 @@
 # translated flow surviving the takeover with the same public address is #9,
 # in lab/ha-failover.sh, which is red until the pair exists. This is the
 # mechanism under it.
-# OFF-RED-AT-LEAST: 10
+# OFF-RED-AT-LEAST: 12
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -310,6 +310,53 @@ done
 echo "  box a took it back after $(( $(date +%s) - BACK_AT ))s"
 
 echo
+echo "=== the pair is asked to diverge, and the commit refuses (#8) ==="
+# THE SILENT FAILURE THIS GATE IS ABOUT. In deterministic mode the mapping is
+# a function of the configuration, so two boxes with the same pool agree
+# without exchanging a byte - and two boxes with DIFFERENT pools fail without
+# saying anything: the takeover maps subscribers to blocks the other box never
+# used, and both boxes log a perfectly ordinary day.
+#
+# The peer's configuration reaches this box the way an operator gets it there:
+# `save` on the other box and a copy. Nothing here is the product's work.
+pair_pool() {   # <box>: the same pool on both, which is what makes the
+                # mapping a function of the configuration and not of the box
+  hx "$1" -c "configure" -c "nat cgnat pool residential" \
+     -c "inside 100.64.0.0/26" -c "outside 200.150.16.0/28" \
+     -c "block-size 2048" -c "mode deterministic" -c "exit" -c "commit"
+}
+pair_pool a | sed 's/^/  a: /'
+pair_pool b | sed 's/^/  b: /'
+hx a -c "save" >/dev/null 2>&1
+cp /etc/prisma-routing/a.conf /etc/prisma-routing/peer-for-b.conf
+echo "  box b now holds box a's configuration as its peer file"
+# A SECOND POOL ON ONE BOX, and not a block size on the shared one. Both
+# diverge the pair, but a block size also re-maps the subscribers already on
+# that pool - and `commit remap` refuses that first, which is correct and is
+# another lab's subject. A pool the peer has never heard of moves nobody on
+# this box and is exactly the divergence this gate is about: after a takeover
+# its subscribers are translated by nothing at all.
+new_pool() {   # <box> <commit words...>
+  _box=$1; shift
+  PRISMA_PEER_CONFIG=/etc/prisma-routing/peer-for-b.conf \
+  hx "$_box" -c "configure" -c "nat cgnat pool business" \
+     -c "inside 100.64.1.0/26" -c "outside 200.150.17.0/28" \
+     -c "block-size 2048" -c "mode deterministic" -c "exit" -c "$*"
+}
+DIVERGE=$(new_pool b commit)
+echo "$DIVERGE" | sed 's/^/  b: /'
+CHECK=$(new_pool b commit check)
+BYNAME=$(new_pool b commit diverge)
+echo "  and when it is asked for by name:"
+echo "$BYNAME" | sed 's/^/  b: /'
+POOL_AFTER=$(hx b -c "show running-config" 2>/dev/null | grep -c "pool business")
+# The pair agrees again before the takeover phase below, which is measured on
+# a pair that agrees - the state the rest of this lab is about.
+PRISMA_PEER_CONFIG=/etc/prisma-routing/peer-for-b.conf \
+  hx b -c "configure" -c "no nat cgnat pool business" \
+  -c "commit diverge" >/dev/null 2>&1
+
+echo
 echo "=== the box holding the service is killed, and nothing else is touched ==="
 pkill -KILL -f "/tmp/startup-a.conf"
 KILLED_AT=$(date +%s)
@@ -354,6 +401,17 @@ expect "and the client's traffic crosses the pair while it is box b holding
 expect "raising it again takes the service back, which is what preempt is
         for: the pair ends where the configuration says" \
        test "$PREEMPT_OK" -eq 0
+expect_said "a commit that would map subscribers differently from the peer
+             is refused, on a box that stands for a service address with one" \
+            "this change maps subscribers differently from the peer" "$DIVERGE"
+expect_in "and the refusal names the pool, and what a takeover would do
+           with it" \
+          "pool 'business' is on this box and not on the peer" "$DIVERGE"
+expect_in "'commit check' says it too, in the window where somebody is
+           deciding" "commit diverge" "$CHECK"
+expect_in "and asked for by name it goes through" "commit complete" "$BYNAME"
+expect "so the operator is stopped, not blocked: the change is on the box" \
+       test "$POOL_AFTER" -ge 1
 expect_in "and box b now says it is holding the address" \
           "master, holding the address" "$HA_B_AFTER"
 

@@ -21,10 +21,11 @@ flowchart LR
 | `commit check` |           | valida sem aplicar |
 | `commit remap` |           | aplica uma mudança que move assinantes existentes para novos endereços públicos e blocos |
 | `commit cutoff` |           | aplica uma mudança que deixa de anunciar o prefixo por onde esta sessão chegou |
+| `commit diverge` |           | aplica uma mudança que mapeia assinantes de forma diferente do par com quem esta caixa divide um endereço de serviço |
 | `commit confirmed <1-60>` | minutos   | aplica, e desfaz sozinho a menos que seja confirmado |
 | `commit comment "<texto>"` |           | registra uma nota junto com este commit |
 
-`remap`, `cutoff`, `confirmed` e `comment` combinam entre si, em qualquer ordem: uma mudança com duas consequências a reconhecer não custa a chance de registrar por quê.
+`remap`, `cutoff`, `diverge`, `confirmed` e `comment` combinam entre si, em qualquer ordem: uma mudança com duas consequências a reconhecer não custa a chance de registrar por quê.
 
 ### `commit check` antes de qualquer coisa
 
@@ -44,6 +45,29 @@ configuration check succeeds
 A conta não é estimativa: quem faz é o dataplane, com as duas definições e a mesma aritmética que rodaria depois. Não é recusa — o `check` não aplicou nada, então não há o que recusar; é o aviso que o comando existe para dar. Quem recusa é o `commit` comum, descrito em `*commit remap*`, logo abaixo.
 
 Uma mudança que não move ninguém não imprime nada disso. Aviso que aparece sempre é aviso que ninguém lê.
+
+### `commit diverge`, quando a caixa faz par com outra
+
+Numa caixa que **sustenta um endereço de serviço com um par** — quer dizer, que tem `vrrp` numa interface — o `commit` confere a candidata contra a configuração do par, aquela que você copiou para `/etc/prisma-routing/peer.conf`, e **recusa** uma mudança que faria as duas mapearem assinantes de formas diferentes:
+
+```
+error: this change maps subscribers differently from the peer
+    this box stands for a service address with another one, so a takeover would
+    translate them there
+error: pool 'business' is on this box and not on the peer, so after a failover
+    its subscribers are translated by nothing at all
+    cgnat pool business
+    a takeover would put subscribers on blocks the other box never used, and
+    neither box would log anything unusual, because nothing unusual happened to
+    either of them
+    if that is what you mean, type: commit diverge
+```
+
+**Por que isso é uma recusa e não um aviso.** Em modo determinístico o mapeamento é função da configuração: duas caixas com o mesmo pool concordam sem trocar um byte, e duas caixas com pools diferentes **falham em silêncio** — o failover passa a mapear assinantes para blocos que a outra caixa nunca usou, e as duas registram um dia perfeitamente normal. Não existe sintoma para notar depois.
+
+**Por que existe a palavra que passa por cima.** Duas caixas não se commitam no mesmo instante. Toda ampliação de capacidade correta diverge o par entre o primeiro commit e o segundo, então uma recusa sem saída dispararia em todo procedimento certo — e a saída viraria "parar de copiar a configuração do par", que remove a conferência em vez da divergência. `commit diverge` é você dizendo que sabe, e o commit segue.
+
+**Numa caixa que não faz par, nada disso acontece.** Sem `vrrp` em interface nenhuma, um `peer.conf` ali é material de comparação e nada mais: a caixa **avisa** sobre a diferença e aplica, como sempre fez. Nenhum arquivo em `/etc` cria um relacionamento que a configuração não declara.
 
 Ele também diz **o que não verificou**:
 
