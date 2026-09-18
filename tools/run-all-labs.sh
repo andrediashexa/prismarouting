@@ -325,7 +325,8 @@ OFF_MODES="audit:off detreserve:off ipfix-outbuf:no-stall ipfix-stop:no-marker b
            in-place:off
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent oom:off pptp:off
-           rtsp:BPA_RTSP_OFF=1 sip:off urpf:off utilisation:off vrf:off"
+           rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
+           utilisation:off vrf:off"
 
 # What a lab is given for its off run, or nothing when it has none.
 #

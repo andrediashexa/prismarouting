@@ -2523,8 +2523,12 @@ the wire as a field - and frames by RFC 6587 octet counting. The timestamp is
 the IPFIX instant at the IPFIX resolution, so the two logs corroborate each
 other; the enterprise number is the operator's and the statement is refused
 without one, because RFC 5424 reserves an unsuffixed structured-data name for
-IANA. What remains is the lab: a syslog collector on the far side of a veth,
-counting one line per event, in the shape `lab/ipfix.sh` already has.
+IANA. `lab/syslog.sh` is that lab - a collector on the far
+side of a veth, counting what arrives - and it earned its place on the first
+run: every event was being dropped before it reached the stream, because the
+queue accepted one only when UDP or TCP was enabled. 3 of 3 allocations, 3 of
+3 releases, the boot marker and nothing malformed on the fix; its off run goes
+red on three.
 
 **`ping`, `traceroute` and `mtr` at the prompt**
 ([#395](https://github.com/andrediashexa/hexarouting/issues/395)) - shipped

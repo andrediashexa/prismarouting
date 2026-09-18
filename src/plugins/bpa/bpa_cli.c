@@ -2702,7 +2702,8 @@ bpa_stop_drain_command_fn (vlib_main_t *vm, unformat_input_t *input,
   bpa_main_t *bm = &bpa_main;
   u32 n;
 
-  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
+  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled
+      && !bpa_log_syslog.enabled)
     {
       vlib_cli_output (vm, "logging is not enabled; nothing to drain");
       return 0;
@@ -2819,6 +2820,34 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
     }
   else
     vlib_cli_output (vm, "TCP transport: disabled");
+
+  /* And the syslog stream, which an operator reading this screen is asking
+   * about as much as the other two: a transport nobody can see the state of
+   * is one they diagnose by guessing (#20). */
+  if (bpa_log_syslog.enabled)
+    {
+      vlib_cli_output (vm, "syslog transport (RFC 5424 over TCP)");
+      vlib_cli_output (vm, "  collector   %U:%u  %s", format_ip4_address,
+		       &bpa_log_syslog.collector, bpa_log_syslog.port,
+		       bpa_log_syslog.connected	       ? "connected"
+		       : bpa_log_syslog.pending_connect ? "connecting"
+							: "disconnected");
+      vlib_cli_output (vm, "  enterprise  %u, facility %u, severity %u",
+		       bpa_log_syslog.pen, bpa_log_syslog.pri / 8,
+		       bpa_log_syslog.pri % 8);
+      vlib_cli_output (vm,
+		       "  lines       %Lu written, %Lu bytes sent, "
+		       "%Lu pending",
+		       bpa_log_syslog.n_records, bpa_log_syslog.n_sent,
+		       (u64) vec_len (bpa_log_syslog.outbuf));
+      vlib_cli_output (vm,
+		       "  spill       %Lu bytes on disk, %Lu replayed, "
+		       "%Lu dropped",
+		       bpa_log_syslog.n_spilled, bpa_log_syslog.n_replayed,
+		       bpa_log_syslog.n_dropped);
+    }
+  else
+    vlib_cli_output (vm, "syslog transport: disabled");
   return 0;
 }
 

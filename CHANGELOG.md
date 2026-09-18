@@ -115,10 +115,17 @@ version has a chance of seeing it.
   each other's bytes into the wrong collector. Framing is RFC 6587 octet
   counting, on port 601 by default.
 
-  Two defects the reader found rather than review: a syslog stream would have
-  been handed IPFIX bytes for the boot marker - so a collector framing by
-  octet count would have read the next line's length out of the middle of a
-  binary record - and it asked for an IPFIX template it has no use for.
+  Three defects were found by the checks rather than by review. A syslog
+  stream would have been handed IPFIX bytes for the boot marker, so a
+  collector framing by octet count would have read the next line's length out
+  of the middle of a binary record; it asked for an IPFIX template it has no
+  use for; and **every event was dropped before it reached the stream**,
+  because the queue only accepted an event when UDP or TCP was enabled - the
+  trap that file's own comment describes for TCP, walked into again. The lab
+  is what caught the third: `lab/syslog.sh` stands a collector on the far side
+  of a veth and counts what arrives, and it read 0 of 3 allocations on the
+  first run and 3 of 3 on the fix, with the boot marker and nothing
+  malformed.
 
 * **The function reader says how much of what is left needs the VPP build**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). The count of C functions no unit test names read

@@ -151,8 +151,13 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
   bpa_log_event_t *e;
 
   /* One enabled transport is enough: with only TCP on, the previous version
-   * dropped every allocation event here, silently. */
-  if (PREDICT_FALSE (!bpa_log_main.enabled && !bpa_log_tcp.enabled))
+   * dropped every allocation event here, silently - and the syslog stream
+   * arrived into exactly that trap, which lab/syslog.sh caught on its first
+   * run. Every transport this box has belongs in this test, and the test is
+   * here rather than at each exporter because this is where the event is
+   * still a queue entry rather than a record (#20). */
+  if (PREDICT_FALSE (!bpa_log_main.enabled && !bpa_log_tcp.enabled
+		     && !bpa_log_syslog.enabled))
     return;
 
   if (PREDICT_FALSE (vec_len (pt->log_queue) >= BPA_LOG_QUEUE_MAX))
@@ -319,7 +324,8 @@ bpa_log_drain (vlib_main_t *vm)
   flow_report_t *fr;
   u32 i, j;
 
-  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
+  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled
+      && !bpa_log_syslog.enabled)
     return;
 
   /*
