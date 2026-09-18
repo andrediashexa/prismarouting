@@ -1,8 +1,24 @@
 #!/bin/sh
 # Install a RELEASED version, configure the box, install this tree over it.
 #
-#   sh tools/lab.sh upgrade           from v0.68.0 to the current tree
-#   sh tools/lab.sh upgrade v0.70.0   from another released tag
+#   sh tools/lab.sh upgrade           from v0.79.0 to the current tree
+#   sh tools/lab.sh upgrade v0.80.0   from another released tag
+#
+# WHY THE OLD SIDE STARTS AT v0.79.0 AND NOT EARLIER, which is a fact about
+# the product and not a fixture preference. v0.79.0 is the rename (#202): the
+# VTY is `prismash` from there on and `hexash` before it, the configuration
+# lives in /etc/prisma-routing and not /etc/hexarouting, and
+# `appliance/upgrade` REFUSES a box carrying the old directory or the old
+# service - "the product was renamed and NOTHING MIGRATES". So an upgrade from
+# a pre-rename tag is not a path this product supports; measuring one would be
+# measuring something the box is written to refuse.
+#
+# It was v0.68.0 until the full suite run of 0.90.0 reported this lab NOT
+# MEASURED, every run: the lab drives the old box through /usr/bin/prismash,
+# a v0.68.0 box has /usr/bin/hexash, and the fixture could not be configured
+# at all. The lab said so rather than reporting the product broken, which is
+# what `give_up` is for - but a lab that cannot measure anything is a lab
+# nobody is testing with.
 #
 # Nothing in this repository has ever upgraded a box (#291). appliance/install.sh
 # says at its own line 4 that it is the path "for updating a box in production
@@ -89,9 +105,9 @@
 # mounted"). Nothing can fix that from inside the container, so the lab looks
 # first for a tree somebody extracted on the host:
 #
-#   git -C <repo> archive v0.68.0 \
-#     | (mkdir -p <repo>/.build-old/v0.68.0 \
-#        && tar -x -C <repo>/.build-old/v0.68.0)
+#   git -C <repo> archive v0.79.0 \
+#     | (mkdir -p <repo>/.build-old/v0.79.0 \
+#        && tar -x -C <repo>/.build-old/v0.79.0)
 #
 # and falls back to that being absent as NOT MEASURED, with that command
 # printed. In the clone the release suite runs from, git now answers and none
@@ -121,13 +137,18 @@
 #      version stamp before it overwrites it, and on a root that already had
 #      one it says which build replaced which and what is still running the
 #      old one. The verdict asserts that here, on a box that really was
-#      v0.68.0 an hour ago, which is the only place in this repository where
-#      those two stamps are real.
+#      a released version an hour ago, which is the only place in this
+#      repository where those two stamps are real.
+#
+#      The readings in this header were taken with v0.68.0 on the old side,
+#      before the rename made that tag unupgradeable. What they measure - a
+#      new VTY against an old dataplane - is a property of the split and not
+#      of the tag, and the run re-measures it on every execution.
 #
 #      WHAT THE SPLIT COSTS IS NOW MEASURED, and it is worse than the issue
 #      says. #291 calls the combination "not tested, not documented and not
 #      stated". It is also PARTLY BROKEN, and section 5 prints which part: on
-#      a box upgraded from v0.68.0 to this tree, the new VTY changing a
+#      a box upgraded from the old side to this tree, the new VTY changing a
 #      setting on an existing pool commits normally, and the new VTY CREATING
 #      A POOL is refused by the old dataplane -
 #
@@ -212,7 +233,7 @@ set -u
 . /src/lab/lib.sh      # startup_conf, start_frr, wait_vpp, vc
 . /src/lab/verdict.sh  # expect, expect_in, expect_setup, verdict
 
-OLD_TAG=${1:-v0.68.0}
+OLD_TAG=${1:-v0.79.0}
 OLD=/tmp/old-tree
 CACHE=/src/.build-old/$OLD_TAG
 HX=/usr/bin/prismash   # the INSTALLED VTY, deliberately: see section 2
@@ -293,8 +314,8 @@ build_why() {  # <log>
 # with a check in it rather than two pairs of commands. /src/.build-vpp
 # persists on the HOST between runs: the second run found it up to date, ninja
 # did nothing, /vpp_plugins still held the plugin THIS RUN had just built from
-# v0.68.0, and the lab copied that into /src/.build-vpp as "this tree's". The
-# upgrade then installed v0.68.0's dataplane over v0.68.0's and reported it as
+# the OLD tag, and the lab copied that into /src/.build-vpp as "this tree's".
+# The upgrade then installed the old dataplane over the old one and reported it as
 # the current tree. What caught it was the sha256 comparison two lines down,
 # which is the only reason it is not still happening.
 #
@@ -608,8 +629,8 @@ echo "  test/test_install_says.sh drives those screens directly."
 # old dataplane refuses, the refusal says which dataplane answered, that the
 # upgrade is why, and what clearing it would cost. The verdict makes that
 # assertion conditional on the refusal having happened, and says so - so a
-# released tag whose API this tree has not moved runs green, and the default
-# v0.68.0, which does refuse, is READ rather than assumed.
+# released tag whose API this tree has not moved runs green, and a tag whose
+# API it HAS moved is READ rather than assumed.
 # A COMMIT and not a `commit check`. Measured both: the check passes in this
 # window, because checking a per-pool setting does not send the message the
 # dataplane would have to understand. It is the write that finds out, and the
@@ -839,7 +860,7 @@ expect_in "the new version stamp is this tree's" \
 
 # AND THAT THE INSTALLER SAID SO (#291 item 3).
 #
-# The two stamps here are real: this box was v0.68.0 twenty minutes ago and
+# The two stamps here are real: this box was the old release twenty minutes ago and
 # the installer had to read that off the disk before it overwrote it. Nothing
 # else in this repository can assert that, because everywhere else one of the
 # two versions is a fixture.
@@ -886,7 +907,7 @@ expect "the dataplane now runs the plugin the upgrade installed" \
 #
 # CONDITIONAL, and the condition is read rather than assumed. This lab takes a
 # tag, and only a tag whose API message this tree has since changed produces
-# the refusal at all - v0.68.0 does, a tag that does not would make an
+# the refusal at all - a tag that does not would make an
 # unconditional assertion red for no defect. So the refusal is the fixture and
 # the explanation is the subject, which is the split expect_setup exists for;
 # it is not spelled expect_setup because a dataplane that ACCEPTS the pool has
@@ -921,8 +942,8 @@ operator's decision" \
   *)
     echo "  ---- ${OLD_TAG}'s dataplane accepted a pool created in the split"
     echo "       window, so there was no refusal here to explain. #293's"
-    echo "       assertions are read on a tag whose API message moved;"
-    echo "       v0.68.0, this lab's default, is one."
+    echo "       assertions are read on a tag whose API message moved, and"
+    echo "       this one's has not moved since."
     ;;
 esac
 

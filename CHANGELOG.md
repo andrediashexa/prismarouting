@@ -77,7 +77,57 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The gap the upgrade lab's own default exposes is filed rather than left
+  in a comment** ([#398](https://github.com/andrediashexa/hexarouting/issues/398)). The
+  lab measures an upgrade from ONE FIXED TAG, which is what makes its
+  readings comparable across releases - and it means the upgrade an operator
+  actually performs, the release they are on to the one being published, has
+  never been measured by anything. A fixed tag also ages: this one aged out
+  of the supported path when the rename shipped. #398 is the gate running the
+  same lab a second time against the previous published release, with the
+  cost measured rather than estimated - about three minutes on this machine,
+  against a gate that takes twenty-five.
+
 ### Fixed
+
+* **The upgrade lab measured nothing, on every run, and said so**
+  ([#291](https://github.com/andrediashexa/hexarouting/issues/291)). The full suite run
+  of 0.90.0 reported it NOT MEASURED - *"the old box was configured and saved
+  its configuration"* - and it reproduced alone, so it was not the machine
+  being busy.
+
+  The cause is the rename. The lab's old side was **v0.68.0**, and it drives
+  that box through `/usr/bin/prismash`; a v0.68.0 box has `/usr/bin/hexash`,
+  because the rename ([#202](https://github.com/andrediashexa/hexarouting/issues/202))
+  shipped in v0.79.0. So the fixture could not be configured at all, and every
+  assertion after it was about a box that did not exist - which is what
+  `give_up` is for, and it did its job: the lab said it had measured nothing
+  rather than reporting the product broken.
+
+  **The old side starts at v0.79.0 now, and that is a fact about the product
+  rather than a fixture preference**: `appliance/upgrade` REFUSES a box
+  carrying `/etc/hexarouting` or `hexarouting.service` - *"the product was
+  renamed and NOTHING MIGRATES"* - so an upgrade from a pre-rename tag is a
+  path this product is written to refuse, and measuring it would be measuring
+  the refusal. With v0.79.0 on the old side the lab passes end to end again:
+  the pool, the forward, the routes, the trail and the rollback store all
+  survive the upgrade, and an unsolicited packet still reaches the pinned
+  subscriber on the port the forward names.
+
+* **A reader refused this tree over another release's document.** With the old
+  release extracted into `.build-old/` - which is what `lab/upgrade.sh` tells
+  you to do when it runs out of a git worktree - `test_doc_copies.py` walked
+  it and refused this tree over a **retracted memory figure in v0.79.0's**
+  `docs/appliance.md`: a document nobody in this tree wrote, nobody here can
+  correct, and whose figure this repository had already withdrawn and
+  replaced in the version being built.
+
+  `.gitignore` has held `.build-old/` since the lab was written, and
+  `test_doc_commands.py` already skipped it: the skip list lives in four
+  readers and had drifted in three. It is in the two that walk the whole tree
+  now - the document check and the context map, where a file name indexed out
+  of a released tree resolves to another release's copy of it - each with the
+  reason written at the walk.
 
 ## 0.96.0 - the off floors catch up with the labs
 
