@@ -448,20 +448,39 @@ the finding changing underneath it cost nothing.
 
 ## What the acceptance test measures now
 
-The readings above were taken at 0.67.0, when nothing on either box answered
-for a service address. Re-taken against a pair carrying the virtual routers
-[#7](https://github.com/andrediashexa/hexarouting/issues/7) built, **18 of the lab's 22 checks
-are green**:
+The readings before this section were taken at 0.67.0, when nothing on either
+box answered for a service address and every check in `lab/ha-failover.sh` was
+red. Re-taken against a pair carrying virtual routers, **all 22 checks are
+green**, and the lab is a member of `tools/run-all-labs.sh` like any other -
+with an `off` run that takes the virtual routers away and puts it back to
+where it started, which is what says it can still fail.
 
 | What was measured | Result |
 |---|---|
-| The subscriber's translated round trip through the service address, before any failure | Works, and the upstream sees the address and block the formula gives - read off the box rather than typed in the lab |
-| **A stopped dataplane**, stopped the way the appliance's own `ExecStop` stops it | Survived: the service comes back in about four seconds, **on the same public address and a port in the same block**, and it is no longer the stopped box receiving it |
-| **A killed dataplane**, SIGKILL | Survived: the service comes back in about three seconds, same address, same block |
-| An in-flight TCP connection across the takeover | Gone, and a new one from the same subscriber gets the same public address and a port in the same block. That is the claim this page makes and the lab states it in those words, so nobody reads a green run as "connections survived" |
-| **A pulled uplink** | **Still red, and not because of the product**: a container cannot make the dataplane see a link go down (see above). Three checks hang off that one failure |
-| Which box received the traffic after the kill | One reading the lab could not take: the service came back, and the lab's own session-count probe reported neither box as the receiver. That is the lab's instrument rather than the product's behaviour, and it is [#9](https://github.com/andrediashexa/hexarouting/issues/9)'s to settle |
+| The subscriber's translated round trip through the service address, before any failure | Works, and the upstream sees the address and block the formula gives - read off the box rather than typed into the lab |
+| **A pulled uplink**, leaving the box alive and holding the subscriber-side address | Survived: tracking takes the priority from 200 to 50, the peer's 100 wins, and the service comes back on the same public address and a port in the same block |
+| **A stopped dataplane**, stopped the way the appliance's own `ExecStop` stops it | Survived, in about four seconds, same address, same block |
+| **A killed dataplane**, SIGKILL | Survived, in about three seconds, same address, same block |
+| An in-flight TCP connection across the takeover | Gone, and a new one from the same subscriber gets the same public address and a port in the same block. That is the claim this page makes, and the lab states it in those words so that nobody reads a green run as "connections survived" |
 
-The lab is still excluded from `tools/run-all-labs.sh` for the ordinary
-reason: it is red, and a red lab in the suite is a suite nobody trusts. What
-changed is why it is red.
+Two things about the pulled-uplink row, because a green check is worth exactly
+what it measured.
+
+**The failure has to be caused in two places, and that is a property of the
+container rather than of the product.** The cable is pulled at the bridge,
+which is what an operator's cable is - and the dataplane does not see it: an
+af_packet host interface goes on reporting `up` with the veth's peer down,
+with its own port down in Linux, and with the veth deleted outright, and a VPP
+`tap` behaves the same. So the lab also takes the port down in the dataplane,
+which is the state a card whose cable is out reports on real hardware. That is
+causing the failure, which this lab may do; it is not configuring the box out
+of one. **The question left for hardware
+([#28](https://github.com/andrediashexa/hexarouting/issues/28)) is the narrow one:
+whether a driver notices the cable itself.**
+
+**And it only fails over because the pair is configured to track.** Each side
+tracks the other's port, so a box whose uplink is gone drops below a healthy
+peer. A pair configured without tracking survives a dead box and not a deaf
+one - it goes on holding the subscriber-side address while reaching nothing -
+and that difference is why the uplink is asked separately from the two ways of
+losing the whole box.

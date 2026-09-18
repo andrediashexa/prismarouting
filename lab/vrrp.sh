@@ -47,7 +47,7 @@
 # translated flow surviving the takeover with the same public address is #9,
 # in lab/ha-failover.sh, which is red until the pair exists. This is the
 # mechanism under it.
-# OFF-RED-AT-LEAST: 12
+# OFF-RED-AT-LEAST: 14
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -251,31 +251,69 @@ echo "  ping: $(sed -n '/packets transmitted/p' /tmp/ping-before.log)"
 echo "  arp:  ${NEIGH_BEFORE:-nothing}"
 
 echo
-echo "=== the uplink, and what this container cannot measure ==="
-# WHY THERE IS NO PULLED-UPLINK CHECK HERE, measured rather than assumed.
+echo "=== the uplink goes, and the box that is alive stops holding the address ==="
+# THE FAILURE A DESIGN WITHOUT TRACKING DOES NOT SURVIVE: box a is healthy,
+# its subscriber port is up, and it can reach nothing upstream. Tracking is
+# what notices, by subtracting from the priority until the peer wins.
 #
-# A pulled uplink is the failure a design without interface tracking does not
-# survive: the box is alive, its subscriber port is up, and it can reach
-# nothing. Tracking is what notices, and the track entry IS on the box - the
-# verdict asserts it came back from the dataplane.
+# WHAT THIS CONTAINER CANNOT DO, measured rather than assumed: make the
+# dataplane see a CABLE go. These boxes forward over af_packet host
+# interfaces, and this VPP never reports one of those as link down - with the
+# bridge side of the veth down, with the box's own port down in Linux, and
+# with the veth deleted outright, `show hardware` goes on saying "up". A VPP
+# tap was tried on the theory that a virtio device carries the host's carrier:
+# it does not either. The readings are printed below.
 #
-# What cannot be done in a container is make the dataplane SEE the cable go.
-# These boxes forward over af_packet host interfaces, and this VPP never
-# reports one of those as link down: with the bridge side of the veth taken
-# down, with the box's own port taken down in Linux, and with the veth deleted
-# outright, `show hardware` goes on saying "up" in all three. The readings are
-# below. So a tracking check here would be measuring af_packet, and a green
-# one would be measuring nothing at all.
-#
-# It belongs with the other measurements that need a real NIC, which is #28.
+# So the cable is pulled AND the port is taken down in the dataplane, which is
+# the state a card whose cable is out reports on real hardware. That is
+# causing the failure, which this lab may do; it is not configuring the box
+# out of it. What is left for #28 is the one question hardware answers: does
+# the driver notice the cable itself.
 ip link set a-up-br down
-sleep 3
+sleep 2
 echo "  the cable is out at the bridge, and Linux says so inside the box:"
 ip netns exec a ip link show a-up | sed -n 1p | sed 's/^/    /'
-echo "  and the dataplane still says the link is up:"
+echo "  and the dataplane still says the link is up, which is why the port"
+echo "  is taken down there too:"
 vb a show hardware host-a-up | sed -n 2p | sed 's/^/    /'
+vb a set interface state host-a-up down
+TRACK_AT=$(date +%s)
+TRACK_OK=1
+while [ $(( $(date +%s) - TRACK_AT )) -lt 20 ]; do
+  case "$(hx b -c "show cgnat ha")" in
+    *"host-b-lan vrrp 1   master, holding the address"*) TRACK_OK=0; break ;;
+  esac
+done
+echo "  box b took the address after $(( $(date +%s) - TRACK_AT ))s"
+HA_A_TRACK=$(hx a -c "show cgnat ha")
+echo "$HA_A_TRACK" | sed -n '/role/,/peer/p' | sed 's/^/  a: /'
+# Bounded, not a single shot: the upstream has to learn the virtual MAC on
+# ITS side too, and that is an ARP exchange after the election - the same
+# reason the first crossing above is waited for rather than slept through.
+CROSS_TRACK=1
+CROSS_AT=$(date +%s)
+while [ $(( $(date +%s) - CROSS_AT )) -lt 15 ]; do
+  if ip netns exec client ping -c 1 -W 1 "$UPSTREAM" >/dev/null 2>&1; then
+    CROSS_TRACK=0; break
+  fi
+done
+echo "  the client crossed the pair again after $(( $(date +%s) - CROSS_AT ))s"
+
+echo
+echo "=== and the cable goes back in ==="
+# Preempt: the configuration says box a holds the service when both are
+# healthy, so a box that comes back takes it back rather than leaving the pair
+# where the last failure put it.
+vb a set interface state host-a-up up
 ip link set a-up-br up
-sleep 2
+BACK_AT=$(date +%s)
+BACK_OK=1
+while [ $(( $(date +%s) - BACK_AT )) -lt 20 ]; do
+  case "$(hx a -c "show cgnat ha")" in
+    *"host-a-lan vrrp 1   master, holding the address"*) BACK_OK=0; break ;;
+  esac
+done
+echo "  box a took it back after $(( $(date +%s) - BACK_AT ))s"
 
 echo
 echo "=== the priority is what decides, and changing it moves the service ==="
@@ -394,6 +432,15 @@ expect "and crosses it again after the box holding the address was killed,
         with the ARP cache never flushed" test "$OK_AFTER" -eq 0
 expect_in "the MAC the client holds is the same one, which is why it never
            had to ask again" "$VMAC" "$NEIGH_AFTER"
+expect "an uplink that is gone moves the address: box a is alive and can
+        reach nothing, and tracking is what notices" test "$TRACK_OK" -eq 0
+expect_in "and box a says what it is ADVERTISING and why, not only what it
+           was configured with" \
+          "and something it tracks is down" "$HA_A_TRACK"
+expect "the client's traffic crosses the pair while box a is the broken one" \
+       test "$CROSS_TRACK" -eq 0
+expect "and when the uplink comes back the box the configuration names takes
+        the service back" test "$BACK_OK" -eq 0
 expect "lowering box a's priority moves the service to box b" \
        test "$LOWER_OK" -eq 0
 expect "and the client's traffic crosses the pair while it is box b holding

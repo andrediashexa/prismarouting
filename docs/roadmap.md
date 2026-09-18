@@ -1467,18 +1467,23 @@ on it because nothing asked for one. `interface <name>` now takes
 `vrrp <vrid> address|priority|track`, over the binary API, onto the interface
 that carries the packets.
 
-**The lab written first did its job.** `lab/ha-failover.sh` was all red at
-0.67.0 and is 18 of 22 green against a pair carrying virtual routers: a
-stopped dataplane and a killed one are both survived, every subscriber keeping
-the same public address and a port in the same block, and an in-flight
-connection dropping - which is what this design claims and says out loud, so
-that nobody reads the green run as "connections survived". The four still red
-are the pulled-uplink trio, which needs a NIC whose link state the dataplane
-can see ([#28](https://github.com/andrediashexa/hexarouting/issues/28)), and one reading
-of which box received the traffic afterwards, which is the lab's instrument
-rather than the product's behaviour. `lab/vrrp.sh` measures the mechanism
-under it: the election, the virtual MAC, the takeover with the subscriber's
-ARP cache never flushed, and the service moving when the priority moves.
+**The lab written first did its job, and it is green.** `lab/ha-failover.sh`
+was all red at 0.67.0 and all 22 of its checks pass against a pair carrying
+virtual routers: a pulled uplink, a stopped dataplane and a killed one are
+each survived, every subscriber keeping the same public address and a port in
+the same block, and an in-flight connection dropping - which is what this
+design claims and says out loud, so that nobody reads the green run as
+"connections survived". It is a member of `tools/run-all-labs.sh` now, with an
+off run of its own.
+
+Two of the reds were the lab rather than the product, which is worth recording
+because both would have been investigated as defects: its probe port never
+advanced past the first reading, because the function that incremented it runs
+in a subshell; and the pulled uplink was a failure the dataplane never saw, so
+the stage had no failure in it at all. `lab/vrrp.sh` measures the mechanism
+under all of this - the election, the virtual MAC, the takeover with the
+subscriber's ARP cache never flushed, the tracked interface, and the service
+moving when the priority moves.
 
 #### Phase 7 — performance, which needs hardware
 
