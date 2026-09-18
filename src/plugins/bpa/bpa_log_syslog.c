@@ -28,6 +28,7 @@
 #include "bpa.h"
 #endif
 #include "bpa_log.h"
+#include "bpa_identity.h"
 
 /*
  * The MSGID, one per natEvent this box emits.
@@ -131,9 +132,9 @@ bpa_syslog_timestamp (char *out, u32 cap, f64 wall)
 u32
 bpa_syslog_line (char *out, u32 cap, f64 wall, u8 event, u32 ip_priv,
 		 u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
-		 const char *hostname, u32 pen, u32 pri)
+		 const char *hostname, u32 pen, u32 pri, const char *identity)
 {
-  char ts[32], host[256];
+  char ts[32], host[256], who[BPA_IDENTITY_MAX * 2 + 2];
   const char *msgid = bpa_syslog_msgid (event);
   int n;
 
@@ -141,18 +142,31 @@ bpa_syslog_line (char *out, u32 cap, f64 wall, u8 event, u32 ip_priv,
     return 0;
   if (!bpa_syslog_escape (host, sizeof (host), hostname ? hostname : "-"))
     return 0;
+  /*
+   * THE IDENTITY IS THE ONE THE RECORD WAS BUILT WITH, and it is escaped
+   * because it comes from a provisioning system rather than from this box: a
+   * name carrying a quote or a bracket would otherwise end the structured
+   * data early and a collector would read the rest of the line as a message
+   * (#21). A name this box has none for arrives here as the unknown marker,
+   * never as an empty string.
+   */
+  if (!bpa_syslog_escape (who, sizeof (who),
+			  identity && identity[0] ? identity
+						  : bpa_identity_unknown))
+    return 0;
 
   n = snprintf (
     out, cap,
     "<%u>1 %s %s prisma-cgnat - %s "
     "[cgnat@%u natEvent=\"%u\" subscriber=\"%u.%u.%u.%u\" "
-    "public=\"%u.%u.%u.%u\" portStart=\"%u\" portEnd=\"%u\" pool=\"%u\"] "
+    "public=\"%u.%u.%u.%u\" portStart=\"%u\" portEnd=\"%u\" pool=\"%u\" "
+    "subscriberId=\"%s\"] "
     "%u.%u.%u.%u %s %u.%u.%u.%u ports %u-%u pool %u",
     pri, ts, host, msgid, pen, event,
     (ip_priv >> 24) & 0xff, (ip_priv >> 16) & 0xff, (ip_priv >> 8) & 0xff,
     ip_priv & 0xff,
     (ip_pub >> 24) & 0xff, (ip_pub >> 16) & 0xff, (ip_pub >> 8) & 0xff,
-    ip_pub & 0xff, port_lo, port_hi, pool_id,
+    ip_pub & 0xff, port_lo, port_hi, pool_id, who,
     (ip_priv >> 24) & 0xff, (ip_priv >> 16) & 0xff, (ip_priv >> 8) & 0xff,
     ip_priv & 0xff,
     event == BPA_NAT_EVENT_BLOCK_DEALLOC ? "released" : "->",

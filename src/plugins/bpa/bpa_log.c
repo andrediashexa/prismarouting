@@ -167,6 +167,11 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
     }
 
   vec_add2 (pt->log_queue, e, 1);
+  /* THE IDENTITY IS TAKEN HERE, at the instant of the allocation, for the
+   * reason the field's own comment gives: a lookup at drain time would name
+   * whoever holds the address by then (#21). */
+  bpa_identity_lookup (&bpa_main.identity, ip_priv, e->identity,
+		       sizeof (e->identity));
   e->event = event;
   e->ip_priv = ip_priv;
   e->ip_pub = ip_pub;
@@ -234,7 +239,7 @@ bpa_log_flush (vlib_main_t *vm)
  */
 void
 bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
-	      u16 port_hi, u32 pool_id)
+	      u16 port_hi, u32 pool_id, const char *identity)
 {
   f64 wall = unix_time_now ();
 
@@ -245,7 +250,7 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
    * own comment exists for: a caller that reaches one exporter directly will
    * sooner or later reach only that one (#20). */
   bpa_log_stream_record (&bpa_log_syslog, wall, event, ip_priv, ip_pub,
-			 port_lo, port_hi, pool_id);
+			 port_lo, port_hi, pool_id, identity);
 }
 
 /*
@@ -399,7 +404,7 @@ bpa_log_drain (vlib_main_t *vm)
 	  bpa_log_event_t *e = vec_elt_at_index (pt->log_queue, j);
 
 	  bpa_log_emit (vm, e->event, e->ip_priv, e->ip_pub, e->port_lo,
-			e->port_hi, e->pool_id);
+			e->port_hi, e->pool_id, e->identity);
 	}
       vec_reset_length (pt->log_queue);
     }

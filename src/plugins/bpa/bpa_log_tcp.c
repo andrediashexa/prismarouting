@@ -168,8 +168,9 @@ bpa_tcp_prepend_template (bpa_log_stream_t *s, f64 now)
 }
 
 void
-bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
-		    u16 port_hi, u32 pool_id)
+bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv,
+		       u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
+		       const char *identity)
 {
   u8 **b = &s->outbuf;
   u32 at, set_at;
@@ -195,7 +196,7 @@ bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv, u32
       u32 n = bpa_syslog_line (line, sizeof (line), wall, event, ip_priv,
 			       ip_pub, port_lo, port_hi, pool_id,
 			       s->hostname ? (const char *) s->hostname : "-",
-			       s->pen, s->pri);
+			       s->pen, s->pri, identity);
       int hn;
 
       if (!n)
@@ -680,8 +681,12 @@ void
 bpa_log_tcp_record (f64 wall, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
 		    u16 port_hi, u32 pool_id)
 {
+  /* The IPFIX record carries no identity field yet - the element has to be
+   * chosen rather than guessed at, and a wrong one is worse than none (#21
+   * step 4). The stream takes the parameter all the same, so the two wires
+   * differ in what they can express and not in what they are given. */
   bpa_log_stream_record (&bpa_log_tcp, wall, event, ip_priv, ip_pub, port_lo,
-			 port_hi, pool_id);
+			 port_hi, pool_id, 0);
 }
 
 void

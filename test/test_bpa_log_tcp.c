@@ -542,7 +542,7 @@ main (void)
     sys.hostname = (u8 *) "cgnat-sp-01";
 
     bpa_log_stream_record (&sys, 1789699259.123, 16, 0x64400005, 0xC8960010,
-			   1024, 1027, 0);
+			   1024, 1027, 0, "joao.silva@isp");
     /* The frame says how many bytes follow, and what follows is exactly that
      * many - read here rather than assumed, because a collector that trusts
      * the count and is given another number reads the next line's first
@@ -558,6 +558,14 @@ main (void)
       one_line = memchr (buf, '\n', len) == 0;
     }
     snprintf (want, sizeof (want), "<134>1 2026-09-18T02:40:59.123Z");
+    /* The identity the record was BUILT with reaches the wire. The queue
+     * entry carries it from the instant of the allocation, so what is
+     * asserted here is that the stream writes what it was handed and
+     * resolves nothing of its own (#21). */
+    CHECK (memmem (sys.outbuf, vec_len (sys.outbuf),
+		   "subscriberId=\"joao.silva@isp\"",
+		   strlen ("subscriberId=\"joao.silva@isp\"")) != 0,
+	   "the line carries the identity the caller was holding");
     CHECK (framed_right && first_len > 0
 	     && strncmp ((char *) sys.outbuf + 4, want, strlen (want)) == 0,
 	   "a syslog record is octet-counted and the count is the line: "
@@ -572,7 +580,7 @@ main (void)
       u64 dropped = sys.n_dropped;
 
       bpa_log_stream_record (&sys, 1789699259.123, 18, 0x64400005,
-			     0xC8960010, 1024, 1027, 0);
+			     0xC8960010, 1024, 1027, 0, "joao.silva@isp");
       CHECK (vec_len (sys.outbuf) == before && sys.n_dropped == dropped + 1,
 	     "an event with no name is counted as dropped, not written: "
 	     "buffer %u -> %u, dropped %llu -> %llu",

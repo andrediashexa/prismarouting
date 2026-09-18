@@ -1438,8 +1438,18 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		   * to name UDP and TCP itself, which is how a third exporter
 		   * gets added in one place and forgotten in the other - and
 		   * how it came to hand vlib_time_now() to a record. */
-		  bpa_log_emit (vm, BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
-				blk.ip_pub, blk.port_lo, blk.port_hi, j);
+		  {
+		    /* The identity as it is NOW, which is the honest answer
+		     * for a drain: this is not the instant of an allocation
+		     * and there is no earlier reading to prefer (#21). */
+		    char who[BPA_IDENTITY_MAX];
+
+		    bpa_identity_lookup (&bm->identity, ip_priv, who,
+					 sizeof (who));
+		    bpa_log_emit (vm, BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
+				  blk.ip_pub, blk.port_lo, blk.port_hi, j,
+				  who);
+		  }
 		}
 	    }
 	}

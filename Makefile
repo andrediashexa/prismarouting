@@ -167,13 +167,15 @@ $(BUILD)/test_bpa_pptp: test/test_bpa_pptp.c src/plugins/bpa/bpa_pptp.c \
 $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
                            src/plugins/bpa/bpa_log_tcp.c \
                            src/plugins/bpa/bpa_log_syslog.c \
+                           src/plugins/bpa/bpa_identity.c \
                            src/plugins/bpa/bpa_log.h \
                            test/bpa_shim.h test/bpa_vec_shim.h \
                            test/bpa_tcp_shim.h test/bpa_log_shim.h \
                            src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
-	    test/test_bpa_log_tcp.c src/plugins/bpa/bpa_log_syslog.c
+	    test/test_bpa_log_tcp.c src/plugins/bpa/bpa_log_syslog.c \
+	    src/plugins/bpa/bpa_identity.c
 
 # The configuration trail's hex reader, which is the one function in
 # bpa_audit.c that touches neither format(), nor vppinfra's SHA-2, nor the
@@ -194,12 +196,18 @@ $(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
 # The syslog line, which is the half of a second transport that decides what a
 # court-ordered lookup reads. Standalone because none of it needs a socket, a
 # collector or a VPP - and a wrong field is invisible in a capture that parses.
+# bpa_identity.c is compiled beside it since #21: the line carries the
+# subscriber's identity, and the unknown marker it falls back to lives there -
+# one holder, so the wire and the table cannot disagree about what "nobody
+# knows" looks like.
 $(BUILD)/test_bpa_log_syslog: test/test_bpa_log_syslog.c \
                               src/plugins/bpa/bpa_log_syslog.c \
+                              src/plugins/bpa/bpa_identity.c \
+                              src/plugins/bpa/bpa_identity.h \
                               src/plugins/bpa/bpa_log.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
-	    test/test_bpa_log_syslog.c
+	    test/test_bpa_log_syslog.c src/plugins/bpa/bpa_identity.c
 
 $(BUILD)/test_bpa_audit: test/test_bpa_audit.c src/plugins/bpa/bpa_audit.c \
                          test/bpa_shim.h
