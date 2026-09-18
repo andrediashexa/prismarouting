@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.83.0 - the identity table's other two sources
+
+[#21](https://github.com/andrediashexa/hexarouting/issues/21).
+
+### Added
+
 * **The identity table can be filled from the accounting a BNG already sends**
   ([#21](https://github.com/andrediashexa/hexarouting/issues/21), the third and last source):
 
