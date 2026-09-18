@@ -55,6 +55,8 @@ Os demais comandos da hierarquia:
 |---------|-----------|
 | `nat cgnat logging tcp <coletor> [port <n>]` | exportação por TCP |
 | `nat cgnat logging tcp disable` | desliga o transporte TCP |
+| `nat cgnat logging syslog <coletor> enterprise <n> [port <n>] [facility <0-23>] [severity <0-7>]` | exporta os mesmos eventos como linhas syslog (RFC 5424) |
+| `nat cgnat logging syslog disable` | desliga o transporte syslog |
 | `nat cgnat logging udp disable` | apaga o destino UDP |
 | `nat cgnat logging disable` | desliga a exportação UDP |
 
@@ -184,6 +186,38 @@ Por isso o `natEvent 17` na liberação é correção, não capricho.
 # Quando a caixa para, e quando ela cai
 
 A mesma lacuna aparece no reinício, e por um motivo mais comum do que a ociosidade: **todo reboot planejado** deixava para trás um bloco segurado no instante da parada, sem liberação nenhuma. E reboot planejado inclui o que inicia uma troca de versão, porque levar a caixa para uma versão nova começa bootando pela mídia nova.
+
+## Quando o seu coletor só fala syslog
+
+A maioria dos coletores de ISP lê syslog e mais nada. Os mesmos eventos saem como linhas **RFC 5424**, sem mudar o que é registrado: um registro por alocação e por liberação, nunca por fluxo.
+
+```
+nat cgnat logging syslog 10.0.0.9 enterprise 44444
+```
+
+Uma linha de alocação chega assim:
+
+```
+<134>1 2026-09-18T02:40:59.123Z cgnat-sp-01 prisma-cgnat - BLOCK-ALLOC
+[cgnat@44444 natEvent="16" subscriber="100.64.0.5" public="200.150.0.16"
+portStart="1024" portEnd="1027" pool="0"]
+100.64.0.5 -> 200.150.0.16 ports 1024-1027 pool 0
+```
+
+**O horário é o mesmo do registro IPFIX, com a mesma precisão de milissegundo, em UTC.** É isso que permite colocar os dois lado a lado: um log cujo relógio não pode ser comparado com o outro não corrobora nada — e corroborar é a razão de existir um segundo transporte.
+
+**O número de empresa é seu, e não tem padrão.** A RFC 5424 reserva um nome de dado estruturado sem sufixo `@empresa` para nomes registrados na IANA, e este produto não tem um. Inventar um colocaria, no log de todo operador, um nome que amanhã significa outra coisa para quem o registrar. Então a caixa **recusa** o comando sem `enterprise <n>` — no prompt, onde dá para resolver, e não em um ano de linhas que o coletor interpretou errado.
+
+O transporte é TCP, com enquadramento por contagem de octetos (RFC 6587): o tamanho e um espaço antes de cada linha. A porta padrão é 601. Vale o mesmo que vale para o IPFIX sobre TCP — se o coletor cair, os bytes vão para um arquivo de transbordo na própria caixa e voltam na reconexão, na ordem. Cada transporte tem o arquivo dele.
+
+Os dois podem ficar ligados ao mesmo tempo: o coletor do provedor lendo syslog e a ferramenta deste produto lendo IPFIX.
+
+| Você digitou | A caixa diz |
+|---|---|
+| `nat cgnat logging syslog 10.0.0.9` | `an enterprise number is required`, com o porquê |
+| `... enterprise 9 sideways 2` | `not an option of this statement`, listando as que são |
+| `... enterprise 9 port 70000` | `port is 0-65535` |
+| `... enterprise 9 facility 24` | `facility is 0-23` |
 
 ## Parada planejada
 

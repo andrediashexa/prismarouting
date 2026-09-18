@@ -343,6 +343,70 @@ RFC 7011 permits SCTP, TCP and UDP.
 Compliance logging **SHOULD** use TCP. UDP **MAY** be used for telemetry, and
 both **MAY** be enabled at once.
 
+**And syslog, for the collectors that speak nothing else**
+([#20](https://github.com/andrediashexa/hexarouting/issues/20)). The event set
+does not change and **MUST NOT**: one record per allocation and release, never
+per flow. What changes is who can receive it - many ISP collectors read syslog
+and nothing else, and a product that cannot be read by the collector a provider
+already runs is disqualified for a reason that has nothing to do with the
+quality of its CGNAT.
+
+### Syslog implementation
+
+```
+nat cgnat logging syslog <collector> enterprise <n> [port <n>]
+                                     [facility <0-23>] [severity <0-7>]
+nat cgnat logging syslog disable
+```
+
+RFC 5424 over TCP, framed by RFC 6587 **octet counting** - the length and a
+space in front of each line. Not a trailing newline: non-transparent framing
+cannot carry a message containing the delimiter, and leaves a collector
+guessing where a truncated line ended. The default port is 601, which is RFC
+6587's, as 4739 is IPFIX's.
+
+It rides the **same exporter** as IPFIX-over-TCP: the same non-blocking
+socket, the same spill file when the collector is away, the same replay in
+order on reconnection. That machinery is what makes a transport fit for a
+compliance log and it has nothing to do with the format of what it carries, so
+it has one implementation and the format is a field. The two streams have
+spill files of their own, because two streams sharing one would replay each
+other's bytes into the wrong collector.
+
+One line per event, in the same grammar as the IPFIX record:
+
+```
+<134>1 2026-09-18T02:40:59.123Z cgnat-sp-01 prisma-cgnat - BLOCK-ALLOC
+[cgnat@44444 natEvent="16" subscriber="100.64.0.5" public="200.150.0.16"
+portStart="1024" portEnd="1027" pool="0"]
+100.64.0.5 -> 200.150.0.16 ports 1024-1027 pool 0
+```
+
+* the **timestamp** is the same instant at the same resolution as the IPFIX
+  `observationTimeMilliseconds`, in UTC. A log whose clock cannot be compared
+  with the IPFIX one cannot corroborate it, and corroboration is what a second
+  transport is for;
+* the **structured data** carries the record's fields under the IPFIX names,
+  so a collector parses them without a regular expression that breaks the
+  first time a message is reworded;
+* the **MSGID** is a name a person filters on - `BLOCK-ALLOC`,
+  `BLOCK-RELEASE`, `PORTS-EXHAUSTED`, `BOOT-MARKER`. An event this box has no
+  name for is **dropped and counted**, never written: a line naming an event a
+  collector cannot map is worse than no line, because it parses, is stored,
+  and answers a court request with a shrug;
+* the **MSG** after the structured data repeats the fields as a sentence, for
+  whoever is reading a tail rather than a collector;
+* the **boot marker** is a line of the same shape, `BOOT-MARKER`, carrying
+  both instants. What it is for is unchanged and is above.
+
+**The enterprise number is the operator's and has no default.** RFC 5424
+reserves a structured-data name without an `@enterprise` suffix for names IANA
+has registered, and this product has none; inventing one would put a name in
+every operator's log that means something else to whoever registers it later.
+So `nat cgnat logging syslog` **MUST** be given an IANA Private Enterprise
+Number and is refused without one - at the prompt, where it can be acted on,
+rather than in a year of lines a collector silently misparsed.
+
 ### UDP implementation
 
 ```

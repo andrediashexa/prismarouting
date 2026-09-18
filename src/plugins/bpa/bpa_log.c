@@ -151,8 +151,13 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
   bpa_log_event_t *e;
 
   /* One enabled transport is enough: with only TCP on, the previous version
-   * dropped every allocation event here, silently. */
-  if (PREDICT_FALSE (!bpa_log_main.enabled && !bpa_log_tcp.enabled))
+   * dropped every allocation event here, silently - and the syslog stream
+   * arrived into exactly that trap, which lab/syslog.sh caught on its first
+   * run. Every transport this box has belongs in this test, and the test is
+   * here rather than at each exporter because this is where the event is
+   * still a queue entry rather than a record (#20). */
+  if (PREDICT_FALSE (!bpa_log_main.enabled && !bpa_log_tcp.enabled
+		     && !bpa_log_syslog.enabled))
     return;
 
   if (PREDICT_FALSE (vec_len (pt->log_queue) >= BPA_LOG_QUEUE_MAX))
@@ -236,6 +241,11 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
   bpa_log_block_event (vm, vm->thread_index, wall, event, ip_priv, ip_pub,
 		       port_lo, port_hi, pool_id);
   bpa_log_tcp_record (wall, event, ip_priv, ip_pub, port_lo, port_hi, pool_id);
+  /* The third transport, and the last line of the fan-out this function's
+   * own comment exists for: a caller that reaches one exporter directly will
+   * sooner or later reach only that one (#20). */
+  bpa_log_stream_record (&bpa_log_syslog, wall, event, ip_priv, ip_pub,
+			 port_lo, port_hi, pool_id);
 }
 
 /*
@@ -262,6 +272,10 @@ bpa_log_marker_emit (vlib_main_t *vm)
   u8 *d;
 
   bpa_log_tcp_marker (wall, bm->boot_wall);
+  /* Every enabled stream gets the marker, for the reason there is one: a
+   * collector cannot read an allocation with no release until it knows which
+   * incarnation of the box wrote it (#20). */
+  bpa_log_stream_marker (&bpa_log_syslog, wall, bm->boot_wall);
 
   if (!lm->enabled)
     return;
@@ -310,7 +324,8 @@ bpa_log_drain (vlib_main_t *vm)
   flow_report_t *fr;
   u32 i, j;
 
-  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
+  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled
+      && !bpa_log_syslog.enabled)
     return;
 
   /*
@@ -392,6 +407,7 @@ bpa_log_drain (vlib_main_t *vm)
   bpa_log_flush (vm);
 
   bpa_log_tcp_service (vlib_time_now (vm));
+  bpa_log_stream_service (&bpa_log_syslog, vlib_time_now (vm));
 }
 
 void

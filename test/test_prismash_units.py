@@ -1220,6 +1220,88 @@ check(len(api.calls) == n and
       rows(text)[0] == "error: cgnat logging: not a shape this box takes"
       and any("cgnat logging tcp" in r for r in rows(text)),
       f"a shape it does not take lists the ones it does: {text!r}")
+print("\n=== Shell.apply_logging_syslog: the second collector, and its "
+      "refusals ===")
+# Mutation shown red: args["enable"] = False on the enabling path.
+api = RecApi()
+sh = shell(api=api)
+sh.apply_logging(["logging", "logging", "syslog", "10.0.0.9",
+                  "enterprise", "44444"])
+check(api.calls[-1] == ("bpa_logging_syslog_set",
+                        {"enable": True, "collector": "10.0.0.9", "port": 0,
+                         "enterprise": 44444, "facility": 16,
+                         "severity": 6}),
+      f"a collector and an enterprise number, with the dataplane's own "
+      f"defaults for the rest: {api.calls[-1]}")
+sh.apply_logging(["logging", "logging", "syslog", "10.0.0.9", "enterprise",
+                  "9", "port", "1514", "facility", "20", "severity", "5"])
+check(api.calls[-1][1]["port"] == 1514
+      and api.calls[-1][1]["facility"] == 20
+      and api.calls[-1][1]["severity"] == 5,
+      f"every option is read wherever it was typed: {api.calls[-1]}")
+sh.apply_logging(["logging", "logging", "syslog", "disable"])
+check(api.calls[-1][1]["enable"] is False
+      and api.calls[-1][1]["collector"] == "0.0.0.0",
+      f"disable sends the off, and names no collector: {api.calls[-1]}")
+
+n = len(api.calls)
+rv, text = driven(sh.apply_logging,
+                  ["logging", "logging", "syslog", "10.0.0.9"])
+check(len(api.calls) == n
+      and rows(text)[0] == "error: cgnat logging syslog: an enterprise "
+                           "number is required"
+      and any("IANA" in r for r in rows(text)),
+      f"no enterprise number is refused at the prompt: {text!r}")
+rv, text = driven(sh.apply_logging,
+                  ["logging", "logging", "syslog", "10.0.0.9", "enterprise",
+                   "9", "sideways", "2"])
+check(len(api.calls) == n
+      and rows(text)[0] == "error: cgnat logging syslog: not an option of "
+                           "this statement",
+      f"a word that is not an option is refused, with the ones that are: "
+      f"{text!r}")
+rv, text = driven(sh.apply_logging,
+                  ["logging", "logging", "syslog", "10.0.0.9", "enterprise"])
+check(len(api.calls) == n
+      and rows(text)[0] == "error: cgnat logging syslog: enterprise takes a "
+                           "number",
+      f"an option with no value is refused, not run with a default: {text!r}")
+for word, value, top in (("port", "70000", 65535), ("facility", "24", 23),
+                         ("severity", "9", 7)):
+    rv, text = driven(sh.apply_logging,
+                      ["logging", "logging", "syslog", "10.0.0.9",
+                       "enterprise", "9", word, value])
+    check(len(api.calls) == n
+          and rows(text)[0] == f"error: cgnat logging syslog: {word} is "
+                               f"0-{top}",
+          f"{word} {value} is refused before anything is sent: {text!r}")
+
+# AND THE DATAPLANE'S OWN REFUSAL, which is the one an operator meets when
+# the box is not in the state the statement needs: it comes back through the
+# API and is printed as the dataplane's words, not this VTY's.
+api = RecApi(refuse={"bpa_logging_syslog_set"})
+sh = shell(api=api)
+rv, text = driven(sh.apply_logging,
+                  ["logging", "logging", "syslog", "10.0.0.9", "enterprise",
+                   "9"])
+check(any(r.startswith("error: cgnat logging syslog: ") for r in rows(text)),
+      f"a refused syslog collector is reported as the dataplane's: {text!r}")
+rv, text = driven(sh.apply_logging, ["logging", "logging", "syslog",
+                                     "disable"])
+check(any(r.startswith("error: cgnat logging syslog: ") for r in rows(text)),
+      f"and so is a refused disable: {text!r}")
+# BY NAME as well as through the dispatch above: apply_logging routes on the
+# third word, and a test that only ever went through it would measure the
+# routing and not this method.
+api = RecApi()
+sh = shell(api=api)
+sh.apply_logging_syslog(["logging", "logging", "syslog", "10.0.0.9",
+                         "enterprise", "7"])
+check(api.calls[-1][0] == "bpa_logging_syslog_set"
+      and api.calls[-1][1]["enterprise"] == 7,
+      f"called by name, it sends the syslog message: {api.calls[-1]}")
+ok("one collector, one enterprise number, and every refusal at the prompt")
+
 api = RecApi(refuse={"bpa_logging_set"})
 sh = shell(api=api)
 rv, text = driven(sh.apply_logging, ["logging", "logging", "enable"])

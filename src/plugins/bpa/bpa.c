@@ -2114,7 +2114,8 @@ bpa_stop_drain (vlib_main_t *vm)
   u32 saved;
   u64 before, lost;
 
-  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
+  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled
+      && !bpa_log_syslog.enabled)
     return 0;
 
   /*
@@ -2173,6 +2174,28 @@ bpa_stop_drain (vlib_main_t *vm)
 		  (unsigned long long) lost,
 		  bpa_log_tcp.spill_path ? (char *) bpa_log_tcp.spill_path
 					 : "(no path configured)");
+
+  /* The syslog stream drains the same way and reports the same loss: a
+   * record this box wrote and nothing took is lost whichever wire it was
+   * bound for (#20). */
+  if (bpa_log_syslog.enabled)
+    {
+      u64 sys_before = bpa_log_syslog.n_dropped;
+      u32 sys_saved = bpa_log_stream_flush_exit (&bpa_log_syslog);
+      u64 sys_lost = bpa_log_syslog.n_dropped - sys_before;
+
+      if (sys_saved)
+	vlib_log_notice (bm->log_class,
+			 "stopping: %u syslog byte(s) the collector had not "
+			 "taken went to the spill file, to be replayed on "
+			 "the next connection",
+			 sys_saved);
+      if (sys_lost)
+	vlib_log_err (bm->log_class,
+		      "stopping: %llu syslog byte(s) were never written and "
+		      "are lost, in no file and in no collector",
+		      (unsigned long long) sys_lost);
+    }
   return 0;
 }
 

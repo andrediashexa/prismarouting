@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 /*
  * test_bpa_log_tcp.c - the IPFIX-over-TCP exporter, without a collector.
  *
@@ -199,7 +200,7 @@ main (void)
     bpa_log_tcp.seq = 7;
     fake_message (45);
     b = bpa_log_tcp.outbuf;
-    at = bpa_tcp_msg_start (&b);
+    at = bpa_tcp_msg_start (&bpa_log_tcp, &b);
     bpa_log_tcp.outbuf = b;
     CHECK (at == 45 && vec_len (bpa_log_tcp.outbuf) == 61 && rd16 (45) == 10
 	     && rd16 (47) == 0 && rd32 (49) >= (u32) now - 5
@@ -283,7 +284,7 @@ main (void)
     bpa_log_tcp.pending_connect = 0;
     bpa_log_tcp.head_sent = 17;
 
-    bpa_tcp_disconnect ();
+    bpa_tcp_disconnect (&bpa_log_tcp);
     CHECK (bpa_log_tcp.fd == -1 && bpa_log_tcp.connected == 0
 	     && bpa_log_tcp.head_sent == 0
 	     && fcntl (pipefd[1], F_GETFD) == -1,
@@ -320,11 +321,11 @@ main (void)
 
     /* Before the retry interval is up, nothing is attempted: a collector that
      * is down must not cost a socket per drain. */
-    bpa_tcp_try_connect (999.0);
+    bpa_tcp_try_connect (&bpa_log_tcp, 999.0);
     connects_after_gate = bpa_log_tcp.n_connects;
     attempt_after_gate = bpa_log_tcp.next_attempt;
 
-    bpa_tcp_try_connect (1000.0);
+    bpa_tcp_try_connect (&bpa_log_tcp, 1000.0);
     CHECK (connects_after_gate == 0 && attempt_after_gate == 1000.0
 	     && bpa_log_tcp.fd >= 0 && bpa_log_tcp.n_connects == 1
 	     && bpa_log_tcp.need_template == 1
@@ -336,7 +337,7 @@ main (void)
 	   bpa_log_tcp.fd, (unsigned long long) bpa_log_tcp.n_connects,
 	   bpa_log_tcp.need_template, bpa_log_tcp.next_attempt);
 
-    bpa_tcp_disconnect ();
+    bpa_tcp_disconnect (&bpa_log_tcp);
     close (lfd);
   }
 
@@ -364,7 +365,7 @@ main (void)
     bpa_log_tcp.connected = 1;
     bpa_log_tcp.head_sent = 10;
 
-    bpa_tcp_spill_now ();
+    bpa_tcp_spill_now (&bpa_log_tcp);
     CHECK (file_equals (spill_file, want, n) && bpa_log_tcp.n_spilled == n
 	     && vec_len (bpa_log_tcp.outbuf) == 0 && bpa_log_tcp.fd == -1,
 	   "bpa_tcp_spill_now writes the buffer whole, empties it, counts it "
@@ -378,7 +379,7 @@ main (void)
      * without bound. */
     reset (1);
     fake_message (45);
-    bpa_tcp_spill ();
+    bpa_tcp_spill (&bpa_log_tcp);
     {
       u64 spilled_small = bpa_log_tcp.n_spilled;
       u32 kept_small = vec_len (bpa_log_tcp.outbuf);
@@ -386,7 +387,7 @@ main (void)
 
       vec_add2 (bpa_log_tcp.outbuf, p, BPA_TCP_SPILL_BYTES);
       memset (p, 0, BPA_TCP_SPILL_BYTES);
-      bpa_tcp_spill ();
+      bpa_tcp_spill (&bpa_log_tcp);
       CHECK (spilled_small == 0 && kept_small == 45
 	       && bpa_log_tcp.n_spilled == 45 + BPA_TCP_SPILL_BYTES
 	       && vec_len (bpa_log_tcp.outbuf) == 0,
@@ -417,7 +418,7 @@ main (void)
       bpa_log_tcp.outbuf = b;
     }
 
-    bpa_tcp_replay_spill ();
+    bpa_tcp_replay_spill (&bpa_log_tcp);
     CHECK (vec_len (bpa_log_tcp.outbuf) == 10
 	     && memcmp (bpa_log_tcp.outbuf, "OLDERNEWER", 10) == 0
 	     && bpa_log_tcp.n_replayed == 5 && file_size (spill_file) == -1,
@@ -438,7 +439,7 @@ main (void)
     fake_message (45);
     bpa_log_tcp.head_sent = 45 + 36 + 10;
 
-    bpa_tcp_drop_sent ();
+    bpa_tcp_drop_sent (&bpa_log_tcp);
     left_after = vec_len (bpa_log_tcp.outbuf);
     head_after = bpa_log_tcp.head_sent;
 
@@ -450,7 +451,7 @@ main (void)
     bpa_log_tcp.outbuf[2] = 0;
     bpa_log_tcp.outbuf[3] = 8;
     bpa_log_tcp.head_sent = 45;
-    bpa_tcp_drop_sent ();
+    bpa_tcp_drop_sent (&bpa_log_tcp);
     left_bogus = vec_len (bpa_log_tcp.outbuf);
     head_bogus = bpa_log_tcp.head_sent;
 
@@ -483,7 +484,7 @@ main (void)
 	   (unsigned long long) service_off,
 	   (unsigned long long) bpa_log_tcp.n_service,
 	   bpa_log_tcp.next_attempt, vec_len (bpa_log_tcp.outbuf));
-    bpa_tcp_disconnect ();
+    bpa_tcp_disconnect (&bpa_log_tcp);
   }
 
   printf ("\n--- the last act before the process leaves ---\n");
@@ -518,6 +519,114 @@ main (void)
 	   (unsigned long long) bpa_log_tcp.n_dropped);
 
     bpa_log_tcp.spill_path = (u8 *) spill_file;
+  }
+
+  /* ------------------------------------------- the syslog wire (#20) */
+  /*
+   * The stream carries either wire, and this is the half that differs: the
+   * framing. RFC 6587 octet counting - the length and a space in front of
+   * each line - and not a trailing newline, because non-transparent framing
+   * cannot carry a message containing the delimiter and leaves a collector
+   * guessing where a truncated line ended.
+   */
+  {
+    bpa_log_stream_t sys = { 0 };
+    u32 first_len = 0;
+    int framed_right = 0, one_line = 0;
+    char want[64];
+
+    sys.enabled = 1;
+    sys.wire = BPA_WIRE_SYSLOG;
+    sys.pen = 44444;
+    sys.pri = 134;
+    sys.hostname = (u8 *) "cgnat-sp-01";
+
+    bpa_log_stream_record (&sys, 1789699259.123, 16, 0x64400005, 0xC8960010,
+			   1024, 1027, 0);
+    /* The frame says how many bytes follow, and what follows is exactly that
+     * many - read here rather than assumed, because a collector that trusts
+     * the count and is given another number reads the next line's first
+     * bytes as the end of this one. */
+    {
+      char *buf = (char *) sys.outbuf;
+      u32 len = vec_len (sys.outbuf), i = 0, n = 0;
+
+      while (i < len && buf[i] >= '0' && buf[i] <= '9')
+	n = n * 10 + (u32) (buf[i++] - '0');
+      first_len = n;
+      framed_right = i < len && buf[i] == ' ' && (i + 1 + n) == len;
+      one_line = memchr (buf, '\n', len) == 0;
+    }
+    snprintf (want, sizeof (want), "<134>1 2026-09-18T02:40:59.123Z");
+    CHECK (framed_right && first_len > 0
+	     && strncmp ((char *) sys.outbuf + 4, want, strlen (want)) == 0,
+	   "a syslog record is octet-counted and the count is the line: "
+	   "%u byte(s), framed=%d, no newline=%d",
+	   first_len, framed_right, one_line);
+
+    /* An event this box has no name for is DROPPED and not half-written. A
+     * collector storing a line that names nothing has stored a record that
+     * answers a court request with a shrug. */
+    {
+      u32 before = vec_len (sys.outbuf);
+      u64 dropped = sys.n_dropped;
+
+      bpa_log_stream_record (&sys, 1789699259.123, 18, 0x64400005,
+			     0xC8960010, 1024, 1027, 0);
+      CHECK (vec_len (sys.outbuf) == before && sys.n_dropped == dropped + 1,
+	     "an event with no name is counted as dropped, not written: "
+	     "buffer %u -> %u, dropped %llu -> %llu",
+	     before, vec_len (sys.outbuf), (unsigned long long) dropped,
+	     (unsigned long long) sys.n_dropped);
+    }
+
+    /* THE BOOT MARKER, which without its own branch wrote IPFIX bytes into a
+     * syslog stream - and a collector framing by octet count would have read
+     * the next line's length out of the middle of a binary record. Driven
+     * through bpa_log_stream_marker by name, on a syslog stream. */
+    {
+      u32 before = vec_len (sys.outbuf);
+      char *buf;
+      u32 len, i = 0, n = 0;
+      int framed;
+
+      bpa_log_stream_marker (&sys, 1789699259.123, 1789600000.0);
+      buf = (char *) sys.outbuf + before;
+      len = vec_len (sys.outbuf) - before;
+      while (i < len && buf[i] >= '0' && buf[i] <= '9')
+	n = n * 10 + (u32) (buf[i++] - '0');
+      framed = i < len && buf[i] == ' ' && (i + 1 + n) == len;
+      CHECK (framed && memmem (buf, len, "BOOT-MARKER", 11) != 0
+	       && memmem (buf, len, "bootTime=", 9) != 0,
+	     "the marker is a syslog line in the same grammar, framed the "
+	     "same way: %u byte(s), framed=%d",
+	     n, framed);
+    }
+
+    /* The service loop and the exit flush are the stream's, whichever wire it
+     * speaks: driven here by name on a stream that is not connected, which is
+     * the state a box is in whenever its collector is away. */
+    {
+      u32 saved;
+
+      sys.fd = -1;
+      sys.spill_path = (u8 *) "/proc/self/no/such/place";
+      bpa_log_stream_service (&sys, 1.0);
+      saved = bpa_log_stream_flush_exit (&sys);
+      CHECK (saved == 0 && vec_len (sys.outbuf) == 0,
+	     "a syslog stream with nowhere to write empties its buffer and "
+	     "reports that nothing was saved: saved=%u left=%u",
+	     saved, vec_len (sys.outbuf));
+    }
+
+    /* And the template: IPFIX prepends one on a schedule, syslog has none,
+     * because every line carries its own field names. */
+    sys.need_template = 1;
+    bpa_tcp_prepend_template (&sys, 100.0);
+    CHECK (sys.need_template == 0,
+	   "a syslog stream asks for no template and stops asking");
+
+    vec_free (sys.outbuf);
   }
 
   unlink (spill_file);

@@ -198,9 +198,58 @@ typedef struct
   u64 n_records, n_sent, n_spilled, n_replayed, n_dropped, n_connects;
   u64 n_service, n_send_calls;
   int last_errno;
-} bpa_log_tcp_t;
+  /*
+   * WHICH WIRE THIS STREAM SPEAKS (#20). The reliability machinery below -
+   * the non-blocking socket, the spill file, the replay in order - is what
+   * makes this transport fit for a compliance log, and it has nothing to do
+   * with the format of what it carries. So it has ONE implementation and the
+   * format is a field: a second copy of reconnection and spill handling would
+   * be a second place for the log to lose a record.
+   */
+  u8 wire;                      /* BPA_WIRE_IPFIX or BPA_WIRE_SYSLOG */
+  /*
+   * The syslog half, unread when the wire is IPFIX. The enterprise number has
+   * no default and is the operator's: RFC 5424 allows a bare SD-ID only to
+   * names IANA has registered, and inventing one would put a name in every
+   * operator's log that means something else to whoever registers it later.
+   */
+  u32 pen;
+  u32 pri;
+  u8 *hostname;
+} bpa_log_stream_t;
 
-extern bpa_log_tcp_t bpa_log_tcp;
+/* The two wires a stream can speak. */
+#define BPA_WIRE_IPFIX	0
+#define BPA_WIRE_SYSLOG 1
+
+extern bpa_log_stream_t bpa_log_tcp;
+extern bpa_log_stream_t bpa_log_syslog;
+
+/*
+ * One stream, whichever wire it speaks. The five below take it explicitly;
+ * the bpa_log_tcp_* names beside them are the IPFIX stream's, kept so that
+ * every caller that had one goes on reading the way it did.
+ */
+void bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event,
+			    u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,
+			    u32 pool_id);
+void bpa_log_stream_marker (bpa_log_stream_t *s, f64 wall, f64 init);
+void bpa_log_stream_service (bpa_log_stream_t *s, f64 now);
+u32 bpa_log_stream_flush_exit (bpa_log_stream_t *s);
+clib_error_t *bpa_log_stream_enable (bpa_log_stream_t *s,
+				     ip4_address_t *collector, u16 port,
+				     int enable);
+
+/* The syslog line itself, in bpa_log_syslog.c: no socket, no queue, no clock
+ * of its own, so it is compiled and driven by plain cc. */
+const char *bpa_syslog_msgid (u8 event);
+u32 bpa_syslog_escape (char *out, u32 cap, const char *in);
+u32 bpa_syslog_timestamp (char *out, u32 cap, f64 wall);
+u32 bpa_syslog_marker_line (char *out, u32 cap, f64 wall, f64 init,
+			    const char *hostname, u32 pen, u32 pri);
+u32 bpa_syslog_line (char *out, u32 cap, f64 wall, u8 event, u32 ip_priv,
+		     u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
+		     const char *hostname, u32 pen, u32 pri);
 
 clib_error_t *bpa_log_tcp_enable (ip4_address_t *collector, u16 port,
 				  int enable);

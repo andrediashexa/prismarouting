@@ -361,6 +361,74 @@ reply:
   REPLY_MACRO (VL_API_BPA_LOGGING_SET_REPLY);
 }
 
+/*
+ * The syslog transport (issue #20).
+ *
+ * A handler of its own beside the one above, matching the message: a syslog
+ * collector is a different destination and not another flag on the IPFIX one,
+ * and the two run side by side on a box whose collector speaks syslog and
+ * whose own tooling reads IPFIX.
+ *
+ * THE ENTERPRISE NUMBER IS REFUSED AT ZERO, here as at the dataplane CLI.
+ * RFC 5424 reserves a structured-data name without an `@enterprise` suffix
+ * for names IANA has registered; this product has none, so every line carries
+ * the operator's own number and there is nothing sensible to default it to.
+ * Refusing at configuration time is the whole point: the alternative is a
+ * year of lines a collector silently misparses.
+ */
+static void
+vl_api_bpa_logging_syslog_set_t_handler (vl_api_bpa_logging_syslog_set_t *mp)
+{
+  vl_api_bpa_logging_syslog_set_reply_t *rmp;
+  ip4_address_t collector;
+  clib_error_t *e;
+  int rv = 0;
+
+  if (!mp->enable)
+    {
+      e = bpa_log_stream_enable (&bpa_log_syslog, 0, 0, 0);
+      goto done;
+    }
+
+  if (!clib_net_to_host_u32 (mp->enterprise))
+    {
+      vlib_log_err (bpa_main.log_class,
+		    "cgnat logging syslog: an enterprise number is required, "
+		    "because RFC 5424 reserves an unsuffixed structured-data "
+		    "name for IANA");
+      rv = VNET_API_ERROR_INVALID_VALUE;
+      goto reply;
+    }
+  if (mp->facility > 23 || mp->severity > 7)
+    {
+      vlib_log_err (bpa_main.log_class,
+		    "cgnat logging syslog: facility is 0-23 and severity "
+		    "is 0-7");
+      rv = VNET_API_ERROR_INVALID_VALUE;
+      goto reply;
+    }
+
+  ip4_address_decode (mp->collector, &collector);
+  bpa_log_syslog.wire = BPA_WIRE_SYSLOG;
+  bpa_log_syslog.pen = clib_net_to_host_u32 (mp->enterprise);
+  bpa_log_syslog.pri = (u32) mp->facility * 8 + mp->severity;
+  e = bpa_log_stream_enable (&bpa_log_syslog, &collector,
+			     clib_net_to_host_u16 (mp->port), 1);
+
+done:
+  if (e)
+    {
+      /* The sentence goes to the log, where the client reads it back and
+       * attaches it to the code - the same route every refusal here takes. */
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+
+reply:
+  REPLY_MACRO (VL_API_BPA_LOGGING_SYSLOG_SET_REPLY);
+}
+
 static void
 vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
 {
