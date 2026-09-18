@@ -77,6 +77,40 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Six report rows could be folded inside their own columns**
+  ([#392](https://github.com/andrediashexa/hexarouting/issues/392)). A route screen padded its columns to 20, 17 and
+  12 characters, which fits an IPv4 box and nothing else: an IPv6 prefix is 43
+  columns at its widest, a next hop 39 and an interface name 28, so one v6
+  route ran past the console and the terminal folded it INSIDE the columns,
+  where a wrapped next hop and a second route look alike. The columns are
+  measured off the rows the box actually holds now, and when the widest of
+  them still will not fit, each entry is printed as a small block whose rows
+  end in their value - where a fold costs nothing.
+
+  Two columns gained a widest along the way, which is what made the rest
+  measurable: the `Next hop` column printed VPP's words `connected` and
+  `local` for routes that have none, which are not next hops and are already
+  what the `VPP` column says, so it carries an address or `-`; and the `FRR`
+  column's two words are declared as a pair. The `** in FRR, NOT forwarding`
+  mark moved to a row of its own under the route it is about. A sampling row
+  and a no-prefixes row fold through `print_prose`, between words.
+
+  The width reader could not see any of this: a column padded to a width the
+  box works out at runtime is one it cannot take apart, so it measured those
+  rows as they were driven and read every value as unbounded. It now says so
+  in as many words and counts them apart, and the guarantee they rest on is
+  asserted where a runtime decision can be - `test_prismash_units.py` drives
+  both route screens with an IPv6 route at its widest and a 28-character
+  interface name, and refuses a row over the console. The ceiling comes down
+  from 56 to 48.
+
+* **A C harness segfaulted on about one run in six**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390), batch I). `test_bpa_pptp` read
+  `vlib_buffer_get_current` before it had set `current_data`, so the segment
+  it laid out started at whatever that stack slot held. It says nothing about
+  the product - the buffer is the harness's own - and a suite that fails at
+  random is one nobody can read, which is worse than a suite that fails.
+
 ## 0.79.0 - the product is Prisma Routing
 
 [#202](https://github.com/andrediashexa/hexarouting/issues/202), [#390](https://github.com/andrediashexa/hexarouting/issues/390).

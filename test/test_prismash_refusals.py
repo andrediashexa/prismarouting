@@ -1987,6 +1987,22 @@ def widest_for(expr, seen):
         return ("an interface name", WIDEST["an interface name"])
     if not seen:
         return None
+    # A COLUMN OF ADDRESSES WITH THE BOX'S OWN PLACEHOLDER IN IT is still a
+    # column of addresses (#392). A route with no next hop prints `-` in that
+    # slot, and a reader that called the mixture unbounded was saying a value
+    # has no widest when every value it can hold is either an address or one
+    # character. The widest is the address, and the placeholder is named here
+    # so that a slot holding some OTHER word goes on being unbounded.
+    PLACEHOLDERS = {"-", "?"}
+    _addrs = [v for v in seen if v not in PLACEHOLDERS]
+    if _addrs and len(_addrs) < len(seen):
+        try:
+            for v in _addrs:
+                ipaddress.ip_address(v)
+            return ("an IP address or the box's placeholder for none",
+                    WIDEST["an IP address"])
+        except ValueError:
+            pass
     try:
         for v in seen:
             ipaddress.ip_address(v)
@@ -2081,15 +2097,35 @@ def pieces(node):
             continue
         spec = ""
         if part.format_spec is not None:
-            spec = "".join(c.value for c in part.format_spec.values
-                           if isinstance(c, ast.Constant))
+            # A WIDTH THE SOURCE DOES NOT HOLD: `{via:<{vw}}` pads to a number
+            # the box works out from the rows it has (#392). Marked rather
+            # than silently read as the constant part alone, which would say
+            # the slot is unpadded and make every value under it unrecoverable.
+            if any(not isinstance(c, ast.Constant)
+                   for c in part.format_spec.values):
+                spec = RUNTIME_WIDTH
+            else:
+                spec = "".join(c.value for c in part.format_spec.values
+                               if isinstance(c, ast.Constant))
         if isinstance(part.value, ast.Constant):
-            literal += format(part.value.value, spec)
+            if spec == RUNTIME_WIDTH:
+                # A heading padded to a width the box measures. The padding is
+                # spaces, so the words are these and the row is measured as
+                # driven like every other runtime-width row below.
+                literal += str(part.value.value)
+            else:
+                literal += format(part.value.value, spec)
             continue
         out.append((literal, ast.unparse(part.value), spec))
         literal = ""
     out.append((literal, None, ""))
     return out
+
+
+#: The mark a slot's format spec carries when its width is computed at
+#: runtime. Not a spec any value could produce, so it cannot be mistaken for
+#: one.
+RUNTIME_WIDTH = "\x00runtime\x00"
 
 
 def pad(spec):
@@ -2159,6 +2195,7 @@ unreached = []
 over = []          # a row that does not fit, with the widest value driven
 unsafe = []        # an unbounded value with the VTY's own words behind it
 opaque = 0
+measured = 0
 
 
 def note(kind):
@@ -2191,6 +2228,32 @@ for _site in sorted(set(PRINTS) | set(VERDICTS)):
         continue
     if all(expr is None for _, expr, _ in _shape):
         note("no value in it")
+        continue
+    # A ROW WHOSE COLUMN WIDTHS ARE MEASURED AT RUNTIME (#392). `{via:<{vw}}`
+    # pads to a number this reader cannot know, and the padding is what tells
+    # a value from the words around it - so the split below recovers nothing
+    # and every slot comes back empty, which read as "no widest" on a row that
+    # cannot fold at all.
+    #
+    # It cannot fold because the width came from `route_column_widths`, which
+    # measures the rows the box actually holds and answers None when the
+    # widest of them would not fit - and the caller then prints each entry as
+    # a block instead. That is a guarantee about a runtime decision, so it is
+    # asserted where a runtime decision can be: test_prismash_units.py drives
+    # both route screens with an IPv6 route at its widest and a 28-character
+    # interface name, and refuses a row over the console.
+    #
+    # Here it is measured AS DRIVEN, the way a row assembled elsewhere is:
+    # what came out is what came out.
+    if any(spec == RUNTIME_WIDTH
+           for _, expr, spec in _shape if expr is not None):
+        measured += 1
+        _worst = max((r for t in _seen for r in t.split("\n")), key=len)
+        if len(_worst) > config.CONSOLE_COLUMNS:
+            note("measured at runtime, and driven over")
+            over.append((_site, len(_worst), "as driven", _worst))
+        else:
+            note("measured at runtime, driven inside")
         continue
     _slots = [(expr, spec) for _, expr, spec in _shape if expr is not None]
     _values = [[] for _ in _slots]
@@ -2287,6 +2350,13 @@ print(f"  {len(unreached)} site(s) printed nothing while this ran, so there "
 print("  measure. Most are inside a 'show' that needs a dataplane, which is "
       "the")
 print("  labs' half and cannot run in `make test`.")
+print(f"  {measured} site(s) build their columns at runtime, from the values "
+      f"the box holds,")
+print("  and were measured as they were driven. What keeps those inside the "
+      "console")
+print("  is route_column_widths() and the block it falls back to, which "
+      "test_prismash_units.py")
+print("  drives at an IPv6 route's widest.")
 print(f"  {opaque} site(s) print a row assembled somewhere else - a name, a "
       f"concatenation,")
 print("  a '*rest' - and were measured as they were driven, which is a lower "
@@ -2334,7 +2404,11 @@ OVER_AT_MOST = 25
 # product line changed with them: measured by running this file with the
 # ceiling at 0 on the tree before those tests and on the tree with them, 50
 # and 56. Folding the six is #392, and this comes back to 50 with it.
-UNSAFE_AT_MOST = 56
+# AND 48 SINCE #392, which is two lower than the 50 that issue names: the six
+# rows it is about are folded through print_prose or measured at runtime now,
+# and the same reading found two of the older 50 - the interface table's rows,
+# whose widths were already measured off the box - were never foldable either.
+UNSAFE_AT_MOST = 48
 
 
 def ceiling(found, allowed, what, detail):
