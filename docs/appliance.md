@@ -1193,7 +1193,8 @@ something essential did not come up, it **MUST** be on screen with the reason
 attached — not merely `failed`.
 
 The self-test checks RAM, CPU instruction sets, VPP, restart counters, the
-tuning state, FRR and configured pools. On failure it dumps the tail of
+tuning state, FRR, configured pools and - on a box that is in one - the
+virtual routers that make it half of a pair. On failure it dumps the tail of
 `/var/log/vpp/vpp.log` and the unit status. It distinguishes warning from
 failure — running in first-boot mode is expected and reported as a warning —
 and always exits zero: **the diagnostic MUST NOT bring down the boot**.
@@ -1324,6 +1325,38 @@ having one. Read from the box and never arranged: a check that creates the
 pair it is checking for cannot report its absence, which is
 [#184](https://github.com/andrediashexa/hexarouting/issues/184) in one
 sentence.
+
+### It also says whether this box is in a pair, and whether it really is
+
+A box that stands for a service address with a peer is configured to do so by
+`vrrp` statements in the saved file. The dataplane took those statements or
+refused them, and **until this check nothing on the box said which**:
+`show running-config` reads the dataplane, so a router that is not there is a
+router the screen does not mention. An operator comparing their file against
+that screen sees the statement they wrote and a screen that does not argue
+with it - while the peer holds the service address alone and this box is a
+standby that will never stand up. The day that is discovered is the day the
+peer dies.
+
+So the self-test makes the comparison it already makes for pools, addresses
+and the MTU, against the one thing whose absence has no counter behind it:
+the `vrrp` statements in the file, against `show vrrp vr` on the dataplane.
+The interface is matched by the index the dataplane reports, taken from
+`show interface`, because the dataplane's listing carries an index and the
+file carries a name.
+
+A box with every router in place is told the thing somebody at the console
+wants first - how many are holding an address and how many are standing by:
+
+```
+  [ ok ] every virtual router the saved configuration names is on the
+         dataplane: 1 holding an address, 1 standing by
+```
+
+A box whose file names one the dataplane has not got gets a FAILED check that
+says what it costs, and a box with no `vrrp` statement at all is told nothing:
+most boxes are not in a pair, and an alarm that is always on is one nobody
+reads ([#7](https://github.com/andrediashexa/hexarouting/issues/7)).
 
 ### It also checks that a pool could be created
 
