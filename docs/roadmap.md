@@ -2524,9 +2524,11 @@ system writes, read whole or refused whole, and the identity copied into the
 record at the instant of the allocation rather than resolved when the log is
 drained. `lab/syslog.sh` rewrites every name between the allocation and the
 drain and asserts the records carry the first set. It is personal data, so the
-count is all any screen says. What remains is the other two sources - a DHCP
-lease file and RADIUS accounting - and the IPFIX element, which has to be
-chosen rather than guessed at.
+count is all any screen says. All three sources are in - a static map, an ISC dhcpd
+lease file, and the accounting stream a BNG already sends - and the identity
+reaches both wires, with IPFIX element 371 read off the IANA registry. What
+remains is the question the lab raised: what a BLOCK-RELEASE record should
+name when the table changed between the allocation and the release.
 
 **The block log as RFC 5424 syslog**
 ([#20](https://github.com/andrediashexa/hexarouting/issues/20)) - on the

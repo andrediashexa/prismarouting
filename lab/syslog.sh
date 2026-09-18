@@ -187,6 +187,26 @@ $HX -c "configure" -c "cgnat identity dhcp-leases /tmp/dhcpd.leases" \
 vppctl show bpa identity | tee /tmp/identity-leases.txt | sed 's/^/  /'
 
 echo
+echo "=== and from the accounting a BNG sends (#21) ==="
+# THE THIRD SOURCE, end to end: a NAS that speaks RFC 2866 at this box, and a
+# subscriber whose record then carries the name that arrived over the wire.
+# tools/radius_nas.py builds those packets in Python from the RFC; the box
+# reads them in C. Two implementations that agree is the evidence a fixture
+# written beside the code cannot give.
+$HX -c "configure" \
+    -c "cgnat identity radius secret lab-s3cr3t port 1813" \
+    -c "commit" 2>&1 | tail -1 | sed 's/^/  listener: /'
+
+python3 /src/tools/radius_nas.py 127.0.0.1 1813 lab-s3cr3t start \
+    100.64.0.11 radius-user@isp 2>&1 | sed 's/^/  start: /'
+# A packet signed with the wrong secret, which must be counted and NOT
+# applied: without that check anybody who reaches the port names anybody.
+python3 /src/tools/radius_nas.py 127.0.0.1 1813 wrong-secret start \
+    100.64.0.12 SHOULD-NOT-APPEAR 2>&1 | sed 's/^/  forged: /'
+sleep 2
+vppctl show bpa identity | tee /tmp/identity-radius.txt | sed 's/^/  /'
+
+echo
 echo "=== the file is rewritten before the records go out ==="
 # Everything moves to a different name. A record naming one of THESE is a
 # record resolved at drain time, which is the defect #21 is about.
@@ -272,6 +292,14 @@ if [ "$MODE" != no-syslog ]; then
     grep -q "2 entry(s)" /tmp/identity-leases.txt
   expect "and no lease that is not active is in it" \
     sh -c "! grep -q 'gone-last-week' /tmp/identity-leases.txt"
+  # THE ACCOUNTING HALF, read off the box.
+  expect "the accounting Start added the subscriber it named" \
+    grep -qE "identity table: [0-9]+ entry" /tmp/identity-radius.txt
+  expect "and the listener answered the NAS" \
+    grep -qE "packets +[0-9]+ received, [1-9][0-9]* applied, [1-9]" \
+      /tmp/identity-radius.txt
+  expect "a packet signed with another secret is counted and not applied" \
+    grep -qE "refused +[1-9][0-9]* bad authenticator" /tmp/identity-radius.txt
   expect "'show bpa identity' counts the entries and prints none of them" \
     sh -c "grep -q '3 entry(s)' /tmp/identity-show.txt && ! grep -q '@isp' /tmp/identity-show.txt"
 else
