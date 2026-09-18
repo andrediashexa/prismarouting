@@ -80,7 +80,7 @@ Na outra caixa, os endereços dela e prioridade menor (100, por exemplo). Os ass
 
 **O MAC virtual é o que faz o CPE não precisar saber de nada.** Quem assume o endereço assume o MAC `00:00:5e:00:01:<vrid>` junto e manda um ARP gratuito; o CPE continua mandando para o mesmo MAC e o quadro passa a chegar na outra caixa.
 
-**`track` é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: segura o endereço do gateway e não alcança nada. Com `track`, a prioridade cai pelo decremento e a parceira assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da da outra.
+`**track**` **é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: segura o endereço do gateway e não alcança nada. Com `track`, a prioridade cai pelo decremento e a parceira assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da da outra.
 
 **O endereço virtual não responde ping.** Quem não é dono do endereço não responde ICMP por ele — é o padrão da RFC 5798 (seção 6.4.3). O monitoramento deve pingar o endereço **próprio** de cada caixa, que é o que diz se aquela caixa está viva; o endereço virtual só diz qual das duas está com ele. Encaminhar **através** dele funciona normalmente.
 
@@ -114,7 +114,7 @@ A pergunta é uma só: uma troca de caixa deixaria cada assinante no mesmo ender
 
 Para que a caixa possa comparar, ela precisa ter a configuração da outra. **O VRRP não carrega configuração nenhuma** — a RFC anuncia uma prioridade e um endereço, e nada mais —, então a configuração da parceira chega como arquivo: salve a configuração da outra caixa e copie o arquivo para `/etc/prisma-routing/peer.conf` desta.
 
-**Numa caixa que faz par, o `commit` recusa uma mudança que divergiria.** Com `vrrp` em alguma interface e um `peer.conf` legível, uma candidata que mapearia assinantes de forma diferente da parceira é recusada pelo nome do pool, e `commit diverge` é a palavra de quem sabe o que está fazendo — porque duas caixas não se commitam no mesmo instante, e toda ampliação correta diverge o par entre o primeiro commit e o segundo. A página *commit, rollback e save* descreve a recusa inteira.
+**Numa caixa que faz par, o** `**commit**` **recusa uma mudança que divergiria.** Com `vrrp` em alguma interface e um `peer.conf` legível, uma candidata que mapearia assinantes de forma diferente da parceira é recusada pelo nome do pool, e `commit diverge` é a palavra de quem sabe o que está fazendo — porque duas caixas não se commitam no mesmo instante, e toda ampliação correta diverge o par entre o primeiro commit e o segundo. A página *commit, rollback e save* descreve a recusa inteira.
 
 Quando as duas divergem:
 
@@ -189,7 +189,7 @@ O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatór
 
 # Operando o par
 
-* Mantenha a configuração das duas caixas idêntica e versionada, e **copie o `peer.conf` de novo sempre que alterar a parceira** — a recusa do `commit` só enxerga o que o arquivo diz, e o arquivo tem idade.
+* Mantenha a configuração das duas caixas idêntica e versionada, e **copie o** `**peer.conf**` **de novo sempre que alterar a parceira** — a recusa do `commit` só enxerga o que o arquivo diz, e o arquivo tem idade.
 * Confira com `show cgnat ha` depois de toda alteração: ele diz o papel de cada roteador virtual, o MAC virtual, a prioridade que a caixa está **anunciando** — que não é a configurada quando algo rastreado está fora — e se as duas mapeiam igual.
 * Trate uma troca como uma janela: os assinantes voltam nos mesmos endereços, mas as conexões em curso caem.
 * Monitore o endereço **próprio** de cada caixa, não o virtual.
