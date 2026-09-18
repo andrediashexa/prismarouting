@@ -158,3 +158,163 @@ bpa_radius_acct_response (u8 *out, u32 cap, const bpa_radius_acct_t *req,
   bpa_md5 (buf, 20 + slen, out + 4);
   return 20;
 }
+
+
+#ifndef BPA_STANDALONE
+
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+bpa_radius_listener_t bpa_radius;
+
+/*
+ * Listen for the accounting a BNG is already sending.
+ *
+ * A SOCKET AND NOT A GRAPH NODE. The packets arrive on the management path,
+ * not on the dataplane, and they are a few a second: a node would put a
+ * parser for somebody else's protocol on the forwarding path to save nothing.
+ * It is read from the same process that drains the log queue, which is where
+ * every other thing this plugin does with a socket already lives.
+ *
+ * NON-BLOCKING, for the reason the exporter's socket is: a process that
+ * blocks here stops draining the compliance log, and the log is what this
+ * feature exists to improve.
+ */
+clib_error_t *
+bpa_radius_enable (u16 port, const char *secret, int enable)
+{
+  bpa_radius_listener_t *r = &bpa_radius;
+  struct sockaddr_in a;
+  int fd, one = 1;
+
+  if (r->fd >= 0)
+    {
+      close (r->fd);
+      r->fd = -1;
+    }
+  r->enabled = 0;
+  vec_free (r->secret);
+  if (!enable)
+    return 0;
+
+  if (!secret || !secret[0])
+    return clib_error_return (
+      0, "a shared secret is required: without one this box cannot tell an "
+	 "accounting packet from anybody's packet, and would take dictation "
+	 "about who is on which address");
+
+  fd = socket (AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0)
+    return clib_error_return (0, "socket: %s", strerror (errno));
+  setsockopt (fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof (one));
+  if (fcntl (fd, F_SETFL, O_NONBLOCK) < 0)
+    {
+      close (fd);
+      return clib_error_return (0, "O_NONBLOCK: %s", strerror (errno));
+    }
+  clib_memset (&a, 0, sizeof (a));
+  a.sin_family = AF_INET;
+  a.sin_addr.s_addr = INADDR_ANY;
+  a.sin_port = clib_host_to_net_u16 (port ? port : BPA_RADIUS_ACCT_PORT);
+  if (bind (fd, (struct sockaddr *) &a, sizeof (a)) < 0)
+    {
+      clib_error_t *e = clib_error_return (0, "bind %u: %s",
+					   port ? port : BPA_RADIUS_ACCT_PORT,
+					   strerror (errno));
+      close (fd);
+      return e;
+    }
+
+  r->fd = fd;
+  r->port = port ? port : BPA_RADIUS_ACCT_PORT;
+  r->secret = format (0, "%s%c", secret, 0);
+  r->enabled = 1;
+  return 0;
+}
+
+/*
+ * Read whatever arrived, act on it, answer it.
+ *
+ * BOUNDED PER CALL. The loop takes at most BPA_RADIUS_PER_SERVICE datagrams
+ * and comes back for the rest next time: a box being flooded on this port
+ * must not be a box that stops draining its log, which is the same argument
+ * the queue ceiling makes one layer down.
+ *
+ * A Start or an Interim WITH an address names the subscriber on it; a Stop
+ * takes that name away. An Interim without an address changes nothing - it is
+ * a session this box cannot place, and guessing which address it meant is how
+ * one subscriber comes to be named in another's record.
+ */
+void
+bpa_radius_service (void)
+{
+  bpa_radius_listener_t *r = &bpa_radius;
+  bpa_main_t *bm = &bpa_main;
+  u32 taken = 0;
+
+  if (!r->enabled || r->fd < 0)
+    return;
+
+  while (taken++ < BPA_RADIUS_PER_SERVICE)
+    {
+      u8 pkt[4096], reply[32];
+      struct sockaddr_in from;
+      socklen_t flen = sizeof (from);
+      bpa_radius_acct_t acct;
+      ssize_t n;
+      int rc, changed = 0;
+
+      n = recvfrom (r->fd, pkt, sizeof (pkt), 0, (struct sockaddr *) &from,
+		    &flen);
+      if (n <= 0)
+	return;
+
+      r->n_received++;
+      rc = bpa_radius_acct_parse (pkt, (u32) n, (const char *) r->secret,
+				  &acct);
+      if (rc == BPA_RADIUS_BAD_AUTH)
+	{
+	  r->n_bad_auth++;
+	  continue; /* no reply: see bpa_radius_acct_parse */
+	}
+      if (rc != BPA_RADIUS_OK)
+	{
+	  r->n_malformed++;
+	  continue;
+	}
+
+      if (acct.have_ip)
+	{
+	  vlib_worker_thread_barrier_sync (bm->vlib_main);
+	  if (acct.status == BPA_ACCT_STOP)
+	    changed = bpa_identity_remove (&bm->identity, acct.framed_ip);
+	  else if (acct.user[0])
+	    changed = bpa_identity_upsert (&bm->identity, acct.framed_ip,
+					   acct.user);
+	  vlib_worker_thread_barrier_release (bm->vlib_main);
+	  if (changed)
+	    {
+	      bm->identity.read_at = unix_time_now ();
+	      r->n_applied++;
+	    }
+	}
+
+      {
+	u32 rn = bpa_radius_acct_response (reply, sizeof (reply), &acct,
+					   (const char *) r->secret);
+	if (rn)
+	  {
+	    if (sendto (r->fd, reply, rn, 0, (struct sockaddr *) &from, flen)
+		== (ssize_t) rn)
+	      r->n_answered++;
+	    else
+	      r->n_unanswered++;
+	  }
+      }
+    }
+}
+
+#endif /* not BPA_STANDALONE */

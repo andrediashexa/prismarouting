@@ -7,6 +7,7 @@
 #include <vnet/format_fns.h>
 
 #include "bpa.h"
+#include "bpa_radius.h"
 #include "bpa_log.h"
 #include <vnet/fib/fib_table.h>
 
@@ -438,6 +439,31 @@ vl_api_bpa_identity_source_set_t_handler (vl_api_bpa_identity_source_set_t *mp)
 
 reply:
   REPLY_MACRO (VL_API_BPA_IDENTITY_SOURCE_SET_REPLY);
+}
+
+/* The accounting listener (issue #21). The secret arrives here and stops
+ * here: nothing in the dataplane prints it back. */
+static void
+vl_api_bpa_identity_radius_set_t_handler (vl_api_bpa_identity_radius_set_t *mp)
+{
+  vl_api_bpa_identity_radius_set_reply_t *rmp;
+  clib_error_t *e;
+  char secret[128];
+  int rv = 0;
+
+  snprintf (secret, sizeof (secret), "%s", (const char *) mp->secret);
+  e = bpa_radius_enable (clib_net_to_host_u16 (mp->port), secret, mp->enable);
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+  /* The copy on the stack is wiped: a secret that lives on after the call is
+   * one more place it can be read from. */
+  clib_memset (secret, 0, sizeof (secret));
+
+  REPLY_MACRO (VL_API_BPA_IDENTITY_RADIUS_SET_REPLY);
 }
 
 static void

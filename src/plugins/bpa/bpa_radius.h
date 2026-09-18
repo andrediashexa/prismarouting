@@ -31,6 +31,27 @@ typedef struct
   u8 user_truncated;
 } bpa_radius_acct_t;
 
+/* RFC 2866's port, and how many datagrams one service pass takes. */
+#define BPA_RADIUS_ACCT_PORT	1813
+#define BPA_RADIUS_PER_SERVICE	64
+
+typedef struct
+{
+  int fd;
+  u16 port;
+  u8 enabled;
+  u8 *secret;
+  u64 n_received, n_bad_auth, n_malformed, n_applied;
+  u64 n_answered, n_unanswered;
+} bpa_radius_listener_t;
+
+extern bpa_radius_listener_t bpa_radius;
+
+#ifndef BPA_STANDALONE
+clib_error_t *bpa_radius_enable (u16 port, const char *secret, int enable);
+void bpa_radius_service (void);
+#endif
+
 int bpa_radius_acct_parse (const u8 *pkt, u32 len, const char *secret,
 			   bpa_radius_acct_t *out);
 u32 bpa_radius_acct_response (u8 *out, u32 cap, const bpa_radius_acct_t *req,

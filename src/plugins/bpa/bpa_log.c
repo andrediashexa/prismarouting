@@ -16,6 +16,7 @@
 
 #include "bpa.h"
 #include "bpa_log.h"
+#include "bpa_radius.h"
 
 bpa_log_main_t bpa_log_main;
 
@@ -413,6 +414,10 @@ bpa_log_drain (vlib_main_t *vm)
 
   bpa_log_tcp_service (vlib_time_now (vm));
   bpa_log_stream_service (&bpa_log_syslog, vlib_time_now (vm));
+  /* And the accounting the BNG is sending, read from the same process for
+   * the same reason: it is a socket, it is a few packets a second, and the
+   * dataplane has no business parsing somebody else's protocol (#21). */
+  bpa_radius_service ();
 }
 
 void

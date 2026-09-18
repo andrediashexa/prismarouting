@@ -215,6 +215,42 @@ bpa_identity_lease_line (const char *line, bpa_identity_entry_t *out,
 
 
 /*
+ * Where `ip` belongs in a sorted table: the index of the entry that holds it,
+ * or of the first entry above it. `*found` says which of the two.
+ *
+ * ONE SEARCH FOR BOTH READERS. The lookup below and the two updaters need the
+ * same answer, and a second bisection written beside this one is a second
+ * place for an off-by-one to live - which in this table means a subscriber
+ * named as their neighbour.
+ */
+u32
+bpa_identity_at (const bpa_identity_table_t *t, u32 ip, int *found)
+{
+  u32 lo = 0, hi;
+
+  *found = 0;
+  if (!t || !t->n || !t->e)
+    return 0;
+  lo = 0;
+  hi = t->n;
+  while (lo < hi)
+    {
+      u32 mid = lo + (hi - lo) / 2;
+
+      if (t->e[mid].ip == ip)
+	{
+	  *found = 1;
+	  return mid;
+	}
+      if (t->e[mid].ip < ip)
+	lo = mid + 1;
+      else
+	hi = mid;
+    }
+  return lo;
+}
+
+/*
  * The identity in force for `ip`, copied into `out`, or the unknown marker.
  *
  * COPIED and not returned by pointer, because the caller is the allocation
@@ -226,8 +262,6 @@ bpa_identity_lease_line (const char *line, bpa_identity_entry_t *out,
 void
 bpa_identity_lookup (const bpa_identity_table_t *t, u32 ip, char *out, u32 cap)
 {
-  u32 lo = 0, hi;
-
   if (!cap)
     return;
   out[0] = 0;
@@ -236,180 +270,15 @@ bpa_identity_lookup (const bpa_identity_table_t *t, u32 ip, char *out, u32 cap)
       snprintf (out, cap, "%s", bpa_identity_unknown);
       return;
     }
-  hi = t->n - 1;
-  while (lo <= hi)
-    {
-      u32 mid = lo + (hi - lo) / 2;
+  {
+    int found;
+    u32 at = bpa_identity_at (t, ip, &found);
 
-      if (t->e[mid].ip == ip)
-	{
-	  snprintf (out, cap, "%s", t->e[mid].name);
-	  return;
-	}
-      if (t->e[mid].ip < ip)
-	lo = mid + 1;
-      else if (mid == 0)
-	break;
-      else
-	hi = mid - 1;
-    }
+    if (found)
+      {
+	snprintf (out, cap, "%s", t->e[at].name);
+	return;
+      }
+  }
   snprintf (out, cap, "%s", bpa_identity_unknown);
 }
-
-
-#ifndef BPA_STANDALONE
-
-/*
- * Build the table from a file the control plane names.
- *
- * WHOLE OR NOT AT ALL. The new table is built beside the old one and swapped
- * in under the worker barrier only when every line read: a table half loaded
- * is a set of subscribers whose records would say "unknown" for a reason
- * nobody would ever find, and the operator asked for a file rather than for
- * as much of one as happened to parse.
- *
- * The count and the instant are what `show` reports. The entries are not, and
- * never will be: this is personal data, and its presence in the log is the
- * reason the log is protected (#21).
- */
-clib_error_t *
-bpa_identity_load (const char *path)
-{
-  return bpa_identity_load_kind (path, BPA_IDENTITY_MAP);
-}
-
-clib_error_t *
-bpa_identity_load_kind (const char *path, bpa_identity_kind_t kind)
-{
-  bpa_main_t *bm = &bpa_main;
-  bpa_identity_entry_t *fresh = 0, e;
-  u32 line_no = 0, truncated = 0;
-  int in_lease = 0;
-  clib_error_t *err = 0;
-  char line[512];
-  FILE *f;
-
-  if (!path || !path[0])
-    {
-      /* Asked for nothing: the table goes away and every record says
-       * "unknown" again, which is a state an operator can mean. */
-      vlib_worker_thread_barrier_sync (bm->vlib_main);
-      vec_free (bm->identity.e);
-      vec_free (bm->identity.path);
-      bm->identity.n = 0;
-      bm->identity.n_truncated = 0;
-      bm->identity.read_at = 0;
-      vlib_worker_thread_barrier_release (bm->vlib_main);
-      return 0;
-    }
-
-  f = fopen (path, "r");
-  if (!f)
-    return clib_error_return (0, "cannot read '%s'", path);
-
-  while (fgets (line, sizeof (line), f))
-    {
-      int rc;
-
-      line_no++;
-      rc = kind == BPA_IDENTITY_DHCP_LEASES
-	     ? bpa_identity_lease_line (line, &e, &in_lease)
-	     : bpa_identity_parse_line (line, &e);
-      if (rc == 0)
-	continue;
-      if (rc < 0)
-	{
-	  err = clib_error_return (
-	    0,
-	    kind == BPA_IDENTITY_DHCP_LEASES
-	      ? "'%s' line %u is not a lease this box can read"
-	      : "'%s' line %u is neither a comment nor '<address> <identity>'",
-	    path, line_no);
-	  goto done;
-	}
-      if (rc == 2)
-	truncated++;
-      vec_add1 (fresh, e);
-    }
-
-  /*
-   * SORTED BY ADDRESS, AND THEN BY WHERE THE LINE WAS, which qsort alone
-   * cannot give: it is not stable, so a lease file whose address appears
-   * twice would keep whichever of the two the sort happened to leave last.
-   * For a renewal that is the difference between the current subscriber and
-   * the one before them.
-   *
-   * The keys are (address << 32 | line order) in a u64, sorted as numbers, so
-   * the tiebreak is exact and costs eight bytes per entry for the length of
-   * this function rather than four in every entry for the life of the table.
-   */
-  if (vec_len (fresh) > 1)
-    {
-      u64 *keys = 0;
-      bpa_identity_entry_t *sorted = 0;
-      u32 i;
-
-      vec_validate (keys, vec_len (fresh) - 1);
-      for (i = 0; i < vec_len (fresh); i++)
-	keys[i] = ((u64) fresh[i].ip << 32) | i;
-      qsort (keys, vec_len (keys), sizeof (keys[0]), bpa_identity_key_cmp);
-      vec_validate (sorted, vec_len (fresh) - 1);
-      for (i = 0; i < vec_len (keys); i++)
-	sorted[i] = fresh[keys[i] & 0xffffffffu];
-      vec_free (keys);
-      vec_free (fresh);
-      fresh = sorted;
-    }
-  /* A duplicate address is refused rather than resolved by position: two
-   * lines claiming one address are two answers to the question a court asks,
-   * and picking the later one would be this box deciding which subscriber to
-   * name. */
-  {
-    u32 i;
-
-    /*
-     * A LEASE FILE NAMES AN ADDRESS AGAIN EVERY TIME IT IS RENEWED, and the
-     * later entry is the current one - so a duplicate there is ordinary and
-     * the last one wins. In a static MAP a duplicate is two answers to one
-     * question and is refused, which is the paragraph below. Two grammars,
-     * two meanings for the same shape, and this is where they part.
-     */
-    if (kind == BPA_IDENTITY_DHCP_LEASES)
-      {
-	u32 w = 0;
-
-	for (i = 0; i < vec_len (fresh); i++)
-	  if (i + 1 == vec_len (fresh) || fresh[i].ip != fresh[i + 1].ip)
-	    fresh[w++] = fresh[i];
-	vec_set_len (fresh, w);
-      }
-    for (i = 1; kind == BPA_IDENTITY_MAP && i < vec_len (fresh); i++)
-      if (fresh[i].ip == fresh[i - 1].ip)
-	{
-	  err = clib_error_return (
-	    0, "'%s' names %u.%u.%u.%u twice, and two identities for one "
-	       "address is two answers to the same question",
-	    path, (fresh[i].ip >> 24) & 0xff, (fresh[i].ip >> 16) & 0xff,
-	    (fresh[i].ip >> 8) & 0xff, fresh[i].ip & 0xff);
-	  goto done;
-	}
-  }
-
-  vlib_worker_thread_barrier_sync (bm->vlib_main);
-  vec_free (bm->identity.e);
-  bm->identity.e = fresh;
-  bm->identity.n = vec_len (fresh);
-  bm->identity.n_truncated = truncated;
-  bm->identity.read_at = unix_time_now ();
-  vec_free (bm->identity.path);
-  bm->identity.path = format (0, "%s%c", path, 0);
-  vlib_worker_thread_barrier_release (bm->vlib_main);
-  fresh = 0;
-
-done:
-  fclose (f);
-  vec_free (fresh);
-  return err;
-}
-
-#endif /* not BPA_STANDALONE */

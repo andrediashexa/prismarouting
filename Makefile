@@ -207,7 +207,8 @@ $(BUILD)/test_bpa_radius: test/test_bpa_radius.c \
 # a log that parses.
 $(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
                             src/plugins/bpa/bpa_identity.c \
-                            src/plugins/bpa/bpa_identity.h test/bpa_shim.h
+                            src/plugins/bpa/bpa_identity.h test/bpa_shim.h \
+                            test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_identity.c
