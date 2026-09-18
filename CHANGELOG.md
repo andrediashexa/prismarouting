@@ -75,7 +75,31 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **Every published release title is compared with its CHANGELOG heading**
+  ([#340](https://github.com/andrediashexa/hexarouting/issues/340)). `tools/release-gate.sh` compares the one release
+  it is cutting, which said nothing about the eighty already published: eight
+  of them carried a different title and four were truncations, announcing half
+  of what the release fixed. `tools/release-titles.sh` reads them all, both
+  sides normalised for the product name in either spelling, an optional `v`,
+  the version and whatever dash was typed into a web form, so what is compared
+  is the sentence. A published title that EXTENDS the heading is right and
+  says so - `0.2.0` reads `foundations (superseded: VTY does not start)`,
+  which is a fact about that release the entry does not carry; a shorter one
+  is the defect. The three that still differed are corrected on the release
+  pages, and 83 of 83 agree.
+
+  It needs the network and `gh`, so it is not in `make test`, for the reason
+  the wiki and roadmap checks are not.
+
 ### Fixed
+
+* **The gate's release-title check stopped recognising the old product name**
+  ([#202](https://github.com/andrediashexa/hexarouting/issues/202)). The rename's sweep rewrote the two spellings it
+  normalises into the same one, so a release published as `HexaRouting 0.7x -
+  ...` would have been read as carrying a product name the check no longer
+  strips. Every release up to 0.78.0 is one of those.
 
 * **Six report rows could be folded inside their own columns**
   ([#392](https://github.com/andrediashexa/hexarouting/issues/392)). A route screen padded its columns to 20, 17 and

@@ -530,10 +530,13 @@ else
     ' "$WORK/CHANGELOG.md")
     # Both sides normalised for an optional product name, an optional "v",
     # the version and the dash, so this is about the sentence and not about
-    # punctuation somebody typed into a web form. Both spellings of the name:
-    # the releases up to the rename (#202) were published as "Prisma Routing".
+    # punctuation somebody typed into a web form. BOTH SPELLINGS OF THE NAME,
+    # and the old one is not decoration: every release up to 0.78.0 was
+    # published as "HexaRouting", and #202's sweep rewrote this line's two
+    # spellings into one - which would have read an old release's title as
+    # carrying a product name this check no longer strips.
     norm_title=$(printf '%s' "$rel_title" \
-      | sed -e 's/^Prisma Routing[[:space:]]*//' -e 's/^Prisma Routing[[:space:]]*//' \
+      | sed -e 's/^HexaRouting[[:space:]]*//' -e 's/^Prisma Routing[[:space:]]*//' \
             -e "s/^v\{0,1\}$VER[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*//")
     if [ -z "$head_title" ]; then
       # An empty heading used to satisfy this check rather than fail it: the
