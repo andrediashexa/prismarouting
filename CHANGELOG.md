@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.92.0 - what changing a virtual router costs, said first
+
+[#7](https://github.com/andrediashexa/hexarouting/issues/7).
+
+### Added
+
 * **The box says what changing a virtual router costs, before it changes it**
   ([#7](https://github.com/andrediashexa/hexarouting/issues/7)):
 
