@@ -47,7 +47,7 @@
 # translated flow surviving the takeover with the same public address is #9,
 # in lab/ha-failover.sh, which is red until the pair exists. This is the
 # mechanism under it.
-# OFF-RED-AT-LEAST: 16
+# OFF-RED-AT-LEAST: 21
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -321,8 +321,9 @@ echo "=== the priority is what decides, and changing it moves the service ==="
 # election that follows the numbers. Tracking works by subtracting from the
 # priority, so a pair whose service does not move when the priority moves
 # would not fail over on a tracked interface either.
-hx a -c "configure" -c "interface host-a-lan" -c "vrrp 1 priority 50" \
-   -c "exit" -c "commit" | sed 's/^/  a: /'
+LOWER_SAID=$(hx a -c "configure" -c "interface host-a-lan" \
+   -c "vrrp 1 priority 50" -c "exit" -c "commit")
+echo "$LOWER_SAID" | sed 's/^/  a: /'
 LOWER_AT=$(date +%s)
 LOWER_OK=1
 while [ $(( $(date +%s) - LOWER_AT )) -lt 20 ]; do
@@ -462,6 +463,11 @@ expect "the client's traffic crosses the pair while box a is the broken one" \
        test "$CROSS_TRACK" -eq 0
 expect "and when the uplink comes back the box the configuration names takes
         the service back" test "$BACK_OK" -eq 0
+expect_said "and the box says what changing a virtual router costs, before
+             it changes it" \
+            "changing vrrp 1 on host-a-lan restarts it: this box stops
+             advertising while it is rebuilt, the peer takes the address, and
+             preempt hands it back" "$LOWER_SAID"
 expect "lowering box a's priority moves the service to box b" \
        test "$LOWER_OK" -eq 0
 expect "and the client's traffic crosses the pair while it is box b holding

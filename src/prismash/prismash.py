@@ -6051,16 +6051,46 @@ class Shell:
                     "them")
         print("    if that is what you mean, type: commit diverge")
 
+    def say_vrrp_restart(self, ifname, vrid):
+        """
+        What changing a virtual router costs, said before it is changed.
+
+        A VR cannot be edited in place - neither by this VTY's delete-and-add
+        nor by VPP's own `vrrp_vr_update`, which was measured doing exactly the
+        same stop and start. So changing ANY field of a router that is holding
+        a service address hands that address to the peer for about a
+        master-down interval, and hands it back when preempt fires: two
+        elections and a few seconds of interruption, for a change the operator
+        may have thought was about something else entirely.
+
+        Said and not refused. It is an ordinary thing to want to do, and a box
+        that refused it would be a box that cannot be reconfigured; what an
+        operator needs is to know it is a maintenance-window change rather
+        than a keystroke.
+        """
+        print_prose(f"changing vrrp {vrid} on {ifname} restarts it: this box "
+                    "stops advertising while it is rebuilt, the peer takes "
+                    "the address, and preempt hands it back - two elections, "
+                    "a few seconds apart", indent="  ")
+
     def set_vrrp(self, ifname, vrid, vr) -> bool:
         """
         Put one virtual router on a dataplane interface, over the binary API.
 
         REPLACED WHOLE, not edited: the existing router is deleted and built
-        again from what the configuration says. VPP's own `vrrp_vr_update`
-        takes the addresses, the priority and the flags together for the same
-        reason - an election in progress is not a thing to walk through three
-        intermediate states of, and a VR that is master with the old address
-        while the new one is being added would answer for both.
+        again from what the configuration says. A VR that is master with the
+        old address while the new one is being added would answer for both,
+        and an election in progress is not a thing to walk through three
+        intermediate states of.
+
+        AND VPP'S OWN `vrrp_vr_update` IS NOT AN IN-PLACE EDIT EITHER, which
+        is worth writing down because the name says otherwise and somebody
+        will reach for it. Measured on 26.06 against a running master:
+        updating the priority through `vrrp_vr_update` logs
+        `transitioning to Initialize` and then `transitioning to Backup` -
+        the same stop and start this does, with the same gap. So there is
+        nothing to gain by moving to it, and `say_vrrp_restart` below is the
+        honest answer instead: tell the operator what the change costs.
 
         `PREEMPT` is on, and it is ONE flag because the client can carry one.
 
@@ -8424,6 +8454,16 @@ class Shell:
             for vrid in vrs:
                 if not self.del_vrrp(ifname, vrid):
                     return False
+        # WHICH OF THESE ALREADY EXIST, read before any of them is touched.
+        # A router being created costs nothing to say - there is no address
+        # to lose - and one being CHANGED costs the pair two elections, which
+        # is what say_vrrp_restart tells the operator.
+        if d["vrrp_set"]:
+            on_box = self.device_vrrp()
+            for ifname, vrs in sorted(d["vrrp_set"].items()):
+                for vrid in sorted(vrs):
+                    if vrid in on_box.get(ifname, {}):
+                        self.say_vrrp_restart(ifname, vrid)
         for ifname, vrs in sorted(d["vrrp_set"].items()):
             for vrid in sorted(vrs):
                 if not self.set_vrrp(ifname, vrid, vrs[vrid]):

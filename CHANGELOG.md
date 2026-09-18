@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The box says what changing a virtual router costs, before it changes it**
+  ([#7](https://github.com/andrediashexa/hexarouting/issues/7)):
+
+  ```
+  changing vrrp 1 on ens18 restarts it: this box stops advertising while it is
+  rebuilt, the peer takes the address, and preempt hands it back - two
+  elections, a few seconds apart
+  ```
+
+  A virtual router cannot be edited in place. This VTY deletes and re-adds it,
+  and **VPP's own `vrrp_vr_update` is not an in-place edit either** - measured
+  on 26.06 against a running master, updating the priority through it logs
+  `transitioning to Initialize` and then `transitioning to Backup`, the same
+  stop and start with the same gap. So there is nothing to gain by moving to
+  it, and the honest answer is to tell the operator: changing **any** field of
+  a router that is holding a service address hands that address to the peer
+  for about a master-down interval and takes it back when preempt fires.
+
+  Said and not refused, and said only when the router already exists on the
+  box - creating one costs nothing, because there is no address to lose. It is
+  an ordinary thing to want to do; what an operator needs is to know it is a
+  maintenance-window change rather than a keystroke. `lab/vrrp.sh` asserts the
+  sentence on a running pair, in the phase that lowers a priority and watches
+  the service move.
+
 ### Fixed
 
 ## 0.91.0 - the check reads what the commit will apply
