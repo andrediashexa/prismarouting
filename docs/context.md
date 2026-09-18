@@ -283,12 +283,15 @@ Not what it contains — what question it is the answer to.
 
 ## 4. Deliberately absent — do not report these as gaps
 
-* **High availability.** Analysed, not implemented; [ha.md](ha.md) says why the
-  lab comes before the implementation
-  ([#9](https://github.com/andrediashexa/hexarouting/issues/9)). The lab now
-  exists - `lab/ha-failover.sh` - and is **red on purpose**: it is excluded from
-  `tools/run-all-labs.sh` because the feature is missing, not because anything
-  is broken.
+* **High availability.** Built, and the lab that was written first is what
+  says so. [ha.md](ha.md) records why the lab came before the implementation
+  ([#9](https://github.com/andrediashexa/hexarouting/issues/9)): written
+  afterwards it would have been shaped by what was built instead of by the
+  requirement. Every check in `lab/ha-failover.sh` was red when it was
+  written; all 22 pass now, and it runs in `tools/run-all-labs.sh` like any
+  other lab. **Sessions are still not synchronised** - connections drop across
+  a takeover and the lab asserts that too, so a green run cannot be read as
+  "connections survived".
 * **Throughput figures.** Nothing is claimed, and the reason is stronger than
   the one that used to be here. `lab/throughput.sh` runs once, keeps no
   repeats and reports no spread, so **how small a change it could tell from

@@ -1228,9 +1228,17 @@ elif _says_not_impl and not _ha_missing:
         f"({_ha or 'it is not excluded at all'}): either the acceptance test "
         f"passes now and the row is stale, or the suite is running a lab that "
         f"cannot go green")
-else:
+elif _ha_missing:
     ok("the acceptance test for HA is outside the suite because the feature is "
        "missing, and the state table says so")
+else:
+    # THE OTHER WAY ROUND, and it needed its own branch the day HA shipped:
+    # the lab is in the suite and the table no longer says the feature is
+    # absent, so what this check verified is that the two agree about a
+    # product that HAS it. Printing the "outside the suite" sentence there
+    # was a reader stating the opposite of what it had just measured.
+    ok("the acceptance test for HA runs in the suite, and the state table no "
+       "longer says the feature is missing")
 
 print("\n=== the performance figure the state table says nobody has taken ===")
 # The Throughput row said "NOT measured - every performance figure is

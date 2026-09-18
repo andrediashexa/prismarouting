@@ -2,31 +2,43 @@
 
 ## TL;DR
 
-**Nothing here is implemented.** This is analysis and a plan.
+**Active/standby is implemented, and this page says which parts are measured
+and which are still a plan.** It was written when none of it existed, and the
+sentence at the top used to say so; everything below it that has since been
+built is marked where it is described.
 
-The relevant finding: in deterministic mode the mapping is a *function of the
-configuration*, so two boxes with the same pool produce the same block for the
-same subscriber without exchanging a single byte of state. A failover still
-drops in-flight connections — as any NAT does — but they re-establish on the
-**same public address**. For the subscriber that is the difference between
-"I reloaded the page" and "my IP changed and the bank logged me out".
+The finding the whole design rests on: in deterministic mode the mapping is a
+*function of the configuration*, so two boxes with the same pool produce the
+same block for the same subscriber without exchanging a single byte of state.
+A failover still drops in-flight connections — as any NAT does — but they
+re-establish on the **same public address**. For the subscriber that is the
+difference between "I reloaded the page" and "my IP changed and the bank
+logged me out".
 
-The trap for whoever implements this: in deterministic mode, two boxes with
+The trap for whoever implements it: in deterministic mode, two boxes with
 **different** configuration fail **silently**.
 
-**That trap now has a check on it, and only that.** `show cgnat ha` compares
-the two boxes' mappings and says which pool differs; nothing here elects a
-role, moves an address or takes anything over. See
-[Configuration equality](#configuration-equality-what-exists) below, which
-also states the seam the comparison ends at: the peer's configuration reaches
-this box as a file somebody copies, because there is no session between the
-two boxes to carry it.
+**What exists**, each with its own section below:
 
-The acceptance test is written and **is red on `master`**: `lab/ha-failover.sh`
-stands up two boxes, runs a subscriber's translated flow through a service
-address, breaks the active box three different ways, and fails every check that
-is the product's. That is the intended result, and the section at the end of
-this page says what it measured.
+* a **virtual router on the dataplane interface** ([#7](https://github.com/andrediashexa/hexarouting/issues/7),
+  v0.84.0) — RFC 5798 through VPP's own plugin, on the interface that carries
+  the packets rather than on the `linux_cp` TAP, with the virtual MAC that
+  makes a CPE's stale ARP entry follow the address;
+* the **mapping comparison** and, since there is a pair to be half of, a
+  **refusal**: `show cgnat ha` says which pool differs, and `commit` on a box
+  that stands for a service address refuses a change that would diverge from
+  its peer ([#8](https://github.com/andrediashexa/hexarouting/issues/8), v0.85.0);
+* the **acceptance test, green**: `lab/ha-failover.sh`
+  ([#9](https://github.com/andrediashexa/hexarouting/issues/9), v0.86.0) stands up two
+  boxes, runs a subscriber's translated flow through a service address, breaks
+  the active box three different ways and asserts the same public address and
+  port block each time. It was red on every check when it was written, which
+  was the point of writing it first.
+
+**What does not exist and is still a plan**: session synchronisation, and
+anything that carries the peer's configuration between the boxes by itself.
+The peer's configuration reaches this box as a file somebody copies, and every
+screen that uses it prints the date of the copy.
 
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY**
 > in this document are to be interpreted as described in
@@ -41,7 +53,7 @@ this page says what it measured.
 | **Who** | The provider's operations team; the subscriber should ideally notice nothing. |
 | **When** | On hardware failure, planned maintenance, or software upgrade. |
 | **Where** | Between two boxes sharing the same pool configuration and the same upstream. |
-| **How** | Proposed: active/standby with VRRP, no session synchronisation. |
+| **How** | Active/standby with VRRP on the dataplane interface, no session synchronisation. |
 | **How much** | Zero state to synchronise for address stability; session synchronisation would cost a control-plane flow comparable to the log itself. |
 
 ## What deterministic mode gives for free
@@ -97,7 +109,7 @@ every create and delete is a control-plane flow comparable to the log itself.
 coordinated, or the two boxes would allocate different blocks to the same
 subscriber.
 
-## Proposal for a first version
+## The first version, as proposed and as built
 
 Active/standby with VRRP on both the public and the internal side, no session
 synchronisation, and identical configuration guaranteed by the configuration
@@ -121,8 +133,8 @@ To be built:
 3. A `show cgnat ha` comparing a configuration hash between peers. **Done**,
    and spelled `cgnat` rather than `bpa` for a reason recorded below.
 4. A lab test with two instances and a forced failure, confirming the
-   subscriber keeps address and block. **Done, and 18 of its 22 checks are
-   now green**: `lab/ha-failover.sh` ([#9](https://github.com/andrediashexa/hexarouting/issues/9)), written before
+   subscriber keeps address and block. **Done, and all 22 of its checks are
+   green**: `lab/ha-failover.sh` ([#9](https://github.com/andrediashexa/hexarouting/issues/9)), written before
    items 1 to 3 so that they are judged against the requirement rather than the
    requirement being written to fit them. What it measures today is in *What
    the acceptance test measures now*, at the end of this page.
@@ -382,13 +394,19 @@ configuration and has never heard of the other, so a comparison between two
 boxes is answered where both can be read. The issue asking for this wrote it
 `show bpa ha`; the spelling changed and the answer did not.
 
-## What the acceptance test measured on `master`
+## What the acceptance test measured before any of this existed
 
-`lab/ha-failover.sh` is the acceptance test for this whole page and it exists
+The readings in this section were taken at **0.67.0**, on a box where nothing
+answered for a service address. They are kept because they are what the
+implementation was judged against, and because the next section - *What the
+acceptance test measures now* - means nothing without them.
+
+`lab/ha-failover.sh` is the acceptance test for this whole page and it existed
 before the implementation, which is what
-[roadmap.md](roadmap.md) phase 6 asks for. It is **excluded from
-`tools/run-all-labs.sh`**, with the reason recorded in that file's `NOT_LABS`:
-it is red because the feature is missing, not because anything is broken.
+[roadmap.md](roadmap.md) phase 6 asks for. It was **excluded from
+`tools/run-all-labs.sh`** for as long as that was true, with the reason
+recorded in that file's `NOT_LABS`: red because the feature was missing, not
+because anything was broken. It is a member of the suite now.
 
 It arranges two dataplanes on a shared inside LAN and a shared outside LAN,
 each with its own addresses, and points a subscriber at a **service address**
