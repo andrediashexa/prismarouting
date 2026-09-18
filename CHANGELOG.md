@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.94.0 - the port says whether it is holding the service
+
+[#7](https://github.com/andrediashexa/hexarouting/issues/7).
+
+### Added
+
 * **`show interface <name>` says whether that port is holding the service
   address** ([#7](https://github.com/andrediashexa/hexarouting/issues/7)):
 
