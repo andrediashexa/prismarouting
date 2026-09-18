@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.90.0 - the appliance page lists the check the box gained
+
+[#7](https://github.com/andrediashexa/hexarouting/issues/7).
+
+### Fixed
+
 * **`docs/appliance.md` listed what the boot self-test checks and did not
   list the newest one** ([#7](https://github.com/andrediashexa/hexarouting/issues/7)).
   The page's own sentence - "the self-test checks RAM, CPU instruction sets,
