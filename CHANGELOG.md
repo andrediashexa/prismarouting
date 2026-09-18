@@ -79,6 +79,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`docs/appliance.md` listed what the boot self-test checks and did not
+  list the newest one** ([#7](https://github.com/andrediashexa/hexarouting/issues/7)).
+  The page's own sentence - "the self-test checks RAM, CPU instruction sets,
+  VPP, restart counters, the tuning state, FRR and configured pools" - is the
+  list a reader trusts to know what the console will and will not tell them,
+  and it now names the virtual routers as well.
+
+  The section under it says what the check reads and why: the `vrrp`
+  statements in the saved file against `show vrrp vr` on the dataplane,
+  matched by the index the dataplane reports, because until that comparison
+  existed nothing on the box said whether a `vrrp` statement had been taken or
+  refused - `show running-config` reads the dataplane, so a router that is not
+  there is a router the screen does not mention.
+
 ## 0.89.0 - what a boot does to a pair
 
 [#7](https://github.com/andrediashexa/hexarouting/issues/7).
