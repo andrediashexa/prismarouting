@@ -113,9 +113,11 @@ To be built:
    **Done, and with neither of them** - the section *Where the virtual router
    runs* below says what was built instead and why.
 2. Verification that both boxes carry the **same** pool configuration.
-   **Done**, as far as a box with no peer session can take it
-   ([#8](https://github.com/andrediashexa/hexarouting/issues/8)) - the section
-   below says where it stops.
+   **Done** ([#8](https://github.com/andrediashexa/hexarouting/issues/8)): the
+   comparison, and since there is a pair to be half of, the refusal as well -
+   `commit` on a box that stands for a service address refuses a change that
+   would map subscribers differently from its peer. The two sections below
+   say how far each half reaches.
 3. A `show cgnat ha` comparing a configuration hash between peers. **Done**,
    and spelled `cgnat` rather than `bpa` for a reason recorded below.
 4. A lab test with two instances and a forced failure, confirming the
@@ -204,7 +206,11 @@ cable go: these labs forward over af_packet host interfaces, and this VPP
 never reports one of those as link down. Measured three ways, all in
 `lab/vrrp.sh` and printed by every run - the bridge side of the veth taken
 down, the box's own port taken down in Linux, and the veth deleted outright -
-and `show hardware` says `up` in all three.
+and `show hardware` says `up` in all three. A VPP `tap` was tried instead of
+an af_packet host interface, on the theory that a virtio device would carry
+the host's carrier: it does not either, and `show hardware` says `up` there
+too with the Linux side of the tap down. So this is not a matter of choosing
+a better interface type in the lab.
 
 So the lab measures the half that tracking rests on instead: an election that
 follows the numbers. It lowers box a's priority through the VTY, watches the
@@ -275,6 +281,62 @@ rate ceilings, the port forwards, the stride, the utilisation alarm. Those the
 dataplane changes on a pool that is carrying traffic, and they move no
 subscriber anywhere: two peers that differ on them are correctly configured,
 and warning about them would be a warning an operator learns to skip.
+
+### The refusal, and why it is a refusal on THIS box rather than on the standby
+
+[#8](https://github.com/andrediashexa/hexarouting/issues/8) asks for "the standby
+refuses to take over on mismatch". Taken literally that needs a hook that
+fires when a box is ABOUT to become master, and RFC 5798 has no such moment to
+hang it on: an election is won by a timer expiring, on a box that by
+definition cannot reach the other one. VPP's plugin will report a transition
+after the fact (`want_vrrp_vr_events`), so a box could take the address and
+then put it down again - which is a takeover, a period of wrong translation,
+and then an outage, in that order. That is worse than either outcome on its
+own.
+
+So the refusal is where a person is: **on the box being configured, at the
+commit that would create the divergence**, and it is the same shape as
+`commit remap`:
+
+```
+error: this change maps subscribers differently from the peer
+    this box stands for a service address with another one, so a takeover would
+    translate them there
+error: pool 'business' is on this box and not on the peer, so after a failover
+    its subscribers are translated by nothing at all
+    cgnat pool business
+    a takeover would put subscribers on blocks the other box never used, and
+    neither box would log anything unusual, because nothing unusual happened to
+    either of them
+    if that is what you mean, type: commit diverge
+```
+
+Three properties of that, each deliberate:
+
+* **Only on a box that is in a pair.** A box with no `vrrp` statement is not
+  in a pair whatever files somebody left in `/etc`, so its commits are not
+  gated; it gets the warning it has always had. A copied file is not a
+  relationship, and this VTY does not get to decide that it is.
+* **There is a word past it**, because two boxes cannot be committed in the
+  same instant: every correct capacity change diverges the pair between the
+  first commit and the second. A refusal with no way past it fires on every
+  correct procedure, and the way past it becomes "stop copying the peer's
+  configuration" - which removes the check rather than the divergence.
+* **`commit check` says it too**, in the window where somebody is deciding
+  rather than at the moment they type the commit.
+
+**What it does not catch, stated plainly**: the peer being reconfigured after
+its file was copied here. Nothing on this box can see that, because there is
+no session between the two - and a stale file is exactly what the date beside
+the digest in `show cgnat ha` exists to make visible. The gate closes the
+window where a human is present and the change is being made; it does not
+close the window where the other box changed and nobody copied it again.
+
+`lab/vrrp.sh` measures the whole of it on a running pair: box b, standing for
+a service address with box a and holding a copy of box a's configuration,
+takes a pool box a has never heard of, is refused, is refused again by
+`commit check` in the same words, and goes through when the change is asked
+for by name.
 
 ### Where the check stops, and why it stops there
 

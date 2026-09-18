@@ -1446,6 +1446,17 @@ peers — the one part of HA that cannot wait, because in deterministic mode two
 peers with different configuration fail **silently**: the failover maps
 subscribers to the wrong blocks and both boxes log nothing.
 
+**#8 is delivered too, and its last criterion had to be re-aimed rather than
+implemented as written.** "The standby refuses to take over on mismatch" needs
+a moment when a box is ABOUT to become master, and RFC 5798 has none: an
+election is won by a timer expiring on a box that cannot reach the other one,
+and VPP reports the transition after the fact - so a refusal there would be a
+takeover, a period of wrong translation and then an outage, in that order. The
+refusal is at the commit instead, on the box being configured, where a person
+is: `commit` on a box that stands for a service address refuses a change that
+would map subscribers differently from its peer, names the pool, and takes
+`commit diverge` from an operator who means it.
+
 **#7 is delivered, and it is neither of the two candidates the issue named.**
 FRR's VRRP and `keepalived` both run in Linux, which on this box is the
 `linux_cp` TAP - and the TAP is not where the packets are, so a pair built on

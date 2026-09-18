@@ -77,6 +77,61 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A commit that would map subscribers differently from the peer is refused**
+  ([#8](https://github.com/andrediashexa/hexarouting/issues/8)), on a box that stands
+  for a service address with one:
+
+  ```
+  error: this change maps subscribers differently from the peer
+      this box stands for a service address with another one, so a takeover would
+      translate them there
+  error: pool 'business' is on this box and not on the peer, so after a failover
+      its subscribers are translated by nothing at all
+      cgnat pool business
+      a takeover would put subscribers on blocks the other box never used, and
+      neither box would log anything unusual, because nothing unusual happened to
+      either of them
+      if that is what you mean, type: commit diverge
+  ```
+
+  **This is the failure `docs/ha.md` says must not be skipped.** In
+  deterministic mode the mapping is a function of the configuration, so two
+  boxes with the same pool agree without exchanging a byte - and two boxes
+  with different pools fail *silently*: the takeover maps subscribers to
+  blocks the other box never used, and both boxes log a perfectly ordinary
+  day. There is no symptom to notice afterwards.
+
+  **The issue asks for "the standby refuses to take over", and that moment
+  does not exist to hang a refusal on.** An election is won by a timer
+  expiring, on a box that by definition cannot reach the other one; VPP's
+  plugin reports a transition *after* the fact, so a box built that way would
+  take the address, translate wrongly for a moment, and then put it down -
+  a takeover, a period of wrong translation and then an outage, in that order.
+  So the refusal is where a person is: on the box being configured, at the
+  commit that would create the divergence, in the same shape as `commit
+  remap`.
+
+  Three properties, each deliberate. It fires **only on a box that is in a
+  pair** - one with a `vrrp` statement - because a copied file in `/etc` is
+  not a relationship and this VTY does not get to decide that it is; a box
+  with no virtual router gets the warning it has always had. There **is a word
+  past it**, because two boxes cannot be committed in the same instant and
+  every correct capacity change diverges the pair between the first commit and
+  the second - a refusal with no way past it fires on every correct procedure,
+  and the way past it becomes "stop copying the peer's configuration", which
+  removes the check rather than the divergence. And **`commit check` says it
+  too**, in the window where somebody is deciding rather than at the moment
+  they type the commit.
+
+  What it does not catch is written down beside it: the peer being
+  reconfigured after its file was copied here. Nothing on this box can see
+  that, because there is no session between the two, which is why
+  `show cgnat ha` prints the date the copy was made.
+
+  `lab/vrrp.sh` measures it on the running pair it already builds: box b takes
+  a pool box a has never heard of, is refused, is refused again by `commit
+  check` in the same words, and goes through when it is asked for by name.
+
 ### Fixed
 
 ## 0.84.0 - a pair of boxes, and the address that moves between them

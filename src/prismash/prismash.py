@@ -1391,6 +1391,8 @@ COMMIT = {
               "addresses and port blocks", None),
     "cutoff": ("apply a change that stops advertising the prefix this session "
                "runs over", None),
+    "diverge": ("apply a change that maps subscribers differently from the "
+                "peer this box shares a service address with", None),
     "confirmed": ("apply, and roll back unless confirmed", "<1-60> minutes"),
     "comment": ("record a note with this commit", "<text>"),
 }
@@ -5419,6 +5421,11 @@ class Shell:
         # and for the same reason: a change that is a mistake most times it is
         # typed and deliberate some of them is gated, not refused.
         self.cutoff = []
+        # The pools this candidate would map differently from the peer's own
+        # configuration, refilled by every check, and only ever filled on a
+        # box that is IN a pair - one with a virtual router on an interface.
+        # Same posture as the two above: gated on a word, not refused.
+        self.diverge = []
         self.mode = "operational"      # operational | config | pool | user
         self.pool = None               # pool being edited
         self.user = None               # user being edited
@@ -5985,6 +5992,64 @@ class Shell:
             self.err_prose(verdict, prose)
         else:
             self.err(verdict)
+
+    def peer_divergence(self, target: Config) -> list:
+        """
+        The pools this configuration would map differently from the peer's,
+        or an empty list - which also means "this box is not in a pair".
+
+        THE TRAP THIS IS ABOUT, and `docs/ha.md` states it at the top: in
+        deterministic mode the mapping is a function of the configuration, so
+        two boxes with the SAME pool need no state to agree - and two boxes
+        with different pools fail SILENTLY. The failover starts mapping
+        subscribers to blocks the other box never used, both boxes log
+        nothing unusual, because nothing unusual happened to either of them,
+        and the compliance record says a subscriber was somewhere they were
+        not.
+
+        ONLY ON A BOX WITH A VIRTUAL ROUTER. A box with no `vrrp` statement is
+        not in a pair, whatever files somebody left in /etc: gating its
+        commits on a peer configuration would be this VTY deciding that a
+        copied file means a relationship.
+
+        AND ONLY WHEN THE PEER'S CONFIGURATION CAN BE READ. Absent,
+        unreadable, or naming no pool is NOT agreement and is not divergence
+        either - it is an unanswered question, and `show cgnat ha` is where
+        that is answered. Refusing commits over a file nobody copied would
+        stop a box being configured at all.
+        """
+        if not target.vrrp:
+            return []
+        peer, _why = read_peer_config()
+        if peer is None:
+            return []
+        return target.mapping_diff_to(peer)
+
+    def say_divergence_refusal(self):
+        """
+        What `commit` refuses over, and the word that gets past it.
+
+        The word exists because a divergence is NOT always a mistake: two
+        boxes cannot be committed in the same instant, so every correct
+        capacity change diverges the pair between the first commit and the
+        second. A refusal with no way past it would fire on every correct
+        procedure, and the way past it would become "stop copying the peer's
+        configuration" - which removes the check rather than the divergence
+        (`docs/ha.md`).
+        """
+        self.err_prose("this change maps subscribers differently from the "
+                       "peer",
+                       "this box stands for a service address with another "
+                       "one, so a takeover would translate them there")
+        # THE SAME RENDERER `show cgnat ha` USES. Two ways of printing one
+        # comparison are two things to keep in step, and the one nobody looks
+        # at goes stale - which is the shape this repository keeps paying for.
+        self.say_divergence("error", self.diverge)
+        print_prose("a takeover would put subscribers on blocks the other "
+                    "box never used, and neither box would log anything "
+                    "unusual, because nothing unusual happened to either of "
+                    "them")
+        print("    if that is what you mean, type: commit diverge")
 
     def set_vrrp(self, ifname, vrid, vr) -> bool:
         """
@@ -7010,6 +7075,7 @@ class Shell:
         d = running.delta_to(target)
         self.remap = []
         self.cutoff = []
+        self.diverge = self.peer_divergence(target)
 
         # THE authorization check, here because this is where the change is
         # applied. The gates on `configure` and on the shell escape are
@@ -7900,27 +7966,39 @@ class Shell:
             # decides the mapping - `mapping_diff_to` says why that is not
             # `is_same`.
             #
-            # WARNED, never refused, and that is measured rather than
-            # timidity. The two boxes cannot be committed in the same instant:
-            # every legitimate capacity change diverges the pair between the
-            # first commit and the second, so a refusal here would fire on
-            # every correct procedure, and the only way past it would be to
-            # stop copying the peer's configuration - which removes the check
-            # rather than the divergence. A refusal that fires on a correct
-            # configuration is the harm #208 was filed for, and an operator
-            # who meets it once stops reading the message that matters.
+            # WARNED HERE, AND GATED ELSEWHERE, and which of the two it is
+            # depends on whether this box is in a pair.
+            #
+            # On a box with no virtual router a copied peer configuration is
+            # a comparison aid and nothing more: nothing on this box will
+            # ever take a service address over, so a refusal would be this
+            # VTY deciding that a file in /etc is a relationship. It warns,
+            # which is what it has always done.
+            #
+            # On a box that DOES stand for a service address the divergence
+            # is the silent failure `docs/ha.md` is about, and `do_commit`
+            # refuses it until it is asked for by name with `commit diverge`
+            # - the same shape as `commit remap`. The word is what makes the
+            # refusal safe: two boxes cannot be committed in the same instant,
+            # so every correct capacity change diverges the pair between the
+            # first commit and the second, and a refusal with no way past it
+            # would fire on every correct procedure - which is the harm #208
+            # was filed for, and the way past it would become "stop copying
+            # the peer's configuration".
+            #
             # The reason is dropped on purpose: `show cgnat ha` is where a
             # box says why it could not read the peer. A commit that printed
             # "there is no peer configuration" every time would say it on
             # every box that is not in a pair, which is most of them.
-            peer_cfg = read_peer_config()[0]
-            if peer_cfg is not None:
-                ha = target.mapping_diff_to(peer_cfg)
-                if ha:
-                    self.say_divergence("warning", ha)
-                    print_prose("'show cgnat ha' compares the two in full; "
-                                "the peer's configuration here was copied "
-                                f"from {PEER_CONFIG_PATH}")
+            if not target.vrrp:
+                peer_cfg = read_peer_config()[0]
+                if peer_cfg is not None:
+                    ha = target.mapping_diff_to(peer_cfg)
+                    if ha:
+                        self.say_divergence("warning", ha)
+                        print_prose("'show cgnat ha' compares the two in "
+                                    "full; the peer's configuration here was "
+                                    f"copied from {PEER_CONFIG_PATH}")
 
             # Only when FRR can answer. A box may run CGNAT with no routing -
             # Frr.available() has said so in its docstring since it was
@@ -9078,6 +9156,22 @@ class Shell:
         print_prose("'commit' refuses this until it is asked for by name, "
                     "with 'commit remap'", indent="  ")
 
+    def report_divergence(self):
+        """
+        What `commit` will refuse over, said by `check` - the same debt
+        `report_remap` was paying: a check that applies nothing has nothing to
+        refuse, so it warns, and an operator who runs `check` in a maintenance
+        window to find out what the commit will do is told the one thing that
+        makes the pair dangerous rather than being told at the commit.
+        """
+        if not self.diverge:
+            return
+        print_prose("this change maps subscribers differently from the peer "
+                    "this box stands for a service address with", indent="  ")
+        self.say_divergence("warning", self.diverge)
+        print_prose("'commit' refuses this until it is asked for by name, "
+                    "with 'commit diverge'", indent="  ")
+
     def do_commit(self, args):
         """commit [check | remap | cutoff | confirmed <min> | comment <text>]"""
         if self.candidate is None:
@@ -9179,6 +9273,7 @@ class Shell:
                 else:
                     print("configuration check succeeds")
                 self.report_remap()
+                self.report_divergence()
             return
 
         # A change that re-maps existing subscribers is refused until it is
@@ -9201,8 +9296,10 @@ class Shell:
         # different consequences: one moves the subscribers, the other costs
         # the operator the session they are typing in, and somebody who has
         # acknowledged one has not been told about the other.
-        remap_ok = cutoff_ok = False
-        while args and args[0] in ("remap", "cutoff"):
+        remap_ok = cutoff_ok = diverge_ok = False
+        while args and args[0] in ("remap", "cutoff", "diverge"):
+            if args[0] == "diverge":
+                diverge_ok = True
             if args[0] == "remap":
                 remap_ok = True
             else:
@@ -9264,6 +9361,14 @@ class Shell:
                 print("    if that is what you mean, type: commit remap")
                 return
             self.remap = []
+
+        # After the re-map gate and before the cut-off one, which is the
+        # order of consequence: a re-map moves subscribers on THIS box now, a
+        # divergence moves them on the OTHER box when it takes over, and a
+        # cut-off takes away the session the operator is typing on.
+        if not diverge_ok and self.diverge:
+            self.say_divergence_refusal()
+            return
 
         if not cutoff_ok and self.cutoff:
             for pfx, why, advice in self.cutoff:

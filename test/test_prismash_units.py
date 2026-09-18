@@ -4305,6 +4305,101 @@ VRRP_ROWS = [{
 }]
 TRACK_ROWS = [{"ifs": [{"sw_if_index": 2, "priority": 150}]}]
 
+# ------------------------------------------- the peer's mapping, at commit (#8)
+
+PAIR_POOL = ("nat cgnat pool residential\n"
+             " inside 100.64.0.0/26\n"
+             " outside 200.150.16.0/28\n"
+             " block-size 2048\n"
+             " mode deterministic\n"
+             " exit\n")
+
+
+def with_peer(text):
+    """PEER_CONFIG_PATH pointed at a file holding `text`, or at nothing."""
+    path = os.path.join(_root, "peer.conf")
+    if text is None:
+        if os.path.exists(path):
+            os.unlink(path)
+    else:
+        with open(path, "w") as f:
+            f.write(text)
+    prismash.PEER_CONFIG_PATH = path
+    return path
+
+
+def in_a_pair(text):
+    """A candidate with that text AND a virtual router, which is the pair."""
+    cfg = Config.parse(text)
+    cfg.vrrp["pg0"] = {1: {"addresses": ["100.64.3.254"], "priority": 200,
+                           "track": {}}}
+    return cfg
+
+
+print("\n=== Shell.peer_divergence: only in a pair, only when it can read ===")
+# Mutation shown red: the `target.vrrp` guard dropped, which gates the commits
+# of every box that ever copied a peer file to compare against.
+_saved_peer = prismash.PEER_CONFIG_PATH
+try:
+    with_peer(PAIR_POOL)
+    sh = shell()
+    same = in_a_pair(PAIR_POOL)
+    check(sh.peer_divergence(same) == [],
+          f"a pair that agrees has nothing to say: "
+          f"{sh.peer_divergence(same)!r}")
+    other = in_a_pair(PAIR_POOL.replace("block-size 2048", "block-size 1024"))
+    found = sh.peer_divergence(other)
+    check(len(found) == 1 and found[0][0] == "residential",
+          f"and a block size that moves every subscriber is a finding: "
+          f"{found!r}")
+    check("block-size 1024" in found[0][1] and "block-size 2048" in found[0][2],
+          f"with what each box makes of it: {found[0]!r}")
+    not_a_pair = Config.parse(PAIR_POOL.replace("block-size 2048", "block-size 1024"))
+    check(sh.peer_divergence(not_a_pair) == [],
+          "a box with no virtual router is not in a pair, whatever files "
+          "somebody left in /etc")
+    with_peer(None)
+    check(sh.peer_divergence(other) == [],
+          "no peer configuration is an unanswered question, not a divergence")
+    with_peer("! nothing but a comment\n")
+    check(sh.peer_divergence(other) == [],
+          "and neither is one that names no pool")
+finally:
+    prismash.PEER_CONFIG_PATH = _saved_peer
+print("  the one place that decides a box is in a pair and disagrees")
+
+print("\n=== Shell.say_divergence_refusal: the verdict, the pools, the word ===")
+# Mutation shown red: the last row dropped, which leaves an operator refused
+# with no way to say they meant it.
+sh = shell()
+sh.diverge = [("residential", "block-size 1024", "block-size 2048")]
+with spoken() as o:
+    sh.say_divergence_refusal()
+text = o.getvalue()
+check(text.splitlines()[0] == ("error: this change maps subscribers "
+                               "differently from the peer"),
+      f"the verdict first: {text.splitlines()[0]!r}")
+check("block-size 1024" in text and "block-size 2048" in text,
+      f"both statements, each whole: {text!r}")
+check("commit diverge" in text.splitlines()[-1],
+      f"and the word that gets past it, last: {text.splitlines()[-1]!r}")
+print("  the same renderer 'show cgnat ha' uses, under a refusal")
+
+print("\n=== Shell.report_divergence: what 'commit check' says instead ===")
+# Mutation shown red: the empty-list return dropped, which prints a heading
+# with no findings under it on every check.
+sh = shell()
+sh.diverge = []
+with spoken() as o:
+    sh.report_divergence()
+check(o.getvalue() == "", "nothing to say when the pair agrees")
+sh.diverge = [("residential", "block-size 1024", "block-size 2048")]
+with spoken() as o:
+    sh.report_divergence()
+check("commit diverge" in o.getvalue() and "refuses" in o.getvalue(),
+      f"and a warning that names what the commit will do: {o.getvalue()!r}")
+print("  a check applies nothing, so it warns where a commit refuses")
+
 print("\n=== Shell.device_vrrp: the virtual routers the BOX holds ===")
 # Mutation shown red: the tracking dump left out, which would make every
 # commit after a reboot remove the tracking nobody touched.
