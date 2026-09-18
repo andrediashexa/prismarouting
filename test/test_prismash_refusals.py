@@ -1423,6 +1423,41 @@ says("parent at commit", _text,
      "error: interface pg9.10: its parent pg9 is not on this box", _rv)
 print("  a tag that is fine on a port that is not there")
 
+print("\n=== what `commit check` reads about a virtual router (#7) ===")
+# THE GAP THIS CLOSES: both of these were refused only by set_vrrp, which runs
+# when the commit is APPLYING. So `commit check` said "configuration check
+# succeeds" and the commit then failed part-way through, on a box the earlier
+# steps had already changed - and the check is the sentence an operator acts
+# on in a maintenance window.
+_dp = Dp({"show interface": (0, "Name  Idx State MTU\n"
+                                "pg0   1   up    9000/0/0/0\n")})
+_target = config.Config()
+_target.vrrp["pg0"] = {1: {"addresses": [], "priority": 200, "track": {}}}
+_sh = shell(Api(have={"pg0": 1}), dp=_dp)
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("no address, at check", _text,
+     "error: interface pg0: vrrp 1 has no address", _rv)
+_target = config.Config()
+_target.vrrp["pg0"] = {1: {"addresses": ["100.64.3.254"], "priority": 200,
+                           "track": {"pg9": 150}}}
+_sh = shell(Api(have={"pg0": 1}), dp=_dp)
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("a tracked interface that is not there, at check", _text,
+     "error: interface pg0: vrrp 1: no interface pg9", _rv)
+# And the interface the router itself sits on, which is the same sentence
+# every other statement on a missing interface already got.
+_target = config.Config()
+_target.vrrp["pg9"] = {1: {"addresses": ["100.64.3.254"], "priority": 200,
+                           "track": {}}}
+_sh = shell(Api(have={"pg0": 1}), dp=_dp)
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("a virtual router on an interface that is not there", _text,
+     "error: interface pg9: this box has no such interface", _rv)
+print("  three refusals a check used to leave for the commit to discover")
+
 print("\n=== a virtual router the dataplane did not take, at commit (#7) ===")
 # THE READ-BACK, not the call's exit status. vat2 answering 0 says the message
 # was accepted, not that the box has a virtual router - and a VR that was
