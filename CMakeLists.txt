@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.13)
 # The build's project name keeps the old spelling after the rename to Prisma
 # Routing (#202): it is an identifier the build tree is keyed on, not a
 # string anybody reads.
-project(hexarouting VERSION 0.1 LANGUAGES C)
+project(prisma-routing VERSION 0.1 LANGUAGES C)
 
 find_package(VPP REQUIRED)
 

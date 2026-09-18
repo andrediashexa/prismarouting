@@ -118,7 +118,7 @@ Linux - the management network the installer recorded - and **never the last
 one**.
 
 The box works out how to stay reachable before it takes the card.
-`hexarouting-tune` reads that card's address, MAC and gateway off it on the
+`prisma-routing-tune` reads that card's address, MAC and gateway off it on the
 boot that claims it, in the window before anything is unbound, and the VTY
 puts them back: the address onto the `linux_cp` pair the dataplane keeps for
 that card, MAC and all, and the default route into Linux behind it. A card
@@ -149,7 +149,7 @@ The API half decides more than it looks: it is why an identity has to travel
 transport — shared memory — carries no peer credentials the plugin could check
 that identity against.
 
-*Authoritative:* `src/hexash/vppapi.py`, `bpa.api`.
+*Authoritative:* `src/prismash/vppapi.py`, `bpa.api`.
 
 ### 1.7 Some settings rebuild the pool and some do not, and the split is load-bearing
 
@@ -165,7 +165,7 @@ in-place never reaches the dataplane; an in-place field classified as mapping
 disconnects a subscriber base to turn one ALG off.
 
 *Authoritative:* `Pool.lines(in_place=)` and `Config.delta_to` in
-`src/hexash/config.py`; `test/test_hexash_config.py` pins it, including an
+`src/prismash/config.py`; `test/test_prismash_config.py` pins it, including an
 assertion that every field a pool has is classified.
 
 ### 1.8 A release is a version bump, an annotated tag, a CHANGELOG entry and a published Release
@@ -192,7 +192,7 @@ and stops checking.
 ### 1.9 The wiki is a usage layer, not a second design
 
 `docs/`, `README.md` and `TESTING.md` are authoritative about the product. The
-wiki at `hexarouting.hexanetworks.com.br` says how somebody *uses* it, and
+wiki at `prisma-routing.hexanetworks.com.br` says how somebody *uses* it, and
 `wiki/` here is its mirror, so it can be read and diffed without leaving the
 repository.
 
@@ -259,9 +259,9 @@ Not what it contains — what question it is the answer to.
 | `src/plugins/bpa/bpa_audit.c` | Which configuration was in force on the date in the court order, and who put it there. |
 | `src/plugins/bpa/bpa.api`, `bpa_api.c` | What a control plane may change, and what it is told when refused. |
 | `src/plugins/bpa/bpa_cli.c` | The same, for a human at the VPP prompt. |
-| `src/hexash/config.py` | What a candidate configuration is, and what changing it costs. |
-| `src/hexash/hexash.py` | The VTY: candidate, `commit`, `rollback`, roles. |
-| `src/hexash/system.py` | Everything that is not VPP: FRR, SSH, accounts, SNMP. |
+| `src/prismash/config.py` | What a candidate configuration is, and what changing it costs. |
+| `src/prismash/prismash.py` | The VTY: candidate, `commit`, `rollback`, roles. |
+| `src/prismash/system.py` | Everything that is not VPP: FRR, SSH, accounts, SNMP. |
 | `ref/bpa_model.py` | The mapping, computed from the specification, as the oracle. |
 | `test/` | Arithmetic and refusals, in seconds, with no VPP. |
 | `lab/` | The same claims, on packets. |
@@ -275,8 +275,8 @@ Not what it contains — what question it is the answer to.
 | add a per-pool setting | 1.7 · `config.py` `Pool.lines` · `bpa.api` · `lab/in-place.sh` |
 | add an ALG | 1.4 · `bpa_alg.h` · `bpa_rtsp.h` (TCP) or `bpa_sip.h` (UDP) with `test/test_bpa_sip.c` as the pattern · one sequence-correction mechanism, `bpa_seq.h`, and UDP needs none of it |
 | touch logging or the trail | 1.2 · [logging.md](logging.md) · `lab/audit.sh`, `lab/ipfix.sh` |
-| change the VTY | 1.6, 1.7 · `hexash.py` · `test/test_hexash_complete.py` · `lab/vty.sh` |
-| work on the appliance | 1.5 · [appliance.md](appliance.md) · `appliance/hexarouting-install` · [#83](https://github.com/andrediashexa/hexarouting/issues/83) |
+| change the VTY | 1.6, 1.7 · `prismash.py` · `test/test_prismash_complete.py` · `lab/vty.sh` |
+| work on the appliance | 1.5 · [appliance.md](appliance.md) · `appliance/prisma-routing-install` · [#83](https://github.com/andrediashexa/hexarouting/issues/83) |
 | measure performance | `lab/throughput.sh` · and note that no figure is trusted without hardware, [#28](https://github.com/andrediashexa/hexarouting/issues/28) |
 | ask which of the plugin CLI's messages any box ever printed | `LAB_OUTPUT=<dir> sh tools/run-all-labs.sh`, then `sh tools/plugin-says.sh src/plugins/bpa/bpa_cli.c <dir>` · the corpus is deleted with the run unless `LAB_OUTPUT` names somewhere to keep it, and the reader's own halves are driven in `test/test_plugin_says.sh` · it reads three bodies - the `vlib_cli_output` format string, every literal passed as an argument to one, and the `format()` sites `show bpa pool` and `show bpa config` are built from - and `PLUGIN_PRINTERS` narrows that back |
 | ask whether it leaks | `lab/soak.sh` · run it deliberately, `sh tools/lab.sh soak 28800`; it is outside `tools/run-all-labs.sh` and outside `make test` because of its length, and what it can see is its margin over the sessions the run churned |

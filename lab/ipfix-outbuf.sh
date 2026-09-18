@@ -87,12 +87,12 @@ set -u
 # that a lab which quietly stopped producing its own condition cannot report a
 # pass for a box it never put under the condition.
 MODE=${1:-stall}
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 COLLECTOR=/src/tools/ipfix_collector.py
 STALL_FILE=/tmp/ipfix-stall
-SPILL=/var/log/hexarouting/ipfix-spill.bin
+SPILL=/var/log/prisma-routing/ipfix-spill.bin
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -510,11 +510,11 @@ ${SPILLED_D:-?}, dropped ${DROPPED_C:-none} -> ${DROPPED_D:-none}"
   # nr_inodes as well as size: open() has to SUCCEED here, or this is the case
   # above over again under a different name. Whether the file was created is
   # read back below and asserted, rather than assumed.
-  mount -t tmpfs -o size=64k,nr_inodes=64 tmpfs /var/log/hexarouting 2>/dev/null \
-    && echo "  /var/log/hexarouting is a 64k tmpfs now" \
+  mount -t tmpfs -o size=64k,nr_inodes=64 tmpfs /var/log/prisma-routing 2>/dev/null \
+    && echo "  /var/log/prisma-routing is a 64k tmpfs now" \
     || echo "  could not mount the tmpfs"
-  dd if=/dev/zero of=/var/log/hexarouting/filler bs=1k count=128 2>/dev/null
-  echo "  free on it: $(df -k /var/log/hexarouting | tail -1 | awk '{print $4}') kB"
+  dd if=/dev/zero of=/var/log/prisma-routing/filler bs=1k count=128 2>/dev/null
+  echo "  free on it: $(df -k /var/log/prisma-routing | tail -1 | awk '{print $4}') kB"
   REC_E=$(tcp_records); SPILLED_E=$(tcp_spilled); DROPPED_E=$(tcp_dropped)
   flood $FLOOD
   REC_F=$(tcp_records); SPILLED_F=$(tcp_spilled); DROPPED_F=$(tcp_dropped)
@@ -539,7 +539,7 @@ ${SPILLED_F:-?}, dropped ${DROPPED_E:-none} -> ${DROPPED_F:-none}"
   echo "  buffered at the stop: $(tcp_pending 2>/dev/null || echo '?') byte(s)"
   DROPPED_STOP=$(tcp_dropped)
   stop_vpp
-  umount /var/log/hexarouting 2>/dev/null
+  umount /var/log/prisma-routing 2>/dev/null
   echo "  what the process said on its way out:"
   EXIT_SAID=$(grep -iE "could NOT be written|went to the spill file" \
               /tmp/vpp-2.log 2>/dev/null | tail -3)

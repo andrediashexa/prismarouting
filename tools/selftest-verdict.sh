@@ -16,7 +16,7 @@
 # Two more were still there after both fixes - lab/boot-iso.sh and the gate
 # itself - and they went on passing for a reason worth writing down rather
 # than being grateful for: a LIVE medium takes the branch where DPDK is off by
-# design, so it ends with "HexaRouting ready." and the old needle matched. A
+# design, so it ends with "Prisma Routing ready." and the old needle matched. A
 # live image that ever ends any other way would have had the gate refuse the
 # release and name the wrong cause.
 #

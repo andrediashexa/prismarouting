@@ -39,7 +39,7 @@
 #include "bpa.h"
 
 #ifndef BPA_AUDIT_PATH_DEFAULT
-#define BPA_AUDIT_PATH_DEFAULT "/var/log/hexarouting/config-history.log"
+#define BPA_AUDIT_PATH_DEFAULT "/var/log/prisma-routing/config-history.log"
 #endif
 
 static u8 *
@@ -167,7 +167,7 @@ bpa_actor_set (const char *user, u32 uid)
    * none.
    *
    * The NAME is what says an identity was supplied. A client that sends one
-   * is attributed by it, uid 0 included - hexash resolves the account even
+   * is attributed by it, uid 0 included - prismash resolves the account even
    * when it is root, so a genuine root operator still appears as "root uid
    * 0". A client that sends neither a name nor a non-zero uid is recorded as
    * unattributed, which is the honest reading of an empty message.

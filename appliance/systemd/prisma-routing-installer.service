@@ -1,0 +1,29 @@
+[Unit]
+Description=Prisma Routing - install to disk when the kernel command line asks
+Documentation=file:///usr/share/doc/prisma-routing/appliance.md
+ConditionKernelCommandLine=prisma-routing.install
+# Same dependency shape as the self-test, and for the same reason: ordering
+# after multi-user.target while being wanted BY it is a cycle, and systemd
+# breaks a cycle by dropping a job - silently, from the operator's point of
+# view. The first version of this unit did exactly that and was skipped.
+DefaultDependencies=no
+# NOT after multi-user.target: getty.target is pulled in by it, and the
+# console getty is ordered after THIS unit so that an unattended install owns
+# the console instead of printing behind a login prompt (#93). Ordering after
+# multi-user.target as well would close that into a cycle.
+#
+# What this unit needs is the self-test to have finished, which is what it now
+# says.
+After=prisma-routing-selftest.service
+Wants=prisma-routing-selftest.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardInput=tty-force
+StandardOutput=tty
+TTYPath=/dev/console
+ExecStart=/usr/lib/prisma-routing/install-from-cmdline
+
+[Install]
+WantedBy=multi-user.target

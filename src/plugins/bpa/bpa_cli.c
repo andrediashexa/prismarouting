@@ -242,7 +242,7 @@ format_bpa_pool (u8 *s, va_list *args)
    * An operator sizes against that number and the honest one was zero.
    *
    * NOT a refusal, and that is deliberate. Writing the pools before the
-   * interfaces exist is ordinary staged work, and `hexash --load` applies them
+   * interfaces exist is ordinary staged work, and `prismash --load` applies them
    * in that order at every boot, so refusing here would refuse a box its own
    * saved configuration. This is #210's option 3 and #226's option A one more
    * time: the mechanism stays and the box stops claiming what it cannot do.
@@ -973,7 +973,7 @@ bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
        * Said HERE because it is the only readback there is. A pool applied
        * over the binary API has no terminal to print to - bpa_pool_add() and
        * bpa_pool_settings_set() warn with a null vm, so only the log hears
-       * them - and hexash reads this command back after a commit to put both
+       * them - and prismash reads this command back after a commit to put both
        * in front of the operator who typed the pool. Through the SAME
        * functions that say them there: a second sentence here, worded or
        * computed differently, would be a second thing to keep in step.
@@ -982,13 +982,13 @@ bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
        * unless its own arithmetic really does come up short.
        *
        * KEEP THESE LAST IN THIS LOOP BODY, and keep any other warning said
-       * here BESIDE them rather than after them. hexash relays these by taking
+       * here BESIDE them rather than after them. prismash relays these by taking
        * everything between a `warning:` row and the next row opening with
        * `pool `, because the message folds and only its first row carries a
        * word to look for (#271). Anything printed about a pool AFTER this
        * call would be relayed to the operator as part of the warning. The
        * constraint is written here, where somebody adding a row would be
-       * looking, and not only in hexash, where they would not.
+       * looking, and not only in prismash, where they would not.
        */
       bpa_stride_say (vm, p);
       bpa_reserve_say (vm, p);
@@ -2684,7 +2684,7 @@ VLIB_CLI_COMMAND (bpa_logging_command, static) = {
  * "bpa stop-drain": release every block, because the box is about to stop.
  *
  * Run from an ExecStop, not by hand. It is deliberately absent from the VTY:
- * an operator configures through hexash, and this is not a configuration
+ * an operator configures through prismash, and this is not a configuration
  * statement, it is the first half of a shutdown.
  *
  * IT IS STILL SAFE TO TYPE, and that matters more than the naming. A box that
@@ -2881,7 +2881,7 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
   u32 i;
 
   /*
-   * Emits the configuration in VTY syntax, so hexash can show
+   * Emits the configuration in VTY syntax, so prismash can show
    * "show running-config" and save it. The dataplane is the source of truth:
    * the VTY runs as a short-lived process and cannot hold state between calls.
    */
@@ -3007,7 +3007,7 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
   if (bm->block_holddown != BPA_BLOCK_HOLDDOWN)
     s = format (s, "cgnat block-holddown %u\n", bm->block_holddown);
   /*
-   * VPP's own UDP exporter. It is core state, not this plugin's - hexash
+   * VPP's own UDP exporter. It is core state, not this plugin's - prismash
    * sets it with VPP's set_ipfix_exporter message, because libvnet exports
    * no setter a plugin could call and copying the handler's field
    * assignments here would be a copy that drifts with every VPP bump.

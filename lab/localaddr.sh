@@ -26,7 +26,7 @@
 #
 # Sections 1 to 4 drive vppctl, so what they measure is the plugin on a box
 # that already carries the address. The path an operator never watches is the
-# other one. `hexash --load` applies POOLS BEFORE ADDRESSES, so at a boot
+# other one. `prismash --load` applies POOLS BEFORE ADDRESSES, so at a boot
 # `bpa_check_local_overlap()` walks an empty interface table, finds nothing,
 # and the pool is created; the address lands a moment later and takes the
 # `vlib_log_err` branch instead - a line on the plugin's log class, which is
@@ -46,7 +46,7 @@
 # through: the boot case only exists on a VPP that has nothing on it.
 set -u
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -54,7 +54,7 @@ cd /src
 . /src/lab/lib.sh
 # The VTY sections below commit through the binary API, not through vppctl.
 use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 VPP_PID=$!
@@ -124,8 +124,8 @@ echo "=========== a dataplane with nothing on it ==========="
 # the boot case on that box would be measuring the case that already works.
 #
 # Nothing here is a step the product is missing. A real boot starts a VPP that
-# has just come up with no address on it and hands hexarouting.conf to
-# `hexash --load`; this stops the dataplane and starts another one, which
+# has just come up with no address on it and hands prisma-routing.conf to
+# `prismash --load`; this stops the dataplane and starts another one, which
 # leaves the box with LESS than a real boot has and never more. The rollback
 # store goes too, for the same reason: a box that has never been configured has
 # no revisions, and leaving four sections' worth behind would be the fixture
@@ -140,7 +140,7 @@ kill -9 "$VPP_PID" 2>/dev/null
 # dataplane that is not there.
 n=0
 while vppctl show version >/dev/null 2>&1 && [ "$n" -lt 15 ]; do sleep 1; n=$((n+1)); done
-rm -rf /etc/hexarouting/rollback
+rm -rf /etc/prisma-routing/rollback
 vpp -c "$(startup_conf test)" > /tmp/vpp-boot.log 2>&1 &
 wait_vpp /tmp/vpp-boot.log
 vppctl create packet-generator interface pg0 >/dev/null
@@ -156,7 +156,7 @@ echo "  pools on the new dataplane:        $EMPTY_POOLS"
 echo
 echo "=========== 5. the same two statements, loaded at a boot ==========="
 # One file holding both, which is what `save` writes and what
-# hexarouting.service hands back at every boot.
+# prisma-routing.service hands back at every boot.
 cat > /tmp/localaddr-boot.conf <<'EOF'
 interface pg0
  ipv4 address 200.150.0.20/28

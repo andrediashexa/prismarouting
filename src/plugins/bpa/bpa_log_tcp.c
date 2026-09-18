@@ -569,7 +569,7 @@ bpa_log_tcp_enable (ip4_address_t *collector, u16 port, int enable)
     bpa_log_tcp.enabled = 1;
     if (!bpa_log_tcp.spill_path)
       bpa_log_tcp.spill_path =
-	format (0, "/var/log/hexarouting/ipfix-spill.bin%c", 0);
+	format (0, "/var/log/prisma-routing/ipfix-spill.bin%c", 0);
     if (!was)
       {
 	/* The marker before anything else, for the reason bpa_log_enable()

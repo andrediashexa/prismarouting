@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-The wiki at <https://hexarouting.hexanetworks.com.br> is a **draft**. It is not
+The wiki at <https://prisma-routing.hexanetworks.com.br> is a **draft**. It is not
 the base of truth, it is still being written, and the maintainer has said it
 contains **errors about the purpose of the project — including about
 deterministic CGNAT and its relationship to BPA**.
@@ -147,14 +147,14 @@ create a document - create it on the wiki, pull, then push.
 index and collaborative state; writing document rows underneath it corrupts all
 three silently.
 
-An API key named `hexarouting-docs-sync` already exists for the admin account.
+An API key named `prisma-routing-docs-sync` already exists for the admin account.
 Its secret is not stored anywhere — if it is lost, make another: Outline hashes
 the token with SHA-256 and stores `hash` and `last4` in the `apiKeys` table, and
 the token is `ol_api_` followed by 38 word characters. Generate one, insert the
 row with its hash, and the API accepts it. Verify with:
 
 ```sh
-curl -s -X POST https://hexarouting.hexanetworks.com.br/api/auth.info \
+curl -s -X POST https://prisma-routing.hexanetworks.com.br/api/auth.info \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
 ```
 
@@ -186,10 +186,10 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 **Renamed to Prisma Routing on the 17 pages that carried the old name or the
 old prompt**, in the mirror only; publication is the maintainer's, at release.
-The prompt `hexarouting> ` became `prisma> ` on every quoted screen,
+The prompt `prisma-routing> ` became `prisma> ` on every quoted screen,
 `show version` and the medium's login screen quote the new first line, and
 the upgrade page names `prisma-routing-<versão>-upgrade.tar.gz`. Nothing an
-operator types changed: `hexash`, the paths and the units keep their names,
+operator types changed: `prismash`, the paths and the units keep their names,
 and the pages say so where they name them. The page *Prisma Routing — visão
 geral* keeps its file name and its address in the mirror until the wiki
 renames the document: `tools/wiki-push.sh` refuses a heading that is not the
@@ -326,7 +326,7 @@ a warning about direction: the edit was accurate and it was the wrong page.
 |---|---|
 | *Roteamento, SSH, usuários e SNMP* | taught `show ip route`, which answers from FRR's RIB — the table where a route looks correct on a box that is dropping the traffic. Static routes and the daemon question were missing. |
 | *Comandos show* | no `show route`, `show route verbose` or `show this` |
-| *Instalação da appliance* | no records volume, no `hexarouting.log-gb=` |
+| *Instalação da appliance* | no records volume, no `prisma-routing.log-gb=` |
 | *Build, testes e laboratórios* | no parallel suite, no `make release-gate` |
 
 Those four were corrected for **content that was stale**. None of them was
@@ -354,8 +354,8 @@ Stale content corrected in the same pass:
 
 | Page | What was wrong |
 |---|---|
-| *VTY hexash — guia de uso* | the prompt table predated v0.32.0: it showed `[edit cgnat pool]` without the pool's name and claimed entering an interface moved nothing. Both are the defect [#108](https://github.com/andrediashexa/hexarouting/issues/108) fixed. `show this` and the completion of live values from v0.29.0 were missing. |
-| *Dimensionamento e requisitos* | no records volume, no `hexarouting.log-gb=`, no ~29 GB/year arithmetic (v0.30.0) |
+| *VTY prismash — guia de uso* | the prompt table predated v0.32.0: it showed `[edit cgnat pool]` without the pool's name and claimed entering an interface moved nothing. Both are the defect [#108](https://github.com/andrediashexa/hexarouting/issues/108) fixed. `show this` and the completion of live values from v0.29.0 were missing. |
+| *Dimensionamento e requisitos* | no records volume, no `prisma-routing.log-gb=`, no ~29 GB/year arithmetic (v0.30.0) |
 | *Operação e diagnóstico* | the boot wait did not explain itself (v0.31.0) |
 | *BPA*, *Ampliar capacidade* | a `:::warning` on each held only its first sentence, the rest having fallen outside the block — Outline's markdown round-trip splits a callout whose source was a one-line blockquote. Check this after every edit that touches one. |
 

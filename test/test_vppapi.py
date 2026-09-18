@@ -12,7 +12,7 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import vppapi
 
 fail = 0
@@ -383,7 +383,7 @@ check(api.interface_index("local0") is None,
 # root client attached, over a file of this suite's own, with chown and
 # chmod recorded rather than done - the one thing this may not touch is
 # the segment on the machine running it.
-seg_dir = tempfile.mkdtemp(prefix="hexash-vppapi-")
+seg_dir = tempfile.mkdtemp(prefix="prismash-vppapi-")
 seg = os.path.join(seg_dir, "global_vm")
 open(seg, "w").close()
 gid = os.stat(seg).st_gid
@@ -396,7 +396,7 @@ class Segment(vppapi.Vat2):
 
 
 class NoGroup(Segment):
-    API_GROUP = "hexa-no-such-group-390"
+    API_GROUP = "prisma-no-such-group-390"
 
 
 touched = []
@@ -433,7 +433,7 @@ print(f"  segment: {seg} as {own_group}")
 # hang as 124 - driven with the interpreter itself so no real client runs.
 # Through Segment, so the finally clause reaches the temporary segment above
 # and not /dev/shm.
-rc, out, err = Segment._subprocess(["/nonexistent/hexa-vat2-390", "--dump-apis"])
+rc, out, err = Segment._subprocess(["/nonexistent/prisma-vat2-390", "--dump-apis"])
 check(rc == 127 and out == "" and "not found" in err,
       f"a binary that is not there is 127 and says so: {(rc, out, err)}")
 rc, out, err = Segment._subprocess([

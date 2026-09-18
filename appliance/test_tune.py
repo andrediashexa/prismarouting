@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests for hexarouting-tune against synthetic topologies.
+Tests for prisma-routing-tune against synthetic topologies.
 
 The development machine has neither SMT nor multiple NUMA nodes, which is
 exactly where the tuning decisions matter. So the topologies are built on
@@ -9,7 +9,7 @@ disk and checked.
 import os, re, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TUNE = os.path.join(HERE, "hexarouting-tune")
+TUNE = os.path.join(HERE, "prisma-routing-tune")
 
 
 def load_tune():
@@ -21,21 +21,21 @@ def load_tune():
     and bound to a name at module level, so that test/test_every_function.py
     reads `tune.parse_list(...)` as a call into the product: the name the
     module is bound to roots at a function this file defines, not at a
-    foreign import. HEXA_MGMT_PATH is pointed into a scratch directory before
+    foreign import. PRISMA_MGMT_PATH is pointed into a scratch directory before
     the load because the tuner reads it at import, and its default is /run.
     """
     import importlib.machinery
     import importlib.util
-    if "hexarouting_tune" in sys.modules:
-        return sys.modules["hexarouting_tune"]
-    os.environ.setdefault("HEXA_MGMT_PATH",
+    if "prisma_routing_tune" in sys.modules:
+        return sys.modules["prisma_routing_tune"]
+    os.environ.setdefault("PRISMA_MGMT_PATH",
                           os.path.join(tempfile.mkdtemp(), "mgmt"))
-    loader = importlib.machinery.SourceFileLoader("hexarouting_tune", TUNE)
-    spec = importlib.util.spec_from_file_location("hexarouting_tune", TUNE,
+    loader = importlib.machinery.SourceFileLoader("prisma_routing_tune", TUNE)
+    spec = importlib.util.spec_from_file_location("prisma_routing_tune", TUNE,
                                                   loader=loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
-    sys.modules["hexarouting_tune"] = module
+    sys.modules["prisma_routing_tune"] = module
     return module
 
 
@@ -157,7 +157,7 @@ def run(root, *args, maxmtu=None, addr=None):
     had a check that could not fail because of it.
     """
     env = dict(os.environ)
-    # HEXA_IP is set on EVERY run, not only the ones that name a maximum.
+    # PRISMA_IP is set on EVERY run, not only the ones that name a maximum.
     # Without it the tuner asked the machine's own `ip` about a card named in
     # a synthetic tree, and every fixture here that names an interface read
     # whatever that machine's eth0 answered: 47 such reads in one run,
@@ -213,14 +213,14 @@ def run(root, *args, maxmtu=None, addr=None):
                      f"maxmtu {maxmtu}'; exit 0 ;;\n")
         _f.write("esac\n")
     os.chmod(os.path.join(_bin, "ip"), 0o755)
-    env["HEXA_IP"] = os.path.join(_bin, "ip")
+    env["PRISMA_IP"] = os.path.join(_bin, "ip")
     # THE RESERVE COMES OUT OF THE TREE, never off the machine running this.
     #
     # The tuner reads the management network the installer recorded and
     # reserves that card for Linux (#378). Its default is an absolute path, so
     # without this every fixture here would consult the build runner's own
-    # /etc/network/interfaces.d/hexarouting - and a developer box that has one
-    # would measure something the runner does not. That is HEXA_IP's argument
+    # /etc/network/interfaces.d/prisma-routing - and a developer box that has one
+    # would measure something the runner does not. That is PRISMA_IP's argument
     # two paragraphs up, and the same trap: it is harmless only for as long as
     # nobody's machine has the file.
     #
@@ -229,8 +229,8 @@ def run(root, *args, maxmtu=None, addr=None):
     # And the file the tuner leaves the computed way back in, inside the tree
     # for the same reason (#378): its real path is /run, which a suite cannot
     # write and must not share between fixtures.
-    env["HEXA_MGMT_PATH"] = os.path.join(root, "run/hexarouting/mgmt")
-    mgmt = os.path.join(root, "etc/network/interfaces.d/hexarouting")
+    env["PRISMA_MGMT_PATH"] = os.path.join(root, "run/prisma-routing/mgmt")
+    mgmt = os.path.join(root, "etc/network/interfaces.d/prisma-routing")
     p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root,
                         "--mgmt-conf", mgmt] + list(args),
                        capture_output=True, text=True, env=env)
@@ -260,7 +260,7 @@ def reserve(root, ifname, how="dhcp"):
     """Write the management network the installer would have recorded."""
     d = f"{root}/etc/network/interfaces.d"
     os.makedirs(d, exist_ok=True)
-    with open(f"{d}/hexarouting", "w") as f:
+    with open(f"{d}/prisma-routing", "w") as f:
         f.write(f"auto {ifname}\niface {ifname} inet {how}\n")
 
 def field(out, prefix):
@@ -343,7 +343,7 @@ with tempfile.TemporaryDirectory() as root:
     print(f"  workers={workers} isolated={isolated}")
 
 print("\n=== no cap is the shipped default, and it takes every core but one ===")
-# HEXA_MAX_WORKERS ships empty. An operator who sets nothing has to get the
+# PRISMA_MAX_WORKERS ships empty. An operator who sets nothing has to get the
 # machine they get today: changing the worker count by default would change the
 # throughput of every installed box on its next boot.
 with tempfile.TemporaryDirectory() as root:
@@ -361,7 +361,7 @@ print("\n=== a cap below the count frees the cores, not just the worker list ===
 # The point of the cap is cores the control plane can run on, not fewer
 # workers. A cap that shortened the worker list but left the cores in isolcpus
 # would cost forwarding capacity and hand the control plane nothing - the
-# scheduler still would not be allowed to put frr, hexash or sshd there.
+# scheduler still would not be allowed to put frr, prismash or sshd there.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=2, nic_node=0,
           hugepages_gb=8, isolated="1-7,9-15", nic_pci="0000:3b:00.0")
@@ -419,8 +419,8 @@ print("\n=== the statistics segment is sized for the interfaces configured (#288
 # 7,000 interfaces that segment was measured holding is 4,793 bytes each.
 
 def interfaces_conf(root, n, extra=""):
-    """A saved configuration naming `n` interfaces, as hexash writes them."""
-    path = os.path.join(root, "hexarouting.conf")
+    """A saved configuration naming `n` interfaces, as prismash writes them."""
+    path = os.path.join(root, "prisma-routing.conf")
     with open(path, "w") as f:
         f.write("! cgnat\n")
         for i in range(n):
@@ -474,16 +474,16 @@ with tempfile.TemporaryDirectory() as root:
           f"the report names no interface count, so a size appears in "
           f"startup.conf with nothing saying what it was sized for: "
           f"{[l for l in out.splitlines() if 'statistics' in l]}")
-    # AND THE COUNT IS HEXASH'S OWN. The tuner loads the VTY's parser instead
+    # AND THE COUNT IS PRISMASH'S OWN. The tuner loads the VTY's parser instead
     # of grepping the file, because a second reader of that grammar answers
     # the same until the VTY learns another way to name an interface, and the
     # box that finds out is the one with twenty thousand of them.
-    sys.path.insert(0, os.path.join(HERE, "..", "src", "hexash"))
+    sys.path.insert(0, os.path.join(HERE, "..", "src", "prismash"))
     import config as _cfg     # noqa: E402
     _theirs = len(_cfg.Config.parse(open(conf).read()).interface_names())
     check(f"the {_theirs} interface(s)" in out,
-          f"the tuner and hexash do not agree about how many interfaces that "
-          f"file configures: hexash says {_theirs} and the report says "
+          f"the tuner and prismash do not agree about how many interfaces that "
+          f"file configures: prismash says {_theirs} and the report says "
           f"{[l for l in out.splitlines() if 'interface(s)' in l]}")
     # AND docs/appliance.md QUOTES THIS RUN. The page prints the report and
     # the stanza under "A box configured for 20,000 sub-interfaces", and the
@@ -508,10 +508,10 @@ with tempfile.TemporaryDirectory() as root:
     if len(_blocks) == 1:
         # The one substitution, and it is not a loosening: the report names
         # the file it counted interfaces in, and on a real box that is
-        # /etc/hexarouting/hexarouting.conf while here it is a temporary
+        # /etc/prisma-routing/prisma-routing.conf while here it is a temporary
         # directory. Comparing without it would report the page wrong about a
         # line that is right, which is a check going red on correct work.
-        _said = out.replace(conf, "/etc/hexarouting/hexarouting.conf")
+        _said = out.replace(conf, "/etc/prisma-routing/prisma-routing.conf")
         _missing = [l for l in _blocks[0].splitlines()
                     if l.strip() and l not in _said.splitlines()]
         check(not _missing,
@@ -529,8 +529,8 @@ with tempfile.TemporaryDirectory() as root:
 with tempfile.TemporaryDirectory() as root:
     # THE FIRST BOOT CARRIES IT TOO, and this is not symmetry for its own
     # sake: the hugepages and the pinning wait for a reboot because the kernel
-    # has to grant them, and the statistics segment does not - hexarouting.service
-    # hands the same saved configuration to `hexash --load` on the first boot,
+    # has to grant them, and the statistics segment does not - prisma-routing.service
+    # hands the same saved configuration to `prismash --load` on the first boot,
     # so a box that aborts on its own configuration aborts on it that time.
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_gb=0, isolated="")
@@ -591,7 +591,7 @@ with tempfile.TemporaryDirectory() as root:
                           f"output was {out!r}")
     check("7,000 and 8,000" in out,
           "a limit without the measured number behind it is a rumour")
-    check("/etc/hexarouting/vpp-base.conf" in out,
+    check("/etc/prisma-routing/vpp-base.conf" in out,
           "saying there is a wall without saying where the stanza goes leaves "
           "the operator with nothing to do about it")
     print("  a box with nothing configured is told about the wall, not a size")
@@ -640,7 +640,7 @@ with tempfile.TemporaryDirectory() as root:
     # "read it and it is fine" must not look the same on the one screen.
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_gb=6, isolated="1-7")
-    conf = os.path.join(root, "hexarouting.conf")
+    conf = os.path.join(root, "prisma-routing.conf")
     # Half-written by a box that lost power mid-save: real bytes, not UTF-8.
     with open(conf, "wb") as f:
         f.write(b"! cgnat\ninterface Ten0/0/0.1\n description \xff\xfe\n exit\n")
@@ -662,29 +662,29 @@ with tempfile.TemporaryDirectory() as root:
 
 with tempfile.TemporaryDirectory() as root:
     # AND A BOX THAT CANNOT REACH THE PARSER AT ALL, which is an install that
-    # put /usr/lib/hexarouting somewhere this program cannot see it. The
+    # put /usr/lib/prisma-routing somewhere this program cannot see it. The
     # configuration on that box is fine, so telling the operator it could not
     # be parsed sends them to edit the one thing that is right - and it is the
     # same mistake as reading a card badly and calling the card broken (#330).
-    # Reached by running the tuner from a directory with neither hexash beside
+    # Reached by running the tuner from a directory with neither prismash beside
     # it nor one installed, which is exactly what that box has.
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_gb=6, isolated="1-7")
     conf = interfaces_conf(root, 20000)
     _alone = os.path.join(root, "bin")
     os.makedirs(_alone, exist_ok=True)
-    shutil.copy(TUNE, os.path.join(_alone, "hexarouting-tune"))
+    shutil.copy(TUNE, os.path.join(_alone, "prisma-routing-tune"))
     # The one tuner run in this file that does not go through run(), so it
     # carries the netlink seam itself: without it the card named here is asked
     # about on the machine underneath, which is the last of the 48 such reads
     # this sweep found.
-    _p = subprocess.run([sys.executable, os.path.join(_alone, "hexarouting-tune"),
+    _p = subprocess.run([sys.executable, os.path.join(_alone, "prisma-routing-tune"),
                          "--sysfs-root", root, "--interface", "eth0",
                          "--config", conf], capture_output=True, text=True,
-                        env=dict(os.environ, HEXA_IP="/nonexistent-ip"))
+                        env=dict(os.environ, PRISMA_IP="/nonexistent-ip"))
     _o = _p.stdout
     check("parser is not installed" in _o,
-          f"the box could not reach hexash's parser and reported its "
+          f"the box could not reach prismash's parser and reported its "
           f"configuration as unreadable, which is the one file on it that is "
           f"fine: {[l for l in _o.splitlines() if 'segment' in l or 'parser' in l]}")
     check("statseg" not in _o.split("### stanzas appended to /etc/vpp/startup.conf")[1],
@@ -864,20 +864,20 @@ def apply_box():
 
     Both were unstubbed. `systemctl is-active vpp.service` was answered by
     whatever machine ran this suite, which is the three-way decision #336 is
-    about being taken from the wrong box - and `hexarouting-bind-nic` was
+    about being taken from the wrong box - and `prisma-routing-bind-nic` was
     looked for on that machine's PATH and RUN when it was there. Measured
     before this existed: with the product installed, this section took a card
     off the machine running the tests five times in one run. That is the
     warning in test/test_apply_tuning.sh, which stubbed both, and this file is
     the other caller nobody swept.
 
-    HEXA_ROOT for the same reason: without it apply-tuning reads the machine's
+    PRISMA_ROOT for the same reason: without it apply-tuning reads the machine's
     own /etc/default/grub.d, /proc/cmdline and /sys, and writes the cpufreq
     governor of any box whose suite runs as root.
     """
     b = _tf.mkdtemp()
     r = os.path.join(b, "root")
-    for d in ("proc", "etc/default/grub.d", "etc/hexarouting",
+    for d in ("proc", "etc/default/grub.d", "etc/prisma-routing",
               "sys/kernel/mm/hugepages/hugepages-1048576kB"):
         _os.makedirs(os.path.join(r, d), exist_ok=True)
     with open(os.path.join(r, "proc/cmdline"), "w") as f:
@@ -885,7 +885,7 @@ def apply_box():
     # Seven, which no machine has. It is what the "reserved 1G pages now"
     # line reads back, and the one number in the report that can only have
     # come from this tree - so the check below can tell a run that honoured
-    # HEXA_ROOT from one that read the machine's own /sys.
+    # PRISMA_ROOT from one that read the machine's own /sys.
     with open(os.path.join(
             r, "sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages"),
             "w") as f:
@@ -895,10 +895,10 @@ def apply_box():
     # test/test_apply_tuning.sh's, which owns this script's decisions.
     with open(os.path.join(b, "systemctl"), "w") as f:
         f.write("#!/bin/sh\ncase \"$*\" in *is-active*) exit 3 ;; esac\nexit 0\n")
-    with open(os.path.join(b, "hexarouting-bind-nic"), "w") as f:
+    with open(os.path.join(b, "prisma-routing-bind-nic"), "w") as f:
         f.write(f"#!/bin/sh\necho bound >> {os.path.join(b, 'bindlog')}\n"
                 "exit 0\n")
-    for c in ("systemctl", "hexarouting-bind-nic"):
+    for c in ("systemctl", "prisma-routing-bind-nic"):
         _os.chmod(os.path.join(b, c), 0o755)
     return b, r
 
@@ -908,13 +908,13 @@ fakebin, fakeroot = apply_box()
 with open(os.path.join(fakebin, "update-grub"), "w") as f:
     f.write("#!/bin/sh\necho CALLED-UPDATE-GRUB\nsleep 5\n")
 _os.chmod(os.path.join(fakebin, "update-grub"), 0o755)
-with open(os.path.join(fakebin, "hexarouting-tune"), "w") as f:
+with open(os.path.join(fakebin, "prisma-routing-tune"), "w") as f:
     f.write("#!/bin/sh\nexit 0\n")
-_os.chmod(os.path.join(fakebin, "hexarouting-tune"), 0o755)
+_os.chmod(os.path.join(fakebin, "prisma-routing-tune"), 0o755)
 
 env = dict(_os.environ, PATH=fakebin + ":" + _os.environ["PATH"],
-           HEXA_ROOT=fakeroot,
-           HEXA_DATAPLANE_IF="", HEXA_SUBSCRIBERS="1000")
+           PRISMA_ROOT=fakeroot,
+           PRISMA_DATAPLANE_IF="", PRISMA_SUBSCRIBERS="1000")
 r = subprocess.run(["sh", APPLY], capture_output=True, text=True, env=env,
                    timeout=30)
 out = r.stdout + r.stderr
@@ -935,7 +935,7 @@ check("reserved 1G pages now: 7" in out,
       f"reading the machine underneath it: {out!r}")
 # And the binder it found was this one. Measured before the stub existed: on a
 # machine with the product installed, this file ran the real
-# hexarouting-bind-nic five times in one run.
+# prisma-routing-bind-nic five times in one run.
 check(os.path.exists(os.path.join(fakebin, "bindlog")),
       "apply-tuning bound no card through this file's binder, so whichever "
       "one it did reach is not the one this test put there")
@@ -944,36 +944,36 @@ _sh.rmtree(fakebin, ignore_errors=True)
 
 # --- the worker cap has to survive the trip from tune.env to the tuner (#172) ---
 #
-# hexarouting-tune has accepted --max-workers since it was written. apply-tuning
+# prisma-routing-tune has accepted --max-workers since it was written. apply-tuning
 # never passed it and tune.env had no variable for it, so the flag was reachable
 # only by hand and every booted box ran uncapped. Testing the computation alone
 # is what let that stand: the calculation was right and nothing called it.
 print("\n=== the worker cap reaches the tuner from the environment ===")
 fakebin, fakeroot = apply_box()
 argvlog = os.path.join(fakebin, "argv")
-with open(os.path.join(fakebin, "hexarouting-tune"), "w") as f:
+with open(os.path.join(fakebin, "prisma-routing-tune"), "w") as f:
     f.write(f'#!/bin/sh\necho "$@" >> {argvlog}\nexit 0\n')
-_os.chmod(os.path.join(fakebin, "hexarouting-tune"), 0o755)
+_os.chmod(os.path.join(fakebin, "prisma-routing-tune"), 0o755)
 
 def apply_argv(**extra):
     open(argvlog, "w").close()
     env = dict(_os.environ, PATH=fakebin + ":" + _os.environ["PATH"],
-               HEXA_ROOT=fakeroot,
-               HEXA_DATAPLANE_IF="", HEXA_SUBSCRIBERS="1000", **extra)
+               PRISMA_ROOT=fakeroot,
+               PRISMA_DATAPLANE_IF="", PRISMA_SUBSCRIBERS="1000", **extra)
     r = subprocess.run(["sh", APPLY], capture_output=True, text=True, env=env,
                        timeout=30)
     return open(argvlog).read().strip(), r
 
-argv, r = apply_argv(HEXA_MAX_WORKERS="4")
+argv, r = apply_argv(PRISMA_MAX_WORKERS="4")
 check("--max-workers 4" in argv, f"the cap never reached the tuner: {argv!r}")
 check(r.returncode == 0, f"apply-tuning must still succeed (rc={r.returncode})")
-print(f"  HEXA_MAX_WORKERS=4 -> {argv}")
+print(f"  PRISMA_MAX_WORKERS=4 -> {argv}")
 
-argv, r = apply_argv(HEXA_MAX_WORKERS="")
+argv, r = apply_argv(PRISMA_MAX_WORKERS="")
 check("--max-workers" not in argv,
       f"empty must stay uncapped, or every box changes on its next boot: {argv!r}")
 check(r.returncode == 0, f"apply-tuning must still succeed (rc={r.returncode})")
-print(f"  HEXA_MAX_WORKERS= (empty) -> {argv}")
+print(f"  PRISMA_MAX_WORKERS= (empty) -> {argv}")
 
 # Unset behaves as empty: an installed box whose tune.env predates the variable
 # has to keep booting the way it does now.
@@ -984,21 +984,21 @@ check(r.returncode == 0, f"apply-tuning must still succeed (rc={r.returncode})")
 print("  unset -> uncapped, same as an existing box")
 
 # A typo must cost the setting, not the tuning. argparse exits non-zero on a
-# non-integer, which would fail hexarouting-tune.service and leave the kernel
+# non-integer, which would fail prisma-routing-tune.service and leave the kernel
 # command line at whatever the previous boot wrote - isolcpus and startup.conf
 # then disagree, which is the restart-loop shape, not a lost setting.
-argv, r = apply_argv(HEXA_MAX_WORKERS="four")
+argv, r = apply_argv(PRISMA_MAX_WORKERS="four")
 check("--max-workers" not in argv, f"garbage must not be forwarded: {argv!r}")
 check(r.returncode == 0,
       f"a typo in tune.env must not fail the tuning unit (rc={r.returncode})")
-check("HEXA_MAX_WORKERS" in r.stdout + r.stderr,
+check("PRISMA_MAX_WORKERS" in r.stdout + r.stderr,
       "and it must say so, or the operator sets it and nothing happens")
-print("  HEXA_MAX_WORKERS=four -> ignored, reported, tuning still applied")
+print("  PRISMA_MAX_WORKERS=four -> ignored, reported, tuning still applied")
 _sh.rmtree(fakebin, ignore_errors=True)
 
 # --- which NIC the dataplane is allowed to claim (#123) ---
 #
-# The shipped default was HEXA_DATAPLANE_IF=eth0, which does not exist on a
+# The shipped default was PRISMA_DATAPLANE_IF=eth0, which does not exist on a
 # Debian 12 box with predictable names. The tuner could not resolve it, emitted
 # "dev default" with no allowlist, and VPP took whatever NIC it found - the
 # management one. Not knowing which NIC carries traffic made it take ALL of
@@ -1150,7 +1150,7 @@ with tempfile.TemporaryDirectory() as root:
     _p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root,
                          "--interface", "eth0", "--keep-management"],
                         capture_output=True, text=True,
-                        env=dict(os.environ, HEXA_IP="/bin/true"))
+                        env=dict(os.environ, PRISMA_IP="/bin/true"))
     check(_p.returncode != 0
           and "unrecognized arguments: --keep-management" in _p.stderr,
           f"the tuner still takes --keep-management, so a record nothing "
@@ -1463,13 +1463,13 @@ with tempfile.TemporaryDirectory() as root:
     check("0102A8C0" not in out,
           "the gateway was printed as the raw hex field rather than decoded")
 
-print("\n=== and it is written where hexash --load and the self-test read it "
+print("\n=== and it is written where prismash --load and the self-test read it "
       "===")
 # DRIVEN AT THE FUNCTION and not through `--write`, and the reason is not
 # convenience: the tuner's write block puts files in /etc/default/grub.d and
 # /etc/vpp, so it cannot run unprivileged at all - a suite that tried would be
 # asserting on a PermissionError. What is driven here is the holder of the
-# record's SHAPE, which is what hexash.read_computed_mgmt() parses into a
+# record's SHAPE, which is what prismash.read_computed_mgmt() parses into a
 # dict of four fields and what appliance/selftest reads with `cat`, so the
 # thing those two have to agree on is exactly what this measures.
 # test/test_dataplane_if.py reads the same four fields back from its own
@@ -1479,10 +1479,10 @@ print("\n=== and it is written where hexash --load and the self-test read it "
 # The same two globals the exec further down sets, and for the same reason:
 # the module prefix resolves paths off __file__, so without them the import
 # raises rather than the check failing.
-_ns2 = {"__name__": "hexarouting_tune", "__file__": TUNE}
+_ns2 = {"__name__": "prisma_routing_tune", "__file__": TUNE}
 exec(compile(open(TUNE).read().split("\ndef plan(")[0], TUNE, "exec"), _ns2)
 with tempfile.TemporaryDirectory() as root:
-    _f = f"{root}/run/hexarouting/mgmt"
+    _f = f"{root}/run/prisma-routing/mgmt"
     _h = {"name": "eth0", "address": "192.168.2.50/24",
           "mac": "52:54:00:ab:cd:ef", "gateway": "192.168.2.1"}
     check(_ns2["write_management_path"](_h, path=_f) == _f,
@@ -1491,7 +1491,7 @@ with tempfile.TemporaryDirectory() as root:
     check(_said == ["eth0", "192.168.2.50/24", "52:54:00:ab:cd:ef",
                     "192.168.2.1"],
           f"the file does not carry name, address, MAC and gateway in that "
-          f"order, which is what hexash --load and the self-test read: "
+          f"order, which is what prismash --load and the self-test read: "
           f"{_said!r}")
 
 print("\n=== a card whose way back cannot be read is NOT handed over ===")
@@ -1544,7 +1544,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== a stale way back is removed, not left for the next boot ===")
 # THE WHOLE ARGUMENT FOR /run. A file describing a handover THIS boot is not
 # making would have the self-test report a handover that did not happen, and
-# hand `hexash --load` an address read on another day. It is rewritten or
+# hand `prismash --load` an address read on another day. It is rewritten or
 # removed every boot.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
@@ -1552,7 +1552,7 @@ with tempfile.TemporaryDirectory() as root:
     add_nic(root, "eth1", "0000:3b:00.1")
     reserve(root, "eth0")                  # eth0 stays with Linux now
     _routed(root, "eth0", "0102A8C0")
-    _f = f"{root}/run/hexarouting/mgmt"
+    _f = f"{root}/run/prisma-routing/mgmt"
     os.makedirs(os.path.dirname(_f), exist_ok=True)
     with open(_f, "w") as f:
         f.write("eth0 192.168.2.50/24 52:54:00:ab:cd:ef 192.168.2.1\n")
@@ -1594,7 +1594,7 @@ with tempfile.TemporaryDirectory() as root:
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
     _claims = "no-pci" not in run(root)
 _shipped = read_file(os.path.join(HERE, "etc/tune.env"))
-_empty = any(l.strip() == "HEXA_DATAPLANE_IF=" for l in _shipped.splitlines())
+_empty = any(l.strip() == "PRISMA_DATAPLANE_IF=" for l in _shipped.splitlines())
 check(_claims and _empty,
       f"the tuner no longer claims a card on a box that has one with the "
       f"setting shipped empty (claims={_claims}, ships empty={_empty}), so "
@@ -1663,9 +1663,9 @@ os.symlink(f"{_d}/sys/devices/platform/soc/eth-mmio",
 # Its own functions are what is under test here: driving the whole thing as a
 # subprocess would answer "was a dpdk stanza written" and this asks the
 # narrower question of what one interface resolves to.
-# `__file__` too: the tuner resolves hexash's configuration parser relative to
+# `__file__` too: the tuner resolves prismash's configuration parser relative to
 # its own path, and a namespace without one is not standing in for the module.
-_ns = {"__name__": "hexarouting_tune", "__file__": TUNE}
+_ns = {"__name__": "prisma_routing_tune", "__file__": TUNE}
 exec(compile(open(TUNE).read().split("\ndef plan(")[0], TUNE, "exec"), _ns)
 Topology, is_pci_addr = _ns["Topology"], _ns["is_pci_addr"]
 
@@ -1694,8 +1694,8 @@ for _bad in ("virtio3", "soc", "0000:00:12", "0000:zz:12.0", "", "a:b:c.d"):
 # where the two disagree offers a card the tuner then refuses, or hides one it
 # would have accepted - and this is a second copy of one truth, which is the
 # defect this repository keeps finding. Compared here rather than trusted.
-sys.path.insert(0, os.path.join(HERE, "..", "src", "hexash"))
-import hexash as _hx     # noqa: E402
+sys.path.insert(0, os.path.join(HERE, "..", "src", "prismash"))
+import prismash as _hx     # noqa: E402
 
 for _if in ("ens18", "eth9", "nosuch"):
     _mine = _t.nic_pci(_if)
@@ -2154,8 +2154,8 @@ def booted_box(root, params):
     """
     cmd = " ".join(params)
     w(f"{root}/proc/cmdline", "BOOT_IMAGE=/boot/vmlinuz ro quiet " + cmd)
-    w(f"{root}/etc/default/grub.d/hexarouting.cfg",
-      "# Generated by hexarouting-tune. Do not edit by hand.\n"
+    w(f"{root}/etc/default/grub.d/prisma-routing.cfg",
+      "# Generated by prisma-routing-tune. Do not edit by hand.\n"
       'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT ' + cmd + '"')
     p = dict((t.split("=", 1) + [""])[:2] for t in params)
     iso = p.get("isolcpus", "")
@@ -2184,7 +2184,7 @@ def booted_box(root, params):
     shipped = os.path.join(HERE, "etc", "sysctl.conf")
     with open(shipped) as f:
         sysctl = f.read()
-    w(f"{root}/etc/sysctl.d/99-hexarouting.conf", sysctl.rstrip("\n"))
+    w(f"{root}/etc/sysctl.d/99-prisma-routing.conf", sysctl.rstrip("\n"))
     for line in sysctl.splitlines():
         line = line.split("#", 1)[0].strip()
         if "=" in line:
@@ -2334,7 +2334,7 @@ for _d in (_hw, _took, _vm, _stale, _blind, _plain, _dark):
 # and required to fail before being kept, which is the only evidence a check
 # can offer that it measures anything. Nothing here reads the machine that
 # runs it: every path is under a scratch root, and the two functions that
-# shell out to `ip` are given a stub through HEXA_IP.
+# shell out to `ip` are given a stub through PRISMA_IP.
 # --------------------------------------------------------------------------
 print("\n=== every function in the tuner, on its own (#390) ===")
 
@@ -2344,7 +2344,7 @@ tune = load_tune()
 def ip_stub(addr_lines=(), maxmtu=None):
     """
     A stub `ip` on disk for nic_address() and nic_max_mtu(), installed into
-    HEXA_IP. `addr_lines` are the `inet` lines the address question gets, so
+    PRISMA_IP. `addr_lines` are the `inet` lines the address question gets, so
     a case can hand the card two global addresses or one of link scope.
     """
     d = tempfile.mkdtemp()
@@ -2360,7 +2360,7 @@ def ip_stub(addr_lines=(), maxmtu=None):
                     f"maxmtu {maxmtu}'; exit 0 ;;\n")
         f.write("esac\n")
     os.chmod(os.path.join(d, "ip"), 0o755)
-    os.environ["HEXA_IP"] = os.path.join(d, "ip")
+    os.environ["PRISMA_IP"] = os.path.join(d, "ip")
     return d
 
 
@@ -2484,8 +2484,8 @@ with tempfile.TemporaryDirectory() as root:
           f"{tune.configured_interfaces(root)}")
     # The parser's modules somewhere this program cannot see: its own
     # answer, not a broken file.
-    _dirs = tune.HEXASH_DIRS
-    tune.HEXASH_DIRS = (f"{root}/nowhere",)
+    _dirs = tune.PRISMASH_DIRS
+    tune.PRISMASH_DIRS = (f"{root}/nowhere",)
     try:
         check(tune.configured_interfaces(_conf) == (None, "noparser"),
               f"with no parser installed beside it the count was "
@@ -2493,7 +2493,7 @@ with tempfile.TemporaryDirectory() as root:
               f"operator their file is broken sends them to edit the one "
               f"thing that is right")
     finally:
-        tune.HEXASH_DIRS = _dirs
+        tune.PRISMASH_DIRS = _dirs
     # A parser that raises: (None, "unparsed"), and never an exception out of
     # a program that runs as root before VPP on every boot.
     import types as _types
@@ -2531,7 +2531,7 @@ with tempfile.TemporaryDirectory() as root:
 # --- the reserve and the way back ---
 with tempfile.TemporaryDirectory() as root:
     reserve(root, "eth1", "static")
-    _mc = f"{root}/etc/network/interfaces.d/hexarouting"
+    _mc = f"{root}/etc/network/interfaces.d/prisma-routing"
     check(tune.reserved_for_linux(_mc) == "eth1",
           f"the installer recorded eth1 and the reserve read as "
           f"{tune.reserved_for_linux(_mc)!r}")
@@ -2681,7 +2681,7 @@ with tempfile.TemporaryDirectory() as root:
     ip_stub(["2: eth0    inet 169.254.1.1/16 scope link eth0"])
     check(topo.nic_address("eth0") is None,
           "a link-scope address was taken for the management address")
-    os.environ["HEXA_IP"] = f"{root}/no-such-ip"
+    os.environ["PRISMA_IP"] = f"{root}/no-such-ip"
     check(topo.nic_address("eth0") is None
           and topo.nic_max_mtu("eth0") is None,
           "with no `ip` to ask, the two readers did not answer None")
@@ -2767,7 +2767,7 @@ with tempfile.TemporaryDirectory() as root:
     check("no-pci" in _none and "dev 0000:3b:00.0" not in _none,
           "a box with no card to claim was given a device, or no allowlist")
     # The report, which is what the operator reads.
-    r = tune.render_report(p, "/etc/hexarouting/vpp-base.conf")
+    r = tune.render_report(p, "/etc/prisma-routing/vpp-base.conf")
     check("# workers (3): 1-3" in r and "# isolated: 1-3" in r
           and "# operating system and VPP main: 0" in r,
           f"the report does not say what the plan decided: {r!r}")
@@ -2845,7 +2845,7 @@ check(tune.cmdline_params("") == {} and tune.cmdline_params(None) == {},
 with tempfile.TemporaryDirectory() as root:
     check(tune.requested_params(root) == {},
           "with no generated GRUB file something was requested")
-    w(f"{root}/etc/default/grub.d/hexarouting.cfg",
+    w(f"{root}/etc/default/grub.d/prisma-routing.cfg",
       "# Generated\nGRUB_CMDLINE_LINUX_DEFAULT=\"$GRUB_CMDLINE_LINUX_DEFAULT "
       "isolcpus=1-3 hugepages=5\"\nGRUB_DISABLE_OS_PROBER=true\n")
     check(tune.requested_params(root) == {"isolcpus": "1-3", "hugepages": "5"},

@@ -242,6 +242,8 @@ else:
         mm = re.search(r"^## " + re.escape(version) + r"\b.*$", TEXT, re.M)
         if mm:
             open_text += section(mm.group(0))
+    # The REPOSITORY, which #202 did not rename: every issue URL already
+    # written down goes on resolving.
     written = set(re.findall(r"/hexarouting/issues/(\d+)\)", open_text))
     missing = sorted(merged - written, key=int)
     if missing:

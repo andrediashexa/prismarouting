@@ -7,7 +7,7 @@
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-WORK=${WORK:-/tmp/hexa-iso}
+WORK=${WORK:-/tmp/prisma-iso}
 # The name carries the version, so the file keeps its identity once it is off
 # the release page. tools/version-stamp.sh owns the calculation - a second
 # copy of it here would drift, and the drift would only show up as an ISO
@@ -53,7 +53,7 @@ fi
 # It was never copied in at all. install.sh looked for it in two places, found
 # neither inside the chroot, printed a warning and carried on - and that
 # warning has been in the build log of every release since the beginning. The
-# medium therefore shipped without the binary API registered, and hexash
+# medium therefore shipped without the binary API registered, and prismash
 # creates a pool over that API: the appliance could not be configured to do
 # the one thing it exists for.
 #
@@ -89,7 +89,7 @@ mkdir -p "$ROOT" "$WORK/iso/live" "$WORK/iso/boot/grub"
 # carry it out - a box that boots, says nothing, and has no address, which is
 # precisely the defect being fixed wearing a different hat.
 #
-# hexarouting-install's verify_installed() refuses such a disk before it
+# prisma-routing-install's verify_installed() refuses such a disk before it
 # reports success, so this is asserted on the box and not only decided here.
 say "debootstrap $SUITE"
 debootstrap --arch=amd64 --variant=minbase \
@@ -106,7 +106,7 @@ chroot "$ROOT" /bin/sh -c "
 # iputils-ping, traceroute and mtr-tiny are the three the VTY's own `ping`,
 # `traceroute` and `mtr` statements run (#395). They are in THIS list and not
 # the debootstrap one above because they are the product's, not the base
-# system's: hexash refuses each statement by naming its package, and the boot
+# system's: prismash refuses each statement by naming its package, and the boot
 # self-test reads the same table back, so a tool dropped here is a tool the
 # box says is missing rather than a statement that fails in the tool's own
 # words.
@@ -132,11 +132,11 @@ cp "$PLUGIN_SO" "$ROOT/vpp_plugins/"
 cp "$VAT2_SO" "$ROOT/vat2_plugins/"
 # The chroot cannot see the host's .git, so the stamp is computed here and
 # passed in. Without it every ISO would declare itself "unknown".
-if [ -z "${HEXA_VERSION_STAMP:-}" ]; then
-  HEXA_VERSION_STAMP=$(sh "$REPO/tools/version-stamp.sh" "$REPO")
+if [ -z "${PRISMA_VERSION_STAMP:-}" ]; then
+  PRISMA_VERSION_STAMP=$(sh "$REPO/tools/version-stamp.sh" "$REPO")
 fi
-say "version: $HEXA_VERSION_STAMP"
-chroot "$ROOT" /bin/sh -c "cd /src && HEXA_VERSION_STAMP='$HEXA_VERSION_STAMP' HEXA_VTY_LOGIN=1 sh appliance/install.sh"
+say "version: $PRISMA_VERSION_STAMP"
+chroot "$ROOT" /bin/sh -c "cd /src && PRISMA_VERSION_STAMP='$PRISMA_VERSION_STAMP' PRISMA_VTY_LOGIN=1 sh appliance/install.sh"
 rm -rf "$ROOT/src"
 
 # install.sh REFUSES a tree with only one of the two plugins now, before it
@@ -144,7 +144,7 @@ rm -rf "$ROOT/src"
 # placed it. This sentence used to say install.sh "warns and carries on ...
 # which is right for a source install on a box that may not want the API", and
 # both halves of that turned out to be wrong: there is no such box, since the
-# vat2 plugin is how hexash learns that a configuration was REFUSED rather
+# vat2 plugin is how prismash learns that a configuration was REFUSED rather
 # than applied, and #119 is that warning having already cost every ISO the
 # binary API.
 #
@@ -195,7 +195,7 @@ for tty in ttyS0 tty1; do
   # These used to be one, and the installer deletes what it finds here because
   # an installed box must not log anybody in without a password. So it took the
   # ORDERING with the autologin, and an installed box drew a login prompt while
-  # hexarouting.service was still waiting for VPP. The first thing anybody does
+  # prisma-routing.service was still waiting for VPP. The first thing anybody does
   # with a new box is log in at that prompt, and `configure` there built a
   # candidate out of vppctl's error text that refused every later commit in the
   # session (#211).
@@ -221,11 +221,11 @@ for tty in ttyS0 tty1; do
 # stay skipped on a boot that did not ask to install.
 #
 # On an INSTALLED box this is what keeps the prompt back until the dataplane is
-# up: the self-test is ordered after hexarouting.service, whose ExecStartPre
+# up: the self-test is ordered after prisma-routing.service, whose ExecStartPre
 # waits for VPP. A prompt offered before that invites an operator into a VTY
 # that cannot read the box (#211).
-After=hexarouting-selftest.service hexarouting-installer.service
-Wants=hexarouting-selftest.service
+After=prisma-routing-selftest.service prisma-routing-installer.service
+Wants=prisma-routing-selftest.service
 EOF
 
   # Live image only. The installer removes this one and keeps the other.
@@ -237,17 +237,17 @@ EOF
 done
 
 say "box identity"
-# The hostname stays "hexarouting" through the rename to Prisma Routing (#202):
+# The hostname stays "prisma-routing" through the rename to Prisma Routing (#202):
 # it is what the installer offers as the default and what every box installed
 # so far answers to, and a hostname is a name on a disk, not a string a
 # person reads on the banner.
-echo hexarouting > "$ROOT/etc/hostname"
-printf '127.0.0.1 localhost\n127.0.1.1 hexarouting\n' > "$ROOT/etc/hosts"
+echo prisma-routing > "$ROOT/etc/hostname"
+printf '127.0.0.1 localhost\n127.0.1.1 prisma-routing\n' > "$ROOT/etc/hosts"
 
 # NO CREDENTIALS ON THE LIVE IMAGE.
 #
-# This used to set 'root:hexarouting' and permit root over SSH. Both travelled
-# onto the disk: hexarouting-install unpacks this squashfs, /etc/shadow and
+# This used to set 'root:prisma-routing' and permit root over SSH. Both travelled
+# onto the disk: prisma-routing-install unpacks this squashfs, /etc/shadow and
 # all, and only asked for a password at the very end - so an install that was
 # aborted, that failed late, or that ran from the kernel command line left a
 # BOOTABLE disk with a password printed in the release notes.
@@ -255,7 +255,7 @@ printf '127.0.0.1 localhost\n127.0.1.1 hexarouting\n' > "$ROOT/etc/hosts"
 # The account is locked instead. Console autologin does not authenticate, so
 # nothing is lost on the live image, and the failure direction is now the safe
 # one: an install that dies halfway leaves a disk nobody can log into rather
-# than a disk anyone can. hexarouting-install sets the real password, from an
+# than a disk anyone can. prisma-routing-install sets the real password, from an
 # answer the operator gave before it wrote anything.
 say "locking the live image's root account"
 chroot "$ROOT" passwd -l root >/dev/null
@@ -276,7 +276,7 @@ chroot "$ROOT" systemctl mask ssh.service >/dev/null 2>&1 || true
 # channel, and the operator's client would say nothing, because the key it was
 # pinned to is the key it was handed.
 #
-# Nothing is lost on the live image: sshd is masked above. hexarouting-install
+# Nothing is lost on the live image: sshd is masked above. prisma-routing-install
 # generates a fresh set on the target, per box, before it enables the service.
 say "removing the live image's ssh host keys"
 rm -f "$ROOT"/etc/ssh/ssh_host_*_key "$ROOT"/etc/ssh/ssh_host_*_key.pub
@@ -327,22 +327,22 @@ menuentry "Prisma Routing installer - start, then type 'install'" {
     initrd /live/initrd
 }
 menuentry "Prisma Routing installer - go straight to the questions" {
-    linux /live/vmlinuz boot=live components hexarouting.install
+    linux /live/vmlinuz boot=live components prisma-routing.install
     initrd /live/initrd
 }
 menuentry "Prisma Routing (shell instead of the VTY)" {
-    linux /live/vmlinuz boot=live components hexash=off
+    linux /live/vmlinuz boot=live components prismash=off
     initrd /live/initrd
 }
 menuentry "Prisma Routing (recovery: single user, shell)" {
-    linux /live/vmlinuz boot=live components single hexash=off
+    linux /live/vmlinuz boot=live components single prismash=off
     initrd /live/initrd
 }
 EOF
 
 # And again on the ISO tree, because the root is not the only thing that ends
-# up on the medium. /run/live/medium/hexarouting.answers - the path
-# "hexarouting.answers" reads with no argument - is the ROOT OF THE MEDIUM,
+# up on the medium. /run/live/medium/prisma-routing.answers - the path
+# "prisma-routing.answers" reads with no argument - is the ROOT OF THE MEDIUM,
 # which is this directory and not the squashfs. A check that looked only at the
 # root would miss the one file the installer picks up without being asked.
 say "no credentials on the medium"
@@ -356,7 +356,7 @@ say "ISO hibrida"
 # so the two words take an underscore.
 #
 # It missed the rename once. The scope was measured with case-sensitive
-# greps for HexaRouting and hexarouting, and this was the one line in the
+# greps for Prisma Routing and prisma-routing, and this was the one line in the
 # tree spelt in capitals, so a medium called prisma-routing-<v>.iso mounted
 # as HEXAROUTING. Nothing on a disk reads the label and the medium is rebuilt
 # for every release, so it moves with the filename: test/test_iso_ready.sh

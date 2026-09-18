@@ -14,9 +14,9 @@
 # not test the product.
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
-mkdir -p /run/vpp /vpp_plugins /etc/hexarouting
-HX="python3 /src/src/hexash/hexash.py"
-export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
+mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing
+HX="python3 /src/src/prismash/prismash.py"
+export PRISMA_CONFIG=/etc/prisma-routing/prisma-routing.conf
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -54,7 +54,7 @@ NOPAIR_LCP=$(vppctl show lcp 2>&1)
 # parse, which is the half that breaks when VPP changes the shape of a listing
 # and the half no stub can hold honest. A box that cannot route has to say so
 # on the console before somebody configures routing on it (#182).
-ST_BEFORE=$(HEXA_SELFTEST_OUT=/dev/stdout sh /src/appliance/selftest 2>/dev/null)
+ST_BEFORE=$(PRISMA_SELFTEST_OUT=/dev/stdout sh /src/appliance/selftest 2>/dev/null)
 echo "  what the self-test says about pairing:"
 printf '%s\n' "$ST_BEFORE" | grep -i "pair" | sed 's/^/    /'
 echo "  netdevs Linux has:"; printf '%s\n' "$NOPAIR_LINKS" \
@@ -71,7 +71,7 @@ PAIRED=$($HX -c "configure" -c "interface host-veth-vpp" \
 printf '%s\n' "$PAIRED" | tail -3 | sed 's/^/  /'
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
 vppctl show lcp | sed 's/^/  /'
-ST_AFTER=$(HEXA_SELFTEST_OUT=/dev/stdout sh /src/appliance/selftest 2>/dev/null)
+ST_AFTER=$(PRISMA_SELFTEST_OUT=/dev/stdout sh /src/appliance/selftest 2>/dev/null)
 echo "  and now:"
 printf '%s\n' "$ST_AFTER" | grep -i "pair" | sed 's/^/    /'
 
@@ -93,7 +93,7 @@ echo "FIB do VPP:"; vppctl show ip fib 10.99.0.0/24 | grep -E "10.99|via|unicast
 
 echo
 echo "=== the boot path: the saved file recreates the pair ==="
-# `ExecStart=/usr/bin/hexash --load /etc/hexarouting/hexarouting.conf` is how an
+# `ExecStart=/usr/bin/prismash --load /etc/prisma-routing/prisma-routing.conf` is how an
 # installed box comes up, and it is the same apply() a commit goes through - so
 # the pair a box has at boot is the pair its saved file names. Shown rather than
 # reasoned about, which is the whole argument of #182: the half nobody measured
@@ -108,7 +108,7 @@ $HX -c "configure" -c "interface loop7" -c "linux-name loop7" \
 # the box. Measured the hard way - without this the copy below found no file
 # and the reload had nothing to replay.
 $HX -c "save" 2>&1 | tail -1 | sed 's/^/  /'
-cp "$HEXA_CONFIG" /tmp/boot.conf
+cp "$PRISMA_CONFIG" /tmp/boot.conf
 BOOT_MADE=$(ip -o link show loop7 2>/dev/null)
 $HX -c "configure" -c "no interface loop7" -c "commit" 2>&1 | tail -1 | sed 's/^/  /'
 BOOT_GONE=$(ip -o link show loop7 2>/dev/null)
@@ -146,6 +146,6 @@ expect_in "the pair is in the running configuration, read off the dataplane" \
 expect_in "a loopback the product paired is in the kernel" \
   "loop7" "$BOOT_MADE"
 expect_not_in "removing it takes the pair with it" "loop7" "$BOOT_GONE"
-expect_in "and replaying the saved file - what hexarouting.service does at boot - brings the pair back" \
+expect_in "and replaying the saved file - what prisma-routing.service does at boot - brings the pair back" \
   "loop7" "$BOOT_BACK"
 verdict

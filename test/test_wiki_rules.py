@@ -2,7 +2,7 @@
 """
 The rules the PUBLIC wiki is written under, with something that reads them.
 
-`wiki/` is a mirror of <https://hexarouting.hexanetworks.com.br>. It is on the
+`wiki/` is a mirror of <https://prisma-routing.hexanetworks.com.br>. It is on the
 open internet and it is written for somebody operating a box - a customer, a
 partner, an integrator. `PADRAO-DOCUMENTACAO.md` section 0 says what may not
 appear on such a page and gives the reason for each: an issue number and a
@@ -21,7 +21,7 @@ sentence at a time.
 WHOLE PAGES, FENCES INCLUDED, and that was measured rather than assumed. The
 first version of this file exempted the fenced blocks, on the argument that a
 page MUST quote what the box prints verbatim and what the box prints is the
-box's business - `appliance/hexarouting-install` really does say "see
+box's business - `appliance/prisma-routing-install` really does say "see
 docs/logging.md" at the connection-records question, which is a defect in the
 installer and not in the page that quotes it honestly. Measured over all 32
 pages: with the fences read too, nothing here goes red. That installer line is
@@ -122,7 +122,7 @@ print(f"  checked {len(PAGES)} page(s)")
 # rule went wrong. It matches a BACKTICKED name whose first component is one
 # of this tree's own directories, which is exactly the shape prose uses when
 # it tells a reader to go and read a file. A path on the appliance -
-# /etc/hexarouting/tune.env - is absolute and never matches, which is right:
+# /etc/prisma-routing/tune.env - is absolute and never matches, which is right:
 # that one IS the operator's file. It also requires an EXTENSION, so a script
 # named without one - `appliance/selftest` - is outside what this can see.
 # Inherited from the holder deliberately: widening it here would be the second
@@ -148,12 +148,12 @@ print(f"  checked {len(PAGES)} page(s) against "
 print("\n=== the three readers are driven over a page that breaks them ===")
 _BAD = ("Rode `vppctil` na caixa.\n"      # spelled so this file has one
         "Veja o #123 no github.com/x/y.\n"
-        "Está em `src/hexash/hexash.py`.\n").replace("vppctil", "vppctl")
+        "Está em `src/prismash/prismash.py`.\n").replace("vppctil", "vppctl")
 check("vppctl" in _BAD, "the sample page does not carry the name")
 check(bool(_ISSUE.findall(_BAD)),
       f"the tracker reader matches nothing in a page that cites it twice: "
       f"{_BAD!r}")
-check(doc_paths.repo_paths(_BAD) == ["src/hexash/hexash.py"],
+check(doc_paths.repo_paths(_BAD) == ["src/prismash/prismash.py"],
       f"the path reader does not see a source file named on a page: "
       f"{doc_paths.repo_paths(_BAD)!r}")
 print("  each of the three readers sees the page that breaks it")

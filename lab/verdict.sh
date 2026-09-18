@@ -43,7 +43,7 @@ expect_in() {
 #
 # So the needle has to be about the SENTENCE and not about where the sentence
 # happened to fold. This is the shell half of unwrapped() in
-# test/test_hexash_bgp.py, which exists for the same reason.
+# test/test_prismash_bgp.py, which exists for the same reason.
 #
 # BOTH sides are collapsed, not only the haystack. A caller writing a long
 # sentence across two source lines is how these needles are written, and

@@ -46,7 +46,7 @@ BISO=appliance/build-iso.sh
 # Under /var/tmp and not /tmp for the reason test/test_installer.sh gives:
 # nothing here mounts over /tmp, but the two rigs are the same shape and a
 # directory that is safe for one is safe for the other.
-WORK=$(mktemp -d -p /var/tmp hexa-iso-preflight.XXXXXX)
+WORK=$(mktemp -d -p /var/tmp prisma-iso-preflight.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 
 TREE=$WORK/tree

@@ -68,7 +68,7 @@ O pacote confere a plataforma da caixa, troca os arquivos do produto e diz, arqu
 
 
 :::info
-**A configuração não é tocada.** `/etc/hexarouting/hexarouting.conf`, as revisões de rollback e o ajuste de tuning que você editou continuam onde estavam. O pacote reescreve os arquivos do produto, não os seus.
+**A configuração não é tocada.** `/etc/prisma-routing/prisma-routing.conf`, as revisões de rollback e o ajuste de tuning que você editou continuam onde estavam. O pacote reescreve os arquivos do produto, não os seus.
 
 :::
 
@@ -85,7 +85,7 @@ prisma> show version
 Prisma Routing 0.74.2
   dataplane: vpp v24.10-release built by root on box at 2026-01-01
   plugin:    0.40.0
-  routing:   FRRouting 10.7.1 (hexarouting).
+  routing:   FRRouting 10.7.1 (prisma-routing).
   daemons:   running  bgpd mgmtd ospfd staticd zebra
 ```
 
@@ -120,6 +120,78 @@ Em modo dinâmico esse volume guarda o registro de conexão que o Marco Civil ob
 Os dois morrem na reinstalação e **nenhum comando deste produto os traz de volta**. Uma caixa reinstalada continua respondendo pelo ano de guarda que já corria.
 
 :::
+
+## Da HexaRouting para o Prisma Routing: o pacote recusa, e por quê
+
+O produto mudou de nome. **Nenhuma caixa rodando HexaRouting aceita o pacote de atualização do Prisma Routing** — ele recusa antes de escrever qualquer coisa, dizendo isto:
+
+```
+This box runs HexaRouting, and this artifact installs Prisma Routing.
+
+  The product was renamed and NOTHING MIGRATES.
+```
+
+A recusa é o ponto. Tudo o que uma caixa instalada carrega mudou de nome junto com o produto:
+
+| Antes | Agora |
+|-------|-------|
+| `/etc/hexarouting/hexarouting.conf` | `/etc/prisma-routing/prisma-routing.conf` |
+| `/etc/hexarouting/rollback/` | `/etc/prisma-routing/rollback/` |
+| `hexarouting.service` e as demais unidades | `prisma-routing.service` e as demais |
+| `hexash`, o shell de login das contas | `prismash` |
+| grupos `hexa-admin` e `hexa-cgnat` | `prisma-admin` e `prisma-cgnat` |
+| variáveis `HEXA_*` em `tune.env` | `PRISMA_*` |
+| chaves de linha de comando `hexarouting.*` | `prisma-routing.*` |
+| `/var/log/hexarouting` | `/var/log/prisma-routing` |
+
+**Nada disso é migrado por nenhum programa.** Se os arquivos novos fossem instalados ao lado dos antigos, a caixa voltaria do próximo boot com a configuração antiga no disco, unidades novas que não a enxergam, interfaces que ninguém subiu e operadores cujo shell de login não existe mais.
+
+**O caminho é a reinstalação pela mídia**, com os passos que já estão nesta página. Duas coisas a mais, e as duas antes de digitar `yes`:
+
+### As contas do produto precisam ser criadas de novo
+
+Uma conta criada pela versão antiga tem `/usr/bin/hexash` gravado como shell no `/etc/passwd`, e esse arquivo não existe na caixa nova. A reinstalação já apaga as contas — o que importa é a lista: **anote quem tem conta e em qual papel antes de apagar o disco**, porque ela não sai de lugar nenhum depois.
+
+### O volume dos registros: como manter o ano de guarda
+
+`/var/log/hexarouting` é um sistema de arquivos separado, e no modo dinâmico ele guarda o registro de conexões que o Marco Civil manda manter por um ano. A reinstalação **não o apaga**, desde que o disco dele fique de fora da instalação — mas a caixa nova procura os registros em `/var/log/prisma-routing`, e não vai olhar no caminho antigo.
+
+O procedimento é este, e é do operador: um programa que renomeasse pontos de montagem sob obrigação de guarda seria uma migração de dados feita por quem não está olhando.
+
+**1. Antes de reinstalar, anote qual disco é o dos registros e como ele está montado:**
+
+```
+# findmnt -no SOURCE /var/log/hexarouting
+/dev/sdb1
+# blkid /dev/sdb1
+/dev/sdb1: UUID="...." TYPE="ext4"
+```
+
+Anote o **UUID**, não o `/dev/sdb1`: nomes de disco mudam de boot para boot, e o UUID não.
+
+**2. Instale a versão nova apontando a instalação só para o disco do sistema.** O instalador pergunta em qual disco instalar; o disco dos registros não é esse. Se a máquina tem espelho de registros, os dois discos do espelho ficam de fora.
+
+**3. Na caixa nova, monte o volume antigo no caminho novo.** A caixa nova já criou `/var/log/prisma-routing` no disco do sistema; monte o volume antigo por cima:
+
+```
+# prisma> start shell
+# mkdir -p /var/log/prisma-routing
+# mount UUID=<o uuid anotado> /var/log/prisma-routing
+# ls /var/log/prisma-routing
+allocations.log  ...
+```
+
+**4. Deixe isso gravado, ou o próximo boot volta sem os registros:**
+
+```
+# echo "UUID=<o uuid anotado>  /var/log/prisma-routing  ext4  defaults  0 2" >> /etc/fstab
+# systemctl daemon-reload
+# mount -a
+```
+
+**5. Confira no autoteste do próximo boot.** A linha dos registros tem que dizer que o volume é um sistema de arquivos separado. Se ela disser que os registros estão no disco do sistema, o `mount` não pegou, e o que está sendo gravado ali vai embora junto com a próxima reinstalação.
+
+Os arquivos de registro em si não mudam de formato: o que estava escrito continua legível, e o ano de guarda que já corria continua correndo.
 
 ## O que não sobrevive
 

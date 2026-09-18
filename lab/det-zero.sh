@@ -29,15 +29,15 @@
 # records.
 set -u
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
 . /src/lab/lib.sh
 use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
-export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
+HX="python3 /src/src/prismash/prismash.py"
+export PRISMA_CONFIG=/etc/prisma-routing/prisma-routing.conf
 
 # the path to the collector
 ip link add veth-out type veth peer name veth-vpp 2>/dev/null

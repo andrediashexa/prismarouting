@@ -98,7 +98,7 @@ cp /tmp/clean.log "${LOGCOPY:-/src/boot-console.log}" 2>/dev/null || true
 # this lab by hand saw whether the box said it was ready.
 #
 # tools/release-gate.sh used to read THIS rendering for its verdict and refused
-# a medium that had booted and said "HexaRouting ready". It reads the console
+# a medium that had booted and said "Prisma Routing ready". It reads the console
 # copy now, so the number below is about readability alone - which is why it
 # can be generous.
 sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -120
@@ -131,7 +131,7 @@ sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -120
 #
 # That is the half #305 is about. The negative below could still fail, because
 # "Reboot once the tuning" has exactly one printer in the tree
-# (hexash.py:9756, the INSTALLED-box branch of the same function) and the
+# (prismash.py:9756, the INSTALLED-box branch of the same function) and the
 # banner never says it; but "the medium says what does work there" was being
 # answered by the banner rather than by the box.
 ANSWER=$(awk '/show interface/ {seen = 1; next} seen' /tmp/clean.log)
@@ -177,7 +177,7 @@ if said_a_verdict /tmp/clean.log; then
     echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
     exit 1
   fi
-  # Two different things, both required. The self-test line proves hexash
+  # Two different things, both required. The self-test line proves prismash
   # STARTS - 0.2.0 shipped with it broken while every other check passed. The
   # prompt proves a login LANDS in it: a box that boots to a bash prompt has
   # the CGNAT running and the front door wrong, and nothing else in the boot
@@ -185,15 +185,15 @@ if said_a_verdict /tmp/clean.log; then
   if ! grep -q "\[ ok \] VTY starts" /tmp/clean.log; then
     echo
     echo "=========== READY, BUT THE VTY DID NOT START ==========="
-    grep -i "hexash\|VTY" /tmp/clean.log | tail -6 | sed 's/^/  /'
+    grep -i "prismash\|VTY" /tmp/clean.log | tail -6 | sed 's/^/  /'
     echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
     exit 1
   fi
-  # ANCHORED. The prompt was "hexarouting>" until #202, and unanchored that
-  # also matched systemd's own line "Hostname set to <hexarouting>." - so this
+  # ANCHORED. The prompt was "prisma-routing>" until #202, and unanchored that
+  # also matched systemd's own line "Hostname set to <prisma-routing>." - so this
   # check, which is the one that proves a login LANDS in the VTY, could be
   # satisfied by a boot that never reached the VTY at all. The hostname is
-  # still hexarouting and the prompt is not, so the two no longer collide;
+  # still prisma-routing and the prompt is not, so the two no longer collide;
   # the anchor stays because a prompt is the start of a line and nothing else
   # is.
   if grep -q "^prisma>" /tmp/clean.log; then
@@ -228,7 +228,7 @@ if said_a_verdict /tmp/clean.log; then
     echo "  the report finishes before the prompt is drawn"
 
     # The boot wait (#97). systemd prints "(22s / no limit)" while
-    # hexarouting.service waits for VPP's CLI socket, and "no limit" reads as
+    # prisma-routing.service waits for VPP's CLI socket, and "no limit" reads as
     # "this is not going to finish" to somebody watching their first boot.
     echo
     echo "=========== the wait, explained or not ==========="
@@ -270,7 +270,7 @@ echo "=========== SELF-TEST DID NOT REPORT READY ==========="
 echo "--- did the self-test even run? ---"
 grep -c "boot self-test" /tmp/clean.log | sed 's/^/  occurrences: /'
 echo "--- services ---"
-grep -iE "hexarouting|vpp\.service|frr\.service" /tmp/clean.log | tail -10 | sed 's/^/  /'
+grep -iE "prisma-routing|vpp\.service|frr\.service" /tmp/clean.log | tail -10 | sed 's/^/  /'
 echo "--- systemd failures ---"
 grep -iE "FAILED|Failed to start|Dependency failed" /tmp/clean.log | tail -8 | sed 's/^/  /'
 echo "--- last 25 console lines ---"

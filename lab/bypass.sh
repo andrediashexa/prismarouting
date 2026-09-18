@@ -21,17 +21,17 @@
 set -u
 MODE=${1:-on}
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 
 mkdir -p /var/run/frr /etc/frr
-printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
+printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
 chown -R frr:frr /var/run/frr /etc/frr 2>/dev/null
 start_frr
 
@@ -157,7 +157,7 @@ echo "$POOL" | sed 's/^/  /'
 
 echo
 echo "=========== 7. through the VTY, without recreating the pool ==========="
-TRAIL=/var/log/hexarouting/config-history.log
+TRAIL=/var/log/prisma-routing/config-history.log
 MARK=$(wc -l < $TRAIL 2>/dev/null || echo 0)
 V0=$(sess)
 if [ "$MODE" != off ]; then

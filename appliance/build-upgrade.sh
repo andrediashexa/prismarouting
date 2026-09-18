@@ -30,7 +30,7 @@
 # artifact that is missing one path is an artifact whose failure happens on an
 # operator's box, at the hour they chose to upgrade, having already overwritten
 # part of it - install.sh's preflight can refuse a missing plugin but nothing
-# can refuse a tree that has no src/hexash/config.py until the line that copies
+# can refuse a tree that has no src/prismash/config.py until the line that copies
 # it runs. That is #119's shape again: a component missing from the medium,
 # invisible until an installed box needed it. So every artifact this script
 # produces has been unpacked and installed once, into a throwaway directory,
@@ -57,7 +57,7 @@ OUT=${OUT:-$REPO/$NAME}
 # The stamp the box will carry, computed here where there is a .git and written
 # into the artifact, because there is none inside a tarball. build-iso.sh
 # passes it into its chroot for the same reason.
-STAMP=${HEXA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
+STAMP=${PRISMA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
 
 say() { echo "==> $*"; }
 
@@ -176,7 +176,7 @@ PROOF=$WORK/proof
 # /etc/frr/daemons: Directory nonexistent", which is this fixture being
 # incomplete rather than the artifact.
 mkdir -p "$PROOF/etc/frr"
-if ! env DESTDIR="$PROOF" HEXA_VERSION_STAMP="$STAMP" \
+if ! env DESTDIR="$PROOF" PRISMA_VERSION_STAMP="$STAMP" \
      sh "$STAGE/appliance/install.sh" > "$WORK/proof.log" 2>&1; then
   echo "the artifact is incomplete: installing it failed." >&2
   tail -20 "$WORK/proof.log" >&2
@@ -188,19 +188,19 @@ fi
 # the tree, and neither would reach install.sh's own refusal.
 for f in usr/lib/x86_64-linux-gnu/vpp_plugins/bpa_plugin.so \
          usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so \
-         usr/share/hexarouting/VERSION usr/share/hexarouting/MANIFEST; do
+         usr/share/prisma-routing/VERSION usr/share/prisma-routing/MANIFEST; do
   [ -f "$PROOF/$f" ] || {
     echo "the install from this artifact left no /$f, so a box taking it" >&2
     echo "would not be the build this artifact claims to be." >&2
     exit 1
   }
 done
-[ "$(cat "$PROOF/usr/share/hexarouting/VERSION")" = "$STAMP" ] || {
+[ "$(cat "$PROOF/usr/share/prisma-routing/VERSION")" = "$STAMP" ] || {
   echo "the install from this artifact stamped the box" >&2
-  echo "'$(cat "$PROOF/usr/share/hexarouting/VERSION")' and this artifact is $STAMP." >&2
+  echo "'$(cat "$PROOF/usr/share/prisma-routing/VERSION")' and this artifact is $STAMP." >&2
   exit 1
 }
-say "  $(grep -c '^[^#]' "$PROOF/usr/share/hexarouting/MANIFEST") file(s) installed, stamped $STAMP"
+say "  $(grep -c '^[^#]' "$PROOF/usr/share/prisma-routing/MANIFEST") file(s) installed, stamped $STAMP"
 
 tar -czf "$OUT" -C "$WORK" "$DIR"
 

@@ -184,7 +184,7 @@ COL_SECS=$(( CHURN + CHURN / 20 + 120 ))
 COL_STOP=/tmp/collector.stop
 rm -f "$COL_STOP"
 
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -246,7 +246,7 @@ echo "  then ${TAIL}s of nothing), $WARMUP of them warm-up"
 # the project with a green lab beside it.
 echo
 echo "=========== the log's far side ==========="
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 $HX -c "configure" \
     -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
     -c "cgnat logging enable" \

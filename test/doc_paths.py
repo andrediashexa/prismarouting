@@ -19,7 +19,7 @@ real files on a box and not files here. The fourth was a wiki page named
 relative to `wiki/` instead of the root. With the rule: 330 mentions across the
 tree, 0 missing. An allowlist of three is an allowlist somebody grows.
 
-Absolute paths never match: `/etc/hexarouting/vpp-base.conf` is a file on the
+Absolute paths never match: `/etc/prisma-routing/vpp-base.conf` is a file on the
 appliance, and asking this tree for it is asking the wrong machine.
 
 AND A FILE THE BUILD MAKES IS NOT A FILE THAT IS GONE, which is `built()`
@@ -74,7 +74,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _ignored_paths():
     """The literal paths `.gitignore` says this tree does not carry.
 
-    LITERAL ONLY, no globs. `hexarouting*.iso` would let any name near it pass
+    LITERAL ONLY, no globs. `prisma-routing*.iso` would let any name near it pass
     for a build product, and every generated file a document actually names is
     spelled out in that file. A negation (`!foo`) says the opposite and is not
     one of these.

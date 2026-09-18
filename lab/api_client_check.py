@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Drives the hexash API client against a real dataplane.
+Drives the prismash API client against a real dataplane.
 
 The unit test covers the failure surface with the runner stubbed. This is the
 other half, and a stub can never prove it: that the parsing matches what vat2
@@ -10,7 +10,7 @@ Prints one line per outcome for lab/api.sh to assert on.
 """
 import sys
 
-sys.path.insert(0, "/src/src/hexash")
+sys.path.insert(0, "/src/src/prismash")
 import vppapi  # noqa: E402
 from config import Pool  # noqa: E402
 
@@ -23,7 +23,7 @@ def add(api, name, block_size, prefixes):
     gained the per-pool settings, the hand-written copy in this file kept
     sending the old shape and vat2 refused to convert it. lab/api.sh spells
     the wire format out on purpose; this half must instead exercise exactly
-    what hexash sends.
+    what prismash sends.
     """
     p = Pool(name)
     p.block_size = str(block_size)
@@ -52,7 +52,7 @@ print(f"invalid: {r.state} {r.retval} | {r.reason}")
 #
 # The first is refused before the process starts: `flags: 0` is the natural
 # way to say administratively down, and vat2 dies on it. The second is the
-# reason the first exists - it is a message hexash never sends, chosen because
+# reason the first exists - it is a message prismash never sends, chosen because
 # it really does make vat2 segfault, so the classification is proved against a
 # crashing client rather than against a stub of one.
 r = api.call("sw_interface_set_flags", {"sw_if_index": 0, "flags": 0})

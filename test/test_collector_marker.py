@@ -3,7 +3,7 @@
 How the shipped collector reads an allocation that has no release.
 
 `appliance/install.sh` puts `tools/ipfix_collector.py` on the box as
-`/usr/lib/hexarouting/ipfix-collector`, so this is not lab scaffolding: it is
+`/usr/lib/prisma-routing/ipfix-collector`, so this is not lab scaffolding: it is
 the program that reads the record a court order asks for. An open allocation
 has two opposite meanings - the subscriber holds those ports now, or the box
 was replaced while holding them and never observed the end - and the boot

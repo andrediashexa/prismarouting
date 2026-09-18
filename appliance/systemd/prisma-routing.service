@@ -1,0 +1,67 @@
+[Unit]
+Description=Prisma Routing - apply the CGNAT configuration to the dataplane
+Documentation=file:///usr/share/doc/prisma-routing/architecture.md
+# FRR is Wants and not Requires: without routing the box still forwards what
+# static routes cover, and taking CGNAT down with it would only widen the
+# damage.
+After=vpp.service frr.service
+Requires=vpp.service
+Wants=frr.service
+PartOf=vpp.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/lib/prisma-routing/wait-for-vpp 60
+ExecStart=/usr/bin/prismash --load /etc/prisma-routing/prisma-routing.conf
+# The control plane must not be the process that empties a box sized to the
+# documented floor. docs/appliance.md sets that floor at 4 GB, and the tuner
+# leaves a quarter of RAM outside the hugepage pool for everything that is not
+# VPP - 2 GB on such a box, shared by the kernel, the page cache, FRR and this.
+# Loading a configuration is the interpreter plus prismash's own modules and the
+# file: 13 MB peak measured, and it does not grow with the routing table or the
+# session count, both of which live in VPP. 512M is a quarter of that 2 GB and
+# forty times the measured need, so a runaway here is killed while it is still
+# a bug in one unit, instead of becoming a machine-wide shortage that lets the
+# kernel choose a victim (#172).
+#
+# Deliberately NOT applied to frr.service, and now for a measured reason rather
+# than for the absence of one. One full IPv4 table fed to bgpd costs 837 MB
+# resident with zebra at 553 MB behind it: 1.37 GB of FRR, against 37 MB on a
+# box that takes default routes only. That spread belongs to the operator's
+# peering and not to this product, and one number in a shipped unit file would
+# have to serve both ends of it on boxes whose share of RAM for everything that
+# is not VPP differs by a factor of eight.
+#
+# Guessed low it does not degrade BGP, it kills it. bgpd under memory.max=512M
+# was killed ten seconds into convergence holding 428 MB, with pgscan 100 and
+# pgsteal 4 beside it - there was nothing reclaimable, so the limit went
+# straight from full to a kill - and frr.service carries Restart=always with
+# RestartSec=5, which turns that into a loop on the box with the most to lose.
+# docs/appliance.md carries the numbers and how they were taken (#172).
+#
+# Reach: this is a oneshot, so the bound holds while the configuration is being
+# applied and not afterwards - the unit keeps its cgroup but no processes. The
+# interactive VTY is started by the login shell, not by this unit, and is not
+# covered here.
+MemoryMax=512M
+# No ExecStop: the configuration lives in VPP, and stopping this service must
+# not erase a production pool. Removing a pool is the operator's action,
+# through the VTY. A stop-time command runs on every RESTART too, so one here
+# would fire on any restart at all and not only when somebody meant it. The
+# PartOf=vpp.service above makes that wider than it looks: `systemctl restart
+# vpp`, which is what `show version` tells an operator to run to pick up a new
+# dataplane build, stops this unit with it.
+#
+# That was a comment and nothing else until #238: adding the ExecStop it
+# forbids left all 34 suites green. test/test_stop_is_not_a_teardown.py now
+# reads this file, so the sentence above has a red light behind it.
+#
+# Closing the retention log when the box stops is a different job and is NOT
+# here, for the same reason: it belongs to the process that holds the blocks.
+# It is an ExecStop in a vpp.service drop-in, appliance/systemd/vpp-stop-drain.conf.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

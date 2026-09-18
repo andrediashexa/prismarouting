@@ -32,10 +32,10 @@ run() {  # <timeout> [quiet] -> writes $OUTD/out, returns the exit code
   # went uncaught.
   rm -f "$OUTD/out"
   if [ -n "${2:-}" ]; then
-    PATH="$BIN:$PATH" HEXA_WAIT_OUT="$OUTD/out" HEXA_WAIT_QUIET="$2" \
+    PATH="$BIN:$PATH" PRISMA_WAIT_OUT="$OUTD/out" PRISMA_WAIT_QUIET="$2" \
       sh "$WAIT" "$1" >/dev/null 2>&1
   else
-    PATH="$BIN:$PATH" HEXA_WAIT_OUT="$OUTD/out" \
+    PATH="$BIN:$PATH" PRISMA_WAIT_OUT="$OUTD/out" \
       sh "$WAIT" "$1" >/dev/null 2>&1
   fi
 }

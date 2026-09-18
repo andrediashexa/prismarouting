@@ -13,9 +13,9 @@
 # have is $REPO: a source tree with a compiled .build-vpp beside it. Measured
 # on a real appliance installed from a published medium (#295):
 #
-#   # ls /usr/lib/hexarouting/
-#   apply-tuning  bind-dataplane-nic  config.py  hexash.py  ...
-#   # find / -name install.sh -path '*hexarouting*'
+#   # ls /usr/lib/prisma-routing/
+#   apply-tuning  bind-dataplane-nic  config.py  prismash.py  ...
+#   # find / -name install.sh -path '*prisma-routing*'
 #   (nothing)
 #   # command -v cmake ninja gcc
 #   (nothing)
@@ -23,7 +23,7 @@
 # So the path this repository has documented since its first release existed
 # only for the release gate and lab/upgrade.sh, which both have a build tree.
 # An operator holding a medium had one route to a new version - a reinstall,
-# which erases the disk and takes /var/log/hexarouting with it, a year of
+# which erases the disk and takes /var/log/prisma-routing with it, a year of
 # connection records they are answerable for.
 #
 # This artifact is that $REPO with the build already in it. The script that
@@ -77,7 +77,7 @@ die() {  # every refusal in this file goes through here, before anything writes
 # directory an artifact rather than somebody's copy of the tree.
 #
 # WHY THE STAMP TRAVELS IN A FILE. install.sh asks tools/version-stamp.sh for
-# the version it is about to write into /usr/share/hexarouting/VERSION, and
+# the version it is about to write into /usr/share/prisma-routing/VERSION, and
 # that calculation reads git. There is no .git here and there never can be:
 # this directory came out of a tarball. Left to itself install.sh would stamp
 # the box "0.75.0 (not a git tree)", and that line is what `show version`
@@ -121,6 +121,54 @@ echo "==> Prisma Routing $STAMP"
 # lines and for the same reason.
 if [ -z "$DESTDIR" ] && [ "$(id -u)" != 0 ]; then
   die "must run as root: this writes into /usr, /lib and /etc"
+fi
+
+# ------------------------------------------- a box that still carries the old name
+#
+# THE RENAME IS A CLEAN BREAK, and this refusal is what makes it an honest one
+# (#202). Everything an installed box holds moved with the product's name:
+# /etc/hexarouting became /etc/prisma-routing and holds the saved
+# configuration; hexarouting.service became prisma-routing.service and is what
+# replays it at every boot; hexash became prismash and is the login shell
+# recorded in /etc/passwd for every account this product created; the role
+# groups, the HEXA_* environment and the kernel keys moved with them.
+#
+# This artifact installs the new names and nothing migrates the old ones. On a
+# box in service that is not an upgrade, it is a box that comes back from its
+# next reboot with a configuration file the new name cannot see, on an
+# interface nothing brought up, with operators whose login shell no longer
+# exists. So it is refused here, before anything writes, and the refusal says
+# what the route is instead.
+#
+# READ OFF THE BOX and not off a file this artifact wrote: the directory that
+# holds the configuration, and the unit that replays it. Under DESTDIR it
+# reads the same two places inside that directory, so the suite arranges a box
+# carrying the old name the same way it arranges every other one - a refusal
+# that can only be met on a real appliance is one nobody drives.
+if [ -d "$DESTDIR/etc/hexarouting" ] \
+   || [ -f "$DESTDIR/lib/systemd/system/hexarouting.service" ] \
+   || [ -f "$DESTDIR/etc/systemd/system/hexarouting.service" ]; then
+  die "This box runs HexaRouting, and this artifact installs Prisma Routing.
+
+  The product was renamed and NOTHING MIGRATES. Its configuration, its units,
+  its groups and its login shell all carry the old name on this box, and this
+  artifact would install the new ones beside them: the next reboot would come
+  back with none of your configuration in effect.
+
+  This box upgrades by REINSTALLING from the medium of this release, which
+  erases the disk. Before you do:
+
+    * /etc/hexarouting holds the saved configuration and up to twenty
+      rollback revisions. Copy it off the box and keep it: the statements in
+      it are the same statements, and the new VTY reads them once you put
+      them back through 'prismash --load'.
+    * /var/log/hexarouting is a separate filesystem holding the connection
+      record. It is NOT erased by reinstalling as long as you keep that
+      disk out of the install, and the wiki page on taking a box to a new
+      version carries the procedure for mounting it at
+      /var/log/prisma-routing and writing that into fstab.
+
+  Nothing on this box has been changed by this run."
 fi
 
 # THE PLATFORM, and the one case where this artifact has to send an operator
@@ -195,5 +243,5 @@ echo "    platform: vpp $HAVE_VPP, frr $HAVE_FRR"
 # costs (#291) is said by the one file that knows - and is not repeated here,
 # where a second copy would fall out of step with the first.
 echo
-exec env DESTDIR="$DESTDIR" HEXA_VERSION_STAMP="$STAMP" \
+exec env DESTDIR="$DESTDIR" PRISMA_VERSION_STAMP="$STAMP" \
      sh "$ART/appliance/install.sh"

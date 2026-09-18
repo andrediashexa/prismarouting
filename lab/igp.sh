@@ -80,12 +80,12 @@ n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
 # The BPA plugin, installed where vat2 looks for it on a real box. Nothing below
-# sends a bpa_ message, but hexash asks vat2 which messages are registered
+# sends a bpa_ message, but prismash asks vat2 which messages are registered
 # before it touches the dataplane and calls it unusable when bpa_pool_add_del is
 # not among them - so without this every commit here fails for a reason that has
 # nothing to do with routing.
 use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
@@ -110,23 +110,23 @@ vppctl set interface ip address host-veth-vpp 2001:db8:0::1/64
 # ---------------- Prisma Routing ----------------
 mkdir -p /var/run/frr /etc/frr
 cat > /etc/frr/zebra.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 # Deliberately EMPTY of every routing protocol. OSPF and IS-IS are configured
 # through the VTY further down, so the prefixes that arrive are evidence that
 # the VTY configured working protocol instances - not that a file written by
 # this lab did (#142, #177).
 cat > /etc/frr/ospfd.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 cat > /etc/frr/isisd.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 cat > /etc/frr/bgpd.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 cat > /etc/frr/ospf6d.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 chown -R frr:frr /var/run/frr /etc/frr
 
@@ -795,7 +795,7 @@ expect "while ospfd, ospf6d and isisd, which are running, committed and forward"
 # prefixes FRR holds that the VPP FIB does not, and producing that divergence
 # live means breaking linux_nl: lab/routing.sh records that taking a route out
 # of the FIB by hand does not hold, because linux_nl puts it straight back. The
-# missing-prefix arm is asserted in test/test_hexash_igp.py against a FIB where
+# missing-prefix arm is asserted in test/test_prismash_igp.py against a FIB where
 # the fault can be stated exactly; what is asserted here is that a healthy box
 # says so and does not cry wolf.
 echo
@@ -895,7 +895,7 @@ echo "=========== set-overload-bit, by its effect on the neighbour ==========="
 # this lab put there - `net 49.0001.0000.0000.0001.00`.
 peer_ol() {
   ip netns exec peer vtysh -N peer -c 'show isis database' 2>/dev/null \
-    | awk '$1 == "hexarouting.00-00" || $1 == "0000.0000.0001.00-00" \
+    | awk '$1 == "prisma-routing.00-00" || $1 == "0000.0000.0001.00-00" \
            {print $NF; exit}'
 }
 echo "  the neighbour's copy of this box's LSP, before: $(peer_ol)"

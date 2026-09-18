@@ -5,8 +5,8 @@
 Software router with built-in CGNAT using **BPA** (*Bloco de Portas Alocadas* —
 allocated port blocks). VPP/DPDK dataplane, FRR control plane, IPFIX logging
 per RFC 8158, single VTY. Targets 100 Gbps+ and 200k+ subscribers, shipped as
-an installable Debian appliance. Called HexaRouting until 0.76.1: the name
-changed, and the paths, the units, the `hexash` command and this repository
+an installable Debian appliance. Called Prisma Routing until 0.76.1: the name
+changed, and the paths, the units, the `prismash` command and this repository
 kept theirs, on purpose (see `CHANGELOG.md`).
 
 Verified on real hardware with real Internet traffic: subscribers translated
@@ -30,7 +30,7 @@ make release-gate      # build the installation medium from a tag and boot it
 | **Who** | ISPs deploying CGNAT. The product is installed per provider, not multi-tenant. |
 | **When** | Deployed when public IPv4 runs out and subscribers must share addresses. |
 | **Where** | On the provider's border, between the subscriber network (RFC 6598) and the upstream. |
-| **How** | VPP plugin (`bpa`) performs translation; FRR handles routing via `linux_cp`; `hexash` provides one CLI for both. |
+| **How** | VPP plugin (`bpa`) performs translation; FRR handles routing via `linux_cp`; `prismash` provides one CLI for both. |
 | **How much** | 200k subscribers in deterministic mode with 512-port blocks require a `/21` of public IPv4. Dynamic mode with oversubscription needs far less — see [docs/logging.md](docs/logging.md). |
 
 ## Architecture at a glance
@@ -42,7 +42,7 @@ flowchart LR
     subgraph BOX["Prisma Routing appliance"]
         VPP["VPP dataplane<br/>bpa plugin"]
         FRR["FRR<br/>bgpd / ospfd / ospf6d / isisd"]
-        VTY["hexash<br/>single VTY"]
+        VTY["prismash<br/>single VTY"]
         VPP <-->|linux_cp TAP| FRR
         VTY -.->|config| VPP
         VTY -.->|config| FRR
@@ -71,7 +71,7 @@ PADRAO-DOCUMENTACAO.md how a wiki page is written (not the same as CONTRIBUTING)
 wiki/                  mirror of the wiki; tools/wiki-status.sh says what is unpublished
 ref/                   executable reference model of BPA, in Python
 src/plugins/bpa/       the VPP CGNAT plugin
-src/hexash/            the VTY
+src/prismash/            the VTY
 test/                  core tests: no VPP, no root
 lab/                   executable labs, from packet injection to real traffic
 appliance/             boot tuning, systemd units, installer, ISO builder
@@ -84,7 +84,7 @@ tools/                 build and lab helpers
 |---|---|
 | [docs/context.md](docs/context.md) | **Start here.** The invariants, a map of what question each part answers, and a reading order per task. |
 | `docs/`, `README.md`, `TESTING.md` | **Authoritative about the product.** What it does and why. |
-| <https://hexarouting.hexanetworks.com.br> | The wiki: how somebody *uses* it. A usage layer, and currently a **draft** — see below. |
+| <https://prisma-routing.hexanetworks.com.br> | The wiki: how somebody *uses* it. A usage layer, and currently a **draft** — see below. |
 
 The wiki is public and still being written. It is **not** a source: where a page
 disagrees with `docs/`, the page is a defect. `wiki/` here is a read-only mirror
@@ -128,7 +128,7 @@ stays on `0.x.x` until it is declared ready for production; see
 | Dataplane (translation, handoff, dynamic mode, fragments, ICMP errors, TCP state) | Verified with injected and real traffic |
 | Routing (BGP, OSPF, IS-IS) | Verified — routes reach the VPP FIB |
 | IPFIX logging (UDP and TCP) | Verified with a decoding collector |
-| VTY (`hexash`) | Candidate/`commit`/`rollback`, roles, `show route` against the FIB, `show this`, and completion of live values — interfaces from the dataplane, pools from the candidate |
+| VTY (`prismash`) | Candidate/`commit`/`rollback`, roles, `show route` against the FIB, `show this`, and completion of live values — interfaces from the dataplane, pools from the candidate |
 | Configuration trail | Attributable and tamper-evident: every entry says **who asked**, and one that cannot be attributed says so rather than leaving the field off; chained by SHA-256. A change typed at the dataplane's own CLI has no session to ask, and is recorded `by unattributed via cli` |
 | Appliance (ISO, tuning, systemd) | ISO boots clean, self-test reports ready; **since v0.28.0** every release is built from its tag, booted, installed to a disk and booted again from that disk before publishing, by `tools/release-gate.sh`. The 26 releases before it, v0.2.0 to v0.27.0, were published without that gate |
 | Connection records | On their own filesystem, so a full log cannot stop the box working |

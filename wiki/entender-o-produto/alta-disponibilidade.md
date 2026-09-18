@@ -77,7 +77,7 @@ O item 2 não pode ser pulado. No modo determinístico, duas caixas com configur
 
 A pergunta é uma só: uma troca de caixa deixaria cada assinante no mesmo endereço público e no mesmo bloco de portas? `show cgnat ha` responde isso e nada além disso.
 
-Para que a caixa possa comparar, ela precisa ter a configuração da outra. Não existe sessão entre as duas — o VRRP ainda não existe —, então a configuração da parceira chega como arquivo: salve a configuração da outra caixa e copie o arquivo para `/etc/hexarouting/peer.conf` desta.
+Para que a caixa possa comparar, ela precisa ter a configuração da outra. Não existe sessão entre as duas — o VRRP ainda não existe —, então a configuração da parceira chega como arquivo: salve a configuração da outra caixa e copie o arquivo para `/etc/prisma-routing/peer.conf` desta.
 
 Quando as duas divergem:
 
@@ -92,7 +92,7 @@ prisma> show cgnat ha
     takes a service address over. What is checked below is whether a takeover
     WOULD land subscribers where they already are.
 
-  peer, from /etc/hexarouting/peer.conf
+  peer, from /etc/prisma-routing/peer.conf
     mapping fingerprint  9e7394fc505d2eff
     pools                residencial
     copied               2026-09-12 09:14:31
@@ -160,4 +160,4 @@ O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatór
 
 * [BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que a fórmula dispensa sincronismo
 * [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — o outro lugar onde configuração idêntica importa
-* [Prisma Routing — visão geral](/doc/hexarouting-visao-geral-cNtWoccoy5) — o estado de cada componente
+* [Prisma Routing — visão geral](/doc/prisma-routing-visao-geral-cNtWoccoy5) — o estado de cada componente

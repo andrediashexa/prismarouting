@@ -1,0 +1,41 @@
+[Unit]
+Description=Prisma Routing - roll back a 'commit confirmed' nobody confirmed
+Documentation=file:///usr/share/doc/prisma-routing/routing.md
+# The deadline of a 'commit confirmed' used to live in the prismash process that
+# made the commit, so logging out cancelled it - and the change it guards
+# against is the one that ENDS that session. It reverted in every case where
+# it was not needed and in none of the cases where it was (#212). This unit is
+# where the deadline lives now.
+After=prisma-routing.service
+Wants=prisma-routing.service
+# Nothing is started when nothing is pending, and the condition is the whole
+# steady-state cost of the promise: systemd stats one path every fifteen
+# seconds and the interpreter runs only while a window is open. Measured with
+# a transient unit carrying this property - with the path absent the command
+# ran 0 times and systemd reported ConditionResult=no; with it present, once.
+#
+# The FILE is also the record of the confirmation. prismash removes it the
+# moment the operator confirms rather than when the window ends, which is how
+# a box rebooted after a confirmation reverts nothing while one rebooted
+# before its deadline still has a deadline to meet.
+ConditionPathExists=/etc/prisma-routing/confirm-pending
+
+[Service]
+Type=oneshot
+# The same wait prisma-routing.service does, for the same reason: the first run
+# after a reboot is the one that matters most and it is also the one most
+# likely to find a dataplane that is still starting. A revert refused because
+# VPP had not answered yet would be read as a revert that did not happen.
+ExecStartPre=/usr/lib/prisma-routing/wait-for-vpp 60
+ExecStart=/usr/bin/prismash --confirm-expired
+# The same bound prisma-routing.service carries, and for the same argument: this
+# runs the same interpreter over the same modules and one configuration file,
+# and it must not be the process that empties a box sized to the documented
+# floor. See prisma-routing.service for the measurement.
+MemoryMax=512M
+# On the console, not only in the journal. The operator this exists for is the
+# one whose session is gone: a box undoing their change on its own is the one
+# event they cannot be told about any other way, and on an appliance the
+# console is where somebody standing in the datacentre is looking.
+StandardOutput=journal+console
+StandardError=journal+console

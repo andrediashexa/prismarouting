@@ -400,7 +400,7 @@ promises about order that the work then rearranged. What the plan is for is the
 | Release | Theme | Issues | Why here and not later |
 |---|---|---|---|
 | **v0.2.0** | Foundations already built | [#1](https://github.com/andrediashexa/hexarouting/issues/1) comments in English, [#2](https://github.com/andrediashexa/hexarouting/issues/2) MTU in the VTY, [#10](https://github.com/andrediashexa/hexarouting/issues/10) versioning, [#11](https://github.com/andrediashexa/hexarouting/issues/11) this roadmap | Three of these sit finished in branches. Merging them first means every later release is tagged, changelogged and readable by whoever inherits it. |
-| **v0.3.0** | A control plane that reports failure | [#3](https://github.com/andrediashexa/hexarouting/issues/3), [#4](https://github.com/andrediashexa/hexarouting/issues/4), [#5](https://github.com/andrediashexa/hexarouting/issues/5) hexash on the binary API | Everything after this adds configuration. Adding it on top of a `commit` that cannot tell success from failure means each new feature inherits a control plane that lies. This is the one ordering constraint that is not negotiable. |
+| **v0.3.0** | A control plane that reports failure | [#3](https://github.com/andrediashexa/hexarouting/issues/3), [#4](https://github.com/andrediashexa/hexarouting/issues/4), [#5](https://github.com/andrediashexa/hexarouting/issues/5) prismash on the binary API | Everything after this adds configuration. Adding it on top of a `commit` that cannot tell success from failure means each new feature inherits a control plane that lies. This is the one ordering constraint that is not negotiable. |
 | **v0.4.0** | Subscriber experience | [#12](https://github.com/andrediashexa/hexarouting/issues/12) per-pool timeouts and half-open state, [#13](https://github.com/andrediashexa/hexarouting/issues/13) extended blocks | The two things an operator notices in the first month: ports held by dead connections, and one customer cut off while the pool is half empty. |
 | **v0.5.0** — *released* | Application compatibility | [#42](https://github.com/andrediashexa/hexarouting/issues/42) FTP, [#43](https://github.com/andrediashexa/hexarouting/issues/43) RTSP and [#44](https://github.com/andrediashexa/hexarouting/issues/44) PPTP/GRE ALGs; [#50](https://github.com/andrediashexa/hexarouting/issues/50) full cone asserted. [#15](https://github.com/andrediashexa/hexarouting/issues/15) and [#16](https://github.com/andrediashexa/hexarouting/issues/16) landed earlier, in v0.4.0. | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. [#14](https://github.com/andrediashexa/hexarouting/issues/14) is closed, with TFTP decided against rather than left to build; SIP-over-UDP and ESP shipped later and are in `BPA_ALG_DEFAULT`. |
 | **v0.6.0 to v0.8.0** — *released* | Not what this table said | The appliance and its installer, SSH and local accounts, SNMP, the first performance measurement and a hardware lab that carries packets. | The order below was written before the first ISO was installed by hand. Three releases went to making the box installable and observable, which is the reordering the plan itself says to expect. |
@@ -659,10 +659,10 @@ then asked for it a second time to confirm — the one moment where a typo is
 destructive, transcribed twice.
 
 And underneath both, the one that had been failing on every box since the
-appliance existed: `install.sh` writes `!\n! HexaRouting\n!` as the default
-configuration, the parser did not treat `!` as a comment, so `hexash --load`
-refused the file and `hexarouting.service` **failed on the first boot of every
-install**. The self-test reported `HexaRouting ready.` anyway, because it
+appliance existed: `install.sh` writes `!\n! Prisma Routing\n!` as the default
+configuration, the parser did not treat `!` as a comment, so `prismash --load`
+refused the file and `prisma-routing.service` **failed on the first boot of every
+install**. The self-test reported `Prisma Routing ready.` anyway, because it
 measured the dataplane, the routing, the tuning and the VTY, and never the unit
 whose job is to apply the configuration. Each defect hid the other.
 
@@ -703,7 +703,7 @@ rather than listed:
   purpose.
 * **A hierarchy that moves must still read the box's own file.** Every box in
   service has a saved configuration and up to twenty rollback revisions in the
-  old spelling, and `hexarouting.service` replays that file at every boot on a
+  old spelling, and `prisma-routing.service` replays that file at every boot on a
   machine nobody is watching.
 * **A rate is a difference, and the difference is measured.** On a box loaded
   enough to be worth asking about, a two-second sleep is not two seconds.
@@ -729,7 +729,7 @@ and the product believed it. The general answer is a read-back check - a
 statement the candidate holds that is not in FRR's running configuration
 afterwards is a failed commit whatever the exit status said, the same argument
 `show bgp summary` already makes about the FIB. `statements_frr_dropped()` in
-`hexash.py` shipped printing `warning:`, with the promotion condition written
+`prismash.py` shipped printing `warning:`, with the promotion condition written
 into the code rather than left to anybody's confidence: it becomes a refusal
 once the full lab suite has run clean with it refusing. That suite ran with the
 refusal in force, 79 runs over 57 lab files and not one of them losing a
@@ -1265,7 +1265,7 @@ section 4d of that file already existed to warn about.
 
 [#288](https://github.com/andrediashexa/hexarouting/issues/288) - *delivered:
 the tuner sizes the statistics segment from the interfaces the box is
-configured for*. `hexarouting-tune` computes hugepages, workers,
+configured for*. `prisma-routing-tune` computes hugepages, workers,
 `buffers-per-numa` and `main-heap-size`, and used to write no `statseg` stanza
 at all, so a shipped box ran on VPP's built-in 32 MB. Measured twice, at the
 same step: that box aborted between 7,000 and 8,000 interfaces, in `os_panic`
@@ -1282,10 +1282,10 @@ counter directory is one contiguous vector that must hold two copies while it
 grows.
 
 **What it is sized from is the box, not the subscriber target.**
-`/etc/hexarouting/hexarouting.conf` is the file `hexarouting.service` hands to
-`hexash --load` at every boot, so the interfaces named in it are the interfaces
-the box will create, and the count is taken with **hexash's own parser** rather
-than a second reader of that grammar. Sizing from `HEXA_SUBSCRIBERS` was
+`/etc/prisma-routing/prisma-routing.conf` is the file `prisma-routing.service` hands to
+`prismash --load` at every boot, so the interfaces named in it are the interfaces
+the box will create, and the count is taken with **prismash's own parser** rather
+than a second reader of that grammar. Sizing from `PRISMA_SUBSCRIBERS` was
 rejected on its own arithmetic and stays rejected: on this product's 4 GB RAM
 floor it would ask for a further 553 MB, out of the 2 GB the tuner leaves
 outside hugepages, for interfaces that never appear - a CGNAT subscriber is a
@@ -1293,11 +1293,11 @@ translation, and 200,000 of them share a handful of ports.
 
 Three things the tuner will not do with that count: write a stanza smaller than
 what VPP gives away (below 7,000 interfaces it does nothing at all); override a
-`statseg` an operator put in `/etc/hexarouting/vpp-base.conf`, which is
+`statseg` an operator put in `/etc/prisma-routing/vpp-base.conf`, which is
 concatenated **ahead of** the generated stanzas; or say anything about a size
 to a box with no interfaces to size for. A box with no saved configuration, one
 whose configuration could not be read, and one this program could not reach
-hexash's parser from are three different sentences and none of them is a
+prismash's parser from are three different sentences and none of them is a
 number.
 
 The self-test still reads the **dataplane's own heap**: a warning at half the
@@ -1351,7 +1351,7 @@ delivered ([#303](https://github.com/andrediashexa/hexarouting/issues/303)):
 on a virtual machine created from this ISO there are no other means, and the
 box came back from every reboot with its card `DOWN` and no address, reachable
 at its console and nowhere else. The installer asks which card and how it is
-addressed, writes `/etc/network/interfaces.d/hexarouting`, and refuses a disk
+addressed, writes `/etc/network/interfaces.d/prisma-routing`, and refuses a disk
 whose DHCP answer has no client on it - the medium carried none, because
 `ifupdown` merely Recommends one. The boot self-test prints the address on
 every boot, which is what makes DHCP usable on a box whose address nobody
@@ -1535,7 +1535,7 @@ one; **nothing installed one version and then put another on top of it**.
 tag's own `install.sh`, configures the box through the VTY that install put
 there, then runs the current tree's `install.sh` over it and asserts the box is
 still configured. The central assertion is the file the old version saved being
-accepted whole, because `hexash --load` refuses it whole or not at all: a
+accepted whole, because `prismash --load` refuses it whole or not at all: a
 statement the new VTY does not accept does not degrade an upgraded box, it
 unconfigures it, at a boot nobody is watching. Renaming one pool statement out
 of the new tree's grammar takes **17 of its 35** checks red and leaves the box
@@ -1561,7 +1561,7 @@ where it stands.
 | [#291](https://github.com/andrediashexa/hexarouting/issues/291) item 3 - *fixed* | `install.sh` behaved identically on a second run and closed with a first install's sentence, so an operator who had already tuned the box read "and reboot so that isolcpus and hugepages take effect" as nothing to do. It reads the stamp before overwriting it now, names both versions, and on a box with systemd names which services are still the older build and what restarting each costs. It still restarts nothing: the default was never the defect, the silence was |
 | [#295](https://github.com/andrediashexa/hexarouting/issues/295) - *fixed* | **and the path itself did not exist where an operator is.** Measured on a real appliance: no `install.sh`, no source tree, no toolchain. The in-place route served the release gate and `lab/upgrade.sh`, which have a build tree; anybody holding a published medium had only a reinstall, which erases the volume carrying a year of connection records. The claims were corrected and the wiki given a page first; the mechanism is option A, an upgrade artifact published beside the medium. `appliance/build-upgrade.sh` packs the four directories the ISO installs from with the built plugins inside, and `appliance/upgrade` runs the same `install.sh` out of it - one implementation, so an operator's upgrade is the one the gate already drives. It carries no packages, so a release that moves the VPP or FRR `build-iso.sh` pins is refused on the box, naming both versions, before anything is written. What is still open: nothing takes a **booted** box from one release to the next except `lab/upgrade.sh`, which runs out of a source tree |
 | [#293](https://github.com/andrediashexa/hexarouting/issues/293) - *fixed* | in that window the new VTY could not create a pool, because the API message grew fields the running plugin does not have, and the refusal named `bpa_pool_add_del` rather than the upgrade that caused it. It now says which dataplane answered and what clearing it costs |
-| [#294](https://github.com/andrediashexa/hexarouting/issues/294) - *fixed* | `hexash --load` refused the **whole** configuration over a static route that was correct, because the next-hop check read the live FIB while the address making the next hop reachable was in the file being loaded. What a boot survived on was FRR's own copy of the route, in another daemon's file |
+| [#294](https://github.com/andrediashexa/hexarouting/issues/294) - *fixed* | `prismash --load` refused the **whole** configuration over a static route that was correct, because the next-hop check read the live FIB while the address making the next hop reachable was in the file being loaded. What a boot survived on was FRR's own copy of the route, in another daemon's file |
 | [#296](https://github.com/andrediashexa/hexarouting/issues/296) - *fixed* | the same path read the other way, and the dangerous direction: a pool whose public range held one of the box's own addresses was refused when typed and became one line in VPP's log when the same file was loaded at boot. Driven on a real dataplane both ways before anything was changed. The VTY refuses it in one code path now; the plugin's live walk stays, because it catches an address the candidate does not describe |
 | [#301](https://github.com/andrediashexa/hexarouting/issues/301) | an install that cannot find the vat2 plugin warns on **stderr**, keeps the previous version's, writes the new `bpa_plugin.so` over the old one, and stamps the box with the new version. The box then asserts a build it has only half of, with a vat2 plugin older than the dataplane plugin beside it - which is the skew #293 measured as unable to answer a message that grew a field. Three shapes on the issue and none chosen |
 
@@ -1573,7 +1573,7 @@ about a box that was not in the state the line described.
 
 [#297](https://github.com/andrediashexa/hexarouting/issues/297) - *fixed*. The
 boot self-test printed `[warn] no dataplane interface: VPP was given no NIC to
-forward on` and ended with `HexaRouting ready.` Warnings were never counted:
+forward on` and ended with `Prisma Routing ready.` Warnings were never counted:
 `bad()` incremented a failure count and a warning was a bare `say`, so a box
 with five warnings ended identically to a box with none. That last line is the
 one that survives a scrolling console. There are three outcomes under
@@ -1620,8 +1620,8 @@ meaning anything when one cause contributes to it twice.
 [#302](https://github.com/andrediashexa/hexarouting/issues/302). `show version`
 prints one line about the whole box and can verify exactly one of the files
 that box is made of. Measured on the appliance the maintainer supplied: the
-stamp reads `0.70.0 (f10a3ed)`, `hexash.py` and `bpa_plugin.so` are from that
-install, and `/usr/bin/hexarouting-tune` is from 0.71.0. Nothing on the box
+stamp reads `0.70.0 (f10a3ed)`, `prismash.py` and `bpa_plugin.so` are from that
+install, and `/usr/bin/prisma-routing-tune` is from 0.71.0. Nothing on the box
 says so, and `show version` is right about the only thing it checks.
 
 That box reached the state honestly - one file was copied onto it to prove the
@@ -1648,7 +1648,7 @@ shouted about every deliberate edit is one somebody switches off.
 [#302](https://github.com/andrediashexa/hexarouting/issues/302) - *fixed*.
 `show version` printed one line about a box made of about twenty files and
 could verify one of them. Measured on a root stamped `0.70.0 (f10a3ed)` with
-v0.68.0's `hexarouting-tune` copied onto it: the self-test report was
+v0.68.0's `prisma-routing-tune` copied onto it: the self-test report was
 **identical line for line** to the same box untouched, 42 lines each.
 
 `appliance/install.sh` records what it installed as it installs it, through a
@@ -1661,7 +1661,7 @@ rephrased, silently and in the direction that reports a broken box as healthy.
 The three files the installer deliberately does not overwrite are named with no
 checksum at all, because a checksum nobody may act on is an invitation to start
 acting on it. There were three and not the two anybody would guess:
-`hexarouting.conf` was a `printf` of a banner rather than a copy.
+`prisma-routing.conf` was a `printf` of a banner rather than a copy.
 
 Measured and printed by the suite on every run rather than left as a number in
 a commit message, which is what makes the drift readable: this said **18 ms at
@@ -1726,8 +1726,8 @@ It went red on its first run and found two defects that no unit test could have.
 boot after the handover made no pair at all, so the box came back holding its
 card with no address on anything and nobody could reach it. `commit` writes the
 card and its management path into the tuner's file, and that file is what
-performs the handover; the pair is made by `hexash --load` out of
-`/etc/hexarouting/hexarouting.conf`, which **`commit` does not write - only
+performs the handover; the pair is made by `prismash --load` out of
+`/etc/prisma-routing/prisma-routing.conf`, which **`commit` does not write - only
 `save` does**. So the boot replayed a file that had never heard of the card.
 The record has a second home now, and a boot where the card is on neither side
 refuses, naming the card, the MAC and the address, instead of returning success
@@ -1736,7 +1736,7 @@ in silence.
 [#336](https://github.com/andrediashexa/hexarouting/issues/336) - *fixed*. And
 the reason that state existed: `commit` bound the card **immediately**, while
 printing "NOT IN EFFECT YET: the dataplane claims its card when it starts, and
-this commit does not restart it". Naming the card restarts `hexarouting-tune`,
+this commit does not restart it". Naming the card restarts `prisma-routing-tune`,
 that unit runs `apply-tuning`, and `apply-tuning` performs the bind - which is
 right at boot, where VPP is ordered after it, and wrong from a commit, where
 nothing starts VPP afterwards. Measured on a booted guest: the driver read
@@ -2103,7 +2103,7 @@ The two that are closed, and what they measured:
 * [#359](https://github.com/andrediashexa/hexarouting/issues/359) - the console
   width was fixed three times, on the screens each fix had measured, and never
   on the file. #252, #271, #349 and #355 split thirty-odd rows between them; a
-  static sweep of `src/hexash/hexash.py` for `print()` calls whose argument is
+  static sweep of `src/prismash/prismash.py` for `print()` calls whose argument is
   FULLY literal finds **fourteen more at 82 to 135 columns** on a console of
   79, and reports the 177 carrying an interpolated value that it cannot bound
   that way. Two of the fourteen are the `configure` refusal on a box whose
@@ -2177,7 +2177,7 @@ program can SAY** ([#364](https://github.com/andrediashexa/hexarouting/issues/36
 `appliance/selftest` has a reader that refuses a message no box prints - 118
 messages, a box for every one, read out of the product's own source - and it
 was written after a hand sweep found seven branches nothing in this repository
-had ever executed. `appliance/hexarouting-install` has 139 printed lines and no
+had ever executed. `appliance/prisma-routing-install` has 139 printed lines and no
 such reader, and measured on 2026-09-15 against a full run of all four suites
 that touch it: **113 of its 117 lines carrying a needle of twelve or more
 literal characters are printed by no run of anything here.** That is 97%, and
@@ -2241,7 +2241,7 @@ by rule rather than by code.
 
 **And the 79-column budget is a rule about the VTY and about nothing else**
 ([#367](https://github.com/andrediashexa/hexarouting/issues/367)). #359, #362
-and #363 put it on `src/hexash/` three ways - literal rows by a static sweep,
+and #363 put it on `src/prismash/` three ways - literal rows by a static sweep,
 verdict rows once the `error: ` prefix is counted, and the 296 interpolated
 ones by driving each site at its widest value. The appliance prints to a BOOT
 CONSOLE, which is a serial line or a VGA text screen: 80 columns hard, no
@@ -2262,7 +2262,7 @@ fold and the scripts choose between them on purpose.
 **And the third thing they found is a warning that reaches nobody**
 ([#372](https://github.com/andrediashexa/hexarouting/issues/372)). Making
 `bpa_reserve_warn()` run for the first time showed it has **one caller, and it
-is the `vppctl` handler**. The binary API path hexash uses calls the other two
+is the `vppctl` handler**. The binary API path prismash uses calls the other two
 warn functions and not this one, so an operator who configures `reserve` from
 the VTY - which is every operator, since the VTY exists so nobody has to drop
 to `vppctl` - sees it neither on the terminal nor in the log. And the pool
@@ -2273,7 +2273,7 @@ that reports a reserve. This was the highest-priority open defect by this
 file's own rule - a claim the product fails to deliver comes above everything
 else - **and it is fixed**. The warning is said at `bpa_pool_add()`,
 which is where creation AND every later change arrive, because `reserve` is
-not a setting that can be edited in place; hexash reads it back from
+not a setting that can be edited in place; prismash reads it back from
 `show bpa pool` for the pools a commit created or recreated and prints it at
 the prompt. The wiki page needed no correction: it described what the product
 intended, and the box now does it.
@@ -2372,7 +2372,7 @@ missing from the middle of the box's screen are each a failure now.
 **And the rows that refusal quotes were the plugin's sentences passed through
 whole** ([#391](https://github.com/andrediashexa/hexarouting/issues/391)) -
 *done on the issue branch, awaiting merge*. The moment #384 drove `commit`
-over the fake dataplane, the width reader in `test/test_hexash_refusals.py`
+over the fake dataplane, the width reader in `test/test_prismash_refusals.py`
 counted a row nothing had driven before: the VTY printed each `remap:` row as
 it came, and the sentence saying every session on the pool ends is 178
 columns with its indent, on a console of 79. The ceiling went up to 26 with
@@ -2436,7 +2436,7 @@ and `--keep-management`, the binder's refusal, the prompt's refusal (the
 spelling one stays), the VTY's own record and its precedence over the
 tuner's, the commit-time writer, the `dataplane management` statement - a
 0.76.x file carrying one loads with the line dropped and a note - the key
-`HEXA_DATAPLANE_MGMT` from every reader, and the `one-nic` lab, whose
+`PRISMA_DATAPLANE_MGMT` from every reader, and the `one-nic` lab, whose
 surviving claims are held offline or by the installed box. The maintainer's direction
 throughout: a box is configured at its console when it is new, so a guard on
 the card it is reached over guards a step nobody takes over the network.
@@ -2528,7 +2528,7 @@ going to act on.
 Nothing FRR uses is shadowed, and that was measured rather than argued: every
 statement written inside an `interface` block in `lab/`, `docs/` and `wiki/`,
 plus FRR's own spellings this tree names, comes back exactly as written.
-`test/test_hexash_units.py` builds that corpus from the tree on every run, so
+`test/test_prismash_units.py` builds that corpus from the tree on every run, so
 a statement added later cannot introduce a shadow quietly. A saved file keeps
 refusing them, and the argument for that is in `config.py` beside the
 refusal. What remains is the proof a lab cannot fake: `lab/install-iso.sh`
@@ -2554,7 +2554,7 @@ or CGNAT account in the same rendered sentence `start shell` gives, before
 systemd is asked; and root is the account that can restart the box today,
 because the VTY runs as whoever logged in and the appliance installs neither
 sudo nor polkit (measured over `appliance/build-iso.sh`'s package lists and
-their dependencies), so a `hexa-admin` member who is not root reads the cost
+their dependencies), so a `prisma-admin` member who is not root reads the cost
 and then systemd's own refusal. Each says what it costs - every session ends,
 the dataplane stops, and since #378 the box comes back claiming its card by
 itself - before it acts, and two costs are measured rather than recited:
@@ -2574,9 +2574,9 @@ path (measured on systemd 252: `reboot.target` requires `systemd-reboot.service`
 which requires `shutdown.target`, and a default-dependency unit conflicts with
 `shutdown.target`, so vpp.service is stopped and drained on the way down);
 `systemctl reboot --force` would skip it and is not what is asked for. Held by
-`test/test_hexash_system.py` driving both statements through the seam and
+`test/test_prismash_system.py` driving both statements through the seam and
 asserting on what was printed and what systemd was asked, the refusals suite,
-the completion suite, and `test/test_hexash_batch.py` for `hexash -c
+the completion suite, and `test/test_prismash_batch.py` for `prismash -c
 "system reboot"` not being gated by #376's commit rule. The end-to-end proof -
 `lab/install-iso.sh` typing `system reboot` at the VTY where PHASE 3 typed
 `systemctl poweroff` at the console, and finding the box back on the network -
@@ -2624,7 +2624,7 @@ the box will also warn about such a stride naming the wrong reason, worker
 sharding, and name a nearest stride that no worker count makes work. The
 warning uncovered this rather than caused it.
 
-#376: a `hexash -c` batch whose statement is refused keeps going and commits
+#376: a `prismash -c` batch whose statement is refused keeps going and commits
 what it could, printing `commit complete`. `main()` runs the batch as
 `for c in cmds: sh.feed(c)` and discards feed's return value, which the REPL
 thirty lines above honours, and nothing on the commit path reads `self.failed`.
@@ -2640,9 +2640,9 @@ script, and the answer is *both, and the word that settles it is `commit`*:
 `commit` now refuses while a statement of the same invocation was refused and
 applies nothing, the batch still runs to its end so that every refusal is named
 at once, and an interactive session and a batch that only asks questions are
-untouched. `docs/routing.md`, under "`hexash -c`: one command, or a script?",
+untouched. `docs/routing.md`, under "`prismash -c`: one command, or a script?",
 carries the argument and the measurement behind it - two of this repository's
-283 `hexash -c` invocation sites change behaviour.
+283 `prismash -c` invocation sites change behaviour.
 
 **The same shape one statement over, and wider**
 ([#373](https://github.com/andrediashexa/hexarouting/issues/373)). The wiki
@@ -2651,7 +2651,7 @@ on this box's worker count, and quotes the three rows. `bpa_stride_warn()` has
 two call sites: the `vppctl` handler, and `bpa_pool_settings_set()` with
 `vm = 0`, which reaches the log alone. `bpa_pool_add()` never calls it.
 `block-stride` sits behind the `in_place` guard in `Config.Pool.lines()`, so
-the VTY path goes through `settings_set`, and nothing in hexash reads it back:
+the VTY path goes through `settings_set`, and nothing in prismash reads it back:
 no `show` in the plugin prints that sentence, so there is nothing to relay.
 An operator who creates that pool from the VTY sees **nothing at all** - the
 reserve at least reached the log on its path, and this does not. The stride is
@@ -2804,197 +2804,61 @@ their own content and not by a checksum: the wiki normalises markdown on the
 way in, so a digest comparison answers about the normalisation and not about
 the page.
 
-#### Phase 8 - the rename to Prisma Routing
+#### Phase 8 - the rename to Prisma Routing - *delivered*
 
-[#202](https://github.com/andrediashexa/hexarouting/issues/202). **The
-maintainer has decided the name and scheduled the work**, so this is no longer
-an open question in the blocked table above: the product is renamed
-**HexaRouting -> Prisma Routing**, two words, and it is a phase of this plan
-like any other.
+[#202](https://github.com/andrediashexa/hexarouting/issues/202). The product
+is **Prisma Routing**, two words for a person to read, `prisma-routing`
+wherever a machine reads it - a path, a unit name, a package, the group prefix
+- and `prisma` at the prompt, which is the one word an operator types beside
+all day.
 
-It is the last phase on purpose. The two ordering rules below are the reason,
-and neither is about the difficulty of the work.
+It landed in two releases and the second is what makes it a rename rather than
+a coat of paint.
 
-Recorded here with its measured size rather than an impression of it, **and the
-measurement has to be re-taken rather than quoted**. On 2026-09-11 it was 905
-lines across 101 files carrying `hexarouting`, 372 across 73 carrying `hexash`
-and 87 carrying the role group names. Re-taken on 2026-09-15 with `git grep`:
-**2,809 lines across 166 files** carry `hexarouting`, **1,033 across 117**
-carry `hexash`, **105 across 17** carry `hexa-admin` or `hexa-cgnat`, **622
-across 61** carry a `HEXA_` environment variable, and **13 across 10** carry
-`Hexanetworks`, which is the company and stays. The `hexarouting` figure
-tripled in four days, because every release writes the name into the CHANGELOG
-and every sweep writes it into a document. A number this file states about its
-own tree is a number with a date on it, and this one had none.
+**The first renamed what a person reads and nothing a box holds**, which was
+the reversible answer: the banner, the prompt, `show version`, the boot
+self-test's header and its four verdict sentences, the installer's screens,
+the medium's boot menu and volume label, the unit descriptions, the medium and
+artifact filenames. Measured rather than swept - 1,907 lines carrying the old
+name were classified by the shape of the token, and the 1,726 that were a
+path, a unit, a key or an identifier were left alone on purpose.
 
-**The name is two words.** This file and the issue both carried it as
-`PrismaRouting` for four days, which is a different name, and a product whose
-own roadmap cannot spell it is a product whose banner, whose ISO filename and
-whose release note will not agree either. Where the name has to be one token -
-a package name, a unit name, a path, a group - it is `prismarouting`, and that
-is a spelling of the two-word name rather than a second name.
+**The second moved everything else, as a clean break the maintainer chose**
+on 2026-09-17 with the five decisions the issue said had to be made first:
 
-The rename is not the hard part. **A box already in service carries the old name
-in the path of its saved configuration, in its unit names, in its group names
-and in the login shell of every operator account it created.** An upgrade that
-renames those without a migration leaves that box unconfigured at the next boot,
-on a machine nobody is watching — which is the exact failure
-[#193](https://github.com/andrediashexa/hexarouting/issues/193) was careful
-about when it kept both spellings of a hierarchy that moved.
+* `/etc/hexarouting` -> `/etc/prisma-routing`, with the saved configuration and
+  the rollback store under it; `/usr/lib/hexarouting` and
+  `/usr/share/hexarouting` with them;
+* every systemd unit, `hexarouting.service` -> `prisma-routing.service` and the
+  rest by the same rule;
+* `hexash` -> `prismash`, which is the login shell recorded in `/etc/passwd`
+  for every account the VTY created;
+* `hexa-admin` and `hexa-cgnat` -> `prisma-admin` and `prisma-cgnat`;
+* the `HEXA_*` environment -> `PRISMA_*`, and the `hexarouting.*` kernel
+  command-line keys -> `prisma-routing.*`;
+* `/var/log/hexarouting` -> `/var/log/prisma-routing`, the records volume.
 
-Four of those are worse than a path. The role groups are read by GID, so a group
-that is *recreated* rather than renamed silently takes every operator's role
-away. `/var/log/hexarouting` is a separate filesystem holding, in dynamic mode,
-the connection record the Marco Civil requires for a year: moving that mountpoint
-is a data migration under a retention obligation, not a rename. `hexash` is the
-recorded login shell of accounts that already exist. And the ISO filename is
-covered by [#91](https://github.com/andrediashexa/hexarouting/issues/91)'s rule
-that a medium's name must carry its identity, because a file loses its context
-the moment it is copied to a USB stick.
+**Nothing migrates, and the upgrade artifact refuses a box that carries the old
+name** - before it writes anything, naming what is on that box and what the
+route is instead. That route is a reinstall from the medium. The records
+volume is the one thing that survives it, and the procedure for keeping it -
+note the filesystem's UUID, keep its disk out of the install, mount it at the
+new path, write that into `fstab`, and read the self-test's records row on the
+next boot - is on the wiki page about taking a box to a new version, because a
+mountpoint moved under a year's retention obligation is a procedure somebody
+performs and not something a package does while nobody is watching.
 
-The acceptance test is the real work, and it is the one
-[#291](https://github.com/andrediashexa/hexarouting/issues/291) asks for rather than a second: install the old name, upgrade,
-boot, and assert the configuration is still in effect. **That is what makes this
-issue closeable**, and it is worth having whatever the box is called, which is
-why it is written up in its own section above.
+**What was deliberately left alone**: the repository and the remote, so every
+issue URL already written down goes on resolving; the files of releases already
+published, which keep the names they shipped under; and `Hexanetworks`, which
+is the company.
 
-##### The five decisions the work makes, rather than waits for
+**The width rule caught two rows on the way through**, and they are the
+measurable cost of a name two characters longer: `apply-tuning`'s refusal put
+`/etc/prisma-routing/tune.env` at 80 columns on a console of 79, and the
+self-test's manifest warning did the same. Both were reworded to put the path
+on a row of its own rather than raise a ceiling.
 
-Scheduling the rename means these stop being open questions and become the
-first five things the work decides. Four are recommended here with a reason; one
-is still the maintainer's and is marked as such, because getting it wrong is
-measured in somebody else's outage rather than in rework.
-
-| Decision | Recommended | Why |
-|---|---|---|
-| **Do boxes in service upgrade, or is it new installs only?** | **The maintainer's.** Not recommended here | Everything below follows from it. A clean break is defensible and cheap; it MUST then say so in the release note in as many words, because an operator who upgrades and reboots gets a box that forwards nothing and a saved configuration the new name cannot see |
-| **Does `hexash` rename?** | **No.** It keeps its name | It is the recorded login shell in `/etc/passwd` for every account the product created, it is in every operator's fingers, and it is in all 33 wiki pages. A renamed shell does not exist until the package makes it exist, and an account whose shell does not exist cannot log in. The product and its command disagreeing about their names is a smaller cost than that, and it is a cost paid once and visibly |
-| **Do the role groups rename?** | **Yes, but by GID and never by recreation** | An account's membership is by GID. `groupmod -n` keeps it; `groupadd` of a new name and a `groupdel` of the old one silently takes every operator's role away, on a box where the only account left with rights is `root` over the console. `appliance/install.sh:353` is where both groups are created and is the one place this has to be right |
-| **Does `/var/log/hexarouting` move?** | **No.** The mountpoint stays | It is a separate filesystem ([#83](https://github.com/andrediashexa/hexarouting/issues/83)) holding, in dynamic mode, the connection record the Marco Civil requires to be kept for a year. Moving a mountpoint under a live retention obligation is a data migration and not a rename, and it buys nothing an operator can see |
-| **Does the repository and its remote rename?** | **Yes, and the old URLs MUST keep resolving** | Cheap and independent of the product. But every `Claude-Session` line and every issue URL already written into 74 release notes and this file points at the old remote, and a rename that breaks them costs this project the record it keeps of why anything was done |
-
-##### Two ordering rules, and they are why this is Phase 8
-
-Both are for the reader of the release note rather than for the work.
-
-It **MUST** ship alone. A note that says "renamed, and also fixed the
-forwarding path" is one whose reader cannot tell which change broke their box.
-
-It **SHOULD** wait until the worker-path defects are closed
-([#201](https://github.com/andrediashexa/hexarouting/issues/201)), because a
-rename touching 2,809 lines makes every later `git blame` on those files answer
-with the rename - and those are the files where the next defect will be
-diagnosed by reading history.
-
-##### What it is NOT allowed to do
-
-A sweep. The name appears in four kinds of place and only one of them is safe
-to `sed`:
-
-* **strings a human reads** - the banner, the prompt, the self-test, the wiki.
-  Mechanical, and the one place a sweep is safe;
-* **paths and unit names** - need the migration above, and the installer needs
-  a test that proves an upgraded box still finds its configuration;
-* **identifiers in code** - the 622 `HEXA_` lines are read by the VTY, by
-  `apply-tuning` and by the labs. The labs SET them; a rename that misses one
-  leaves a lab configuring a box that is not the one under test, and the lab
-  still says `LAB PASSED`;
-* **the ISO filename** - [#91](https://github.com/andrediashexa/hexarouting/issues/91)'s
-  rule is that the medium's name carries its identity, because a file loses its
-  context the moment it is copied to a USB stick. `tools/version-stamp.sh` is
-  the only place that calculation lives.
-
-`Hexanetworks` stays: it is the company and not the product, and its 13
-occurrences MUST be checked one at a time rather than swept.
-
-##### What the first release of it did, and left, 2026-09-16
-
-The rename shipped as **strings only**, which answers the first decision in
-the table above the reversible way: an upgraded box changes what it prints
-and nothing it has on its disk, so there is nothing to migrate and nothing to
-rename back. What moved: the banner, the VTY prompt (`prisma> `; it
-was the product name written into the VTY and never the hostname), `show
-version`, the boot self-test's header and its verdict sentences, the
-installer's screens, the unit descriptions, the medium and artifact filenames
-(`prisma-routing-<version>.iso`, from `tools/version-stamp.sh --filename`),
-the documents and the wiki mirror. What stayed, each with a comment at its
-definition site: `hexash`, every path under `/etc`, `/var/log`, `/usr/lib`
-and `/usr/sbin`, every unit name, the role groups, the `HEXA_*` environment,
-the `hexarouting.*` kernel keys, the hostname, the labels, the EFI entry, the
-repository and the remote. **The groups were not renamed**, although the
-table above recommends `groupmod -n`: a release that renames nothing on disk
-is the one a box in service can take without a migration, and the group
-rename belongs with the path migration when, and if, that is decided.
-
-Re-taken on 2026-09-16, on the tree before the edit, with
-`git grep -I -c <name> -- . ':!docs/brand' ':!CHANGELOG.md'`: **181 lines
-across 60 files** carried `HexaRouting`, **1,907 across 167** carried
-`hexarouting` and **4 across 2** carried `Hexanetworks` (the 13 above counted
-the brand kit and the changelog). The 1,907 were classified before anything
-was edited, by the shape of the token and not by a sweep: **153** were the
-prompt, **27** the medium's or the artifact's filename, **1** a prose line,
-and **1,726** a path, a unit, a key, a hostname or an identifier that stays.
-**Both greps were case-sensitive, and that count is short by one line.** The
-medium's ISO 9660 volume label, `HEXAROUTING`, is the one line in the tree
-spelt in capitals, so neither count saw it and it was neither renamed nor
-classified; the review below found it. Re-taken case-insensitively on the
-same tree, `git grep -I -i -c hexarouting` with the same exclusions:
-**2,085 lines across 174 files**, which is the 1,907 and the 181, less the
-4 lines that carry both spellings, plus that one. The classification of the
-one-token name therefore reads **153** the prompt, **27** the filename, **1**
-the volume label, **1** a prose line and **1,726** that stay.
-The 181 `HexaRouting` lines were read one at a time; the ones left are
-quotations of what an earlier version printed, kept as history beside the
-issue that changed them. The acceptance test is still
-[#291](https://github.com/andrediashexa/hexarouting/issues/291)'s
-`lab/upgrade.sh`, which puts this tree over an installed v0.68.0 and asserts
-the configuration is still in effect, and `lab/boot-iso.sh` and
-`lab/install-iso.sh` read the renamed console through
-`tools/selftest-verdict.sh`.
-
-##### What the review of that release found, and what closed it
-
-Three findings, and they are one defect in three places: a renamed string
-that nothing offline could see go stale, so `make test` stayed green while
-a lab or the release gate would have found it hours later on a booted box.
-Each is fixed on the same branch, and each check was shown red under the
-mutation that had passed before it.
-
-* **The medium's volume label was still `HEXAROUTING`.** It is what
-  `lsblk`, `blkid` and a desktop file manager show for the stick a medium is
-  written to, and the medium had been renamed `prisma-routing-<version>.iso`
-  for the stated reason that the name on the stick reads as the name on the
-  banner. How it escaped is above: a case-sensitive count. It is
-  `PRISMA_ROUTING` now (ISO 9660 spells a label in `A-Z`, `0-9` and `_`, 32
-  characters at most, so the two words take an underscore); nothing on a
-  disk reads the label and the medium is rebuilt for every release, so it
-  moves with the filename. `test/test_iso_ready.sh` derives the label it
-  expects from `tools/version-stamp.sh --filename`, the filename's one
-  owner, and reads the one `appliance/build-iso.sh` passes to
-  `grub-mkrescue`, so the two spellings of the name on one medium cannot
-  part again: the label back at the old name, the filename renamed without
-  it, the label dropped and a hyphen in it each went red.
-* **The operational prompt had no offline reader.**
-  `test/test_hexash_complete.py` held it by `endswith("> ")` and only the
-  configuration prompt by equality, so with the one `return` in
-  `Shell.prompt()` back at `hexarouting> ` this suite, `test_doc_commands.py`
-  and `test_console_driver.sh` all stayed green, and every wait for
-  `prisma> ` in `lab/boot-iso.sh` and `lab/install-iso.sh` would have timed
-  out on a booted box. It is held by equality now, and that one mutation
-  turns it red.
-* **Two of the holder's three renamed patterns had no reader.**
-  `tools/selftest-verdict.sh` spells the renamed sentence in `VERDICT_RE`,
-  `VERDICT_OK_RE` and `VERDICT_NOFWD_RE`, and `test/test_selftest.sh` read
-  only the first. `VERDICT_OK_RE` is what `tools/release-gate.sh` publishes
-  on and `VERDICT_NOFWD_RE` is how `lab/install-iso.sh` knows a box claimed
-  no card, so the two left at the old name kept `make test` green while the
-  gate would have refused every release and the lab never seen a no-forward
-  box. The suite now reads all four patterns out of the holder, the
-  no-product-name `VERDICT_BAD_RE` with them, and holds each to the four
-  sentences its readers decide on, sentence by sentence: the two left at the
-  old name went red on four rows, and so did a `VERDICT_OK_RE` widened to
-  the failed verdict, which is the shape of
-  [#311](https://github.com/andrediashexa/hexarouting/issues/311).
 
 #### If only three were possible
 

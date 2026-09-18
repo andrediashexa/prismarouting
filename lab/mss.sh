@@ -22,7 +22,7 @@ set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 MODE=${1:-on}
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }

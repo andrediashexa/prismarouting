@@ -74,7 +74,7 @@ Se o par não existir, não há para onde o endereço voltar. A caixa sobe encam
         52:54:00:00:00:01
         without a pair: ens18
         give each one a 'linux-name <name>' under 'interface' in
-        hexash, and commit. A card named after its Linux card is
+        prismash, and commit. A card named after its Linux card is
         paired under that name by any 'interface' block for it.
 ```
 
@@ -200,7 +200,7 @@ Quando algum arquivo não confere, o autoteste diz quais:
 
 ```
   [FAIL] 1 file(s) on this box are not from 0.72.0 (beefcaf):
-          usr/bin/hexarouting-tune
+          usr/bin/prisma-routing-tune
 ```
 
 Isso acontece de três maneiras, e todas são comuns: alguém copiou um arquivo de outra versão para a caixa (em geral para provar uma correção, e depois ele ficou), uma instalação parou no meio, ou uma atualização passou por parte da caixa e não pelo resto. Em qualquer dos três casos a caixa continua funcionando e continua encaminhando, e é por isso que a linha importa: sem ela, a versão informada segue sendo lida como verdade, e todo diagnóstico a partir dali é feito contra as notas de outra versão.
@@ -209,39 +209,39 @@ O conserto é instalar de novo, inteira, a versão que a caixa informa. A págin
 
 
 :::info
-**Os três arquivos de configuração nunca aparecem nessa lista.** `tune.env`, `vpp-base.conf` e `hexarouting.conf` são escritos uma única vez, na primeira instalação, e a partir daí são seus: nem a atualização os substitui, nem o autoteste opina sobre o conteúdo deles. Editar o `tune.env` é o arquivo cumprindo a função dele, não um defeito, e uma verificação que reclamasse disso seria uma verificação que ninguém deixaria ligada.
+**Os três arquivos de configuração nunca aparecem nessa lista.** `tune.env`, `vpp-base.conf` e `prisma-routing.conf` são escritos uma única vez, na primeira instalação, e a partir daí são seus: nem a atualização os substitui, nem o autoteste opina sobre o conteúdo deles. Editar o `tune.env` é o arquivo cumprindo a função dele, não um defeito, e uma verificação que reclamasse disso seria uma verificação que ninguém deixaria ligada.
 
 :::
 
 Há mais duas linhas vizinhas, e nenhuma das duas acusa a caixa de nada:
 
-* `[warn] no /usr/share/hexarouting/MANIFEST, so nothing checked that line`: a lista não está lá. Toda instalação deixa uma, então ou ela foi apagada, ou a instalação não chegou ao fim. Nada foi medido, que é diferente de nada estar errado.
-* `[warn] /usr/share/hexarouting/MANIFEST names no files, so it checked nothing`: a lista está lá e está vazia. Mesma leitura: nada foi comparado.
+* `[warn] no /usr/share/prisma-routing/MANIFEST, so nothing checked that line`: a lista não está lá. Toda instalação deixa uma, então ou ela foi apagada, ou a instalação não chegou ao fim. Nada foi medido, que é diferente de nada estar errado.
+* `[warn] /usr/share/prisma-routing/MANIFEST names no files, so it checked nothing`: a lista está lá e está vazia. Mesma leitura: nada foi comparado.
 
 # Serviços e ordem de boot
 
 ```mermaid
 flowchart LR
-    T["hexarouting-tune<br/><i>isolcpus, hugepages</i>"] -->|Before| V["vpp.service"]
-    V --> H["hexarouting.service<br/><i>aplica a config salva</i>"]
+    T["prisma-routing-tune<br/><i>isolcpus, hugepages</i>"] -->|Before| V["vpp.service"]
+    V --> H["prisma-routing.service<br/><i>aplica a config salva</i>"]
     F["frr.service"] -.->|Wants| H
-    H --> S["hexarouting-selftest<br/><i>relatório no console</i>"]
+    H --> S["prisma-routing-selftest<br/><i>relatório no console</i>"]
 ```
 
 | Serviço | Função |
 |---------|--------|
-| `hexarouting-tune` | tuning de boot (isolcpus, hugepages); roda em **todo** boot, sem sentinela |
+| `prisma-routing-tune` | tuning de boot (isolcpus, hugepages); roda em **todo** boot, sem sentinela |
 | `vpp.service` | o dataplane |
 | `frr.service` | o roteamento |
-| `hexarouting.service` | aplica a configuração salva (`hexash --load`) |
-| `hexarouting-selftest` | verifica e reporta no console |
+| `prisma-routing.service` | aplica a configuração salva (`prismash --load`) |
+| `prisma-routing-selftest` | verifica e reporta no console |
 
 Duas decisões que valem entender:
 
 * **FRR é** `**Wants**`**, não** `**Requires**`**.** Sem roteamento a máquina ainda encaminha pelas rotas estáticas existentes; derrubar o CGNAT junto só ampliaria o estrago.
 * **Não existe** `**ExecStop**`**.** A configuração vive no VPP. Parar o serviço **não** apaga pools de produção — remover um pool é ação do operador, pela VTY.
 
-`hexarouting.service` espera o VPP **aceitar comandos** antes de aplicar configuração: o systemd considera o `vpp.service` iniciado assim que o processo sobe, mas o socket da CLI e os plugins demoram mais um pouco, e aplicar antes disso falha de forma intermitente.
+`prisma-routing.service` espera o VPP **aceitar comandos** antes de aplicar configuração: o systemd considera o `vpp.service` iniciado assim que o processo sobe, mas o socket da CLI e os plugins demoram mais um pouco, e aplicar antes disso falha de forma intermitente.
 
 Essa espera **se explica no console**, que é onde a pessoa está:
 
@@ -319,7 +319,7 @@ São **quatro** respostas por regra, e nenhuma delas se confunde com outra:
 | `[ ok ] every tuning rule this box can read back is in effect (2)` | tudo que dava para conferir está valendo, e diz quantas regras foram |
 | `[warn] requested and NOT in effect: isolcpus` | foi pedido e o kernel não está fazendo. A linha de baixo diz o que ele está fazendo em vez disso |
 | `[info] cannot be read on this box: nohz_full` | esta caixa não expõe jeito de ler se pegou. Não é "pegou" nem "não pegou" |
-| `[info] not requested on this box: 99-hexarouting.conf` | ninguém pediu esse ajuste aqui. Uma caixa deliberada não pode ter a cara de uma caixa quebrada |
+| `[info] not requested on this box: 99-prisma-routing.conf` | ninguém pediu esse ajuste aqui. Uma caixa deliberada não pode ter a cara de uma caixa quebrada |
 
 Medido numa caixa cujo kernel recusou o isolamento:
 
@@ -334,7 +334,7 @@ Três outras linhas valem a pena reconhecer no console:
 
 | O que aparece | O que significa |
 |---------------|-----------------|
-| `deep C-states left enabled on purpose` | você pôs `HEXA_LOW_LATENCY=0` e a caixa está fazendo o que foi mandada. Não é aviso |
+| `deep C-states left enabled on purpose` | você pôs `PRISMA_LOW_LATENCY=0` e a caixa está fazendo o que foi mandada. Não é aviso |
 | `booted a command line older than that file` | `tune.env` foi editado e a caixa ainda não reiniciou desde então. Reinicie para valer |
 | `the kernel exposes no idle-state driver` | numa máquina virtual não há estado de energia para desligar, então esse ajuste não muda nada ali |
 
@@ -359,8 +359,8 @@ Duas linhas separam *"o ajuste não pegou"* de *"ninguém conseguiu conferir"*:
 
 | Linha no autoteste | O que significa |
 |--------------------|-----------------|
-| `[warn] hexarouting-tune is not on this box, so what the kernel did with the tuning cannot be read here at all` | não há conferidor nesta caixa. Nada foi medido |
-| `[warn] hexarouting-tune could not say what tuning is in effect, so this box is unmeasured rather than confirmed` | o conferidor está lá e não respondeu. Também não foi medido |
+| `[warn] prisma-routing-tune is not on this box, so what the kernel did with the tuning cannot be read here at all` | não há conferidor nesta caixa. Nada foi medido |
+| `[warn] prisma-routing-tune could not say what tuning is in effect, so this box is unmeasured rather than confirmed` | o conferidor está lá e não respondeu. Também não foi medido |
 
 Nenhuma das duas diz que o ajuste está valendo, e nenhuma diz que não está. Uma caixa **não medida** e uma caixa **conferida e boa** não podem ter a mesma cara na tela, que é o que uma ausência de linha faria com as duas.
 
@@ -414,7 +414,7 @@ flowchart TD
 | FTP/RTSP/PPTP conectam mas a transferência não começa | ALG correspondente desligado no pool |
 | Conexões travam sem erro, em certos caminhos | MSS não rebaixado — configure `tcp-mss auto` |
 | Assinante sem tradução e o pool não enche | prefixo dele coberto por um `bypass source` |
-| Serviço não sobe no primeiro boot | ver `hexarouting.service`; o self-test imprime a última mensagem dela |
+| Serviço não sobe no primeiro boot | ver `prisma-routing.service`; o self-test imprime a última mensagem dela |
 | Autoteste diz `the records mirror is DEGRADED` | um dos dois discos de registros morreu; a caixa funciona, a guarda está por um fio |
 | Tudo caiu ao mesmo tempo, sem alarme | mudança de mapeamento aplicada com `commit remap` |
 | `show bgp` (ou `ospf`, ou `isis`) não responde | `show version` nomeia os daemons parados; um parado recebe configuração e não chega a lugar nenhum |

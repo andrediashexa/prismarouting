@@ -33,8 +33,8 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
-import hexash      # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
+import prismash      # noqa: E402
 
 fail = 0
 
@@ -73,8 +73,8 @@ if m:
     # and staticd itself, and the selftest checks those separately - "FRR
     # responding" is that check. Requiring them in this loop would fail on a
     # correct selftest.
-    offered = sorted(d for d in hexash.configurable_daemons()
-                     if d not in hexash.ALWAYS_STARTED)
+    offered = sorted(d for d in prismash.configurable_daemons()
+                     if d not in prismash.ALWAYS_STARTED)
 
     missing = [d for d in offered if d not in looked_for]
     for d in missing:

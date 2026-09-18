@@ -91,7 +91,7 @@
 # reason measured and written above it.
 set -u
 . /src/lab/lib.sh      # startup_conf, use_binary_api
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/hexarouting /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/prisma-routing /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -341,8 +341,8 @@ exec vat2 -s $2 "\$@"
 EOF
   chmod +x "/usr/local/bin/vppctl-$1" "/usr/local/bin/vat2-$1"
   VPPCTL=/usr/local/bin/vppctl-$1 VAT2=/usr/local/bin/vat2-$1 \
-  HEXA_API_SEGMENT="/dev/shm/$2-global_vm" HEXA_CONFIG="/etc/hexarouting/$1.conf" \
-  python3 /src/src/hexash/hexash.py \
+  PRISMA_API_SEGMENT="/dev/shm/$2-global_vm" PRISMA_CONFIG="/etc/prisma-routing/$1.conf" \
+  python3 /src/src/prismash/prismash.py \
     -c "configure" \
     -c "interface host-$1-in"  -c "vrrp 1 ip $VIP_IN"  -c "vrrp 1 priority $3" -c "exit" \
     -c "interface host-$1-out" -c "vrrp 2 ip $VIP_OUT" -c "vrrp 2 priority $3" -c "exit" \
@@ -352,8 +352,8 @@ EOF
 # two fail differently and a reader needs both. See the paragraph above.
 ask_cgnat_ha() {   # <box> <api prefix> <peer address>
   VPPCTL=/usr/local/bin/vppctl-$1 VAT2=/usr/local/bin/vat2-$1 \
-  HEXA_API_SEGMENT="/dev/shm/$2-global_vm" HEXA_CONFIG="/etc/hexarouting/$1.conf" \
-  python3 /src/src/hexash/hexash.py \
+  PRISMA_API_SEGMENT="/dev/shm/$2-global_vm" PRISMA_CONFIG="/etc/prisma-routing/$1.conf" \
+  python3 /src/src/prismash/prismash.py \
     -c "configure" -c "nat cgnat ha peer $3 priority 200" -c "commit check" \
     -c "commit" 2>&1
 }
@@ -378,8 +378,8 @@ echo "  Refused at the prompt, and the commit behind it refused with it, so"
 echo "  the running configuration never carried it either:"
 ask_cgnat_ha a hxa 200.150.0.12 >/dev/null 2>&1
 VPPCTL=/usr/local/bin/vppctl-a VAT2=/usr/local/bin/vat2-a \
-  HEXA_API_SEGMENT=/dev/shm/hxa-global_vm HEXA_CONFIG=/etc/hexarouting/a.conf \
-  python3 /src/src/hexash/hexash.py -c "show running-config" 2>/dev/null \
+  PRISMA_API_SEGMENT=/dev/shm/hxa-global_vm PRISMA_CONFIG=/etc/prisma-routing/a.conf \
+  python3 /src/src/prismash/prismash.py -c "show running-config" 2>/dev/null \
   | grep -c "ha peer" | sed 's/^/    lines matching "ha peer": /'
 echo
 echo "  the dataplane already ships RFC 5798, and nothing asks it for a router:"

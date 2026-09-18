@@ -2,7 +2,7 @@
  * Binary API of the bpa plugin.
  *
  * It exists because VPP's CLI returns 0 even when the command failed: the text
- * is what says so. hexash detected errors by text pattern, which breaks at the
+ * is what says so. prismash detected errors by text pattern, which breaks at the
  * first reworded message. Here there are real return codes.
  */
 
@@ -70,7 +70,7 @@
  */
 /*
  * 0.11.0 adds bpa_logging_set: the IPFIX export state and its TCP collector,
- * which were the last configuration changes hexash made over the VPP CLI
+ * which were the last configuration changes prismash made over the VPP CLI
  * socket (issue #76). A new message, so no existing layout moves and no
  * client has to be rebuilt for it.
  *
@@ -180,7 +180,7 @@ typedef bpa_timeouts
  * could not say who: bpa_audit.c had no getuid, no SUDO_USER, nothing
  * identifying a person (issue #34).
  *
- * Fields on each message rather than state on the connection, because hexash
+ * Fields on each message rather than state on the connection, because prismash
  * reaches the dataplane through vat2 - one process per call - so there is no
  * connection to attach an identity to. Fixed-size and placed above the
  * variable-length arrays, where this file already says later additions must

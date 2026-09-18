@@ -401,10 +401,10 @@ rm -f "$DS/exec.txt"
 out=$(PATH="$DS/bin:$PATH" sh "$REPO/tools/vty.sh" -c "show version" 2>&1) \
   && rc=0 || rc=$?
 [ "$rc" = 1 ] \
-  && ok "refused with exit 1 when hexa-vpp is not running" \
+  && ok "refused with exit 1 when prisma-vpp is not running" \
   || { bad "tools/vty.sh exited $rc with no container to talk to:"
        printf '%s\n' "$out" | sed 's/^/    /'; }
-printf '%s\n' "$out" | grep -q "container 'hexa-vpp' is not running" \
+printf '%s\n' "$out" | grep -q "container 'prisma-vpp' is not running" \
   && ok "and it names the container it looked for" \
   || { bad "it refused without naming the container:"
        printf '%s\n' "$out" | sed 's/^/    /'; }
@@ -420,7 +420,7 @@ echo
 echo "=== and it does NOT refuse when the container is there ==="
 # The other direction on the same site, because a refusal that fires whatever
 # the machine looks like is a script nobody can use.
-printf 'hexa-vpp\nsome-other-container\n' > "$DS/names.txt"
+printf 'prisma-vpp\nsome-other-container\n' > "$DS/names.txt"
 rm -f "$DS/exec.txt"
 PATH="$DS/bin:$PATH" sh "$REPO/tools/vty.sh" -c "show version" \
   > "$WORK/vty-ok.log" 2>&1 \
@@ -428,7 +428,7 @@ PATH="$DS/bin:$PATH" sh "$REPO/tools/vty.sh" -c "show version" \
   || { bad "tools/vty.sh refused a container that is running:"
        sed 's/^/    /' "$WORK/vty-ok.log"; }
 if [ -f "$DS/exec.txt" ]; then
-  grep -q "hexash.py" "$DS/exec.txt" \
+  grep -q "prismash.py" "$DS/exec.txt" \
     && grep -q -- "-c show version" "$DS/exec.txt" \
     && ok "and it handed the VTY the command: docker exec $(cat "$DS/exec.txt")" \
     || { bad "it ran something other than the VTY with that command:"

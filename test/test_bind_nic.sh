@@ -64,7 +64,7 @@ on_driver() {  # <root> <driver> <addr>
   ln -sf "../../drivers/$2" "$1/sys/bus/pci/devices/$3/driver"
 }
 
-runbind() { OUT=$(HEXA_ROOT="$1" sh "$BIN" 2>&1); RC=$?
+runbind() { OUT=$(PRISMA_ROOT="$1" sh "$BIN" 2>&1); RC=$?
              printf '%s\n' "$OUT" | say_box; }
 
 said() { printf '%s\n' "$OUT" | grep -q "$1"; }
@@ -189,9 +189,9 @@ echo "=== and the way back in /run is not this program's to read ==="
 # holds the absent half and a binder that still read the file would show it
 # on this box by printing the record.
 R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
-mkdir -p "$R/run/hexarouting"
+mkdir -p "$R/run/prisma-routing"
 printf 'eth9 10.95.200.198/24 52:54:00:00:00:01 10.95.200.1\n' \
-  > "$R/run/hexarouting/dataplane-management"
+  > "$R/run/prisma-routing/dataplane-management"
 runbind "$R"
 said "10.95.200.198" \
   && bad "the binder still reads the way back and prints it, which is a \
@@ -238,8 +238,8 @@ on_driver "$R" virtio-pci 0000:03:00.0
 # card. Without that line this case would be a box that had never been told
 # to hand anything over, and the assertion below would pass over a binder that
 # takes whatever tune.env names.
-mkdir -p "$R/etc/hexarouting"
-printf 'HEXA_DATAPLANE_IF=eth9\n' > "$R/etc/hexarouting/tune.env"
+mkdir -p "$R/etc/prisma-routing"
+printf 'PRISMA_DATAPLANE_IF=eth9\n' > "$R/etc/prisma-routing/tune.env"
 TROOT=$(mktemp -d)
 for c in 0 1; do
   mkdir -p "$TROOT/sys/devices/system/cpu/cpu$c/topology"
@@ -259,7 +259,7 @@ echo 0 > "$TROOT/sys/devices/pci0000:00/0000:03:00.0/numa_node"
 echo "MemTotal:       8388608 kB" > "$TROOT/proc/meminfo"
 ln -s "$TROOT/sys/devices/pci0000:00/0000:03:00.0/virtio7" \
       "$TROOT/sys/class/net/eth9/device"
-HEXA_IP=/bin/true python3 "$REPO/appliance/hexarouting-tune" \
+PRISMA_IP=/bin/true python3 "$REPO/appliance/prisma-routing-tune" \
   --sysfs-root "$TROOT" --interface eth9 \
   --vpp-base /nonexistent --config /nonexistent 2>/dev/null \
   | sed -n '/### stanzas appended/,$p' | tail -n +2 \
@@ -477,7 +477,7 @@ echo "=== --which-driver promises what the bind actually writes ==="
 for _shape in iommu noiommu; do
   R=$(mkbox 0000:03:00.0 eth0 "$_shape" vfio-pci uio_pci_generic)
   on_driver "$R" ixgbe 0000:03:00.0
-  _promised=$(HEXA_ROOT="$R" sh "$BIN" --which-driver 2>&1 | awk '{print $1}')
+  _promised=$(PRISMA_ROOT="$R" sh "$BIN" --which-driver 2>&1 | awk '{print $1}')
   runbind "$R"
   _wrote=$(cat "$R/sys/bus/pci/devices/0000:03:00.0/driver_override" \
            2>/dev/null)
@@ -493,7 +493,7 @@ done
 # it does not. Neither sentence had been produced by anything (#364).
 for _shape in iommu noiommu; do
   R=$(mkbox 0000:03:00.0 eth0 "$_shape" vfio-pci uio_pci_generic)
-  _w=$(HEXA_ROOT="$R" sh "$BIN" --which-driver 2>&1)
+  _w=$(PRISMA_ROOT="$R" sh "$BIN" --which-driver 2>&1)
   printf '%s\n' "$_w" | say_box
   case "$_shape:$_w" in
     "iommu:vfio-pci through the IOMMU"*)
@@ -532,7 +532,7 @@ mkfifo "$R/sys/bus/pci/drivers_probe"
 _probe=$!
 # A bound on the wait, because a fifo nobody reads is a suite that hangs
 # rather than one that fails.
-OUT=$(HEXA_ROOT="$R" timeout 20 sh "$BIN" 2>&1); RC=$?
+OUT=$(PRISMA_ROOT="$R" timeout 20 sh "$BIN" 2>&1); RC=$?
 printf '%s\n' "$OUT" | say_box
 wait "$_probe" 2>/dev/null || true
 [ "$RC" = 0 ] && said "is now on vfio-pci" \
@@ -545,7 +545,7 @@ did not: $OUT"
 # And the mode binds nothing: it is called from a VTY that an operator may be
 # typing into while the box is forwarding.
 R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
-HEXA_ROOT="$R" sh "$BIN" --which-driver >/dev/null 2>&1
+PRISMA_ROOT="$R" sh "$BIN" --which-driver >/dev/null 2>&1
 [ -e "$R/sys/bus/pci/devices/0000:03:00.0/driver_override" ] \
   && bad "--which-driver wrote driver_override: it is not supposed to touch \
 the box at all" \
@@ -568,7 +568,7 @@ echo
 echo "=== a card on a DPDK driver is taken off it ==="
 R=$(mkbox 0000:03:00.0 eth9 iommu uio_pci_generic virtio-pci)
 on_driver "$R" uio_pci_generic 0000:03:00.0
-OUT=$(HEXA_ROOT="$R" sh "$GIVE" 2>&1)
+OUT=$(PRISMA_ROOT="$R" sh "$GIVE" 2>&1)
 # THE OVERRIDE FIRST, AND EMPTY. Left set, the unbind hands the device straight
 # back to the same DPDK driver and the command looks like it did nothing.
 if [ -e "$R/$DEVDIR/driver_override" ]; then
@@ -591,7 +591,7 @@ echo "=== a card already on a kernel driver is left alone, and says so ==="
 # This unit fires on a FAILURE, so "the card was not the problem" is a verdict
 # an operator reading the journal needs, not a silence.
 R=$(mkbox 0000:03:00.0 eth9 iommu virtio-pci); on_driver "$R" virtio-pci 0000:03:00.0
-OUT=$(HEXA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
+OUT=$(PRISMA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
 [ "$RC" = 0 ] \
   && ok "exit 0: there is nothing to undo" \
   || bad "it exited $RC on a card the kernel already holds"
@@ -608,7 +608,7 @@ echo
 echo "=== a startup.conf that names no device has nothing to give back ==="
 R=$(mkbox 0000:03:00.0 eth9 iommu virtio-pci)
 printf 'dpdk {\n  no-pci\n}\n' > "$R/etc/vpp/startup.conf"
-OUT=$(HEXA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
+OUT=$(PRISMA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
 [ "$RC" = 0 ] \
   && ok "exit 0 on a box that never took a card" \
   || bad "it exited $RC where no card was ever taken"
@@ -623,7 +623,7 @@ echo "=== a device that ends with NO driver is the loudest failure here ==="
 # reclaim a device - which is exactly the state being asserted: the override
 # cleared, the bus asked, and nothing holding the card.
 R=$(mkbox 0000:03:00.0 eth9 iommu uio_pci_generic virtio-pci)
-OUT=$(HEXA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
+OUT=$(PRISMA_ROOT="$R" sh "$GIVE" 2>&1); RC=$?
 [ "$RC" = 1 ] \
   && ok "exit 1, because a box with no network interface is a failure" \
   || bad "a device left with no driver exited $RC"
@@ -643,14 +643,14 @@ echo "=== the drop-in arms it on the failure, not on every restart ==="
 # reaches `failed`, after the restart limit - the state the reporting box was
 # in: "Failed with result 'start-limit-hit'".
 D=$REPO/appliance/systemd/vpp-give-card-back.conf
-grep -q "^OnFailure=hexarouting-give-card-back.service\$" "$D" \
+grep -q "^OnFailure=prisma-routing-give-card-back.service\$" "$D" \
   && ok "the drop-in names the unit that gives the card back" \
-  || bad "the drop-in does not arm hexarouting-give-card-back.service"
+  || bad "the drop-in does not arm prisma-routing-give-card-back.service"
 grep -q "^\[Unit\]" "$D" \
   && ok "and puts it under [Unit], where systemd reads OnFailure" \
   || bad "OnFailure is not under [Unit], so systemd ignores it"
-U=$REPO/appliance/systemd/hexarouting-give-card-back.service
-grep -q "^ExecStart=/usr/lib/hexarouting/give-the-card-back\$" "$U" \
+U=$REPO/appliance/systemd/prisma-routing-give-card-back.service
+grep -q "^ExecStart=/usr/lib/prisma-routing/give-the-card-back\$" "$U" \
   && ok "and the unit runs the script these cases have been driving" \
   || bad "the unit does not run appliance/give-the-card-back"
 grep -q "give-the-card-back" "$REPO/appliance/install.sh" \
@@ -659,7 +659,7 @@ grep -q "give-the-card-back" "$REPO/appliance/install.sh" \
 appliance has"
 # AND THE BINARY IT CALLS AFTERWARDS IS ON THE IMAGE. The kernel reclaiming
 # the device creates the netdev and puts no address on it; `ifup -a` is what
-# reads /etc/network/interfaces.d/hexarouting, which the installer wrote. A
+# reads /etc/network/interfaces.d/prisma-routing, which the installer wrote. A
 # unit naming a binary the image does not carry would give the card back and
 # leave the box without an address, which is most of the way to the state this
 # is undoing - and it would do it silently, because the call is prefixed `-`.

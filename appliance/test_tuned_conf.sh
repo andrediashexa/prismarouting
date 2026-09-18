@@ -45,10 +45,10 @@ ln -s "$ROOT/sys/devices/pci0000:00/0000:3b:00.0" "$ROOT/sys/class/net/eth0/devi
 # Installs the way the product installs: the plugin has to be on the path VPP
 # scans, otherwise "bpa pool" comes back as "unknown input" and the test blames
 # the startup.conf for a problem that is not its own.
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/prisma-routing
 sh /src/appliance/install.sh >/dev/null 2>&1 || bad "install.sh failed"
-cp /src/appliance/etc/vpp-base.conf /etc/hexarouting/vpp-base.conf
-python3 /src/appliance/hexarouting-tune --sysfs-root "$ROOT" --interface eth0 \
+cp /src/appliance/etc/vpp-base.conf /etc/prisma-routing/vpp-base.conf
+python3 /src/appliance/prisma-routing-tune --sysfs-root "$ROOT" --interface eth0 \
   --subscribers 10000 --write >/dev/null 2>&1 || bad "the tuner exited with an error"
 
 CONF=/etc/vpp/startup.conf

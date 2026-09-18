@@ -1,7 +1,7 @@
 #!/bin/sh
 # The Prisma Routing VTY: one CLI for both routing and CGNAT.
 set -u
-mkdir -p /run/vpp /vpp_plugins /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -9,8 +9,8 @@ cd /src
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
 
-HX="python3 /src/src/hexash/hexash.py"
-export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
+HX="python3 /src/src/prismash/prismash.py"
+export PRISMA_CONFIG=/etc/prisma-routing/prisma-routing.conf
 
 ip link add veth-out type veth peer name veth-vpp 2>/dev/null
 ip link set veth-vpp up
@@ -42,8 +42,8 @@ vppctl set interface state pg0 up
 vppctl set interface ip address pg0 100.64.3.254/22
 
 mkdir -p /var/run/frr /etc/frr
-printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
-printf 'hostname hexarouting\n' > /etc/frr/bgpd.conf
+printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
+printf 'hostname prisma-routing\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
 start_frr bgpd
 
@@ -121,11 +121,11 @@ echo
 echo "=========== write memory e recarga ==========="
 $HX -c "save" 2>&1 | head -2 | sed 's/^/  /'
 echo "  -- file written:"
-cat "$HEXA_CONFIG" | sed 's/^/    /'
+cat "$PRISMA_CONFIG" | sed 's/^/    /'
 echo "  -- deleting the pool from the dataplane and reloading from the file"
 vppctl bpa pool provider-a del
 vppctl show bpa pool | head -1 | sed 's/^/    antes: /'
-$HX --load "$HEXA_CONFIG"
+$HX --load "$PRISMA_CONFIG"
 vppctl show bpa pool | head -2 | sed 's/^/    depois: /'
 
 echo
@@ -147,34 +147,34 @@ echo "=========== roles: what each account may change ==========="
 # The two role groups. install.sh creates them; without them here the VTY
 # would refuse the role - correctly - and this lab would be testing the
 # refusal instead of the grant.
-groupadd -f hexa-admin 2>/dev/null
-groupadd -f hexa-cgnat 2>/dev/null
+groupadd -f prisma-admin 2>/dev/null
+groupadd -f prisma-cgnat 2>/dev/null
 # The login shell the VTY marks its accounts with. install.sh puts it there.
-install -D -m 0755 /src/appliance/hexash-login /usr/bin/hexash-login
+install -D -m 0755 /src/appliance/prismash-login /usr/bin/prismash-login
 # An account that may configure has to be able to write the rollback store and
 # the saved configuration. Both hold the whole configuration, password hashes
 # included, so granting the capability grants sight of them - which is why the
 # directory is group-owned rather than world-anything. Also #76.
 #
-# hexa-cgnat owns it and hexa-admin is ADDITIVE on top: an administrator is a
-# member of both. Owning it with hexa-admin instead would have handed the
+# prisma-cgnat owns it and prisma-admin is ADDITIVE on top: an administrator is a
+# member of both. Owning it with prisma-admin instead would have handed the
 # cgnat operator administrator rights, which is the opposite of the point.
 #
 # 2770 and not 0770, which is also what install.sh states: the group is not
 # enough on its own. Without setgid a revision root writes at boot is group
 # root, and the operator who comes next cannot read the thing it is supposed to
 # be able to roll back to.
-chgrp -R hexa-cgnat /etc/hexarouting 2>/dev/null
-chmod 2770 /etc/hexarouting 2>/dev/null
-mkdir -p /etc/hexarouting/rollback
-chgrp hexa-cgnat /etc/hexarouting/rollback 2>/dev/null
-chmod 2770 /etc/hexarouting/rollback 2>/dev/null
-# 0660 and group hexa-cgnat, which is what appliance/install.sh installs. It
+chgrp -R prisma-cgnat /etc/prisma-routing 2>/dev/null
+chmod 2770 /etc/prisma-routing 2>/dev/null
+mkdir -p /etc/prisma-routing/rollback
+chgrp prisma-cgnat /etc/prisma-routing/rollback 2>/dev/null
+chmod 2770 /etc/prisma-routing/rollback 2>/dev/null
+# 0660 and group prisma-cgnat, which is what appliance/install.sh installs. It
 # used to be 0644 here: world-readable, which no appliance ships, and which
 # handed the read-only account a copy of every password hash on the box the
 # product deliberately does not give it.
-chgrp hexa-cgnat /etc/hexarouting/hexarouting.conf 2>/dev/null
-chmod 0660 /etc/hexarouting/hexarouting.conf 2>/dev/null
+chgrp prisma-cgnat /etc/prisma-routing/prisma-routing.conf 2>/dev/null
+chmod 0660 /etc/prisma-routing/prisma-routing.conf 2>/dev/null
 # And the one file in /etc/frr an administrator has to be able to write, which
 # install.sh also states. Applying a routing change ends with frr-reload asking
 # vtysh to persist the result, and the frr package ships that file 0640
@@ -195,10 +195,10 @@ MAKE=$($HX -c "configure" \
 printf '%s\n' "$MAKE" | sed 's/^/    /'
 # The modes after a commit run by ROOT, which is the case that made every later
 # one fail: the VTY chmod'd 0700/0600 on every save and every commit, so the
-# first one on the box - hexarouting.service applying the configuration at boot
+# first one on the box - prisma-routing.service applying the configuration at boot
 # - took the group's access away (#188). They are stated by appliance/install.sh
 # and by nothing else, so they must be exactly what was set above.
-MODE_AFTER_ROOT="$(stat -c %a /etc/hexarouting) $(stat -c %a /etc/hexarouting/rollback)"
+MODE_AFTER_ROOT="$(stat -c %a /etc/prisma-routing) $(stat -c %a /etc/prisma-routing/rollback)"
 echo "    modes after root's commit: $MODE_AFTER_ROOT"
 # The memberships as the SYSTEM reports them, not as the VTY believes them.
 # The whole defect was a VTY whose belief and the box's answer never met.
@@ -223,12 +223,12 @@ echo "    running-config: $ROLES_BACK"
 # API client puts /dev/shm/global_vm back to root:root, so every non-root
 # client that follows one crashes in svm_region_map. Doing it here is what
 # makes the accounts below usable; it is also a defect of its own, since on an
-# installed box hexarouting.service applies the configuration as root at every
+# installed box prisma-routing.service applies the configuration as root at every
 # boot and leaves the region that way.
 chgrp vpp /dev/shm/global_vm 2>/dev/null
 chmod 0660 /dev/shm/global_vm 2>/dev/null
 
-as() { u=$1; shift; su -s /bin/sh -c "HEXA_CONFIG=$HEXA_CONFIG python3 /src/src/hexash/hexash.py $*" "$u" 2>&1; }
+as() { u=$1; shift; su -s /bin/sh -c "PRISMA_CONFIG=$PRISMA_CONFIG python3 /src/src/prismash/prismash.py $*" "$u" 2>&1; }
 
 echo "  -- read-only account tries to configure"
 RO_CONF=$(as ro -c "'configure'")
@@ -252,16 +252,16 @@ echo "  -- and the rollback revision that commit has to record"
 # went unnoticed until #188 was filed.
 CG_RB=$(as cg -c "'show rollback'")
 printf '%s\n' "$CG_RB" | head -2 | sed 's/^/    /'
-RB_OWNER=$(stat -c %U /etc/hexarouting/rollback/0.conf 2>/dev/null || echo none)
-RB_GROUP=$(stat -c %G /etc/hexarouting/rollback/0.conf 2>/dev/null || echo none)
+RB_OWNER=$(stat -c %U /etc/prisma-routing/rollback/0.conf 2>/dev/null || echo none)
+RB_GROUP=$(stat -c %G /etc/prisma-routing/rollback/0.conf 2>/dev/null || echo none)
 echo "    revision 0 belongs to: $RB_OWNER:$RB_GROUP"
 echo "  -- and the operator saves the running configuration"
 CG_SAVE=$(as cg -c "'save'")
 printf '%s\n' "$CG_SAVE" | sed 's/^/    /'
-MODE_DIR=$(stat -c %a /etc/hexarouting)
-MODE_RB=$(stat -c %a /etc/hexarouting/rollback)
-MODE_CONF=$(stat -c %a /etc/hexarouting/hexarouting.conf)
-GROUP_CONF=$(stat -c %G /etc/hexarouting/hexarouting.conf)
+MODE_DIR=$(stat -c %a /etc/prisma-routing)
+MODE_RB=$(stat -c %a /etc/prisma-routing/rollback)
+MODE_CONF=$(stat -c %a /etc/prisma-routing/prisma-routing.conf)
+GROUP_CONF=$(stat -c %G /etc/prisma-routing/prisma-routing.conf)
 SAVE_STATE="$(printf '%s' "$CG_SAVE" | grep -c 'configuration saved') \
 $MODE_DIR $MODE_RB $MODE_CONF $GROUP_CONF"
 SAVE_STATE=$(printf '%s' "$SAVE_STATE" | tr -s ' \n' ' ')
@@ -292,7 +292,7 @@ printf '%s\n' "$NETADM_ROUTE" | sed 's/^/    /'
 # an account that is not root.
 NETADM_IN_FRR=$(vtysh -c "show run" 2>/dev/null | grep -c "NETADM-WAS-HERE")
 echo "    statements FRR holds with that description: $NETADM_IN_FRR"
-echo "  -- and applies a CGNAT change, because hexa-admin carries that too"
+echo "  -- and applies a CGNAT change, because prisma-admin carries that too"
 NETADM_POOL=$(as netadm -c "'configure'" -c "'cgnat pool provider-a'" \
   -c "'alg ftp off'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$NETADM_POOL" | sed 's/^/    /'
@@ -320,10 +320,10 @@ IFACE_LIST=$(vppctl show interface | awk 'NR>1 && $1 !~ /^ / {print $1}' | tr '\
 echo "  the dataplane has: $IFACE_LIST"
 COMP=$(python3 - <<'PYEOF'
 import sys
-sys.path.insert(0, "/src/src/hexash")
-import hexash
-sh = hexash.Shell()
-sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+sys.path.insert(0, "/src/src/prismash")
+import prismash
+sh = prismash.Shell()
+sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
 sh.feed("configure")
 opts, hint, _ = sh._options("interface ", False)
 print("INTERFACES:", " ".join(sorted(opts)))
@@ -500,7 +500,7 @@ echo "=========== every configuration change goes over the binary API (#76) ====
 # the VTY that statement, so what is asserted here is now that both halves go
 # over the API and both read back. The refusal itself did not go away and is
 # asserted where it belongs, by lab/ipfix.sh, on a box with no exporter.
-API_TRACE=$(HEXA_TRACE=1 $HX -c "configure" \
+API_TRACE=$(PRISMA_TRACE=1 $HX -c "configure" \
     -c "cgnat pool provider-a" \
     -c "max-sessions 2000" \
     -c "bypass destination 198.51.100.0/24" \
@@ -595,7 +595,7 @@ expect_in "an administrator APPLIES the routing change the operator was refused"
 # read-only to group frr, so this account could validate and not commit (#186).
 expect "and FRR holds what that account sent it" \
   test "${NETADM_IN_FRR:-0}" -ge 1
-expect_in "and applies a CGNAT change, since hexa-admin carries that too" \
+expect_in "and applies a CGNAT change, since prisma-admin carries that too" \
   "commit complete" "$NETADM_POOL"
 expect "and that change reached the dataplane" test "${NETADM_REACHED:-0}" -ge 1
 
@@ -604,13 +604,13 @@ expect "and that change reached the dataplane" test "${NETADM_REACHED:-0}" -ge 1
 # Nothing above ran usermod. Every membership asserted here was written by
 # `commit`, which is the whole difference between a role an operator is given
 # and a role a lab hands out on the product's behalf.
-expect_in "the VTY says it granted the role group" "added to group hexa-admin" \
+expect_in "the VTY says it granted the role group" "added to group prisma-admin" \
   "$MAKE"
-expect_in "an administrator is put in hexa-admin" " hexa-admin " "$NETADM_GROUPS"
-expect_in "and in hexa-cgnat with it, which owns the configuration directory" \
-  " hexa-cgnat " "$NETADM_GROUPS"
-expect_in "a cgnat operator is put in hexa-cgnat" " hexa-cgnat " "$CG_GROUPS"
-expect_not_in "and NOT in hexa-admin" " hexa-admin " "$CG_GROUPS"
+expect_in "an administrator is put in prisma-admin" " prisma-admin " "$NETADM_GROUPS"
+expect_in "and in prisma-cgnat with it, which owns the configuration directory" \
+  " prisma-cgnat " "$NETADM_GROUPS"
+expect_in "a cgnat operator is put in prisma-cgnat" " prisma-cgnat " "$CG_GROUPS"
+expect_not_in "and NOT in prisma-admin" " prisma-admin " "$CG_GROUPS"
 # The reach every role needs before authorization is even the question: VPP's
 # sockets are group vpp and /etc/frr is group frr, so an account outside them
 # is refused by the SOCKET on every command - including the read-only ones.
@@ -651,7 +651,7 @@ expect "which that account wrote itself" test "${RB_OWNER:-none}" = cg
 # setgid on the directory, or a revision root writes at boot is group root and
 # the next operator cannot read it.
 expect "and which carries the role group, whoever wrote it" \
-  test "${RB_GROUP:-none}" = hexa-cgnat
+  test "${RB_GROUP:-none}" = prisma-cgnat
 # The modes, against what install.sh states - 2770 on the directories, 0660 on
 # the file - at the two moments that broke them.
 expect "root's own commit left the configuration directory as installed" \
@@ -660,12 +660,12 @@ expect "root's own commit left the configuration directory as installed" \
 # wrong reason: a save that is refused cannot narrow anything, so a mode read
 # after a failed save says only that nothing happened.
 expect "and a non-root save succeeds and leaves every one of them alone" \
-  test "${SAVE_STATE:-}" = "1 2770 2770 660 hexa-cgnat"
+  test "${SAVE_STATE:-}" = "1 2770 2770 660 prisma-cgnat"
 # The constraint none of the above may buy: this file holds the password hash
 # of every account on the box, so widening it to everybody would answer the
 # group problem by handing out an offline cracking target.
 expect "and never readable by everybody: it holds every password hash" \
-  sh -c "[ \"\$(stat -c %a /etc/hexarouting/hexarouting.conf | tail -c 2)\" = 0 ]"
+  sh -c "[ \"\$(stat -c %a /etc/prisma-routing/prisma-routing.conf | tail -c 2)\" = 0 ]"
 
 # --- an account with no role can do nothing ---
 #
@@ -674,15 +674,15 @@ expect "and never readable by everybody: it holds every password hash" \
 # cannot reach a shell. What is left is that being given nothing is a real
 # state and not an accident of the groups.
 expect_not_in "an account with no role is in neither role group" \
-  " hexa-admin " "$RO_GROUPS"
-expect_not_in "  nor the other" " hexa-cgnat " "$RO_GROUPS"
+  " prisma-admin " "$RO_GROUPS"
+expect_not_in "  nor the other" " prisma-cgnat " "$RO_GROUPS"
 
 # --- a demotion is one ---
 expect_in "'no role' says it took the membership away" \
-  "removed from group hexa-admin" "$DEMOTE"
+  "removed from group prisma-admin" "$DEMOTE"
 expect_not_in "and the box no longer has the account in it" \
-  " hexa-admin " "$NETADM_GROUPS_AFTER"
-expect_not_in "nor in hexa-cgnat" " hexa-cgnat " "$NETADM_GROUPS_AFTER"
+  " prisma-admin " "$NETADM_GROUPS_AFTER"
+expect_not_in "nor in prisma-cgnat" " prisma-cgnat " "$NETADM_GROUPS_AFTER"
 expect_in "the demoted administrator is refused where it was allowed" \
   "permission denied" "$NETADM_AFTER"
 # But not stripped of everything: a demotion makes an account read-only, and a
@@ -1046,7 +1046,7 @@ echo "=========== a file written before the hierarchies moved (#193) ===========
 # The migration property, on a real box rather than on a parser. CGNAT is under
 # `nat` now and static routes under `router`; every box already in service has
 # a saved configuration and up to twenty rollback revisions written the OLD
-# way, and hexarouting.service replays that file at every boot on a machine
+# way, and prisma-routing.service replays that file at every boot on a machine
 # nobody is watching. A grammar that cannot read the box's own file leaves the
 # box unconfigured, and nothing would say so until somebody noticed the traffic.
 vppctl bpa pool provider-a del 2>/dev/null
@@ -1068,10 +1068,10 @@ OLD_ROUTE=$(vtysh -c "show running-config" 2>/dev/null | grep -c "ip route 198.5
 echo "  after loading the old format: pool rows $OLD_POOL, route lines $OLD_ROUTE"
 # And what the box writes back is the NEW hierarchy, which must itself load.
 $HX -c "save" >/dev/null 2>&1
-NEW_TEXT=$(cat "$HEXA_CONFIG")
+NEW_TEXT=$(cat "$PRISMA_CONFIG")
 printf '%s\n' "$NEW_TEXT" | grep -E "^nat |^router static|^ route " | sed 's/^/    /'
 vppctl bpa pool provider-a del 2>/dev/null
-$HX --load "$HEXA_CONFIG" 2>&1 | sed 's/^/  /'
+$HX --load "$PRISMA_CONFIG" 2>&1 | sed 's/^/  /'
 ROUND=$(vppctl show bpa pool | grep -c provider-a)
 echo "  after loading what the box itself wrote: pool rows $ROUND"
 

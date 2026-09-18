@@ -6,12 +6,12 @@
 # model is the executable specification and it does not share the plugin's
 # arithmetic.
 #
-# Every command here is run through hexash rather than vppctl. An operator who
+# Every command here is run through prismash rather than vppctl. An operator who
 # has to drop to the dataplane CLI to troubleshoot is one for whom this VTY is
 # decoration.
 set -u
 . /src/lab/verdict.sh
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -19,7 +19,7 @@ cd /src
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
 
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 SUB=100.64.0.5
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done

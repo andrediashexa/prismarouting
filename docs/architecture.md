@@ -68,7 +68,7 @@ checked against it on every build.
 | D4 | Worker sharding | VPP handoff, keyed on subscriber index | Guarantees both directions land on the same worker |
 | D5 | Pool addressing | Sets of non-contiguous prefixes | Real provider IPv4 is fragmented; a single aligned prefix would rule out most deployments |
 | D6 | Control plane | FRR over `linux_cp`/`linux_nl` | Both plugins ship with VPP 26.06; FRR needs no modification |
-| D7 | Configuration | Single VTY (`hexash`) | Operators expect `configure terminal` and `write memory` covering routing and CGNAT together |
+| D7 | Configuration | Single VTY (`prismash`) | Operators expect `configure terminal` and `write memory` covering routing and CGNAT together |
 
 ## The mapping
 
@@ -382,7 +382,7 @@ Refused at `commit`, wherever the candidate came from - typed at the prompt,
 built by a `-c` batch, or loaded by `rollback`, which loads a revision and
 applies nothing, so it is the commit after it that refuses - and dropped at
 boot. A file saved before the refusal existed can carry the pair, on a box that
-ran on that file yesterday, and `hexash --load` takes the stride off that pool
+ran on that file yesterday, and `prismash --load` takes the stride off that pool
 rather than refusing the file: the pool never read it, so the file minus the
 line is the configuration the box was running, and a refusal would have been a
 box coming up with no pools on it, read by nobody, to enforce a property about
@@ -1167,7 +1167,7 @@ word — `tcp-mss      auto -> 1460` — for the same reason.
   box.
 
 Turning the clamp on with `bpa tcp-mss` changes it **in place** and keeps every
-session, and so does a commit: `hexash` compares only the mapping half of a
+session, and so does a commit: `prismash` compares only the mapping half of a
 pool's text (`Pool.lines(in_place=False)`), so a clamp change leaves as
 `bpa_pool_settings_set` and the pool is not rebuilt
 ([#69](https://github.com/andrediashexa/hexarouting/issues/69), asserted on a
@@ -2151,12 +2151,12 @@ out: with the right address and the wrong session.
 - [x] FTP, RTSP and PPTP/GRE ALGs, switchable per pool ([#42](https://github.com/andrediashexa/hexarouting/issues/42), [#43](https://github.com/andrediashexa/hexarouting/issues/43), [#44](https://github.com/andrediashexa/hexarouting/issues/44))
 - [x] IPFIX export over UDP and TCP ([logging.md](logging.md))
 - [x] Dated configuration trail
-- [x] Single VTY (`hexash`) with completion and contextual help
+- [x] Single VTY (`prismash`) with completion and contextual help
 - [x] Binary API with real return codes
 - [x] Appliance: boot tuning, systemd units, ISO ([appliance.md](appliance.md))
 - [x] The ISO is an installation medium: no credentials, guided `install` ([#52](https://github.com/andrediashexa/hexarouting/issues/52))
 - [ ] **HA / failover** — analysed in [ha.md](ha.md), not implemented
-- [ ] Migrate `hexash` from the CLI to the binary API
+- [ ] Migrate `prismash` from the CLI to the binary API
 
 What is still missing, and why each item matters, is in
 [roadmap.md](roadmap.md) — including the items that turn out to be already

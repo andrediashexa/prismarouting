@@ -89,91 +89,59 @@ version has a chance of seeing it.
   neither number ever goes up.
 ### Changed
 
-* **The product is called Prisma Routing**
-  ([#202](https://github.com/andrediashexa/hexarouting/issues/202)). Two
-  words. Where a name has to be one token it is `prismarouting` (nothing on
-  a disk takes it yet), in a filename `prisma-routing`, and at the prompt
-  `prisma` - the one word an operator types beside all day, kept short for
-  that reason. This release renames what a person reads and
-  nothing a box has on its disk, so a box in service takes it as an ordinary
-  upgrade with nothing to migrate and nothing to rename back if the name has
-  to change again.
+* **The product is called Prisma Routing, and this is a CLEAN BREAK for a box
+  in service** ([#202](https://github.com/andrediashexa/hexarouting/issues/202)).
+  Two words for a person to read, `prisma-routing` where a machine reads it -
+  paths, unit names, the group prefix - and `prisma` at the prompt, the one
+  word an operator types beside all day.
 
-  **What changes on an upgraded box, at the next login and the next boot:**
+  **A BOX RUNNING HexaRouting DOES NOT UPGRADE INTO THIS. Nothing migrates,
+  and that is a decision rather than an omission.** Everything an installed
+  box holds carries the old name, and the new names are laid down beside
+  nothing: the upgrade artifact refuses such a box outright, before it writes
+  anything, and says what the route is instead. That route is a reinstall from
+  the medium, which erases the disk.
 
-  * the login banner: the brand kit's terminal signature, 42 columns at its
-    widest, in place of the old lettering;
-  * the VTY prompt: `prisma> ` and `prisma# [edit] ` in place
-    of `hexarouting> ` and `hexarouting# [edit] `. The prompt was the product
-    name written into the VTY and never the box's hostname, which is why it
-    moves and the hostname does not;
-  * `show version`: its first line reads `Prisma Routing <version> (<commit>)`,
-    and the paragraph under `plugin:` on a box between an upgrade and its
-    reboot says "not the Prisma Routing build above";
-  * the boot self-test: its header reads `Prisma Routing: boot self-test`,
-    its first row `[ ok ] Prisma Routing <version>`, and its last line is one
-    of `Prisma Routing ready.`, `Prisma Routing ready, with N warning(s)
-    above.` and `Prisma Routing is installed and healthy, and has no interface
-    to forward on:`. Anything of yours that reads that console for
-    `HexaRouting ready` has to be re-pointed. The sentences live in
-    `tools/selftest-verdict.sh`, and every reader in this repository takes
-    them from there;
-  * the installer's screens, the medium's boot menu, the descriptions
-    `systemctl` shows beside the unit names, and the medium's hint
-    `Type 'install' to install Prisma Routing onto a disk.`;
-  * the medium is `prisma-routing-<version>.iso` and the upgrade artifact
-    `prisma-routing-<version>-upgrade.tar.gz`, from
-    `tools/version-stamp.sh --filename`, the one place that name is computed,
-    and the medium's volume label, what `lsblk`, `blkid` and a file manager
-    show for the stick it is written to, is `PRISMA_ROUTING` (ISO 9660
-    spells a label in `A-Z`, `0-9` and `_`). Releases before this one keep
-    the files they were published with;
-  * the comment at the top of a freshly installed configuration file reads
-    `! Prisma Routing`. A box that already has a configuration keeps its
-    file byte for byte.
+  | on a box in service | on a box installed from this medium |
+  |---|---|
+  | `/etc/hexarouting/hexarouting.conf`, the saved configuration | `/etc/prisma-routing/prisma-routing.conf` |
+  | `/etc/hexarouting/rollback/` | `/etc/prisma-routing/rollback/` |
+  | `hexarouting.service` and every other unit | `prisma-routing.service`, and the rest by the same rule |
+  | `hexash`, the login shell in `/etc/passwd` | `prismash` |
+  | `hexa-admin`, `hexa-cgnat` | `prisma-admin`, `prisma-cgnat` |
+  | `HEXA_*` in `tune.env` | `PRISMA_*` |
+  | `hexarouting.*` kernel command-line keys | `prisma-routing.*` |
+  | `/var/log/hexarouting`, a separate filesystem | `/var/log/prisma-routing` |
 
-  **What does NOT change, deliberately, and why:**
+  **What an operator has to do before reinstalling**, and the wiki page
+  *Levar a caixa para uma versao nova* carries it step by step: take the
+  configuration off the box, because the statements are the same statements
+  and the new VTY reads them back; write down who has an account and in which
+  role, because an account created by the old version has a login shell that
+  no longer exists and the list survives nowhere else; and keep the records
+  volume out of the install, then mount it at `/var/log/prisma-routing` and
+  write that into `fstab`. The connection record the Marco Civil requires for
+  a year is not erased by the reinstall and its files do not change format -
+  what changes is the path the box looks for it under, and moving a mountpoint
+  under a retention obligation is a procedure somebody performs rather than
+  something a package does while nobody is watching.
 
-  * `/usr/bin/hexash` and the word `hexash`: it is the login shell recorded
-    in `/etc/passwd` for every account the VTY created, and an account whose
-    shell does not exist cannot log in;
-  * `/etc/hexarouting/` with the saved configuration and the rollback store,
-    `/usr/lib/hexarouting`, `/usr/sbin/hexarouting-install` and
-    `/usr/share/hexarouting/VERSION`: an upgrade must still find them;
-  * `/var/log/hexarouting`: a mountpoint in `fstab` under a retention
-    obligation, the connection records the Marco Civil requires for a year.
-    Moving it is a data migration and not a rename;
-  * every systemd unit name, `hexarouting.service`,
-    `hexarouting-tune.service`, `hexarouting-selftest.service` and the rest,
-    the `vpp.service` drop-ins, and therefore `journalctl -u hexarouting`;
-  * the role groups `hexa-admin` and `hexa-cgnat`: membership is by GID, and
-    a group recreated under a new name silently takes every operator's role
-    away, on a box where the only account left with rights is `root` over the
-    console;
-  * the `HEXA_*` environment the VTY, the tuner and the labs read, and the
-    `hexarouting.*` kernel command-line keys the installer answers to, which
-    a PXE server or a prepared medium already carries;
-  * the default hostname `hexarouting`, the filesystem labels and the EFI
-    boot entry, which are on the disk of every box installed so far;
-  * the repository, its remote, every issue link and the wiki's address.
+  **What a person reads**, on the box this medium installs: the login banner,
+  the prompt (`prisma> ` and `prisma# [edit] `), `show version`, the boot
+  self-test's header and its four verdict sentences (`Prisma Routing ready.`
+  and the rest, in `tools/selftest-verdict.sh`, which every reader in this
+  repository takes them from - anything of yours grepping a console for
+  `HexaRouting ready` has to be re-pointed), the installer's screens, the
+  medium's boot menu and its `PRISMA_ROUTING` volume label, the unit
+  descriptions `systemctl` shows, and the medium and artifact filenames
+  `prisma-routing-<version>.iso` and
+  `prisma-routing-<version>-upgrade.tar.gz`. Releases published before this
+  one keep the files and the names they shipped with.
 
-  The roadmap's Phase 8 recommends renaming the groups by `groupmod -n` and
-  the paths behind a migration. Both are deferred rather than rejected, so
-  that this release is the reversible one: an upgraded box that turns out to
-  need the old name back has lost nothing but a banner. Every occurrence was
-  classified before it was edited and none was swept: of the 1,907 lines
-  carrying `hexarouting`, 153 were the prompt, 27 the medium's or the
-  artifact's filename, 1 a prose line and 1,726 a path, a unit, a key or a
-  hostname that stays, with a comment at each definition site saying why.
-  One line escaped that count because it is spelt in capitals and the count
-  was not: the medium's volume label, `HEXAROUTING` until the review of this
-  entry found it. Counted case-insensitively the name was on 2,085 lines,
-  and the roadmap's Phase 8 record carries the corrected classification and
-  the two checks that review found could not go red. The wiki mirror
-  under `wiki/` carries the new name and the new prompt on the 17 pages that
-  quoted them; it is published at release, and the page whose title carries
-  the name has to be renamed in the wiki first, because the push refuses a
-  heading that is not the live document's title.
+  **What does not change**: the repository and every issue URL already written
+  down, so the record this project keeps goes on resolving; and `Hexanetworks`,
+  which is the company and not the product.
+
 ### Fixed
 
 ## 0.78.0 - the box can reach out, and a new box is configured at its console

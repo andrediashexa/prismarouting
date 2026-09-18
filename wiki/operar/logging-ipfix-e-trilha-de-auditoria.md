@@ -198,7 +198,7 @@ As liberações são escritas no instante da parada, mas o coletor pode não est
 * um coletor lento, ou que parou de ler sem fechar a conexão;
 * uma caixa com **muitos blocos segurados**. A parada escreve uma liberação por bloco, de uma só vez, e isso é mais do que cabe no socket em uma passada.
 
-Nos dois casos os bytes que sobraram **não são perdidos**: vão para um arquivo no disco da própria caixa, `/var/log/hexarouting/ipfix-spill.bin`, e voltam na próxima conexão com o coletor, na ordem em que foram escritos. É o mesmo arquivo que cobre um coletor fora do ar.
+Nos dois casos os bytes que sobraram **não são perdidos**: vão para um arquivo no disco da própria caixa, `/var/log/prisma-routing/ipfix-spill.bin`, e voltam na próxima conexão com o coletor, na ordem em que foram escritos. É o mesmo arquivo que cobre um coletor fora do ar.
 
 O que isso muda para quem opera:
 

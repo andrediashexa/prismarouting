@@ -1,7 +1,7 @@
 # Tarefa: documentar todas as features do Prisma Routing na wiki
 
 Você vai escrever documentação de uso na wiki pública do Prisma Routing. O
-repositório está em `/home/hexanetworks/hexarouting` (branch `master`).
+repositório está em `/home/hexanetworks/prisma-routing` (branch `master`).
 
 ## Leia isto primeiro, nesta ordem
 
@@ -51,7 +51,7 @@ Operar                Receitas do dia a dia · Operação e diagnóstico ·
                       porta · uRPF e origens forjadas · Ampliar capacidade sem
                       derrubar assinantes · Monitoramento e SNMP · Logging
                       IPFIX e trilha de auditoria
-Referência            VTY hexash — guia de uso (+ 5 subpáginas: Comandos show,
+Referência            VTY prismash — guia de uso (+ 5 subpáginas: Comandos show,
                       Configuração de CGNAT, Configuração de pool, commit
                       rollback e save, Roteamento SSH usuários e SNMP) ·
                       Multi-tenant com VRF · Timeouts e os pisos das RFCs

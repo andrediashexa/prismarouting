@@ -348,7 +348,7 @@ void bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p);
 /*
  * The stride warning WITHOUT the log record: the rows an operator reads, for a
  * caller that is answering somebody who is looking rather than reporting an
- * event. `show bpa pool` is one - it is the readback hexash relays to an
+ * event. `show bpa pool` is one - it is the readback prismash relays to an
  * operator who applied the pool over the API - and so is `bpa pool ... check`,
  * which creates nothing to write a record about. The record for a stride that
  * IS applied is written once, by bpa_pool_add() or bpa_pool_settings_set().
@@ -358,7 +358,7 @@ void bpa_reserve_warn (vlib_main_t *vm, const bpa_pool_t *p);
 /*
  * The reserve warning WITHOUT the log record: the rows an operator reads, for
  * a caller that is answering somebody who is looking rather than reporting an
- * event. `show bpa pool` is one - it is the readback hexash relays to an
+ * event. `show bpa pool` is one - it is the readback prismash relays to an
  * operator who applied the pool over the API - and so is `bpa pool ... check`,
  * which creates nothing to write a record about. The record for a pool that
  * IS created is written once, by bpa_pool_add().
@@ -512,7 +512,7 @@ bpa_proto_of (u8 ip_proto)
  * an index into the next-node list of the node that consumes it - the handoff
  * node - and this node then applied that index to its own list, whose only
  * member was error-drop. Every packet was translated, counted as translated,
- * and blackholed. `hexarouting-tune` configures workers on every appliance, so
+ * and blackholed. `prisma-routing-tune` configures workers on every appliance, so
  * that was the shipped configuration; no lab asserted that a packet LEAVES a
  * box that has them, which is why it survived (#199).
  *

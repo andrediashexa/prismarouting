@@ -2,7 +2,7 @@
 # appliance/apply-tuning, driven against fake boxes.
 #
 # This script is what the appliance runs before VPP on every boot: it reads
-# /etc/hexarouting/tune.env, turns it into arguments for hexarouting-tune,
+# /etc/prisma-routing/tune.env, turns it into arguments for prisma-routing-tune,
 # sets the cpufreq governor, binds the dataplane NIC and regenerates GRUB.
 # Nothing ran it. test/test_kernel_tuning.py reads it as TEXT, looking for
 # candidate knobs that must not be set, and appliance/test_tune.py tests the
@@ -11,13 +11,13 @@
 #
 # What that hid, both measured before this suite existed:
 #
-#   HEXA_LOW_LATENCY=true produced "--no-low-latency". Any value that was not
+#   PRISMA_LOW_LATENCY=true produced "--no-low-latency". Any value that was not
 #   exactly 1 took the "not 1" branch, so a typo meaning YES stripped the
 #   C-state and transparent-hugepage parameters off the kernel command line
 #   and left the governor alone - the opposite of what the operator wrote -
-#   while the journal said "HEXA_LOW_LATENCY=0", naming a value nobody typed.
+#   while the journal said "PRISMA_LOW_LATENCY=0", naming a value nobody typed.
 #
-#   HEXA_SUBSCRIBERS=200k failed the whole unit. The tuner's argument parser
+#   PRISMA_SUBSCRIBERS=200k failed the whole unit. The tuner's argument parser
 #   refused it with a usage dump that names neither the variable nor the file,
 #   this script exited 1, and no tuning was written at all: the kernel command
 #   line stayed at whatever the previous boot wrote, disagreeing with the
@@ -50,12 +50,12 @@ say_init "$BIN"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# The stubs. hexarouting-tune records its arguments and writes the GRUB file
+# The stubs. prisma-routing-tune records its arguments and writes the GRUB file
 # this script compares before and after, which is how "only regenerate on a
 # change" is exercised at all.
 STUB=$WORK/bin
 mkdir -p "$STUB"
-cat > "$STUB/hexarouting-tune" <<'EOF'
+cat > "$STUB/prisma-routing-tune" <<'EOF'
 #!/bin/sh
 echo "tune" >> "$REC/order"
 echo "$*" > "$REC/argv"
@@ -63,17 +63,17 @@ echo "$*" > "$REC/argv"
                                   exit "$STUB_TUNE_RC"; }
 mkdir -p "$REC/root/etc/default/grub.d"
 printf '%s\n' "${STUB_GRUB:-GRUB_CMDLINE_LINUX_DEFAULT=\"x\"}" \
-  > "$REC/root/etc/default/grub.d/hexarouting.cfg"
+  > "$REC/root/etc/default/grub.d/prisma-routing.cfg"
 echo "# a line the script forwards to the journal"
 EOF
 cat > "$STUB/update-grub" <<'EOF'
 #!/bin/sh
 echo "update-grub" >> "$REC/order"
 EOF
-# Without a stub, "command -v hexarouting-bind-nic" would find whatever is
+# Without a stub, "command -v prisma-routing-bind-nic" would find whatever is
 # installed on the machine running the tests, and an appliance running its own
 # suite would bind a real NIC.
-cat > "$STUB/hexarouting-bind-nic" <<'EOF'
+cat > "$STUB/prisma-routing-bind-nic" <<'EOF'
 #!/bin/sh
 echo "bind" >> "$REC/order"
 exit "${STUB_BIND_RC:-0}"
@@ -102,7 +102,7 @@ mkbox() {  # [governor] [available governors]
   n=$((n + 1))
   REC=$WORK/box$n
   R=$REC/root
-  mkdir -p "$R/proc" "$R/etc/default/grub.d" "$R/etc/hexarouting" \
+  mkdir -p "$R/proc" "$R/etc/default/grub.d" "$R/etc/prisma-routing" \
            "$R/sys/kernel/mm/hugepages/hugepages-1048576kB"
   echo "BOOT_IMAGE=/vmlinuz ro quiet" > "$R/proc/cmdline"
   echo 0 > "$R/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages"
@@ -117,7 +117,7 @@ mkbox() {  # [governor] [available governors]
 }
 
 run() {  # VAR=value ... ; the box must already exist
-  OUT=$(env PATH="$STUB:$PATH" REC="$REC" HEXA_ROOT="$R" "$@" sh "$BIN" 2>&1)
+  OUT=$(env PATH="$STUB:$PATH" REC="$REC" PRISMA_ROOT="$R" "$@" sh "$BIN" 2>&1)
   RC=$?
   printf '%s\n' "$OUT" | say_box
 }
@@ -131,43 +131,43 @@ echo "=== the tuner is run at all, and the suite can tell when it is not ==="
 # First, because everything below reads $REC/argv: a stub that never ran
 # leaves it empty, and an empty file must not read as agreement with anything.
 mkbox
-run HEXA_LOW_LATENCY=1
+run PRISMA_LOW_LATENCY=1
 if [ -s "$REC/argv" ]; then
-  ok "apply-tuning invoked hexarouting-tune: $(argv)"
+  ok "apply-tuning invoked prisma-routing-tune: $(argv)"
 else
-  bad "hexarouting-tune was never invoked, so every argument check below is" \
+  bad "prisma-routing-tune was never invoked, so every argument check below is" \
       "comparing an empty file against an expectation and finding nothing" \
       "wrong. Output was: $OUT"
 fi
 
 echo
-echo "=== HEXA_LOW_LATENCY, the switch the document promises ==="
-# docs/appliance.md: "HEXA_LOW_LATENCY=0 in /etc/hexarouting/tune.env drops
+echo "=== PRISMA_LOW_LATENCY, the switch the document promises ==="
+# docs/appliance.md: "PRISMA_LOW_LATENCY=0 in /etc/prisma-routing/tune.env drops
 # the C-state and THP parameters from the kernel command line and leaves the
 # governor alone". test_kernel_tuning.py asserts --no-low-latency does that to
 # the line. Nothing asserted that the operator's 0 becomes that flag.
 mkbox powersave
-run HEXA_LOW_LATENCY=1
+run PRISMA_LOW_LATENCY=1
 case "$(argv)" in
-  *--no-low-latency*) bad "HEXA_LOW_LATENCY=1 passed --no-low-latency: $(argv)" ;;
-  *) ok "HEXA_LOW_LATENCY=1 keeps the low-latency parameters: $(argv)" ;;
+  *--no-low-latency*) bad "PRISMA_LOW_LATENCY=1 passed --no-low-latency: $(argv)" ;;
+  *) ok "PRISMA_LOW_LATENCY=1 keeps the low-latency parameters: $(argv)" ;;
 esac
 [ "$(gov)" = performance ] \
   && ok "and the cpufreq governor was set to performance" \
-  || bad "HEXA_LOW_LATENCY=1 left the governor at '$(gov)': the governor is" \
+  || bad "PRISMA_LOW_LATENCY=1 left the governor at '$(gov)': the governor is" \
          "runtime state and this script is the only thing that re-applies it"
 
 mkbox powersave
-run HEXA_LOW_LATENCY=0
+run PRISMA_LOW_LATENCY=0
 case "$(argv)" in
-  *--no-low-latency*) ok "HEXA_LOW_LATENCY=0 passes --no-low-latency: $(argv)" ;;
-  *) bad "HEXA_LOW_LATENCY=0 did NOT pass --no-low-latency, so the kernel" \
+  *--no-low-latency*) ok "PRISMA_LOW_LATENCY=0 passes --no-low-latency: $(argv)" ;;
+  *) bad "PRISMA_LOW_LATENCY=0 did NOT pass --no-low-latency, so the kernel" \
          "command line keeps the C-state and THP parameters the operator" \
          "turned off: $(argv)" ;;
 esac
 [ "$(gov)" = powersave ] \
   && ok "and the governor was left alone, as the document says" \
-  || bad "HEXA_LOW_LATENCY=0 still forced the governor to '$(gov)'"
+  || bad "PRISMA_LOW_LATENCY=0 still forced the governor to '$(gov)'"
 
 echo
 echo "=== a value tune.env should not carry is refused, and says what is ==="
@@ -179,10 +179,10 @@ echo "=== a value tune.env should not carry is refused, and says what is ==="
 # widest, so on one row it pushed the path to the file off an 80-column
 # console - and the path is the only thing on that screen anybody can act on.
 mkbox powersave
-run HEXA_LOW_LATENCY=true
-said "REFUSED HEXA_LOW_LATENCY in " && said "  'true'" \
-  && ok "HEXA_LOW_LATENCY=true is refused, and the refusal quotes the value" \
-  || bad "HEXA_LOW_LATENCY=true passed silently. Output: $OUT"
+run PRISMA_LOW_LATENCY=true
+said "REFUSED PRISMA_LOW_LATENCY, in tune.env" && said "  'true'" \
+  && ok "PRISMA_LOW_LATENCY=true is refused, and the refusal quotes the value" \
+  || bad "PRISMA_LOW_LATENCY=true passed silently. Output: $OUT"
 if said "deep C-states off" && said "leave all three alone"; then
   ok "and the refusal says what the box accepts, both values, with what each does"
 else
@@ -191,7 +191,7 @@ else
 fi
 case "$(argv)" in
   *--no-low-latency*)
-    bad "HEXA_LOW_LATENCY=true still stripped the C-state and THP parameters" \
+    bad "PRISMA_LOW_LATENCY=true still stripped the C-state and THP parameters" \
         "off the kernel command line. A typo meaning YES must not turn the" \
         "tuning off: $(argv)" ;;
   *) ok "and the box keeps the shipped default rather than the opposite of" \
@@ -199,16 +199,16 @@ case "$(argv)" in
 esac
 [ "$RC" = 0 ] \
   && ok "and the unit does not fail: a typo must not cost the box its tuning" \
-  || bad "apply-tuning exited $RC on a bad HEXA_LOW_LATENCY, so no tuning was" \
+  || bad "apply-tuning exited $RC on a bad PRISMA_LOW_LATENCY, so no tuning was" \
          "written and the kernel command line stays at the previous boot's"
 
 echo
-echo "=== HEXA_SUBSCRIBERS, which used to fail the whole unit ==="
+echo "=== PRISMA_SUBSCRIBERS, which used to fail the whole unit ==="
 mkbox
-run HEXA_SUBSCRIBERS=200k
-said "REFUSED HEXA_SUBSCRIBERS in " && said "  '200k'" \
-  && ok "HEXA_SUBSCRIBERS=200k is refused by name, with the value quoted" \
-  || bad "HEXA_SUBSCRIBERS=200k was not refused by this script. Output: $OUT"
+run PRISMA_SUBSCRIBERS=200k
+said "REFUSED PRISMA_SUBSCRIBERS, in tune.env" && said "  '200k'" \
+  && ok "PRISMA_SUBSCRIBERS=200k is refused by name, with the value quoted" \
+  || bad "PRISMA_SUBSCRIBERS=200k was not refused by this script. Output: $OUT"
 said "digits only: 200000, not 200k" \
   && ok "and the refusal says what the box accepts and what it will not take" \
   || bad "the refusal does not name the accepted form"
@@ -222,26 +222,26 @@ esac
   || bad "apply-tuning exited $RC: the boot unit fails and nothing is written"
 
 mkbox
-run HEXA_SUBSCRIBERS=50000
+run PRISMA_SUBSCRIBERS=50000
 case "$(argv)" in
   *"--subscribers 50000"*) ok "a number is passed through unchanged: $(argv)" ;;
-  *) bad "HEXA_SUBSCRIBERS=50000 did not reach the tuner: $(argv)" ;;
+  *) bad "PRISMA_SUBSCRIBERS=50000 did not reach the tuner: $(argv)" ;;
 esac
 
 echo
-echo "=== HEXA_MAX_WORKERS ==="
+echo "=== PRISMA_MAX_WORKERS ==="
 mkbox
-run HEXA_MAX_WORKERS=4
+run PRISMA_MAX_WORKERS=4
 case "$(argv)" in
   *"--max-workers 4"*) ok "a cap reaches the tuner: $(argv)" ;;
-  *) bad "HEXA_MAX_WORKERS=4 did not reach the tuner: $(argv)" ;;
+  *) bad "PRISMA_MAX_WORKERS=4 did not reach the tuner: $(argv)" ;;
 esac
 
 mkbox
-run HEXA_MAX_WORKERS=four
-said "REFUSED HEXA_MAX_WORKERS in " && said "  'four'" \
+run PRISMA_MAX_WORKERS=four
+said "REFUSED PRISMA_MAX_WORKERS, in tune.env" && said "  'four'" \
   && ok "a cap that is not a number is refused by name" \
-  || bad "HEXA_MAX_WORKERS=four was not refused. Output: $OUT"
+  || bad "PRISMA_MAX_WORKERS=four was not refused. Output: $OUT"
 said "empty, which is the shipped value and means no cap" \
   && ok "and the refusal names both accepted forms: digits, or empty" \
   || bad "the refusal does not say what a cap may be"
@@ -251,7 +251,7 @@ case "$(argv)" in
 esac
 
 mkbox
-run HEXA_MAX_WORKERS=
+run PRISMA_MAX_WORKERS=
 case "$(argv)" in
   *--max-workers*) bad "an empty cap invented one: $(argv)" ;;
   *) ok "an empty cap passes nothing, which is the shipped behaviour" ;;
@@ -262,7 +262,7 @@ echo "=== every line a refusal prints fits an 80-column serial console ==="
 # This comes out of the journal onto the console of a racked box. A reason
 # that wraps mid-value cannot be grepped for or typed back.
 mkbox
-run HEXA_LOW_LATENCY=maybe HEXA_SUBSCRIBERS=lots HEXA_MAX_WORKERS=some
+run PRISMA_LOW_LATENCY=maybe PRISMA_SUBSCRIBERS=lots PRISMA_MAX_WORKERS=some
 wide=$(printf '%s\n' "$OUT" | awk 'length > 79 {print length": "$0}')
 [ -z "$wide" ] \
   && ok "three refusals at once, widest line $(printf '%s\n' "$OUT" \
@@ -275,13 +275,13 @@ echo "=== the governor is only written when the box has one to write ==="
 # Writing a governor the kernel does not offer is a write that fails silently
 # and a claim in the journal that it happened.
 mkbox powersave "powersave schedutil"
-run HEXA_LOW_LATENCY=1
+run PRISMA_LOW_LATENCY=1
 [ "$(gov)" = powersave ] \
   && ok "a box that does not offer 'performance' is left alone: $(gov)" \
   || bad "wrote a governor the kernel does not offer: $(gov)"
 
 mkbox
-run HEXA_LOW_LATENCY=1
+run PRISMA_LOW_LATENCY=1
 said "no cpufreq policy exposed" \
   && ok "and a box with no cpufreq at all says so instead of failing" \
   || bad "a box with no cpufreq did not say so: $OUT"
@@ -293,7 +293,7 @@ echo "=== order: the tuner chooses the NIC, then the binder takes it ==="
 # An order that silently inverts gives the binder a startup.conf from the
 # previous boot.
 mkbox
-run HEXA_LOW_LATENCY=1
+run PRISMA_LOW_LATENCY=1
 case "$(order)" in
   "tune bind"*) ok "the order is: $(order)" ;;
   *) bad "expected the tuner before the binder, got: $(order)" ;;
@@ -313,7 +313,7 @@ echo "=== and NOT while the dataplane is already running (#336) ==="
 # gone, three lines under that sentence.
 mkbox
 echo yes > "$REC/vpp_active"
-run HEXA_LOW_LATENCY=1
+run PRISMA_LOW_LATENCY=1
 case "$(order)" in
   *bind*) bad "the card was taken while the dataplane was already running, \
 so it is on neither stack: $(order)" ;;
@@ -340,7 +340,7 @@ echo "=== and not where nothing can be asked, which is not a box booting ==="
 # box nobody can reach. This file already carries that trade, in #123's
 # refusal, and it points the same way.
 mkbox
-run HEXA_SYSTEMCTL=/nonexistent-systemctl
+run PRISMA_SYSTEMCTL=/nonexistent-systemctl
 case "$(order)" in
   *bind*) bad "a box where nothing could be asked bound the card anyway: \
 $(order)" ;;
@@ -402,7 +402,7 @@ echo "=== a box with no update-grub is told, rather than left disagreeing ==="
 # operator is left holding.
 #
 # What it is about: this script has already WRITTEN the kernel command line
-# into /etc/default/grub.d/hexarouting.cfg, and that file does nothing at all
+# into /etc/default/grub.d/prisma-routing.cfg, and that file does nothing at all
 # until a bootloader is regenerated from it. A box in that state boots with
 # the isolcpus and hugepages of the PREVIOUS boot while startup.conf beside it
 # names the new ones - the mismatch the refusals at the top of this file exist
@@ -426,7 +426,7 @@ for t in sh mkdir cat tr grep dirname; do
   _p=$(command -v "$t") && ln -sf "$_p" "$nogrub/$t"
 done
 mkbox
-OUT=$(env PATH="$nogrub" REC="$REC" HEXA_ROOT="$R" STUB_GRUB="isolcpus=1-3" \
+OUT=$(env PATH="$nogrub" REC="$REC" PRISMA_ROOT="$R" STUB_GRUB="isolcpus=1-3" \
       sh "$BIN" 2>&1); RC=$?
 [ "$RC" != 0 ] \
   && ok "the unit fails on a box that cannot regenerate its bootloader" \
@@ -439,7 +439,7 @@ said "update-grub missing" \
 # The file, by path. This is the one thing an operator can act on: the tuning
 # was computed and written, and all that is left is to put it into whatever
 # bootloader this box has.
-said "hexarouting.cfg" \
+said "prisma-routing.cfg" \
   && ok "and names the file whose contents still have to be applied" \
   || bad "it did not say where the command line it computed can be found, so \
 the operator is told a command is missing and not what to do instead: $OUT"
@@ -472,7 +472,7 @@ echo "=== the two things this box may not have: 1G pages, and update-grub ==="
 # be tuned looking identical.
 mkbox
 rm -rf "$R/sys/kernel/mm/hugepages"
-run HEXA_LOW_LATENCY=1
+run PRISMA_LOW_LATENCY=1
 said "(no 1G support)" \
   && ok "a kernel with no 1G pages is named as such, not reported as zero" \
   || bad "the reserved-pages line said nothing about a box that cannot \
@@ -494,7 +494,7 @@ if command -v update-grub >/dev/null 2>&1; then
 else
   mv "$STUB/update-grub" "$WORK/update-grub.away"
   mkbox
-  run HEXA_LOW_LATENCY=1
+  run PRISMA_LOW_LATENCY=1
   mv "$WORK/update-grub.away" "$STUB/update-grub"
   [ "$RC" != 0 ] \
     && ok "a box with no update-grub fails rather than reporting success" \
@@ -502,7 +502,7 @@ else
   said "update-grub missing" \
     && ok "and says which command is missing" \
     || bad "it failed without naming what is missing: $OUT"
-  said "hexarouting.cfg" \
+  said "prisma-routing.cfg" \
     && ok "and names the file to carry into the bootloader by hand" \
     || bad "it refused without saying where the command line it wrote is: \
 $OUT"

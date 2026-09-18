@@ -2,23 +2,23 @@
 """
 What this appliance is allowed to do to itself on the way down.
 
-`docs/appliance.md` states it and `appliance/systemd/hexarouting.service`
+`docs/appliance.md` states it and `appliance/systemd/prisma-routing.service`
 repeats it in a comment:
 
-    No `ExecStop` on `hexarouting.service`. The configuration lives in VPP.
+    No `ExecStop` on `prisma-routing.service`. The configuration lives in VPP.
     Stopping the service MUST NOT delete production pools; removing a pool is
     the operator's action, through the VTY.
 
 Nothing executable held it. Adding
 
-    ExecStop=/usr/bin/hexash -c "delete nat cgnat ; commit"
+    ExecStop=/usr/bin/prismash -c "delete nat cgnat ; commit"
 
 to that unit left all 34 suites green (#238). `test/test_install_manifest.py`
 asserts the unit is INSTALLED and never reads a byte of it, and the only thing
 in the tree that reads an `ExecStop` at all - `lab/ipfix-stop.sh` - reads it out
 of a different unit for the opposite purpose.
 
-The cost of the gap is not a stopped box. `hexarouting.service` carries
+The cost of the gap is not a stopped box. `prisma-routing.service` carries
 `PartOf=vpp.service`, so an `ExecStop` there fires on every restart: a tuning
 change, a plugin upgrade, a `systemctl restart vpp` typed during an unrelated
 diagnosis. The failure would arrive during an ordinary upgrade, on a box that
@@ -34,7 +34,7 @@ is still running to carry the records (#217). A rule that forbade it would be
 switched off within a week, and the rule that gets switched off protects
 nothing.
 
-"Not on hexarouting.service, allowed on vpp.service" is also the wrong rule. It
+"Not on prisma-routing.service, allowed on vpp.service" is also the wrong rule. It
 is a rule about which FILE a line is typed in, so it is silent on the mutation
 that matters most: the drain file itself edited into a deletion. The unit that
 already has permission to run a command at stop time is the cheapest place to
@@ -60,7 +60,7 @@ rule was missing:
      below, byte for byte, with the reason it is there. Anything else fails and
      is quoted. This catches the sweep's mutation, a new unit, and a directive
      written by `install.sh` rather than by a unit file - and it catches
-     `ExecStop=/usr/lib/hexarouting/teardown`, whose body this check cannot
+     `ExecStop=/usr/lib/prisma-routing/teardown`, whose body this check cannot
      read, because an unreadable command is not an allowed one.
   2. Every command in ALLOWED_STOP is put through `teardown_reason()` and MUST
      come back clean. Blessing a line in the table is therefore not enough to
@@ -103,9 +103,9 @@ STOP_DIRECTIVES = ("ExecStop", "ExecStopPost")
 # The programs a unit MAY run while the box is going down.
 #
 # vppctl talks to the running graph and can ask it to flush what it is already
-# holding. hexash is deliberately absent: it IS the configuration surface - the
+# holding. prismash is deliberately absent: it IS the configuration surface - the
 # candidate, `commit`, the pool definitions and the file under
-# /etc/hexarouting - so there is no argument list that makes it a safe thing to
+# /etc/prisma-routing - so there is no argument list that makes it a safe thing to
 # run unattended at stop time, and listing it here with a careful-looking
 # argument is the mutation this check exists to refuse. A shell is absent
 # because its body is a string this check cannot read, and neither can the
@@ -187,17 +187,17 @@ CASES = [
      "the drain this product ships"),
     ("-/usr/bin/vppctl bpa stop-drain", None,
      "the same with systemd's '-' prefix"),
-    ('/usr/bin/hexash -c "delete nat cgnat ; commit"', "delete",
+    ('/usr/bin/prismash -c "delete nat cgnat ; commit"', "delete",
      "#238's own mutation, character for character"),
-    ('/usr/bin/hexash -c "no cgnat pool subs ; commit"', "no",
+    ('/usr/bin/prismash -c "no cgnat pool subs ; commit"', "no",
      "the same in the vocabulary the VTY actually has"),
-    ("/usr/bin/hexash --load /etc/hexarouting/hexarouting.conf", "re-applies",
+    ("/usr/bin/prismash --load /etc/prisma-routing/prisma-routing.conf", "re-applies",
      "re-applying the configuration file at stop time"),
-    ("/usr/bin/hexash --confirm-expired", "hexash",
-     "hexash with no destructive word in sight"),
+    ("/usr/bin/prismash --confirm-expired", "prismash",
+     "prismash with no destructive word in sight"),
     ("/bin/sh -c '/usr/bin/vppctl bpa stop-drain'", "sh",
      "a shell wrapping the very command that is allowed"),
-    ("/usr/lib/hexarouting/teardown", "teardown",
+    ("/usr/lib/prisma-routing/teardown", "teardown",
      "a script whose body this check cannot read"),
     ("-/usr/bin/vppctl bpa pool del subs", "del",
      "the allowed program, on the wrong verb"),
@@ -241,7 +241,7 @@ for root, dirs, files in os.walk(os.path.join(REPO, "appliance")):
         # deletion could be parked on the second line of one.
         for line in text.replace("\\\n", " ").splitlines():
             s = line.strip()
-            # A comment is where the rule is WRITTEN DOWN - hexarouting.service
+            # A comment is where the rule is WRITTEN DOWN - prisma-routing.service
             # explains at length why it has no ExecStop, and refusing that
             # sentence would delete the explanation to satisfy the check.
             if s.startswith("#") or s.startswith(";"):
@@ -307,11 +307,11 @@ print("\n=== the rule is still written where an operator reads it ===")
 # next reader has no way to argue with.
 DOC = os.path.join(REPO, "docs", "appliance.md")
 doc = open(DOC, encoding="utf-8").read()
-if "No `ExecStop` on `hexarouting.service`" in doc and \
+if "No `ExecStop` on `prisma-routing.service`" in doc and \
         "MUST NOT** delete production pools" in doc:
     ok("docs/appliance.md still states it, in RFC 2119 keywords")
 else:
-    bad("docs/appliance.md no longer states that stopping hexarouting.service "
+    bad("docs/appliance.md no longer states that stopping prisma-routing.service "
         "MUST NOT delete production pools. That sentence is what this suite "
         "enforces; if the rule changed, this file changes with it")
 

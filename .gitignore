@@ -15,13 +15,13 @@ test/bpa_vectors.h
 # "git add -A" committed 321 MB before GitHub refused the push (#91). And both
 # product names, for the same reason one rename later: a medium built before
 # #202 is still on disk under the old one.
-hexarouting*.iso
+prisma-routing*.iso
 prisma-routing*.iso
 # And the upgrade artifact, for the same reason one size down. It is a megabyte
 # rather than 321, which is exactly what makes it the one that would slip
 # through: nothing refuses a push of it, so it would simply become a file in
 # the history that somebody later mistakes for a release.
-hexarouting*-upgrade.tar.gz
+prisma-routing*-upgrade.tar.gz
 prisma-routing*-upgrade.tar.gz
 boot-console.log
 install-console.log

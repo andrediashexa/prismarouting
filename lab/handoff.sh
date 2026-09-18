@@ -94,7 +94,7 @@ echo "=========== does a translated packet actually LEAVE? ==========="
 # and nothing left. This lab would have passed on it, and did.
 #
 # Every other lab that asserts a packet leaving uses startup-test.conf, which
-# has NO workers. hexarouting-tune configures two or more on every appliance,
+# has NO workers. prisma-routing-tune configures two or more on every appliance,
 # so the forwarding path was proved only in a configuration the product never
 # ships in.
 #

@@ -4,9 +4,9 @@
 # THE MEASUREMENT THIS EXISTS FOR. On a real appliance installed from a
 # published medium (#295):
 #
-#   # ls /usr/lib/hexarouting/
-#   apply-tuning  bind-dataplane-nic  config.py  hexash.py  ...
-#   # find / -name install.sh -path '*hexarouting*'
+#   # ls /usr/lib/prisma-routing/
+#   apply-tuning  bind-dataplane-nic  config.py  prismash.py  ...
+#   # find / -name install.sh -path '*prisma-routing*'
 #   (nothing)
 #   # command -v cmake ninja gcc
 #   (nothing)
@@ -69,7 +69,7 @@ fresh_tree() {
 build() {  # -> $ART, the unpacked artifact directory; $BUILD_OUT, what it said
   _tar=$WORK/artifact.tar.gz
   rm -rf "$WORK/unpacked"; mkdir -p "$WORK/unpacked"
-  BUILD_OUT=$(OUT="$_tar" HEXA_VERSION_STAMP="$STAMP" \
+  BUILD_OUT=$(OUT="$_tar" PRISMA_VERSION_STAMP="$STAMP" \
               sh "$TREE/appliance/build-upgrade.sh" 2>&1)
   BUILD_RC=$?
   [ "$BUILD_RC" = 0 ] || return 1
@@ -236,28 +236,28 @@ fi
 if [ -f "$BOX/usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so" ]; then
   ok "and the vat2 plugin beside it, so the binary API is registered (#119)"
 else
-  bad "the vat2 plugin did not reach the box: hexash could not configure a pool"
+  bad "the vat2 plugin did not reach the box: prismash could not configure a pool"
 fi
-if [ -x "$BOX/usr/bin/hexash" ] && [ -f "$BOX/usr/lib/hexarouting/config.py" ]; then
+if [ -x "$BOX/usr/bin/prismash" ] && [ -f "$BOX/usr/lib/prisma-routing/config.py" ]; then
   ok "the VTY and the module it imports both travelled"
 else
   bad "the VTY did not reach the box whole, which is #119's shape on the other \
-component: hexash would raise ModuleNotFoundError on every start"
+component: prismash would raise ModuleNotFoundError on every start"
 fi
 
 echo
 echo "=== the box is stamped what the artifact says, not what git said ==="
 # WHY THIS IS A CHECK OF ITS OWN. install.sh asks tools/version-stamp.sh for
-# the line it writes into /usr/share/hexarouting/VERSION, and that calculation
+# the line it writes into /usr/share/prisma-routing/VERSION, and that calculation
 # reads git. There is no .git inside a tarball and there never can be. Left to
 # itself install.sh stamps the box "0.75.0 (not a git tree)", and that line is
 # what `show version` prints, what the boot self-test puts at the top of its
 # report and the first thing anybody is asked on the telephone - so the box
 # would be unable to name the build it is running, which is the whole of #302,
 # put there by the thing that upgraded it.
-GOT=$(cat "$BOX/usr/share/hexarouting/VERSION" 2>/dev/null || echo "")
+GOT=$(cat "$BOX/usr/share/prisma-routing/VERSION" 2>/dev/null || echo "")
 if [ "$GOT" = "$STAMP" ]; then
-  ok "/usr/share/hexarouting/VERSION says $GOT"
+  ok "/usr/share/prisma-routing/VERSION says $GOT"
 else
   bad "the box is stamped '$GOT' and the artifact is '$STAMP'"
 fi
@@ -339,7 +339,7 @@ if [ "$RC" != 0 ]; then
   ok "refused"
 else
   bad "an artifact with no RELEASE installed anyway, stamping the box \
-'$(cat "$BOX/usr/share/hexarouting/VERSION" 2>/dev/null)'"
+'$(cat "$BOX/usr/share/prisma-routing/VERSION" 2>/dev/null)'"
 fi
 case "$OUTPUT" in
   *install.sh*) ok "and it says what to run in a source tree instead" ;;
@@ -448,7 +448,7 @@ echo "=== the artifact is installed once before it is published ==="
 # An artifact that is missing one path is an artifact whose failure happens on
 # an operator's box, at the hour they chose to upgrade, with part of it already
 # overwritten - install.sh's preflight can refuse a missing plugin but nothing
-# can refuse a tree with no src/hexash/config.py until the line that copies it
+# can refuse a tree with no src/prismash/config.py until the line that copies it
 # runs. So every artifact is unpacked and installed into a throwaway root
 # before the tarball is written, and that step is only worth having if it can
 # say no.
@@ -458,11 +458,11 @@ echo "=== the artifact is installed once before it is published ==="
 # thirty-odd ordinary files, which is the whole point - the check is that the
 # tree is COMPLETE, and completeness cannot be asserted by a list.
 #
-# By name, and that word is load-bearing. src/hexash/*.py is installed through
+# By name, and that word is load-bearing. src/prismash/*.py is installed through
 # a GLOB, deliberately (install.sh:251, which says why: naming those files one
 # by one shipped a box with no config.py in 0.2.0). A glob over a file that is
 # not there installs one file fewer and exits 0, so it is not the case this
-# proof can catch - measured, removing src/hexash/config.py from the tree
+# proof can catch - measured, removing src/prismash/config.py from the tree
 # still packed an artifact, "31 file(s) installed", and would have published
 # it.
 rm -f "$TREE/appliance/wait-for-vpp"
@@ -503,7 +503,7 @@ echo
 echo "=== an artifact that cannot say what it is (#295) ==="
 #
 # RELEASE carries three lines and appliance/upgrade reads all three: the stamp
-# it writes into /usr/share/hexarouting/VERSION, and the two platform versions
+# it writes into /usr/share/prisma-routing/VERSION, and the two platform versions
 # it compares against the box. A file with one of them missing is a DAMAGED
 # artifact - a truncated download, an edit, a tar that was interrupted - and
 # every one of the three has a different box at the end of it.
@@ -520,7 +520,7 @@ for _f in stamp vpp frr; do
   upgrade
   if [ "$RC" = 0 ]; then
     bad "an artifact with no '$_f=' line installed anyway, stamping the box \
-'$(cat "$BOX/usr/share/hexarouting/VERSION" 2>/dev/null)'"
+'$(cat "$BOX/usr/share/prisma-routing/VERSION" 2>/dev/null)'"
   else
     case "$OUTPUT" in
       *"no '$_f=' line"*)
@@ -621,6 +621,56 @@ echo "=== and it will not write into / as an ordinary user ==="
 # something is driving this into a directory and root is neither needed nor
 # wanted, which is how every other case in this suite runs.
 #
+echo "=== and a box that still carries the old name is refused (#202) ==="
+# THE CLEAN BREAK, made honest. The product was renamed and nothing migrates:
+# this artifact installs /etc/prisma-routing, prisma-routing.service and
+# prismash, and a box in service holds /etc/hexarouting, hexarouting.service
+# and hexash. Installed beside each other, the box comes back from its next
+# reboot with a configuration file the running units cannot see.
+#
+# Arranged three ways because the box may carry any one of the three - a
+# directory somebody kept, a unit in /lib, a unit in /etc - and each on its
+# own is a box this artifact must not write to.
+for _old in etc/hexarouting lib/systemd/system/hexarouting.service \
+            etc/systemd/system/hexarouting.service; do
+  fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
+  case "$_old" in
+    */) mkdir -p "$BOX/$_old" ;;
+    etc/hexarouting) mkdir -p "$BOX/$_old" ;;
+    *) mkdir -p "$BOX/$(dirname "$_old")"; : > "$BOX/$_old" ;;
+  esac
+  upgrade
+  if [ "$RC" != 0 ]; then
+    ok "a box carrying $_old is refused"
+  else
+    bad "a box carrying $_old was upgraded anyway, which leaves it with a
+configuration the units it runs cannot see: $OUTPUT"
+  fi
+  case "$OUTPUT" in
+    *"NOTHING MIGRATES"*) ;;
+    *) bad "the refusal about $_old does not say that nothing migrates:
+$OUTPUT" ;;
+  esac
+  case "$OUTPUT" in
+    *"reinstalling from the medium"*|*"REINSTALLING from the medium"*) ;;
+    *) bad "the refusal about $_old does not say what the route is instead:
+$OUTPUT" ;;
+  esac
+done
+# AND THE BOX IT IS FOR is not refused, so the rule above is about the old
+# name and not about every box: fresh_box arranges the ordinary one.
+# On the REFUSAL and not on the exit status: a box arranged as a directory
+# gets as far as install.sh and stops there for reasons of its own, which is
+# what every other case in this file reads too. What is asserted is that this
+# rule did not fire.
+fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
+upgrade
+case "$OUTPUT" in
+  *"NOTHING MIGRATES"*)
+    bad "the old-name refusal caught an ordinary box: $OUTPUT" ;;
+  *) ok "and a box that carries none of the three is not refused by it" ;;
+esac
+
 # THE INTERLOCK, because this case deliberately unsets DESTDIR and so names
 # the machine running the suite as the target. A dpkg-query of its own, first
 # on PATH, answers with a version no release was ever built against - so a run

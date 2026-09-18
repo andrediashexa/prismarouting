@@ -28,7 +28,7 @@ printf '  [ ok ] dataplane forwarding on 0000:01:00.0\n  Prisma Routing ready.\n
 printf '  [ ok ] records volume\n  Prisma Routing ready, with 2 warning(s) above.\n' > "$WORK/warned"
 printf '  Prisma Routing is installed and healthy, and has no NIC to forward on:\n' > "$WORK/nofwd"
 printf '  [FAIL] vpp.service\n  2 check(s) failed. The box is NOT ready.\n' > "$WORK/failed"
-printf '  [ ok ] something\nhexarouting login: \n' > "$WORK/none"
+printf '  [ ok ] something\nprisma-routing login: \n' > "$WORK/none"
 
 # What each reader answers, as yes/no, on its own line so the call stands in
 # command position for test/test_every_function.py.

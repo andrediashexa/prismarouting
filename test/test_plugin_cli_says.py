@@ -49,7 +49,7 @@ THE CEILING, and it may only go down. The count of (c) is written down with
 the date it was measured, and the run refuses a count above it - a message
 added to the plugin with nothing naming it goes red on the next run, naming
 the line - and refuses a count below it, because a ceiling that is no longer
-tight holds nothing. That is the idiom test/test_hexash_refusals.py's
+tight holds nothing. That is the idiom test/test_prismash_refusals.py's
 OVER_AT_MOST uses, and the only way to change the number is to make something
 name a sentence. NOT by quoting it in a lab that does not drive it: a lab
 names a sentence honestly only on a screen it captures and asserts on, which

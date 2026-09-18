@@ -4,7 +4,7 @@ What the VTY reads back from sshd, against what the VTY will accept.
 
 THE DEFECT THIS HOLDS (#304). OpenSSH takes `prohibit-password` and
 `without-password` as two names for one PermitRootLogin setting, and `sshd -T`
-- which is how src/hexash/system.py reads the effective configuration -
+- which is how src/prismash/system.py reads the effective configuration -
 canonicalises to the OLD one. Measured on OpenSSH 9.2: a config file saying
 `prohibit-password` reads back as `permitrootlogin without-password`.
 
@@ -43,7 +43,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src",
-                                "hexash"))
+                                "prismash"))
 import system                                       # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -68,7 +68,7 @@ def reader(text):
         return 127, "not this test's business"
     # dropin is pointed at a path that does not exist, so the fallback reader
     # cannot quietly supply the answer the sshd branch was supposed to give.
-    return system.System(runner=run, root="", dropin="/nonexistent/hexa-304")
+    return system.System(runner=run, root="", dropin="/nonexistent/prisma-304")
 
 
 # Every value OpenSSH accepts for PermitRootLogin, and what sshd -T answers
@@ -101,9 +101,9 @@ print("\n=== the VTY offers exactly what it accepts ===")
 # the table that refuses a value. They were never compared, and the fix for
 # #304 touches neither - so this is here to keep the fix from being undone by
 # widening one of them alone.
-import hexash                                       # noqa: E402
+import prismash                                       # noqa: E402
 
-tree = hexash.TREE["config"]["ssh"][1]["permit-root-login"][1]
+tree = prismash.TREE["config"]["ssh"][1]["permit-root-login"][1]
 offered = set(tree)
 accepted = set(system._VALID["permit-root-login"])
 if offered != accepted:

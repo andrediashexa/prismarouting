@@ -4,7 +4,7 @@
 #
 # Every ISO this project published up to and including 0.66.0 carried the host
 # keys openssh-server's postinst generated inside the build container, private
-# halves included. hexarouting-install unpacks that squashfs onto the disk and
+# halves included. prisma-routing-install unpacks that squashfs onto the disk and
 # then enables sshd with PermitRootLogin yes, so every box installed from one
 # medium answers with the SAME key, and its private half is in the download.
 # build-iso.sh removes them from the image and the installer generates a set
@@ -18,7 +18,7 @@
 #   * the boot self-test. Its report goes to OUT, and OUT is /dev/console: its
 #     say() falls back to stdout only when the write to the console FAILS, so
 #     on a racked box the report reaches a serial port once, at boot, and does
-#     NOT reach the journal - `journalctl -u hexarouting-selftest` cannot
+#     NOT reach the journal - `journalctl -u prisma-routing-selftest` cannot
 #     bring it back afterwards.
 #   * the VTY banner, which is the only one of the two an operator who reached
 #     this box over ssh ever sees.
@@ -39,7 +39,7 @@
 # into the comment, and the hostname it uses is the one gethostname() answers,
 # which chroot does not change: the installer runs `chroot "$MNT" ssh-keygen
 # -A`, so a box's own freshly generated key is stamped with the LIVE MEDIUM's
-# hostname - measured as "root@hexarouting" - whatever the operator named the
+# hostname - measured as "root@prisma-routing" - whatever the operator named the
 # box. Comparing the comment against the hostname would therefore report every
 # correctly installed box with a name of its own. The comment cannot separate
 # the two cases and is not read here.

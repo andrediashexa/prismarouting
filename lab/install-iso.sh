@@ -36,7 +36,7 @@
 # nothing about the installer, which is the shape of #99, #119 and #184.
 set -u
 ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
-DISK=${DISK:-/tmp/hexa-disk.qcow2}
+DISK=${DISK:-/tmp/prisma-disk.qcow2}
 # 40G, not 8G. The installer reserves 8 GB for the system before it will give
 # any of the disk to connection records (#83), so an 8 GB disk is one the
 # installer correctly refuses - it found that out by refusing this lab. qcow2
@@ -111,7 +111,7 @@ esac
 # refuses a mirror disk that cannot hold the records it was told to keep, and a
 # leg the same size as the answer to the megabyte is an array one megabyte
 # short of it.
-DISK2=${DISK2:-/tmp/hexa-disk2.qcow2}
+DISK2=${DISK2:-/tmp/prisma-disk2.qcow2}
 DISK2_SIZE=${DISK2_SIZE:-4G}
 MIRROR_DEV=/dev/vdb
 
@@ -258,8 +258,8 @@ LIVE_ROOT=$(grep "^root:" /tmp/sq/etc/shadow 2>/dev/null | cut -d: -f2)
 #
 # Both trees, and the second is not the first. The squashfs is what lands on
 # the disk; /mnt/iso is the root of the MEDIUM, which is where
-# "hexarouting.answers" with no argument reads
-# /run/live/medium/hexarouting.answers from.
+# "prisma-routing.answers" with no argument reads
+# /run/live/medium/prisma-routing.answers from.
 #
 # An unread image is not a clean image - the same argument the /etc/shadow
 # check below makes, and for the same reason: the moment this matters is the
@@ -304,14 +304,14 @@ if [ "$MODE" = mirror ]; then
   rm -f "$DISK2"
   qemu-img create -f qcow2 "$DISK2" "$DISK2_SIZE" >/dev/null
   MIRROR_DRIVE="-drive file=$DISK2,format=qcow2,if=virtio"
-  MIRROR_ANSWER="hexarouting.mirror=$MIRROR_DEV"
+  MIRROR_ANSWER="prisma-routing.mirror=$MIRROR_DEV"
 fi
 
 echo "=========== PHASE 1: install onto a blank disk ==========="
-# hexarouting.yes runs it unattended. An interactive installer driven by
+# prisma-routing.yes runs it unattended. An interactive installer driven by
 # keystrokes timed against a boot would be testing the timing.
 #
-# hexarouting.mgmt-address=dhcp IS ASKED FOR, and since #394 it has to be: an
+# prisma-routing.mgmt-address=dhcp IS ASKED FOR, and since #394 it has to be: an
 # unattended install that says nothing gets no management network, because a
 # new box is configured at its console and every card it has is the
 # dataplane's. This lab is the other case - it reaches the installed box over
@@ -326,11 +326,11 @@ timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -drive file="$DISK",format=qcow2,if=virtio $MIRROR_DRIVE $MGMT_NET \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
-           hexarouting.install=/dev/vda hexarouting.yes \
-           hexarouting.mgmt-address=dhcp \
-           hexarouting.log-gb=2 $MIRROR_ANSWER \
-           hexarouting.hostname=$NEW_HOST hexarouting.timezone=$NEW_TZ \
-           hexarouting.password=$NEW_PW" \
+           prisma-routing.install=/dev/vda prisma-routing.yes \
+           prisma-routing.mgmt-address=dhcp \
+           prisma-routing.log-gb=2 $MIRROR_ANSWER \
+           prisma-routing.hostname=$NEW_HOST prisma-routing.timezone=$NEW_TZ \
+           prisma-routing.password=$NEW_PW" \
   > /tmp/install.log 2>&1
 
 sed 's/\x1b\[[0-9;]*m//g' /tmp/install.log > /tmp/install-clean.log
@@ -346,9 +346,9 @@ if ! grep -q "Prisma Routing installed to /dev/vda" /tmp/install-clean.log; then
   if grep -q "Ordering cycle found" /tmp/install-clean.log; then
     echo "  systemd dropped the installer unit to break an ordering cycle:"
     grep -i "ordering cycle" /tmp/install-clean.log | tail -3 | sed 's/^/    /'
-  elif grep -qE "hexarouting-inst|install to disk" /tmp/install-clean.log; then
-    # "hexarouting-inst", not "hexarouting-installer": systemd truncates a unit
-    # description on the status line - "Starting hexarouting-insta...". Looking
+  elif grep -qE "prisma-routing-inst|install to disk" /tmp/install-clean.log; then
+    # "prisma-routing-inst", not "prisma-routing-installer": systemd truncates a unit
+    # description on the status line - "Starting prisma-routing-insta...". Looking
     # for the full name never matched, so a unit that HAD started was reported
     # as never having started, and the next person to read that went and
     # checked ConditionKernelCommandLine, which was correct all along.
@@ -360,8 +360,8 @@ if ! grep -q "Prisma Routing installed to /dev/vda" /tmp/install-clean.log; then
       echo "  Something else owns the console: the installer writes to"
       echo "  /dev/console, and a getty that reached it first takes the"
       echo "  screen with a login prompt. Check the ordering between"
-      echo "  getty@/serial-getty@ and hexarouting-installer.service."
-      grep -nE "Started (serial-)?getty|Starting hexarouting-inst" \
+      echo "  getty@/serial-getty@ and prisma-routing-installer.service."
+      grep -nE "Started (serial-)?getty|Starting prisma-routing-inst" \
         /tmp/install-clean.log | tail -4 | sed 's/^/    /'
     fi
   else
@@ -455,9 +455,9 @@ for _t in qemu-img sfdisk; do
   }
 done
 
-qemu-img convert -O raw "$DISK" /tmp/hexa-disk.raw 2>&1 | sed 's/^/  qemu-img: /'
-ls -l /tmp/hexa-disk.raw 2>&1 | sed 's/^/  /'
-sfdisk -J /tmp/hexa-disk.raw > /tmp/parts.json 2>/tmp/sfdisk-j.log \
+qemu-img convert -O raw "$DISK" /tmp/prisma-disk.raw 2>&1 | sed 's/^/  qemu-img: /'
+ls -l /tmp/prisma-disk.raw 2>&1 | sed 's/^/  /'
+sfdisk -J /tmp/prisma-disk.raw > /tmp/parts.json 2>/tmp/sfdisk-j.log \
   || sed 's/^/  sfdisk: /' /tmp/sfdisk-j.log
 START=$(python3 -c '
 import json, sys
@@ -467,7 +467,7 @@ print(max(t["partitions"], key=lambda p: p["size"])["start"])
 echo "  root partition starts at sector ${START:-?}"
 mkdir -p /tmp/target
 if [ -n "$START" ] \
-   && mount -o loop,ro,offset=$((START * 512)) /tmp/hexa-disk.raw /tmp/target \
+   && mount -o loop,ro,offset=$((START * 512)) /tmp/prisma-disk.raw /tmp/target \
         2>/tmp/mount.log; then
   INST_ROOT=$(grep "^root:" /tmp/target/etc/shadow 2>/dev/null | cut -d: -f2)
   INST_HOST=$(cat /tmp/target/etc/hostname 2>/dev/null || true)
@@ -475,7 +475,7 @@ if [ -n "$START" ] \
   # What the installed box will mount the records from, and what it believes
   # about its own disks. Read off the disk rather than off the console: the
   # installer's output says what it meant to write.
-  INST_REC_UUID=$(awk '$2 == "/var/log/hexarouting" { print $1 }' \
+  INST_REC_UUID=$(awk '$2 == "/var/log/prisma-routing" { print $1 }' \
       /tmp/target/etc/fstab 2>/dev/null | sed 's/^UUID=//')
   INST_MDCONF=$(grep "^ARRAY" /tmp/target/etc/mdadm/mdadm.conf 2>/dev/null || true)
   # The other half of #245. The medium carries no ssh host keys, so the
@@ -581,8 +581,8 @@ if [ "$MODE" = mirror ]; then
       exit 1
     }
   done
-  qemu-img convert -O raw "$DISK2" /tmp/hexa-mirror.raw 2>&1 | sed 's/^/  qemu-img: /'
-  sfdisk -J /tmp/hexa-mirror.raw > /tmp/parts2.json 2>/tmp/sfdisk-j2.log \
+  qemu-img convert -O raw "$DISK2" /tmp/prisma-mirror.raw 2>&1 | sed 's/^/  qemu-img: /'
+  sfdisk -J /tmp/prisma-mirror.raw > /tmp/parts2.json 2>/tmp/sfdisk-j2.log \
     || sed 's/^/  sfdisk: /' /tmp/sfdisk-j2.log
   MSTART=$(python3 -c '
 import json
@@ -603,7 +603,7 @@ print("%d %d" % (len(p), p[0]["start"]))
     fail=1
   fi
   MLOOP=$(losetup --find --show --read-only --offset "$(( MOFF * 512 ))" \
-          /tmp/hexa-mirror.raw 2>/tmp/losetup.log) || true
+          /tmp/prisma-mirror.raw 2>/tmp/losetup.log) || true
   if [ -n "${MLOOP:-}" ]; then
     mdadm --examine "$MLOOP" > /tmp/examine.log 2>&1 || true
     MLEVEL=$(awk -F': *' '/Raid Level/ { print $2; exit }' /tmp/examine.log)
@@ -629,13 +629,13 @@ print("%d %d" % (len(p), p[0]["start"]))
   fi
 
   # The filesystem itself, on the leg, with no md anywhere in the picture. Its
-  # UUID is the one the installed box mounts /var/log/hexarouting by - which is
+  # UUID is the one the installed box mounts /var/log/prisma-routing by - which is
   # what makes this the same records volume and not merely an ext4.
   mkdir -p /mnt/rec
   MIRROR_UUID=""
   if [ -n "${MDATAOFF:-}" ] \
      && mount -o loop,ro,offset="$(( (MOFF + MDATAOFF) * 512 ))" \
-          /tmp/hexa-mirror.raw /mnt/rec 2>/tmp/mount2.log; then
+          /tmp/prisma-mirror.raw /mnt/rec 2>/tmp/mount2.log; then
     # The loop device the mount is on, named before anything is asked of it:
     # blkid with an empty argument lists every device on the machine running
     # this container, and one of those answers would read like this one.
@@ -782,7 +782,7 @@ fi
 # operator is handed. Everything it types is in drive_console() below.
 #
 # Nothing here sleeps and hopes. A serial console echoes what is typed, a
-# prompt arrives when the box is ready and not when the driver is, and hexash
+# prompt arrives when the box is ready and not when the driver is, and prismash
 # is not a shell - so every wait is for a string the BOX prints, with a timeout
 # and a report naming the string it gave up on. A driver that cannot tell "the
 # box never asked" from "the box asked and refused" is worse than no driver:
@@ -839,7 +839,7 @@ printed_before() {  # <first> <second>
 # ready with warnings above, installed and healthy with no NIC to forward on,
 # and n checks failed. The ordering assertion above was corrected to accept
 # all four and this one, four hundred lines below it, went on grepping for
-# "HexaRouting ready" - so an installed box that had printed a complete report
+# "Prisma Routing ready" - so an installed box that had printed a complete report
 # was reported as a box that never came up, and the gate refused the medium a
 # second time for the same reason it had refused it the first.
 #
@@ -906,8 +906,8 @@ wait_said() {  # <sentence> <seconds> <what the driver was doing>
   # THE JOURNAL PREFIX HAS TO COME OFF FIRST, and collapsing whitespace alone
   # is not enough. Every line on this console arrives as
   #
-  #   [  189.895690] hexash[1772]: commit confirmed 1: nobody confirmed it ...
-  #   [  189.899320] hexash[1772]: the previous configuration back
+  #   [  189.895690] prismash[1772]: commit confirmed 1: nobody confirmed it ...
+  #   [  189.899320] prismash[1772]: the previous configuration back
   #
   # so the fold does not merely break the sentence, it inserts a timestamp and
   # a pid into the middle of it. Joining the lines without stripping that
@@ -1033,9 +1033,9 @@ expect_one_of() {  # <good> <bad> <seconds> <what the driver was doing>
 drive_console() {
   # ------------------------------------- the FIRST prompt the box ever offers
   #
-  # This lab used to start at "HexaRouting ready." and then ask for a prompt,
+  # This lab used to start at "Prisma Routing ready." and then ask for a prompt,
   # and the comment here said why: the getty drew "cgnat-lab login:" while
-  # hexarouting.service was still waiting for the dataplane, so `configure`
+  # prisma-routing.service was still waiting for the dataplane, so `configure`
   # typed at that prompt built its candidate out of vppctl's "Could not find
   # VPP CLI socket" and every commit in the session was then refused. Starting
   # later was the right call for a lab about ROLES - and it left the defect
@@ -1046,7 +1046,7 @@ drive_console() {
   # what happens next is the product's answer, not the timing of this driver.
   #
   # The fix has two halves and this exercises both. The getty is ordered after
-  # the self-test, which is ordered after hexarouting.service, whose
+  # the self-test, which is ordered after prisma-routing.service, whose
   # ExecStartPre waits for VPP - so a prompt offered at all means the dataplane
   # is up. And the VTY refuses to build a candidate from a dataplane that is
   # not answering, rather than building one out of the error text.
@@ -1058,7 +1058,7 @@ drive_console() {
 
   # Half one, read off the transcript: the self-test FINISHED first.
   #
-  # Not a proxy for it. The self-test is ordered after hexarouting.service,
+  # Not a proxy for it. The self-test is ordered after prisma-routing.service,
   # whose ExecStartPre waits for VPP, so the position of its output in the
   # transcript is the ordering itself. Before the drop-in was split in two,
   # the installer deleted the file carrying this ordering along with the
@@ -1066,7 +1066,7 @@ drive_console() {
   # at all.
   #
   # THE ANCHOR IS THE CLOSING ROW AND NOT THE VERDICT SENTENCE, and that is a
-  # scar. It used to look for "HexaRouting ready." - the last line the
+  # scar. It used to look for "Prisma Routing ready." - the last line the
   # self-test printed, which made it the right anchor for an ordering
   # question. #297 gave that summary three forms, because a box that is
   # installed and healthy and has no NIC to forward on is neither ready nor
@@ -1087,7 +1087,7 @@ drive_console() {
   else
     echo "  [FAIL] the box offered a login prompt before it was ready"
     echo "         the getty reached the console ahead of the self-test, so"
-    echo "         the prompt is drawn while hexarouting.service is still"
+    echo "         the prompt is drawn while prisma-routing.service is still"
     echo "         waiting for VPP. An operator who logs in there is in a VTY"
     echo "         that cannot read the box (#211). On the live image the"
     echo "         ordering is in 10-after-selftest.conf; on an installed box"
@@ -1239,7 +1239,7 @@ drive_console() {
   send 'echo "HX""LAB shell-op=$(getent passwd '"$OP_USER"' | cut -d: -f7)"'
   wait_for "HXLAB shell-op=" 30 \
     "the box to say what the account logs into" || return 1
-  send 'echo "HX""LAB modes=$(stat -c %a:%G /etc/hexarouting) $(stat -c %a:%G /etc/hexarouting/rollback)"'
+  send 'echo "HX""LAB modes=$(stat -c %a:%G /etc/prisma-routing) $(stat -c %a:%G /etc/prisma-routing/rollback)"'
   wait_for "HXLAB modes=" 30 \
     "the box to state the configuration directory's mode" || return 1
   # What this ONE-DISK box has in the way of arrays, asked of the kernel (#83).
@@ -1262,7 +1262,7 @@ drive_console() {
   # predictable naming calls qemu's card on this host, the installer chose it
   # from what the machine had, and a lab that hard-coded "ens3" would be
   # asserting against its own guess - which is #161's standing rule.
-  send 'M=$(sed -n "s/^iface \([^ ]*\) .*/\1/p" /etc/network/interfaces.d/hexarouting | head -1); echo "HX""LAB mgmt-if=$M"'
+  send 'M=$(sed -n "s/^iface \([^ ]*\) .*/\1/p" /etc/network/interfaces.d/prisma-routing | head -1); echo "HX""LAB mgmt-if=$M"'
   wait_for "HXLAB mgmt-if=" 30 \
     "the box to say which card it was installed to be managed on" || return 1
   send 'echo "HX""LAB mgmt-addr=$(ip -o -4 addr show dev $M | awk "{print \$4}" | tr "\n" " ")"'
@@ -1288,7 +1288,7 @@ drive_console() {
   # property of the installed image - the tool being in it, the VTY finding
   # it, and the account being allowed to run it.
   #
-  # Through `hexash -c` rather than at the prompt, because the statement and
+  # Through `prismash -c` rather than at the prompt, because the statement and
   # the batch go through the same dispatch and the batch can be read back
   # from a serial line without timing anything.
   #
@@ -1297,14 +1297,14 @@ drive_console() {
   send 'G=$(ip -o -4 route list default | awk "{print \$3}" | head -1); echo "HX""LAB probe-gw=$G"'
   wait_for "HXLAB probe-gw=" 30 \
     "the box to say which gateway it would be pinging" || return 1
-  send 'echo "HX""LAB probe-ping=$(hexash -c "ping $G count 2" 2>&1 | tr -d "\r" | grep -c " bytes from ")"'
+  send 'echo "HX""LAB probe-ping=$(prismash -c "ping $G count 2" 2>&1 | tr -d "\r" | grep -c " bytes from ")"'
   wait_for "HXLAB probe-ping=" 120 \
     "the VTY's own ping to answer" || return 1
   # AND THE REFUSAL, from the same box, because a statement that only ever
   # says yes is one nobody has seen decide. A read-only account is not
   # arranged here - that is what the unit suite drives - but an answer this
   # VTY must not accept is, and it must not reach the tool at all.
-  send 'echo "HX""LAB probe-refused=$(hexash -c "ping 1.1.1.1 count 0" 2>&1 | tr -d "\r" | grep -c "count out of range")"'
+  send 'echo "HX""LAB probe-refused=$(prismash -c "ping 1.1.1.1 count 0" 2>&1 | tr -d "\r" | grep -c "count out of range")"'
   wait_for "HXLAB probe-refused=" 60 \
     "the VTY to refuse a count it does not take" || return 1
   send 'echo "HX""LAB probe-tools=$(for t in ping traceroute mtr; do command -v $t >/dev/null 2>&1 || echo $t; done | tr "\n" " ")"'
@@ -1321,7 +1321,7 @@ drive_console() {
   # because it was the only state a box built by this lab could be in.
   #
   # FIRST, THE PROOF THAT NOBODY NAMED IT, and it is the reading the rest
-  # of this block is worthless without. HEXA_DATAPLANE_IF is the tuner's
+  # of this block is worthless without. PRISMA_DATAPLANE_IF is the tuner's
   # input and the VTY writes it; it ships empty and nothing in this lab
   # sets it. A non-empty value here means something typed, and then a
   # claimed card proves nothing about a box that claims its own.
@@ -1330,7 +1330,7 @@ drive_console() {
   # is what the box ships with and is the answer wanted, so a reader that
   # printed the value would give "" for the good case and for a tune.env
   # that is missing altogether - and those are different boxes.
-  send 'echo "HX""LAB claim-typed=$(grep -c "^HEXA_DATAPLANE_IF=." /etc/hexarouting/tune.env)"'
+  send 'echo "HX""LAB claim-typed=$(grep -c "^PRISMA_DATAPLANE_IF=." /etc/prisma-routing/tune.env)"'
   wait_for "HXLAB claim-typed=" 30 \
     "the box to say whether anything named a card in the tuner's file" \
     || return 1
@@ -1415,7 +1415,7 @@ drive_console() {
     "systemd to say what it runs before stopping the dataplane" || return 1
 
   # The bounds the control plane carries, asked of SYSTEMD rather than of the
-  # unit file (#172). hexarouting.service ships MemoryMax=512M against a
+  # unit file (#172). prisma-routing.service ships MemoryMax=512M against a
   # measured 13 MB peak, and frr.service deliberately ships none because one
   # full IPv4 table costs FRR 1.37 GB and 37 MB on a box taking default routes
   # only - one number cannot serve both. Neither of those has ever been read
@@ -1424,7 +1424,7 @@ drive_console() {
   # systemd. Both halves are asserted, because the absence is as deliberate as
   # the presence and a MemoryMax that appeared on frr.service by accident
   # would be a five-second kill loop on the box with the most to lose.
-  send 'echo "HX""LAB memmax=hx:$(systemctl show hexarouting.service -p MemoryMax --value) frr:$(systemctl show frr.service -p MemoryMax --value)"'
+  send 'echo "HX""LAB memmax=hx:$(systemctl show prisma-routing.service -p MemoryMax --value) frr:$(systemctl show frr.service -p MemoryMax --value)"'
   wait_for "HXLAB memmax=" 30 \
     "systemd to say what memory bounds it applied" || return 1
 
@@ -1469,7 +1469,7 @@ drive_console() {
   echo "  -- the boot self-test, run again now that an account has a role"
   send 'echo "HX""LAB selftest-rerun"'
   wait_for "HXLAB selftest-rerun" 30 "the marker before the re-run" || return 1
-  send "/usr/lib/hexarouting/selftest"
+  send "/usr/lib/prisma-routing/selftest"
   wait_for "====================" 240 "the self-test to finish" || return 1
 
   send 'echo "HX""LAB section=op"'
@@ -1530,13 +1530,13 @@ drive_console() {
   # A commit whose rollback revision could not be written still says "commit
   # complete" and warns one line above it, so an operator whose changes could
   # not be undone went unnoticed until #188 was filed.
-  send 'echo "HX""LAB rollback=$(ls /etc/hexarouting/rollback | wc -l) $(stat -c %a:%G /etc/hexarouting/rollback)"'
+  send 'echo "HX""LAB rollback=$(ls /etc/prisma-routing/rollback | wc -l) $(stat -c %a:%G /etc/prisma-routing/rollback)"'
   wait_for "HXLAB rollback=" 30 "the rollback store to be listed" || return 1
   # WHO owns the newest revision, and not how many there are. root's commit
   # above wrote one, so a count proves nothing about the operator's - a store
   # holding somebody else's revision is exactly the box #188 describes, where
   # the operator's own change is the one that cannot be undone.
-  send 'echo "HX""LAB newest-rev=$(stat -c %U $(ls -dt /etc/hexarouting/rollback/* | head -1))"'
+  send 'echo "HX""LAB newest-rev=$(stat -c %U $(ls -dt /etc/prisma-routing/rollback/* | head -1))"'
   wait_for "HXLAB newest-rev=" 30 \
     "the box to say who owns the newest rollback revision" || return 1
   send 'echo "HX""LAB section=ro"'
@@ -1586,12 +1586,12 @@ drive_console() {
   # ------------------- a 'commit confirmed' with nobody logged in to enforce it
   #
   # The one case the feature exists for, and the one it did not cover (#212).
-  # The deadline used to live in the hexash process that made the commit, so
+  # The deadline used to live in the prismash process that made the commit, so
   # the operator logging out cancelled it - and the failure it guards against
   # is precisely the one that ends that session.
   #
   # Nothing below prompts the box. Between the logout and the box's own
-  # sentence there is no hexash on this machine at all, which is the whole
+  # sentence there is no prismash on this machine at all, which is the whole
   # point: a lab that had to go and trigger the revert would be performing the
   # step the product is missing.
   echo "  -- a commit nobody confirms, made by a session that then ends"
@@ -1660,7 +1660,7 @@ drive_console() {
   # the process that made the commit leaves nothing here, and the assertion
   # about the account being gone later would otherwise be the first place that
   # shows.
-  send 'echo "HX""LAB confirm-armed=$(ls /etc/hexarouting/confirm-pending 2>/dev/null | wc -l)"'
+  send 'echo "HX""LAB confirm-armed=$(ls /etc/prisma-routing/confirm-pending 2>/dev/null | wc -l)"'
   wait_for "HXLAB confirm-armed=" 30 \
     "the box to say whether the deadline reached the disk" || return 1
   send "exit"
@@ -1704,10 +1704,10 @@ drive_console() {
   # What systemd thinks it is running, asked of systemd. A unit that was
   # installed and never enabled is indistinguishable from one that works, on
   # a feature nobody notices working.
-  send 'echo "HX""LAB confirm-unit=$(systemctl is-enabled hexarouting-confirm.timer 2>&1) $(systemctl is-active hexarouting-confirm.timer 2>&1)"'
+  send 'echo "HX""LAB confirm-unit=$(systemctl is-enabled prisma-routing-confirm.timer 2>&1) $(systemctl is-active prisma-routing-confirm.timer 2>&1)"'
   wait_for "HXLAB confirm-unit=" 30 \
     "systemd to say whether the timer is enabled and running" || return 1
-  send 'echo "HX""LAB confirm-left=$(ls /etc/hexarouting/confirm-pending 2>/dev/null | wc -l)"'
+  send 'echo "HX""LAB confirm-left=$(ls /etc/prisma-routing/confirm-pending 2>/dev/null | wc -l)"'
   wait_for "HXLAB confirm-left=" 30 \
     "the box to say whether anything is still pending" || return 1
   return 0
@@ -1736,7 +1736,7 @@ if [ "$MODE" = mirror ]; then
 # mount table - not of the installer's console output, which says what the
 # installer meant to do, and not of mdadm.conf, which says what it was told.
 read_disks() {  # <prefix for the markers>
-  send 'echo "HX""LAB '"$1"'rec=$(findmnt -no SOURCE --target /var/log/hexarouting)"'
+  send 'echo "HX""LAB '"$1"'rec=$(findmnt -no SOURCE --target /var/log/prisma-routing)"'
   wait_for "HXLAB $1rec=" 60 "the box to say where the records are" || return 1
   send 'echo "HX""LAB '"$1"'md=$(grep -E "^md[0-9]|blocks " /proc/mdstat | tr "\n" "/")"'
   wait_for "HXLAB $1md=" 30 "the kernel to describe its arrays" || return 1
@@ -1751,8 +1751,8 @@ read_disks() {  # <prefix for the markers>
 healthy_session() {
   login_root "the installed box to boot with both disks attached" || return 1
   read_disks "" || return 1
-  send 'echo "HX""LAB wrote=$(echo hexa-record-42 > /var/log/hexarouting/lab-record.txt; sync; cat /var/log/hexarouting/lab-record.txt)"'
-  wait_for "HXLAB wrote=hexa-record-42" 60 \
+  send 'echo "HX""LAB wrote=$(echo prisma-record-42 > /var/log/prisma-routing/lab-record.txt; sync; cat /var/log/prisma-routing/lab-record.txt)"'
+  wait_for "HXLAB wrote=prisma-record-42" 60 \
     "the box to write a connection record onto the mirrored volume" || return 1
   send "sync"
   send "systemctl poweroff"
@@ -1767,7 +1767,7 @@ degraded_session() {
   read_disks "dg" || return 1
   # The record written by the previous boot, read back off the survivor. This
   # is the question the whole feature exists to answer.
-  send 'echo "HX""LAB dgrecord=$(cat /var/log/hexarouting/lab-record.txt 2>&1)"'
+  send 'echo "HX""LAB dgrecord=$(cat /var/log/prisma-routing/lab-record.txt 2>&1)"'
   wait_for "HXLAB dgrecord=" 60 \
     "the box to read back the record it wrote before the disk died" || return 1
   # The self-test again, on a settled box. At boot it may run while the kernel
@@ -1776,7 +1776,7 @@ degraded_session() {
   # the kernel gives up on a disk.
   send 'echo "HX""LAB selftest-degraded"'
   wait_for "HXLAB selftest-degraded" 30 "the marker before the re-run" || return 1
-  send "/usr/lib/hexarouting/selftest"
+  send "/usr/lib/prisma-routing/selftest"
   wait_for "====================" 240 "the self-test to finish" || return 1
   send "sync"
   send "systemctl poweroff"
@@ -1815,12 +1815,12 @@ case "${H_REC:-}" in
   /dev/md*)
     echo "  [ ok ] and the volume it writes them to is the array, not a disk" ;;
   *)
-    echo "  [FAIL] /var/log/hexarouting is on '${H_REC:-nothing}', which is not"
+    echo "  [FAIL] /var/log/prisma-routing is on '${H_REC:-nothing}', which is not"
     echo "         the array. The records are being written to one disk on a"
     echo "         box that was installed with two"
     fail=1 ;;
 esac
-if [ "$H_WROTE" = hexa-record-42 ]; then
+if [ "$H_WROTE" = prisma-record-42 ]; then
   echo "  [ ok ] and a record written through the running box lands on it"
 else
   echo "  [FAIL] the box could not write a record onto the records volume:"
@@ -1880,7 +1880,7 @@ if [ "$DEGRADED_DRIVEN" = 1 ]; then
       echo "         replaced"
       fail=1 ;;
   esac
-  if [ "$D_RECORD" = hexa-record-42 ]; then
+  if [ "$D_RECORD" = prisma-record-42 ]; then
     echo "  [ ok ] and the record written before the disk died is still there:"
     echo "         the copy survived the disk"
   else
@@ -1899,10 +1899,10 @@ echo "=========== THE SURVIVOR, READ ON ANOTHER MACHINE ==========="
 # The record it is asked for was written by the RUNNING BOX two boots ago, not
 # by mkfs - which is the difference between "an array existed at install time"
 # and "the mirror is still copying what this appliance writes".
-rm -f /tmp/hexa-mirror.raw
-qemu-img convert -O raw "$DISK2" /tmp/hexa-mirror.raw 2>&1 | sed 's/^/  qemu-img: /'
+rm -f /tmp/prisma-mirror.raw
+qemu-img convert -O raw "$DISK2" /tmp/prisma-mirror.raw 2>&1 | sed 's/^/  qemu-img: /'
 SURV_LOOP=$(losetup --find --show --read-only --offset "$(( MOFF * 512 ))" \
-            /tmp/hexa-mirror.raw 2>/tmp/losetup2.log) || true
+            /tmp/prisma-mirror.raw 2>/tmp/losetup2.log) || true
 SURV_RECORD=""
 SURV_HOW=""
 if [ -n "${SURV_LOOP:-}" ]; then
@@ -1921,7 +1921,7 @@ if [ -n "${SURV_LOOP:-}" ]; then
     # was about the data or about the container.
     if [ -n "${MDATAOFF:-}" ] \
        && mount -o loop,ro,offset="$(( (MOFF + MDATAOFF) * 512 ))" \
-            /tmp/hexa-mirror.raw /mnt/surv 2>>/tmp/assemble.log; then
+            /tmp/prisma-mirror.raw /mnt/surv 2>>/tmp/assemble.log; then
       SURV_RECORD=$(cat /mnt/surv/lab-record.txt 2>/dev/null)
       SURV_HOW="mounted straight off the leg at its data offset, with no array"
       umount /mnt/surv 2>/dev/null || true
@@ -1929,7 +1929,7 @@ if [ -n "${SURV_LOOP:-}" ]; then
   fi
   losetup -d "$SURV_LOOP" 2>/dev/null || true
 fi
-if [ "$SURV_RECORD" = hexa-record-42 ]; then
+if [ "$SURV_RECORD" = prisma-record-42 ]; then
   echo "  [ ok ] the record the running box wrote is on the mirror disk, read"
   echo "         with the box switched off: $SURV_HOW"
 else
@@ -1999,11 +1999,11 @@ timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   -drive file="$DISK",format=qcow2,if=virtio \
   -drive file="$DISK2",format=qcow2,if=virtio $MGMT_NET \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
-           hexarouting.install=/dev/vda hexarouting.yes \
-           hexarouting.mgmt-address=dhcp \
-           hexarouting.log-gb=2 hexarouting.mirror=$MIRROR_DEV \
-           hexarouting.hostname=$NEW_HOST hexarouting.timezone=$NEW_TZ \
-           hexarouting.password=$NEW_PW" \
+           prisma-routing.install=/dev/vda prisma-routing.yes \
+           prisma-routing.mgmt-address=dhcp \
+           prisma-routing.log-gb=2 prisma-routing.mirror=$MIRROR_DEV \
+           prisma-routing.hostname=$NEW_HOST prisma-routing.timezone=$NEW_TZ \
+           prisma-routing.password=$NEW_PW" \
   > /tmp/reinstall.log 2>&1
 sed 's/\x1b\[[0-9;]*m//g' /tmp/reinstall.log > /tmp/reinstall-clean.log
 cat /tmp/reinstall-clean.log >> "$LOG" 2>/dev/null || true
@@ -2108,7 +2108,7 @@ if said_a_failed_verdict /tmp/disk-clean.log; then
   sed -n '/boot self-test/,/=====$/p' /tmp/disk-clean.log \
     | grep -E "\[FAIL\]|\[warn\]" | sed 's/^/  /'
   echo "  --- what the tuner decided, and from what ---"
-  grep -E "hexarouting-tune|1G hugepages|WARNING|cmdline hugepages|reserved 1G" \
+  grep -E "prisma-routing-tune|1G hugepages|WARNING|cmdline hugepages|reserved 1G" \
     /tmp/disk-clean.log | tail -8 | sed 's/^/  /'
   echo "  --- what the dataplane said ---"
   grep -iE "vpp.service|SEGV|Killed|Out of memory" /tmp/disk-clean.log \
@@ -2193,7 +2193,7 @@ if [ "$up" = 1 ]; then
   elif [ -n "$MGMT_IF" ]; then
     echo "  [ ok ] the installed box was given a management card: $MGMT_IF"
   else
-    echo "  [FAIL] the installed box has no /etc/network/interfaces.d/hexarouting"
+    echo "  [FAIL] the installed box has no /etc/network/interfaces.d/prisma-routing"
     echo "         naming a card, so nothing configures an interface at boot."
     echo "         This is the box of #303: it comes back from every reboot"
     echo "         down and unreachable, and the console is the only way in"
@@ -2249,7 +2249,7 @@ if [ "$up" = 1 ]; then
     echo "         own statements run"
   else
     echo "  [FAIL] the installed image has no: $PROBE_TOOLS"
-    echo "         hexash offers a statement for each, and refuses the ones"
+    echo "         prismash offers a statement for each, and refuses the ones"
     echo "         whose tool is not here: that is a promise the medium does"
     echo "         not keep"
     fail=1
@@ -2706,7 +2706,7 @@ if [ "$up" = 1 ]; then
 fi
 # The binary API, asserted on the INSTALLED box (#119).
 #
-# hexash creates a pool over that API. The ISO never carried the vat2 plugin
+# prismash creates a pool over that API. The ISO never carried the vat2 plugin
 # that registers it, so an installed appliance could route and answer and never
 # be configured to do CGNAT at all. Ten labs hid this by placing the plugin by
 # hand, describing that as "what install.sh does on a real box".
@@ -2840,11 +2840,11 @@ else
   echo "  $OP_USER (role administrator) is in:$OP_GROUPS"
   echo "  $RO_USER (no role) is in:$RO_GROUPS"
 
-  # The role groups. hexa-admin is additive on top of hexa-cgnat, because the
-  # configuration directory and the rollback store are group hexa-cgnat and an
+  # The role groups. prisma-admin is additive on top of prisma-cgnat, because the
+  # configuration directory and the rollback store are group prisma-cgnat and an
   # administrator that cannot write them cannot record the revision for the
   # change it just made.
-  for g in hexa-admin hexa-cgnat; do
+  for g in prisma-admin prisma-cgnat; do
     if has "$g" "$OP_GROUPS"; then
       echo "  [ ok ] the account the VTY made is in $g"
     else
@@ -2874,7 +2874,7 @@ else
       fail=1
     fi
   done
-  if [ "$OP_SHELL" = /usr/bin/hexash-login ]; then
+  if [ "$OP_SHELL" = /usr/bin/prismash-login ]; then
     echo "  [ ok ] and it logs into the VTY, not into a shell"
   else
     echo "  [FAIL] the account's login shell is '$OP_SHELL', so the box hands"
@@ -2885,13 +2885,13 @@ else
   # #188, on an installed box: the installer states these modes and the VTY
   # must not narrow them. The first commit here was ROOT's, which is the case
   # that broke every later one.
-  if [ "$CONF_MODES" = "2770:hexa-cgnat 2770:hexa-cgnat" ]; then
+  if [ "$CONF_MODES" = "2770:prisma-cgnat 2770:prisma-cgnat" ]; then
     echo "  [ ok ] root's commit left the configuration directory and the"
-    echo "         rollback store 2770 group hexa-cgnat"
+    echo "         rollback store 2770 group prisma-cgnat"
   else
     echo "  [FAIL] after root's commit the configuration directory and the"
-    echo "         rollback store are '$CONF_MODES', not '2770:hexa-cgnat"
-    echo "         2770:hexa-cgnat': every non-root operation on them fails"
+    echo "         rollback store are '$CONF_MODES', not '2770:prisma-cgnat"
+    echo "         2770:prisma-cgnat': every non-root operation on them fails"
     fail=1
   fi
 
@@ -2917,7 +2917,7 @@ else
     echo "         that only systemd runs, and this is the only lab that has one"
     fail=1
   fi
-  if [ "$NEWEST_REV" = "$OP_USER" ] && [ "$RB_MODE" = 2770:hexa-cgnat ] \
+  if [ "$NEWEST_REV" = "$OP_USER" ] && [ "$RB_MODE" = 2770:prisma-cgnat ] \
      && ! grep -q "no rollback revision could be recorded" /tmp/sec-op.log; then
     echo "  [ ok ] and the commit it made can be undone: the newest of the"
     echo "         $RB_COUNT revision(s) belongs to $NEWEST_REV, in a store"
@@ -2984,11 +2984,11 @@ else
   fi
   if [ "${CONF_ARMED:-0}" = 1 ]; then
     echo "  [ ok ] and the deadline reached the disk: while the window was"
-    echo "         open, /etc/hexarouting/confirm-pending was on this box"
+    echo "         open, /etc/prisma-routing/confirm-pending was on this box"
   else
-    echo "  [FAIL] nothing was written to /etc/hexarouting/confirm-pending"
+    echo "  [FAIL] nothing was written to /etc/prisma-routing/confirm-pending"
     echo "         while the window was open, so the deadline exists only"
-    echo "         inside the hexash process that made the commit - and that"
+    echo "         inside the prismash process that made the commit - and that"
     echo "         process is what the change this guards against destroys"
     fail=1
   fi
@@ -3014,7 +3014,7 @@ else
       | sed 's/^/         /'
   else
     echo "  [FAIL] with nobody logged in, this box said NOTHING and did"
-    echo "         nothing. That is #212: the deadline lived in the hexash"
+    echo "         nothing. That is #212: the deadline lived in the prismash"
     echo "         process that made the commit, so logging out cancelled it"
     echo "         - and the change it guards against is the one that ends"
     echo "         that session. It reverts in every case where it is not"
@@ -3034,10 +3034,10 @@ else
   fi
   case "$CONF_UNIT" in
     "enabled active")
-      echo "  [ ok ] and systemd is what enforces it: hexarouting-confirm.timer"
+      echo "  [ ok ] and systemd is what enforces it: prisma-routing-confirm.timer"
       echo "         is enabled and active on this box" ;;
     *)
-      echo "  [FAIL] hexarouting-confirm.timer is '${CONF_UNIT:-<no answer>}',"
+      echo "  [FAIL] prisma-routing-confirm.timer is '${CONF_UNIT:-<no answer>}',"
       echo "         not 'enabled active'. A unit that was installed and never"
       echo "         enabled reads exactly like one that works, on a feature"
       echo "         whose whole job is to do nothing most of the time"
@@ -3047,7 +3047,7 @@ else
     echo "  [ ok ] and nothing is left pending, so the next boot reverts"
     echo "         nothing a second time"
   else
-    echo "  [FAIL] /etc/hexarouting/confirm-pending is still on the box after"
+    echo "  [FAIL] /etc/prisma-routing/confirm-pending is still on the box after"
     echo "         the revert ran, so the box would do it again at every boot"
     fail=1
   fi
@@ -3075,7 +3075,7 @@ echo
 # Which NIC the dataplane was allowed to claim (#123).
 #
 # An installed box used to generate a DPDK stanza with no device allowlist,
-# because the shipped HEXA_DATAPLANE_IF named an interface that does not exist
+# because the shipped PRISMA_DATAPLANE_IF named an interface that does not exist
 # under predictable names. VPP then took whatever it found - the management
 # interface - and the box left the network the moment the dataplane started.
 #
@@ -3161,11 +3161,11 @@ fi
 
 # The memory bound the control plane carries, read back from systemd (#172).
 #
-# hexarouting.service ships MemoryMax=512M against a measured 13 MB peak and
+# prisma-routing.service ships MemoryMax=512M against a measured 13 MB peak and
 # frr.service ships none against a measured 1.37 GB full table. Both halves are
 # asserted: a MemoryMax that arrived on frr.service would turn a slow box into
 # a five-second restart loop, and one that systemd parsed and refused on
-# hexarouting.service reads exactly like one that took.
+# prisma-routing.service reads exactly like one that took.
 mm=$(sed -n 's/^HXLAB memmax=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
 case "$mm" in
   "") if [ "$up" = 1 ]; then
@@ -3178,7 +3178,7 @@ case "$mm" in
   *)
     echo "  [FAIL] the memory bounds systemd applied are not the shipped ones:"
     echo "         $mm"
-    echo "         expected hx:536870912 (512M, hexarouting.service) and"
+    echo "         expected hx:536870912 (512M, prisma-routing.service) and"
     echo "         frr:infinity (deliberately unbounded - one full table costs"
     echo "         FRR 1.37 GB and a bound guessed low kills rather than"
     echo "         degrades; docs/appliance.md carries the measurement)"
@@ -3289,7 +3289,7 @@ if [ "$up" = 1 ] && [ "${CONSOLE_DRIVEN:-0}" = 1 ]; then
   fi
 
   if login_root "the installed box to come back from a cold start"; then
-    send 'M=$(sed -n "s/^iface \([^ ]*\) .*/\1/p" /etc/network/interfaces.d/hexarouting | head -1); echo "HX""LAB rb-if=$M"'
+    send 'M=$(sed -n "s/^iface \([^ ]*\) .*/\1/p" /etc/network/interfaces.d/prisma-routing | head -1); echo "HX""LAB rb-if=$M"'
     wait_for "HXLAB rb-if=" 30 "the box to name its management card again" \
       || fail=1
     send 'echo "HX""LAB rb-addr=$(ip -o -4 addr show dev $M | awk "{print \$4}" | tr "\n" " ")"'
@@ -3359,7 +3359,7 @@ fi
 # nothing about whether the box returned, which is the half that matters.
 #
 # WHAT IT PROVES BEYOND "the command exists". The offline suite drives
-# `system reboot` through a stub and reads the argv (test/test_hexash_system.py);
+# `system reboot` through a stub and reads the argv (test/test_prismash_system.py);
 # what a stub cannot show is that `systemctl reboot` on a real box takes it
 # down cleanly - vpp.service's ExecStop draining the connection log on the way
 # (#217) - and that the box boots again to a reachable state. That is an end to
@@ -3922,10 +3922,10 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send 'echo "HX""LAB ho-frr=$(vtysh -c "show interface brief" 2>/dev/null | awk -v n="'"$HO_IF"'" "\$1 == n {print \$1, \$2}")"'
     wait_for "HXLAB ho-frr=" 60 "FRR to say whether it lists the card" \
       || fail=1
-    send 'echo "HX""LAB ho-shif=$(hexash -c "show interface" 2>/dev/null | tr -d "\r" | awk -v n="'"$HO_IF"'" "\$1 == n" | tr -s " " | sed "s/^ //")"'
+    send 'echo "HX""LAB ho-shif=$(prismash -c "show interface" 2>/dev/null | tr -d "\r" | awk -v n="'"$HO_IF"'" "\$1 == n" | tr -s " " | sed "s/^ //")"'
     wait_for "HXLAB ho-shif=" 120 "the VTY to print its own row for the card" \
       || fail=1
-    # AND THE ROW THE CARD RULE READS. hexash decides which interfaces are
+    # AND THE ROW THE CARD RULE READS. prismash decides which interfaces are
     # cards - the ones paired under their own name by default - off the
     # `pci:` row `show hardware-interfaces` prints under each, written from
     # VPP's format string and never before read off a box here. The row
@@ -4253,7 +4253,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       echo "         Linux name, which is the row the card rule reads" ;;
     *)
       echo "  [FAIL] 'show hardware-interfaces' has no pci row under $HO_IF,"
-      echo "         so hexash cannot tell that name is a card's"
+      echo "         so prismash cannot tell that name is a card's"
       fail=1 ;;
   esac
 fi

@@ -61,7 +61,7 @@ Recorded because a section nobody measured is how #303 happened, and an
 unswept area reads exactly like a clean one.
 
 * **Every VTY command quoted inside a message the box prints.** Extracted from
-  the AST of `src/hexash/hexash.py`, excluding docstrings, and walked against
+  the AST of `src/prismash/prismash.py`, excluding docstrings, and walked against
   the live command tree in both modes. Thirty-five commands. One was wrong,
   and it is #308. Three more were flagged and traced to the tree accepting
   them by another door: `ip route <prefix> blackhole` and `no interface
@@ -71,16 +71,16 @@ unswept area reads exactly like a clean one.
   `README.md`, and passes; it does not do it for the VTY's own messages, which
   is why #308 survived.
 * **The same extraction over `appliance/selftest`,
-  `appliance/hexarouting-tune`, `appliance/hexarouting-install`,
+  `appliance/prisma-routing-tune`, `appliance/prisma-routing-install`,
   `appliance/bind-dataplane-nic`, `appliance/apply-tuning`,
   `appliance/wait-for-vpp` and `appliance/install.sh`.** Every VTY command
   those scripts quote exists. The one flagged, `'no workers'`, is a phrase
   from a startup file and not a command.
-* **Every absolute path named in a message `hexash.py` prints.** Eleven, all
+* **Every absolute path named in a message `prismash.py` prints.** Eleven, all
   of them files an installed box has. This is #295's shape and it is not
   repeated anywhere in the VTY.
 * **The installer's three claims about what the boot self-test will say.**
-  `hexarouting-install` promises, at the screen the operator reads before
+  `prisma-routing-install` promises, at the screen the operator reads before
   walking away, that the self-test says so at every boot when there is no
   management network, prints the DHCP address it was given, and reports a
   records mirror still synchronising. All three were traced to the branch in
@@ -100,7 +100,7 @@ unswept area reads exactly like a clean one.
 Every finding was produced by running the code or reading the file, and the
 output is quoted in the issue rather than described. Where a code path needed a
 box, it was driven against a fake tree through the seams the product already
-has - `SYS_CLASS_NET`, `PROC_NET_ROUTE`, `TUNE_ENV`, `HEXA_LIVE_SQUASHFS` -
+has - `SYS_CLASS_NET`, `PROC_NET_ROUTE`, `TUNE_ENV`, `PRISMA_LIVE_SQUASHFS` -
 which is the same technique `test/test_dataplane_if.py` uses and for the same
 reason.
 
@@ -164,7 +164,7 @@ nobody recomputed.
 | | |
 |---|---|
 | **A virtio guest is told it has no NIC to choose from.** `routing.md` said a virtio guest's NICs fail the PCI test and printed a `show hardware` message saying so. `pci_address_of()` **walks up** the sysfs parent chain for exactly this reason: the `device` link on a guest points at the virtio bus device whose parent is the PCI one, and reproduced in a tempdir, `/sys/class/net/x/device -> .../pci0000:00/0000:00:12.0/virtio3` resolves to `0000:00:12.0`. The card is eligible and has been since [#286](https://github.com/andrediashexa/hexarouting/issues/286); the box's own message now says so in as many words. The page carried the pre-#286 reading in two places, and a VM with one virtual NIC is, by this page's own sentence, how most people first meet this product. |
-| **The first screen of a fresh appliance sends the operator to an editor.** `routing.md`'s `show hardware` transcript quoted `Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env ... then restart hexarouting-tune and vpp`. Driven against a `no-pci` startup file, the VTY prints its own remedy instead - `configure`, `dataplane interface <name>`, `commit` - which is precisely what [#283](https://github.com/andrediashexa/hexarouting/issues/283) replaced that advice with. The section is *about* #283 and was quoting the defect. Its driver rows and its column widths had drifted with it. |
+| **The first screen of a fresh appliance sends the operator to an editor.** `routing.md`'s `show hardware` transcript quoted `Set PRISMA_DATAPLANE_IF in /etc/prisma-routing/tune.env ... then restart prisma-routing-tune and vpp`. Driven against a `no-pci` startup file, the VTY prints its own remedy instead - `configure`, `dataplane interface <name>`, `commit` - which is precisely what [#283](https://github.com/andrediashexa/hexarouting/issues/283) replaced that advice with. The section is *about* #283 and was quoting the defect. Its driver rows and its column widths had drifted with it. |
 | **`show cgnat ?` is missing an entry.** The page lists eleven sub-commands; the tree offers twelve. `ha` has been there since the HA comparison was built and the transcript was never re-taken. |
 | **An interface block's `vrf` description is stale**, in both of the two places `routing.md` prints that listing: the box now adds *"; 0 takes the interface back out of one"*. |
 | **The reserve's cost under `blocked` is wrong in both numbers.** `architecture.md` said "738 of 882 subscribers moved ... plus the 21 the truncation dropped". Re-running the model it cites gives **750 and 7**. The 7 is also what the `interleaved` row beside it derives from the pool definition - `outside.count x reserve`, 7 x 1 - so the table contradicted itself, and the half that was wrong is the one an operator sizes a `commit remap` window against. |

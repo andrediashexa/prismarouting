@@ -32,7 +32,7 @@
 # and the same applies to the repository that mirrors it.
 set -eu
 
-URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
+URL=${WIKI_URL:-https://prisma-routing.hexanetworks.com.br}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 STAMP="$REPO/wiki/.pulled"
 INDEX="$REPO/wiki/.ids"

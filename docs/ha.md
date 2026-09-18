@@ -143,7 +143,7 @@ prisma> show cgnat ha
     takes a service address over. What is checked below is whether a takeover
     WOULD land subscribers where they already are.
 
-  peer, from /etc/hexarouting/peer.conf
+  peer, from /etc/prisma-routing/peer.conf
     mapping fingerprint  9e7394fc505d2eff
     pools                residencial
     copied               2026-09-12 09:14:31
@@ -169,7 +169,7 @@ place, for a different reason.
 
 `Config.delta_to` rebuilds a pool on the dataplane exactly when
 `Pool.lines(in_place=False)` moves, because a mapping change invalidates every
-session on the pool. `test/test_hexash_config.py` asserts that classification
+session on the pool. `test/test_prismash_config.py` asserts that classification
 field by field, and asserts that **every field a pool has is classified** - a
 field added later and forgotten fails there rather than defaulting to whatever
 the diff happens to do with it.
@@ -197,8 +197,8 @@ session between the two boxes, because VRRP is
 [#7](https://github.com/andrediashexa/hexarouting/issues/7) and does not exist
 yet, so nothing can ask the peer anything.
 
-So the peer's configuration arrives as a file, `/etc/hexarouting/peer.conf`
-(`HEXA_PEER_CONFIG` overrides it), which is the same artefact `save` writes and
+So the peer's configuration arrives as a file, `/etc/prisma-routing/peer.conf`
+(`PRISMA_PEER_CONFIG` overrides it), which is the same artefact `save` writes and
 `--load` reads. That seam is deliberate: whatever ends up carrying a peer
 relationship writes that file, and the comparison above does not change. Until
 something does, the file is whatever was last copied there - which is why every

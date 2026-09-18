@@ -27,7 +27,7 @@
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 . /src/lab/verdict.sh
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -225,7 +225,7 @@ vppctl show bpa pool | grep -E "^pool (nostride|strided)|per sub|stride " \
 # performs the product's own step proves nothing about the product: the rule
 # lab/ipfix.sh records after UDP export shipped for the life of the project
 # with a green lab beside it.
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 $HX -c "configure" \
     -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
     -c "cgnat logging enable" \

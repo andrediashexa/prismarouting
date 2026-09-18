@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Every function in hexarouting-snmp-agent, called on its own (#390).
+Every function in prisma-routing-snmp-agent, called on its own (#390).
 
 The agent speaks net-snmp's pass_persist protocol over stdin and asks the
 dataplane through vppctl, and the two rules it exists for are READ-ONLY and
@@ -9,7 +9,7 @@ also cached the liveness check served the first ten seconds of an outage as
 a healthy box, measured in a lab. So the liveness check, the cache, the OID
 table and the parsers are each driven here against a stub vppctl on disk,
 whose answers a case changes between two calls. Nothing here reads the
-machine that runs it: VPPCTL and HEXA_SNMPD_CONF are pointed into a scratch
+machine that runs it: VPPCTL and PRISMA_SNMPD_CONF are pointed into a scratch
 directory before the agent is loaded, because it reads both at import.
 
 Each check was run against a mutation of the rule it holds and required to
@@ -22,7 +22,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-AGENT = os.path.join(HERE, "hexarouting-snmp-agent")
+AGENT = os.path.join(HERE, "prisma-routing-snmp-agent")
 
 fail = 0
 
@@ -76,8 +76,8 @@ w(f"{BOX}/drops", "bpa drops\n"
                   "  everything else it counted\n"
                   "  9999 in2out packets\n")
 os.environ["VPPCTL"] = f"{BOX}/vppctl"
-os.environ["HEXA_SNMPD_CONF"] = f"{BOX}/snmpd.conf"
-os.environ.pop("HEXA_SNMP_ENTERPRISE", None)
+os.environ["PRISMA_SNMPD_CONF"] = f"{BOX}/snmpd.conf"
+os.environ.pop("PRISMA_SNMP_ENTERPRISE", None)
 
 
 def load_agent():
@@ -91,15 +91,15 @@ def load_agent():
     """
     import importlib.machinery
     import importlib.util
-    if "hexarouting_snmp_agent" in sys.modules:
-        return sys.modules["hexarouting_snmp_agent"]
-    loader = importlib.machinery.SourceFileLoader("hexarouting_snmp_agent",
+    if "prisma_routing_snmp_agent" in sys.modules:
+        return sys.modules["prisma_routing_snmp_agent"]
+    loader = importlib.machinery.SourceFileLoader("prisma_routing_snmp_agent",
                                                   AGENT)
-    spec = importlib.util.spec_from_file_location("hexarouting_snmp_agent",
+    spec = importlib.util.spec_from_file_location("prisma_routing_snmp_agent",
                                                   AGENT, loader=loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
-    sys.modules["hexarouting_snmp_agent"] = module
+    sys.modules["prisma_routing_snmp_agent"] = module
     return module
 
 
@@ -126,10 +126,10 @@ w(f"{BOX}/snmpd.conf", "view hexa included .1.3.6.1.2.1.123\n"
 check(agent._enterprise() == "",
       f"a conf whose only enterprise OID is not on a view line gave "
       f"{agent._enterprise()!r}")
-os.environ["HEXA_SNMP_ENTERPRISE"] = " 4242 "
+os.environ["PRISMA_SNMP_ENTERPRISE"] = " 4242 "
 check(agent._enterprise() == "4242",
-      f"the HEXA_SNMP_ENTERPRISE override read as {agent._enterprise()!r}")
-os.environ.pop("HEXA_SNMP_ENTERPRISE")
+      f"the PRISMA_SNMP_ENTERPRISE override read as {agent._enterprise()!r}")
+os.environ.pop("PRISMA_SNMP_ENTERPRISE")
 print("  [ ok ] the fourth field of the view line, and the override")
 
 print("\n=== vppctl: an answer, or None, and never an error message ===")

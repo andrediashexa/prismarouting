@@ -8,7 +8,7 @@
 #                                  to be able to fail
 #
 # This is evidence, not a feature. Nothing here is a commitment to ship a BNG,
-# and nothing here is wired into the product: no hexash statement creates a
+# and nothing here is wired into the product: no prismash statement creates a
 # PPPoE session and none is proposed.
 #
 # What makes this lab worth anything is that the control plane does the control
@@ -28,7 +28,7 @@ set -u
 
 OFF=${1:-}
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing /etc/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -45,7 +45,7 @@ echo "=========== 1. WHAT IT COSTS TO BUILD accel-ppp-ng ==========="
 # answered the question and thrown the answer away.
 DEPS="libssl-dev libpcre2-dev libnl-3-dev libnl-route-3-dev libnl-genl-3-dev"
 LABDEPS="ppp pppoe"
-echo "  build dependencies on top of hexarouting-dev:26.06:"
+echo "  build dependencies on top of prisma-routing-dev:26.06:"
 echo "    $DEPS"
 echo "  and for the lab's own PPPoE client, which is not a product dependency:"
 echo "    $LABDEPS"
@@ -205,7 +205,7 @@ lcp-echo-failure=3
 
 [pppoe]
 verbose=1
-ac-name=hexarouting
+ac-name=prisma-routing
 interface=vppcp,vpp-cp=enable
 
 [chap-secrets]
@@ -401,12 +401,12 @@ echo "=========== 9. show route verbose, THE PRODUCT'S OWN COMMAND ==========="
 # subscribers in the FIB and none of them in the RIB.
 mkdir -p /etc/frr /var/run/frr
 cat > /etc/frr/zebra.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 chown -R frr:frr /etc/frr /var/run/frr 2>/dev/null
 . /src/lab/lib.sh
 start_frr
-ROUTE_VERBOSE=$(python3 /src/src/hexash/hexash.py -c "show route verbose" 2>&1)
+ROUTE_VERBOSE=$(python3 /src/src/prismash/prismash.py -c "show route verbose" 2>&1)
 printf '%s\n' "$ROUTE_VERBOSE" | sed 's/^/  /'
 
 echo

@@ -355,7 +355,7 @@ nat cgnat logging udp disable                               clear the exporter
 infrastructure, which refuses to start a report while VPP's IPFIX exporter has
 no collector. **For the life of the project nothing configured one**: the
 exporter is set with `set ipfix exporter collector <ip> src <ip>`, a VPP CLI
-command, and `hexash` had no statement for it and
+command, and `prismash` had no statement for it and
 `appliance/etc/vpp-base.conf` carried none. So UDP export was refused on every
 installed box — permanently, because it was not a state an operator could
 leave ([#209](https://github.com/andrediashexa/hexarouting/issues/209)). Until
@@ -436,7 +436,7 @@ A setting that was refused looks, from the configuration, exactly like one
 that is working — the same shape as the OOM drop-in in
 [#172](https://github.com/andrediashexa/hexarouting/issues/172). So
 `appliance/selftest` reads two different places and compares them: the file
-`hexarouting.service` hands to `hexash`, and the state the dataplane holds.
+`prisma-routing.service` hands to `prismash`, and the state the dataplane holds.
 
 * the file names a collector and the dataplane has none → **FAIL**, the
   statement was refused when it was applied;
@@ -743,7 +743,7 @@ the line it is on.
 
 ```
 show bpa pool history verify
-configuration trail: /var/log/hexarouting/config-history.log
+configuration trail: /var/log/prisma-routing/config-history.log
   7 entries checked, chain intact
   head  seq 7 sha256 4e98de83…81f4
   a chain that verifies proves the file was not edited, not that it is the
@@ -807,7 +807,7 @@ truncation, only the remote copy can tell.
   loss; deployments that take this seriously **SHOULD** forward VPP's log to a
   remote syslog so the trail leaves the box.
 * A local file does not survive a disk loss **unless there are two disks**. The
-  installer will keep `/var/log/hexarouting` on a mirror across two of them
+  installer will keep `/var/log/prisma-routing` on a mirror across two of them
   ([appliance.md](appliance.md#the-records-on-two-disks-and-the-system-on-one)),
   which is the other half of the same sentence: forwarding takes the trail off
   the box, and the mirror keeps the copy that is on it. Neither replaces the
@@ -816,7 +816,7 @@ truncation, only the remote copy can tell.
 
 `show bpa pool history` reads the trail; `bpa audit-path` changes its location.
 The plugin opens the file with `O_CREAT` and cannot create the directory above
-it, so `/var/log/hexarouting` is created by the installer — without it the trail
+it, so `/var/log/prisma-routing` is created by the installer — without it the trail
 is missing on exactly the boxes that need it, and the failure is a line in
 VPP's log that nobody is looking for.
 

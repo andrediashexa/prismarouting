@@ -4,7 +4,7 @@ O que existe e o que cada coisa faz. Consulta, não leitura corrida — venha pa
 
 | Página | Cobre |
 |--------|-------|
-| [VTY hexash — guia de uso](/doc/vty-hexash-guia-de-uso-h6sDAK8Dsh) | Modos, prompts e a árvore de comandos completa |
+| [VTY prismash — guia de uso](/doc/vty-prismash-guia-de-uso-h6sDAK8Dsh) | Modos, prompts e a árvore de comandos completa |
 | [Multi-tenant com VRF](/doc/multi-tenant-com-vrf-3PDsWxfy6D) | Dois clientes usando a mesma faixa privada na mesma caixa |
 | [Timeouts e os pisos das RFCs](/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf) | Quanto vive cada sessão, e o que quebra abaixo do piso |
 

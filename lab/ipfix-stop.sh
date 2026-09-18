@@ -47,10 +47,10 @@ set -u
 # C. The assertions that separate them must go red - that is the only way to
 # know they can.
 MODE=${1:-with-marker}
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 COLLECTOR=/src/tools/ipfix_collector.py
 
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }

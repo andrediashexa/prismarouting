@@ -26,7 +26,7 @@
 # could not look reported it as something the install had done wrong.
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-IMAGE=${IMAGE:-hexarouting-dev:26.06}
+IMAGE=${IMAGE:-prisma-routing-dev:26.06}
 
 if [ $# -eq 0 ]; then
   echo "available labs:"
@@ -50,7 +50,7 @@ if ! docker ps >/dev/null 2>&1; then
   # reintroduced by the runner.
   exec sg docker -c "IMAGE='$IMAGE' LAB_WORKERS='${LAB_WORKERS:-}' \
                      LAB_WORKER_COUNT='${LAB_WORKER_COUNT:-}' \
-                     HEXA_VERSION_STAMP='${HEXA_VERSION_STAMP:-}' \
+                     PRISMA_VERSION_STAMP='${PRISMA_VERSION_STAMP:-}' \
                      '$0' '$LAB' $LAB_ARGV"
 fi
 
@@ -65,7 +65,7 @@ fi
 # of them running at once would be writing that header in the same build
 # directory at the same time. The whole reason run-all-labs.sh builds first is
 # that ninja is then a no-op; this is what keeps it one.
-HEXA_VERSION_STAMP=${HEXA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
+PRISMA_VERSION_STAMP=${PRISMA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
 
 # --device=/dev/kvm when it exists: an ISO boots in seconds instead of minutes
 KVM=""
@@ -96,7 +96,7 @@ exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e BPA_RTSP_OFF="${BPA_RTSP_OFF:-}" \
   -e LAB_WORKERS="${LAB_WORKERS:-}" \
   -e LAB_WORKER_COUNT="${LAB_WORKER_COUNT:-}" \
-  -e HEXA_VERSION_STAMP="$HEXA_VERSION_STAMP" \
+  -e PRISMA_VERSION_STAMP="$PRISMA_VERSION_STAMP" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "cat > /etc/apt/apt.conf.d/99lab <<'APTCONF'
 Acquire::ForceIPv4 \"true\";

@@ -9,7 +9,7 @@
 # `LAB_OUTPUT=<dir> sh tools/run-all-labs.sh`.
 #
 # WHY THIS IS A TOOL AND NOT A SUITE IN `make test`. The other four readers of
-# this shape - appliance/selftest, hexarouting-install, bind-dataplane-nic and
+# this shape - appliance/selftest, prisma-routing-install, bind-dataplane-nic and
 # apply-tuning - arrange their own boxes, because a box there is the program
 # run with an answer fed to it. A box here is a DATAPLANE STATE: reaching
 # "no subscriber holds a block right now" means a pool with no subscriber on

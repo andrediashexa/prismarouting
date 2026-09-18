@@ -5,7 +5,7 @@
 FRR provides BGP, OSPF and IS-IS. VPP's `linux_cp` mirrors each dataplane
 interface as a Linux TAP, so FRR sees ordinary netdevs and needs no
 modification; `linux_nl` carries the routes FRR installs back into the VPP FIB.
-`hexash` is one CLI for routing and CGNAT: CGNAT under `nat`, static routes in a
+`prismash` is one CLI for routing and CGNAT: CGNAT under `nat`, static routes in a
 `router static` block, and both of those hierarchies translated here because
 neither VPP's plugin nor FRR has them — the older spellings (`cgnat ...`,
 `ip route ...`) stay readable forever, because every box in service saved its
@@ -28,7 +28,7 @@ is explicitly enabled.
 | **Who** | Network operators who already know FRR syntax and expect it to work unchanged. |
 | **When** | Routes propagate to the VPP FIB within seconds of adjacency establishment. |
 | **Where** | Control-plane packets are punted to Linux TAPs; the dataplane keeps forwarding. |
-| **How** | `linux_cp` mirrors interfaces; `linux_nl` listens to netlink; `hexash` forwards routing commands to `vtysh`. |
+| **How** | `linux_cp` mirrors interfaces; `linux_nl` listens to netlink; `prismash` forwards routing commands to `vtysh`. |
 | **How much** | No measurable dataplane cost: punt only affects protocol packets, not transit. |
 
 ## The table you can see is not always the table that forwards
@@ -311,7 +311,7 @@ the table is empty — and that is exactly the moment an operator needs to see
 what NICs the box has, in order to choose one. The only screen that could tell
 them was the one that had nothing to say, and the way to the list was to leave
 the VTY and read `/sys` or run `ip link`. For an appliance whose whole argument
-is that it is driven from `hexash`, a first setup step that is a shell is a VTY
+is that it is driven from `prismash`, a first setup step that is a shell is a VTY
 that is decoration
 ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
 
@@ -368,7 +368,7 @@ stubbed method.
   NIC in every VM and this screen told a virtio guest it had nothing to choose
   from ([#286](https://github.com/andrediashexa/hexarouting/issues/286)). DPDK
   drives virtio through its own poll-mode driver and the card was always
-  eligible. It is the same walk `nic_pci()` in `appliance/hexarouting-tune`
+  eligible. It is the same walk `nic_pci()` in `appliance/prisma-routing-tune`
   does, so a NIC this screen offers is a NIC the tuner can resolve - the two
   cannot disagree about what is a candidate.
 * **Driver** is `device/driver` resolved, and it is the driver holding the NIC
@@ -450,7 +450,7 @@ record beside the card in `tune.env` as a second line, so the boot after the
 commit could put the address on the pair. The tuner reads the same
 three things off the live card on the boot that claims it, whichever box it is
 on and whether or not the card was named, and leaves them in
-`/run/hexarouting/dataplane-management`; a record taken at the prompt was a
+`/run/prisma-routing/dataplane-management`; a record taken at the prompt was a
 second copy of a fact the box recomputes, and one that could be a day older
 than the boot that used it. So `dataplane interface <card>` is accepted like
 any other statement, and the commit says what it says for every card: the
@@ -472,8 +472,8 @@ it - so the tuner asks `ip`, through the seam its suite drives.
 saved file says, which is
 [#332](https://github.com/andrediashexa/hexarouting/issues/332) and half of
 [#385](https://github.com/andrediashexa/hexarouting/issues/385).** The pair is
-made by `hexash --load`, out of the configuration file
-`hexarouting.service` replays - and `commit` does not write that file. Only
+made by `prismash --load`, out of the configuration file
+`prisma-routing.service` replays - and `commit` does not write that file. Only
 `save` does. So a box that did what the VTY tells it to do, commit and reboot,
 came up replaying a file that had never heard of the card: on a fresh appliance
 the three comments the installer ships, which `Config.is_empty()` returns on
@@ -493,7 +493,7 @@ carried no record was a boot that put nothing back.
 told apart by asking Linux.** While Linux still has the card the handover has
 not happened yet - the boot before the operator reboots into it, the one after
 a rollback gave the card back - and there is nothing to do and nothing to say,
-which is what `hexash --load` running on every boot requires. Once Linux has
+which is what `prismash --load` running on every boot requires. Once Linux has
 given the card up and the dataplane has not got it, the card is on neither side
 and the address has nowhere to go, and the box says so on the console rather
 than returning success:
@@ -522,7 +522,7 @@ a reconnection
 **That window was removed in
 [#378](https://github.com/andrediashexa/hexarouting/issues/378), because it
 stopped undoing anything.** Since the box claims its own card, the state its
-revert produced - `HEXA_DATAPLANE_IF` empty, on a box with one card - is
+revert produced - `PRISMA_DATAPLANE_IF` empty, on a box with one card - is
 exactly the state that claims that card. An operator who came back and
 confirmed, and one who did nothing, ended in the same place; the second paid a
 reboot to get there. The screen was wrong twice over: it said the card goes
@@ -530,7 +530,7 @@ back to Linux, and it implied that not typing `commit` would lose it. The card
 stays either way.
 
 What the window was for is done earlier, on every boot, without a reboot:
-`hexarouting-tune` reads the card's address, MAC and gateway off it in the
+`prisma-routing-tune` reads the card's address, MAC and gateway off it in the
 window before anything is unbound, and this VTY puts them back on the
 `linux_cp` pair. A card whose way back cannot be read is not claimed at all,
 and a dataplane that will not start hands the card to Linux
@@ -642,7 +642,7 @@ It holds for all four ways of naming an interface: the FRR block,
 `cgnat interface`, and the `mtu` and `urpf` statements, which this VTY models
 outside the routing section.
 
-* **`hexash --load` refuses the whole file**, not statement by statement. It
+* **`prismash --load` refuses the whole file**, not statement by statement. It
   runs at boot with nobody watching, and applying half a file leaves the box
   holding half of it.
 * **With the dataplane unreachable the check is skipped, not failed.** A VTY
@@ -858,7 +858,7 @@ rolled back the whole commit, CGNAT half included
 `Frr.available()` existed, said *"A box may run CGNAT with no routing"* in its
 own docstring, and was never called.
 
-No lab caught it because **every lab that drives `hexash` also starts FRR**.
+No lab caught it because **every lab that drives `prismash` also starts FRR**.
 The product's own supported configuration — CGNAT without routing — was not one
 any test ran. `lab/subif.sh` does not need FRR, so it did not start it, and the
 defect surfaced immediately.
@@ -872,7 +872,7 @@ share it so they cannot drift.
 ### Nothing created a linux_cp pair
 
 `lcp create` appeared in five labs and nowhere else in this repository. Nothing
-in `appliance/` and nothing in `hexash` paired a dataplane interface into the
+in `appliance/` and nothing in `prismash` paired a dataplane interface into the
 kernel. The `linux-cp` settings in the startup configuration — `lcp-sync`,
 `lcp-auto-subint` — govern how an **existing** pair behaves; `lcp-auto-subint`
 creates a pair for a sub-interface of an interface that is *already* paired.
@@ -983,7 +983,7 @@ either way, so that check passed on a box with no pair at all.
 
 ### And the pair has to survive a reboot
 
-`hexarouting.service` runs `hexash --load /etc/hexarouting/hexarouting.conf`,
+`prisma-routing.service` runs `prismash --load /etc/prisma-routing/prisma-routing.conf`,
 which is the same apply path a commit takes — so the pair a box has at boot is
 the pair its saved file names. `lab/lcp.sh` asks that out loud: pair a
 loopback, save, take it down, and hand the box back the file it wrote.
@@ -1228,13 +1228,13 @@ neighbor 10.0.0.2 remote-as 65001
 coalesce-time 1000  <- not checked
 neighbor 10.0.0.2 soft-reconfiguration inbound  <- not checked
 exit
-! hexash: 2 statement(s) above are marked '<- not checked': this VTY has no
-! hexash: grammar for them and handed them to FRR word for word
+! prismash: 2 statement(s) above are marked '<- not checked': this VTY has no
+! prismash: grammar for them and handed them to FRR word for word
 ```
 
 ### What decides it: the command tree, and nothing beside it
 
-`hexash.statement_checked()` walks the grammar in force for the block the
+`prismash.statement_checked()` walks the grammar in force for the block the
 statement sits in - the **same** walk that decides what `?` offers there. There
 is no list of modelled statements kept alongside the tree, and there
 deliberately never will be: a second list has to be kept in step with the
@@ -1281,8 +1281,8 @@ statement was not*:
 prisma# [edit vrf red] show this
 vrf red  <- not checked
  ip route 10.9.0.0/16 10.0.0.9  <- not checked
-! hexash: 2 statement(s) above are marked '<- not checked': this VTY has no
-! hexash: grammar for them and handed them to FRR word for word
+! prismash: 2 statement(s) above are marked '<- not checked': this VTY has no
+! prismash: grammar for them and handed them to FRR word for word
 ```
 
 ### How it is shown, and why it is sixteen characters
@@ -1368,9 +1368,9 @@ with status 2: line 5: % Unknown command:  coalesce-time 1000  <- not checked
 ```
 
 The same file with the marker removed gets past that stage. A file carrying
-only the `! hexash:` note lines gets past it as well - `!` opens a comment in
+only the `! prismash:` note lines gets past it as well - `!` opens a comment in
 FRR's parser too - but that is defence in depth and not the reason the parser
-strips them: this file is read back by `hexash --load`, whose routing section
+strips them: this file is read back by `prismash --load`, whose routing section
 takes every line it is given as a statement.
 
 The same session measured the two statements from the issue, and both answers
@@ -1391,7 +1391,7 @@ to the same statements.
 
 The other half of the same hazard is that an operator copies what is **on the
 screen** into a file. `Config.parse()` therefore strips the marker from the end
-of a line and skips any line starting with `! hexash:`, and both constants live
+of a line and skips any line starting with `! prismash:`, and both constants live
 in `config.py` so the half that writes them and the half that removes them
 cannot come to be spelled differently.
 
@@ -1403,7 +1403,7 @@ policy, OSPF, a default route - and its `show running-config` read back and put
 through the display. **Three statements of twenty-four** are marked:
 
 ```
-hostname hexarouting  <- not checked
+hostname prisma-routing  <- not checked
 service integrated-vtysh-config  <- not checked
 ...
  no bgp ebgp-requires-policy  <- not checked
@@ -1411,7 +1411,7 @@ service integrated-vtysh-config  <- not checked
 
 That proportion is the point of the design being proportionate: a display where
 everything is marked says as little as one where nothing is. The read-back is
-kept as a fixture in `test/test_hexash_complete.py`, with each of the
+kept as a fixture in `test/test_prismash_complete.py`, with each of the
 twenty-one unmarked statements named one by one - a count passes just as well
 when the wrong lines are the clean ones.
 
@@ -1489,7 +1489,7 @@ It now prints both halves:
 ```
 Prisma Routing 0.67.0
   dataplane: vpp v26.06-release
-  routing:   FRRouting 10.7.1 (hexarouting).
+  routing:   FRRouting 10.7.1 (prisma-routing).
   daemons:   running  mgmtd ospfd staticd watchfrr zebra
              stopped  bgpd isisd ospf6d
              a stopped daemon takes the configuration that needs it and reaches
@@ -1566,7 +1566,7 @@ so the screen and the file cannot drift apart.
 
 * every box already in service has a saved configuration, and up to twenty
   rollback revisions, written as `cgnat ...` and `ip route ...`;
-* `hexarouting.service` replays that file at **every boot**, unattended. A
+* `prisma-routing.service` replays that file at **every boot**, unattended. A
   grammar that cannot read the box's own file leaves the box unconfigured, on a
   machine nobody is watching, and nothing says so until somebody notices the
   traffic.
@@ -1581,7 +1581,7 @@ statements with `nat ` and emits the static routes as a `router static` block,
 so `show running-config`, `show configuration` and the file `save` writes all
 carry it. The round trip - a box reading back the file it just wrote, and a box
 reading a file written before the move - is asserted in
-`test/test_hexash_config.py` and end to end in `lab/vty.sh`, which loads an
+`test/test_prismash_config.py` and end to end in `lab/vty.sh`, which loads an
 old-format file, checks the pool reached the dataplane and the route reached
 FRR, saves, and loads what the box itself wrote.
 
@@ -1726,7 +1726,7 @@ was found by.
 | VPP | Dataplane: forwarding and CGNAT (`bpa` plugin) |
 | FRR | Control plane: `bgpd`, `ospfd`, `ospf6d`, `isisd`, `zebra` |
 | `linux_cp` + `linux_nl` | The glue between them |
-| `hexash` | Prisma Routing's configuration shell |
+| `prismash` | Prisma Routing's configuration shell |
 
 ```mermaid
 flowchart TB
@@ -1836,7 +1836,7 @@ move. Two rules come out of it, and they cost a release each to learn:
   A positional parse breaks on the next VPP version silently, by finding
   nothing.
 * **An assertion that cannot fail is not an assertion.** The lab now turns
-  `lcp-sync` off before checking the TAP, so it can only pass if `hexash` did
+  `lcp-sync` off before checking the TAP, so it can only pass if `prismash` did
   the work.
 
 The running configuration reports the MTU of **every** interface the dataplane
@@ -1897,9 +1897,9 @@ the box by an upstream route, not local configuration.
 
 ### The VTY is the front door
 
-An operator logging into the appliance, over console or SSH, lands in `hexash`
-rather than in a Unix shell. Root's login shell is `/usr/bin/hexash-login`,
-a wrapper rather than `hexash` itself, and the reason is lockout: a `hexash`
+An operator logging into the appliance, over console or SSH, lands in `prismash`
+rather than in a Unix shell. Root's login shell is `/usr/bin/prismash-login`,
+a wrapper rather than `prismash` itself, and the reason is lockout: a `prismash`
 that fails to start would otherwise leave nobody able to reach the box.
 
 `start shell` opens a real shell as a child of the VTY; leaving it returns to
@@ -1919,13 +1919,13 @@ and `?` offer it.
 * A shell **MUST** remain reachable. Recovery, `tcpdump`, and reading a log the
   VTY does not expose all need one, and an appliance that makes them impossible
   gets a permanent hole opened by the first operator who needs one.
-* Booting with `hexash=off` skips the VTY entirely, and **MUST** keep working
-  even when `hexash` is broken - it is read from `/proc/cmdline` by the
+* Booting with `prismash=off` skips the VTY entirely, and **MUST** keep working
+  even when `prismash` is broken - it is read from `/proc/cmdline` by the
   wrapper, so it does not depend on the VTY starting.
 
 See [appliance.md](appliance.md) for the login table and the recovery paths.
 
-### How hexash reaches the dataplane
+### How prismash reaches the dataplane
 
 Through the **binary API**, not `vppctl`.
 
@@ -1934,7 +1934,7 @@ refusal is the text it printed. A control plane built on that cannot tell
 "pool created" from "pool rejected", so `commit` could report success while the
 dataplane held none of the configuration.
 
-The client is `src/hexash/vppapi.py`, driving `vat2`. Two alternatives were
+The client is `src/prismash/vppapi.py`, driving `vat2`. Two alternatives were
 rejected:
 
 | Option | Why not |
@@ -1945,7 +1945,7 @@ rejected:
 `vat2` ships inside the `vpp` package itself, so it is on every installed box
 and every ISO, and it is versioned with VPP by construction. The cost is a
 process per call rather than a persistent connection - irrelevant for
-configuration, which happens at human speed and is all `hexash` does.
+configuration, which happens at human speed and is all `prismash` does.
 
 Six failure states are distinguished, beside `ok`, because they need different
 actions:
@@ -2086,9 +2086,9 @@ The deadline now lives on the box:
 
 | | |
 |---|---|
-| `/etc/hexarouting/confirm-pending` | the configuration to go back to, and the absolute time it is due. Mode 0660, group `hexa-cgnat`: it holds a whole configuration, password hashes included |
-| `hexarouting-confirm.timer` | elapses every 15 seconds, and 60 seconds after boot |
-| `hexarouting-confirm.service` | `ConditionPathExists` on that file, so nothing is started while nothing is pending. `hexash --confirm-expired` is what it runs, as root |
+| `/etc/prisma-routing/confirm-pending` | the configuration to go back to, and the absolute time it is due. Mode 0660, group `prisma-cgnat`: it holds a whole configuration, password hashes included |
+| `prisma-routing-confirm.timer` | elapses every 15 seconds, and 60 seconds after boot |
+| `prisma-routing-confirm.service` | `ConditionPathExists` on that file, so nothing is started while nothing is pending. `prismash --confirm-expired` is what it runs, as root |
 
 **The file is the record of the confirmation, and it is removed the moment the
 operator confirms** - not when the window ends. That is what lets the box tell
@@ -2107,8 +2107,8 @@ revert. That is the safe direction: the operator can type one word to keep the
 change, and cannot type anything at all to recover a box they cannot reach.
 
 Polled rather than armed at the instant of the commit, because the account that
-commits is not root - it holds a role, which is membership of `hexa-admin` or
-`hexa-cgnat`. Arming a transient unit from an operator's session would mean
+commits is not root - it holds a role, which is membership of `prisma-admin` or
+`prisma-cgnat`. Arming a transient unit from an operator's session would mean
 granting every such account the ability to make the box run units, which is a
 far larger grant than the feature is worth; writing a file into a directory
 its role group already owns is not a grant at all. The cost is that the error
@@ -2138,7 +2138,7 @@ is worth:
 
 ```
 warning: the revert could NOT be armed on the box
-    /etc/hexarouting: Permission denied
+    /etc/prisma-routing: Permission denied
     it will run in 10 minute(s) IF THIS SESSION LASTS THAT LONG, and not
     otherwise
     which is not the case it exists for: keep a second session open, and use
@@ -2198,15 +2198,15 @@ every commit for no reason.
 
 `lab/vty-pool.sh` sets each of them through the VTY and asks **the dataplane**
 whether they arrived, then makes a setting with `vppctl`, commits an unrelated
-change through the VTY, and asserts the setting survived. Asking `hexash`
-whether `hexash` stored something proves nothing - that is exactly what the old
+change through the VTY, and asserts the setting survived. Asking `prismash`
+whether `prismash` stored something proves nothing - that is exactly what the old
 code did successfully.
 
-### `hexash -c`: one command, or a script?
+### `prismash -c`: one command, or a script?
 
 Both, and the word that settles it is `commit`.
 
-`hexash -c "show cgnat pool"` is a question. It changes nothing, so there is
+`prismash -c "show cgnat pool"` is a question. It changes nothing, so there is
 nothing for it to be half of, and it **MUST** keep working exactly as it does:
 it is how `appliance/selftest` and `appliance/test_startup_conf.sh` ask a
 booted box what it is holding.
@@ -2270,7 +2270,7 @@ gated at all, because there is no `commit` in it to gate.
 
 **How much of this repository it changes: two invocation sites.** Counted over
 every way the tree names the VTY as a program, with each backslash
-continuation joined first, there are 283 `hexash -c` invocation sites in 37
+continuation joined first, there are 283 `prismash -c` invocation sites in 37
 files; 200 of them pass more than one statement and 193 carry a `commit`.
 Driving each batch's statements through an offline `Shell` finds a statement
 refused before the `commit` in two of them: `lab/vty-ssh.sh` drives
@@ -2279,7 +2279,7 @@ itself, and `lab/ha-failover.sh` drives `nat cgnat ha peer`, which is the
 section demonstrating that this box has no HA to configure. Neither asserts on
 what the `commit` behind it answered.
 
-`test/test_hexash_batch.py` is the check. It asserts on what the box
+`test/test_prismash_batch.py` is the check. It asserts on what the box
 **printed** and on what reached the **dataplane**, because the exit status
 proves nothing
 here: it was already 1 before any of this, which is why nothing caught it for
@@ -2298,10 +2298,10 @@ configuration document, and rollback converges FRR onto the revision using
 
 ### The dataplane is the source of truth
 
-Each `hexash -c …` is a new process, so in-memory state does not survive
+Each `prismash -c …` is a new process, so in-memory state does not survive
 between invocations - the first version wrote an empty configuration. The
 plugin therefore emits its own configuration in VTY syntax
-(`show bpa config`), which `hexash` reads.
+(`show bpa config`), which `prismash` reads.
 
 This mirrors `vtysh`: the daemon knows its configuration, not the shell. A
 useful side effect is that a public range merged from adjacent prefixes is
@@ -2363,11 +2363,11 @@ the country, so it has three guards rather than one.
 
 #### Secrets
 
-Password hashes are in `hexarouting.conf` and in every rollback revision -
+Password hashes are in `prisma-routing.conf` and in every rollback revision -
 they have to be, or a rollback could not restore a password. So:
 
-* `/etc/hexarouting` and its rollback store are `2770` and group-owned by
-  `hexa-cgnat`, and the files under them are `0660` - set once by the
+* `/etc/prisma-routing` and its rollback store are `2770` and group-owned by
+  `prisma-cgnat`, and the files under them are `0660` - set once by the
   installer, and deliberately not re-stated on every write. See *Roles*.
 * `show running-config` prints `password <set, not shown>`. A hash on a screen
   shared during an incident is a hash that has left the building, and it is
@@ -2495,7 +2495,7 @@ Plain ASCII, 59 columns, six lines: a racked box is reached through a BMC whose
 console is 80 columns of whatever font it decided on, box-drawing characters
 render as noise there, and a banner that wraps is worse than none.
 
-It **MUST NOT** appear when stdout is not a terminal. `hexash -c` and piped
+It **MUST NOT** appear when stdout is not a terminal. `prismash -c` and piped
 commands are how every lab and every script drives this VTY, and a banner
 prepended to their output breaks the parsing.
 
@@ -2574,7 +2574,7 @@ and everything indented under it, which is the shape of this configuration.
   of its own.
 * A box running CGNAT with no routing daemon is a legitimate deployment, so a
   missing or silent FRR **MUST NOT** block a CGNAT-only commit.
-* `hexash` is written in Python. It is an interactive control-plane shell,
+* `prismash` is written in Python. It is an interactive control-plane shell,
   outside any packet path; C would take three times the code for the same
   result.
 
@@ -2586,21 +2586,21 @@ appliance whose accounts nobody deprovisions when somebody leaves.
 
 | Group | May change |
 |---|---|
-| `hexa-admin` | everything: routing, the box's own configuration, CGNAT |
-| `hexa-cgnat` | CGNAT configuration only |
+| `prisma-admin` | everything: routing, the box's own configuration, CGNAT |
+| `prisma-cgnat` | CGNAT configuration only |
 | neither | nothing - read-only |
 
 `root` has both, because root can talk to the dataplane socket directly and
 pretending otherwise would be theatre.
 
-**`hexa-admin` is additive.** It grants the capability; it does not grant file
-access. `/etc/hexarouting` is group-owned by `hexa-cgnat`, so **an
-administrator MUST also be a member of `hexa-cgnat`** - otherwise they can
+**`prisma-admin` is additive.** It grants the capability; it does not grant file
+access. `/etc/prisma-routing` is group-owned by `prisma-cgnat`, so **an
+administrator MUST also be a member of `prisma-cgnat`** - otherwise they can
 apply a change and then fail to record its rollback revision.
 
 **The modes have one owner, and it is `appliance/install.sh`**: `2770` on
-`/etc/hexarouting` and on its rollback store, `0660` on the files inside, group
-`hexa-cgnat`. The VTY does not restate them. It used to `chmod 0700` on every
+`/etc/prisma-routing` and on its rollback store, `0660` on the files inside, group
+`prisma-cgnat`. The VTY does not restate them. It used to `chmod 0700` on every
 `save` and every `commit`, so the **first** one on the box - root, applying the
 configuration at boot - closed the directory the operator's group had just been
 given, and from then on every non-root `save` failed and every non-root
@@ -2637,8 +2637,8 @@ that leaves the group behind is not a demotion.
 
 | written for | groups |
 |---|---|
-| `role administrator` | `hexa-admin`, `hexa-cgnat` |
-| `role cgnat-operator` | `hexa-cgnat` |
+| `role administrator` | `prisma-admin`, `prisma-cgnat` |
+| `role cgnat-operator` | `prisma-cgnat` |
 | **every** account the VTY owns, role or none | `vpp`, `frr`, `frrvty` |
 
 The last row is not a role and is not the operator's to choose. VPP creates its
@@ -2688,7 +2688,7 @@ be both the wrong answer and one they were not entitled to.
 The configuration is one document. An account that may configure reads the
 running configuration to build its candidate, and that document contains the
 **password hashes** of every local account and the SNMP credentials. There is
-no CGNAT-only view of it. Granting `hexa-cgnat` therefore grants sight of
+no CGNAT-only view of it. Granting `prisma-cgnat` therefore grants sight of
 those, and the directory is group-owned rather than world-readable for that
 reason.
 
@@ -2743,9 +2743,9 @@ fixed:
 
 * **A root API client puts `/dev/shm/global_vm` back to `root:root`.**
   Measured in `lab/vty.sh`: the drop-in above fixes the segment after the
-  dataplane starts, and the next `hexash` run as root undoes it - after which
+  dataplane starts, and the next `prismash` run as root undoes it - after which
   every non-root client crashes in `svm_region_map`. On an installed box
-  `hexarouting.service` applies the configuration as root at every boot.
+  `prisma-routing.service` applies the configuration as root at every boot.
 
 #### What applying a routing change needs, beyond the role
 
@@ -2838,7 +2838,7 @@ without it before anything is applied. `docs/logging.md` has the measurements.
 
 `lab/vty.sh` drives one commit that changes a pool, a pool setting, a bypass
 list, an interface attachment, two global settings, the IPFIX collector, an MTU
-and a uRPF mode - with `HEXA_TRACE=1`, and asserts that every `[device]` line
+and a uRPF mode - with `PRISMA_TRACE=1`, and asserts that every `[device]` line
 in the trace is a `show` or a `check`. It asserts beside it that the commit was
 not vacuous - a commit that changes nothing sends nothing and would satisfy the
 rule without testing it - and that the export state and the exporter beside it
@@ -3239,7 +3239,7 @@ no RPKI module.
 ## The BGP commands an operator runs while something is wrong
 
 Configuring BGP is half the job. The other half is what gets typed at 2am, and
-until now it meant leaving `hexash` for `vtysh` on a box whose whole point is
+until now it meant leaving `prismash` for `vtysh` on a box whose whole point is
 that the operator does not have to.
 
 ### `show bgp summary`, against the table that forwards
@@ -3452,7 +3452,7 @@ assertion about its output, and it is the one command an operator runs
   FIB.
 * The far end's MTU is not knowable from this box. What is advertised from this
   end is, and that is what the screen says.
-* The RIB/FIB divergence is asserted in `test/test_hexash_igp.py` and not in
+* The RIB/FIB divergence is asserted in `test/test_prismash_igp.py` and not in
   the lab: producing one live means breaking `linux_nl`, and taking a route out
   of the FIB by hand does not hold - `linux_nl` puts it straight back. The lab
   asserts the other half, that a healthy box says so and does not cry wolf.
@@ -4165,7 +4165,7 @@ re-measured after somebody edits the sentence.
 So the refusal is split in two, and the two halves are treated differently
 ([#252](https://github.com/andrediashexa/hexarouting/issues/252)):
 
-* A message's **own prose MUST** be wrapped by `hexash.console_prose()` to
+* A message's **own prose MUST** be wrapped by `prismash.console_prose()` to
   `config.CONSOLE_COLUMNS`, and **MUST NOT** be wrapped by hand. It is
   asserted, over every shape both refusals have.
 * A **statement the refusal quotes MUST** be printed whole: not wrapped, not
@@ -4276,7 +4276,7 @@ the defect #252 is named for, standing in a command #252 did not drive.
 The input is what an ISP types, which is what #271's fixtures did not have:
 an IPv6 neighbour, a route-map named for the policy it carries, an IPv6
 prefix-list, a crypt hash pasted without its leading `$`, and the box's own
-`/etc/hexarouting/` paths. Measured that way, **every one of the checks is
+`/etc/prisma-routing/` paths. Measured that way, **every one of the checks is
 over**, and so is every copy of the row:
 
 | Where | Columns |
@@ -4322,7 +4322,7 @@ its path by whoever ran it, so no wording can bound that row:
 
 ```
 error: refusing to load this file, these lines are not understood:
-    /etc/hexarouting/hexarouting.conf
+    /etc/prisma-routing/prisma-routing.conf
     line 2: password 6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRfLb8XkY...
         (password: expected a crypt hash such as $y$... or $6$... (openssl
         passwd -6), not a plaintext password)
@@ -4335,7 +4335,7 @@ is the worst moment to be handed a broken row.
 assertion did: `lab/bgp-policy.sh` searched for `until one is, the clause
 matches nothing`, which the wrap now splits. `lab/verdict.sh` gained
 `expect_said`, which is `expect_in` over the haystack with whitespace
-collapsed - the shell half of `unwrapped()` in `test/test_hexash_bgp.py`, added
+collapsed - the shell half of `unwrapped()` in `test/test_prismash_bgp.py`, added
 by #271 for exactly this. A needle that must stay on **one** row still uses
 `expect_in`: that is a different question and it keeps its own answer.
 
@@ -4353,7 +4353,7 @@ happens to carry.
 - [x] BGP, OSPF and IS-IS over the TAP, all three routes in the VPP FIB
       (`lab/routing.sh`)
 - [x] Pool validated against local addresses, both directions
-- [x] `hexash` with completion and contextual help
+- [x] `prismash` with completion and contextual help
 - [x] Candidate/commit/rollback covering CGNAT and routing
 - [x] MTU as an explicit interface parameter in the VTY, on both sides of the pair
 - [x] Migrate configuration writes to the binary API

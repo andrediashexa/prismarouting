@@ -77,7 +77,7 @@ vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp
 # pool goes through bpa_pool_add_del, and the check that a pool's public prefix
 # is announced needs both halves present.
 use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
+HX="python3 /src/src/prismash/prismash.py"
 
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
@@ -107,13 +107,13 @@ vppctl set interface ip address host-veth2-vpp 10.1.0.1/24
 # ---------------- Prisma Routing ----------------
 mkdir -p /var/run/frr /etc/frr
 cat > /etc/frr/zebra.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 # Deliberately EMPTY of BGP. Both sessions are configured through the VTY
 # further down, so every table a policy below moves is evidence about a peering
 # the VTY built - not one a file written by the lab did (#142).
 cat > /etc/frr/bgpd.conf <<'EOF'
-hostname hexarouting
+hostname prisma-routing
 EOF
 chown -R frr:frr /var/run/frr /etc/frr
 # These are the daemons THIS LAB arranges, not what the product ships: an
@@ -898,8 +898,8 @@ for RX in '^65001$' '65001' '_65002_' '^65001(_65001)*$' '.*' '^$' \
   fi
   if RX="$RX" RXN="$RXN" python3 -c "
 import os, sys
-sys.path.insert(0, '/src/src/hexash')
-from hexash import as_path_regex_error as e
+sys.path.insert(0, '/src/src/prismash')
+from prismash import as_path_regex_error as e
 stmt = 'bgp as-path access-list RX%s permit %s' % (os.environ['RXN'], os.environ['RX'])
 sys.exit(1 if e(stmt) else 0)"; then
     VTY_SAYS=accepted
@@ -997,8 +997,8 @@ expect_in "and the error names a prefix that is in no configuration" \
 # the product, not a copy of it here.
 vtysh -f /tmp/poison.conf > /dev/null 2>&1
 python3 -c "
-import sys; sys.path.insert(0, '/src/src/hexash')
-from hexash import Frr
+import sys; sys.path.insert(0, '/src/src/prismash')
+from prismash import Frr
 Frr().absorb_stale_refusal()" 2>/dev/null
 ABSORBED=$($HX -c "configure" \
            -c "ip prefix-list PL-SPARED seq 10 permit 10.24.0.0/16" \
@@ -1037,8 +1037,8 @@ for CASE in "10.9.0.0/16" "10.9.0.0/16 ge 24 le 28" "10.9.0.0/16 ge 16" \
   fi
   if STMT="$STMT" python3 -c "
 import os, sys
-sys.path.insert(0, '/src/src/hexash')
-from hexash import prefix_range_error as e
+sys.path.insert(0, '/src/src/prismash')
+from prismash import prefix_range_error as e
 sys.exit(1 if e(os.environ['STMT']) else 0)"; then
     VTY_SAYS=accepted
   else
@@ -1397,8 +1397,8 @@ echo "=========== a policy that withdraws the prefix carrying this session =====
 # the shape #23 established for a change that re-maps subscribers.
 #
 # SSH_CONNECTION is what sshd sets for the session's own process, and on the
-# appliance hexash IS the login shell, so it is there. It is supplied here
-# because this lab runs hexash directly rather than through sshd; nothing in
+# appliance prismash IS the login shell, so it is there. It is supplied here
+# because this lab runs prismash directly rather than through sshd; nothing in
 # the product writes that variable, and nothing here stands in for a step the
 # product is missing.
 #
@@ -1495,7 +1495,7 @@ expect "while the one the policy permits is still there" \
 # The confirmation, which also proves the revert was armed on the box rather
 # than promised. Left unconfirmed, the lab would be reverted under itself ten
 # minutes later.
-# `configure` first: a fresh hexash process has no candidate until it is
+# `configure` first: a fresh prismash process has no candidate until it is
 # entered, and `commit` on its own answers "no candidate configuration" -
 # which is not a confirmation, and the box would have reverted the change
 # under the lab ten minutes later.

@@ -103,7 +103,7 @@ The repository's **About** carries three things, and they are documentation:
 | | |
 |---|---|
 | description | one line, what the product is |
-| website | <https://hexarouting.hexanetworks.com.br> — the wiki, as the external documentation |
+| website | <https://prisma-routing.hexanetworks.com.br> — the wiki, as the external documentation |
 | topics | what somebody would search for to find this |
 
 They **MUST** stay true. A topic that is not a claim this project makes does not
@@ -381,7 +381,7 @@ When it happens it **MUST** produce all six of:
    carried the vat2 plugin, so an installed box had no binary API and could
    not be configured to do CGNAT at all
    ([#119](https://github.com/andrediashexa/hexarouting/issues/119)); and
-   behind it, `hexarouting.service` failed on the first boot of every install
+   behind it, `prisma-routing.service` failed on the first boot of every install
    ([#121](https://github.com/andrediashexa/hexarouting/issues/121)). Neither
    was visible from a live boot. They were also hiding each other — the second
    could not be seen until the first was fixed.
@@ -489,7 +489,7 @@ A version that lives only in git identifies the release to whoever has the
 repository open, which is not the person reporting a fault. Therefore:
 
 * The boot self-test **MUST** print the version.
-* `hexash` **MUST** report it under `show version`, alongside the VPP and FRR
+* `prismash` **MUST** report it under `show version`, alongside the VPP and FRR
   versions it drives.
 * An artifact built from a tree with uncommitted changes **MUST** say so, and
   **MUST NOT** claim to be a released version. An ISO that reports `v0.4.1`

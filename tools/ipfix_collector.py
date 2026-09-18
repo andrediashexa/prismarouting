@@ -389,7 +389,7 @@ def main():
 #
 # Every caller runs this as a program - four labs invoke it with `python3
 # tools/ipfix_collector.py ...`, and appliance/install.sh installs it as
-# /usr/lib/hexarouting/ipfix-collector - so for all of them __name__ is
+# /usr/lib/prisma-routing/ipfix-collector - so for all of them __name__ is
 # "__main__" and nothing changes.
 if __name__ == "__main__":
     main()
