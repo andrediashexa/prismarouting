@@ -9,6 +9,7 @@
 #include <bpa/bpa_version.h>
 
 #include "bpa.h"
+#include "bpa_radius.h"
 #include "bpa_mss.h"
 
 bpa_main_t bpa_main;
@@ -2238,6 +2239,11 @@ bpa_ip4_address_change (ip4_main_t *im, uword opaque, u32 sw_if_index,
 static clib_error_t *
 bpa_init (vlib_main_t *vm)
 {
+  /* The accounting listener starts closed. Zero is a VALID file descriptor -
+   * it is stdin - so a struct that begins as zeros would have this box
+   * reading the console for RADIUS packets on the first service pass (#21). */
+  bpa_radius.fd = -1;
+
   bpa_main_t *bm = &bpa_main;
   vlib_thread_main_t *tm = vlib_get_thread_main ();
   clib_error_t *e;

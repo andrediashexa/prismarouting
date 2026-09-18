@@ -392,6 +392,42 @@ several times and the **last** lease wins, which is the opposite of the static
 map's rule below and is why the two are different statements rather than one
 that guesses from the file's first line.
 
+**Or from the accounting stream the BNG is already sending**, for a provider
+running PPPoE:
+
+```
+nat cgnat identity radius secret <shared secret> [port <n>]
+nat cgnat identity radius disable
+```
+
+This box is **not** a RADIUS server. It authenticates nobody and answers no
+Access-Request; it is a second listener on the accounting stream, reading it
+for one thing - which subscriber is on which address. An `Accounting-Start`
+or `Interim-Update` carrying a `Framed-IP-Address` and a `User-Name` names the
+subscriber on that address; a `Stop` takes the name away; an `Interim` with no
+address changes nothing, because guessing which address it meant is how one
+subscriber comes to be named in another's record.
+
+**The shared secret is required and is checked on every packet.** RFC 2866's
+Request Authenticator is MD5 over the packet and the secret, and a packet that
+does not match is dropped **without a reply**. Without that check anybody who
+can reach the port could name any subscriber on any address, and this box's
+compliance log would be a thing that takes dictation. `show cgnat identity` says
+`radius accounting: listening on port <n>` and counts the two refusals apart - the row reads
+`refused    <n> bad authenticator, <n> malformed` -
+because they are different diagnoses: somebody else's box or this one's secret
+being wrong, against somebody's broken client.
+
+A request this box accepts is answered with an `Accounting-Response` signed
+the way the RFC says. A NAS that gets no reply retransmits until it gives up
+and then logs this box as a dead accounting server, so answering is not
+politeness.
+
+The secret is kept by the VTY and **not** given back by the dataplane's
+running configuration: `show configuration` prints `secret <set, not shown>`,
+the saved file keeps the real value - a box has to be able to start its own
+listener after a reboot - and the same rule covers an SNMP community.
+
 **It is read whole or not at all.** A line that is neither a comment nor an
 address and an identity is refused, naming the line, and the table in force
 does not change: a provisioning system that writes one malformed line may

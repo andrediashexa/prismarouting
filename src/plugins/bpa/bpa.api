@@ -79,6 +79,11 @@
  * version of itself that the option had never reached.
  */
 /*
+ * 0.17.0 adds bpa_identity_radius_set: the identity table filled from the
+ * accounting stream a BNG already sends (issue #21). A new message, so no
+ * existing layout moves.
+ */
+/*
  * 0.16.0 adds bpa_identity_source_set: the same identity table, from an ISC
  * dhcpd lease file rather than a static map (issue #21). A new message, so no
  * existing layout moves.
@@ -123,7 +128,7 @@
  * than discovered by a client that silently stops working; lab/api.sh pins
  * the JSON shape and is what fails when this happens.
  */
-option version = "0.16.0";
+option version = "0.17.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -523,6 +528,35 @@ autoreply define bpa_identity_source_set
 
   u8 kind;
   string path[256];
+};
+
+/** \brief Listen for the accounting a BNG already sends (issue #21)
+
+    The third source of identity, and the only one that is not a file: a
+    provider running PPPoE has the answer in the accounting stream their BNG
+    is already sending, and this box reads it for one thing - which subscriber
+    is on which address.
+
+    THE SECRET IS REQUIRED. Without it this box cannot tell an accounting
+    packet from anybody's packet, and its compliance log would take dictation
+    about who is on which address. It is carried here and NOT returned in
+    `show bpa config`: what the dataplane gives back is the port and that the
+    listener is on, and the secret lives in the VTY's own configuration the
+    way an SNMP community does - written to the saved file, redacted on every
+    screen.
+
+    @param enable - the listener on or off
+    @param port - UDP port; 0 means RFC 2866's 1813
+    @param secret - the shared secret this box checks every packet against
+*/
+autoreply define bpa_identity_radius_set
+{
+  u32 client_index;
+  u32 context;
+
+  bool enable;
+  u16 port;
+  string secret[128];
 };
 
 autoreply define bpa_logging_syslog_set

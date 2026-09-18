@@ -1262,6 +1262,69 @@ check(any(r.startswith("error: cgnat identity: ") for r in rows(text)),
       f"a refused file is reported as the dataplane's: {text!r}")
 ok("the path is configuration; what is in the file is personal data")
 
+print("\n=== Shell.apply_identity_radius: the listener, and its secret ===")
+# Mutation shown red: args["enable"] = False on the enabling path.
+api = RecApi()
+sh = shell(api=api)
+sh.apply_identity_radius(["identity", "identity", "radius", "secret",
+                          "s3cr3t"])
+check(api.calls[-1] == ("bpa_identity_radius_set",
+                        {"enable": True, "port": 0, "secret": "s3cr3t"}),
+      f"a secret and the dataplane's own default port: {api.calls[-1]}")
+sh.apply_identity_radius(["identity", "identity", "radius", "port", "1814",
+                          "secret", "s3cr3t"])
+check(api.calls[-1][1]["port"] == 1814,
+      f"the options are read in whatever order they were typed: "
+      f"{api.calls[-1]}")
+sh.apply_identity_radius(["identity", "identity", "radius", "disable"])
+check(api.calls[-1][1]["enable"] is False
+      and api.calls[-1][1]["secret"] == "",
+      f"disable carries no secret at all: {api.calls[-1]}")
+
+n = len(api.calls)
+rv, text = driven(sh.apply_identity_radius,
+                  ["identity", "identity", "radius", "port", "1813"])
+check(len(api.calls) == n
+      and rows(text)[0] == "error: cgnat identity radius: a shared secret is "
+                           "required"
+      and any("dictation" in r for r in rows(text)),
+      f"no secret is refused, and the refusal says what it would cost: "
+      f"{text!r}")
+rv, text = driven(sh.apply_identity_radius,
+                  ["identity", "identity", "radius", "secret", "s", "port",
+                   "70000"])
+check(len(api.calls) == n
+      and rows(text)[0] == "error: cgnat identity radius: port is 0-65535",
+      f"a port that is not one is refused before anything is sent: {text!r}")
+rv, text = driven(sh.apply_identity_radius,
+                  ["identity", "identity", "radius", "sideways", "2"])
+check(len(api.calls) == n
+      and rows(text)[0] == "error: cgnat identity radius: not an option of "
+                           "this statement",
+      f"a word that is not an option lists the ones that are: {text!r}")
+# And it is reachable the way an operator types it, through apply_logging's
+# sibling: `cgnat identity radius ...`.
+api = RecApi()
+sh = shell(api=api)
+sh.apply_identity(["identity", "identity", "radius", "secret", "abc"])
+check(api.calls[-1][0] == "bpa_identity_radius_set",
+      f"`cgnat identity radius` routes here: {api.calls[-1]}")
+# AND THE DATAPLANE'S OWN REFUSAL, on both paths: a port already taken, a
+# secret the dataplane will not have. It comes back through the API and is
+# printed as the dataplane's words, not this VTY's.
+api = RecApi(refuse={"bpa_identity_radius_set"})
+sh = shell(api=api)
+rv, text = driven(sh.apply_identity_radius,
+                  ["identity", "identity", "radius", "secret", "s3cr3t"])
+check(any(r.startswith("error: cgnat identity radius: ") for r in rows(text)),
+      f"a refused listener is reported as the dataplane's: {text!r}")
+rv, text = driven(sh.apply_identity_radius,
+                  ["identity", "identity", "radius", "disable"])
+check(any(r.startswith("error: cgnat identity radius: ") for r in rows(text)),
+      f"and so is a refused disable: {text!r}")
+ok("a listener that checks nothing would take dictation, so the secret is "
+   "required")
+
 print("\n=== Shell.apply_logging_syslog: the second collector, and its "
       "refusals ===")
 # Mutation shown red: args["enable"] = False on the enabling path.

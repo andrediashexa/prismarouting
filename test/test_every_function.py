@@ -90,14 +90,16 @@ MARKER = "not a unit:"
 # 2026-09-17, #390 batches A to H: every Python and shell function at 0
 # but for the excusals, which print with their reasons; C holds what the
 # plain-cc harness reaches, the rest waits for the VPP build.
-# 2026-09-18, #21: 161 to 168. The identity table's loader, its statement and
+# 2026-09-18, #21: 161 to 171. The identity table's loader, its statement and
 # its screen, and the API handler that carries the path: the loader swaps the
 # table under the worker barrier, two are a VLIB_CLI_COMMAND body each and one
 # is an API handler, and the fifth is bpa_log_tcp_enable's wrapper, which is
 # the IPFIX stream's enable under the name its callers use; the sixth and
 # seventh are the identity loader and the kind it takes, which swap the table
-# under the worker barrier, and the last is the API handler that carries the
-# kind. All of them need the VPP build. The
+# under the worker barrier, one is the API handler that carries the kind, and
+# the last three are the RADIUS listener's socket half - enable, service and
+# the handler that carries the secret. All of them need the VPP build: a
+# socket, a barrier, or a CLI body. The
 # parse, the search and the unknown marker came with their own harness and are
 # not in this count.
 # 2026-09-18, #20: 159 to 161. The syslog transport added a VLIB_CLI_COMMAND
@@ -114,7 +116,7 @@ MARKER = "not a unit:"
 # buffer, a session pool, a bihash, VPP's format() or the CLI, and waits for
 # the VPP build with bpa_log.c, which needs the ipfix-export infrastructure
 # for all eight of its functions.
-UNTESTED_AT_MOST = {"python": 0, "c": 168, "shell": 0}
+UNTESTED_AT_MOST = {"python": 0, "c": 171, "shell": 0}
 MEASURED_ON = "2026-09-17"
 
 # A parse that came back nearly empty would make every count below small and

@@ -40,6 +40,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     global_key, ordered_globals)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
+                    identity_redact,
                     snmp_redact, validate_snmp, validate_ssh, validate_role,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT,
                     ROLE_ADMIN, ROLE_CGNAT)
@@ -1356,7 +1357,8 @@ CGNAT_CONFIG = {
     # provisioning system and can hold one line per customer, and a
     # configuration carrying 200000 of them is one nobody can read.
     "identity": ("where this box reads who held a private address",
-                 "file <path> | dhcp-leases <path> | none"),
+                 "file <path> | dhcp-leases <path> | "
+                 "radius secret <s> [port <n>] | none"),
     "session-table": ("session table sizing", "buckets <n> memory <MB>"),
 }
 
@@ -8429,6 +8431,9 @@ class Shell:
             args = {"kind": 0, "path": " ".join(w[3:])}
         elif len(w) >= 4 and w[2] == "dhcp-leases":
             args = {"kind": 1, "path": " ".join(w[3:])}
+        elif len(w) >= 3 and w[2] == "radius":
+            self.apply_identity_radius(w)
+            return
         else:
             self.err_prose(
                 "cgnat identity: not a shape this box takes",
@@ -8439,6 +8444,67 @@ class Shell:
         r = self.api_call("bpa_identity_source_set", args)
         if r.state != vppapi.OK:
             self.err_dataplane(f"cgnat identity: {r.reason}")
+
+    def apply_identity_radius(self, w):
+        """
+        `cgnat identity radius secret <s> [port <n>]`, and `radius disable`.
+
+        THE SECRET IS THIS VTY'S TO KEEP. Everything else about the CGNAT
+        running configuration is read back from the dataplane, which is #209's
+        rule and the reason there is one owner of it - but a secret read back
+        that way would be printed by `show configuration` on every screen, and
+        a secret on a screen shared during an incident has left the building.
+        So the dataplane gives back the port and that the listener is on, the
+        candidate carries the statement with the secret, the saved file keeps
+        it - a box has to be able to reload - and `redact` blanks it wherever
+        it is displayed. That is exactly how an SNMP community is treated.
+
+        Without a secret the statement is refused here as it is in the
+        dataplane, and for the same reason: a listener that checks nothing
+        would let anybody who can reach the port name any subscriber on any
+        address.
+        """
+        if len(w) >= 4 and w[3] == "disable":
+            r = self.api_call("bpa_identity_radius_set",
+                              {"enable": False, "port": 0, "secret": ""})
+            if r.state != vppapi.OK:
+                self.err_dataplane(f"cgnat identity radius: {r.reason}")
+            return
+
+        secret, port = None, 0
+        rest = w[3:]
+        i = 0
+        while i < len(rest):
+            word = rest[i]
+            value = rest[i + 1] if i + 1 < len(rest) else None
+            if word not in ("secret", "port") or value is None:
+                self.err_prose(
+                    "cgnat identity radius: not an option of this statement",
+                    f"'{word}' is not one, or it is missing its value",
+                    "the options are: secret <s>, port <n>")
+                return
+            if word == "port":
+                if not value.isdigit() or int(value) > 65535:
+                    self.err("cgnat identity radius: port is 0-65535")
+                    return
+                port = int(value)
+            else:
+                secret = value
+            i += 2
+
+        if not secret:
+            self.err_prose(
+                "cgnat identity radius: a shared secret is required",
+                "without one this box cannot tell an accounting packet from "
+                "anybody's packet",
+                "it would take dictation about who is on which address, and "
+                "that goes in the compliance log")
+            return
+
+        r = self.api_call("bpa_identity_radius_set",
+                          {"enable": True, "port": port, "secret": secret})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"cgnat identity radius: {r.reason}")
 
     def apply_logging_syslog(self, w):
         """
@@ -10935,7 +11001,7 @@ class Shell:
         is crackable offline at the attacker's leisure.
         """
         print("\n".join(mark_unchecked(
-            snmp_redact(redact(cfg.text().splitlines())))))
+            identity_redact(snmp_redact(redact(cfg.text().splitlines()))))))
 
     def show_this(self):
         """

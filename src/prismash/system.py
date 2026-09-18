@@ -681,6 +681,28 @@ class SnmpUser:
         return isinstance(other, SnmpUser) and self.lines() == other.lines()
 
 
+def identity_redact(lines):
+    """
+    The RADIUS shared secret, blanked for display.
+
+    The same rule as `snmp_redact` below and for the same reason: this secret
+    is what tells an accounting packet from anybody's packet, and one on a
+    screen shared during an incident has left the building. A display
+    transform only - the stored configuration keeps the real value, or a box
+    could not reload its own listener (#21).
+    """
+    out = []
+    for l in lines:
+        w = l.split()
+        if w[:3] == ["cgnat", "identity", "radius"] and "secret" in w:
+            at = w.index("secret")
+            kept = w[:at + 1] + ["<set, not shown>"] + w[at + 2:]
+            out.append(" ".join(kept))
+            continue
+        out.append(l)
+    return out
+
+
 def snmp_redact(lines):
     """Community strings and v3 passphrases are passwords on the wire."""
     out = []

@@ -218,6 +218,26 @@ A gramática é a do ISC dhcpd. A identidade é o `client-hostname` quando o lea
 
 **Ele é lido inteiro ou recusado inteiro.** Uma linha que não é comentário nem `<endereço> <identidade>` é recusada dizendo qual linha, e a tabela em vigor não muda — um provisionamento que escreveu uma linha torta pode ter escrito outra, e uma tabela faltando um assinante em silêncio é justamente a falha que isso existe para evitar. Endereço repetido também é recusado: duas identidades para um endereço são duas respostas para a pergunta que o juiz faz, e escolher uma seria a caixa decidindo qual assinante nomear.
 
+**Ou da contabilidade que o seu BNG já manda**, se a autenticação é PPPoE e a resposta já existe num RADIUS:
+
+```
+nat cgnat identity radius secret <segredo compartilhado> [port <n>]
+```
+
+Esta caixa não é um servidor RADIUS: ela não autentica ninguém e não responde Access-Request. Ela é um segundo destino da contabilidade, lendo dela uma coisa só — qual assinante está em qual endereço. Um `Start` ou um `Interim` que traz endereço e nome diz quem está ali, um `Stop` tira o nome, e um `Interim` sem endereço não muda nada, porque adivinhar de qual endereço ele falava é exatamente como um assinante acaba nomeado no registro de outro.
+
+**O segredo é obrigatório e conferido em todo pacote**, e pacote que não bate é descartado sem resposta. Sem essa conferência, qualquer um que alcance a porta nomearia qualquer assinante em qualquer endereço, e o log de compliance passaria a aceitar ditado. As duas recusas são contadas separadas — autenticador ruim é a caixa de outro (ou o segredo desta errado), pacote malformado é cliente quebrado de alguém:
+
+```
+prisma> show cgnat identity
+identity table: 3 entry(s), read 2026-09-18T06:41:02Z
+radius accounting: listening on port 1813
+  packets    2 received, 1 applied, 1 answered
+  refused    1 bad authenticator, 0 malformed
+```
+
+**O segredo não volta em nenhuma tela.** O `show configuration` imprime `secret <set, not shown>`, e o arquivo salvo guarda o valor de verdade — a caixa precisa subir o próprio listener depois de um reboot. É o mesmo tratamento que a community SNMP já tem.
+
 **A identidade é tomada no instante da alocação**, não na hora em que o registro sai. Entre uma coisa e outra o lease pode ter mudado de dono, e um registro nomeando quem tem o endereço depois é um registro bem formado, guardado, e errado.
 
 **Endereço que a caixa não conhece vira** `**unknown**`**, e o registro sai assim mesmo.** Registro faltando é pior que registro incompleto, e o coletor precisa distinguir "a caixa não sabe" de "a caixa não disse".

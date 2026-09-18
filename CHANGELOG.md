@@ -77,6 +77,47 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The identity table can be filled from the accounting a BNG already sends**
+  ([#21](https://github.com/andrediashexa/hexarouting/issues/21), the third and last source):
+
+  ```
+  nat cgnat identity radius secret <shared secret> [port <n>]
+  ```
+
+  This box is not a RADIUS server: it authenticates nobody and answers no
+  Access-Request. It is a second listener on the accounting stream, reading it
+  for one thing - which subscriber is on which address. A Start or an Interim
+  carrying an address and a name says who is there, a Stop takes the name
+  away, and an Interim with no address changes nothing, because guessing which
+  address it meant is how one subscriber comes to be named in another's
+  record.
+
+  **The shared secret is required and checked on every packet**, and a packet
+  that does not match is dropped without a reply: without that check anybody
+  who can reach the port could name any subscriber on any address, and the
+  compliance log would take dictation. The two refusals are counted apart - a
+  bad authenticator is somebody else's box or this one's secret being wrong, a
+  malformed packet is somebody's broken client.
+
+  The secret is kept by the VTY and never returned by the dataplane's running
+  configuration, so `show configuration` prints `secret <set, not shown>`
+  while the saved file keeps the real value - a box has to start its own
+  listener after a reboot. That is how an SNMP community is already treated.
+
+  RFC 2866 asks for MD5 and this product had none: vppinfra ships AES, GHASH,
+  Poly1305 and SHA-2, and the build image no OpenSSL headers. It carries its
+  own now, checked against RFC 1321's vectors and against an independent
+  implementation - and that is not a security choice, which the file says at
+  its top: the audit trail, which IS about tamper evidence, is SHA-2 and is
+  untouched.
+
+  `tools/radius_nas.py` is a NAS that speaks the same RFC from Python, which
+  `lab/syslog.sh` points at the box: the Start is applied and answered, and a
+  packet signed with another secret is counted and not applied. The two
+  implementations are checked against each other in `make test` as well -
+  packets the Python builds are handed to the C parser, because either one
+  checked against itself would pass for a pair that are wrong the same way.
+
 * **The identity table can be read from the DHCP server's own lease file**
   ([#21](https://github.com/andrediashexa/hexarouting/issues/21)). A provider running IPoE already has the answer and
   should not be asked to transcribe it into a second file that goes stale:

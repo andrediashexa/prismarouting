@@ -28,6 +28,18 @@
  */
 #define BPA_IDENTITY_MAX 32
 
+/*
+ * Where a table came from. The static map is a file an operator's
+ * provisioning writes; the leases are one a DHCP server writes and nobody
+ * edits. Same table, different grammar, and the KIND is carried rather than
+ * sniffed: a file's first line is a poor thing to bet a court record on.
+ */
+typedef enum
+{
+  BPA_IDENTITY_MAP = 0,
+  BPA_IDENTITY_DHCP_LEASES = 1,
+} bpa_identity_kind_t;
+
 typedef struct
 {
   u32 ip;
@@ -45,24 +57,18 @@ typedef struct
    * is configuration; what is IN the file is not, and is never printed.
    */
   u8 *path;
+  /* Which grammar that file is in, so the running configuration can give
+   * the statement back the way it was typed. */
+  bpa_identity_kind_t kind;
 } bpa_identity_table_t;
-
-/*
- * Where a table came from. The static map is a file an operator's
- * provisioning writes; the leases are one a DHCP server writes and nobody
- * edits. Same table, different grammar, and the KIND is carried rather than
- * sniffed: a file's first line is a poor thing to bet a court record on.
- */
-typedef enum
-{
-  BPA_IDENTITY_MAP = 0,
-  BPA_IDENTITY_DHCP_LEASES = 1,
-} bpa_identity_kind_t;
 
 extern const char bpa_identity_unknown[];
 
 int bpa_identity_cmp (const void *a, const void *b);
 int bpa_identity_key_cmp (const void *a, const void *b);
+u32 bpa_identity_at (const bpa_identity_table_t *t, u32 ip, int *found);
+int bpa_identity_upsert (bpa_identity_table_t *t, u32 ip, const char *name);
+int bpa_identity_remove (bpa_identity_table_t *t, u32 ip);
 int bpa_identity_parse_line (const char *line, bpa_identity_entry_t *out);
 int bpa_identity_lease_line (const char *line, bpa_identity_entry_t *out,
 			     int *in_block);

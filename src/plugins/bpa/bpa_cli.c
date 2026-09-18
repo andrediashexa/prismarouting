@@ -6,6 +6,7 @@
 #include <vnet/ip/ip.h>
 
 #include "bpa.h"
+#include "bpa_radius.h"
 #include "bpa_mss.h"
 #include "bpa_errors.h"
 #include "bpa_log.h"
@@ -3069,7 +3070,20 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
     s = format (s, "cgnat logging tcp %U port %u\n", format_ip4_address,
 		&bpa_log_tcp.collector, bpa_log_tcp.port);
   if (bpa_main.identity.path)
-    s = format (s, "cgnat identity file %v\n", bpa_main.identity.path);
+    s = format (s, "cgnat identity %s %v\n",
+		bpa_main.identity.kind == BPA_IDENTITY_DHCP_LEASES
+		  ? "dhcp-leases"
+		  : "file",
+		bpa_main.identity.path);
+  /*
+   * The listener, WITHOUT its secret. The running configuration this
+   * dataplane gives back is read by the VTY and written to the box's file,
+   * and a secret that travelled that way would be printed by `show
+   * configuration` on every screen. The VTY keeps it, the way it keeps an
+   * SNMP community, and writes it to the file with the rest (#21).
+   */
+  if (bpa_radius.enabled)
+    s = format (s, "cgnat identity radius port %u\n", bpa_radius.port);
   if (bpa_log_syslog.enabled)
     s = format (s,
 		"cgnat logging syslog %U port %u enterprise %u facility %u "
@@ -3218,6 +3232,20 @@ bpa_show_identity_command_fn (vlib_main_t *vm, unformat_input_t *input,
     }
   vlib_cli_output (vm, "identity table: %u entry(s), read %U", bm->identity.n,
 		   format_time_float, 0, bm->identity.read_at);
+  if (bpa_radius.enabled)
+    {
+      vlib_cli_output (vm, "radius accounting: listening on port %u",
+		       bpa_radius.port);
+      vlib_cli_output (vm,
+		       "  packets    %Lu received, %Lu applied, %Lu answered",
+		       bpa_radius.n_received, bpa_radius.n_applied,
+		       bpa_radius.n_answered);
+      /* The two refusals apart, because they are different diagnoses: one is
+       * somebody's broken client and the other is this box's secret, or
+       * somebody else's box on this port. */
+      vlib_cli_output (vm, "  refused    %Lu bad authenticator, %Lu malformed",
+		       bpa_radius.n_bad_auth, bpa_radius.n_malformed);
+    }
   if (bm->identity.n_truncated)
     vlib_cli_output (vm,
 		     "  %u name(s) were longer than %u characters and are "

@@ -17,7 +17,12 @@
 #include <string.h>
 
 #include "bpa_shim.h"
+/* The vector shim, for the same reason test_bpa_dyn.c takes it: the table's
+ * in-place updates are vec_add1 and vec_set_len, and what they DO - where an
+ * insert lands, what a removal shifts - is the behaviour under test. */
+#include "bpa_vec_shim.h"
 #include "bpa_identity.c"
+#include "bpa_identity_table.c"
 
 static int fail;
 
@@ -177,6 +182,51 @@ main (void)
 	   "a lease that is not active yields nothing, whatever name it "
 	   "still carries");
     CHECK (in_block == 0, "the parser ends outside a block, as the file does");
+  }
+
+  printf ("\n--- one subscriber at a time, from an accounting stream ---\n");
+  {
+    bpa_identity_table_t t = { 0 };
+    int found;
+
+    CHECK (bpa_identity_upsert (&t, ip (100, 64, 0, 5), "joao@isp") == 1
+	     && t.n == 1,
+	   "the first entry: n=%u", t.n);
+    bpa_identity_lookup (&t, ip (100, 64, 0, 5), out, sizeof (out));
+    CHECK (strcmp (out, "joao@isp") == 0, "and it is found: %s", out);
+
+    /* Out of order, because an accounting stream is in nobody's order. */
+    bpa_identity_upsert (&t, ip (100, 64, 0, 9), "nine@isp");
+    bpa_identity_upsert (&t, ip (100, 64, 0, 1), "one@isp");
+    bpa_identity_upsert (&t, ip (100, 64, 0, 7), "seven@isp");
+    CHECK (t.n == 4 && t.e[0].ip < t.e[1].ip && t.e[1].ip < t.e[2].ip
+	     && t.e[2].ip < t.e[3].ip,
+	   "the table stays sorted whatever order the events arrive in");
+    bpa_identity_lookup (&t, ip (100, 64, 0, 7), out, sizeof (out));
+    CHECK (strcmp (out, "seven@isp") == 0, "each is found after: %s", out);
+
+    /* An Interim for a session whose name changed, and one that changed
+     * nothing: the second must not report a change, because a box that
+     * reports every interim as a change has a counter nobody can read. */
+    CHECK (bpa_identity_upsert (&t, ip (100, 64, 0, 7), "seven@isp") == 0,
+	   "the same name again is not a change");
+    CHECK (bpa_identity_upsert (&t, ip (100, 64, 0, 7), "7@isp") == 1,
+	   "a different name for one address replaces it");
+    bpa_identity_lookup (&t, ip (100, 64, 0, 7), out, sizeof (out));
+    CHECK (strcmp (out, "7@isp") == 0, "and the later one wins: %s", out);
+
+    /* The Stop. */
+    CHECK (bpa_identity_remove (&t, ip (100, 64, 0, 7)) == 1 && t.n == 3,
+	   "a stop removes the entry: n=%u", t.n);
+    bpa_identity_lookup (&t, ip (100, 64, 0, 7), out, sizeof (out));
+    CHECK (strcmp (out, bpa_identity_unknown) == 0,
+	   "and the address reads as nobody's, not as a blank name: %s", out);
+    CHECK (bpa_identity_remove (&t, ip (100, 64, 0, 7)) == 0,
+	   "a stop for a session already gone changes nothing");
+    bpa_identity_at (&t, ip (100, 64, 0, 9), &found);
+    CHECK (found, "and what is left is still findable");
+    CHECK (bpa_identity_upsert (&t, ip (100, 64, 0, 5), "") == 0,
+	   "an empty name is not an identity and is not stored");
   }
 
   printf ("\n--- the key sort, which is what makes a renewal win ---\n");

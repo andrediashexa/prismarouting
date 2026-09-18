@@ -13,7 +13,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn \
       $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
       $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog \
-      $(BUILD)/test_bpa_identity
+      $(BUILD)/test_bpa_identity $(BUILD)/test_bpa_md5 \
+      $(BUILD)/test_bpa_radius
 	@sh tools/run-tests.sh
 
 vectors:
@@ -182,13 +183,32 @@ $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
 # CLI. Standalone because its refusals decide whether the chain is verified
 # against bytes or against uninitialised memory, and both readings print a
 # verdict.
+# MD5, against RFC 1321's own vectors. This product carries its own because
+# vppinfra ships no MD5 and the image no OpenSSL headers, and RADIUS asks for
+# it by name - see bpa_md5.c for why that is not a security choice.
+$(BUILD)/test_bpa_md5: test/test_bpa_md5.c src/plugins/bpa/bpa_md5.c \
+                       src/plugins/bpa/bpa_md5.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_md5.c
+
+# The accounting packet a BNG already sends. Standalone because the parse and
+# the digest read their arguments and nothing else; the socket is the plugin's
+# half and is not in this harness.
+$(BUILD)/test_bpa_radius: test/test_bpa_radius.c \
+                          src/plugins/bpa/bpa_radius.c \
+                          src/plugins/bpa/bpa_radius.h \
+                          src/plugins/bpa/bpa_md5.c test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_radius.c
+
 # Who held a private address at the instant a block was allocated to it. The
 # parse, the search and the unknown marker are standalone because none of them
 # reads a packet, a session or a pool - and because a wrong one is invisible in
 # a log that parses.
 $(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
                             src/plugins/bpa/bpa_identity.c \
-                            src/plugins/bpa/bpa_identity.h test/bpa_shim.h
+                            src/plugins/bpa/bpa_identity.h test/bpa_shim.h \
+                            test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_identity.c

@@ -696,6 +696,30 @@ check(not any(s in " ".join(shown) for s in ("s3cret", "pa55", "cr7pt",
                                              "indented")),
       "and no secret survives on the screen")
 
+print("--- identity_redact: the RADIUS secret is a password on the wire")
+shown = system.identity_redact([
+    "cgnat identity radius secret s3cr3t port 1813",
+    "cgnat identity radius secret onlythesecret",
+    "cgnat identity file /etc/prisma-routing/subscribers.map",
+    "cgnat pool residential"])
+check(shown == [
+    "cgnat identity radius secret <set, not shown> port 1813",
+    "cgnat identity radius secret <set, not shown>",
+    "cgnat identity file /etc/prisma-routing/subscribers.map",
+    "cgnat pool residential"],
+    f"the secret goes and the port stays, because a port is not a secret: "
+    f"{shown}")
+check(not any(x in " ".join(shown) for x in ("s3cr3t", "onlythesecret")),
+      "and no secret survives on the screen")
+# THE FILE KEEPS THE REAL VALUE. This is a display transform, and a box that
+# redacted its own saved configuration could not start its listener after a
+# reboot (#21).
+check(system.identity_redact(["cgnat identity radius secret keepme"])[0]
+      != "cgnat identity radius secret keepme"
+      and "keepme" not in
+      system.identity_redact(["cgnat identity radius secret keepme"])[0],
+      "the transform is on the way to the screen and nowhere else")
+
 print("--- _snmpd_body: the snmpd.conf this VTY owns, generated whole")
 body = system._snmpd_body(
     {"listen-address": "10.0.0.1", "port": "1161",
