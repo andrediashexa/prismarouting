@@ -3011,6 +3011,17 @@ check(rows_of(o.getvalue()) == ["error: count must be between 1 and 120"],
       f"a count outside its range: {o.getvalue()!r}")
 ok("two counters, the time between, the difference")
 
+#: One virtual router as `vrrp_vr_dump` reports it, copied from a running
+#: box: a master holding one address, with the MAC RFC 5798 gives its id.
+VRRP_ROWS = [{
+    "config": {"sw_if_index": 1, "vr_id": 1, "priority": 200,
+               "interval": 100, "flags": "VRRP_API_VR_PREEMPT"},
+    "runtime": {"state": "VRRP_API_VR_STATE_MASTER", "mac": "00:00:5e:00:01:01",
+                "tracking": {"interfaces_dec": 0, "priority": 200}},
+    "n_addrs": 1, "addrs": ["100.64.3.254"],
+}]
+TRACK_ROWS = [{"ifs": [{"sw_if_index": 2, "priority": 150}]}]
+
 print("\n=== Shell.show_one_interface: the counters, the first row kept ===")
 # Mutation shown red: `one.splitlines()[2:]`, dropping the interface's own
 # row and with it the first counter (#280).
@@ -3018,7 +3029,8 @@ ONE = ("              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)"
        "     Counter          Count\n"
        "pg0 1 up 9000/0/0/0 rx packets 5\n"
        "                                                   rx bytes 300\n")
-api = Api(rows={"sw_interface_dump": SW_ROWS}, have={"pg0": 1},
+api = Api(rows={"sw_interface_dump": SW_ROWS, "vrrp_vr_dump": VRRP_ROWS},
+          have={"pg0": 1},
           calls={"sw_interface_get_table": {"vrf_id": 10}})
 sh = shell(dp=Dp({"show interface": IFACES,
                   "show interface features pg0": "ip4-unicast:\n  bpa-in2out\n",
@@ -3033,8 +3045,27 @@ for want in ("state       up", "mtu         9000",
              "addresses   200.150.0.1/24", "linux       tap4096 vppwan0",
              "vrf         10", "mac         02:fe:aa:bb:cc:dd",
              "description uplink", "urpf        strict", "cgnat       in2out",
+             # The virtual router, which is the first thing that matters about
+             # a port on a box in a pair: whether the subscribers are here or
+             # on the other box.
+             "vrrp 1      master, holding the address",
+             "100.64.3.254 on 00:00:5e:00:01:01",
              "counters", "rx packets 5", "rx bytes 300"):
     check(want in text, f"{want!r} is on the screen: {text!r}")
+# And a port with no virtual router says nothing about one: most ports have
+# none, and a line that is always there is a line nobody reads.
+sh = shell(dp=Dp({"show interface": IFACES,
+                  "show interface features pg0": "ip4-unicast:\n  bpa-in2out\n",
+                  "show interface pg0": ONE,
+                  "show bpa urpf": "pg0 strict\n"}),
+           api=Api(rows={"sw_interface_dump": SW_ROWS}, have={"pg0": 1},
+                   calls={"sw_interface_get_table": {"vrf_id": 10}}))
+with spoken() as o:
+    sh.show_one_interface("pg0", {"pg0": {"state": "up", "mtu": "9000",
+                                          "addresses": ["200.150.0.1/24"],
+                                          "host": ""}})
+check("vrrp" not in o.getvalue(),
+      f"a port with no virtual router is not told about one: {o.getvalue()!r}")
 ok("everything the box knows about one interface, counters uninterpreted")
 
 print("\n=== Shell.one_nic_note: only the box whose one card is its path ===")
@@ -4296,14 +4327,6 @@ ok("a banner, not a health line")
 # the binary API and the refusals are the ones an operator meets when it is
 # not there, or not where they said it was.
 
-VRRP_ROWS = [{
-    "config": {"sw_if_index": 1, "vr_id": 1, "priority": 200,
-               "interval": 100, "flags": "VRRP_API_VR_PREEMPT"},
-    "runtime": {"state": "VRRP_API_VR_STATE_MASTER", "mac": "00:00:5e:00:01:01",
-                "tracking": {"interfaces_dec": 0, "priority": 200}},
-    "n_addrs": 1, "addrs": ["100.64.3.254"],
-}]
-TRACK_ROWS = [{"ifs": [{"sw_if_index": 2, "priority": 150}]}]
 
 # ------------------------------------------- the peer's mapping, at commit (#8)
 

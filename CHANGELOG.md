@@ -77,6 +77,35 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show interface <name>` says whether that port is holding the service
+  address** ([#7](https://github.com/andrediashexa/hexarouting/issues/7)):
+
+  ```
+      cgnat       in2out
+      vrrp 1      master, holding the address
+                  100.64.3.254 on 00:00:5e:00:01:01
+  ```
+
+  An operator looking at one interface during a fault is looking at this
+  screen, and on a box in a pair the first thing that matters about a port is
+  whether the subscribers are on this box or the other one. `show cgnat ha`
+  answers it for the whole box; this answers it for the port they already have
+  in front of them.
+
+  The **role** and not the configuration: what a virtual router is configured
+  to be is in `show this` and in the saved file, and what it IS can only be
+  read from the dataplane. A port with no virtual router is told nothing,
+  because most ports have none and a line that is always there is a line
+  nobody reads.
+
+  The role goes on one row and each address on its own, rather than a list
+  joined into the first: a slot holding "however many addresses this router
+  stands for" has no width, and a row whose width nobody can state is a row
+  that folds inside an address at whatever the operator's window happens to
+  be. The four state words moved to a module-level tuple for the same reason -
+  the reader that bounds these rows reads the product's closed sets off the
+  module, and a dict hands it the keys, which are the names nobody prints.
+
 ### Fixed
 
 ## 0.93.0 - the pair screen reads both boxes' routers
