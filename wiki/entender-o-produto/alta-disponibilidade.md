@@ -127,9 +127,9 @@ Para que a caixa possa comparar, ela precisa ter a configuração da outra. **O 
 Dois achados, e os dois são erro de configuração sem sintoma até o dia em que importa:
 
 * **a mesma prioridade nas duas caixas.** A RFC 5798 desempata pelo endereço de origem maior, então o par funciona e quem fica com o serviço é decidido por algo que ninguém escreveu. O primeiro failover cai onde o endereçamento puser.
-* **um `vrid` que só uma das caixas sustenta.** Não existe standby para aquele endereço: a caixa que está com ele está sozinha. Endereço virtual diferente sob o mesmo `vrid` é esse mesmo achado duas vezes, uma para cada caixa.
+* **um** `**vrid**` **que só uma das caixas sustenta.** Não existe standby para aquele endereço: a caixa que está com ele está sozinha. Endereço virtual diferente sob o mesmo `vrid` é esse mesmo achado duas vezes, uma para cada caixa.
 
-A comparação é pelo **`vrid` e pelo endereço**, nunca pelo nome da interface: as duas caixas sustentam um endereço sob um `vrid`, e como a porta se chama de cada lado é problema de cada uma — `ens18` aqui pode ser `ens19` lá e o par está certo.
+A comparação é pelo `**vrid**` **e pelo endereço**, nunca pelo nome da interface: as duas caixas sustentam um endereço sob um `vrid`, e como a porta se chama de cada lado é problema de cada uma — `ens18` aqui pode ser `ens19` lá e o par está certo.
 
 Quando as duas divergem:
 
