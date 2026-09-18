@@ -90,7 +90,7 @@
 # Only configure_ha() below mentions a spelling, and it asserts nothing, for a
 # reason measured and written above it.
 #
-# OFF-RED-AT-LEAST: 8
+# OFF-RED-AT-LEAST: 15
 #
 #   sh tools/lab.sh ha-failover        -> LAB PASSED
 #   sh tools/lab.sh ha-failover off    -> LAB FAILED (no pair is configured)
