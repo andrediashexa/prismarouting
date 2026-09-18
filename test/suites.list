@@ -23,6 +23,7 @@
 .build/test_bpa_pptp
 .build/test_bpa_log_tcp
 .build/test_bpa_audit
+.build/test_bpa_log_syslog
 python3 appliance/test_tune.py
 python3 appliance/test_snmp_agent.py
 python3 test/test_prismash_complete.py

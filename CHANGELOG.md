@@ -75,6 +75,18 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **The function reader says how much of what is left needs the VPP build**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). The count of C functions no unit test names read
+  as a backlog of batches, and it is not one: of the 159, **159 are behind the
+  VPP boundary and 0 are within reach of a plain-cc harness**. Batch I took the
+  last one. Reachability is read off the source - every `#if` tracked, not only
+  the ones naming `BPA_STANDALONE`, because an `#endif` belonging to another
+  conditional closes the guard's frame and reports the whole VPP half as
+  reachable, which is a mistake this measurement made twice by hand before the
+  reader held the rule.
+
 ### Fixed
 
 ## 0.80.0 - the lab's box is shaped like a real one, and a route screen cannot be folded

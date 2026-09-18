@@ -12,7 +12,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite \
       $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn \
       $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
-      $(BUILD)/test_bpa_audit
+      $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog
 	@sh tools/run-tests.sh
 
 vectors:
@@ -173,6 +173,16 @@ $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
 # CLI. Standalone because its refusals decide whether the chain is verified
 # against bytes or against uninitialised memory, and both readings print a
 # verdict.
+# The syslog line, which is the half of a second transport that decides what a
+# court-ordered lookup reads. Standalone because none of it needs a socket, a
+# collector or a VPP - and a wrong field is invisible in a capture that parses.
+$(BUILD)/test_bpa_log_syslog: test/test_bpa_log_syslog.c \
+                              src/plugins/bpa/bpa_log_syslog.c \
+                              src/plugins/bpa/bpa_log.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_log_syslog.c
+
 $(BUILD)/test_bpa_audit: test/test_bpa_audit.c src/plugins/bpa/bpa_audit.c \
                          test/bpa_shim.h
 	@mkdir -p $(BUILD)
