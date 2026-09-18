@@ -12,7 +12,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite \
       $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn \
       $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
-      $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog
+      $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog \
+      $(BUILD)/test_bpa_identity
 	@sh tools/run-tests.sh
 
 vectors:
@@ -179,6 +180,17 @@ $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
 # CLI. Standalone because its refusals decide whether the chain is verified
 # against bytes or against uninitialised memory, and both readings print a
 # verdict.
+# Who held a private address at the instant a block was allocated to it. The
+# parse, the search and the unknown marker are standalone because none of them
+# reads a packet, a session or a pool - and because a wrong one is invisible in
+# a log that parses.
+$(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
+                            src/plugins/bpa/bpa_identity.c \
+                            src/plugins/bpa/bpa_identity.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_identity.c
+
 # The syslog line, which is the half of a second transport that decides what a
 # court-ordered lookup reads. Standalone because none of it needs a socket, a
 # collector or a VPP - and a wrong field is invisible in a capture that parses.

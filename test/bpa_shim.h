@@ -12,6 +12,7 @@ typedef uint32_t u32;
 typedef uint64_t u64;
 typedef int16_t i16;
 typedef int32_t i32;
+typedef double f64;
 
 /* The two VPP spellings a parser reaches for. Plain memmove and memcpy: the
  * real ones differ in what they promise about overlap and alignment, not in

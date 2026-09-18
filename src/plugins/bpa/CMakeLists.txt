@@ -7,6 +7,7 @@ add_vpp_plugin(bpa
   bpa_log.c
   bpa_log_tcp.c
   bpa_log_syslog.c
+  bpa_identity.c
   bpa_audit.c
   bpa_session.c
   bpa_in2out.c
