@@ -346,6 +346,48 @@ def c_functions(path):
     return found
 
 
+def c_standalone_visible(path):
+    """
+    Which lines of `path` a plain-cc harness can compile.
+
+    The plugin's files guard the half that needs VPP with `BPA_STANDALONE`, so
+    a function's reachability from `make test` is a property of the source and
+    can be READ rather than guessed at. Every `#if` is tracked, not only the
+    ones naming the guard: an `#endif` belonging to some other conditional -
+    `#ifndef BPA_AUDIT_PATH_DEFAULT`, say - would otherwise close the guard's
+    frame and report the whole of the VPP half as reachable, which is the
+    mistake this function exists to have made once.
+    """
+    lines = read(path).splitlines()
+    vis, stack = [], []          # stack entries: True while this branch shows
+    for line in lines:
+        s = line.strip()
+        if s.startswith("#ifdef BPA_STANDALONE"):
+            stack.append(True); vis.append(False); continue
+        if s.startswith("#ifndef BPA_STANDALONE"):
+            stack.append(False); vis.append(False); continue
+        if s.startswith(("#if", "#ifdef", "#ifndef")):
+            stack.append(None); vis.append(False); continue   # not ours
+        if s.startswith("#else") and stack:
+            if stack[-1] is not None:
+                stack[-1] = not stack[-1]
+            vis.append(False); continue
+        if s.startswith("#endif") and stack:
+            stack.pop(); vis.append(False); continue
+        vis.append(all(x for x in stack if x is not None))
+    return lines, vis
+
+
+def c_needs_vpp(fn):
+    """Is this function in the half of its file that needs the VPP build?"""
+    src = read(fn.path)
+    if "BPA_STANDALONE" not in src:
+        return True
+    lines, vis = c_standalone_visible(fn.path)
+    i = fn.line - 1
+    return not (0 <= i < len(vis) and vis[i])
+
+
 def c_strip_comments(text):
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
     return re.sub(r"//[^\n]*", " ", text)
@@ -526,6 +568,18 @@ def report(lang, fns, named, n_tests):
         ok("0 excused at their definition")
 
     allowed = UNTESTED_AT_MOST[lang]
+    if lang == "c" and untested:
+        # WHAT IS LEFT, AND WHY, on every run. The number alone reads as a
+        # backlog of batches; it is not one. The functions still uncounted are
+        # in the half of the plugin that needs a buffer, a session pool, a
+        # bihash, VPP's format() or the CLI, and no batch of plain-cc
+        # harnesses can reach them - what they wait for is a harness built
+        # against the real VPP, in the container that already builds the
+        # plugin (#390).
+        _vpp = [f for f in untested if c_needs_vpp(f)]
+        print(f"  {len(_vpp)} of them are behind the VPP boundary and "
+              f"{len(untested) - len(_vpp)} are within reach of a plain-cc "
+              f"harness")
     print(f"  {len(untested)} named by no test, by file:")
     for path in files:
         names = [f.disp for f in untested if rel(f.path) == path]
