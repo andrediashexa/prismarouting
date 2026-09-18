@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.87.0 - the documentation says what the box does
+
+[#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9).
+
+### Fixed
+
 * **`docs/ha.md` opened by saying that nothing in it was implemented, three
   releases after it was** ([#6](https://github.com/andrediashexa/hexarouting/issues/6),
   [#7](https://github.com/andrediashexa/hexarouting/issues/7),
