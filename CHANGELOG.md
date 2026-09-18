@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.91.0 - the check reads what the commit will apply
+
+[#7](https://github.com/andrediashexa/hexarouting/issues/7).
+
+### Fixed
+
 * **`commit check` said a virtual-router configuration was fine and the commit
   then failed part-way through applying it**
   ([#7](https://github.com/andrediashexa/hexarouting/issues/7)). Two refusals lived only
