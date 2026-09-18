@@ -90,6 +90,12 @@ MARKER = "not a unit:"
 # 2026-09-17, #390 batches A to H: every Python and shell function at 0
 # but for the excusals, which print with their reasons; C holds what the
 # plain-cc harness reaches, the rest waits for the VPP build.
+# 2026-09-18, #21: 161 to 165. The identity table's loader, its statement and
+# its screen, and the API handler that carries the path: the loader swaps the
+# table under the worker barrier, two are a VLIB_CLI_COMMAND body each and one
+# is an API handler, so all four need the VPP build. The
+# parse, the search and the unknown marker came with their own harness and are
+# not in this count.
 # 2026-09-18, #20: 159 to 161. The syslog transport added a VLIB_CLI_COMMAND
 # body and an API handler, both in the half of the plugin that needs the VPP
 # build - which the reader now says on every run, so the number explains
@@ -104,7 +110,7 @@ MARKER = "not a unit:"
 # buffer, a session pool, a bihash, VPP's format() or the CLI, and waits for
 # the VPP build with bpa_log.c, which needs the ipfix-export infrastructure
 # for all eight of its functions.
-UNTESTED_AT_MOST = {"python": 0, "c": 161, "shell": 0}
+UNTESTED_AT_MOST = {"python": 0, "c": 165, "shell": 0}
 MEASURED_ON = "2026-09-17"
 
 # A parse that came back nearly empty would make every count below small and

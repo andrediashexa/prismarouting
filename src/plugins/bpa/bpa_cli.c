@@ -3068,6 +3068,8 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
   if (bpa_log_tcp.enabled)
     s = format (s, "cgnat logging tcp %U port %u\n", format_ip4_address,
 		&bpa_log_tcp.collector, bpa_log_tcp.port);
+  if (bpa_main.identity.path)
+    s = format (s, "cgnat identity file %v\n", bpa_main.identity.path);
   if (bpa_log_syslog.enabled)
     s = format (s,
 		"cgnat logging syslog %U port %u enterprise %u facility %u "
@@ -3167,6 +3169,69 @@ bpa_logging_syslog_command_fn (vlib_main_t *vm, unformat_input_t *input,
   bpa_log_syslog.pri = facility * 8 + severity;
   return bpa_log_stream_enable (&bpa_log_syslog, &addr, (u16) port, 1);
 }
+
+/*
+ * Where this box reads who held a private address (#21).
+ *
+ * A FILE AND NOT A LIST OF STATEMENTS, because the list is written by a
+ * provisioning system and can hold one line per subscriber: a configuration
+ * that carried 200000 of them would be a configuration nobody can read, and
+ * every commit would rewrite it whole.
+ *
+ * `show bpa identity` says how many entries and when they were read. It does
+ * not print one, and neither does any other screen on this box: identity is
+ * personal data, and its presence in the log is the reason the log is
+ * protected.
+ */
+static clib_error_t *
+bpa_identity_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			 vlib_cli_command_t *cmd)
+{
+  u8 *path = 0;
+  clib_error_t *e;
+
+  if (unformat (input, "none"))
+    return bpa_identity_load (0);
+  if (!unformat (input, "file %s", &path))
+    return clib_error_return (0, "usage: bpa identity file <path> | none");
+  e = bpa_identity_load ((const char *) path);
+  vec_free (path);
+  return e;
+}
+
+VLIB_CLI_COMMAND (bpa_identity_command, static) = {
+  .path = "bpa identity",
+  .short_help = "bpa identity file <path> | bpa identity none",
+  .function = bpa_identity_command_fn,
+};
+
+static clib_error_t *
+bpa_show_identity_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			      vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+
+  if (!bm->identity.n)
+    {
+      vlib_cli_output (vm, "no identity table: every record says 'unknown'");
+      return 0;
+    }
+  vlib_cli_output (vm, "identity table: %u entry(s), read %U", bm->identity.n,
+		   format_time_float, 0, bm->identity.read_at);
+  if (bm->identity.n_truncated)
+    vlib_cli_output (vm,
+		     "  %u name(s) were longer than %u characters and are "
+		     "carried in part",
+		     bm->identity.n_truncated, BPA_IDENTITY_MAX - 1);
+  /* THE ENTRIES ARE NOT PRINTED, here or anywhere. See bpa_identity.c. */
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_identity_command, static) = {
+  .path = "show bpa identity",
+  .short_help = "show bpa identity",
+  .function = bpa_show_identity_command_fn,
+};
 
 VLIB_CLI_COMMAND (bpa_logging_syslog_command, static) = {
   .path = "bpa logging syslog",

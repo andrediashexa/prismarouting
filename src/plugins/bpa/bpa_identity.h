@@ -40,6 +40,11 @@ typedef struct
   u32 n;
   f64 read_at;          /* when the control plane last built it */
   u32 n_truncated;      /* names that did not fit, counted rather than lost */
+  /*
+   * The file this came from, so `show bpa config` can give it back. The path
+   * is configuration; what is IN the file is not, and is never printed.
+   */
+  u8 *path;
 } bpa_identity_table_t;
 
 extern const char bpa_identity_unknown[];
@@ -48,5 +53,8 @@ int bpa_identity_cmp (const void *a, const void *b);
 int bpa_identity_parse_line (const char *line, bpa_identity_entry_t *out);
 void bpa_identity_lookup (const bpa_identity_table_t *t, u32 ip, char *out,
 			  u32 cap);
+#ifndef BPA_STANDALONE
+clib_error_t *bpa_identity_load (const char *path);
+#endif
 
 #endif /* __included_bpa_identity_h__ */

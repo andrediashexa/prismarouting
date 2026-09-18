@@ -75,6 +75,44 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **The block log can name the subscriber, not only the address**
+  ([#21](https://github.com/andrediashexa/hexarouting/issues/21), the static map and the syslog wire). A court order
+  names a person; the log named a private address at an instant, and joining
+  the two needed a second system and a manual step performed under time
+  pressure by whoever is on call - the condition under which a wrong answer
+  gets sent.
+
+  ```
+  nat cgnat identity file /etc/prisma-routing/subscribers.map
+  nat cgnat identity none
+  ```
+
+  One subscriber per line, `<inside address> <identity>`, read **whole or not
+  at all**: a line that is neither a comment nor an address and an identity is
+  refused naming the line, and an address named twice is refused as well -
+  two identities for one address are two answers to the question a court asks,
+  and picking one would be this box deciding which subscriber to name.
+
+  **The identity is taken at the instant of the allocation**, copied into the
+  queue entry by the dataplane rather than looked up when the log is drained.
+  A lease may move in between, and a record naming whoever holds the address
+  by then is well-formed, stored, and wrong. `lab/syslog.sh` proves it the
+  only way that can be proved: it rewrites every name in the file after the
+  blocks are allocated and before the records go out, and asserts the records
+  carry the first set and none of the second.
+
+  An address this box knows nothing about is `unknown` and the record is still
+  emitted, because a missing record is worse than an incomplete one and a
+  collector must tell a box that does not know from one that did not say.
+
+  **It is personal data and nothing prints an entry.** `show cgnat identity`
+  gives the count and when the file was read; no other screen on this box
+  carries an identity at all. It reaches the syslog wire as `subscriberId`;
+  the IPFIX record does not carry it yet, because that needs an information
+  element chosen rather than guessed at.
+
 ### Fixed
 
 ## 0.81.0 - the block log speaks syslog, for the collectors that speak nothing else

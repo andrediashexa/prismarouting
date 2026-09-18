@@ -1220,6 +1220,40 @@ check(len(api.calls) == n and
       rows(text)[0] == "error: cgnat logging: not a shape this box takes"
       and any("cgnat logging tcp" in r for r in rows(text)),
       f"a shape it does not take lists the ones it does: {text!r}")
+print("\n=== Shell.apply_identity: a path, and never the file's contents ===")
+# Mutation shown red: args["path"] = "" on the file path.
+api = RecApi()
+sh = shell(api=api)
+sh.apply_identity(["identity", "identity", "file",
+                   "/etc/prisma-routing/subscribers.map"])
+check(api.calls[-1] == ("bpa_identity_set",
+                        {"path": "/etc/prisma-routing/subscribers.map"}),
+      f"the statement carries the path and nothing else: {api.calls[-1]}")
+sh.apply_identity(["identity", "identity", "file", "/tmp/a file.map"])
+check(api.calls[-1][1]["path"] == "/tmp/a file.map",
+      f"a path with a space in it is one path: {api.calls[-1]}")
+sh.apply_identity(["identity", "identity", "none"])
+check(api.calls[-1][1]["path"] == "",
+      f"'none' is the empty path, which the dataplane reads as no table: "
+      f"{api.calls[-1]}")
+n = len(api.calls)
+rv, text = driven(sh.apply_identity, ["identity", "identity", "sideways"])
+check(len(api.calls) == n
+      and rows(text)[0] == "error: cgnat identity: not a shape this box takes"
+      and any("identity file <path>" in r for r in rows(text)),
+      f"a shape it does not take lists the ones it does: {text!r}")
+rv, text = driven(sh.apply_identity, ["identity", "identity", "file"])
+check(len(api.calls) == n,
+      f"'file' with no path is not a path: {text!r}")
+# THE DATAPLANE READS THE FILE, NOT THIS VTY: a refusal about a line comes
+# back from there, and is printed as the dataplane's.
+api = RecApi(refuse={"bpa_identity_set"})
+sh = shell(api=api)
+rv, text = driven(sh.apply_identity, ["identity", "identity", "file", "/x"])
+check(any(r.startswith("error: cgnat identity: ") for r in rows(text)),
+      f"a refused file is reported as the dataplane's: {text!r}")
+ok("the path is configuration; what is in the file is personal data")
+
 print("\n=== Shell.apply_logging_syslog: the second collector, and its "
       "refusals ===")
 # Mutation shown red: args["enable"] = False on the enabling path.

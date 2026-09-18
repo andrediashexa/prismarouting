@@ -82,14 +82,18 @@ vppctl bpa block-holddown 4
 # templates: a collector that started after the exporter cannot tell a box
 # that sent early from a collector that joined late.
 REPORT=/tmp/syslog-report.txt
-rm -f "$REPORT"
+LINES_FILE=/tmp/syslog-lines.txt
+rm -f "$REPORT" "$LINES_FILE"
 # THE WINDOW IS THE COLLECTOR'S OWN, and the lab waits it out rather than
 # killing it: the report is written when the window closes, so a lab that
 # stopped the process to hurry it along read an empty file and reported that
 # nothing arrived - which is exactly the failure it would report about a
 # broken transport.
+# The lines themselves, because the identity half of this lab is about WHAT a
+# record says and not how many there are. The collector writes them only for a
+# caller that names a file, which is this one.
 ip netns exec peer python3 /src/tools/syslog_collector.py 601 60 "$REPORT" \
-  > /tmp/syslog-collector.out 2>&1 &
+  "$LINES_FILE" > /tmp/syslog-collector.out 2>&1 &
 COL=$!
 sleep 2
 
@@ -121,6 +125,25 @@ echo "=== the running configuration the dataplane reads back ==="
 vppctl show bpa config | tr -d '\r' | grep '^cgnat logging' | sed 's/^/  /'
 
 echo
+echo "=== who held the address, read from a file (#21) ==="
+# THE ASSERTION THIS LAB EXISTS FOR, on the identity half: the record must
+# carry the identity that was in force AT THE ALLOCATION, not the one that
+# replaced it while the log was being drained. So the file is loaded, the
+# subscribers allocate, and the file is then REWRITTEN with different names
+# before the records go out.
+cat > /tmp/subscribers.map <<'MAP'
+# written by a provisioning system, one line per subscriber
+100.64.0.5 joao.silva@isp
+100.64.0.6 maria.souza@isp
+100.64.0.9 pppoe-4471
+MAP
+IDENT_OUT=$($HX -c "configure" \
+    -c "cgnat identity file /tmp/subscribers.map" \
+    -c "commit" 2>&1)
+printf '%s\n' "$IDENT_OUT" | sed 's/^/  /'
+vppctl show bpa identity | tee /tmp/identity-show.txt | sed 's/^/  /'
+
+echo
 echo "=== 3 subscribers: 3 block allocations ==="
 for sub in 5 6 9; do
   vppctl packet-generator new "name s$sub limit 1 node ip4-input interface pg0 size 60-60 \
@@ -130,6 +153,18 @@ for sub in 5 6 9; do
 done
 vppctl packet-generator enable >/dev/null; sleep 1
 for sub in 5 6 9; do vppctl packet-generator delete s$sub >/dev/null 2>&1; done
+
+echo
+echo "=== the file is rewritten before the records go out ==="
+# Everything moves to a different name. A record naming one of THESE is a
+# record resolved at drain time, which is the defect #21 is about.
+cat > /tmp/subscribers.map <<'MAP'
+100.64.0.5 SOMEBODY-ELSE-5
+100.64.0.6 SOMEBODY-ELSE-6
+100.64.0.9 SOMEBODY-ELSE-9
+MAP
+$HX -c "configure" -c "cgnat identity file /tmp/subscribers.map" \
+    -c "commit" 2>&1 | tail -1 | sed 's/^/  reloaded: /'
 
 echo
 echo "=== forcing expiry to produce the 3 releases ==="
@@ -185,6 +220,13 @@ if [ "$MODE" != no-syslog ]; then
     grep -qE "collector +10\.0\.0\.2:601 +connected" /tmp/syslog-show.txt
   expect "and the enterprise number every line carries" \
     grep -q "enterprise  44444" /tmp/syslog-show.txt
+  # THE IDENTITY, and the instant it belongs to.
+  expect "the allocation lines name who held the address then" \
+    grep -q 'subscriberId="joao.silva@isp"' "$LINES_FILE"
+  expect "and not the identity that replaced it before the record went out" \
+    sh -c "! grep -q 'SOMEBODY-ELSE' '$LINES_FILE'"
+  expect "'show bpa identity' counts the entries and prints none of them" \
+    sh -c "grep -q '3 entry(s)' /tmp/identity-show.txt && ! grep -q '@isp' /tmp/identity-show.txt"
 else
   expect "'show bpa logging' says the syslog transport is disabled" \
     grep -q "syslog transport: disabled" /tmp/syslog-show.txt

@@ -79,6 +79,11 @@
  * version of itself that the option had never reached.
  */
 /*
+ * 0.15.0 adds bpa_identity_set: where this box reads who held a private
+ * address, for the log (issue #21). A new message, so no existing layout
+ * moves.
+ */
+/*
  * 0.14.0 adds bpa_logging_syslog_set: the same block events as RFC 5424
  * syslog lines, for the collectors that speak nothing else (issue #20). A new
  * message, so no existing layout moves and no client has to be rebuilt for
@@ -113,7 +118,7 @@
  * than discovered by a client that silently stops working; lab/api.sh pins
  * the JSON shape and is what fails when this happens.
  */
-option version = "0.14.0";
+option version = "0.15.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -469,6 +474,27 @@ autoreply define bpa_logging_set
                       says nothing gets, applied by the dataplane
     @param severity - syslog severity, 0-7; 6 (informational) likewise
 */
+/** \brief Where this box reads who held a private address (issue #21)
+
+    A PATH AND NOT THE TABLE. The file holds one line per subscriber and is
+    written by a provisioning system; carrying its contents on this message
+    would mean a configuration nobody can read and a rewrite of it on every
+    commit. The dataplane reads the file, refuses it whole when a line is
+    neither a comment nor an address and an identity, and names the line.
+
+    An empty path means "no table", which is a state an operator can mean:
+    every record then says `unknown`, and every record is still emitted.
+
+    @param path - the file to read, or empty for none
+*/
+autoreply define bpa_identity_set
+{
+  u32 client_index;
+  u32 context;
+
+  string path[256];
+};
+
 autoreply define bpa_logging_syslog_set
 {
   u32 client_index;

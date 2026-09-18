@@ -351,6 +351,61 @@ and nothing else, and a product that cannot be read by the collector a provider
 already runs is disqualified for a reason that has nothing to do with the
 quality of its CGNAT.
 
+### Who held the address: the identity in the record
+
+A court order names a person. The log names a private address at an instant.
+Joining the two needs a second system and a manual step, performed under time
+pressure by whoever is on call, which is exactly the condition under which a
+wrong answer gets sent - so the record carries the identity itself
+([#21](https://github.com/andrediashexa/hexarouting/issues/21)).
+
+```
+nat cgnat identity file /etc/prisma-routing/subscribers.map
+nat cgnat identity none
+```
+
+The file is one subscriber per line, `<inside address> <identity>`, with `#`
+comments and blank lines ignored:
+
+```
+100.64.0.5   joao.silva@isp
+100.64.0.6   pppoe-4471
+```
+
+**It is read whole or not at all.** A line that is neither a comment nor an
+address and an identity is refused, naming the line, and the table in force
+does not change: a provisioning system that writes one malformed line may
+write another, and a table silently missing a subscriber is the failure this
+exists to prevent. An address named twice is refused for the same reason -
+two identities for one address are two answers to the question a court asks,
+and picking one would be this box deciding which subscriber to name. A name
+longer than 31 characters is carried in part and counted - the screen says how
+many were longer than that many characters and are carried in part - because
+the subscriber exists and a partial name beats no record.
+
+**The identity is taken at the instant of the allocation**, not when the log
+is drained. The dataplane copies it into the queue entry as the block is
+allocated; a lease may move in the seconds before the record goes out, and a
+record naming whoever holds the address by then is well-formed, stored, and
+the wrong answer. That copy is what `BPA_IDENTITY_MAX` costs in memory: 32
+bytes per queued event per worker.
+
+**An address this box knows nothing about is `unknown`, and the record is
+still emitted.** A missing record is worse than an incomplete one, and a
+collector has to be able to tell a box that does not know from a box that did
+not say.
+
+**It is personal data, and nothing prints an entry.** `show cgnat identity`
+answers with the count and when the file was read. On a box with none it says
+`no identity table: every record says 'unknown'`, and no other screen on this
+box carries an identity at all. Its presence in the log is the reason the log
+is protected.
+
+Today the identity reaches the **syslog** wire, as `subscriberId` in the
+structured data. The IPFIX record does not carry it yet: that needs an
+information element chosen rather than guessed at, and a wrong element is
+worse than no field.
+
 ### Syslog implementation
 
 ```

@@ -145,3 +145,107 @@ bpa_identity_lookup (const bpa_identity_table_t *t, u32 ip, char *out, u32 cap)
     }
   snprintf (out, cap, "%s", bpa_identity_unknown);
 }
+
+
+#ifndef BPA_STANDALONE
+
+/*
+ * Build the table from a file the control plane names.
+ *
+ * WHOLE OR NOT AT ALL. The new table is built beside the old one and swapped
+ * in under the worker barrier only when every line read: a table half loaded
+ * is a set of subscribers whose records would say "unknown" for a reason
+ * nobody would ever find, and the operator asked for a file rather than for
+ * as much of one as happened to parse.
+ *
+ * The count and the instant are what `show` reports. The entries are not, and
+ * never will be: this is personal data, and its presence in the log is the
+ * reason the log is protected (#21).
+ */
+clib_error_t *
+bpa_identity_load (const char *path)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_identity_entry_t *fresh = 0, e;
+  u32 line_no = 0, truncated = 0;
+  clib_error_t *err = 0;
+  char line[512];
+  FILE *f;
+
+  if (!path || !path[0])
+    {
+      /* Asked for nothing: the table goes away and every record says
+       * "unknown" again, which is a state an operator can mean. */
+      vlib_worker_thread_barrier_sync (bm->vlib_main);
+      vec_free (bm->identity.e);
+      vec_free (bm->identity.path);
+      bm->identity.n = 0;
+      bm->identity.n_truncated = 0;
+      bm->identity.read_at = 0;
+      vlib_worker_thread_barrier_release (bm->vlib_main);
+      return 0;
+    }
+
+  f = fopen (path, "r");
+  if (!f)
+    return clib_error_return (0, "cannot read '%s'", path);
+
+  while (fgets (line, sizeof (line), f))
+    {
+      int rc;
+
+      line_no++;
+      rc = bpa_identity_parse_line (line, &e);
+      if (rc == 0)
+	continue;
+      if (rc < 0)
+	{
+	  err = clib_error_return (
+	    0, "'%s' line %u is neither a comment nor '<address> <identity>'",
+	    path, line_no);
+	  goto done;
+	}
+      if (rc == 2)
+	truncated++;
+      vec_add1 (fresh, e);
+    }
+
+  if (vec_len (fresh) > 1)
+    qsort (fresh, vec_len (fresh), sizeof (fresh[0]), bpa_identity_cmp);
+  /* A duplicate address is refused rather than resolved by position: two
+   * lines claiming one address are two answers to the question a court asks,
+   * and picking the later one would be this box deciding which subscriber to
+   * name. */
+  {
+    u32 i;
+
+    for (i = 1; i < vec_len (fresh); i++)
+      if (fresh[i].ip == fresh[i - 1].ip)
+	{
+	  err = clib_error_return (
+	    0, "'%s' names %u.%u.%u.%u twice, and two identities for one "
+	       "address is two answers to the same question",
+	    path, (fresh[i].ip >> 24) & 0xff, (fresh[i].ip >> 16) & 0xff,
+	    (fresh[i].ip >> 8) & 0xff, fresh[i].ip & 0xff);
+	  goto done;
+	}
+  }
+
+  vlib_worker_thread_barrier_sync (bm->vlib_main);
+  vec_free (bm->identity.e);
+  bm->identity.e = fresh;
+  bm->identity.n = vec_len (fresh);
+  bm->identity.n_truncated = truncated;
+  bm->identity.read_at = unix_time_now ();
+  vec_free (bm->identity.path);
+  bm->identity.path = format (0, "%s%c", path, 0);
+  vlib_worker_thread_barrier_release (bm->vlib_main);
+  fresh = 0;
+
+done:
+  fclose (f);
+  vec_free (fresh);
+  return err;
+}
+
+#endif /* not BPA_STANDALONE */

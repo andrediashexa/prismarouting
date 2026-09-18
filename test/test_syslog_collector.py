@@ -99,6 +99,45 @@ check("lines 2" in text and "BLOCK-ALLOC 1" in text
       f"two lines in, two counted by name: {text!r}")
 ok("the count the lab asserts on is the count of what was received")
 
+print("\n=== the lines themselves are kept only for a caller that asks ===")
+srv_probe = socket.socket()
+srv_probe.bind(("127.0.0.1", 0))
+port3 = srv_probe.getsockname()[1]
+srv_probe.close()
+lines_file = report + ".lines"
+if os.path.exists(lines_file):
+    os.unlink(lines_file)
+t = threading.Thread(target=sc.serve, args=(port3, 3.0, report, lines_file),
+                     daemon=True)
+t.start()
+time.sleep(0.4)
+c = socket.create_connection(("127.0.0.1", port3), timeout=2)
+c.sendall(framed(LINE))
+c.close()
+t.join(timeout=6)
+check(open(lines_file, "rb").read().strip() == LINE,
+      "the line is written whole, one per row, when a file was named")
+
+# And not otherwise: a line carries a subscriber's identity, which is why the
+# log that holds it is protected, so counting must not leave a copy behind.
+gone = report + ".notasked"
+if os.path.exists(gone):
+    os.unlink(gone)
+srv_probe = socket.socket()
+srv_probe.bind(("127.0.0.1", 0))
+port4 = srv_probe.getsockname()[1]
+srv_probe.close()
+t = threading.Thread(target=sc.serve, args=(port4, 2.0, report), daemon=True)
+t.start()
+time.sleep(0.3)
+c = socket.create_connection(("127.0.0.1", port4), timeout=2)
+c.sendall(framed(LINE))
+c.close()
+t.join(timeout=5)
+check(not os.path.exists(gone),
+      "and no file of lines appears when none was named")
+ok("counting leaves no copy of what was counted")
+
 print("\n=== main: the arguments an operator types ===")
 srv_probe = socket.socket()
 srv_probe.bind(("127.0.0.1", 0))
