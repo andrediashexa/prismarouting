@@ -79,6 +79,12 @@
  * version of itself that the option had never reached.
  */
 /*
+ * 0.14.0 adds bpa_logging_syslog_set: the same block events as RFC 5424
+ * syslog lines, for the collectors that speak nothing else (issue #20). A new
+ * message, so no existing layout moves and no client has to be rebuilt for
+ * it.
+ */
+/*
  * 0.13.0 adds block_reserve to bpa_pool_add_del and bpa_pool_details, and
  * blocks_mapped and reserve_count to bpa_pool_details: blocks held out of the
  * deterministic formula so a subscriber that fills its block can be given
@@ -107,7 +113,7 @@
  * than discovered by a client that silently stops working; lab/api.sh pins
  * the JSON shape and is what fails when this happens.
  */
-option version = "0.13.0";
+option version = "0.14.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -437,6 +443,43 @@ autoreply define bpa_logging_set
   bool tcp_enable;
   vl_api_ip4_address_t collector;
   u16 port;
+};
+
+/** \brief The same block events as RFC 5424 syslog lines (issue #20)
+
+    A MESSAGE OF ITS OWN and not fields on bpa_logging_set, for the reason
+    this file states at every version note: a new message moves no existing
+    layout and no client has to be rebuilt for it. It is also the honest
+    shape - a syslog collector is a different destination with different
+    answers to give, not another flag on the IPFIX one, and the two run side
+    by side.
+
+    @param enable - the syslog transport on or off; off disconnects the
+                    collector and stops that transport, and touches neither
+                    IPFIX transport
+    @param collector - the syslog collector, read only when enable is true
+    @param port - its port; 0 means RFC 6587's 601, which the dataplane
+                  applies rather than the caller, so every client agrees
+    @param enterprise - the operator's IANA Private Enterprise Number, which
+                        every line carries in its structured-data name. There
+                        is NO default and 0 is refused: RFC 5424 reserves an
+                        unsuffixed SD-ID for names IANA has registered, and
+                        this product has none
+    @param facility - syslog facility, 0-23; 16 (local0) is what a box that
+                      says nothing gets, applied by the dataplane
+    @param severity - syslog severity, 0-7; 6 (informational) likewise
+*/
+autoreply define bpa_logging_syslog_set
+{
+  u32 client_index;
+  u32 context;
+
+  bool enable;
+  vl_api_ip4_address_t collector;
+  u16 port;
+  u32 enterprise;
+  u8 facility;
+  u8 severity;
 };
 
 /** \brief Lists the configured pools. */

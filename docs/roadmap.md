@@ -2499,6 +2499,18 @@ and naming a card is the decision it always was. The medium's own card is
 still named on the list. An unattended install takes `none` too, unless it
 asks for an address, which is an install saying it wants a management network
 - and is how `lab/install-iso.sh` installs the box it then reaches over ssh.
+**The block log as RFC 5424 syslog**
+([#20](https://github.com/andrediashexa/hexarouting/issues/20)) - on the
+branch. Many ISP collectors speak syslog and nothing else. The event set does
+not change; the transport does. It rides the exporter that already exists -
+one implementation of the socket, the spill file and the replay in order, with
+the wire as a field - and frames by RFC 6587 octet counting. The timestamp is
+the IPFIX instant at the IPFIX resolution, so the two logs corroborate each
+other; the enterprise number is the operator's and the statement is refused
+without one, because RFC 5424 reserves an unsuffixed structured-data name for
+IANA. What remains is the lab: a syslog collector on the far side of a veth,
+counting one line per event, in the shape `lab/ipfix.sh` already has.
+
 **`ping`, `traceroute` and `mtr` at the prompt**
 ([#395](https://github.com/andrediashexa/hexarouting/issues/395)) - shipped
 in 0.78.0. Reachability is the first question anybody asks of a router and this

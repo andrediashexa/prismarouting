@@ -3039,6 +3039,13 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
   if (bpa_log_tcp.enabled)
     s = format (s, "cgnat logging tcp %U port %u\n", format_ip4_address,
 		&bpa_log_tcp.collector, bpa_log_tcp.port);
+  if (bpa_log_syslog.enabled)
+    s = format (s,
+		"cgnat logging syslog %U port %u enterprise %u facility %u "
+		"severity %u\n",
+		format_ip4_address, &bpa_log_syslog.collector,
+		bpa_log_syslog.port, bpa_log_syslog.pen,
+		bpa_log_syslog.pri / 8, bpa_log_syslog.pri % 8);
 
   if (s)
     {
@@ -3077,6 +3084,67 @@ VLIB_CLI_COMMAND (bpa_logging_tcp_command, static) = {
   .path = "bpa logging tcp",
   .short_help = "bpa logging tcp <collector> [port <n>] | bpa logging tcp disable",
   .function = bpa_logging_tcp_command_fn,
+};
+
+/*
+ * The same events, as RFC 5424 syslog lines, for the collectors that speak
+ * nothing else (#20).
+ *
+ * THE ENTERPRISE NUMBER IS REQUIRED and has no default. RFC 5424 allows a
+ * structured-data name without an `@enterprise` suffix only for names IANA
+ * has registered; this product has none, and inventing one would put a name
+ * in every operator's log that means something else to whoever registers it
+ * later. So the operator is asked for their own, and refused without it -
+ * a refusal at configuration time, where it can be acted on, rather than a
+ * log a collector silently misparses for a year.
+ */
+static clib_error_t *
+bpa_logging_syslog_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			       vlib_cli_command_t *cmd)
+{
+  ip4_address_t addr = { 0 };
+  u32 port = 601, pen = 0, facility = 16, severity = 6;
+
+  if (unformat (input, "disable"))
+    return bpa_log_stream_enable (&bpa_log_syslog, 0, 0, 0);
+
+  if (!unformat (input, "%U", unformat_ip4_address, &addr))
+    return clib_error_return (0, "collector address required");
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "port %u", &port))
+	;
+      else if (unformat (input, "enterprise %u", &pen))
+	;
+      else if (unformat (input, "facility %u", &facility))
+	;
+      else if (unformat (input, "severity %u", &severity))
+	;
+      else
+	return clib_error_return (0, "unknown argument");
+    }
+  if (port > 65535)
+    return clib_error_return (0, "invalid port");
+  if (!pen)
+    return clib_error_return (
+      0, "enterprise <n> is required: RFC 5424 reserves an unsuffixed "
+	 "structured-data name for IANA, so the lines carry your own "
+	 "enterprise number");
+  if (facility > 23 || severity > 7)
+    return clib_error_return (0, "facility is 0-23 and severity is 0-7");
+
+  bpa_log_syslog.wire = BPA_WIRE_SYSLOG;
+  bpa_log_syslog.pen = pen;
+  bpa_log_syslog.pri = facility * 8 + severity;
+  return bpa_log_stream_enable (&bpa_log_syslog, &addr, (u16) port, 1);
+}
+
+VLIB_CLI_COMMAND (bpa_logging_syslog_command, static) = {
+  .path = "bpa logging syslog",
+  .short_help = "bpa logging syslog <collector> enterprise <n> [port <n>] "
+		"[facility <0-23>] [severity <0-7>] | bpa logging syslog "
+		"disable",
+  .function = bpa_logging_syslog_command_fn,
 };
 
 static clib_error_t *

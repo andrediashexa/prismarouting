@@ -630,13 +630,32 @@ bpa_log_stream_enable (bpa_log_stream_t *s, ip4_address_t *collector, u16 port, 
     int was = s->enabled || bpa_log_main.enabled;
 
     s->collector = *collector;
-    s->port = port ? port : 4739;
+    s->port = port ? port : (s->wire == BPA_WIRE_SYSLOG ? 601 : 4739);
     s->fd = -1;
     s->next_attempt = 0;
     s->enabled = 1;
+    /* Each wire spills into a file of its own: two streams sharing one would
+     * replay each other's bytes into the wrong collector, and the file is a
+     * stream the collector frames. 601 is RFC 6587's port for syslog over
+     * TCP, as 4739 is IPFIX's. */
     if (!s->spill_path)
       s->spill_path =
-	format (0, "/var/log/prisma-routing/ipfix-spill.bin%c", 0);
+	s->wire == BPA_WIRE_SYSLOG
+	  ? format (0, "/var/log/prisma-routing/syslog-spill.bin%c", 0)
+	  : format (0, "/var/log/prisma-routing/ipfix-spill.bin%c", 0);
+    if (s->wire == BPA_WIRE_SYSLOG && !s->hostname)
+      {
+	char hn[256];
+
+	/* The HOSTNAME field is the box's own name and a collector groups by
+	 * it. Read once, here, rather than per line: it is answered by the
+	 * kernel and cannot change without a reboot this stream does not
+	 * survive. */
+	if (gethostname (hn, sizeof (hn)) != 0)
+	  hn[0] = 0;
+	hn[sizeof (hn) - 1] = 0;
+	s->hostname = format (0, "%s%c", hn[0] ? hn : "-", 0);
+      }
     if (!was)
       {
 	/* The marker before anything else, for the reason bpa_log_enable()

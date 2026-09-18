@@ -407,6 +407,12 @@ ARG_REV = "<0-19>"
 # offers nothing: a hostname is not this box's to complete.
 ARG_HOST = "<host>"
 
+#: The options `cgnat logging syslog` takes after its collector. Declared
+#: rather than written at each site: the refusals carry one of these words,
+#: and a slot whose values are a closed set has a widest the console reader
+#: can measure (#363).
+SYSLOG_OPTIONS = ("enterprise", "port", "facility", "severity")
+
 SHOW_CGNAT = {
     # The four that answer an operator's question rather than reporting a
     # counter. Every one of them takes its answer from the dataplane, so they
@@ -1332,6 +1338,13 @@ CGNAT_CONFIG = {
         "udp": ("where UDP export goes; required before 'enable'",
                 "<collector> src <source> [port <n>] | disable"),
         "tcp": ("export over TCP", "<collector> [port <n>] | disable"),
+        # The same events for a collector that speaks syslog and nothing
+        # else, which is most of them (#20). The enterprise number is part of
+        # the shape rather than an option: RFC 5424 reserves a structured-data
+        # name without one for IANA, so a line this box writes without it is
+        # a line a collector may read as somebody else's.
+        "syslog": ("export as RFC 5424 syslog lines",
+                   "<collector> enterprise <n> [options] | disable"),
     }),
     "session-table": ("session table sizing", "buckets <n> memory <MB>"),
 }
@@ -8326,6 +8339,9 @@ class Shell:
         elif w[2] == "udp" and len(w) >= 4:
             self.apply_logging_udp(w)
             return
+        elif w[2] == "syslog" and len(w) >= 4:
+            self.apply_logging_syslog(w)
+            return
         elif w[2] == "tcp" and len(w) >= 4:
             args["set_tcp"] = True
             if w[3] != "disable":
@@ -8373,6 +8389,78 @@ class Shell:
         r = self.api_call("bpa_logging_set", args)
         if r.state != vppapi.OK:
             self.err_dataplane(f"cgnat {' '.join(w[1:])}: {r.reason}")
+
+    def apply_logging_syslog(self, w):
+        """
+        Where the syslog export goes, and under whose enterprise number.
+
+        A MESSAGE OF ITS OWN, like the statement: a syslog collector is a
+        second destination and not another flag on the IPFIX one, and a box
+        can have both - the provider's collector speaking syslog and this
+        product's own tooling reading IPFIX.
+
+        THE ENTERPRISE NUMBER IS REFUSED HERE AND AT THE DATAPLANE, and both
+        refusals say the same thing for the same reason: RFC 5424 allows a
+        structured-data name without an `@enterprise` suffix only for names
+        IANA has registered. This one is refused at the prompt, where an
+        operator can act on it, rather than in a year of lines a collector
+        misparsed.
+        """
+        args = {"enable": False, "collector": "0.0.0.0", "port": 0,
+                "enterprise": 0, "facility": 16, "severity": 6}
+        if w[3] == "disable":
+            r = self.api_call("bpa_logging_syslog_set", args)
+            if r.state != vppapi.OK:
+                # The dataplane's sentence LAST on its row and nothing of this
+                # VTY's behind it: it is as long as the dataplane makes it,
+                # and a fold inside this box's own words is the one #363 is
+                # about.
+                self.err_dataplane(f"cgnat logging syslog: {r.reason}")
+            return
+
+        args["enable"] = True
+        args["collector"] = w[3]
+        rest = w[4:]
+        i = 0
+        while i < len(rest):
+            word = rest[i]
+            value = rest[i + 1] if i + 1 < len(rest) else None
+            if word not in SYSLOG_OPTIONS:
+                self.err_prose(
+                    "cgnat logging syslog: not an option of this statement",
+                    f"'{word}' is not one, or it is missing its value",
+                    "the options are: " + ", ".join(SYSLOG_OPTIONS))
+                return
+            if value is None or not value.isdigit():
+                self.err_prose(
+                    f"cgnat logging syslog: {word} takes a number",
+                    f"'{value if value is not None else ''}' is not one")
+                return
+            args[word] = int(value)
+            i += 2
+
+        bounds = {"port": 65535, "enterprise": 4294967295,
+                  "facility": 23, "severity": 7}
+        for word, top in bounds.items():
+            if args[word] > top:
+                self.err(f"cgnat logging syslog: {word} is 0-{top}")
+                return
+        if not args["enterprise"]:
+            # The word is the operator's to find, not this box's to invent,
+            # so the verdict says what is missing and the prose says where
+            # the number comes from.
+            self.err_prose(
+                "cgnat logging syslog: an enterprise number is required",
+                "RFC 5424 reserves a structured-data name without an "
+                "'@enterprise' suffix for names IANA has registered, and this "
+                "product has none",
+                "use your own IANA Private Enterprise Number: every line this "
+                "box writes carries it, and a collector keys on it")
+            return
+
+        r = self.api_call("bpa_logging_syslog_set", args)
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"cgnat logging syslog: {r.reason}")
 
     def apply_logging_udp(self, w):
         """

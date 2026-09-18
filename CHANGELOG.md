@@ -77,6 +77,49 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The block log can be exported as RFC 5424 syslog**
+  ([#20](https://github.com/andrediashexa/hexarouting/issues/20)). Many ISP collectors speak syslog and nothing else,
+  and a product the provider's own collector cannot read is disqualified for a
+  reason that has nothing to do with the quality of its CGNAT. The event set
+  does not change - one record per allocation and release, never per flow -
+  only the transport does:
+
+  ```
+  nat cgnat logging syslog <collector> enterprise <n> [port <n>]
+                                       [facility <0-23>] [severity <0-7>]
+  ```
+
+  The timestamp is the same instant at the same resolution as the IPFIX
+  record's, in UTC, because a log whose clock cannot be compared with the
+  IPFIX one cannot corroborate it - and corroboration is what a second
+  transport is for. The fields are the IPFIX record's, under the same names,
+  in structured data a collector parses without a regular expression. The
+  MSGID is a name a person filters on (`BLOCK-ALLOC`, `BLOCK-RELEASE`,
+  `PORTS-EXHAUSTED`, `BOOT-MARKER`), and an event this box has no name for is
+  dropped and counted rather than written: a line naming an event a collector
+  cannot map parses, is stored, and answers a court request with a shrug.
+
+  **The enterprise number is the operator's and has no default.** RFC 5424
+  reserves a structured-data name without an `@enterprise` suffix for names
+  IANA has registered and this product has none, so the statement is refused
+  without one - at the prompt, where it can be acted on, rather than in a year
+  of lines a collector silently misparsed.
+
+  It rides the exporter that already exists rather than a second copy of it:
+  the non-blocking socket, the spill file and the replay in order are what
+  make a transport fit for a compliance log, and they have nothing to do with
+  the format of what they carry. `bpa_log_tcp_t` is `bpa_log_stream_t` now,
+  every function takes the stream it acts on, and the IPFIX entry points are
+  one-line wrappers - proven unchanged by that exporter's own harness. Each
+  stream spills into a file of its own, because two sharing one would replay
+  each other's bytes into the wrong collector. Framing is RFC 6587 octet
+  counting, on port 601 by default.
+
+  Two defects the reader found rather than review: a syslog stream would have
+  been handed IPFIX bytes for the boot marker - so a collector framing by
+  octet count would have read the next line's length out of the middle of a
+  binary record - and it asked for an IPFIX template it has no use for.
+
 * **The function reader says how much of what is left needs the VPP build**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). The count of C functions no unit test names read
   as a backlog of batches, and it is not one: of the 159, **159 are behind the
