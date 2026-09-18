@@ -2155,7 +2155,7 @@ out: with the right address and the wrong session.
 - [x] Binary API with real return codes
 - [x] Appliance: boot tuning, systemd units, ISO ([appliance.md](appliance.md))
 - [x] The ISO is an installation medium: no credentials, guided `install` ([#52](https://github.com/andrediashexa/hexarouting/issues/52))
-- [ ] **HA / failover** — analysed in [ha.md](ha.md), not implemented
+- [x] **HA: active/standby**, a virtual router on the dataplane interface, with the mapping comparison and the refusal that goes with it ([#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9), [ha.md](ha.md)). Sessions are **not** synchronised, which is a refusal by cost and not an omission
 - [ ] Migrate `prismash` from the CLI to the binary API
 
 What is still missing, and why each item matters, is in
