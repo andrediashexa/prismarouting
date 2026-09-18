@@ -110,6 +110,10 @@ disco""".split())
 ALLOWED = {
     "TRANSITO": "a BGP peer-group name in the lab fixtures, and the VTY must "
                 "carry it back verbatim",
+    "A NAS": "Network Access Server, RFC 2865's own word for the box that "
+             "sends accounting - and 'nas' is also a Portuguese preposition, "
+             "which is why this one is written out rather than left to the "
+             "reader",
     "America/Sao_Paulo": "an IANA timezone identifier",
     "label: dos": "the sfdisk name for an MBR partition table",
     "uplink para o transito": "a deliberate Portuguese interface description: "

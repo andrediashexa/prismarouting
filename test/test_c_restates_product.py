@@ -244,13 +244,14 @@ def harness_checks(src):
 INCLUDE = re.compile(r'#\s*include\s+"([^"]+)"')
 
 harnesses = sorted(glob.glob(os.path.join(TEST, "test_bpa_*.c")))
-# 15 since #21 added the identity table's, 14 since #20 added the syslog line's, and 13 since #390 batch I, which added the PPTP ALG's, the TCP log writer's and
+# 17 since #21 added MD5's and the RADIUS parser's, 15 with the identity
+# table's, 14 since #20 added the syslog line's, and 13 since #390 batch I, which added the PPTP ALG's, the TCP log writer's and
 # the audit trail's. The number is written down so that a glob that stops
 # matching goes red instead of quietly reading fewer files than the
 # repository has - which is what this line is for, and why it moves with the
 # harnesses rather than being loosened to a floor.
-check(len(harnesses) == 15,
-      f"{len(harnesses)} C harnesses found, not the 15 this repository has - "
+check(len(harnesses) == 17,
+      f"{len(harnesses)} C harnesses found, not the 17 this repository has - "
       f"the glob is probably wrong and this suite is reading too little")
 
 n_checks = 0
