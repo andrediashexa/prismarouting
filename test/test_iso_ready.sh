@@ -36,6 +36,33 @@ cat "$REPO/VERSION" > "$T/VERSION"
 : > "$T/src/anything.c"
 NAME=$(sh "$T/tools/version-stamp.sh" --filename "$T")
 
+echo "=== a medium of ANY of this product's names is ignored by git ==="
+# #91 IS WHAT THIS IS FOR, and #202 made it happen a second way. `git add -A`
+# committed 321 MB of image once, because the ignore pattern named one
+# spelling of the filename and the image on disk carried the other. The rename
+# repeated it exactly: the sweep rewrote the old-name pattern into the new one,
+# so the two lines became the same line and every image built before the rename
+# stopped being ignored - eleven of them, 3.4 GB, went into a release commit
+# that had to be undone before it was pushed.
+#
+# Asked of git rather than of the file's text: what matters is whether git
+# would stage such a file, and check-ignore is the question itself. Both names,
+# because a box and a shelf both have mediums built before the rename on them.
+for _n in hexarouting-0.24.0.iso hexarouting.iso \
+          hexarouting-0.70.0-0856e6a.iso \
+          prisma-routing-0.79.0.iso prisma-routing.iso \
+          hexarouting-0.78.0-upgrade.tar.gz \
+          prisma-routing-0.79.0-upgrade.tar.gz; do
+  if git -C "$REPO" check-ignore -q "$_n"; then
+    ok "git ignores $_n"
+  else
+    bad "git would stage $_n, which is a release artifact of this product. \
+That is #91: 'git add -A' commits it and GitHub refuses the push - or worse, \
+takes it. Both product names belong in .gitignore, on lines of their own"
+  fi
+done
+
+echo
 echo "=== the name it looks for is the one this tree would build ==="
 case "$NAME" in
   prisma-routing-*.iso) ok "$NAME" ;;

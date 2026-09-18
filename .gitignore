@@ -10,6 +10,12 @@ test/bpa_vectors.h
 # git worktree. It is a checkout of a tag and not work of ours, and it is
 # several megabytes of a copy of this repository.
 .build-old/
+# BOTH PRODUCT NAMES, and each on a line of its own. #202's sweep rewrote the
+# old-name line into the new one, so the two became one line, every medium
+# built before the rename stopped being ignored, and 'git add -A' put 3.4 GB of
+# them into a release commit that had to be undone. test/test_iso_ready.sh asks
+# git itself whether it would stage a medium of either name.
+#
 # Both the old name and the versioned one. Narrowing this to the versioned
 # pattern alone un-ignored the image already on disk under the old name, and
 # "git add -A" committed 321 MB before GitHub refused the push (#91). And both
