@@ -75,6 +75,12 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+## 0.79.0 - the product is Prisma Routing
+
+[#202](https://github.com/andrediashexa/hexarouting/issues/202), [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
 ### Added
 
 * **Twenty-eight more C functions are named by a unit test**
