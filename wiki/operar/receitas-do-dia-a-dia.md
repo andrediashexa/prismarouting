@@ -235,6 +235,46 @@ Não use `save` antes de confirmar. O desfazer devolve o que está valendo e nã
 
 :::
 
+# Fazer manutenção numa caixa que faz par
+
+A caixa que você quer mexer está com o endereço de serviço. Passe o serviço para a parceira antes, em vez de derrubar a caixa e descobrir depois se o par funcionava:
+
+```
+configure
+ interface ens18
+  vrrp 1 priority 50
+  exit
+ commit
+```
+
+A caixa avisa o que isso custa antes de aplicar:
+
+```
+  changing vrrp 1 on ens18 restarts it: this box stops advertising while it is
+  rebuilt, the peer takes the address, and preempt hands it back - two
+  elections, a few seconds apart
+```
+
+Confira em qual caixa o serviço ficou — `show cgnat ha` nas duas — e só então faça a manutenção. No fim, devolva a prioridade:
+
+```
+configure
+ interface ens18
+  vrrp 1 priority 200
+  exit
+ commit
+```
+
+Com `preempt` ligado, que é o padrão desta caixa, ela **retoma** o endereço assim que volta a anunciar a prioridade maior. É por isso que a configuração é a afirmação de quem deve ficar com o serviço: o par termina onde a configuração diz, e não onde a última falha deixou.
+
+
+:::warning
+**As conexões em curso caem nas duas trocas.** O assinante mantém o mesmo endereço público e o mesmo bloco de portas — é isso que o modo determinístico preserva —, mas as sessões em andamento não sobrevivem. Trate como janela, e não como operação transparente.
+
+**A mudança precisa ir para as duas caixas.** Se você alterar pool numa caixa que faz par, o `commit` recusa enquanto a parceira discordar, e `commit diverge` é a palavra de quem sabe o que está fazendo: aplique a mesma mudança nos dois lados, e copie o `peer.conf` de novo depois.
+
+:::
+
 # Adicionar um operador que só mexe em CGNAT
 
 ```
