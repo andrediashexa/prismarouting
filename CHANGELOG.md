@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.85.0 - the pair refuses to drift apart
+
+[#8](https://github.com/andrediashexa/hexarouting/issues/8).
+
+### Added
+
 * **A commit that would map subscribers differently from the peer is refused**
   ([#8](https://github.com/andrediashexa/hexarouting/issues/8)), on a box that stands
   for a service address with one:
