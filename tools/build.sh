@@ -32,6 +32,22 @@ fi
 PRISMA_VERSION_STAMP=${PRISMA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
 export PRISMA_VERSION_STAMP
 
+# THE IMAGE HAS TO BE THERE, and the refusal is a sentence rather than
+# docker's. A `docker run` against a tag this host has not got goes to the
+# registry, is refused there, and prints "pull access denied ... may require
+# docker login" - which sends whoever reads it to look for credentials for an
+# image that was never published anywhere. It is built here, from
+# build/Dockerfile.dev, and #202 is how this was met: the rename moved the tag
+# and every host still held the image under the old one.
+if [ "$TARGET" != image ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "error: this host has no $IMAGE image, and it is not published" >&2
+  echo "       anywhere: it is built from build/Dockerfile.dev." >&2
+  echo "       Build it:  sh tools/build.sh image" >&2
+  echo "       An image under an older tag is the same contents: " >&2
+  echo "       'docker tag <old tag> $IMAGE' is enough." >&2
+  exit 1
+fi
+
 case "$TARGET" in
   image)
     docker build -f "$REPO/build/Dockerfile.dev" -t "$IMAGE" "$REPO"
