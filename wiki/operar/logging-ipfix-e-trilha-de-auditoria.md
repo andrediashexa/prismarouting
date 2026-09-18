@@ -213,7 +213,7 @@ O transporte é TCP, com enquadramento por contagem de octetos (RFC 6587): o tam
 Os dois podem ficar ligados ao mesmo tempo: o coletor do provedor lendo syslog e a ferramenta deste produto lendo IPFIX.
 
 | Você digitou | A caixa diz |
-|---|---|
+|--------------|-------------|
 | `nat cgnat logging syslog 10.0.0.9` | `an enterprise number is required`, com o porquê |
 | `... enterprise 9 sideways 2` | `not an option of this statement`, listando as que são |
 | `... enterprise 9 port 70000` | `port is 0-65535` |

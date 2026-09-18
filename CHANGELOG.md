@@ -75,6 +75,12 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+## 0.81.0 - the block log speaks syslog, for the collectors that speak nothing else
+
+[#20](https://github.com/andrediashexa/hexarouting/issues/20), [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
 ### Added
 
 * **The block log can be exported as RFC 5424 syslog**
