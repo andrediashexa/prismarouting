@@ -1213,6 +1213,41 @@ check("is a number" in config.vrrp_remove(v, "pg0", ["vrrp", "all"])[0],
       "with an id that is not one")
 print("  all of a virtual router, because half of one stands for nothing")
 
+print("\n=== config.vrrp_pair_findings: what two boxes say about each other ===")
+# Mutation shown red: keying by interface name. The two boxes stand for one
+# address under one id, and what the port is called locally is each box's own
+# business - a comparison by name reports a correct pair as broken and a
+# broken one as fine, depending on how the cabling was labelled.
+mine = {"ens18": {1: {"addresses": ["100.64.3.254"], "priority": 200,
+                      "track": {}}}}
+same = {"ens19": {1: {"addresses": ["100.64.3.254"], "priority": 100,
+                      "track": {}}}}
+check(config.vrrp_pair_findings(mine, same) == [],
+      f"a correct pair says nothing, whatever the ports are called: "
+      f"{config.vrrp_pair_findings(mine, same)!r}")
+tie = {"ens18": {1: {"addresses": ["100.64.3.254"], "priority": 200,
+                     "track": {}}}}
+found = config.vrrp_pair_findings(mine, tie)
+check(len(found) == 1 and "priority 200 on both boxes" in found[0]
+      and "RFC 5798" in found[0],
+      f"the same priority on both is a finding, with the rule that breaks "
+      f"the tie: {found!r}")
+found = config.vrrp_pair_findings(mine, {})
+check(len(found) == 1 and "on no interface of the peer's" in found[0],
+      f"an id only this box carries is a finding: {found!r}")
+found = config.vrrp_pair_findings({}, mine)
+check(len(found) == 1 and "on no interface of this box" in found[0],
+      f"and one only the peer carries, from the other side: {found!r}")
+other = {"ens18": {1: {"addresses": ["100.64.9.254"], "priority": 100,
+                       "track": {}}}}
+found = config.vrrp_pair_findings(mine, other)
+check(len(found) == 2,
+      f"a different address under the same id is two findings, because each "
+      f"box is alone for its own: {found!r}")
+check(config.vrrp_pair_findings({}, {}) == [],
+      "two boxes with no virtual router at all have nothing to compare")
+print("  keyed by the id and the address, which is what a pair agrees on")
+
 print("\n=== config.vrrp_why: the refusal as one sentence, for a log ===")
 # Mutation shown red: the prose dropped, which leaves `--load` printing a
 # verdict with no reason on a box nobody is watching.

@@ -1072,6 +1072,63 @@ def vrrp_remove(vrrp: dict, iface: str, words: list):
     return None
 
 
+def vrrp_pair_findings(mine: dict, theirs: dict) -> list:
+    """
+    What two boxes' virtual routers say about each other, as sentences.
+
+    Keyed by (virtual router id, virtual address) and NOT by interface name:
+    the two boxes stand for the same address under the same id, and what that
+    address is called locally is each box's own business - `ens18` here can
+    be `ens19` there and the pair is still correct.
+
+    Two findings, and both are configuration mistakes with no symptom until
+    the day it matters:
+
+    * **the same priority on both boxes.** RFC 5798 breaks the tie by the
+      higher source address, so the pair works and which box holds the service
+      is decided by something the operator never wrote down. The first
+      failover lands wherever the addressing happens to put it.
+    * **an id one box stands for and the other does not.** There is no
+      standby for that address at all: the box holding it is alone, and the
+      screen that was supposed to say so says nothing, because a comparison
+      keyed by interface name would not have looked.
+
+    A different ADDRESS under the same id is the second finding twice over -
+    each box is alone for its own address - and comes out as two lines, which
+    is what it is.
+    """
+    # not a unit: a closure over nothing, measured through the findings it
+    # produces - there is no answer it can give that the four cases in
+    # test_prismash_config.py do not read
+    def by_key(vrrp):
+        out = {}
+        for ifname in vrrp:
+            for vrid, vr in vrrp[ifname].items():
+                for addr in vr["addresses"]:
+                    out[(vrid, addr)] = (ifname, vr["priority"])
+        return out
+
+    here, there = by_key(mine), by_key(theirs)
+    findings = []
+    for key in sorted(set(here) | set(there)):
+        vrid, addr = key
+        if key in here and key not in there:
+            findings.append(
+                f"vrrp {vrid} stands for {addr} on this box and on no "
+                "interface of the peer's, so nothing takes that address over")
+        elif key in there and key not in here:
+            findings.append(
+                f"vrrp {vrid} stands for {addr} on the peer and on no "
+                "interface of this box, so nothing takes that address over")
+        elif here[key][1] == there[key][1]:
+            findings.append(
+                f"vrrp {vrid} for {addr} is priority {here[key][1]} on both "
+                "boxes: RFC 5798 breaks that tie by the higher address, so "
+                "which box holds the service is decided by the addressing "
+                "and not by the configuration")
+    return findings
+
+
 def vrrp_why(refusal) -> str:
     """
     A refusal as ONE sentence, for the reader that has no console to fold in.
