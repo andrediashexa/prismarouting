@@ -4491,6 +4491,19 @@ check(r is False and "start:" in o.getvalue(),
       f"a router that could not be started: {o.getvalue()!r}")
 ok("six refusals, each naming the interface and the virtual router")
 
+print("\n=== Shell.say_vrrp_restart: what changing a router costs ===")
+# Mutation shown red: the sentence reduced to "restarting vrrp 1". What an
+# operator needs is not that it restarts - it is that the pair changes hands
+# twice while it does, which is a maintenance window and not a keystroke.
+sh = shell()
+with spoken() as o:
+    sh.say_vrrp_restart("pg0", 1)
+said = " ".join(o.getvalue().split())
+check("changing vrrp 1 on pg0 restarts it" in said, f"what it is: {said!r}")
+check("the peer takes the address" in said and "preempt hands it back" in said,
+      f"and what that costs the pair: {said!r}")
+print("  a sentence about the service, not about the API call")
+
 print("\n=== Shell.del_vrrp: stopped first, then deleted ===")
 # Mutation shown red: the start_stop call dropped, which leaves the peer
 # waiting out the master-down interval instead of taking it at once.
