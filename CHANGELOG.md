@@ -77,6 +77,27 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A recipe for taking a paired box out for maintenance**
+  ([#6](https://github.com/andrediashexa/hexarouting/issues/6)). The pair shipped
+  without the procedure for the most ordinary thing anybody will do with it:
+  the box holding the service address is the one that needs the work.
+
+  *Fazer manutenção numa caixa que faz par* hands the service to the peer by
+  lowering the priority, quotes the sentence the box prints back so nobody is
+  surprised by it, says to confirm on both boxes with `show cgnat ha` before
+  touching anything, and restores the priority afterwards - with preempt
+  taking the address back, which is why the configuration is the statement of
+  which box should hold the service rather than a record of where the last
+  failure left it.
+
+  It carries the two warnings that belong to it. **In-flight connections drop
+  at both transitions** - the subscriber keeps the same public address and the
+  same port block, which is what deterministic mode preserves, but sessions do
+  not survive - so it is a window and not a transparent operation. And **a
+  pool change on a paired box is refused** until both sides agree, with
+  `commit diverge` for somebody who knows they are mid-procedure and will
+  copy the peer file again afterwards.
+
 ### Fixed
 
 ## 0.94.0 - the port says whether it is holding the service
