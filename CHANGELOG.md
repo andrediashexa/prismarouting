@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.86.0 - the failover test is green, and in the suite
+
+[#9](https://github.com/andrediashexa/hexarouting/issues/9).
+
+### Added
+
 * **The HA acceptance test passes, and it is a member of the suite**
   ([#9](https://github.com/andrediashexa/hexarouting/issues/9)). `lab/ha-failover.sh`
   was written before any of high availability existed, so that #7 and #8 would
