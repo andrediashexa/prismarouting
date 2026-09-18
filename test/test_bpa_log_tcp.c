@@ -239,14 +239,22 @@ main (void)
     reset (1);
     bpa_log_tcp_record (1700000000.5, BPA_NAT_EVENT_BLOCK_ALLOC, 0x0a000001,
 			0xc6336401, 2048, 3071, 9);
-    CHECK (while_off == 0 && vec_len (bpa_log_tcp.outbuf) == 45 && rd16 (2) == 45
-	     && rd16 (16) == BPA_TCP_TEMPLATE_ID && rd16 (18) == 29
+    /* 53 and not 45 since #21: the eighth element, userName, is variable
+     * length - one octet of length and the value, and with no identity table
+     * the value is the unknown marker (7 bytes). The set length and the
+     * message length move with it, and the TEMPLATE ID moved too, so a
+     * collector holding the old one never matches these bytes. */
+    CHECK (while_off == 0 && vec_len (bpa_log_tcp.outbuf) == 53 && rd16 (2) == 53
+	     && rd16 (16) == BPA_TCP_TEMPLATE_ID && rd16 (18) == 37
 	     && rd64 (20) == 1700000000500ull && bpa_log_tcp.outbuf[28] == 16
 	     && rd32 (29) == 0x0a000001 && rd32 (33) == 0xc6336401
 	     && rd16 (37) == 2048 && rd16 (39) == 3071 && rd32 (41) == 9
+	     && bpa_log_tcp.outbuf[45] == 7
+	     && memcmp (bpa_log_tcp.outbuf + 46, "unknown", 7) == 0
 	     && bpa_log_tcp.seq == 1 && bpa_log_tcp.n_records == 1,
-	   "bpa_log_tcp_record writes one 45-byte message carrying the seven "
-	   "RFC 8158 fields, and nothing at all while the transport is off: "
+	   "bpa_log_tcp_record writes one 53-byte message carrying the seven "
+	   "RFC 8158 fields and the subscriber, and nothing at all while the "
+	   "transport is off: "
 	   "off=%u len=%u set=%u/%u ms=%llu ev=%u priv=%08x pub=%08x %u-%u "
 	   "pool=%u",
 	   while_off, vec_len (bpa_log_tcp.outbuf), rd16 (16), rd16 (18),

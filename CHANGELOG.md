@@ -109,9 +109,24 @@ version has a chance of seeing it.
 
   **It is personal data and nothing prints an entry.** `show cgnat identity`
   gives the count and when the file was read; no other screen on this box
-  carries an identity at all. It reaches the syslog wire as `subscriberId`;
-  the IPFIX record does not carry it yet, because that needs an information
-  element chosen rather than guessed at.
+  carries an identity at all.
+
+  It reaches both wires: `subscriberId` in the syslog line's structured data,
+  and element **371 `userName`** on IPFIX over TCP - read off the IANA
+  registry rather than chosen, as a variable-length string. **The block
+  record's template id moved from 256 to 258 with it**, because IPFIX does not
+  let one id mean two sets of fields: a collector holding 256 from an older
+  box would otherwise read the identity's first bytes as a pool id. With a new
+  id a stale cache matches nothing and waits for the template, which arrives
+  within the minute. The UDP exporter's template is unchanged - UDP is the
+  telemetry transport and TCP the compliance one.
+
+  One defect found by a lab rather than by review: the refactor that gave the
+  exporter one implementation left `bpa_log_tcp_enable` without its wrapper.
+  A shared object links lazily, so the build was green and the unit suites -
+  which are standalone and never see that half - were green too; VPP refused
+  to load the plugin with `undefined symbol`, and `lab/ipfix-tcp.sh` is what
+  said so.
 
 ### Fixed
 

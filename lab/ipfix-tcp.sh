@@ -105,7 +105,10 @@ echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 C2=$(cat /tmp/c2.out)
 expect_in "records arrived after the collector came back" "DEALLOCATION" "$C2"
-expect_in "the template was resent on reconnect" "TEMPLATE 256" "$C2"
+# 258 since #21: the block record carries userName, and IPFIX does not let a
+# template id mean two sets of fields - a collector holding 256 from an older
+# box must never match these bytes.
+expect_in "the template was resent on reconnect" "TEMPLATE 258" "$C2"
 # The VALUE, not one number it must not be. This asserted "270 pending" was
 # absent, which is true of 0 pending, 1 pending and 4000 pending alike - so the
 # only check that the spill queue drained was satisfied by a box that drained

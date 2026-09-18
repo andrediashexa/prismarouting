@@ -401,10 +401,24 @@ answers with the count and when the file was read. On a box with none it says
 box carries an identity at all. Its presence in the log is the reason the log
 is protected.
 
-Today the identity reaches the **syslog** wire, as `subscriberId` in the
-structured data. The IPFIX record does not carry it yet: that needs an
-information element chosen rather than guessed at, and a wrong element is
-worse than no field.
+It reaches both wires. On **syslog** it is `subscriberId` in the structured
+data; on **IPFIX over TCP** it is element **371 `userName`**, read off the
+IANA registry on 2026-09-18 rather than chosen, encoded as IPFIX's
+variable-length string: one length octet, then the value.
+
+**The block record's template id moved from 256 to 258 with it**, and that is
+the point rather than a detail. IPFIX does not let one template id mean two
+sets of fields: a collector that cached 256 from a box of an earlier version
+would read the new record as the old one and report the identity's first
+bytes as a pool id. With a new id, a stale cache matches nothing this box
+sends and simply waits for the template it does not have, which arrives within
+the minute.
+
+The **UDP** exporter's template is unchanged: it carries the seven RFC 8158
+fields and no identity. UDP is the telemetry transport here, TCP is the
+compliance one, and a variable-length field on the UDP path would mean
+changing VPP's own flow-report assembly for a record this product does not ask
+that transport to carry.
 
 ### Syslog implementation
 
