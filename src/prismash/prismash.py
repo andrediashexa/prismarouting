@@ -41,7 +41,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     VRID_MIN, VRID_MAX, VRRP_PRIORITY_MIN, VRRP_PRIORITY_MAX,
                     VRRP_PRIORITY_DEFAULT,
                     VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
-                    vrrp_statement, vrrp_remove)
+                    vrrp_statement, vrrp_remove, vrrp_pair_findings)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
@@ -14363,6 +14363,25 @@ class Shell:
             print(f"    copied               {when}")
         except OSError:
             pass
+
+        # THE PAIR'S OWN HALF, read from the same file as the mapping. The
+        # peer's configuration is what `save` wrote on the other box, so it
+        # carries that box's `vrrp` statements - and two boxes that map every
+        # subscriber identically can still be a pair that never fails over,
+        # or one whose master is decided by the addressing.
+        print()
+        print("  the pair")
+        pair = vrrp_pair_findings(mine.vrrp, peer.vrrp)
+        if not mine.vrrp and not peer.vrrp:
+            print_prose("neither box carries a virtual router, so neither "
+                        "takes a service address over", indent="    ")
+        elif not pair:
+            print_prose("every virtual router this box carries has one on the "
+                        "peer with the same id, the same address and a "
+                        "different priority", indent="    ")
+        else:
+            for line in pair:
+                self.say_finding("warning", "", line)
 
         print()
         findings = mine.mapping_diff_to(peer)

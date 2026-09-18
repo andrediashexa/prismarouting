@@ -116,6 +116,21 @@ Para que a caixa possa comparar, ela precisa ter a configuração da outra. **O 
 
 **Numa caixa que faz par, o** `**commit**` **recusa uma mudança que divergiria.** Com `vrrp` em alguma interface e um `peer.conf` legível, uma candidata que mapearia assinantes de forma diferente da parceira é recusada pelo nome do pool, e `commit diverge` é a palavra de quem sabe o que está fazendo — porque duas caixas não se commitam no mesmo instante, e toda ampliação correta diverge o par entre o primeiro commit e o segundo. A página *commit, rollback e save* descreve a recusa inteira.
 
+**A tela lê os roteadores virtuais das duas caixas, e não só o mapeamento.** O arquivo da parceira é a configuração que ela salvou, então ele carrega os `vrrp` dela também — e duas caixas que mapeiam todo assinante igual ainda podem ser um par que nunca troca:
+
+```
+  the pair
+    every virtual router this box carries has one on the peer with the same id,
+    the same address and a different priority
+```
+
+Dois achados, e os dois são erro de configuração sem sintoma até o dia em que importa:
+
+* **a mesma prioridade nas duas caixas.** A RFC 5798 desempata pelo endereço de origem maior, então o par funciona e quem fica com o serviço é decidido por algo que ninguém escreveu. O primeiro failover cai onde o endereçamento puser.
+* **um `vrid` que só uma das caixas sustenta.** Não existe standby para aquele endereço: a caixa que está com ele está sozinha. Endereço virtual diferente sob o mesmo `vrid` é esse mesmo achado duas vezes, uma para cada caixa.
+
+A comparação é pelo **`vrid` e pelo endereço**, nunca pelo nome da interface: as duas caixas sustentam um endereço sob um `vrid`, e como a porta se chama de cada lado é problema de cada uma — `ens18` aqui pode ser `ens19` lá e o par está certo.
+
 Quando as duas divergem:
 
 ```

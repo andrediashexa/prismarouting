@@ -77,6 +77,36 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show cgnat ha` reads both boxes' virtual routers, not only their
+  mappings** ([#8](https://github.com/andrediashexa/hexarouting/issues/8)). The peer's
+  configuration is what `save` wrote on the other box, so it carries that
+  box's `vrrp` statements - and two boxes that map every subscriber
+  identically can still be a pair that never fails over.
+
+  ```
+    the pair
+      every virtual router this box carries has one on the peer with the same
+      id, the same address and a different priority
+  ```
+
+  Two findings, and both are configuration mistakes with no symptom until the
+  day they matter:
+
+  * **the same priority on both boxes.** RFC 5798 breaks that tie by the
+    higher source address, so the pair works and which box holds the service
+    is decided by something nobody wrote down. The first failover lands
+    wherever the addressing happens to put it.
+  * **an id one box stands for and the other does not.** There is no standby
+    for that address at all - the box holding it is alone - and a different
+    virtual address under the same id is that finding twice over, once for
+    each box, which is what it is.
+
+  **Keyed by the id and the address, never by the interface name.** The two
+  boxes stand for one address under one id, and what the port is called
+  locally is each box's own business: `ens18` here can be `ens19` there and
+  the pair is correct. A comparison by name would report a correct pair as
+  broken and a broken one as fine, depending on how the cabling was labelled.
+
 ### Fixed
 
 ## 0.92.0 - what changing a virtual router costs, said first

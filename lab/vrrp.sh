@@ -406,6 +406,12 @@ new_pool() {   # <box> <commit words...>
 DIVERGE=$(new_pool b commit)
 echo "$DIVERGE" | sed 's/^/  b: /'
 CHECK=$(new_pool b commit check)
+# WHAT THE PAIR SECTION SAYS when the peer file is there to read: box a and
+# box b carry vrrp 1 for the same address with different priorities, which is
+# what a correct pair looks like from either side.
+PAIR_SAID=$(PRISMA_PEER_CONFIG=/etc/prisma-routing/peer-for-b.conf \
+  hx b -c "show cgnat ha")
+echo "$PAIR_SAID" | sed -n '/the pair/,/^$/p' | sed 's/^/  b: /'
 BYNAME=$(new_pool b commit diverge)
 echo "  and when it is asked for by name:"
 echo "$BYNAME" | sed 's/^/  b: /'
@@ -483,6 +489,11 @@ expect_in "and the refusal names the pool, and what a takeover would do
           "pool 'business' is on this box and not on the peer" "$DIVERGE"
 expect_in "'commit check' says it too, in the window where somebody is
            deciding" "commit diverge" "$CHECK"
+expect_said "the screen reads both boxes' virtual routers, not only the
+             mapping" \
+            "every virtual router this box carries has one on the peer with
+             the same id, the same address and a different priority" \
+            "$PAIR_SAID"
 expect_in "and asked for by name it goes through" "commit complete" "$BYNAME"
 expect "so the operator is stopped, not blocked: the change is on the box" \
        test "$POOL_AFTER" -ge 1
