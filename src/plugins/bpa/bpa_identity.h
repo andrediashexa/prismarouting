@@ -47,14 +47,31 @@ typedef struct
   u8 *path;
 } bpa_identity_table_t;
 
+/*
+ * Where a table came from. The static map is a file an operator's
+ * provisioning writes; the leases are one a DHCP server writes and nobody
+ * edits. Same table, different grammar, and the KIND is carried rather than
+ * sniffed: a file's first line is a poor thing to bet a court record on.
+ */
+typedef enum
+{
+  BPA_IDENTITY_MAP = 0,
+  BPA_IDENTITY_DHCP_LEASES = 1,
+} bpa_identity_kind_t;
+
 extern const char bpa_identity_unknown[];
 
 int bpa_identity_cmp (const void *a, const void *b);
+int bpa_identity_key_cmp (const void *a, const void *b);
 int bpa_identity_parse_line (const char *line, bpa_identity_entry_t *out);
+int bpa_identity_lease_line (const char *line, bpa_identity_entry_t *out,
+			     int *in_block);
 void bpa_identity_lookup (const bpa_identity_table_t *t, u32 ip, char *out,
 			  u32 cap);
 #ifndef BPA_STANDALONE
 clib_error_t *bpa_identity_load (const char *path);
+clib_error_t *bpa_identity_load_kind (const char *path,
+				      bpa_identity_kind_t kind);
 #endif
 
 #endif /* __included_bpa_identity_h__ */

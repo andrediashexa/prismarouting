@@ -407,6 +407,39 @@ vl_api_bpa_identity_set_t_handler (vl_api_bpa_identity_set_t *mp)
   REPLY_MACRO (VL_API_BPA_IDENTITY_SET_REPLY);
 }
 
+/* The same table from a lease file (issue #21). The kind decides the grammar
+ * the loader reads the file with; everything else is bpa_identity_set's. */
+static void
+vl_api_bpa_identity_source_set_t_handler (vl_api_bpa_identity_source_set_t *mp)
+{
+  vl_api_bpa_identity_source_set_reply_t *rmp;
+  clib_error_t *e;
+  char path[256];
+  int rv = 0;
+
+  snprintf (path, sizeof (path), "%s", (const char *) mp->path);
+  if (mp->kind > BPA_IDENTITY_DHCP_LEASES)
+    {
+      vlib_log_err (bpa_main.log_class,
+		    "cgnat identity: kind %u is not one this box reads",
+		    mp->kind);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+      goto reply;
+    }
+
+  e = bpa_identity_load_kind (path[0] ? path : 0,
+			      (bpa_identity_kind_t) mp->kind);
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+
+reply:
+  REPLY_MACRO (VL_API_BPA_IDENTITY_SOURCE_SET_REPLY);
+}
+
 static void
 vl_api_bpa_logging_syslog_set_t_handler (vl_api_bpa_logging_syslog_set_t *mp)
 {

@@ -130,6 +130,75 @@ main (void)
 	   "and one above it: %s", out);
   }
 
+  printf ("\n--- an ISC dhcpd lease file, which a provider already has ---\n");
+  {
+    const char *file[] = {
+      "# written by isc-dhcp-server",
+      "lease 100.64.0.5 {",
+      "  starts 4 2026/09/18 06:00:00;",
+      "  binding state active;",
+      "  hardware ethernet bc:24:11:ea:db:12;",
+      "  client-hostname \"cpe-12345\";",
+      "}",
+      "lease 100.64.0.6 {",
+      "  binding state active;",
+      "  hardware ethernet 02:00:00:00:00:07;",
+      "}",
+      "lease 100.64.0.7 {",
+      "  binding state free;",
+      "  hardware ethernet 02:00:00:00:00:09;",
+      "  client-hostname \"gone-last-week\";",
+      "}",
+      "lease 100.64.0.8 {",
+      "  binding state active;",
+      "}",
+    };
+    bpa_identity_entry_t got[8];
+    u32 n = 0, i;
+    int in_block = 0;
+
+    for (i = 0; i < sizeof (file) / sizeof (file[0]); i++)
+      if (bpa_identity_lease_line (file[i], &got[n], &in_block) == 1)
+	n++;
+
+    CHECK (n == 2, "two of the four leases yield an entry: %u", n);
+    CHECK (got[0].ip == ip (100, 64, 0, 5)
+	     && strcmp (got[0].name, "cpe-12345") == 0,
+	   "the client-hostname is the identity when there is one: %s",
+	   got[0].name);
+    CHECK (got[1].ip == ip (100, 64, 0, 6)
+	     && strcmp (got[1].name, "02:00:00:00:00:07") == 0,
+	   "and the hardware address when there is not: %s", got[1].name);
+    /* THE ONE THAT MATTERS. A lease file holds every lease the server ever
+     * wrote, and a `free` one still carries the old client's name. Naming a
+     * subscriber from one of those is the wrong answer to a court order with
+     * a straight face. */
+    CHECK (n == 2 || got[2].ip != ip (100, 64, 0, 7),
+	   "a lease that is not active yields nothing, whatever name it "
+	   "still carries");
+    CHECK (in_block == 0, "the parser ends outside a block, as the file does");
+  }
+
+  printf ("\n--- the key sort, which is what makes a renewal win ---\n");
+  {
+    /* A lease file names an address again every time it is renewed, and the
+     * later line is the current subscriber. qsort is not stable, so the order
+     * is carried in the key rather than hoped for. */
+    u64 k[3] = { ((u64) 5 << 32) | 9, ((u64) 5 << 32) | 2,
+		 ((u64) 4 << 32) | 7 };
+
+    CHECK (bpa_identity_key_cmp (&k[0], &k[1]) > 0
+	     && bpa_identity_key_cmp (&k[1], &k[0]) < 0
+	     && bpa_identity_key_cmp (&k[0], &k[0]) == 0,
+	   "the key comparator orders whole keys, address above line");
+    qsort (k, 3, sizeof (k[0]), bpa_identity_key_cmp);
+    CHECK (k[0] == (((u64) 4 << 32) | 7) && k[1] == (((u64) 5 << 32) | 2)
+	     && k[2] == (((u64) 5 << 32) | 9),
+	   "address first, then the line it was on: %llu %llu %llu",
+	   (unsigned long long) k[0], (unsigned long long) k[1],
+	   (unsigned long long) k[2]);
+  }
+
   printf ("\n--- a table that is not there answers, rather than crashing ---\n");
   {
     bpa_identity_table_t empty = { 0 };
