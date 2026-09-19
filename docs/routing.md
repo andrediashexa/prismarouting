@@ -98,12 +98,31 @@ prisma# [edit] interface ?
   TenGigabitEthernet0/8/0  interface (up)
   host-veth-vpp            interface (up)
   pg0                      interface (up)
-  <interface>
+  <interface>, or a name that creates one
+    a name this box has not got is how one is made: <parent>.<tag> creates a
+    VLAN sub-interface - its parent has to exist - and loop<n> creates a
+    loopback. Anything else is refused at the commit, naming what the box has.
 ```
 
 Interfaces come from the dataplane; pools, accounts and SNMP users come from
 the **candidate**, so they complete what is being edited rather than only what
 is committed.
+
+**And the line under the hint is the whole of
+[#406](https://github.com/andrediashexa/hexarouting/issues/406).** Typing a
+name the box has not got is how a VLAN sub-interface and a loopback are made —
+both have worked for releases — and `?` offered only the interfaces that
+already existed, so the list read as the complete set of what may be typed. A
+maintainer asked for sub-interfaces to be implemented on a box that had had
+them all along. A feature nobody can find is a feature nobody has, and the
+place to say so is the screen somebody is looking at while they type.
+
+The shapes are in `HINT_NOTES`, keyed by the marker they belong under, and are
+folded to the console by `console_prose` — the sentence is 90 columns and this
+is a screen read on a serial console. `show interface <name>` and `nat cgnat
+interface <name>` keep the plain `<interface>` marker: those take a name the
+box HAS, and offering "or invent one" there would be offering a name they
+refuse.
 
 Before this, `interface <TAB>` answered `<word>` — true and useless. It told
 the operator what they already knew and sent them to `vppctl` or `ip link` in

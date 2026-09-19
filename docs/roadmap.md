@@ -501,9 +501,11 @@ not have found, because each is about a box somebody is USING:
   `show hardware` claims the dataplane claims it, the VTY says the box has no
   such interface, and nothing says the card will be claimed on the next boot.
 * [#406](https://github.com/andrediashexa/hexarouting/issues/406) -
-  sub-interfaces and loopbacks work and cannot be discovered: `?` offers the
-  interfaces the box already has, and the shape that CREATES one is stated
-  only inside a refusal an operator reaches by guessing wrong first.
+  **fixed.** Sub-interfaces and loopbacks worked and could not be discovered:
+  `?` offered the interfaces the box already has, so the list read as the
+  complete set of what may be typed, and the shape that CREATES one was stated
+  only inside a refusal an operator reaches by guessing wrong first. It is now
+  under the list, on the screen somebody is looking at while they type.
 
 A plan that says this out loud is worth more than one that reads as if work
 were queued: what this product needs next is a box with a real NIC in it and a

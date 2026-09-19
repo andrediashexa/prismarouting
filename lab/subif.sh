@@ -24,6 +24,32 @@ vppctl set interface state pg0 up
 
 HX="python3 /src/src/prismash/prismash.py"
 
+echo "=========== what ? says a name can create (#406) ==========="
+# THE SHAPE, ON THE SCREEN AN OPERATOR IS LOOKING AT WHILE THEY TYPE. Typing a
+# name the box has not got is how a sub-interface is made, it has worked since
+# #131, and `?` offered only the interfaces that already existed - so the list
+# read as the complete set of what may be typed, and a maintainer asked for
+# sub-interfaces to be implemented on a box that had had them for releases.
+#
+# Driven through the completer itself, not through a copy of the text: the
+# hint and the note are what `?` prints, and a lab asserting a constant it
+# wrote itself would assert nothing about the box.
+HINT=$(python3 - <<'PYEOF'
+import io, contextlib, sys
+sys.path.insert(0, "/src/src/prismash")
+import prismash
+sh = prismash.Shell()
+sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+with contextlib.redirect_stdout(io.StringIO()):
+    sh.feed("configure")
+opts, hint, _ = sh._options("interface ", False)
+print("NAMES:", " ".join(sorted(opts)))
+print("HINT:", hint)
+print("NOTE:", prismash.HINT_NOTES.get(hint, ""))
+PYEOF
+)
+printf '%s\n' "$HINT" | sed 's/^/  /'
+
 echo "=========== creating a sub-interface through the VTY ==========="
 $HX -c "configure" -c "interface pg0.100" -c "vlan 100" \
     -c "ipv4 address 10.100.0.1/24" -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
@@ -35,6 +61,14 @@ vc show interface | awk 'NR>1 {print "    " $1}' | grep -v '^    $'
 
 . /src/lab/verdict.sh
 IFACES=$(vppctl show interface | awk '{print $1}')
+# #406, before the sub-interface below exists: the screen has to say the name
+# can be typed BEFORE there is one to complete.
+expect_in "? offers the interfaces the box has" "pg0" "$HINT"
+expect_in "and says a name can create one" "or a name that creates one" "$HINT"
+expect_in "naming the shape that makes a sub-interface" "<parent>.<tag>" "$HINT"
+expect_in "and the one that makes a loopback" "loop<n>" "$HINT"
+expect_in "and that the parent has to exist" "its parent has to exist" "$HINT"
+
 expect_in "the sub-interface exists on the dataplane" "pg0.100" "$IFACES"
 expect_in "with the address it was given" "10.100.0.1/24" \
   "$(vppctl show interface addr pg0.100)"

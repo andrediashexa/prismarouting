@@ -415,6 +415,30 @@ ARG_LIMIT = "<0-4294967295>"
 # nothing and says so, rather than hanging or raising: a VTY that cannot be
 # used while the dataplane is down is a VTY that cannot be used to fix it.
 ARG_INTERFACE = "<interface>"
+#: The same names, where typing one the box has NOT got is how an interface is
+#: made (#406). Two shapes do that: `<parent>.<tag>` creates a VLAN
+#: sub-interface and `loop<n>` creates a loopback, and both worked for
+#: releases while `?` offered only the interfaces that already existed - so
+#: the list read as the complete set of what may be typed, and a feature
+#: nobody can find is a feature nobody has. A marker of its own rather than a
+#: longer ARG_INTERFACE: `show interface <name>` and `nat cgnat interface
+#: <name>` take a name the box HAS, and offering "or invent one" there would
+#: be offering a name those statements refuse.
+ARG_INTERFACE_NEW = "<interface>, or a name that creates one"
+
+#: What `?` says UNDER a hint, where the hint alone cannot carry it.
+#:
+#: A hint is one row beside the options, so it has room for a shape and not
+#: for a sentence. These are the sentences, folded to the console under it.
+#: Data rather than a branch in the printer, so a marker that grows a note is
+#: one line here and the printer stays one printer.
+HINT_NOTES = {
+    ARG_INTERFACE_NEW:
+        "a name this box has not got is how one is made: <parent>.<tag> "
+        "creates a VLAN sub-interface - its parent has to exist - and "
+        "loop<n> creates a loopback. Anything else is refused at the commit, "
+        "naming what the box has.",
+}
 #: The card as LINUX names it, which is a different question from
 #: ARG_INTERFACE and has to be: before the dataplane has been given a card it
 #: has no interfaces at all, so the one screen that could list the candidates
@@ -1958,7 +1982,7 @@ TREE = {
                       "'router ospf'", None),
             "isis": ("IS-IS", ARG_ISIS_TAG),
         }),
-        "interface": ("interface configuration", ARG_INTERFACE),
+        "interface": ("interface configuration", ARG_INTERFACE_NEW),
         # The card the dataplane is GIVEN, which is not one of the interfaces
         # the dataplane has - a fresh appliance has none of those, and the
         # only way to name one used to be editing a file in Linux (#283).
@@ -15057,6 +15081,7 @@ class Shell:
     #: silently going back to being a bare "<word>".
     DYNAMIC = {
         ARG_INTERFACE: "dyn_interfaces",
+        ARG_INTERFACE_NEW: "dyn_interfaces",
         ARG_HOST_NIC: "dyn_host_nics",
         ARG_POOL: "dyn_pools",
         ARG_USER: "dyn_users",
@@ -15240,6 +15265,14 @@ class Shell:
         hint = getattr(self, "_last_hint", None)
         if hint:
             print(f"  {hint}")
+            # The shapes behind a hint, where the hint alone cannot carry
+            # them. Folded by console_prose rather than written as one row:
+            # the sentence is 90 columns and this is a screen an operator
+            # reads on a serial console (#252).
+            note = HINT_NOTES.get(hint)
+            if note:
+                for line in console_prose(note):
+                    print(line)
         if not opts and not hint:
             print("  (no known options here; the command is passed to FRR)")
         print()
