@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.104.0 - a loopback is visible to FRR
+
+[#404](https://github.com/andrediashexa/hexarouting/issues/404).
+
+### Fixed
+
 * **A loopback got no `linux_cp` pair, so FRR could not see the address it
   exists to carry.** Measured on a box in service: `interface loop0 / ipv4
   address 10.0.0.9/32` committed cleanly, the dataplane had the address, `show
