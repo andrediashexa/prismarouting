@@ -20,7 +20,7 @@ the wrong subscriber.
 | | |
 |---|---|
 | **What** | IPFIX export of port-block lifecycle events, per RFC 8158. |
-| **Why** | Marco Civil (Law 12.965/2014, arts. 13–15) requires one year of connection records. Identifying a subscriber from (public IP, port, timestamp) requires the mapping. |
+| **Why** | Marco Civil (Law 12.965/2014, arts. 13–15) requires one year of connection records to be kept. Identifying a subscriber from (public IP, port, timestamp) requires the mapping. **This box keeps none of it**: it exports, and the collector retains ([#401](https://github.com/andrediashexa/hexarouting/issues/401)). |
 | **Who** | The provider's compliance and legal teams answer with this data; the collector is theirs. |
 | **When** | On block allocation, on release, and on exhaustion. Never per flow. |
 | **Where** | Exported to a collector the box can reach: over **UDP** the dataplane sends the packet, so the collector has to be reachable through the **VPP FIB**; over **TCP** the exporter owns a kernel socket and the collector is reached through **Linux**. |
@@ -328,7 +328,11 @@ subscriber, ~25 bytes of data per record and ~40 bytes with IPFIX framing.
 | BPA deterministic | 0 | 0 |
 
 One year of retention in dynamic mode is tens of gigabytes, not tens of
-terabytes. That is the commercial argument for BPA.
+terabytes. That is the commercial argument for BPA - and it is an argument
+about the **collector's** disk, not this box's: the records leave as they are
+made, and what this box keeps on `/var/log/prisma-routing` is the configuration
+trail and whatever the exporter could not deliver yet
+([#401](https://github.com/andrediashexa/hexarouting/issues/401)).
 
 ## Transport
 

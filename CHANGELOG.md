@@ -285,6 +285,42 @@ version has a chance of seeing it.
   reads that declaration — it went red on all five before they were declared,
   which is what it is for.
 
+* **The documents said this box keeps connection records for a year. It
+  exports them and keeps none.** Several documents, the installer's sizing
+  screen and the boot self-test described a product that retains: *"the
+  connection record the Marco Civil requires this box to keep for a year"*, a
+  volume sized as *"one year at 200k subscribers"*, a self-test line reading
+  *"records on their own filesystem"*, a prompt asking for *"Gigabytes for
+  connection records"*.
+
+  `/var/log/prisma-routing` holds exactly two kinds of file: the configuration
+  trail, and the spill the exporter writes when a collector cannot be reached.
+  There is no local store of allocation records and no code that writes one -
+  they go to a collector over IPFIX/UDP, IPFIX/TCP or syslog, and
+  `docs/logging.md` has always said the collector is the provider's. The
+  maintainer has decided it stays that way.
+
+  So the product was right and the documents around it were wrong, which is
+  the dangerous direction: an operator sizing that volume from "one year of
+  records" was answering a question this box does not ask, and one reading the
+  self-test believed the box was holding evidence it was not holding.
+
+  What the size means is stated instead of implied: **how long the box can
+  spill while a collector is unreachable**, plus the trail. The default does
+  not change - 30 GB is over a year of spilling at the ~80 MB/day
+  `docs/logging.md` measures - and the volume is still its own filesystem for
+  the reason #83 gives.
+
+  The installer's screen and prompt, `docs/appliance.md`'s transcript of them,
+  the self-test's lines, the needles in `test/test_installer.sh`,
+  `test/test_selftest.sh` and `lab/install-iso.sh`, and the public wiki pages
+  all moved together. `CHANGELOG.md` is deliberately not swept: its tagged
+  sections describe media that shipped, and correcting them would be editing
+  what a box in service was told.
+
+  One refusal became two rows while this was done: a log size that would leave
+  the system less than 8 GB carried three numbers and 85 columns of words on a
+  console of 79.
 ## 0.110.0 - what an operator can type, checked at both doors
 
 [#411](https://github.com/andrediashexa/hexarouting/issues/411), [#412](https://github.com/andrediashexa/hexarouting/issues/412), [#413](https://github.com/andrediashexa/hexarouting/issues/413), [#414](https://github.com/andrediashexa/hexarouting/issues/414), [#415](https://github.com/andrediashexa/hexarouting/issues/415), [#416](https://github.com/andrediashexa/hexarouting/issues/416), [#417](https://github.com/andrediashexa/hexarouting/issues/417).

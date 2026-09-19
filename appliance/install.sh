@@ -14,8 +14,10 @@
 #                              whose shell does not exist cannot log in
 #   /etc/prisma-routing/*         the saved configuration and its rollback
 #                              store, which an upgrade must still find
-#   /var/log/prisma-routing       a mountpoint in fstab holding the connection
-#                              records the Marco Civil requires for a year
+#   /var/log/prisma-routing       a mountpoint in fstab holding the
+#                              configuration trail and the exporter's spill;
+#                              the connection records themselves are EXPORTED
+#                              and kept by the collector (#401)
 #   /usr/lib/prisma-routing,      the runtime and the installer, named by every
 #   /usr/sbin/prisma-routing-install
 #                              unit and by the VTY by absolute path
@@ -53,9 +55,10 @@
 # product files and no packages, so it cannot move the VPP or FRR that
 # appliance/build-iso.sh pins. A release that changes either is refused by
 # appliance/upgrade, naming both versions, and the operator reinstalls from the
-# medium - which erases the disk and takes /var/log/prisma-routing with it, a year
-# of connection records. The wiki page on taking a new version states both
-# routes and what each costs.
+# medium - which erases the disk and takes /var/log/prisma-routing with it: the
+# configuration trail, and whatever the exporter had not yet delivered to the
+# collector. The wiki page on taking a new version states both routes and what
+# each costs.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)

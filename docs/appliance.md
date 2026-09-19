@@ -1611,7 +1611,7 @@ is `y`. Showing the size and the model does the other half, which re-typing a
 path never did — `/dev/sdb` typed twice is still the wrong disk if it was the
 wrong disk.
 
-### Where the connection records live
+### Where the trail and the export spill live
 
 The disk is laid out in **three** partitions, not two:
 
@@ -1621,72 +1621,86 @@ The disk is laid out in **three** partitions, not two:
 | root | the rest, minus the records |
 | `/var/log/prisma-routing` | what the operator asked for |
 
-In dynamic mode the allocation log **is** the connection record the Marco Civil
-requires this box to keep for a year. On the root filesystem it shares space
-with everything the box needs to keep working — so a log that fills stops the
-box writing its configuration, its trail and anything else, because it was busy
-recording who connected to what
-([#83](https://github.com/andrediashexa/hexarouting/issues/83)).
+**This box does not keep connection records.** It exports them — IPFIX over
+UDP or TCP, or syslog — and whoever keeps them for the year the Marco Civil
+asks for is the collector
+([#401](https://github.com/andrediashexa/hexarouting/issues/401)). What lands
+on this volume is the **configuration trail**, which is small and is the dated
+evidence of what the box was configured to do, and the **spill** the exporter
+writes while a collector cannot be reached.
 
-Given its own filesystem, a full log volume is a full log volume.
+On the root filesystem either of those shares space with everything the box
+needs to keep working — so a collector that has been unreachable for a week
+stops the box writing its configuration
+([#83](https://github.com/andrediashexa/hexarouting/issues/83)). Given its own
+filesystem, a full log volume is a full log volume.
 
-The default size is arithmetic rather than a guess, and the arithmetic is on
-the screen: [logging.md](logging.md#volume) measures ~80 MB/day for 200k
-subscribers in dynamic mode, so a year is about 29 GB. **Deterministic mode
-logs no allocations at all** and needs almost none — which is why this is a
-question and not a constant.
+The default size is arithmetic rather than a guess:
+[logging.md](logging.md#volume) measures ~80 MB/day of records for 200k
+subscribers in dynamic mode, so 30 GB is over a year of **spilling** at that
+rate — far more than any outage anybody plans for, which is why the number did
+not have to change when what it means did. **Deterministic mode exports almost
+nothing** and needs almost none of this — which is why this is a question and
+not a constant.
 
 ```
-  Connection records go on their own filesystem, so that a full log
-  cannot stop the box working. One year at 200k subscribers in dynamic
-  mode is about 29 GB (see docs/logging.md); deterministic mode logs
-  no allocations and needs almost none.
-  This disk is 240 GB; at most 231 GB can go to records.
-Gigabytes for connection records [30]:
+  The configuration trail and the export spill go on their own
+  filesystem, so that a full log cannot stop the box working. This box
+  does not keep connection records: it exports them, and whoever keeps
+  them for the year the law asks for is the collector. What this size
+  buys is how long the box can spill while a collector is unreachable.
+  The arithmetic is in
+  /usr/share/doc/prisma-routing/logging.md once this box is installed.
+  This disk is 240 GB; at most 231 GB can go to this volume.
+Gigabytes for the trail and the export spill [30]:
 ```
 
 The root filesystem is never left less than 8 GB, and a size that would do so
 is refused with the arithmetic rather than accepted and discovered later.
 
-* The volume is mounted **`nofail`**. A box that will not boot because the
-  records volume is missing is a box nobody can log into to find out why — it
-  **MUST** come up and complain instead.
-* Which means the boot self-test **MUST** report where the records are. Without
-  that, a box whose volume failed to mount comes up quietly writing records
-  onto the root filesystem, which is the arrangement this replaced.
+* The volume is mounted **`nofail`**. A box that will not boot because that
+  volume is missing is a box nobody can log into to find out why — it **MUST**
+  come up and complain instead.
+* Which means the boot self-test **MUST** report where the volume is. Without
+  that, a box whose volume failed to mount comes up quietly writing onto the
+  root filesystem, which is the arrangement this replaced.
 * The size is read from `/sys/block/<disk>/size`, which is world-readable, so
   the fit is checked in `PRISMA_INSTALL_CHECK` mode too. A check that skipped it
   for want of privileges would be more permissive than the real run.
 
-### The records on two disks, and the system on one
+### The log volume on two disks, and the system on one
 
-With one disk, a single failure on a box under a one-year retention obligation
-loses **the records themselves**. That is a different class of loss from
-downtime: downtime ends with a reinstall, and this does not end at all - the
-box is still answerable for records no procedure puts back
-([#83](https://github.com/andrediashexa/hexarouting/issues/83)).
+With one disk, a single failure loses **what is on that volume**, and that is a
+different class of loss from downtime: downtime ends with a reinstall, and this
+does not end at all. The configuration trail is the dated evidence of what this
+box was configured to do — in deterministic mode, half of the answer to a court
+order, the algorithm being the other half — and the spill is the records the
+collector has **not received yet**, so a disk that takes it leaves a gap in
+somebody else's year of retention that nothing on this box can refill
+([#83](https://github.com/andrediashexa/hexarouting/issues/83),
+[#401](https://github.com/andrediashexa/hexarouting/issues/401)).
 
-So the installer offers a second disk and mirrors **the records onto it, and
+So the installer offers a second disk and mirrors **that volume onto it, and
 not the system**. The argument for the asymmetry is the one above, and both
 halves of what it costs are measured in `lab/install-iso.sh mirror` rather than
 argued:
 
 | Which disk dies | What was measured, on a box that was installed and then booted with that disk detached |
 |---|---|
-| the mirror disk | the box boots, `/proc/mdstat` reads `md0 : active raid1 vda3[0] ... [2/1] [U_]`, `/var/log/prisma-routing` is still mounted from `/dev/md0`, a record written before the disk died reads back, and the boot self-test says `[FAIL] the records mirror is DEGRADED: 1 of 2 disks (vda3)` with nobody logged in |
-| the system disk | no bootloader, no kernel and no prompt: the machine sat at the firmware until the lab stopped it. **And the records on the survivor were read back on another machine**, out of the leg alone, with that box switched off |
+| the mirror disk | the box boots, `/proc/mdstat` reads `md0 : active raid1 vda3[0] ... [2/1] [U_]`, `/var/log/prisma-routing` is still mounted from `/dev/md0`, a line written before the disk died reads back, and the boot self-test says `[FAIL] the records mirror is DEGRADED: 1 of 2 disks (vda3)` with nobody logged in |
+| the system disk | no bootloader, no kernel and no prompt: the machine sat at the firmware until the lab stopped it. **And what was on the survivor was read back on another machine**, out of the leg alone, with that box switched off |
 
 The second row is the whole of the trade: what mirroring the system would have
 bought is a box that boots, and what it would have cost is the ESP that
 firmware writes to on one leg only, root on `md` in the initramfs, and a
-bootloader on both disks. What is not lost either way is the records.
+bootloader on both disks. What is not lost either way is that volume.
 
 | | |
 |---|---|
 | Question | asked only when the machine HAS a second disk |
 | Default | `none`, taken by a bare Enter |
 | Answer, unattended | `prisma-routing.mirror=<disk>`, or `mirror = <disk>` in the answers file |
-| Refused when | it is the target disk, the boot medium, not a whole disk, or smaller than the records answer |
+| Refused when | it is the target disk, the boot medium, not a whole disk, or smaller than the size answered for the log volume |
 | Layout on the second disk | one partition, whole disk, type Linux RAID |
 | The array | `raid1`, metadata 1.2, named `<hostname>:records` |
 
@@ -1736,7 +1750,7 @@ that console to skip the line that matters.
 | Target disk | not a block device, or the medium this system booted from |
 | Hostname | it contains characters a hostname may not have |
 | Timezone | there is no such zone in `/usr/share/zoneinfo` |
-| Gigabytes for connection records | not a whole number, below 1 GB, or it would leave the system less than 8 GB |
+| Gigabytes for the trail and the export spill | not a whole number, below 1 GB, or it would leave the system less than 8 GB |
 | Records mirror | it is the target, the medium, a partition, or too small for the records |
 | Management card | this machine has no card by that name |
 | Management address | it is neither `dhcp` nor `none` nor an address with a prefix in 1..32 |
@@ -2083,7 +2097,7 @@ command line:
 | `prisma-routing.hostname=<name>` | answer the hostname question |
 | `prisma-routing.timezone=<zone>` | answer the timezone question |
 | `prisma-routing.password=<pw>` | answer the root password question |
-| `prisma-routing.log-gb=<n>` | gigabytes for the connection records |
+| `prisma-routing.log-gb=<n>` | gigabytes for the trail and the export spill |
 | `prisma-routing.mirror=<disk>` | the second disk the records are mirrored onto |
 | `prisma-routing.mgmt-interface=<card>` | the card this box is managed on |
 | `prisma-routing.mgmt-address=<a>` | `dhcp`, `a.b.c.d/nn`, or `none` |
@@ -2125,7 +2139,7 @@ whoever boots it do not have to agree on a path from memory.
 | `disk` | which disk to install onto |
 | `hostname` | the hostname |
 | `timezone` | the timezone |
-| `log-gb` | gigabytes for the connection records |
+| `log-gb` | gigabytes for the trail and the export spill |
 | `mirror` | the second disk the records are mirrored onto |
 | `password` | the root password |
 | `mgmt-interface` | the card this box is managed on |

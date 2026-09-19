@@ -208,9 +208,9 @@ echo "=== deleting the pool releases every block it was still holding ==="
 # A block held at the instant its pool is deleted is freed by bpa_pool_del()
 # itself and never reaches the reap, so the ordinary release path never runs
 # for it. Without a record of its own that allocation stays OPEN in the
-# retention log for as long as the log is kept - and in dynamic mode that log
-# IS the connection record, so "who held 200.150.0.16:1030 at 14:22" is
-# answered with a subscriber who had already been disconnected (#215).
+# COLLECTOR's copy for as long as the collector keeps it - and in dynamic mode
+# that copy is the connection record, so "who held 200.150.0.16:1030 at 14:22"
+# is answered with a subscriber who had already been disconnected (#215).
 #
 # Nothing may expire underneath this. The blocks have to still be held when
 # the delete frees them, or the reap has already emitted their releases and

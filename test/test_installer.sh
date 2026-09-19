@@ -1581,7 +1581,7 @@ rm -rf "$vnone"
 rm -rf "$vgood" "$vbin" "$vnet"
 
 echo
-echo "=== the records mirror: the answer, and what it refuses (#83) ==="
+echo "=== the log volume's mirror: the answer, and what it refuses (#83) ==="
 #
 # With one disk a single failure loses the RECORDS, which no reinstall puts
 # back. The second disk is destroyed by the same "yes" that destroys the
@@ -1668,12 +1668,12 @@ else
   M_TARGET=""; M_MIRROR=""
 fi
 if [ -n "$M_MIRROR" ]; then
-  run 0 "a second whole disk is accepted as the records mirror" \
+  run 0 "a second whole disk is accepted as the log volume's mirror" \
       PRISMA_DISK="$M_TARGET" PRISMA_HOSTNAME=cgnat01 \
       PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
       PRISMA_LOG_GB=1 PRISMA_MIRROR="$M_MIRROR"
   case "$LAST_OUT" in
-    *"records mirror $M_MIRROR"*)
+    *"log mirror     $M_MIRROR"*)
       ok "and the summary repeats back the disk that will be destroyed too" ;;
     *) bad "the summary does not name the mirror disk: $LAST_OUT" ;;
   esac
@@ -1683,14 +1683,14 @@ fi
 
 # And the box with ONE disk, which is most of them: no mirror, no question,
 # no difference. The summary says so rather than saying nothing, because the
-# operator is confirming an install that will keep a year of records on a
-# single disk and that is worth one line.
+# operator is confirming an install that will keep its trail and its undelivered
+# records on a single disk, and that is worth one line.
 # shellcheck disable=SC2086
 run 0 "an install with no mirror answer is accepted exactly as before" $OK \
     PRISMA_ROOT_PASSWORD=s3cr3t
 case "$LAST_OUT" in
-  *"records mirror none (one disk"*)
-    ok "and the summary says the records will be on one disk" ;;
+  *"log mirror     none (one disk"*)
+    ok "and the summary says the volume will be on one disk" ;;
   *) bad "a one-disk install does not say it has no mirror: $LAST_OUT" ;;
 esac
 
@@ -1721,10 +1721,10 @@ chmod +x "$twodisk/lsblk"
 run 0 "an unattended install on a two-disk machine still installs" $OK \
     PATH="$twodisk:$PATH" PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_INSTALL_YES=1
 case "$LAST_OUT" in
-  *"records: not mirrored, and this machine has /dev/vdz"*)
-    ok "and it names the disk the records could have been mirrored onto" ;;
+  *"log volume: not mirrored, and this machine has /dev/vdz"*)
+    ok "and it names the disk the volume could have been mirrored onto" ;;
   *) bad "an unattended install passed over a second disk in silence, so \
-nobody learns the records are on one until one of them fails:
+nobody learns the volume is on one disk until one of them fails:
 $LAST_OUT" ;;
 esac
 case "$LAST_OUT" in
@@ -2581,7 +2581,7 @@ something else: $RROUT" ;;
   esac
 
   echo
-  echo "=== a medium with no mdadm, asked for a records mirror ==="
+  echo "=== a medium with no mdadm, asked for a mirror ==="
   # mdadm is deliberately NOT in the tool list at the top: a medium without it
   # must still install a one-disk box. So the question is asked down where a
   # mirror was actually answered, and that is the second of the two
@@ -2611,8 +2611,8 @@ something else: $RROUT" ;;
       *"has no mdadm"*)
         bad "the control run had mdadm on its PATH and was told it had none, \
 so the stub set is not what this case assumed: $RROUT" ;;
-      *"records mirror /dev/loop1"*)
-        ok "a second disk two gigabytes wide is taken as the records mirror" ;;
+      *"log mirror     /dev/loop1"*)
+        ok "a second disk two gigabytes wide is taken as the mirror" ;;
       *) bad "/dev/loop1 was not accepted as a mirror, so the case below would \
 measure a machine that was never asked for one: $RROUT" ;;
     esac
@@ -3138,17 +3138,17 @@ $IWOUT"
   ifail "and on a BIOS box it names BIOS" \
         chroot-grub-install "grub-install (BIOS) failed"
 
-  # A PARTITION TABLE THAT PRODUCED NO RECORDS PARTITION. The second of the
-  # two, which is the one the connection records go on: a box that came up
-  # without it writes a year of records onto the root filesystem, which is
-  # the arrangement the separate volume exists to replace.
+  # A PARTITION TABLE THAT PRODUCED NO LOG PARTITION. The third of the three,
+  # which is the one the configuration trail and the export spill go on: a box
+  # that came up without it writes both onto the root filesystem, which is the
+  # arrangement the separate volume exists to replace.
   IPARTS="disk disk1 disk2"
   iwrite 'yes
 '
   [ "$IWRC" = 0 ] \
-    && bad "a table with no records partition was installed onto anyway" \
-    || isaid "a table that produced no records partition stops by name" \
-             "partitioning did not produce /tmp/disk3 for the records"
+    && bad "a table with no log partition was installed onto anyway" \
+    || isaid "a table that produced no log partition stops by name" \
+             "partitioning did not produce /tmp/disk3 for the log volume"
   IPARTS="disk disk1 disk2 disk3"
 
   # AN ARRAY THIS BOX CANNOT STOP. release_disk says what it found and what it
@@ -3164,7 +3164,7 @@ $IWOUT"
   isaid "an array that will not stop is named, not passed over in silence" \
         "would not stop"
 
-  # ------------------------------------------------------- the records mirror
+  # ---------------------------------------------------- the log volume mirror
   #
   # The second disk, which is the half of this program that only runs on a box
   # with one - and every screen it prints was unrun. /sys/block is a tmpfs
@@ -3175,7 +3175,7 @@ $IWOUT"
   iwrite 'yes
 ' PRISMA_MIRROR=/tmp/mirror
   [ "$IWRC" = 0 ] \
-    && ok "an install with a records mirror runs to the end" \
+    && ok "an install with a log volume mirror runs to the end" \
     || bad "the mirrored install failed: rc=$IWRC
 $IWOUT"
   isaid "and says it is building the array, and that it syncs afterwards" \
@@ -3282,7 +3282,11 @@ fi
 # 48 since #394: the unattended management row no longer prints a card name
 # ("management network: <card> by DHCP (unattended)"). It says none, which is
 # the program's own word, so nothing on that row can grow.
-SAY_UNSAFE_AT_MOST=48
+# 47 since #401: the refusal for a log volume that would leave the system less
+# than 8 GB is two rows now rather than one. It carried three decimals and 85
+# columns of words, and the third decimal moved to a row of its own - so one
+# row left this count by fitting.
+SAY_UNSAFE_AT_MOST=47
 # TWO printers this pass's boundary rule cannot see, and both are ask()'s own
 # prompt: `if [ -n "$_d" ]; then printf ... else printf ... fi` at 180 and 181.
 # `then` and `else` are words rather than the punctuation the rule matches on.

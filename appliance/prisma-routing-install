@@ -40,7 +40,7 @@
 # Non-interactive answers, for automated installs and for the lab:
 #
 #   PRISMA_DISK, PRISMA_HOSTNAME, PRISMA_TIMEZONE, PRISMA_ROOT_PASSWORD, PRISMA_LOG_GB
-#   PRISMA_MIRROR=<disk>        mirror the records onto a second disk
+#   PRISMA_MIRROR=<disk>        mirror the log volume onto a second disk
 #   PRISMA_MGMT_INTERFACE=<if>  the card this box is managed on
 #   PRISMA_MGMT_ADDRESS=dhcp    or <a.b.c.d/nn>, or "none" for no management
 #                             network at all
@@ -309,16 +309,19 @@ choose_disk() {
   done
 }
 
-# The second disk the records are mirrored onto, or nothing. (#83)
+# The second disk the log volume is mirrored onto, or nothing. (#83)
 #
-# Why the records and not the system: with one disk, a single failure on a box
-# under a one-year retention obligation loses the RECORDS. Losing the system is
-# downtime and downtime is recoverable - reinstall, restore the configuration,
-# the box forwards again. The records are not recoverable by any means at all,
-# and the box is still answerable for them. So this mirrors the one thing that
-# cannot be rebuilt, and lab/records-mirror measures what that leaves uncovered:
-# the survivor does NOT boot on its own, and the records on it are readable on
-# another machine.
+# Why this volume and not the system: losing the system is downtime, and
+# downtime is recoverable - reinstall, restore the configuration, the box
+# forwards again. What is on this volume cannot be rebuilt by any means at all.
+# The configuration trail is the dated evidence of what the box was configured
+# to do, which in deterministic mode is half of the answer to a court order;
+# the spill is the records the collector has NOT received yet, and a disk
+# failure that takes it is a gap in somebody else's year of retention that
+# nothing on this box can refill (#401).
+#
+# lab/records-mirror measures what that leaves uncovered: the survivor does NOT
+# boot on its own, and what is on it is readable on another machine.
 #
 # Asked, never assumed. A second disk in a machine is not consent to destroy
 # what is on it, and "the largest disk" reasoning that picks an install target
@@ -334,11 +337,12 @@ choose_mirror() {   # <target disk>; the chosen disk on stdout, or nothing
   [ -n "$_table" ] || return 0
 
   echo >&2
-  echo "  This machine has another disk. The connection records can be kept on" >&2
-  echo "  BOTH, so that one disk failing does not take the year of records with" >&2
-  echo "  it - which is a loss no reinstall undoes." >&2
+  echo "  This machine has another disk. The log volume - the configuration" >&2
+  echo "  trail, and the records the collector has not received yet - can be" >&2
+  echo "  kept on BOTH, so that one disk failing does not take it with it," >&2
+  echo "  which is a loss no reinstall undoes." >&2
   echo "  The system is NOT mirrored: a dead system disk is a reinstall, and" >&2
-  echo "  the records on the survivor can still be read on another machine." >&2
+  echo "  what is on the survivor can still be read on another machine." >&2
   echo "  EVERYTHING ON THE DISK YOU CHOOSE IS DESTROYED." >&2
   _i=1
   printf '%s\n' "$_table" | while read -r p b h m; do
@@ -353,7 +357,7 @@ choose_mirror() {   # <target disk>; the chosen disk on stdout, or nothing
     # where this question's answer to a held-down return key lives - the empty
     # string never reaches the case below. A default of the first disk here
     # would destroy a disk nobody chose.
-    _a=$(ask "Mirror the connection records onto which disk" "none")
+    _a=$(ask "Mirror the log volume onto which disk" "none")
     case "$_a" in
       none|no|n)
         return 0 ;;
@@ -877,13 +881,13 @@ verify_installed() {   # <mounted root>; non-zero if the disk is not usable
 #
 # "mdadm --create" exits zero having started a DEGRADED array - one leg
 # rejected, one accepted - so its exit status answers "did mdadm run", not
-# "are the records on two disks". The kernel's own account of the array is
+# "is the log volume on two disks". The kernel's own account of the array is
 # /proc/mdstat and that is what is read here.
 #
 # A mirror created degraded is the exact failure the mirror exists to prevent,
 # arriving at the moment the operator is told the install worked. It has to be
-# a refusal and not a warning, because the box would then spend a year
-# reporting a mirror it never had.
+# a refusal and not a warning, because the box would then go on reporting a
+# mirror it never had, for as long as it runs.
 #
 # It reads only, like verify_installed: a verification that repairs what it
 # finds is a verification whose result is about itself.
@@ -893,7 +897,7 @@ verify_mirror() {   # <mdstat> <md device>; non-zero unless both legs are there
   _md=${2#/dev/}
   if [ ! -r "$_f" ]; then
     echo "  [FAIL] mirror: $_f cannot be read, so nothing here knows whether"
-    echo "         the records reached two disks"
+    echo "         the log volume reached two disks"
     return 1
   fi
   # The array's block line, which is the one carrying [n/m]. Anchored on the
@@ -902,7 +906,7 @@ verify_mirror() {   # <mdstat> <md device>; non-zero unless both legs are there
   _line=$(awk -v d="$_md" '$1 == d { f = 1 }
                            f && /\[[0-9]+\/[0-9]+\]/ { print; exit }' "$_f")
   if [ -z "$_line" ]; then
-    echo "  [FAIL] mirror: the kernel has no array $_dev, so the records are on"
+    echo "  [FAIL] mirror: the kernel has no array $_dev, so the log volume is"
     echo "         ONE disk - which is what the second disk was given for"
     return 1
   fi
@@ -910,11 +914,11 @@ verify_mirror() {   # <mdstat> <md device>; non-zero unless both legs are there
   _want=${_legs%/*}
   _have=${_legs#*/}
   if [ "$_have" = "$_want" ]; then
-    echo "  [ ok ] records mirrored on $_dev, $_have of $_want disks present"
+    echo "  [ ok ] mirror: $_dev, $_have of $_want disks present"
     return 0
   fi
   echo "  [FAIL] mirror: $_dev has $_have of $_want disks. It was created"
-  echo "         DEGRADED, so the records are on one disk and the box would"
+  echo "         DEGRADED, so the log volume is on one disk and the box would"
   echo "         report a mirror it never had"
   return 1
 }
@@ -1062,9 +1066,10 @@ case "$HOSTNAME_NEW" in
 esac
 
 # -------------------------------------------------------------- 3. timezone
-# It decides the timestamps on the configuration trail, which under the Marco
-# Civil is a connection record. A box logging in the wrong zone produces
-# records that do not line up with anybody else's.
+# It decides the timestamps on the configuration trail and on every record this
+# box exports. A box logging in the wrong zone produces records that do not line
+# up with anybody else's - and the collector holding them for the year the law
+# asks for is somebody else's.
 if [ -z "$TIMEZONE" ]; then
   TIMEZONE=$(ask "Timezone" "America/Sao_Paulo")
 fi
@@ -1073,19 +1078,24 @@ fi
 
 # ------------------------------------------------------- 3b. the log volume
 #
-# In dynamic mode the allocation log IS the connection record the Marco Civil
-# requires this box to keep for a year. Put on the root filesystem it shares
-# space with everything the box needs to keep working - so a log that fills
-# stops the box writing its configuration, its trail, and anything else,
-# because it was busy recording who connected to what (#83).
+# WHAT THIS VOLUME HOLDS, and it is not retention (#401). This box EXPORTS its
+# block records - IPFIX over UDP or TCP, or syslog - and keeps none of them:
+# whoever retains the connection record for the year the law asks for is the
+# collector. What lands here is the configuration trail, which is small and is
+# the dated evidence of what the box was configured to do, and the SPILL the
+# exporter writes when the collector cannot be reached.
 #
-# It gets its own filesystem. Then a full log volume is a full log volume.
+# Put on the root filesystem either of those shares space with everything the
+# box needs to keep working - so a collector that has been unreachable for a
+# week stops the box writing its configuration (#83). It gets its own
+# filesystem. Then a full log volume is a full log volume.
 #
-# The default is arithmetic, not a guess, and the arithmetic is shown: docs/
-# logging.md measures ~80 MB/day for 200k subscribers in dynamic mode, so a
-# year is ~29 GB. A box in deterministic mode logs no allocations at all and
-# needs almost none of this - which is why it is a question rather than a
-# constant.
+# The default is arithmetic, not a guess: docs/logging.md measures ~80 MB/day
+# of records for 200k subscribers in dynamic mode, so 30 GB is over a year of
+# spilling at that rate - far more than any outage anybody plans for, and the
+# reason the number does not need to change now that it means something else.
+# A box in deterministic mode exports almost nothing and needs almost none of
+# this, which is why it is a question rather than a constant.
 # The size of the disk, if it can be had. blockdev needs privileges the check
 # mode deliberately does not have, so this can legitimately be unknown - and a
 # bound against an unknown size is not a bound. The SHAPE of the answer is
@@ -1118,13 +1128,28 @@ if [ -z "${PRISMA_LOG_GB:-}" ] && [ "$ASSUME_YES" = 1 ]; then
   # which is what the first version of this did, on a lab that had answered
   # every other question on the kernel command line.
   LOG_GB=$LOG_DEFAULT
-  say "records: $LOG_GB GB (unattended; pass prisma-routing.log-gb= to choose)"
+  say "log volume: $LOG_GB GB (unattended; prisma-routing.log-gb= chooses)"
 elif [ -z "${PRISMA_LOG_GB:-}" ]; then
   echo
-  echo "  Connection records go on their own filesystem, so that a full log"
-  echo "  cannot stop the box working. One year at 200k subscribers in dynamic"
-  echo "  mode is about 29 GB; deterministic mode logs no allocations and"
-  echo "  needs almost none. The arithmetic is in"
+  # WHAT THIS VOLUME IS FOR, and it is not retention.
+  #
+  # This box EXPORTS its block records - IPFIX over UDP or TCP, or syslog -
+  # and keeps none of them: whoever retains the connection record for the year
+  # the law asks for is the collector, not this appliance. What lands here is
+  # the configuration trail, which is small and is the evidence of what the box
+  # was configured to do, and the SPILL the exporter writes when the collector
+  # cannot be reached.
+  #
+  # The screen used to say the volume held "one year at 200k subscribers, about
+  # 29 GB", which described a product that stores records. It does not, and an
+  # operator sizing this from that sentence was answering the wrong question.
+  # The right one is how long they accept spilling while a collector is out.
+  echo "  The configuration trail and the export spill go on their own"
+  echo "  filesystem, so that a full log cannot stop the box working. This box"
+  echo "  does not keep connection records: it exports them, and whoever keeps"
+  echo "  them for the year the law asks for is the collector. What this size"
+  echo "  buys is how long the box can spill while a collector is unreachable."
+  echo "  The arithmetic is in"
   # THE PATH THIS BOX HAS, not the one the source tree has. It said
   # docs/logging.md, and there is no docs/ on a box this product installs:
   # install.sh puts that file under /usr/share/doc/prisma-routing/ (#348). An
@@ -1133,11 +1158,11 @@ elif [ -z "${PRISMA_LOG_GB:-}" ]; then
   # follow reached a reader who has not installed anything yet.
   echo "  /usr/share/doc/prisma-routing/logging.md once this box is installed."
   if [ -n "$MAX_LOG" ]; then
-    echo "  This disk is $(( DISK_MB / 1024 )) GB; at most $(( MAX_LOG / 1024 )) GB can go to records."
+    echo "  This disk is $(( DISK_MB / 1024 )) GB; at most $(( MAX_LOG / 1024 )) GB can go to this volume."
   else
     echo "  The size of $DISK could not be read, so the fit is not checked."
   fi
-  LOG_GB=$(ask "Gigabytes for connection records" "$LOG_DEFAULT")
+  LOG_GB=$(ask "Gigabytes for the trail and the export spill" "$LOG_DEFAULT")
 else
   LOG_GB=$PRISMA_LOG_GB
 fi
@@ -1146,13 +1171,18 @@ case "$LOG_GB" in
 esac
 [ "$LOG_GB" -ge 1 ] || die "the log needs at least 1 GB of its own"
 if [ -n "$MAX_LOG" ] && [ "$(( LOG_GB * 1024 ))" -gt "$MAX_LOG" ]; then
-  die "$LOG_GB GB of records leaves the system less than $(( SYSTEM_MB / 1024 )) GB on a $(( DISK_MB / 1024 )) GB disk"
+  # TWO ROWS, because one does not fit. Three decimals and the words between
+  # them measure 85 columns at the widest number this installer counts, on a
+  # console of 79 that cannot reflow - and this is a refusal somebody has to
+  # read before retyping an answer.
+  die "a $LOG_GB GB log volume leaves the system less than $(( SYSTEM_MB / 1024 )) GB:
+  this disk is $(( DISK_MB / 1024 )) GB"
 fi
 
-# ------------------------------------------------- 3c. the records mirror
+# ---------------------------------------------- 3c. the log volume's mirror
 #
 # Asked here because the answer needs LOG_GB - the second disk has to hold the
-# records - and because it is still a QUESTION, before the first write. The
+# same volume - and because it is still a QUESTION, before the first write. The
 # ordering is the rule this whole script is built on and a disk that is going
 # to be destroyed cannot be chosen after the partitioning has started.
 if [ -z "$MIRROR" ]; then
@@ -1165,8 +1195,8 @@ if [ -z "$MIRROR" ]; then
     # is the whole of what makes it actionable.
     _others=$(disk_table | awk -v t="$DISK" '$1 != t { printf "%s ", $1 }')
     if [ -n "$_others" ]; then
-      say "records: not mirrored, and this machine has ${_others}too"
-      say "  (pass prisma-routing.mirror=<disk> to keep the records on two disks)"
+      say "log volume: not mirrored, and this machine has ${_others}too"
+      say "  (pass prisma-routing.mirror=<disk> to keep it on two disks)"
     fi
   else
     MIRROR=$(choose_mirror "$DISK")
@@ -1185,7 +1215,7 @@ if [ -n "$MIRROR" ]; then
                         die "$MIRROR is not a block device"; }
   # A whole disk, not a partition. /sys/block/<name> exists only for whole
   # disks, so this is the same question as "can its size be read" - and the
-  # size is the other half of the answer: a leg smaller than the records
+  # size is the other half of the answer: a leg smaller than the log
   # partition makes an array smaller than the operator asked for, silently,
   # because md sizes a mirror by its smallest member.
   _msys="/sys/block/$(basename "$MIRROR")/size"
@@ -1197,7 +1227,7 @@ if [ -n "$MIRROR" ]; then
   # margin an exactly-sized disk produces an array one megabyte short of the
   # answer, which nobody would notice until the volume filled early.
   if [ "$MIRROR_MB" -lt "$(( LOG_GB * 1024 + 8 ))" ]; then
-    die "$MIRROR holds $(( MIRROR_MB / 1024 )) GB and the records need $LOG_GB GB:
+    die "$MIRROR holds $(( MIRROR_MB / 1024 )) GB and the log volume needs $LOG_GB GB:
   a mirror is as big as its smallest disk"
   fi
   # Checked here rather than in the tool list at the top, because a medium
@@ -1205,7 +1235,7 @@ if [ -n "$MIRROR" ]; then
   # something about the MACHINE, and check mode reports those instead of
   # refusing answers that are perfectly good.
   command -v mdadm >/dev/null 2>&1 || \
-    fatal "this medium has no mdadm, so it cannot build the records mirror"
+    fatal "this medium has no mdadm, so it cannot mirror the log volume"
 fi
 
 # ------------------------------------------------ 3d. the management network
@@ -1354,10 +1384,11 @@ echo
 echo "  disk           $DISK  ($SIZE ${MODEL:-unknown})   EVERYTHING ON IT IS DESTROYED"
 lsblk -no NAME,SIZE,FSTYPE,MOUNTPOINT "$DISK" 2>/dev/null | sed 's/^/                   /'
 if [ -n "$MIRROR" ]; then
-  echo "  records mirror $MIRROR   EVERYTHING ON IT IS DESTROYED TOO"
-  echo "                   the records go on both disks; the system does not"
+  echo "  log mirror     $MIRROR   EVERYTHING ON IT IS DESTROYED TOO"
+  echo "                   the log volume goes on both; the system does not"
 else
-  echo "  records mirror none (one disk: a disk failure loses the records)"
+  echo "  log mirror     none (one disk: a disk failure loses the trail and"
+  echo "                 whatever the collector has not received)"
 fi
 echo "  hostname       $HOSTNAME_NEW"
 echo "  timezone       $TIMEZONE"
@@ -1410,7 +1441,7 @@ if [ "$ASSUME_YES" != 1 ]; then
   # it is not the confirmation this script claims to have.
   if [ -n "$MIRROR" ]; then
     _what2=$(lsblk -dno SIZE,MODEL "$MIRROR" 2>/dev/null | sed 's/  */ /g;s/^ *//')
-    echo "  and to ERASE $MIRROR  ${_what2:-}  (the records mirror)"
+    echo "  and to ERASE $MIRROR  ${_what2:-}  (the log volume's mirror)"
   fi
   echo "  Everything on it is lost. This cannot be undone."
   printf "  Type 'yes' to install: "
@@ -1486,7 +1517,7 @@ release_disk() {   # <disk>; stop and erase what would hold it open
 # superblocks erased, the second disk was still refused, and the line this
 # prints said what by -
 #
-#   ==> the records mirror on /dev/vdb
+#   ==> the log volume is mirrored on /dev/vdb
 #   [   39.270871]  vdb: vdb1
 #   ==>   /dev/vdb is still held by an array:
 #       md127 : inactive vdb1[1](S)
@@ -1536,9 +1567,10 @@ say "partitioning $DISK (UEFI=$EFI)"
 # instead of sitting there. A partitioner that can hang silently is worse than
 # one that fails: the operator has no idea whether the disk was touched.
 command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
-# Records LAST, so growing the disk later grows the partition that fills.
+# The log volume LAST, so growing the disk later grows the partition that
+# fills.
 #
-# Type "R" - Linux RAID - when the records are mirrored, so that anyone who
+# Type "R" - Linux RAID - when it is mirrored, so that anyone who
 # opens this table with fdisk on a box whose other disk has died is told what
 # the partition is before they try to mount it directly. The type does not
 # drive the assembly; the metadata and mdadm.conf do.
@@ -1573,14 +1605,14 @@ case "$DISK" in
   *)               P1="${DISK}1";  P2="${DISK}2";  P3="${DISK}3"  ;;
 esac
 [ -b "$P2" ] || die "partitioning did not produce $P2"
-[ -b "$P3" ] || die "partitioning did not produce $P3 for the records"
+[ -b "$P3" ] || die "partitioning did not produce $P3 for the log volume"
 
-# The records go on BOTH disks, or on the one. Everything downstream - the
+# The log volume goes on BOTH disks, or on the one. Everything downstream - the
 # mkfs, the UUID in fstab, the verification - uses this one name, so the
 # one-disk path is the same path it has always been with $P3 in it.
 RECORDS_DEV=$P3
 if [ -n "$MIRROR" ]; then
-  say "the records mirror on $MIRROR"
+  say "the log volume is mirrored on $MIRROR"
   # Released here, a second time and immediately before its own write. The run
   # that only did this once got the system disk partitioned and was then
   # refused on this one: the gap between the two sfdisks is long enough for

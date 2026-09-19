@@ -2019,7 +2019,7 @@ mkdir -p "$FAKE/root/var/log/prisma-routing"
 echo /dev/vda2 > "$FAKE/mnt_root"
 echo /dev/vdb1 > "$FAKE/mnt_records"
 run
-if said '\[ ok \] records on their own filesystem: /dev/vdb1'; then
+if said '\[ ok \] log volume on its own filesystem: /dev/vdb1'; then
   ok "a records volume of its own is reported, and named"
 else
   bad "the records volume was separate and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'records on' || echo '<nothing>')"
@@ -2032,13 +2032,13 @@ fi
 # The volume that did not mount: same directory, same box, one source.
 echo /dev/vda2 > "$FAKE/mnt_records"
 run
-if said '\[warn\] connection records are on the ROOT filesystem'; then
-  ok "records on the root filesystem is reported"
+if said '\[warn\] the trail and the export spill are on the ROOT filesystem'; then
+  ok "a log volume on the root filesystem is reported"
 else
-  bad "records were on the root filesystem and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'records' || echo '<nothing>')"
+  bad "the trail and the spill were on the root filesystem and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'root filesystem' || echo '<nothing>')"
 fi
-if said 'stop this box writing its own'; then
-  ok "and says what a full log does to the rest of the box"
+if said_across 'stop this box writing its own configuration'; then
+  ok "and says what a full volume does to the rest of the box"
 else
   bad "the warning does not say what it costs"
 fi
@@ -2047,7 +2047,7 @@ fi
 mkdir -p "$FAKE/root/run/live/medium/live"
 : > "$FAKE/root/run/live/medium/live/filesystem.squashfs"
 run
-if said '\[info\] live medium: records are not persisted anyway'; then
+if said '\[info\] live medium: nothing here is persisted anyway'; then
   ok "the live medium says so instead of warning about a disk it does not have"
 else
   bad "the live medium was warned about the root filesystem: $(printf '%s\n' "$OUTPUT" | grep -i 'records\|live medium' || echo '<nothing>')"
@@ -2204,7 +2204,7 @@ if said 'mirror'; then
 else
   ok "a box with one disk is told nothing about a mirror it does not have"
 fi
-if said '\[ ok \] records on their own filesystem: /dev/vda3'; then
+if said '\[ ok \] log volume on its own filesystem: /dev/vda3'; then
   ok "and still reports its records volume exactly as before"
 else
   bad "the one-disk records line changed: $(printf '%s\n' "$OUTPUT" | grep -i 'records on' || echo '<nothing>')"
