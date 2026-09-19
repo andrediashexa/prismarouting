@@ -7426,7 +7426,15 @@ class Shell:
                     # Wrapped, not one row: the list grows with the box, and
                     # a name is never split because `console_prose` does not
                     # break a word - so each one stays greppable (#271).
-                    print_prose("it has: " + ", ".join(sorted(have)))
+                    #
+                    # What is OFFERED is what an operator configures, while
+                    # what is ACCEPTED above is every name the box answers to.
+                    # A refusal that offered `local0` and two TAPs sent them
+                    # to type one of three names that would be refused next,
+                    # or taken and wrong (#403).
+                    print_prose("it has: "
+                                + ", ".join(sorted(
+                                    routes.operator_interfaces(have))))
                     print_prose("(a linux_cp pair answers to both its "
                                 "dataplane name and its Linux one)")
                     print_prose("the statement would commit and do nothing")
@@ -11861,18 +11869,25 @@ class Shell:
         count an operator acts on stops meaning anything when it counts
         something that does not count (#299).
 
-        What that choice costs is that the count no longer matches the number
-        of rows in the table, and the cost is paid by the note rather than by
-        hiding the row: `local0` STAYS LISTED, because hiding an interface the
+        `local0` USED TO STAY LISTED with a note under the count explaining
+        why the two disagreed, on the argument that hiding an interface the
         dataplane has is how a listing stops being the thing people reach for
-        when something is off.
+        when something is off. The maintainer read that screen on a real box
+        and asked for it to go (#403), and the argument does not survive the
+        reading: it holds for interfaces the box HAS, and `local0` is an
+        artefact of VPP rather than a port on the machine. The note existed
+        only to carry it.
+
+        So the screens list what an operator configured -
+        `routes.operator_interfaces()` is that one decision - and this counts
+        the rows they are printed under. A TAP named OUTRIGHT still answers,
+        which is the half of the old argument that was about diagnosis.
+
+        The note survives as a return value with nothing to say. Both count
+        lines print whatever comes back, and a caller that has something to
+        add under a count has somewhere to put it.
         """
-        n = sum(1 for name in ifaces if name != cls.NULL_INTERFACE)
-        if cls.NULL_INTERFACE in ifaces:
-            return n, [f"  {cls.NULL_INTERFACE} is listed above but not "
-                       "counted: it is the dataplane's own null interface and "
-                       "forwards nothing"]
-        return n, []
+        return sum(1 for name in ifaces if name != cls.NULL_INTERFACE), []
 
     @staticmethod
     def link_state(name, hardware):
@@ -13294,6 +13309,14 @@ class Shell:
         _, addr = self.dp.run("show interface addr")
         _, lcp = self.dp.run("show lcp")
         ifaces = routes.parse_interfaces(out, addr, lcp)
+        # EVERYTHING THE DATAPLANE HAS is kept, and what is LISTED is what an
+        # operator configured. The two are different sets and both are needed:
+        # a TAP named outright still answers, because the argument against
+        # hiding a row was always about diagnosis (#403), and diagnosis is
+        # what typing the name is for.
+        everything = ifaces
+        ifaces = {n: e for n, e in ifaces.items()
+                  if n in set(routes.operator_interfaces(ifaces))}
 
         # `local0` alone means the dataplane claimed no NIC. Explained here
         # rather than left as a one-line table, because the operator asking
@@ -13316,7 +13339,7 @@ class Shell:
             total = dict(ifaces)
             rest = [a for a in args[1:] if a]
             if rest:
-                ifaces = {n: e for n, e in ifaces.items()
+                ifaces = {n: e for n, e in everything.items()
                           if any(_starts(n, w) for w in rest)}
                 if not ifaces:
                     print("  no interface matches")
@@ -13329,7 +13352,7 @@ class Shell:
 
         wanted = [a for a in args if a not in ("description", "descr", "brief")]
         if wanted:
-            ifaces = {n: e for n, e in ifaces.items()
+            ifaces = {n: e for n, e in everything.items()
                       if any(_starts(n, w) for w in wanted)}
             if not ifaces:
                 print("  no interface matches")
@@ -13364,11 +13387,9 @@ class Shell:
             for extra in addrs[1:]:
                 print(f"  {'':<26} {'':<6} {'':<6} {extra:<20}")
 
-        # local0 is VPP's own loopback and configures nothing. It IS listed -
-        # hiding an interface the dataplane reports would be this command
-        # deciding what the operator may see - but it is not offered for
-        # completion, and it is not in the count: see forwarding_count(), the
-        # one holder the other two count lines read as well.
+        # The count is of the rows above it, because the rows above it are the
+        # interfaces somebody configured: see forwarding_count(), the one
+        # holder the other two count lines read as well.
         shown, note = self.forwarding_count(ifaces)
         print(f"\n  {shown} interface(s) on the dataplane can forward")
         for line in note:
@@ -14757,11 +14778,14 @@ class Shell:
             # continuation lines are.
             if not w or line[0].isspace() or w[0] in ("Name",):
                 continue
-            if w[0] == "local0":
-                continue  # VPP's own loopback: nothing to configure on it
             state = w[2] if len(w) > 2 else ""
             names[w[0]] = f"interface ({state})" if state else "interface"
-        return names
+        # `local0` and the TAP half of every pair, out of the one holder the
+        # screens read. This branch kept its own list and it had one name on
+        # it, so TAB completed `tap4096` as an interface to configure - and a
+        # TAP is the half of a pair this product creates and destroys (#403).
+        return {n: v for n, v in names.items()
+                if n in set(routes.operator_interfaces(names))}
 
     def dyn_host_nics(self):
         """

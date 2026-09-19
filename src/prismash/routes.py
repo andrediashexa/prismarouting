@@ -601,6 +601,39 @@ def parse_interfaces(show_interface: str, show_addr: str = "",
     return out
 
 
+#: VPP's own null interface. It is in every `show interface` on every box, it
+#: takes no configuration of any kind, and it is not a port on the machine.
+NULL_INTERFACE = "local0"
+
+
+def operator_interfaces(names):
+    """
+    Of everything the dataplane has, the interfaces an OPERATOR configures.
+
+    ONE HOLDER, because four screens were each deciding it for themselves and
+    three of them decided wrong. What comes out is what somebody put there -
+    cards, VLAN sub-interfaces, loopbacks - and what goes is:
+
+      * `local0`, VPP's null interface, which configures nothing;
+      * the TAP half of every linux_cp pair, which THIS PRODUCT creates and
+        destroys and which is already on its partner's row, in the `Linux`
+        column. Listing it again as an interface invites somebody to configure
+        one half of a pair, which is how the two halves come to disagree.
+
+    Measured on the maintainer's box: one card, one sub-interface and one
+    loopback were reported as "5 interface(s) on the dataplane can forward",
+    because every claimed card was counted twice - once as itself and once as
+    its TAP - so the number an operator checks their cards against was off by
+    the thing they were checking (#403).
+
+    It takes NAMES and not the pair table: `_is_lcp_tap` answers from the
+    shape, the same shape `Config.drop_lcp_taps` has always used to keep these
+    out of the configuration read back from the box. One reading, so a name
+    cannot be configuration here and noise there.
+    """
+    return [n for n in names if n != NULL_INTERFACE and not _is_lcp_tap(n)]
+
+
 def lcp_pairs(show_lcp: str) -> dict:
     """
     Every name each linux_cp pair answers to, keyed by each of them.

@@ -118,6 +118,41 @@ $HX --load /tmp/boot.conf 2>&1 | sed 's/^/  reload: /'
 BOOT_BACK=$(ip -o link show loop7 2>/dev/null)
 
 echo
+echo "=========== what the interface screen lists (#403) ==========="
+# ON A BOX WITH A REAL PAIR, which is the only box where this can be measured:
+# the TAP is created by the product, it is VPP's own interface with a state
+# and an MTU of its own, and it was listed beside the card it belongs to - so
+# every claimed card was counted twice and the number an operator checks their
+# cards against was off by the thing they were checking.
+TAPNAME=$(vppctl show lcp \
+          | sed -n 's/.*itf-pair: \[[0-9]*\] [^ ]* \(tap[0-9]*\) .*/\1/p' \
+          | head -1)
+echo "  the pair's TAP, as VPP names it: ${TAPNAME:-<none>}"
+IFLIST=$($HX -c "show interface" 2>&1)
+printf '%s\n' "$IFLIST" | sed 's/^/  /'
+# The rows of the table: indented, four columns or more, and not the header.
+# Counted the way an operator counts them - by looking at the screen - so the
+# assertion is about what is printed and not about what the code did.
+IF_ROWS=$(printf '%s\n' "$IFLIST" \
+          | awk '/^  [A-Za-z]/ && $1 != "Interface" && NF >= 4 { n++ }
+                 END { print n + 0 }')
+IF_SAYS=$(printf '%s\n' "$IFLIST" \
+          | sed -n 's/^  \([0-9]*\) interface(s) on the dataplane can forward$/\1/p')
+# The TAP as a ROW of its own, which is what was wrong - its name is still on
+# its partner's row, in the Linux column, and must stay there. A substring
+# test would be answered by that column and assert nothing.
+IF_TAP_ROWS=$(printf '%s\n' "$IFLIST" \
+              | awk -v t="$TAPNAME" '$1 == t { n++ } END { print n + 0 }')
+IF_TAP_COL=$(printf '%s\n' "$IFLIST" \
+             | awk -v t="$TAPNAME" '$1 != t && index($0, t) { n++ }
+                                    END { print n + 0 }')
+echo "  rows in the table: $IF_ROWS; the count under it says: ${IF_SAYS:-<none>}"
+# And the TAP still answers when it is NAMED, which is the half of the old
+# argument that was about diagnosis.
+IF_NAMED=$($HX -c "show interface $TAPNAME" 2>&1)
+printf '%s\n' "$IF_NAMED" | sed 's/^/  named: /'
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 # The negative half first: with no pair there is no Linux interface at all.
@@ -148,4 +183,26 @@ expect_in "a loopback the product paired is in the kernel" \
 expect_not_in "removing it takes the pair with it" "loop7" "$BOOT_GONE"
 expect_in "and replaying the saved file - what prisma-routing.service does at boot - brings the pair back" \
   "loop7" "$BOOT_BACK"
+
+# #403, on the box that has a pair to be wrong about.
+expect "the lab found the pair's TAP to assert against" \
+  test -n "${TAPNAME:-}"
+expect "the TAP half of the pair is not a row of its own" \
+  test "${IF_TAP_ROWS:-1}" -eq 0
+# And it did not simply disappear: the name an operator needs in order to find
+# the pair is still on the interface it belongs to.
+expect "but its name is still on its partner's row, in the Linux column" \
+  test "${IF_TAP_COL:-0}" -ge 1
+expect_not_in "and neither is VPP's null interface" "local0" "$IFLIST"
+# The count and the rows agree, which they did not while either was listed:
+# on this box the TAP made them disagree by one, and on a box with two cards
+# by two.
+expect "the count under the table is the number of rows in it" \
+  test "${IF_SAYS:-x}" = "${IF_ROWS:-y}"
+expect_not_in "and nothing is left explaining a disagreement" \
+  "listed above but not counted" "$IFLIST"
+# The half that must NOT go: a TAP named outright still answers, because the
+# argument against hiding a row was about diagnosis.
+expect_in "a TAP named outright still answers" "$TAPNAME" "$IF_NAMED"
+
 verdict

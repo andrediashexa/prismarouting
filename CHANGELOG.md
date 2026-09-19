@@ -79,6 +79,42 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show interface` listed the `linux_cp` TAPs and `local0`, and counted every
+  card twice.** Read on the maintainer's box, which has one card, one VLAN
+  sub-interface and one loopback: the screen said *"5 interface(s) on the
+  dataplane can forward"*. Every claimed card was counted once as itself and
+  once as the TAP this product created for it, so the number an operator checks
+  their cards against was off by the thing they were checking.
+
+  The TAPs were listed as interfaces besides. Each is already on its partner's
+  row, in the `Linux` column, and nobody configures one: `linux_cp` creates and
+  destroys them, and configuring one half of a pair is how the two halves come
+  to disagree. `local0` went with them - it is VPP's null interface, it takes
+  no configuration of any kind, and it is not a port on the machine.
+
+  That reverses a decision this repository had written down: `local0` was
+  listed on the argument that hiding an interface the dataplane reports is the
+  screen deciding what the operator may see. The argument holds for interfaces
+  the box HAS. The half of it that is about diagnosis is kept - a TAP named
+  OUTRIGHT still answers, so `show interface tap4096` on a box whose pair is
+  broken shows what is there.
+
+  One holder decides it, `routes.operator_interfaces()`, and it is the same
+  reading `Config.drop_lcp_taps()` already used to keep a TAP out of the
+  configuration read back from the box. The table, `terse`, `description`, the
+  count, TAB completion and the "this box has no such interface" refusal all
+  ask it - the refusal offered `local0` and two TAPs as the names the operator
+  could have meant, which sent them to type one of three that would be refused
+  next, or taken and wrong.
+
+* **A VLAN sub-interface put its TAP into the running configuration.**
+  `interface ens18.100` left `interface tap4096.100 / vlan 100` in the saved
+  file, which is replayed at every boot: an attempt to configure the half of a
+  pair that `linux_cp` creates by itself. `_is_lcp_tap()` matched `tap4096` and
+  not `tap4096.100`, because "4096.100" is not a run of digits, and
+  `lcp-auto-subint` makes one of those for every sub-interface on a paired
+  card. Measured on the maintainer's box.
+
 ## 0.102.0 - a release title carries its version
 
 [#402](https://github.com/andrediashexa/hexarouting/issues/402).

@@ -963,10 +963,14 @@ text = out.getvalue()
 check("TenGigabitEthernet0/8/0" in text and "host-veth-vpp" in text,
       f"the dataplane's interfaces are listed: {text!r}")
 check("up" in text, "with their state")
-# local0 is listed - hiding an interface the dataplane reports would be the
-# command deciding what the operator may see - while not being offered for
-# completion, because it configures nothing.
-check("local0" in text, "including VPP's own loopback, which it does report")
+# local0 is NOT listed, and that reverses what this box used to assert. It was
+# listed on the argument that hiding an interface the dataplane reports is the
+# command deciding what the operator may see; the maintainer read the screen on
+# a real box and asked for it to go (#403). The argument holds for interfaces
+# the box HAS - `local0` is an artefact of VPP rather than a port on the
+# machine, and it takes no configuration of any kind.
+check("local0" not in text,
+      f"and not VPP's null interface, which configures nothing: {text!r}")
 print("  " + [l for l in text.splitlines() if "TenGig" in l][0].strip())
 
 # `show interface description` used to be answered with a line saying the
@@ -3185,10 +3189,12 @@ for _cmd in ("show interface", "show interface terse",
     # interface. The number is what an operator reads off this screen.
     check("1 interface(s)" not in _o and "of 1 interface(s)" not in _o,
           f"a box with no NIC does not count local0 as one - {_cmd}: {_o}")
-    check("local0" in _o,
-          f"and local0 is still LISTED, not hidden - {_cmd}: {_o}")
-    check("local0 is listed above but not counted" in _o,
-          f"the count says what it left out - {_cmd}: {_o}")
+    check("local0" not in _o,
+          f"and local0 is not listed either - {_cmd}: {_o}")
+    # The note under the count went with it: it existed to explain why the
+    # rows and the count disagreed, and they no longer do.
+    check("listed above but not counted" not in _o,
+          f"and nothing says the rows and the count disagree - {_cmd}: {_o}")
 
     _o = capture(box_192(_IF_TWO, _HW_TWO), _cmd)
     check("3 interface(s)" not in _o and "of 3 interface(s)" not in _o,

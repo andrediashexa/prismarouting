@@ -255,7 +255,7 @@ O `mtu` aqui existe porque um operador que não descobre `mtu` com `?` herda os 
 
 ```
 error: interface ens9: this box has no such interface
-    it has: ens18, ens19, local0
+    it has: ens18, ens19
     (a linux_cp pair answers to both its dataplane name and its Linux one)
     the statement would commit and do nothing
 ```

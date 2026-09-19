@@ -2482,7 +2482,11 @@ print("  fifty digits quotes all fifty back, and that row is not measured "
 # folds each remap row through print_prose, between words, and the box above
 # (`plugin_remap_rows`) holds the widest one inside the console; the ceiling
 # came back down to 25 with it.
-OVER_AT_MOST = 25
+# 22 since #403 took `local0` out of the three interface screens: the note
+# under each count - "local0 is listed above but not counted: it is the
+# dataplane's own null interface and forwards nothing" - was one of these
+# rows, printed from three places, and it went with the row it explained.
+OVER_AT_MOST = 22
 # 52 until #385 took out the handover headline the prompt printed on a
 # one-card box, which carried the interface name with no widest behind it;
 # and one less again when #389 gave the `linux-name` refusal at the prompt

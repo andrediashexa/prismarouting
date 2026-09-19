@@ -480,6 +480,29 @@ mechanism. So the product is right and the documents around it are wrong, which 
 dangerous direction: an operator sizing that volume from "one year of records"
 is answering a question this box does not ask.
 
+**And four defects the maintainer found on his own box in one afternoon**, by
+adding a NIC to it and reading the screens. They are the shape the work takes
+between phases, and every one of them is a thing this repository's suites could
+not have found, because each is about a box somebody is USING:
+
+* [#403](https://github.com/andrediashexa/hexarouting/issues/403) - **fixed.**
+  `show interface` listed the `linux_cp` TAPs and `local0`, so a box with one
+  card, one sub-interface and one loopback reported five interfaces that can
+  forward. Every claimed card was counted twice, once as itself and once as
+  its TAP. A sub-interface's TAP reached the SAVED configuration besides,
+  because the shape test for a TAP did not know about `tap4096.100`.
+* [#404](https://github.com/andrediashexa/hexarouting/issues/404) - a loopback
+  created without `linux-name` gets no pair, so FRR cannot see the address the
+  loopback exists to carry, and the commit says nothing.
+* [#405](https://github.com/andrediashexa/hexarouting/issues/405) - a NIC added
+  after boot is invisible, and three screens say something untrue about it:
+  `show hardware` claims the dataplane claims it, the VTY says the box has no
+  such interface, and nothing says the card will be claimed on the next boot.
+* [#406](https://github.com/andrediashexa/hexarouting/issues/406) -
+  sub-interfaces and loopbacks work and cannot be discovered: `?` offers the
+  interfaces the box already has, and the shape that CREATES one is stated
+  only inside a refusal an operator reaches by guessing wrong first.
+
 A plan that says this out loud is worth more than one that reads as if work
 were queued: what this product needs next is a box with a real NIC in it and a
 maintainer's answer to five questions, not another phase.

@@ -174,10 +174,8 @@ prisma> show interface
   Interface                  State  MTU    Address             Linux
   GigabitEthernet0/12/0      up     9000   203.0.113.1/24      tap0
   TenGigabitEthernet0/8/0    up     1500   -                   -
-  local0                     down   0      -                   -
 
   2 interface(s) on the dataplane can forward
-  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
 It answers from the **dataplane**. It used to be handed to `vtysh`, which sees
@@ -199,9 +197,26 @@ here is VPP's own for a device nobody named, which is what a lab's `pg0` and
 a hand-edited `startup.conf` still get; FRR refuses a name over 16 characters,
 and the commit check says so before FRR is handed one.
 
-* `local0` **is listed** - hiding an interface the dataplane reports would be
-  this command deciding what the operator may see - but it is **not offered for
-  completion**, because it configures nothing.
+* **What is listed is what an operator configured**: cards, VLAN
+  sub-interfaces and loopbacks. `local0` is not - it is VPP's null interface
+  and takes no configuration of any kind - and neither is the TAP half of a
+  `linux_cp` pair, which this product creates and destroys and which is
+  already on its partner's row, in the `Linux` column
+  ([#403](https://github.com/andrediashexa/hexarouting/issues/403)).
+
+  Both were listed until 0.103.0, on the argument that hiding an interface the
+  dataplane reports is this command deciding what the operator may see. That
+  argument holds for interfaces the box HAS; it does not hold for an artefact
+  of VPP or for half of a pair, and the cost of keeping them was a count that
+  was wrong by the number of cards - each one counted twice, once as itself
+  and once as its TAP. The half of the argument that was about diagnosis
+  survives: a TAP named OUTRIGHT still answers, so `show interface tap4096` on
+  a box whose pair is broken shows what is there.
+
+  `routes.operator_interfaces()` is the one place that decides it, and it is
+  the same reading `Config.drop_lcp_taps()` already used to keep a TAP out of
+  the configuration read back from the box - so a name cannot be configuration
+  in one screen and noise in another.
 * FRR's view of the same interfaces stays at `show ip interface`.
 * With the dataplane down it says it could not ask. An empty table would read
   as *"this box has no interfaces"*, which is a very different statement.
@@ -219,10 +234,8 @@ prisma> show interface terse
   Interface                  Admin  Link   Proto  Local
   GigabitEthernet0/12/0      up     up     inet   203.0.113.1/24
   TenGigabitEthernet0/8/0    up     down   -      -
-  local0                     down   down   -      -
 
   2 interface(s) on the dataplane can forward
-  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
   TenGigabitEthernet0/8/0: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
@@ -248,10 +261,8 @@ prisma> show interface description
   Interface                  Admin  Link   Description
   GigabitEthernet0/12/0      up     up     ASSINANTES PON-3
   TenGigabitEthernet0/8/0    up     down   TRANSITO Vivo AS26599
-  local0                     down   down   
 
   2 of 2 interface(s) described
-  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
 The description is the dataplane's own interface tag, read back from the box, so
@@ -638,7 +649,7 @@ would be comparing against scaffolding.
 
 ```
 error: interface Ten0: this box has no such interface
-    it has: GigabitEthernet0/12/0, TenGigabitEthernet0/8/0, local0
+    it has: GigabitEthernet0/12/0, TenGigabitEthernet0/8/0
     (a linux_cp pair answers to both its dataplane name and its Linux one)
     the statement would commit and do nothing
 ```
