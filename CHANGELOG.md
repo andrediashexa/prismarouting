@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.101.0 - the words a configuration level owns
+
+[#400](https://github.com/andrediashexa/hexarouting/issues/400).
+
+### Added
+
 * **`top` and `up` move inside the configuration hierarchy.** `top` goes to the
   root of configuration mode from any depth; `up` leaves one level and `up <n>`
   leaves `n` of them. Both write the block's own `exit` where FRR needs one, so
