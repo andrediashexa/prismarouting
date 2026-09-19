@@ -793,10 +793,34 @@ UPGRADE=${NAME%.iso}-upgrade.tar.gz
 # run for eleven releases. Every tag in this repository is a published
 # release - that is what section 5 of CONTRIBUTING.md means by "every merge is
 # a release" - so the previous one is the highest version tag below this one.
-PREV=$(git -C "$REPO" tag -l "v*" --sort=-v:refname \
-       | grep -v -x "$TAG" | head -1)
+#
+# THE ONE BELOW THIS TAG, not the newest one that is not this tag. Re-running
+# the gate against an older tag is an ordinary thing to do - it is how a
+# medium gets rebuilt - and `--sort=-v:refname | grep -v $TAG | head -1` hands
+# back the NEWEST release in the repository, so a re-run of v0.80.0 would have
+# tried to "upgrade" a box running the latest release down to v0.80.0. Sorted
+# ascending and stopped at the tag, what comes out is the release immediately
+# before it, which is what the sentence below claims.
+PREV=$(git -C "$REPO" tag -l "v*" --sort=v:refname \
+       | awk -v t="$TAG" '$0 == t { exit } { p = $0 } END { print p }')
+# The rename is a wall, not a version. `appliance/upgrade` refuses a box
+# carrying /etc/hexarouting or hexarouting.service - "the product was renamed
+# and NOTHING MIGRATES" - so an upgrade from a release before v0.79.0 is a
+# path this product is written to refuse, and a gate that demanded it would
+# refuse every re-run of a tag from that era over the product doing exactly
+# what it says.
+RENAME=v0.79.0
+PRE_RENAME=no
+if [ -n "$PREV" ] && [ "$PREV" != "$RENAME" ]; then
+  [ "$(printf '%s\n%s\n' "$PREV" "$RENAME" | sort -V | head -1)" = "$PREV" ] \
+    && PRE_RENAME=yes
+fi
 if [ -z "$PREV" ]; then
   echo "==> no published release before $TAG, so there is no upgrade to measure"
+elif [ "$PRE_RENAME" = yes ]; then
+  echo "==> $PREV is older than the rename ($RENAME), and this product"
+  echo "    refuses to upgrade a box carrying the old name at all, so there"
+  echo "    is no upgrade here to measure"
 else
   echo "==> upgrading a $PREV box to this tree"
   ( cd "$WORK" && sh tools/lab.sh upgrade "$PREV" ) \

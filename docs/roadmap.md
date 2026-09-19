@@ -2571,6 +2571,27 @@ is finer - the 1G reservation is global on the kernel command line and VPP is
 told `buffers-per-numa` - and whether that is worth anything is a throughput
 question behind #28.
 
+**And the distributed version of the same proposal**
+([#399](https://github.com/andrediashexa/hexarouting/issues/399)) - four planes, a
+state plane, two-node HA, active/active by shard ownership, and a logical
+router across nodes. Read against what is already here, four things in it are
+ambiguous enough that two engineers would build different products, and they
+are on the issue: **active/active contradicts its own cluster-link rule**
+(ownership by subscriber hash, but the return flow is steered by somebody
+else's ECMP hash, so the packet lands on the wrong node and the only ways out
+are forbidden or are full replication - partitioning by the public prefix is
+what makes the return arrive by routing); **what the state plane buys** is
+connections and not addresses, because in deterministic mode the mapping is a
+function of the configuration and `lab/ha-failover.sh` already measures a
+failover keeping every subscriber's address and block with no state
+exchanged; **the witness cannot be independent while it runs with the UI**;
+and **control-plane redundancy names no arbitration mechanism**. The
+throughput figure in it has no baseline in this repository - bits per second
+are #28 - and the one obligation the document does not mention at all is the
+one that is legal rather than technical: the year of connection records, the
+chained trail and the subscriber identity, which in a cluster need an answer
+to "which node answers the court order".
+
 **The log can name the subscriber**
 ([#21](https://github.com/andrediashexa/hexarouting/issues/21)) - on the
 branch, in the half that needs no second system: a static map a provisioning
