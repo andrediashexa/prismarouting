@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.105.0 - the VTY says which names create something
+
+[#406](https://github.com/andrediashexa/hexarouting/issues/406).
+
+### Fixed
+
 * **Sub-interfaces and loopbacks worked and could not be found.** The
   maintainer asked for VLAN sub-interfaces to be implemented on a box that has
   had them since #131: `interface ens18.100 / vlan 100` makes one, it gets its
