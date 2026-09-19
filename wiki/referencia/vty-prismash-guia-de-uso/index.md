@@ -20,12 +20,12 @@ flowchart LR
 |------|--------|-------------|-----------|
 | Operacional | `prisma> ` | é onde a sessão começa | `exit` encerra a sessão |
 | Configuração | `prisma# [edit] ` | `configure` | `exit`    |
-| Pool | `prisma# [edit cgnat pool residencial] ` | `nat cgnat pool <nome>` | `exit`    |
-| Interface | `prisma# [edit interface ens18] ` | `interface <nome>` | `exit`    |
-| Usuário | `prisma# [edit user joao] ` | `user <nome>` | `exit`    |
-| Usuário SNMP | `prisma# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`    |
-| Rotas estáticas | `prisma# [edit router static] ` | `router static` | `exit`    |
-| Bloco do FRR | `prisma# [edit router bgp 65000] ` | `router bgp <AS>` | `exit`    |
+| Pool | `prisma# [edit cgnat pool residencial] ` | `nat cgnat pool <nome>` | `exit`, `up` ou `top` |
+| Interface | `prisma# [edit interface ens18] ` | `interface <nome>` | `exit`, `up` ou `top` |
+| Usuário | `prisma# [edit user joao] ` | `user <nome>` | `exit`, `up` ou `top` |
+| Usuário SNMP | `prisma# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`, `up` ou `top` |
+| Rotas estáticas | `prisma# [edit router static] ` | `router static` | `exit`, `up` ou `top` |
+| Bloco do FRR | `prisma# [edit router bgp 65000] ` | `router bgp <AS>` | `exit`, `up` ou `top` |
 
 **O prompt nomeia o assunto, não só o tipo de bloco.** `[edit cgnat pool]` seria o mesmo prompt numa caixa com vinte pools: diria que você está *num* pool sem dizer em qual, que é justamente a pergunta que você tem.
 
@@ -44,6 +44,43 @@ show this
 ```
 
 Mostra a configuração da hierarquia em que você está — dentro de um pool, o pool; dentro de uma interface, a MTU e o uRPF dela; no topo do modo de configuração, a candidata inteira.
+
+## Andar na hierarquia: `top` e `up`
+
+Duas palavras movem você **dentro** do modo de configuração, sem sair dele e sem mexer na candidata:
+
+| Palavra | O que faz |
+|---------|-----------|
+| `top`   | vai para a raiz do modo de configuração, de qualquer profundidade |
+| `up`    | sobe um nível |
+| `up <n>` | sobe `n` níveis |
+
+```
+prisma# [edit] nat cgnat pool residencial
+prisma# [edit cgnat pool residencial] inside 100.64.0.0/10
+prisma# [edit cgnat pool residencial] top
+prisma# [edit] router bgp 65000
+prisma# [edit router bgp 65000] address-family ipv4 unicast
+prisma# [edit ...r bgp 65000 / address-family ipv4 unicast] up
+prisma# [edit router bgp 65000] top
+prisma# [edit]
+```
+
+**Nenhuma das duas sai do modo de configuração.** A candidata continua, o modo de configuração continua, e você fica onde disse. Um pool, uma interface, uma conta e um bloco do FRR contam **um nível cada** — e por isso `up` serve para todos.
+
+**Subir mais níveis do que existem é recusado, não aparado.** Sair de mais níveis do que você pediu deixa você num lugar que não digitou, e a próxima declaração cai ali:
+
+```
+prisma# [edit router bgp 65000] up 2
+error: up 2: there are only 1 level(s) below the top here
+    'top' goes all the way up in one word
+```
+
+
+:::warning
+Antes da versão que trouxe essas palavras, `top` e `up` não eram declarações deste VTY: iam para o FRR como configuração, e o `commit` seguinte era recusado — numa caixa cujo roteamento estava correto. Se você digitou uma delas numa versão antiga e o `commit` passou a falhar, `rollback 0` descarta a candidata.
+
+:::
 
 ## Descobrindo comandos
 
@@ -270,16 +307,24 @@ prisma# [edit interface ens18] ?
   isis         IS-IS settings on this interface
   linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
   mac-address  the MAC this interface answers to
+  mtr          ping every hop of the path, as a report
   mtu          MTU, on both the dataplane interface and its TAP
   no           remove a statement from this interface
+  ping         send echo requests and say what came back
   show         display information
   shutdown     take the interface administratively down
+  top          go to the top of the configuration
+  traceroute   the path to a host, one row per hop
+  up           go up one level, or <n> levels
   urpf         drop packets whose source does not route back this way
   vlan         VLAN tag, on a sub-interface
-  vrf          the routing table this interface's addresses live in
+  vrf          the routing table this interface's addresses live in; 0 takes the interface back out of one
+  vrrp         stand for a service address together with the peer (RFC 5798), on the dataplane interface where the packets are
 ```
 
-Um bloco do FRR oferece `exit` e `show` e nada mais — este VTY não modela as declarações do FRR, e oferecer algumas seria um palpite apresentado como gramática. Depois disso, vale a sintaxe do FRR.
+Cinco dessas linhas não são declarações: `top`, `up`, `ping`, `traceroute` e `mtr` são **palavras que todo nível do modo de configuração tem**, e aparecem em todos eles. No topo do modo de configuração, `top` e `up` ficam de fora da lista — não há nível acima, e a caixa recusa as duas ali.
+
+Um bloco do FRR oferece `exit`, `show`, essas cinco palavras e nada mais — este VTY não modela as declarações do FRR, e oferecer algumas seria um palpite apresentado como gramática. Depois disso, vale a sintaxe do FRR.
 
 Onde a árvore espera um **nome**, quem responde é a caixa: interfaces vêm do dataplane com o estado, e pools, contas e usuários SNMP vêm da **candidata** — completam o que está sendo editado, não só o que já foi commitado.
 

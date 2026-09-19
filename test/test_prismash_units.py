@@ -4598,5 +4598,215 @@ check(sh.interface_names_by_index() == {},
       "a dataplane that cannot be asked is an empty map")
 ok("what a dump's sw_if_index is turned back into")
 
+# ---------------------------------------------------------------------------
+# Batch I: the words a configuration level owns (#400).
+#
+# Each of these is called on its own, standing at a level this box put it at
+# by hand rather than by typing its way in - which is the point: the defect
+# was a word that worked in ONE mode, so the boxes below stand in every mode
+# there is and ask the same question in each.
+# ---------------------------------------------------------------------------
+
+def at(mode="config", ctx=(), candidate=None):
+    """A Shell standing at a level, with a candidate to write into."""
+    sh = shell()
+    sh.mode = mode
+    sh.frr_ctx = list(ctx)
+    sh.candidate = candidate if candidate is not None else Config()
+    return sh
+
+
+print("\n=== Shell.config_depth: a block and a sub-mode are one level each ===")
+# Mutation shown red: `BLOCK_MODES` written out again as ("pool", "user",
+# "snmp_user"), the spelling the mode does NOT use - which answers 0 inside an
+# SNMP user, so `top` there silently stays put.
+check(at().config_depth() == 0, "the top of configuration mode is depth 0")
+check(at(ctx=["router bgp 65000"]).config_depth() == 1, "one block, one level")
+check(at(ctx=["router bgp 65000",
+             "address-family ipv4 unicast"]).config_depth() == 2,
+      "a block inside a block is two")
+for mode in prismash.BLOCK_MODES:
+    check(at(mode=mode).config_depth() == 1, f"the '{mode}' sub-mode is a level")
+check(at(mode="operational").config_depth() == 0,
+      "operational mode is not below anything")
+ok("every level this VTY has, counted the one way")
+
+print("\n=== Shell.leave_one_level: the block's own exit goes with it ===")
+# Mutation shown red: the `exit` not appended, which is #180 - the next
+# statement typed lands inside the block that was left.
+sh = at(ctx=["router bgp 65000", "address-family ipv4 unicast"])
+sh.leave_one_level()
+check(sh.frr_ctx == ["router bgp 65000"], f"one popped: {sh.frr_ctx!r}")
+check(sh.candidate.routing == ["exit"],
+      f"and FRR's own exit written: {sh.candidate.routing!r}")
+sh = at(ctx=[prismash.STATIC_BLOCK])
+sh.leave_one_level()
+check(sh.candidate.routing == [],
+      f"'{prismash.STATIC_BLOCK}' is this VTY's block, so there is nothing "
+      f"for FRR to close: {sh.candidate.routing!r}")
+sh = at(mode="pool")
+sh.pool = Pool("residential")
+sh.leave_one_level()
+check(sh.mode == "config" and sh.pool is None,
+      f"a sub-mode is left by forgetting it: {sh.mode} {sh.pool!r}")
+ok("one level, whichever kind of level it was")
+
+print("\n=== Shell.do_navigate: top, up, and up <n> ===")
+# Mutation shown red: `levels > depth` allowed through, which pops an empty
+# list and ends the session on an IndexError.
+sh = at(ctx=["router bgp 65000", "address-family ipv4 unicast"])
+with spoken() as o:
+    sh.do_navigate(["top"])
+check(sh.config_depth() == 0 and not o.getvalue(),
+      f"top goes all the way up and says nothing: {o.getvalue()!r}")
+check(sh.candidate.routing == ["exit", "exit"],
+      f"closing each block on the way: {sh.candidate.routing!r}")
+sh = at(mode="user")
+with spoken() as o:
+    sh.do_navigate(["top"])
+check(sh.mode == "config", "top leaves a sub-mode as well as a block")
+sh = at()
+with spoken() as o:
+    sh.do_navigate(["top"])
+check(sh.mode == "config" and not o.getvalue(),
+      f"and top at the top is not a refusal: {o.getvalue()!r}")
+sh = at(ctx=["router bgp 65000", "address-family ipv4 unicast"])
+with spoken() as o:
+    sh.do_navigate(["up"])
+check(sh.frr_ctx == ["router bgp 65000"] and not o.getvalue(),
+      f"up is one level: {sh.frr_ctx!r} {o.getvalue()!r}")
+sh = at(ctx=["router bgp 65000", "address-family ipv4 unicast"])
+with spoken() as o:
+    sh.do_navigate(["up", "2"])
+check(sh.config_depth() == 0 and not o.getvalue(),
+      f"up 2 is two of them: {sh.config_depth()} {o.getvalue()!r}")
+check(sh.mode == "config", "and it is still configuration mode afterwards")
+for word, why in (("0", "zero levels"), ("x", "a word"), ("-1", "a negative")):
+    sh = at(ctx=["router bgp 65000"])
+    with spoken() as o:
+        sh.do_navigate(["up", word])
+    check(sh.config_depth() == 1 and "error:" in o.getvalue(),
+          f"{why} moves nothing and is named: {o.getvalue()!r}")
+sh = at(ctx=["router bgp 65000"])
+with spoken() as o:
+    sh.do_navigate(["up", "1", "2"])
+check(sh.config_depth() == 1 and "usage: up" in o.getvalue(),
+      f"two arguments are not a level count: {o.getvalue()!r}")
+sh = at(ctx=["router bgp 65000"])
+with spoken() as o:
+    sh.do_navigate(["up", "9"])
+check(sh.config_depth() == 1 and "only 1 level(s)" in o.getvalue(),
+      f"deeper than the tree is refused, not clamped: {o.getvalue()!r}")
+check(sh.candidate.routing == [],
+      f"and a refused up writes no exit at all: {sh.candidate.routing!r}")
+sh = at()
+with spoken() as o:
+    sh.do_navigate(["up"])
+check("already at the top" in o.getvalue(),
+      f"up at the top says which word leaves the mode: {o.getvalue()!r}")
+ok("moving inside the hierarchy, and never out of it by accident")
+
+print("\n=== router static: the words are not refused by its grammar ===")
+# Mutation shown red: the level words taken back out of `hierarchy_rewrite`'s
+# pass-through list, which is how `top` came to work at four levels and be
+# refused at the fifth - found by lab/vty.sh, not by a unit box, which is why
+# there is one here now.
+sh = at()
+with spoken() as o:
+    for _line in ("router static", "route 198.19.0.0/24 10.0.0.2", "top"):
+        sh.do_config(_line)
+check(sh.config_depth() == 0 and "error" not in o.getvalue(),
+      f"'top' leaves 'router static' like any other level: "
+      f"{sh.config_depth()} {o.getvalue()!r}")
+check(sh.candidate.routing == ["ip route 198.19.0.0/24 10.0.0.2"],
+      f"and FRR's own spelling is what was staged, with no 'exit' for a block "
+      f"FRR has not got: {sh.candidate.routing!r}")
+sh = at()
+sh.probes = []
+sh.do_probe = lambda tool, args: sh.probes.append((tool, args))
+with spoken() as o:
+    for _line in ("router static", "ping 10.0.0.1"):
+        sh.do_config(_line)
+check(sh.probes == [("ping", ["10.0.0.1"])],
+      f"and a probe is answered inside it: {sh.probes!r} {o.getvalue()!r}")
+check(sh.candidate.routing == [],
+      f"and staged as configuration nowhere: {sh.candidate.routing!r}")
+ok("the fifth dispatcher, which the first pass of #400 missed")
+
+print("\n=== Shell.owns_word: the same words at every level ===")
+# Mutation shown red: `return False` for the probes, which is the defect -
+# every level then hands `ping` to FRR as a routing statement.
+sh = at(ctx=["router bgp 65000"])
+with spoken():
+    check(sh.owns_word(["top"]) is True, "top is this VTY's word")
+sh = at(ctx=["router bgp 65000"])
+with spoken():
+    check(sh.owns_word(["up"]) is True, "and so is up")
+sh = at()
+sh.probes = []
+sh.do_probe = lambda tool, args: sh.probes.append((tool, args))
+for tool in prismash.PROBE_TOOLS:
+    check(sh.owns_word([tool, "10.0.0.1"]) is True, f"{tool} is answered here")
+check(sh.probes == [(t, ["10.0.0.1"]) for t in prismash.PROBE_TOOLS],
+      f"each with the argument it was given: {sh.probes!r}")
+check(at().owns_word(["router", "bgp", "65000"]) is False,
+      "a statement is not one of them, and falls through untouched")
+ok("one place, so no level can be the one that forgot")
+
+print("\n=== Shell.level_words: what ? offers for them ===")
+# Mutation shown red: `top` and `up` offered at depth 0, where the next
+# keystroke refuses them.
+check(set(at().level_words()) == set(prismash.PROBE_TOOLS),
+      f"at the top, the probes and not the two that would be refused: "
+      f"{sorted(at().level_words())!r}")
+words = at(ctx=["router bgp 65000"]).level_words()
+check(set(words) == set(prismash.PROBE_TOOLS) | {"top", "up"},
+      f"inside a block, all of them: {sorted(words)!r}")
+check(words["ping"] == prismash.TREE["operational"]["ping"][0],
+      f"a probe described in the tree's own words: {words['ping']!r}")
+check(all(words[k] for k in words), "and every word has something said about it")
+ok("the list an operator reads while typing, and nothing refused in it")
+
+print("\n=== unread_statements: the set a stray word lands in ===")
+# Mutation shown red: the `path is None` test dropped, which names a block's
+# own `exit` as a statement the VTY failed to read.
+lines = ["router bgp 65000", " bgp router-id 10.0.0.1", "exit", "",
+         "top", "ping 10.95.200.1"]
+check(prismash.unread_statements(lines) == ["top", "ping 10.95.200.1"],
+      f"the words that are not statements: "
+      f"{prismash.unread_statements(lines)!r}")
+check(prismash.unread_statements(["ip route 0.0.0.0/0 10.0.0.2"]) == [],
+      "a statement the tree reads is not in it")
+check(prismash.unread_statements([]) == [], "and nothing staged is nothing")
+ok("the same walk the boundary marker does, read as a list")
+
+print("\n=== Shell.say_frr_refused: where to look, and the way out ===")
+# Mutation shown red: the ceiling dropped, which prints forty statements over
+# a verdict nobody then reads.
+sh = shell()
+with spoken() as o:
+    sh.say_frr_refused(["router bgp 65000", "exit", "top", "ping 10.0.0.1"])
+said = o.getvalue()
+check("top" in said and "ping 10.0.0.1" in said,
+      f"the unread statements, named: {said!r}")
+check("rollback 0" in said, f"and the way out: {said!r}")
+check(all(len(r) <= 79 for r in rows_of(said)),
+      f"on a console 79 columns wide: {[len(r) for r in rows_of(said)]!r}")
+many = [f"word{n}" for n in range(prismash.UNREAD_NAMED + 3)]
+with spoken() as o:
+    sh.say_frr_refused(many)
+said = o.getvalue()
+check(f"and {len(many) - prismash.UNREAD_NAMED} more" in said,
+      f"past the ceiling it stops naming and counts: {said!r}")
+named = [r for r in rows_of(said) if r.strip().startswith("word")]
+check(len(named) == prismash.UNREAD_NAMED,
+      f"{prismash.UNREAD_NAMED} of them and no more: {named!r}")
+with spoken() as o:
+    sh.say_frr_refused(["ip route 0.0.0.0/0 10.0.0.2"])
+said = o.getvalue()
+check("rollback 0" in said and "unread" in said,
+      f"with nothing unread, still the way out: {said!r}")
+ok("the half FRR's own words do not say")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -124,10 +124,15 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   isis         IS-IS settings on this interface
   linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
   mac-address  the MAC this interface answers to
+  mtr          ping every hop of the path, as a report
   mtu          MTU, on both the dataplane interface and its TAP
   no           remove a statement from this interface
+  ping         send echo requests and say what came back
   show         display information
   shutdown     take the interface administratively down
+  top          go to the top of the configuration
+  traceroute   the path to a host, one row per hop
+  up           go up one level, or <n> levels
   urpf         drop packets whose source does not route back this way
   vlan         VLAN tag, on a sub-interface
   vrf          the routing table this interface's addresses live in; 0 takes the interface back out of one
@@ -137,12 +142,20 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
 It used to offer the whole configuration tree - fifteen options, of which
 three were valid there. Offering the level above invites somebody to type
 `cgnat pool` inside an interface and find out afterwards what that meant. The
-sixteen it offers today are a different list: every one of them is valid
-inside an interface, because the interface became a first-class object.
+list it offers today is a different one: every statement in it is valid inside
+an interface, because the interface became a first-class object.
 
-An FRR block offers `exit` and `show` and nothing else. This VTY does not model
-FRR's statements, and offering some of them would be **a guess presented as a
-grammar**.
+Five of those rows are not statements at all. `top`, `up`, `ping`, `traceroute`
+and `mtr` are **words every configuration level owns**, and they are offered
+wherever they work - which is every level, blocks included
+([#400](https://github.com/andrediashexa/hexarouting/issues/400)). `top` and
+`up` are left out at the top of configuration mode, where there is nothing
+above to go to and the box refuses them: a `?` that offers a word the next
+keystroke refuses teaches the operator that the list is a guess.
+
+An FRR block offers `exit` and `show`, those five words, and nothing else. This
+VTY does not model FRR's statements, and offering some of them would be **a
+guess presented as a grammar**.
 
 Completion **ignores case** and always inserts the machine's spelling: `ten`,
 `TEN` and `TenGig` all complete to `TenGigabitEthernet0/8/0`. Demanding the
@@ -662,10 +675,15 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   isis         IS-IS settings on this interface
   linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
   mac-address  the MAC this interface answers to
+  mtr          ping every hop of the path, as a report
   mtu          MTU, on both the dataplane interface and its TAP
   no           remove a statement from this interface
+  ping         send echo requests and say what came back
   show         display information
   shutdown     take the interface administratively down
+  top          go to the top of the configuration
+  traceroute   the path to a host, one row per hop
+  up           go up one level, or <n> levels
   urpf         drop packets whose source does not route back this way
   vlan         VLAN tag, on a sub-interface
   vrf          the routing table this interface's addresses live in; 0 takes the interface back out of one
@@ -1629,6 +1647,127 @@ error: FRR accepted 1 statement(s) of this commit and did not keep them
 finds it, because a refusal is handed a statement with its position already
 stripped off - and position is the whole question for a static route
 ([#251](https://github.com/andrediashexa/hexarouting/issues/251)).
+
+## Moving inside the hierarchy: `top` and `up`
+
+`[edit router bgp 65000]` reads as JunOS to anybody who has ever met JunOS, and
+in JunOS `top` and `up` mean what they look like. This VTY means the same thing
+by them:
+
+```
+prisma# [edit] nat cgnat pool residential
+prisma# [edit cgnat pool residential] inside 100.64.0.0/10
+prisma# [edit cgnat pool residential] top
+prisma# [edit] router bgp 65000
+prisma# [edit router bgp 65000] address-family ipv4 unicast
+prisma# [edit ...r bgp 65000 / address-family ipv4 unicast] up
+prisma# [edit router bgp 65000] top
+prisma# [edit]
+```
+
+**Neither of them is `exit`.** The candidate survives, configuration mode
+survives, and the operator lands where they said — which is the whole
+difference between a navigation word and a way out. `exit` at the top of
+configuration mode leaves the mode; `top` and `up` never do.
+
+**A pool, an interface, an account, an SNMP user and an FRR block are one level
+each**, and they do not nest: a sub-mode is entered from the top of
+configuration mode, so a box is in one or the other and never in both.
+`Shell.config_depth()` counts them the same way, which is what lets these be
+one pair of words rather than four.
+
+**`up` writes the block's own `exit` into the candidate**, exactly as typing
+`exit` would. The routing section is a flat list and `block_paths()` decides
+which block a statement belongs to by reading it forward, so a block that was
+opened and never closed swallows whatever is typed next — the defect behind
+[#180](https://github.com/andrediashexa/hexarouting/issues/180). `router
+static` is the exception it already is everywhere else: FRR has no such block,
+so there is nothing to close.
+
+**Going up further than the tree goes is refused, not clamped**, and this is
+the one place this VTY deliberately does not behave like JunOS:
+
+```
+prisma# [edit router bgp 65000] up 2
+error: up 2: there are only 1 level(s) below the top here
+    'top' goes all the way up in one word
+```
+
+Leaving more levels than were asked for puts the operator somewhere they did
+not type, and the next statement lands there — the same class of surprise this
+issue is about. `top` is one word away and says it exactly. `top` at the top,
+by contrast, is **not** a refusal: it says "put me at the root", and a box
+already there has done what was asked.
+
+### Why they had to exist: the words a level owns
+
+Before [#400](https://github.com/andrediashexa/hexarouting/issues/400) neither
+word was a statement of this VTY, so both fell through to the passthrough that
+hands a line to FRR verbatim. `top` typed at `[edit router bgp 65000]` became a
+routing statement, `vtysh` refused the candidate at the next `commit`, and
+**every commit after that failed the same way** — on a box whose routing was
+fine. It was found on a production box, where an address had been typed twice
+over because the commit in between had been refused and read as a no-op.
+
+`ping`, `traceroute` and `mtr` were the same defect with a different word. They
+are answered in operational mode, they were dispatched there and nowhere else,
+so in configuration mode they went into the candidate as well.
+
+All five now live in **one place** — `Shell.owns_word()`, called at the head of
+`do_config`, `do_pool`, `do_user` and `do_snmp_user`. The alternative is four
+copies of two branches, and the copy that gets forgotten is the one in the mode
+somebody is standing in when they need it, which is exactly how this happened.
+They are offered by `?` wherever they work, out of `Shell.level_words()`, and
+`top` and `up` are left out at the top of configuration mode where the box
+refuses them: a `?` that offers a word the next keystroke refuses teaches the
+operator that the list is a guess.
+
+### What a refused commit now says
+
+FRR's own words are the first line and are unchanged — it says which statement
+it could not parse and nothing here says it better. What it does not say is how
+that statement got there, or how to get out:
+
+```
+prisma# [edit] commit
+routing validation failed: line 4: % Unknown command: top
+    these statements were handed to FRR unread, so a word that is not a
+    statement is one of them:
+      top
+    'rollback 0' discards the candidate and leaves the running configuration
+    alone; 'show configuration' marks every statement this VTY passed through
+    unread
+```
+
+The named set is the one the boundary marker marks — `unread_statements()`
+calls the same `block_paths()` and `statement_checked()` that `mark_routing()`
+does, so a refusal cannot name a different set from the one `show
+configuration` shows. It stops at five: a refusal that prints forty lines is
+one nobody reads to the end of, and the screen that shows every one of them
+already exists.
+
+The way out is the half that was missing. On the box this was filed from,
+`commit` had been refused three times before anybody thought of `rollback 0`.
+
+### Where it is measured
+
+`lab/vty.sh` drives a session on a running box that navigates with `top` and
+`up`, sets an MTU inside an interface, opens `router static` after a `top`,
+answers a probe, and then **commits**. The commit is the assertion: a candidate
+carrying one of these words is one `vtysh` refuses, so a lab that only read the
+candidate back would have passed before the fix as well. It also asserts the
+two refusals, and that a word FRR cannot read still fails the commit with the
+statement and `rollback 0` named.
+
+That lab is how the fix was found to be incomplete. The first pass gave the
+words to `do_config`, `do_pool`, `do_user` and `do_snmp_user` and missed a
+fifth path: `hierarchy_rewrite()` reads the inside of `router static` before
+`do_config` sees the line, and its pass-through list did not carry them - so
+`top` worked at every level except that one, which is the copy-per-level
+failure this issue is about, one layer further in. `test/test_prismash_units.py`
+now has a box for it as well, because a defect a lab found and no unit box
+holds is a defect that comes back the next time the list is edited.
+
 
 ## Static routes
 

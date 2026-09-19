@@ -2568,6 +2568,32 @@ def mark_routing(lines, ctx=()):
     return out, n
 
 
+#: How many unread statements a refusal names before it stops naming them.
+#:
+#: A refusal that prints forty lines is a refusal nobody reads to the end of,
+#: and the box already has a place that shows every one of them: `show
+#: configuration` marks them in place. Five is what fits on a console beside
+#: the verdict, FRR's own words and the way out.
+UNREAD_NAMED = 5
+
+
+def unread_statements(lines):
+    """
+    The statements of `lines` this VTY passed through without reading.
+
+    The same two functions `mark_routing` calls, in the same order, because the
+    question is the same question: a refusal that named a different set from
+    the one `show configuration` marks would send an operator looking at a
+    statement the marker says was checked.
+    """
+    out = []
+    for line, path in zip(lines, block_paths(list(lines))):
+        if path is None or statement_checked(line.strip(), path):
+            continue
+        out.append(line.strip())
+    return out
+
+
 def console_prose(text, indent="    "):
     """
     A message's OWN words, wrapped to the console by measurement.
@@ -5359,8 +5385,20 @@ class ConfirmPending:
 #: The blocks this product models itself, as opposed to the FRR blocks tracked
 #: in `frr_ctx`. They are modes rather than context entries, which is why they
 #: needed naming: two places have to know the same list, and before #221 only
-#: one of them did.
+#: one of them did. `config_depth` reads it as well: a sub-mode is a level, so
+#: `up` leaves one of these the same way it leaves an FRR block.
 BLOCK_MODES = ("pool", "user", "snmp-user")
+
+#: The words every configuration level owns, and what `?` says about each.
+#:
+#: They are not in `TREE` on purpose. `TREE` is walked per mode and per block,
+#: and these work at every level of configuration mode - so an entry in the
+#: tree would be an entry in one node, which is the shape of the defect #400
+#: was: a word that worked in the mode it was written into and nowhere else.
+LEVEL_WORDS = {
+    "top": "go to the top of the configuration",
+    "up": "go up one level, or <n> levels",
+}
 
 
 def is_pci_addr(name):
@@ -8085,6 +8123,7 @@ class Shell:
                     rc, out = self.frr.reload(target.routing, check_only=True)
                     if rc:
                         print(f"routing validation failed: {out}")
+                        self.say_frr_refused(target.routing)
                         ok = False
                 elif self.real_routing(target.routing):
                     # Routing the operator actually wrote, and nothing to
@@ -10524,7 +10563,17 @@ class Shell:
             return "no " + _frr_static(w[2:])
         if w[:1] == ["ip"] or w[:1] == ["ipv6"]:
             return line          # FRR's own spelling, typed inside the block
-        if w[0] in ("exit", "quit", "end", "show", "commit", "rollback"):
+        # The words that are not this block's business: the ways out, the
+        # readers, and the words every configuration level owns. They are
+        # handed BACK so `do_config` dispatches them through `owns_word`.
+        #
+        # `top`, `up` and the probes were missed here on the first pass of
+        # #400 and `lab/vty.sh` caught it: four dispatchers had been given the
+        # words and this fifth path refused them, so `top` worked at every
+        # level except inside `router static` - which is the copy-per-level
+        # failure that issue is about, one layer further in.
+        if (w[0] in ("exit", "quit", "end", "show", "commit", "rollback")
+                or w[0] in LEVEL_WORDS or w[0] in PROBE_TOOLS):
             return line
         # The word typed goes into the PROSE and not into the verdict: it
         # is whatever the operator typed, so a verdict carrying it has no
@@ -10553,6 +10602,21 @@ class Shell:
             return True
         if w[0] == "show":
             self.show_or_pass(line)
+            return True
+        # THE WORDS THIS VTY OWNS, ahead of the passthrough that hands
+        # anything else to FRR (#400). `top` and `up` are navigation, the
+        # probes are operational commands this box already answers in
+        # operational mode - and every one of them was being staged for FRR
+        # and refused at the next commit, silently, until the candidate could
+        # not be committed at all.
+        #
+        # The probes carry the argument the operational-mode dispatcher makes
+        # at its own call site (#395): FRR has a `ping` and a `traceroute` of
+        # its own, they run in FRR's world and answer in FRR's words, so a box
+        # that let them through would answer one question two ways. In
+        # configuration mode it was worse than that - nothing dispatched them
+        # at all, so they went into the candidate.
+        if self.owns_word(w):
             return True
         if w[0] == "exit-address-family":
             # FRR's own spelling, and the one an operator arriving from
@@ -11092,9 +11156,147 @@ class Shell:
             self.frr_ctx.append(line)
         return True
 
+    def owns_word(self, w):
+        """
+        The words a configuration level owns, wherever the operator is
+        standing. True when it handled the line.
+
+        ONE PLACE, called by every sub-mode as well as by `do_config`. The
+        alternative is four copies of two branches, and the copy that gets
+        forgotten is the one in the mode somebody is standing in when they
+        need it - which is exactly how #400 happened: the probes were
+        dispatched in operational mode and in no other.
+        """
+        if w[0] in ("top", "up"):
+            self.do_navigate(w)
+            return True
+        if w[0] in PROBE_TOOLS:
+            self.do_probe(w[0], w[1:])
+            return True
+        return False
+
+    def level_words(self):
+        """
+        What `?` offers for the words a level owns, at THIS level.
+
+        `top` and `up` are left out at the top of configuration mode, where
+        they are refused - a `?` that offers a word the next keystroke refuses
+        teaches the operator that the list is a guess, and the list is the only
+        documentation an operator reads while typing.
+
+        The probes are offered at every level, including the top, because they
+        are answered at every level. Their descriptions come FROM the tree that
+        already carries them, so the two readings of `ping` cannot disagree.
+        """
+        words = dict(LEVEL_WORDS) if self.config_depth() else {}
+        for tool in PROBE_TOOLS:
+            words[tool] = TREE["operational"][tool][0]
+        return words
+
+    def config_depth(self):
+        """
+        How many levels below `[edit]` the operator is standing.
+
+        An FRR block is a level and so is a sub-mode - a pool, an account, an
+        SNMP user - and they do not nest: a sub-mode is entered from the top,
+        so a box is in one or the other and never in both. Counting them the
+        same way is what lets `up` and `top` be one pair of words rather than
+        four.
+
+        `BLOCK_MODES` is the list, and it is the list `?` already reads to know
+        where `show this` works. A second copy of it here is how this would
+        answer 1 inside an SNMP user that spells its mode `snmp-user` and 0
+        inside the same user spelled any other way - a `top` that silently
+        stayed put.
+        """
+        return len(self.frr_ctx) + (1 if self.mode in BLOCK_MODES else 0)
+
+    def leave_one_level(self):
+        """
+        Leave one level, writing the block's own `exit` where FRR needs it.
+
+        THE `exit` IS NOT COSMETIC. The candidate's routing section is a flat
+        list, and `block_paths` decides which block a statement belongs to by
+        reading that list forward - so a block that was opened and never
+        closed swallows whatever is typed next, and the statement goes to FRR
+        INSIDE the block just left (#180). `router static` is the exception it
+        already is everywhere else: FRR has no such block, so there is nothing
+        to close.
+        """
+        if self.mode in BLOCK_MODES:
+            self.mode = "config"
+            self.pool = None
+            self.user = None
+            self.snmp_user = None
+            return
+        ctx = self.frr_ctx.pop()
+        if ctx != STATIC_BLOCK:
+            self.candidate.routing.append("exit")
+
+    def do_navigate(self, w):
+        """
+        `top` and `up [n]`: move in the hierarchy without leaving it.
+
+        NEITHER OF THESE IS `exit`. The candidate survives, configuration mode
+        survives, and the operator lands where they said - which is the whole
+        difference between a navigation word and a way out.
+
+        They exist because the prompt invites them. `[edit router bgp 65000]`
+        is read as JunOS by anybody who has met JunOS, and in JunOS these two
+        words mean exactly this. Before #400 they were not statements here, so
+        they fell into the passthrough, were staged for FRR, and the next
+        commit was refused by `vtysh` - on a box where an address was never
+        applied twice over because of it.
+        """
+        depth = self.config_depth()
+        if w[0] == "top":
+            # Silent when there is nothing to leave. `top` says "put me at the
+            # root", and a box that is already there has done what was asked.
+            while self.config_depth():
+                self.leave_one_level()
+            return
+        if len(w) > 2:
+            self.err("usage: up [<levels>]")
+            return
+        levels = 1
+        if len(w) == 2:
+            if not w[1].isdigit() or w[1] == "0":
+                # Their word goes in the PROSE and not the verdict, which is
+                # the rule #363 states: a verdict carrying a word the operator
+                # chose has no width at all, and this one is 36 columns
+                # without it and says the same thing.
+                self.err_prose("up: a number of levels, 1 or more",
+                               f"'{w[1]}' is not one of those; 'up' on its "
+                               "own is one level")
+                return
+            levels = int(w[1])
+        if depth == 0:
+            self.err_prose("up: already at the top of the configuration",
+                           "'exit' leaves configuration mode; this word only "
+                           "moves inside it")
+            return
+        if levels > depth:
+            # REFUSED RATHER THAN CLAMPED, and this is the one place this VTY
+            # will not behave like JunOS. Leaving more levels than were asked
+            # for puts the operator somewhere they did not type, and the next
+            # statement lands there - which is the same class of surprise this
+            # issue is about. `top` is one word away and says it exactly.
+            # ONE TEMPLATE, "level(s)" and all: this VTY's messages are read
+            # back out of the source by test/test_wiki_screens.py, so a
+            # verdict composed out of two conditional halves is a verdict a
+            # page can quote and nothing can check the quotation of.
+            self.err_prose(f"up {levels}: there are only {depth} level(s) "
+                           "below the top here",
+                           "'top' goes all the way up in one word")
+            return
+        for _ in range(levels):
+            self.leave_one_level()
+
     def do_snmp_user(self, line):
         w = line.split()
         u = self.snmp_user
+        if self.owns_word(w):
+            return True
         # "show this" is most useful exactly here, and each sub-mode
         # dispatches its own lines - so without this it is refused in the one
         # place it exists for.
@@ -11120,6 +11322,8 @@ class Shell:
     def do_user(self, line):
         w = line.split()
         u = self.user
+        if self.owns_word(w):
+            return True
         # "show this" is most useful exactly here, and each sub-mode
         # dispatches its own lines - so without this it is refused in the one
         # place it exists for.
@@ -11191,9 +11395,43 @@ class Shell:
         if why:
             raise ValueError(why)
 
+    def say_frr_refused(self, lines):
+        """
+        After FRR refuses the candidate: where to look, and the way out.
+
+        FRR's own words go above this, unchanged - it says which line it could
+        not parse and nothing here can say it better. What it does NOT say is
+        how the line got there, and that is the whole of #400: a word this VTY
+        did not recognise was staged for FRR verbatim, so `top` became a
+        routing statement, and the operator read "% Unknown command: top"
+        about a word they typed to MOVE rather than to configure. Every commit
+        after that failed the same way, on a box whose routing was fine.
+
+        So the refusal names the statements this VTY passed through unread -
+        the set a stray word always lands in - and then says the way out. The
+        way out is the part that was missing: `commit` had already refused
+        three times before anybody thought of it on the box this was filed
+        from.
+        """
+        unread = unread_statements(lines)
+        if unread:
+            print_prose("these statements were handed to FRR unread, so a "
+                        "word that is not a statement is one of them:")
+            for stmt in unread[:UNREAD_NAMED]:
+                # The statement as it stands, never wrapped: it is typed back
+                # in or grepped for, which is the rule #252 states.
+                print(f"      {stmt}")
+            if len(unread) > UNREAD_NAMED:
+                print(f"      ... and {len(unread) - UNREAD_NAMED} more")
+        print_prose("'rollback 0' discards the candidate and leaves the "
+                    "running configuration alone; 'show configuration' marks "
+                    "every statement this VTY passed through unread")
+
     def do_pool(self, line):
         w = line.split()
         p = self.pool
+        if self.owns_word(w):
+            return True
         if w[0] in ("exit", "end"):
             self.mode = "config"
             self.pool = None
@@ -14847,6 +15085,15 @@ class Shell:
         # read a block back before committing (#221).
         if words[:1] == ["show"] and (self.frr_ctx or self.mode in BLOCK_MODES):
             node, hint = walk_from(SHOW, words[1:])
+        elif (self.mode != "operational" and words[:1]
+                and words[0] in PROBE_TOOLS):
+            # A probe is answered in configuration mode too (#400), so what `?`
+            # offers after the word has to be the same thing it offers outside
+            # - the ceiling on the count, the host hint. Walked from the
+            # operational tree rather than copied into this branch, because a
+            # copy is what would go out of date the next time a probe grows an
+            # option.
+            node, hint = walk_from(TREE["operational"], words)
         elif self.frr_ctx:
             grammar = self.block_grammar(words)
             if grammar is not None:
@@ -14863,6 +15110,7 @@ class Shell:
                     # one, where `show this` is the only way to read back what
                     # has been typed so far.
                     opts["show"] = "display information"
+                    opts.update(self.level_words())
                 return ({k: v for k, v in opts.items() if _starts(k, prefix)},
                         None, prefix)
 
@@ -14887,6 +15135,11 @@ class Shell:
         if not words and self.mode in BLOCK_MODES:
             if _starts("show", prefix):
                 opts["show"] = "display information"
+        # `top`, `up` and the probes, at whatever level this is. The block
+        # branch above returns before reaching here, so both paths say it.
+        if not words and self.mode != "operational":
+            opts.update({k: v for k, v in self.level_words().items()
+                         if _starts(k, prefix)})
         # A node can offer keywords AND take a name - `show interface` offers
         # `terse` and every interface on the box. Before this, a node with a
         # subtree discarded the hint, so adding `terse` to `show interface`
