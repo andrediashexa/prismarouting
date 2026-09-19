@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.98.0 - the gate takes the upgrade an operator takes
+
+[#398](https://github.com/andrediashexa/hexarouting/issues/398).
+
+### Added
+
 * **The release gate upgrades a box running the previous release to the one
   being published** ([#398](https://github.com/andrediashexa/hexarouting/issues/398)),
   and refuses the release if that box cannot be upgraded - or if the attempt
