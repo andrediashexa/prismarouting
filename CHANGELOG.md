@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.97.0 - the upgrade lab measures something again
+
+[#291](https://github.com/andrediashexa/hexarouting/issues/291), [#202](https://github.com/andrediashexa/hexarouting/issues/202), [#398](https://github.com/andrediashexa/hexarouting/issues/398).
+
+### Added
+
 * **The gap the upgrade lab's own default exposes is filed rather than left
   in a comment** ([#398](https://github.com/andrediashexa/hexarouting/issues/398)). The
   lab measures an upgrade from ONE FIXED TAG, which is what makes its
