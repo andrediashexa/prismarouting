@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.99.0 - the previous release is the one below this tag
+
+[#398](https://github.com/andrediashexa/hexarouting/issues/398), [#399](https://github.com/andrediashexa/hexarouting/issues/399).
+
+### Fixed
+
 * **The gate's new upgrade step took the newest release as "the previous
   one"** ([#398](https://github.com/andrediashexa/hexarouting/issues/398)). It read
   `--sort=-v:refname | grep -v $TAG | head -1`, which is the highest tag that
