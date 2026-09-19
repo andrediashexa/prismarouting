@@ -201,7 +201,20 @@ impossible rather than merely detected. It then refuses:
 * a tag on a tree whose `VERSION` disagrees with it — a `v0.27.0` tag on a
   `0.26.0` tree produces an image called `0.26.0` published under `0.27.0`;
 * any image whose name carries `-dirty` or `-unverified`;
-* a medium that builds and does not boot, or boots and does not report ready.
+* a medium that builds and does not boot, or boots and does not report ready;
+* **a box running the previous release that cannot be upgraded to this one**
+  ([#398](https://github.com/andrediashexa/hexarouting/issues/398)), and a run that
+  could not measure the attempt at all - NOT MEASURED refuses the release
+  here, because a gate that shrugs is a gate that publishes an upgrade nobody
+  read.
+
+The previous tag is derived, not written down. `lab/upgrade.sh` keeps its own
+fixed old side, which is what makes its readings comparable between releases;
+the gate runs the same lab a second time against whatever the last published
+release happens to be, which is the upgrade an operator actually performs. It
+costs about three minutes on top of a gate that takes twenty-five, and it
+names the pair it measured, because a green gate that does not say which two
+versions it compared is a claim nobody can check.
 
 `RELEASE_GATE_CHECK_ONLY=1` runs the checks and builds nothing, so they can be
 exercised without a 321 MB image — a check that can only be reached by building

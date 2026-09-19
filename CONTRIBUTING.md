@@ -422,8 +422,18 @@ When it happens it **MUST** produce all six of:
    home in the file; neither blocks the release.
 
    `make release-gate` is the whole procedure — clone at the tag, build the
-   plugin, build the medium, boot it, install it to a disk, boot the disk and
-   build the upgrade artifact — and it **MUST** be what cuts a release.
+   plugin, build the medium, boot it, install it to a disk, boot the disk,
+   build the upgrade artifact, and **upgrade a box running the previous
+   release to this one** — and it **MUST** be what cuts a release.
+
+   That last step is the one an operator performs
+   ([#398](https://github.com/andrediashexa/hexarouting/issues/398)). The previous tag
+   is derived rather than written down, because a constant ages: the fixed
+   tag `lab/upgrade.sh` carries for its own comparable readings sat at a
+   pre-rename version until a full suite run noticed the lab had reported
+   NOT MEASURED on every run for eleven releases. NOT MEASURED refuses the
+   release here for the same reason a failure does — a gate that shrugs is a
+   gate that publishes an upgrade nobody read.
    Done by hand it goes wrong: three times in one evening, each caught by a
    rule rather than by attention. See `TESTING.md`.
 
