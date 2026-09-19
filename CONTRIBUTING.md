@@ -350,6 +350,18 @@ When it happens it **MUST** produce all six of:
    NOT** be generated from the commit list: a list of commits describes the
    work, and what a reader needs is what changed for them.
 
+   **The release's TITLE is its `CHANGELOG` heading, version and all** -
+   `0.101.0 - the words a configuration level owns`, the shape every release
+   published so far carries. A title may say MORE than the heading (0.2.0's
+   "(superseded: VTY does not start)" is a fact about that release the
+   CHANGELOG does not carry); it may not say less, and it may not drop the
+   version. `tools/release-titles.sh` reads every published title and refuses
+   both, and `test/test_release_titles.sh` drives it over the shapes it must
+   refuse. The gate cannot do this one: at cut time the release is not
+   published yet, so the title is typed at the one moment nothing else is
+   looking - which is how 0.101.0 went out as the sentence alone
+   ([#402](https://github.com/andrediashexa/hexarouting/issues/402)).
+
    **And the upgrade artifact beside it, with its own `sha256`.** The medium
    is a route only somebody with an empty disk can take: installing it erases
    the disk, and on a box already in service that is a year of connection

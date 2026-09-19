@@ -469,6 +469,17 @@ fifth, `router static`, and it was `lab/vty.sh` that said so rather than any
 unit box: the poisoning only appears at the next commit, which is the argument
 for the lab assertion the issue asked for.
 
+**And one correction in flight, which is neither a phase nor a decision**
+([#401](https://github.com/andrediashexa/hexarouting/issues/401)). Several
+documents, the installer's sizing screen and the boot self-test say this box
+**keeps** connection records for the year the Marco Civil asks for. It does
+not: it exports them, and `/var/log/prisma-routing` holds the configuration
+trail and the exporter's spill and nothing else. The maintainer has decided it stays
+that way: this box is not to store records on itself, and the export is the
+mechanism. So the product is right and the documents around it are wrong, which is the
+dangerous direction: an operator sizing that volume from "one year of records"
+is answering a question this box does not ask.
+
 A plan that says this out loud is worth more than one that reads as if work
 were queued: what this product needs next is a box with a real NIC in it and a
 maintainer's answer to five questions, not another phase.
@@ -2603,6 +2614,20 @@ eighty already published, four of which were truncations announcing half of
 what the release fixed. `tools/release-titles.sh` reads them all; a title that
 extends the heading is right and one that is shorter is the defect; the three
 that still differed are corrected on their pages and 83 of 83 agree.
+
+**And it compared the sentence and never the shape**
+([#402](https://github.com/andrediashexa/hexarouting/issues/402)). 0.101.0 was
+published as the sentence alone, with no version in front of it, where all 104
+before it carry one - and that check passed it, because the normaliser strips
+the version before comparing, so a title with none is indistinguishable from
+one that has it. The gate could not have caught it either: it checks the title
+of the release it is cutting, and at cut time that release is not published
+yet, so the title is typed at the one moment nothing is looking. It now refuses
+a title that does not begin with its version in one of the three shapes the 104
+already use, and `test/test_release_titles.sh` drives every refusal over a
+table of releases instead of GitHub - because until then the only way to watch
+one fire was to publish a release with the defect in it, which is how this one
+was found.
 
 **The installer's management-network default is `none`**
 ([#394](https://github.com/andrediashexa/hexarouting/issues/394)) - shipped
