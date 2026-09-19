@@ -79,6 +79,33 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A published release title carrying no version passed the check written to
+  catch exactly that.** `v0.101.0` went out titled *the words a configuration
+  level owns*, where all 104 releases published before it carry the version as
+  well. `tools/release-titles.sh` read it and said "105 published release(s)
+  carry the CHANGELOG heading as their title": it normalises both sides before
+  comparing and one of the things it strips is the version, so a title with
+  none is indistinguishable from one that has it. It compared the sentence and
+  never the shape, and the maintainer found it on the releases page.
+
+  The gate could not have caught it either. It checks the title of the release
+  it is cutting and only when that release is already published - at cut time
+  it is not, so it prints "no published release yet" and moves on. The title is
+  typed at publish time, which is the one moment nothing was looking.
+
+  A title that does not begin with its version, in one of the three shapes the
+  104 already use, is now refused with the title quoted and the shape named.
+  The check that was already there is kept: shorter than the heading is still a
+  defect, and a title that EXTENDS it is still right.
+
+  **And the reader can be driven now.** It needs `gh` and the network, so it is
+  not in `make test`, and the only way to watch one of its refusals fire was to
+  publish a release with the defect in it - which is how this one was found.
+  `PRISMA_RELEASE_TITLES` hands it a table of releases instead of GitHub, and
+  `test/test_release_titles.sh` drives every refusal over one, the shipped
+  shape included. `CONTRIBUTING.md` section 5 now states the rule the 104
+  releases were following without it being written down anywhere.
+
 ## 0.101.0 - the words a configuration level owns
 
 [#400](https://github.com/andrediashexa/hexarouting/issues/400).

@@ -101,3 +101,4 @@ python3 test/test_console_width.py
 sh test/test_plugin_says.sh
 sh test/test_plugin_says_units.sh
 python3 test/test_plugin_cli_says.py
+sh test/test_release_titles.sh

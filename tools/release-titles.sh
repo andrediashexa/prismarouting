@@ -18,17 +18,32 @@
 # It needs the network and `gh`, so it is not in `make test`, for the reason
 # the wiki and roadmap checks are not: a suite that cannot run offline is a
 # suite that stops being run.
+#
+# PRISMA_RELEASE_TITLES names a file of "<tag>\t<title>" rows to read INSTEAD
+# of asking GitHub, and that is what test/test_release_titles.sh drives this
+# over. Without it, the only way to watch a refusal fire was to publish a
+# release with the defect - which is how the one this file did not catch got
+# published (#402): a title with no version normalises to the same string as
+# one that has it, so the check compared the sentence and never the shape.
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-command -v gh >/dev/null 2>&1 || {
-  echo "error: gh is not installed, so no release can be read." >&2
-  exit 2
-}
-gh release list -L 300 --json tagName,name -q '.[] | .tagName + "\t" + .name' \
-  > /tmp/release-titles.tsv || {
-  echo "error: gh could not list the releases." >&2
-  exit 2
-}
+if [ -n "${PRISMA_RELEASE_TITLES:-}" ]; then
+  [ -r "$PRISMA_RELEASE_TITLES" ] || {
+    echo "error: $PRISMA_RELEASE_TITLES cannot be read." >&2
+    exit 2
+  }
+  cp "$PRISMA_RELEASE_TITLES" /tmp/release-titles.tsv
+else
+  command -v gh >/dev/null 2>&1 || {
+    echo "error: gh is not installed, so no release can be read." >&2
+    exit 2
+  }
+  gh release list -L 300 --json tagName,name -q '.[] | .tagName + "\t" + .name' \
+    > /tmp/release-titles.tsv || {
+    echo "error: gh could not list the releases." >&2
+    exit 2
+  }
+fi
 diff=0
 total=0
 while IFS="$(printf '\t')" read -r tag name; do
@@ -43,6 +58,26 @@ while IFS="$(printf '\t')" read -r tag name; do
   norm=$(printf '%s' "$name" \
     | sed -e 's/^HexaRouting[[:space:]]*//' -e 's/^Prisma Routing[[:space:]]*//' \
           -e "s/^v\{0,1\}$ver[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*//")
+  # AND IT CARRIES THE VERSION, which is the other half of the convention and
+  # was checked by nothing. Every one of the 104 releases published before
+  # 0.101.0 begins with the version - some with a `v`, some after the product
+  # name - and 0.101.0 was published as the sentence alone. This loop passed
+  # it, because the normaliser above STRIPS the version before comparing: a
+  # title with no version at all normalises to exactly the same string as one
+  # that has it, so the shape was invisible to the only reader that looks at
+  # published titles. The maintainer saw it on the releases page.
+  #
+  # Checked on the raw name and not on `norm`, for that reason.
+  case "$name" in
+    "$ver"*|"v$ver"*|"HexaRouting $ver"*|"HexaRouting v$ver"*|\
+    "Prisma Routing $ver"*|"Prisma Routing v$ver"*) ;;
+    *)
+      diff=$((diff + 1))
+      echo "$ver"
+      echo "  published: $name"
+      echo "  and it does not begin with the version, as every other does"
+      continue ;;
+  esac
   # A PUBLISHED TITLE THAT EXTENDS THE HEADING IS RIGHT, and 0.2.0 is why:
   # it reads "foundations (superseded: VTY does not start)", which is a fact
   # about that release the CHANGELOG entry does not carry and a reader landing
@@ -66,6 +101,6 @@ else
   echo "$diff of $total published release(s) do not carry the CHANGELOG heading."
   echo "The published page is what somebody who does not clone this repository"
   echo "reads, and a shorter title announces less than the release fixed."
-  echo "Fix one with:  gh release edit vX.Y.Z --title '<heading>'"
+  echo "Fix one with:  gh release edit vX.Y.Z --title 'X.Y.Z - <heading>'"
   exit 1
 fi
