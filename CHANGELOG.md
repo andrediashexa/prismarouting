@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.100.0 - the plan says where it stands
+
+[#398](https://github.com/andrediashexa/hexarouting/issues/398), [#399](https://github.com/andrediashexa/hexarouting/issues/399).
+
+### Fixed
+
 * **The roadmap's plan did not say where it had got to.** *The plan for what
   remains* opens eight phases deep, and a reader had to get through all of
   them to learn that phases 1 to 6 and 8 are delivered and that what is left of
