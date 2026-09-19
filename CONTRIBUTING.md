@@ -126,6 +126,14 @@ it is *no*, and why.
   documented. An edit drafted there **reaches nobody until it is published** -
   `sh tools/wiki-status.sh` lists what is drafted and still unpublished, and
   `sh tools/wiki-push.sh <file>` publishes one page.
+* **Publish, pull and COMMIT the pull before the tag.** The gate reads
+  `tools/wiki-status.sh`, which compares the mirror against the commit
+  `wiki/.pulled` records - so a page edited and published while the pull is
+  still uncommitted leaves the gate refusing the release for shipping behind
+  its own wiki. It is a correct refusal and it arrives late: after the version
+  bump, the tag and twenty minutes of building. Publishing from the branch,
+  pulling with `WIKI_PULL_DISCARD=1` and committing what comes back is one
+  step at the end of the work, and it costs nothing there.
 * **Publish before you pull, never after.** `tools/wiki-push.sh` refuses to
   overwrite a page that changed after the last pull, and that guard is per
   document: it does not need a fresh pull to work. Other people write the wiki
