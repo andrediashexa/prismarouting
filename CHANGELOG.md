@@ -75,6 +75,15 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+### Fixed
+
+## 0.98.0 - the gate takes the upgrade an operator takes
+
+[#398](https://github.com/andrediashexa/hexarouting/issues/398),
+[#291](https://github.com/andrediashexa/hexarouting/issues/291).
+
 ### Fixed
 
 * **The upgrade lab built both releases' plugins with the same version
@@ -98,12 +107,6 @@ version has a chance of seeing it.
   and the new side keeps the host's. Measured on the pair the gate refused:
   `v0.97.0 is fe43098ae5f6b157, this tree is 1eeee00947c34cfa`, and the box's
   stamp moves with it.
-
-### Added
-
-## 0.98.0 - the gate takes the upgrade an operator takes
-
-[#398](https://github.com/andrediashexa/hexarouting/issues/398).
 
 ### Added
 
@@ -134,8 +137,6 @@ version has a chance of seeing it.
   does not say which two versions it compared is a claim nobody can check.
 
   It costs about three minutes on a gate that takes twenty-five.
-
-### Fixed
 
 ## 0.97.0 - the upgrade lab measures something again
 
