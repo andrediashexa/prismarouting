@@ -395,6 +395,64 @@ prisma> show hardware
   installed with.
 ```
 
+### A card the box has and the dataplane has not
+
+The rule above is in the **future** on purpose — the dataplane claims its cards
+when it starts — and the tense was not enough
+([#405](https://github.com/andrediashexa/hexarouting/issues/405)). A second NIC
+went into a running box; this screen said *"The dataplane claims all 1"*, and
+the VTY then said *"interface ens19: this box has no such interface"*. Both
+sentences were true and the pair of them is not readable.
+
+So the screen names the cards that are **not on the dataplane yet**, under the
+rule, and says what hands them over:
+
+```
+  The dataplane does not hold ens19 yet: a card is claimed when the dataplane
+  starts, and the cards it claims are computed on that boot.
+  Until this box is rebooted the dataplane cannot be given one: it is started
+  with an allowlist naming the cards it had at boot, so a card added since is
+  outside the process entirely.
+  'system reboot' does it, and says what it costs first.
+```
+
+**There is no live path, and that is a decision rather than an omission.** The
+tuner writes one `dev` stanza per claimed card into `startup.conf` and VPP is
+started with an EAL allowlist naming exactly those, so a card that appeared
+afterwards is not merely unclaimed — it is outside the process, and nothing the
+VTY can send reaches it. Taking it in means restarting the dataplane, which
+stops forwarding for every subscriber on the box.
+[#336](https://github.com/andrediashexa/hexarouting/issues/336) decided that
+binding happens at boot and only at boot, and that decision holds here: a box
+that moved a card to a userspace driver by itself, on a timer, would be a box
+that can lose the card it is reached over while nobody is watching.
+
+The refusal at the prompt says the same thing rather than denying the card
+exists:
+
+```
+error: interface ens19: the dataplane does not hold this card
+    the box has it and Linux still does; the dataplane claims a card when it
+    starts, and the cards it claims are computed on that boot
+    'show hardware' lists it, and 'system reboot' is what hands it over
+```
+
+and the boot self-test says it too, as a **warning** — the box forwards, its
+configuration is sound, and what is wrong is that a card somebody installed is
+doing nothing:
+
+```
+  [warn] a card this box has is not on the dataplane
+         ens19
+         the dataplane claims its cards when it starts, and it is
+         started with a list naming the ones it had then - so a
+         card added since is outside it until this box reboots.
+         'show hardware' lists it; 'system reboot' hands it over.
+```
+
+Three screens, one sentence, because an operator reads whichever one they were
+already looking at.
+
 Every value is read from a file, through a seam that a test can point somewhere
 else: `Shell.SYS_CLASS_NET` and `Shell.PROC_NET_ROUTE`, the way
 `Shell.STARTUP_CONF`, `Shell.TUNE_ENV`, `Shell.PCI_DEVICES` and

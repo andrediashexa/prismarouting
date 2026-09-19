@@ -803,6 +803,31 @@ with tempfile.TemporaryDirectory() as tmp:
           f"and does not say where the address goes, which is the whole of "
           f"what the operator loses if it is wrong: {joined!r}")
 
+print("\n=== a card the dataplane has not taken yet is named (#405) ===")
+# The maintainer put a second NIC in a running box, read "The dataplane claims
+# all 1" on this screen, and was then told by the VTY that the box has no such
+# interface. Both sentences were true and the pair is unreadable: "claims" is
+# the rule, the card is not claimed yet, and nothing said when it would be.
+#
+# Mutation shown red: `held is None` treated as "holds nothing", which turns a
+# dataplane that could not be asked into a box waiting for a reboot - two
+# different machines, and only one of them has anything to do.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, cards=("ens18", "ens19", "lo"))
+    said = " ".join(sh.waiting_note(sh.host_nics(), ["ens18"]))
+    check("ens19" in said and "ens18" not in said,
+          f"the card the dataplane has not got, and only that one: {said!r}")
+    check("reboot" in said,
+          f"and what hands it over: {said!r}")
+    check("allowlist" in said or "list naming the cards" in said,
+          f"and why nothing else can: {said!r}")
+    check(sh.waiting_note(sh.host_nics(), ["ens18", "ens19"]) == [],
+          "a box with every card claimed says nothing")
+    check(sh.waiting_note(sh.host_nics(), None) == [],
+          "and a dataplane that could not be asked says nothing either - "
+          "that is a different box from one holding no card")
+    check(sh.waiting_note([], []) == [], "no cards, nothing to say")
+
 print("\n=== an override says it was named, not chosen ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, tune="PRISMA_DATAPLANE_IF=enp2s0\n")

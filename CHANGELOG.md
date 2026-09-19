@@ -79,6 +79,35 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A NIC added after boot was invisible, and three screens said something
+  untrue about it.** The maintainer put a second card in a running box.
+  `show hardware` listed it and said *"The dataplane claims all 1"*; the VTY
+  answered `interface ens19` with *"this box has no such interface"*; the boot
+  self-test said nothing. Both sentences were true - "claims" is the rule and
+  the card is genuinely not on the dataplane - and the pair of them is not
+  readable, because nothing said **when** the card would be taken.
+
+  It is taken at the next boot. The tuner computes the `dpdk` stanza from the
+  hardware on every boot, and VPP is started with an EAL allowlist naming
+  exactly the cards in it - so a card that arrived afterwards is not merely
+  unclaimed, it is outside the process, and nothing the VTY can send reaches
+  it. There is no live path and that is
+  [#336](https://github.com/andrediashexa/hexarouting/issues/336)'s decision
+  rather than an omission: taking a card in means restarting the dataplane,
+  which stops forwarding for every subscriber on the box, and a box that did
+  that to itself on a timer could lose the card it is reached over while
+  nobody is watching.
+
+  So all three screens say the same thing now. `show hardware` names the cards
+  the dataplane does not hold yet, under the rule, and says `system reboot` is
+  what hands them over. The refusal at the prompt says the dataplane does not
+  hold the card rather than that the box has not got it - a card the operator
+  is looking at in `show hardware` two commands earlier. The boot self-test
+  warns, on the screen that says which cards the box took, because a card
+  missing from that list with no explanation reads as one the box failed to
+  take. It is a warning and not a failure: the box forwards and its
+  configuration is sound.
+
 ## 0.105.0 - the VTY says which names create something
 
 [#406](https://github.com/andrediashexa/hexarouting/issues/406).
