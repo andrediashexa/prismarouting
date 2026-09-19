@@ -6874,11 +6874,27 @@ class Shell:
         it is an ordinary statement: `show configuration` prints it, `save`
         writes it and `linux-name <other>` overrides it.
 
-        FOR CARDS WITH A BLOCK, and not every interface whose name Linux
-        could take. A card's name is free in Linux precisely because the
-        card left Linux for the dataplane; a pg, a host interface or a
-        loopback has no such name to put back, and the labs that hold a
-        loopback without a pair say so. `no interface <card>` is refused -
+        AND FOR LOOPBACKS, which is #404 and reverses half of the paragraph
+        below. A loopback exists to carry the address a router is KNOWN by -
+        the BGP router-id, the iBGP endpoint, the address that stays up when a
+        port does not - and every one of those is FRR's job. FRR sees only
+        what Linux has. So the one interface whose whole purpose is to be
+        reachable by the routing daemons was the one they could not see:
+        measured on the maintainer's box, `interface loop0 / ipv4 address
+        10.0.0.9/32` committed cleanly, the dataplane had the address, `show
+        interface` showed it, and `vtysh` called loop0 a *pseudo interface* -
+        no index, no flags, nothing to send a packet out of.
+
+        Its name is free in Linux for a different reason than a card's, and
+        that is why the paragraph below did not cover it: a card's name is
+        free because the card LEFT Linux, while `loop0` is a name VPP invents
+        for an interface Linux never had. Linux's own loopback is `lo`. Either
+        way the name is there to be taken.
+
+        FOR CARDS AND LOOPBACKS WITH A BLOCK, and not every interface whose
+        name Linux could take. A card's name is free in Linux precisely
+        because the card left Linux for the dataplane; a pg or a host
+        interface has no such name to put back. `no interface <card>` is refused -
         a physical port is not something a configuration removes - and `no
         linux-name` on a card takes an OVERRIDE back: the default returns
         here at the next apply, and the prompt says so as it is typed. A
@@ -6893,7 +6909,13 @@ class Shell:
         expecting FRR to see the port.
         """
         blocks = target.interface_names() | set(target.frr_interface_names())
-        for card in self.defaulted_cards():
+        # The loopbacks come from the TARGET and not from the dataplane, which
+        # is the one difference from a card: naming a loopback is what creates
+        # it, so at this point in the apply it does not exist yet and a read
+        # of the box would default nothing on the commit that made it.
+        defaulted = self.defaulted_cards() | {
+            n for n in target.loopbacks if not linux_ifname_error(n)}
+        for card in defaulted:
             if card in blocks and card not in target.linux_names:
                 target.linux_names[card] = card
 
@@ -10907,20 +10929,30 @@ class Shell:
             # Typed for the first it is right; typed for the second it does
             # nothing, silently, and there is no statement that unpairs a
             # card with a block - `no interface <card>` is refused. Said
-            # here, where the operator is reading (#389). A loopback, a
-            # sub-interface or a host interface gets no default, so on one
-            # of those this does unpair, and nothing is said: a warning
-            # there would be false. Asked of the dataplane, and a dataplane
-            # that cannot be asked defaults nothing at apply either.
-            if iface in self.defaulted_cards():
+            # here, where the operator is reading (#389). A sub-interface or
+            # a host interface gets no default, so on one of those this does
+            # unpair, and nothing is said: a warning there would be false.
+            # Asked of the dataplane, and a dataplane that cannot be asked
+            # defaults nothing at apply either.
+            #
+            # A LOOPBACK IS IN THIS SET SINCE #404, and it is in it from the
+            # candidate rather than from the box: naming a loopback creates
+            # it, so one typed a moment ago is not on the dataplane to be
+            # asked about, and the operator taking an override back is
+            # standing in the block that made it.
+            if (iface in self.defaulted_cards()
+                    or (iface in self.candidate.loopbacks
+                        and not linux_ifname_error(iface))):
+                what = ("a loopback" if iface in self.candidate.loopbacks
+                        else "a card")
                 # The name goes in the prose, which folds: on the headline,
                 # driven at the widest interface name, the row measured 82.
                 print("warning: no linux-name: the default returns at commit")
-                print_prose(f"{iface} is a card with an interface block, and "
-                            "such a card is paired into Linux under its own "
-                            "name unless 'linux-name <name>' says otherwise; "
-                            "this takes an override back and does not unpair "
-                            "the card")
+                print_prose(f"{iface} is {what} with an interface block, and "
+                            "such an interface is paired into Linux under its "
+                            "own name unless 'linux-name <name>' says "
+                            "otherwise; this takes an override back and does "
+                            "not unpair it")
             return True
         if iface and not neg and dp == "ipv6 nd suppress-ra":
             # The default already. Accepted so an operator can write it to

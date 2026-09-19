@@ -491,9 +491,11 @@ not have found, because each is about a box somebody is USING:
   forward. Every claimed card was counted twice, once as itself and once as
   its TAP. A sub-interface's TAP reached the SAVED configuration besides,
   because the shape test for a TAP did not know about `tap4096.100`.
-* [#404](https://github.com/andrediashexa/hexarouting/issues/404) - a loopback
-  created without `linux-name` gets no pair, so FRR cannot see the address the
-  loopback exists to carry, and the commit says nothing.
+* [#404](https://github.com/andrediashexa/hexarouting/issues/404) - **fixed.**
+  A loopback got no `linux_cp` pair unless `linux-name` was typed, so FRR
+  called it a pseudo interface and could not bind the address the loopback
+  exists to carry. `lab/routing.sh` had been asserting that behaviour as the
+  product's ordinary one.
 * [#405](https://github.com/andrediashexa/hexarouting/issues/405) - a NIC added
   after boot is invisible, and three screens say something untrue about it:
   `show hardware` claims the dataplane claims it, the VTY says the box has no

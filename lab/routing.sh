@@ -1010,8 +1010,14 @@ expect_not_in "and the invalid line is not on the box" "PL-BAD" \
 # is created and paired entirely by the product - no `vppctl lcp create` in
 # sight - so if FRR can see it, the product built the whole path.
 echo "=========== a loopback the product creates ==========="
+# NO `linux-name` HERE SINCE #404, and that is the assertion. A loopback with
+# an interface block is paired into Linux under its own name by default, the
+# way a claimed card is: the address it carries is the one FRR announces, FRR
+# sees only what Linux has, and an operator who types four statements and gets
+# a router-id FRR cannot bind has been given a loopback that does not do the
+# one thing a loopback is for. Everything below is asserted on a box where
+# nobody typed the pairing statement.
 LOOP=$($HX -c "configure" -c "interface loop0" \
-       -c "linux-name loop0" \
        -c "ipv4 address 10.99.0.1/32" \
        -c "description router-id, which a port cannot take with it" \
        -c "exit" -c "commit" 2>&1)
@@ -1036,6 +1042,11 @@ expect "with the address on it" \
   sh -c "ip -br addr show loop0 | grep -q 10.99.0.1"
 expect_in "the pair is in the running configuration, read back from the box" \
   "linux-name loop0" "$($HX -c 'show running-config')"
+# The default is WRITTEN, not implied: the running configuration is read off
+# `show lcp`, so a pair that existed only in a rule would be a statement in the
+# running text and not in the candidate, and the next commit would remove it.
+expect_in "and it was never typed - the default put it there (#404)" \
+  "linux-name loop0" "$($HX -c 'show configuration')"
 # And it is usable for what it exists for: FRR has to hold a REAL interface,
 # not the placeholder object zebra makes for any interface its configuration
 # names. The marker is measured rather than guessed - see the negative half at
@@ -1064,15 +1075,22 @@ expect "and its pair is gone from the kernel" \
 # to that was hidden because every lab created a pair by hand before FRR ever
 # looked.
 #
-# A loopback is the honest way to ask it. It is created by the product out of
-# nothing - there is no NIC, no veth and no `vppctl` line behind it - so the
-# only difference between the two states below is the `linux-name` statement.
-# The dataplane has loop1 in both.
+# A loopback is the honest way to ask it: it is created out of nothing - no
+# NIC, no veth behind it - so the only difference between the two states below
+# is the pair. The dataplane has loop1 in both.
+#
+# THE UNPAIRED STATE IS MADE WITH `vppctl`, and it has to be, since #404: a
+# loopback configured through this VTY is paired by default now, so the state
+# this half measures can no longer be reached by typing at the product. That
+# is the fix, and it is why the contrast had to be built rather than
+# configured. Before #404 the two states below were "with `linux-name`" and
+# "without", and this lab asserted the unpaired one as the product's ordinary
+# behaviour - a lab pinning what the box did WRONG, which is how a defect
+# reaches a maintainer's own box with a green suite behind it.
 echo "=========== and with no pair, FRR has nothing ==========="
-NOPAIR=$($HX -c "configure" -c "interface loop1" \
-         -c "ipv4 address 10.98.0.1/32" -c "exit" -c "commit" 2>&1)
-echo "$NOPAIR" | tail -2 | sed 's/^/  /'
-echo "  the dataplane:"; vppctl show interface loop1 2>&1 | head -2 | sed 's/^/    /'
+vppctl loopback create-interface instance 1 >/dev/null 2>&1
+echo "  the dataplane, with a loopback this lab made behind the product's back:"
+vppctl show interface loop1 2>&1 | head -2 | sed 's/^/    /'
 echo "  the kernel:"; ip -br link show loop1 2>&1 | sed 's/^/    /'
 # MEASURED, and it refuted the obvious assertion. `vtysh -c "show interface"`
 # DOES list loop1 with no pair anywhere: configuring an interface stages an
@@ -1082,24 +1100,29 @@ echo "  the kernel:"; ip -br link show loop1 2>&1 | sed 's/^/    /'
 # something this box does not do. What FRR does not have is a REAL interface -
 # no index, no flags, nothing to send a packet out of - and it says so in that
 # one word, which is the same word the paired case is asserted not to contain.
+vtysh -c "configure terminal" -c "interface loop1" -c "exit" >/dev/null 2>&1
 FRR_BEFORE=$(vtysh -c "show interface loop1" 2>&1)
 echo "  what FRR has:"; printf '%s\n' "$FRR_BEFORE" | head -14 | sed 's/^/    /'
-expect_in "an unpaired loopback still commits" "commit complete" "$NOPAIR"
-expect "and the dataplane really has it" \
+expect "the dataplane really has it" \
   sh -c "vppctl show interface loop1 2>&1 | awk '\$1 == \"loop1\"{f=1} END{exit !f}'"
 expect "but Linux has no netdev for it" \
   sh -c "! ip link show loop1 >/dev/null 2>&1"
 expect_in "and FRR has no real interface, so nothing can run on it" \
   "pseudo interface" "$FRR_BEFORE"
 
-# The same interface, one statement later. Nothing else changes.
-PAIRNOW=$($HX -c "configure" -c "interface loop1" -c "linux-name loop1" \
+# The same interface, through the product, with NOTHING said about pairing.
+PAIRNOW=$($HX -c "configure" -c "interface loop1" \
+          -c "ipv4 address 10.98.0.1/32" \
           -c "exit" -c "commit" 2>&1)
 echo "$PAIRNOW" | tail -2 | sed 's/^/  /'
 FRR_AFTER=$(vtysh -c "show interface loop1" 2>&1)
 echo "  what FRR has now:"; printf '%s\n' "$FRR_AFTER" | head -14 | sed 's/^/    /'
-expect_not_in "naming it is what makes FRR see a real interface" \
+expect_in "configuring it through the product commits" \
+  "commit complete" "$PAIRNOW"
+expect_not_in "and that is what makes FRR see a real interface, with nothing typed about the pair (#404)" \
   "pseudo interface" "$FRR_AFTER"
+expect "and Linux has the netdev it did not have a moment ago" \
+  sh -c "ip link show loop1 >/dev/null 2>&1"
 $HX -c "configure" -c "no interface loop1" -c "commit" >/dev/null 2>&1
 
 echo "=========== router advertisements ==========="

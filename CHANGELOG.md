@@ -79,6 +79,34 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A loopback got no `linux_cp` pair, so FRR could not see the address it
+  exists to carry.** Measured on a box in service: `interface loop0 / ipv4
+  address 10.0.0.9/32` committed cleanly, the dataplane had the address, `show
+  interface` showed it - and `vtysh` called `loop0` a *pseudo interface*, the
+  placeholder zebra makes for a name its configuration mentions. No index, no
+  flags, nothing to send a packet out of.
+
+  A loopback exists to carry the address a router is **known by**: the BGP
+  router-id, the iBGP `update-source`, the address that stays up when a port
+  does not. Every one of those is FRR's job and FRR sees only what Linux has,
+  so the one interface whose whole purpose is to be reachable by the routing
+  daemons was the one they could not see - and nothing said so.
+
+  A loopback with an `interface` block is now paired into Linux under its own
+  name by default, the way a claimed card has been since #389, and the default
+  is written into the configuration at apply so the next commit does not take
+  it away. `linux-name <other>` still overrides it and `no linux-name` takes
+  the override back rather than unpairing, which the prompt now says for a
+  loopback as it already did for a card.
+
+  **The lab was asserting the defect.** `lab/routing.sh` created a loopback
+  without `linux-name` and required that Linux have no netdev for it - a lab
+  pinning what the box did wrong, which is how this reached a maintainer's own
+  box with a green suite behind it. That half is kept, because it is what
+  shows the pair is what makes FRR see the interface, but the unpaired state
+  is now built with `vppctl` behind the product's back: through the VTY it can
+  no longer be reached, which is the fix.
+
 ## 0.103.0 - the screen lists what an operator can configure
 
 [#403](https://github.com/andrediashexa/hexarouting/issues/403).

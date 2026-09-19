@@ -1525,18 +1525,35 @@ check(_ok is True and pairs_made(_sh.api) == [(1, "ens19", True)],
       f"{pairs_made(_sh.api)}")
 print("  interface ens19 with nothing in it: paired all the same")
 
-# NOT A LOOPBACK, which is not a card. lab/routing.sh holds a loopback with
-# no `linux-name` and asserts FRR has no real interface for it; the default
-# is the card's name put back where it came from, and a loopback has none.
+# AND A LOOPBACK, which is #404 and reverses what this box used to assert.
+# It used to require NO pair here, on the reasoning that the default is a
+# card's name put back where it came from and a loopback has none. Measured on
+# the maintainer's box: a loopback with an address committed cleanly and
+# `vtysh` called it a pseudo interface, so the one interface whose whole
+# purpose is to carry the address FRR announces was the one FRR could not see.
+# `loop0` is a name Linux never had - its own loopback is `lo` - so it is free
+# for the same practical reason a claimed card's is.
 _sh = card_shell()
 _target = config.Config.parse("interface loop0\n ipv4 address "
                               "10.99.0.1/32\n exit\n")
 with contextlib.redirect_stdout(io.StringIO()):
     _ok = _sh.apply(_target)
-check(_ok is True and pairs_made(_sh.api) == [],
-      f"a loopback with no linux-name was paired anyway: "
+check(_ok is True and [p[1:] for p in pairs_made(_sh.api)]
+      == [("loop0", True)],
+      f"a loopback with a block is paired under its own name: "
       f"{pairs_made(_sh.api)}")
-print("  interface loop0, no linux-name: no pair, as before")
+check(_target.linux_names.get("loop0") == "loop0",
+      f"and the default is WRITTEN into the configuration, the way a card's "
+      f"is, so the next commit does not remove it: {_target.linux_names!r}")
+# The override still wins, for a loopback as for a card.
+_sh = card_shell()
+_target = config.Config.parse("interface loop0\n linux-name lo9\n exit\n")
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh.apply(_target)
+check([p[1:] for p in pairs_made(_sh.api)] == [("lo9", True)],
+      f"and 'linux-name' on a loopback still names the pair: "
+      f"{pairs_made(_sh.api)}")
+print("  interface loop0: paired as itself, and the override still wins")
 
 # THE OVERRIDE STAYS. `linux-name wan0` on the card names the pair, and on a
 # card already carrying its default pair that is a RENAME: the dataplane
@@ -1914,20 +1931,38 @@ check("ens19 is a card with an interface block" in flat(_buf.getvalue())
       and "does not unpair" in _buf.getvalue(),
       f"and did not name the card, or say what the statement is not: "
       f"{_buf.getvalue()!r}")
-# A loopback gets no default, so `no linux-name` on one does unpair it and
-# nothing is said - a warning there would be false.
+# A LOOPBACK IS WARNED TOO SINCE #404: it has a default now, so taking an
+# override back on one leaves the pair standing, and an operator told nothing
+# would read that as an unpair. Said from the CANDIDATE, because naming a
+# loopback is what creates it - one typed a moment ago is on no dataplane to
+# be asked about.
 _sh = card_shell()
 _sh.candidate = config.Config.parse("interface loop0\n linux-name lo9\n"
                                     " exit\n")
+_sh.candidate.loopbacks.add("loop0")
 _sh.mode = "config"
 _sh.frr_ctx = ["interface loop0"]
 _buf = io.StringIO()
 with contextlib.redirect_stdout(_buf):
     _sh.do_config("no linux-name")
-check("warning" not in _buf.getvalue(),
-      f"a loopback, which gets no default, was warned about one: "
+check("the default returns at commit" in _buf.getvalue()
+      and "loop0 is a loopback with an interface block" in flat(_buf.getvalue()),
+      f"a loopback was not told its default comes back: "
       f"{_buf.getvalue()!r}")
-print("  ens19: the default returns, said; loop0: unpaired, nothing said")
+# And a sub-interface still gets no default, so `no linux-name` on one really
+# does unpair it and a warning there would be false.
+_sh = card_shell()
+_sh.candidate = config.Config.parse("interface ens19.100\n vlan 100\n"
+                                    " linux-name sub9\n exit\n")
+_sh.mode = "config"
+_sh.frr_ctx = ["interface ens19.100"]
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.do_config("no linux-name")
+check("warning" not in _buf.getvalue(),
+      f"a sub-interface, which gets no default, was warned about one: "
+      f"{_buf.getvalue()!r}")
+print("  ens19 and loop0: the default returns, said; a sub-interface: not")
 
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
