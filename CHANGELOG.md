@@ -75,9 +75,31 @@ version has a chance of seeing it.
 
 ## Unreleased
 
-### Added
-
 ### Fixed
+
+* **The upgrade lab built both releases' plugins with the same version
+  string, so the two dataplanes were indistinguishable**
+  ([#398](https://github.com/andrediashexa/hexarouting/issues/398),
+  [#291](https://github.com/andrediashexa/hexarouting/issues/291)). The new gate step
+  found it on its first run, which is what a check is for.
+
+  `tools/lab.sh` exports `PRISMA_VERSION_STAMP` into the container - it must,
+  because a git worktree's `.git` is a pointer the container cannot follow -
+  and `tools/plugin-version-h.sh` compiles that string **into the plugin**. So
+  the old release's plugin claimed to be the new version, and on a release
+  whose plugin sources did not change the two builds came out **byte for byte
+  identical**. The lab warned and then failed its own "the plugin on disk
+  changed" check: the fixture had made the two dataplanes indistinguishable,
+  so everything the lab says about a new VTY against an old dataplane was
+  being measured against one dataplane wearing both labels.
+
+  `build_plugin` takes the stamp per tree now. The old side gets the tag it
+  came from - the same string the lab already hands that tag's own installer -
+  and the new side keeps the host's. Measured on the pair the gate refused:
+  `v0.97.0 is fe43098ae5f6b157, this tree is 1eeee00947c34cfa`, and the box's
+  stamp moves with it.
+
+### Added
 
 ## 0.98.0 - the gate takes the upgrade an operator takes
 

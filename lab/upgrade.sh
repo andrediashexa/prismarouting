@@ -324,10 +324,28 @@ build_why() {  # <log>
 # C shared library /vpp_plugins/bpa_plugin.so" - and a full build of this
 # plugin from nothing takes about two seconds, so nothing here is being
 # optimised at the cost of knowing which build is which.
-build_plugin() {  # <source tree> <build dir> <log>
+#
+# AND EACH TREE IS STAMPED WITH ITS OWN VERSION, which is the other half of
+# "which build is which" and was missing until the release gate ran this lab
+# against two adjacent releases.
+#
+# tools/lab.sh exports PRISMA_VERSION_STAMP into the container - it has to,
+# because a git worktree's .git is a pointer the container cannot follow - and
+# `tools/plugin-version-h.sh` puts that string inside the plugin. So BOTH
+# builds took the HOST's stamp, both plugins claimed to be the new version,
+# and on a release whose plugin sources did not change the two came out byte
+# for byte identical. The lab said so in a warning and then failed its own
+# "the plugin on disk changed" check, which is the check doing its job about a
+# fixture that had made the two dataplanes indistinguishable.
+#
+# The stamp is per TREE here, and the old one is the tag it came from - the
+# same string this file already hands that tag's own installer, for the reason
+# written there.
+build_plugin() {  # <source tree> <build dir> <log> <version stamp>
   rm -f /vpp_plugins/bpa_plugin.so /vat2_plugins/bpa_test_plugin_bpa_plugin.so
   mkdir -p "$2" || return 1
-  (cd "$2" && cmake -G Ninja "$1" > "$3" 2>&1 && ninja >> "$3" 2>&1) || return 1
+  (cd "$2" && PRISMA_VERSION_STAMP="$4" cmake -G Ninja "$1" > "$3" 2>&1 \
+     && PRISMA_VERSION_STAMP="$4" ninja >> "$3" 2>&1) || return 1
   [ -s /vpp_plugins/bpa_plugin.so ] || return 1
   mkdir -p "$1/.build-vpp/lib/vpp_plugins" "$1/.build-vpp/lib/vat2_plugins"
   cp /vpp_plugins/bpa_plugin.so "$1/.build-vpp/lib/vpp_plugins/" || return 1
@@ -336,7 +354,7 @@ build_plugin() {  # <source tree> <build dir> <log>
 }
 
 echo "  compiling ${OLD_TAG}'s dataplane plugin (the price of the tag route)"
-if ! build_plugin "$OLD" /tmp/build-old /tmp/old-build.log; then
+if ! build_plugin "$OLD" /tmp/build-old /tmp/old-build.log "${OLD_TAG#v}"; then
   give_up "${OLD_TAG}'s plugin could be compiled" \
     "the old tree does not build against this container's vpp-dev, so" \
     "nothing here was measured about upgrading. What the compiler said:" \
@@ -346,7 +364,8 @@ OLD_SO_SUM=$(sha256sum "$OLD/.build-vpp/lib/vpp_plugins/bpa_plugin.so" | cut -c1
 
 # And this tree's, into the build directory every other lab uses, because that
 # is the one appliance/install.sh reaches for.
-if ! build_plugin /src /src/.build-vpp /tmp/new-build.log; then
+if ! build_plugin /src /src/.build-vpp /tmp/new-build.log \
+     "${PRISMA_VERSION_STAMP:-}"; then
   give_up "this tree's plugin could be compiled" \
     "the current tree does not build, which is not a question about" \
     "upgrading. What the compiler said:" \
