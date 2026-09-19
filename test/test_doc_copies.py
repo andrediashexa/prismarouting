@@ -603,7 +603,19 @@ else:
     # "/ref" is a substring of "/referencia" - eleven of the pages an operator
     # actually reads, reported green having never been opened. Found by
     # counting what the walk reached (38 files) against what the tree has.
-    _SKIP = {".git", "build", "ref", ".build-vpp"}
+    #
+    # `.build-old` is the released tree lab/upgrade.sh installs as the old
+    # side, extracted on the host because git inside the build container
+    # cannot reach a worktree's repository. It is a checkout of a TAG - other
+    # releases' documents, with other releases' figures in them - and a reader
+    # that walks it reports them as this tree's. Measured: with v0.79.0
+    # extracted there, this check refused the tree over the +395 MB figure in
+    # THAT release's docs/appliance.md, which nobody in this tree wrote and
+    # nobody can correct. `.gitignore` has held the directory since the lab
+    # was written; test_doc_commands.py already skips it, which is the other
+    # half of this lesson: a skip list that lives in four readers drifts in
+    # three of them.
+    _SKIP = {".git", "build", "ref", ".build-vpp", ".build-old"}
     for _dirpath, _dirnames, _filenames in os.walk(REPO):
         _dirnames[:] = [_d for _d in _dirnames if _d not in _SKIP]
         for _f in _filenames:

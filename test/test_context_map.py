@@ -66,8 +66,12 @@ check(len(candidates) > 30,
 # file is deleted or renamed, which is what this test is for.
 index = {}
 for base, dirs, files in os.walk(ROOT):
+    # `.build-old` for the reason test_doc_copies.py gives at its own walk: it
+    # is a released tree extracted by lab/upgrade.sh, so a file name indexed
+    # from there resolves to another release's copy of it.
     dirs[:] = [d for d in dirs
-               if d not in (".git", ".build", ".build-vpp", "__pycache__")]
+               if d not in (".git", ".build", ".build-vpp", ".build-old",
+                            "__pycache__")]
     for f in files:
         index.setdefault(f, os.path.join(base, f))
 

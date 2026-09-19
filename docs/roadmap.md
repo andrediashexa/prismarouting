@@ -1571,13 +1571,24 @@ least five places with no red light behind any of them. `lab/install-iso.sh`
 installed a box and booted it; `lab/in-place.sh` changed a setting on a running
 one; **nothing installed one version and then put another on top of it**.
 
-`lab/upgrade.sh` does now. It compiles v0.68.0's dataplane plugin, runs that
-tag's own `install.sh`, configures the box through the VTY that install put
-there, then runs the current tree's `install.sh` over it and asserts the box is
+`lab/upgrade.sh` does now. It compiles a released tag's dataplane plugin, runs
+that tag's own `install.sh`, configures the box through the VTY that install
+put there, then runs the current tree's `install.sh` over it and asserts the box is
 still configured. The central assertion is the file the old version saved being
 accepted whole, because `prismash --load` refuses it whole or not at all: a
 statement the new VTY does not accept does not degrade an upgraded box, it
-unconfigures it, at a boot nobody is watching. Renaming one pool statement out
+unconfigures it, at a boot nobody is watching.
+
+**The old side is ONE FIXED TAG, and that is both the point and the gap**
+([#398](https://github.com/andrediashexa/hexarouting/issues/398)). Fixed, its readings
+are comparable across releases and it measures the upgrade machinery itself.
+Fixed, it also means the upgrade an operator actually performs - the release
+they are on to the one being published - has never been measured by anything,
+and a fixed tag ages: this one aged out of the supported path entirely when
+the rename shipped, and the lab reported NOT MEASURED on every run for eleven
+releases before a full suite run read it. #398 is the gate running the same
+lab a second time against the previous published release, with the cost
+measured rather than estimated. Renaming one pool statement out
 of the new tree's grammar takes **17 of its 35** checks red and leaves the box
 with no pool and no addresses. This paragraph said *nineteen* and was the only
 place that did: `lab/upgrade.sh`'s own header and `TESTING.md` both say 17, and
