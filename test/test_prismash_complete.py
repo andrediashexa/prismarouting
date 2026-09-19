@@ -618,8 +618,13 @@ sh = shell_with_box(dp_rc=1)
 sh.feed("configure")
 opts, hint, _ = sh._options("interface ", False)
 check(opts == {}, f"nothing is offered: {opts}")
-check(hint == "<interface>",
+check(hint == prismash.ARG_INTERFACE_NEW,
       f"and the hint still says what goes here: {hint}")
+# Which matters most exactly here: with the dataplane down there is no list at
+# all, so the hint and its note are the only thing on the screen - and on a box
+# whose dataplane is down, `interface loop0` is still a thing to type (#406).
+check("<parent>.<tag>" in prismash.HINT_NOTES.get(hint, ""),
+      "and the shapes that create one are still under it")
 print(f"  dataplane down -> options {opts}, hint {hint}")
 
 # Every marker in the tree must have a source. One added without it silently
@@ -813,6 +818,50 @@ opts, _, _ = sh._options("", False)
 check("inside" in opts and "cgnat" not in opts,
       f"a pool still offers its own tree: {sorted(opts)[:6]}")
 sh.feed("exit")
+
+print("\n=== ? says which names create an interface (#406) ===")
+# A maintainer asked for sub-interfaces to be implemented on a box that had had
+# them since #131. They work: `interface ens18.100 / vlan 100` makes one, and
+# `loop0` makes a loopback. What did not work is FINDING them - `?` offered the
+# interfaces that already existed, so the list read as the complete set of what
+# may be typed, and the shape that creates one was stated only inside a refusal
+# an operator reaches by guessing wrong first.
+#
+# Mutation shown red: the marker put back to ARG_INTERFACE, which takes the
+# note away and leaves the hint saying "<interface>" over a list of interfaces.
+sh = shell_with_box()
+sh.feed("configure")
+opts, hint, _ = sh._options("interface ", False)
+check("TenGigabitEthernet0/8/0" in opts,
+      f"the box's own interfaces are still offered: {sorted(opts)}")
+check(hint == prismash.ARG_INTERFACE_NEW,
+      f"under a marker of its own: {hint!r}")
+note = prismash.HINT_NOTES.get(hint, "")
+check("<parent>.<tag>" in note and "loop<n>" in note,
+      f"whose note names both shapes that create one: {note!r}")
+check("parent has to exist" in note,
+      f"and says the parent is not created with it: {note!r}")
+# The plain marker stays where a name the box HAS is what is taken: offering
+# "or invent one" there would offer a name the statement refuses.
+_, show_hint, _ = sh._options("show interface ", False)
+check(show_hint != prismash.ARG_INTERFACE_NEW,
+      f"`show interface` still takes a name the box has: {show_hint!r}")
+# And every marker with a note is one the tree actually uses, or the note is
+# printed by nothing.
+_used = set()
+def _markers(node):
+    if isinstance(node, str):
+        _used.add(node)
+        return
+    for _, sub in (node or {}).items():
+        _markers(sub[1])
+for _mode in prismash.TREE.values():
+    _markers(_mode)
+_markers(prismash.INTERFACE_BLOCK)
+check(set(prismash.HINT_NOTES) <= _used,
+      f"a note under a marker nothing offers: "
+      f"{sorted(set(prismash.HINT_NOTES) - _used)}")
+print("  the shapes, on the screen somebody is looking at while they type")
 
 print("\n=== completion ignores case, and inserts the box's spelling ===")
 # Interface names are GigabitEthernet0/12/0. Requiring the capital G before

@@ -79,6 +79,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Sub-interfaces and loopbacks worked and could not be found.** The
+  maintainer asked for VLAN sub-interfaces to be implemented on a box that has
+  had them since #131: `interface ens18.100 / vlan 100` makes one, it gets its
+  own `linux_cp` pair, and the address reaches Linux and FRR. What did not work
+  was finding it. `interface ?` offers the interfaces the box already has, and
+  a sub-interface that does not exist yet is not among them - so the list reads
+  as the complete set of what may be typed. The shape that CREATES one was
+  stated in exactly one place, inside the refusal for typing `vlan 100` in the
+  parent, which an operator reaches by guessing wrong first.
+
+  `?` now says it, under the list, where somebody is looking while they type:
+  a name the box has not got is how one is made, `<parent>.<tag>` makes a VLAN
+  sub-interface and its parent has to exist, `loop<n>` makes a loopback. The
+  sentence lives in `HINT_NOTES`, keyed by the marker it belongs under, and is
+  folded to the console rather than written as a 90-column row.
+
+  `show interface <name>` and `nat cgnat interface <name>` keep the plain
+  marker: those take a name the box HAS, and offering "or invent one" there
+  would offer a name they refuse.
+
+  A feature nobody can find is a feature nobody has, and this one had been
+  shipped, documented and tested for eleven releases.
+
 ## 0.104.0 - a loopback is visible to FRR
 
 [#404](https://github.com/andrediashexa/hexarouting/issues/404).

@@ -114,6 +114,34 @@ configure
 
 ## Sub-interfaces e VLAN
 
+**Como se cria uma, do começo ao fim.** Basta digitar um nome que a caixa ainda não tem, no formato `<pai>.<tag>`: é isso que cria a sub-interface. O `?` diz isso na linha abaixo da lista de interfaces — ele oferece as que existem, e a nota embaixo diz quais nomes criam uma nova.
+
+```
+prisma> configure
+prisma# [edit] interface ens18.100
+prisma# [edit interface ens18.100] vlan 100
+prisma# [edit interface ens18.100] ipv4 address 100.64.0.1/22
+prisma# [edit interface ens18.100] exit
+prisma# [edit] commit
+commit complete
+```
+
+Depois disso a sub-interface existe no dataplane, carrega a tag, e ganha o próprio par `linux_cp` — o `lcp-auto-subint` cria um para cada sub-interface de uma placa já pareada — então o Linux e o roteamento a enxergam com o endereço:
+
+```
+prisma> show interface
+  Interface                  State  MTU    Address             Linux
+  ens18                      up     1500   10.95.200.198/24    tap4096 ens18
+  ens18.100                  up     1500   100.64.0.1/22       tap4096.100 ens18.100
+```
+
+**O pai precisa existir.** `interface ens99.100` numa caixa sem `ens99` é recusado no `commit`, nomeando o pai:
+
+```
+error: interface ens99.100: its parent ens99 is not on this box
+error: candidate did not pass validation; nothing applied
+```
+
 Uma sub-interface é uma interface: tudo da tabela acima vale dentro dela.
 
 ```
