@@ -79,6 +79,33 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The roadmap's plan did not say where it had got to.** *The plan for what
+  remains* opens eight phases deep, and a reader had to get through all of
+  them to learn that phases 1 to 6 and 8 are delivered and that what is left of
+  the plan is phase 7, which needs a NIC this project does not have.
+
+  It says so in its first paragraph now, and it sorts everything still open
+  into the three things it actually is: **a decision the maintainer has not
+  taken**, with the evidence already on the issue
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396),
+  [#390](https://github.com/andrediashexa/hexarouting/issues/390),
+  [#210](https://github.com/andrediashexa/hexarouting/issues/210),
+  [#337](https://github.com/andrediashexa/hexarouting/issues/337),
+  [#397](https://github.com/andrediashexa/hexarouting/issues/397)); **blocked on the same
+  hardware as phase 7**, or on Debian
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163),
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172)'s last half,
+  [#36](https://github.com/andrediashexa/hexarouting/issues/36)); or **deferred by its own
+  issue until there is demand** -
+  [#32](https://github.com/andrediashexa/hexarouting/issues/32) and
+  [#80](https://github.com/andrediashexa/hexarouting/issues/80) say so in as many words,
+  and [#170](https://github.com/andrediashexa/hexarouting/issues/170) says why a BNG is a
+  second product rather than a feature.
+
+  A plan that says that out loud is worth more than one that reads as if work
+  were queued. What this product needs next is a box with a real NIC in it and
+  a maintainer's answer to five questions, not another phase.
+
 ## 0.99.0 - the previous release is the one below this tag
 
 [#398](https://github.com/andrediashexa/hexarouting/issues/398), [#399](https://github.com/andrediashexa/hexarouting/issues/399).
