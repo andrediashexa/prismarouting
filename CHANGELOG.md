@@ -77,6 +77,34 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The release gate upgrades a box running the previous release to the one
+  being published** ([#398](https://github.com/andrediashexa/hexarouting/issues/398)),
+  and refuses the release if that box cannot be upgraded - or if the attempt
+  could not be measured at all.
+
+  `lab/upgrade.sh` measures an upgrade from one FIXED tag, and that is what
+  makes its readings comparable between releases. It also means the upgrade
+  an operator actually performs - the release they are on to the one being
+  published - had never been measured by anything. The failure it catches is
+  the one the lab already prints for its own pair: a new VTY creating a pool
+  against the old dataplane, refused because the API message grew fields the
+  running plugin does not have. Between two adjacent releases that appears the
+  day a field is added, and without this it appears first to an operator in a
+  maintenance window with nothing on the box to explain it.
+
+  **The previous tag is derived and not written down.** A constant here would
+  age exactly as the lab's own default aged - it sat at a pre-rename tag until
+  a full suite run noticed the lab had been reporting NOT MEASURED on every
+  run for eleven releases. Every tag in this repository is a published
+  release, so the previous one is the highest version tag below this one.
+
+  **NOT MEASURED refuses the release**, for the same reason a failure does:
+  every box in the field is on some released version, and this is the path all
+  of them take. The gate names the pair it measured, because a green gate that
+  does not say which two versions it compared is a claim nobody can check.
+
+  It costs about three minutes on a gate that takes twenty-five.
+
 ### Fixed
 
 ## 0.97.0 - the upgrade lab measures something again

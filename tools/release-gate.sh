@@ -773,6 +773,52 @@ UPGRADE=${NAME%.iso}-upgrade.tar.gz
   exit 1
 }
 
+# AND THE UPGRADE AN OPERATOR ACTUALLY PERFORMS (#398).
+#
+# `lab/upgrade.sh` already measures an upgrade, from ONE FIXED TAG, and that
+# fixed tag is what makes its readings comparable between releases. It is also
+# the reason nothing here had ever measured the upgrade people take, which is
+# the release they are on to the release being published: a pair of adjacent
+# versions, whose API messages differ by whatever this release changed.
+#
+# The failure it catches is the one the lab already prints for its own pair:
+# a new VTY creating a pool against the old dataplane, refused because the
+# message grew fields the running plugin does not have. That appears the day
+# a field is added, and without this it appears first to an operator in a
+# maintenance window with nothing on the box to explain it.
+#
+# THE PREVIOUS TAG IS DERIVED AND NOT WRITTEN DOWN. A constant here would age
+# exactly the way the lab's own default aged: it sat at a pre-rename tag until
+# a full suite run noticed the lab had been reporting NOT MEASURED on every
+# run for eleven releases. Every tag in this repository is a published
+# release - that is what section 5 of CONTRIBUTING.md means by "every merge is
+# a release" - so the previous one is the highest version tag below this one.
+PREV=$(git -C "$REPO" tag -l "v*" --sort=-v:refname \
+       | grep -v -x "$TAG" | head -1)
+if [ -z "$PREV" ]; then
+  echo "==> no published release before $TAG, so there is no upgrade to measure"
+else
+  echo "==> upgrading a $PREV box to this tree"
+  ( cd "$WORK" && sh tools/lab.sh upgrade "$PREV" ) \
+      > "$WORK/upgrade-lab.log" 2>&1 || {
+    echo "error: a box running $PREV could not be upgraded to $TAG, or the" >&2
+    echo "       lab could not measure the attempt. Either way this release" >&2
+    echo "       MUST NOT be published: every box in the field is on some" >&2
+    echo "       released version, and this is the path all of them take." >&2
+    echo "       NOT MEASURED is refused here for the same reason a FAIL is:" >&2
+    echo "       a gate that shrugs is a gate that publishes an upgrade" >&2
+    echo "       nobody read." >&2
+    grep -E "\[FAIL\]|\[NOT MEASURED\]|^LAB " "$WORK/upgrade-lab.log" \
+      | head -10 >&2
+    echo "       full log: $WORK/upgrade-lab.log" >&2
+    exit 1
+  }
+  # NAMED, because a green gate that does not say which pair it measured is a
+  # claim nobody can check - and the pair changes with every release.
+  echo "    $PREV -> $TAG: the saved configuration, the forwards, the routes"
+  echo "    and the trail all survived, and the box still forwards"
+fi
+
 now=$(sha256sum "$WORK/$NAME" | cut -d" " -f1)
 [ "$now" = "$MEDIUM_SHA" ] || {
   echo "error: the medium was rebuilt between the boot and now, so this gate" >&2

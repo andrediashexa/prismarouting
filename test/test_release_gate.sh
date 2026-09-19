@@ -17,10 +17,12 @@
 # built from nothing has to satisfy every other check by hand, and one that
 # drifts from the gate measures the fixture.
 #
-# WHAT THIS DOES NOT REACH. The gate refuses eleven more times after
+# WHAT THIS DOES NOT REACH. The gate refuses a dozen more times after
 # RELEASE_GATE_CHECK_ONLY, and every one of those needs a 321 MB image built,
-# booted and installed. Those stay unmeasured here and the count below says so
-# out loud rather than leaving the reader to assume this covers the file.
+# booted and installed - including the upgrade from the previous release
+# (#398), which needs that release's tree compiled as well. Those stay
+# unmeasured here and the count below says so out loud rather than leaving the
+# reader to assume this covers the file.
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
