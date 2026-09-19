@@ -79,6 +79,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The gate's new upgrade step took the newest release as "the previous
+  one"** ([#398](https://github.com/andrediashexa/hexarouting/issues/398)). It read
+  `--sort=-v:refname | grep -v $TAG | head -1`, which is the highest tag that
+  is not this one - and on a re-run of an older tag, that is a LATER release.
+  Rebuilding a medium for v0.80.0 would have tried to upgrade a box running
+  the newest release down to it, and refused the release over a downgrade
+  nobody asked for. Sorted ascending and stopped at the tag, what comes out is
+  the release immediately below it, which is what the gate's own sentence
+  claims.
+
+* **And it would have demanded an upgrade the product refuses.**
+  `appliance/upgrade` refuses a box carrying `/etc/hexarouting` or
+  `hexarouting.service` - *"the product was renamed and NOTHING MIGRATES"* -
+  so any tag whose predecessor is older than v0.79.0 could never pass this
+  step. The gate now says so and skips it, rather than refusing a re-run over
+  the product doing exactly what it says.
+
 ## 0.98.0 - the gate takes the upgrade an operator takes
 
 [#398](https://github.com/andrediashexa/hexarouting/issues/398),
