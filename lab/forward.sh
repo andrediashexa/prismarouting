@@ -15,7 +15,7 @@
 # unpinned blocks as a control: if those are still held, nothing was reaped and
 # the section proved nothing.
 #
-# OFF-RED-AT-LEAST: 26
+# OFF-RED-AT-LEAST: 27
 #
 # A FLOOR, not a target, and the number is measured rather than chosen: it is
 # what this lab's off run went red on in the release suite of 2026-09-13.

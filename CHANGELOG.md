@@ -79,6 +79,24 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Three labs' off-run floors were behind what those labs measure**, and the
+  suite is what said so. `tools/run-all-labs.sh` runs each lab a second time
+  with its feature switched off and refuses a run that stays green; the
+  `OFF-RED-AT-LEAST` in each lab's header is the floor under how many checks
+  must go red. A floor lower than the truth is how a check gets lost quietly:
+  delete an assertion and the run still clears a floor written when the lab
+  was smaller.
+
+  Measured on the full suite run of 0.90.0: `forward+off` 27 red against a
+  floor of 26, `ha-failover+off` 15 against 8, and `vrrp+off` 21 against 16 -
+  the last of those went out with 0.92.0, which is where that lab's newest
+  phase was added. The other two are here. The acceptance lab's floor was
+  written when it gained an off run and the run has grown since; `forward`'s
+  was written by whoever last counted, and the lab has grown since.
+
+  Each floor is the number its own run produces now, which is the only number
+  that keeps an assertion from being deleted quietly.
+
 ## 0.95.0 - the procedure for the box that is holding the service
 
 [#6](https://github.com/andrediashexa/hexarouting/issues/6).
