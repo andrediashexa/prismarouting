@@ -940,11 +940,29 @@ no link layer to carry it.
 
 ```
 interface loop0
-  linux-name loop0
   ipv4 address 10.99.0.1/32
   description router-id, which a port cannot take with it
   exit
 ```
+
+**Nothing says `linux-name` there, and the loopback is still visible to FRR.**
+A loopback with an `interface` block is paired into Linux under its own name by
+default, the way a claimed card is
+([#404](https://github.com/andrediashexa/hexarouting/issues/404)). It has to
+be: the address a loopback carries is the address FRR announces and binds to,
+FRR sees only what Linux has, and until this defaulted the one interface whose
+whole purpose is to be reachable by the routing daemons was the one they could
+not see. Measured on a box in service — four statements, `commit complete`, the
+address on the dataplane, and `vtysh` calling `loop0` a *pseudo interface*.
+
+The default is **written into the configuration** at apply, so `show
+configuration` prints the `linux-name` nobody typed and the next commit does
+not take it away; `linux-name <other>` overrides it, and `no linux-name` takes
+the override back rather than unpairing, which the prompt says as it is typed.
+A loopback's name is free in Linux for a different reason than a card's — a
+card's is free because the card left Linux, while `loop0` is a name VPP invents
+for an interface Linux never had, its own loopback being `lo` — and either way
+it is there to be taken.
 
 Naming a loopback is what **creates** it, the way naming a sub-interface is —
 there is nothing else on the box to create it from. `loop<n>` is VPP's own
@@ -980,15 +998,21 @@ passthrough ([#168](https://github.com/andrediashexa/hexarouting/issues/168)).
 
 The loopback section is where the pairing is proved end to end, because a
 loopback is created and paired entirely by the product: there is no NIC and no
-veth behind it, so nothing but the product could have made it. The assertions
-are that the interface is on the dataplane, the kernel has it, the address is
-on it, FRR holds it, and the pair is in the running configuration read back
-from the box. Then removal, asserted on both the dataplane and the kernel.
+veth behind it, so nothing but the product could have made it. It is committed
+with **no `linux-name`**, which is the assertion since #404. The rest are that
+the interface is on the dataplane, the kernel has it, the address is on it, FRR
+holds it, and the pair is in the running configuration read back from the box —
+and in the candidate, which is what says the default was written rather than
+implied. Then removal, asserted on both the dataplane and the kernel.
 
 And the negative half, without which none of that shows the **pair** is what
-did it: the same loopback committed with no `linux-name` is on the dataplane,
-has no netdev, and FRR does not hold it. One measurement changed how that is
-asserted. `vtysh -c "show interface"` **does** list an unpaired interface —
+did it. That half is now built with `vppctl loopback create-interface`, behind
+the product's back, because a loopback configured through this VTY is paired
+and the unpaired state can no longer be reached by typing at it. Before #404
+the two states were *with* `linux-name` and *without*, and this lab asserted
+the unpaired one as the product's ordinary behaviour — a lab pinning what the
+box did wrong, which is how this reached a maintainer's box with a green suite
+behind it. One measurement changed how that is asserted. `vtysh -c "show interface"` **does** list an unpaired interface —
 configuring one stages an `interface` stanza into FRR, and zebra makes a
 placeholder object for any interface its configuration names. What FRR does
 not have is a real one, and it says so in those words:
@@ -999,7 +1023,8 @@ Interface loop1 is down
   pseudo interface
 ```
 
-against, one `linux-name` later and nothing else changed:
+against the same interface once the product has configured it, with nothing
+typed about the pair:
 
 ```
 Interface loop1 is down
