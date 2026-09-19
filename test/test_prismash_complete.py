@@ -739,9 +739,17 @@ opts, _, _ = sh._options("", False)
 # nothing from the level above leaks in. Two statements are named explicitly so
 # the assertion cannot be satisfied by an empty offer.
 from prismash import INTERFACE_BLOCK                              # noqa: E402
-check(set(opts) <= set(INTERFACE_BLOCK) | {"show"},
+# `show`, and the words every configuration level owns: `top`, `up` and the
+# three probes (#400). They are not statements of any block and they are
+# offered inside every one of them, because they are answered inside every one
+# of them - which is the whole of that issue. Taken from the product's own two
+# sets rather than written out here, so a probe added later is not a failure of
+# this check.
+from prismash import LEVEL_WORDS, PROBE_TOOLS                     # noqa: E402
+LEVEL = {"show"} | set(LEVEL_WORDS) | set(PROBE_TOOLS)
+check(set(opts) <= set(INTERFACE_BLOCK) | LEVEL,
       f"an interface offers only its own statements: "
-      f"{sorted(set(opts) - set(INTERFACE_BLOCK) - {'show'})}")
+      f"{sorted(set(opts) - set(INTERFACE_BLOCK) - LEVEL)}")
 check({"mtu", "urpf"} <= set(opts),
       f"and it does offer them: {sorted(opts)}")
 check(not ({"cgnat", "user", "commit", "rollback"} & set(opts)),
@@ -752,9 +760,9 @@ sh.feed("exit")
 from prismash import BGP_BLOCK, BGP_NEIGHBOUR, BGP_AF_BLOCK   # noqa: E402
 sh.feed("router bgp 65001")
 opts, _, _ = sh._options("", False)
-check(set(opts) <= set(BGP_BLOCK) | {"show"},
+check(set(opts) <= set(BGP_BLOCK) | LEVEL,
       f"router bgp offers only its own statements: "
-      f"{sorted(set(opts) - set(BGP_BLOCK) - {'show'})}")
+      f"{sorted(set(opts) - set(BGP_BLOCK) - LEVEL)}")
 check({"neighbor", "address-family"} <= set(opts),
       f"and it does offer them: {sorted(opts)}")
 check("cgnat" not in opts and "interface" not in opts,
@@ -773,8 +781,9 @@ check("address-family" not in opts,
 # `remote-as` does not.
 sh.feed("address-family ipv4 unicast")
 opts, _, _ = sh._options("", False)
-check(set(opts) <= set(BGP_AF_BLOCK) | {"show"},
-      f"an address family offers only its own: {sorted(opts)}")
+check(set(opts) <= set(BGP_AF_BLOCK) | LEVEL,
+      f"an address family offers only its own: "
+      f"{sorted(set(opts) - set(BGP_AF_BLOCK) - LEVEL)}")
 opts, _, _ = sh._options("neighbor 10.0.0.2 ", False)
 check("activate" in opts and "remote-as" not in opts,
       f"activate belongs to the family, remote-as does not: {sorted(opts)}")
@@ -791,8 +800,9 @@ sh.feed("exit")
 # it is claimed, this line fails again and asks for a new one.
 sh.feed("router rip")
 opts, _, _ = sh._options("", False)
-check(set(opts) == {"exit", "show"},
-      f"an unmodelled FRR block offers only the way out: {sorted(opts)}")
+check(set(opts) == {"exit"} | LEVEL,
+      f"an unmodelled FRR block offers the way out and the level's own "
+      f"words: {sorted(opts)}")
 print(f"  router rip -> {sorted(opts)}")
 sh.feed("exit")
 

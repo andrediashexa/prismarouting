@@ -837,6 +837,7 @@ import prismash                                                    # noqa: E402
 #: the ones the documentation's own transcripts use.
 _IFACES = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
 GigabitEthernet0/12/0             1      up          9000/0/0/0
+ens18                             6      up          9000/0/0/0
 TenGigabitEthernet0/8/0           4      up          9000/0/0/0
 host-veth-vpp                     5      up          9000/0/0/0
 local0                            0     down            0/0/0/0
@@ -877,10 +878,18 @@ _LISTINGS = {
     "prisma> show cgnat ?": ("operational", (), "show cgnat "),
     "prisma# [edit interface GigabitEthernet0/12/0] ?":
         ("configuration", ("interface GigabitEthernet0/12/0",), ""),
+    # The wiki's copy of the same screen, on the interface name its pages use.
+    # It was read by nothing until #400 added five rows to that listing and
+    # this file caught the DOCS copy alone - the public page would have kept a
+    # screen the box stopped printing, and it had already lost `vrrp` and half
+    # of what `vrf` says.
+    "prisma# [edit interface ens18] ?":
+        ("configuration", ("interface ens18",), ""),
 }
 
 _seen = set()
-for _path in ("docs/routing.md",):
+for _path in ("docs/routing.md",
+              "wiki/referencia/vty-prismash-guia-de-uso/index.md"):
     _lines = read(_path).split("\n")
     for _i, _line in enumerate(_lines):
         _where = _LISTINGS.get(_line.strip())

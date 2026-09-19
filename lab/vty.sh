@@ -556,6 +556,51 @@ $HX -c "show cgnat subscriber 1.2.3.4${NL}bpa pool trace-only del" \
 INJECT_SURVIVED=$(vppctl show bpa pool | grep -c "trace-only")
 echo "  -- pool rows after two show arguments that try to be a command: $INJECT_SURVIVED"
 
+echo
+echo "=========== the words a configuration level owns (#400) ==========="
+# THE DEFECT WAS FOUND IN PRODUCTION, and this is the shape it had: `top` was
+# not a statement of this VTY, so it fell into the passthrough, was staged for
+# FRR as configuration, and every commit from then on was refused by vtysh -
+# on a box whose routing was fine. So the session below types the words an
+# operator types, at the depths they type them at, and then COMMITS: a lab
+# that only read the candidate back would have passed before the fix too.
+# The ASN is the one this box already runs. A second `router bgp` with a
+# different number is refused by FRR itself - one instance per box - so a
+# session that opened one here would measure that refusal instead of the
+# navigation, and the commit at the end would fail for a reason this phase is
+# not about.
+NAV=$($HX -c "configure" \
+    -c "router bgp 65000" \
+    -c "address-family ipv4 unicast" \
+    -c "up" \
+    -c "top" \
+    -c "interface pg0" \
+    -c "mtu 1470" \
+    -c "up" \
+    -c "router static" \
+    -c "route 198.19.0.0/24 10.0.0.2" \
+    -c "top" \
+    -c "ping 127.0.0.1 count 1" \
+    -c "show configuration" \
+    -c "commit" 2>&1)
+printf '%s\n' "$NAV" | sed 's/^/  /'
+NAV_FRR=$(vtysh -c "show running-config" 2>/dev/null | grep -c "ip route 198.19.0.0/24 10.0.0.2")
+# A staged statement is a LINE, so these are counted as lines: `show
+# configuration` prints the candidate the box would save and replay at boot,
+# and a navigation word in there is a box that cannot read its own file.
+NAV_TOP_STAGED=$(printf '%s\n' "$NAV" | grep -cx "top")
+NAV_PROBE_STAGED=$(printf '%s\n' "$NAV" | grep -cx "ping 127.0.0.1 count 1")
+NAV_MTU=$(vppctl show interface pg0 | grep -c "1470")
+echo "  -- FRR holds the route typed in a block entered after a 'top': $NAV_FRR"
+# The refusals, at the two depths where they mean different things.
+NAV_TOO_FAR=$($HX -c "configure" -c "router bgp 65001" -c "up 9" 2>&1)
+NAV_AT_TOP=$($HX -c "configure" -c "up" 2>&1)
+printf '%s\n' "$NAV_TOO_FAR" "$NAV_AT_TOP" | sed 's/^/  /'
+# And the other half of the issue: a word FRR cannot read still gets refused,
+# and the refusal now says where it came from and how to get out of it.
+NAV_BAD=$($HX -c "configure" -c "frobnicate the candidate" -c "commit" 2>&1)
+printf '%s\n' "$NAV_BAD" | sed 's/^/  /'
+
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 R=$($HX -c "show running-config" 2>/dev/null)
@@ -1135,5 +1180,37 @@ expect_in "and the global setting that travelled beside them" \
 # sentence, and the question is what the dataplane did.
 expect "a show argument cannot become a second command" \
   sh -c "[ \"${INJECT_SURVIVED:-0}\" -ge 1 ]"
+
+# #400. THE COMMIT IS THE ASSERTION: a session that typed `top` used to leave a
+# candidate vtysh refuses, so a lab that only read the candidate back would
+# have passed before the fix.
+expect_in "a session that navigates with 'top' and 'up' can still commit" \
+  "commit complete" "$NAV"
+expect "and the statement typed in a block entered after 'top' reached FRR" \
+  test "${NAV_FRR:-0}" -ge 1
+expect "and the one typed inside the interface reached the dataplane" \
+  test "${NAV_MTU:-0}" -ge 1
+# The words themselves are never configuration. Asserted against `show
+# configuration`, which is the candidate as the box would save and replay it -
+# a `top` in there is a box that cannot boot its own file.
+# Counted on WHOLE LINES, not as a substring: a configuration statement is a
+# line of its own, and "top" matches half the prose this session prints.
+expect "'top' is not in the configuration it would save" \
+  test "${NAV_TOP_STAGED:-1}" -eq 0
+expect "and neither is a probe typed in configuration mode" \
+  test "${NAV_PROBE_STAGED:-1}" -eq 0
+expect_in "a probe answers in configuration mode, at whatever depth" \
+  "127.0.0.1" "$NAV"
+expect_in "'up' past the top of the tree is refused, not clamped" \
+  "there are only 1 level(s)" "$NAV_TOO_FAR"
+expect_in "and 'up' at the top says which word leaves the mode instead" \
+  "already at the top" "$NAV_AT_TOP"
+# The other half of #400: FRR still refuses what it cannot read, and the
+# refusal now says which statement it was handed unread and how to get out.
+expect_in "a word FRR cannot read still fails the commit" \
+  "routing validation failed" "$NAV_BAD"
+expect_in "and the refusal names the statement it was handed unread" \
+  "frobnicate the candidate" "$NAV_BAD"
+expect_in "and says how to get out of it" "rollback 0" "$NAV_BAD"
 
 verdict

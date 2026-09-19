@@ -257,8 +257,22 @@ for path, mode, context, cmd in lines:
     if context:
         # `[edit interface Gi0/1]` means the reader is inside that block, so
         # the shell has to be put there before the command is looked up.
+        #
+        # NESTED BLOCKS ARE ONE PROMPT WITH ` / ` BETWEEN THEM, and a prompt
+        # longer than `Shell.PROMPT_MAX` keeps its END - so the page can show
+        # `[edit ...r bgp 65000 / address-family ipv4 unicast]`, whose first
+        # block this file cannot recover. It is read the way the prompt itself
+        # is written: the innermost block is the one that decides where the
+        # next statement lands, an elided head is dropped, and what is left is
+        # entered block by block. Before this, the whole string was fed as ONE
+        # line: a nested prompt put the shell nowhere, and every command shown
+        # at one was walked against the top of the tree.
+        blocks = [b.strip() for b in context.split(" / ")]
+        if blocks and blocks[0].startswith("..."):
+            blocks.pop(0)
         with contextlib.redirect_stdout(io.StringIO()):
-            sh.feed(context)
+            for block in blocks:
+                sh.feed(block)
     # Read the line the way feed() reads it: an abbreviation of this VTY's
     # own words is spelled out first (#393), so `no shut` walks as `no
     # shutdown` and an ambiguous one is refused before anything is walked.

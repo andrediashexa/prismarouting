@@ -449,6 +449,26 @@ waiting for somebody to start it:
   say so in as many words, and [#170](https://github.com/andrediashexa/hexarouting/issues/170)
   BNG says why it is a second product rather than a feature.
 
+**And one thing that was neither: a defect an operator hit**
+([#400](https://github.com/andrediashexa/hexarouting/issues/400), delivered).
+In configuration mode this VTY staged any word it did not model for FRR, and
+`top` is such a word - so a word typed to MOVE inside the hierarchy became a
+routing statement, `vtysh` refused the candidate, and **every commit from then
+on failed** on a box whose routing was fine. `ping`, `traceroute` and `mtr`
+were the same defect: dispatched in operational mode and in no other. The words
+now live in one place that every level calls, `?` offers them wherever they
+work, and a refused commit names the statements this VTY handed over unread and
+says that `rollback 0` discards the candidate.
+
+It is in this section rather than in a phase because of what it says about the
+order above: this was found by the maintainer on a production box in an
+afternoon, and it outranked every decision and every phase for exactly one
+reason - **a box that cannot commit is worse than any of the work below it**.
+The first pass of the fix gave the words to four dispatchers and missed a
+fifth, `router static`, and it was `lab/vty.sh` that said so rather than any
+unit box: the poisoning only appears at the next commit, which is the argument
+for the lab assertion the issue asked for.
+
 A plan that says this out loud is worth more than one that reads as if work
 were queued: what this product needs next is a box with a real NIC in it and a
 maintainer's answer to five questions, not another phase.

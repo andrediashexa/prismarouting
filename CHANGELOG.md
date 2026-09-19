@@ -77,7 +77,63 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`top` and `up` move inside the configuration hierarchy.** `top` goes to the
+  root of configuration mode from any depth; `up` leaves one level and `up <n>`
+  leaves `n` of them. Both write the block's own `exit` where FRR needs one, so
+  the candidate is exactly what typing `exit` that many times would have built,
+  and neither leaves configuration mode - the candidate survives, and `exit` is
+  still the only word that puts an operator back in operational mode.
+
+  Going up further than the tree goes is **refused rather than clamped**, which
+  is the one place this VTY deliberately does not behave like JunOS: leaving
+  more levels than were asked for puts the operator somewhere they did not
+  type, and the next statement lands there. `top` is one word away and says it
+  exactly. `top` at the top is not a refusal, because a box already at the root
+  has done what was asked.
+
+  `?` offers them wherever they work, which is every level, and leaves them out
+  at the root where the box refuses them: a `?` that offers a word the next
+  keystroke refuses teaches the operator that the list is a guess.
+
 ### Fixed
+
+* **A word this VTY did not know poisoned the candidate, and every commit after
+  it failed.** Found on a production box. `top` was not a statement here, so it
+  fell into the passthrough that hands a line to FRR verbatim, was staged as
+  routing configuration, and `vtysh` refused the whole candidate at the next
+  `commit` - on a box whose routing was fine. The operator read `% Unknown
+  command: top` about a word they had typed to MOVE rather than to configure,
+  the refusal said nothing about where it came from or how to get out, and an
+  address was typed twice over because the commit in between had been refused
+  and read as a no-op.
+
+  `ping`, `traceroute` and `mtr` were the same defect with a different word:
+  they are answered in operational mode, they were dispatched there and nowhere
+  else, so in configuration mode they went into the candidate too.
+
+  All five words now live in **one place** - `Shell.owns_word()`, called at the
+  head of `do_config`, `do_pool`, `do_user` and `do_snmp_user`. The alternative
+  is four copies of two branches, and the copy that gets forgotten is the one
+  in the mode somebody is standing in when they need it, which is exactly how
+  this happened.
+
+* **A refused commit did not say how to get out of it.** `routing validation
+  failed:` carried FRR's own words, which name the statement FRR could not
+  parse and nothing says better, and then stopped. It now names the statements
+  this VTY handed over **unread** - the set a stray word always lands in, taken
+  from the same walk the boundary marker uses, so a refusal cannot name a
+  different set from the one `show configuration` marks - and says that
+  `rollback 0` discards the candidate. On the box this was filed from, `commit`
+  had been refused three times before anybody thought of that.
+
+* **Two documentation checks were reading less than they said.**
+  `test/test_doc_commands.py` fed a nested prompt's whole context as one line,
+  so every command shown at `[edit router bgp 65000 / address-family ipv4
+  unicast]` was walked against the top of the tree; it now enters the blocks
+  one at a time and drops an elided head, the way the prompt itself is written.
+  `test/test_doc_copies.py` compared the `?` transcript in `docs/routing.md`
+  against the box and not the copy of it on the public wiki, which had already
+  lost `vrrp` and half of what `vrf` says.
 
 ## 0.100.0 - the plan says where it stands
 
