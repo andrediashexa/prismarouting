@@ -2864,15 +2864,36 @@ ok("the dispatch under `show`")
 
 # ----------------------------------------------------- the interfaces
 
-print("\n=== Shell.forwarding_count: local0 listed, not counted ===")
-# Mutation shown red: `len(ifaces)`, counting the null interface.
+print("\n=== Shell.forwarding_count: what the rows above it are ===")
+# Mutation shown red: `len(ifaces)`, counting the null interface - which is
+# what the count did on every box until #306, and what it must not go back to
+# for a screen that is ever handed the whole table.
 n, note = prismash.Shell.forwarding_count({"pg0": {}, "local0": {}})
-check(n == 1 and len(note) == 1 and "local0 is listed above but not "
-      "counted" in note[0], f"one of two forwards, and the note says why: "
-      f"{(n, note)!r}")
+check((n, note) == (1, []),
+      f"one of two forwards, and nothing is left to explain: {(n, note)!r}")
 n, note = prismash.Shell.forwarding_count({"pg0": {}, "pg1": {}})
-check((n, note) == (2, []), f"no local0, no note: {(n, note)!r}")
+check((n, note) == (2, []), f"two cards read two: {(n, note)!r}")
+check(prismash.Shell.forwarding_count({})[0] == 0,
+      "and a box with nothing on it reads zero")
 ok("the one holder of that count")
+
+print("\n=== routes.operator_interfaces: what somebody configured ===")
+# Mutation shown red: the TAP test dropped, which is the screen the maintainer
+# read on his own box - one card counted twice, once as itself and once as the
+# TAP this product created for it (#403).
+_have = ["ens18", "ens18.100", "local0", "loop0", "tap4096", "tap4096.100"]
+check(routes.operator_interfaces(_have) == ["ens18", "ens18.100", "loop0"],
+      f"the card, its sub-interface and the loopback: "
+      f"{routes.operator_interfaces(_have)!r}")
+check(routes.operator_interfaces(["local0"]) == [],
+      "a box that claimed no card configures nothing")
+check(routes.operator_interfaces([]) == [], "and nothing is nothing")
+# The ORDER is the caller's, because two of the three screens sort and one
+# prints a count: a helper that sorted would decide a presentation question
+# for callers that have already decided it.
+check(routes.operator_interfaces(["pg1", "pg0"]) == ["pg1", "pg0"],
+      "the order it was given, which is the caller's business")
+ok("one decision, four screens")
 
 print("\n=== Shell.link_state: a sub-interface's link is its parent's ===")
 # Mutation shown red: drop the parent lookup.
@@ -2905,9 +2926,14 @@ check(any(r.split() == ["pg0", "up", "down", "inet", "200.150.0.1/24"]
       f"{text!r}")
 check(any(r.split() == ["pg1", "up", "up", "-", "-"] for r in text),
       f"a bare port shows dashes: {text!r}")
-check("  2 interface(s) on the dataplane can forward" in text
-      and any("local0 is listed above" in r for r in text),
-      f"the forwarding count and its note: {text!r}")
+check("  2 interface(s) on the dataplane can forward" in text,
+      f"the forwarding count: {text!r}")
+# Called DIRECTLY here, with the whole table including `local0` - which is not
+# how `show_interfaces` calls it since #403, and is the point of the check:
+# this screen prints what it is handed and counts what can forward, and the
+# note that used to explain the difference is gone with the row.
+check(not any("listed above but not counted" in r for r in text),
+      f"and nothing left explaining a disagreement: {text!r}")
 check(any(r.startswith("  pg0: configured up, link down") for r in text)
       and not any(r.startswith("  pg1:") for r in text),
       f"up/down is the wire and is named; up/up is not: {text!r}")
@@ -3228,8 +3254,9 @@ sh.show_interfaces(["pg0"])
 check(seen == ["pg0"], f"an exact name wins over its sub-interfaces: {seen!r}")
 sh.show_interfaces(["terse", "pg1"])
 check(seen[-1] == ("terse", ["pg1"],
-                   sorted(["pg0", "pg1", "loop0", "local0", "pg0.100"])),
-      f"terse, filtered, with the whole table as the total: {seen[-1]!r}")
+                   sorted(["pg0", "pg1", "loop0", "pg0.100"])),
+      f"terse, filtered, with the whole table as the total - and `local0` in "
+      f"neither half of it (#403): {seen[-1]!r}")
 with spoken() as o:
     sh.show_interfaces(["nope"])
 check(rows_of(o.getvalue()) == ["  no interface matches"], o.getvalue())

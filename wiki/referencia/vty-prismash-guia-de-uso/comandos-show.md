@@ -78,11 +78,8 @@ prisma> show interface
   Interface                  State  MTU    Address             Linux
   ens18                      up     9000   203.0.113.1/24      tap0 ens18
   ens19                      up     1500   -                   -
-  local0                     down   0      -                   -
-  tap0                       up     9000   -                   ens18
 
-  3 interface(s) on the dataplane can forward
-  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
+  2 interface(s) on the dataplane can forward
 ```
 
 Responde pelo **dataplane**, com estado, MTU, endereços e o par do `linux_cp`. Esse último porque é o nome que o FRR e o `ip` usam, e quem transita entre as duas ferramentas precisa dos dois lado a lado.
@@ -97,9 +94,11 @@ Este comando já foi repassado ao `vtysh`, que enxerga apenas o que o `linux_cp`
 
 :::
 
-`local0` é o loopback interno do VPP. Aparece na lista — esconder o que o dataplane reporta seria o comando decidindo o que você pode ver — mas não é oferecido na completação, porque não configura nada.
+**A lista é do que você configurou**: placas, sub-interfaces de VLAN e loopbacks. O `local0` não aparece — é a interface nula do VPP e não configura nada — e o `tap` do par `linux_cp` também não: ele é criado e destruído por este produto, e o nome dele já está na coluna **Linux** da interface a que pertence.
 
-**E não entra na conta.** O número no fim da lista é o de interfaces que encaminham, que é o número a comparar com as placas que você instalou. Contando o `local0`, uma caixa com duas placas dizia três, e uma caixa sem placa nenhuma dizia *uma* logo abaixo da frase que avisava que ela não tinha interface para encaminhar. A linha seguinte ao número diz o que ficou de fora.
+Os dois apareciam até a 0.103.0, com o argumento de que esconder o que o dataplane reporta seria o comando decidindo o que você pode ver. O argumento vale para interfaces que a caixa tem; não vale para um artefato do VPP nem para a metade de um par — e o preço de mantê-los era uma conta errada pelo número de placas, cada uma contada duas vezes, uma como ela mesma e outra como o `tap` dela. A metade do argumento que era sobre diagnóstico continua de pé: um `tap` **nomeado explicitamente** ainda responde, então `show interface tap4096` mostra o que existe numa caixa com o par quebrado.
+
+**O número no fim da lista** é o de interfaces que encaminham, que é o número a comparar com as placas que você instalou.
 
 A visão do FRR continua em `show ip interface`.
 
@@ -112,10 +111,8 @@ prisma> show interface terse
   Interface                  Admin  Link   Proto  Local
   ens18                      up     up     inet   203.0.113.1/24
   ens19                      up     down   -      -
-  local0                     down   down   -      -
 
   2 interface(s) on the dataplane can forward
-  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
   ens19: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
@@ -138,10 +135,8 @@ prisma> show interface description
   Interface                  Admin  Link   Description
   ens18                      up     up     ASSINANTES PON-3
   ens19                      up     down   TRANSITO Vivo AS26599
-  local0                     down   down   
 
   2 of 2 interface(s) described
-  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
 A descrição fica guardada como a **etiqueta da interface no próprio dataplane**, com espaços e tudo: ela sobrevive a um restart da VTY e diz a mesma coisa a quem consultar o dataplane por outro caminho. Escreve-se com `description <texto>` dentro de `interface <nome>`.

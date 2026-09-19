@@ -1335,8 +1335,22 @@ def _is_lcp_tap(name: str) -> bool:
     not something this VTY can ask for. If that convention ever changes the
     worst outcome is the TAP coming back into the running configuration, which
     is the state this replaces - visible, not silent.
+
+    AND THE TAP'S SUB-INTERFACES, `tap4096.100`. `lcp-auto-subint` is on, so
+    VPP creates one of those for every VLAN sub-interface an operator makes on
+    a paired card - and this said no to it, because "4096.100" is not a run of
+    digits. Measured on the maintainer's box (#403): one `interface ens18.100`
+    put `interface tap4096.100 / vlan 100` into the running configuration,
+    which is saved, replayed at boot, and an attempt to configure the half of a
+    pair that linux_cp creates and destroys by itself.
     """
-    return name.startswith("tap") and len(name) > 3 and name[3:].isdigit()
+    if not name.startswith("tap") or len(name) <= 3:
+        return False
+    rest = name[3:]
+    if "." in rest:
+        base, _, sub = rest.partition(".")
+        return base.isdigit() and sub.isdigit()
+    return rest.isdigit()
 
 
 class Config:
