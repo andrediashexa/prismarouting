@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.103.0 - the screen lists what an operator can configure
+
+[#403](https://github.com/andrediashexa/hexarouting/issues/403).
+
+### Fixed
+
 * **`show interface` listed the `linux_cp` TAPs and `local0`, and counted every
   card twice.** Read on the maintainer's box, which has one card, one VLAN
   sub-interface and one loopback: the screen said *"5 interface(s) on the
