@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.96.0 - the off floors catch up with the labs
+
+[#151](https://github.com/andrediashexa/hexarouting/issues/151).
+
+### Fixed
+
 * **Three labs' off-run floors were behind what those labs measure**, and the
   suite is what said so. `tools/run-all-labs.sh` runs each lab a second time
   with its feature switched off and refuses a run that stays green; the
