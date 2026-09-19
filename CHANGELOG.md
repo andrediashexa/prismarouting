@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.102.0 - a release title carries its version
+
+[#402](https://github.com/andrediashexa/hexarouting/issues/402).
+
+### Fixed
+
 * **A published release title carrying no version passed the check written to
   catch exactly that.** `v0.101.0` went out titled *the words a configuration
   level owns*, where all 104 releases published before it carry the version as
