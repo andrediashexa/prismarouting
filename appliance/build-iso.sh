@@ -381,7 +381,7 @@ EOF
 say "no credentials on the medium"
 sh "$REPO/appliance/no-credentials-in-image" "$WORK/iso" || exit 1
 
-say "ISO hibrida"
+say "hybrid ISO"
 # The volume label is what lsblk, blkid and a desktop file manager show for
 # the stick this medium is written to, so it carries the product's name for
 # the reason the filename does: the name on the stick reads as the name on

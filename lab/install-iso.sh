@@ -3793,8 +3793,15 @@ then
         wait_for "HXLAB rb-why=" 60 "the box to say what --load made of its file" \
           || fail=1
 
-        RB_LOAD=$(mfield "$CONSOLE_CLEAN" rb-load)
-        RB_WHY=$(mfield "$CONSOLE_CLEAN" rb-why)
+        # live_field and NOT mfield, which is the third time this check was
+        # put in the wrong place and the last: mfield reads the CLEANED log,
+        # and that is written only when the machine stops. This check runs on
+        # a box that is still up - it has to, because it asks the box a
+        # question - so the value has to come off the live console. The
+        # comment on live_field says exactly this, and it was there before
+        # this check was written.
+        RB_LOAD=$(live_field rb-load)
+        RB_WHY=$(live_field rb-why)
         case "$RB_LOAD" in
           *rc=0*)
             echo "  [ ok ] the file this box wrote is one it can read: --load exited 0"
