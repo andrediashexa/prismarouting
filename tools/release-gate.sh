@@ -38,7 +38,30 @@ if [ -z "$TAG" ]; then
   }
 fi
 
-echo "==> release gate for $TAG"
+# THE CLOCK ON EVERY STEP (#408). docs/build-timing.md had to ESTIMATE the
+# per-step table: what it measured was the WHOLE - 36 minutes over six
+# releases, tag to this script's last line - and the inside was one block.
+# With this the gate's own log IS that table, and every release after it says
+# whether the numbers moved.
+#
+# Seconds since the PREVIOUS step, not a running total, for the reason
+# build-iso.sh's say() gives: a reader wants to know which step cost what, and
+# a total makes them subtract.
+#
+# Every step, including the cheap ones. A document check that prints 0s is
+# telling the reader it is free, which is worth knowing when the ten-minute
+# one is three lines below it.
+_STEP_LAST=""
+step() {
+  _now=$(date +%s)
+  if [ -n "$_STEP_LAST" ]; then
+    printf '==> %s (%ss)\n' "$*" "$((_now - _STEP_LAST))"
+  else
+    printf '==> %s\n' "$*"
+  fi
+  _STEP_LAST=$_now
+}
+step "release gate for $TAG"
 
 # --no-local so the clone is a real copy rather than hardlinks into the
 # original .git, which is the same trap the worktree fell into.
@@ -425,7 +448,7 @@ if ! wiki_out=$(sh "$WORK/tools/wiki-status.sh" 2>&1); then
   echo "       not a chore. Publish them, then run this again." >&2
   docs_bad=$((docs_bad + 1))
 else
-  echo "==> the published wiki matches this tree"
+  step "the published wiki matches this tree"
 fi
 
 # AND THE FILE SOMEBODY READS TO DECIDE WHAT TO DO NEXT.
@@ -457,12 +480,12 @@ fi
 # holder was added beside this one and the gate refused a release over a stub
 # that answered an empty list.
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
-  echo "==> the roadmap was NOT checked against the tracker: gh cannot answer"
+  step "the roadmap was NOT checked against the tracker: gh cannot answer"
 else
   rm_out=$(sh "$WORK/tools/roadmap-state.sh" 2>&1) && rm_rc=0 || rm_rc=$?
 fi
 if [ "${rm_rc:-0}" = 2 ]; then
-  echo "==> the roadmap was NOT checked against the tracker, and it says why:"
+  step "the roadmap was NOT checked against the tracker, and it says why:"
   printf '%s\n' "$rm_out" | sed -n '1,3p' | sed 's/^/    /'
 elif [ "${rm_rc:-0}" != 0 ]; then
   echo "error: docs/roadmap.md and the tracker disagree." >&2
@@ -473,7 +496,7 @@ elif [ "${rm_rc:-0}" != 0 ]; then
   echo "       that is not. Fix the file, then run this again." >&2
   docs_bad=$((docs_bad + 1))
 else
-  echo "==> the roadmap and the tracker agree"
+  step "the roadmap and the tracker agree"
 fi
 
 # tools/changelog-state.sh asks the other half of the same question, of the
@@ -497,13 +520,13 @@ fi
 # clean one except by refusing to answer, and a release stopped because GitHub
 # was down is a gate somebody learns to argue with.
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
-  echo "==> the CHANGELOG was NOT checked against the tracker: gh cannot answer"
+  step "the CHANGELOG was NOT checked against the tracker: gh cannot answer"
 else
   cl_out=$(sh "$WORK/tools/changelog-state.sh" "$WORK/CHANGELOG.md" 2>&1) \
     && cl_rc=0 || cl_rc=$?
 fi
 if [ "${cl_rc:-0}" = 2 ]; then
-  echo "==> the CHANGELOG was NOT checked against the tracker, and it says why:"
+  step "the CHANGELOG was NOT checked against the tracker, and it says why:"
   printf '%s\n' "$cl_out" | sed -n '1,3p' | sed 's/^/    /'
 elif [ "${cl_rc:-0}" != 0 ]; then
   echo "error: work has shipped that CHANGELOG.md does not record." >&2
@@ -514,7 +537,7 @@ elif [ "${cl_rc:-0}" != 0 ]; then
   echo "       the work if it was an older one." >&2
   docs_bad=$((docs_bad + 1))
 else
-  echo "==> the CHANGELOG records every completed issue"
+  step "the CHANGELOG records every completed issue"
 fi
 
 # AND THE TITLE THIS RELEASE WILL CARRY WHERE PEOPLE ACTUALLY READ IT.
@@ -551,7 +574,7 @@ if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
   # LOUDLY, for the reason the roadmap check above is loud about the same
   # condition. Driven with a gh that exits 1: this block printed nothing at
   # all, so its verdict was indistinguishable from the run where it passed.
-  echo "==> the release title was NOT checked: gh cannot answer"
+  step "the release title was NOT checked: gh cannot answer"
 else
   gh_err=/tmp/prisma-release-title-err
   if rel_title=$(gh release view "$TAG" --json name -q .name 2>"$gh_err"); then
@@ -563,10 +586,10 @@ else
   fi
   case "$rel_state" in
   none)
-    echo "==> $TAG has no published release yet, so its title is not checked"
+    step "$TAG has no published release yet, so its title is not checked"
     ;;
   unreadable)
-    echo "==> the release title was NOT checked: gh could not read $TAG"
+    step "the release title was NOT checked: gh could not read $TAG"
     sed 's/^/    /' "$gh_err"
     ;;
   ok)
@@ -615,7 +638,7 @@ else
       echo "         gh release edit $TAG --title \"$VER - $head_title\"" >&2
       docs_bad=$((docs_bad + 1))
     else
-      echo "==> the published release title is the CHANGELOG heading"
+      step "the published release title is the CHANGELOG heading"
     fi
     ;;
   esac
@@ -675,9 +698,9 @@ fi
 # a 321 MB image is a check nobody exercises.
 if [ "${RELEASE_GATE_CHECK_ONLY:-0}" = 1 ]; then
   if [ "$KIND" = patch ]; then
-    echo "==> check only: $TAG verifies as a patch release, nothing was built"
+    step "check only: $TAG verifies as a patch release, nothing was built"
   else
-    echo "==> check only: $NAME verifies as $TAG, nothing was built"
+    step "check only: $NAME verifies as $TAG, nothing was built"
   fi
   exit 0
 fi
@@ -697,7 +720,7 @@ fi
 # The third category is neither: test/, lab/, ref/ and the contributor
 # documents ship nowhere at all, so no box can disagree with them.
 if [ "$KIND" = patch ]; then
-  echo "==> the suites, which are what a patch release proves"
+  step "the suites, which are what a patch release proves"
   ( cd "$WORK" && make test ) > "$WORK/maketest.log" 2>&1 || {
     echo "error: make test is not green on $TAG, and it is the whole of" >&2
     echo "       what this release proves." >&2
@@ -707,10 +730,10 @@ if [ "$KIND" = patch ]; then
   }
   grep -E "^  [0-9]+ suites:" "$WORK/maketest.log" | sed 's/^/    /'
 
-  echo "==> building the plugin"
+  step "building the plugin"
   sh "$WORK/tools/build.sh" plugin >/dev/null
 
-  echo "==> building the upgrade artifact"
+  step "building the upgrade artifact"
   ( cd "$WORK" && sh appliance/build-upgrade.sh ) > "$WORK/upgrade.log" 2>&1 || {
     echo "error: the upgrade artifact could not be built." >&2
     tail -20 "$WORK/upgrade.log" >&2
@@ -720,7 +743,7 @@ if [ "$KIND" = patch ]; then
   [ -f "$ART" ] || { echo "error: no upgrade artifact was produced" >&2; exit 1; }
 
   echo
-  echo "==> $(basename "$ART") is ready to publish, as a PRE-RELEASE"
+  step "$(basename "$ART") is ready to publish, as a PRE-RELEASE"
   echo "    $ART"
   echo "    sha256 $(sha256sum "$ART" | cut -d" " -f1)"
   echo
@@ -731,7 +754,7 @@ if [ "$KIND" = patch ]; then
   exit 0
 fi
 
-echo "==> building the plugin"
+step "building the plugin"
 sh "$WORK/tools/build.sh" plugin >/dev/null
 
 # BEFORE the 325 MB image, because it costs two minutes and it refuses the
@@ -744,7 +767,7 @@ sh "$WORK/tools/build.sh" plugin >/dev/null
 # a real VPP by anything here. 0.75.0 shipped a `dev { mtu ... }` line that
 # this VPP answers with "unknown input", so VPP exited, Restart=always made it
 # a loop, and the box forwarded nothing (#377). The gate passed it.
-echo "==> the generated startup.conf, read by the VPP that reads it"
+step "the generated startup.conf, read by the VPP that reads it"
 ( cd "$WORK" && sg docker -c "docker run --rm --privileged \
     -v $WORK:/src -w /src prisma-routing-dev:26.06 \
     sh /src/appliance/test_startup_conf_shapes.sh" ) \
@@ -768,7 +791,7 @@ grep -q "NOT MEASURED" "$WORK/shapes.log" && {
 }
 echo "    every shape the tuner can write is one this VPP accepts"
 
-echo "==> building the medium"
+step "building the medium"
 ( cd "$WORK" && make iso >/dev/null )
 [ -f "$WORK/$NAME" ] || { echo "error: $NAME was not produced" >&2; exit 1; }
 
@@ -786,7 +809,7 @@ echo "==> building the medium"
 # between here and the end is caught, not just a make prerequisite.
 MEDIUM_SHA=$(sha256sum "$WORK/$NAME" | cut -d" " -f1)
 
-echo "==> booting it"
+step "booting it"
 ( cd "$WORK" && sh tools/lab.sh boot-iso ) > "$WORK/boot.log" 2>&1 || {
   echo "error: the medium did not boot. Last of the console:" >&2
   tail -20 "$WORK/boot.log" >&2
@@ -852,7 +875,7 @@ said_a_good_verdict "$BOOTLOG" || {
 #
 # So the gate installs to a disk and boots THAT, with the medium detached. The
 # second boot is the assertion; a live image cannot make it.
-echo "==> installing it to a disk and booting the disk"
+step "installing it to a disk and booting the disk"
 ( cd "$WORK" && make test-install ) > "$WORK/install.log" 2>&1 || {
   echo "error: the medium installed and the installed box failed its checks." >&2
   grep -E "\[FAIL\]" "$WORK/install.log" | head -10 >&2
@@ -886,7 +909,7 @@ echo "==> installing it to a disk and booting the disk"
 # assertion that the two builds of this tree still agree about which tree they
 # are - not a second calculation of the identity, which tools/version-stamp.sh
 # owns and this gate refuses "-dirty" and "-unverified" on above.
-echo "==> building the upgrade artifact"
+step "building the upgrade artifact"
 ( cd "$WORK" && make upgrade-artifact ) > "$WORK/upgrade.log" 2>&1 || {
   echo "error: the upgrade artifact for $TAG could not be built, or could not" >&2
   echo "       be installed out of its own tarball. Publishing the medium" >&2
@@ -946,13 +969,13 @@ if [ -n "$PREV" ] && [ "$PREV" != "$RENAME" ]; then
     && PRE_RENAME=yes
 fi
 if [ -z "$PREV" ]; then
-  echo "==> no published release before $TAG, so there is no upgrade to measure"
+  step "no published release before $TAG, so there is no upgrade to measure"
 elif [ "$PRE_RENAME" = yes ]; then
-  echo "==> $PREV is older than the rename ($RENAME), and this product"
+  step "$PREV is older than the rename ($RENAME), and this product"
   echo "    refuses to upgrade a box carrying the old name at all, so there"
   echo "    is no upgrade here to measure"
 else
-  echo "==> upgrading a $PREV box to this tree"
+  step "upgrading a $PREV box to this tree"
   ( cd "$WORK" && sh tools/lab.sh upgrade "$PREV" ) \
       > "$WORK/upgrade-lab.log" 2>&1 || {
     echo "error: a box running $PREV could not be upgraded to $TAG, or the" >&2
@@ -984,7 +1007,7 @@ now=$(sha256sum "$WORK/$NAME" | cut -d" " -f1)
 }
 
 echo
-echo "==> $NAME is ready to publish"
+step "$NAME is ready to publish"
 echo "    $WORK/$NAME"
 echo "    sha256 $(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
 # Beside it, and named in the same block, because a release page that carries

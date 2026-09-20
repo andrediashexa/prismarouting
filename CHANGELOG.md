@@ -107,6 +107,40 @@ version has a chance of seeing it.
   It is run by hand, because `OFF_MODES` carries one mode per lab and this
   lab's is `no-marker`.
 
+* **A clock on every step of a release**
+  ([#408](https://github.com/andrediashexa/hexarouting/issues/408)).
+  `docs/build-timing.md` measured the **whole** — 36 minutes, six releases in
+  a row, tag to the gate's last line — and could not measure the inside:
+  `debootstrap`, the VPP and FRR install and `mksquashfs` were one ten-minute
+  block with no clock on any of them. That is exactly where the first
+  optimisation is aimed, and optimising against an estimate is how the wrong
+  thing gets made faster.
+
+  Four places, and the gate's own log now **is** the table that document had
+  to estimate:
+
+  * `appliance/build-iso.sh` — seconds beside every `say()`, which splits the
+    ten minutes into its phases;
+  * `tools/release-gate.sh` — the same beside all 29 steps, on both the minor
+    and the patch path. Including the cheap ones: a document check that prints
+    `0s` is telling the reader it is free, which is worth knowing when the
+    ten-minute one is three lines below it;
+  * `lab/boot-iso.sh` and `lab/install-iso.sh` — the elapsed time with the
+    verdict. On **both** of `install-iso`'s exits, because a duration printed
+    only on success is one missing exactly when the run went wrong. This lab's
+    header had carried 687-692 s in a comment, from three runs somebody read
+    off a terminal once;
+  * `lab/upgrade.sh` — **cache HIT or MISS**, said out loud. The release gate
+    deletes its clone's cache before every run, so on that path it has never
+    once been hit and nothing said so. A cache that is never hit is not a
+    cache; it is a directory that makes a reader believe a step is cheaper
+    than it is.
+
+  The boot and install timings are also what
+  [#396](https://github.com/andrediashexa/hexarouting/issues/396)'s phase-0
+  baseline needs: a container cannot be shown to have cost nothing against a
+  before that was never recorded.
+
 ### Fixed
 
 ## 0.110.3 - something kills the control plane and sends a packet

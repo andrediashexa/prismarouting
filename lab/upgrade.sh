@@ -261,10 +261,18 @@ echo "=========== 1. the old release, built and installed ==========="
 echo "old side: $OLD_TAG   new side: the tree at /src"
 
 rm -rf "$OLD"; mkdir -p "$OLD"
+# HIT OR MISS, SAID OUT LOUD (#408). This cache is one the release gate
+# DELETES before every run - it clones the tag into a fresh directory - so on
+# the release path it has never once been hit, and nothing said so. A cache
+# that is never hit is not a cache; it is a directory that makes a reader
+# believe a step is cheaper than it is.
 if [ -d "$CACHE" ] && [ -f "$CACHE/appliance/install.sh" ]; then
   cp -a "$CACHE/." "$OLD/"
-  echo "  the tag's tree came from $CACHE"
+  echo "  cache HIT: the tag's tree came from $CACHE"
 else
+  echo "  cache MISS: $CACHE is not there, so the tree is extracted"
+  echo "  (the release gate deletes its clone's cache before every run, so on"
+  echo "   that path this is always a miss - docs/build-timing.md, #409)"
   # safe.directory as a one-shot -c and not as a config write: see the header.
   git -c safe.directory=/src -C /src archive "$OLD_TAG" \
     2>/tmp/git-archive.err | tar -x -C "$OLD" 2>/dev/null || true

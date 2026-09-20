@@ -18,7 +18,27 @@ MIRROR=http://deb.debian.org/debian
 VPP_VERSION=${VPP_VERSION:-26.06-release}
 FRR_VERSION=${FRR_VERSION:-10.7.1-0~deb12u1}
 
-say() { echo "==> $*"; }
+# THE CLOCK ON EVERY PHASE (#408). docs/build-timing.md measured the WHOLE at
+# 36 minutes, six releases in a row, tag to the gate's last line - and could
+# not measure the inside of this script: debootstrap, the VPP and FRR install
+# and mksquashfs are one ten-minute block with no clock on any of them. That
+# is exactly where the first optimisation is aimed, and optimising against an
+# estimate is how the wrong thing gets made faster.
+#
+# SECONDS SINCE THE PREVIOUS say(), not since the start: what a reader wants
+# is which phase cost what, and a running total makes them subtract. The first
+# say() has no previous one and prints none rather than printing zero, because
+# a zero there would read as a phase that took no time.
+_SAY_LAST=""
+say() {
+  _now=$(date +%s)
+  if [ -n "$_SAY_LAST" ]; then
+    printf '==> %s (%ss)\n' "$*" "$((_now - _SAY_LAST))"
+  else
+    printf '==> %s\n' "$*"
+  fi
+  _SAY_LAST=$_now
+}
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
 
 # Without this check a missing tool only shows up much later, as a

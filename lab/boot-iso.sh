@@ -14,6 +14,14 @@
 # resident.
 set -u
 . /src/tools/selftest-verdict.sh
+
+# HOW LONG THE BOOT TOOK, not only whether it happened (#408).
+# docs/build-timing.md had to estimate this: what was measured was the whole
+# release, and this lab reported a verdict and no duration. It is also the
+# number #396's phase-0 baseline needs - "boot time to ready" - and a baseline
+# with no before cannot say whether a container made anything slower.
+_LAB_START=$(date +%s)
+elapsed() { echo "$(( $(date +%s) - _LAB_START ))"; }
 ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 SRC=${SRC:-/src}
 
@@ -255,6 +263,7 @@ if said_a_verdict /tmp/clean.log; then
       grep -A2 "VPP did not answer" /tmp/clean.log | head -3 | sed 's/^/  /'
       exit 1
     fi
+    echo "  the medium booted and said ready in $(elapsed)s"
     exit 0
   fi
   echo

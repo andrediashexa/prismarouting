@@ -226,13 +226,28 @@ emptied the working tree"
 echo "=== say, on its own ==="
 # The line after say is defined refuses anyone who is not root, so the
 # function is cut out of the script and called alone, the way
-# test/test_run_all_labs.sh cuts _jobs_by_mem out of the lab suite. It is one
-# line, and every step the build reports goes through it.
-sed -n '/^say() /p' "$REPO/$BISO" > "$WORK/say.sh"
+# test/test_run_all_labs.sh cuts _jobs_by_mem out of the lab suite.
+#
+# IT USED TO BE ONE LINE and this cut was `sed -n '/^say() /p'`. It grew a
+# branch with #408 - the seconds since the previous step - so the whole
+# function is taken, and the extraction would have silently produced a
+# fragment otherwise. That is what happened when the clock first went in: this
+# suite went red on a syntax error rather than on the product, which is the
+# extraction telling the truth about itself.
+sed -n '/^_SAY_LAST=/,/^}/p' "$REPO/$BISO" > "$WORK/say.sh"
 got=$(. "$WORK/say.sh"; say "VPP 26.06 and FRR 10.7")
 [ "$got" = "==> VPP 26.06 and FRR 10.7" ] \
   && ok "say prints the step behind the '==>' the build log is read by" \
   || bad "say gave '$got'"
+# THE FIRST STEP PRINTS NO TIME, and the ones after it do. A zero on the first
+# would read as a phase that took no time, when what it means is that there is
+# nothing to subtract from yet (#408).
+got2=$(. "$WORK/say.sh"; say "first"; sleep 1; say "second")
+case "$got2" in
+  "==> first"*"==> second (1s)"|"==> first"*"==> second (2s)")
+    ok "and a later step carries the seconds since the one before it" ;;
+  *) bad "say gave '$got2' for two steps a second apart" ;;
+esac
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
