@@ -1145,6 +1145,55 @@ elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
       ok "dataplane NIC(s): claimed by this box with nobody asked"
       say_list "         " "$NICPCI"
     fi
+    # AND A CARD THAT ARRIVED AFTER THE BOOT (#405). The dataplane claims its
+    # cards when it starts, and VPP is started with an EAL allowlist naming
+    # exactly those - so a card plugged into a running box is not merely
+    # unclaimed, it is outside the process, and no amount of configuring
+    # reaches it. The tuner recomputes the stanza on every boot, so the next
+    # boot takes it.
+    #
+    # A WARNING AND NOT A FAILURE: the box forwards, the configuration is
+    # sound, and what is wrong is only that a card somebody installed is doing
+    # nothing. Said here because this is the screen that says which cards the
+    # box took, and a card missing from that list with no explanation reads as
+    # a card the box failed to take.
+    #
+    # Counted from the netdev's own PCI address, which is the reading the
+    # tuner makes: a card with no `device` link is not a card (that is the
+    # linux_cp pair), and one whose address is already in startup.conf is one
+    # the dataplane holds.
+    _waiting=""
+    for _n in "$ROOT"/sys/class/net/*; do
+      _ni=$(basename "$_n")
+      [ "$_ni" = lo ] && continue
+      [ -e "$_n/device" ] || continue
+      _pci=$(basename "$(readlink -f "$_n/device" 2>/dev/null)" 2>/dev/null)
+      # A PCI ADDRESS AND NOTHING ELSE. `device` on a netdev that is not a PCI
+      # card - a virtio-mmio device, a USB adapter, anything a container
+      # arranges - resolves to a name that is not an address, and a name this
+      # cannot compare against startup.conf is a card this must not report as
+      # waiting for a boot.
+      case "$_pci" in
+        [0-9a-f][0-9a-f][0-9a-f][0-9a-f]:*) ;;
+        *) continue ;;
+      esac
+      case " $NICPCI " in
+        *" $_pci "*) continue ;;
+      esac
+      _waiting="$_waiting $_ni"
+    done
+    if [ -n "$_waiting" ]; then
+      # THE NAMES ON A ROW OF THEIR OWN, which is the shape #367 settled:
+      # an interface name can be fifteen characters, a verdict carrying a list
+      # of them folds on an 80-column console, and the fold takes the only
+      # words an operator recognises with it.
+      warn "a card this box has is not on the dataplane"
+      say_list "         " "$_waiting"
+      say "         the dataplane claims its cards when it starts, and it is"
+      say "         started with a list naming the ones it had then - so a"
+      say "         card added since is outside it until this box reboots."
+      say "         'show hardware' lists it; 'system reboot' hands it over."
+    fi
     # AND WHICH CARD LINUX KEPT, if any. The reserve is the management network
     # the installer recorded, and an operator looking at a box with three
     # cards and two claimed needs the reason the third was spared - otherwise

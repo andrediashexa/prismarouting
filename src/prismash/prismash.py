@@ -7465,8 +7465,29 @@ class Shell:
                             print_prose("the session would be sourced from "
                                         "nothing and never come up")
                             ok = False
+                # The cards Linux still holds, so a name that is one of
+                # them is refused for the reason it is actually refused for
+                # (#405). Read once, outside the loop: the answer is the same
+                # for every name and the read walks /sys.
+                on_linux = {n["name"] for n in self.host_nics()}
                 for name in sorted(named - have):
                     missing.add(name)
+                    if name in on_linux:
+                        # A CARD THE OPERATOR IS LOOKING AT. It is in `show
+                        # hardware`, it is in `ip link`, and "this box has no
+                        # such interface" about it reads as the box being
+                        # wrong - which sends somebody to check their spelling
+                        # instead of to the one thing that fixes it.
+                        self.err_prose(
+                            f"interface {name}: the dataplane does not hold "
+                            "this card",
+                            "the box has it and Linux still does; the "
+                            "dataplane claims a card when it starts, and the "
+                            "cards it claims are computed on that boot",
+                            "'show hardware' lists it, and 'system reboot' "
+                            "is what hands it over")
+                        ok = False
+                        continue
                     self.err(f"interface {name}: this box has no such "
                              "interface")
                     # Wrapped, not one row: the list grows with the box, and
@@ -12508,6 +12529,15 @@ class Shell:
         it starts, so on a box where the configuration has just changed this
         describes the next start and not the present - which is the same thing
         `dataplane interface` already tells the operator at the commit.
+
+        AND THE TENSE WAS NOT ENOUGH (#405). The maintainer put a second NIC
+        in a running box, read "The dataplane claims all 1" here, and was then
+        told by the VTY that the box has no such interface. Both sentences
+        were true and the pair of them is not readable: "claims" is the rule,
+        the card is not claimed yet, and nothing on the screen said when it
+        would be. `waiting_note()` says that, under this, naming the cards it
+        is about - which is the only line on the screen an operator can act
+        on, and the action is a reboot.
         """
         named = self.read_dataplane_if()
         if named:
@@ -12551,6 +12581,45 @@ class Shell:
                 f"network, so it is reached at its console.",
                 "'dataplane interface <name>' claims that card alone "
                 "instead."]
+
+    def waiting_note(self, nics, held):
+        """
+        The cards Linux has that the dataplane has not taken yet, as prose.
+
+        `held` is what `show interface` reports, or None when the dataplane
+        could not be asked - and None answers nothing here, because "the
+        dataplane holds no card" and "the dataplane did not answer" are
+        different boxes and only one of them is waiting for a boot.
+
+        THE CARD IS STILL IN LINUX, which is the whole signal: the tuner
+        writes a `dev` stanza per claimed card into startup.conf and VPP is
+        started with an EAL allowlist naming exactly those, so a card added
+        after that is not merely unclaimed - it is excluded from the process
+        and no amount of configuring reaches it. The tuner runs on every boot
+        and computes the stanza from the hardware it finds, so the next boot
+        claims it. That is #336's decision and it is the right one: claiming a
+        card moves it to a userspace driver, and a box that did that to itself
+        on a timer would lose the card it is reached over while nobody was
+        watching.
+
+        So what is missing is not a mechanism, it is a sentence. Empty when
+        every card is accounted for, because a line on every boot is a line
+        nobody reads.
+        """
+        if held is None or not nics:
+            return []
+        waiting = sorted(n["name"] for n in nics
+                         if n["name"] not in set(held))
+        if not waiting:
+            return []
+        return ["The dataplane does not hold " + ", ".join(waiting)
+                + " yet: a card is claimed when the dataplane starts, and "
+                  "the cards it claims are computed on that boot.",
+                "Until this box is rebooted the dataplane cannot be given "
+                "one: it is started with an allowlist naming the cards it had "
+                "at boot, so a card added since is outside the process "
+                "entirely.",
+                "'system reboot' does it, and says what it costs first."]
 
     def one_nic_note(self):
         """
@@ -12945,6 +13014,10 @@ class Shell:
         # copy of the rule: the rule is one sentence and this states it, which
         # is the difference between a screen and a reimplementation.
         for line in self.claim_note(nics):
+            print_prose(line, indent="  ")
+        # And which of them is not on the dataplane YET, which is the half
+        # the rule above cannot say (#405).
+        for line in self.waiting_note(nics, held):
             print_prose(line, indent="  ")
         if not mgmt:
             print_prose("no interface carries a default route on this box, "

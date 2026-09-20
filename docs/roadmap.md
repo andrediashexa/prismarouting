@@ -496,10 +496,13 @@ not have found, because each is about a box somebody is USING:
   called it a pseudo interface and could not bind the address the loopback
   exists to carry. `lab/routing.sh` had been asserting that behaviour as the
   product's ordinary one.
-* [#405](https://github.com/andrediashexa/hexarouting/issues/405) - a NIC added
-  after boot is invisible, and three screens say something untrue about it:
-  `show hardware` claims the dataplane claims it, the VTY says the box has no
-  such interface, and nothing says the card will be claimed on the next boot.
+* [#405](https://github.com/andrediashexa/hexarouting/issues/405) - **fixed.**
+  A NIC added after boot was invisible, and three screens said something untrue
+  about it: `show hardware` said the dataplane claims it, the VTY said the box
+  has no such interface, and nothing said the card is claimed at the next boot.
+  All three say that now. There is still no live path, on #336's reasoning -
+  taking a card in restarts the dataplane, which stops forwarding for everybody
+  on the box - and the screens say so rather than leaving it to be discovered.
 * [#406](https://github.com/andrediashexa/hexarouting/issues/406) -
   **fixed.** Sub-interfaces and loopbacks worked and could not be discovered:
   `?` offered the interfaces the box already has, so the list read as the

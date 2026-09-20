@@ -2324,6 +2324,49 @@ else
 "$(printf '%s\n' "$OUTPUT" | grep -A3 -i 'dataplane NIC' || echo '<nothing>')"
 fi
 
+# A CARD THAT ARRIVED AFTER THE BOOT (#405). The box claimed 0000:03:00.0,
+# holds it, forwards on it - and Linux has a second card whose address is in no
+# `dev` stanza. That is the box the maintainer was reading: a NIC added to a
+# running machine, invisible to the dataplane because VPP is started with an
+# allowlist naming the cards it had at boot, and nothing on any screen saying
+# when it would be taken.
+#
+# The `device` link has to resolve to something SHAPED like a PCI address,
+# because that is what the check compares against startup.conf - and it is why
+# the fixtures above, whose `device` is a plain directory, do not trip this.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet3/0/0           1      up          9000/0/0/0     rx packets                  12
+local0                            0     down          0/0/0/0
+IFACE
+nicconf 'dpdk {
+  dev 0000:03:00.0
+}'
+mkdir -p "$FAKE/root/sys/devices/pci0000:00/0000:04:00.0" \
+         "$FAKE/root/sys/class/net/ens19"
+ln -sfn "../../../devices/pci0000:00/0000:04:00.0" \
+        "$FAKE/root/sys/class/net/ens19/device"
+run
+if said 'a card this box has is not on the dataplane' && said_across 'ens19'; then
+  ok "a card added after the boot is named, on the screen that says which cards the box took"
+else
+  bad "a card Linux holds and the dataplane does not is reported nowhere: "\
+"$(printf '%s\n' "$OUTPUT" | grep -i 'card this box\|dataplane NIC' || echo '<nothing>')"
+fi
+if said_across "outside it until this box reboots"; then
+  ok "and it says why, and what to do about it"
+else
+  bad "it named the card and not what becomes of it: "\
+"$(printf '%s\n' "$OUTPUT" | grep -A4 -i 'card this box' || echo '<nothing>')"
+fi
+if said '\[FAIL\].*card this box has'; then
+  bad "a card waiting for a boot was reported as a FAILED check: the box \
+forwards and its configuration is sound"
+else
+  ok "and it is a warning rather than a failure: the box forwards"
+fi
+rm -rf "$FAKE/root/sys/class/net/ens19"
+
 # AND THE CLAIM IS NOT ENOUGH (#382). The same box, with the driver having
 # refused to start the port: the dataplane still HOLDS the interface, so every
 # check above stays green - including the two #378 ones just above, which
