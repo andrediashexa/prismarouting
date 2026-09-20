@@ -79,6 +79,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.106.0 - a card the box has and the dataplane has not
+
+[#405](https://github.com/andrediashexa/hexarouting/issues/405).
+
+### Fixed
+
+* **`CONTRIBUTING.md` says where the wiki publish goes.** The gate refused two
+  releases in one day for shipping behind their own wiki, both times after the
+  version bump and the tag: `tools/wiki-status.sh` compares the mirror against
+  the commit `wiki/.pulled` names, so a page published while that pull is
+  uncommitted reads as unpublished. A correct refusal arriving twenty minutes
+  into a build. Section 5 now says to publish, pull and commit the pull before
+  the tag, which costs nothing at the end of the work.
+
 * **A NIC added after boot was invisible, and three screens said something
   untrue about it.** The maintainer put a second card in a running box.
   `show hardware` listed it and said *"The dataplane claims all 1"*; the VTY
