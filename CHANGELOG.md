@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.107.0 - a sub-interface does not block every commit
+
+[#407](https://github.com/andrediashexa/hexarouting/issues/407).
+
+### Fixed
+
 * **A sub-interface whose parent was shut down made every commit fail.** Found
   by the maintainer on 0.105.0, a box in service. A VLAN sub-interface created
   under a shut-down card committed fine; every commit after it failed with
