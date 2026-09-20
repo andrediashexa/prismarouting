@@ -90,6 +90,16 @@ MARKER = "not a unit:"
 # 2026-09-17, #390 batches A to H: every Python and shell function at 0
 # but for the excusals, which print with their reasons; C holds what the
 # plain-cc harness reaches, the rest waits for the VPP build.
+# 2026-09-20, #390 step 1 of the decision taken on #21's successor: 171 to 130.
+# bpa_cli.c's forty-one rendering functions are excused at their definitions -
+# thirty VLIB_CLI_COMMAND bodies, eight format functions over a va_list, and
+# two that write through vlib_cli_output() - each with the class it belongs to
+# and a pointer to that file's header, where the argument is made once instead
+# of forty-one times. What holds them instead is named there too:
+# test_plugin_cli_says.py requires every message the file can print to be named
+# by a lab, a suite or a document. The arithmetic in the same file - the
+# comparator, the counter total, the subscriber lookups - is NOT excused and
+# waits for the VPP-linked harness, which is the other half of that decision.
 # 2026-09-18, #21: 161 to 171. The identity table's loader, its statement and
 # its screen, and the API handler that carries the path: the loader swaps the
 # table under the worker barrier, two are a VLIB_CLI_COMMAND body each and one
@@ -116,8 +126,8 @@ MARKER = "not a unit:"
 # buffer, a session pool, a bihash, VPP's format() or the CLI, and waits for
 # the VPP build with bpa_log.c, which needs the ipfix-export infrastructure
 # for all eight of its functions.
-UNTESTED_AT_MOST = {"python": 0, "c": 171, "shell": 0}
-MEASURED_ON = "2026-09-17"
+UNTESTED_AT_MOST = {"python": 0, "c": 130, "shell": 0}
+MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and
 # the whole file green, which is the failure this check exists to find one
@@ -176,12 +186,34 @@ def marker_above(lines, idx, is_comment):
     """
     The marker in the contiguous comment block ending on line idx-1, or
     None. `is_comment` says whether a line belongs to that block.
+
+    THE REASON IS THE REST OF THE BLOCK, not the rest of that one line. A
+    reason worth giving does not fit in what is left of a 79-column line
+    after the marker, and the first version of this read only that - so a
+    wrapped comment, which is the house style for every other comment in
+    these files, printed as a sentence cut off in the middle: "a VPP format
+    function: its argument is a va_list and it". An excuse that reads as a
+    fragment is an excuse nobody can weigh, which is the whole thing the
+    reason is for (#390).
     """
     i = idx - 1
     while i >= 0 and is_comment(lines[i]):
         m = re.search(re.escape(MARKER) + r"(.*)", lines[i])
         if m:
-            return m.group(1).replace("*/", "").strip()
+            parts = [m.group(1)]
+            # Forward from the marker to the end of the block, so the reason
+            # reads in the order it was written.
+            j = i + 1
+            while j < idx and is_comment(lines[j]):
+                parts.append(lines[j])
+                j += 1
+            reason = " ".join(parts)
+            # The comment's own punctuation, in all three languages: C's
+            # opening and closing, the continuation star, and the # or the
+            # leading whitespace python and shell use.
+            reason = reason.replace("*/", " ").replace("/*", " ")
+            reason = re.sub(r"(^|\s)[*#]+(\s|$)", " ", reason)
+            return re.sub(r"\s+", " ", reason).strip()
         i -= 1
     return None
 
