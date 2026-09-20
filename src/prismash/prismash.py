@@ -30,6 +30,8 @@ import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
+                    MTU_MIN, MTU_MAX, MTU_RANGE,
+                    IFACE_VRF_MAX, IFACE_VRF_RANGE,
                     is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
@@ -400,7 +402,7 @@ ARG_PORT = "<1-65535>"
 ARG_SECONDS = "<1-4294967295>"
 #: A VRF table id on an INTERFACE, u32 in Linux. Zero is not in the range
 #: because here it REMOVES the statement rather than selecting table 0.
-ARG_VRF = "<1-4294967295>"
+ARG_VRF = IFACE_VRF_RANGE
 #: The same id where it names a table rather than a statement: u32 in the
 #: dataplane (`bpa_pool_t.vrf_id`), and 0 is VPP's default table, which a pool
 #: may legitimately be pinned to.
@@ -849,7 +851,11 @@ INTERFACE_BLOCK = {
         }),
     }),
     "shutdown": ("take the interface administratively down", None),
-    "mtu": ("MTU, on both the dataplane interface and its TAP", "<576-9216>"),
+    # The range comes from config.py, which is also what refuses one outside
+    # it - at the prompt AND in a saved file, since #417. A hint that spells
+    # the numbers out is a second copy of them, which is what `vlan` above
+    # says and what this statement had three of.
+    "mtu": ("MTU, on both the dataplane interface and its TAP", MTU_RANGE),
     "urpf": ("drop packets whose source does not route back this way", {
         "strict": ("the source MUST route back out this interface", None),
         "loose": ("the source MUST have a route somewhere", None),
@@ -11135,9 +11141,10 @@ class Shell:
         # prevent. Everything else in the block is still FRR's.
         if iface and not neg and dp == "mtu":
             if len(w) < 2 or not is_number(w[1]):
-                self.err("usage: mtu <576-9216>")
-            elif not 576 <= int(w[1]) <= 9216:
-                self.err(f"mtu {w[1]} out of range (576-9216)")
+                self.err(f"usage: mtu {MTU_RANGE}")
+            elif not MTU_MIN <= int(w[1]) <= MTU_MAX:
+                self.err(f"mtu {w[1]} out of range "
+                         f"({MTU_MIN}-{MTU_MAX})")
             else:
                 self.candidate.mtus[iface] = int(w[1])
             return True
