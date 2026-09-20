@@ -1032,6 +1032,65 @@ def mac_why(refusal) -> str:
     return f"{verdict} - {prose}" if prose else verdict
 
 
+#: The AS numbers that are not an AS a box configures itself as, and what to
+#: say about each. Data rather than branches, because the reason is the whole
+#: value of the finding and a branch would leave it in a sentence nobody can
+#: compare against the RFC.
+#:
+#: AS_TRANS is the only one. The private ranges are NOT here, and that is the
+#: decision: 64512-65534 and 4200000000-4294967294 (RFC 6996) are an ordinary
+#: thing for an ISP to run internally, and a checker that warns about what is
+#: merely unusual is one an operator learns to work around.
+AS_NOTABLE = {
+    23456: ("AS_TRANS", "RFC 6793 reserves it for a 2-byte speaker to stand "
+                        "in with; it is not an AS to be"),
+}
+
+#: 1 to 2^32-1. Zero is reserved (RFC 7607) and 4294967295 is the last one
+#: RFC 7300 reserves, but both are refused here for the plainer reason that
+#: neither is an AS anybody is assigned - and the hint beside `remote-as` has
+#: said `<1-4294967295>` since it was written while nothing kept it.
+ASN_MIN, ASN_MAX = 1, 4294967295
+
+
+def asn_error(what: str, value: str):
+    """
+    None if `value` is an AS number, else why not, in rows.
+
+    REFUSED is everything that is not a number and everything outside
+    1-4294967295: neither is an AS under any reading, and until #415 nothing
+    in this VTY asked. `router bgp 0`, `router bgp 4294967296` and
+    `router bgp banana` were all staged, and FRR refused them at commit - one
+    step after the operator had built a candidate that probably changes
+    something else too. That is the argument #351, #360 and #361 already won
+    for the pool: a bound enforced only by the thing downstream is a bound the
+    operator meets one commit late.
+
+    SAID is AS_TRANS, through `asn_note`, because refusing it would refuse a
+    lab somebody built deliberately.
+
+    `internal`, `external` and `auto` are not handled here: they are real FRR
+    spellings of `remote-as` and the caller keeps them, because this function
+    answers about a NUMBER and those are not one.
+    """
+    if not value:
+        return (f"{what}: expected an AS number", "")
+    if not is_number(value):
+        return (f"{what} '{value}': expected an AS number",
+                f"an AS number is {ASN_MIN} to {ASN_MAX}")
+    n = int(value)
+    if not ASN_MIN <= n <= ASN_MAX:
+        return (f"{what} {value}: out of range",
+                f"an AS number is {ASN_MIN} to {ASN_MAX}")
+    return None
+
+
+def asn_why(refusal) -> str:
+    """`asn_error` as one sentence, for the file. See `vrrp_why`."""
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
+
+
 def mac_normal(value: str) -> str:
     """
     A MAC as the dataplane writes it: two lowercase digits per octet.
@@ -1044,6 +1103,21 @@ def mac_normal(value: str) -> str:
     makes accepting the short spelling safe.
     """
     return ":".join(f"{int(o, 16):02x}" for o in value.split(":"))
+
+def asn_note(value: str):
+    """
+    What is worth saying about an AS number that is legal, or None.
+
+    A FINDING and never a refusal - see AS_NOTABLE for why the private ranges
+    produce nothing at all.
+    """
+    if not is_number(value):
+        return None
+    entry = AS_NOTABLE.get(int(value))
+    if not entry:
+        return None
+    name, why = entry
+    return f"AS {value} is {name}: {why}"
 
 
 def prefix_error(what: str, value: str):

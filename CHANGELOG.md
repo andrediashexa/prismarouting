@@ -103,6 +103,41 @@ version has a chance of seeing it.
   `delta_to` reported `mac_set` on **every** commit: the box re-applied the MAC
   forever and `show configuration compare` was never clean. It is now stored in
   the spelling VPP prints, which is what makes accepting the short one safe.
+* **An AS number is checked for being one**
+  ([#415](https://github.com/andrediashexa/hexarouting/issues/415)).
+  `router bgp 0`, `router bgp 4294967296` and `router bgp banana` were all
+  staged, and so was `neighbor 10.0.0.1 remote-as 99999999999`. The hint
+  beside `remote-as` has said `<1-4294967295>` since it was written and
+  nothing kept it. FRR refused them at commit - one step after the operator
+  had built a candidate that probably changes something else too, which is the
+  argument [#351](https://github.com/andrediashexa/hexarouting/issues/351),
+  [#360](https://github.com/andrediashexa/hexarouting/issues/360) and
+  [#361](https://github.com/andrediashexa/hexarouting/issues/361) already won
+  for the pool.
+
+  Four places an AS is written are read now: `router bgp`, `remote-as`, and
+  `set as-path prepend` and `exclude`. `router bgp` is refused at the prompt
+  **before the stanza is entered** - a block refused afterwards leaves the
+  operator standing inside one the box has already declined, so every
+  statement they type next lands in it. The other three are read by
+  `asn_findings` at commit, which is what covers a file loaded at boot as well
+  as a session.
+
+  **What is said and not refused**: `23456` is AS_TRANS
+  ([RFC 6793](https://www.rfc-editor.org/rfc/rfc6793)) and produces a warning,
+  because a lab may be built on it deliberately. **What produces nothing at
+  all** is a private AS - 64512-65534 and 4200000000-4294967294
+  ([RFC 6996](https://www.rfc-editor.org/rfc/rfc6996)) - which is an ordinary
+  thing for an ISP to run internally, and a checker that warns about what is
+  merely usual is one an operator learns to work around. That silence is
+  asserted, so a later change cannot quietly start warning about it.
+
+  `remote-as internal`, `remote-as external` and `remote-as auto` are real FRR
+  spellings and pass untouched. Reading them as a bad AS is
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208), where the
+  ordinary way to run eBGP to a directly connected peer was refused; the
+  assertion for each is named one at a time. `set as-path prepend last-as <n>`
+  takes a count and not an AS, and is left alone for the same reason.
 
 * **An address is an address, wherever it is written**
   ([#413](https://github.com/andrediashexa/hexarouting/issues/413)). Eight
