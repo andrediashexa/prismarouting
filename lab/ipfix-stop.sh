@@ -3,6 +3,19 @@
 #
 #   sh tools/lab.sh ipfix-stop            -> LAB PASSED
 #   sh tools/lab.sh ipfix-stop no-marker  -> LAB FAILED
+#   sh tools/lab.sh ipfix-stop no-wait    -> LAB FAILED (2 checks)
+#
+# NO-WAIT IS RUN BY HAND, not by the suite: OFF_MODES carries one mode per lab
+# and this lab's is `no-marker`. Measured on 2026-09-20 rather than reasoned
+# about, which is the only thing that makes it a control:
+#
+#   [FAIL] and released it on the way out (got 0)
+#   [FAIL] the stopped box's block is not left open at all (got ENDED AT RESTART)
+#
+# The second is the one worth reading. Without the wait, the STOPPED box is no
+# longer distinguishable from a box that fell over: the collector reads its
+# block as ended at the restart rather than released on the way out. That is
+# #217 exactly, produced by the defect a PID-1 wrapper makes possible.
 #
 # The collector runs for the whole lab, over UDP and over TCP at once, and
 # survives two restarts of the box. Three states are produced deliberately,
@@ -172,7 +185,28 @@ stop_vpp() {
   PID=$VPP_PID
   [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null || { echo "  no vpp to stop"; exit 1; }
   echo "  ExecStop: ${EXECSTOP:-(none in the drop-in)}"
-  [ -n "$EXECSTOP" ] && $EXECSTOP 2>&1 | sed 's/^/    /'
+  # THE SUPERVISOR RUNS THE DRAIN AND WAITS, and `no-wait` is what says this
+  # lab can see the difference (#396).
+  #
+  # Today the waiting is systemd's: ExecStop runs, systemd waits for it, and
+  # only then sends the signal. Under a container supervisor that contract
+  # becomes OUR code - Compose has no pre-stop hook, so the drain moves into a
+  # PID-1 wrapper that traps SIGTERM, drains, and forwards. A wrapper that
+  # forwards WITHOUT waiting produces exactly the defect the drop-in exists to
+  # prevent, and every assertion below would stay green, because this script
+  # supplies the ordering itself.
+  #
+  # So the ordering gets a control of its own. In `no-wait` the drain is
+  # started in the background and the signal follows immediately: the graph
+  # stops before the UDP record can be sent, the stopped box's block is left
+  # open, and the assertion that says it is not MUST go red.
+  if [ "$MODE" = no-wait ]; then
+    echo "  no-wait: the drain is started and NOT waited for, which is the"
+    echo "  wrapper defect a container supervisor makes possible"
+    [ -n "$EXECSTOP" ] && ($EXECSTOP >/dev/null 2>&1 &)
+  else
+    [ -n "$EXECSTOP" ] && $EXECSTOP 2>&1 | sed 's/^/    /'
+  fi
   echo "  SIGTERM -> vpp pid $PID"
   kill -TERM "$PID" 2>/dev/null
   n=0; while kill -0 "$PID" 2>/dev/null && [ "$n" -lt 30 ]; do sleep 1; n=$((n+1)); done
