@@ -79,6 +79,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.110.2 - the rendering half says why it is not a unit
+
+[#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
+### Fixed
+
 * **The rendering half of the plugin says why it is not a unit, and the
   reader reads the whole reason.** [#390](https://github.com/andrediashexa/hexarouting/issues/390)'s
   rule is that every function has a unit test or says at its definition why it
