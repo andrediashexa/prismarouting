@@ -79,6 +79,41 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A name and a piece of free text are bounded by the field they travel in**
+  ([#416](https://github.com/andrediashexa/hexarouting/issues/416)). Nothing
+  bounded any of them: a 200-character pool name, a 200-character user name, a
+  4000-character interface description, a 1000-byte identity path and a
+  500-byte RADIUS secret were all staged, saved and handed to fields of 64,
+  256 and 128 bytes.
+
+  `config.TEXT_LIMITS` carries every bound **with the field it came from**,
+  because a bound with no source is a number somebody chose and the next
+  reader cannot tell one from the other. Three of the six are compared against
+  `src/plugins/bpa/bpa.api` by a suite, so the table cannot drift from the
+  messages it describes; the other two name VPP's own `interface.api` and
+  `useradd(8)`, which are not in this repository.
+
+  **Counted in bytes, not characters**, because the fields are: `trânsito` is
+  eight characters and nine bytes, and a limit counted in characters would let
+  a UTF-8 value past the field it has to fit in.
+
+* **A control character in a description or a name is refused, not stripped**
+  ([#416](https://github.com/andrediashexa/hexarouting/issues/416)). The
+  prompt removed a BEL from a description in silence and a saved file kept it,
+  so one statement meant two things depending on the door it arrived through.
+  A description is also read back to whoever is sitting at the console by
+  `show configuration`, so what goes in comes out at a terminal.
+
+  Accented text is **not** a control character and is not refused: this box is
+  sold to operators who name a port in Portuguese, and the rule is about what
+  a terminal executes rather than about what alphabet it is in.
+
+  A name refused at the prompt does not move the mode, for the reason a
+  refused `router bgp` does not enter its stanza
+  ([#415](https://github.com/andrediashexa/hexarouting/issues/415)): an
+  operator left inside a pool the box will not take types every following
+  statement into it.
+
 * **A MAC address is checked for being one**
   ([#414](https://github.com/andrediashexa/hexarouting/issues/414)). The whole
   check was that the word had six colon-separated parts, at both doors, so

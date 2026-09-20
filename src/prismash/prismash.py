@@ -39,6 +39,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     is_static_route,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     prefix_error, prefix_why, address_error,
+                    text_error, text_why,
                     mac_error, mac_normal,
                     asn_error, asn_why, asn_note,
                     global_key, ordered_globals,
@@ -9176,6 +9177,16 @@ class Shell:
                 f"{NAT_HIERARCHY} cgnat identity dhcp-leases <path>",
                 f"{NAT_HIERARCHY} cgnat identity none")
             return
+        # The path against the field it travels in, before it is sent. A
+        # longer one is not something the dataplane can hold, and the refusal
+        # belongs where the operator can retype it (#416).
+        if args["path"]:
+            what = ("cgnat identity dhcp-leases" if args["kind"]
+                    else "cgnat identity file")
+            why = text_error(what, args["path"])
+            if why:
+                self.err_prose(*why)
+                return
         r = self.api_call("bpa_identity_source_set", args)
         if r.state != vppapi.OK:
             self.err_dataplane(f"cgnat identity: {r.reason}")
@@ -9227,6 +9238,11 @@ class Shell:
                 secret = value
             i += 2
 
+        if secret:
+            why = text_error("cgnat identity radius secret", secret)
+            if why:
+                self.err_prose(*why)
+                return
         if not secret:
             self.err_prose(
                 "cgnat identity radius: a shared secret is required",
@@ -10915,6 +10931,14 @@ class Shell:
 
         if line.startswith("cgnat pool "):
             name = w[2]
+            # Before the pool exists and before the mode changes, for the
+            # reason `router bgp` is refused before its block is entered
+            # (#415): a name refused after the mode moved leaves the operator
+            # typing pool statements into a pool the box will not take.
+            why = text_error("cgnat pool", name)
+            if why:
+                self.err_prose(*why)
+                return True
             self.pool = self.candidate.pools.get(name) or Pool(name)
             self.candidate.pools[name] = self.pool
             self.mode = "pool"
@@ -10990,6 +11014,10 @@ class Shell:
                 self.candidate.ssh[w[1]] = " ".join(w[2:])
             return True
         if w[0] == "user" and len(w) > 1:
+            why = text_error("user", w[1])
+            if why:
+                self.err_prose(*why)
+                return True
             self.user = self.candidate.users.get(w[1]) or User(w[1])
             self.candidate.users[w[1]] = self.user
             self.mode = "user"
@@ -11305,7 +11333,12 @@ class Shell:
             if len(w) < 2:
                 self.err("usage: description <text>")
             else:
-                self.candidate.descriptions[iface] = line.strip().split(None, 1)[1]
+                text = line.strip().split(None, 1)[1]
+                why = text_error("description", text)
+                if why:
+                    self.err_prose(*why)
+                else:
+                    self.candidate.descriptions[iface] = text
             return True
         if iface and neg and dp == "description":
             self.candidate.descriptions.pop(iface, None)
