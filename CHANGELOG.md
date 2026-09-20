@@ -79,6 +79,39 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.109.1 - an entry point, and every commit is announced
+
+### Added
+
+* **`CLAUDE.md`, the entry point a new session did not have.** It does not
+  repeat the rules — it says which document owns each one and which check
+  refuses a violation, because a rule with no reader behind it is a comment.
+  It also carries what was true here and written nowhere: the worktree per
+  branch, that anything long has to be detached or the shell that started it
+  kills it, that an edit is never chained with a commit, that the maintainer
+  finds defects by using a box, and that a lab asserting what the box does
+  WRONG is worse than no lab.
+
+* **Every commit is announced on Discord.** A `post-commit` hook rather than a
+  step somebody remembers. `tools/announce-commit.sh` sends the subject, the
+  short hash, the branch and the version — never the diff — and **cannot fail
+  a commit**: it returns 0 whether Discord answers, refuses, or is not
+  configured at all. The webhook is a credential and is not in this
+  repository: `appliance/build-iso.sh` copies `docs/` into the medium, so one
+  written into a document would ship inside every ISO.
+
+* **The rest of the X.Y.Z rule**, in the four documents that carry it: a Z is
+  tagged like anything else and published as a **pre-release**, so GitHub
+  leaves *Latest* on the last medium this project actually booted. And the
+  third category the first version of the rule was missing — `test/`, `lab/`,
+  `ref/` and the contributor documents ship nowhere, so they cannot make a Z
+  into a Y.
+
+**This is the first Z release**, cut by hand: the gate does not know the two
+paths yet ([#410](https://github.com/andrediashexa/hexarouting/issues/410)).
+It publishes the upgrade artifact and no medium, and what proves it is `make
+test` — 94 suites, 94 passed — and nothing that installs.
+
 ## 0.109.0 - where the release time goes, and the rule that follows
 
 [#408](https://github.com/andrediashexa/hexarouting/issues/408), [#409](https://github.com/andrediashexa/hexarouting/issues/409), [#410](https://github.com/andrediashexa/hexarouting/issues/410).

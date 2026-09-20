@@ -400,6 +400,13 @@ example: `src/`, `tools/`, `docs/`, the `appliance/` files the artifact
 installs, and the `bpa` plugin. That is what `appliance/build-upgrade.sh`
 packs and what `appliance/upgrade` puts onto a box in service.
 
+**And anything that ships nowhere at all**: `test/`, `lab/`, `ref/`,
+`CONTRIBUTING.md`, `CLAUDE.md`, `TESTING.md`, `README.md`. They reach neither
+the artifact nor the medium, so no box can disagree with them and they cannot
+make a Z into a Y. This is the third category, and it is written down because
+the first version of this rule had only two and the very next commit — an
+entry point and a hook — fell between them.
+
 **What a Z release MUST NOT change**: the kernel, the VPP and FRR pins,
 `appliance/build-iso.sh`, `appliance/install.sh`'s partitioning, the
 bootloader, or anything else that only exists on the medium. A change to one

@@ -36,6 +36,10 @@ was decided, and why the other options were rejected. `CONTRIBUTING.md` §2.
 
 **Each merge into `master` is a release.** `CONTRIBUTING.md` §5 is the
 procedure and the X.Y.Z rule; the checklist below is that procedure as steps.
+In short: **Z** changes only what the upgrade artifact carries (or what ships
+nowhere — `test/`, `lab/`, the contributor documents) and is published as a
+**pre-release** with no ISO, proven by `make test`; **X** or **Y** publishes
+the medium and goes through the whole gate.
 
 ## The rules that have teeth
 
