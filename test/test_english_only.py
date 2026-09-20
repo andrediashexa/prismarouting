@@ -102,7 +102,7 @@ criando recebido apos após possiveis possíveis proposital borda binario
 binário binaria binária faltando carrega dirige absorve devolvidos crua
 transito trânsito estaticas estáticas autoteste passou existe abre morria
 embarcou exercita assinantes coletor recebeu roteamento memoria memória
-disco pronto prontos""".split())
+disco pronto prontos hibrida hibrido""".split())
 
 # Portuguese that is an IDENTIFIER rather than prose, each with the reason it
 # stays. Removed from the line before the words are looked for, so a line that
