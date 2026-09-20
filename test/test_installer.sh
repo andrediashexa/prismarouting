@@ -2871,7 +2871,19 @@ elif [ ! -b /dev/loop0 ] \
 else
   iwork=$(mktemp -d -p /var/tmp prisma-install-write.XXXXXX)
   ibin=$iwork/bin
+  # THE INSTALLER, COPIED OUT OF THE TREE, for the reason the read-only block
+  # above gives and then only half applied: this case binds a directory over
+  # /tmp inside a namespace, so a repository that LIVES under /tmp disappears
+  # the moment the bind happens - and `sh "$INSTALLER"` then fails with
+  # "cannot open", which is rc=2 and reads as thirty-two product defects.
+  #
+  # tools/release-gate.sh clones to /tmp/prisma-release, and since #410 its
+  # patch path runs `make test` inside that clone. So this is not a
+  # hypothetical location: it is where the gate runs this suite on every
+  # patch release, and it was red there while being green everywhere else.
+  IWINST=$iwork/prisma-routing-install
   mkdir -p "$ibin" "$iwork/tmp" "$iwork/rc" "$iwork/net/ens18/device"
+  cp "$INSTALLER" "$IWINST"
   echo up > "$iwork/net/ens18/operstate"
   : > "$iwork/filesystem.squashfs"
   # The kernel's account of its arrays, written rather than read off this
@@ -3028,7 +3040,7 @@ ISFDISK
         PRISMA_TIMEZONE=America/Sao_Paulo PRISMA_ROOT_PASSWORD=s3cr3t \
         PRISMA_LOG_GB=1 PRISMA_NET_SYS="$iwork/net" \
         PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=dhcp \
-        "$@" sh "$INSTALLER" 2>&1)
+        "$@" sh "$IWINST" 2>&1)
     IWRC=$?
     printf '%s\n' "$IWOUT" | say_box
   }

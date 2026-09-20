@@ -105,6 +105,15 @@ version has a chance of seeing it.
   moved to the newest **minor** tag — from a patch tag they were measuring the
   wrong procedure and calling it a pass.
 
+* **`test/test_installer.sh` could not run from a tree under `/tmp`, which is
+  where the gate clones.** One case binds a directory over `/tmp` inside a user
+  namespace, so a repository living there disappears the moment the bind
+  happens and `sh "$INSTALLER"` fails with *cannot open* — rc=2, reported as
+  thirty-two product defects. The read-only block above it had hit this once
+  and fixed it by copying the installer out of the tree; the block that writes
+  had not. Invisible until the patch path started running `make test` inside
+  the gate's own clone.
+
 * **The gate refused an older tag for carrying no section of a newer one.** It
   compared the CHANGELOG against the newest OTHER tag rather than the tag below
   the one being built, so running it against anything but the newest release
