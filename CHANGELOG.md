@@ -85,6 +85,35 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`ssh listen-address [::]` is an address, and refusing it stopped every
+  commit on an installed box**
+  ([#413](https://github.com/andrediashexa/hexarouting/issues/413)). `sshd -T`
+  prints an IPv6 `ListenAddress` bracketed and `read_ssh` stores what it
+  printed, so `[::]` is the value a real box holds — and the new refusal took
+  it:
+
+  ```
+  error: ssh listen-address '[::]': not an IP address
+  error: candidate did not pass validation; nothing applied
+  ```
+
+  Found by `tools/release-gate.sh` on this tag, where it took the console
+  driver's first commit and with it seven later checks that never ran.
+  **`make test` could not have caught it** — 95 suites green — because it
+  installs nothing and never asks sshd what it is doing. The gate is the only
+  thing that could, and did.
+
+  The shape is [#357](https://github.com/andrediashexa/hexarouting/issues/357)'s
+  in a new place, and it is worth naming: **a validator placed on a value the
+  box also READS BACK has to accept every form the box itself writes**, or the
+  box stops being able to agree with its own configuration.
+
+  The value is also stored in the spelling `sshd -T` gives back, for the
+  reason `mac_normal` exists
+  ([#414](https://github.com/andrediashexa/hexarouting/issues/414)): typing
+  `::` and reading back `[::]` was a difference on every commit. That half
+  predates this refusal rather than arriving with it.
+
 * **A reader that keeps the two doors in step**
   ([#417](https://github.com/andrediashexa/hexarouting/issues/417)).
   `test/test_both_doors.py` walks the VTY's own grammar, builds hostile values

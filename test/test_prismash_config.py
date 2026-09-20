@@ -28,6 +28,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import config      # noqa: E402
+import system      # noqa: E402
 
 fail = 0
 
@@ -1507,6 +1508,44 @@ print("\n=== system.address_error: a host, and not a prefix (#413) ===")
 for good in ("10.0.0.1", "0.0.0.0", "2001:db8::1", "::1"):
     check(config.address_error("ssh listen-address", good) is None,
           f"{good} is an address")
+# THE FORM AN INSTALLED BOX ACTUALLY HOLDS, and the case that made this
+# refusal a defect rather than a guard. `sshd -T` prints an IPv6
+# ListenAddress bracketed, `read_ssh` stores what it printed, so `[::]` is the
+# value on every installed box - and refusing it took every commit there with
+# it. Measured by tools/release-gate.sh on v0.110.0:
+#
+#     error: ssh listen-address '[::]': not an IP address
+#     error: candidate did not pass validation; nothing applied
+#
+# Mutation shown red: unbracket() returning its argument unchanged.
+for _real in ("[::]", "::", "0.0.0.0", "[2001:db8::1]", "10.0.0.1"):
+    check(config.address_error("ssh listen-address", _real) is None,
+          f"{_real} is a ListenAddress a box can hold, and was refused")
+# The bracket stripper on its own, because address_error and
+# ssh_listen_normal both stand on it and a test through either is a test of
+# two things at once.
+check(system.unbracket("[::]") == "::" and system.unbracket("[2001:db8::1]")
+      == "2001:db8::1", "brackets come off an IPv6 literal")
+for _plain in ("::", "0.0.0.0", "10.0.0.1", "potato", "", "[", "]"):
+    check(system.unbracket(_plain) == _plain,
+          f"{_plain!r} is not bracketed and comes back unchanged")
+check(system.unbracket("[]") == "", "an empty pair strips to nothing, which "
+                                    "address_error then refuses")
+check(system.ssh_listen_normal("::") == "[::]"
+      and system.ssh_listen_normal("[::]") == "[::]",
+      "IPv6 is stored bracketed, which is the spelling sshd -T gives back")
+check(system.ssh_listen_normal("0.0.0.0") == "0.0.0.0",
+      "and IPv4 bare, which is the spelling it gives back for that")
+_settings = {"listen-address": "::"}
+check(system.validate_ssh(_settings) is None
+      and _settings["listen-address"] == "[::]",
+      f"so typing the bare form stores the box's form, and commit has nothing "
+      f"to re-apply forever: {_settings!r}")
+# And the brackets are not a wildcard: what is inside still has to be an
+# address, or the refusal has been traded for no check at all.
+for _bad in ("[potato]", "[::", "[]", "[10.0.0.0/8]"):
+    check(config.address_error("ssh listen-address", _bad) is not None,
+          f"{_bad!r} is not an address with brackets round it")
 for bad, why in (("potato", "a word"), ("999.1.1.1", "an octet out of range"),
                  ("010.1.1.1", "a leading zero, which is octal to some "
                                "readers and decimal to others"),

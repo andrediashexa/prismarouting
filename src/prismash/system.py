@@ -192,12 +192,58 @@ def address_error(what: str, value: str):
     if not value:
         return f"{what}: expected an address"
     try:
-        ipaddress.ip_address(value)
+        ipaddress.ip_address(unbracket(value))
     except ValueError:
         if "/" in value:
             return (f"{what} '{value}': expected an address, not a prefix")
         return f"{what} '{value}': not an IP address"
     return None
+
+
+def unbracket(value: str) -> str:
+    """
+    An IPv6 literal without its brackets, and anything else unchanged.
+
+    `[::]` IS AN ADDRESS HERE, and this is not a courtesy to a spelling. It is
+    what `sshd -T` prints for an IPv6 ListenAddress and therefore what
+    `read_ssh` stores, so it is the value on every installed box - and
+    `address_error` refusing it made **every commit on an installed box fail**:
+
+        error: ssh listen-address '[::]': not an IP address
+        error: candidate did not pass validation; nothing applied
+
+    Measured by tools/release-gate.sh on v0.110.0, where it took the console
+    driver's first commit and with it seven later checks that never ran. Not
+    reachable from `make test`, which installs nothing and never asks sshd
+    what it is doing - the gate is the only thing that could have caught it,
+    and did.
+
+    The general shape is #357's and it is worth naming: a validator placed on
+    a value the box also READS BACK has to accept every form the box itself
+    writes, or the box stops being able to agree with its own configuration.
+    """
+    if len(value) > 1 and value[0] == "[" and value[-1] == "]":
+        return value[1:-1]
+    return value
+
+
+def ssh_listen_normal(value: str) -> str:
+    """
+    A ListenAddress in the spelling `sshd -T` gives back.
+
+    IPv6 bracketed, IPv4 bare. Normalised for the reason `config.mac_normal`
+    exists (#414): the candidate is compared against what the box reports, so
+    a value stored in the other spelling is a difference on every commit -
+    the box re-applying a setting forever and `show configuration compare`
+    never clean. Typing `::` and reading back `[::]` was exactly that, and it
+    predates the refusal above rather than arriving with it.
+    """
+    bare = unbracket(value)
+    try:
+        addr = ipaddress.ip_address(bare)
+    except ValueError:
+        return value
+    return f"[{bare}]" if addr.version == 6 else bare
 
 
 def validate_role(name, role):
@@ -378,6 +424,9 @@ def validate_ssh(settings: dict):
             why = address_error(f"ssh {k}", str(v))
             if why:
                 return why
+            # Stored in the spelling sshd -T gives back, so the candidate and
+            # the box can agree. See ssh_listen_normal.
+            settings[k] = ssh_listen_normal(str(v))
         elif k in _VALID and v not in _VALID[k]:
             return f"ssh {k} '{v}': expected one of " + ", ".join(_VALID[k])
     return None
