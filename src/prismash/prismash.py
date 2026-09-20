@@ -38,6 +38,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
                     is_static_route,
                     _address_family_error, _is_loopback, _is_lcp_tap,
+                    prefix_error, prefix_why, address_error,
                     global_key, ordered_globals,
                     VRID_MIN, VRID_MAX, VRRP_PRIORITY_MIN, VRRP_PRIORITY_MAX,
                     VRRP_PRIORITY_DEFAULT,
@@ -9022,6 +9023,10 @@ class Shell:
             args["set_tcp"] = True
             if w[3] != "disable":
                 args["tcp_enable"] = True
+                why = address_error("cgnat logging tcp", w[3])
+                if why:
+                    self.err(why)
+                    return
                 args["collector"] = w[3]
                 if len(w) >= 6 and w[4] == "port":
                     if not is_number(w[5]) or int(w[5]) > 65535:
@@ -9195,6 +9200,10 @@ class Shell:
                 self.err_dataplane(f"cgnat logging syslog: {r.reason}")
             return
 
+        why = address_error("cgnat logging syslog", w[3])
+        if why:
+            self.err(why)
+            return
         args["enable"] = True
         args["collector"] = w[3]
         rest = w[4:]
@@ -9269,6 +9278,21 @@ class Shell:
         neighbours fill in; the comment on them says why there is no way to
         avoid that.
         """
+        # BEFORE THE DATAPLANE IS ASKED ANYTHING. A word that is not an
+        # address is wrong whatever the box answers, and reading the exporter
+        # first meant an operator who mistyped the collector was told the
+        # dataplane has no IPFIX exporter - a true sentence about the wrong
+        # thing, and one they cannot act on.
+        if len(w) > 3 and w[3] != "disable":
+            checks = [(w[3], "cgnat logging udp")]
+            if len(w) > 5 and w[4] == "src":
+                checks.append((w[5], "cgnat logging udp src"))
+            for value, what in checks:
+                why = address_error(what, value)
+                if why:
+                    self.err(why)
+                    return
+
         r = self.api.dump("ipfix_exporter_dump", {})
         if r.state != vppapi.OK:
             self.err_dataplane(f"cgnat {' '.join(w[1:])}: cannot read the IPFIX "
@@ -11618,10 +11642,20 @@ class Shell:
             return True
 
         try:
-            if w[0] == "inside":
-                p.inside.append(w[1])
-            elif w[0] == "outside":
-                p.outside.append(w[1])
+            if w[0] in ("inside", "outside"):
+                # The same rule as the saved file's, from the same function.
+                # A second copy is what lets the two doors disagree, which is
+                # #417 - and `inside potato` reached a commit through this one
+                # while the file's half only asked for a slash.
+                why = prefix_error(w[0], w[1])
+                if why:
+                    # SAID and not raised, the way block-size above is: the
+                    # chain answers a ValueError with "invalid argument: " in
+                    # front of it, and these verdicts already carry a value of
+                    # the operator's own length.
+                    self.err_prose(*why)
+                    return True
+                (p.inside if w[0] == "inside" else p.outside).append(w[1])
             elif w[0] == "block-size":
                 self.pool_range("block-size", w[1])
                 # The range is one of TWO things `?` promises about this
@@ -11730,6 +11764,17 @@ class Shell:
                 self.pool_range("reserve", w[1])
                 p.block_reserve = int(w[1])
             elif w[0] == "bypass":
+                # The prefix first and by ITSELF, so the refusal arrives as
+                # the two rows prefix_error writes rather than as one sentence
+                # behind "invalid argument: " - which is 145 columns at an
+                # IPv6 value. Everything else this statement can get wrong -
+                # the direction, a repeat - is still _pool_line's, so there is
+                # one reader for the statement and not two.
+                if len(w) > 2:
+                    why = prefix_error(f"bypass {w[1]}", w[2])
+                    if why:
+                        self.err_prose(*why)
+                        return True
                 why = Config._pool_line(p, " ".join(w))
                 if why:
                     raise ValueError(why)

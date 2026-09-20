@@ -12,9 +12,11 @@ a state that never existed.
 from __future__ import annotations
 
 import difflib
+import ipaddress
 import hashlib
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
+                    address_error,
                     is_number,
                     validate_role,
                     SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp)
@@ -972,6 +974,72 @@ class Pool:
         return isinstance(other, Pool) and self.lines() == other.lines()
 
 
+def prefix_error(what: str, value: str):
+    """
+    None if `value` is an IPv4 network this dataplane can hold, else why not.
+
+    A TUPLE of rows, the way `vrrp_statement` answers and for the same reason
+    (#355): the prompt prints the first through `err` and the rest as prose,
+    and the file parser joins them with `prefix_why`, because an entry in
+    `unknown` is one line by construction. Composed as one sentence, the IPv6
+    refusal reaches a console at 132 columns.
+
+    Four questions, and every one of them is `bpa_cli.c`'s rather than this
+    file's opinion:
+
+      * IPv4. All four statements that reach here - `inside`, `outside`,
+        `bypass source`, `bypass destination` - are `unformat_ip4_address` in
+        the plugin, and the datapath nodes are `ip4`. An IPv6 prefix is a
+        statement the dataplane has no way to hold.
+      * A prefix length, and one of at most 32. The plugin refuses `len > 32`
+        with "inside prefix length %u invalid", one commit later than here.
+      * NO HOST BITS. This is the one that is a decision, and the refusal is
+        safe for the reason that decides every refusal in this parser: the
+        dataplane MASKS them on the way in - `base & ~(count - 1)` in
+        bpa_cli.c - and `show bpa config` renders from that masked base, so
+        the readback can only ever produce a network address and can never
+        reach this refusal. That is the #357 hazard, answered by measurement.
+
+        Refused rather than masked here, because masking is a configuration
+        whose text does not round-trip: the operator types 100.64.0.5/10,
+        `save` writes 100.64.0.0/10, and the file is not the file. The network
+        they meant is in the prose, so the fix is a copy and paste.
+      * It parses at all. `inside potato` was staged, saved and committed.
+    """
+    if not value:
+        return (f"{what}: expected a prefix", "")
+    if "/" not in value:
+        return (f"{what} '{value}': expected a prefix", "a prefix carries its "
+                "length, as in 100.64.0.0/10")
+    if ":" in value:
+        return (f"{what} '{value}': expected an IPv4 prefix",
+                "this CGNAT translates IPv4, and the dataplane has no way to "
+                "hold an IPv6 one")
+    try:
+        ipaddress.IPv4Network(value, strict=True)
+    except ipaddress.AddressValueError:
+        return (f"{what} '{value}': not an IPv4 prefix", "")
+    except ipaddress.NetmaskValueError:
+        return (f"{what} '{value}': not a prefix length", "a length is 0 to 32")
+    except ValueError:
+        # strict=True refuses exactly one thing the two above do not: host
+        # bits. Naming the network the operator meant is the whole value of
+        # saying it here rather than letting the dataplane mask it in silence.
+        try:
+            meant = ipaddress.IPv4Interface(value).network
+        except ValueError:
+            return (f"{what} '{value}': not an IPv4 prefix", "")
+        return (f"{what} '{value}': host bits are set",
+                f"the prefix this names is {meant}")
+    return None
+
+
+def prefix_why(refusal) -> str:
+    """`prefix_error` as one sentence, for the file. See `vrrp_why`."""
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
+
+
 def _address_family_error(keyword: str, prefix: str):
     """
     None when the prefix matches the keyword, a sentence when it does not.
@@ -988,6 +1056,18 @@ def _address_family_error(keyword: str, prefix: str):
         return f"'{prefix}' is not an IPv4 prefix"
     if "/" not in prefix:
         return f"'{prefix}' has no prefix length"
+    # AND IT HAS TO PARSE, which nothing asked until #413: `999.1.1.1/24` and
+    # `2001:zz::1/64` were staged, saved and handed to the dataplane.
+    #
+    # ip_interface and not ip_network, and that is the decision this statement
+    # turns on: on an interface the host bits ARE the address, so `10.0.0.5/8`
+    # is the ordinary way a router is configured and refusing it would refuse
+    # every real configuration. A pool prefix is the opposite thing and
+    # prefix_error() above says so.
+    try:
+        ipaddress.ip_interface(prefix)
+    except ValueError:
+        return f"'{prefix}' is not an address with a prefix length"
     return None
 
 
@@ -2285,10 +2365,11 @@ class Config:
         w = s.split()
         if not w:
             return None
-        if w[0] == "inside" and len(w) > 1:
-            pool.inside.append(w[1])
-        elif w[0] == "outside" and len(w) > 1:
-            pool.outside.append(w[1])
+        if w[0] in ("inside", "outside") and len(w) > 1:
+            why = prefix_error(w[0], w[1])
+            if why:
+                return prefix_why(why)
+            (pool.inside if w[0] == "inside" else pool.outside).append(w[1])
         elif w[0] == "block-size" and len(w) > 1:
             # NOT BOUNDED HERE, and that is the whole of #357. This function
             # is the reader for THREE things: a statement typed at the prompt,
@@ -2369,8 +2450,9 @@ class Config:
         elif w[0] == "bypass" and len(w) > 2:
             if w[1] not in ("source", "destination"):
                 return f"bypass '{w[1]}': expected source or destination"
-            if "/" not in w[2]:
-                return f"bypass {w[1]}: '{w[2]}' is not a prefix"
+            why = prefix_error(f"bypass {w[1]}", w[2])
+            if why:
+                return prefix_why(why)
             lst = pool.bypass_dst if w[1] == "destination" else pool.bypass_src
             if w[2] not in lst:
                 lst.append(w[2])

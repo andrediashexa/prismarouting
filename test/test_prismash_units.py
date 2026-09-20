@@ -4859,5 +4859,63 @@ check("rollback 0" in said and "unread" in said,
       f"with nothing unread, still the way out: {said!r}")
 ok("the half FRR's own words do not say")
 
+print("\n=== the prompt refuses the addresses a saved file refuses (#413) ===")
+# Mutation shown red: any one call site reverted - `inside potato` is then
+# staged at the prompt while a file refuses it, which is the disagreement #417
+# exists to catch and the one this issue must not create.
+#
+# THE PROMPT HALF. The file half is in test_prismash_config.py, one rule and
+# one function behind both.
+_ADDR_PROMPT = [
+    ("inside potato", "expected a prefix"),
+    ("inside 300.0.0.0/10", "not an IPv4 prefix"),
+    ("outside 200.0.0.1", "expected a prefix"),
+    ("inside 2001:db8::/32", "expected an IPv4 prefix"),
+    ("inside 100.64.0.5/10", "host bits are set"),
+    ("bypass source 999.9.9.9/99", "not an IPv4 prefix"),
+    ("bypass destination 2001:db8::/32", "expected an IPv4 prefix"),
+]
+for _line, _needle in _ADDR_PROMPT:
+    _sh = shell()
+    _sh.mode, _sh.pool = "pool", Pool("A")
+    _rv, _text = driven(_sh.do_pool, _line)
+    check(_needle in _text, f"{_line!r}: {_needle!r} not in {_text!r}")
+    # SAID, not raised: the chain answers a ValueError with "invalid
+    # argument: " in front, and these verdicts already carry a value of the
+    # operator's own length (#355).
+    check("invalid argument" not in _text,
+          f"{_line!r}: said through err_prose, not raised: {_text!r}")
+    check(not _sh.pool.inside and not _sh.pool.outside
+          and not _sh.pool.bypass_src and not _sh.pool.bypass_dst,
+          f"{_line!r}: and nothing was staged: {_sh.pool.lines()!r}")
+# The control: the same statements with values a box can hold.
+_sh = shell()
+_sh.mode, _sh.pool = "pool", Pool("A")
+for _line in ("inside 100.64.0.0/10", "outside 203.0.113.0/24",
+              "bypass source 10.0.0.0/8", "bypass destination 192.0.2.0/24"):
+    _rv, _text = driven(_sh.do_pool, _line)
+    check(not _text, f"{_line!r} is a real statement and was refused: {_text!r}")
+check(_sh.pool.inside == ["100.64.0.0/10"]
+      and _sh.pool.bypass_src == ["10.0.0.0/8"],
+      f"and each reached the candidate: {_sh.pool.lines()!r}")
+ok(f"{len(_ADDR_PROMPT)} refused at the prompt, and four real ones staged")
+
+print("\n=== and the collectors, which reached the exporter unread (#413) ===")
+# Mutation shown red: the address_error call dropped from apply_logging_udp -
+# `potato` then reaches VPP's set_ipfix_exporter as a collector address.
+for _stmt, _what in (
+        (["cgnat", "logging", "udp", "potato", "src", "10.0.0.1"],
+         "the UDP collector"),
+        (["cgnat", "logging", "udp", "10.0.0.9", "src", "potato"],
+         "the source it exports from"),
+        (["cgnat", "logging", "tcp", "potato"], "the TCP collector"),
+        (["cgnat", "logging", "syslog", "potato", "enterprise", "12345"],
+         "the syslog collector")):
+    _sh = shell()
+    _rv, _text = driven(_sh.apply_logging, _stmt)
+    check("not an IP address" in _text,
+          f"{_what}: {' '.join(_stmt)!r} was taken: {_text!r}")
+ok("four collectors, none of them read as an address before this")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

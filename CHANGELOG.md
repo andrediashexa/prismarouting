@@ -79,6 +79,45 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **An address is an address, wherever it is written**
+  ([#413](https://github.com/andrediashexa/hexarouting/issues/413)). Eight
+  statements named an address or a prefix and none of them read it as one.
+  `inside potato`, `outside 300.0.0.0/24`, `bypass source 999.9.9.9/99`,
+  `ipv4 address 999.1.1.1/24`, `ipv6 address 2001:zz::1/64`,
+  `ssh listen-address potato`, `snmp listen-address potato` and every IPFIX
+  collector - UDP, its source, TCP and syslog - were staged, saved and
+  committed. The whole of the bypass check was that a `/` was present, and
+  the whole of the interface check was the family and that a length existed.
+
+  Three validators now, each with one definition read by both doors:
+  `prefix_error` for the four statements the dataplane holds as networks,
+  `address_error` for the places a single host is named, and the parse
+  `_address_family_error` never did.
+
+  **Host bits are refused in a pool prefix and accepted on an interface**, and
+  that is a decision rather than an inconsistency: on an interface the host
+  bits **are** the address, so `10.0.0.5/8` is how every router in this market
+  is configured; in a pool prefix they are a mistake the dataplane would mask
+  in silence, and a masked prefix is a configuration whose text does not
+  round-trip - the operator types `100.64.0.5/10` and `save` writes
+  `100.64.0.0/10`. The refusal names the prefix they meant.
+
+  That refusing them is safe is measured, not assumed: `bpa_cli.c` masks host
+  bits on the way in and `show bpa config` renders from the masked base, so
+  the readback can only ever produce a network address and can never reach the
+  refusal. That is the
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357) hazard,
+  answered the same way
+  [#412](https://github.com/andrediashexa/hexarouting/issues/412) answered it.
+
+  An IPv6 prefix in a pool is refused with the reason said out loud: all four
+  statements are `unformat_ip4_address` in the plugin and the datapath nodes
+  are `ip4`, so it is a statement the dataplane has no way to hold.
+
+  The collector is now read **before the dataplane is asked anything**. An
+  operator who mistyped it was told the box has no IPFIX exporter - a true
+  sentence about the wrong thing.
+
 * **One character ended the VTY session, and ended `prismash --load` at boot**
   ([#412](https://github.com/andrediashexa/hexarouting/issues/412)). Every
   numeric statement this product takes was guarded by `str.isdigit()`, which

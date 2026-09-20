@@ -16,6 +16,7 @@ believes it wrote is a VTY that cannot notice being wrong.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import subprocess
 
@@ -167,6 +168,36 @@ def is_number(v) -> bool:
     """
     v = str(v)
     return v.isascii() and v.isdigit()
+
+
+def address_error(what: str, value: str):
+    """
+    None if `value` is an IP address, otherwise why it is not.
+
+    An ADDRESS and not a prefix: this is for the places a single host is
+    named - a collector, a source, an address a daemon listens on - where a
+    prefix length is not part of the grammar and would be as wrong as a word.
+
+    `ipaddress` and not a hand-written dotted quad, because the questions it
+    already answers are the ones that get forgotten: `010.1.1.1` is octal to
+    some resolvers and decimal to others, and CPython refuses it for that
+    reason. `config._is_ipv4_address` refuses it too and says so; this is the
+    same rule for both families, from the library rather than from a second
+    copy.
+
+    IT LIVES HERE for the reason `is_number` does: `validate_ssh` and
+    `validate_snmp` are in this module and `config` imports it, not the other
+    way round. One definition, and the two doors read it.
+    """
+    if not value:
+        return f"{what}: expected an address"
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        if "/" in value:
+            return (f"{what} '{value}': expected an address, not a prefix")
+        return f"{what} '{value}': not an IP address"
+    return None
 
 
 def validate_role(name, role):
@@ -339,6 +370,14 @@ def validate_ssh(settings: dict):
         if k == "port":
             if not is_number(str(v)) or not 1 <= int(v) <= 65535:
                 return f"ssh port '{v}': expected 1-65535"
+        elif k == "listen-address":
+            # NOTHING asked until #413: `ssh listen-address potato` was taken
+            # at the prompt, written to the file and handed to sshd, which
+            # then refuses its own configuration and does not start - on a box
+            # whose other way in is a serial cable.
+            why = address_error(f"ssh {k}", str(v))
+            if why:
+                return why
         elif k in _VALID and v not in _VALID[k]:
             return f"ssh {k} '{v}': expected one of " + ", ".join(_VALID[k])
     return None
@@ -674,6 +713,10 @@ def validate_snmp(settings: dict):
             return f"snmp enabled '{v}': expected yes or no"
         if k == "port" and (not is_number(str(v)) or not 1 <= int(v) <= 65535):
             return f"snmp port '{v}': expected 1-65535"
+        if k == "listen-address":
+            why = address_error(f"snmp {k}", str(v))
+            if why:
+                return why
         if k == "enterprise-number" and v and (
                 not is_number(str(v)) or not 1 <= int(v) <= 4294967295):
             # An OID under somebody else's PEN is a lie about who the object
