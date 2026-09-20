@@ -30,6 +30,9 @@ import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
+                    MTU_MIN, MTU_MAX, MTU_RANGE,
+                    IFACE_VRF_MAX, IFACE_VRF_RANGE,
+                    is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
@@ -37,6 +40,10 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
                     is_static_route,
                     _address_family_error, _is_loopback, _is_lcp_tap,
+                    prefix_error, prefix_why, address_error,
+                    text_error, text_why,
+                    mac_error, mac_normal,
+                    asn_error, asn_why, asn_note,
                     global_key, ordered_globals,
                     VRID_MIN, VRID_MAX, VRRP_PRIORITY_MIN, VRRP_PRIORITY_MAX,
                     VRRP_PRIORITY_DEFAULT,
@@ -395,7 +402,7 @@ ARG_PORT = "<1-65535>"
 ARG_SECONDS = "<1-4294967295>"
 #: A VRF table id on an INTERFACE, u32 in Linux. Zero is not in the range
 #: because here it REMOVES the statement rather than selecting table 0.
-ARG_VRF = "<1-4294967295>"
+ARG_VRF = IFACE_VRF_RANGE
 #: The same id where it names a table rather than a statement: u32 in the
 #: dataplane (`bpa_pool_t.vrf_id`), and 0 is VPP's default table, which a pool
 #: may legitimately be pinned to.
@@ -844,7 +851,11 @@ INTERFACE_BLOCK = {
         }),
     }),
     "shutdown": ("take the interface administratively down", None),
-    "mtu": ("MTU, on both the dataplane interface and its TAP", "<576-9216>"),
+    # The range comes from config.py, which is also what refuses one outside
+    # it - at the prompt AND in a saved file, since #417. A hint that spells
+    # the numbers out is a second copy of them, which is what `vlan` above
+    # says and what this statement had three of.
+    "mtu": ("MTU, on both the dataplane interface and its TAP", MTU_RANGE),
     "urpf": ("drop packets whose source does not route back this way", {
         "strict": ("the source MUST route back out this interface", None),
         "loose": ("the source MUST have a route somewhere", None),
@@ -1772,7 +1783,7 @@ def frr_without_seq(stmt):
         return None
     w = stmt.split()
     for i in range(len(w) - 1):
-        if w[i] == "seq" and w[i + 1].isdigit():
+        if w[i] == "seq" and is_number(w[i + 1]):
             return " ".join(w[:i] + w[i + 2:])
     return stmt
 
@@ -2114,7 +2125,7 @@ def probe_count_ok(word):
     "+5", " 5" and "5\n"; the digits check is what keeps the number the
     operator sees and the number the tool gets the same.
     """
-    if not word or not word.isdigit():
+    if not word or not is_number(word):
         return None
     n = int(word)
     if n < 1 or n > PROBE_COUNT_MAX:
@@ -2891,6 +2902,64 @@ def as_path_parts(line):
     return None, None
 
 
+def asn_findings(routing):
+    """
+    Every AS number in `routing` that is not one, as (severity, stmt, why).
+
+    BOTH DOORS with one reader, which is why this is here and not only in the
+    prompt: a statement reaches `routing` the same way whether it was typed or
+    loaded out of a saved file, so a check at commit covers the file that the
+    prompt refusal cannot. The prompt refuses `router bgp <asn>` as well,
+    because a block entered is a block the next statement lands in.
+
+    Four places an AS number is written, and `remote-as` is the one that is
+    not positional: `neighbor vppwan0 interface remote-as external` is BGP
+    unnumbered, where the value is a word and not a number. `internal`,
+    `external` and `auto` are real FRR spellings and are kept - reading them
+    as a bad AS is how #208 refused the ordinary way to run eBGP to a directly
+    connected peer.
+    """
+    out = []
+    words_kept = ("internal", "external", "auto")
+    for line in routing:
+        w = line.split()
+        if not w:
+            continue
+        if w[:2] == ["router", "bgp"]:
+            why = asn_error("router bgp", w[2] if len(w) > 2 else "")
+            if why:
+                out.append(("error", line.strip(), asn_why(why)))
+                continue
+            note = asn_note(w[2])
+            if note:
+                out.append(("warning", line.strip(), note))
+        elif "remote-as" in w:
+            at = w.index("remote-as")
+            value = w[at + 1] if at + 1 < len(w) else ""
+            if value in words_kept:
+                continue
+            why = asn_error("remote-as", value)
+            if why:
+                out.append(("error", line.strip(), asn_why(why)))
+                continue
+            note = asn_note(value)
+            if note:
+                out.append(("warning", line.strip(), note))
+        elif w[:2] == ["set", "as-path"] and len(w) > 3 \
+                and w[2] in ("prepend", "exclude"):
+            # `set as-path prepend last-as <n>` is a count and not an AS, so
+            # it is left alone. Everything else after the verb is a list of AS
+            # numbers.
+            if w[3] == "last-as":
+                continue
+            for value in w[3:]:
+                why = asn_error(f"set as-path {w[2]}", value)
+                if why:
+                    out.append(("error", line.strip(), asn_why(why)))
+                    break
+    return out
+
+
 def as_path_regex_error(line):
     """
     Why FRR would refuse this AS-path regex, or None.
@@ -3164,7 +3233,7 @@ def osi_input_drops(show_errors):
     """
     for line in (show_errors or "").splitlines():
         w = line.split()
-        if len(w) >= 5 and w[0].isdigit() and w[1] == "osi-input" \
+        if len(w) >= 5 and is_number(w[0]) and w[1] == "osi-input" \
                 and w[2:5] == ["unknown", "osi", "protocol"]:
             return int(w[0])
     return 0
@@ -3727,7 +3796,7 @@ def set_value_error(stmt: str):
     if bound is None:
         return None
     lo, hi = bound
-    if not w[2].isdigit() or not lo <= int(w[2]) <= hi:
+    if not is_number(w[2]) or not lo <= int(w[2]) <= hi:
         return (f"'{w[2]}' is not a {w[1]}: expected {lo}-{hi}. FRR takes "
                 "this statement with any word in it and then sets nothing")
     return None
@@ -3815,7 +3884,7 @@ def route_map_findings(routing):
     # not a unit: a sort key inside route_map_findings, read through its
     # owner by test_prismash_units.py
     def by_seq(c):
-        return (0, int(c["seq"])) if c["seq"].isdigit() else (1, 0)
+        return (0, int(c["seq"])) if is_number(c["seq"]) else (1, 0)
 
     out = []
     for name, clauses in maps.items():
@@ -4588,7 +4657,7 @@ def route_map_verdict(routing, name, prefix):
         if w[0] == "route-map" and len(w) >= 3 and w[2] in ("permit", "deny"):
             current = None
             if w[1] == name:
-                seq = w[3] if len(w) >= 4 and w[3].isdigit() else "0"
+                seq = w[3] if len(w) >= 4 and is_number(w[3]) else "0"
                 current = {"action": w[2], "seq": int(seq),
                            "match": [], "opaque": False}
                 clauses.append(current)
@@ -6384,7 +6453,7 @@ class Shell:
             if w[0] == "local0" or "/" not in w[3]:
                 continue
             l3 = w[3].split("/")[0]
-            if l3.isdigit() and int(l3) > 0:
+            if is_number(l3) and int(l3) > 0:
                 mtus[w[0]] = int(l3)
         return mtus
 
@@ -7668,6 +7737,15 @@ class Shell:
                 else:
                     self.say_finding("warning", stmt, why)
 
+            # An AS number that is not one, wherever it is written - at the
+            # prompt or in a file this box loaded at boot (#415). The prompt
+            # refuses `router bgp` on its own, and this is the reader that
+            # covers the other door and the other three statements.
+            for sev, stmt, why in asn_findings(target.routing):
+                self.say_finding(sev, stmt, why)
+                if sev == "error":
+                    ok = False
+
             # An AS-path regex FRR would refuse, refused at the prompt
             # instead of mid-commit (#146).
             for stmt in target.routing:
@@ -8949,13 +9027,13 @@ class Shell:
                 self.err(f"cgnat timeout {w[2]}: no such timeout")
                 return
             t = dict(self.ZERO_TIMEOUTS)
-            t[field] = int(w[3]) if w[3].isdigit() else 0
+            t[field] = int(w[3]) if is_number(w[3]) else 0
             r = self.global_api(timeouts=t)
             if r.state != vppapi.OK:
                 self.err_dataplane(f"cgnat timeout {w[2]} {w[3]}: {r.reason}")
         elif w[1] == "block-holddown" and len(w) >= 3:
             r = self.global_api(set_block_holddown=True,
-                                block_holddown=int(w[2]) if w[2].isdigit()
+                                block_holddown=int(w[2]) if is_number(w[2])
                                 else 0)
             if r.state != vppapi.OK:
                 self.err_dataplane(f"cgnat block-holddown {w[2]}: {r.reason}")
@@ -8973,7 +9051,7 @@ class Shell:
             # "session-table buckets <n> memory <MB>", in either order.
             got = {}
             for i in range(2, len(w) - 1, 2):
-                if w[i] in ("buckets", "memory") and w[i + 1].isdigit():
+                if w[i] in ("buckets", "memory") and is_number(w[i + 1]):
                     got[w[i]] = int(w[i + 1])
             if len(got) != 2:
                 self.err("usage: nat cgnat session-table buckets <n> "
@@ -9021,9 +9099,13 @@ class Shell:
             args["set_tcp"] = True
             if w[3] != "disable":
                 args["tcp_enable"] = True
+                why = address_error("cgnat logging tcp", w[3])
+                if why:
+                    self.err(why)
+                    return
                 args["collector"] = w[3]
                 if len(w) >= 6 and w[4] == "port":
-                    if not w[5].isdigit() or int(w[5]) > 65535:
+                    if not is_number(w[5]) or int(w[5]) > 65535:
                         self.err(f"cgnat logging tcp: port {w[5]} is not one")
                         return
                     # Zero, not 4739, when no port was typed: the default
@@ -9101,6 +9183,16 @@ class Shell:
                 f"{NAT_HIERARCHY} cgnat identity dhcp-leases <path>",
                 f"{NAT_HIERARCHY} cgnat identity none")
             return
+        # The path against the field it travels in, before it is sent. A
+        # longer one is not something the dataplane can hold, and the refusal
+        # belongs where the operator can retype it (#416).
+        if args["path"]:
+            what = ("cgnat identity dhcp-leases" if args["kind"]
+                    else "cgnat identity file")
+            why = text_error(what, args["path"])
+            if why:
+                self.err_prose(*why)
+                return
         r = self.api_call("bpa_identity_source_set", args)
         if r.state != vppapi.OK:
             self.err_dataplane(f"cgnat identity: {r.reason}")
@@ -9144,7 +9236,7 @@ class Shell:
                     "the options are: secret <s>, port <n>")
                 return
             if word == "port":
-                if not value.isdigit() or int(value) > 65535:
+                if not is_number(value) or int(value) > 65535:
                     self.err("cgnat identity radius: port is 0-65535")
                     return
                 port = int(value)
@@ -9152,6 +9244,11 @@ class Shell:
                 secret = value
             i += 2
 
+        if secret:
+            why = text_error("cgnat identity radius secret", secret)
+            if why:
+                self.err_prose(*why)
+                return
         if not secret:
             self.err_prose(
                 "cgnat identity radius: a shared secret is required",
@@ -9194,6 +9291,10 @@ class Shell:
                 self.err_dataplane(f"cgnat logging syslog: {r.reason}")
             return
 
+        why = address_error("cgnat logging syslog", w[3])
+        if why:
+            self.err(why)
+            return
         args["enable"] = True
         args["collector"] = w[3]
         rest = w[4:]
@@ -9207,7 +9308,7 @@ class Shell:
                     f"'{word}' is not one, or it is missing its value",
                     "the options are: " + ", ".join(SYSLOG_OPTIONS))
                 return
-            if value is None or not value.isdigit():
+            if value is None or not is_number(value):
                 self.err_prose(
                     f"cgnat logging syslog: {word} takes a number",
                     f"'{value if value is not None else ''}' is not one")
@@ -9268,6 +9369,21 @@ class Shell:
         neighbours fill in; the comment on them says why there is no way to
         avoid that.
         """
+        # BEFORE THE DATAPLANE IS ASKED ANYTHING. A word that is not an
+        # address is wrong whatever the box answers, and reading the exporter
+        # first meant an operator who mistyped the collector was told the
+        # dataplane has no IPFIX exporter - a true sentence about the wrong
+        # thing, and one they cannot act on.
+        if len(w) > 3 and w[3] != "disable":
+            checks = [(w[3], "cgnat logging udp")]
+            if len(w) > 5 and w[4] == "src":
+                checks.append((w[5], "cgnat logging udp src"))
+            for value, what in checks:
+                why = address_error(what, value)
+                if why:
+                    self.err(why)
+                    return
+
         r = self.api.dump("ipfix_exporter_dump", {})
         if r.state != vppapi.OK:
             self.err_dataplane(f"cgnat {' '.join(w[1:])}: cannot read the IPFIX "
@@ -9296,7 +9412,7 @@ class Shell:
                 return
             src = w[5]
             if len(w) >= 8 and w[6] == "port":
-                if not w[7].isdigit() or int(w[7]) > 65535:
+                if not is_number(w[7]) or int(w[7]) > 65535:
                     self.err(f"cgnat logging udp: port {w[7]} is not one")
                     return
                 port = int(w[7])
@@ -10821,6 +10937,14 @@ class Shell:
 
         if line.startswith("cgnat pool "):
             name = w[2]
+            # Before the pool exists and before the mode changes, for the
+            # reason `router bgp` is refused before its block is entered
+            # (#415): a name refused after the mode moved leaves the operator
+            # typing pool statements into a pool the box will not take.
+            why = text_error("cgnat pool", name)
+            if why:
+                self.err_prose(*why)
+                return True
             self.pool = self.candidate.pools.get(name) or Pool(name)
             self.candidate.pools[name] = self.pool
             self.mode = "pool"
@@ -10896,6 +11020,10 @@ class Shell:
                 self.candidate.ssh[w[1]] = " ".join(w[2:])
             return True
         if w[0] == "user" and len(w) > 1:
+            why = text_error("user", w[1])
+            if why:
+                self.err_prose(*why)
+                return True
             self.user = self.candidate.users.get(w[1]) or User(w[1])
             self.candidate.users[w[1]] = self.user
             self.mode = "user"
@@ -11012,10 +11140,11 @@ class Shell:
         # MTU set on one side only reproduces the mismatch this exists to
         # prevent. Everything else in the block is still FRR's.
         if iface and not neg and dp == "mtu":
-            if len(w) < 2 or not w[1].isdigit():
-                self.err("usage: mtu <576-9216>")
-            elif not 576 <= int(w[1]) <= 9216:
-                self.err(f"mtu {w[1]} out of range (576-9216)")
+            if len(w) < 2 or not is_number(w[1]):
+                self.err(f"usage: mtu {MTU_RANGE}")
+            elif not MTU_MIN <= int(w[1]) <= MTU_MAX:
+                self.err(f"mtu {w[1]} out of range "
+                         f"({MTU_MIN}-{MTU_MAX})")
             else:
                 self.candidate.mtus[iface] = int(w[1])
             return True
@@ -11024,10 +11153,18 @@ class Shell:
             return True
 
         if iface and not neg and dp == "mac-address":
-            if len(w) < 2 or len(w[1].split(":")) != 6:
-                self.err("usage: mac-address <xx:xx:xx:xx:xx:xx>")
+            # No separate usage line. `mac_error("")` already says "expected
+            # an address", so a second refusal for the same mistake would be
+            # one more site nothing drives - which is exactly what
+            # test_prismash_refusals.py caught when this branch was left in.
+            why = mac_error(w[1] if len(w) > 1 else "")
+            if why:
+                self.err_prose(*why)
             else:
-                self.candidate.macs[iface] = w[1].lower()
+                # Normalised, not stored as typed: the dataplane prints two
+                # digits per octet, so a short spelling left the candidate and
+                # the running configuration permanently unequal (#414).
+                self.candidate.macs[iface] = mac_normal(w[1])
             return True
         # `no mac-address`, which went to FRR until #224: the MAC of a VPP
         # interface is nothing FRR can act on, so at commit it was a statement
@@ -11104,7 +11241,7 @@ class Shell:
             # dataplane, `?` offered `<1-65535>`, and the parser took any run
             # of digits at all - so all three said something different and
             # only one of them was checking anything (#351).
-            if len(w) < 2 or not w[1].isdigit() or int(w[1]) > 4294967295:
+            if len(w) < 2 or not is_number(w[1]) or int(w[1]) > 4294967295:
                 self.err(f"usage: vrf {ARG_VRF}, or 0 to take it back out")
             elif int(w[1]):
                 self.candidate.vrfs[iface] = int(w[1])
@@ -11121,7 +11258,7 @@ class Shell:
         # what an operator is told to type instead.
         if iface and not neg and dp == "vlan":
             why = None
-            if len(w) < 2 or not w[1].isdigit():
+            if len(w) < 2 or not is_number(w[1]):
                 why = f"usage: vlan {VLAN_RANGE} [inner {VLAN_RANGE}]"
             # THE RANGE THIS STATEMENT HAS ALWAYS QUOTED, now checked. `?` and
             # the usage line above both said <1-4094> and nothing compared a
@@ -11150,7 +11287,7 @@ class Shell:
                 self.err(why)
                 return True
             tag = {"outer": int(w[1]), "inner": None}
-            if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
+            if len(w) >= 4 and w[2] == "inner" and is_number(w[3]):
                 # The inner tag had no check at all, not even the name one the
                 # outer tag borrowed: nothing is named after it, so `inner 0`
                 # and `inner 9999` reached the dataplane exactly as typed.
@@ -11203,7 +11340,12 @@ class Shell:
             if len(w) < 2:
                 self.err("usage: description <text>")
             else:
-                self.candidate.descriptions[iface] = line.strip().split(None, 1)[1]
+                text = line.strip().split(None, 1)[1]
+                why = text_error("description", text)
+                if why:
+                    self.err_prose(*why)
+                else:
+                    self.candidate.descriptions[iface] = text
             return True
         if iface and neg and dp == "description":
             self.candidate.descriptions.pop(iface, None)
@@ -11290,6 +11432,25 @@ class Shell:
         # `no` forms ARE configuration rather than a removal - `no bgp
         # ebgp-requires-policy` is the one every eBGP session in this lab
         # needs - and dropping those would break them.
+        # THE AS NUMBER BEFORE THE STATEMENT IS STAGED (#415), and before the
+        # block below is entered. Both halves matter and the second is the one
+        # that bites: a stanza refused after `frr_ctx.append` leaves the
+        # operator standing inside a block this box has just said it will not
+        # take, so every statement they type next lands in it. Staged first,
+        # it also reaches `commit` as a statement nobody asked for.
+        #
+        # Only `router bgp` here. The other three places an AS is written -
+        # `remote-as` and the two `set as-path` verbs - are read by
+        # asn_findings at commit, which is the reader that covers a saved file
+        # too. This one is at the prompt as well because it opens a block.
+        if w[:2] == ["router", "bgp"]:
+            why = asn_error("router bgp", w[2] if len(w) > 2 else "")
+            if why:
+                self.err_prose(*why)
+                return True
+            note = asn_note(w[2])
+            if note:
+                print_prose(note)
         if w[0] == "no" and len(w) > 1:
             negated = " ".join(w[1:])
             for i, existing in enumerate(self.candidate.routing):
@@ -11433,7 +11594,7 @@ class Shell:
             return
         levels = 1
         if len(w) == 2:
-            if not w[1].isdigit() or w[1] == "0":
+            if not is_number(w[1]) or w[1] == "0":
                 # Their word goes in the PROSE and not the verdict, which is
                 # the rule #363 states: a verdict carrying a word the operator
                 # chose has no width at all, and this one is 36 columns
@@ -11617,10 +11778,20 @@ class Shell:
             return True
 
         try:
-            if w[0] == "inside":
-                p.inside.append(w[1])
-            elif w[0] == "outside":
-                p.outside.append(w[1])
+            if w[0] in ("inside", "outside"):
+                # The same rule as the saved file's, from the same function.
+                # A second copy is what lets the two doors disagree, which is
+                # #417 - and `inside potato` reached a commit through this one
+                # while the file's half only asked for a slash.
+                why = prefix_error(w[0], w[1])
+                if why:
+                    # SAID and not raised, the way block-size above is: the
+                    # chain answers a ValueError with "invalid argument: " in
+                    # front of it, and these verdicts already carry a value of
+                    # the operator's own length.
+                    self.err_prose(*why)
+                    return True
+                (p.inside if w[0] == "inside" else p.outside).append(w[1])
             elif w[0] == "block-size":
                 self.pool_range("block-size", w[1])
                 # The range is one of TWO things `?` promises about this
@@ -11729,6 +11900,17 @@ class Shell:
                 self.pool_range("reserve", w[1])
                 p.block_reserve = int(w[1])
             elif w[0] == "bypass":
+                # The prefix first and by ITSELF, so the refusal arrives as
+                # the two rows prefix_error writes rather than as one sentence
+                # behind "invalid argument: " - which is 145 columns at an
+                # IPv6 value. Everything else this statement can get wrong -
+                # the direction, a repeat - is still _pool_line's, so there is
+                # one reader for the statement and not two.
+                if len(w) > 2:
+                    why = prefix_error(f"bypass {w[1]}", w[2])
+                    if why:
+                        self.err_prose(*why)
+                        return True
                 why = Config._pool_line(p, " ".join(w))
                 if why:
                     raise ValueError(why)

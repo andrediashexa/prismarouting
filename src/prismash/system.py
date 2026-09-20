@@ -16,6 +16,7 @@ believes it wrote is a VTY that cannot notice being wrong.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import subprocess
 
@@ -135,6 +136,68 @@ def role_from_groups(names) -> str:
     if GROUP_CGNAT in names:
         return ROLE_CGNAT
     return ""
+
+
+def is_number(v) -> bool:
+    """
+    True if `v` is a decimal number THIS BOX WILL PARSE, ASCII digits only.
+
+    WHY NOT `str.isdigit()`, which is what every one of these call sites used
+    until #412: it is true for characters `int()` refuses, so the guard and the
+    conversion disagree and the disagreement is a traceback. Measured:
+
+        '\u00b2'  isdigit=True   int() -> ValueError
+        '\u2467'  isdigit=True   int() -> ValueError
+        '\u0663'  isdigit=True   int() -> 3
+        '\U0001d7da'  isdigit=True   int() -> 2
+
+    The first two ended the VTY session and ended `prismash --load` at boot,
+    at every numeric statement this product has, through both doors. The last
+    two are the quieter half: they convert, so a saved file carrying one comes
+    back a DIFFERENT file - `save` writes the ASCII digit - and a
+    configuration's text stops round-tripping.
+
+    `isdecimal()` alone fixes neither: it is true for both of the last two.
+    ASCII is the rule because ASCII is what `int()` takes, what the dataplane
+    prints with `%u`, and what an operator can type back in.
+
+    IT LIVES HERE, in the lowest module, because both parsers need it and
+    `config` already imports this one. One definition is the entire point: the
+    defect was one wrong predicate repeated forty-one times, and a second
+    definition would be that defect starting again.
+    """
+    v = str(v)
+    return v.isascii() and v.isdigit()
+
+
+def address_error(what: str, value: str):
+    """
+    None if `value` is an IP address, otherwise why it is not.
+
+    An ADDRESS and not a prefix: this is for the places a single host is
+    named - a collector, a source, an address a daemon listens on - where a
+    prefix length is not part of the grammar and would be as wrong as a word.
+
+    `ipaddress` and not a hand-written dotted quad, because the questions it
+    already answers are the ones that get forgotten: `010.1.1.1` is octal to
+    some resolvers and decimal to others, and CPython refuses it for that
+    reason. `config._is_ipv4_address` refuses it too and says so; this is the
+    same rule for both families, from the library rather than from a second
+    copy.
+
+    IT LIVES HERE for the reason `is_number` does: `validate_ssh` and
+    `validate_snmp` are in this module and `config` imports it, not the other
+    way round. One definition, and the two doors read it.
+    """
+    if not value:
+        return f"{what}: expected an address"
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        if "/" in value:
+            return (f"{what} '{value}': expected an address, not a prefix")
+        return f"{what} '{value}': not an IP address"
+    return None
 
 
 def validate_role(name, role):
@@ -305,8 +368,16 @@ def validate_ssh(settings: dict):
         if k not in SSH_FIELDS:
             return f"'{k}' is not an ssh setting"
         if k == "port":
-            if not str(v).isdigit() or not 1 <= int(v) <= 65535:
+            if not is_number(str(v)) or not 1 <= int(v) <= 65535:
                 return f"ssh port '{v}': expected 1-65535"
+        elif k == "listen-address":
+            # NOTHING asked until #413: `ssh listen-address potato` was taken
+            # at the prompt, written to the file and handed to sshd, which
+            # then refuses its own configuration and does not start - on a box
+            # whose other way in is a serial cable.
+            why = address_error(f"ssh {k}", str(v))
+            if why:
+                return why
         elif k in _VALID and v not in _VALID[k]:
             return f"ssh {k} '{v}': expected one of " + ", ".join(_VALID[k])
     return None
@@ -640,10 +711,14 @@ def validate_snmp(settings: dict):
             return f"'{k}' is not an snmp setting"
         if k == "enabled" and v not in ("yes", "no"):
             return f"snmp enabled '{v}': expected yes or no"
-        if k == "port" and (not str(v).isdigit() or not 1 <= int(v) <= 65535):
+        if k == "port" and (not is_number(str(v)) or not 1 <= int(v) <= 65535):
             return f"snmp port '{v}': expected 1-65535"
+        if k == "listen-address":
+            why = address_error(f"snmp {k}", str(v))
+            if why:
+                return why
         if k == "enterprise-number" and v and (
-                not str(v).isdigit() or not 1 <= int(v) <= 4294967295):
+                not is_number(str(v)) or not 1 <= int(v) <= 4294967295):
             # An OID under somebody else's PEN is a lie about who the object
             # belongs to, and it collides the day that organisation uses the
             # same subtree. So there is no default and no guess: either the

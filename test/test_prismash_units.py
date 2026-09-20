@@ -4859,5 +4859,220 @@ check("rollback 0" in said and "unread" in said,
       f"with nothing unread, still the way out: {said!r}")
 ok("the half FRR's own words do not say")
 
+print("\n=== the prompt refuses the addresses a saved file refuses (#413) ===")
+# Mutation shown red: any one call site reverted - `inside potato` is then
+# staged at the prompt while a file refuses it, which is the disagreement #417
+# exists to catch and the one this issue must not create.
+#
+# THE PROMPT HALF. The file half is in test_prismash_config.py, one rule and
+# one function behind both.
+_ADDR_PROMPT = [
+    ("inside potato", "expected a prefix"),
+    ("inside 300.0.0.0/10", "not an IPv4 prefix"),
+    ("outside 200.0.0.1", "expected a prefix"),
+    ("inside 2001:db8::/32", "expected an IPv4 prefix"),
+    ("inside 100.64.0.5/10", "host bits are set"),
+    ("bypass source 999.9.9.9/99", "not an IPv4 prefix"),
+    ("bypass destination 2001:db8::/32", "expected an IPv4 prefix"),
+]
+for _line, _needle in _ADDR_PROMPT:
+    _sh = shell()
+    _sh.mode, _sh.pool = "pool", Pool("A")
+    _rv, _text = driven(_sh.do_pool, _line)
+    check(_needle in _text, f"{_line!r}: {_needle!r} not in {_text!r}")
+    # SAID, not raised: the chain answers a ValueError with "invalid
+    # argument: " in front, and these verdicts already carry a value of the
+    # operator's own length (#355).
+    check("invalid argument" not in _text,
+          f"{_line!r}: said through err_prose, not raised: {_text!r}")
+    check(not _sh.pool.inside and not _sh.pool.outside
+          and not _sh.pool.bypass_src and not _sh.pool.bypass_dst,
+          f"{_line!r}: and nothing was staged: {_sh.pool.lines()!r}")
+# The control: the same statements with values a box can hold.
+_sh = shell()
+_sh.mode, _sh.pool = "pool", Pool("A")
+for _line in ("inside 100.64.0.0/10", "outside 203.0.113.0/24",
+              "bypass source 10.0.0.0/8", "bypass destination 192.0.2.0/24"):
+    _rv, _text = driven(_sh.do_pool, _line)
+    check(not _text, f"{_line!r} is a real statement and was refused: {_text!r}")
+check(_sh.pool.inside == ["100.64.0.0/10"]
+      and _sh.pool.bypass_src == ["10.0.0.0/8"],
+      f"and each reached the candidate: {_sh.pool.lines()!r}")
+ok(f"{len(_ADDR_PROMPT)} refused at the prompt, and four real ones staged")
+
+print("\n=== and the collectors, which reached the exporter unread (#413) ===")
+# Mutation shown red: the address_error call dropped from apply_logging_udp -
+# `potato` then reaches VPP's set_ipfix_exporter as a collector address.
+for _stmt, _what in (
+        (["cgnat", "logging", "udp", "potato", "src", "10.0.0.1"],
+         "the UDP collector"),
+        (["cgnat", "logging", "udp", "10.0.0.9", "src", "potato"],
+         "the source it exports from"),
+        (["cgnat", "logging", "tcp", "potato"], "the TCP collector"),
+        (["cgnat", "logging", "syslog", "potato", "enterprise", "12345"],
+         "the syslog collector")):
+    _sh = shell()
+    _rv, _text = driven(_sh.apply_logging, _stmt)
+    check("not an IP address" in _text,
+          f"{_what}: {' '.join(_stmt)!r} was taken: {_text!r}")
+ok("four collectors, none of them read as an address before this")
+
+print("\n=== the prompt refuses the MACs a saved file refuses (#414) ===")
+# Mutation shown red: the prompt's six-colon test left as it was, which is the
+# disagreement between the doors that #417 exists to catch.
+for _value, _needle in (("zz:zz:zz:zz:zz:zz", "not a hex octet"),
+                        ("1:2:3:4:5:6789", "not a hex octet"),
+                        ("ff:ff:ff:ff:ff:ff", "broadcast"),
+                        ("01:00:5e:00:00:01", "group bit is set")):
+    _sh = at()
+    with spoken() as _o:
+        _sh.do_config("interface pg0")
+        _sh.do_config(f"mac-address {_value}")
+    check(_needle in _o.getvalue(),
+          f"{_value!r}: {_needle!r} not in {_o.getvalue()!r}")
+    check(not _sh.candidate.macs,
+          f"{_value!r}: and nothing staged: {_sh.candidate.macs!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("interface pg0")
+    _sh.do_config("mac-address 2:0:0:0:0:1")
+check(_sh.candidate.macs == {"pg0": "02:00:00:00:00:01"},
+      f"and the short spelling is staged as the dataplane writes it: "
+      f"{_sh.candidate.macs!r} {_o.getvalue()!r}")
+ok("four refused at the prompt, and the short spelling normalised")
+print("\n=== prismash.asn_findings: every place an AS is written (#415) ===")
+# Mutation shown red: the `words_kept` tuple emptied, which refuses
+# `remote-as external` - the ordinary way to run eBGP to a directly connected
+# peer, and the exact defect #208 was filed for.
+_ASN_ROUTING = [
+    "router bgp 0",
+    "router bgp 65000",
+    "router bgp 23456",
+    "neighbor 10.0.0.1 remote-as 99999999999",
+    "neighbor 10.0.0.2 remote-as 65001",
+    "neighbor vppwan0 interface remote-as external",
+    "neighbor v6peers remote-as internal",
+    "neighbor 10.0.0.9 remote-as auto",
+    "set as-path prepend 65000 0 65000",
+    "set as-path prepend 65000 65000",
+    "set as-path exclude banana",
+    "set as-path prepend last-as 3",
+    "neighbor 10.0.0.3 remote-as 23456",
+]
+_found = prismash.asn_findings(_ASN_ROUTING)
+_errors = [stmt for sev, stmt, _ in _found if sev == "error"]
+_warnings = [stmt for sev, stmt, _ in _found if sev == "warning"]
+check(_errors == ["router bgp 0",
+                  "neighbor 10.0.0.1 remote-as 99999999999",
+                  "set as-path prepend 65000 0 65000",
+                  "set as-path exclude banana"],
+      f"four statements carry an AS that is not one: {_errors!r}")
+check(_warnings == ["router bgp 23456", "neighbor 10.0.0.3 remote-as 23456"],
+      f"and AS_TRANS is a warning wherever it is written: {_warnings!r}")
+# THE THREE SPELLINGS THAT ARE NOT NUMBERS, named one at a time, because
+# reading them positionally is how #208 refused BGP unnumbered.
+for _kept in ("neighbor vppwan0 interface remote-as external",
+              "neighbor v6peers remote-as internal",
+              "neighbor 10.0.0.9 remote-as auto"):
+    check(_kept not in _errors and _kept not in _warnings,
+          f"{_kept!r} is a real FRR spelling and must pass untouched")
+check("set as-path prepend last-as 3" not in _errors,
+      "`last-as` takes a COUNT and not an AS, so 3 is not read as one")
+check(prismash.asn_findings([]) == [] and prismash.asn_findings([""]) == [],
+      "and nothing to read is not a finding")
+ok(f"{len(_errors)} refused, {len(_warnings)} said, and four spellings kept")
+
+print("\n=== and the prompt refuses the stanza before entering it (#415) ===")
+# Mutation shown red: the check moved below `self.frr_ctx.append(line)`, which
+# leaves the operator standing inside a stanza the box has just refused - so
+# every statement they type next lands in it.
+for _line, _needle in (("router bgp 0", "out of range"),
+                       ("router bgp 4294967296", "out of range"),
+                       ("router bgp banana", "expected an AS number"),
+                       ("router bgp", "expected an AS number")):
+    _sh = at()
+    with spoken() as _o:
+        _sh.do_config(_line)
+    check(_needle in _o.getvalue(),
+          f"{_line!r}: {_needle!r} not in {_o.getvalue()!r}")
+    check(_sh.frr_ctx == [],
+          f"{_line!r}: and the operator is not left inside it: "
+          f"{_sh.frr_ctx!r}")
+    check(_sh.candidate.routing == [],
+          f"{_line!r}: and nothing staged: {_sh.candidate.routing!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("router bgp 23456")
+check(_sh.frr_ctx == ["router bgp 23456"] and "AS_TRANS" in _o.getvalue(),
+      f"AS_TRANS is said and the block is entered: {_sh.frr_ctx!r} "
+      f"{_o.getvalue()!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("router bgp 65000")
+check(_sh.frr_ctx == ["router bgp 65000"] and not _o.getvalue(),
+      f"and an ordinary AS is entered in silence: {_o.getvalue()!r}")
+ok("four refused at the prompt, one said, one silent")
+
+print("\n=== the prompt bounds the same text a saved file bounds (#416) ===")
+# Mutation shown red: any one call site reverted, which is a disagreement
+# between the doors - #417's whole subject.
+#
+# AND THE MODE MUST NOT MOVE. A name refused after `self.mode = "pool"` leaves
+# the operator typing pool statements into a pool the box will not take, which
+# is the same shape as a BGP stanza refused after its block is entered (#415).
+for _line, _needle, _mode in (
+        ("cgnat pool " + "p" * 200, "and the limit is 64", "config"),
+        ("user " + "u" * 200, "and the limit is 32", "config")):
+    _sh = at()
+    with spoken() as _o:
+        _sh.do_config(_line)
+    check(_needle in _o.getvalue(),
+          f"{_line[:24]!r}: {_needle!r} not in {_o.getvalue()!r}")
+    check(_sh.mode == _mode,
+          f"{_line[:24]!r}: the mode moved to {_sh.mode!r} on a refusal")
+    check(not _sh.candidate.pools and not _sh.candidate.users,
+          f"{_line[:24]!r}: and nothing was created")
+for _text, _needle in (("A" * 4000, "and the limit is 64"),
+                       ("up\x07link", "control character")):
+    _sh = at()
+    with spoken() as _o:
+        _sh.do_config("interface pg0")
+        _sh.do_config(f"description {_text}")
+    check(_needle in _o.getvalue(),
+          f"description: {_needle!r} not in {_o.getvalue()!r}")
+    check(not _sh.candidate.descriptions,
+          f"description: staged anyway: {_sh.candidate.descriptions!r}")
+# The control, and it is the accented one on purpose: the operator this box is
+# sold to writes Portuguese.
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("cgnat pool residential")
+check(_sh.mode == "pool" and not _o.getvalue(),
+      f"a real pool name is taken and the mode moves: {_sh.mode!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("interface pg0")
+    _sh.do_config("description uplink para o tr\u00e2nsito")
+check(_sh.candidate.descriptions == {"pg0": "uplink para o tr\u00e2nsito"},
+      f"and accented text is text: {_sh.candidate.descriptions!r} "
+      f"{_o.getvalue()!r}")
+ok("four refused at the prompt, the mode held, and accented text taken")
+
+print("\n=== and the two identity statements, against their own fields ===")
+# Mutation shown red: the text_error call dropped from apply_identity - a
+# 1000-byte path then reaches a 256-byte field.
+for _w, _needle in (
+        (["cgnat", "identity", "file", "/" + "d" * 1000],
+         "and the limit is 256"),
+        (["cgnat", "identity", "dhcp-leases", "/" + "d" * 1000],
+         "and the limit is 256"),
+        (["cgnat", "identity", "radius", "secret", "s" * 500],
+         "and the limit is 128")):
+    _sh = shell()
+    _rv, _text = driven(_sh.apply_identity, _w)
+    check(_needle in _text,
+          f"{' '.join(_w)[:34]!r}: {_needle!r} not in {_text!r}")
+ok("a path and a secret, each against the field bpa.api declares for it")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

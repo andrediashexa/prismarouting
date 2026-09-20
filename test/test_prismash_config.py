@@ -1268,5 +1268,536 @@ for bad in ("1.2.3", "1.2.3.4.5", "1.2.3.256", "1.2.3.-1", "010.1.1.1",
     check(not config._is_ipv4_address(bad), f"{bad!r} is not")
 print("  each octet in range, written the way one reader would read it")
 
+print("\n=== Pool.check_number: the shape, and never the range (#412) ===")
+# Mutation shown red: `return None` for a non-digit, which puts the seven
+# ValueErrors back and ends `prismash --load` in a traceback.
+#
+# THE SHAPE AND NOT THE RANGE is the whole of why this is not check_range with
+# the numbers left off, and the case below that proves it is the `block-size 4`
+# one: #357 enforced a range in this parser and a pool the dataplane had built
+# with a small block came back unmodellable, so every commit on that box was
+# refused. A shape check cannot do that, because `show bpa config` renders
+# every one of these fields `%u`.
+for good in ("0", "1", "4", "512", "65535", "4294967295"):
+    check(config.Pool.check_number("block-size", good) is None,
+          f"{good} is a number")
+for bad in ("abc", "-5", "", "1.5", "0x10", "512 ", "+1"):
+    why = config.Pool.check_number("block-size", bad)
+    check(why is not None, f"{bad!r} is not a number")
+check(config.Pool.check_number("ports", "abc", "min")
+      == "ports min 'abc': expected a number",
+      "the half is named when one statement carries two numbers")
+import re                                                    # noqa: E402
+check(not re.search(r"\d+-\d+",
+                    config.Pool.check_number("max-blocks", "abc")),
+      "and no range is quoted, because this parser does not enforce one - a "
+      "bound in the sentence is a bound an operator would be told their own "
+      "box's number breaks")
+print("  a number or not, said without a bound this reader does not hold")
+
+print("\n=== a pool block a hand cannot crash (#412) ===")
+# Mutation shown red: any one of the ten guards removed - the case for that
+# statement then raises out of Config.parse instead of landing in `unknown`,
+# which is the traceback `prismash --load` printed at boot.
+#
+# Ten statements, not seven. The seven reach `int()` in _pool_line itself;
+# block-size, ports and vrf reach it one step later in Pool.api_args, so they
+# crashed the COMMIT rather than the parse - the same defect, further from the
+# operator.
+_POOL_HEAD = "cgnat pool p\n inside 10.0.0.0/8\n outside 200.0.0.0/24\n"
+_CANNOT_CRASH = [
+    ("timeout", " timeout udp abc\n", "timeout udp 'abc'"),
+    ("timeout, negative", " timeout udp -5\n", "timeout udp '-5'"),
+    ("max-blocks", " max-blocks abc\n", "max-blocks 'abc'"),
+    ("block-stride", " block-stride abc\n", "block-stride 'abc'"),
+    ("reserve", " reserve abc\n", "reserve 'abc'"),
+    ("utilisation-alarm", " utilisation-alarm abc\n", "utilisation-alarm 'abc'"),
+    ("max-sessions", " max-sessions abc\n", "max-sessions 'abc'"),
+    ("max-session-rate", " max-session-rate abc\n", "max-session-rate 'abc'"),
+    ("block-size", " block-size abc\n", "block-size 'abc'"),
+    ("ports, the min", " ports abc 2000\n", "ports min 'abc'"),
+    ("ports, the max", " ports 1024 abc\n", "ports max 'abc'"),
+    ("vrf", " vrf banana\n", "vrf 'banana'"),
+    ("outside-vrf", " outside-vrf banana\n", "outside-vrf 'banana'"),
+]
+for label, stmt, needle in _CANNOT_CRASH:
+    try:
+        cfg = config.Config.parse(_POOL_HEAD + stmt)
+    except Exception as e:                                  # noqa: BLE001
+        check(False, f"{label}: parse raised {type(e).__name__}: {e}")
+        continue
+    check(len(cfg.unknown) == 1,
+          f"{label}: refused as one unknown line, got {cfg.unknown!r}")
+    if cfg.unknown:
+        lineno, text, why = cfg.unknown[0]
+        check(lineno == 4,
+              f"{label}: naming the line a hand would edit, got {lineno}")
+        check(text == stmt.strip(),
+              f"{label}: and the statement whole, got {text!r}")
+        check(needle in why, f"{label}: {needle!r} not in {why!r}")
+print(f"  {len(_CANNOT_CRASH)} statements, each a refusal with a line number "
+      f"rather than a traceback")
+
+print("\n=== and the direction #357 is about: the dataplane's own numbers ===")
+# Mutation shown red: check_number replaced by check_range, which is what #357
+# reverted. `block-size 4` is then refused, running_config() reports that
+# committing would REMOVE the pool, and the box cannot be configured at all.
+#
+# Every value here is one `show bpa config` can print and the PROMPT refuses:
+# a block below 64, a port range outside 1-65535, a utilisation alarm over 100.
+# The parser has to take all of them, because they are facts about a running
+# box rather than requests.
+_DATAPLANE_SAYS = [
+    ("a block the prompt would refuse", " block-size 4\n"),
+    ("a port range the prompt would refuse", " ports 0 70000\n"),
+    ("an alarm the prompt would refuse", " utilisation-alarm 200\n"),
+    ("max-blocks above the u8 the prompt bounds", " max-blocks 300\n"),
+    ("vrf 0, which is a real table", " vrf 0\n"),
+]
+for label, stmt in _DATAPLANE_SAYS:
+    cfg = config.Config.parse(_POOL_HEAD + stmt)
+    check(not cfg.unknown, f"{label}: refused, and must not be: {cfg.unknown!r}")
+    if not cfg.unknown:
+        pool = cfg.pools["p"]
+        try:
+            pool.api_args()
+            pool.settings_api_args()
+            pool.limits_api_args()
+        except Exception as e:                              # noqa: BLE001
+            check(False, f"{label}: parsed and then unsendable: "
+                         f"{type(e).__name__}: {e}")
+        check(stmt.strip() in cfg.text(),
+              f"{label}: and round-trips, so `save` does not rewrite the box's "
+              f"own number")
+print("  a fact read off the box is taken whole; only a shape is refused")
+
+print("\n=== the refusal's own words fit the console ===")
+# Mutation shown red: the range put back into the sentence, or the statement
+# interpolated twice - either takes the fixed half past CONSOLE_COLUMNS.
+#
+# THE OWN WORDS AND NOT THE VALUE, which is #252's split. The operator's value
+# is quoted, and a quoted token is printed as it stands rather than folded -
+# `console_prose` says why, and a value has no widest because an operator can
+# type a word of any length. What has a widest is everything this box wrote,
+# and that is what is measured: the longest statement name, the longest half
+# name a statement carries, and the sentence around them.
+_LONGEST_NAME = max(config.Pool.RANGES, key=len)
+_LONGEST_HALF = max(config.Pool.TIMEOUTS, key=len)
+_own = config.Pool.check_number(_LONGEST_NAME, "", _LONGEST_HALF)
+check(len(_own) <= config.CONSOLE_COLUMNS,
+      f"{len(_own)} columns of this box's own words: {_own!r}")
+check(_LONGEST_NAME in _own and _LONGEST_HALF in _own,
+      f"and both of the widest halves are really in it: {_own!r}")
+print(f"  {len(_own)} columns at '{_LONGEST_NAME}' and '{_LONGEST_HALF}', the "
+      f"widest this box can write")
+
+print("\n=== system.is_number: the predicate isdigit() was not (#412) ===")
+# Mutation shown red: `isascii()` dropped, which is the product as it shipped -
+# '\u00b2' then passes the guard and the int() behind it raises, ending the VTY
+# session and ending `prismash --load` at boot.
+for good in ("0", "1", "42", "4294967295"):
+    check(config.is_number(good), f"{good} is a number")
+# The four measured on CPython 3.11. The first two RAISE in int(); the last two
+# CONVERT, which is the quieter half - a file carrying one comes back a
+# different file, because `save` writes the ASCII digit.
+for bad, what in (("\u00b2", "superscript two: int() raises"),
+                  ("\u2467", "circled eight: int() raises"),
+                  ("\u0663", "arabic-indic three: int() returns 3"),
+                  ("\U0001d7da", "mathematical two: int() returns 2")):
+    check(bad.isdigit(), f"{what} - isdigit() really is true for it, which is "
+                         f"the whole defect")
+    check(not config.is_number(bad), f"{what} - and is_number says no")
+for bad in ("", "abc", "-1", "1.5", " 1", "1 ", "0x10", "1_000"):
+    check(not config.is_number(bad), f"{bad!r} is not a number")
+check(config.is_number(7) and not config.is_number(None),
+      "a non-string is stringified, the way validate_ssh hands it one")
+print("  ASCII digits, which is what int() takes and %u prints")
+
+print("\n=== and nothing in the VTY guards an int() with isdigit() any more ===")
+# Mutation shown red: one call site put back - the count then disagrees.
+#
+# NO ALLOWLIST. The rule is that `.isdigit()` appears nowhere in the product
+# but inside is_number's own definition and the docstring arguing against it.
+# A site that genuinely wants Python's broader question can have it back by
+# saying so here, which is a change somebody has to make deliberately.
+_SRC = os.path.join(os.path.dirname(__file__), "..", "src", "prismash")
+_left = []
+for _name in sorted(os.listdir(_SRC)):
+    if not _name.endswith(".py"):
+        continue
+    with open(os.path.join(_SRC, _name)) as _f:
+        for _n, _line in enumerate(_f, 1):
+            if ".isdigit()" not in _line:
+                continue
+            if _name == "system.py" and ("return v.isascii()" in _line
+                                         or "isdigit=True" in _line
+                                         or "WHY NOT" in _line):
+                continue
+            _left.append(f"{_name}:{_n}: {_line.strip()}")
+check(not _left, "`.isdigit()` still guards something:\n    "
+                 + "\n    ".join(_left))
+print("  one predicate, and the forty-three call sites read it")
+
+print("\n=== config.prefix_error: an IPv4 network the dataplane can hold ===")
+# Mutation shown red: strict=True softened to strict=False, which is the
+# dataplane's masking done silently here - the operator types 100.64.0.5/10,
+# `save` writes 100.64.0.0/10, and the file is not the file.
+for good in ("10.0.0.0/8", "100.64.0.0/10", "203.0.113.0/24", "0.0.0.0/0",
+             "192.0.2.1/32"):
+    check(config.prefix_error("inside", good) is None, f"{good} is a prefix")
+_BAD_PREFIX = [
+    ("potato", "expected a prefix", "not a prefix at all"),
+    ("200.0.0.1", "expected a prefix", "an address with no length"),
+    ("300.0.0.0/10", "not an IPv4 prefix", "an octet out of range"),
+    ("10.0.0.0/33", "not a prefix length", "a length above 32"),
+    ("2001:db8::/32", "expected an IPv4 prefix", "IPv6, which bpa_cli.c "
+     "cannot unformat"),
+    ("100.64.0.5/10", "host bits are set", "host bits, which the dataplane "
+     "would mask in silence"),
+    ("", "expected a prefix", "nothing at all"),
+]
+for value, needle, why in _BAD_PREFIX:
+    r = config.prefix_error("inside", value)
+    check(r is not None, f"{why}: {value!r} was accepted")
+    if r:
+        check(needle in r[0], f"{why}: {needle!r} not in {r[0]!r}")
+# The network the operator meant is IN the refusal, which is the whole reason
+# host bits are refused here rather than masked.
+check("100.64.0.0/10" in config.prefix_error("inside", "100.64.0.5/10")[1],
+      "and the prefix the operator meant is named, so the fix is a paste")
+print(f"  {len(_BAD_PREFIX)} refusals, each naming what the dataplane cannot "
+      f"hold")
+
+print("\n=== config.prefix_why: the two rows as one, for the file ===")
+# Mutation shown red: the prose dropped, which leaves `prismash --load`
+# printing a verdict with no reason on a box nobody is watching - the same
+# defect vrrp_why was written against.
+check(config.prefix_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "both halves joined")
+check(config.prefix_why(("a verdict", "")) == "a verdict",
+      "and nothing added when there is no prose")
+check(config.prefix_why(config.prefix_error("inside", "100.64.0.5/10"))
+      == "inside '100.64.0.5/10': host bits are set - the prefix this names "
+         "is 100.64.0.0/10",
+      "and a real refusal reads as one sentence in a log")
+print("  what a file's reader gets, who has no console to fold in")
+
+print("\n=== and an INTERFACE address is the opposite thing (#413) ===")
+# Mutation shown red: ip_interface swapped for ip_network, which refuses
+# 10.0.0.5/8 - the ordinary way every router in this market is configured.
+#
+# On an interface the host bits ARE the address. In a pool prefix they are a
+# mistake. Two statements, two rules, and this is the pair that says so.
+for good in ("10.0.0.5/8", "192.0.2.1/24", "100.64.0.1/32"):
+    check(config._address_family_error("ipv4", good) is None,
+          f"{good} is an interface address, host bits and all")
+check(config._address_family_error("ipv6", "2001:db8::1/64") is None,
+      "and so is an IPv6 one")
+for bad in ("999.1.1.1/24", "10.0.0.256/24", "10.0.0.1/33", "potato/24"):
+    check(config._address_family_error("ipv4", bad) is not None,
+          f"{bad!r} is not an address at all, and was staged until #413")
+check(config._address_family_error("ipv6", "2001:zz::1/64") is not None,
+      "nor is an IPv6 one with a bad group")
+print("  host bits accepted where they are the address, refused where they "
+      "are a mistake")
+
+print("\n=== system.address_error: a host, and not a prefix (#413) ===")
+# Mutation shown red: the "/" branch dropped, which lets a prefix through to
+# sshd's ListenAddress and to the IPFIX exporter's collector field.
+for good in ("10.0.0.1", "0.0.0.0", "2001:db8::1", "::1"):
+    check(config.address_error("ssh listen-address", good) is None,
+          f"{good} is an address")
+for bad, why in (("potato", "a word"), ("999.1.1.1", "an octet out of range"),
+                 ("010.1.1.1", "a leading zero, which is octal to some "
+                               "readers and decimal to others"),
+                 ("10.0.0.0/8", "a prefix where a host is named"),
+                 ("", "nothing at all")):
+    check(config.address_error("ssh listen-address", bad) is not None,
+          f"{why}: {bad!r} was accepted")
+print("  the same rule for both families, from the library and not a copy")
+
+print("\n=== both doors, on every statement that names an address (#413) ===")
+# Mutation shown red: any one call site reverted - that row then parses.
+#
+# THE FILE HALF. The prompt half is in test_prismash_units.py, and #417 is the
+# reader that will stop the two from drifting apart again.
+_ADDRESS_DOORS = [
+    ("pool inside", "cgnat pool p\n inside potato\n"),
+    ("pool outside", "cgnat pool p\n outside 300.0.0.0/24\n"),
+    ("pool bypass source", "cgnat pool p\n bypass source 999.9.9.9/99\n"),
+    ("pool bypass destination",
+     "cgnat pool p\n bypass destination 2001:db8::/32\n"),
+    ("interface ipv4", "interface pg0\n ipv4 address 999.1.1.1/24\n"),
+    ("interface ipv6", "interface pg0\n ipv6 address 2001:zz::1/64\n"),
+    ("ssh listen-address", "ssh listen-address potato\n"),
+    ("snmp listen-address", "snmp listen-address potato\n"),
+]
+for label, text in _ADDRESS_DOORS:
+    cfg = config.Config.parse(text)
+    check(len(cfg.unknown) == 1,
+          f"{label}: a saved file took it: {cfg.unknown!r}")
+# And the control, because a check that refuses everything is not a check.
+_GOOD = ("cgnat pool p\n inside 100.64.0.0/10\n outside 203.0.113.0/24\n"
+         " bypass source 10.0.0.0/8\n bypass destination 192.0.2.0/24\n exit\n"
+         "interface pg0\n ipv4 address 10.0.0.5/8\n"
+         " ipv6 address 2001:db8::1/64\n"
+         "ssh listen-address 0.0.0.0\nsnmp listen-address 127.0.0.1\n")
+_cfg = config.Config.parse(_GOOD)
+check(not _cfg.unknown, f"a configuration of real values is taken whole: "
+                        f"{_cfg.unknown!r}")
+check(_cfg.pools["p"].inside == ["100.64.0.0/10"]
+      and _cfg.addresses["pg0"] == ["10.0.0.5/8", "2001:db8::1/64"],
+      f"and reaches the model unchanged: {_cfg.pools['p'].inside!r} "
+      f"{_cfg.addresses.get('pg0')!r}")
+print(f"  {len(_ADDRESS_DOORS)} statements refused in a saved file, and a real "
+      f"configuration untouched")
+
+print("\n=== and these refusals fit the console too ===")
+# Mutation shown red: the two rows folded back into one sentence, which is
+# 132 columns at an IPv6 value and is why prefix_error answers in rows (#355).
+_LONG = "bypass destination"
+for _value in ("2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff/64", "10.0.0.5/8",
+               "potato", "10.0.0.0/33", ""):
+    _r = config.prefix_error(_LONG, _value)
+    if not _r:
+        continue
+    _own = _r[0].replace(f"'{_value}'", "")
+    check(len(f"error: {_own}") <= config.CONSOLE_COLUMNS,
+          f"verdict's own words at {len(_own)} columns: {_r[0]!r}")
+    # THE PROSE IS FOLDED, so its length is not the rule - `console_prose`
+    # wraps it and never splits a word, so what has to fit is the longest
+    # WORD. Asserting the whole string is a stricter rule than the product's
+    # and would refuse a correct two-row paragraph.
+    for _word in _r[1].split():
+        check(len(_word) <= config.CONSOLE_COLUMNS,
+              f"a word the fold cannot break: {_word!r}")
+print("  the verdict's own words unfolded, and no word in the prose the fold "
+      "cannot break; the operator's value is quoted and runs over")
+
+print("\n=== config.mac_error: six hex octets, unicast, not broadcast ===")
+# Mutation shown red: the hex test dropped, which is the product as it
+# shipped - the whole check was that the word had six colon-separated parts.
+for good in ("02:00:00:00:00:01", "aa:bb:cc:dd:ee:ff", "AA:BB:CC:DD:EE:FF",
+             "2:0:0:0:0:1", "00:00:00:00:00:00"):
+    check(config.mac_error(good) is None, f"{good} is a MAC")
+_BAD_MAC = [
+    ("zz:zz:zz:zz:zz:zz", "not a hex octet", "letters that are not hex"),
+    ("1:2:3:4:5:6789", "not a hex octet", "an octet of four digits"),
+    ("02:00:00:00:00", "expected six octets", "five octets"),
+    ("02:00:00:00:00:00:01", "expected six octets", "seven"),
+    ("ff:ff:ff:ff:ff:ff", "broadcast", "the broadcast address"),
+    ("01:00:5e:00:00:01", "group bit is set", "a multicast address"),
+    ("", "expected an address", "nothing at all"),
+]
+for value, needle, why in _BAD_MAC:
+    r = config.mac_error(value)
+    check(r is not None, f"{why}: {value!r} was accepted")
+    if r:
+        check(needle in r[0], f"{why}: {needle!r} not in {r[0]!r}")
+# The locally-administered bit is NOT a rule, and this is what says so: an
+# operator matching a peer's filter may need a globally-unique address, and
+# refusing one would refuse a real configuration.
+check(config.mac_error("00:1b:21:00:00:01") is None,
+      "a globally-unique address is not refused; the local bit is not a rule")
+print(f"  {len(_BAD_MAC)} refusals, and the rule that is deliberately absent")
+
+print("\n=== config.mac_normal: the spelling the dataplane writes (#414) ===")
+# Mutation shown red: mac_normal returning value.lower() unchanged, which is
+# the defect - `2:0:0:0:0:1` then never equals the `02:00:00:00:00:01` that
+# sw_interface_dump gives back.
+check(config.mac_normal("2:0:0:0:0:1") == "02:00:00:00:00:01",
+      "a short octet is padded")
+check(config.mac_normal("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff",
+      "and the case is the dataplane's")
+_typed = config.Config.parse("interface pg0\n mac-address 2:0:0:0:0:1\n")
+_device = config.Config.parse(
+    "interface pg0\n mac-address 02:00:00:00:00:01\n")
+check(_typed.is_same(_device),
+      f"so a short spelling equals what the box reports: {_typed.macs!r} "
+      f"against {_device.macs!r}")
+check(not {k: v for k, v in _device.delta_to(_typed).items() if v},
+      "and commit has nothing to apply, where it used to apply the MAC "
+      "forever")
+print("  accepted in the spelling vppctl takes, stored in the one VPP prints")
+
+print("\n=== config.mac_why: the two rows as one, for the file ===")
+check(config.mac_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "both halves joined")
+check(config.mac_why(("a verdict", "")) == "a verdict",
+      "and nothing added when there is no prose")
+print("  what a file's reader gets")
+
+print("\n=== a MAC refused in a saved file, and one taken (#414) ===")
+for value in ("zz:zz:zz:zz:zz:zz", "1:2:3:4:5:6789", "ff:ff:ff:ff:ff:ff",
+              "01:00:5e:00:00:01"):
+    _cfg = config.Config.parse(f"interface pg0\n mac-address {value}\n")
+    check(len(_cfg.unknown) == 1,
+          f"a saved file took {value!r}: {_cfg.unknown!r}")
+_cfg = config.Config.parse("interface pg0\n mac-address 02:00:00:00:00:01\n")
+check(not _cfg.unknown and _cfg.macs == {"pg0": "02:00:00:00:00:01"},
+      f"and a real one is taken whole: {_cfg.macs!r} {_cfg.unknown!r}")
+print("  the file door, four refusals and a control")
+
+print("\n=== and these refusals fit the console ===")
+for _v in ("zz:zz:zz:zz:zz:zz", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01", ""):
+    _r = config.mac_error(_v)
+    _own = _r[0].replace(f"'{_v}'", "")
+    check(len(f"error: {_own}") <= config.CONSOLE_COLUMNS,
+          f"verdict at {len(_own)}: {_r[0]!r}")
+    for _word in _r[1].split():
+        check(len(_word) <= config.CONSOLE_COLUMNS,
+              f"a word the fold cannot break: {_word!r}")
+print("  the verdict unfolded, and no word in the prose the fold cannot break")
+
+print("\n=== config.asn_error: 1 to 4294967295, and nothing else ===")
+# Mutation shown red: the range test dropped, which is the product as it
+# shipped - `router bgp 0` was staged and FRR refused it a commit later, on a
+# candidate the operator had already built.
+for good in ("1", "65000", "64512", "4200000000", "4294967295", "23456"):
+    check(config.asn_error("router bgp", good) is None, f"{good} is an AS")
+for bad, needle, why in (("0", "out of range", "zero, which RFC 7607 reserves"),
+                         ("4294967296", "out of range", "one past 2^32-1"),
+                         ("banana", "expected an AS number", "a word"),
+                         ("-1", "expected an AS number", "a negative"),
+                         ("", "expected an AS number", "nothing at all")):
+    r = config.asn_error("router bgp", bad)
+    check(r is not None, f"{why}: {bad!r} was accepted")
+    if r:
+        check(needle in r[0], f"{why}: {needle!r} not in {r[0]!r}")
+check(config.asn_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "and the two rows join for a file, like every other refusal here")
+print("  refused where no reading makes it an AS")
+
+print("\n=== config.asn_note: said, and deliberately not refused ===")
+# Mutation shown red: the private ranges added to AS_NOTABLE, which is the
+# checker that warns about what is merely usual - the thing an operator learns
+# to work around, and then works around the real findings too.
+check("AS_TRANS" in config.asn_note("23456"),
+      "AS_TRANS is named, with the RFC that reserves it")
+check(config.asn_error("router bgp", "23456") is None,
+      "and it is NOT refused: a lab may be built on it deliberately")
+for private in ("64512", "65534", "4200000000", "4294967294"):
+    check(config.asn_note(private) is None,
+          f"{private} is a private AS (RFC 6996) and gets nothing at all")
+for ordinary in ("1", "65000", "13335"):
+    check(config.asn_note(ordinary) is None, f"{ordinary} gets nothing")
+check(config.asn_note("banana") is None,
+      "and a word gets nothing here; asn_error owns that refusal")
+print(f"  {len(config.AS_NOTABLE)} number worth a sentence, and the private "
+      f"ranges silent")
+
+print("\n=== config.TEXT_LIMITS against bpa.api itself (#416) ===")
+# Mutation shown red: any of the three numbers changed here - the table then
+# disagrees with the message it describes, which is the second copy this
+# whole file exists to prevent.
+#
+# THE API IS READ, not quoted. Three of the six rows come from bpa.api and are
+# compared field by field; the other two are cited because their source is not
+# in this repository, and they are named so a reader can check them in one
+# command.
+_API = os.path.join(os.path.dirname(__file__), "..", "src", "plugins", "bpa",
+                    "bpa.api")
+with open(_API) as _f:
+    _api_text = _f.read()
+_FROM_API = {
+    "cgnat pool": ("name", 64),
+    "cgnat identity file": ("path", 256),
+    "cgnat identity radius secret": ("secret", 128),
+}
+for _what, (_field, _width) in _FROM_API.items():
+    check(f"string {_field}[{_width}];" in _api_text,
+          f"bpa.api no longer declares 'string {_field}[{_width}]' - the "
+          f"limit for {_what!r} was read from it and has to move with it")
+    check(config.TEXT_LIMITS[_what][0] == _width,
+          f"{_what}: the table says {config.TEXT_LIMITS[_what][0]}, the API "
+          f"says {_width}")
+check(config.TEXT_LIMITS["cgnat identity dhcp-leases"][0] == 256,
+      "both identity paths travel in the same field and take the same limit")
+check(config.TEXT_LIMITS["description"] == (
+          64, "VPP's vnet/interface.api, sw_interface_tag_add_del tag[64]"),
+      "the description's limit names VPP's own field, which is not in this "
+      "repository")
+check(config.TEXT_LIMITS["user"][0] == 32
+      and "useradd(8)" in config.TEXT_LIMITS["user"][1],
+      "and a user name names useradd(8), which is the thing this box runs")
+for _what, (_n, _source) in config.TEXT_LIMITS.items():
+    check(_source.strip(), f"{_what} has a limit and no source for it")
+print(f"  {len(config.TEXT_LIMITS)} bounds, {len(_FROM_API)} of them compared "
+      f"against the API and the rest carrying their source")
+
+print("\n=== config.text_error: bytes, and what a terminal executes ===")
+# Mutation shown red: len(value) instead of len(value.encode()), which lets a
+# 64-character accented description past a 64-BYTE field - the exact case the
+# byte count exists for.
+check(config.text_error("description", "a" * 64) is None,
+      "64 bytes fits a 64-byte field")
+check(config.text_error("description", "a" * 65) is not None,
+      "and 65 does not")
+check(config.text_error("description", "\u00e1" * 32) is None,
+      "32 accented characters are 64 bytes and fit")
+check(config.text_error("description", "\u00e1" * 33) is not None,
+      "33 of them are 66 bytes and do not - the count is bytes, because the "
+      "field is")
+check("66 bytes" in config.text_error("description", "\u00e1" * 33)[0],
+      "and the refusal says how many, so the operator can shorten it")
+# Accented text is not a control character, and this is what says so: the
+# wiki is in Portuguese and an operator names a port in their own language.
+check(config.text_error("description", "uplink para o tr\u00e2nsito") is None,
+      "accented text is text")
+for _bad, _why in (("up\x07link", "a BEL, which a terminal sounds"),
+                   ("up\x1b[31mlink", "an ANSI escape, which a terminal obeys"),
+                   ("up\nlink", "a newline, which is a second line in a file"),
+                   ("up\x00link", "a NUL")):
+    _r = config.text_error("description", _bad)
+    check(_r is not None, f"{_why}: {_bad!r} was accepted")
+    if _r:
+        check("control character" in _r[0],
+              f"{_why}: {_r[0]!r} does not name what is wrong")
+# REFUSED and not stripped, which is the half that made the two doors
+# disagree: the prompt removed a BEL in silence and a file kept it.
+_typed = config.Config.parse("interface pg0\n description up\x07link\n")
+check(_typed.unknown and not _typed.descriptions,
+      f"a saved file refuses it rather than keeping it: {_typed.unknown!r}")
+try:
+    config.text_error("mtu", "1500")
+    check(False, "text this table does not bound answered quietly")
+except KeyError:
+    pass
+print("  counted in bytes, and refused where a terminal would act on it")
+
+print("\n=== config.text_why: the two rows as one, for the file ===")
+check(config.text_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "both halves joined")
+check(config.text_why(("a verdict", "")) == "a verdict",
+      "and nothing added when there is no prose")
+check(config.text_why(config.text_error("cgnat pool", "p" * 200))
+      == "cgnat pool: 200 bytes, and the limit is 64 - the field it travels "
+         "in is bpa.api, bpa_pool_add_del name[64]",
+      "and a real refusal reads as one sentence in a log, naming the field")
+print("  what a file's reader gets, who has no console to fold in")
+
+print("\n=== and every bounded statement, at the file door (#416) ===")
+_TEXT_DOORS = [
+    ("pool name", "cgnat pool " + "p" * 200 + "\n"),
+    ("user name", "user " + "u" * 200 + "\n"),
+    ("description", "interface pg0\n description " + "A" * 4000 + "\n"),
+    ("description, a control character",
+     "interface pg0\n description up\x07link\n"),
+]
+for _label, _text in _TEXT_DOORS:
+    _cfg = config.Config.parse(_text)
+    check(len(_cfg.unknown) == 1,
+          f"{_label}: a saved file took it: {_cfg.unknown!r}")
+_cfg = config.Config.parse(
+    "cgnat pool residential\n exit\nuser netadm\n exit\n"
+    "interface pg0\n description uplink para o tr\u00e2nsito\n")
+check(not _cfg.unknown and "residential" in _cfg.pools
+      and "netadm" in _cfg.users
+      and _cfg.descriptions["pg0"] == "uplink para o tr\u00e2nsito",
+      f"and real names and a real description are taken whole: "
+      f"{_cfg.unknown!r}")
+print(f"  {len(_TEXT_DOORS)} refused in a file, and a real configuration "
+      f"untouched")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

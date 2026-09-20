@@ -77,7 +77,212 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A reader that keeps the two doors in step**
+  ([#417](https://github.com/andrediashexa/hexarouting/issues/417)).
+  `test/test_both_doors.py` walks the VTY's own grammar, builds hostile values
+  out of each statement's hint, drives the prompt **and** a saved file with
+  them, and fails when the two answers differ. 114 values over 33 statements
+  today, and a statement added tomorrow is compared by nobody's decision -
+  there is no list in it.
+
+  The one class that is meant to differ is declared **in the product**, as
+  `config.DOORS_DIFFER` with its reason, rather than as an allowlist inside
+  the check - for the reason `NOT_LABS` holds its reasons as data: an
+  exception nobody can read is one nobody re-examines. There is no ceiling to
+  raise here; a new disagreement is a failure.
+
+  A hint the generator cannot build a value from is **named on every run**
+  rather than skipped, because a statement nobody is comparing has to be
+  visible. Five today, all of them `alg <name> <on|off>`.
+
 ### Fixed
+
+* **A name and a piece of free text are bounded by the field they travel in**
+  ([#416](https://github.com/andrediashexa/hexarouting/issues/416)). Nothing
+  bounded any of them: a 200-character pool name, a 200-character user name, a
+  4000-character interface description, a 1000-byte identity path and a
+  500-byte RADIUS secret were all staged, saved and handed to fields of 64,
+  256 and 128 bytes.
+
+  `config.TEXT_LIMITS` carries every bound **with the field it came from**,
+  because a bound with no source is a number somebody chose and the next
+  reader cannot tell one from the other. Three of the six are compared against
+  `src/plugins/bpa/bpa.api` by a suite, so the table cannot drift from the
+  messages it describes; the other two name VPP's own `interface.api` and
+  `useradd(8)`, which are not in this repository.
+
+  **Counted in bytes, not characters**, because the fields are: `trânsito` is
+  eight characters and nine bytes, and a limit counted in characters would let
+  a UTF-8 value past the field it has to fit in.
+
+* **A control character in a description or a name is refused, not stripped**
+  ([#416](https://github.com/andrediashexa/hexarouting/issues/416)). The
+  prompt removed a BEL from a description in silence and a saved file kept it,
+  so one statement meant two things depending on the door it arrived through.
+  A description is also read back to whoever is sitting at the console by
+  `show configuration`, so what goes in comes out at a terminal.
+
+  Accented text is **not** a control character and is not refused: this box is
+  sold to operators who name a port in Portuguese, and the rule is about what
+  a terminal executes rather than about what alphabet it is in.
+
+  A name refused at the prompt does not move the mode, for the reason a
+  refused `router bgp` does not enter its stanza
+  ([#415](https://github.com/andrediashexa/hexarouting/issues/415)): an
+  operator left inside a pool the box will not take types every following
+  statement into it.
+
+* **An interface's MTU and VRF are bounded in a saved file too**
+  ([#417](https://github.com/andrediashexa/hexarouting/issues/417)). The
+  prompt refused `mtu 999999`, `mtu 0` and `vrf 99999999999`; a file took all
+  three. Unlike a pool's numbers this is safe, and the reason is which reader
+  it is: `running_config` fills `cgnat.mtus` and `cgnat.vrfs` from
+  `device_mtus()` and `device_vrfs()` directly, so `Config.parse` sees only a
+  saved file - and a file is a request, like anything an operator types.
+
+* **The MTU range is written once**
+  ([#417](https://github.com/andrediashexa/hexarouting/issues/417)).
+  `576-9216` appeared three times in `prismash.py` - in the hint, in the usage
+  line and in the refusal - and the saved file was bounded by none of them.
+  `config.MTU_MIN`, `MTU_MAX` and `MTU_RANGE` are the one place now, the way
+  `VLAN_RANGE` already was, and the interface VRF range beside them.
+
+* **A MAC address is checked for being one**
+  ([#414](https://github.com/andrediashexa/hexarouting/issues/414)). The whole
+  check was that the word had six colon-separated parts, at both doors, so
+  `zz:zz:zz:zz:zz:zz`, `1:2:3:4:5:6789`, the broadcast address and a multicast
+  address were all staged, saved and handed to the dataplane - which answers a
+  bare retval, the reason `linux-name` is already refused in the parser.
+
+  Three rules: six octets of hexadecimal, not `ff:ff:ff:ff:ff:ff`, and the
+  group bit clear. An interface answering to the broadcast address answers to
+  every frame on the segment; a multicast source address is one no switch will
+  learn, so the box goes unreachable through a port that is up.
+
+  **The locally-administered bit is deliberately not a fourth rule.** An
+  operator matching a peer's filter or a licence may need a globally-unique
+  address, and refusing one would refuse a real configuration.
+
+* **A short MAC no longer leaves the candidate permanently unequal to the box**
+  ([#414](https://github.com/andrediashexa/hexarouting/issues/414)). VPP's
+  `unformat_ethernet_address` takes `2:0:0:0:0:1`, so this VTY takes it too -
+  refusing what `vppctl` accepts is a disagreement with the box. It was stored
+  as typed, while `sw_interface_dump` gives back `02:00:00:00:00:01`, so
+  `delta_to` reported `mac_set` on **every** commit: the box re-applied the MAC
+  forever and `show configuration compare` was never clean. It is now stored in
+  the spelling VPP prints, which is what makes accepting the short one safe.
+* **An AS number is checked for being one**
+  ([#415](https://github.com/andrediashexa/hexarouting/issues/415)).
+  `router bgp 0`, `router bgp 4294967296` and `router bgp banana` were all
+  staged, and so was `neighbor 10.0.0.1 remote-as 99999999999`. The hint
+  beside `remote-as` has said `<1-4294967295>` since it was written and
+  nothing kept it. FRR refused them at commit - one step after the operator
+  had built a candidate that probably changes something else too, which is the
+  argument [#351](https://github.com/andrediashexa/hexarouting/issues/351),
+  [#360](https://github.com/andrediashexa/hexarouting/issues/360) and
+  [#361](https://github.com/andrediashexa/hexarouting/issues/361) already won
+  for the pool.
+
+  Four places an AS is written are read now: `router bgp`, `remote-as`, and
+  `set as-path prepend` and `exclude`. `router bgp` is refused at the prompt
+  **before the stanza is entered** - a block refused afterwards leaves the
+  operator standing inside one the box has already declined, so every
+  statement they type next lands in it. The other three are read by
+  `asn_findings` at commit, which is what covers a file loaded at boot as well
+  as a session.
+
+  **What is said and not refused**: `23456` is AS_TRANS
+  ([RFC 6793](https://www.rfc-editor.org/rfc/rfc6793)) and produces a warning,
+  because a lab may be built on it deliberately. **What produces nothing at
+  all** is a private AS - 64512-65534 and 4200000000-4294967294
+  ([RFC 6996](https://www.rfc-editor.org/rfc/rfc6996)) - which is an ordinary
+  thing for an ISP to run internally, and a checker that warns about what is
+  merely usual is one an operator learns to work around. That silence is
+  asserted, so a later change cannot quietly start warning about it.
+
+  `remote-as internal`, `remote-as external` and `remote-as auto` are real FRR
+  spellings and pass untouched. Reading them as a bad AS is
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208), where the
+  ordinary way to run eBGP to a directly connected peer was refused; the
+  assertion for each is named one at a time. `set as-path prepend last-as <n>`
+  takes a count and not an AS, and is left alone for the same reason.
+
+* **An address is an address, wherever it is written**
+  ([#413](https://github.com/andrediashexa/hexarouting/issues/413)). Eight
+  statements named an address or a prefix and none of them read it as one.
+  `inside potato`, `outside 300.0.0.0/24`, `bypass source 999.9.9.9/99`,
+  `ipv4 address 999.1.1.1/24`, `ipv6 address 2001:zz::1/64`,
+  `ssh listen-address potato`, `snmp listen-address potato` and every IPFIX
+  collector - UDP, its source, TCP and syslog - were staged, saved and
+  committed. The whole of the bypass check was that a `/` was present, and
+  the whole of the interface check was the family and that a length existed.
+
+  Three validators now, each with one definition read by both doors:
+  `prefix_error` for the four statements the dataplane holds as networks,
+  `address_error` for the places a single host is named, and the parse
+  `_address_family_error` never did.
+
+  **Host bits are refused in a pool prefix and accepted on an interface**, and
+  that is a decision rather than an inconsistency: on an interface the host
+  bits **are** the address, so `10.0.0.5/8` is how every router in this market
+  is configured; in a pool prefix they are a mistake the dataplane would mask
+  in silence, and a masked prefix is a configuration whose text does not
+  round-trip - the operator types `100.64.0.5/10` and `save` writes
+  `100.64.0.0/10`. The refusal names the prefix they meant.
+
+  That refusing them is safe is measured, not assumed: `bpa_cli.c` masks host
+  bits on the way in and `show bpa config` renders from the masked base, so
+  the readback can only ever produce a network address and can never reach the
+  refusal. That is the
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357) hazard,
+  answered the same way
+  [#412](https://github.com/andrediashexa/hexarouting/issues/412) answered it.
+
+  An IPv6 prefix in a pool is refused with the reason said out loud: all four
+  statements are `unformat_ip4_address` in the plugin and the datapath nodes
+  are `ip4`, so it is a statement the dataplane has no way to hold.
+
+  The collector is now read **before the dataplane is asked anything**. An
+  operator who mistyped it was told the box has no IPFIX exporter - a true
+  sentence about the wrong thing.
+
+* **One character ended the VTY session, and ended `prismash --load` at boot**
+  ([#412](https://github.com/andrediashexa/hexarouting/issues/412)). Every
+  numeric statement this product takes was guarded by `str.isdigit()`, which
+  is true for characters `int()` refuses: `²` and `⑧` passed the guard and
+  raised on the conversion. Measured at both doors - `mtu ²`, `vrf ²`,
+  `ssh port ²`, `snmp port ²` and `cgnat timeout udp ²` each ended the
+  session with a traceback, and `mtu`, `vlan`, `vrf`, `block-size` and
+  `forward` did the same to `prismash --load`, which
+  `prisma-routing.service` runs on every boot. `Pool.check_range`,
+  `check_mss`, `check_pow2`, `validate_ssh` and `validate_snmp` - the
+  functions whose whole job is to say whether a value is acceptable - all
+  raised on it too.
+
+  The quieter half is the same predicate: `٣` and `𝟚` pass **and**
+  convert, to 3 and 2, so a saved file carrying one came back a different
+  file once `save` had written the ASCII digit.
+
+  One predicate now, `system.is_number`, read by all 43 call sites: a number
+  is ASCII digits, which is what `int()` takes and what the dataplane prints
+  with `%u`. A suite asserts that `.isdigit()` guards nothing in
+  `src/prismash` any more, with no allowlist.
+
+* **A hand-edited pool block refuses a line instead of crashing**
+  ([#412](https://github.com/andrediashexa/hexarouting/issues/412)). Thirteen
+  statements in a pool block reached `int()` with nothing between: seven in
+  the parser itself and six more one step later in `Pool.api_args`, so
+  `block-size abc`, `ports abc 2000` and `vrf banana` crashed the commit
+  rather than the parse. Each now returns a refusal naming the line, the
+  statement and the word.
+
+  The SHAPE and deliberately not the range, because this parser also reads
+  the dataplane's own `show bpa config`: enforcing a range here is
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357), where a
+  pool built with `block-size 4` came back unmodellable and every commit on
+  that box was refused. A shape check cannot do that, and it is measured
+  rather than argued - every field it guards is rendered `%u` by
+  `bpa_cli.c`, so the readback can never reach the refusal.
 
 ## 0.109.2 - the gate knows which digit moved
 

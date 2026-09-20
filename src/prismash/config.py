@@ -12,9 +12,13 @@ a state that never existed.
 from __future__ import annotations
 
 import difflib
+import ipaddress
+import unicodedata
 import hashlib
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
+                    address_error,
+                    is_number,
                     validate_role,
                     SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp)
 
@@ -392,7 +396,7 @@ class Pool:
         """None if `v` is a legal clamp, otherwise why it is not."""
         if v == "auto":
             return None
-        if not v.isdigit():
+        if not is_number(v):
             return f"tcp-mss '{v}': expected a size in bytes, or auto"
         if not Pool.MSS_MIN <= int(v) <= Pool.MSS_MAX:
             return (f"tcp-mss {v}: expected {Pool.MSS_MIN}-{Pool.MSS_MAX}. "
@@ -457,7 +461,7 @@ class Pool:
         """
         lo, hi = Pool.RANGES[name]
         label = f"{name} {what}".rstrip()
-        if not v.isdigit():
+        if not is_number(v):
             return f"{label} '{v}': expected a number {lo}-{hi}"
         if not lo <= int(v) <= hi:
             return f"{label} {v}: expected {lo}-{hi}"
@@ -494,7 +498,7 @@ class Pool:
             # caller asking about a statement that does not carry this
             # constraint is a bug, and a quiet None would answer "fine".
             raise KeyError(name)
-        if not v.isdigit() or int(v) < 1:
+        if not is_number(v) or int(v) < 1:
             # check_range owns that refusal and runs first; saying it twice in
             # two spellings is how the two drift apart.
             return None
@@ -504,6 +508,47 @@ class Pool:
         lo = 1 << (n.bit_length() - 1)
         return (f"{name} {v} is not a power of two: "
                 f"the nearest are {lo} and {lo << 1}")
+
+    @staticmethod
+    def check_number(name: str, v: str, what=""):
+        """
+        None if `v` is a number at all, otherwise why it is not.
+
+        THE SHAPE, AND DELIBERATELY NOT THE RANGE, which is the whole reason
+        this is not `check_range` with the two numbers left off. This function
+        is reached from `_pool_line`, and `_pool_line` reads THREE things: a
+        statement typed at the prompt, a saved file, and the running
+        configuration read back out of the dataplane by `show bpa config`.
+
+        #357 is what happens when a range is enforced there. A pool the
+        dataplane had built with `block-size 4` - which it accepts, and which
+        lab/detreserve.sh uses to keep a block cheap - came back unmodellable,
+        so `running_config()` reported that committing would REMOVE it and
+        every commit on that box was then refused. The operator could no
+        longer configure anything at all.
+
+        "Is this a number" does not have that failure mode, and that is
+        measured rather than assumed: every field this check guards is
+        rendered `%u` by `show bpa config` in `bpa_cli.c` - block-size and
+        ports at lines 2929 and 2931, max-blocks, block-stride, reserve, vrf,
+        outside-vrf and utilisation-alarm at 2954 to 2972, and the timeouts
+        and the session limits beside them. A `%u` cannot print a word, so
+        the readback cannot reach this refusal. The request is bounded where
+        the request is made, in Shell.pool_range.
+
+        Without this, seven `int()` calls below raised a ValueError that
+        nothing caught, and `prismash --load` ended in a traceback - on a file
+        `prisma-routing.service` replays at every boot, with no line number and
+        no statement named. That is #94's shape with the diagnosis removed.
+        """
+        if is_number(v):
+            return None
+        label = f"{name} {what}".rstrip()
+        # No range in the sentence, for the reason above: quoting one here
+        # would be quoting a bound this parser does not enforce, and an
+        # operator reading a file back off their own box would be told the
+        # number it printed is out of range.
+        return f"{label} '{v}': expected a number"
 
     #: The statements carrying TWO numbers whose order is part of the
     #: statement, and a third table for the same reason POW2 is a second one:
@@ -533,7 +578,7 @@ class Pool:
         if name not in Pool.ORDERED:
             # As loud as check_range's KeyError on an unknown statement.
             raise KeyError(name)
-        if not first.isdigit() or not second.isdigit():
+        if not is_number(first) or not is_number(second):
             # check_range owns that refusal and runs first; saying it twice in
             # two spellings is how the two drift apart.
             return None
@@ -892,7 +937,7 @@ class Pool:
         commit at all. The dataplane refuses those, and names them.
         """
         parts = self.ports.replace("-", " ").split()
-        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        if len(parts) != 2 or not all(is_number(p) for p in parts):
             return None
         lo, hi = int(parts[0]), int(parts[1])
         if lo > hi:
@@ -930,6 +975,322 @@ class Pool:
         return isinstance(other, Pool) and self.lines() == other.lines()
 
 
+def mac_error(value: str):
+    """
+    None if `value` is a MAC an interface can answer to, else why not.
+
+    Rows, like `prefix_error`, and joined by `mac_why` for the file.
+
+    THREE RULES, and none of them is pedantry:
+
+      * six octets of hexadecimal. The whole check until #414 was that the
+        word had six colon-separated parts, so `zz:zz:zz:zz:zz:zz` and
+        `1:2:3:4:5:6789` were staged, saved and handed to the dataplane, which
+        answers a bare retval - which is why `linux-name` is already refused in
+        this parser rather than at commit.
+      * not `ff:ff:ff:ff:ff:ff`. An interface that answers to the broadcast
+        address answers to every frame on the segment.
+      * the GROUP BIT clear - the low bit of the first octet. A multicast
+        source address is not a unicast interface identity, and a switch will
+        not learn it, so the box goes unreachable through a port that is up.
+
+    NOT a fourth rule: the locally-administered bit is neither required nor
+    encouraged. An operator matching a peer's filter or a licence may need a
+    globally-unique address, and refusing one would refuse a real
+    configuration. Written down so the next reader does not add it as the
+    obvious next rule.
+
+    ONE TO TWO digits per octet, not two, because VPP's own
+    `unformat_ethernet_address` takes `1:2:3:4:5:6` and this VTY refusing what
+    `vppctl` accepts is a disagreement with the box. `mac_normal` is what
+    makes that safe - see it for the diff this used to produce.
+    """
+    if not value:
+        return ("mac-address: expected an address", "")
+    parts = value.split(":")
+    if len(parts) != 6:
+        return (f"mac-address '{value}': expected six octets",
+                "as in 02:00:00:00:00:01")
+    for octet in parts:
+        if not 1 <= len(octet) <= 2 or any(
+                c not in "0123456789abcdefABCDEF" for c in octet):
+            return (f"mac-address '{value}': '{octet}' is not a hex octet",
+                    "each octet is one or two hexadecimal digits")
+    if all(int(o, 16) == 0xff for o in parts):
+        return ("mac-address ff:ff:ff:ff:ff:ff: that is the broadcast address",
+                "an interface answering to it answers to every frame on the "
+                "segment")
+    if int(parts[0], 16) & 1:
+        return (f"mac-address '{value}': the group bit is set",
+                "the low bit of the first octet marks a multicast address, "
+                "which no switch will learn as this port's")
+    return None
+
+
+def mac_why(refusal) -> str:
+    """`mac_error` as one sentence, for the file. See `vrrp_why`."""
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
+
+
+#: The AS numbers that are not an AS a box configures itself as, and what to
+#: say about each. Data rather than branches, because the reason is the whole
+#: value of the finding and a branch would leave it in a sentence nobody can
+#: compare against the RFC.
+#:
+#: AS_TRANS is the only one. The private ranges are NOT here, and that is the
+#: decision: 64512-65534 and 4200000000-4294967294 (RFC 6996) are an ordinary
+#: thing for an ISP to run internally, and a checker that warns about what is
+#: merely unusual is one an operator learns to work around.
+AS_NOTABLE = {
+    23456: ("AS_TRANS", "RFC 6793 reserves it for a 2-byte speaker to stand "
+                        "in with; it is not an AS to be"),
+}
+
+#: 1 to 2^32-1. Zero is reserved (RFC 7607) and 4294967295 is the last one
+#: RFC 7300 reserves, but both are refused here for the plainer reason that
+#: neither is an AS anybody is assigned - and the hint beside `remote-as` has
+#: said `<1-4294967295>` since it was written while nothing kept it.
+ASN_MIN, ASN_MAX = 1, 4294967295
+
+
+def asn_error(what: str, value: str):
+    """
+    None if `value` is an AS number, else why not, in rows.
+
+    REFUSED is everything that is not a number and everything outside
+    1-4294967295: neither is an AS under any reading, and until #415 nothing
+    in this VTY asked. `router bgp 0`, `router bgp 4294967296` and
+    `router bgp banana` were all staged, and FRR refused them at commit - one
+    step after the operator had built a candidate that probably changes
+    something else too. That is the argument #351, #360 and #361 already won
+    for the pool: a bound enforced only by the thing downstream is a bound the
+    operator meets one commit late.
+
+    SAID is AS_TRANS, through `asn_note`, because refusing it would refuse a
+    lab somebody built deliberately.
+
+    `internal`, `external` and `auto` are not handled here: they are real FRR
+    spellings of `remote-as` and the caller keeps them, because this function
+    answers about a NUMBER and those are not one.
+    """
+    if not value:
+        return (f"{what}: expected an AS number", "")
+    if not is_number(value):
+        return (f"{what} '{value}': expected an AS number",
+                f"an AS number is {ASN_MIN} to {ASN_MAX}")
+    n = int(value)
+    if not ASN_MIN <= n <= ASN_MAX:
+        return (f"{what} {value}: out of range",
+                f"an AS number is {ASN_MIN} to {ASN_MAX}")
+    return None
+
+
+def asn_why(refusal) -> str:
+    """`asn_error` as one sentence, for the file. See `vrrp_why`."""
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
+
+
+def mac_normal(value: str) -> str:
+    """
+    A MAC as the dataplane writes it: two lowercase digits per octet.
+
+    MEASURED, not tidiness. `sw_interface_dump` gives `01:02:03:04:05:06` and
+    the VTY stored whatever was typed, so `mac-address 1:2:3:4:5:6` left the
+    candidate and the running configuration permanently unequal: `delta_to`
+    reported `mac_set` on every commit, the box re-applied the MAC forever and
+    `show configuration compare` was never clean. Normalising here is what
+    makes accepting the short spelling safe.
+    """
+    return ":".join(f"{int(o, 16):02x}" for o in value.split(":"))
+
+def asn_note(value: str):
+    """
+    What is worth saying about an AS number that is legal, or None.
+
+    A FINDING and never a refusal - see AS_NOTABLE for why the private ranges
+    produce nothing at all.
+    """
+    if not is_number(value):
+        return None
+    entry = AS_NOTABLE.get(int(value))
+    if not entry:
+        return None
+    name, why = entry
+    return f"AS {value} is {name}: {why}"
+
+
+#: How many BYTES each name and each piece of free text may carry, and where
+#: the number comes from. The source is in the table because a bound with no
+#: source is a number somebody chose, and the next person cannot tell one from
+#: the other.
+#:
+#: BYTES and not characters: every one of these travels in a fixed-size field
+#: of the binary API, and a letter carrying an accent is one character and two
+#: bytes in UTF-8. A limit counted in characters would let a value past the
+#: field it has to fit in, which is the whole defect - and the operators this
+#: box is sold to write accented text, so it is the ordinary case rather than
+#: an exotic one.
+#:
+#: `test_prismash_config.py` reads `src/plugins/bpa/bpa.api` and compares the
+#: three rows that come from it, so this table cannot drift from the messages
+#: it describes. The other two are cited rather than read: VPP's own
+#: `interface.api` is not in this repository, and `useradd(8)` is a manual
+#: page. Both are named so the next reader can check them in one command.
+TEXT_LIMITS = {
+    "cgnat pool": (64, "bpa.api, bpa_pool_add_del name[64]"),
+    "description": (64, "VPP's vnet/interface.api, "
+                        "sw_interface_tag_add_del tag[64]"),
+    "cgnat identity file": (256, "bpa.api, bpa_identity_set path[256]"),
+    "cgnat identity dhcp-leases": (256, "bpa.api, bpa_identity_set path[256]"),
+    "cgnat identity radius secret": (
+        128, "bpa.api, bpa_identity_radius_set secret[128]"),
+    "user": (32, "useradd(8): usernames may only be up to 32 characters long"),
+}
+
+
+def text_error(what: str, value: str):
+    """
+    None if `value` fits the field it travels in and carries no control
+    characters, else why not, in rows.
+
+    TWO QUESTIONS, and they are here together because they are the same
+    statement's - a name or a piece of free text an operator types.
+
+    THE LENGTH comes from `TEXT_LIMITS`, never from a number written beside a
+    handler. Nothing bounded any of these: a 200-character pool name and a
+    4000-character description were staged, saved and handed to fields of 64
+    bytes. What the dataplane then does with them is NOT measured here - it
+    needs a running one, and #416 names the lab.
+
+    CONTROL CHARACTERS are refused rather than stripped. Stripped is how the
+    two doors came to disagree: the prompt silently removed a BEL from a
+    description and a saved file kept it, so one statement meant two things
+    depending on how it arrived. And a description is read back to an operator
+    by `show configuration` on the terminal they are sitting at, so what goes
+    in comes out at a console.
+
+    Accented text is NOT a control character and is not refused. The wiki is
+    in Portuguese and an operator names a port in their own language; the rule
+    is about what a terminal executes, not about what alphabet it is in.
+    """
+    if what not in TEXT_LIMITS:
+        # As loud as check_range's KeyError. A caller asking about text this
+        # table does not bound is a bug, and a quiet None would answer "fine".
+        raise KeyError(what)
+    limit, source = TEXT_LIMITS[what]
+    for ch in value:
+        if unicodedata.category(ch) in ("Cc", "Cf", "Cs"):
+            return (f"{what}: a control character is not text",
+                    f"{ch!r} is read back to a console by "
+                    f"'show configuration'")
+    size = len(value.encode("utf-8"))
+    if size > limit:
+        return (f"{what}: {size} bytes, and the limit is {limit}",
+                f"the field it travels in is {source}")
+    return None
+
+
+def text_why(refusal) -> str:
+    """`text_error` as one sentence, for the file. See `vrrp_why`."""
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
+
+
+
+#: The statements whose two doors DELIBERATELY give different answers, and
+#: why. Declared HERE, in the product, rather than as an allowlist inside the
+#: check that reads it - for the reason `NOT_LABS` holds its reasons as data:
+#: an exception nobody can read is one nobody re-examines.
+#:
+#: There is one entry and it is a whole class. `Config._pool_line` is the
+#: reader for THREE things - a statement typed at the prompt, a saved file,
+#: and the running configuration read back out of the dataplane by `show bpa
+#: config` - and the third is a FACT rather than a request. #357 put a range
+#: there and a pool the dataplane had built with `block-size 4` came back
+#: unmodellable, so every commit on that box was refused.
+#:
+#: So a pool's NUMBERS are bounded where the request is made, in
+#: Shell.pool_range, and not in the parser. The SHAPE is checked in both
+#: (#412), because "is this a number" is a question the dataplane's own %u
+#: output always answers yes to.
+DOORS_DIFFER = {
+    "pool numbers": (
+        tuple(sorted(Pool.RANGES)),
+        "the file parser also reads `show bpa config`, where a number outside "
+        "the range the prompt enforces is a fact about a running box rather "
+        "than a request (#357). The shape is checked at both doors; the range "
+        "is not."),
+}
+
+
+def prefix_error(what: str, value: str):
+    """
+    None if `value` is an IPv4 network this dataplane can hold, else why not.
+
+    A TUPLE of rows, the way `vrrp_statement` answers and for the same reason
+    (#355): the prompt prints the first through `err` and the rest as prose,
+    and the file parser joins them with `prefix_why`, because an entry in
+    `unknown` is one line by construction. Composed as one sentence, the IPv6
+    refusal reaches a console at 132 columns.
+
+    Four questions, and every one of them is `bpa_cli.c`'s rather than this
+    file's opinion:
+
+      * IPv4. All four statements that reach here - `inside`, `outside`,
+        `bypass source`, `bypass destination` - are `unformat_ip4_address` in
+        the plugin, and the datapath nodes are `ip4`. An IPv6 prefix is a
+        statement the dataplane has no way to hold.
+      * A prefix length, and one of at most 32. The plugin refuses `len > 32`
+        with "inside prefix length %u invalid", one commit later than here.
+      * NO HOST BITS. This is the one that is a decision, and the refusal is
+        safe for the reason that decides every refusal in this parser: the
+        dataplane MASKS them on the way in - `base & ~(count - 1)` in
+        bpa_cli.c - and `show bpa config` renders from that masked base, so
+        the readback can only ever produce a network address and can never
+        reach this refusal. That is the #357 hazard, answered by measurement.
+
+        Refused rather than masked here, because masking is a configuration
+        whose text does not round-trip: the operator types 100.64.0.5/10,
+        `save` writes 100.64.0.0/10, and the file is not the file. The network
+        they meant is in the prose, so the fix is a copy and paste.
+      * It parses at all. `inside potato` was staged, saved and committed.
+    """
+    if not value:
+        return (f"{what}: expected a prefix", "")
+    if "/" not in value:
+        return (f"{what} '{value}': expected a prefix", "a prefix carries its "
+                "length, as in 100.64.0.0/10")
+    if ":" in value:
+        return (f"{what} '{value}': expected an IPv4 prefix",
+                "this CGNAT translates IPv4, and the dataplane has no way to "
+                "hold an IPv6 one")
+    try:
+        ipaddress.IPv4Network(value, strict=True)
+    except ipaddress.AddressValueError:
+        return (f"{what} '{value}': not an IPv4 prefix", "")
+    except ipaddress.NetmaskValueError:
+        return (f"{what} '{value}': not a prefix length", "a length is 0 to 32")
+    except ValueError:
+        # strict=True refuses exactly one thing the two above do not: host
+        # bits. Naming the network the operator meant is the whole value of
+        # saying it here rather than letting the dataplane mask it in silence.
+        try:
+            meant = ipaddress.IPv4Interface(value).network
+        except ValueError:
+            return (f"{what} '{value}': not an IPv4 prefix", "")
+        return (f"{what} '{value}': host bits are set",
+                f"the prefix this names is {meant}")
+    return None
+
+
+def prefix_why(refusal) -> str:
+    """`prefix_error` as one sentence, for the file. See `vrrp_why`."""
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
+
+
 def _address_family_error(keyword: str, prefix: str):
     """
     None when the prefix matches the keyword, a sentence when it does not.
@@ -946,6 +1307,18 @@ def _address_family_error(keyword: str, prefix: str):
         return f"'{prefix}' is not an IPv4 prefix"
     if "/" not in prefix:
         return f"'{prefix}' has no prefix length"
+    # AND IT HAS TO PARSE, which nothing asked until #413: `999.1.1.1/24` and
+    # `2001:zz::1/64` were staged, saved and handed to the dataplane.
+    #
+    # ip_interface and not ip_network, and that is the decision this statement
+    # turns on: on an interface the host bits ARE the address, so `10.0.0.5/8`
+    # is the ordinary way a router is configured and refusing it would refuse
+    # every real configuration. A pool prefix is the opposite thing and
+    # prefix_error() above says so.
+    try:
+        ipaddress.ip_interface(prefix)
+    except ValueError:
+        return f"'{prefix}' is not an address with a prefix length"
     return None
 
 
@@ -1146,7 +1519,7 @@ def _is_ipv4_address(a: str) -> bool:
     if len(parts) != 4:
         return False
     for p in parts:
-        if not p.isdigit() or not 0 <= int(p) <= 255 or (
+        if not is_number(p) or not 0 <= int(p) <= 255 or (
                 len(p) > 1 and p[0] == "0"):
             return False
     return True
@@ -1170,6 +1543,24 @@ def _is_ipv4_address(a: str) -> bool:
 VLAN_MIN, VLAN_MAX = 1, 4094
 VLAN_RANGE = f"<{VLAN_MIN}-{VLAN_MAX}>"
 
+#: The same arrangement for the two other interface numbers, and for the same
+#: reason VLAN_RANGE exists: 576-9216 was written out THREE times in
+#: prismash.py - in the hint, in the usage line and in the refusal - and the
+#: saved file was bounded by none of them (#417). A range written more than
+#: once is a range that can disagree with itself.
+#:
+#: 576 is the smallest IPv4 datagram every host must accept (RFC 791); 9216 is
+#: what this product offers as a jumbo frame.
+MTU_MIN, MTU_MAX = 576, 9216
+MTU_RANGE = f"<{MTU_MIN}-{MTU_MAX}>"
+
+#: An interface's VRF. 0 is not in the range because on an INTERFACE that word
+#: is how the statement is taken back off, which is the split Pool.RANGES'
+#: comment on `vrf` describes: the same word with the same number means a real
+#: table on a pool and "remove this" here.
+IFACE_VRF_MIN, IFACE_VRF_MAX = 1, 4294967295
+IFACE_VRF_RANGE = f"<{IFACE_VRF_MIN}-{IFACE_VRF_MAX}>"
+
 
 def vlan_tag_error(word: str, what: str = "vlan"):
     """
@@ -1181,7 +1572,7 @@ def vlan_tag_error(word: str, what: str = "vlan"):
     one is a Q-in-Q customer tag, and an operator reading a refusal has to
     know which of the two numbers on the line it is about.
     """
-    if not word.isdigit():
+    if not is_number(word):
         return f"{what} '{word}': expected a VLAN tag {VLAN_RANGE}"
     # ONE ROW, and short. `err` prints what it is given and wraps nothing
     # (#252), and a racked box is read at 80 columns - so the reason why 0 and
@@ -1316,7 +1707,7 @@ def _is_loopback(name: str) -> bool:
     interface the box does not have.
     """
     return (name.startswith("loop") and len(name) > 4
-            and name[4:].isdigit())
+            and is_number(name[4:]))
 
 
 def _is_lcp_tap(name: str) -> bool:
@@ -1349,8 +1740,8 @@ def _is_lcp_tap(name: str) -> bool:
     rest = name[3:]
     if "." in rest:
         base, _, sub = rest.partition(".")
-        return base.isdigit() and sub.isdigit()
-    return rest.isdigit()
+        return is_number(base) and is_number(sub)
+    return is_number(rest)
 
 
 class Config:
@@ -1980,6 +2371,10 @@ class Config:
                 if len(w) < 2:
                     cfg.unknown.append((lineno, s, "a user needs a name"))
                     continue
+                why = text_error("user", w[1])
+                if why:
+                    cfg.unknown.append((lineno, s, text_why(why)))
+                    continue
                 user = User(w[1])
                 cfg.users[user.name] = user
                 pool = iface = None
@@ -1995,6 +2390,10 @@ class Config:
                 w = s.split()
                 if len(w) < 3:
                     cfg.unknown.append((lineno, s, "a pool needs a name"))
+                    continue
+                why = text_error("cgnat pool", w[2])
+                if why:
+                    cfg.unknown.append((lineno, s, text_why(why)))
                     continue
                 pool = Pool(w[2])
                 cfg.pools[pool.name] = pool
@@ -2046,8 +2445,21 @@ class Config:
                 w = s.split()
                 if s == "exit":
                     iface = None
-                elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
-                    cfg.mtus[iface] = int(w[1])
+                elif w[0] == "mtu" and len(w) > 1 and is_number(w[1]):
+                    # BOUNDED HERE TOO, unlike a pool's numbers, and the
+                    # difference is which reader this is. A pool's are read
+                    # back out of the dataplane through _pool_line, so a
+                    # bound there refuses a running box's own facts (#357).
+                    # An interface's MTU never comes through this function:
+                    # `running_config` fills `cfg.mtus` from `device_mtus()`
+                    # directly. So this parser sees only a saved file, and a
+                    # file is a request like anything an operator types.
+                    if not MTU_MIN <= int(w[1]) <= MTU_MAX:
+                        cfg.unknown.append(
+                            (lineno, s, f"mtu {w[1]}: expected "
+                                        f"{MTU_MIN}-{MTU_MAX}"))
+                    else:
+                        cfg.mtus[iface] = int(w[1])
                 elif w[0] == "linux-name" and len(w) > 1:
                     # Refused here rather than at commit, because the message
                     # an operator gets from the dataplane for this is a bare
@@ -2061,11 +2473,11 @@ class Config:
                 elif s == "no linux-name":
                     cfg.linux_names.pop(iface, None)
                 elif w[0] == "mac-address" and len(w) > 1:
-                    if len(w[1].split(":")) != 6:
-                        cfg.unknown.append(
-                            (lineno, s, f"'{w[1]}' is not a MAC address"))
+                    why = mac_error(w[1])
+                    if why:
+                        cfg.unknown.append((lineno, s, mac_why(why)))
                     else:
-                        cfg.macs[iface] = w[1].lower()
+                        cfg.macs[iface] = mac_normal(w[1])
                 elif s == "no mac-address":
                     cfg.macs.pop(iface, None)
                 elif s == "ipv6 nd suppress-ra":
@@ -2075,14 +2487,22 @@ class Config:
                     cfg.ra_enabled.discard(iface)
                 elif s == "no ipv6 nd suppress-ra":
                     cfg.ra_enabled.add(iface)
-                elif w[0] == "vrf" and len(w) > 1 and w[1].isdigit():
+                elif w[0] == "vrf" and len(w) > 1 and is_number(w[1]):
+                    # Bounded here for the reason `mtu` above is: an
+                    # interface's VRF is filled from `device_vrfs()` and not
+                    # from this parser, so a file is the only thing it reads.
+                    if int(w[1]) > IFACE_VRF_MAX:
+                        cfg.unknown.append(
+                            (lineno, s, f"vrf {w[1]}: expected "
+                                        f"0-{IFACE_VRF_MAX}"))
+                        continue
                     if int(w[1]):
                         cfg.vrfs[iface] = int(w[1])
                     else:
                         cfg.vrfs.pop(iface, None)
                 elif s == "no vrf":
                     cfg.vrfs.pop(iface, None)
-                elif w[0] == "vlan" and len(w) > 1 and w[1].isdigit():
+                elif w[0] == "vlan" and len(w) > 1 and is_number(w[1]):
                     # The tag is bounded HERE as well as at the prompt. A file
                     # is the other way a statement arrives, and a range checked
                     # only where it is typed is a range an operator gets past
@@ -2095,7 +2515,7 @@ class Config:
                         cfg.unknown.append((lineno, s, why))
                         continue
                     tag = {"outer": int(w[1]), "inner": None}
-                    if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
+                    if len(w) >= 4 and w[2] == "inner" and is_number(w[3]):
                         why = vlan_tag_error(w[3], "inner")
                         if why:
                             cfg.unknown.append((lineno, s, why))
@@ -2129,7 +2549,12 @@ class Config:
                     # Everything after the keyword, spaces included. Splitting
                     # on words would turn "uplink para o transito" into
                     # "uplink" and lose the rest without saying so.
-                    cfg.descriptions[iface] = s.split(None, 1)[1]
+                    text = s.split(None, 1)[1]
+                    why = text_error("description", text)
+                    if why:
+                        cfg.unknown.append((lineno, s, text_why(why)))
+                    else:
+                        cfg.descriptions[iface] = text
                 elif s == "no description":
                     cfg.descriptions.pop(iface, None)
                 elif s == "shutdown":
@@ -2243,10 +2668,11 @@ class Config:
         w = s.split()
         if not w:
             return None
-        if w[0] == "inside" and len(w) > 1:
-            pool.inside.append(w[1])
-        elif w[0] == "outside" and len(w) > 1:
-            pool.outside.append(w[1])
+        if w[0] in ("inside", "outside") and len(w) > 1:
+            why = prefix_error(w[0], w[1])
+            if why:
+                return prefix_why(why)
+            (pool.inside if w[0] == "inside" else pool.outside).append(w[1])
         elif w[0] == "block-size" and len(w) > 1:
             # NOT BOUNDED HERE, and that is the whole of #357. This function
             # is the reader for THREE things: a statement typed at the prompt,
@@ -2265,14 +2691,31 @@ class Config:
             # The request is bounded where the request is made:
             # Shell.pool_range() in do_pool, which is what an operator types
             # at and the only place a number can still be argued with.
+            why = Pool.check_number("block-size", w[1])
+            if why:
+                return why
             pool.block_size = w[1]
         elif w[0] == "ports" and len(w) > 2:
+            # Both halves, each named, for the reason check_range's `what`
+            # exists: one statement carrying two numbers has to say WHICH of
+            # them was not one.
+            for value, half in ((w[1], "min"), (w[2], "max")):
+                why = Pool.check_number("ports", value, half)
+                if why:
+                    return why
             pool.ports = f"{w[1]} {w[2]}"
         elif w[0] == "policy" and len(w) > 1:
             if w[1] not in ("interleaved", "blocked"):
                 return f"policy '{w[1]}': expected interleaved or blocked"
             pool.policy = w[1]
         elif w[0] in ("vrf", "outside-vrf") and len(w) > 1:
+            # A pool's VRF reaches `int()` in api_args, not here, so an
+            # unguarded word crashed the COMMIT rather than the parse - one
+            # step further from the operator than the seven below, and the
+            # same defect.
+            why = Pool.check_number(w[0], w[1])
+            if why:
+                return why
             if w[0] == "vrf":
                 pool.vrf = w[1]
             else:
@@ -2285,21 +2728,34 @@ class Config:
             if w[1] not in Pool.TIMEOUTS:
                 return (f"timeout '{w[1]}': expected one of "
                         + ", ".join(Pool.TIMEOUTS))
+            why = Pool.check_number("timeout", w[2], w[1])
+            if why:
+                return why
             pool.timeouts[w[1]] = int(w[2])
         elif w[0] == "max-blocks" and len(w) > 1:
             # The TOP as well as the bottom, and the top is where this was
             # wrong: `max-blocks 256` was taken here, written to the file,
             # sent to a u8 field and arrived as 1 (#351).
+            why = Pool.check_number("max-blocks", w[1])
+            if why:
+                return why
             pool.max_blocks = int(w[1])
         elif w[0] == "block-stride" and len(w) > 1:
+            why = Pool.check_number("block-stride", w[1])
+            if why:
+                return why
             pool.block_stride = int(w[1])
         elif w[0] == "reserve" and len(w) > 1:
+            why = Pool.check_number("reserve", w[1])
+            if why:
+                return why
             pool.block_reserve = int(w[1])
         elif w[0] == "bypass" and len(w) > 2:
             if w[1] not in ("source", "destination"):
                 return f"bypass '{w[1]}': expected source or destination"
-            if "/" not in w[2]:
-                return f"bypass {w[1]}: '{w[2]}' is not a prefix"
+            why = prefix_error(f"bypass {w[1]}", w[2])
+            if why:
+                return prefix_why(why)
             lst = pool.bypass_dst if w[1] == "destination" else pool.bypass_src
             if w[2] not in lst:
                 lst.append(w[2])
@@ -2309,8 +2765,14 @@ class Config:
             # quotes as `<1-100>`, so an operator comparing the screen to the
             # hint was comparing two spellings of one range - and nothing
             # could compare them either (#351).
+            why = Pool.check_number("utilisation-alarm", w[1])
+            if why:
+                return why
             pool.util_alarm = int(w[1])
         elif w[0] in ("max-sessions", "max-session-rate") and len(w) > 1:
+            why = Pool.check_number(w[0], w[1])
+            if why:
+                return why
             if w[0] == "max-sessions":
                 pool.max_sessions = int(w[1])
             else:
@@ -2341,7 +2803,7 @@ class Config:
                 return (f"forward '{w[1]}': expected one of "
                         + ", ".join(Pool.FWD_PROTOS))
             for p in (w[2], w[5]):
-                if not p.isdigit() or not 1 <= int(p) <= 65535:
+                if not is_number(p) or not 1 <= int(p) <= 65535:
                     return f"forward: '{p}' is not a port"
             # The device decides whether the address is a subscriber of this
             # pool and whether the port is in its block; it is the only thing
@@ -2350,7 +2812,7 @@ class Config:
             # as a parse error a commit later.
             octets = w[4].split(".")
             if len(octets) != 4 or not all(
-                    o.isdigit() and int(o) < 256 for o in octets):
+                    is_number(o) and int(o) < 256 for o in octets):
                 return f"forward: '{w[4]}' is not an IPv4 address"
             # Refused rather than deduplicated. Silently dropping the second
             # line leaves a configuration whose text does not round-trip, and
