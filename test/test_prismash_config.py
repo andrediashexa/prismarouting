@@ -1268,5 +1268,175 @@ for bad in ("1.2.3", "1.2.3.4.5", "1.2.3.256", "1.2.3.-1", "010.1.1.1",
     check(not config._is_ipv4_address(bad), f"{bad!r} is not")
 print("  each octet in range, written the way one reader would read it")
 
+print("\n=== Pool.check_number: the shape, and never the range (#412) ===")
+# Mutation shown red: `return None` for a non-digit, which puts the seven
+# ValueErrors back and ends `prismash --load` in a traceback.
+#
+# THE SHAPE AND NOT THE RANGE is the whole of why this is not check_range with
+# the numbers left off, and the case below that proves it is the `block-size 4`
+# one: #357 enforced a range in this parser and a pool the dataplane had built
+# with a small block came back unmodellable, so every commit on that box was
+# refused. A shape check cannot do that, because `show bpa config` renders
+# every one of these fields `%u`.
+for good in ("0", "1", "4", "512", "65535", "4294967295"):
+    check(config.Pool.check_number("block-size", good) is None,
+          f"{good} is a number")
+for bad in ("abc", "-5", "", "1.5", "0x10", "512 ", "+1"):
+    why = config.Pool.check_number("block-size", bad)
+    check(why is not None, f"{bad!r} is not a number")
+check(config.Pool.check_number("ports", "abc", "min")
+      == "ports min 'abc': expected a number",
+      "the half is named when one statement carries two numbers")
+import re                                                    # noqa: E402
+check(not re.search(r"\d+-\d+",
+                    config.Pool.check_number("max-blocks", "abc")),
+      "and no range is quoted, because this parser does not enforce one - a "
+      "bound in the sentence is a bound an operator would be told their own "
+      "box's number breaks")
+print("  a number or not, said without a bound this reader does not hold")
+
+print("\n=== a pool block a hand cannot crash (#412) ===")
+# Mutation shown red: any one of the ten guards removed - the case for that
+# statement then raises out of Config.parse instead of landing in `unknown`,
+# which is the traceback `prismash --load` printed at boot.
+#
+# Ten statements, not seven. The seven reach `int()` in _pool_line itself;
+# block-size, ports and vrf reach it one step later in Pool.api_args, so they
+# crashed the COMMIT rather than the parse - the same defect, further from the
+# operator.
+_POOL_HEAD = "cgnat pool p\n inside 10.0.0.0/8\n outside 200.0.0.0/24\n"
+_CANNOT_CRASH = [
+    ("timeout", " timeout udp abc\n", "timeout udp 'abc'"),
+    ("timeout, negative", " timeout udp -5\n", "timeout udp '-5'"),
+    ("max-blocks", " max-blocks abc\n", "max-blocks 'abc'"),
+    ("block-stride", " block-stride abc\n", "block-stride 'abc'"),
+    ("reserve", " reserve abc\n", "reserve 'abc'"),
+    ("utilisation-alarm", " utilisation-alarm abc\n", "utilisation-alarm 'abc'"),
+    ("max-sessions", " max-sessions abc\n", "max-sessions 'abc'"),
+    ("max-session-rate", " max-session-rate abc\n", "max-session-rate 'abc'"),
+    ("block-size", " block-size abc\n", "block-size 'abc'"),
+    ("ports, the min", " ports abc 2000\n", "ports min 'abc'"),
+    ("ports, the max", " ports 1024 abc\n", "ports max 'abc'"),
+    ("vrf", " vrf banana\n", "vrf 'banana'"),
+    ("outside-vrf", " outside-vrf banana\n", "outside-vrf 'banana'"),
+]
+for label, stmt, needle in _CANNOT_CRASH:
+    try:
+        cfg = config.Config.parse(_POOL_HEAD + stmt)
+    except Exception as e:                                  # noqa: BLE001
+        check(False, f"{label}: parse raised {type(e).__name__}: {e}")
+        continue
+    check(len(cfg.unknown) == 1,
+          f"{label}: refused as one unknown line, got {cfg.unknown!r}")
+    if cfg.unknown:
+        lineno, text, why = cfg.unknown[0]
+        check(lineno == 4,
+              f"{label}: naming the line a hand would edit, got {lineno}")
+        check(text == stmt.strip(),
+              f"{label}: and the statement whole, got {text!r}")
+        check(needle in why, f"{label}: {needle!r} not in {why!r}")
+print(f"  {len(_CANNOT_CRASH)} statements, each a refusal with a line number "
+      f"rather than a traceback")
+
+print("\n=== and the direction #357 is about: the dataplane's own numbers ===")
+# Mutation shown red: check_number replaced by check_range, which is what #357
+# reverted. `block-size 4` is then refused, running_config() reports that
+# committing would REMOVE the pool, and the box cannot be configured at all.
+#
+# Every value here is one `show bpa config` can print and the PROMPT refuses:
+# a block below 64, a port range outside 1-65535, a utilisation alarm over 100.
+# The parser has to take all of them, because they are facts about a running
+# box rather than requests.
+_DATAPLANE_SAYS = [
+    ("a block the prompt would refuse", " block-size 4\n"),
+    ("a port range the prompt would refuse", " ports 0 70000\n"),
+    ("an alarm the prompt would refuse", " utilisation-alarm 200\n"),
+    ("max-blocks above the u8 the prompt bounds", " max-blocks 300\n"),
+    ("vrf 0, which is a real table", " vrf 0\n"),
+]
+for label, stmt in _DATAPLANE_SAYS:
+    cfg = config.Config.parse(_POOL_HEAD + stmt)
+    check(not cfg.unknown, f"{label}: refused, and must not be: {cfg.unknown!r}")
+    if not cfg.unknown:
+        pool = cfg.pools["p"]
+        try:
+            pool.api_args()
+            pool.settings_api_args()
+            pool.limits_api_args()
+        except Exception as e:                              # noqa: BLE001
+            check(False, f"{label}: parsed and then unsendable: "
+                         f"{type(e).__name__}: {e}")
+        check(stmt.strip() in cfg.text(),
+              f"{label}: and round-trips, so `save` does not rewrite the box's "
+              f"own number")
+print("  a fact read off the box is taken whole; only a shape is refused")
+
+print("\n=== the refusal's own words fit the console ===")
+# Mutation shown red: the range put back into the sentence, or the statement
+# interpolated twice - either takes the fixed half past CONSOLE_COLUMNS.
+#
+# THE OWN WORDS AND NOT THE VALUE, which is #252's split. The operator's value
+# is quoted, and a quoted token is printed as it stands rather than folded -
+# `console_prose` says why, and a value has no widest because an operator can
+# type a word of any length. What has a widest is everything this box wrote,
+# and that is what is measured: the longest statement name, the longest half
+# name a statement carries, and the sentence around them.
+_LONGEST_NAME = max(config.Pool.RANGES, key=len)
+_LONGEST_HALF = max(config.Pool.TIMEOUTS, key=len)
+_own = config.Pool.check_number(_LONGEST_NAME, "", _LONGEST_HALF)
+check(len(_own) <= config.CONSOLE_COLUMNS,
+      f"{len(_own)} columns of this box's own words: {_own!r}")
+check(_LONGEST_NAME in _own and _LONGEST_HALF in _own,
+      f"and both of the widest halves are really in it: {_own!r}")
+print(f"  {len(_own)} columns at '{_LONGEST_NAME}' and '{_LONGEST_HALF}', the "
+      f"widest this box can write")
+
+print("\n=== system.is_number: the predicate isdigit() was not (#412) ===")
+# Mutation shown red: `isascii()` dropped, which is the product as it shipped -
+# '\u00b2' then passes the guard and the int() behind it raises, ending the VTY
+# session and ending `prismash --load` at boot.
+for good in ("0", "1", "42", "4294967295"):
+    check(config.is_number(good), f"{good} is a number")
+# The four measured on CPython 3.11. The first two RAISE in int(); the last two
+# CONVERT, which is the quieter half - a file carrying one comes back a
+# different file, because `save` writes the ASCII digit.
+for bad, what in (("\u00b2", "superscript two: int() raises"),
+                  ("\u2467", "circled eight: int() raises"),
+                  ("\u0663", "arabic-indic three: int() returns 3"),
+                  ("\U0001d7da", "mathematical two: int() returns 2")):
+    check(bad.isdigit(), f"{what} - isdigit() really is true for it, which is "
+                         f"the whole defect")
+    check(not config.is_number(bad), f"{what} - and is_number says no")
+for bad in ("", "abc", "-1", "1.5", " 1", "1 ", "0x10", "1_000"):
+    check(not config.is_number(bad), f"{bad!r} is not a number")
+check(config.is_number(7) and not config.is_number(None),
+      "a non-string is stringified, the way validate_ssh hands it one")
+print("  ASCII digits, which is what int() takes and %u prints")
+
+print("\n=== and nothing in the VTY guards an int() with isdigit() any more ===")
+# Mutation shown red: one call site put back - the count then disagrees.
+#
+# NO ALLOWLIST. The rule is that `.isdigit()` appears nowhere in the product
+# but inside is_number's own definition and the docstring arguing against it.
+# A site that genuinely wants Python's broader question can have it back by
+# saying so here, which is a change somebody has to make deliberately.
+_SRC = os.path.join(os.path.dirname(__file__), "..", "src", "prismash")
+_left = []
+for _name in sorted(os.listdir(_SRC)):
+    if not _name.endswith(".py"):
+        continue
+    with open(os.path.join(_SRC, _name)) as _f:
+        for _n, _line in enumerate(_f, 1):
+            if ".isdigit()" not in _line:
+                continue
+            if _name == "system.py" and ("return v.isascii()" in _line
+                                         or "isdigit=True" in _line
+                                         or "WHY NOT" in _line):
+                continue
+            _left.append(f"{_name}:{_n}: {_line.strip()}")
+check(not _left, "`.isdigit()` still guards something:\n    "
+                 + "\n    ".join(_left))
+print("  one predicate, and the forty-three call sites read it")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -27,6 +27,8 @@ import re
 
 from config import _is_lcp_tap
 
+from system import is_number
+
 # A prefix on its own at the start of a line opens an entry in "show ip fib".
 _PREFIX = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3}/\d{1,2})\b")
 # The header "show ip fib" prints above each table, in its two forms.
@@ -662,7 +664,7 @@ def lcp_pairs(show_lcp: str) -> dict:
             tok = tok.strip(",")
             if tok in ("itf-pair:", "type", "tap", "tun"):
                 continue
-            if tok.startswith("[") or tok.isdigit():
+            if tok.startswith("[") or is_number(tok):
                 continue
             names.append(tok)
         for n in names:
