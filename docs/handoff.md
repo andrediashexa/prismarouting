@@ -32,6 +32,28 @@ comes from.
 
 ## Ready to merge, on a branch, green
 
+* **`issue/411-validation-at-both-doors` (#411 and its six children)** — a
+  **minor**: it changes what a running box accepts, in `src/`, which the
+  upgrade artifact carries. `make test` is green on it at **95 suites** — 95
+  and not 94 because #417 adds one. Cut from `master` at 0.109.2 and never
+  rebased since, so it needs one.
+
+  What it is: every value this VTY takes, driven with hostile values at the
+  prompt **and** in a saved file. Thirteen classes of gap. The largest was one
+  wrong predicate repeated 43 times — `str.isdigit()` is true for characters
+  `int()` refuses, so one character ended the VTY session and ended the boot,
+  through both doors, and `check_range`, `check_mss`, `validate_ssh` and
+  `validate_snmp` all answered with a traceback.
+
+  The one to read first is **#417**: a reader that walks the grammar, builds
+  hostile values out of each statement's own hint, drives both doors and fails
+  when the answers differ. It has no list in it and no ceiling to raise, and
+  it found two of the gaps itself on its first run.
+
+  The wiki needs no page (recorded on each issue, with why). The roadmap and
+  the tracker agree. Needs a rebase, a bump to **0.110.0** and the full gate.
+
+
 Both were finished and tested before the X.Y.Z work interrupted them. Neither
 has been rebased since 0.109.2.
 
