@@ -974,6 +974,78 @@ class Pool:
         return isinstance(other, Pool) and self.lines() == other.lines()
 
 
+def mac_error(value: str):
+    """
+    None if `value` is a MAC an interface can answer to, else why not.
+
+    Rows, like `prefix_error`, and joined by `mac_why` for the file.
+
+    THREE RULES, and none of them is pedantry:
+
+      * six octets of hexadecimal. The whole check until #414 was that the
+        word had six colon-separated parts, so `zz:zz:zz:zz:zz:zz` and
+        `1:2:3:4:5:6789` were staged, saved and handed to the dataplane, which
+        answers a bare retval - which is why `linux-name` is already refused in
+        this parser rather than at commit.
+      * not `ff:ff:ff:ff:ff:ff`. An interface that answers to the broadcast
+        address answers to every frame on the segment.
+      * the GROUP BIT clear - the low bit of the first octet. A multicast
+        source address is not a unicast interface identity, and a switch will
+        not learn it, so the box goes unreachable through a port that is up.
+
+    NOT a fourth rule: the locally-administered bit is neither required nor
+    encouraged. An operator matching a peer's filter or a licence may need a
+    globally-unique address, and refusing one would refuse a real
+    configuration. Written down so the next reader does not add it as the
+    obvious next rule.
+
+    ONE TO TWO digits per octet, not two, because VPP's own
+    `unformat_ethernet_address` takes `1:2:3:4:5:6` and this VTY refusing what
+    `vppctl` accepts is a disagreement with the box. `mac_normal` is what
+    makes that safe - see it for the diff this used to produce.
+    """
+    if not value:
+        return ("mac-address: expected an address", "")
+    parts = value.split(":")
+    if len(parts) != 6:
+        return (f"mac-address '{value}': expected six octets",
+                "as in 02:00:00:00:00:01")
+    for octet in parts:
+        if not 1 <= len(octet) <= 2 or any(
+                c not in "0123456789abcdefABCDEF" for c in octet):
+            return (f"mac-address '{value}': '{octet}' is not a hex octet",
+                    "each octet is one or two hexadecimal digits")
+    if all(int(o, 16) == 0xff for o in parts):
+        return ("mac-address ff:ff:ff:ff:ff:ff: that is the broadcast address",
+                "an interface answering to it answers to every frame on the "
+                "segment")
+    if int(parts[0], 16) & 1:
+        return (f"mac-address '{value}': the group bit is set",
+                "the low bit of the first octet marks a multicast address, "
+                "which no switch will learn as this port's")
+    return None
+
+
+def mac_why(refusal) -> str:
+    """`mac_error` as one sentence, for the file. See `vrrp_why`."""
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
+
+
+def mac_normal(value: str) -> str:
+    """
+    A MAC as the dataplane writes it: two lowercase digits per octet.
+
+    MEASURED, not tidiness. `sw_interface_dump` gives `01:02:03:04:05:06` and
+    the VTY stored whatever was typed, so `mac-address 1:2:3:4:5:6` left the
+    candidate and the running configuration permanently unequal: `delta_to`
+    reported `mac_set` on every commit, the box re-applied the MAC forever and
+    `show configuration compare` was never clean. Normalising here is what
+    makes accepting the short spelling safe.
+    """
+    return ":".join(f"{int(o, 16):02x}" for o in value.split(":"))
+
+
 def prefix_error(what: str, value: str):
     """
     None if `value` is an IPv4 network this dataplane can hold, else why not.
@@ -2183,11 +2255,11 @@ class Config:
                 elif s == "no linux-name":
                     cfg.linux_names.pop(iface, None)
                 elif w[0] == "mac-address" and len(w) > 1:
-                    if len(w[1].split(":")) != 6:
-                        cfg.unknown.append(
-                            (lineno, s, f"'{w[1]}' is not a MAC address"))
+                    why = mac_error(w[1])
+                    if why:
+                        cfg.unknown.append((lineno, s, mac_why(why)))
                     else:
-                        cfg.macs[iface] = w[1].lower()
+                        cfg.macs[iface] = mac_normal(w[1])
                 elif s == "no mac-address":
                     cfg.macs.pop(iface, None)
                 elif s == "ipv6 nd suppress-ra":
