@@ -77,6 +77,40 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Where the 36 minutes of a release go, measured.**
+  [docs/build-timing.md](docs/build-timing.md) reads the pipeline step by step
+  and says which numbers are measured and which are bounds. A release takes 36
+  minutes - six consecutive ones on 2026-09-19 measured 36, 36, 36, 36, 36 and
+  38 - and **about 30 seconds of it is compiling this product**: a cold build
+  of the plugin, from a clone with no build directory at all, is 4 seconds.
+
+  The time is in a Debian filesystem built from nothing on every release, in
+  three QEMU boots, and in a container that installs its own tools four times
+  because they are not in the dev image. The medium's ~10 minutes exist so that
+  about 4 MB of `src/`, `appliance/`, `tools/` and `docs/` can be put inside a
+  700 MB userland that did not change.
+
+* **The rule that follows from it**, in `CONTRIBUTING.md` section 5, decided by
+  the maintainer on 2026-09-20. `X.Y.Z`, and the digit decides what the release
+  has to prove: a **Z** publishes the upgrade artifact and no ISO and proves
+  itself with `make test`; an **X** or **Y** publishes the medium and goes
+  through the whole gate. A Z may change only what the artifact carries, and a
+  change to the kernel, the VPP or FRR pins, the ISO build, the partitioning or
+  the bootloader is a Y whatever its size.
+
+  What a Z does **not** prove is written down beside the rule: no box is
+  installed. The exposure is bounded rather than absent - the gate upgrades
+  from the previous published release, so the first Y after a run of Z releases
+  measures the upgrade from the last of them, and a Z is proven at the next Y
+  and never before it.
+
+  The gate does not know the two paths yet
+  ([#410](https://github.com/andrediashexa/hexarouting/issues/410)); the clock
+  on every step ([#408](https://github.com/andrediashexa/hexarouting/issues/408))
+  and the versioned base rootfs
+  ([#409](https://github.com/andrediashexa/hexarouting/issues/409)) are the
+  order the work goes in.
+
 ### Fixed
 
 ## 0.108.0 - a release record repeats what its allocation said

@@ -517,6 +517,19 @@ its parent is down and failing does not change what the configuration wants.
 The same shape as #400 from the dataplane's side, and found the same way - by
 the maintainer, using the box.
 
+**And the waiting itself, measured and then attacked**
+([#408](https://github.com/andrediashexa/hexarouting/issues/408),
+[#409](https://github.com/andrediashexa/hexarouting/issues/409),
+[#410](https://github.com/andrediashexa/hexarouting/issues/410)). A release
+takes 36 minutes and about 30 seconds of that is compiling this product:
+`docs/build-timing.md` has the measurement and the pipeline behind it. The
+time is in a Debian filesystem built from nothing on every release, three QEMU
+boots, and a container that installs its own tools four times. The maintainer
+set the rule that follows from it - a **Z** release publishes the upgrade
+artifact and no medium, and may change only what that artifact carries - and
+the three issues are the order: a clock on every step first, then the
+versioned base rootfs, then the gate learning which digit moved.
+
 A plan that says this out loud is worth more than one that reads as if work
 were queued: what this product needs next is a box with a real NIC in it and a
 maintainer's answer to five questions, not another phase.

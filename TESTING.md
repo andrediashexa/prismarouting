@@ -525,6 +525,13 @@ make test-install              # installs onto a blank disk, boots that disk
 make upgrade-artifact          # seconds, no root and no container
 ```
 
+**Where the 36 minutes of a release go** is measured in
+[docs/build-timing.md](docs/build-timing.md), with the per-step table, what is
+rebuilt that did not change, and the rule that follows from it: a **Z** release
+publishes the upgrade artifact and no medium, and proves itself with `make
+test`. `CONTRIBUTING.md` section 5 carries that rule; the gate does not know it
+yet ([#410](https://github.com/andrediashexa/hexarouting/issues/410)).
+
 `make upgrade-artifact` is the other half of what a release publishes: the
 medium is the route for an empty disk, and the artifact is the route for a box
 already carrying subscribers, which installing the medium would erase along

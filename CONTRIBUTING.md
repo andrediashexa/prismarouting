@@ -342,7 +342,43 @@ diff.
 A merge into `master` happens only when the maintainer asks for it — with one
 standing exception, below.
 
-When it happens it **MUST** produce all six of:
+#### Which digit moves, and what that costs
+
+`X.Y.Z`, and the digit decides what the release has to prove. Decided by the
+maintainer on 2026-09-20, after `docs/build-timing.md` measured where the 36
+minutes of a release go.
+
+| | What changed | What is published | What proves it |
+|---|---|---|---|
+| **Z** | only what the upgrade artifact carries | the artifact and its `sha256`, **no ISO** | `make test`, green |
+| **Y** or **X** | anything else | the medium, the artifact, and both `sha256` | the full `tools/release-gate.sh` |
+
+**What a Z release MAY change**, and the list is the rule rather than an
+example: `src/`, `tools/`, `docs/`, the `appliance/` files the artifact
+installs, and the `bpa` plugin. That is what `appliance/build-upgrade.sh`
+packs and what `appliance/upgrade` puts onto a box in service.
+
+**What a Z release MUST NOT change**: the kernel, the VPP and FRR pins,
+`appliance/build-iso.sh`, `appliance/install.sh`'s partitioning, the
+bootloader, or anything else that only exists on the medium. A change to one
+of those is a **Y**, whatever its size — because the artifact cannot carry it,
+so a box that took the patch would be running something no medium builds.
+
+**What a Z release does NOT prove, said out loud.** `make test` is 93 suites
+and about two minutes, and it does not install anything: no Z release is
+measured on a box. The exposure is bounded rather than absent, and it is
+bounded by a check that already exists — `tools/release-gate.sh` upgrades a
+box from the **previous published release**, so the first Y after a run of Z
+releases measures the upgrade from the last of them. A Z release is therefore
+proven at the next Y, and never before it. Anyone who wants it proven sooner
+cuts a Y.
+
+**The tag message says which of the two it is**, in the same paragraph that
+today carries *"built, booted, installed to a disk and booted again"*. A Z
+release **MUST NOT** carry that sentence: it did not do those things, and a
+note that says it did is the one thing this procedure exists to prevent.
+
+When a release happens it **MUST** produce all six of:
 
 1. **A version bump** in `VERSION`, which is the single source of truth. No
    version string is hardcoded anywhere else.
