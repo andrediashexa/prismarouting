@@ -1686,5 +1686,118 @@ check(config.asn_note("banana") is None,
 print(f"  {len(config.AS_NOTABLE)} number worth a sentence, and the private "
       f"ranges silent")
 
+print("\n=== config.TEXT_LIMITS against bpa.api itself (#416) ===")
+# Mutation shown red: any of the three numbers changed here - the table then
+# disagrees with the message it describes, which is the second copy this
+# whole file exists to prevent.
+#
+# THE API IS READ, not quoted. Three of the six rows come from bpa.api and are
+# compared field by field; the other two are cited because their source is not
+# in this repository, and they are named so a reader can check them in one
+# command.
+_API = os.path.join(os.path.dirname(__file__), "..", "src", "plugins", "bpa",
+                    "bpa.api")
+with open(_API) as _f:
+    _api_text = _f.read()
+_FROM_API = {
+    "cgnat pool": ("name", 64),
+    "cgnat identity file": ("path", 256),
+    "cgnat identity radius secret": ("secret", 128),
+}
+for _what, (_field, _width) in _FROM_API.items():
+    check(f"string {_field}[{_width}];" in _api_text,
+          f"bpa.api no longer declares 'string {_field}[{_width}]' - the "
+          f"limit for {_what!r} was read from it and has to move with it")
+    check(config.TEXT_LIMITS[_what][0] == _width,
+          f"{_what}: the table says {config.TEXT_LIMITS[_what][0]}, the API "
+          f"says {_width}")
+check(config.TEXT_LIMITS["cgnat identity dhcp-leases"][0] == 256,
+      "both identity paths travel in the same field and take the same limit")
+check(config.TEXT_LIMITS["description"] == (
+          64, "VPP's vnet/interface.api, sw_interface_tag_add_del tag[64]"),
+      "the description's limit names VPP's own field, which is not in this "
+      "repository")
+check(config.TEXT_LIMITS["user"][0] == 32
+      and "useradd(8)" in config.TEXT_LIMITS["user"][1],
+      "and a user name names useradd(8), which is the thing this box runs")
+for _what, (_n, _source) in config.TEXT_LIMITS.items():
+    check(_source.strip(), f"{_what} has a limit and no source for it")
+print(f"  {len(config.TEXT_LIMITS)} bounds, {len(_FROM_API)} of them compared "
+      f"against the API and the rest carrying their source")
+
+print("\n=== config.text_error: bytes, and what a terminal executes ===")
+# Mutation shown red: len(value) instead of len(value.encode()), which lets a
+# 64-character accented description past a 64-BYTE field - the exact case the
+# byte count exists for.
+check(config.text_error("description", "a" * 64) is None,
+      "64 bytes fits a 64-byte field")
+check(config.text_error("description", "a" * 65) is not None,
+      "and 65 does not")
+check(config.text_error("description", "\u00e1" * 32) is None,
+      "32 accented characters are 64 bytes and fit")
+check(config.text_error("description", "\u00e1" * 33) is not None,
+      "33 of them are 66 bytes and do not - the count is bytes, because the "
+      "field is")
+check("66 bytes" in config.text_error("description", "\u00e1" * 33)[0],
+      "and the refusal says how many, so the operator can shorten it")
+# Accented text is not a control character, and this is what says so: the
+# wiki is in Portuguese and an operator names a port in their own language.
+check(config.text_error("description", "uplink para o tr\u00e2nsito") is None,
+      "accented text is text")
+for _bad, _why in (("up\x07link", "a BEL, which a terminal sounds"),
+                   ("up\x1b[31mlink", "an ANSI escape, which a terminal obeys"),
+                   ("up\nlink", "a newline, which is a second line in a file"),
+                   ("up\x00link", "a NUL")):
+    _r = config.text_error("description", _bad)
+    check(_r is not None, f"{_why}: {_bad!r} was accepted")
+    if _r:
+        check("control character" in _r[0],
+              f"{_why}: {_r[0]!r} does not name what is wrong")
+# REFUSED and not stripped, which is the half that made the two doors
+# disagree: the prompt removed a BEL in silence and a file kept it.
+_typed = config.Config.parse("interface pg0\n description up\x07link\n")
+check(_typed.unknown and not _typed.descriptions,
+      f"a saved file refuses it rather than keeping it: {_typed.unknown!r}")
+try:
+    config.text_error("mtu", "1500")
+    check(False, "text this table does not bound answered quietly")
+except KeyError:
+    pass
+print("  counted in bytes, and refused where a terminal would act on it")
+
+print("\n=== config.text_why: the two rows as one, for the file ===")
+check(config.text_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "both halves joined")
+check(config.text_why(("a verdict", "")) == "a verdict",
+      "and nothing added when there is no prose")
+check(config.text_why(config.text_error("cgnat pool", "p" * 200))
+      == "cgnat pool: 200 bytes, and the limit is 64 - the field it travels "
+         "in is bpa.api, bpa_pool_add_del name[64]",
+      "and a real refusal reads as one sentence in a log, naming the field")
+print("  what a file's reader gets, who has no console to fold in")
+
+print("\n=== and every bounded statement, at the file door (#416) ===")
+_TEXT_DOORS = [
+    ("pool name", "cgnat pool " + "p" * 200 + "\n"),
+    ("user name", "user " + "u" * 200 + "\n"),
+    ("description", "interface pg0\n description " + "A" * 4000 + "\n"),
+    ("description, a control character",
+     "interface pg0\n description up\x07link\n"),
+]
+for _label, _text in _TEXT_DOORS:
+    _cfg = config.Config.parse(_text)
+    check(len(_cfg.unknown) == 1,
+          f"{_label}: a saved file took it: {_cfg.unknown!r}")
+_cfg = config.Config.parse(
+    "cgnat pool residential\n exit\nuser netadm\n exit\n"
+    "interface pg0\n description uplink para o tr\u00e2nsito\n")
+check(not _cfg.unknown and "residential" in _cfg.pools
+      and "netadm" in _cfg.users
+      and _cfg.descriptions["pg0"] == "uplink para o tr\u00e2nsito",
+      f"and real names and a real description are taken whole: "
+      f"{_cfg.unknown!r}")
+print(f"  {len(_TEXT_DOORS)} refused in a file, and a real configuration "
+      f"untouched")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -5013,5 +5013,66 @@ check(_sh.frr_ctx == ["router bgp 65000"] and not _o.getvalue(),
       f"and an ordinary AS is entered in silence: {_o.getvalue()!r}")
 ok("four refused at the prompt, one said, one silent")
 
+print("\n=== the prompt bounds the same text a saved file bounds (#416) ===")
+# Mutation shown red: any one call site reverted, which is a disagreement
+# between the doors - #417's whole subject.
+#
+# AND THE MODE MUST NOT MOVE. A name refused after `self.mode = "pool"` leaves
+# the operator typing pool statements into a pool the box will not take, which
+# is the same shape as a BGP stanza refused after its block is entered (#415).
+for _line, _needle, _mode in (
+        ("cgnat pool " + "p" * 200, "and the limit is 64", "config"),
+        ("user " + "u" * 200, "and the limit is 32", "config")):
+    _sh = at()
+    with spoken() as _o:
+        _sh.do_config(_line)
+    check(_needle in _o.getvalue(),
+          f"{_line[:24]!r}: {_needle!r} not in {_o.getvalue()!r}")
+    check(_sh.mode == _mode,
+          f"{_line[:24]!r}: the mode moved to {_sh.mode!r} on a refusal")
+    check(not _sh.candidate.pools and not _sh.candidate.users,
+          f"{_line[:24]!r}: and nothing was created")
+for _text, _needle in (("A" * 4000, "and the limit is 64"),
+                       ("up\x07link", "control character")):
+    _sh = at()
+    with spoken() as _o:
+        _sh.do_config("interface pg0")
+        _sh.do_config(f"description {_text}")
+    check(_needle in _o.getvalue(),
+          f"description: {_needle!r} not in {_o.getvalue()!r}")
+    check(not _sh.candidate.descriptions,
+          f"description: staged anyway: {_sh.candidate.descriptions!r}")
+# The control, and it is the accented one on purpose: the operator this box is
+# sold to writes Portuguese.
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("cgnat pool residential")
+check(_sh.mode == "pool" and not _o.getvalue(),
+      f"a real pool name is taken and the mode moves: {_sh.mode!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("interface pg0")
+    _sh.do_config("description uplink para o tr\u00e2nsito")
+check(_sh.candidate.descriptions == {"pg0": "uplink para o tr\u00e2nsito"},
+      f"and accented text is text: {_sh.candidate.descriptions!r} "
+      f"{_o.getvalue()!r}")
+ok("four refused at the prompt, the mode held, and accented text taken")
+
+print("\n=== and the two identity statements, against their own fields ===")
+# Mutation shown red: the text_error call dropped from apply_identity - a
+# 1000-byte path then reaches a 256-byte field.
+for _w, _needle in (
+        (["cgnat", "identity", "file", "/" + "d" * 1000],
+         "and the limit is 256"),
+        (["cgnat", "identity", "dhcp-leases", "/" + "d" * 1000],
+         "and the limit is 256"),
+        (["cgnat", "identity", "radius", "secret", "s" * 500],
+         "and the limit is 128")):
+    _sh = shell()
+    _rv, _text = driven(_sh.apply_identity, _w)
+    check(_needle in _text,
+          f"{' '.join(_w)[:34]!r}: {_needle!r} not in {_text!r}")
+ok("a path and a secret, each against the field bpa.api declares for it")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

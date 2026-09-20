@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import difflib
 import ipaddress
+import unicodedata
 import hashlib
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
@@ -1118,6 +1119,83 @@ def asn_note(value: str):
         return None
     name, why = entry
     return f"AS {value} is {name}: {why}"
+
+
+#: How many BYTES each name and each piece of free text may carry, and where
+#: the number comes from. The source is in the table because a bound with no
+#: source is a number somebody chose, and the next person cannot tell one from
+#: the other.
+#:
+#: BYTES and not characters: every one of these travels in a fixed-size field
+#: of the binary API, and a letter carrying an accent is one character and two
+#: bytes in UTF-8. A limit counted in characters would let a value past the
+#: field it has to fit in, which is the whole defect - and the operators this
+#: box is sold to write accented text, so it is the ordinary case rather than
+#: an exotic one.
+#:
+#: `test_prismash_config.py` reads `src/plugins/bpa/bpa.api` and compares the
+#: three rows that come from it, so this table cannot drift from the messages
+#: it describes. The other two are cited rather than read: VPP's own
+#: `interface.api` is not in this repository, and `useradd(8)` is a manual
+#: page. Both are named so the next reader can check them in one command.
+TEXT_LIMITS = {
+    "cgnat pool": (64, "bpa.api, bpa_pool_add_del name[64]"),
+    "description": (64, "VPP's vnet/interface.api, "
+                        "sw_interface_tag_add_del tag[64]"),
+    "cgnat identity file": (256, "bpa.api, bpa_identity_set path[256]"),
+    "cgnat identity dhcp-leases": (256, "bpa.api, bpa_identity_set path[256]"),
+    "cgnat identity radius secret": (
+        128, "bpa.api, bpa_identity_radius_set secret[128]"),
+    "user": (32, "useradd(8): usernames may only be up to 32 characters long"),
+}
+
+
+def text_error(what: str, value: str):
+    """
+    None if `value` fits the field it travels in and carries no control
+    characters, else why not, in rows.
+
+    TWO QUESTIONS, and they are here together because they are the same
+    statement's - a name or a piece of free text an operator types.
+
+    THE LENGTH comes from `TEXT_LIMITS`, never from a number written beside a
+    handler. Nothing bounded any of these: a 200-character pool name and a
+    4000-character description were staged, saved and handed to fields of 64
+    bytes. What the dataplane then does with them is NOT measured here - it
+    needs a running one, and #416 names the lab.
+
+    CONTROL CHARACTERS are refused rather than stripped. Stripped is how the
+    two doors came to disagree: the prompt silently removed a BEL from a
+    description and a saved file kept it, so one statement meant two things
+    depending on how it arrived. And a description is read back to an operator
+    by `show configuration` on the terminal they are sitting at, so what goes
+    in comes out at a console.
+
+    Accented text is NOT a control character and is not refused. The wiki is
+    in Portuguese and an operator names a port in their own language; the rule
+    is about what a terminal executes, not about what alphabet it is in.
+    """
+    if what not in TEXT_LIMITS:
+        # As loud as check_range's KeyError. A caller asking about text this
+        # table does not bound is a bug, and a quiet None would answer "fine".
+        raise KeyError(what)
+    limit, source = TEXT_LIMITS[what]
+    for ch in value:
+        if unicodedata.category(ch) in ("Cc", "Cf", "Cs"):
+            return (f"{what}: a control character is not text",
+                    f"{ch!r} is read back to a console by "
+                    f"'show configuration'")
+    size = len(value.encode("utf-8"))
+    if size > limit:
+        return (f"{what}: {size} bytes, and the limit is {limit}",
+                f"the field it travels in is {source}")
+    return None
+
+
+def text_why(refusal) -> str:
+    """`text_error` as one sentence, for the file. See `vrrp_why`."""
+    verdict, prose = refusal
+    return f"{verdict} - {prose}" if prose else verdict
 
 
 def prefix_error(what: str, value: str):
@@ -2248,6 +2326,10 @@ class Config:
                 if len(w) < 2:
                     cfg.unknown.append((lineno, s, "a user needs a name"))
                     continue
+                why = text_error("user", w[1])
+                if why:
+                    cfg.unknown.append((lineno, s, text_why(why)))
+                    continue
                 user = User(w[1])
                 cfg.users[user.name] = user
                 pool = iface = None
@@ -2263,6 +2345,10 @@ class Config:
                 w = s.split()
                 if len(w) < 3:
                     cfg.unknown.append((lineno, s, "a pool needs a name"))
+                    continue
+                why = text_error("cgnat pool", w[2])
+                if why:
+                    cfg.unknown.append((lineno, s, text_why(why)))
                     continue
                 pool = Pool(w[2])
                 cfg.pools[pool.name] = pool
@@ -2397,7 +2483,12 @@ class Config:
                     # Everything after the keyword, spaces included. Splitting
                     # on words would turn "uplink para o transito" into
                     # "uplink" and lose the rest without saying so.
-                    cfg.descriptions[iface] = s.split(None, 1)[1]
+                    text = s.split(None, 1)[1]
+                    why = text_error("description", text)
+                    if why:
+                        cfg.unknown.append((lineno, s, text_why(why)))
+                    else:
+                        cfg.descriptions[iface] = text
                 elif s == "no description":
                     cfg.descriptions.pop(iface, None)
                 elif s == "shutdown":
