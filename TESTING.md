@@ -525,6 +525,19 @@ make test-install              # installs onto a blank disk, boots that disk
 make upgrade-artifact          # seconds, no root and no container
 ```
 
+**Build caches go in `/var/cache/prisma`**, which one command creates on a
+build host and nothing creates by itself:
+
+```sh
+sudo install -d -o $(id -u) -g $(id -g) -m 0755 /var/cache/prisma
+```
+
+Outside the repository on purpose: the release gate clones the tag into a fresh
+directory and deletes it first, so a cache inside the tree is one the procedure
+destroys before it can be hit. A host without that directory builds from the
+network and says so — a cache that is a dependency is not a cache
+([#409](https://github.com/andrediashexa/hexarouting/issues/409)).
+
 **Where the 36 minutes of a release go** is measured in
 [docs/build-timing.md](docs/build-timing.md), with the per-step table, what is
 rebuilt that did not change, and the rule that follows from it: a **Z** release

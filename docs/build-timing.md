@@ -133,10 +133,10 @@ exactly where to put the clock.
 | What | How | Saves |
 |---|---|---|
 | `ISO_DEPS` + `qemu-system-x86` | add to `build/Dockerfile.dev` | 4 apt runs per release |
-| The debootstrap tree | a tarball keyed by `SUITE` + the `--include` list, rebuilt when either changes | the whole `debootstrap` phase |
+| The debootstrap tree | a tarball in `/var/cache/prisma`, keyed by `SUITE` + the `--include` list, rebuilt when either changes | the whole `debootstrap` phase |
 | VPP/FRR packages | an apt cache directory bind-mounted into the chroot build, keyed by the two pinned versions | the network-bound half of `make iso` |
 | The whole base rootfs | one squashfs layer for "Debian + VPP + FRR", rebuilt only when a pin moves | both phases above, on every release that does not move a pin |
-| `.build-old/<tag>` | keep the gate's work directory, or point the cache at a path outside it | one plugin build and one `git archive` per release |
+| `.build-old/<tag>` | move it to `/var/cache/prisma`, which the gate's `rm -rf` cannot reach | one plugin build and one `git archive` per release |
 
 ## Incremental build opportunities
 
@@ -201,6 +201,13 @@ behind it.
   pinned VPP and FRR, rebuilt only when a pin moves, kept on disk rather than
   published. It makes the medium *more* reproducible than it is today, because
   the bytes stop being whatever the archive served that morning.
+* **Every build cache lives in `/var/cache/prisma`, outside the repository**
+  (decided 2026-09-20). Outside, because the gate clones the tag into a fresh
+  directory and deletes it first — a cache inside the tree is a cache the
+  procedure destroys before it can be hit, which is exactly the state
+  `.build-old/<tag>` has been in since it was written. A path in `/var/cache`
+  is also the one a second build machine can be pointed at, and one nothing in
+  `git status` ever has to ignore.
 * **The instrumentation lands first, on its own**, so the optimisations that
   follow aim at measured numbers rather than at the estimates in this
   document.

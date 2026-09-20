@@ -139,6 +139,10 @@ That is deliberate: the alternative is a rule about which commits count.
 
 ## Conventions that are written nowhere else
 
+* **Build caches live in `/var/cache/prisma`, never in the tree.** The gate
+  clones the tag into a fresh directory and deletes it first, so a cache inside
+  the repository is one the release procedure destroys before it can be hit —
+  which is what has happened to `.build-old/<tag>` for its whole life.
 * **Worktrees, one per branch.** Work happens in `/home/hexanetworks/wt-<short>`,
   created with `git worktree add`. There are several hundred; they are cheap and
   nobody prunes them.
