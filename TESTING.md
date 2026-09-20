@@ -525,6 +525,13 @@ make test-install              # installs onto a blank disk, boots that disk
 make upgrade-artifact          # seconds, no root and no container
 ```
 
+**The gate takes two paths**, by the digit that moved. A **Z** runs the
+document checks, refuses a note that claims a boot and a change the artifact
+cannot carry, runs `make test`, builds the plugin and the artifact, and stops —
+no medium, and it says out loud that no box was installed. An **X** or **Y**
+takes every step: the medium, the boot, the install, the second boot and the
+upgrade from the previous release.
+
 **Build caches go in `/var/cache/prisma`**, which one command creates on a
 build host and nothing creates by itself:
 

@@ -101,7 +101,9 @@ two of them have bitten when done late.
    release it MUST contain, in one paragraph, that the medium was *built,
    booted, installed to a disk and booted again, and upgraded from the previous
    release*. A Z release MUST NOT claim that: it did none of it.
-6. `sh tools/release-gate.sh vX.Y.Z`, detached (see below). About 36 minutes.
+6. `sh tools/release-gate.sh vX.Y.Z`, detached (see below). It reads which
+   digit moved and takes the matching path: about 36 minutes for an X or Y,
+   minutes for a Z — which builds no medium and says so.
 7. `git push origin master --follow-tags`, then `gh release create`. The title
    is the `CHANGELOG` heading, version included.
    * **X or Y**: a full release, with the **four** assets — the ISO, the

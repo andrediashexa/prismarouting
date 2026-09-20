@@ -31,11 +31,23 @@ fail=0
 ok()  { echo "  [ ok ] $*"; }
 bad() { echo "  FAIL: $*"; fail=$((fail + 1)); }
 
-TAG=$(git -C "$REPO" tag --sort=-v:refname 2>/dev/null | head -1)
+# THE NEWEST MINOR TAG, not the newest tag (#410). Every case below breaks one
+# thing in a tree and requires the refusal the MEDIUM path makes, and since the
+# gate learned the two paths a patch tag takes the other one - where a note
+# claiming nothing is correct rather than refused, and where no medium is
+# built. Driven from a patch tag, this file measured the wrong procedure and
+# said the gate had stopped refusing.
+#
+# The patch path has cases of its own, at the end.
+TAG=$(git -C "$REPO" tag --sort=-v:refname 2>/dev/null \
+      | awk -F. '$NF == 0 { print; exit }')
 if [ -z "$TAG" ]; then
-  echo "  FAIL: this repository has no tag, so the gate cannot be driven"
+  echo "  FAIL: this repository has no minor tag, so the gate's medium path"
+  echo "        cannot be driven"
   echo; echo "1 FAILURES"; exit 1
 fi
+PATCH_TAG=$(git -C "$REPO" tag --sort=-v:refname 2>/dev/null \
+            | awk -F. '$NF != 0 { print; exit }')
 
 # One clone, reused. Each case resets it to the tag, breaks one thing, and
 # re-tags under a name of its own so the gate is asked about that tree.
@@ -249,8 +261,14 @@ echo "=== a released section that is not what its own tag shipped ==="
 # already tagged must be, byte for byte, what that tag had.
 reset_fixture
 V=$(cat "$FIX/VERSION")
-PREV=$(git -C "$FIX" tag -l "v*" --sort=-v:refname \
-       | grep -v "^v$V\$" | head -1 | sed 's/^v//')
+# The tag BELOW this one, and not merely a different one. Sorted ascending and
+# stopped at the fixture's own version: taking the newest other tag picked a
+# LATER release once the medium cases moved off the newest tag (#410), and a
+# later release has no section in this tree's CHANGELOG - so the case asserted
+# on a heading that cannot be there and refused a correct fixture.
+PREV=$(git -C "$FIX" tag -l "v*" --sort=v:refname \
+       | awk -v t="v$V" '$0 == t { exit } { p = $0 } END { print p }' \
+       | sed 's/^v//')
 if [ -z "$PREV" ]; then
   bad "the fixture has no previous release section, so this case is about \
 nothing"
@@ -630,7 +648,79 @@ GHSTUB
 chmod +x "$GHBIN/gh"
 
 echo
-echo "=== and this suite reaches only the half that needs no image ==="
+echo "=== a patch release: the two refusals the other path cannot make ==="
+# THE RULE HAS A READER NOW (#410). A Z publishes the artifact and no medium,
+# and the two ways of getting that wrong are both invisible afterwards: a note
+# that claims a boot nobody performed, and a patch carrying a change the
+# artifact cannot deliver. The first is the likelier of the two, because a note
+# is written by copying the last one.
+#
+# The fixture's patch tag is built on top of the minor one, so the gate sees
+# the same shape a real patch release has: the same minor, a higher last digit.
+reset_fixture
+PV=$(cat "$FIX/VERSION")
+PATCHV="${PV%.*}.$(( ${PV##*.} + 1 ))"
+printf '%s\n' "$PATCHV" > "$FIX/VERSION"
+python3 - "$FIX/CHANGELOG.md" "$PATCHV" <<'PYE'
+import sys
+p, ver = sys.argv[1], sys.argv[2]
+t = open(p, encoding="utf-8").read()
+# The WHOLE open block, not its heading: leaving the Added and Fixed that
+# follow Unreleased in place puts them inside the new section, which is a
+# section saying Fixed twice - and the gate refuses that, correctly, for a
+# reason this case is not about.
+head = "## Unreleased\n\n### Added\n\n### Fixed\n"
+assert head in t, "the fixture has no open Unreleased block to work from"
+t = t.replace(head, head + "\n## " + ver + " - a patch of this suite's own"
+              + "\n\n### Fixed\n\n* a line, so the section is not empty\n",
+              1)
+open(p, "w", encoding="utf-8").write(t)
+PYE
+git -C "$FIX" add -A
+git -C "$FIX" commit -q -m "a patch release"
+# The note a correct patch release carries: it claims the suites and nothing
+# about a medium.
+git -C "$FIX" tag -f -a "v$PATCHV" -m "a patch of this suite's own
+
+make test: green. No box was installed." >/dev/null 2>&1
+run_gate "v$PATCHV"
+[ "$RC" = 0 ] \
+  && ok "a correct patch release is accepted, with no medium claimed" \
+  || bad "a correct patch release was refused (rc=$RC): $OUT"
+printf '%s\n' "$OUT" | grep -q "moves only the patch digit" \
+  && ok "and the gate says which path it took" \
+  || bad "the gate did not say it was on the patch path: $OUT"
+
+# THE NOTE THAT CLAIMS A BOOT. Same tree, same version, a note copied from a
+# minor release.
+git -C "$FIX" tag -f -a "v$PATCHV" -m "a patch of this suite's own
+
+Built, booted, installed to a disk and booted again." >/dev/null 2>&1
+run_gate "v$PATCHV"
+[ "$RC" != 0 ] \
+  && printf '%s\n' "$OUT" | grep -q "claims the medium was built" \
+  && ok "a patch whose note claims a boot is refused" \
+  || bad "a patch release claimed a boot nobody performed and the gate took \
+it (rc=$RC): $OUT"
+
+# THE CHANGE THE ARTIFACT CANNOT CARRY. The installer only runs from the
+# medium, so a box that took this patch would not have it and nothing would
+# say so.
+printf '\n# a change only the medium carries\n' >> "$FIX/appliance/build-iso.sh"
+git -C "$FIX" add -A
+git -C "$FIX" commit -q -m "a patch that touches the medium"
+git -C "$FIX" tag -f -a "v$PATCHV" -m "a patch of this suite's own
+
+make test: green. No box was installed." >/dev/null 2>&1
+run_gate "v$PATCHV"
+[ "$RC" != 0 ] \
+  && printf '%s\n' "$OUT" | grep -q "exist only on the medium" \
+  && ok "a patch touching the ISO build is refused, and named" \
+  || bad "a patch changed the medium and the gate took it (rc=$RC): $OUT"
+reset_fixture
+
+echo
+echo "=== and this suite reaches only the half that needs no image ===""
 # Said as a number rather than left to be assumed, and the number is COUNTED
 # three lines down rather than written here: it was "the gate refuses eighteen
 # times" sitting directly above the code that computes it, and the gate has
@@ -645,7 +735,7 @@ BEFORE=$(awk '/RELEASE_GATE_CHECK_ONLY:-0/ {exit} /echo "error:/ {n++} END {prin
          "$REPO/tools/release-gate.sh")
 [ "$BEFORE" -ge 6 ] \
   && ok "$BEFORE of the gate's $REFUSALS refusals are reachable without an \
-image, and this file drives 13 of them" \
+image, and this file drives 16 of them" \
   || bad "the gate's checks moved: only $BEFORE refusals now come before the \
 check-only seam, so this suite is measuring less than it says"
 
