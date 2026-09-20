@@ -16,7 +16,7 @@
 # $REPO. There was no $REPO on that box and no toolchain to make one, so the
 # path served tools/release-gate.sh and lab/upgrade.sh - which have a build
 # tree - and nobody who bought the product. Their route to a new version was a
-# reinstall, which erases the disk and takes a year of connection records with
+# reinstall, which erases the disk and takes the configuration trail with
 # it.
 #
 # appliance/build-upgrade.sh packs that $REPO with the build already in it and
@@ -179,8 +179,8 @@ else
 fi
 
 # The size, because the number is the argument. An operator who wants a new
-# version is told to download a 325 MB medium and erase the disk under a year
-# of connection records; what actually changes is this.
+# version is told to download a 325 MB medium and erase the disk under their
+# configuration trail; what actually changes is this.
 SZ=$(wc -c < "$WORK/artifact.tar.gz")
 if [ "$SZ" -gt 100000 ] && [ "$SZ" -lt 20000000 ]; then
   ok "$((SZ / 1024)) KB against a 325 MB medium"

@@ -1496,37 +1496,43 @@ if vppctl show version >/dev/null 2>&1; then
   fi
 fi
 
-# --- where the connection records live ---
+# --- where the log volume is ---
 #
-# In dynamic mode the allocation log IS the record the Marco Civil requires to
-# be kept for a year. It has its own filesystem so that a full log cannot stop
-# the box working (#83) - and fstab mounts it "nofail", because a box that
-# will not boot because that volume is missing is a box nobody can log into to
-# find out why.
+# WHAT IS ON IT, and it is not retention (#401): this box EXPORTS its block
+# records and keeps none of them, so the year the Marco Civil asks for is the
+# collector's to keep. What lands here is the configuration trail - small, and
+# the dated evidence of what the box was configured to do - and the SPILL the
+# exporter writes while a collector cannot be reached.
+#
+# It has its own filesystem so that neither can stop the box working (#83) -
+# and fstab mounts it "nofail", because a box that will not boot because that
+# volume is missing is a box nobody can log into to find out why.
 #
 # Which means something has to say so, or the box comes up quietly writing
-# records onto the root filesystem, which is the arrangement this replaced.
+# onto the root filesystem, which is the arrangement this replaced.
 if [ -d "$ROOT/var/log/prisma-routing" ]; then
   rec_src=$(findmnt -no SOURCE --target "$ROOT/var/log/prisma-routing" 2>/dev/null)
   root_src=$(findmnt -no SOURCE --target / 2>/dev/null)
   if [ -n "$rec_src" ] && [ "$rec_src" != "$root_src" ]; then
-    ok "records on their own filesystem: $rec_src, $(df -h "$ROOT/var/log/prisma-routing" 2>/dev/null | awk 'NR==2{print $4" free of "$2}')"
+    ok "log volume on its own filesystem: $rec_src, $(df -h "$ROOT/var/log/prisma-routing" 2>/dev/null | awk 'NR==2{print $4" free of "$2}')"
   elif [ -f "$ROOT/run/live/medium/live/filesystem.squashfs" ]; then
-    say "  [info] live medium: records are not persisted anyway"
+    say "  [info] live medium: nothing here is persisted anyway"
   else
-    warn "connection records are on the ROOT filesystem"
-    say "         a log that fills will stop this box writing its own"
-    say "         configuration. Check that /var/log/prisma-routing is mounted."
+    warn "the trail and the export spill are on the ROOT filesystem"
+    say "         a collector that has been unreachable for a week will stop"
+    say "         this box writing its own configuration. Check that"
+    say "         /var/log/prisma-routing is mounted."
   fi
 
   # --- and are they still on TWO disks? (#83) ---
   #
   # A mirror nobody is told about is a mirror that silently becomes one disk,
   # and then zero. Nothing else on this box notices a disk dying under a
-  # mirror: the volume stays mounted, the records keep being written, the box
-  # forwards - and the SECOND failure is the one that loses the year the Marco
-  # Civil requires. Downtime is recoverable by rebooting; this is not
-  # recoverable at all, which is why it is a failed check and not a warning.
+  # mirror: the volume stays mounted, the trail keeps being written, the box
+  # forwards - and the SECOND failure loses the dated evidence of what this box
+  # was configured to do, and whatever the collector had not received yet.
+  # Downtime is recoverable by rebooting; neither of those is recoverable at
+  # all, which is why it is a failed check and not a warning.
   #
   # A box with one disk is told NOTHING here. It has no array, so there is no
   # question to answer, and inventing one would put a line about hardware
@@ -1602,8 +1608,9 @@ fi
 
 # --- is the allocation log actually LEAVING the box? ---
 #
-# In dynamic mode the IPFIX export IS the connection record the Marco Civil
-# requires to be kept for a year, and until #209 it could not run at all over
+# In dynamic mode the IPFIX export carries the connection record the Marco
+# Civil requires somebody to keep for a year - the collector, not this box
+# (#401) - and until #209 it could not run at all over
 # UDP: VPP's own exporter needs a collector, nothing on an installed box set
 # one, and no VTY statement reached it. The dataplane refused `bpa logging
 # enable` and - before #76 - the VTY discarded the refusal and said "commit

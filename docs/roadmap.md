@@ -473,16 +473,24 @@ fifth, `router static`, and it was `lab/vty.sh` that said so rather than any
 unit box: the poisoning only appears at the next commit, which is the argument
 for the lab assertion the issue asked for.
 
-**And one correction in flight, which is neither a phase nor a decision**
+**And one correction, which is neither a phase nor a decision** - **delivered**
 ([#401](https://github.com/andrediashexa/hexarouting/issues/401)). Several
-documents, the installer's sizing screen and the boot self-test say this box
+documents, the installer's sizing screen and the boot self-test said this box
 **keeps** connection records for the year the Marco Civil asks for. It does
 not: it exports them, and `/var/log/prisma-routing` holds the configuration
-trail and the exporter's spill and nothing else. The maintainer has decided it stays
-that way: this box is not to store records on itself, and the export is the
-mechanism. So the product is right and the documents around it are wrong, which is the
-dangerous direction: an operator sizing that volume from "one year of records"
-is answering a question this box does not ask.
+trail and the exporter's spill and nothing else. The maintainer has decided it
+stays that way: this box is not to store records on itself, and the export is
+the mechanism. So the product was right and the documents around it were wrong,
+which is the dangerous direction: an operator sizing that volume from "one year
+of records" was answering a question this box does not ask.
+
+Every document, screen, self-test line, test needle and wiki page now says what
+the box does - it exports, and the collector retains - and what the size buys:
+how long the box can spill while a collector is unreachable. The default does
+not change, because 30 GB is over a year of spilling at the ~80 MB/day
+`docs/logging.md` measures. `CHANGELOG.md` is deliberately not swept: its
+tagged sections describe media that shipped, and correcting them would be
+editing what a box in service was told.
 
 **And four defects the maintainer found on his own box in one afternoon**, by
 adding a NIC to it and reading the screens. They are the shape the work takes
@@ -2729,9 +2737,9 @@ exchanged; **the witness cannot be independent while it runs with the UI**;
 and **control-plane redundancy names no arbitration mechanism**. The
 throughput figure in it has no baseline in this repository - bits per second
 are #28 - and the one obligation the document does not mention at all is the
-one that is legal rather than technical: the year of connection records, the
-chained trail and the subscriber identity, which in a cluster need an answer
-to "which node answers the court order".
+one that is legal rather than technical: the export every node owes its
+collector, the chained trail and the subscriber identity, which in a cluster
+need an answer to "which node answers the court order".
 
 **The log can name the subscriber**
 ([#21](https://github.com/andrediashexa/hexarouting/issues/21)) - on the

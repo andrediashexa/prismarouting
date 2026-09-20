@@ -558,7 +558,8 @@ yet ([#410](https://github.com/andrediashexa/hexarouting/issues/410)).
 `make upgrade-artifact` is the other half of what a release publishes: the
 medium is the route for an empty disk, and the artifact is the route for a box
 already carrying subscribers, which installing the medium would erase along
-with a year of connection records (#295). It needs the plugin built and nothing
+with its configuration trail and whatever its exporter had not yet delivered
+(#295). It needs the plugin built and nothing
 else, and it proves itself by unpacking what it has just packed and installing
 it into a throwaway directory. `test/test_upgrade_artifact.sh` runs in `make
 test` and drives the whole path - the build, the install onto a box that is a

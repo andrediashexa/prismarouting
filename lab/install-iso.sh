@@ -49,7 +49,7 @@ LAB_START=$(date +%s)
 ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 DISK=${DISK:-/tmp/prisma-disk.qcow2}
 # 40G, not 8G. The installer reserves 8 GB for the system before it will give
-# any of the disk to connection records (#83), so an 8 GB disk is one the
+# any of the disk to the log volume (#83), so an 8 GB disk is one the
 # installer correctly refuses - it found that out by refusing this lab. qcow2
 # is sparse: a 40 GB disk that holds 3 GB costs 3 GB.
 #
@@ -1718,9 +1718,9 @@ drive_console() {
     "the dataplane to say how many rx queues it opened on each card" \
     || return 1
   # What systemd will do when this box is stopped, asked of SYSTEMD and not of
-  # the drop-in file. In dynamic mode the block log is the connection record
-  # the Marco Civil requires, and a block held when the dataplane stops leaves
-  # an allocation open in it for ever (#217). The dataplane closes them when
+  # the drop-in file. In dynamic mode the block record is what answers a court
+  # order under the Marco Civil, and a block held when the dataplane stops
+  # leaves an allocation open in the collector's copy for ever (#217). The dataplane closes them when
   # asked, and what asks is an ExecStop in a vpp.service drop-in - so a drop-in
   # that was installed and that systemd parsed and refused reads exactly like
   # one that works. There is no systemd in a lab container; this is the only
@@ -2068,7 +2068,7 @@ healthy_session() {
   read_disks "" || return 1
   send 'echo "HX""LAB wrote=$(echo prisma-record-42 > /var/log/prisma-routing/lab-record.txt; sync; cat /var/log/prisma-routing/lab-record.txt)"'
   wait_for "HXLAB wrote=prisma-record-42" 60 \
-    "the box to write a connection record onto the mirrored volume" || return 1
+    "the box to write a line onto the mirrored volume" || return 1
   send "sync"
   send "systemctl poweroff"
   return 0
@@ -2449,19 +2449,19 @@ if ! grep -q "\[ ok \] VTY starts" /tmp/disk-clean.log; then
   fail=1
 fi
 
-# The connection records must be on their OWN filesystem (#83).
+# The log volume must be on its OWN filesystem (#83).
 #
-# The assertion is not that a partition exists - it is that the records and the
-# root are DIFFERENT filesystems, which is the property that matters: a log
+# The assertion is not that a partition exists - it is that this volume and the
+# root are DIFFERENT filesystems, which is the property that matters: a spill
 # that fills must not take down the box that is writing it.
 if [ "$up" = 1 ]; then
-  if grep -q "records on their own filesystem" /tmp/disk-clean.log; then
-    echo "  [ ok ] connection records are on their own filesystem"
-    grep -o "records on their own filesystem.*" /tmp/disk-clean.log | head -1 \
+  if grep -q "log volume on its own filesystem" /tmp/disk-clean.log; then
+    echo "  [ ok ] the log volume is on its own filesystem"
+    grep -o "log volume on its own filesystem.*" /tmp/disk-clean.log | head -1 \
       | sed 's/^/         /'
   else
-    echo "  [FAIL] connection records share a filesystem with the root"
-    grep -A2 "records are on the ROOT" /tmp/disk-clean.log | head -3 \
+    echo "  [FAIL] the log volume shares a filesystem with the root"
+    grep -A2 "are on the ROOT filesystem" /tmp/disk-clean.log | head -3 \
       | sed 's/^/         /'
     fail=1
   fi

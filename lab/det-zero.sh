@@ -20,7 +20,8 @@
 #
 # The failure it guards is silent and slow. If deterministic mode began
 # emitting a record per block, nothing here would fail; an operator would find
-# out when a year of records filled the disk the retention obligation lives on.
+# out from the collector's bill, or from a spill file filling the log volume on
+# a box that was meant to export nothing at all.
 #
 # SECTION 3 IS THE CONTROL AND THE LAB IS WORTHLESS WITHOUT IT. A box whose
 # exporter was never armed also emits zero, and would satisfy section 2 while
