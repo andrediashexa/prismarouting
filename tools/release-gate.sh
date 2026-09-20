@@ -810,8 +810,27 @@ grep -q "NOT MEASURED" "$WORK/shapes.log" && {
 echo "    every shape the tuner can write is one this VPP accepts"
 
 step "building the medium"
-( cd "$WORK" && make iso >/dev/null )
-[ -f "$WORK/$NAME" ] || { echo "error: $NAME was not produced" >&2; exit 1; }
+# THE ISO BUILD'S OWN PHASES ARE KEPT, not discarded (#408). This was
+# `make iso >/dev/null`, so the per-phase clock build-iso.sh grew in 0.111.0
+# produced its numbers into nothing on the release path - which is the whole
+# block #408 was aimed at. docs/build-timing.md calls it "the ~10 min `make
+# iso`" and could not say what inside it cost what, and a clock whose output
+# is thrown away leaves that exactly as it was.
+#
+# Kept in a file rather than streamed, because debootstrap and apt write
+# thousands of lines and the gate's log is read by a person. The phases are
+# printed after the step, which is the table.
+( cd "$WORK" && make iso > "$WORK/iso-build.log" 2>&1 )
+[ -f "$WORK/$NAME" ] || {
+  echo "error: $NAME was not produced" >&2
+  echo "       the build's own log is at $WORK/iso-build.log; its last lines:" >&2
+  tail -20 "$WORK/iso-build.log" >&2 2>/dev/null
+  exit 1
+}
+# The ten minutes, split into the phases that spent them.
+if [ -s "$WORK/iso-build.log" ]; then
+  grep -E "^    .*: [0-9]+s$" "$WORK/iso-build.log" | sed 's/^/    /'
+fi
 
 # ONE MEDIUM, and this is what says so.
 #

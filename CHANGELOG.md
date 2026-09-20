@@ -101,6 +101,21 @@ version has a chance of seeing it.
   test` installs nothing, and a lab step in the wrong place is invisible to
   everything that does not boot a box.
 
+* **The gate threw away the ISO build's own timings**
+  ([#408](https://github.com/andrediashexa/hexarouting/issues/408)). It ran
+  `make iso >/dev/null`, so the per-phase clock `build-iso.sh` gained in
+  0.111.0 produced its numbers into nothing on the release path — which is
+  exactly the ten-minute block that clock was aimed at.
+  `docs/build-timing.md` calls it *"the ~10 min `make iso`"* and could not say
+  what inside it cost what; a clock whose output is discarded leaves that
+  where it was.
+
+  The build's log is kept now, and its phases are printed after the step. It
+  is a file rather than a stream because `debootstrap` and `apt` write
+  thousands of lines and the gate's log is read by a person — and when the
+  image is not produced, the refusal now names that log and shows its tail
+  instead of leaving nothing to read.
+
 ## 0.111.0 - a clock on every step, and the collector retains
 
 [#396](https://github.com/andrediashexa/hexarouting/issues/396), [#401](https://github.com/andrediashexa/hexarouting/issues/401), [#408](https://github.com/andrediashexa/hexarouting/issues/408).
