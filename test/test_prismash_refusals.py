@@ -1273,8 +1273,19 @@ print("\n=== an interface statement, typed ===")
 # A usage refusal that stops firing here does not print a usage line - it
 # hands the words to FRR.
 _iface = [
+    # The verdict names the rule that was broken rather than repeating the
+    # grammar, since #414: "six octets" is what is wrong with `0200`, and a
+    # usage line said the same thing about four different mistakes.
     ("a MAC that is not six octets", "pg0", "mac-address 0200",
-     "error: usage: mac-address <xx:xx:xx:xx:xx:xx>"),
+     "error: mac-address '0200': expected six octets"),
+    ("a MAC octet that is not hex", "pg0", "mac-address zz:zz:zz:zz:zz:zz",
+     "error: mac-address 'zz:zz:zz:zz:zz:zz': 'zz' is not a hex octet"),
+    ("the broadcast address", "pg0", "mac-address ff:ff:ff:ff:ff:ff",
+     "error: mac-address ff:ff:ff:ff:ff:ff: that is the broadcast address"),
+    ("a multicast address", "pg0", "mac-address 01:00:5e:00:00:01",
+     "error: mac-address '01:00:5e:00:00:01': the group bit is set"),
+    ("a mac-address with no value at all", "pg0", "mac-address",
+     "error: mac-address: expected an address"),
     ("linux-name with no name", "pg0", "linux-name",
      "error: usage: linux-name <name>"),
     ("a Linux name Linux would not take", "pg0", "linux-name a/b",

@@ -1564,10 +1564,90 @@ for _value in ("2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff/64", "10.0.0.5/8",
     _own = _r[0].replace(f"'{_value}'", "")
     check(len(f"error: {_own}") <= config.CONSOLE_COLUMNS,
           f"verdict's own words at {len(_own)} columns: {_r[0]!r}")
-    check(len(_r[1]) <= config.CONSOLE_COLUMNS,
-          f"prose at {len(_r[1])} columns: {_r[1]!r}")
-print("  the verdict's own words and the prose, each inside 79; the "
-      "operator's value is quoted and folds where it costs nothing")
+    # THE PROSE IS FOLDED, so its length is not the rule - `console_prose`
+    # wraps it and never splits a word, so what has to fit is the longest
+    # WORD. Asserting the whole string is a stricter rule than the product's
+    # and would refuse a correct two-row paragraph.
+    for _word in _r[1].split():
+        check(len(_word) <= config.CONSOLE_COLUMNS,
+              f"a word the fold cannot break: {_word!r}")
+print("  the verdict's own words unfolded, and no word in the prose the fold "
+      "cannot break; the operator's value is quoted and runs over")
+
+print("\n=== config.mac_error: six hex octets, unicast, not broadcast ===")
+# Mutation shown red: the hex test dropped, which is the product as it
+# shipped - the whole check was that the word had six colon-separated parts.
+for good in ("02:00:00:00:00:01", "aa:bb:cc:dd:ee:ff", "AA:BB:CC:DD:EE:FF",
+             "2:0:0:0:0:1", "00:00:00:00:00:00"):
+    check(config.mac_error(good) is None, f"{good} is a MAC")
+_BAD_MAC = [
+    ("zz:zz:zz:zz:zz:zz", "not a hex octet", "letters that are not hex"),
+    ("1:2:3:4:5:6789", "not a hex octet", "an octet of four digits"),
+    ("02:00:00:00:00", "expected six octets", "five octets"),
+    ("02:00:00:00:00:00:01", "expected six octets", "seven"),
+    ("ff:ff:ff:ff:ff:ff", "broadcast", "the broadcast address"),
+    ("01:00:5e:00:00:01", "group bit is set", "a multicast address"),
+    ("", "expected an address", "nothing at all"),
+]
+for value, needle, why in _BAD_MAC:
+    r = config.mac_error(value)
+    check(r is not None, f"{why}: {value!r} was accepted")
+    if r:
+        check(needle in r[0], f"{why}: {needle!r} not in {r[0]!r}")
+# The locally-administered bit is NOT a rule, and this is what says so: an
+# operator matching a peer's filter may need a globally-unique address, and
+# refusing one would refuse a real configuration.
+check(config.mac_error("00:1b:21:00:00:01") is None,
+      "a globally-unique address is not refused; the local bit is not a rule")
+print(f"  {len(_BAD_MAC)} refusals, and the rule that is deliberately absent")
+
+print("\n=== config.mac_normal: the spelling the dataplane writes (#414) ===")
+# Mutation shown red: mac_normal returning value.lower() unchanged, which is
+# the defect - `2:0:0:0:0:1` then never equals the `02:00:00:00:00:01` that
+# sw_interface_dump gives back.
+check(config.mac_normal("2:0:0:0:0:1") == "02:00:00:00:00:01",
+      "a short octet is padded")
+check(config.mac_normal("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff",
+      "and the case is the dataplane's")
+_typed = config.Config.parse("interface pg0\n mac-address 2:0:0:0:0:1\n")
+_device = config.Config.parse(
+    "interface pg0\n mac-address 02:00:00:00:00:01\n")
+check(_typed.is_same(_device),
+      f"so a short spelling equals what the box reports: {_typed.macs!r} "
+      f"against {_device.macs!r}")
+check(not {k: v for k, v in _device.delta_to(_typed).items() if v},
+      "and commit has nothing to apply, where it used to apply the MAC "
+      "forever")
+print("  accepted in the spelling vppctl takes, stored in the one VPP prints")
+
+print("\n=== config.mac_why: the two rows as one, for the file ===")
+check(config.mac_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "both halves joined")
+check(config.mac_why(("a verdict", "")) == "a verdict",
+      "and nothing added when there is no prose")
+print("  what a file's reader gets")
+
+print("\n=== a MAC refused in a saved file, and one taken (#414) ===")
+for value in ("zz:zz:zz:zz:zz:zz", "1:2:3:4:5:6789", "ff:ff:ff:ff:ff:ff",
+              "01:00:5e:00:00:01"):
+    _cfg = config.Config.parse(f"interface pg0\n mac-address {value}\n")
+    check(len(_cfg.unknown) == 1,
+          f"a saved file took {value!r}: {_cfg.unknown!r}")
+_cfg = config.Config.parse("interface pg0\n mac-address 02:00:00:00:00:01\n")
+check(not _cfg.unknown and _cfg.macs == {"pg0": "02:00:00:00:00:01"},
+      f"and a real one is taken whole: {_cfg.macs!r} {_cfg.unknown!r}")
+print("  the file door, four refusals and a control")
+
+print("\n=== and these refusals fit the console ===")
+for _v in ("zz:zz:zz:zz:zz:zz", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01", ""):
+    _r = config.mac_error(_v)
+    _own = _r[0].replace(f"'{_v}'", "")
+    check(len(f"error: {_own}") <= config.CONSOLE_COLUMNS,
+          f"verdict at {len(_own)}: {_r[0]!r}")
+    for _word in _r[1].split():
+        check(len(_word) <= config.CONSOLE_COLUMNS,
+              f"a word the fold cannot break: {_word!r}")
+print("  the verdict unfolded, and no word in the prose the fold cannot break")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

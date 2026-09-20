@@ -79,6 +79,31 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A MAC address is checked for being one**
+  ([#414](https://github.com/andrediashexa/hexarouting/issues/414)). The whole
+  check was that the word had six colon-separated parts, at both doors, so
+  `zz:zz:zz:zz:zz:zz`, `1:2:3:4:5:6789`, the broadcast address and a multicast
+  address were all staged, saved and handed to the dataplane - which answers a
+  bare retval, the reason `linux-name` is already refused in the parser.
+
+  Three rules: six octets of hexadecimal, not `ff:ff:ff:ff:ff:ff`, and the
+  group bit clear. An interface answering to the broadcast address answers to
+  every frame on the segment; a multicast source address is one no switch will
+  learn, so the box goes unreachable through a port that is up.
+
+  **The locally-administered bit is deliberately not a fourth rule.** An
+  operator matching a peer's filter or a licence may need a globally-unique
+  address, and refusing one would refuse a real configuration.
+
+* **A short MAC no longer leaves the candidate permanently unequal to the box**
+  ([#414](https://github.com/andrediashexa/hexarouting/issues/414)). VPP's
+  `unformat_ethernet_address` takes `2:0:0:0:0:1`, so this VTY takes it too -
+  refusing what `vppctl` accepts is a disagreement with the box. It was stored
+  as typed, while `sw_interface_dump` gives back `02:00:00:00:00:01`, so
+  `delta_to` reported `mac_set` on **every** commit: the box re-applied the MAC
+  forever and `show configuration compare` was never clean. It is now stored in
+  the spelling VPP prints, which is what makes accepting the short one safe.
+
 * **An address is an address, wherever it is written**
   ([#413](https://github.com/andrediashexa/hexarouting/issues/413)). Eight
   statements named an address or a prefix and none of them read it as one.

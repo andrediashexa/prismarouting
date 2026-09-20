@@ -39,6 +39,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     is_static_route,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     prefix_error, prefix_why, address_error,
+                    mac_error, mac_normal,
                     global_key, ordered_globals,
                     VRID_MIN, VRID_MAX, VRRP_PRIORITY_MIN, VRRP_PRIORITY_MAX,
                     VRRP_PRIORITY_DEFAULT,
@@ -11049,10 +11050,18 @@ class Shell:
             return True
 
         if iface and not neg and dp == "mac-address":
-            if len(w) < 2 or len(w[1].split(":")) != 6:
-                self.err("usage: mac-address <xx:xx:xx:xx:xx:xx>")
+            # No separate usage line. `mac_error("")` already says "expected
+            # an address", so a second refusal for the same mistake would be
+            # one more site nothing drives - which is exactly what
+            # test_prismash_refusals.py caught when this branch was left in.
+            why = mac_error(w[1] if len(w) > 1 else "")
+            if why:
+                self.err_prose(*why)
             else:
-                self.candidate.macs[iface] = w[1].lower()
+                # Normalised, not stored as typed: the dataplane prints two
+                # digits per octet, so a short spelling left the candidate and
+                # the running configuration permanently unequal (#414).
+                self.candidate.macs[iface] = mac_normal(w[1])
             return True
         # `no mac-address`, which went to FRR until #224: the MAC of a VPP
         # interface is nothing FRR can act on, so at commit it was a statement

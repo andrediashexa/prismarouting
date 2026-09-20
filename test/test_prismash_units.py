@@ -4917,5 +4917,29 @@ for _stmt, _what in (
           f"{_what}: {' '.join(_stmt)!r} was taken: {_text!r}")
 ok("four collectors, none of them read as an address before this")
 
+print("\n=== the prompt refuses the MACs a saved file refuses (#414) ===")
+# Mutation shown red: the prompt's six-colon test left as it was, which is the
+# disagreement between the doors that #417 exists to catch.
+for _value, _needle in (("zz:zz:zz:zz:zz:zz", "not a hex octet"),
+                        ("1:2:3:4:5:6789", "not a hex octet"),
+                        ("ff:ff:ff:ff:ff:ff", "broadcast"),
+                        ("01:00:5e:00:00:01", "group bit is set")):
+    _sh = at()
+    with spoken() as _o:
+        _sh.do_config("interface pg0")
+        _sh.do_config(f"mac-address {_value}")
+    check(_needle in _o.getvalue(),
+          f"{_value!r}: {_needle!r} not in {_o.getvalue()!r}")
+    check(not _sh.candidate.macs,
+          f"{_value!r}: and nothing staged: {_sh.candidate.macs!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("interface pg0")
+    _sh.do_config("mac-address 2:0:0:0:0:1")
+check(_sh.candidate.macs == {"pg0": "02:00:00:00:00:01"},
+      f"and the short spelling is staged as the dataplane writes it: "
+      f"{_sh.candidate.macs!r} {_o.getvalue()!r}")
+ok("four refused at the prompt, and the short spelling normalised")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
