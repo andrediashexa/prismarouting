@@ -77,7 +77,64 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A reader that puts the box's own answers back through the box's own
+  parser** ([#419](https://github.com/andrediashexa/hexarouting/issues/419)).
+  `test/test_a_readback_survives.py`, plus the direct form of it on an
+  installed box in `lab/install-iso.sh`: the box **saves its own
+  configuration and loads it back**, and the lab fails if `--load` refuses the
+  file the box just wrote.
+
+  The rule is
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357)'s,
+  generalised: *a value the box can report MUST survive `text()` and
+  `parse()`. A range belongs at the prompt, where a request is made; the file
+  parser reads facts and refuses only what it cannot parse.*
+
 ### Fixed
+
+* **A `cgnat` global in a saved file no longer becomes a silent zero**
+  ([#418](https://github.com/andrediashexa/hexarouting/issues/418)). A global
+  typed at the prompt is read before it is staged; the same line in a saved
+  file goes into `Config.globals` **unparsed** and is applied at commit by
+  `apply_global`. So `apply_global` is the file's only reader — and it did
+  `int(w[3]) if is_number(w[3]) else 0`, where zero in that message means
+  *leave this one alone*.
+
+  `cgnat timeout udp abc` in a file therefore changed nothing, said nothing,
+  and left an operator reading a configuration whose timeout was not the one
+  in force. Five words did that: the four global timeouts and
+  `block-holddown`. Each is refused now, through `Pool.check_range` — the same
+  call the prompt uses, because it is the same u32 field.
+
+* **An unknown timeout name is refused where it is typed**
+  ([#418](https://github.com/andrediashexa/hexarouting/issues/418)).
+  `apply_global` refused `cgnat timeout nosuch 5` at commit and the prompt
+  staged it, so an operator who mistyped one built a candidate around a
+  statement the box was going to throw out. The prompt names the ones this box
+  has.
+
+* **Five values a box can report were refused by its own parser, and a saved
+  file carrying one is a box that comes up with no configuration**
+  ([#419](https://github.com/andrediashexa/hexarouting/issues/419)). All five
+  shipped in 0.110.0 and all five are mine: `mtu` outside 576-9216
+  ([#417](https://github.com/andrediashexa/hexarouting/issues/417)), an
+  interface `vrf` above the prompt's range, a `description` carrying a control
+  character ([#416](https://github.com/andrediashexa/hexarouting/issues/416)),
+  and the broadcast and multicast MACs
+  ([#414](https://github.com/andrediashexa/hexarouting/issues/414)).
+
+  **#417's argument was wrong in one specific way.** It said `Config.parse`
+  sees only a saved file, and a file is a request. The second half does not
+  follow: a saved file is **written from** the readback, so it carries facts.
+  `prisma-routing.service` hands that file to `--load` at every boot and
+  `--load` refuses a file **whole**.
+
+  The ranges and the two MAC policy rules are the prompt's now; the parser
+  keeps the shapes, which no readback can violate. Each difference is declared
+  in `config.DOORS_DIFFER` with its reason, and
+  [#417](https://github.com/andrediashexa/hexarouting/issues/417)'s reader
+  reads that declaration — it went red on all five before they were declared,
+  which is what it is for.
 
 ## 0.110.0 - what an operator can type, checked at both doors
 

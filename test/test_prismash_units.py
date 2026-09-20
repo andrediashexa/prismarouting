@@ -5074,5 +5074,52 @@ for _w, _needle in (
           f"{' '.join(_w)[:34]!r}: {_needle!r} not in {_text!r}")
 ok("a path and a secret, each against the field bpa.api declares for it")
 
+print("\n=== a cgnat global does not silently become zero (#418) ===")
+# Mutation shown red: `int(w[3]) if is_number(w[3]) else 0` put back, which is
+# the product as it shipped.
+#
+# THE THIRD DOOR. A global typed at the prompt is read before it is staged; the
+# same line in a saved file goes into Config.globals UNPARSED and is applied at
+# commit by apply_global. So apply_global is the file's only reader, and it
+# coerced a word to zero - which in this message means "leave this one alone".
+# A typo in a file changed nothing, said nothing, and left an operator reading
+# a configuration whose timeout was not the one in force.
+for _line, _needle in (
+        ("cgnat timeout udp abc", "expected a number"),
+        ("cgnat timeout udp 0", "expected 1-"),
+        ("cgnat timeout tcp-established abc", "expected a number"),
+        ("cgnat block-holddown abc", "expected a number"),
+        ("cgnat block-holddown 0", "expected 1-")):
+    _sh = shell()
+    _rv, _text = driven(_sh.apply_global, _line)
+    check(_needle in _text,
+          f"{_line!r}: {_needle!r} not in {_text!r}")
+    check(not _sh.api.calls,
+          f"{_line!r}: and nothing was sent to the dataplane: "
+          f"{_sh.api.calls!r}")
+# The control: a real value still reaches the dataplane.
+_sh = shell()
+_rv, _text = driven(_sh.apply_global, "cgnat timeout udp 300")
+check(not _text and _sh.api.calls,
+      f"a real timeout is applied in silence: {_text!r} {_sh.api.calls!r}")
+ok("five words that used to mean 'leave it alone', each refused now")
+
+print("\n=== and the prompt refuses the NAME, not only the number (#418) ===")
+# Mutation shown red: the TIMEOUT_FIELD test removed - apply_global then
+# refuses it at commit, on a candidate the operator has already built.
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("cgnat timeout nosuch 5")
+check("no such timeout" in _o.getvalue(),
+      f"an unknown timeout is refused where it is typed: {_o.getvalue()!r}")
+check(not _sh.candidate.globals,
+      f"and nothing staged: {_sh.candidate.globals!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("cgnat timeout udp 300")
+check(_sh.candidate.globals == ["cgnat timeout udp 300"] and not _o.getvalue(),
+      f"a real one is staged in silence: {_sh.candidate.globals!r}")
+ok("the name and the number, both where the operator can act on them")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

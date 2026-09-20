@@ -4562,6 +4562,55 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   esac
 fi
 
+# ---------------------------------------------------------------------------
+# THE BOX WRITES ITS OWN CONFIGURATION AND READS IT BACK (#419)
+#
+# prisma-routing.service hands /etc/prisma-routing/prisma-routing.conf to
+# `prismash --load` at EVERY boot, and --load refuses a file WHOLE. The file
+# is written by `save` out of a candidate built from what the box reports
+# about itself. So a value the box produces, written out and refused on the
+# way back in, is a box that comes up with NO configuration - on a machine
+# nobody is watching.
+#
+# That has happened twice, both times caught by something else noticing:
+# #357, a range in the pool parser that also reads `show bpa config`; and
+# 0.110.0, where `[::]` - the form sshd -T gives back for an IPv6
+# ListenAddress - was refused, and every commit on an installed box failed.
+#
+# This is the direct test of the property, and it is here because this is the
+# only place in this repository where a box that was INSTALLED writes a file
+# and boots again. test/test_a_readback_survives.py is the same rule against
+# the model, in seconds and with no box; this is the same rule against the
+# box's own answers, which is the half a model cannot have.
+echo
+echo "  -- the box saves its own configuration and loads it back (#419)"
+send 'echo "HX""LAB rb-load=$(prismash -c "save" >/tmp/rb.save 2>&1; prismash --load /etc/prisma-routing/prisma-routing.conf >/tmp/rb.out 2>&1; echo rc=$?)"'
+wait_for "HXLAB rb-load=" 180 \
+  "the box to save its own configuration and read it back" || fail=1
+send 'echo "HX""LAB rb-why=$(head -c 200 /tmp/rb.out 2>/dev/null | tr -d "\r" | tr "\n" "|")"'
+wait_for "HXLAB rb-why=" 60 "the box to say what --load made of its file" \
+  || fail=1
+
+RB_LOAD=$(mfield "$CONSOLE_CLEAN" rb-load)
+RB_WHY=$(mfield "$CONSOLE_CLEAN" rb-why)
+case "$RB_LOAD" in
+  *rc=0*)
+    echo "  [ ok ] the file this box wrote is one it can read: --load exited 0"
+    ;;
+  "")
+    echo "  [FAIL] the box never answered, so nothing here says whether its"
+    echo "         own configuration survives a reboot"
+    fail=1 ;;
+  *)
+    echo "  [FAIL] the box REFUSED THE FILE IT JUST WROTE ($RB_LOAD)."
+    echo "         prisma-routing.service hands that file to --load at every"
+    echo "         boot and --load refuses a file whole, so this box would"
+    echo "         come up with no configuration at all. A validator has been"
+    echo "         put on a value the box reads back - see #419. What it said:"
+    echo "         ${RB_WHY:-<nothing>}"
+    fail=1 ;;
+esac
+
 echo
 if [ "$fail" = 0 ]; then
   echo "LAB PASSED"
