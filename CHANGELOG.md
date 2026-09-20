@@ -79,6 +79,36 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A sub-interface whose parent was shut down made every commit fail.** Found
+  by the maintainer on 0.105.0, a box in service. A VLAN sub-interface created
+  under a shut-down card committed fine; every commit after it failed with
+  `interface ens19.100: no shutdown: the dataplane refused it: unspecified
+  error`, whatever the commit was about - an address on a different card could
+  not be applied at all.
+
+  VPP will not bring a sub-interface administratively up while its parent is
+  down. Its own CLI says so, `super-interface pg0 must be up`; over the binary
+  API the same refusal arrives as `VNET_API_ERROR_UNSPECIFIED` and carries no
+  string, which is where "unspecified error" came from. And **failing does not
+  change what the configuration wants**: the child had no `shutdown`, so it was
+  wanted up, so the next commit carried it again. A box that cannot commit is
+  the worst thing this product can be, and #400 was the same sentence from the
+  VTY's side.
+
+  A parent's `no shutdown` is applied before its children's now, so one commit
+  brings both up. A child whose parent will still be down is not attempted, and
+  the box warns - naming the parent and what to type - rather than failing. And
+  its being down is no longer written into the configuration as a `shutdown`
+  nobody typed: `device_admin_down()` leaves a child out while its parent is
+  down, `device_admin_down_raw()` is the unfiltered reading, and the apply uses
+  that one because a set neither configuration holds cannot come out of the
+  delta of them.
+
+  Measured, and it is what decides that shape: a sub-interface does **not**
+  follow its parent up. `lab/subif.sh` drives the whole sequence on a real
+  dataplane, including the assertion this is all for - a commit about a
+  different interface succeeds.
+
 ## 0.106.0 - a card the box has and the dataplane has not
 
 [#405](https://github.com/andrediashexa/hexarouting/issues/405).

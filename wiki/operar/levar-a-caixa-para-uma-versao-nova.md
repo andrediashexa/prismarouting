@@ -113,9 +113,9 @@ Nesse caso o caminho é a mídia, e ele apaga o disco. **Leia a seção abaixo i
 
 
 :::warning
-**Reinstalar apaga o disco inteiro, inclusive o volume de registros de conexão.**
+**Reinstalar apaga o disco inteiro, inclusive o volume de log.**
 
-Em modo dinâmico esse volume guarda o registro de conexão que o Marco Civil obriga a manter por um ano. Em modo determinístico ele guarda a trilha de configuração, que é o que permite dizer qual definição de pool estava em vigor num instante passado - sem ela, a resposta a um ofício sobre o mês passado deixa de ser sustentável.
+Esse volume guarda a trilha de configuração - o que permite dizer qual definição de pool estava em vigor num instante passado, e sem ela a resposta a um ofício sobre o mês passado deixa de ser sustentável - e o spill do exportador, que são registros que o coletor ainda não recebeu. Os registros em si não ficam aqui: a caixa os exporta.
 
 Os dois morrem na reinstalação e **nenhum comando deste produto os traz de volta**. Uma caixa reinstalada continua respondendo pelo ano de guarda que já corria.
 
@@ -154,7 +154,7 @@ Uma conta criada pela versão antiga tem `/usr/bin/hexash` gravado como shell no
 
 ### O volume dos registros: como manter o ano de guarda
 
-`/var/log/hexarouting` é um sistema de arquivos separado, e no modo dinâmico ele guarda o registro de conexões que o Marco Civil manda manter por um ano. A reinstalação **não o apaga**, desde que o disco dele fique de fora da instalação — mas a caixa nova procura os registros em `/var/log/prisma-routing`, e não vai olhar no caminho antigo.
+`/var/log/hexarouting` é um sistema de arquivos separado, com a trilha de configuração e o spill do exportador. A reinstalação **não o apaga**, desde que o disco dele fique de fora da instalação — mas a caixa nova procura em `/var/log/prisma-routing`, e não vai olhar no caminho antigo.
 
 O procedimento é este, e é do operador: um programa que renomeasse pontos de montagem sob obrigação de guarda seria uma migração de dados feita por quem não está olhando.
 
@@ -200,7 +200,7 @@ Os arquivos de registro em si não mudam de formato: o que estava escrito contin
 | A configuração em vigor | **Não.** Você precisa levá-la para fora e digitá-la de volta |
 | As senhas das contas e as comunidades SNMP | **Não**, e não dá para copiá-las da tela: a caixa as mascara ao imprimir a configuração |
 | As revisões de rollback | **Não**                   |
-| Os registros de conexão do modo dinâmico | **Não**                   |
+| A trilha de configuração e o spill do exportador | **Não**                   |
 | A trilha de configuração | **Não**                   |
 | O que já foi exportado para um coletor IPFIX | **Sim** - está fora da caixa, e a reinstalação não o alcança |
 | O que já foi copiado para um syslog remoto | **Sim**, pelo mesmo motivo |
@@ -256,7 +256,7 @@ Se não houver cópia remota da trilha, **pare aqui**. Ela não se reconstrói d
 O procedimento é o de [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) e não muda. Três pontos que são diferentes quando a máquina não é nova:
 
 * **O disco alvo é o mesmo de antes**, com tudo que está nele, e a confirmação com a palavra `yes` apaga o disco inteiro.
-* **A pergunta sobre quantos gigabytes ficam com os registros de conexão volta a ser feita.** Responda pelo menos o mesmo número de antes: responder menos encolhe a guarda sem que nada avise.
+* **A pergunta sobre quantos gigabytes ficam com o volume de log volta a ser feita.** Responda pelo menos o mesmo número de antes: responder menos encolhe o quanto a caixa aguenta exportando para um coletor inalcançável, sem que nada avise.
 * **Se a caixa tinha espelho de registros em dois discos**, o segundo disco é perguntado de novo e apagado pelo mesmo `yes`.
 
 ## 5. Digite a configuração de volta

@@ -198,47 +198,50 @@ O disco é dividido em **três** partições, não duas:
 | raiz     | o resto, menos os registros |
 | `/var/log/prisma-routing` | o que o operador pediu |
 
-Em modo dinâmico o log de alocação **é** o registro de conexão que o Marco Civil exige guardar por um ano. No sistema de arquivos raiz ele divide espaço com tudo que a caixa precisa para funcionar — um log que enche para a caixa de escrever a própria configuração, porque ela estava ocupada registrando quem se conectou.
+**Esta caixa não guarda registros de conexão.** Ela **exporta** — IPFIX por UDP ou TCP, ou syslog — e não fica com nenhum: quem guarda pelo ano que o Marco Civil exige é o coletor. O que fica neste volume é a **trilha de configuração**, que é pequena e é a prova datada do que a caixa foi configurada para fazer, e o **spill** que o exportador escreve enquanto o coletor está inalcançável.
 
-Com sistema de arquivos próprio, um volume de log cheio é um volume de log cheio.
+No sistema de arquivos raiz, qualquer um dos dois divide espaço com tudo que a caixa precisa para funcionar — um coletor inalcançável por uma semana para a caixa de escrever a própria configuração. Com sistema de arquivos próprio, um volume de log cheio é um volume de log cheio.
 
-O padrão é conta, não chute, e a conta aparece na tela:
+O padrão é conta, não chute:
 
 ```
-  Connection records go on their own filesystem, so that a full log
-  cannot stop the box working. One year at 200k subscribers in dynamic
-  mode is about 29 GB; deterministic mode logs no allocations and
-  needs almost none. The arithmetic is in
+  The configuration trail and the export spill go on their own
+  filesystem, so that a full log cannot stop the box working. This box
+  does not keep connection records: it exports them, and whoever keeps
+  them for the year the law asks for is the collector. What this size
+  buys is how long the box can spill while a collector is unreachable.
+  The arithmetic is in
   /usr/share/doc/prisma-routing/logging.md once this box is installed.
-  This disk is 240 GB; at most 231 GB can go to records.
-Gigabytes for connection records [30]:
+  This disk is 240 GB; at most 231 GB can go to this volume.
+Gigabytes for the trail and the export spill [30]:
 ```
 
-**Modo determinístico não registra alocação nenhuma** e precisa de quase nada disso — por isso é uma pergunta e não uma constante. A raiz nunca fica com menos de 8 GB, e um tamanho que a deixaria é recusado com a conta, em vez de aceito e descoberto depois.
+30 GB dão mais de um ano de *spill* a \~80 MB/dia, que é a taxa de 200 mil assinantes em modo dinâmico — muito mais do que qualquer indisponibilidade que alguém planeje. **Modo determinístico exporta quase nada** e precisa de quase nada disso — por isso é uma pergunta e não uma constante. A raiz nunca fica com menos de 8 GB, e um tamanho que a deixaria é recusado com a conta, em vez de aceito e descoberto depois.
 
 
 :::info
-O volume é montado com `nofail`. Uma caixa que não sobe porque o volume de registros sumiu é uma caixa em que ninguém consegue entrar para descobrir por quê — ela sobe e reclama. Por isso o autoteste de boot **informa onde os registros estão**: sem isso, uma caixa cujo volume não montou volta a escrevê-los na raiz em silêncio.
+O volume é montado com `nofail`. Uma caixa que não sobe porque esse volume sumiu é uma caixa em que ninguém consegue entrar para descobrir por quê — ela sobe e reclama. Por isso o autoteste de boot **informa onde o volume está**: sem isso, uma caixa cujo volume não montou volta a escrever na raiz em silêncio.
 
 :::
 
-## Espelho dos registros em dois discos
+## Espelho do volume de log em dois discos
 
-Com um disco só, uma única falha de hardware numa caixa sob obrigação de guarda de um ano perde **os registros**. Isso não é a mesma coisa que ficar fora do ar: indisponibilidade acaba com uma reinstalação, e a perda dos registros não acaba - a caixa continua respondendo por um ano de dados que nenhum procedimento traz de volta.
+Com um disco só, uma única falha de hardware perde **o que está nesse volume**, e isso não é a mesma coisa que ficar fora do ar: indisponibilidade acaba com uma reinstalação, e essa perda não acaba. A trilha de configuração é a prova datada do que a caixa foi configurada para fazer — em modo determinístico, metade da resposta a uma ordem judicial, sendo o algoritmo a outra metade — e o spill são registros que o coletor **ainda não recebeu**, então um disco que os leva abre um buraco no ano de guarda de outra pessoa que nada nesta caixa recompõe.
 
 Por isso, quando a máquina tem um segundo disco, o instalador pergunta:
 
 ```
-  This machine has another disk. The connection records can be kept on
-  BOTH, so that one disk failing does not take the year of records with
-  it - which is a loss no reinstall undoes.
+  This machine has another disk. The log volume - the configuration
+  trail, and the records the collector has not received yet - can be
+  kept on BOTH, so that one disk failing does not take it with it,
+  which is a loss no reinstall undoes.
   The system is NOT mirrored: a dead system disk is a reinstall, and
-  the records on the survivor can still be read on another machine.
+  what is on the survivor can still be read on another machine.
   EVERYTHING ON THE DISK YOU CHOOSE IS DESTROYED.
   a) /dev/sdc         932G  WD Black 1TB
   none) one disk, no mirror   <- default
 
-Mirror the connection records onto which disk [none]:
+Mirror the log volume onto which disk [none]:
 ```
 
 
@@ -247,16 +250,16 @@ Mirror the connection records onto which disk [none]:
 
 :::
 
-**São espelhados os registros, e não o sistema.** A assimetria é a razão de existir do espelho, e os dois lados dela foram medidos numa caixa instalada e depois ligada com aquele disco fora:
+**É espelhado esse volume, e não o sistema.** A assimetria é a razão de existir do espelho, e os dois lados dela foram medidos numa caixa instalada e depois ligada com aquele disco fora:
 
 | Morre o disco | O que foi observado |
 |---------------|---------------------|
-| do espelho    | a caixa sobe normalmente, os registros continuam montados no arranjo rodando com uma perna só, o que foi gravado antes da falha continua lá, e o autoteste diz `[FAIL] the records mirror is DEGRADED: 1 of 2 disks` sem ninguém logado |
-| do sistema    | a máquina não chega a carregar nada: fica no firmware. É reinstalação. **Os registros do disco sobrevivente foram lidos em outra máquina**, com aquela caixa desligada |
+| do espelho    | a caixa sobe normalmente, o volume continua montado no arranjo rodando com uma perna só, o que foi gravado antes da falha continua lá, e o autoteste diz `[FAIL] the records mirror is DEGRADED: 1 of 2 disks` sem ninguém logado |
+| do sistema    | a máquina não chega a carregar nada: fica no firmware. É reinstalação. **O conteúdo do disco sobrevivente foi lido em outra máquina**, com aquela caixa desligada |
 
 Uma caixa com **um disco só** não é perguntada, não ganha arranjo nenhum e o autoteste dela não fala em espelho. Nada muda para quem tem um disco.
 
-O segundo disco é recusado quando é o disco alvo, quando é a mídia de boot, quando é uma partição em vez de um disco inteiro, ou quando é menor que o tamanho pedido para os registros - um espelho tem o tamanho do menor disco dele.
+O segundo disco é recusado quando é o disco alvo, quando é a mídia de boot, quando é uma partição em vez de um disco inteiro, ou quando é menor que o tamanho pedido para o volume de log - um espelho tem o tamanho do menor disco dele.
 
 ### O que a caixa diz depois
 

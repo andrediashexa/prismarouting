@@ -862,6 +862,56 @@ missing, and without that the check refused the very commit that would have
 brought it into existence. A sub-interface whose *parent* is absent is a
 different error and says so.
 
+#### A parent that is shut down
+
+**VPP will not bring a sub-interface administratively up while its parent is
+down.** Its own CLI says so — `set interface state: super-interface pg0 must be
+up` — and over the binary API the same refusal arrives as
+`VNET_API_ERROR_UNSPECIFIED`, which is what reached an operator as *"the
+dataplane refused it: unspecified error"*
+([#407](https://github.com/andrediashexa/hexarouting/issues/407)).
+
+That refusal used to fail the whole commit, and **failing does not change what
+the configuration wants**: the sub-interface had no `shutdown`, so it was
+wanted up, so the next commit carried it again and failed too. Measured on a
+box in service: an `ipv4 address` on a different card could not be committed at
+all, because a VLAN sub-interface of a second, shut-down card was in the
+candidate. A box that cannot commit is the worst thing this product can be, and
+[#400](https://github.com/andrediashexa/hexarouting/issues/400) is the same
+sentence from the VTY's side.
+
+Three things now:
+
+* **The parent's `no shutdown` is applied before the child's**, so a commit
+  that brings both up works in one pass.
+* **A child whose parent will still be down is not attempted**, and the box
+  says so rather than failing:
+
+  ```
+  warning: interface pg1.300: left shut down
+      the dataplane will not bring a sub-interface up while its parent is down,
+      and pg1 is shut down; 'no shutdown' on pg1 brings both up
+  ```
+
+* **Its being down is not written into the configuration.** A `shutdown` nobody
+  typed would say the interface is *meant* to be down, and the candidate an
+  operator loads is read back from the box — so bringing the parent up later
+  would leave the child behind, for a reason nothing on the screen explains.
+  `device_admin_down()` leaves a child out while its parent is down;
+  `device_admin_down_raw()` is the unfiltered reading, and the apply uses it,
+  because a set neither configuration holds cannot come out of the delta of
+  them.
+
+**Measured, and it is what decides the shape above:** a sub-interface does
+**not** follow its parent up. With the child down and the parent brought up,
+the child stays down — so the configuration saying "up" is the only thing that
+will ever bring it up. It does not follow the parent *down* either: the child
+reads `up` in `show interface` while the parent is down, forwarding nothing.
+
+`lab/subif.sh` drives the whole sequence on a real dataplane: a sub-interface
+created under a shut-down parent, a commit about a different interface that has
+to succeed, and the parent's `no shutdown` bringing the child up with it.
+
 **A QinQ sub-interface also matches frames carrying more than two tags**, and
 the VTY says so every time it creates one:
 

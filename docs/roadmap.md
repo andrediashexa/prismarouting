@@ -510,6 +510,14 @@ not have found, because each is about a box somebody is USING:
   only inside a refusal an operator reaches by guessing wrong first. It is now
   under the list, on the screen somebody is looking at while they type.
 
+**And a fifth, found on 0.105.0 the day the other four shipped**
+([#407](https://github.com/andrediashexa/hexarouting/issues/407), **fixed**): a
+VLAN sub-interface created under a shut-down card made **every** commit fail,
+whatever it was about, because VPP refuses to bring a sub-interface up while
+its parent is down and failing does not change what the configuration wants.
+The same shape as #400 from the dataplane's side, and found the same way - by
+the maintainer, using the box.
+
 A plan that says this out loud is worth more than one that reads as if work
 were queued: what this product needs next is a box with a real NIC in it and a
 maintainer's answer to five questions, not another phase.
