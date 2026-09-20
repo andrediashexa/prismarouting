@@ -79,6 +79,44 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **One character ended the VTY session, and ended `prismash --load` at boot**
+  ([#412](https://github.com/andrediashexa/hexarouting/issues/412)). Every
+  numeric statement this product takes was guarded by `str.isdigit()`, which
+  is true for characters `int()` refuses: `²` and `⑧` passed the guard and
+  raised on the conversion. Measured at both doors - `mtu ²`, `vrf ²`,
+  `ssh port ²`, `snmp port ²` and `cgnat timeout udp ²` each ended the
+  session with a traceback, and `mtu`, `vlan`, `vrf`, `block-size` and
+  `forward` did the same to `prismash --load`, which
+  `prisma-routing.service` runs on every boot. `Pool.check_range`,
+  `check_mss`, `check_pow2`, `validate_ssh` and `validate_snmp` - the
+  functions whose whole job is to say whether a value is acceptable - all
+  raised on it too.
+
+  The quieter half is the same predicate: `٣` and `𝟚` pass **and**
+  convert, to 3 and 2, so a saved file carrying one came back a different
+  file once `save` had written the ASCII digit.
+
+  One predicate now, `system.is_number`, read by all 43 call sites: a number
+  is ASCII digits, which is what `int()` takes and what the dataplane prints
+  with `%u`. A suite asserts that `.isdigit()` guards nothing in
+  `src/prismash` any more, with no allowlist.
+
+* **A hand-edited pool block refuses a line instead of crashing**
+  ([#412](https://github.com/andrediashexa/hexarouting/issues/412)). Thirteen
+  statements in a pool block reached `int()` with nothing between: seven in
+  the parser itself and six more one step later in `Pool.api_args`, so
+  `block-size abc`, `ports abc 2000` and `vrf banana` crashed the commit
+  rather than the parse. Each now returns a refusal naming the line, the
+  statement and the word.
+
+  The SHAPE and deliberately not the range, because this parser also reads
+  the dataplane's own `show bpa config`: enforcing a range here is
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357), where a
+  pool built with `block-size 4` came back unmodellable and every commit on
+  that box was refused. A shape check cannot do that, and it is measured
+  rather than argued - every field it guards is rendered `%u` by
+  `bpa_cli.c`, so the readback can never reach the refusal.
+
 ## 0.109.2 - the gate knows which digit moved
 
 [#410](https://github.com/andrediashexa/hexarouting/issues/410).

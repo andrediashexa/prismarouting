@@ -15,6 +15,7 @@ import difflib
 import hashlib
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
+                    is_number,
                     validate_role,
                     SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp)
 
@@ -392,7 +393,7 @@ class Pool:
         """None if `v` is a legal clamp, otherwise why it is not."""
         if v == "auto":
             return None
-        if not v.isdigit():
+        if not is_number(v):
             return f"tcp-mss '{v}': expected a size in bytes, or auto"
         if not Pool.MSS_MIN <= int(v) <= Pool.MSS_MAX:
             return (f"tcp-mss {v}: expected {Pool.MSS_MIN}-{Pool.MSS_MAX}. "
@@ -457,7 +458,7 @@ class Pool:
         """
         lo, hi = Pool.RANGES[name]
         label = f"{name} {what}".rstrip()
-        if not v.isdigit():
+        if not is_number(v):
             return f"{label} '{v}': expected a number {lo}-{hi}"
         if not lo <= int(v) <= hi:
             return f"{label} {v}: expected {lo}-{hi}"
@@ -494,7 +495,7 @@ class Pool:
             # caller asking about a statement that does not carry this
             # constraint is a bug, and a quiet None would answer "fine".
             raise KeyError(name)
-        if not v.isdigit() or int(v) < 1:
+        if not is_number(v) or int(v) < 1:
             # check_range owns that refusal and runs first; saying it twice in
             # two spellings is how the two drift apart.
             return None
@@ -504,6 +505,47 @@ class Pool:
         lo = 1 << (n.bit_length() - 1)
         return (f"{name} {v} is not a power of two: "
                 f"the nearest are {lo} and {lo << 1}")
+
+    @staticmethod
+    def check_number(name: str, v: str, what=""):
+        """
+        None if `v` is a number at all, otherwise why it is not.
+
+        THE SHAPE, AND DELIBERATELY NOT THE RANGE, which is the whole reason
+        this is not `check_range` with the two numbers left off. This function
+        is reached from `_pool_line`, and `_pool_line` reads THREE things: a
+        statement typed at the prompt, a saved file, and the running
+        configuration read back out of the dataplane by `show bpa config`.
+
+        #357 is what happens when a range is enforced there. A pool the
+        dataplane had built with `block-size 4` - which it accepts, and which
+        lab/detreserve.sh uses to keep a block cheap - came back unmodellable,
+        so `running_config()` reported that committing would REMOVE it and
+        every commit on that box was then refused. The operator could no
+        longer configure anything at all.
+
+        "Is this a number" does not have that failure mode, and that is
+        measured rather than assumed: every field this check guards is
+        rendered `%u` by `show bpa config` in `bpa_cli.c` - block-size and
+        ports at lines 2929 and 2931, max-blocks, block-stride, reserve, vrf,
+        outside-vrf and utilisation-alarm at 2954 to 2972, and the timeouts
+        and the session limits beside them. A `%u` cannot print a word, so
+        the readback cannot reach this refusal. The request is bounded where
+        the request is made, in Shell.pool_range.
+
+        Without this, seven `int()` calls below raised a ValueError that
+        nothing caught, and `prismash --load` ended in a traceback - on a file
+        `prisma-routing.service` replays at every boot, with no line number and
+        no statement named. That is #94's shape with the diagnosis removed.
+        """
+        if is_number(v):
+            return None
+        label = f"{name} {what}".rstrip()
+        # No range in the sentence, for the reason above: quoting one here
+        # would be quoting a bound this parser does not enforce, and an
+        # operator reading a file back off their own box would be told the
+        # number it printed is out of range.
+        return f"{label} '{v}': expected a number"
 
     #: The statements carrying TWO numbers whose order is part of the
     #: statement, and a third table for the same reason POW2 is a second one:
@@ -533,7 +575,7 @@ class Pool:
         if name not in Pool.ORDERED:
             # As loud as check_range's KeyError on an unknown statement.
             raise KeyError(name)
-        if not first.isdigit() or not second.isdigit():
+        if not is_number(first) or not is_number(second):
             # check_range owns that refusal and runs first; saying it twice in
             # two spellings is how the two drift apart.
             return None
@@ -892,7 +934,7 @@ class Pool:
         commit at all. The dataplane refuses those, and names them.
         """
         parts = self.ports.replace("-", " ").split()
-        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        if len(parts) != 2 or not all(is_number(p) for p in parts):
             return None
         lo, hi = int(parts[0]), int(parts[1])
         if lo > hi:
@@ -1146,7 +1188,7 @@ def _is_ipv4_address(a: str) -> bool:
     if len(parts) != 4:
         return False
     for p in parts:
-        if not p.isdigit() or not 0 <= int(p) <= 255 or (
+        if not is_number(p) or not 0 <= int(p) <= 255 or (
                 len(p) > 1 and p[0] == "0"):
             return False
     return True
@@ -1181,7 +1223,7 @@ def vlan_tag_error(word: str, what: str = "vlan"):
     one is a Q-in-Q customer tag, and an operator reading a refusal has to
     know which of the two numbers on the line it is about.
     """
-    if not word.isdigit():
+    if not is_number(word):
         return f"{what} '{word}': expected a VLAN tag {VLAN_RANGE}"
     # ONE ROW, and short. `err` prints what it is given and wraps nothing
     # (#252), and a racked box is read at 80 columns - so the reason why 0 and
@@ -1316,7 +1358,7 @@ def _is_loopback(name: str) -> bool:
     interface the box does not have.
     """
     return (name.startswith("loop") and len(name) > 4
-            and name[4:].isdigit())
+            and is_number(name[4:]))
 
 
 def _is_lcp_tap(name: str) -> bool:
@@ -1349,8 +1391,8 @@ def _is_lcp_tap(name: str) -> bool:
     rest = name[3:]
     if "." in rest:
         base, _, sub = rest.partition(".")
-        return base.isdigit() and sub.isdigit()
-    return rest.isdigit()
+        return is_number(base) and is_number(sub)
+    return is_number(rest)
 
 
 class Config:
@@ -2046,7 +2088,7 @@ class Config:
                 w = s.split()
                 if s == "exit":
                     iface = None
-                elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
+                elif w[0] == "mtu" and len(w) > 1 and is_number(w[1]):
                     cfg.mtus[iface] = int(w[1])
                 elif w[0] == "linux-name" and len(w) > 1:
                     # Refused here rather than at commit, because the message
@@ -2075,14 +2117,14 @@ class Config:
                     cfg.ra_enabled.discard(iface)
                 elif s == "no ipv6 nd suppress-ra":
                     cfg.ra_enabled.add(iface)
-                elif w[0] == "vrf" and len(w) > 1 and w[1].isdigit():
+                elif w[0] == "vrf" and len(w) > 1 and is_number(w[1]):
                     if int(w[1]):
                         cfg.vrfs[iface] = int(w[1])
                     else:
                         cfg.vrfs.pop(iface, None)
                 elif s == "no vrf":
                     cfg.vrfs.pop(iface, None)
-                elif w[0] == "vlan" and len(w) > 1 and w[1].isdigit():
+                elif w[0] == "vlan" and len(w) > 1 and is_number(w[1]):
                     # The tag is bounded HERE as well as at the prompt. A file
                     # is the other way a statement arrives, and a range checked
                     # only where it is typed is a range an operator gets past
@@ -2095,7 +2137,7 @@ class Config:
                         cfg.unknown.append((lineno, s, why))
                         continue
                     tag = {"outer": int(w[1]), "inner": None}
-                    if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
+                    if len(w) >= 4 and w[2] == "inner" and is_number(w[3]):
                         why = vlan_tag_error(w[3], "inner")
                         if why:
                             cfg.unknown.append((lineno, s, why))
@@ -2265,14 +2307,31 @@ class Config:
             # The request is bounded where the request is made:
             # Shell.pool_range() in do_pool, which is what an operator types
             # at and the only place a number can still be argued with.
+            why = Pool.check_number("block-size", w[1])
+            if why:
+                return why
             pool.block_size = w[1]
         elif w[0] == "ports" and len(w) > 2:
+            # Both halves, each named, for the reason check_range's `what`
+            # exists: one statement carrying two numbers has to say WHICH of
+            # them was not one.
+            for value, half in ((w[1], "min"), (w[2], "max")):
+                why = Pool.check_number("ports", value, half)
+                if why:
+                    return why
             pool.ports = f"{w[1]} {w[2]}"
         elif w[0] == "policy" and len(w) > 1:
             if w[1] not in ("interleaved", "blocked"):
                 return f"policy '{w[1]}': expected interleaved or blocked"
             pool.policy = w[1]
         elif w[0] in ("vrf", "outside-vrf") and len(w) > 1:
+            # A pool's VRF reaches `int()` in api_args, not here, so an
+            # unguarded word crashed the COMMIT rather than the parse - one
+            # step further from the operator than the seven below, and the
+            # same defect.
+            why = Pool.check_number(w[0], w[1])
+            if why:
+                return why
             if w[0] == "vrf":
                 pool.vrf = w[1]
             else:
@@ -2285,15 +2344,27 @@ class Config:
             if w[1] not in Pool.TIMEOUTS:
                 return (f"timeout '{w[1]}': expected one of "
                         + ", ".join(Pool.TIMEOUTS))
+            why = Pool.check_number("timeout", w[2], w[1])
+            if why:
+                return why
             pool.timeouts[w[1]] = int(w[2])
         elif w[0] == "max-blocks" and len(w) > 1:
             # The TOP as well as the bottom, and the top is where this was
             # wrong: `max-blocks 256` was taken here, written to the file,
             # sent to a u8 field and arrived as 1 (#351).
+            why = Pool.check_number("max-blocks", w[1])
+            if why:
+                return why
             pool.max_blocks = int(w[1])
         elif w[0] == "block-stride" and len(w) > 1:
+            why = Pool.check_number("block-stride", w[1])
+            if why:
+                return why
             pool.block_stride = int(w[1])
         elif w[0] == "reserve" and len(w) > 1:
+            why = Pool.check_number("reserve", w[1])
+            if why:
+                return why
             pool.block_reserve = int(w[1])
         elif w[0] == "bypass" and len(w) > 2:
             if w[1] not in ("source", "destination"):
@@ -2309,8 +2380,14 @@ class Config:
             # quotes as `<1-100>`, so an operator comparing the screen to the
             # hint was comparing two spellings of one range - and nothing
             # could compare them either (#351).
+            why = Pool.check_number("utilisation-alarm", w[1])
+            if why:
+                return why
             pool.util_alarm = int(w[1])
         elif w[0] in ("max-sessions", "max-session-rate") and len(w) > 1:
+            why = Pool.check_number(w[0], w[1])
+            if why:
+                return why
             if w[0] == "max-sessions":
                 pool.max_sessions = int(w[1])
             else:
@@ -2341,7 +2418,7 @@ class Config:
                 return (f"forward '{w[1]}': expected one of "
                         + ", ".join(Pool.FWD_PROTOS))
             for p in (w[2], w[5]):
-                if not p.isdigit() or not 1 <= int(p) <= 65535:
+                if not is_number(p) or not 1 <= int(p) <= 65535:
                     return f"forward: '{p}' is not a port"
             # The device decides whether the address is a subscriber of this
             # pool and whether the port is in its block; it is the only thing
@@ -2350,7 +2427,7 @@ class Config:
             # as a parse error a commit later.
             octets = w[4].split(".")
             if len(octets) != 4 or not all(
-                    o.isdigit() and int(o) < 256 for o in octets):
+                    is_number(o) and int(o) < 256 for o in octets):
                 return f"forward: '{w[4]}' is not an IPv4 address"
             # Refused rather than deduplicated. Silently dropping the second
             # line leaves a configuration whose text does not round-trip, and

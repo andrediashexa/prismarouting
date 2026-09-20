@@ -30,6 +30,7 @@ import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
+                    is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
@@ -1772,7 +1773,7 @@ def frr_without_seq(stmt):
         return None
     w = stmt.split()
     for i in range(len(w) - 1):
-        if w[i] == "seq" and w[i + 1].isdigit():
+        if w[i] == "seq" and is_number(w[i + 1]):
             return " ".join(w[:i] + w[i + 2:])
     return stmt
 
@@ -2114,7 +2115,7 @@ def probe_count_ok(word):
     "+5", " 5" and "5\n"; the digits check is what keeps the number the
     operator sees and the number the tool gets the same.
     """
-    if not word or not word.isdigit():
+    if not word or not is_number(word):
         return None
     n = int(word)
     if n < 1 or n > PROBE_COUNT_MAX:
@@ -3164,7 +3165,7 @@ def osi_input_drops(show_errors):
     """
     for line in (show_errors or "").splitlines():
         w = line.split()
-        if len(w) >= 5 and w[0].isdigit() and w[1] == "osi-input" \
+        if len(w) >= 5 and is_number(w[0]) and w[1] == "osi-input" \
                 and w[2:5] == ["unknown", "osi", "protocol"]:
             return int(w[0])
     return 0
@@ -3727,7 +3728,7 @@ def set_value_error(stmt: str):
     if bound is None:
         return None
     lo, hi = bound
-    if not w[2].isdigit() or not lo <= int(w[2]) <= hi:
+    if not is_number(w[2]) or not lo <= int(w[2]) <= hi:
         return (f"'{w[2]}' is not a {w[1]}: expected {lo}-{hi}. FRR takes "
                 "this statement with any word in it and then sets nothing")
     return None
@@ -3815,7 +3816,7 @@ def route_map_findings(routing):
     # not a unit: a sort key inside route_map_findings, read through its
     # owner by test_prismash_units.py
     def by_seq(c):
-        return (0, int(c["seq"])) if c["seq"].isdigit() else (1, 0)
+        return (0, int(c["seq"])) if is_number(c["seq"]) else (1, 0)
 
     out = []
     for name, clauses in maps.items():
@@ -4588,7 +4589,7 @@ def route_map_verdict(routing, name, prefix):
         if w[0] == "route-map" and len(w) >= 3 and w[2] in ("permit", "deny"):
             current = None
             if w[1] == name:
-                seq = w[3] if len(w) >= 4 and w[3].isdigit() else "0"
+                seq = w[3] if len(w) >= 4 and is_number(w[3]) else "0"
                 current = {"action": w[2], "seq": int(seq),
                            "match": [], "opaque": False}
                 clauses.append(current)
@@ -6384,7 +6385,7 @@ class Shell:
             if w[0] == "local0" or "/" not in w[3]:
                 continue
             l3 = w[3].split("/")[0]
-            if l3.isdigit() and int(l3) > 0:
+            if is_number(l3) and int(l3) > 0:
                 mtus[w[0]] = int(l3)
         return mtus
 
@@ -8949,13 +8950,13 @@ class Shell:
                 self.err(f"cgnat timeout {w[2]}: no such timeout")
                 return
             t = dict(self.ZERO_TIMEOUTS)
-            t[field] = int(w[3]) if w[3].isdigit() else 0
+            t[field] = int(w[3]) if is_number(w[3]) else 0
             r = self.global_api(timeouts=t)
             if r.state != vppapi.OK:
                 self.err_dataplane(f"cgnat timeout {w[2]} {w[3]}: {r.reason}")
         elif w[1] == "block-holddown" and len(w) >= 3:
             r = self.global_api(set_block_holddown=True,
-                                block_holddown=int(w[2]) if w[2].isdigit()
+                                block_holddown=int(w[2]) if is_number(w[2])
                                 else 0)
             if r.state != vppapi.OK:
                 self.err_dataplane(f"cgnat block-holddown {w[2]}: {r.reason}")
@@ -8973,7 +8974,7 @@ class Shell:
             # "session-table buckets <n> memory <MB>", in either order.
             got = {}
             for i in range(2, len(w) - 1, 2):
-                if w[i] in ("buckets", "memory") and w[i + 1].isdigit():
+                if w[i] in ("buckets", "memory") and is_number(w[i + 1]):
                     got[w[i]] = int(w[i + 1])
             if len(got) != 2:
                 self.err("usage: nat cgnat session-table buckets <n> "
@@ -9023,7 +9024,7 @@ class Shell:
                 args["tcp_enable"] = True
                 args["collector"] = w[3]
                 if len(w) >= 6 and w[4] == "port":
-                    if not w[5].isdigit() or int(w[5]) > 65535:
+                    if not is_number(w[5]) or int(w[5]) > 65535:
                         self.err(f"cgnat logging tcp: port {w[5]} is not one")
                         return
                     # Zero, not 4739, when no port was typed: the default
@@ -9144,7 +9145,7 @@ class Shell:
                     "the options are: secret <s>, port <n>")
                 return
             if word == "port":
-                if not value.isdigit() or int(value) > 65535:
+                if not is_number(value) or int(value) > 65535:
                     self.err("cgnat identity radius: port is 0-65535")
                     return
                 port = int(value)
@@ -9207,7 +9208,7 @@ class Shell:
                     f"'{word}' is not one, or it is missing its value",
                     "the options are: " + ", ".join(SYSLOG_OPTIONS))
                 return
-            if value is None or not value.isdigit():
+            if value is None or not is_number(value):
                 self.err_prose(
                     f"cgnat logging syslog: {word} takes a number",
                     f"'{value if value is not None else ''}' is not one")
@@ -9296,7 +9297,7 @@ class Shell:
                 return
             src = w[5]
             if len(w) >= 8 and w[6] == "port":
-                if not w[7].isdigit() or int(w[7]) > 65535:
+                if not is_number(w[7]) or int(w[7]) > 65535:
                     self.err(f"cgnat logging udp: port {w[7]} is not one")
                     return
                 port = int(w[7])
@@ -11012,7 +11013,7 @@ class Shell:
         # MTU set on one side only reproduces the mismatch this exists to
         # prevent. Everything else in the block is still FRR's.
         if iface and not neg and dp == "mtu":
-            if len(w) < 2 or not w[1].isdigit():
+            if len(w) < 2 or not is_number(w[1]):
                 self.err("usage: mtu <576-9216>")
             elif not 576 <= int(w[1]) <= 9216:
                 self.err(f"mtu {w[1]} out of range (576-9216)")
@@ -11104,7 +11105,7 @@ class Shell:
             # dataplane, `?` offered `<1-65535>`, and the parser took any run
             # of digits at all - so all three said something different and
             # only one of them was checking anything (#351).
-            if len(w) < 2 or not w[1].isdigit() or int(w[1]) > 4294967295:
+            if len(w) < 2 or not is_number(w[1]) or int(w[1]) > 4294967295:
                 self.err(f"usage: vrf {ARG_VRF}, or 0 to take it back out")
             elif int(w[1]):
                 self.candidate.vrfs[iface] = int(w[1])
@@ -11121,7 +11122,7 @@ class Shell:
         # what an operator is told to type instead.
         if iface and not neg and dp == "vlan":
             why = None
-            if len(w) < 2 or not w[1].isdigit():
+            if len(w) < 2 or not is_number(w[1]):
                 why = f"usage: vlan {VLAN_RANGE} [inner {VLAN_RANGE}]"
             # THE RANGE THIS STATEMENT HAS ALWAYS QUOTED, now checked. `?` and
             # the usage line above both said <1-4094> and nothing compared a
@@ -11150,7 +11151,7 @@ class Shell:
                 self.err(why)
                 return True
             tag = {"outer": int(w[1]), "inner": None}
-            if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
+            if len(w) >= 4 and w[2] == "inner" and is_number(w[3]):
                 # The inner tag had no check at all, not even the name one the
                 # outer tag borrowed: nothing is named after it, so `inner 0`
                 # and `inner 9999` reached the dataplane exactly as typed.
@@ -11433,7 +11434,7 @@ class Shell:
             return
         levels = 1
         if len(w) == 2:
-            if not w[1].isdigit() or w[1] == "0":
+            if not is_number(w[1]) or w[1] == "0":
                 # Their word goes in the PROSE and not the verdict, which is
                 # the rule #363 states: a verdict carrying a word the operator
                 # chose has no width at all, and this one is 36 columns
