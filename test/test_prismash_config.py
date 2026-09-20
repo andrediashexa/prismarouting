@@ -1438,5 +1438,136 @@ check(not _left, "`.isdigit()` still guards something:\n    "
                  + "\n    ".join(_left))
 print("  one predicate, and the forty-three call sites read it")
 
+print("\n=== config.prefix_error: an IPv4 network the dataplane can hold ===")
+# Mutation shown red: strict=True softened to strict=False, which is the
+# dataplane's masking done silently here - the operator types 100.64.0.5/10,
+# `save` writes 100.64.0.0/10, and the file is not the file.
+for good in ("10.0.0.0/8", "100.64.0.0/10", "203.0.113.0/24", "0.0.0.0/0",
+             "192.0.2.1/32"):
+    check(config.prefix_error("inside", good) is None, f"{good} is a prefix")
+_BAD_PREFIX = [
+    ("potato", "expected a prefix", "not a prefix at all"),
+    ("200.0.0.1", "expected a prefix", "an address with no length"),
+    ("300.0.0.0/10", "not an IPv4 prefix", "an octet out of range"),
+    ("10.0.0.0/33", "not a prefix length", "a length above 32"),
+    ("2001:db8::/32", "expected an IPv4 prefix", "IPv6, which bpa_cli.c "
+     "cannot unformat"),
+    ("100.64.0.5/10", "host bits are set", "host bits, which the dataplane "
+     "would mask in silence"),
+    ("", "expected a prefix", "nothing at all"),
+]
+for value, needle, why in _BAD_PREFIX:
+    r = config.prefix_error("inside", value)
+    check(r is not None, f"{why}: {value!r} was accepted")
+    if r:
+        check(needle in r[0], f"{why}: {needle!r} not in {r[0]!r}")
+# The network the operator meant is IN the refusal, which is the whole reason
+# host bits are refused here rather than masked.
+check("100.64.0.0/10" in config.prefix_error("inside", "100.64.0.5/10")[1],
+      "and the prefix the operator meant is named, so the fix is a paste")
+print(f"  {len(_BAD_PREFIX)} refusals, each naming what the dataplane cannot "
+      f"hold")
+
+print("\n=== config.prefix_why: the two rows as one, for the file ===")
+# Mutation shown red: the prose dropped, which leaves `prismash --load`
+# printing a verdict with no reason on a box nobody is watching - the same
+# defect vrrp_why was written against.
+check(config.prefix_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "both halves joined")
+check(config.prefix_why(("a verdict", "")) == "a verdict",
+      "and nothing added when there is no prose")
+check(config.prefix_why(config.prefix_error("inside", "100.64.0.5/10"))
+      == "inside '100.64.0.5/10': host bits are set - the prefix this names "
+         "is 100.64.0.0/10",
+      "and a real refusal reads as one sentence in a log")
+print("  what a file's reader gets, who has no console to fold in")
+
+print("\n=== and an INTERFACE address is the opposite thing (#413) ===")
+# Mutation shown red: ip_interface swapped for ip_network, which refuses
+# 10.0.0.5/8 - the ordinary way every router in this market is configured.
+#
+# On an interface the host bits ARE the address. In a pool prefix they are a
+# mistake. Two statements, two rules, and this is the pair that says so.
+for good in ("10.0.0.5/8", "192.0.2.1/24", "100.64.0.1/32"):
+    check(config._address_family_error("ipv4", good) is None,
+          f"{good} is an interface address, host bits and all")
+check(config._address_family_error("ipv6", "2001:db8::1/64") is None,
+      "and so is an IPv6 one")
+for bad in ("999.1.1.1/24", "10.0.0.256/24", "10.0.0.1/33", "potato/24"):
+    check(config._address_family_error("ipv4", bad) is not None,
+          f"{bad!r} is not an address at all, and was staged until #413")
+check(config._address_family_error("ipv6", "2001:zz::1/64") is not None,
+      "nor is an IPv6 one with a bad group")
+print("  host bits accepted where they are the address, refused where they "
+      "are a mistake")
+
+print("\n=== system.address_error: a host, and not a prefix (#413) ===")
+# Mutation shown red: the "/" branch dropped, which lets a prefix through to
+# sshd's ListenAddress and to the IPFIX exporter's collector field.
+for good in ("10.0.0.1", "0.0.0.0", "2001:db8::1", "::1"):
+    check(config.address_error("ssh listen-address", good) is None,
+          f"{good} is an address")
+for bad, why in (("potato", "a word"), ("999.1.1.1", "an octet out of range"),
+                 ("010.1.1.1", "a leading zero, which is octal to some "
+                               "readers and decimal to others"),
+                 ("10.0.0.0/8", "a prefix where a host is named"),
+                 ("", "nothing at all")):
+    check(config.address_error("ssh listen-address", bad) is not None,
+          f"{why}: {bad!r} was accepted")
+print("  the same rule for both families, from the library and not a copy")
+
+print("\n=== both doors, on every statement that names an address (#413) ===")
+# Mutation shown red: any one call site reverted - that row then parses.
+#
+# THE FILE HALF. The prompt half is in test_prismash_units.py, and #417 is the
+# reader that will stop the two from drifting apart again.
+_ADDRESS_DOORS = [
+    ("pool inside", "cgnat pool p\n inside potato\n"),
+    ("pool outside", "cgnat pool p\n outside 300.0.0.0/24\n"),
+    ("pool bypass source", "cgnat pool p\n bypass source 999.9.9.9/99\n"),
+    ("pool bypass destination",
+     "cgnat pool p\n bypass destination 2001:db8::/32\n"),
+    ("interface ipv4", "interface pg0\n ipv4 address 999.1.1.1/24\n"),
+    ("interface ipv6", "interface pg0\n ipv6 address 2001:zz::1/64\n"),
+    ("ssh listen-address", "ssh listen-address potato\n"),
+    ("snmp listen-address", "snmp listen-address potato\n"),
+]
+for label, text in _ADDRESS_DOORS:
+    cfg = config.Config.parse(text)
+    check(len(cfg.unknown) == 1,
+          f"{label}: a saved file took it: {cfg.unknown!r}")
+# And the control, because a check that refuses everything is not a check.
+_GOOD = ("cgnat pool p\n inside 100.64.0.0/10\n outside 203.0.113.0/24\n"
+         " bypass source 10.0.0.0/8\n bypass destination 192.0.2.0/24\n exit\n"
+         "interface pg0\n ipv4 address 10.0.0.5/8\n"
+         " ipv6 address 2001:db8::1/64\n"
+         "ssh listen-address 0.0.0.0\nsnmp listen-address 127.0.0.1\n")
+_cfg = config.Config.parse(_GOOD)
+check(not _cfg.unknown, f"a configuration of real values is taken whole: "
+                        f"{_cfg.unknown!r}")
+check(_cfg.pools["p"].inside == ["100.64.0.0/10"]
+      and _cfg.addresses["pg0"] == ["10.0.0.5/8", "2001:db8::1/64"],
+      f"and reaches the model unchanged: {_cfg.pools['p'].inside!r} "
+      f"{_cfg.addresses.get('pg0')!r}")
+print(f"  {len(_ADDRESS_DOORS)} statements refused in a saved file, and a real "
+      f"configuration untouched")
+
+print("\n=== and these refusals fit the console too ===")
+# Mutation shown red: the two rows folded back into one sentence, which is
+# 132 columns at an IPv6 value and is why prefix_error answers in rows (#355).
+_LONG = "bypass destination"
+for _value in ("2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff/64", "10.0.0.5/8",
+               "potato", "10.0.0.0/33", ""):
+    _r = config.prefix_error(_LONG, _value)
+    if not _r:
+        continue
+    _own = _r[0].replace(f"'{_value}'", "")
+    check(len(f"error: {_own}") <= config.CONSOLE_COLUMNS,
+          f"verdict's own words at {len(_own)} columns: {_r[0]!r}")
+    check(len(_r[1]) <= config.CONSOLE_COLUMNS,
+          f"prose at {len(_r[1])} columns: {_r[1]!r}")
+print("  the verdict's own words and the prose, each inside 79; the "
+      "operator's value is quoted and folds where it costs nothing")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
