@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.108.0 - a release record repeats what its allocation said
+
+[#397](https://github.com/andrediashexa/hexarouting/issues/397).
+
+### Added
+
 * **A release record repeats what its allocation said.** An allocation record
   names the subscriber in force at the allocation, which is #21's requirement;
   a release record named the subscriber in force at the **release**, because
