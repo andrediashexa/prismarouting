@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.109.0 - where the release time goes, and the rule that follows
+
+[#408](https://github.com/andrediashexa/hexarouting/issues/408), [#409](https://github.com/andrediashexa/hexarouting/issues/409), [#410](https://github.com/andrediashexa/hexarouting/issues/410).
+
+### Added
+
 * **Where the 36 minutes of a release go, measured.**
   [docs/build-timing.md](docs/build-timing.md) reads the pipeline step by step
   and says which numbers are measured and which are bounds. A release takes 36
