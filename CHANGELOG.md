@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.110.3 - something kills the control plane and sends a packet
+
+[#420](https://github.com/andrediashexa/hexarouting/issues/420), [#421](https://github.com/andrediashexa/hexarouting/issues/421).
+
+### Added
+
 * **Something kills the control plane and then sends a packet**
   ([#421](https://github.com/andrediashexa/hexarouting/issues/421)).
   `lab/control-plane-dies.sh`. The property *"a management failure MUST NOT
