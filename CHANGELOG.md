@@ -101,8 +101,6 @@ version has a chance of seeing it.
   test` installs nothing, and a lab step in the wrong place is invisible to
   everything that does not boot a box.
 
-### Fixed
-
 ## 0.111.0 - a clock on every step, and the collector retains
 
 [#396](https://github.com/andrediashexa/hexarouting/issues/396), [#401](https://github.com/andrediashexa/hexarouting/issues/401), [#408](https://github.com/andrediashexa/hexarouting/issues/408).
