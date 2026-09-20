@@ -750,16 +750,33 @@ echo "=== step: the clock the gate's log is read as a table by (#408) ==="
 # would read as a step that took none, when what it means is that there is
 # nothing to subtract from yet - and docs/build-timing.md is read as a table,
 # where a wrong zero in the first row is a wrong total.
-sed -n '/^_STEP_LAST=/,/^}/p' "$REPO/tools/release-gate.sh" > "$WORK/step.sh"
+sed -n '/^_STEP_LAST=/,/^}/p; /^step_done()/,/^}/p' \
+  "$REPO/tools/release-gate.sh" > "$WORK/step.sh"
 first=$(. "$WORK/step.sh"; step "building the medium")
 [ "$first" = "==> building the medium" ] \
   && ok "the first step prints the step and no seconds" \
   || bad "step gave '$first' for the first call"
+# THE DURATION UNDER THE NAME THAT SPENT IT, which is the whole value of this
+# clock. A step is announced BEFORE its work runs, so the first version - which
+# printed the seconds on the new step's line - charged every number to the
+# label after the one it belonged to. The gate's own first run said
+# `building the medium (120s)` when 120s was the startup.conf check and the
+# medium had not started, and docs/build-timing.md is a table somebody reads
+# to decide what to optimise.
 later=$(. "$WORK/step.sh"; step "one"; sleep 1; step "two")
 case "$later" in
-  *"==> two (1s)"|*"==> two (2s)")
-    ok "and a later one carries the seconds since the step before it" ;;
+  *"one: 1s"*|*"one: 2s"*)
+    ok "the seconds are printed under the step that spent them" ;;
   *) bad "step gave '$later' for two steps a second apart" ;;
+esac
+case "$later" in
+  *"two: "*) bad "step charged time to a step that had not run: '$later'" ;;
+  *) ok "and the step that has not run yet is charged nothing" ;;
+esac
+last=$(. "$WORK/step.sh"; step "only"; sleep 1; step_done)
+case "$last" in
+  *"only: 1s"*|*"only: 2s"*) ok "and the last step is timed by step_done" ;;
+  *) bad "step_done gave '$last'" ;;
 esac
 # NOT RECURSIVE, which is not a hypothetical: the change that added this
 # function rewrote every `echo "==> ` in the file, including the one INSIDE

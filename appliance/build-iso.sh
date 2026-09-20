@@ -30,14 +30,27 @@ FRR_VERSION=${FRR_VERSION:-10.7.1-0~deb12u1}
 # say() has no previous one and prints none rather than printing zero, because
 # a zero there would read as a phase that took no time.
 _SAY_LAST=""
+_SAY_NAME=""
 say() {
   _now=$(date +%s)
-  if [ -n "$_SAY_LAST" ]; then
-    printf '==> %s (%ss)\n' "$*" "$((_now - _SAY_LAST))"
-  else
-    printf '==> %s\n' "$*"
+  # THE DURATION UNDER THE NAME THAT SPENT IT, for the reason
+  # tools/release-gate.sh's step() gives at length: a phase is announced
+  # BEFORE its work runs, so seconds printed on the new phase's line belong to
+  # the previous one. The gate's first run said `building the medium (120s)`
+  # about a step that had not started.
+  if [ -n "$_SAY_NAME" ]; then
+    printf '    %s: %ss\n' "$_SAY_NAME" "$((_now - _SAY_LAST))"
   fi
+  printf '==> %s\n' "$*"
   _SAY_LAST=$_now
+  _SAY_NAME=$*
+}
+
+# The last phase has nothing after it to print its time.
+say_done() {
+  [ -n "$_SAY_NAME" ] || return 0
+  printf '    %s: %ss\n' "$_SAY_NAME" "$(( $(date +%s) - _SAY_LAST ))"
+  _SAY_NAME=""
 }
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
 
@@ -384,4 +397,5 @@ say "ISO hibrida"
 # filename's one owner, and reads this line.
 grub-mkrescue -o "$OUT" "$WORK/iso" -- -volid PRISMA_ROUTING
 
-say "pronto: $OUT ($(du -h "$OUT" | cut -f1))"
+say "ready: $OUT ($(du -h "$OUT" | cut -f1))"
+say_done

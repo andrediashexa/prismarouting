@@ -234,7 +234,7 @@ echo "=== say, on its own ==="
 # fragment otherwise. That is what happened when the clock first went in: this
 # suite went red on a syntax error rather than on the product, which is the
 # extraction telling the truth about itself.
-sed -n '/^_SAY_LAST=/,/^}/p' "$REPO/$BISO" > "$WORK/say.sh"
+sed -n '/^_SAY_LAST=/,/^}/p; /^say_done()/,/^}/p' "$REPO/$BISO" > "$WORK/say.sh"
 got=$(. "$WORK/say.sh"; say "VPP 26.06 and FRR 10.7")
 [ "$got" = "==> VPP 26.06 and FRR 10.7" ] \
   && ok "say prints the step behind the '==>' the build log is read by" \
@@ -242,11 +242,27 @@ got=$(. "$WORK/say.sh"; say "VPP 26.06 and FRR 10.7")
 # THE FIRST STEP PRINTS NO TIME, and the ones after it do. A zero on the first
 # would read as a phase that took no time, when what it means is that there is
 # nothing to subtract from yet (#408).
+# THE DURATION UNDER THE NAME THAT SPENT IT. The first version of the clock
+# printed the seconds on the NEW phase's line, and a phase is announced BEFORE
+# its work runs - so every number landed on the label after the one it
+# belonged to. The gate's own first run said `building the medium (120s)` when
+# 120s was the previous check and the medium had not started. This box is what
+# says the attribution is right, and it is the whole value of the clock.
 got2=$(. "$WORK/say.sh"; say "first"; sleep 1; say "second")
 case "$got2" in
-  "==> first"*"==> second (1s)"|"==> first"*"==> second (2s)")
-    ok "and a later step carries the seconds since the one before it" ;;
-  *) bad "say gave '$got2' for two steps a second apart" ;;
+  *"first: 1s"*|*"first: 2s"*)
+    ok "the seconds are printed under the phase that spent them" ;;
+  *) bad "say gave '$got2' for two phases a second apart" ;;
+esac
+case "$got2" in
+  *"second: "*) bad "say charged time to a phase that had not run: '$got2'" ;;
+  *) ok "and the phase that has not run yet is charged nothing" ;;
+esac
+# The last phase has nothing after it to print its time, so the end says so.
+got3=$(. "$WORK/say.sh"; say "only"; sleep 1; say_done)
+case "$got3" in
+  *"only: 1s"*|*"only: 2s"*) ok "and the last phase is timed by say_done" ;;
+  *) bad "say_done gave '$got3'" ;;
 esac
 
 echo

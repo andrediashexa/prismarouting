@@ -52,14 +52,32 @@ fi
 # telling the reader it is free, which is worth knowing when the ten-minute
 # one is three lines below it.
 _STEP_LAST=""
+_STEP_NAME=""
 step() {
   _now=$(date +%s)
-  if [ -n "$_STEP_LAST" ]; then
-    printf '==> %s (%ss)\n' "$*" "$((_now - _STEP_LAST))"
-  else
-    printf '==> %s\n' "$*"
+  # THE DURATION UNDER THE NAME THAT SPENT IT. The first version of this
+  # printed the seconds on the NEW step's line - and a step is announced
+  # BEFORE its work runs, so every number landed on the label after the one it
+  # belonged to. The log said `building the medium (120s)` when 120s was the
+  # startup.conf check and the medium was still ten minutes away.
+  #
+  # That is worse than the estimate it replaces, because it looks precise, and
+  # docs/build-timing.md is a table somebody reads to decide what to optimise.
+  # Caught by reading the gate's own first run rather than by a check, which
+  # is the half of this that had no reader.
+  if [ -n "$_STEP_NAME" ]; then
+    printf '    %s: %ss\n' "$_STEP_NAME" "$((_now - _STEP_LAST))"
   fi
+  printf '==> %s\n' "$*"
   _STEP_LAST=$_now
+  _STEP_NAME=$*
+}
+
+# The last step has nothing after it to print its time, so the end says so.
+step_done() {
+  [ -n "$_STEP_NAME" ] || return 0
+  printf '    %s: %ss\n' "$_STEP_NAME" "$(( $(date +%s) - _STEP_LAST ))"
+  _STEP_NAME=""
 }
 step "release gate for $TAG"
 
@@ -1017,3 +1035,4 @@ echo "    sha256 $(sha256sum "$WORK/$UPGRADE" | cut -d' ' -f1)"
 grep -E "^\s+\[ ok \] Prisma Routing|$VERDICT_RE" "$BOOTLOG" | sed 's/^/    /'
 grep -E "\[ ok \] the installed box can configure a pool" "$WORK/install.log" \
   | sed 's/^/    /'
+step_done

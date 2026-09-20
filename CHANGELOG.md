@@ -127,9 +127,9 @@ version has a chance of seeing it.
   Four places, and the gate's own log now **is** the table that document had
   to estimate:
 
-  * `appliance/build-iso.sh` — seconds beside every `say()`, which splits the
-    ten minutes into its phases;
-  * `tools/release-gate.sh` — the same beside all 29 steps, on both the minor
+  * `appliance/build-iso.sh` — the seconds each phase spent, printed **under
+    that phase's own name**, which splits the ten minutes into its parts;
+  * `tools/release-gate.sh` — the same for all 29 steps, on both the minor
     and the patch path. Including the cheap ones: a document check that prints
     `0s` is telling the reader it is free, which is worth knowing when the
     ten-minute one is three lines below it;
@@ -143,6 +143,16 @@ version has a chance of seeing it.
     once been hit and nothing said so. A cache that is never hit is not a
     cache; it is a directory that makes a reader believe a step is cheaper
     than it is.
+
+  **The first version of this attributed every number to the wrong step.** A
+  step is announced *before* its work runs, so seconds printed on the new
+  step's line belong to the one before it: the gate's own first run said
+  `building the medium (120s)` when 120s was the startup.conf check and the
+  medium had not started. That is worse than the estimate it replaces, because
+  it looks precise — and `docs/build-timing.md` is a table somebody reads to
+  decide what to optimise. Found by reading the gate's first run, not by a
+  check; there is a check now, on both clocks, and it asserts that a step which
+  has not run is charged nothing.
 
   The boot and install timings are also what
   [#396](https://github.com/andrediashexa/hexarouting/issues/396)'s phase-0
