@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.110.1 - a readback is a fact
+
+[#418](https://github.com/andrediashexa/hexarouting/issues/418), [#419](https://github.com/andrediashexa/hexarouting/issues/419).
+
+### Added
+
 * **A reader that puts the box's own answers back through the box's own
   parser** ([#419](https://github.com/andrediashexa/hexarouting/issues/419)).
   `test/test_a_readback_survives.py`, plus the direct form of it on an
