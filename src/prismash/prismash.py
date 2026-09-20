@@ -9026,15 +9026,36 @@ class Shell:
             if field is None:
                 self.err(f"cgnat timeout {w[2]}: no such timeout")
                 return
+            # REFUSED AND NOT COERCED, which is #418. `int(w[3]) if
+            # is_number(w[3]) else 0` turned `cgnat timeout udp abc` into a
+            # zero, and zero in this message is "leave this one alone" - so a
+            # typo in a saved file changed nothing, said nothing, and left the
+            # operator reading a configuration whose timeout was not the one
+            # in force. The prompt has refused it since #273; this is the
+            # other door, which nothing was watching.
+            #
+            # Pool.check_range, not two numbers written again: it is the same
+            # u32 field as a pool's own timeout, and the prompt is refused by
+            # the same call.
+            why = Pool.check_range("timeout", w[3], w[2])
+            if why:
+                self.err(f"cgnat {why}")
+                return
             t = dict(self.ZERO_TIMEOUTS)
-            t[field] = int(w[3]) if is_number(w[3]) else 0
+            t[field] = int(w[3])
             r = self.global_api(timeouts=t)
             if r.state != vppapi.OK:
                 self.err_dataplane(f"cgnat timeout {w[2]} {w[3]}: {r.reason}")
         elif w[1] == "block-holddown" and len(w) >= 3:
+            # The same coercion and the same refusal as the timeout above
+            # (#418): zero here is the message's "leave this alone", so a word
+            # silently left the hold-down as it was.
+            why = Pool.check_range("timeout", w[2], "")
+            if why:
+                self.err(f"cgnat {why.replace('timeout ', 'block-holddown ', 1)}")
+                return
             r = self.global_api(set_block_holddown=True,
-                                block_holddown=int(w[2]) if is_number(w[2])
-                                else 0)
+                                block_holddown=int(w[2]))
             if r.state != vppapi.OK:
                 self.err_dataplane(f"cgnat block-holddown {w[2]}: {r.reason}")
         elif w[1] == "logging" and len(w) >= 3:
@@ -11104,6 +11125,16 @@ class Shell:
             # than a timeout of none (#351). Same two numbers as the pool's
             # own timeouts, from Pool.RANGES, because they are the same field.
             if w[1] == "timeout" and len(w) >= 4:
+                # THE NAME BEFORE THE NUMBER (#418). apply_global refuses an
+                # unknown timeout at commit and the prompt staged it, so an
+                # operator who mistyped one built a candidate around a
+                # statement the box was going to throw out.
+                if self.TIMEOUT_FIELD.get(w[2]) is None:
+                    self.err_prose(
+                        f"cgnat timeout {w[2]}: no such timeout",
+                        "this box has: " + ", ".join(sorted(
+                            self.TIMEOUT_FIELD)))
+                    return True
                 why = Pool.check_range("timeout", w[3], w[2])
             elif w[1] == "block-holddown" and len(w) >= 3:
                 # "timeout" names the RANGE, and the operator's statement is

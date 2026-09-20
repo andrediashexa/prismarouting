@@ -92,6 +92,27 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A `cgnat` global in a saved file no longer becomes a silent zero**
+  ([#418](https://github.com/andrediashexa/hexarouting/issues/418)). A global
+  typed at the prompt is read before it is staged; the same line in a saved
+  file goes into `Config.globals` **unparsed** and is applied at commit by
+  `apply_global`. So `apply_global` is the file's only reader — and it did
+  `int(w[3]) if is_number(w[3]) else 0`, where zero in that message means
+  *leave this one alone*.
+
+  `cgnat timeout udp abc` in a file therefore changed nothing, said nothing,
+  and left an operator reading a configuration whose timeout was not the one
+  in force. Five words did that: the four global timeouts and
+  `block-holddown`. Each is refused now, through `Pool.check_range` — the same
+  call the prompt uses, because it is the same u32 field.
+
+* **An unknown timeout name is refused where it is typed**
+  ([#418](https://github.com/andrediashexa/hexarouting/issues/418)).
+  `apply_global` refused `cgnat timeout nosuch 5` at commit and the prompt
+  staged it, so an operator who mistyped one built a candidate around a
+  statement the box was going to throw out. The prompt names the ones this box
+  has.
+
 * **Five values a box can report were refused by its own parser, and a saved
   file carrying one is a box that comes up with no configuration**
   ([#419](https://github.com/andrediashexa/hexarouting/issues/419)). All five
