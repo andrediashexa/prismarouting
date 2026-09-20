@@ -489,6 +489,23 @@ unique by accident. `lab/two-pools.sh` is the one that does not.
 | Port bitmap | `block_size` bits per active subscriber | 64 bytes at 512 ports; ~13 MB for 200k |
 | Session tables | Two bihash tables per worker | Default 16 MB each, configurable via `bpa session-table` |
 | Block ownership (dynamic) | 21 bytes per block per worker slice | owner, idle-since, pinned flag, free-list slot and its position in that list, one array each |
+| Block identity (dynamic, and only with an identity table loaded) | 40 bytes per **held** block, plus its hash entry, on the worker holding it | the name the block's allocation record carried, so its release record can carry the same one ([#397](https://github.com/andrediashexa/hexarouting/issues/397)) |
+
+**Per HELD block, and nothing at all without an identity table.** A pool is
+configured for its capacity and holds what its subscribers have asked for, so
+this is sized by subscribers rather than by the pool; and the unknown marker is
+never stored, so a box that has loaded no identity map — which is most of them
+— pays nothing. At 200k subscribers holding one block each it is about 8 MB
+across the box, against the ~13 MB of port bitmaps those same subscribers
+already cost.
+
+It is paid so that a release record names who held the block rather than who
+holds the private address when it goes back: the two are different subscribers
+whenever the identity table changed in between, and a collector reading only
+the release line would otherwise attribute the block to the wrong person. The
+alternative was to pair allocation and release by address, ports and time at
+the collector, which is work this box can do once and every collector would
+otherwise have to do for ever.
 
 Session table size is a **virtual** reservation, but the OOM killer counts
 virtual memory. The default is therefore modest: a deployment with 200k

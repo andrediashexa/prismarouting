@@ -275,14 +275,30 @@ if [ "$MODE" != no-syslog ]; then
   # THE IDENTITY, and the instant it belongs to.
   expect "the allocation lines name who held the address then" \
     grep -q 'subscriberId="joao.silva@isp"' "$LINES_FILE"
-  # ON THE ALLOCATION LINES, and that is the whole precision of it. A
-  # release is a different event at a different instant, and what it names
-  # is what the table says THEN - see the note on #21 about whether that is
-  # the right answer for a release. The allocation is what this issue's
-  # requirement is about, and it must never name the replacement.
+  # ON THE ALLOCATION LINES, and that is the whole precision of it: the
+  # identity in force AT THE ALLOCATION, never the one that replaced it.
   grep BLOCK-ALLOC "$LINES_FILE" > /tmp/alloc-lines.txt 2>/dev/null || true
   expect "and no allocation line names the identity that replaced it" \
     sh -c "! grep -q 'SOMEBODY-ELSE' /tmp/alloc-lines.txt"
+
+  # AND ON THE RELEASE LINES, which is #397 and was a consequence until the
+  # maintainer decided it: the release repeats what the allocation said,
+  # rather than naming whoever holds the private address when the block goes
+  # back. The map was rewritten between the two, so a release resolved at its
+  # own instant names SOMEBODY-ELSE and one carried with the block does not -
+  # and this lab is the only place the difference is visible.
+  grep BLOCK-RELEASE "$LINES_FILE" > /tmp/release-lines.txt 2>/dev/null || true
+  expect "the release lines name the subscriber the ALLOCATION named (#397)" \
+    grep -q 'subscriberId="joao.silva@isp"' /tmp/release-lines.txt
+  expect "and no release line names the identity that replaced it" \
+    sh -c "! grep -q 'SOMEBODY-ELSE' /tmp/release-lines.txt"
+  expect "all three releases carry an identity, not just the first" \
+    sh -c "test $(grep -c 'subscriberId=' /tmp/release-lines.txt) = 3"
+  # The pair, which is what a court order is answered from: one block, two
+  # records, one subscriber.
+  expect "and the two records of one block agree about who held it" \
+    sh -c "test $(grep -o 'subscriberId=\"[^\"]*\"' /tmp/alloc-lines.txt \
+                  /tmp/release-lines.txt | cut -d: -f2- | sort -u | wc -l) = 3"
   expect "the allocation lines are the three subscribers, each named" \
     sh -c "test $(grep -c 'subscriberId=' /tmp/alloc-lines.txt) = 3"
   # THE LEASE FILE'S OWN RULES, read off the box: two of the four leases

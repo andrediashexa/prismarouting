@@ -1972,6 +1972,11 @@ bpa_pool_del (u8 *name)
 
       if (pool_index < vec_len (pt->dyn))
 	bpa_dyn_free (vec_elt_at_index (pt->dyn, pool_index));
+      /* And what this worker remembered about the blocks of this pool (#397).
+       * The releases above took their own entries out; what is left belongs to
+       * releases whose record was never queued, and the pool index they are
+       * filed under is about to be handed to the next pool created. */
+      bpa_block_ident_forget_pool (&pt->block_ident, pool_index);
     }
   vec_free (p->name);
   vec_free (p->statics);

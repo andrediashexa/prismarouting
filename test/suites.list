@@ -25,6 +25,7 @@
 .build/test_bpa_audit
 .build/test_bpa_log_syslog
 .build/test_bpa_identity
+.build/test_bpa_block_ident
 .build/test_bpa_md5
 .build/test_bpa_radius
 python3 appliance/test_tune.py
