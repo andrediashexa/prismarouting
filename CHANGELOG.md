@@ -77,6 +77,36 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The supervisor runs the drain and WAITS, and a control says the lab can
+  see it** ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  `sh tools/lab.sh ipfix-stop no-wait` starts the drain and sends the signal
+  without waiting for it, which is the defect a container supervisor makes
+  possible: Compose has no pre-stop hook, so the drain moves into a PID-1
+  wrapper that traps SIGTERM, drains and forwards — and a wrapper that
+  forwards early produces exactly what `vpp-stop-drain.conf` exists to
+  prevent.
+
+  `lab/ipfix-stop.sh` already reads the drain out of the shipped drop-in and
+  asserts its effect, so the property was measured. What nothing asserted is
+  that the **ordering** is the supervisor's: the lab supplies it, so a
+  wrapper that signalled early would have left every check green.
+
+  Measured rather than reasoned about — the control drops two:
+
+  ```
+  [FAIL] and released it on the way out (got 0)
+  [FAIL] the stopped box's block is not left open at all (got ENDED AT RESTART)
+  ```
+
+  The second is the one worth reading. Without the wait the **stopped** box
+  stops being distinguishable from one that fell over: the collector reads its
+  block as ended at the restart rather than released on the way out. That is
+  [#217](https://github.com/andrediashexa/hexarouting/issues/217), reproduced
+  on demand.
+
+  It is run by hand, because `OFF_MODES` carries one mode per lab and this
+  lab's is `no-marker`.
+
 ### Fixed
 
 ## 0.110.3 - something kills the control plane and sends a packet
