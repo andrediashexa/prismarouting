@@ -281,7 +281,7 @@ def expand(spec):
 
 # ---------------------------------------------------------------- casos
 
-print("=== 2 sockets x 8 cores x 2 threads (32 CPUs), NIC no no 1 ===")
+print("=== 2 sockets x 8 cores x 2 threads (32 CPUs), NIC on node 1 ===")
 with tempfile.TemporaryDirectory() as root:
     nodes = build(root, sockets=2, cores_per_socket=8, threads=2, nic_node=1)
     out = run(root, "--interface", "eth0")
@@ -291,7 +291,8 @@ with tempfile.TemporaryDirectory() as root:
     print(f"  workers={len(workers)} isolated={len(isolated)} os={oscpus}")
 
     check(all(c in nodes[1] for c in workers),
-          f"workers fora do no da NIC: {[c for c in workers if c not in nodes[1]]}")
+          f"worker(s) off the NIC's node: "
+          f"{[c for c in workers if c not in nodes[1]]}")
     check(len(workers) == 7, f"expected 7 workers (8 cores - 1 for the OS), got {len(workers)}")
     check(len(isolated) == 14, f"expected 14 isolated CPUs (7 cores x 2 threads), got {len(isolated)}")
     check(not set(workers) & set(oscpus), "worker landed on an operating-system CPU")
