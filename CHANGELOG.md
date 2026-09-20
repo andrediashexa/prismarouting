@@ -79,6 +79,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The readback check ran after the box had been switched off, so it could
+  never pass** ([#419](https://github.com/andrediashexa/hexarouting/issues/419)).
+  `lab/install-iso.sh` gained a check in 0.110.3 — the box saves its own
+  configuration and loads it back — and it was placed at the end of the file,
+  which is **after** the clean `systemctl poweroff`. The console driver was
+  writing to a closed descriptor:
+
+  ```
+  /src/lab/install-iso.sh: 1123: 3: Bad file descriptor
+  waiting for: 'HXLAB rb-load='
+  it waited: 0s, and then the machine exited
+  ```
+
+  So it reported *"the box never answered"* on every run, which is the answer
+  it gives when it cannot ask — and 0.110.3 was a **Z**, so no install lab ran
+  and nothing exercised it until the next minor's gate.
+
+  The check now runs while the shell it needs is open, before the poweroff.
+  That it was found by the gate rather than by a suite is the point: `make
+  test` installs nothing, and a lab step in the wrong place is invisible to
+  everything that does not boot a box.
+
+### Fixed
+
 ## 0.111.0 - a clock on every step, and the collector retains
 
 [#396](https://github.com/andrediashexa/hexarouting/issues/396), [#401](https://github.com/andrediashexa/hexarouting/issues/401), [#408](https://github.com/andrediashexa/hexarouting/issues/408).
