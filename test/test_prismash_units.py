@@ -4940,6 +4940,78 @@ check(_sh.candidate.macs == {"pg0": "02:00:00:00:00:01"},
       f"and the short spelling is staged as the dataplane writes it: "
       f"{_sh.candidate.macs!r} {_o.getvalue()!r}")
 ok("four refused at the prompt, and the short spelling normalised")
+print("\n=== prismash.asn_findings: every place an AS is written (#415) ===")
+# Mutation shown red: the `words_kept` tuple emptied, which refuses
+# `remote-as external` - the ordinary way to run eBGP to a directly connected
+# peer, and the exact defect #208 was filed for.
+_ASN_ROUTING = [
+    "router bgp 0",
+    "router bgp 65000",
+    "router bgp 23456",
+    "neighbor 10.0.0.1 remote-as 99999999999",
+    "neighbor 10.0.0.2 remote-as 65001",
+    "neighbor vppwan0 interface remote-as external",
+    "neighbor v6peers remote-as internal",
+    "neighbor 10.0.0.9 remote-as auto",
+    "set as-path prepend 65000 0 65000",
+    "set as-path prepend 65000 65000",
+    "set as-path exclude banana",
+    "set as-path prepend last-as 3",
+    "neighbor 10.0.0.3 remote-as 23456",
+]
+_found = prismash.asn_findings(_ASN_ROUTING)
+_errors = [stmt for sev, stmt, _ in _found if sev == "error"]
+_warnings = [stmt for sev, stmt, _ in _found if sev == "warning"]
+check(_errors == ["router bgp 0",
+                  "neighbor 10.0.0.1 remote-as 99999999999",
+                  "set as-path prepend 65000 0 65000",
+                  "set as-path exclude banana"],
+      f"four statements carry an AS that is not one: {_errors!r}")
+check(_warnings == ["router bgp 23456", "neighbor 10.0.0.3 remote-as 23456"],
+      f"and AS_TRANS is a warning wherever it is written: {_warnings!r}")
+# THE THREE SPELLINGS THAT ARE NOT NUMBERS, named one at a time, because
+# reading them positionally is how #208 refused BGP unnumbered.
+for _kept in ("neighbor vppwan0 interface remote-as external",
+              "neighbor v6peers remote-as internal",
+              "neighbor 10.0.0.9 remote-as auto"):
+    check(_kept not in _errors and _kept not in _warnings,
+          f"{_kept!r} is a real FRR spelling and must pass untouched")
+check("set as-path prepend last-as 3" not in _errors,
+      "`last-as` takes a COUNT and not an AS, so 3 is not read as one")
+check(prismash.asn_findings([]) == [] and prismash.asn_findings([""]) == [],
+      "and nothing to read is not a finding")
+ok(f"{len(_errors)} refused, {len(_warnings)} said, and four spellings kept")
+
+print("\n=== and the prompt refuses the stanza before entering it (#415) ===")
+# Mutation shown red: the check moved below `self.frr_ctx.append(line)`, which
+# leaves the operator standing inside a stanza the box has just refused - so
+# every statement they type next lands in it.
+for _line, _needle in (("router bgp 0", "out of range"),
+                       ("router bgp 4294967296", "out of range"),
+                       ("router bgp banana", "expected an AS number"),
+                       ("router bgp", "expected an AS number")):
+    _sh = at()
+    with spoken() as _o:
+        _sh.do_config(_line)
+    check(_needle in _o.getvalue(),
+          f"{_line!r}: {_needle!r} not in {_o.getvalue()!r}")
+    check(_sh.frr_ctx == [],
+          f"{_line!r}: and the operator is not left inside it: "
+          f"{_sh.frr_ctx!r}")
+    check(_sh.candidate.routing == [],
+          f"{_line!r}: and nothing staged: {_sh.candidate.routing!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("router bgp 23456")
+check(_sh.frr_ctx == ["router bgp 23456"] and "AS_TRANS" in _o.getvalue(),
+      f"AS_TRANS is said and the block is entered: {_sh.frr_ctx!r} "
+      f"{_o.getvalue()!r}")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("router bgp 65000")
+check(_sh.frr_ctx == ["router bgp 65000"] and not _o.getvalue(),
+      f"and an ordinary AS is entered in silence: {_o.getvalue()!r}")
+ok("four refused at the prompt, one said, one silent")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

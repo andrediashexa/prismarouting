@@ -1649,5 +1649,42 @@ for _v in ("zz:zz:zz:zz:zz:zz", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01", ""):
               f"a word the fold cannot break: {_word!r}")
 print("  the verdict unfolded, and no word in the prose the fold cannot break")
 
+print("\n=== config.asn_error: 1 to 4294967295, and nothing else ===")
+# Mutation shown red: the range test dropped, which is the product as it
+# shipped - `router bgp 0` was staged and FRR refused it a commit later, on a
+# candidate the operator had already built.
+for good in ("1", "65000", "64512", "4200000000", "4294967295", "23456"):
+    check(config.asn_error("router bgp", good) is None, f"{good} is an AS")
+for bad, needle, why in (("0", "out of range", "zero, which RFC 7607 reserves"),
+                         ("4294967296", "out of range", "one past 2^32-1"),
+                         ("banana", "expected an AS number", "a word"),
+                         ("-1", "expected an AS number", "a negative"),
+                         ("", "expected an AS number", "nothing at all")):
+    r = config.asn_error("router bgp", bad)
+    check(r is not None, f"{why}: {bad!r} was accepted")
+    if r:
+        check(needle in r[0], f"{why}: {needle!r} not in {r[0]!r}")
+check(config.asn_why(("a verdict", "a reason")) == "a verdict - a reason",
+      "and the two rows join for a file, like every other refusal here")
+print("  refused where no reading makes it an AS")
+
+print("\n=== config.asn_note: said, and deliberately not refused ===")
+# Mutation shown red: the private ranges added to AS_NOTABLE, which is the
+# checker that warns about what is merely usual - the thing an operator learns
+# to work around, and then works around the real findings too.
+check("AS_TRANS" in config.asn_note("23456"),
+      "AS_TRANS is named, with the RFC that reserves it")
+check(config.asn_error("router bgp", "23456") is None,
+      "and it is NOT refused: a lab may be built on it deliberately")
+for private in ("64512", "65534", "4200000000", "4294967294"):
+    check(config.asn_note(private) is None,
+          f"{private} is a private AS (RFC 6996) and gets nothing at all")
+for ordinary in ("1", "65000", "13335"):
+    check(config.asn_note(ordinary) is None, f"{ordinary} gets nothing")
+check(config.asn_note("banana") is None,
+      "and a word gets nothing here; asn_error owns that refusal")
+print(f"  {len(config.AS_NOTABLE)} number worth a sentence, and the private "
+      f"ranges silent")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

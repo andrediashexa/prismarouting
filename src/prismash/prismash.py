@@ -40,6 +40,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     prefix_error, prefix_why, address_error,
                     mac_error, mac_normal,
+                    asn_error, asn_why, asn_note,
                     global_key, ordered_globals,
                     VRID_MIN, VRID_MAX, VRRP_PRIORITY_MIN, VRRP_PRIORITY_MAX,
                     VRRP_PRIORITY_DEFAULT,
@@ -2892,6 +2893,64 @@ def as_path_parts(line):
         if w[i] in ("permit", "deny"):
             return name, " ".join(w[i + 1:])
     return None, None
+
+
+def asn_findings(routing):
+    """
+    Every AS number in `routing` that is not one, as (severity, stmt, why).
+
+    BOTH DOORS with one reader, which is why this is here and not only in the
+    prompt: a statement reaches `routing` the same way whether it was typed or
+    loaded out of a saved file, so a check at commit covers the file that the
+    prompt refusal cannot. The prompt refuses `router bgp <asn>` as well,
+    because a block entered is a block the next statement lands in.
+
+    Four places an AS number is written, and `remote-as` is the one that is
+    not positional: `neighbor vppwan0 interface remote-as external` is BGP
+    unnumbered, where the value is a word and not a number. `internal`,
+    `external` and `auto` are real FRR spellings and are kept - reading them
+    as a bad AS is how #208 refused the ordinary way to run eBGP to a directly
+    connected peer.
+    """
+    out = []
+    words_kept = ("internal", "external", "auto")
+    for line in routing:
+        w = line.split()
+        if not w:
+            continue
+        if w[:2] == ["router", "bgp"]:
+            why = asn_error("router bgp", w[2] if len(w) > 2 else "")
+            if why:
+                out.append(("error", line.strip(), asn_why(why)))
+                continue
+            note = asn_note(w[2])
+            if note:
+                out.append(("warning", line.strip(), note))
+        elif "remote-as" in w:
+            at = w.index("remote-as")
+            value = w[at + 1] if at + 1 < len(w) else ""
+            if value in words_kept:
+                continue
+            why = asn_error("remote-as", value)
+            if why:
+                out.append(("error", line.strip(), asn_why(why)))
+                continue
+            note = asn_note(value)
+            if note:
+                out.append(("warning", line.strip(), note))
+        elif w[:2] == ["set", "as-path"] and len(w) > 3 \
+                and w[2] in ("prepend", "exclude"):
+            # `set as-path prepend last-as <n>` is a count and not an AS, so
+            # it is left alone. Everything else after the verb is a list of AS
+            # numbers.
+            if w[3] == "last-as":
+                continue
+            for value in w[3:]:
+                why = asn_error(f"set as-path {w[2]}", value)
+                if why:
+                    out.append(("error", line.strip(), asn_why(why)))
+                    break
+    return out
 
 
 def as_path_regex_error(line):
@@ -7671,6 +7730,15 @@ class Shell:
                 else:
                     self.say_finding("warning", stmt, why)
 
+            # An AS number that is not one, wherever it is written - at the
+            # prompt or in a file this box loaded at boot (#415). The prompt
+            # refuses `router bgp` on its own, and this is the reader that
+            # covers the other door and the other three statements.
+            for sev, stmt, why in asn_findings(target.routing):
+                self.say_finding(sev, stmt, why)
+                if sev == "error":
+                    ok = False
+
             # An AS-path regex FRR would refuse, refused at the prompt
             # instead of mid-commit (#146).
             for stmt in target.routing:
@@ -11324,6 +11392,25 @@ class Shell:
         # `no` forms ARE configuration rather than a removal - `no bgp
         # ebgp-requires-policy` is the one every eBGP session in this lab
         # needs - and dropping those would break them.
+        # THE AS NUMBER BEFORE THE STATEMENT IS STAGED (#415), and before the
+        # block below is entered. Both halves matter and the second is the one
+        # that bites: a stanza refused after `frr_ctx.append` leaves the
+        # operator standing inside a block this box has just said it will not
+        # take, so every statement they type next lands in it. Staged first,
+        # it also reaches `commit` as a statement nobody asked for.
+        #
+        # Only `router bgp` here. The other three places an AS is written -
+        # `remote-as` and the two `set as-path` verbs - are read by
+        # asn_findings at commit, which is the reader that covers a saved file
+        # too. This one is at the prompt as well because it opens a block.
+        if w[:2] == ["router", "bgp"]:
+            why = asn_error("router bgp", w[2] if len(w) > 2 else "")
+            if why:
+                self.err_prose(*why)
+                return True
+            note = asn_note(w[2])
+            if note:
+                print_prose(note)
         if w[0] == "no" and len(w) > 1:
             negated = " ".join(w[1:])
             for i, existing in enumerate(self.candidate.routing):
