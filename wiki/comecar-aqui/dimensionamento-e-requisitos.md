@@ -345,7 +345,7 @@ Premissas explícitas, para ordem de grandeza e não para precisão: 200 mil ass
 
 ## Os registros têm sistema de arquivos próprio
 
-Em modo dinâmico o log de alocação **é** o registro de conexão que o Marco Civil exige guardar por um ano. Por isso o instalador cria três partições — ESP, raiz e `/var/log/prisma-routing` — em vez de deixar tudo junto.
+O instalador cria três partições — ESP, raiz e `/var/log/prisma-routing` — em vez de deixar tudo junto. O que fica no terceiro volume é a **trilha de configuração** e o **spill** do exportador: esta caixa não guarda registros de conexão, ela os exporta, e quem guarda pelo ano que o Marco Civil exige é o coletor.
 
 
 :::warning
@@ -359,7 +359,7 @@ Em instalação não assistida, `prisma-routing.log-gb=` responde essa pergunta 
 
 O volume é montado com `nofail`: uma máquina que não dá boot porque o volume de registros sumiu é uma máquina em que ninguém consegue entrar para descobrir o porquê. Por isso o self-test de boot **reporta onde os registros estão** — sem isso, uma caixa cujo volume não montou sobe caladinha gravando na raiz.
 
-Essa tabela é o argumento comercial do BPA em uma linha: guardar um ano de registros passa de dezenas de terabytes para dezenas de gigabytes — ou para nada.
+Essa tabela é o argumento comercial do BPA em uma linha: guardar um ano de registros passa de dezenas de terabytes para dezenas de gigabytes — ou para nada. É um argumento sobre o disco do **coletor**, não sobre o desta caixa.
 
 # Como conferir
 

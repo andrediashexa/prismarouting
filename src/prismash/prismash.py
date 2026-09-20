@@ -6288,12 +6288,25 @@ class Shell:
 
     def device_admin_down(self) -> set:
         """
-        The interfaces that are administratively down.
+        The interfaces whose being down is a `shutdown` SOMEBODY TYPED.
 
         Read from `show interface`, not from sw_interface_dump: the dump
         returns the flags as an enum vat2 renders as "Invalid ENUM", so the
         one field that would answer this is the one that does not survive the
         JSON. Captured from a running dataplane rather than assumed.
+
+        A SUB-INTERFACE WHOSE PARENT IS DOWN IS LEFT OUT (#407). VPP will not
+        bring one up while its super-interface is down, so a box that recorded
+        that as `shutdown` would put a statement in the running configuration
+        that nobody wrote - and the candidate an operator loads from it would
+        then say the interface is meant to be down, so bringing the parent up
+        later would leave the child behind for a reason nothing on the screen
+        explains. Measured: a sub-interface does NOT follow its parent up by
+        itself, so the configuration saying "up" is the only thing that will
+        ever bring it up.
+
+        The parent's own `shutdown` is still recorded, because that one IS a
+        statement somebody made.
         """
         rc, out = self.dp.run("show interface")
         if rc != 0:
@@ -6303,8 +6316,27 @@ class Shell:
         # reporting it would put "shutdown" in the running configuration of
         # every box on earth - which is also how a test asserting " shutdown"
         # came to pass on a box where nothing had been shut down.
-        return {name for name, info in routes.parse_interfaces(out).items()
+        return {n for n in self.device_admin_down_raw()
+                if "." not in n
+                or n.split(".")[0] not in self.device_admin_down_raw()}
+
+    def device_admin_down_raw(self) -> set:
+        """
+        Every interface the dataplane has administratively down, as it says.
+
+        The reading `device_admin_down` filters, and it is kept apart because
+        the apply needs the unfiltered one: a sub-interface left down because
+        its parent is down is not a `shutdown` in the configuration, and it is
+        still an interface this box has to bring up when the parent comes up
+        (#407).
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0:
+            return set()
+        ifaces = routes.parse_interfaces(out)
+        down = {name for name, info in ifaces.items()
                 if info.get("state") == "down" and name != "local0"}
+        return down
 
     def device_urpf(self) -> dict:
         """
@@ -6473,6 +6505,15 @@ class Shell:
         if r.state != vppapi.OK:
             self.err_dataplane(f"interface {ifname}: "
                                f"{'no shutdown' if up else 'shutdown'}: {r.reason}")
+            # THE REASON VPP HAS AND THE REPLY DOES NOT. Its CLI says
+            # "super-interface <name> must be up"; the binary API answers
+            # VNET_API_ERROR_UNSPECIFIED and carries no string, so an operator
+            # reads "unspecified error" about the one refusal here that has a
+            # plain cause. The apply skips this case before it happens (#407);
+            # this is what is said if it is ever reached another way.
+            if up and "." in ifname:
+                print_prose(f"a sub-interface cannot come up while its parent "
+                            f"is down: check {ifname.split('.')[0]}")
             return False
         # The Linux side of the pair, which routes.linux_end() names: on the
         # same-name pair (#389) `name != ifname` kept the TAP and skipped
@@ -8608,7 +8649,54 @@ class Shell:
                                        "back without it")
                         return False
 
-        for ifname in d["admin_up"]:
+        # PARENTS FIRST, AND NOT AT ALL WHILE A PARENT STAYS DOWN (#407).
+        #
+        # VPP will not bring a sub-interface administratively up while its
+        # super-interface is down. Its own CLI says so - "set interface state:
+        # super-interface pg0 must be up" - and over the binary API the same
+        # refusal arrives as VNET_API_ERROR_UNSPECIFIED, so what reached the
+        # operator was "the dataplane refused it: unspecified error".
+        #
+        # That refusal failed the whole commit, and the desired state does not
+        # change by failing: a sub-interface with no `shutdown` is wanted up,
+        # the device has it down, so the delta carried it again on the NEXT
+        # commit and failed that one too. Measured on the maintainer's box: an
+        # `ipv4 address` on a different card could not be committed at all,
+        # because a VLAN sub-interface of a second, shut-down card was in the
+        # candidate. A box that cannot commit is the worst thing this product
+        # can be, and #400 was the same sentence from the other side.
+        #
+        # So: the parent's `no shutdown` is applied before the child's, which
+        # is the sort below, and a child whose parent will still be down after
+        # this commit is left alone and said out loud. Nothing is lost by
+        # waiting - the statement stays in the configuration, the device stays
+        # down, and the delta carries it again on the commit that brings the
+        # parent up. Measured, because it decides this: a sub-interface does
+        # NOT follow its parent up by itself.
+        stays_down = set(target.admin_down)
+        # EVERY SUB-INTERFACE THE DEVICE HAS DOWN AND THE CONFIGURATION DOES
+        # NOT, which is a set neither configuration holds: `device_admin_down`
+        # leaves a child out when its parent is down, because that is not a
+        # statement anybody made, so the delta of running and target cannot
+        # carry it. The device is asked instead. Each of them is either
+        # brought up here or said out loud, and which one depends on the
+        # parent.
+        children = {n for n in self.device_admin_down_raw()
+                    if "." in n and n not in stays_down}
+        for ifname in sorted(set(d["admin_up"]) | children,
+                             key=lambda n: (n.count("."), n)):
+            parent = ifname.split(".")[0] if "." in ifname else ""
+            if parent and parent in stays_down:
+                # A warning and not a refusal: the box is doing what the
+                # configuration says everywhere it can, and this one interface
+                # is waiting on a decision the operator has already made about
+                # its parent. Said on every commit while it is true, the way
+                # the pool warnings are: it stops the day the parent comes up.
+                print(f"warning: interface {ifname}: left shut down")
+                print_prose(f"the dataplane will not bring a sub-interface up "
+                            f"while its parent is down, and {parent} is shut "
+                            f"down; 'no shutdown' on {parent} brings both up")
+                continue
             if not self.set_admin(ifname, True):
                 return False
 

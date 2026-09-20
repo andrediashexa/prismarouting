@@ -135,6 +135,16 @@ prisma> show interface
   ens18.100                  up     1500   100.64.0.1/22       tap4096.100 ens18.100
 ```
 
+**Se o pai estiver** `**shutdown**`**, a sub-interface fica esperando — e o** `**commit**` **passa assim mesmo.** O VPP não sobe uma sub-interface enquanto a interface-pai está down, então a caixa não tenta e diz isso:
+
+```
+warning: interface ens19.100: left shut down
+    the dataplane will not bring a sub-interface up while its parent is down,
+    and ens19 is shut down; 'no shutdown' on ens19 brings both up
+```
+
+Um `no shutdown` no pai sobe os dois. Até a versão 0.107.0 isso era uma falha de `commit` com a mensagem `unspecified error` - e, como falhar não muda o que a configuração pede, **todo** `commit` seguinte falhava igual, mesmo os que não tinham nada a ver com aquela interface.
+
 **O pai precisa existir.** `interface ens99.100` numa caixa sem `ens99` é recusado no `commit`, nomeando o pai:
 
 ```

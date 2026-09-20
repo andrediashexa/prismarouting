@@ -6,7 +6,7 @@ O diferencial é o **BPA** (*Bloco de Portas Alocadas*): em vez de registrar cad
 
 ## Por que BPA
 
-O Marco Civil (Lei 12.965/2014) exige um ano de guarda de registros de conexão. Log por fluxo em CGNAT gera volume impraticável. Com BPA:
+O Marco Civil (Lei 12.965/2014) exige um ano de guarda de registros de conexão. Log por fluxo em CGNAT gera volume impraticável. Esta caixa **exporta** os registros e não guarda nenhum — quem guarda pelo ano é o coletor. Com BPA:
 
 * **Modo determinístico** — o endereço público e o bloco de portas são *calculados* a partir da definição do pool. Não existe evento de alocação, logo não há o que exportar. A prova entregue a uma autoridade é *"o algoritmo, mais a configuração vigente naquele instante"*.
 * **Modo dinâmico** — o bloco é alocado sob demanda, com um registro IPFIX por alocação (RFC 8158), não por fluxo.

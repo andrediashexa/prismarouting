@@ -241,6 +241,39 @@ expect_in "and the VTY reads it back from the box" "02:aa:bb:cc:dd:ee" \
   "$($HX -c 'show running-config' | sed -n '/^interface pg0$/,/^ exit$/p')"
 
 echo
+echo "=========== a sub-interface of a shut-down parent (#407) ==========="
+# THE BOX THE MAINTAINER COULD NOT COMMIT ON. VPP will not bring a
+# sub-interface up while its super-interface is down, and over the binary API
+# that refusal is VNET_API_ERROR_UNSPECIFIED - so the VTY failed the commit
+# with "unspecified error", and since the desired state does not change by
+# failing, EVERY later commit failed the same way. The commit below is about
+# an address on a different interface, which is exactly the shape it arrived
+# in.
+vppctl create packet-generator interface pg1 >/dev/null 2>&1
+$HX -c "configure" -c "interface pg1" -c "shutdown" -c "exit" \
+    -c "interface pg1.300" -c "vlan 300" -c "exit" -c "commit" \
+    > /tmp/subif-parent.log 2>&1 || true
+sed 's/^/  /' /tmp/subif-parent.log
+PARENT_DOWN=$(vppctl show interface | awk '$1 == "pg1" { print $3 }')
+CHILD_STATE=$(vppctl show interface | awk '$1 == "pg1.300" { print $3 }')
+echo "  pg1 is ${PARENT_DOWN:-<none>}, pg1.300 is ${CHILD_STATE:-<none>}"
+
+# An unrelated commit, on another interface entirely.
+UNRELATED=$($HX -c "configure" -c "interface pg0" \
+            -c "description a commit about something else" \
+            -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$UNRELATED" | sed 's/^/  /'
+
+# And the parent brought up, which is the operator's own decision arriving
+# later. A sub-interface does NOT follow its parent up by itself - measured -
+# so this is the commit that has to carry it.
+PARENT_UP=$($HX -c "configure" -c "interface pg1" -c "no shutdown" \
+            -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$PARENT_UP" | sed 's/^/  /'
+CHILD_AFTER=$(vppctl show interface | awk '$1 == "pg1.300" { print $3 }')
+echo "  pg1.300 after its parent came up: ${CHILD_AFTER:-<none>}"
+
+echo
 echo "=========== removing it through the VTY ==========="
 $HX -c "configure" -c "no interface pg0.100" -c "no interface pg0.700" \
     -c "commit" 2>&1 | sed 's/^/  /'
@@ -248,5 +281,24 @@ IFACES=$(vppctl show interface | awk '{print $1}')
 expect_not_in "the sub-interface is gone from the dataplane" "pg0.100" "$IFACES"
 expect_not_in "the QinQ one too" "pg0.700" "$IFACES"
 expect_in "and its parent is untouched" "pg0" "$IFACES"
+
+# #407, on the box that could not commit.
+expect_in "a sub-interface of a shut-down parent commits" "commit complete" \
+  "$(cat /tmp/subif-parent.log)"
+expect_in "and says the child was left shut down" "left shut down" \
+  "$(cat /tmp/subif-parent.log)"
+expect_in "naming the parent that has to come up first" \
+  "on pg1 brings both up" "$(cat /tmp/subif-parent.log)"
+expect "and the child really is down on the dataplane" \
+  test "${CHILD_STATE:-x}" = down
+# THE ASSERTION THIS IS ALL FOR: a commit about something else works.
+expect_in "a commit about another interface is not failed by it" \
+  "commit complete" "$UNRELATED"
+expect_not_in "and says nothing about the dataplane refusing anything" \
+  "unspecified error" "$UNRELATED"
+# And the wait ends when the maintainer's own decision arrives.
+expect_in "bringing the parent up commits" "commit complete" "$PARENT_UP"
+expect "and the child comes up with it, which it does not do by itself" \
+  test "${CHILD_AFTER:-x}" = up
 
 verdict

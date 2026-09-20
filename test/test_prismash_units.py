@@ -2572,6 +2572,30 @@ sh = shell(dp=Dp({"show interface": (1, "")}))
 check(sh.device_admin_down() == set(), "cannot be asked is nothing down")
 ok("an admin state read off the table, the null interface excepted")
 
+print("\n=== a sub-interface down because its parent is (#407) ===")
+# Mutation shown red: the two readings made one again, either way round. With
+# the filter in the raw one, nothing ever brings the child up - the delta is of
+# two configurations and neither holds it. Without the filter in the
+# configuration one, the box writes a `shutdown` nobody typed, the candidate
+# says the interface is meant to be down, and the parent coming up leaves the
+# child behind for a reason nothing on the screen explains.
+DOWN_PAIR = (IFACES
+             + "pg1.300                           5     down          0/0/0/0\n"
+             + "pg0.100                           6     down          0/0/0/0\n")
+sh = shell(dp=Dp({"show interface": DOWN_PAIR}))
+check(sh.device_admin_down_raw() == {"pg1", "pg1.300", "pg0.100"},
+      f"the raw reading is every interface the device has down: "
+      f"{sh.device_admin_down_raw()!r}")
+check(sh.device_admin_down() == {"pg1", "pg0.100"},
+      f"and the configuration one leaves out the child of a down parent, "
+      f"while keeping the child of an UP one: {sh.device_admin_down()!r}")
+check("pg1" in sh.device_admin_down(),
+      "the parent's own shutdown is still a statement somebody made")
+sh = shell(dp=Dp({"show interface": (1, "")}))
+check(sh.device_admin_down_raw() == set(),
+      "and a dataplane that cannot be asked is nothing down, in both")
+ok("two readings of one table, and the difference between them")
+
 print("\n=== Shell.device_urpf: the interfaces that HAVE it, by mode ===")
 # Mutation shown red: "off" accepted as a mode.
 sh = shell(dp=Dp({"show bpa urpf": "interface mode\npg0 strict\npg1 loose\n"
