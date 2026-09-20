@@ -1,4 +1,33 @@
-/* bpa_cli.c - debug CLI for BPA pools. */
+/*
+ * bpa_cli.c - debug CLI for BPA pools.
+ *
+ * WHY EVERY FUNCTION HERE CARRIES `not a unit:` (#390). The rule this
+ * repository set is that every function has a unit test and a reader refuses
+ * the one that has none. This file is the rendering half of the plugin, and
+ * the maintainer's decision - both answers, split by file - puts it on the
+ * other side of that line from `bpa_session.c` and the datapath:
+ *
+ *   * a VLIB_CLI_COMMAND body takes an `unformat_input_t` the CLI fills. There
+ *     is no plain-cc stand-in for VPP's parser, and building one would be
+ *     writing a second parser to test the first against.
+ *   * a format function takes a `va_list` and appends through `format()`,
+ *     which is VPP's own vector printer.
+ *   * the two helpers that take a `vlib_main_t` write into the CLI's buffer
+ *     through `vlib_cli_output()`.
+ *
+ * WHAT STILL HOLDS THEM, because an excuse is only honest beside the check it
+ * leans on: `test/test_plugin_cli_says.py` requires every message this file
+ * can print to be named by a lab, a suite or a document, and the labs capture
+ * those screens on a running box. A wrong sentence here is caught there; what
+ * is NOT caught is arithmetic, and the functions in this file that do
+ * arithmetic - `bpa_top_cmp`, `bpa_counter_total`, the subscriber lookups -
+ * are deliberately NOT excused. They are waiting for the harness built against
+ * the real VPP, which is the other half of the same decision.
+ *
+ * The marker on each one says which of the three classes it is and points
+ * here, rather than repeating this paragraph forty-one times: an excuse
+ * nobody reads is an allowlist, which is what the rule was written against.
+ */
 
 #include <time.h>
 
@@ -13,6 +42,7 @@
 #include <vnet/fib/fib_table.h>
 #include <vnet/ipfix-export/flow_report.h>
 
+/* not a unit: a VPP format function over a va_list - see the header */
 u8 *
 format_bpa_policy (u8 *s, va_list *args)
 {
@@ -21,6 +51,7 @@ format_bpa_policy (u8 *s, va_list *args)
 		 p == BPA_POLICY_INTERLEAVED ? "interleaved" : "blocked");
 }
 
+/* not a unit: a VPP format function over a va_list - see the header */
 u8 *
 format_bpa_proto (u8 *s, va_list *args)
 {
@@ -46,6 +77,7 @@ format_bpa_proto (u8 *s, va_list *args)
 /* The whole mask at once: "ftp on rtsp off pptp on esp on sip on". One line an
  * operator can read, rather than one line per ALG that has to be assembled by
  * eye. */
+/* not a unit: a VPP format function over a va_list - see the header */
 u8 *
 format_bpa_alg (u8 *s, va_list *args)
 {
@@ -62,6 +94,7 @@ format_bpa_alg (u8 *s, va_list *args)
     return s;
 }
 
+/* not a unit: a VPP format function over a va_list - see the header */
 u8 *
 format_bpa_mode (u8 *s, va_list *args)
 {
@@ -71,6 +104,7 @@ format_bpa_mode (u8 *s, va_list *args)
 }
 
 /* Renders a host-order address the way the rest of VPP prints v4. */
+/* not a unit: a VPP format function over a va_list - see the header */
 static u8 *
 format_bpa_addr (u8 *s, va_list *args)
 {
@@ -123,6 +157,7 @@ bpa_attachments (int *inside, int *outside)
     }
 }
 
+/* not a unit: a VPP format function over a va_list - see the header */
 static u8 *
 format_bpa_addr_set (u8 *s, va_list *args)
 {
@@ -135,6 +170,7 @@ format_bpa_addr_set (u8 *s, va_list *args)
   return s;
 }
 
+/* not a unit: a VPP format function over a va_list - see the header */
 u8 *
 format_bpa_pool (u8 *s, va_list *args)
 {
@@ -422,6 +458,7 @@ bpa_static_clause (bpa_pool_t *cfg, u8 proto, u32 port_pub,
   return 0;
 }
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
@@ -942,6 +979,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
   .is_mp_safe = 1,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			  vlib_cli_command_t *cmd)
@@ -1003,6 +1041,7 @@ VLIB_CLI_COMMAND (bpa_show_pool_command, static) = {
   .function = bpa_show_pool_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			  vlib_cli_command_t *cmd)
@@ -1069,6 +1108,7 @@ VLIB_CLI_COMMAND (bpa_interface_command, static) = {
   .function = bpa_interface_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_session_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			     vlib_cli_command_t *cmd)
@@ -1237,6 +1277,7 @@ bpa_subscriber_pool (bpa_main_t *bm, u32 host, u32 *pool_index, u32 *sub_idx)
   return found ? 0 : -1;
 }
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
 				vlib_cli_command_t *cmd)
@@ -1396,6 +1437,7 @@ VLIB_CLI_COMMAND (bpa_show_subscriber_command, static) = {
  * NOW - the block was somebody else's yesterday, and only the RFC 8158 log
  * says whose.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 				 vlib_cli_command_t *cmd)
@@ -1548,6 +1590,7 @@ bpa_top_cmp (void *a, void *b)
  * - not one per session. On a box with 200k subscribers and millions of
  * sessions those differ by three orders of magnitude.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_top_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
@@ -1658,6 +1701,7 @@ static u8 bpa_out2in_is_drop[] = {
 #undef _
 };
 
+/* not a unit: it renders through vlib_cli_output() - see the header */
 static u64
 bpa_counter_total (vlib_main_t *vm, vlib_node_t *n, u32 i)
 {
@@ -1678,6 +1722,7 @@ bpa_counter_total (vlib_main_t *vm, vlib_node_t *n, u32 i)
   return total;
 }
 
+/* not a unit: it renders through vlib_cli_output() - see the header */
 static void
 bpa_show_drops_node (vlib_main_t *vm, u32 node_index, const char *label,
 		     const u8 *is_drop, u32 n_is_drop)
@@ -1727,6 +1772,7 @@ bpa_show_drops_node (vlib_main_t *vm, u32 node_index, const char *label,
     }
 }
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_drops_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			   vlib_cli_command_t *cmd)
@@ -1785,6 +1831,7 @@ VLIB_CLI_COMMAND (bpa_show_drops_command, static) = {
  *
  * "none" empties it, which is how a bypass is removed.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_bypass_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       vlib_cli_command_t *cmd)
@@ -1857,6 +1904,7 @@ VLIB_CLI_COMMAND (bpa_bypass_command, static) = {
   .function = bpa_bypass_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_limits_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       vlib_cli_command_t *cmd)
@@ -1911,6 +1959,7 @@ VLIB_CLI_COMMAND (bpa_limits_command, static) = {
   .function = bpa_limits_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_mss_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		    vlib_cli_command_t *cmd)
@@ -1976,6 +2025,7 @@ done:
   return error;
 }
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_filter_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       vlib_cli_command_t *cmd)
@@ -2044,6 +2094,7 @@ VLIB_CLI_COMMAND (bpa_filter_command, static) = {
  * The public ADDRESS is not asked for and cannot be given: it is the
  * subscriber's own, the one the pool's arithmetic assigns. See bpa_static_t.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_forward_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			vlib_cli_command_t *cmd)
@@ -2152,6 +2203,7 @@ VLIB_CLI_COMMAND (bpa_forward_command, static) = {
  * One line per interface, "<name> <mode>", which is what a machine reads and
  * what an operator can also make sense of.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_urpf_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			  vlib_cli_command_t *cmd)
@@ -2190,6 +2242,7 @@ VLIB_CLI_COMMAND (bpa_show_urpf_command, static) = {
   .function = bpa_show_urpf_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_forward_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			     vlib_cli_command_t *cmd)
@@ -2253,6 +2306,7 @@ VLIB_CLI_COMMAND (bpa_show_forward_command, static) = {
  * from the session, not from this switch - so it stops new rewrites without
  * breaking the connections it already touched.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		    vlib_cli_command_t *cmd)
@@ -2328,6 +2382,7 @@ VLIB_CLI_COMMAND (bpa_alg_command, static) = {
   .function = bpa_alg_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
@@ -2364,6 +2419,7 @@ VLIB_CLI_COMMAND (bpa_show_alg_command, static) = {
  * marked. The mark matters as much as the number: an operator who does not
  * know to ask cannot find out that a value is unusual.
  */
+/* not a unit: it renders through vlib_cli_output() - see the header */
 static void
 bpa_timeouts_show (vlib_main_t *vm, const bpa_timeouts_t *t, const char *what)
 {
@@ -2383,6 +2439,7 @@ bpa_timeouts_show (vlib_main_t *vm, const bpa_timeouts_t *t, const char *what)
   vlib_cli_output (vm, "  %-16s %6u", "alg-expect", t->alg_expect);
 }
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			      vlib_cli_command_t *cmd)
@@ -2408,6 +2465,7 @@ VLIB_CLI_COMMAND (bpa_show_timeouts_command, static) = {
   .function = bpa_show_timeouts_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
@@ -2474,6 +2532,7 @@ VLIB_CLI_COMMAND (bpa_timeouts_command, static) = {
   .function = bpa_timeouts_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			    vlib_cli_command_t *cmd)
@@ -2636,6 +2695,7 @@ VLIB_CLI_COMMAND (bpa_show_blocks_command, static) = {
   .function = bpa_show_blocks_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_holddown_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
@@ -2659,6 +2719,7 @@ VLIB_CLI_COMMAND (bpa_holddown_command, static) = {
   .function = bpa_holddown_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			vlib_cli_command_t *cmd)
@@ -2696,6 +2757,7 @@ VLIB_CLI_COMMAND (bpa_logging_command, static) = {
  * window in which the log says a block is free while it is held; the
  * alternative is an unbounded one in which it says so for ever.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_stop_drain_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			   vlib_cli_command_t *cmd)
@@ -2742,6 +2804,7 @@ VLIB_CLI_COMMAND (bpa_stop_drain_command, static) = {
   .is_mp_safe = 1,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			     vlib_cli_command_t *cmd)
@@ -2865,6 +2928,7 @@ VLIB_CLI_COMMAND (bpa_show_logging_command, static) = {
  * no longer be a single prefix. For the configuration to be readable back, it
  * has to come out as prefixes again.
  */
+/* not a unit: a VPP format function over a va_list - see the header */
 static u8 *
 format_bpa_range_as_prefixes (u8 *s, va_list *args)
 {
@@ -2898,6 +2962,7 @@ format_bpa_range_as_prefixes (u8 *s, va_list *args)
   return s;
 }
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			    vlib_cli_command_t *cmd)
@@ -3106,6 +3171,7 @@ VLIB_CLI_COMMAND (bpa_show_config_command, static) = {
   .function = bpa_show_config_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_logging_tcp_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			    vlib_cli_command_t *cmd)
@@ -3143,6 +3209,7 @@ VLIB_CLI_COMMAND (bpa_logging_tcp_command, static) = {
  * a refusal at configuration time, where it can be acted on, rather than a
  * log a collector silently misparses for a year.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_logging_syslog_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			       vlib_cli_command_t *cmd)
@@ -3197,6 +3264,7 @@ bpa_logging_syslog_command_fn (vlib_main_t *vm, unformat_input_t *input,
  * personal data, and its presence in the log is the reason the log is
  * protected.
  */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_identity_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
@@ -3219,6 +3287,7 @@ VLIB_CLI_COMMAND (bpa_identity_command, static) = {
   .function = bpa_identity_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_identity_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			      vlib_cli_command_t *cmd)
@@ -3269,6 +3338,7 @@ VLIB_CLI_COMMAND (bpa_logging_syslog_command, static) = {
   .function = bpa_logging_syslog_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_sessions_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)

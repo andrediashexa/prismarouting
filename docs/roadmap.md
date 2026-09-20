@@ -2879,6 +2879,29 @@ function it holds; the reader's floor moves down with every batch and never
 up. The rename ([#202](https://github.com/andrediashexa/hexarouting/issues/202))
 ships after it, alone.
 
+**Where it stands.** The reader shipped and batches A to I brought every
+Python and shell function to zero and every C function a plain-cc harness can
+reach with it. What was left was 171 C functions behind the VPP boundary, and
+they are not one population - which is why the maintainer's answer, delegated
+and recorded on the issue, was **both**, split by file: the datapath and
+`bpa_session.c` get a harness built against the real VPP, and `bpa_cli.c`'s
+rendering half is excused at its definitions, because a wrong sentence there
+is already caught by `test_plugin_cli_says.py` and by the labs that capture
+the screens on a running box.
+
+**Step 1 of that is done**: forty-one functions in `bpa_cli.c` - thirty
+`VLIB_CLI_COMMAND` bodies, eight format functions over a `va_list` and two
+that write through `vlib_cli_output()` - carry the marker with the class they
+belong to, and the argument is made once in that file's header rather than
+forty-one times in the report. The ceiling went 171 to 130. The arithmetic in
+the same file is deliberately **not** excused and waits for the harness. Step
+2, the reader learning to print the four states apart, it already half does:
+it says how many of the untested are behind the VPP boundary and how many a
+plain-cc harness could reach. Steps 3 and 4 - `make test-plugin-vpp`, starting
+with `bpa_session.c`'s arithmetic, then the datapath - are the work that is
+left, and they need the dev container rather than `make test`, so the ceiling
+they lower is a different ceiling.
+
 **And two the stride work uncovered, both open**
 ([#375](https://github.com/andrediashexa/hexarouting/issues/375),
 [#376](https://github.com/andrediashexa/hexarouting/issues/376)).

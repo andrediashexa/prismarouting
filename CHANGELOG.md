@@ -79,6 +79,37 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The rendering half of the plugin says why it is not a unit, and the
+  reader reads the whole reason.** [#390](https://github.com/andrediashexa/hexarouting/issues/390)'s
+  rule is that every function has a unit test or says at its definition why it
+  cannot be one. 171 C functions were behind the VPP boundary with no marker,
+  and they are not one population - so the answer recorded on the issue was
+  both, split by file.
+
+  Step one of it: `bpa_cli.c`'s forty-one rendering functions carry the marker
+  now - thirty `VLIB_CLI_COMMAND` bodies whose argument is an
+  `unformat_input_t` the CLI fills, eight format functions over a `va_list`,
+  and two that write through `vlib_cli_output()`. Each says which class it
+  belongs to; the argument is made **once**, in that file's header, because an
+  excuse repeated forty-one times in a report is an allowlist, which is what
+  the rule was written against. What holds them instead is named there too:
+  `test_plugin_cli_says.py` requires every message the file can print to be
+  named by a lab, a suite or a document, and the labs capture those screens on
+  a running box.
+
+  The arithmetic in the same file - the comparator, the counter total, the
+  subscriber lookups - is deliberately **not** excused. It waits for the
+  harness built against the real VPP, which is the other half of the decision.
+
+  The C ceiling goes 171 to 130.
+
+* **An excuse that wrapped read as a fragment.** The reader took the reason to
+  be the rest of the marker's own line, so a comment wrapped the way every
+  other comment in these files is wrapped printed as *"a VPP format function:
+  its argument is a va_list and it"*. The reason is the whole comment block
+  now. An excuse nobody can weigh is the thing the reason exists to prevent.
+
+
 ## 0.110.0 - what an operator can type, checked at both doors
 
 [#411](https://github.com/andrediashexa/hexarouting/issues/411), [#412](https://github.com/andrediashexa/hexarouting/issues/412), [#413](https://github.com/andrediashexa/hexarouting/issues/413), [#414](https://github.com/andrediashexa/hexarouting/issues/414), [#415](https://github.com/andrediashexa/hexarouting/issues/415), [#416](https://github.com/andrediashexa/hexarouting/issues/416), [#417](https://github.com/andrediashexa/hexarouting/issues/417).
