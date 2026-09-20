@@ -383,6 +383,10 @@ minutes of a release go.
 | **Z** | only what the upgrade artifact carries | `vX.Y.Z`, always | a **pre-release** carrying the artifact and its `sha256`, **no ISO** | `make test`, green |
 | **Y** or **X** | anything else | `vX.Y.0` | a full release: the medium, the artifact, and both `sha256` | the full `tools/release-gate.sh` |
 
+`tools/release-gate.sh` reads the digit off the tag and takes the matching
+path, and refuses the two ways of getting a Z wrong: a note claiming the medium
+was built and booted, and a change to something the artifact cannot carry.
+
 **A Z release is tagged and published as a PRE-RELEASE.** Tagged, because a
 version that exists on a box has to exist in the history —
 `gh release create vX.Y.Z --prerelease`. Pre-release, because GitHub then

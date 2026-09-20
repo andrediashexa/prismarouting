@@ -53,7 +53,9 @@ git -C "$WORK" checkout -q "$TAG" 2>/dev/null || {
 STAMP=$(sh "$WORK/tools/version-stamp.sh" "$WORK")
 NAME=$(sh "$WORK/tools/version-stamp.sh" --filename "$WORK")
 echo "    stamp: $STAMP"
-echo "    image: $NAME"
+# The name is printed where the KIND is known, below: a patch release builds no
+# image at all, and a line announcing one it will not produce is the first
+# sentence of the run and the wrong one.
 
 # The refusal that makes this a gate rather than a script. A release image
 # whose name carries a commit, "dirty" or "unverified" is by definition not
@@ -76,6 +78,32 @@ esac
 # a tree whose VERSION says 0.26.0 produces an image called 0.26.0, published
 # under a release called 0.27.0.
 VER=$(tr -d '[:space:]' < "$WORK/VERSION")
+
+# WHICH DIGIT MOVED, because the answer decides what this release has to prove
+# (#410). CONTRIBUTING.md section 5: a Z publishes the upgrade artifact and no
+# medium and proves itself with `make test`; an X or Y publishes the medium and
+# takes every step below.
+#
+# Against the PREVIOUS TAG and not against a guess at the shape: `0.109.1` is a
+# Z only because `0.109.0` came before it, and the first tag of a new minor is
+# an X or Y however it is spelled. The previous tag is the one this release's
+# operators are coming FROM, which is the same tag the upgrade step measures.
+PREV_TAG=$(git -C "$WORK" tag --sort=v:refname | awk -v t="$TAG" '
+  $0 == t { exit } { p = $0 } END { print p }')
+KIND=medium
+if [ -n "$PREV_TAG" ]; then
+  _pv=${PREV_TAG#v}
+  if [ "${_pv%.*}" = "${VER%.*}" ] && [ "$_pv" != "$VER" ]; then
+    KIND=patch
+  fi
+fi
+if [ "$KIND" = patch ]; then
+  echo "    $TAG moves only the patch digit over $PREV_TAG: no medium is built"
+  echo "    artifact: prisma-routing-$VER-upgrade.tar.gz"
+else
+  echo "    $TAG moves the minor or major digit: the medium is built and booted"
+  echo "    image: $NAME"
+fi
 if [ "$TAG" != "v$VER" ]; then
   echo "error: tag $TAG is on a tree whose VERSION is $VER." >&2
   echo "       The image would be called prisma-routing-$VER.iso and published" >&2
@@ -159,7 +187,21 @@ note=$(git -C "$WORK" tag -l --format="%(contents)" "$TAG")
 # Paragraphs joined onto single lines: awk prints a newline only where a blank
 # line was, and spaces elsewhere.
 folded=$(printf '%s\n' "$note" | awk 'BEGIN{s=""} /^[[:space:]]*$/{if(s!=""){print s; s=""}; next} {s = (s=="" ? $0 : s " " $0)} END{if(s!="")print s}')
-if ! printf '%s\n' "$folded" | grep -qiE "built.*booted.*installed.*(again|second)"; then
+if [ "$KIND" = patch ]; then
+  # THE MIRROR IMAGE, and it is the refusal a patch release needs most. A Z
+  # builds no medium, so a note that says it was built, booted and installed
+  # is a claim about something that did not happen - and it is the easiest
+  # mistake there is to make, because the sentence is in the note of every
+  # release before it and notes are written by copying the last one.
+  if printf '%s\n' "$folded" | grep -qiE "built.*booted.*installed.*(again|second)"; then
+    echo "error: the release note for $TAG claims the medium was built," >&2
+    echo "       booted, installed and booted again. This release moves only" >&2
+    echo "       the patch digit, so no medium is built and none of that" >&2
+    echo "       happened. Say what a patch release proves instead: the" >&2
+    echo "       suites, and the artifact an operator installs." >&2
+    exit 1
+  fi
+elif ! printf '%s\n' "$folded" | grep -qiE "built.*booted.*installed.*(again|second)"; then
   echo "error: the release note for $TAG does not record that the medium was" >&2
   echo "       built, booted, installed and booted again." >&2
   echo "       CONTRIBUTING.md section 5 requires the note to say it, because" >&2
@@ -246,7 +288,15 @@ fi
 # section, which the rule below forbids. That would be a gate nobody can pass,
 # and a gate nobody can pass is one somebody switches off. What to do about
 # 0.66.0 is the maintainer's call, recorded in #274.
-prev=$(git -C "$WORK" tag -l "v*" --sort=-v:refname | grep -v "^$TAG\$" | head -1)
+# THE TAG BELOW THIS ONE, and not merely the newest other tag. Sorted
+# ascending and stopped at $TAG: a release cannot be expected to carry the
+# CHANGELOG section of a release that came AFTER it, and taking the newest
+# other tag said exactly that the moment the gate was run against anything but
+# the newest - a false refusal, on a tree that is fine, about a section that
+# could not be there. Found by test/test_release_gate.sh once its cases moved
+# to the newest MINOR tag (#410).
+prev=$(git -C "$WORK" tag -l "v*" --sort=v:refname \
+       | awk -v t="$TAG" '$0 == t { exit } { p = $0 } END { print p }')
 if [ -n "$prev" ]; then
   prev_ver=${prev#v}
   cur_sect=$(awk -v v="## $prev_ver" '
@@ -593,11 +643,91 @@ if [ "$docs_bad" != 0 ]; then
   exit 1
 fi
 
+# A PATCH RELEASE MUST NOT CHANGE WHAT ONLY THE MEDIUM CARRIES (#410).
+#
+# Here and not with the patch path below, because this is a shape rather than a
+# build: it reads a diff, it costs nothing, and the seam under it exists so
+# that a check nobody can exercise without a 321 MB image is not where the
+# rules live. Driven by test/test_release_gate.sh for exactly that reason.
+#
+# The files named are the ones the upgrade artifact does not carry, so a box
+# that took such a patch would not have the change and nothing would say so.
+# appliance/install.sh is in the list although the artifact DOES run it: what
+# the artifact cannot deliver is the partitioning and the bootloader half,
+# which runs once from the medium - and a rule that admits "part of this file"
+# is a rule nobody can apply.
+if [ "$KIND" = patch ] && [ -n "$PREV_TAG" ]; then
+  medium_only=$(git -C "$WORK" diff --name-only "$PREV_TAG" "$TAG" | grep -E \
+    '^(appliance/build-iso\.sh|appliance/install\.sh|build/|CMakeLists\.txt)' \
+    || true)
+  if [ -n "$medium_only" ]; then
+    echo "error: $TAG moves only the patch digit, and it changes files that" >&2
+    echo "       exist only on the medium. The upgrade artifact does not" >&2
+    echo "       carry them, so a box that took this patch would not have" >&2
+    echo "       the change and nothing would say so. Cut it as a minor:" >&2
+    printf '%s\n' "$medium_only" | sed 's/^/         /' >&2
+    exit 1
+  fi
+fi
+
 # The same seam the installer has, and for the same reason: the checks above
 # are what make this a gate, and a check that can only be exercised by building
 # a 321 MB image is a check nobody exercises.
 if [ "${RELEASE_GATE_CHECK_ONLY:-0}" = 1 ]; then
-  echo "==> check only: $NAME verifies as $TAG, nothing was built"
+  if [ "$KIND" = patch ]; then
+    echo "==> check only: $TAG verifies as a patch release, nothing was built"
+  else
+    echo "==> check only: $NAME verifies as $TAG, nothing was built"
+  fi
+  exit 0
+fi
+
+# ---------------------------------------------------------- the patch path
+#
+# A Z release publishes the upgrade artifact and no medium, and what proves it
+# is `make test` (#410, and CONTRIBUTING.md section 5). Everything below this
+# block builds, boots and installs a medium, and none of it applies.
+#
+# WHAT IS REFUSED HERE is the thing the rule cannot enforce by being written
+# down: a patch that changes something the artifact does not carry. Such a
+# patch would be installed onto a box as a no-op while the operator believes
+# they took it - the kernel, the pinned VPP and FRR, the ISO build, the
+# partitioning and the bootloader all live only on the medium.
+#
+# The third category is neither: test/, lab/, ref/ and the contributor
+# documents ship nowhere at all, so no box can disagree with them.
+if [ "$KIND" = patch ]; then
+  echo "==> the suites, which are what a patch release proves"
+  ( cd "$WORK" && make test ) > "$WORK/maketest.log" 2>&1 || {
+    echo "error: make test is not green on $TAG, and it is the whole of" >&2
+    echo "       what this release proves." >&2
+    grep -E "FAIL|FAILURES" "$WORK/maketest.log" | head -10 >&2
+    echo "       full run: $WORK/maketest.log" >&2
+    exit 1
+  }
+  grep -E "^  [0-9]+ suites:" "$WORK/maketest.log" | sed 's/^/    /'
+
+  echo "==> building the plugin"
+  sh "$WORK/tools/build.sh" plugin >/dev/null
+
+  echo "==> building the upgrade artifact"
+  ( cd "$WORK" && sh appliance/build-upgrade.sh ) > "$WORK/upgrade.log" 2>&1 || {
+    echo "error: the upgrade artifact could not be built." >&2
+    tail -20 "$WORK/upgrade.log" >&2
+    exit 1
+  }
+  ART=$(ls "$WORK"/prisma-routing-*-upgrade.tar.gz 2>/dev/null | head -1)
+  [ -f "$ART" ] || { echo "error: no upgrade artifact was produced" >&2; exit 1; }
+
+  echo
+  echo "==> $(basename "$ART") is ready to publish, as a PRE-RELEASE"
+  echo "    $ART"
+  echo "    sha256 $(sha256sum "$ART" | cut -d" " -f1)"
+  echo
+  echo "    NO BOX WAS INSTALLED for this release, and that is what the"
+  echo "    pre-release label is for: a patch is proven on a box at the next"
+  echo "    minor, when the gate upgrades from the newest published release."
+  echo "    gh release create $TAG --prerelease"
   exit 0
 fi
 

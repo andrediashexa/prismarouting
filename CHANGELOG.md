@@ -79,6 +79,32 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The gate knows which digit moved**
+  ([#410](https://github.com/andrediashexa/hexarouting/issues/410)). The X.Y.Z
+  rule shipped as prose in 0.109.0 and the gate had one path, so the first
+  patch release had to be cut by hand — and cutting it turned `make test` red,
+  because two suites drive the gate against the newest tag and the gate
+  refused a correct Z for not claiming a boot it never performed. A rule with
+  no reader is a comment, and this one was red inside an hour.
+
+  `tools/release-gate.sh` now reads the digit off the tag against the tag below
+  it, says which path it is on, and for a **Z** runs the document checks, runs
+  `make test`, builds the plugin and the artifact, and stops — printing that no
+  box was installed and that the release is published as a pre-release. It
+  refuses the two ways of getting a Z wrong: a note that claims the medium was
+  built, booted and installed, and a change to something the upgrade artifact
+  cannot carry.
+
+  `test/test_release_gate.sh` drives all three of those, and its medium cases
+  moved to the newest **minor** tag — from a patch tag they were measuring the
+  wrong procedure and calling it a pass.
+
+* **The gate refused an older tag for carrying no section of a newer one.** It
+  compared the CHANGELOG against the newest OTHER tag rather than the tag below
+  the one being built, so running it against anything but the newest release
+  failed on a section that could not be there. Found the moment the suite's
+  cases moved off the newest tag.
+
 ## 0.109.1 - an entry point, and every commit is announced
 
 ### Added
