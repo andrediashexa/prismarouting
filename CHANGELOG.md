@@ -77,7 +77,43 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A reader that puts the box's own answers back through the box's own
+  parser** ([#419](https://github.com/andrediashexa/hexarouting/issues/419)).
+  `test/test_a_readback_survives.py`, plus the direct form of it on an
+  installed box in `lab/install-iso.sh`: the box **saves its own
+  configuration and loads it back**, and the lab fails if `--load` refuses the
+  file the box just wrote.
+
+  The rule is
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357)'s,
+  generalised: *a value the box can report MUST survive `text()` and
+  `parse()`. A range belongs at the prompt, where a request is made; the file
+  parser reads facts and refuses only what it cannot parse.*
+
 ### Fixed
+
+* **Five values a box can report were refused by its own parser, and a saved
+  file carrying one is a box that comes up with no configuration**
+  ([#419](https://github.com/andrediashexa/hexarouting/issues/419)). All five
+  shipped in 0.110.0 and all five are mine: `mtu` outside 576-9216
+  ([#417](https://github.com/andrediashexa/hexarouting/issues/417)), an
+  interface `vrf` above the prompt's range, a `description` carrying a control
+  character ([#416](https://github.com/andrediashexa/hexarouting/issues/416)),
+  and the broadcast and multicast MACs
+  ([#414](https://github.com/andrediashexa/hexarouting/issues/414)).
+
+  **#417's argument was wrong in one specific way.** It said `Config.parse`
+  sees only a saved file, and a file is a request. The second half does not
+  follow: a saved file is **written from** the readback, so it carries facts.
+  `prisma-routing.service` hands that file to `--load` at every boot and
+  `--load` refuses a file **whole**.
+
+  The ranges and the two MAC policy rules are the prompt's now; the parser
+  keeps the shapes, which no readback can violate. Each difference is declared
+  in `config.DOORS_DIFFER` with its reason, and
+  [#417](https://github.com/andrediashexa/hexarouting/issues/417)'s reader
+  reads that declaration — it went red on all five before they were declared,
+  which is what it is for.
 
 ## 0.110.0 - what an operator can type, checked at both doors
 

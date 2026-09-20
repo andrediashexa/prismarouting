@@ -975,7 +975,7 @@ class Pool:
         return isinstance(other, Pool) and self.lines() == other.lines()
 
 
-def mac_error(value: str):
+def mac_error(value: str, request: bool = True):
     """
     None if `value` is a MAC an interface can answer to, else why not.
 
@@ -1016,6 +1016,15 @@ def mac_error(value: str):
                 c not in "0123456789abcdefABCDEF" for c in octet):
             return (f"mac-address '{value}': '{octet}' is not a hex octet",
                     "each octet is one or two hexadecimal digits")
+    if not request:
+        # A FACT, and the shape is all that can be asked of it. `device_macs`
+        # reads l2_address out of sw_interface_dump, which is six bytes and
+        # carries no opinion about what they are - so a box whose port really
+        # holds a multicast MAC would have `save` write it and `--load` refuse
+        # the whole file, and the box would come up with no configuration at
+        # all. That is the #357 rule and it is why the two rules below are the
+        # prompt's (#419).
+        return None
     if all(int(o, 16) == 0xff for o in parts):
         return ("mac-address ff:ff:ff:ff:ff:ff: that is the broadcast address",
                 "an interface answering to it answers to every frame on the "
@@ -1150,7 +1159,7 @@ TEXT_LIMITS = {
 }
 
 
-def text_error(what: str, value: str):
+def text_error(what: str, value: str, request: bool = True):
     """
     None if `value` fits the field it travels in and carries no control
     characters, else why not, in rows.
@@ -1180,7 +1189,13 @@ def text_error(what: str, value: str):
         # table does not bound is a bug, and a quiet None would answer "fine".
         raise KeyError(what)
     limit, source = TEXT_LIMITS[what]
-    for ch in value:
+    # THE CONTROL CHARACTER IS THE PROMPT'S RULE. An interface tag is six-four
+    # bytes of whatever a byte can be, and `device_descriptions` reports what
+    # the box holds - so refusing one in the parser means `save` writing a
+    # file that `--load` refuses whole, and a box with no configuration (#419).
+    # The LENGTH stays at both doors: the field cannot hold more than its own
+    # width, so no readback can exceed it.
+    for ch in (value if request else ""):
         if unicodedata.category(ch) in ("Cc", "Cf", "Cs"):
             return (f"{what}: a control character is not text",
                     f"{ch!r} is read back to a console by "
@@ -1217,12 +1232,33 @@ def text_why(refusal) -> str:
 #: output always answers yes to.
 DOORS_DIFFER = {
     "pool numbers": (
-        tuple(sorted(Pool.RANGES)),
+        "pool", tuple(sorted(Pool.RANGES)),
         "the file parser also reads `show bpa config`, where a number outside "
         "the range the prompt enforces is a fact about a running box rather "
         "than a request (#357). The shape is checked at both doors; the range "
         "is not."),
+    "interface mtu and vrf": (
+        "interface", ("mtu", "vrf"),
+        "a saved file is WRITTEN FROM the readback - `running_config` fills "
+        "these from `device_mtus()` and `device_vrfs()` - so a value outside "
+        "the range the prompt offers, on a box that really has one, would be "
+        "written by `save` and refuse the whole file at the next boot. #417 "
+        "bounded them here and #419 took the bound back out."),
+    "interface mac-address": (
+        "interface", ("mac-address",),
+        "the SHAPE is checked at both doors and the two policy rules - not "
+        "the broadcast address, and the group bit clear - are the prompt's. "
+        "`device_macs` reads six bytes out of sw_interface_dump and carries "
+        "no opinion about what they are, so a port that really holds a "
+        "multicast MAC must still round-trip through `save` (#419)."),
+    "interface description": (
+        "interface", ("description",),
+        "the LENGTH is checked at both doors, because the field cannot hold "
+        "more than its own width. The control-character rule is the prompt's: "
+        "an interface tag is 64 bytes of whatever a byte can be, and refusing "
+        "one in the parser would refuse a file the box itself wrote (#419)."),
 }
+
 
 
 def prefix_error(what: str, value: str):
@@ -2454,12 +2490,16 @@ class Config:
                     # `running_config` fills `cfg.mtus` from `device_mtus()`
                     # directly. So this parser sees only a saved file, and a
                     # file is a request like anything an operator types.
-                    if not MTU_MIN <= int(w[1]) <= MTU_MAX:
-                        cfg.unknown.append(
-                            (lineno, s, f"mtu {w[1]}: expected "
-                                        f"{MTU_MIN}-{MTU_MAX}"))
-                    else:
-                        cfg.mtus[iface] = int(w[1])
+                    # NOT BOUNDED HERE, and #417 had this wrong. The
+                    # argument then was that `running_config` fills
+                    # `cfg.mtus` from `device_mtus()` directly, so this
+                    # parser only ever sees a saved file - and a file is a
+                    # request. The second half does not follow: a saved file
+                    # is WRITTEN FROM the readback, so it carries facts. An
+                    # MTU outside the range the prompt offers, on a box that
+                    # really has one, would be written by `save` and refuse
+                    # the whole file at the next boot (#419).
+                    cfg.mtus[iface] = int(w[1])
                 elif w[0] == "linux-name" and len(w) > 1:
                     # Refused here rather than at commit, because the message
                     # an operator gets from the dataplane for this is a bare
@@ -2473,7 +2513,7 @@ class Config:
                 elif s == "no linux-name":
                     cfg.linux_names.pop(iface, None)
                 elif w[0] == "mac-address" and len(w) > 1:
-                    why = mac_error(w[1])
+                    why = mac_error(w[1], request=False)
                     if why:
                         cfg.unknown.append((lineno, s, mac_why(why)))
                     else:
@@ -2491,11 +2531,7 @@ class Config:
                     # Bounded here for the reason `mtu` above is: an
                     # interface's VRF is filled from `device_vrfs()` and not
                     # from this parser, so a file is the only thing it reads.
-                    if int(w[1]) > IFACE_VRF_MAX:
-                        cfg.unknown.append(
-                            (lineno, s, f"vrf {w[1]}: expected "
-                                        f"0-{IFACE_VRF_MAX}"))
-                        continue
+                    # Not bounded here either, for the reason above.
                     if int(w[1]):
                         cfg.vrfs[iface] = int(w[1])
                     else:
@@ -2550,7 +2586,8 @@ class Config:
                     # on words would turn "uplink para o transito" into
                     # "uplink" and lose the rest without saying so.
                     text = s.split(None, 1)[1]
-                    why = text_error("description", text)
+                    why = text_error("description", text,
+                                     request=False)
                     if why:
                         cfg.unknown.append((lineno, s, text_why(why)))
                     else:

@@ -1666,12 +1666,28 @@ check(config.mac_why(("a verdict", "")) == "a verdict",
       "and nothing added when there is no prose")
 print("  what a file's reader gets")
 
-print("\n=== a MAC refused in a saved file, and one taken (#414) ===")
-for value in ("zz:zz:zz:zz:zz:zz", "1:2:3:4:5:6789", "ff:ff:ff:ff:ff:ff",
-              "01:00:5e:00:00:01"):
+print("\n=== a MAC in a saved file: the shape, and not the policy (#419) ===")
+# CHANGED BY #419, and the change is the point. A saved file is written FROM
+# the readback, and `device_macs` reads six bytes out of sw_interface_dump
+# with no opinion about what they are. So a port that really holds the
+# broadcast or a multicast MAC has to round-trip through `save`, or `--load`
+# refuses the whole file and the box comes up with no configuration.
+#
+# The shape is still refused at both doors: a word that is not six hex octets
+# is not something any readback can produce.
+for value in ("zz:zz:zz:zz:zz:zz", "1:2:3:4:5:6789"):
     _cfg = config.Config.parse(f"interface pg0\n mac-address {value}\n")
     check(len(_cfg.unknown) == 1,
-          f"a saved file took {value!r}: {_cfg.unknown!r}")
+          f"a saved file took the malformed {value!r}: {_cfg.unknown!r}")
+for value in ("ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01"):
+    _cfg = config.Config.parse(f"interface pg0\n mac-address {value}\n")
+    check(not _cfg.unknown and _cfg.macs == {"pg0": value},
+          f"a saved file must TAKE {value!r}, which a box can report: "
+          f"{_cfg.unknown!r}")
+    check(config.mac_error(value) is not None,
+          f"and the prompt must still refuse it: {value!r}")
+    check(config.mac_error(value, request=False) is None,
+          f"the same value read back as a fact is not refused: {value!r}")
 _cfg = config.Config.parse("interface pg0\n mac-address 02:00:00:00:00:01\n")
 check(not _cfg.unknown and _cfg.macs == {"pg0": "02:00:00:00:00:01"},
       f"and a real one is taken whole: {_cfg.macs!r} {_cfg.unknown!r}")
@@ -1792,11 +1808,19 @@ for _bad, _why in (("up\x07link", "a BEL, which a terminal sounds"),
     if _r:
         check("control character" in _r[0],
               f"{_why}: {_r[0]!r} does not name what is wrong")
-# REFUSED and not stripped, which is the half that made the two doors
-# disagree: the prompt removed a BEL in silence and a file kept it.
+# REFUSED AT THE PROMPT and not stripped, which is the half that made the two
+# doors disagree: the prompt removed a BEL in silence and a file kept it.
+#
+# The FILE takes it, since #419: an interface tag is 64 bytes of whatever a
+# byte can be, `device_descriptions` reports what the box holds, and refusing
+# one here would refuse a file the box itself wrote.
 _typed = config.Config.parse("interface pg0\n description up\x07link\n")
-check(_typed.unknown and not _typed.descriptions,
-      f"a saved file refuses it rather than keeping it: {_typed.unknown!r}")
+check(not _typed.unknown and _typed.descriptions == {"pg0": "up\x07link"},
+      f"a saved file takes what the box can hold: {_typed.unknown!r}")
+check(config.text_error("description", "up\x07link", request=False) is None,
+      "read back as a fact it is not refused")
+check(config.text_error("description", "up\x07link") is not None,
+      "and asked for at the prompt it still is")
 try:
     config.text_error("mtu", "1500")
     check(False, "text this table does not bound answered quietly")
@@ -1820,8 +1844,6 @@ _TEXT_DOORS = [
     ("pool name", "cgnat pool " + "p" * 200 + "\n"),
     ("user name", "user " + "u" * 200 + "\n"),
     ("description", "interface pg0\n description " + "A" * 4000 + "\n"),
-    ("description, a control character",
-     "interface pg0\n description up\x07link\n"),
 ]
 for _label, _text in _TEXT_DOORS:
     _cfg = config.Config.parse(_text)

@@ -183,8 +183,8 @@ OURS = {" ".join(stmt) for stmt in prismash.INTERFACE_DATAPLANE}
 
 #: The one declared difference, expanded from what the product says.
 DECLARED = set()
-for _key, (_stmts, _why) in config.DOORS_DIFFER.items():
-    DECLARED |= {("pool", s) for s in _stmts}
+for _key, (_where, _stmts, _why) in config.DOORS_DIFFER.items():
+    DECLARED |= {(_where, s) for s in _stmts}
 # `timeout` is one row of Pool.RANGES and eight statements in the grammar.
 DECLARED |= {("pool", f"timeout {name}") for name in Pool.TIMEOUTS}
 
@@ -251,8 +251,11 @@ print("\n=== and the declaration is real, not a name nobody reads ===")
 check(config.DOORS_DIFFER,
       "config.DOORS_DIFFER is empty; the exception it holds is the #357 one "
       "and removing it silently would make this check refuse a correct box")
-for _key, (_stmts, _why) in config.DOORS_DIFFER.items():
+for _key, (_where, _stmts, _why) in config.DOORS_DIFFER.items():
     check(_stmts, f"{_key}: declared with no statements")
+    check(_where in [name for name, _ in CONTEXTS],
+          f"{_key}: declared in context {_where!r}, which this reader does "
+          f"not walk - so the declaration excuses nothing and hides that")
     check(len(_why) > 40 and "#" in _why,
           f"{_key}: declared with no reason and no issue behind it: {_why!r}")
 check(("pool", "block-size") in DECLARED,
