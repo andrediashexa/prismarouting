@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A reader that keeps the two doors in step**
+  ([#417](https://github.com/andrediashexa/hexarouting/issues/417)).
+  `test/test_both_doors.py` walks the VTY's own grammar, builds hostile values
+  out of each statement's hint, drives the prompt **and** a saved file with
+  them, and fails when the two answers differ. 114 values over 33 statements
+  today, and a statement added tomorrow is compared by nobody's decision -
+  there is no list in it.
+
+  The one class that is meant to differ is declared **in the product**, as
+  `config.DOORS_DIFFER` with its reason, rather than as an allowlist inside
+  the check - for the reason `NOT_LABS` holds its reasons as data: an
+  exception nobody can read is one nobody re-examines. There is no ceiling to
+  raise here; a new disagreement is a failure.
+
+  A hint the generator cannot build a value from is **named on every run**
+  rather than skipped, because a statement nobody is comparing has to be
+  visible. Five today, all of them `alg <name> <on|off>`.
+
 ### Fixed
 
 * **A name and a piece of free text are bounded by the field they travel in**
@@ -113,6 +131,21 @@ version has a chance of seeing it.
   ([#415](https://github.com/andrediashexa/hexarouting/issues/415)): an
   operator left inside a pool the box will not take types every following
   statement into it.
+
+* **An interface's MTU and VRF are bounded in a saved file too**
+  ([#417](https://github.com/andrediashexa/hexarouting/issues/417)). The
+  prompt refused `mtu 999999`, `mtu 0` and `vrf 99999999999`; a file took all
+  three. Unlike a pool's numbers this is safe, and the reason is which reader
+  it is: `running_config` fills `cgnat.mtus` and `cgnat.vrfs` from
+  `device_mtus()` and `device_vrfs()` directly, so `Config.parse` sees only a
+  saved file - and a file is a request, like anything an operator types.
+
+* **The MTU range is written once**
+  ([#417](https://github.com/andrediashexa/hexarouting/issues/417)).
+  `576-9216` appeared three times in `prismash.py` - in the hint, in the usage
+  line and in the refusal - and the saved file was bounded by none of them.
+  `config.MTU_MIN`, `MTU_MAX` and `MTU_RANGE` are the one place now, the way
+  `VLAN_RANGE` already was, and the interface VRF range beside them.
 
 * **A MAC address is checked for being one**
   ([#414](https://github.com/andrediashexa/hexarouting/issues/414)). The whole

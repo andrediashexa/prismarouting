@@ -1198,6 +1198,33 @@ def text_why(refusal) -> str:
     return f"{verdict} - {prose}" if prose else verdict
 
 
+
+#: The statements whose two doors DELIBERATELY give different answers, and
+#: why. Declared HERE, in the product, rather than as an allowlist inside the
+#: check that reads it - for the reason `NOT_LABS` holds its reasons as data:
+#: an exception nobody can read is one nobody re-examines.
+#:
+#: There is one entry and it is a whole class. `Config._pool_line` is the
+#: reader for THREE things - a statement typed at the prompt, a saved file,
+#: and the running configuration read back out of the dataplane by `show bpa
+#: config` - and the third is a FACT rather than a request. #357 put a range
+#: there and a pool the dataplane had built with `block-size 4` came back
+#: unmodellable, so every commit on that box was refused.
+#:
+#: So a pool's NUMBERS are bounded where the request is made, in
+#: Shell.pool_range, and not in the parser. The SHAPE is checked in both
+#: (#412), because "is this a number" is a question the dataplane's own %u
+#: output always answers yes to.
+DOORS_DIFFER = {
+    "pool numbers": (
+        tuple(sorted(Pool.RANGES)),
+        "the file parser also reads `show bpa config`, where a number outside "
+        "the range the prompt enforces is a fact about a running box rather "
+        "than a request (#357). The shape is checked at both doors; the range "
+        "is not."),
+}
+
+
 def prefix_error(what: str, value: str):
     """
     None if `value` is an IPv4 network this dataplane can hold, else why not.
@@ -1515,6 +1542,24 @@ def _is_ipv4_address(a: str) -> bool:
 #: staged in silence (#350).
 VLAN_MIN, VLAN_MAX = 1, 4094
 VLAN_RANGE = f"<{VLAN_MIN}-{VLAN_MAX}>"
+
+#: The same arrangement for the two other interface numbers, and for the same
+#: reason VLAN_RANGE exists: 576-9216 was written out THREE times in
+#: prismash.py - in the hint, in the usage line and in the refusal - and the
+#: saved file was bounded by none of them (#417). A range written more than
+#: once is a range that can disagree with itself.
+#:
+#: 576 is the smallest IPv4 datagram every host must accept (RFC 791); 9216 is
+#: what this product offers as a jumbo frame.
+MTU_MIN, MTU_MAX = 576, 9216
+MTU_RANGE = f"<{MTU_MIN}-{MTU_MAX}>"
+
+#: An interface's VRF. 0 is not in the range because on an INTERFACE that word
+#: is how the statement is taken back off, which is the split Pool.RANGES'
+#: comment on `vrf` describes: the same word with the same number means a real
+#: table on a pool and "remove this" here.
+IFACE_VRF_MIN, IFACE_VRF_MAX = 1, 4294967295
+IFACE_VRF_RANGE = f"<{IFACE_VRF_MIN}-{IFACE_VRF_MAX}>"
 
 
 def vlan_tag_error(word: str, what: str = "vlan"):
@@ -2401,7 +2446,20 @@ class Config:
                 if s == "exit":
                     iface = None
                 elif w[0] == "mtu" and len(w) > 1 and is_number(w[1]):
-                    cfg.mtus[iface] = int(w[1])
+                    # BOUNDED HERE TOO, unlike a pool's numbers, and the
+                    # difference is which reader this is. A pool's are read
+                    # back out of the dataplane through _pool_line, so a
+                    # bound there refuses a running box's own facts (#357).
+                    # An interface's MTU never comes through this function:
+                    # `running_config` fills `cfg.mtus` from `device_mtus()`
+                    # directly. So this parser sees only a saved file, and a
+                    # file is a request like anything an operator types.
+                    if not MTU_MIN <= int(w[1]) <= MTU_MAX:
+                        cfg.unknown.append(
+                            (lineno, s, f"mtu {w[1]}: expected "
+                                        f"{MTU_MIN}-{MTU_MAX}"))
+                    else:
+                        cfg.mtus[iface] = int(w[1])
                 elif w[0] == "linux-name" and len(w) > 1:
                     # Refused here rather than at commit, because the message
                     # an operator gets from the dataplane for this is a bare
@@ -2430,6 +2488,14 @@ class Config:
                 elif s == "no ipv6 nd suppress-ra":
                     cfg.ra_enabled.add(iface)
                 elif w[0] == "vrf" and len(w) > 1 and is_number(w[1]):
+                    # Bounded here for the reason `mtu` above is: an
+                    # interface's VRF is filled from `device_vrfs()` and not
+                    # from this parser, so a file is the only thing it reads.
+                    if int(w[1]) > IFACE_VRF_MAX:
+                        cfg.unknown.append(
+                            (lineno, s, f"vrf {w[1]}: expected "
+                                        f"0-{IFACE_VRF_MAX}"))
+                        continue
                     if int(w[1]):
                         cfg.vrfs[iface] = int(w[1])
                     else:
