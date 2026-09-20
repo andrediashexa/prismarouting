@@ -20,39 +20,29 @@ right. `CLAUDE.md` is how this repository is worked on; read that first.
 | 0.109.0 | where the release time goes, and the X.Y.Z rule that follows | #408, #409, #410 |
 | 0.109.1 | `CLAUDE.md`, and every commit is announced on Discord | — |
 | 0.109.2 | the gate knows which digit moved | #410 |
+| 0.110.0 | what an operator can type, checked at both doors | #411, #412, #413, #414, #415, #416, #417 |
 
 Everything up to 0.109.0 went through the full gate with an ISO. **0.109.1 and
 0.109.2 are the first two patch releases**: no medium, published as
-pre-releases, so `Latest` on the releases page is still 0.109.0 — the last
-medium this project actually booted.
+pre-releases. 0.110.0 is a minor and takes the full gate again, so `Latest`
+moves to it.
+
+**0.110.0 is the validation audit.** Every value this VTY takes, driven with
+hostile values at the prompt **and** in a saved file - the file being what
+`prisma-routing.service` replays at every boot, so the unguarded door is the
+one nobody is watching. Thirteen classes of gap; the largest was one wrong
+predicate repeated 43 times, `str.isdigit()` being true for characters `int()`
+refuses, so a single character ended the VTY session and ended the boot. The
+one to read first is **#417**: a reader that walks the grammar, builds hostile
+values out of each statement's own hint, drives both doors and fails when the
+answers differ. No list in it, no ceiling to raise, and it found two of the
+gaps itself on its first run. **#418** is what it states it cannot see.
 
 Five of those were defects the maintainer found by **using** a box. That is the
 pattern worth carrying: the suites are green and the box is where the next one
 comes from.
 
 ## Ready to merge, on a branch, green
-
-* **`issue/411-validation-at-both-doors` (#411 and its six children)** — a
-  **minor**: it changes what a running box accepts, in `src/`, which the
-  upgrade artifact carries. `make test` is green on it at **95 suites** — 95
-  and not 94 because #417 adds one. Cut from `master` at 0.109.2 and never
-  rebased since, so it needs one.
-
-  What it is: every value this VTY takes, driven with hostile values at the
-  prompt **and** in a saved file. Thirteen classes of gap. The largest was one
-  wrong predicate repeated 43 times — `str.isdigit()` is true for characters
-  `int()` refuses, so one character ended the VTY session and ended the boot,
-  through both doors, and `check_range`, `check_mss`, `validate_ssh` and
-  `validate_snmp` all answered with a traceback.
-
-  The one to read first is **#417**: a reader that walks the grammar, builds
-  hostile values out of each statement's own hint, drives both doors and fails
-  when the answers differ. It has no list in it and no ceiling to raise, and
-  it found two of the gaps itself on its first run.
-
-  The wiki needs no page (recorded on each issue, with why). The roadmap and
-  the tracker agree. Needs a rebase, a bump to **0.110.0** and the full gate.
-
 
 Both were finished and tested before the X.Y.Z work interrupted them. Neither
 has been rebased since 0.109.2.

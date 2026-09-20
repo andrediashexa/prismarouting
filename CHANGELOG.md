@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.110.0 - what an operator can type, checked at both doors
+
+[#411](https://github.com/andrediashexa/hexarouting/issues/411), [#412](https://github.com/andrediashexa/hexarouting/issues/412), [#413](https://github.com/andrediashexa/hexarouting/issues/413), [#414](https://github.com/andrediashexa/hexarouting/issues/414), [#415](https://github.com/andrediashexa/hexarouting/issues/415), [#416](https://github.com/andrediashexa/hexarouting/issues/416), [#417](https://github.com/andrediashexa/hexarouting/issues/417).
+
+### Added
+
 * **A reader that keeps the two doors in step**
   ([#417](https://github.com/andrediashexa/hexarouting/issues/417)).
   `test/test_both_doors.py` walks the VTY's own grammar, builds hostile values
