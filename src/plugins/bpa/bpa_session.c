@@ -1439,13 +1439,27 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		   * gets added in one place and forgotten in the other - and
 		   * how it came to hand vlib_time_now() to a record. */
 		  {
-		    /* The identity as it is NOW, which is the honest answer
-		     * for a drain: this is not the instant of an allocation
-		     * and there is no earlier reading to prefer (#21). */
+		    /*
+		     * WHAT THE ALLOCATION SAID, repeated here (#397). This
+		     * used to be the identity as it is NOW, on the grounds
+		     * that a drain is not the instant of an allocation and
+		     * there was no earlier reading to prefer - which was true
+		     * until the block started keeping one.
+		     *
+		     * The fallback is that same lookup, for a block allocated
+		     * before this version or by a subscriber the table never
+		     * had: `recall` leaves the buffer alone when it has
+		     * nothing, so the order here is lookup first, recall
+		     * over it.
+		     */
 		    char who[BPA_IDENTITY_MAX];
 
 		    bpa_identity_lookup (&bm->identity, ip_priv, who,
 					 sizeof (who));
+		    bpa_block_ident_recall (
+		      &pt->block_ident,
+		      bpa_block_ident_key (j, blk.ip_pub, blk.port_lo), who,
+		      sizeof (who));
 		    bpa_log_emit (vm, BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
 				  blk.ip_pub, blk.port_lo, blk.port_hi, j,
 				  who);

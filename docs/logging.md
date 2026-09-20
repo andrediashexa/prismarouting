@@ -446,6 +446,35 @@ record naming whoever holds the address by then is well-formed, stored, and
 the wrong answer. That copy is what `BPA_IDENTITY_MAX` costs in memory: 32
 bytes per queued event per worker.
 
+**And a release record repeats what its allocation said**
+([#397](https://github.com/andrediashexa/hexarouting/issues/397)). An
+allocation names the subscriber in force at the allocation; a release used to
+name the subscriber in force at the *release*, because that is when its own
+event happens — so whenever the identity table changed in between, the two
+records for one block named two different people.
+
+Three answers were possible and the maintainer chose the second:
+
+| | What a release would name | Why not |
+|---|---|---|
+| Leave it | whoever holds the private address at the release | Defensible, and it makes a collector pair allocation and release by address, ports and time to learn anything. One reading only the release line is told the wrong subscriber. |
+| **Carry it with the block** | **who held the block** | **Chosen.** Either record answers a court order on its own, and what it says about last month is what was true last month. |
+| Emit none on a release | nothing | The release is half of the pair a retention period is read through; a record that attributes nothing is a record that has to be joined to another one anyway. |
+
+So the block remembers the name its allocation record carried, and the release
+reads it back — and reading forgets it, because a block has exactly one
+release. What it costs is in `docs/architecture.md` beside the other per-block
+costs: 40 bytes per **held** block on the worker holding it, and nothing at all
+on a box with no identity table, because the `unknown` marker is never stored.
+
+When nothing was remembered — a block allocated before the box was upgraded, or
+a subscriber the table never had — the release falls back to the lookup it
+always did, which is the behaviour every release had before this.
+
+`lab/syslog.sh` is where the difference is visible: it rewrites every name in
+the map between the allocations and the drain, and asserts that the release
+lines name the subscribers the **allocation** lines named.
+
 **An address this box knows nothing about is `unknown`, and the record is
 still emitted.** A missing record is worse than an incomplete one, and a
 collector has to be able to tell a box that does not know from a box that did

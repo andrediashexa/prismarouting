@@ -77,6 +77,34 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A release record repeats what its allocation said.** An allocation record
+  names the subscriber in force at the allocation, which is #21's requirement;
+  a release record named the subscriber in force at the **release**, because
+  that is when its own event happens. Whenever the identity table changed in
+  between - a lease moved, a RADIUS Stop arrived, a provisioning system
+  rewrote the map - the two records for one block named two different people,
+  and a collector reading only the release line was told the wrong one.
+
+  That was a consequence rather than a decision, which is why #397 existed. Of
+  the three answers it set out, the maintainer chose to **carry the identity
+  with the block**: either record now answers a court order on its own, and
+  what a release says about last month is what was true last month.
+
+  The block remembers the name its allocation record carried and the release
+  reads it back; reading forgets it, because a block has exactly one release.
+  Kept where the identity is already looked up rather than in the allocator,
+  so nothing on the packet path changes. It costs 40 bytes per **held** block
+  on the worker holding it - stated in `docs/architecture.md` beside the other
+  per-block costs - and nothing at all on a box with no identity table, since
+  the `unknown` marker is never stored. A block allocated before the upgrade
+  falls back to the lookup every release did before.
+
+  `lab/syslog.sh` is where it is visible: it already rewrote every name in the
+  map between the allocations and the drain, and it now asserts on the
+  **release** lines what it asserted on the allocation lines - that neither
+  names the identity that replaced it, and that the two records of one block
+  agree about who held it.
+
 ### Fixed
 
 ## 0.107.0 - a sub-interface does not block every commit

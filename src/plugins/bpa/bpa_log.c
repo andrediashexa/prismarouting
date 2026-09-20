@@ -173,6 +173,30 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
    * whoever holds the address by then (#21). */
   bpa_identity_lookup (&bpa_main.identity, ip_priv, e->identity,
 		       sizeof (e->identity));
+  /*
+   * AND THE BLOCK REMEMBERS IT, so that its release says the same thing
+   * (#397). The maintainer's decision, of the three answers that issue sets
+   * out: a release repeats what the allocation said, rather than naming
+   * whoever holds the private address when the block goes back.
+   *
+   * Here and not in the allocator: this is the one place the lookup already
+   * happens, so nothing on the packet path changes and a box with no identity
+   * table pays nothing - `remember` stores no unknown.
+   *
+   * A release reads it back, and reading forgets: a block has one release, and
+   * an entry that outlived it would be a leak with a court record's name on
+   * it. When nothing was remembered - a block allocated before this version,
+   * or a subscriber the table never had - what is in `e->identity` is the
+   * lookup just made, which is what every release carried before #397.
+   */
+  if (event == BPA_NAT_EVENT_BLOCK_ALLOC)
+    bpa_block_ident_remember (
+      &pt->block_ident, bpa_block_ident_key (pool_id, ip_pub, port_lo),
+      e->identity);
+  else if (event == BPA_NAT_EVENT_BLOCK_DEALLOC)
+    bpa_block_ident_recall (&pt->block_ident,
+			    bpa_block_ident_key (pool_id, ip_pub, port_lo),
+			    e->identity, sizeof (e->identity));
   e->event = event;
   e->ip_priv = ip_priv;
   e->ip_pub = ip_pub;

@@ -23,6 +23,7 @@
 #include "bpa_ports.h"
 #include "bpa_dyn.h"
 #include "bpa_log.h"
+#include "bpa_block_ident.h"
 
 /*
  * Default timeouts in seconds. The floors come from RFC 4787 (UDP, 2 min)
@@ -325,6 +326,14 @@ typedef struct
   uword *sub_by_idx;		  /* sub_idx -> index into subs */
   bpa_log_event_t *log_queue; /* queued by the dataplane, drained by the process */
   u64 log_dropped;
+  /*
+   * The identity each HELD block's allocation record named, so its release
+   * record can say the same thing (#397). Per thread because a block belongs
+   * to one worker's slice, so the worker that allocates it is the worker that
+   * releases it - and the two release paths that run in process context read
+   * this under the worker barrier, the way they already read owner[].
+   */
+  bpa_block_ident_table_t block_ident;
   bpa_quarantine_t *quarantine;   /* ports waiting out their hold-down */
   u32 quarantine_head;            /* drained from the front, FIFO by time */
   u64 n_quarantine_early;         /* released before their time, counted */

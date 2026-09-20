@@ -14,6 +14,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
       $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog \
       $(BUILD)/test_bpa_identity $(BUILD)/test_bpa_md5 \
+      $(BUILD)/test_bpa_block_ident \
       $(BUILD)/test_bpa_radius
 	@sh tools/run-tests.sh
 
@@ -220,6 +221,21 @@ $(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
 # subscriber's identity, and the unknown marker it falls back to lives there -
 # one holder, so the wire and the table cannot disagree about what "nobody
 # knows" looks like.
+# What a RELEASE record names when the identity table changed after the
+# allocation (#397). Standalone because none of it needs a packet, a pool or a
+# VPP: it is a store, and every way of getting it wrong - the holder now, the
+# holder before a block was reused, the subscriber of a deleted pool - produces
+# a record that PARSES and attributes traffic to the wrong person.
+$(BUILD)/test_bpa_block_ident: test/test_bpa_block_ident.c \
+                               src/plugins/bpa/bpa_block_ident.c \
+                               src/plugins/bpa/bpa_block_ident.h \
+                               src/plugins/bpa/bpa_identity.c \
+                               src/plugins/bpa/bpa_identity.h \
+                               test/bpa_shim.h test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_block_ident.c
+
 $(BUILD)/test_bpa_log_syslog: test/test_bpa_log_syslog.c \
                               src/plugins/bpa/bpa_log_syslog.c \
                               src/plugins/bpa/bpa_identity.c \
