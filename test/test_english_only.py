@@ -241,6 +241,39 @@ else:
 # whole directory.
 print(f"  [info] {len(not_text)} file(s) are not text and were not read")
 
+print("\n=== what a word list cannot find, measured rather than described ===")
+# THE LIMIT OF THIS CHECK, driven instead of claimed (#420). The rule is a
+# vocabulary, so it finds Portuguese only when the Portuguese uses one of the
+# words below. The words most likely to slip are the SHORT ones that overlap
+# English - `no`, `da`, `do`, `se`, `a`, `os` - and those are what a short
+# comment is made of.
+#
+# Two real comments lived in appliance/test_tune.py for the life of that file
+# and this check was green the whole time: "NIC no no 1" and "workers fora do
+# no da NIC". They are in English now, and this box is what stops the next
+# pair being found by somebody reading rather than by the suite.
+#
+# It does NOT fail. A check that refused its own known limit would be a check
+# nobody could keep green, and the three ways out are a decision on #420
+# rather than a line here. What it does is say the number out loud on every
+# run, so the limit is a measurement.
+_UNFINDABLE = [
+    "NIC no no 1",
+    "workers fora do no da NIC",
+    "o disco e a placa",
+    "se o valor nao vier",
+]
+_missed = [line for line in _UNFINDABLE
+           if not (set(line.lower().split()) & WORDS)]
+print(f"    {len(_missed)} of {len(_UNFINDABLE)} real Portuguese lines carry "
+      f"no word this check knows:")
+for _line in _missed:
+    print(f"      {_line!r}")
+if not _missed:
+    bad("every sample line was caught, which would mean this box is measuring "
+        "nothing - widen the samples rather than deleting the box")
+print(f"  a floor of {len(WORDS)} words, and what it cannot reach is counted")
+
 print("\n=== and the check is reading something ===")
 # Without this the file passes on a scope that resolved to nothing, which is
 # the shape #151 spent an issue on and #235 found again in test/ itself.
