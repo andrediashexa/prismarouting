@@ -1,0 +1,15 @@
+#!/bin/sh
+# Announces every commit on Discord, because the rule is that every commit is
+# announced and a step somebody has to remember is a step that gets skipped.
+#
+# Install it once - it is shared by every worktree of this repository, since
+# they share one .git:
+#
+#   ln -sf ../../tools/git-hooks/post-commit .git/hooks/post-commit
+#
+# An amend is a new commit object and is announced again, with its own short
+# hash. That is deliberate: the alternative is a rule about which commits count,
+# and a reader of the channel can see two hashes and one subject for what it is.
+#
+# It cannot fail the commit: announce-commit.sh returns 0 whatever happens.
+exec sh "$(git rev-parse --show-toplevel)/tools/announce-commit.sh" HEAD

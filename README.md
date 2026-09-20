@@ -13,6 +13,12 @@ Verified on real hardware with real Internet traffic: subscribers translated
 to the exact public addresses the reference model predicts, ICMP and HTTPS
 flowing, BGP/OSPF/IS-IS routes reaching the VPP FIB.
 
+**Working on this repository?** [CLAUDE.md](CLAUDE.md) is the entry point: the
+rules, where each one is written down, the check that refuses a violation, and
+the conventions that are written nowhere else. [docs/context.md](docs/context.md)
+is what is not obvious from any single file, and [docs/handoff.md](docs/handoff.md)
+is where the last session left off.
+
 ```sh
 make test              # the core suites: no root, no VPP required
 sh tools/lab.sh        # list the labs

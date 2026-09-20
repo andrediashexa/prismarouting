@@ -187,6 +187,17 @@ What is invariant is the other direction: a release has all four parts. An
 invariant stated one step too wide is one a reader checks once, finds false,
 and stops checking.
 
+**And the digit decides what the release PROVES**, since 2026-09-20. `X.Y.Z`:
+a **Z** publishes the upgrade artifact and no medium, and proves itself with
+`make test` alone; an **X** or **Y** publishes the medium and goes through the
+whole gate. A Z may change only what the artifact carries, so a change to the
+kernel, the VPP or FRR pins, the ISO build, the partitioning or the bootloader
+is a Y whatever its size. The four parts above are unchanged by this: a Z is
+tagged like anything else and published like anything else — as a
+**pre-release**, so that GitHub leaves *Latest* on the last medium this
+project booted. What changes is what the published Release carries. `docs/build-timing.md` has the
+measurement the rule came from.
+
 *Authoritative:* [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ### 1.9 The wiki is a usage layer, not a second design

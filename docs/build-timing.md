@@ -182,6 +182,11 @@ Decided by the maintainer on 2026-09-20, from the questions this report
 raised. `CONTRIBUTING.md` section 5 carries the rule; this is the reasoning
 behind it.
 
+* **A Z release is tagged and published as a pre-release.** Tagged because a
+  version running on a box has to exist in the history; pre-release because
+  GitHub then leaves **Latest** on the last X or Y, which is the last medium
+  this project booted — and that is what an operator landing on the releases
+  page should be handed.
 * **A Z release proves `make test` and nothing more.** 93 suites, about two
   minutes, and no box is installed. The exposure is bounded by a check that
   already exists: the gate upgrades from the **previous published release**, so

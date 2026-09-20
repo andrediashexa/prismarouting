@@ -315,6 +315,36 @@ A branch is ready to merge when **all** of the following hold:
 5. The commit message explains the failure or the decision, not the diff. The
    diff is already in the commit.
 
+### Every commit is announced
+
+A commit that lands **MUST** be announced on the project's Discord channel:
+the subject, the short hash, the branch and the version. Set by the maintainer
+on 2026-09-20.
+
+It is a hook and not a step, because a step somebody remembers is a step that
+is eventually skipped — the same argument `tools/release-gate.sh` makes about
+the release procedure:
+
+```sh
+ln -sf ../../tools/git-hooks/post-commit "$(git rev-parse --git-common-dir)/hooks/post-commit"
+```
+
+One link covers every worktree, since they share one `.git`.
+`tools/announce-commit.sh` does the posting and **cannot fail a commit**: it
+returns 0 whether Discord answers, refuses, or is not configured. A hook that
+can fail is a hook that stops somebody committing when the network is out.
+
+**The webhook URL is a credential and MUST NOT be committed.** It goes in
+`~/.discord-webhook` (one line, mode 600) or in `DISCORD_WEBHOOK`, the way
+`~/.wiki-token` already works. The reason is concrete rather than principled:
+`appliance/build-iso.sh` copies `docs/` into the medium, so a webhook written
+into a document would ship inside every ISO — which is the defect
+`test/test_no_credentials.sh` exists to prevent.
+
+What is sent is the commit's own subject and never the diff. A commit message
+is written to be read; a diff in a chat channel is neither read nor safe to
+assume is public.
+
 ## 5. Versioning and releases
 
 ### Before 1.0.0
@@ -348,10 +378,22 @@ standing exception, below.
 maintainer on 2026-09-20, after `docs/build-timing.md` measured where the 36
 minutes of a release go.
 
-| | What changed | What is published | What proves it |
-|---|---|---|---|
-| **Z** | only what the upgrade artifact carries | the artifact and its `sha256`, **no ISO** | `make test`, green |
-| **Y** or **X** | anything else | the medium, the artifact, and both `sha256` | the full `tools/release-gate.sh` |
+| | What changed | Tag | What is published | What proves it |
+|---|---|---|---|---|
+| **Z** | only what the upgrade artifact carries | `vX.Y.Z`, always | a **pre-release** carrying the artifact and its `sha256`, **no ISO** | `make test`, green |
+| **Y** or **X** | anything else | `vX.Y.0` | a full release: the medium, the artifact, and both `sha256` | the full `tools/release-gate.sh` |
+
+**A Z release is tagged and published as a PRE-RELEASE.** Tagged, because a
+version that exists on a box has to exist in the history —
+`gh release create vX.Y.Z --prerelease`. Pre-release, because GitHub then
+leaves **Latest** on the last X or Y, which is exactly right: the latest thing
+this project has proven on a box is the last medium it built, and an operator
+who lands on the releases page to download an ISO should find that one. The
+artifact is there for whoever is already running the box and wants the patch.
+
+It is also the honest label for what a Z is. It was proven by `make test` and
+by nothing that installs; it is proven on a box at the next Y, and until then
+"pre-release" is the word for that.
 
 **What a Z release MAY change**, and the list is the rule rather than an
 example: `src/`, `tools/`, `docs/`, the `appliance/` files the artifact
