@@ -79,27 +79,6 @@ version has a chance of seeing it.
 
 ### Fixed
 
-* **The readback check read a log that is only written when the box stops**
-  ([#419](https://github.com/andrediashexa/hexarouting/issues/419)). Moved to
-  the right phase, it then used `mfield`, which reads the **cleaned** console
-  log — and `lab/install-iso.sh` says in a comment written before this check
-  existed that the cleaned log is produced only when the machine stops, so a
-  value the driver needs in order to type its next line cannot come from
-  there. It uses `live_field` now, which is the helper directly below that
-  comment.
-
-  Third placement of one check, and the shape is worth the entry: each
-  attempt failed in the same words — *"the box never answered"* — which is what
-  it prints when it cannot ask, and is indistinguishable from a box that
-  really did not answer. A check whose failure mode is the same sentence for
-  three different causes costs a full gate per cause.
-
-* **`say "ISO hibrida"` is English**
-  ([#420](https://github.com/andrediashexa/hexarouting/issues/420)). Found by
-  reading the build's newly-printed phase table, not by the check — the fourth
-  instance of that hole in this sweep, after `pronto` and the two in
-  `appliance/test_tune.py`. The word is in the list now.
-
 ## 0.111.0 - a clock on every step, and the collector retains
 
 [#396](https://github.com/andrediashexa/hexarouting/issues/396), [#401](https://github.com/andrediashexa/hexarouting/issues/401), [#408](https://github.com/andrediashexa/hexarouting/issues/408).
@@ -181,6 +160,27 @@ version has a chance of seeing it.
   before that was never recorded.
 
 ### Fixed
+
+* **The readback check read a log that is only written when the box stops**
+  ([#419](https://github.com/andrediashexa/hexarouting/issues/419)). Moved to
+  the right phase, it then used `mfield`, which reads the **cleaned** console
+  log — and `lab/install-iso.sh` says in a comment written before this check
+  existed that the cleaned log is produced only when the machine stops, so a
+  value the driver needs in order to type its next line cannot come from
+  there. It uses `live_field` now, which is the helper directly below that
+  comment.
+
+  Third placement of one check, and the shape is worth the entry: each
+  attempt failed in the same words — *"the box never answered"* — which is what
+  it prints when it cannot ask, and is indistinguishable from a box that
+  really did not answer. A check whose failure mode is the same sentence for
+  three different causes costs a full gate per cause.
+
+* **`say "ISO hibrida"` is English**
+  ([#420](https://github.com/andrediashexa/hexarouting/issues/420)). Found by
+  reading the build's newly-printed phase table, not by the check — the fourth
+  instance of that hole in this sweep, after `pronto` and the two in
+  `appliance/test_tune.py`. The word is in the list now.
 
 * **The readback check ran after the box had been switched off, so it could
   never pass** ([#419](https://github.com/andrediashexa/hexarouting/issues/419)).
