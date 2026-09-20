@@ -27,6 +27,17 @@ Everything up to 0.109.0 went through the full gate with an ISO. **0.109.1 and
 pre-releases. 0.110.0 is a minor and takes the full gate again, so `Latest`
 moves to it.
 
+**0.110.0 is the validation audit, and it is published** - the full gate ran,
+so `Latest` is on it.
+
+**The one thing to carry out of it**: the gate refused the first attempt, and
+it was right. `address_error` refused `ssh listen-address [::]` - the form
+`sshd -T` gives back - so every commit on an installed box failed, and
+`lab/install-iso.sh` reported *eight* failures for that one defect because
+seven checks never ran. `make test` was green at 95 suites on that tree. The
+general class is **#419** and it has now bitten twice; read it before adding a
+validator to anything the box reads back.
+
 **0.110.0 is the validation audit.** Every value this VTY takes, driven with
 hostile values at the prompt **and** in a saved file - the file being what
 `prisma-routing.service` replays at every boot, so the unguarded door is the
@@ -65,6 +76,11 @@ has been rebased since 0.109.2.
 
 In the order the roadmap gives:
 
+0. **#419** — a validator on a value the box reads back must accept what the
+   box writes. Put first because it is the only item here that has already
+   caused two outages of the configuration path, and because the next person
+   to add a validator is the person who will cause the third. The first half
+   is an enumeration of the readback sources, not a change.
 1. **#210** — the per-worker partition. Option 2 is chosen (the partition
    follows the hash) and the mechanism is settled in a comment on the issue: a
    borrower cannot write the lender's slice, so the move happens under the
