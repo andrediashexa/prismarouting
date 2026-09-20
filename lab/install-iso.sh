@@ -35,6 +35,17 @@
 # that creates the array itself and then checks an array exists has proved
 # nothing about the installer, which is the shape of #99, #119 and #184.
 set -u
+
+# HOW LONG THE INSTALL TOOK (#408). This lab's own header records 687-692 s
+# from three runs, in a comment - numbers somebody read off a terminal once
+# and wrote down. Printing it with the verdict makes EVERY run say it, which
+# is what docs/build-timing.md had to estimate and what #396's phase-0
+# baseline needs: a container cannot be shown to have cost nothing against a
+# before that was never recorded.
+#
+# On both exits, because this lab has two and a duration printed on one of
+# them is a duration missing exactly when the run went wrong.
+LAB_START=$(date +%s)
 ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 DISK=${DISK:-/tmp/prisma-disk.qcow2}
 # 40G, not 8G. The installer reserves 8 GB for the system before it will give
@@ -2329,10 +2340,10 @@ fi
 
 echo
 if [ "$fail" = 0 ]; then
-  echo "LAB PASSED"
+  echo "LAB PASSED in $(( $(date +%s) - LAB_START ))s"
   exit 0
 fi
-echo "LAB FAILED"
+echo "LAB FAILED after $(( $(date +%s) - LAB_START ))s"
 echo "--- full console in $LOG ---"
 exit 1
 
@@ -4613,9 +4624,9 @@ esac
 
 echo
 if [ "$fail" = 0 ]; then
-  echo "LAB PASSED"
+  echo "LAB PASSED in $(( $(date +%s) - LAB_START ))s"
   exit 0
 fi
-echo "LAB FAILED"
+echo "LAB FAILED after $(( $(date +%s) - LAB_START ))s"
 echo "--- full console in $LOG ---"
 exit 1

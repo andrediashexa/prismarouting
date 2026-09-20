@@ -739,5 +739,34 @@ image, and this file drives 16 of them" \
   || bad "the gate's checks moved: only $BEFORE refusals now come before the \
 check-only seam, so this suite is measuring less than it says"
 
+echo
+echo "=== step: the clock the gate's log is read as a table by (#408) ==="
+# Cut out of the script and called alone, the way
+# test/test_build_iso_preflight.sh cuts say() out of build-iso.sh: everything
+# after the first line of the gate refuses anyone who is not standing on a
+# tag, so the function cannot be reached by running it.
+#
+# THE FIRST STEP PRINTS NO TIME and the ones after it do. A zero on the first
+# would read as a step that took none, when what it means is that there is
+# nothing to subtract from yet - and docs/build-timing.md is read as a table,
+# where a wrong zero in the first row is a wrong total.
+sed -n '/^_STEP_LAST=/,/^}/p' "$REPO/tools/release-gate.sh" > "$WORK/step.sh"
+first=$(. "$WORK/step.sh"; step "building the medium")
+[ "$first" = "==> building the medium" ] \
+  && ok "the first step prints the step and no seconds" \
+  || bad "step gave '$first' for the first call"
+later=$(. "$WORK/step.sh"; step "one"; sleep 1; step "two")
+case "$later" in
+  *"==> two (1s)"|*"==> two (2s)")
+    ok "and a later one carries the seconds since the step before it" ;;
+  *) bad "step gave '$later' for two steps a second apart" ;;
+esac
+# NOT RECURSIVE, which is not a hypothetical: the change that added this
+# function rewrote every `echo "==> ` in the file, including the one INSIDE
+# it, and the suite found a step() that called itself.
+grep -q 'printf' "$WORK/step.sh" \
+  && ok "and it prints rather than calling itself, which the first version did" \
+  || bad "step does not print: $(cat "$WORK/step.sh")"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
