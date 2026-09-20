@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.0 - a clock on every step, and the collector retains
+
+[#396](https://github.com/andrediashexa/hexarouting/issues/396), [#401](https://github.com/andrediashexa/hexarouting/issues/401), [#408](https://github.com/andrediashexa/hexarouting/issues/408).
+
+### Added
+
 * **The supervisor runs the drain and WAITS, and a control says the lab can
   see it** ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
   `sh tools/lab.sh ipfix-stop no-wait` starts the drain and sends the signal
