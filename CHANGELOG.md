@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.109.2 - the gate knows which digit moved
+
+[#410](https://github.com/andrediashexa/hexarouting/issues/410).
+
+### Fixed
+
 * **The gate knows which digit moved**
   ([#410](https://github.com/andrediashexa/hexarouting/issues/410)). The X.Y.Z
   rule shipped as prose in 0.109.0 and the gate had one path, so the first
