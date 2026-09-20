@@ -77,6 +77,36 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Something kills the control plane and then sends a packet**
+  ([#421](https://github.com/andrediashexa/hexarouting/issues/421)).
+  `lab/control-plane-dies.sh`. The property *"a management failure MUST NOT
+  stop forwarding"* was supported by the **mechanism** — independent systemd
+  units, `OOMScoreAdjust=-1000` on the dataplane, `MemoryMax=512M` on the
+  control plane — and by no measurement. Nothing in this repository killed
+  FRR and then sent a packet.
+
+  That is the defect class this project is organised against — an artifact
+  that reports success without verifying effect — applied to a property an
+  operator's box is expected to have while their control plane restarts, and
+  which [#396](https://github.com/andrediashexa/hexarouting/issues/396) offers
+  as already-satisfied when deciding whether containers buy a failure boundary
+  this product does not already have.
+
+  The lab translates a packet, kills `mgmtd`, `zebra` and `staticd`, and
+  translates another — with a **different source port**, so the second cannot
+  be the first one's session answering — and reads both off the captured
+  packet rather than off a counter.
+
+  Its control kills the **dataplane** instead and drops **4 of its 5**
+  assertions. The first stays green in both runs and must: the translation
+  before the kill happens either way, and a floor of five would claim this lab
+  tests something it does not.
+
+  The closest thing before it was `lab/routing.sh`, which kills `frr/mgmtd`
+  and asserts a **commit** is refused with advice an operator can act on —
+  good, about the control plane's own behaviour, and it sends no packet
+  afterwards.
+
 ### Fixed
 
 ## 0.110.2 - the rendering half says why it is not a unit

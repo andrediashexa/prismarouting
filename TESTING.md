@@ -297,6 +297,7 @@ sh tools/lab.sh vty-ssh        # the SSH daemon and accounts, and the lockout
 sh tools/lab.sh snmp           # a real snmpget against a real snmpd
 sh tools/lab.sh throughput     # CPU clocks per packet, from VPP's own accounting
 sh tools/lab.sh api            # binary API
+sh tools/lab.sh control-plane-dies  # FRR killed, and the box still translates
 sh tools/lab.sh commit         # candidate, commit, rollback
 sh tools/lab.sh audit          # dated configuration trail
 sh tools/lab.sh upgrade        # install v0.68.0, configure it, put this tree over it
@@ -325,6 +326,7 @@ The most instructive to run:
 | `pptp` | Two subscribers choose the same Call ID and both tunnels work |
 | `esp` | Two subscribers share one public address and each keeps its own IPsec tunnel — and the SPI is asserted **unchanged**, because rewriting it is the failure. `sh tools/lab.sh esp off` drops 25 of its assertions |
 | `vty-pool` | Sets a pool setting with `vppctl`, commits something unrelated through the VTY, and proves the first one survived |
+| `control-plane-dies` | Kills FRR and sends another packet. The property *"a management failure MUST NOT stop forwarding"* was supported by the MECHANISM - independent units, `OOMScoreAdjust=-1000`, `MemoryMax=512M` - and by no measurement: nothing killed the control plane and then sent a packet (#421). The second packet uses a DIFFERENT source port, so it cannot be the first one's session answering. `sh tools/lab.sh control-plane-dies kill-vpp` kills the **dataplane** instead and drops 4 of its 5 assertions - the first stays green in both runs, because the translation before the kill happens either way |
 | `two-pools` | The only lab that configures more than one pool — which is why nothing caught subscribers of two pools sharing one set of port bitmaps |
 | `troubleshoot` | Uses `ref/bpa_model.py` as the oracle, so the show commands cannot agree with the plugin by sharing its arithmetic |
 | `vty-ssh` | Produces the lockout — a change leaving nobody able to log in — and watches the commit refuse it |
