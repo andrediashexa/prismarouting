@@ -64,6 +64,11 @@ typedef struct
   ip6_address_t src;
 } bpa_ra_trace_t;
 
+/* not a unit: a VPP format function over a va_list, which is the class bpa_cli.c's
+ * header describes: it takes its arguments off a va_list a caller built and
+ * writes through format(), so a harness would be building VPP's own
+ * plumbing to watch a string come out. `show trace` after any lab that
+ * traces is where these are read */
 static u8 *
 format_bpa_ra_trace (u8 *s, va_list *args)
 {

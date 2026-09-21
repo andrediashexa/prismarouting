@@ -199,6 +199,9 @@ bpa_radius_listener_t bpa_radius;
  * blocks here stops draining the compliance log, and the log is what this
  * feature exists to improve.
  */
+/* not a unit: it opens a UDP socket and binds it, and it is not compiled at all under
+ * BPA_STANDALONE - which is what leaves the packet arithmetic in this file
+ * testable. lab/syslog.sh drives it with a NAS that speaks RFC 2866 */
 clib_error_t *
 bpa_radius_enable (u16 port, const char *secret, int enable)
 {
@@ -264,6 +267,9 @@ bpa_radius_enable (u16 port, const char *secret, int enable)
  * a session this box cannot place, and guessing which address it meant is how
  * one subscriber comes to be named in another's record.
  */
+/* not a unit: it reads from that socket inside VPP's main loop and reaches into the
+ * identity table under the barrier; like bpa_radius_enable() it is outside
+ * the standalone build, and lab/syslog.sh is where it is exercised */
 void
 bpa_radius_service (void)
 {

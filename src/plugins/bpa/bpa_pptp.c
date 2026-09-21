@@ -116,6 +116,8 @@ pptp_payload (vlib_buffer_t *b, tcp_header_t *tcp, u32 *len)
 #ifndef BPA_STANDALONE
 
 /* The GRE session this call request already created, if it is a retransmit. */
+/* not a unit: it searches this worker's session tables, which exist only inside a
+ * running VPP. lab/pptp.sh drives the pair of them with real call setup */
 static bpa_session_t *
 pptp_find_by_own (bpa_per_thread_t *pt, u32 ip_priv, u16 call_id, u32 remote,
 		  u32 fib)
@@ -137,6 +139,8 @@ pptp_find_by_own (bpa_per_thread_t *pt, u32 ip_priv, u16 call_id, u32 remote,
  * to a different subscriber - the public address is shared, so the Call ID
  * alone identifies nobody in particular.
  */
+/* not a unit: the reverse search, on the same per-worker tables - see
+ * pptp_find_by_own() above */
 static bpa_session_t *
 pptp_find_by_ours (bpa_per_thread_t *pt, const bpa_session_t *ctrl,
 		   u16 call_id)
@@ -155,6 +159,9 @@ pptp_find_by_ours (bpa_per_thread_t *pt, const bpa_session_t *ctrl,
 
 /* ------------------------------------------------------------- outbound */
 
+/* not a unit: it reads a PPTP control message out of a packet and edits the session
+ * tables, so it needs both a buffer and a worker's state. The call-id
+ * arithmetic it rests on is what this file's harness drives */
 static int
 pptp_out_message (bpa_per_thread_t *pt, tcp_header_t *tcp, u8 *msg, u32 len,
 		  bpa_session_t *ctrl, f64 now)
@@ -226,6 +233,7 @@ pptp_out_message (bpa_per_thread_t *pt, tcp_header_t *tcp, u8 *msg, u32 len,
   return BPA_PPTP_MANGLED;
 }
 
+/* not a unit: a node-side entry point over a vlib_buffer_t - see pptp_out_message() */
 int
 bpa_pptp_out (bpa_per_thread_t *pt, vlib_buffer_t *b, tcp_header_t *tcp,
 	      bpa_session_t *ctrl, f64 now)
@@ -259,6 +267,7 @@ bpa_pptp_out (bpa_per_thread_t *pt, vlib_buffer_t *b, tcp_header_t *tcp,
 
 /* -------------------------------------------------------------- inbound */
 
+/* not a unit: the inbound half of pptp_out_message(), and the same reason */
 static int
 pptp_in_message (bpa_per_thread_t *pt, tcp_header_t *tcp, u8 *msg, u32 len,
 		 bpa_session_t *ctrl, f64 now)
@@ -325,6 +334,7 @@ pptp_in_message (bpa_per_thread_t *pt, tcp_header_t *tcp, u8 *msg, u32 len,
   return BPA_PPTP_MANGLED;
 }
 
+/* not a unit: a node-side entry point over a vlib_buffer_t - see pptp_in_message() */
 int
 bpa_pptp_in (bpa_per_thread_t *pt, vlib_buffer_t *b, tcp_header_t *tcp,
 	     bpa_session_t *ctrl, f64 now)

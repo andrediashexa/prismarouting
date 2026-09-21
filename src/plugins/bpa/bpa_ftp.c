@@ -399,6 +399,10 @@ bpa_ftp_keyword_later (const u8 *pl, u32 len, int server_side)
  *   Creating a second one would overwrite the hash entry and strand the first,
  *   leaking a port out of the subscriber's block on every repeat.
  */
+/* not a unit: it searches this worker's bihash and hands out a block, so it needs a
+ * running dataplane - and it is not compiled at all under BPA_STANDALONE,
+ * which is what leaves the text half of this ALG testable. lab/ftp-alg.sh
+ * drives it with real FTP */
 static bpa_session_t *
 bpa_ftp_expect (bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t *ctl,
 		u16 port_priv, f64 now)
@@ -439,6 +443,10 @@ bpa_ftp_expect (bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t *ctl,
 
 /* ------------------------------------------------------------- rewriting */
 
+/* not a unit: it rewrites a packet in a vlib_buffer_t and opens a session, neither of
+ * which exists outside a VPP - and like bpa_ftp_expect() it is not compiled
+ * under BPA_STANDALONE. The parse it rests on IS driven here; what this adds
+ * is the buffer, and lab/ftp-alg.sh is where that is asked */
 bpa_ftp_result_t
 bpa_ftp_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 		bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t **sp,
