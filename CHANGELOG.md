@@ -77,6 +77,30 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The box says which device node the container has to be handed**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  A dataplane in a container reaches its NIC through a device node, and which
+  node follows from the driver the box can use - `vfio-pci` where there is an
+  IOMMU, `uio_pci_generic` where there is not.
+  `appliance/bind-dataplane-nic --compose-devices` prints the compose
+  fragment, because that script is the **one holder** of that rule: written
+  into `compose.yaml` instead it would be a second copy, and a compose file
+  promising `/dev/vfio` on a box that binds `uio_pci_generic` is
+  [#328](https://github.com/andrediashexa/hexarouting/issues/328) wearing a
+  container.
+
+  It prints `/dev/vfio/vfio` **and** the card's group - a container given only
+  the groups cannot open the VFIO container at all, and the EAL fails with
+  the cards in front of it - or `/dev/uio0` on a box without an IOMMU. It
+  binds nothing, and it runs **after** the bind: on the uio path the node
+  does not exist until the device is bound, and a card that is not bound gets
+  a sentence rather than a guess. A box the tuner named no card on is handed
+  nothing, quietly.
+
+  Five boxes in `test/test_bind_nic.sh` drive it, each through the same
+  say-coverage reader as the rest of that program, and three mutations were
+  watched red - including the uio box being promised a `/dev/vfio` node.
+
 ### Fixed
 
 ## 0.111.6 - the dataplane without privileged

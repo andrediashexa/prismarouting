@@ -2722,12 +2722,39 @@ can bind - the same hardware gap [#28](https://github.com/andrediashexa/hexarout
 records. Dropping it on the strength of a box that cannot exercise it would
 be measuring the wrong thing.
 
-**`/dev/vfio` is deliberately not in the file.** Compose refuses to start a
-service whose device is missing, and a box with no IOMMU has no `/dev/vfio`
-at all - `bind-dataplane-nic` falls back to `uio_pci_generic` on exactly
-those boxes and says so. Which device the dataplane is handed follows from
-what that script chose, so it belongs in an override the box generates beside
-the card's own address.
+**`/dev/vfio` is deliberately not in the file**, and the box says which node
+it needs instead. Compose refuses to start a service whose device is missing,
+and a box with no IOMMU has no `/dev/vfio` at all - `bind-dataplane-nic` falls
+back to `uio_pci_generic` on exactly those boxes. Which node the dataplane is
+handed follows from the driver that script chose, and **that script is the one
+holder of the rule**, so it is the one that prints the fragment:
+
+```sh
+sh appliance/bind-dataplane-nic --compose-devices
+```
+
+On a box with an IOMMU:
+
+```
+services:
+  vpp:
+    devices:
+      - /dev/vfio/vfio
+      - /dev/vfio/7
+```
+
+The container device **and** the card's group: a container given only the
+groups cannot open the VFIO container at all, and the EAL fails with the
+cards in front of it. On a box without one it is `/dev/uio0`, and a card that
+is not bound yet gets a sentence rather than a guess - the node does not exist
+until the bind has happened, so this mode runs **after** it. A box the tuner
+named no card on is handed nothing, quietly: the `no-pci` case already has
+two voices explaining it.
+
+Writing those paths into `compose.yaml` instead would be a second copy of the
+driver rule, and a compose file promising `/dev/vfio` on a box that binds
+`uio_pci_generic` is [#328](https://github.com/andrediashexa/hexarouting/issues/328)
+wearing a container.
 
 | what the file says | why |
 |---|---|
