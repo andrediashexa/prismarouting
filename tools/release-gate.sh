@@ -661,6 +661,19 @@ else
     ;;
   esac
   rm -f "$gh_err"
+
+  # AND THE DIGIT AGAINST HOW IT WAS PUBLISHED (#409). The gate reads the
+  # digit off the TAG and takes the matching path, and refuses a Z whose note
+  # claims a boot. What it never checked is the PUBLISHING: `--prerelease` is
+  # typed at the one moment nothing is looking, which is how the neighbouring
+  # title rule lost a release (#402).
+  #
+  # It reads every published release, not only this one, for the same reason
+  # tools/release-titles.sh does: this tag is not published yet at cut time,
+  # so the only thing here to judge is what went before.
+  if ! sh "$REPO/tools/release-digits.sh"; then
+    docs_bad=$((docs_bad + 1))
+  fi
 fi
 # AND IT SAYS SO ON THE WAY OUT.
 #
