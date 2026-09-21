@@ -62,6 +62,36 @@ main (void)
   bpa_rebalance_move_t plan[BPA_REBALANCE_MAX_MOVES];
   u32 n;
 
+  printf ("=== what a slice may lend, on its own ===\n");
+  {
+    /*
+     * The four numbers, and each of them is a way to lend a block that
+     * should have stayed: the slice's own size, what it is holding, what it
+     * has already lent, and what it has NEEDED recently. The last is the
+     * one the measurement added - a slice whose blocks are free this
+     * instant may be one whose subscribers are between packets, and lending
+     * then cost a live allocation (#210).
+     */
+    CHECK (bpa_rebalance_spare (4, 1, 0, 0) == 3,
+	   "4 blocks with 1 held lends 3, got %u",
+	   bpa_rebalance_spare (4, 1, 0, 0));
+    CHECK (bpa_rebalance_spare (4, 1, 0, 4) == 0,
+	   "a slice that has needed all four lends nothing, got %u",
+	   bpa_rebalance_spare (4, 1, 0, 4));
+    CHECK (bpa_rebalance_spare (4, 0, 0, 2) == 2,
+	   "a slice idle now that recently held 2 lends 2, got %u",
+	   bpa_rebalance_spare (4, 0, 0, 2));
+    CHECK (bpa_rebalance_spare (4, 3, 0, 1) == 1,
+	   "what is held beats a stale peak: got %u",
+	   bpa_rebalance_spare (4, 3, 0, 1));
+    CHECK (bpa_rebalance_spare (4, 1, 2, 1) == 1,
+	   "blocks already lent are not lent twice, got %u",
+	   bpa_rebalance_spare (4, 1, 2, 1));
+    CHECK (bpa_rebalance_spare (2, 3, 0, 0) == 0,
+	   "a slice holding more than it has lends nothing rather than "
+	   "wrapping, got %u", bpa_rebalance_spare (2, 3, 0, 0));
+  }
+
   printf ("=== the two amounts the plan is made of, on their own ===\n");
   {
     /*

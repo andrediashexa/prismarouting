@@ -252,6 +252,33 @@ else, and it is zero on every box with no loans. A pool being replaced gives
 up its entries with it, because the next pool created takes the same index and
 its blocks start at zero too.
 
+### What it costs, and why it ships off
+
+The mechanism works: a subscriber refused with blocks free next door is
+served **one tick later**, from a block another worker lent -
+`lab/dynamic.sh` drives exactly that and asserts it.
+
+It is **off on a box nobody has told**, and that is a measurement rather than
+caution. Every setting that lends eagerly enough to serve that subscriber
+also lends a block the lender's own next subscriber wants:
+
+| what the lab's three-block pool did | allocations | refusals |
+|---|---|---|
+| with the mechanism off | 3 | 1 |
+| lending a block that is free right now | 2 | 2 |
+| lending only above a recent high-water mark | 2 | 2 |
+
+A loan returned on the next tick avoids that and buys nothing: the block is
+available for one second, and a DNS client retries in about a second while a
+TCP SYN is retransmitted at 1 s and 3 s. Measured - the box lent a block at
+09:48:51 and took it home at 09:48:52, with the retry still coming.
+
+So the block is kept for five ticks once lent (`BPA_LOAN_GRACE_TICKS`), the
+demand a tick could not act on is carried to the next one, and the whole
+thing waits behind `bpa rebalance enable`. Which side of that trade an
+operator wants is a decision about their traffic, and the numbers above are
+what it should be taken on.
+
 **The index space is the part that is not symmetric.** A block's name in a
 worker's slice is arithmetic - `block_idx = local × n_workers + worker` - so
 every index in a slice is congruent to that worker's id, and a borrowed block

@@ -77,6 +77,53 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A block moves between workers, and the trade is measured**
+  ([#210](https://github.com/andrediashexa/hexarouting/issues/210)). The tick
+  that joins the four pieces: `bpa_expire_process` already takes the barrier
+  once a second, and after the reap it now plans moves, lends, borrows and
+  writes the loan book.
+
+  **It works.** `lab/dynamic.sh` fills one worker's slice while another has a
+  block standing free, drives the subscriber that gets refused, and asserts
+  the **next** packet is translated - which it is, from the block the other
+  worker lent. That is this issue's acceptance criterion, and the two checks
+  above it are its control: if the refused subscriber had been served
+  straight away, the slice was not empty and the retry would prove nothing.
+
+  **It ships off**, behind `bpa rebalance enable`, and that is a measurement
+  rather than caution. Every setting that lends eagerly enough to serve that
+  subscriber also lends a block the lender's own next subscriber wants:
+
+  | the lab's three-block pool | allocations | refusals |
+  |---|---|---|
+  | mechanism off | 3 | 1 |
+  | lending what is free right now | 2 | 2 |
+  | lending only above a recent high-water mark | 2 | 2 |
+
+  Four things were found by measuring rather than by reading, and each is
+  written where it was learned:
+
+  * **A loan returned on the next tick buys nothing.** The box lent a block
+    at 09:48:51 and took it home at 09:48:52 while the retry was still
+    coming - a DNS client retries in about a second and a TCP SYN at 1 s and
+    3 s. A loan is now kept five ticks.
+  * **The demand was consumed by the tick that could not act on it.** The
+    first tick after a refusal is exactly the one with no previous reading
+    of the lender's spare, so it planned nothing and forgot the refusal.
+    Unserved demand is carried forward now.
+  * **A slice free this instant may be one whose subscribers are between
+    packets**, which is why what it may lend is measured against a decaying
+    high-water mark rather than against what is held right now.
+  * **A refusal has two causes and they are opposite.** The first version of
+    the lab read "still refused" on a pool that was 3/3 in use - honest
+    exhaustion, where the right answer is no loan at all - as a failure to
+    lend. It has a pool of its own now, and prints the slices at the moment
+    of the refusal.
+
+  `bpa_rebalance_spare()` is the lending rule as arithmetic, driven on its
+  own; the tick says at its definition why it has no harness and which lab
+  drives it.
+
 ### Fixed
 
 ## 0.111.12 - the loan book the return path reads

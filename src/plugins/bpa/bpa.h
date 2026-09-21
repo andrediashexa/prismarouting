@@ -131,6 +131,21 @@ typedef struct
    */
   uword *lent_to;    /* (pool_index << 32 | block_idx) -> worker + 1 */
   u32 n_lent_total;  /* how many entries lent_to holds */
+  /*
+   * AND THE MECHANISM IS OFF UNTIL SOMEBODY TURNS IT ON (#210).
+   *
+   * Moving a block works - a refused subscriber is served one tick later
+   * from a block another worker lent, measured in lab/dynamic.sh - and
+   * every setting that lends eagerly enough to do that also lends a block
+   * the lender's own next subscriber wants: the same lab's three-block pool
+   * went from 3 allocations and 1 refusal to 2 and 2.
+   *
+   * Which side of that an operator wants is a decision about their traffic,
+   * not one this file can take. So the mechanism ships complete and idle:
+   * `bpa rebalance enable` turns it on, the lab turns it on to measure it,
+   * and a box nobody has told stays exactly as it was.
+   */
+  u8 rebalance_on;
 
   vlib_log_class_t log_class; /* shows up in "show logging" */
   u8 *audit_path;	      /* dated configuration trail */
@@ -243,6 +258,12 @@ void bpa_lent_set (bpa_main_t *bm, u32 pool_index, u32 block_idx, u32 worker);
 void bpa_lent_clear (bpa_main_t *bm, u32 pool_index, u32 block_idx);
 /* Every loan of one pool given up at once, for a pool being replaced. */
 void bpa_lent_clear_pool (bpa_main_t *bm, u32 pool_index);
+
+/*
+ * Moves blocks between workers' slices, once a tick, under the barrier
+ * bpa_expire_process already takes and after the reap (#210).
+ */
+void bpa_rebalance_tick (bpa_main_t *bm);
 
 /*
  * Which worker holds this block now, or -1 when nobody borrowed it.

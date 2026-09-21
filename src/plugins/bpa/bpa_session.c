@@ -1468,6 +1468,14 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 	    }
 	}
       /*
+       * AND BLOCKS MOVE BETWEEN SLICES (#210), after the reap and under the
+       * same barrier: a subscriber refused while blocks sit free on another
+       * worker is the defect, and the counters this reads are only current
+       * once the hold-down releases above are back on their free lists.
+       */
+      bpa_rebalance_tick (bm);
+
+      /*
        * A drain that was not followed by a stop.
        *
        * "bpa stop-drain" says every block has been given back, and it is only

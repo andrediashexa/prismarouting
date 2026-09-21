@@ -5,6 +5,7 @@ add_vpp_plugin(bpa
   bpa_pool.c
   bpa_dyn.c
   bpa_lent.c
+  bpa_rebalance.c
   bpa_log.c
   bpa_log_tcp.c
   bpa_log_syslog.c

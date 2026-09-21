@@ -2750,6 +2750,40 @@ bpa_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
   return bpa_log_enable (enable);
 }
 
+/*
+ * "bpa rebalance": move blocks between workers' slices, or stop (#210).
+ *
+ * OFF ON A BOX NOBODY HAS TOLD, and the reason is measured rather than
+ * cautious: the mechanism serves a subscriber that was refused with blocks
+ * free next door, and it does that by lending a block the lender's own next
+ * subscriber may want. Both were measured in lab/dynamic.sh, and which side
+ * an operator wants is a decision about their traffic.
+ */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
+static clib_error_t *
+bpa_rebalance_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			  vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+
+  if (unformat (input, "enable"))
+    bm->rebalance_on = 1;
+  else if (unformat (input, "disable"))
+    bm->rebalance_on = 0;
+  else
+    return clib_error_return (0, "say 'enable' or 'disable'");
+
+  vlib_cli_output (vm, "rebalance %s",
+		   bm->rebalance_on ? "enabled" : "disabled");
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_rebalance_command, static) = {
+  .path = "bpa rebalance",
+  .short_help = "bpa rebalance <enable|disable> (move blocks between workers)",
+  .function = bpa_rebalance_command_fn,
+};
+
 VLIB_CLI_COMMAND (bpa_logging_command, static) = {
   .path = "bpa logging",
   .short_help = "bpa logging <enable|disable>",
