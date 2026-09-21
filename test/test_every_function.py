@@ -91,6 +91,12 @@ MARKER = "not a unit:"
 # but for the excusals, which print with their reasons; C holds what the
 # plain-cc harness reaches, the rest waits for the VPP build.
 # 2026-09-20, #390 step 1 of the decision taken on #21's successor: 171 to 130.
+# 2026-09-21: 130 to 129. bpa_ranges_overlap() moved from bpa.c to
+# bpa_pool.h, beside the type it is about, so test_bpa_pool.c can drive it -
+# it is the rule that refuses a pool overlapping another (#73), and a
+# half-open interval has every way of being wrong at its boundaries. Moving
+# a function to where a harness reaches it is the way this number goes down
+# for anything bpa.c holds: that file needs a VPP to link.
 # bpa_cli.c's forty-one rendering functions are excused at their definitions -
 # thirty VLIB_CLI_COMMAND bodies, eight format functions over a va_list, and
 # two that write through vlib_cli_output() - each with the class it belongs to
@@ -126,7 +132,7 @@ MARKER = "not a unit:"
 # buffer, a session pool, a bihash, VPP's format() or the CLI, and waits for
 # the VPP build with bpa_log.c, which needs the ipfix-export infrastructure
 # for all eight of its functions.
-UNTESTED_AT_MOST = {"python": 0, "c": 130, "shell": 0}
+UNTESTED_AT_MOST = {"python": 0, "c": 129, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and

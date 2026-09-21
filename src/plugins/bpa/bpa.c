@@ -720,14 +720,6 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
   return 0;
 }
 
-/* Do two address ranges have any address in common? */
-static_always_inline int
-bpa_ranges_overlap (const bpa_range_t *a, const bpa_range_t *b)
-{
-  return (u64) a->base < (u64) b->base + b->count
-	 && (u64) b->base < (u64) a->base + a->count;
-}
-
 /*
  * Refuses a pool that would make selection ambiguous.
  *
