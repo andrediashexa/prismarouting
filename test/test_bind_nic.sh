@@ -670,6 +670,83 @@ grep -q "ifupdown" "$REPO/appliance/build-iso.sh" \
   && ok "and the image carries ifupdown, so /sbin/ifup is there to run" \
   || bad "the unit calls /sbin/ifup and the image does not install ifupdown"
 
+echo
+echo "=== the device nodes a container has to be handed (#396) ==="
+# A dataplane in a container reaches its NIC through a device node, and WHICH
+# node follows from the driver this box can use - the rule this file's subject
+# is the one holder of. The mode is driven here against both boxes, because a
+# compose file promising /dev/vfio on a box that binds uio_pci_generic is #328
+# wearing a container.
+
+# The IOMMU box: vfio-pci, so the container device plus the card's group.
+R=$(mkbox 0000:3b:00.0 eth9 iommu vfio-pci uio_pci_generic)
+mkdir -p "$R/sys/kernel/iommu_groups/7"
+ln -s "../../../kernel/iommu_groups/7" "$R/sys/bus/pci/devices/0000:3b:00.0/iommu_group"
+OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1)
+printf '%s\n' "$OUT" | say_box
+case "$OUT" in
+  *"/dev/vfio/vfio"*"/dev/vfio/7"*)
+    ok "a box with an IOMMU is handed the container device and its group" ;;
+  *) bad "the vfio box was handed '$OUT'" ;;
+esac
+printf '%s
+' "$OUT" | grep -q "devices:" \
+  && ok "and it is a compose fragment, not a list to be reassembled" \
+  || bad "the fragment has no devices: key: $OUT"
+# AND IT BOUND NOTHING. This mode runs on a box that is already forwarding.
+[ -z "$(cat "$R/sys/bus/pci/drivers/vfio-pci/bind" 2>/dev/null)" ] \
+  && ok "and it bound nothing on the way" \
+  || bad "the mode wrote to a driver's bind file"
+rm -rf "$R"
+
+# The same box with the card in no group: vfio-pci cannot be what it is on.
+R=$(mkbox 0000:3b:00.0 eth9 iommu vfio-pci)
+OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1); RC=$?
+printf '%s\n' "$OUT" | say_box
+[ "$RC" != 0 ] && printf '%s
+' "$OUT" | grep -q "no IOMMU group" \
+  && ok "a card in no group is refused, and said" \
+  || bad "a card with no group produced (rc=$RC): $OUT"
+rm -rf "$R"
+
+# The box with no IOMMU: uio_pci_generic, and the node the bind produced.
+R=$(mkbox 0000:3b:00.0 eth9 noiommu uio_pci_generic)
+mkdir -p "$R/sys/bus/pci/devices/0000:3b:00.0/uio/uio0"
+OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1)
+printf '%s\n' "$OUT" | say_box
+case "$OUT" in
+  *"/dev/uio0"*) ok "a box with no IOMMU is handed its uio node" ;;
+  *) bad "the uio box was handed '$OUT'" ;;
+esac
+printf '%s
+' "$OUT" | grep -q "/dev/vfio" \
+  && bad "a box with no IOMMU was promised a /dev/vfio node: $OUT" \
+  || ok "and no /dev/vfio node it has not got"
+rm -rf "$R"
+
+# The same box before the bind: the node does not exist yet, and this mode
+# reads what the bind produced rather than predicting it.
+R=$(mkbox 0000:3b:00.0 eth9 noiommu uio_pci_generic)
+OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1); RC=$?
+printf '%s\n' "$OUT" | say_box
+[ "$RC" != 0 ] && printf '%s
+' "$OUT" | grep -q "not bound to" \
+  && ok "and before the bind it says so rather than naming a node" \
+  || bad "an unbound card produced (rc=$RC): $OUT"
+rm -rf "$R"
+
+# A box the tuner named no card on: nothing to hand, and nothing said - the
+# no-pci case already has two voices explaining it.
+R=$(mkbox 0000:3b:00.0 eth9 iommu vfio-pci)
+printf 'dpdk {\n}\n' > "$R/etc/vpp/startup.conf"
+OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1); RC=$?
+printf '%s\n' "$OUT" | say_box
+[ "$RC" = 0 ] && [ -z "$OUT" ] \
+  && ok "a box claiming no card is handed nothing, quietly" \
+  || bad "a box with no card produced (rc=$RC): $OUT"
+rm -rf "$R"
+
+
 # WHAT THE WIDTH READER MAY STILL FIND, and it may only go down.
 #
 # 2 rows here carry a driver name the kernel handed back, with the words of
