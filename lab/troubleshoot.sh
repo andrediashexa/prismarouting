@@ -97,6 +97,40 @@ printf '%s\n' "$DROPS" | sed 's/^/  /'
 DROP_SECTION=$(printf '%s\n' "$DROPS" | sed -n '/packets that did not get through/,/everything else/p')
 
 echo
+# =========================================================================
+# FOUR ANSWERS AN OPERATOR CAN GET AND NOTHING NAMED.
+#
+# test/test_plugin_cli_says.py counts a message as named only when a lab, a
+# suite, a wiki page or a document carries it WHOLE - and it counted 28 that
+# nothing did. A message nothing names is a branch nobody has checked the box
+# still says, which is how the sentence an operator reads goes stale while
+# every test stays green.
+#
+# These four are the ones this lab's own box can produce: it already has a
+# deterministic pool with a capacity, a dynamic pool with free blocks, and no
+# forwards at all. The other twenty-four need a box shaped differently and
+# are somebody else's section, not a wider needle here.
+echo
+echo "=========== four answers, and the sentences they are ==========="
+# BEYOND CAPACITY. `nb` has 4 public addresses of 126 blocks each, so it can
+# serve 504 subscribers and the inside prefix holds 1024. The 505th is inside
+# the prefix and outside the pool, which is a different answer from "not in
+# any pool" and reads the same to anybody who does not know the arithmetic.
+BEYOND=$($HX -c "show cgnat subscriber 100.64.1.250" 2>&1)
+printf '%s\n' "$BEYOND" | sed 's/^/  /'
+# A FREE DYNAMIC BLOCK. The dynamic pool's second public address has been
+# allocated to nobody, so asking what holds it is the "nobody, right now"
+# branch - the one that says the answer is about this instant only.
+FREE=$($HX -c "show cgnat translation 203.0.113.18 20000" 2>&1)
+printf '%s\n' "$FREE" | sed 's/^/  /'
+# A PORT BELOW THE POOL'S RANGE. 500 is under the 1024 every pool here
+# starts at, so the address is the pool's and the port belongs to no block.
+NOBLOCK=$($HX -c "show cgnat translation 200.150.0.16 500" 2>&1)
+printf '%s\n' "$NOBLOCK" | sed 's/^/  /'
+# AND NO FORWARDS AT ALL, which is this box: nothing here configures one.
+NOFWD=$($HX -c "show cgnat forward" 2>&1)
+printf '%s\n' "$NOFWD" | sed 's/^/  /'
+
 echo "=========== VERDICT ==========="
 expect_in "the subscriber view names the public address the model predicts" \
   "$E_IP" "$SUBOUT"
@@ -115,6 +149,20 @@ expect_in "which holds for a past instant, and says so" "past or present" "$TR"
 # counts a message as named only when something carries it whole (#366).
 expect_in "in the sentence the operator reads, whole" \
   "from the FORMULA. It holds for any instant, past or present, as long as this pool's addresses and block size have not changed since. No allocation record is involved." "$TR"
+
+# THE FOUR SENTENCES, whole. A keyword survives a rewrite that changes what
+# the sentence promises, which is why this file already carries two of them
+# in full (#366).
+expect_in "an address inside the prefix and beyond the pool's capacity says so" \
+  "BEYOND CAPACITY: the pool has no block for this address, so it is not translated at all" \
+  "$BEYOND"
+expect_in "a free dynamic block answers for this instant only" \
+  "no subscriber holds this block at the moment" "$FREE"
+expect_in "a port below the pool's range is not a block" \
+  "the port is outside the pool's usable range, so nothing was ever translated here" \
+  "$NOBLOCK"
+expect_in "and a box with no forwards says that, rather than printing a heading" \
+  "no forwards configured" "$NOFWD"
 
 expect "the dynamic subscriber was translated at all" test -n "${DPUB:-}"
 expect_in "a dynamic answer says it is dynamic" "DYNAMIC" "$DTR"

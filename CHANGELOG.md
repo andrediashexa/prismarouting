@@ -77,6 +77,33 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Four answers an operator can get, and nothing named them**
+  ([#366](https://github.com/andrediashexa/hexarouting/issues/366)'s ceiling,
+  lowered). `test/test_plugin_cli_says.py` counts a message as named only
+  when a lab, a suite, a wiki page or a document carries it **whole**, and it
+  counted 28 of `bpa_cli.c`'s that nothing did. A message nothing names is a
+  branch nobody has checked the box still says - which is how the sentence an
+  operator reads goes stale while every test stays green.
+
+  `lab/troubleshoot.sh` produces four of them on the box it already builds
+  and asserts each sentence in full:
+
+  ```
+  BEYOND CAPACITY: the pool has no block for this address, so it is not translated at all
+  203.0.113.18:20000  ->  nobody, right now
+  200.150.0.16:500 belongs to pool nb but to no block: the port is outside the pool's usable range
+  no forwards configured
+  ```
+
+  The first is the one worth having: an address **inside** the inside prefix
+  and **beyond** the pool's capacity - `nb` serves 504 subscribers out of a
+  prefix holding 1024 - which reads the same as "not in any pool" to anybody
+  who has not done the arithmetic, and is a different answer.
+
+  The ceiling is **26** now, measured, and the comment beside it says which
+  four moved. The remaining twenty-six need a box shaped differently and are
+  somebody else's section rather than a wider needle here.
+
 ### Fixed
 
 ## 0.112.5 - what the drain costs per block
