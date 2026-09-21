@@ -81,7 +81,8 @@ def w(path, content):
 
 def build(root, sockets, cores_per_socket, threads, nic_node=None,
           hugepages_gb=0, isolated="", nic_pci=None, ram_gb=64,
-          nic_bus=None, hugepage_kb=1048576, tx_queues=None):
+          nic_bus=None, hugepage_kb=1048576, tx_queues=None,
+          node_hugepages_gb=None):
     """
     Typical Linux numbering: first every first thread, then every second one.
     With 2 sockets x 8 cores x 2 threads, the sibling of cpu0 is cpu16.
@@ -141,6 +142,15 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
     for _kb in ((2048, 1048576) if hugepage_kb == "both" else (hugepage_kb,)):
         w(f"{root}/sys/kernel/mm/hugepages/hugepages-{_kb}kB/nr_hugepages",
           hugepages_gb * (1048576 // _kb))
+    # THE PER-NODE POOLS, which are the ones VPP's heap actually comes from
+    # and which no fixture here had. {node: GB}; a box given none keeps the
+    # shape every case written before #422 has, where only the box-wide
+    # total exists and the tuner falls back to it.
+    for _n, _gb in (node_hugepages_gb or {}).items():
+        for _kb in ((2048, 1048576) if hugepage_kb == "both"
+                    else (hugepage_kb,)):
+            w(f"{root}/sys/devices/system/node/node{_n}/hugepages/"
+              f"hugepages-{_kb}kB/nr_hugepages", _gb * (1048576 // _kb))
     w(f"{root}/sys/devices/system/cpu/isolated", isolated)
     # Plenty of RAM unless a case says otherwise, so the existing cases are
     # unaffected by the cap below.
@@ -502,11 +512,34 @@ with tempfile.TemporaryDirectory() as root:
     _doc = open(os.path.join(HERE, "..", "docs", "appliance.md"),
                 encoding="utf-8").read()
     _blocks = re.findall(r"```\n(# 1G hugepages:.*?)```", _doc, re.S)
-    check(len(_blocks) == 1,
+    # TWO of them, and they are two boxes rather than one screen quoted
+    # twice: this fixture's one socket, and the two-socket box whose
+    # hugepage count is the node's rather than the machine's (#422). Each is
+    # held against a run that produced it; the two-node one a few lines
+    # below, because this fixture cannot be both boxes at once.
+    _one = [b for b in _blocks if "counted on node" not in b]
+    _two = [b for b in _blocks if "counted on node" in b]
+    check(len(_blocks) == 2 and len(_one) == 1 and len(_two) == 1,
           f"docs/appliance.md has {len(_blocks)} quoted tuner reports opening "
-          f"with '# 1G hugepages:', so this check is measuring the wrong one "
-          f"or none at all")
-    if len(_blocks) == 1:
+          f"with '# 1G hugepages:', {len(_two)} of them for a two-node box, "
+          f"so this check is measuring the wrong one or none at all")
+    if len(_two) == 1:
+        # The two-socket box, built here and run for real. The page says 6 GB
+        # reserved on node 1 of 2 with 12 on the machine, and a page that
+        # says that has to be a page the tuner would print.
+        with tempfile.TemporaryDirectory() as _nroot:
+            build(_nroot, sockets=2, cores_per_socket=8, threads=1,
+                  nic_node=1, nic_pci="0000:af:00.0", hugepages_gb=12,
+                  node_hugepages_gb={0: 6, 1: 6}, ram_gb=64)
+            _nout = run(_nroot, "--interface", "eth0",
+                        "--subscribers", "200000")
+        _nmissing = [l for l in _two[0].splitlines()
+                     if l.strip() and l not in _nout.splitlines()]
+        check(not _nmissing,
+              f"docs/appliance.md quotes a two-socket box as printing lines "
+              f"no two-socket box produces: {_nmissing}")
+    if len(_one) == 1:
+        _blocks = _one
         # The one substitution, and it is not a loosening: the report names
         # the file it counted interfaces in, and on a real box that is
         # /etc/prisma-routing/prisma-routing.conf while here it is a temporary
@@ -2337,6 +2370,97 @@ for _d in (_hw, _took, _vm, _stale, _blind, _plain, _dark):
 # runs it: every path is under a scratch root, and the two functions that
 # shell out to `ip` are given a stub through PRISMA_IP.
 # --------------------------------------------------------------------------
+print("\n=== a virtio card's NUMA node is read off the PCI function (#422) ===")
+# The card declares node 1. It declares it where every PCI device does - on
+# the FUNCTION - and `device` points one level below that, at the virtio bus
+# device, which has no numa_node at all. nic_pci walks up for exactly this
+# reason and says so in its comment; nic_node did not, so it returned None on
+# every guest, the tuner fell back to `sorted(nodes)[0]`, and the report told
+# the operator the card declares no affinity.
+#
+# Measured on this project's own guest: /sys/class/net/ens19/device resolves
+# to .../0000:00:13.0/virtio4, there is no numa_node there, and the PCI
+# function one directory up carries it.
+with tempfile.TemporaryDirectory() as root:
+    nodes = build(root, sockets=2, cores_per_socket=8, threads=2, nic_node=1,
+                  nic_pci="0000:af:00.0", nic_bus="virtio4")
+    out = run(root, "--interface", "eth0")
+    workers = expand(field(out, "# workers").split(": ")[-1])
+    note = field(out, "# NIC")
+    print(f"  {note}; workers={len(workers)} on node "
+          f"{sorted({1 if c in nodes[1] else 0 for c in workers})}")
+
+    check("no NUMA affinity" not in note,
+          f"the card declares node 1 and the box said {note!r}: a sentence "
+          f"about the reader, printed as one about the card")
+    check("node 1" in note, f"the note names the wrong node: {note!r}")
+    check(workers and all(c in nodes[1] for c in workers),
+          f"worker(s) on the far socket: "
+          f"{[c for c in workers if c not in nodes[1]]} - every packet then "
+          f"crosses the interconnect, and nothing on the box says so")
+
+print("\n=== and a card whose device IS the PCI function still reads (#422) ===")
+# The bare-metal shape, which is the one that always worked. It is here
+# because the walk must not have TAKEN it away: an Intel card links `device`
+# straight at the function, so the walk finds it at the first step.
+with tempfile.TemporaryDirectory() as root:
+    nodes = build(root, sockets=2, cores_per_socket=8, threads=2, nic_node=1,
+                  nic_pci="0000:3b:00.0")
+    out = run(root, "--interface", "eth0")
+    workers = expand(field(out, "# workers").split(": ")[-1])
+    check(workers and all(c in nodes[1] for c in workers),
+          f"the bare-metal shape lost its node: workers {workers}")
+    print(f"  {field(out, '# NIC')}")
+
+print("\n=== hugepages are counted on the node the heap comes from (#422) ===")
+# The kernel spreads a boot-time `hugepages=N` across the nodes. The box-wide
+# total was what the tuner read, what `tuned_now` was decided by, and what the
+# report printed - so a box with 12 pages, 6 of them on the node VPP is
+# pinned to, was told it had 12. VPP allocates on the node its main thread
+# runs on, and this file is what pins that thread.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=2, cores_per_socket=8, threads=2, nic_node=1,
+          nic_pci="0000:af:00.0", hugepages_gb=12,
+          node_hugepages_gb={0: 6, 1: 6})
+    out = run(root, "--interface", "eth0")
+    line = field(out, "# 1G hugepages:")
+    print(f"  1G hugepages: {line}")
+    check("6 reserved right now" in line,
+          f"the box counted the whole machine's pages: {line!r} - half of "
+          f"them are on a node its dataplane cannot allocate from")
+    check("counted on node 1, of this box's 2" in out,
+          "the report does not say WHICH node it counted, so an operator "
+          "reading a short node has no way to tell it from a short box")
+
+print("\n=== and a single-node box says nothing about nodes (#422) ===")
+# The same reading, on the box almost every install is. There the two numbers
+# are one number, and a line explaining which node was counted is noise on a
+# console that has to fit 79 columns.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8,
+          node_hugepages_gb={0: 8})
+    out = run(root, "--interface", "eth0")
+    check("8 reserved right now" in field(out, "# 1G hugepages:"),
+          f"a single-node box read {field(out, '# 1G hugepages:')!r}")
+    check("counted on node" not in out,
+          "a box with one node was told which of its one node was counted")
+    print("  counted, and not explained")
+
+print("\n=== a node with no pool of its own falls back to the box's (#422) ===")
+# /sys/devices/system/node/nodeN/hugepages/ is not guaranteed: a kernel built
+# without NUMA has no node directory at all, and the box-wide pool is then
+# the only answer there is. Falling back to it keeps that box reading the
+# number it always read, rather than reporting 0 and refusing to tune.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8)
+    out = run(root, "--interface", "eth0")
+    check("8 reserved right now" in field(out, "# 1G hugepages:"),
+          f"a box with no per-node pool read "
+          f"{field(out, '# 1G hugepages:')!r} instead of its box-wide 8")
+    print("  the box-wide pool, where there is no other")
+
 print("\n=== every function in the tuner, on its own (#390) ===")
 
 tune = load_tune()

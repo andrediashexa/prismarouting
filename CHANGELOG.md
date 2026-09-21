@@ -77,6 +77,40 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The tuner asks where the card is and reads the answer one directory too
+  high** ([#422](https://github.com/andrediashexa/hexarouting/issues/422)).
+  `nic_node` read `device/numa_node`. `nic_pci`, five lines above it, walks up
+  to the PCI function and says in its own comment why: `device` points at the
+  device that owns the netdev, and on a virtio guest that is the bus device,
+  which has no `numa_node` at all. Measured on this project's own guest.
+
+  So on every guest the card read as declaring no NUMA affinity, the tuner
+  fell back to node 0, and the report printed *"declares no NUMA affinity"* -
+  a sentence about the reader, printed as one about the card. On a synthetic
+  two-socket root with the card on node 1 it put all seven workers on node 0
+  and said nothing. It walks now, the same walk, to the same directory.
+
+* **Hugepages are counted on the node the heap comes from**
+  ([#422](https://github.com/andrediashexa/hexarouting/issues/422)).
+  The kernel spreads a boot-time `hugepages=N` across the nodes, and VPP
+  allocates its heap on the node its main thread is pinned to - which this
+  tuner is what pins. The count read was the machine's, so a two-socket box
+  with 12 pages, 6 of them on the node the dataplane can reach, was told it
+  had 12, and `tuned_now` was decided on the same number. It is the node's
+  count now, and the report says which node it counted on a box that has more
+  than one. A box with no per-node pool falls back to the box-wide one.
+
+  **Asking the kernel for the pages per node is NOT done.** The command line
+  has a syntax for it, whether this product's kernel honours it has not been
+  measured, and a wrong guess reserves nothing and leaves an installed box on
+  the first-boot profile. `docs/appliance.md` says so where it quotes the
+  two-socket report, which `appliance/test_tune.py` now holds against a
+  two-socket run rather than against this fixture's one socket.
+
+  [#396](https://github.com/andrediashexa/hexarouting/issues/396) listed
+  NUMA-aware worker placement as *"a real gap"*. It is not one: the workers
+  have always come off the chosen node's CPUs. Its inputs were the gap.
+
 ### Fixed
 
 ## 0.111.1 - the X.Y.Z rule has a reader
