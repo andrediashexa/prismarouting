@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.4 - a PID 1 that drains and waits
+
+### Added
+
 * **A PID 1 that drains and waits, because Compose has no pre-stop hook**
   ([#396](https://github.com/andrediashexa/hexarouting/issues/396),
   decision 4). `docker stop` sends `SIGTERM` and waits out a grace period;
