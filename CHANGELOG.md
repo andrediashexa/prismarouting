@@ -77,6 +77,15 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.113.0 - the medium carries the containers
+
+Issues: [#396](https://github.com/andrediashexa/hexarouting/issues/396),
+[#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The medium carries the containers, and the box still boots without them**
   ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
   An appliance installs with no network guaranteed, so a container stack that
