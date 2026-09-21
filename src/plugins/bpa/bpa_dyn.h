@@ -140,6 +140,27 @@ typedef struct
    * pool` would report a capacity the box has already given away.
    */
   u32 n_lent;
+  /*
+   * Blocks BORROWED from another worker's slice, by pool-wide index (#210).
+   *
+   * A slot here is a local index of n_local + k, so owner[], idle_since[],
+   * pinned[] and free_pos[] cover it exactly like a block of this worker's
+   * own - which is what leaves bpa_dyn_acquire() untouched: a borrowed block
+   * is pushed onto the same free list and popped by the same line.
+   *
+   * IT CANNOT BE HELD AS AN ORDINARY LOCAL BLOCK, and that is not a choice.
+   * A slice's index space is arithmetic - block_idx = local * n_workers +
+   * worker - so every index in it is congruent to that worker's id, and a
+   * borrowed block is congruent to the LENDER's. The pool-wide index is the
+   * only name the two workers can both use, so it is kept here and
+   * bpa_dyn_block_of() is what every site that used to multiply now asks.
+   *
+   * BPA_NO_BLOCK in a slot means VACANT: the block went home and the slot is
+   * waiting for the next borrow. Reusing it rather than deleting it keeps
+   * every other slot's index still, which by_sub and extras both hold, and
+   * bounds the array at the most this worker ever borrowed at one time.
+   */
+  u32 *foreign;
   u64 n_allocations;
   u64 n_extensions;   /* blocks handed out as extensions *//* lifetime; becomes natEvent 16 count */
   /*
@@ -318,6 +339,56 @@ int bpa_dyn_pin (bpa_dyn_t *d, u32 block_idx, u32 sub_idx, u32 n_workers,
  */
 void bpa_dyn_unpin (bpa_dyn_t *d, u32 block_idx, u32 n_workers, int *released);
 
+/*
+ * How many slots this slice has: its own blocks, then the borrowed ones.
+ *
+ * Every walk over owner[] wants this rather than n_local, because a borrowed
+ * block is held by a subscriber exactly like an owned one - it is reaped, it
+ * is announced, and it is released. n_local is still the right bound for the
+ * candidate searches, which are arithmetic over THIS worker's congruent
+ * indices and have nothing to say about a foreign block.
+ */
+static_always_inline u32
+bpa_dyn_slots (const bpa_dyn_t *d)
+{
+  return d->n_local + vec_len (d->foreign);
+}
+
+/*
+ * The pool-wide index of a slot, whether it is this worker's or borrowed.
+ *
+ * Replaces `local * n_workers + worker`, which is right for every index
+ * below n_local and wrong for every one above it.
+ */
+static_always_inline u32
+bpa_dyn_block_at (const bpa_dyn_t *d, u32 local, u32 worker, u32 n_workers)
+{
+  if (PREDICT_TRUE (local < d->n_local))
+    return local * n_workers + worker;
+  if (local - d->n_local >= vec_len (d->foreign))
+    return BPA_NO_BLOCK;
+  return d->foreign[local - d->n_local];
+}
+
+/*
+ * BORROWS a block another worker lent, by its pool-wide index.
+ *
+ * It arrives free: pushed onto this slice's free list, so the next
+ * subscriber that asks gets it through bpa_dyn_acquire() with no branch
+ * added to that path. Returns 0, or -1 when the slice cannot take it.
+ *
+ * Called under the barrier, like everything else in the rebalance.
+ */
+int bpa_dyn_borrow (bpa_dyn_t *d, u32 block_idx);
+
+/*
+ * GIVES BACK a borrowed block, which must be free: a held one is a
+ * subscriber's, and handing it to the lender would let the lender give it to
+ * somebody else while this worker is still translating out of it. Returns 0,
+ * or -1 when this slice does not hold it free.
+ */
+int bpa_dyn_give_back (bpa_dyn_t *d, u32 block_idx);
+
 /* Is this block held by configuration rather than by traffic? */
 static_always_inline int
 bpa_dyn_is_pinned (const bpa_dyn_t *d, u32 block_idx, u32 n_workers)
@@ -432,8 +503,15 @@ bpa_dyn_block_of (bpa_dyn_t *d, u32 sub_idx, u32 worker, u32 n_workers,
   if (!q)
     return -1;
 
-  *block_idx = (u32) (q[0] - 1) * n_workers + worker;
-  return 0;
+  /*
+   * Through bpa_dyn_block_at(), because the block this subscriber holds may
+   * be one this worker BORROWED, and that one is not congruent to this
+   * worker's id (#210). Multiplied here, `show bpa subscriber` would print
+   * the address of whatever block of this worker's own happens to sit at
+   * that index - a public address the subscriber is not translating to.
+   */
+  *block_idx = bpa_dyn_block_at (d, (u32) (q[0] - 1), worker, n_workers);
+  return *block_idx == BPA_NO_BLOCK ? -1 : 0;
 }
 
 #endif /* __included_bpa_dyn_h__ */

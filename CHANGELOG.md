@@ -77,6 +77,49 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The borrower's side: a slot for a block that is not this worker's**
+  ([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
+  A borrowed block arrives as a **slot past `n_local`**, so `owner[]`,
+  `idle_since[]`, `pinned[]` and `free_pos[]` cover it exactly like one of
+  this worker's own - and it is pushed onto the same free list, which is what
+  leaves `bpa_dyn_acquire()` untouched: the next subscriber that asks pops it
+  with the same line.
+
+  **It could not be an ordinary local block**, and the plan on that issue said
+  it would be. A slice's index space is arithmetic -
+  `block_idx = local × n_workers + worker` - so every index in it is
+  congruent to that worker's id and a borrowed block is congruent to the
+  **lender's**. `bpa_dyn_block_at()` is what every site that used to multiply
+  now asks, including `bpa_dyn_block_of()`, which answers `show bpa
+  subscriber`: multiplied there, an operator would be shown the address of
+  whichever block of this worker's own sits at that index - a public address
+  the subscriber is not translating to.
+
+  Three walks had to learn about the slots: the reap (a reap bounded by
+  `n_local` leaves a borrowed block held for ever by a subscriber that left,
+  on a slice that cannot give it back because it is not free), the
+  announcement walk in `bpa.c`, and the allocator's own index arithmetic. The
+  candidate searches deliberately did **not**: they are arithmetic over this
+  worker's congruent indices and have nothing to say about a foreign block.
+
+  **A borrowed block is not lent on**, which the first version of `lend` got
+  wrong: it sits on the same free list, and draining a borrower's list lent
+  the borrowed block away - leaving the first lender waiting for ever for a
+  take-back the block could no longer satisfy. Measured, then guarded, then
+  watched red.
+
+  A slot whose block goes home is left **vacant** rather than deleted:
+  `by_sub` and `extras` hold local indices, and deleting one in the middle
+  would move another subscriber's block out from under them. The next borrow
+  reuses it, so the array is bounded by the most this worker ever borrowed at
+  one time.
+
+  Five mutations red. `lab/throughput.sh` reads **3.39e2 clocks per packet at
+  64 bytes** against the 3.40e2 baseline - the same figure at this lab's
+  resolution, which is the assertion #210's plan puts first. `dynamic` and
+  `datapath` green, and `bpa_dyn_free()` learned to release the new vector
+  **before** the memset that had been zeroing the pointer it needed.
+
 ### Fixed
 
 ## 0.111.9 - the lender's side of a lent block

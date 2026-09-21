@@ -2096,6 +2096,151 @@ main (void)
     bpa_dyn_free (&d);
   }
 
+  printf ("\n=== and the borrower holds it as a slot of its own (#210) ===\n");
+  {
+    /*
+     * The other half of the loan. A borrowed block cannot be an ordinary
+     * local block - a slice's indices are congruent to its own worker id and
+     * this one is congruent to the lender's - so it arrives as a SLOT past
+     * n_local, and everything that walks owner[] has to walk those too.
+     *
+     * WHAT MAKES THESE ABLE TO FAIL: a slot the allocator cannot reach is a
+     * loan that buys nothing; a slot the reap cannot reach is a block held
+     * for ever by a subscriber that left; and an index computed by
+     * multiplication is the LENDER's block, so the subscriber translates to
+     * a public address somebody else is using.
+     */
+    bpa_dyn_t lender, borrower;
+    u32 lent[2], n;
+    bpa_block_t b;
+    int is_new = 0;
+
+    CHECK (bpa_dyn_init (&lender, &p64, 0, 2, 0) == 0, "lender refused");
+    CHECK (bpa_dyn_init (&borrower, &p64, 1, 2, 0) == 0, "borrower refused");
+
+    n = bpa_dyn_lend (&lender, 0, 2, 2, lent);
+    CHECK (n == 2, "the lender lent %u of two", n);
+    CHECK (bpa_dyn_borrow (&borrower, lent[0]) == 0, "the borrow was refused");
+    CHECK (bpa_dyn_slots (&borrower) == borrower.n_local + 1,
+	   "the borrower has %u slots for %u blocks plus one borrowed",
+	   bpa_dyn_slots (&borrower), borrower.n_local);
+
+    /* THE SAME BLOCK TWICE IS REFUSED: it would sit on the free list twice
+       and be handed to two subscribers. */
+    CHECK (bpa_dyn_borrow (&borrower, lent[0]) != 0,
+	   "the same block was borrowed twice");
+
+    /*
+     * THE ALLOCATOR REACHES IT, and the address is the LENDER's block. The
+     * borrowed block was pushed last, so it is on top of this slice's stack
+     * and the very next acquire takes it - no draining needed, which is
+     * also the shape a real borrower is in: it borrowed because it had
+     * nothing free.
+     */
+    CHECK (bpa_dyn_acquire (&borrower, &p64, 77, 1, 2, &b, &is_new) == 0,
+	   "the borrowed block was not handed to a subscriber");
+    CHECK (b.blk_idx == lent[0],
+	   "the subscriber got block %u and the borrowed one is %u",
+	   b.blk_idx, lent[0]);
+    CHECK (b.blk_idx % 2 == 0,
+	   "the block handed out is congruent to the borrower's own index "
+	   "space, so it is not the lender's block at all: %u", b.blk_idx);
+
+    /* AND THE SUBSCRIBER'S BLOCK READS BACK AS THAT ONE. `show bpa
+       subscriber` asks this, and multiplication here would answer with a
+       block of the borrower's own - a public address it is not using. */
+    {
+      u32 got = BPA_NO_BLOCK;
+      CHECK (bpa_dyn_block_of (&borrower, 77, 1, 2, &got) == 0,
+	     "the borrower cannot say which block subscriber 77 holds");
+      CHECK (got == lent[0], "it says block %u, and the block is %u", got,
+	     lent[0]);
+    }
+
+    /* IT IS NOT GIVEN BACK WHILE IT IS HELD. The lender would hand it to
+       somebody else while this worker is still translating out of it. */
+    CHECK (bpa_dyn_give_back (&borrower, lent[0]) != 0,
+	   "a borrowed block held by a subscriber was given back");
+
+    /* THE REAP REACHES IT. A reap bounded by n_local would leave it held for
+       ever by a subscriber that left, on a slice that cannot give it back
+       because it is not free. */
+    {
+      bpa_dyn_release_t rel[8];
+      u32 freed;
+
+      bpa_dyn_idle (&borrower, 77, 10.0);
+      freed = bpa_dyn_reap (&borrower, 100.0, 1, 1, 2, rel, 8);
+      CHECK (freed == 1, "the reap freed %u borrowed block(s)", freed);
+      CHECK (freed == 1 && rel[0].block_idx == lent[0],
+	     "the release names block %u, not the borrowed %u",
+	     freed ? rel[0].block_idx : BPA_NO_BLOCK, lent[0]);
+    }
+
+    /* AND NOW IT GOES HOME, and the slot is left vacant for the next loan
+       rather than deleted - by_sub and extras hold local indices, and
+       deleting a slot in the middle would move another subscriber's block
+       out from under them. */
+    CHECK (bpa_dyn_give_back (&borrower, lent[0]) == 0,
+	   "a free borrowed block would not go home");
+    CHECK (bpa_dyn_give_back (&borrower, lent[0]) != 0,
+	   "it went home twice");
+    CHECK (bpa_dyn_take_back (&lender, lent[0], 2) == 0,
+	   "the lender would not take back the block it lent");
+    CHECK (lender.n_lent == 1, "the lender still counts %u lent",
+	   lender.n_lent);
+
+    /*
+     * AND A BORROWED BLOCK IS NOT LENT ON. It sits on this slice's free list
+     * like any other, so a lend that did not look would hand another
+     * worker's block to a third - and the first lender's take_back would
+     * refuse for ever, because the block is no longer here.
+     *
+     * Measured before the guard existed: draining a borrower's free list
+     * lent the borrowed block away.
+     */
+    {
+      u32 out[8], k, m, saw = 0;
+
+      /* lent[1] is the one still out on loan: lent[0] went home above, and
+         borrowing a block its lender is not lending is a state that cannot
+         happen on a box. */
+      CHECK (bpa_dyn_borrow (&borrower, lent[1]) == 0,
+	     "the second lent block would not borrow");
+      m = bpa_dyn_lend (&borrower, 1, 2, 8, out);
+      for (k = 0; k < m; k++)
+	if (out[k] == lent[1])
+	  saw++;
+      CHECK (saw == 0, "the borrower lent on a block it had borrowed");
+      CHECK (m > 0, "the borrower lent nothing of its own, so this case "
+		    "would pass on a slice with nothing to lend");
+      CHECK (bpa_dyn_give_back (&borrower, lent[1]) == 0,
+	     "the borrowed block is no longer free after a lend that must "
+	     "have left it alone");
+      CHECK (bpa_dyn_take_back (&lender, lent[1], 2) == 0,
+	     "the lender would not take it back after the lend-on case");
+      CHECK (lender.n_lent == 0, "the lender still counts %u lent after both "
+	     "came home", lender.n_lent);
+    }
+
+    /* THE VACANT SLOT IS REUSED rather than a second one appended. Both
+       loans are home by now, so the lender lends one more. */
+    {
+      u32 slots = bpa_dyn_slots (&borrower), again[1];
+
+      CHECK (bpa_dyn_lend (&lender, 0, 2, 1, again) == 1,
+	     "the lender would not lend a third time");
+      CHECK (bpa_dyn_borrow (&borrower, again[0]) == 0,
+	     "the third block would not borrow");
+      CHECK (bpa_dyn_slots (&borrower) == slots,
+	     "a vacant slot was left behind: %u slots became %u", slots,
+	     bpa_dyn_slots (&borrower));
+    }
+
+    bpa_dyn_free (&lender);
+    bpa_dyn_free (&borrower);
+  }
+
   (void) i;
   return bpa_test_verdict (checks, failures);
 }
