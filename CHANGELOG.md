@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.3 - the images, and what they would cost the medium
+
+### Added
+
 * **The two runtime images, and what they cost**
   ([#396](https://github.com/andrediashexa/hexarouting/issues/396), phase 1).
   `build/Dockerfile.vpp` carries VPP, DPDK and the bpa plugin **this
@@ -111,8 +117,6 @@ version has a chance of seeing it.
   `ExecStop` today and Compose has no pre-stop hook, so the PID 1 that traps
   `SIGTERM`, drains, **waits** and only then forwards it is decision 4 on that
   issue and not a shape to guess at now.
-
-### Fixed
 
 ## 0.111.2 - the card says which node it is on
 
