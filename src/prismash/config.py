@@ -1147,8 +1147,30 @@ def asn_note(value: str):
 #: it describes. The other two are cited rather than read: VPP's own
 #: `interface.api` is not in this repository, and `useradd(8)` is a manual
 #: page. Both are named so the next reader can check them in one command.
+#: THE USABLE MAXIMUM, which is not the field's width.
+#:
+#: `string name[64]` holds 64 BYTES, and a C string spends one of them on the
+#: terminator. The dataplane was asked, one length at a time, through
+#: `vat2 bpa_pool_add_del` on a running box (#423):
+#:
+#:    63 characters   retval 0, and `show bpa pool` reads all 63 back
+#:    64 characters   retval -7
+#:    65, 100, 200    retval -7
+#:
+#: It REFUSES; it does not truncate and it does not crash, which is the
+#: question #416 left open and the reason `vppapi.unsendable()` needs no
+#: length guard. What it also means is that a bound written as the field's
+#: width lets exactly one value through the prompt that the commit then
+#: refuses - and a refusal that arrives at the commit rather than at the
+#: prompt is the thing the candidate model exists to avoid.
+#:
+#: Only the pool name is measured. The other entries keep the field width,
+#: because a limit lowered on the argument that C strings have terminators is
+#: a limit lowered on a guess, and this table is read by the refusal an
+#: operator sees.
 TEXT_LIMITS = {
-    "cgnat pool": (64, "bpa.api, bpa_pool_add_del name[64]"),
+    "cgnat pool": (63, "bpa.api, bpa_pool_add_del name[64], which holds 63 "
+                       "characters and a terminator"),
     "description": (64, "VPP's vnet/interface.api, "
                         "sw_interface_tag_add_del tag[64]"),
     "cgnat identity file": (256, "bpa.api, bpa_identity_set path[256]"),

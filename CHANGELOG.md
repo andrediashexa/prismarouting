@@ -79,6 +79,37 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A 64-character pool name passed the VTY and was refused by the dataplane**
+  ([#423](https://github.com/andrediashexa/hexarouting/issues/423)).
+  `TEXT_LIMITS` bounded the name at 64 because `bpa.api` declares
+  `string name[64]`, and the check refuses only what is **longer**. The
+  dataplane refuses **64**. So one name in the whole range was accepted at the
+  prompt, staged, committed, and died at `vat2` with `retval: -7` - a refusal
+  arriving where the operator can no longer act on it, which is the whole
+  argument for the candidate model.
+
+  Measured on a running dataplane, one length at a time, which is what
+  [#416](https://github.com/andrediashexa/hexarouting/issues/416) named and
+  left undone:
+
+  | name | the dataplane |
+  |---|---|
+  | 63 characters | `retval: 0`, and `show bpa pool` reads all 63 back |
+  | 64 characters | `retval: -7` |
+  | 65, 100, 200 | `retval: -7` |
+
+  It **refuses**; it does not truncate and it does not crash - so
+  `vppapi.unsendable()` needs no length guard, which is the question #416 said
+  this measurement would settle. The limit is 63 now, and the refusal says
+  why the field's own width is not it: *"bpa.api, bpa_pool_add_del name[64],
+  which holds 63 characters and a terminator"*.
+
+  **The other fields keep the width.** `path[256]`, `secret[128]` and VPP's
+  own `tag[64]` have **not** been asked - the probe for the first two was
+  malformed and the third answered `retval: 0` at 65 without a readable
+  readback - and lowering a limit an operator reads, on the argument that C
+  strings have terminators, would be lowering it on a guess.
+
 ## 0.112.0 - a block moves between workers
 
 ### Added

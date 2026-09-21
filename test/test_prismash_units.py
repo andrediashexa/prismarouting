@@ -5021,7 +5021,9 @@ print("\n=== the prompt bounds the same text a saved file bounds (#416) ===")
 # the operator typing pool statements into a pool the box will not take, which
 # is the same shape as a BGP stanza refused after its block is entered (#415).
 for _line, _needle, _mode in (
-        ("cgnat pool " + "p" * 200, "and the limit is 64", "config"),
+        # 63, not the field's 64: the dataplane refuses a 64-character name
+        # with retval -7, so the prompt refuses it first (#423).
+        ("cgnat pool " + "p" * 200, "and the limit is 63", "config"),
         ("user " + "u" * 200, "and the limit is 32", "config")):
     _sh = at()
     with spoken() as _o:
