@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.114.0 - the VTY reaches a dataplane in a container
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
 * **The VTY can reach a dataplane that is in a container**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
   `prismash` runs on the box and not in a container - that is one of the
