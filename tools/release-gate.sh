@@ -710,9 +710,24 @@ fi
 # the artifact cannot deliver is the partitioning and the bootloader half,
 # which runs once from the medium - and a rule that admits "part of this file"
 # is a rule nobody can apply.
+#
+# build/Dockerfile.dev IS in the list and the rest of build/ is NOT, and the
+# difference is measured rather than tidy (#396). That file builds the image
+# the plugin is compiled in, and the image is built by hand - `sh
+# tools/build.sh image` - never rebuilt by appliance/build-upgrade.sh. So an
+# edit to it reaches a box only through a medium built afterwards, which is
+# this rule exactly. build/Dockerfile.vpp and build/Dockerfile.frr are the
+# runtime images of #396 phase 1: nothing on a box runs them, the medium does
+# not carry them and neither does the artifact, so they ship NOWHERE - the
+# same class as test/ and lab/, which this list has never held.
+#
+# WHEN PHASE 2 PUTS THEM INSIDE THE MEDIUM THIS PATTERN MOVES WITH THEM, and
+# that is not a note somebody has to remember: appliance/build-iso.sh is
+# already on the list, so the commit that teaches it to copy an image in is
+# itself a minor.
 if [ "$KIND" = patch ] && [ -n "$PREV_TAG" ]; then
   medium_only=$(git -C "$WORK" diff --name-only "$PREV_TAG" "$TAG" | grep -E \
-    '^(appliance/build-iso\.sh|appliance/install\.sh|build/|CMakeLists\.txt)' \
+    '^(appliance/build-iso\.sh|appliance/install\.sh|build/Dockerfile\.dev|CMakeLists\.txt)' \
     || true)
   if [ -n "$medium_only" ]; then
     echo "error: $TAG moves only the patch digit, and it changes files that" >&2

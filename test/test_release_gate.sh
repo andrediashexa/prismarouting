@@ -707,6 +707,39 @@ run_gate "v$PATCHV"
   || bad "a patch release claimed a boot nobody performed and the gate took \
 it (rc=$RC): $OUT"
 
+# AND THE OTHER SIDE OF THAT LINE, because a list that refuses everything
+# under build/ is a list nobody can add a file to. build/Dockerfile.dev
+# builds the image the plugin is compiled in, by hand and never by
+# build-upgrade.sh, so its edit reaches a box only through a later medium -
+# it stays refused. The runtime images of #396 phase 1 run on nobody's box,
+# are in neither the medium nor the artifact, and ship NOWHERE: the same
+# class as test/ and lab/, which this list has never held.
+mkdir -p "$FIX/build"
+printf '# a runtime image nothing on a box runs\n' > "$FIX/build/Dockerfile.vpp"
+git -C "$FIX" add -A
+git -C "$FIX" commit -q -m "a patch that adds a runtime image"
+git -C "$FIX" tag -f -a "v$PATCHV" -m "a patch of this suite's own
+
+make test: green. No box was installed." >/dev/null 2>&1
+run_gate "v$PATCHV"
+printf '%s\n' "$OUT" | grep -q "exist only on the medium" \
+  && bad "a patch adding build/Dockerfile.vpp was refused as medium-only, \
+and no medium carries it: $OUT" \
+  || ok "a patch adding a runtime image is not refused as medium-only"
+
+printf '\n# the image the plugin is compiled in\n' >> "$FIX/build/Dockerfile.dev"
+git -C "$FIX" add -A
+git -C "$FIX" commit -q -m "a patch that touches the build image"
+git -C "$FIX" tag -f -a "v$PATCHV" -m "a patch of this suite's own
+
+make test: green. No box was installed." >/dev/null 2>&1
+run_gate "v$PATCHV"
+[ "$RC" != 0 ] \
+  && printf '%s\n' "$OUT" | grep -q "exist only on the medium" \
+  && ok "and a patch touching build/Dockerfile.dev still is" \
+  || bad "a patch changed the image the plugin is compiled in and the gate \
+took it (rc=$RC): $OUT"
+
 # THE CHANGE THE ARTIFACT CANNOT CARRY. The installer only runs from the
 # medium, so a box that took this patch would not have it and nothing would
 # say so.
@@ -722,6 +755,7 @@ run_gate "v$PATCHV"
   && ok "a patch touching the ISO build is refused, and named" \
   || bad "a patch changed the medium and the gate took it (rc=$RC): $OUT"
 reset_fixture
+
 
 echo
 echo "=== and this suite reaches only the half that needs no image ===""

@@ -79,6 +79,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The gate called every file under `build/` medium-only, and two of them
+  ship nowhere at all**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  A patch may not change what only the medium carries, because the upgrade
+  artifact cannot deliver it and a box that took the patch would be without
+  it silently. The pattern held `build/` whole, and it refused
+  [v0.111.3](https://github.com/andrediashexa/hexarouting/releases/tag/v0.111.3)'s
+  two runtime image files - which are in no medium, in no artifact, and on
+  nobody's box.
+
+  It is `build/Dockerfile.dev` now, and the difference is measured: that file
+  builds the image the plugin is compiled in, the image is built by hand and
+  never by `appliance/build-upgrade.sh`, so an edit to it reaches a box only
+  through a medium built afterwards. That is the rule exactly. The runtime
+  images are the class `test/` and `lab/` are in, which this list has never
+  held. `test/test_release_gate.sh` drives **both** sides of that line, so a
+  list that refuses everything under `build/` and a list that refuses nothing
+  there are each red.
+
+  When phase 2 puts the images inside the medium the pattern moves with them,
+  and that is not a note somebody has to remember: `appliance/build-iso.sh`
+  is already on the list, so the commit that teaches it to copy an image in
+  is itself a minor.
+
 ## 0.111.3 - the images, and what they would cost the medium
 
 ### Added
