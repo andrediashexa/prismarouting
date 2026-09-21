@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.112.7 - the overlap rule has a harness
+
+### Added
+
 * **The rule that refuses an overlapping pool has a harness**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)'s ceiling,
   lowered). `bpa_ranges_overlap()` decides whether a pool is refused for
@@ -102,8 +108,6 @@ version has a chance of seeing it.
 
   The C ceiling is **129**. Moving a function to where a harness reaches it
   is how that number goes down for anything `bpa.c` holds.
-
-### Fixed
 
 ## 0.112.6 - four answers have a name
 
