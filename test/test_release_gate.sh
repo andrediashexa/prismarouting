@@ -707,6 +707,29 @@ run_gate "v$PATCHV"
   || bad "a patch release claimed a boot nobody performed and the gate took \
 it (rc=$RC): $OUT"
 
+# AND `again` IS NOT A SUBSTRING. The note of the 0.114.1 release said, in
+# so many words, that nothing was built, booted or installed - and the gate
+# refused it, because a later sentence read "compose-check AGAINST the real
+# stack" and the pattern was looking for "again" with no word boundary. That
+# is the needle trap this file's own comment warns about, landing on the one
+# check where it costs a false RED: a gate that refuses correct work is a
+# gate somebody learns to argue with.
+# THE ORDER IS THE PATTERN'S. It matches built...booted...installed...again
+# in that sequence, so a note that says the three words in any other order
+# never reaches the last one - which is how the first version of this case
+# passed against the unbounded pattern and proved nothing. This note is
+# 0.114.1's own shape: the denial first, in order, and "against" after it.
+git -C "$FIX" tag -f -a "v$PATCHV" -m "a patch of this suite's own
+
+Nothing here was built, booted or installed. make test is what proves it,
+with compose-check against the real stack." >/dev/null 2>&1
+run_gate "v$PATCHV"
+[ "$RC" = 0 ] \
+  && ok "a patch whose note says 'against' is not read as claiming a boot" \
+  || bad "the word 'against' was read as the claim 'booted again' and a \
+correct patch release was refused (rc=$RC): $OUT"
+
+
 # AND THE OTHER SIDE OF THAT LINE, because a list that refuses everything
 # under build/ is a list nobody can add a file to. build/Dockerfile.dev
 # builds the image the plugin is compiled in, by hand and never by
@@ -754,6 +777,23 @@ run_gate "v$PATCHV"
   && printf '%s\n' "$OUT" | grep -q "exist only on the medium" \
   && ok "a patch touching the ISO build is refused, and named" \
   || bad "a patch changed the medium and the gate took it (rc=$RC): $OUT"
+reset_fixture
+
+# AND THE MINOR SIDE OF THE SAME WORD BOUNDARY, which is the half that would
+# cost a false GREEN rather than a false red: a note that contains "against"
+# and never claims the second boot must still be refused on the X or Y path,
+# where the claim is what the gate is there to require.
+V=$(cat "$FIX/VERSION")
+git -C "$FIX" commit -q -m "against, and no claim" --allow-empty
+git -C "$FIX" tag -f -a "v$V" -m "a minor of this suite's own
+
+It was built and booted against the real stack, and installed nowhere." \
+  >/dev/null 2>&1
+run_gate "v$V"
+[ "$RC" != 0 ] \
+  && printf '%s\n' "$OUT" | grep -q "does not record that the medium was" \
+  && ok "and on the minor path 'against' does not stand in for the claim" \
+  || bad "a minor whose note never claims the second boot was accepted because it contained the word 'against' (rc=$RC): $OUT"
 reset_fixture
 
 
