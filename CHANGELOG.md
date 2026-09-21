@@ -102,6 +102,21 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The release gate read `against` as a claim that a medium was booted**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  A patch release must not claim the medium was built, booted, installed and
+  booted *again*, and the gate refuses a note that does. The pattern looked
+  for `again` with no word boundary, so 0.114.1's note - which says in so
+  many words that nothing here was built, booted or installed - was refused
+  because a later sentence read *compose-check against the real stack*.
+
+  That is the needle trap `tools/release-gate.sh`'s own comment warns about,
+  landing on the one check where it costs a false **red**: a gate that
+  refuses correct work is a gate somebody learns to argue with. Both
+  patterns are word-bounded now, and `test/test_release_gate.sh` drives both
+  sides - a patch note containing `against` is accepted, and a minor note
+  containing `against` and no claim is still refused.
+
 ## 0.114.0 - the VTY reaches a dataplane in a container
 
 Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).

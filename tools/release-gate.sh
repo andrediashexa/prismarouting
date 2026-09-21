@@ -234,7 +234,16 @@ if [ "$KIND" = patch ]; then
   # is a claim about something that did not happen - and it is the easiest
   # mistake there is to make, because the sentence is in the note of every
   # release before it and notes are written by copying the last one.
-  if printf '%s\n' "$folded" | grep -qiE "built.*booted.*installed.*(again|second)"; then
+  #
+  # \b AROUND THE LAST WORD, and it is the needle trap again, in the file
+  # whose own comment above warns about it. `again` is a SUBSTRING OF
+  # `against`, and 0.114.1's note - which correctly said nothing here was
+  # built, booted or installed - was refused because a later sentence read
+  # "compose-check against the real stack". The gate refused correct work,
+  # which its comment twenty lines up calls the worst thing this particular
+  # check can do: a gate that refuses correct work is a gate somebody learns
+  # to argue with.
+  if printf '%s\n' "$folded" | grep -qiE "built.*booted.*installed.*(\\bagain\\b|\\bsecond\\b)"; then
     echo "error: the release note for $TAG claims the medium was built," >&2
     echo "       booted, installed and booted again. This release moves only" >&2
     echo "       the patch digit, so no medium is built and none of that" >&2
@@ -242,7 +251,7 @@ if [ "$KIND" = patch ]; then
     echo "       suites, and the artifact an operator installs." >&2
     exit 1
   fi
-elif ! printf '%s\n' "$folded" | grep -qiE "built.*booted.*installed.*(again|second)"; then
+elif ! printf '%s\n' "$folded" | grep -qiE "built.*booted.*installed.*(\\bagain\\b|\\bsecond\\b)"; then
   echo "error: the release note for $TAG does not record that the medium was" >&2
   echo "       built, booted, installed and booted again." >&2
   echo "       CONTRIBUTING.md section 5 requires the note to say it, because" >&2
