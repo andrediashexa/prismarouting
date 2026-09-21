@@ -2683,7 +2683,10 @@ plan because `sh tools/build-images.sh compose-check` drives it:
 
 ```
 ==> the stack, started by compose
-  [ ok ] the dataplane came up under compose, with the plugin, in 0s
+  [ ok ] the dataplane came up under compose, with the plugin, in 1s
+  [ ok ] and DPDK initialised with no privileged flag, on cap_add alone
+  [ ok ] and linux_cp's door is open: created tap0
+  [ ok ] and both workers are on the cores startup.conf named: 2 3
   [ ok ] logging enabled, so the drain below takes a box's own branch
 ==> and stopped, which is the question
   [ ok ] the drain ran before the signal, releasing 0 block(s)
@@ -2697,6 +2700,34 @@ the drain **through our PID 1** and VPP was still answering when it did. With
 no cards there are no blocks to release, so what this proves is the **path**,
 not a record on a collector - `lab/ipfix-stop.sh` is where a real allocation
 is drained and read off one.
+
+**The dataplane is not `privileged`**, and the set that replaced it was
+measured by removing each entry and reading what broke:
+
+| removed | what the box said | result |
+|---|---|---|
+| everything | `set_mempolicy: Operation not permitted`, then `rte_eal_init failed: Cannot allocate memory (12)` | the dataplane does not start |
+| `SYS_NICE` | the same two lines | the same |
+| `NET_ADMIN` | `create tap: ioctl(TUNSETIFF): Operation not permitted` | starts, and `linux_cp` can pair no card into Linux |
+| `/dev/net/tun` | `create tap: open '/dev/net/tun': No such file or directory` | the same, one step earlier |
+| `IPC_LOCK` | nothing, **on this box** | see below |
+
+So the file grants `SYS_NICE`, `NET_ADMIN` and `IPC_LOCK`, and passes
+`/dev/net/tun` and `/dev/vhost-net`. With all of them, `create tap` answers
+`tap0`.
+
+`IPC_LOCK` is the one entry that is **not** a measurement: it is the locked
+memory VFIO needs to map DMA, and this machine has no IOMMU and no card DPDK
+can bind - the same hardware gap [#28](https://github.com/andrediashexa/hexarouting/issues/28)
+records. Dropping it on the strength of a box that cannot exercise it would
+be measuring the wrong thing.
+
+**`/dev/vfio` is deliberately not in the file.** Compose refuses to start a
+service whose device is missing, and a box with no IOMMU has no `/dev/vfio`
+at all - `bind-dataplane-nic` falls back to `uio_pci_generic` on exactly
+those boxes and says so. Which device the dataplane is handed follows from
+what that script chose, so it belongs in an override the box generates beside
+the card's own address.
 
 | what the file says | why |
 |---|---|

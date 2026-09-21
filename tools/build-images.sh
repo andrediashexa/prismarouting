@@ -233,10 +233,31 @@ if [ "$TARGET" = compose-check ]; then
   # A dataplane with no card and no DPDK: this check is about the STOP, and a
   # VPP that spends its startup failing to bind a NIC this machine does not
   # have would fail it for a reason that is not the question.
+  # DPDK ON, AND WORKERS PINNED, because that is what an appliance runs and
+  # because the privileges below are only interesting against it: a VPP with
+  # the EAL disabled starts under no privileges at all and would report this
+  # check green on a container that could not run the product (#396).
+  #
+  # `no-pci`: this machine has no card DPDK can bind, which is the gap #28
+  # records. The EAL still initialises, still wants its hugepages and still
+  # calls set_mempolicy, which is the part being measured here.
+  #
+  # The plugins stanza is the one appliance/prisma-routing-tune writes on a
+  # tuned box - default, bpa, linux_cp, linux_nl - and not a shorter list
+  # chosen here. With `plugin default { disable }` even `create tap` is not a
+  # command this VPP has, so a check written against that list would be
+  # measuring a dataplane the product never runs.
   cat > "$CDIR/vpp/startup.conf" <<CONF
 unix { nodaemon cli-listen /run/vpp/cli.sock }
 api-segment { gid 0 }
-plugins { plugin default { disable } plugin bpa_plugin.so { enable } }
+cpu { main-core 1 corelist-workers 2-3 }
+dpdk { no-pci }
+plugins {
+  plugin default { enable }
+  plugin bpa_plugin.so { enable }
+  plugin linux_cp_plugin.so { enable }
+  plugin linux_nl_plugin.so { enable }
+}
 CONF
   cat > "$CDIR/override.yaml" <<OVR
 services:
@@ -270,6 +291,53 @@ OVR
     else
       bad "the dataplane did not answer under compose after ${_n}s"
     fi
+
+    # WITHOUT `privileged: true`, and the EAL is what says so: it is the
+    # first thing that fails when SYS_NICE is missing, with
+    # "set_mempolicy: Operation not permitted" and then
+    # "rte_eal_init failed: Cannot allocate memory". A dpdk plugin that
+    # loaded is an EAL that came up under the capability set in the shipped
+    # compose file.
+    # grep -v on the comments first: the file EXPLAINS that it is not
+    # privileged, and the sentence saying so contains the words. Measured -
+    # this check went red on its own documentation.
+    if grep -v '^[[:space:]]*#' "$REPO/appliance/compose.yaml" \
+       | grep -q "privileged: *true"; then
+      bad "appliance/compose.yaml is back to privileged: true, so this check no longer measures a narrowed dataplane"
+    elif docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+         -f "$CDIR/override.yaml" exec -T vpp vppctl show plugins 2>/dev/null \
+         | grep -q dpdk_plugin; then
+      ok "and DPDK initialised with no privileged flag, on cap_add alone"
+    else
+      bad "the DPDK plugin is not loaded, so the EAL did not come up: the capability set in appliance/compose.yaml is short of what the dataplane needs"
+    fi
+
+    # A TAP, WHICH IS WHAT NET_ADMIN IS FOR. linux_cp pairs every dataplane
+    # card into Linux through one, and on a one-card box the address the
+    # operator reaches moves onto that pair. Measured with the capability
+    # removed: `create tap: ioctl(TUNSETIFF): Operation not permitted`, and
+    # with it, `tap0`.
+    tapout=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+             -f "$CDIR/override.yaml" exec -T vpp vppctl create tap 2>&1 | head -1)
+    case "$tapout" in
+      tap[0-9]*) ok "and linux_cp's door is open: created $tapout" ;;
+      *) bad "the dataplane could not create a TAP ('$tapout'), so linux_cp would pair no card into Linux and the control plane would route over nothing" ;;
+    esac
+
+    # AND THE WORKERS ARE WHERE startup.conf PUT THEM. The tuner computes
+    # `corelist-workers` from the NIC's NUMA node and the physical cores, and
+    # a container that confines the process to some other set would leave
+    # those threads wherever the cgroup allowed - quietly, at a fraction of
+    # the forwarding, which is the failure this whole product's tuning
+    # exists to prevent.
+    thr=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+          -f "$CDIR/override.yaml" exec -T vpp vppctl show threads 2>/dev/null)
+    cores=$(printf '%s' "$thr" | awk '$2 ~ /^vpp_wk_/ {print $(NF-3)}' | sort -n | tr '\n' ' ')
+    case "$cores" in
+      "2 3 ") ok "and both workers are on the cores startup.conf named: 2 3" ;;
+      "") bad "the dataplane reported no worker threads at all: $(printf '%s' "$thr" | head -2)" ;;
+      *) bad "the workers are on core(s) '$cores' and startup.conf asked for 2 and 3: the container placed them somewhere the tuning did not" ;;
+    esac
   fi
 
   # LOGGING ON, so the drain takes its real branch. With it off the command
