@@ -37,9 +37,20 @@ RUN apt-get update -qq \
 # copies the plugin this repository compiled into this directory.
 COPY vpp_plugins/ /usr/lib/x86_64-linux-gnu/vpp_plugins/
 
-# NOT an ENTRYPOINT yet. The drain that runs on the way down is an ExecStop
-# today, and Compose has no pre-stop hook to put it in: the PID 1 that traps
-# SIGTERM, drains and only then forwards it is the whole of decision 4 on
-# #396, and an entrypoint written before that is decided is a shape somebody
-# will assume is the answer.
-CMD ["/usr/bin/vpp", "-c", "/etc/vpp/startup.conf"]
+# THE DRAIN'S DROP-IN, in an image that has no systemd to read it. It is the
+# one statement of what stopping this dataplane means, and both supervisors
+# read it: systemd as an ExecStop on the box, and the entrypoint below as the
+# command it runs before forwarding the signal. Copying it rather than
+# retyping the command is what keeps the two from disagreeing (#396).
+COPY appliance/systemd/vpp-stop-drain.conf \
+     /etc/systemd/system/vpp.service.d/vpp-stop-drain.conf
+
+# PID 1 IS A WRAPPER, and the reason is that Compose has no pre-stop hook:
+# `docker stop` sends SIGTERM and waits, and there is no "run this, wait,
+# then signal" - which is exactly what the ExecStop is. The wrapper traps
+# SIGTERM, runs the drain, WAITS for it, and only then signals VPP. Without
+# the wait the release record is written into a graph that has stopped and is
+# swallowed, and the stopped box becomes indistinguishable from one that fell
+# over (#217, measured in lab/ipfix-stop.sh no-wait).
+COPY appliance/vpp-entrypoint /usr/local/bin/vpp-entrypoint
+ENTRYPOINT ["/usr/local/bin/vpp-entrypoint"]
