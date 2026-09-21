@@ -251,8 +251,8 @@ harnesses = sorted(glob.glob(os.path.join(TEST, "test_bpa_*.c")))
 # matching goes red instead of quietly reading fewer files than the
 # repository has - which is what this line is for, and why it moves with the
 # harnesses rather than being loosened to a floor.
-check(len(harnesses) == 18,
-      f"{len(harnesses)} C harnesses found, not the 18 this repository has - "
+check(len(harnesses) == 19,
+      f"{len(harnesses)} C harnesses found, not the 19 this repository has - "
       f"the glob is probably wrong and this suite is reading too little")
 
 n_checks = 0
