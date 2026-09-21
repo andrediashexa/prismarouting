@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.7 - the card the container is handed
+
+### Added
+
 * **The box says which device node the container has to be handed**
   ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
   A dataplane in a container reaches its NIC through a device node, and which
@@ -100,8 +106,6 @@ version has a chance of seeing it.
   Five boxes in `test/test_bind_nic.sh` drive it, each through the same
   say-coverage reader as the rest of that program, and three mutations were
   watched red - including the uio box being promised a `/dev/vfio` node.
-
-### Fixed
 
 ## 0.111.6 - the dataplane without privileged
 
