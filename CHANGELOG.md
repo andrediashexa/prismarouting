@@ -77,7 +77,33 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The container stack is handed the card this boot bound**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  `appliance/compose.yaml` names `/dev/net/tun` and `/dev/vhost-net`, which
+  every box has, and deliberately names no `/dev/vfio` - a box with no IOMMU
+  has none, and compose refuses to start a service whose device is missing.
+  `prisma-routing-containers.service` now generates the rest at start:
+  `bind-dataplane-nic --compose-devices` writes
+  `/run/prisma-routing/compose-devices.yaml`, and both `up` and `down` are
+  given it beside the base file. The bind script stays the one holder of the
+  rule about which driver this box can use - a compose file promising
+  `/dev/vfio` on a box that binds `uio_pci_generic` is
+  [#328](https://github.com/andrediashexa/hexarouting/issues/328) wearing a
+  container.
+
 ### Fixed
+
+* **A box that names no card would have had a container stack that will not
+  start** ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  `--compose-devices` printed nothing at all on a no-pci box, which was right
+  while nothing consumed it and wrong the moment a unit hands the output to
+  `docker-compose -f`: measured on docker-compose 1.29.2, the version the
+  medium carries, an empty file is refused with *Top level object needs to be
+  a mapping*. It now prints `devices: []`, and the same measurement says an
+  empty list appends nothing - so the base file's two device nodes are left
+  exactly as they are. `tools/build-images.sh compose-check` generates the
+  fragment the way the unit does and starts the stack with it, on this
+  machine, which is a no-pci box.
 
 ## 0.113.0 - the medium carries the containers
 

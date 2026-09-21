@@ -33,7 +33,23 @@ WorkingDirectory=/etc/prisma-routing
 # cleared, then starts the images it has rather than none. `docker load` on
 # an image that is already there is a no-op that prints the tag.
 ExecStartPre=/bin/sh -c 'test -f /usr/lib/prisma-routing/images.tar.gz && docker load -i /usr/lib/prisma-routing/images.tar.gz >/dev/null || true'
-ExecStart=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml up -d
+# THE CARD'S DEVICE NODE, READ OFF THIS BOOT AND NOT GUESSED AT.
+# compose.yaml names /dev/net/tun and /dev/vhost-net, which every box has;
+# it deliberately names no /dev/vfio, because a box with no IOMMU has none
+# and compose refuses to start a service whose device is missing. Which node
+# the dataplane needs follows from the driver the bind script chose, and that
+# script is the one holder of that rule - a second copy here is the defect
+# #328 was about wearing a container.
+#
+# AFTER THE BIND AND NOT BEFORE: on the uio path the node does not exist
+# until the device is bound. prisma-routing-tune.service is what binds, and
+# this unit is ordered after it.
+#
+# `devices` MERGES BY APPENDING across -f files on docker-compose 1.29.2,
+# measured on the version the medium carries - so the fragment adds the
+# card's node to the two above rather than replacing them.
+ExecStartPre=/bin/sh -c 'install -d -m 0755 /run/prisma-routing && /usr/lib/prisma-routing/bind-dataplane-nic --compose-devices > /run/prisma-routing/compose-devices.yaml'
+ExecStart=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml -f /run/prisma-routing/compose-devices.yaml up -d
 # `down` and not `stop`: the containers are recreated from the compose file
 # on every start, so leaving them around buys nothing and a stopped container
 # holding /run/vpp is a dataplane the next start cannot bind.
@@ -42,7 +58,12 @@ ExecStart=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml up -d
 # stop, and systemd killing this unit before that would cut the drain off -
 # which is the retention record #217 is about. 60 leaves room for the
 # control plane's own stop after it.
-ExecStop=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml down -t 30
+#
+# THE SAME -f PAIR AS THE START, because compose computes the project from
+# the files it is given: `down` with only the base file is `down` against a
+# different definition of the same project, and what it would take with it
+# is not a thing to find out on a box in service.
+ExecStop=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml -f /run/prisma-routing/compose-devices.yaml down -t 30
 TimeoutStopSec=60
 
 [Install]

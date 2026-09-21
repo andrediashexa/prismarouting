@@ -206,7 +206,8 @@ def teardown_reason(cmd):
 ALLOWED_STOP = {
     "appliance/systemd/prisma-routing-containers.service": [
         ("ExecStop",
-         "/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml down -t 30",
+         "/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml "
+         "-f /run/prisma-routing/compose-devices.yaml down -t 30",
          "#396: with the dataplane in a container, stopping it is stopping "
          "the container, and compose is what does that. `down` removes "
          "containers and networks; volumes need -v, which COMPOSE_FORBIDDEN "
@@ -214,7 +215,11 @@ ALLOWED_STOP = {
          "trail are bind mounts of directories on the box and are left "
          "exactly as they were. The -t 30 is the drain's: compose.yaml gives "
          "the dataplane 30 seconds to stop, and a shorter timeout here would "
-         "cut off the stop-drain that writes the release records."),
+         "cut off the stop-drain that writes the release records. The "
+         "SECOND -f is the fragment the unit generated at start, naming the "
+         "card's device node: compose computes the project from the files "
+         "it is given, so `down` with only the base file would be `down` "
+         "against a different definition of the same project."),
     ],
     "appliance/systemd/vpp-stop-drain.conf": [
         ("ExecStop", "-/usr/bin/vppctl bpa stop-drain",
