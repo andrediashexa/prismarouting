@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.9 - the lender's side of a lent block
+
+### Added
+
 * **The lender's side of a lent block**
   ([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
   A block given to another worker is a **third state**, `BPA_LENT` in
@@ -111,8 +117,6 @@ version has a chance of seeing it.
   counted, the zero it leans on is now asserted, so the redundancy is a fact
   instead of a hope; and the harness's own free/held invariant learned about
   lending, which is how the missing term was found.
-
-### Fixed
 
 ## 0.111.8 - the arithmetic of moving a block
 
