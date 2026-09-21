@@ -92,6 +92,20 @@ services:
     # one, and 30 s has room by a factor of about twenty-five rather than
     # being a number that sounded safe.
     stop_grace_period: 30s
+    # OUT OF THE OOM KILLER'S CHOICE, the same -1000 vpp-oom-protect.conf
+    # puts on vpp.service and for the same reason: the dataplane came to be
+    # killed on a 2 GB box while holding 19 MB resident, because on a box
+    # where nothing else is resident it is the biggest thing there. A box
+    # that lost bgpd still forwards on what it learned; a box that lost VPP
+    # forwards nothing. The drop-in's comment carries the measurements.
+    #
+    # THAT IT REACHES THE KERNEL IS MEASURED AND NOT ASSUMED. docker-compose
+    # 1.29.2 - the version the medium carries - parses `oom_score_adj` under
+    # the 3.9 schema this file resolves to, passes it as HostConfig.
+    # OomScoreAdj, and the container's PID 1 reads -1000 back out of
+    # /proc/<pid>/oom_score_adj. The dataplane inherits it: oom_score_adj is
+    # carried across fork, and vpp-entrypoint is the parent.
+    oom_score_adj: -1000
     # `unless-stopped` and not `always`: they are not the same, and the
     # difference is the one systemd has too - `Restart=always` restarts a
     # clean exit. A dataplane that exited cleanly did so because somebody

@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The containerised dataplane is out of the OOM killer's choice too**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `vpp.service` has carried `OOMScoreAdjust=-1000` since a 2 GB box killed
+  VPP while it held 19 MB resident - it was not the glutton, it was the
+  chosen victim. The container had no such protection, so a box booted on
+  the containers was a box whose dataplane the kernel could pick for
+  somebody else's allocation. `appliance/compose.yaml` now sets
+  `oom_score_adj: -1000`, and that it reaches the kernel is measured rather
+  than assumed: `tools/build-images.sh compose-check` reads
+  `/proc/<pid>/oom_score_adj` of the running container - `-1000` with the
+  key, `0` with it removed.
+
+* **A suite that holds the two dataplanes to one shape**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `test/test_two_dataplanes_one_shape.sh`. Until
+  [#396](https://github.com/andrediashexa/hexarouting/issues/396) there was
+  one dataplane and every protection was a line in a drop-in; there are two
+  now, and a protection on one path and not the other is the worst shape
+  available, because the box looks the same from the VTY either way. It
+  asserts three pairs today - the OOM score (and that the two values agree),
+  the shared API segment, and the drain before the dataplane dies - and it
+  is where the rest of #426's pairs will land.
+
 ### Fixed
 
 ## 0.114.0 - the VTY reaches a dataplane in a container

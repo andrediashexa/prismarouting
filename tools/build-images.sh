@@ -363,6 +363,24 @@ OVR
       bad "the dataplane's API segments are not on this host's /dev/shm, so prismash - which runs on the box and not in a container - would have no binary API and every commit would fail: appliance/compose.yaml needs ipc: host"
     fi
 
+    # AND THE KERNEL HAS THE OOM SCORE, read off /proc and not off the
+    # compose file. `oom_score_adj` is a key compose 1.29.2 parses under the
+    # 3.9 schema; whether it reaches the kernel is a different question, and
+    # a box whose dataplane is choosable while a file says it is not is
+    # exactly the shape #328 was about. -1000 takes VPP out of selection:
+    # the 2 GB box that killed it while it held 19 MB resident is in
+    # vpp-oom-protect.conf with the rest of the measurement.
+    vpppid=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+             -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" \
+             ps -q vpp 2>/dev/null \
+             | head -1 | xargs -r docker inspect -f '{{.State.Pid}}' 2>/dev/null)
+    oomadj=$(cat "/proc/${vpppid:-0}/oom_score_adj" 2>/dev/null)
+    case "$oomadj" in
+      -1000) ok "and the kernel has the dataplane out of the OOM killer's choice" ;;
+      "") bad "could not read /proc/${vpppid:-?}/oom_score_adj, so nothing here says whether the containerised dataplane is choosable by the OOM killer" ;;
+      *) bad "the containerised dataplane's oom_score_adj is $oomadj and not -1000, so the kernel may kill the dataplane for somebody else's allocation - which is how it came to be killed on a 2 GB box while holding 19 MB" ;;
+    esac
+
     # AND THE WORKERS ARE WHERE startup.conf PUT THEM. The tuner computes
     # `corelist-workers` from the NIC's NUMA node and the physical cores, and
     # a container that confines the process to some other set would leave
