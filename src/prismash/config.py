@@ -1171,8 +1171,16 @@ def asn_note(value: str):
 TEXT_LIMITS = {
     "cgnat pool": (63, "bpa.api, bpa_pool_add_del name[64], which holds 63 "
                        "characters and a terminator"),
-    "description": (64, "VPP's vnet/interface.api, "
-                        "sw_interface_tag_add_del tag[64]"),
+    #: 63, and VPP is the one that decided it (#424). Asked through
+    #: `vat2 sw_interface_tag_add_del` and read back with
+    #: `sw_interface_dump`: 63, 64, 65 and 100 characters all answer
+    #: `retval: 0`, and every one of them reads back as 63. It TRUNCATES,
+    #: silently, where the pool name refuses - so a 64-character
+    #: description was accepted by every screen and kept one character
+    #: shorter, and a saved file is written from the readback (#419).
+    "description": (63, "VPP's vnet/interface.api, "
+                        "sw_interface_tag_add_del tag[64], which keeps 63 "
+                        "characters and truncates the rest"),
     "cgnat identity file": (256, "bpa.api, bpa_identity_set path[256]"),
     "cgnat identity dhcp-leases": (256, "bpa.api, bpa_identity_set path[256]"),
     "cgnat identity radius secret": (
