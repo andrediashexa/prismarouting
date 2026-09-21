@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.8 - the arithmetic of moving a block
+
+### Added
+
 * **The arithmetic of moving a block between workers**
   ([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
   A dynamic pool's blocks are partitioned per worker and the
@@ -112,8 +118,6 @@ version has a chance of seeing it.
   side, the read on the `out2in` miss path - is the next piece, and the
   measurement that has to come before it is `lab/throughput.sh` on a box
   where nothing is lent.
-
-### Fixed
 
 ## 0.111.7 - the card the container is handed
 
