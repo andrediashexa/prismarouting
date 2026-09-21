@@ -1,0 +1,27 @@
+# The control-plane image: FRR and its daemons. It holds no packet; it speaks
+# BGP, OSPF, OSPFv3 and IS-IS over the TAPs linux_cp pairs into Linux, which
+# is why it shares the dataplane's network namespace and can never have
+# Docker's network isolation (#396, section 3, point 1).
+FROM debian:12
+
+# NOT the distribution's FRR. Debian 12 carries 8.4.4; this product is
+# developed against 10.7.1 and the version is pinned in three places, which
+# test/test_image_pins.py is what keeps agreeing.
+ARG FRR_VERSION=10.7.1-0~deb12u1
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && curl -s https://deb.frrouting.org/frr/keys.gpg \
+         -o /usr/share/keyrings/frrouting.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr bookworm frr-stable" \
+       > /etc/apt/sources.list.d/frr.list \
+    && apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        frr=${FRR_VERSION} \
+        frr-pythontools=${FRR_VERSION} \
+        frr-rpki-rtrlib=${FRR_VERSION} \
+    && apt-get purge -y curl gnupg && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+CMD ["/usr/lib/frr/frrinit.sh", "start"]

@@ -789,7 +789,14 @@ for path in PY_SOURCES:
 
 SHELL_SOURCES = ["appliance/selftest", "appliance/prisma-routing-install",
                  "appliance/bind-dataplane-nic", "appliance/wait-for-vpp",
-                 "appliance/apply-tuning"]
+                 "appliance/apply-tuning",
+                 # NOT an appliance file: tools/build-images.sh runs on
+                 # whoever's machine builds the images, and prints its
+                 # verdicts in the same `  [ ok ] ` shape the box does
+                 # (#396). docs/appliance.md quotes that screen, and a
+                 # screen quoted under docs/ is read as what the product
+                 # prints whether or not the printer boots.
+                 "tools/build-images.sh"]
 
 SHELL_MARK = {"ok": "  [ ok ] ", "_vok": "  [ ok ] ",
               "bad": "  [FAIL] ", "_vbad": "  [FAIL] ",

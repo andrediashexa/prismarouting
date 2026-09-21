@@ -1,0 +1,45 @@
+# The dataplane image: VPP, DPDK and the bpa plugin, and nothing that builds
+# them. It is not build/Dockerfile.dev with the compiler removed - that image
+# carries vpp-dev, libvppinfra-dev, cmake, ninja and gdb, and an appliance
+# ships none of those.
+#
+# THE PLUGIN IS NOT BUILT HERE. It is compiled in the dev image, against the
+# VPP whose version is pinned in both, and copied in: a plugin compiled
+# against one VPP and loaded by another is the failure this product pins
+# versions to avoid, and building it twice is two chances to compile it
+# against two different ones. `tools/build-images.sh` is what puts them
+# together, and `test/test_image_pins.py` refuses a pin here that disagrees
+# with the one appliance/build-iso.sh installs.
+FROM debian:12
+
+ARG VPP_VERSION=26.06-release
+ENV DEBIAN_FRONTEND=noninteractive
+# The vpp postinst runs `sysctl --system`, which a container may not do, and
+# the script is `sh -e`. The package exposes this variable for exactly this.
+ENV VPP_INSTALL_SKIP_SYSCTL=1
+
+# One layer, and curl and gnupg are gone by the end of it. They are needed to
+# add the fd.io repository and are a network client in a dataplane image
+# afterwards; removing them in a LATER layer would leave them in this one,
+# where anything with the image can still read them.
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && curl -s https://packagecloud.io/install/repositories/fdio/release/script.deb.sh | bash \
+    && apt-get install -y --no-install-recommends \
+        vpp=${VPP_VERSION} \
+        vpp-plugin-core=${VPP_VERSION} \
+        vpp-plugin-dpdk=${VPP_VERSION} \
+        libvppinfra=${VPP_VERSION} \
+    && apt-get purge -y curl gnupg && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Where VPP looks for plugins it did not ship with. tools/build-images.sh
+# copies the plugin this repository compiled into this directory.
+COPY vpp_plugins/ /usr/lib/x86_64-linux-gnu/vpp_plugins/
+
+# NOT an ENTRYPOINT yet. The drain that runs on the way down is an ExecStop
+# today, and Compose has no pre-stop hook to put it in: the PID 1 that traps
+# SIGTERM, drains and only then forwards it is the whole of decision 4 on
+# #396, and an entrypoint written before that is decided is a shape somebody
+# will assume is the answer.
+CMD ["/usr/bin/vpp", "-c", "/etc/vpp/startup.conf"]
