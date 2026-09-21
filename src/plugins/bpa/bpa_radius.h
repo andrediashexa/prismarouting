@@ -41,13 +41,24 @@ typedef struct
   u16 port;
   u8 enabled;
   u8 *secret;
+
   u64 n_received, n_bad_auth, n_malformed, n_applied;
   u64 n_answered, n_unanswered;
 } bpa_radius_listener_t;
 
 extern bpa_radius_listener_t bpa_radius;
 
+/*
+ * The longest secret this box can be given, from the field it travels in:
+ * `string secret[128]` in bpa.api. Every buffer that holds a secret beside
+ * something else is sized from this rather than from a number that looked
+ * big enough - #425 was a 128-byte scratch holding a 20-byte header and a
+ * secret, which silently stopped answering the NAS at 109 characters.
+ */
+#define BPA_RADIUS_SECRET_MAX 128
+
 #ifndef BPA_STANDALONE
+
 clib_error_t *bpa_radius_enable (u16 port, const char *secret, int enable);
 void bpa_radius_service (void);
 #endif

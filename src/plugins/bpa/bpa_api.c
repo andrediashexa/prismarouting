@@ -448,7 +448,18 @@ vl_api_bpa_identity_radius_set_t_handler (vl_api_bpa_identity_radius_set_t *mp)
 {
   vl_api_bpa_identity_radius_set_reply_t *rmp;
   clib_error_t *e;
-  char secret[128];
+  /*
+   * 128 PLUS ROOM FOR THE TERMINATOR (#425), which is one byte more than
+   * this buffer used to have.
+   *
+   * It is not what limits the secret today: measured through BOTH doors, a
+   * 128-character secret arrives here as 127 - `string secret[128]` in
+   * VPP's own encoding spends a byte on the terminator, exactly as
+   * `name[64]` gives 63 usable characters (#423). What this width buys is
+   * that the handler is not the SECOND thing shortening it, so the limit an
+   * operator is refused by is the field's and not a C buffer's.
+   */
+  char secret[BPA_RADIUS_SECRET_MAX + 1];
   int rv = 0;
 
   snprintf (secret, sizeof (secret), "%s", (const char *) mp->secret);

@@ -1183,8 +1183,16 @@ TEXT_LIMITS = {
                         "characters and truncates the rest"),
     "cgnat identity file": (256, "bpa.api, bpa_identity_set path[256]"),
     "cgnat identity dhcp-leases": (256, "bpa.api, bpa_identity_set path[256]"),
+    #: 127, measured with a packet (#425). A secret cannot be read back -
+    #: the box does not print one, correctly - so it was asked the only way
+    #: it can be: RFC 2866 signs the Accounting-Request with the secret, so
+    #: a NAS that is answered has proved which secret the box holds.
+    #: Configured with 128 characters through BOTH doors, the box answers a
+    #: NAS signing with the first 127 and not one signing with all 128 - the
+    #: same terminator `name[64]` spends, one field wider.
     "cgnat identity radius secret": (
-        128, "bpa.api, bpa_identity_radius_set secret[128]"),
+        127, "bpa.api, bpa_identity_radius_set secret[128], which holds 127 "
+             "characters and a terminator"),
     "user": (32, "useradd(8): usernames may only be up to 32 characters long"),
 }
 

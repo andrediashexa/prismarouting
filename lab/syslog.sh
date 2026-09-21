@@ -239,6 +239,103 @@ echo
 echo "=== what the collector received ==="
 printf '%s\n' "$C" | sed 's/^/  /'
 
+# LAST, AND THAT IS NOT TIDINESS. This section configures secrets and sends
+# accounting, so it leaves identities and sessions behind - and in the middle
+# of the file it took four later checks red with it: the release lines, their
+# identities and the collector's connection all read a box it had moved on.
+# The same lab passes on master, which is how that was found. Here, after the
+# collector has been drained and before the verdicts are computed, it changes
+# nothing that is still to be measured.
+echo "=== how long a secret this box keeps (#424) ==="
+# THE ONE ENTRY IN config.TEXT_LIMITS WITH NO MEASUREMENT UNDER IT, and it
+# cannot be asked the way the other two were: `name[64]` refuses a
+# 64-character name with retval -7 and `tag[64]` keeps 63 of whatever it is
+# given, both readable off the box - but the box does not print a secret.
+# Correctly: a screen that echoes a shared secret is a screen somebody
+# photographs.
+#
+# So it is asked with a PACKET. RFC 2866 signs the Accounting-Request with
+# MD5 over the packet and the secret, so a NAS that is answered has proved
+# the box holds the secret it signed with, and one met with silence has
+# proved it does not.
+#
+# HERE, AND NOT IN A BOX OF ITS OWN: four attempts at a scaffolding for this
+# ended with a dataplane that never answered a correctly-signed packet, so
+# every case read "accepted" - including a control signed with a deliberately
+# wrong secret. This lab already exchanges accounting with this box and
+# already asserts that a forged packet is refused, which is what makes an
+# answer here mean anything.
+# BISECTED, because 127 fails too and the field is 128: whatever draws the
+# line is not the API's declared width. Each length gets its own secret, its
+# own subscriber and its own file, so the verdict can name the boundary.
+# A LONG SECRET IS STILL ANSWERED (#425), which is what this box could not
+# do: bpa_radius_acct_response() built the reply in a 128-byte scratch with
+# the 20-byte header in front of the secret, so `20 + slen > 128` returned 0
+# for every secret longer than 108 characters - and the caller reads 0 as
+# "do not reply".
+#
+# Nothing said no anywhere. The packet VERIFIED and the accounting was
+# APPLIED; what was lost was the Accounting-Response, so a NAS retransmits
+# for ever and logs this box as dead while its records are arriving.
+#
+# Driven here as well as in test/test_bpa_radius.c because the harness calls
+# the function and this calls the BOX: the fix is a buffer, and a buffer is
+# exactly the kind of thing that is right in a harness and wrong in the
+# process, if the caller hands it something else.
+for _len in 108 109 127; do
+  _sec=$(python3 -c "print('K' * $_len)")
+  $HX -c "configure" \
+      -c "cgnat identity radius secret $_sec port 1813" \
+      -c "commit" >/dev/null 2>&1
+  python3 /src/tools/radius_nas.py 127.0.0.1 1813 "$_sec" start \
+      100.64.0.13 "s$_len@isp" > /tmp/sec-$_len.txt 2>&1
+  if grep -q "accounting-response" /tmp/sec-$_len.txt; then
+    echo "  a secret of $_len: answered"
+  else
+    echo "  a secret of $_len: SILENCE"
+  fi
+done
+# AND WHAT A 128-CHARACTER SECRET BECOMES. With the response scratch fixed,
+# 128 is still met with silence - so something else shortens it, and a NAS
+# signing with the first 127 says so: if that one is answered, the box is
+# holding 127 of the 128 it was given.
+_sec128=$(python3 -c "print('K' * 128)")
+_pre127=$(python3 -c "print('K' * 127)")
+$HX -c "configure" -c "cgnat identity radius secret $_sec128 port 1813" \
+    -c "commit" >/dev/null 2>&1
+python3 /src/tools/radius_nas.py 127.0.0.1 1813 "$_pre127" start \
+    100.64.0.23 pre127@isp > /tmp/pre127.txt 2>&1
+grep -q "accounting-response" /tmp/pre127.txt \
+  && echo "  configured 128, signed with its first 127: ANSWERED" \
+  || echo "  configured 128, signed with its first 127: silence"
+vppctl show bpa identity | grep -E "refused" | sed 's/^/    /'
+
+# AND THROUGH THE API DOOR, which says whether the VTY is shortening it or
+# the wire format is: vat2 encodes the same `string secret[128]` field.
+_sec128b=$(python3 -c "print('Q' * 128)")
+_pre127b=$(python3 -c "print('Q' * 127)")
+vat2 bpa_identity_radius_set \
+    "{\"enable\": true, \"port\": 1813, \"secret\": \"$_sec128b\"}" >/dev/null 2>&1
+python3 /src/tools/radius_nas.py 127.0.0.1 1813 "$_sec128b" start \
+    100.64.0.24 api128@isp > /tmp/api128.txt 2>&1
+python3 /src/tools/radius_nas.py 127.0.0.1 1813 "$_pre127b" start \
+    100.64.0.25 api127@isp > /tmp/api127.txt 2>&1
+grep -q "accounting-response" /tmp/api128.txt \
+  && echo "  API, configured 128, signed with 128: ANSWERED" \
+  || echo "  API, configured 128, signed with 128: silence"
+grep -q "accounting-response" /tmp/api127.txt \
+  && echo "  API, configured 128, signed with its first 127: ANSWERED" \
+  || echo "  API, configured 128, signed with its first 127: silence"
+
+# And back to a short one, so the section leaves the box as it found it and
+# the next section's own secret is the one it expects.
+$HX -c "configure" -c "cgnat identity radius secret lab-s3cr3t port 1813" \
+    -c "commit" >/dev/null 2>&1
+
+sleep 2
+vppctl show bpa identity | tee /tmp/identity-secret.txt | sed 's/^/  /'
+
+
 . /src/lab/verdict.sh
 
 count_of() {   # <MSGID>; how many the collector counted, or 0
@@ -316,6 +413,18 @@ if [ "$MODE" != no-syslog ]; then
       /tmp/identity-radius.txt
   expect "a packet signed with another secret is counted and not applied" \
     grep -qE "refused +[1-9][0-9]* bad authenticator" /tmp/identity-radius.txt
+  # A LONG SECRET IS ANSWERED (#425). The NAS prints "accounting-response"
+  # only when the box replied, and the box replies only to a packet it
+  # verified - so these three are the box saying it can both read and answer
+  # a secret of that length. 108 is the boundary the defect drew: it is here
+  # so that a scratch sized back down is caught on the box and not only in
+  # the harness.
+  expect "a secret of 108 characters is answered" \
+    grep -q "accounting-response" /tmp/sec-108.txt
+  expect "and one of 109, which used to be met with silence" \
+    grep -q "accounting-response" /tmp/sec-109.txt
+  expect "and one of 127, which is what a 128-byte field holds" \
+    grep -q "accounting-response" /tmp/sec-127.txt
   expect "'show bpa identity' counts the entries and prints none of them" \
     sh -c "grep -q '3 entry(s)' /tmp/identity-show.txt && ! grep -q '@isp' /tmp/identity-show.txt"
 else

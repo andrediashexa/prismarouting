@@ -1759,13 +1759,17 @@ with open(_API) as _f:
 # measurement rather than arithmetic about C (#423). `string name[64]` holds
 # 64 bytes and the dataplane refuses a 64-character name with retval -7 -
 # asked, on a running box, one length at a time - so 63 is what an operator
-# may type. The other two rows have NOT been asked, and they keep the width:
+# may type. The SECRET was asked too, and with a packet (#425): a secret
+# cannot be read back, so lab/syslog.sh configures one and has a NAS sign
+# with it - the box answers a signature made with the first 127 of a
+# 128-character secret and not one made with all 128. `path[256]` is the row
+# that still keeps its width, because it has not been asked:
 # lowering them on the grounds that C strings have terminators would be
 # lowering a limit an operator reads on a guess.
 _FROM_API = {
     "cgnat pool": ("name", 64, 63),
     "cgnat identity file": ("path", 256, 256),
-    "cgnat identity radius secret": ("secret", 128, 128),
+    "cgnat identity radius secret": ("secret", 128, 127),
 }
 for _what, (_field, _width, _usable) in _FROM_API.items():
     check(f"string {_field}[{_width}];" in _api_text,
