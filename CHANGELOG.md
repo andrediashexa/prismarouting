@@ -77,6 +77,32 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The rule that refuses an overlapping pool has a harness**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)'s ceiling,
+  lowered). `bpa_ranges_overlap()` decides whether a pool is refused for
+  sharing an address with one already configured, and it lived in `bpa.c` -
+  a file that needs a VPP to link, so nothing could drive it.
+
+  It sits beside the type it is about now, in `bpa_pool.h`, and
+  `test/test_bpa_pool.c` drives it over twelve pairs, each asked **both ways
+  round** because the caller compares each new range against each existing
+  one in whichever order the vectors hold them: touching, adjacent,
+  contained, identical, and single addresses either side of a join.
+
+  **Including the case the casts exist for.** `base + count` is where a range
+  ends, and for a range ending at the top of the address space that sum wraps
+  in 32 bits - so without the widening a pool at `255.255.255.0/24` reads as
+  ending *below* everything and overlaps nothing. Two mutations watched red:
+  the casts dropped, and the interval closed at both ends.
+
+  What a mistake here costs is in `bpa_check_pool_overlap()`'s own comment:
+  two pools claiming one inside address means the second accepts
+  configuration and translates nothing, with nothing saying so
+  ([#73](https://github.com/andrediashexa/hexarouting/issues/73)).
+
+  The C ceiling is **129**. Moving a function to where a harness reaches it
+  is how that number goes down for anything `bpa.c` holds.
+
 ### Fixed
 
 ## 0.112.6 - four answers have a name

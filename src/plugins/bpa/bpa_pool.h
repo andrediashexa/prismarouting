@@ -308,6 +308,29 @@ typedef struct
 } bpa_range_t;
 
 /*
+ * Do two address ranges have any address in common?
+ *
+ * HERE RATHER THAN BESIDE ITS CALLER, so it can be driven without a VPP: it
+ * is the rule that refuses a pool overlapping another, and what a mistake in
+ * it costs is in bpa_check_pool_overlap()'s own comment - two pools claiming
+ * one inside address means the second accepts configuration and translates
+ * nothing, with nothing saying so (#73).
+ *
+ * THE CASTS ARE THE POINT. `base + count` is where a range ends, and on a
+ * range ending at the top of the address space that sum wraps in 32 bits: a
+ * pool at 255.255.255.0/24 would then look disjoint from everything and
+ * overlap checks would pass on a box where they must not. Both sides are
+ * widened before the comparison, and test/test_bpa_pool.c drives exactly
+ * that case.
+ */
+static_always_inline int
+bpa_ranges_overlap (const bpa_range_t *a, const bpa_range_t *b)
+{
+  return (u64) a->base < (u64) b->base + b->count
+	 && (u64) b->base < (u64) a->base + a->count;
+}
+
+/*
  * A set of addresses presented as a dense index space [0, count).
  * Ranges are sorted by base, which - because first_idx is assigned in that
  * same order - makes them sorted by first_idx too. One binary search serves

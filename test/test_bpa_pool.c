@@ -1915,5 +1915,60 @@ main (void)
     }
   }
 
+  printf ("\n=== two ranges overlapping, which refuses a pool (#73) ===\n");
+  {
+    /*
+     * bpa_check_pool_overlap() refuses a pool that shares an address with
+     * one already configured, and this is the arithmetic it refuses by.
+     * What a mistake costs is in that function's own comment: two pools
+     * claiming one inside address means bpa_pool_by_inside() returns the
+     * first, and the second accepts configuration and translates nothing
+     * with nothing saying so.
+     *
+     * Driven at the boundaries, because every way of getting a half-open
+     * interval wrong lives there: touching, adjacent, contained, identical,
+     * and single addresses either side of a join.
+     */
+    struct { u32 ab, ac, bb, bc; int want; const char *what; } cases[] = {
+      { 100, 10, 200, 10, 0, "disjoint, far apart" },
+      { 100, 10, 110, 10, 0, "adjacent: [100,110) and [110,120) share none" },
+      { 110, 10, 100, 10, 0, "and the same pair the other way round" },
+      { 100, 10, 109, 10, 1, "touching by one: 109 is in both" },
+      { 100, 10, 91, 10, 1, "touching by one at the bottom: 100 is in both" },
+      { 100, 10, 100, 10, 1, "identical ranges" },
+      { 100, 10, 102, 2, 1, "contained entirely" },
+      { 102, 2, 100, 10, 1, "container the other way round" },
+      { 100, 1, 100, 1, 1, "one address, the same one" },
+      { 100, 1, 101, 1, 0, "one address each, next to each other" },
+      /*
+       * THE CAST'S OWN CASE. A range ending at the top of the address space
+       * has base + count wrapping to 0 in 32 bits, and a comparison done
+       * that way reads it as ending BELOW everything - so a pool at the top
+       * of the space would look disjoint from a pool that contains it.
+       */
+      { 0xffffff00u, 256, 0xffffff80u, 4, 1,
+	"a range ending at the top of the space still overlaps one inside it" },
+      { 0xffffff00u, 256, 0u, 1, 0,
+	"and does not wrap round to meet 0.0.0.0" },
+    };
+    u32 k;
+
+    for (k = 0; k < sizeof (cases) / sizeof (cases[0]); k++)
+      {
+	bpa_range_t a = { .base = cases[k].ab, .count = cases[k].ac };
+	bpa_range_t b = { .base = cases[k].bb, .count = cases[k].bc };
+
+	CHECK (bpa_ranges_overlap (&a, &b) == cases[k].want, "%s",
+	       cases[k].what);
+	/* AND IT IS SYMMETRIC, because the caller compares each new range
+	   against each existing one in whichever order the vectors are in. */
+	CHECK (bpa_ranges_overlap (&b, &a) == cases[k].want,
+	       "%s - and the same answer with the arguments swapped",
+	       cases[k].what);
+      }
+    printf ("  %u pair(s), each asked both ways round\n",
+	    (unsigned) (sizeof (cases) / sizeof (cases[0])));
+  }
+
   return bpa_test_verdict (checks, failures);
 }
