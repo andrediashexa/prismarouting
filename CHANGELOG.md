@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.6 - the dataplane without privileged
+
+### Added
+
 * **The dataplane runs without `privileged`, and the set that replaced it was
   measured** ([#396](https://github.com/andrediashexa/hexarouting/issues/396),
   phase 2). Each entry by removing it and reading what the box said:
@@ -116,8 +122,6 @@ version has a chance of seeing it.
   `bind-dataplane-nic` falls back to `uio_pci_generic` there and says so.
   Which device the dataplane is handed follows from what that script chose,
   so it belongs in an override the box generates beside the card's address.
-
-### Fixed
 
 ## 0.111.5 - the stack, started and stopped for real
 
