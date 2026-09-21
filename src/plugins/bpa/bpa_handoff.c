@@ -91,6 +91,8 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
     {
       ip4_header_t *ip = vlib_buffer_get_current (b[0]);
       u32 sub_idx = 0, pool_index = 0;
+      /* ~0 until the loan book says this block is somewhere else (#210). */
+      u32 lent_owner = ~0u;
       int matched = 0;
 
       if (is_in2out)
@@ -224,16 +226,54 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  if (!matched)
 		    matched =
 		      (bpa_reserve_index_of (p, pub, port, &sub_idx) == 0);
+		  /*
+		   * AND THE BLOCK MAY HAVE BEEN LENT (#210).
+		   *
+		   * In a dynamic pool the value bpa_reverse_sub() just
+		   * produced IS the block's own index - bpa_join() of the
+		   * address and the block - and the whole reason a
+		   * subscriber may only hold a block congruent to itself is
+		   * that this steering then lands on the worker whose
+		   * session table holds it.
+		   *
+		   * A lent block breaks that deliberately: it stays the
+		   * lender's by arithmetic and the subscriber holding it is
+		   * on the borrower. Steered by the formula, the reply
+		   * arrives at the lender and bpa-out2in searches a table
+		   * that was never going to hold it - which is the same
+		   * failure the reserve paragraph above describes, arriving
+		   * by a different road.
+		   *
+		   * THE TEST IS ONE LOAD. Every box that has never exhausted
+		   * a slice has no loans at all, and pays a comparison
+		   * against zero rather than a hash lookup.
+		   */
+		  if (PREDICT_FALSE (matched && bm->n_lent_total
+				     && p->mode == BPA_MODE_DYNAMIC))
+		    {
+		      u32 borrower;
+
+		      if (bpa_lent_worker (bm, pool_index, sub_idx,
+					   &borrower) == 0)
+			lent_owner = borrower;
+		    }
 		}
 	    }
 	}
 
       if (matched)
 	{
+	  /*
+	   * The borrower when this block is on loan, and the arithmetic
+	   * otherwise. Both go through vlib_get_worker_thread_index()
+	   * because a worker id is not a thread index on a box whose main
+	   * thread does not forward.
+	   */
 	  u32 owner =
 	    bm->n_workers
 	      ? vlib_get_worker_thread_index (
-		  bpa_owner_worker (&bm->workers, sub_idx))
+		  lent_owner != ~0u ? lent_owner
+				    : bpa_owner_worker (&bm->workers, sub_idx))
 	      : 0;
 	  ti[0] = (u16) owner;
 	  if (owner == this_thread)

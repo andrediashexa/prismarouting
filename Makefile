@@ -16,6 +16,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_identity $(BUILD)/test_bpa_md5 \
       $(BUILD)/test_bpa_block_ident \
       $(BUILD)/test_bpa_rebalance \
+      $(BUILD)/test_bpa_lent \
       $(BUILD)/test_bpa_radius
 	@sh tools/run-tests.sh
 
@@ -232,6 +233,18 @@ $(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
 # packet or a VPP: counters in, moves out - and every way of getting it wrong
 # is quiet, from a lender that gives away what it needs to a plan that holds
 # the barrier for as long as the counters say.
+# The loan book the return path reads: which worker is holding a block it does
+# not own (#210). Standalone because it is a table and a counter, and the
+# counter IS the fast path - the handoff tests it before it looks at anything
+# else, so a count that drifts above zero turns a comparison into a hash
+# lookup on every packet of every box.
+$(BUILD)/test_bpa_lent: test/test_bpa_lent.c \
+                        src/plugins/bpa/bpa_lent.c \
+                        test/bpa_shim.h test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_lent.c
+
 $(BUILD)/test_bpa_rebalance: test/test_bpa_rebalance.c \
                              src/plugins/bpa/bpa_rebalance.c \
                              src/plugins/bpa/bpa_rebalance.h \

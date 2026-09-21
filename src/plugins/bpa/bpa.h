@@ -109,6 +109,29 @@ typedef struct
   u32 n_workers;
   bpa_divisor_t workers; /* spreads subscribers over the workers */
 
+  /*
+   * WHO IS HOLDING A BLOCK THAT WAS LENT (#210), keyed by pool and block.
+   *
+   * The return path steers on arithmetic: bpa_reverse_sub() turns (public
+   * address, port) into the block's own index, and a dynamic block is owned
+   * by the worker that index is congruent to - which is exactly why a
+   * subscriber may only be given a block congruent to itself. Lending breaks
+   * that on purpose: the block stays the lender's by arithmetic and the
+   * SUBSCRIBER holding it is on the borrower, so a reply steered by the
+   * formula arrives at a worker whose session table was never going to hold
+   * it.
+   *
+   * So the loan is written down where the return path can read it. Written
+   * only under the barrier, by the rebalance; read on the handoff, which is
+   * the last place a packet can still be sent somewhere else.
+   *
+   * n_lent_total IS THE FAST PATH. Every box that has never exhausted a
+   * slice has none of these, and pays one load and a comparison against zero
+   * - not a hash lookup - for the whole mechanism.
+   */
+  uword *lent_to;    /* (pool_index << 32 | block_idx) -> worker + 1 */
+  u32 n_lent_total;  /* how many entries lent_to holds */
+
   vlib_log_class_t log_class; /* shows up in "show logging" */
   u8 *audit_path;	      /* dated configuration trail */
 
@@ -202,6 +225,43 @@ extern vlib_node_registration_t bpa_in2out_handoff_node;
 extern vlib_node_registration_t bpa_out2in_handoff_node;
 
 /* Queues a log event from the dataplane. No lock: the queue is per-thread. */
+/*
+ * The loan book (#210). Written under the barrier by the rebalance, read on
+ * the handoff by every worker.
+ *
+ * A key is the pool and the block, because a block index means nothing
+ * without the pool it belongs to, and two pools' blocks share an index space
+ * that starts at zero.
+ */
+static_always_inline u64
+bpa_lent_key (u32 pool_index, u32 block_idx)
+{
+  return ((u64) pool_index << 32) | block_idx;
+}
+
+void bpa_lent_set (bpa_main_t *bm, u32 pool_index, u32 block_idx, u32 worker);
+void bpa_lent_clear (bpa_main_t *bm, u32 pool_index, u32 block_idx);
+/* Every loan of one pool given up at once, for a pool being replaced. */
+void bpa_lent_clear_pool (bpa_main_t *bm, u32 pool_index);
+
+/*
+ * Which worker holds this block now, or -1 when nobody borrowed it.
+ *
+ * The caller checks n_lent_total first: this is the slow half, and on a box
+ * with no loans it is never reached.
+ */
+static_always_inline int
+bpa_lent_worker (const bpa_main_t *bm, u32 pool_index, u32 block_idx,
+		 u32 *worker)
+{
+  uword *q = hash_get (bm->lent_to, bpa_lent_key (pool_index, block_idx));
+
+  if (PREDICT_TRUE (q == 0))
+    return -1;
+  *worker = (u32) (q[0] - 1);
+  return 0;
+}
+
 void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
 			  u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id);
 

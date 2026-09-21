@@ -1993,6 +1993,14 @@ bpa_pool_del (u8 *name)
        * filed under is about to be handed to the next pool created. */
       bpa_block_ident_forget_pool (&pt->block_ident, pool_index);
     }
+  /*
+   * And the loans filed against this pool (#210), for the same reason as the
+   * line above: the index is about to be handed to the next pool created,
+   * whose blocks start at zero like this one's, and a stale entry would
+   * steer a reply for a block that means something else now to a worker that
+   * never borrowed anything.
+   */
+  bpa_lent_clear_pool (bm, pool_index);
   vec_free (p->name);
   vec_free (p->statics);
   pool_put (bm->pools, p);

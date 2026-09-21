@@ -234,6 +234,24 @@ exact. `show bpa blocks` says so when there is any:
              1 lent to another thread, so 1 of this slice is neither in use nor free here
 ```
 
+**The return path is where the loan has to be written down.** A reply steers
+by arithmetic: `bpa_reverse_sub()` turns (public address, port) into the
+block's own index, and a dynamic block is owned by the worker that index is
+congruent to - which is exactly why a subscriber may only be given a block
+congruent to itself. A lent block breaks that on purpose, so the reply for it
+would arrive at the **lender**, whose session table was never going to hold
+it.
+
+So `bpa_main`'s loan book - `(pool, block) -> the worker holding it now` - is
+read on the handoff, which is the last place a packet can still be sent
+somewhere else. It is written only under the barrier, by the rebalance.
+
+**A box that has never exhausted a slice pays one load and a comparison
+against zero**, not a hash lookup: `n_lent_total` is tested before anything
+else, and it is zero on every box with no loans. A pool being replaced gives
+up its entries with it, because the next pool created takes the same index and
+its blocks start at zero too.
+
 **The index space is the part that is not symmetric.** A block's name in a
 worker's slice is arithmetic - `block_idx = local × n_workers + worker` - so
 every index in a slice is congruent to that worker's id, and a borrowed block

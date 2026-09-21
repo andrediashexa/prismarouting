@@ -27,6 +27,7 @@
 .build/test_bpa_identity
 .build/test_bpa_block_ident
 .build/test_bpa_rebalance
+.build/test_bpa_lent
 .build/test_bpa_md5
 .build/test_bpa_radius
 python3 appliance/test_tune.py
