@@ -77,6 +77,53 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The loan book the return path reads**
+  ([#210](https://github.com/andrediashexa/hexarouting/issues/210), the last
+  of the four pieces). A reply steers by arithmetic: `bpa_reverse_sub()`
+  turns (public address, port) into the block's own index, and a dynamic
+  block is owned by the worker that index is congruent to - which is exactly
+  why a subscriber may hold only a block congruent to itself. A lent block
+  breaks that deliberately, so the reply for it would arrive at the **lender**
+  and `bpa-out2in` would search a table that was never going to hold it.
+
+  `bpa_lent.c` is the book - `(pool, block) -> the worker holding it now` -
+  written only under the barrier and read on the **handoff**, which is the
+  last place a packet can still be sent somewhere else. The pool is part of
+  the key because two pools' blocks both start at index zero, and a pool
+  being replaced gives up its entries with it: the next pool created takes
+  that index.
+
+  **A box with no loans pays one load and a comparison against zero**, not a
+  hash lookup. That makes `n_lent_total` a fast-path number rather than
+  bookkeeping: a count that drifts above the entries never returns to zero,
+  and every packet of every box pays a lookup for ever. It is counted on the
+  transition and not on the call, and four mutations were watched red -
+  including both directions of that drift.
+
+  **Measured, and the measurement is the interesting part.** A single run of
+  `lab/throughput.sh` is worth ±4% on this machine: the first run after this
+  change read 3.46e2 clocks against a 3.40e2 baseline, and a second read
+  3.52e2 - on an *idle* box, where a *busy* one had read lower. So three runs
+  were taken on each tree:
+
+  | | run 1 | run 2 | run 3 |
+  |---|---|---|---|
+  | handoff, this branch | 1.26e2 | 1.24e2 | 1.24e2 |
+  | handoff, master | 1.28e2 | 1.26e2 | 1.29e2 |
+  | `bpa-in2out`, this branch | 3.36e2 | 3.40e2 | 3.40e2 |
+  | `bpa-in2out`, master | 3.43e2 | 3.41e2 | 3.43e2 |
+
+  Every run of the branch is at or below every run of master, on both nodes,
+  so the added load and branch cost nothing this lab can see. The earlier
+  entries in this file that compared **one** run against **one** baseline
+  were luckier than they were rigorous, and said so with more confidence than
+  the instrument supports.
+
+  **Nothing writes to the book yet**: the rebalance has no caller, so no box
+  changes behaviour. What is left on that issue is the tick that joins the
+  four pieces, and the lab that drives a borrowed block's reply through a
+  real handoff.
+
 ### Fixed
 
 ## 0.111.11 - a two-digit patch is not a prefix

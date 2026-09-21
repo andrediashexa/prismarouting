@@ -258,6 +258,15 @@ bpa_hash_free_ (uword *hp)
 }
 
 #define hash_create(E, V) bpa_hash_create ()
+/*
+ * A walk, which VPP spells hash_foreach and which bpa_lent.c needs to give up
+ * one pool's loans at once. The body is a statement expression in VPP's
+ * macro, so it is one here too, and the entries are walked BACKWARDS: the
+ * only caller collects keys to unset afterwards, and a forward walk over an
+ * ordered array is the shape that tempts somebody to unset inside it.
+ */
+#define hash_foreach(K, V, H, BODY)                                             do                                                                              {                                                                               bpa_hash_t *_h = (bpa_hash_t *) (H);                                          uword _i;                                                                     if (_h)                                                                 	for (_i = _h->len; _i > 0; _i--)                                      	  {                                                                   	    (K) = _h->ents[_i - 1].key;                                       	    (V) = _h->ents[_i - 1].val;                                       	    BODY;                                                             	  }                                                                       }                                                                           while (0)
+
 #define hash_get(H, K)	  bpa_hash_get ((H), (uword) (K))
 #define hash_set(H, K, V) bpa_hash_set ((H), (uword) (K), (uword) (V))
 #define hash_unset(H, K)  bpa_hash_unset ((H), (uword) (K))
