@@ -2608,6 +2608,83 @@ the target. On an installed box it would mean physical or IPMI access equals
 full access with no password, which is the operator's decision rather than our
 default.
 
+## The container images, which nothing on the box runs yet
+
+[#396](https://github.com/andrediashexa/hexarouting/issues/396) asks whether
+the control plane, the agent and the dataplane should be containers on one
+host. Its phase 1 is the smallest honest step: **build the images, prove they
+hold what they claim, and change nothing about how the box boots.** That is
+what is here. The appliance still runs VPP and FRR as systemd units, and
+nothing starts either image.
+
+```sh
+sh tools/build-images.sh          # prisma-vpp:<version>, prisma-frr:<version>
+sh tools/build-images.sh check    # start them, and ask what they hold
+sh tools/build-images.sh save     # the file a medium would carry
+```
+
+Two images, and the split is the one the product already has: `prisma-vpp`
+carries VPP, DPDK and the **bpa plugin this repository compiled**, and
+`prisma-frr` carries FRR's daemons. Neither carries a compiler - that is
+`build/Dockerfile.dev`, which exists to build the plugin and has no business
+on a customer's box.
+
+**The plugin is copied in, never built there.** A plugin compiled against one
+VPP and loaded by another does not load, which is why this product pins a VPP
+version at all; building it inside the image would be a second compile against
+a second apt resolution, on a different day.
+
+### What they cost, measured
+
+| | |
+|---|---|
+| `prisma-vpp` | 202 MB |
+| `prisma-frr` | 205 MB |
+| both, saved and gzipped - what a medium would carry | **118 MB** |
+| the medium today | 325 MB |
+
+So shipping them inside the ISO makes it **36% bigger to carry a second copy
+of packages it already installs into its own root**, and an installed disk
+holds both copies. That is the true price of phase 1 taken literally, and it
+buys no behaviour: the duplication only ends in phase 2, when the box starts
+the containers instead of the units and the root can stop installing VPP and
+FRR at all.
+
+### What the started images say
+
+`check` starts them rather than reading their Dockerfiles, because only a
+running container can say what apt resolved and what VPP loaded:
+
+```
+==> the dataplane image, started
+  [ ok ] the bpa plugin is loaded
+  [ ok ] and it is this tree's plugin: 0.111.2, commit 595354b
+  [ ok ] VPP is the pinned 26.06-release
+  [ ok ] and no compiler came with it
+==> the control-plane image, asked its version
+  [ ok ] FRR is the pinned 10.7.1
+IMAGES PASSED
+```
+
+`make test` cannot run that - it has no docker and no network - so
+`test/test_image_pins.py` reads what a file can answer: that both Dockerfiles
+pin the versions **the medium installs**, that the tool takes those pins out
+of `appliance/build-iso.sh` rather than repeating them, and that no runtime
+image installs a compiler.
+
+### What phase 1 does NOT do
+
+* **Nothing on an installed box changes.** No unit, no install step, no boot.
+* **The images are not in the medium.** They are built on demand by the tool
+  above. Putting 118 MB into every ISO before anything starts them is a
+  bigger medium for no behaviour, and the release that starts them is the
+  release that should carry them.
+* **There is no entrypoint.** The drain that must run before the dataplane
+  stops is an `ExecStop` today, and Compose has no pre-stop hook: the PID 1
+  that traps `SIGTERM`, drains, **waits**, and only then forwards the signal
+  is the whole of decision 4 on that issue. An entrypoint written before that
+  is decided is a shape somebody will mistake for the answer.
+
 ## What is still missing
 
 * **HA**: no failover today. Two boxes with the same deterministic pool

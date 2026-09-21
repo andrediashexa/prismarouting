@@ -77,6 +77,41 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The two runtime images, and what they cost**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396), phase 1).
+  `build/Dockerfile.vpp` carries VPP, DPDK and the bpa plugin **this
+  repository compiled**; `build/Dockerfile.frr` carries FRR's daemons. Neither
+  carries a compiler - that is `build/Dockerfile.dev`, which has no business
+  on a customer's box. `sh tools/build-images.sh` builds them, `check` starts
+  them and asks what they hold, `save` writes the file a medium would carry.
+
+  **Measured, and the number is the phase-1 result**: 202 MB for the
+  dataplane image, 205 MB for the control plane, **118 MB** for the two saved
+  and gzipped - against a **325 MB** medium that already installs both sets of
+  packages into its own root. Shipping them inside it is a **36% bigger
+  medium carrying a second copy of what it has**, and it buys no behaviour
+  until phase 2 starts them. So they are built on demand and the medium is
+  unchanged; the release that starts them is the release that should carry
+  them.
+
+  The started images say what no file can: the plugin loads, and it is this
+  tree's - `0.111.2, commit 595354b`, read off `show plugins` inside the
+  container.
+
+  `test/test_image_pins.py` is what `make test` can do without docker: both
+  Dockerfiles must pin the versions **the medium installs**, the tool must
+  take those pins out of `appliance/build-iso.sh` rather than repeating them,
+  no runtime image may install a compiler, and the plugin must be copied in
+  rather than built there - a plugin compiled against one VPP and loaded by
+  another does not load, which is why this product pins a VPP at all.
+  `test/test_build_images.sh` drives the tool's two readers alone.
+
+  **Nothing on an installed box changes**, and there is deliberately **no
+  entrypoint**: the drain that must run before the dataplane stops is an
+  `ExecStop` today and Compose has no pre-stop hook, so the PID 1 that traps
+  `SIGTERM`, drains, **waits** and only then forwards it is decision 4 on that
+  issue and not a shape to guess at now.
+
 ### Fixed
 
 ## 0.111.2 - the card says which node it is on

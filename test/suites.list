@@ -107,3 +107,5 @@ python3 test/test_plugin_cli_says.py
 sh test/test_release_titles.sh
 sh test/test_release_digits.sh
 sh test/test_announce_commit.sh
+python3 test/test_image_pins.py
+sh test/test_build_images.sh
