@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.112.4 - four fields, four behaviours
+
+### Fixed
+
 * **Every row of `TEXT_LIMITS` has a measurement under it now**
   ([#424](https://github.com/andrediashexa/hexarouting/issues/424)). The last
   one was the identity path, and it is the odd case: **the box does not
