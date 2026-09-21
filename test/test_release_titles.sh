@@ -34,6 +34,10 @@ cat > "$WORK/CHANGELOG.md" <<'EOF'
 ## 9.2.0 - the gate takes the upgrade an operator takes
 
 ## 9.1.0 - foundations
+
+## 9.0.10 - the tenth patch, which is not the first one
+
+## 9.0.1 - the first patch
 EOF
 
 run() {   # <table rows on stdin>; prints the tool's output, sets RC
@@ -46,6 +50,29 @@ run() {   # <table rows on stdin>; prints the tool's output, sets RC
 }
 
 TAB=$(printf '\t')
+
+echo "=== a two-digit patch is not a prefix of the one-digit one ==="
+# THE DAY THIS PROJECT PUBLISHED 0.111.10. "## 0.111.1" is a prefix of
+# "## 0.111.10 - ...", so the reader matched the wrong heading and reported a
+# correctly titled release as wrong - a check refusing correct work, which is
+# the failure this whole file exists to prevent one level down.
+run "v9.0.1${TAB}9.0.1 - the first patch
+v9.0.10${TAB}9.0.10 - the tenth patch, which is not the first one"
+if [ "$RC" = 0 ]; then
+  ok "both patches read their own heading"
+else
+  bad "a two-digit patch beside a one-digit one was refused: $OUT"
+fi
+case "$OUT" in
+  *"2 published release(s)"*) ok "and both were read, not skipped" ;;
+  *) bad "the tool read $OUT" ;;
+esac
+# AND THE REFUSAL STILL FIRES on the one that is actually wrong, so the fix
+# above is a narrower match rather than a looser one.
+run "v9.0.1${TAB}9.0.1 - the tenth patch, which is not the first one"
+[ "$RC" != 0 ] \
+  && ok "and a patch wearing its neighbour's heading is still refused" \
+  || bad "the narrower match stopped refusing a wrong title: $OUT"
 
 echo "=== every shape the convention allows is accepted ==="
 run "v9.3.0${TAB}9.3.0 - the words a level owns

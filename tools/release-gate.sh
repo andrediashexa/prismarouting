@@ -341,12 +341,22 @@ prev=$(git -C "$WORK" tag -l "v*" --sort=v:refname \
 if [ -n "$prev" ]; then
   prev_ver=${prev#v}
   cur_sect=$(awk -v v="## $prev_ver" '
-    index($0, v) == 1 { p = 1; print; next }
+    index($0, v) == 1 &&
+    (length($0) == length(v) || substr($0, length(v) + 1, 1) == " ") {
+      p = 1; print; next
+    }
     /^## / { p = 0 }
     p { print }
   ' "$WORK/CHANGELOG.md")
+  # The same guard on the next character as tools/release-titles.sh, and for
+  # the same reason: "## 0.111.1" is a prefix of "## 0.111.10 - ...", so a
+  # two-digit patch makes this compare one release's section against
+  # another's and refuse a tag that is correct.
   was_sect=$(git -C "$WORK" show "$prev:CHANGELOG.md" 2>/dev/null | awk -v v="## $prev_ver" '
-    index($0, v) == 1 { p = 1; print; next }
+    index($0, v) == 1 &&
+    (length($0) == length(v) || substr($0, length(v) + 1, 1) == " ") {
+      p = 1; print; next
+    }
     /^## / { p = 0 }
     p { print }
   ')
