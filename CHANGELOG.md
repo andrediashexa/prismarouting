@@ -77,6 +77,30 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The X.Y.Z rule has a reader**
+  ([#409](https://github.com/andrediashexa/hexarouting/issues/409)).
+  `tools/release-digits.sh` reads every published release and refuses one
+  whose publishing disagrees with its own digit: a **Z** must be a
+  pre-release, so `Latest` stays on the last medium this project booted; an
+  **X or Y** must not be.
+
+  The gate reads the digit off the tag and takes the matching path, and
+  refuses a Z whose note claims a boot. What nothing checked is the
+  **publishing** — `--prerelease` is typed at the one moment nothing is
+  looking, which is exactly how the neighbouring title rule lost a release
+  ([#402](https://github.com/andrediashexa/hexarouting/issues/402)). Five Z
+  releases have been published since the rule landed and all five are correct;
+  they were typed that way by whoever cut them, and a rule kept by whoever
+  remembers is not a rule this repository counts as kept.
+
+  **History is counted, never refused.** Nine patches published before the
+  rule existed — `v0.2.1` through `v0.77.1` — are named and counted, because a
+  check that fails on history is a check somebody turns off.
+
+  It is driven through `PRISMA_RELEASE_DIGITS`, the same escape hatch
+  `release-titles.sh` has, so every refusal is watched firing without
+  publishing a release that carries the defect.
+
 ### Fixed
 
 ## 0.111.0 - a clock on every step, and the collector retains

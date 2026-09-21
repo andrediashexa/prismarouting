@@ -90,6 +90,10 @@ install_gate() {
   cp "$REPO/tools/release-gate.sh" "$FIX/tools/release-gate.sh"
   cp "$REPO/tools/wiki-status.sh" "$FIX/tools/wiki-status.sh"
   cp "$REPO/tools/roadmap-state.sh" "$FIX/tools/roadmap-state.sh"
+  # The gate calls this one too, since #409. A fixture missing a tool the gate
+  # invokes makes every run refuse for a reason that is about the fixture -
+  # which is what happened the moment this was added and not copied.
+  cp "$REPO/tools/release-digits.sh" "$FIX/tools/release-digits.sh"
 }
 
 GHBIN=$WORK/ghbin
