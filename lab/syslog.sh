@@ -327,6 +327,60 @@ grep -q "accounting-response" /tmp/api127.txt \
   && echo "  API, configured 128, signed with its first 127: ANSWERED" \
   || echo "  API, configured 128, signed with its first 127: silence"
 
+# AND HOW LONG A PATH THIS BOX OPENS (#424's last unmeasured row). The other
+# two entries of config.TEXT_LIMITS that come from a field have been asked
+# with a packet or a refusal; this one is the odd case - the box was already
+# seen using a 257-character path and finding the file, so its declared
+# `string path[256]` is not a limit and the VTY refusing 257 refuses
+# something the box can do.
+#
+# Built out of nested directories, because a single component is capped at
+# 255 bytes by the filesystem and that cap is not the one being measured.
+mkdir -p /tmp/deep
+_dir=/tmp/deep
+while [ ${#_dir} -lt 1100 ]; do
+  _dir="$_dir/dddddddddddddddddddddddddddddddddddddddddddddddddd"
+  mkdir -p "$_dir" 2>/dev/null || break
+done
+for _want in 255 256 257 1000; do
+  # A path of about _want characters, ending in a file that exists and holds
+  # one mapping: a path cut short names a file that is not there, and the
+  # load then brings in no entries - which is the reading, not the retval.
+  _p=$(python3 -c "
+import os, sys
+want = $_want
+base = '$_dir'
+parts = base.split('/')
+p = ''
+for part in parts:
+    if len(p) + len(part) + 1 > want - 12:
+        break
+    p = p + '/' + part if part else p
+if not p:
+    p = '/tmp'
+pad = 'f' * max(1, want - len(p) - 1)
+print(p + '/' + pad[:200])")
+  printf '100.64.0.40 path-%s\n' "$_want" > "$_p" 2>/dev/null || {
+    echo "  a path of $_want: the filesystem would not make it"; continue; }
+  $HX -c "configure" -c "cgnat identity file $_p" -c "commit" \
+      > /tmp/path-$_want.txt 2>&1
+  _n=$(vppctl show bpa identity | sed -n 's/identity table: \([0-9]*\) entry.*/\1/p')
+  # "commit complete" is NOT the reading: a statement refused at the prompt
+  # leaves an unchanged candidate, and committing that completes too. What
+  # says the path was taken is an error line, and the mapping this file
+  # holds appearing on the box.
+  if grep -qi "error" /tmp/path-$_want.txt; then
+    echo "  a path of $(printf '%s' "$_p" | wc -c): REFUSED - $(grep -i error /tmp/path-$_want.txt | head -1 | cut -c1-64)"
+  elif vppctl show bpa identity | grep -q "entry"; then
+    _who=$(vppctl show bpa subscriber 100.64.0.40 2>/dev/null | grep -o "path-[0-9]*" | head -1)
+    echo "  a path of $(printf '%s' "$_p" | wc -c): taken, and the box read ${_n:-0} entry(s) [${_who:-no name}]"
+  else
+    echo "  a path of $(printf '%s' "$_p" | wc -c): no error and no entries"
+  fi
+done
+$HX -c "configure" -c "cgnat identity file /tmp/subscribers.map" -c "commit" \
+    >/dev/null 2>&1
+
 # And back to a short one, so the section leaves the box as it found it and
 # the next section's own secret is the one it expects.
 $HX -c "configure" -c "cgnat identity radius secret lab-s3cr3t port 1813" \
@@ -425,6 +479,16 @@ if [ "$MODE" != no-syslog ]; then
     grep -q "accounting-response" /tmp/sec-109.txt
   expect "and one of 127, which is what a 128-byte field holds" \
     grep -q "accounting-response" /tmp/sec-127.txt
+  # THE LAST ROW OF config.TEXT_LIMITS (#424). A path of 256 is taken and one
+  # of 257 is refused at the prompt, which is where a refusal can be acted
+  # on. What the DATAPLANE does with 257 is a different answer - handed one
+  # directly through the API it opens the file and reads it - so the bound is
+  # the declared field and not a limit the box enforces, and the refusal says
+  # so rather than implying the box would fail.
+  expect "an identity path of 256 characters is taken" \
+    sh -c "! grep -qi error /tmp/path-256.txt"
+  expect "and one of 257 is refused at the prompt, naming the limit" \
+    grep -q "and the limit is 256" /tmp/path-257.txt
   expect "'show bpa identity' counts the entries and prints none of them" \
     sh -c "grep -q '3 entry(s)' /tmp/identity-show.txt && ! grep -q '@isp' /tmp/identity-show.txt"
 else

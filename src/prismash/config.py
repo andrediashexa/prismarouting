@@ -1181,6 +1181,14 @@ TEXT_LIMITS = {
     "description": (63, "VPP's vnet/interface.api, "
                         "sw_interface_tag_add_del tag[64], which keeps 63 "
                         "characters and truncates the rest"),
+    #: 256, and this is the one bound that is NOT what the box enforces
+    #: (#424, measured). Handed a 257-character path directly through the
+    #: API, the dataplane opens the file and reads its entry: `string
+    #: path[256]` is what bpa.api DECLARES, and VPP's encoding carries more
+    #: than that without promising to. So the limit is the declared field,
+    #: the refusal arrives at the prompt where an operator can act on it,
+    #: and neither claims the box would fail - going past a declared width
+    #: is relying on behaviour nothing documents.
     "cgnat identity file": (256, "bpa.api, bpa_identity_set path[256]"),
     "cgnat identity dhcp-leases": (256, "bpa.api, bpa_identity_set path[256]"),
     #: 127, measured with a packet (#425). A secret cannot be read back -

@@ -79,6 +79,38 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Every row of `TEXT_LIMITS` has a measurement under it now**
+  ([#424](https://github.com/andrediashexa/hexarouting/issues/424)). The last
+  one was the identity path, and it is the odd case: **the box does not
+  enforce it**. Handed a 257-character path directly through the API, the
+  dataplane opens the file and reads its entry - `string path[256]` is what
+  `bpa.api` declares, and VPP's encoding carries more than that without
+  promising to.
+
+  So the bound stays at 256 and its **reason** changes: it is the declared
+  field, the refusal arrives at the prompt where an operator can act on it,
+  and neither claims the box would fail. Going past a declared width is
+  relying on behaviour nothing documents, which is not a promise this
+  product makes to an operator.
+
+  `lab/syslog.sh` pins both halves - 256 taken, 257 refused with the limit
+  named - and the four fields now read, in one table:
+
+  | field | what the dataplane does with more than it declares |
+  |---|---|
+  | `bpa_pool_add_del name[64]` | refuses at 64, `retval: -7` |
+  | `sw_interface_tag_add_del tag[64]` | accepts anything, keeps 63 |
+  | `bpa_identity_radius_set secret[128]` | keeps 127, and the reply path broke at 109 until [#425](https://github.com/andrediashexa/hexarouting/issues/425) |
+  | `bpa_identity_set path[256]` | accepts 257 and uses it |
+
+  Four fields, four behaviours. A limit read off a declared width was never
+  one rule.
+
+  **And a reading of my own was wrong on the way**: the first pass called a
+  257-character path "taken" because the commit said `commit complete` - which
+  it does even when the statement was refused, since an unchanged candidate
+  commits cleanly. The lab reads the refusal now, not the commit.
+
 ## 0.112.3 - a long secret stopped the box answering
 
 ### Fixed
