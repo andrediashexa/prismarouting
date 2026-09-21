@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.112.1 - a name of 64 is one too many
+
+### Fixed
+
 * **A 64-character pool name passed the VTY and was refused by the dataplane**
   ([#423](https://github.com/andrediashexa/hexarouting/issues/423)).
   `TEXT_LIMITS` bounded the name at 64 because `bpa.api` declares
