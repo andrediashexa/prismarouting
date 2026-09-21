@@ -166,6 +166,19 @@ echo "=========== every subscriber the claim covers gets a block ==========="
 # agreeing with itself rather than with the product.
 vppctl bpa pool tight inside 100.65.0.0/22 outside 200.150.0.20/32 block 16384 mode dynamic
 vppctl bpa pool roomy inside 100.66.0.8/29  outside 200.150.0.24/30 block 16384 mode dynamic
+# A POOL OF THIS SECTION'S OWN, for the loan case at the bottom of this file.
+#
+# It needs a slice that can be filled while ANOTHER slice still has a block
+# standing free, which the pools above cannot give it: by the time that
+# section runs, `tight` is 3/3 in use - its blocks are held by subscribers of
+# the sections before, under a 300 s hold-down - so a refusal there is honest
+# exhaustion and the right answer is no loan at all. Measured, by reading the
+# blocks at the moment of the refusal rather than assuming the pool was free.
+#
+# Four blocks over two addresses: with two workers the slices are two and
+# two, so two subscribers of one worker fill their slice while two blocks
+# stand free next door.
+vppctl bpa pool lend  inside 100.67.0.0/24  outside 200.150.0.30/31 block 32768 mode dynamic
 
 # The number the box promises for a pool: the guaranteed figure when it prints
 # one, and the ceiling when it does not, because a pool that prints no caveat
@@ -235,6 +248,7 @@ claim_check() {
   # nothing about the box, the second is the box refusing a subscriber it
   # claimed it could serve.
   MISSING=""; REFUSED=""
+  FIRST_REFUSED=""
   for _a in $SET; do
     _l=$(printf '%s\n' "$TR" | grep "BPA in2out $_a:" | head -1)
     if [ -z "$_l" ]; then
@@ -243,6 +257,50 @@ claim_check() {
       case "$_l" in *"-> 0.0.0.0:0"*) REFUSED="$REFUSED $_a" ;; esac
     fi
   done
+  FIRST_REFUSED=$REFUSED
+
+  # AND AGAIN, AFTER A TICK (#210).
+  #
+  # A subscriber whose slice was empty is refused and the box then moves a
+  # block to that slice, under the barrier bpa_expire_process takes once a
+  # second. So "was this subscriber served" cannot be answered by the packet
+  # that caused the loan - it can only be answered by the next one, which on
+  # a real box is milliseconds later and on this lab has to be sent on
+  # purpose.
+  #
+  # Sending it ALWAYS, not only when something was refused: a second pass
+  # that runs on some boxes and not others is a lab whose numbers mean
+  # different things on different runs. On a box that refused nobody this is
+  # the same subscribers translating again, which is what they would do.
+  [ -n "$REFUSED" ] && echo "    refused on the first pass:$REFUSED"
+  sleep 3
+  _i=0
+  for _a in $SET; do
+    _i=$((_i+1))
+    vppctl packet-generator new "name r$_i limit 1 node ip4-input interface pg0 \
+        size 60-60 \
+        data { UDP: $_a -> 8.8.8.8 \
+               UDP: 12345 -> 53 \
+               incrementing 8 }" >/dev/null
+  done
+  vppctl clear trace >/dev/null; vppctl trace add pg-input 60 >/dev/null
+  vppctl packet-generator enable >/dev/null; sleep 2
+  TR=$(vppctl show trace | grep "BPA in2out")
+  _j=0
+  while [ "$_j" -lt "$_i" ]; do
+    _j=$((_j+1)); vppctl packet-generator delete "r$_j" >/dev/null 2>&1
+  done
+
+  MISSING=""; REFUSED=""
+  for _a in $SET; do
+    _l=$(printf '%s\n' "$TR" | grep "BPA in2out $_a:" | head -1)
+    if [ -z "$_l" ]; then
+      MISSING="$MISSING $_a"
+    else
+      case "$_l" in *"-> 0.0.0.0:0"*) REFUSED="$REFUSED $_a" ;; esac
+    fi
+  done
+  printf '%s\n' "$TR" | sed 's/^ */    /'
 }
 
 claim_check tight 100.65.0.1 100.65.0.2 100.65.0.3 100.65.0.4 100.65.0.5 \
@@ -255,6 +313,110 @@ claim_check roomy 100.66.0.8 100.66.0.9 100.66.0.10 100.66.0.11 \
                   100.66.0.12 100.66.0.13 100.66.0.14 100.66.0.15
 ROOMY_CLAIM=$CLAIM; ROOMY_USABLE=$USABLE
 ROOMY_MISSING=$MISSING; ROOMY_REFUSED=$REFUSED
+
+# =========================================================================
+# A subscriber refused with blocks free next door, and what happens next.
+#
+# THIS IS #210's OWN CASE, and until the block could move it had no answer: a
+# dynamic pool's blocks are partitioned per worker and a subscriber lands on
+# one by hash, so a slice can be empty while another has blocks standing free
+# - and the subscriber was refused for ever, not for a second.
+#
+# The box moves the block under the barrier bpa_expire_process takes once a
+# second, so the packet that CAUSES the loan is still refused. What this
+# section measures is the one after it, which on a real box is milliseconds
+# later.
+#
+# Two addresses on ONE worker are what makes a slice empty while the other
+# has room; they are found by asking the box rather than by arithmetic here,
+# because which worker an address lands on is bpa_owner_worker()'s to say.
+echo
+echo "=========== a refused subscriber, one tick later ==========="
+LEND_NW=$(box_workers)
+if [ "${LEND_NW:-0}" -lt 2 ]; then
+  echo "  one worker: there is no second slice for a block to come from,"
+  echo "  and nothing here is about a box that cannot lend"
+  LEND_STATE=skipped
+else
+  # Every address of `tight` that shares a worker, in the order the box
+  # reports them, so the pair below is two subscribers of one slice.
+  # ENOUGH OF THEM TO FILL THE SLICE AND ONE MORE. The thickest slice of
+  # `tight` holds two blocks, so two subscribers fill it and the third is the
+  # one with nowhere to go - which is the state this section is about. Asking
+  # for two and hoping is what the first version did, and the box served the
+  # second from the block that was still free: the control below caught it.
+  LEND_T=$(thinnest "$(stanza lend "$(vppctl show bpa blocks)")")
+  LEND_FILL=""; LEND_B=""; LEND_ON=""
+  for _a in 100.67.0.1 100.67.0.2 100.67.0.3 100.67.0.4 100.67.0.5 \
+            100.67.0.6 100.67.0.7 100.67.0.8 100.67.0.9 100.67.0.10; do
+    _t=$(thread_of $_a)
+    [ -n "$_t" ] || continue
+    [ "$_t" = "$LEND_T" ] && continue   # the thin slice has nothing to spare
+    LEND_ON="$LEND_ON $_a"
+  done
+  # All but the last fill the slice; the last is the subscriber with nowhere
+  # to go. The count comes off the box's own row rather than from a 2 written
+  # here, so a fixture with a different shape does not quietly stop testing
+  # the thing this section is named after.
+  LEND_SIZE=$(stanza lend "$(vppctl show bpa blocks)" \
+              | sed -n "s/^ *thread [0-9]*: [0-9]*\/\([0-9]*\) blocks.*/\1/p" \
+              | sort -rn | head -1)
+  _n=0
+  for _a in $LEND_ON; do
+    _n=$((_n + 1))
+    if [ "$_n" -le "${LEND_SIZE:-2}" ]; then LEND_FILL="$LEND_FILL $_a"
+    elif [ -z "$LEND_B" ]; then LEND_B=$_a
+    fi
+  done
+  # ON FOR THIS SECTION ONLY. The mechanism ships off - lending a block
+  # serves a refused subscriber and can cost the lender's own next one, and
+  # which side an operator wants is their decision - so the lab turns it on
+  # where it measures it and off again after, and every other section of
+  # this file measures the box as it ships.
+  vppctl bpa rebalance enable | sed 's/^/    /'
+  echo "  filling a ${LEND_SIZE:-?}-block slice with:$LEND_FILL"
+  echo "  and then asking for:$LEND_B"
+
+  send_one() {   # <address>; prints the trace line
+    vppctl packet-generator new "name L limit 1 node ip4-input interface pg0 \
+        size 60-60 \
+        data { UDP: $1 -> 8.8.8.8 \
+               UDP: 12345 -> 53 \
+               incrementing 8 }" >/dev/null
+    vppctl clear trace >/dev/null; vppctl trace add pg-input 20 >/dev/null
+    vppctl packet-generator enable >/dev/null; sleep 1
+    vppctl packet-generator delete L >/dev/null 2>&1
+    vppctl show trace | grep "BPA in2out $1:" | head -1
+  }
+
+  LEND_FIRST=""
+  for _a in $LEND_FILL; do
+    LEND_FIRST=$(send_one "$_a")
+    echo "    fill:   $(printf '%s' "$LEND_FIRST" | sed 's/^ *//')"
+  done
+  LEND_SECOND=$(send_one "$LEND_B")
+  echo "    second: $(printf '%s' "$LEND_SECOND" | sed 's/^ *//')"
+  # ONE TICK, not three, and the difference is the mechanism's own shape.
+  # The tick after the refusal is the one that lends; the loan is then held
+  # for the subscriber that caused it, and a loan still unused a tick later
+  # goes home - which is what stops a stale demand costing the lender a live
+  # allocation. Measured: waiting three ticks here found the block already
+  # returned and read as "still refused", which is the box working exactly as
+  # designed and a lab asking the question too late. A real subscriber
+  # retries in milliseconds; a DNS client or a TCP SYN is back inside one
+  # second.
+  sleep 1
+  # The slice state at the moment of the retry, because "still refused" has
+  # two causes and they are opposite: a pool with nothing free anywhere is
+  # honest exhaustion, and a pool with a block standing free next door is
+  # #210. The first version of this section read the second as the first.
+  echo "    --- blocks after the refusal, one tick on ---"
+  stanza lend "$(vppctl show bpa blocks)" | sed 's/^/      /'
+  LEND_RETRY=$(send_one "$LEND_B")
+  echo "    retry:  $(printf '%s' "$LEND_RETRY" | sed 's/^ *//')"
+  vppctl bpa rebalance disable | sed 's/^/    /'
+  LEND_STATE=measured
+fi
 
 echo
 echo "=========== VERDICT ==========="
@@ -350,4 +512,23 @@ echo "  roomy claims $ROOMY_CLAIM of $ROOMY_USABLE"
 # lab/ipfix.sh's own pair carries the same rule for the same reason.
 expect "a pool with a block for every inside address claims all of them (claims ${ROOMY_CLAIM:-none}, usable ${ROOMY_USABLE:-none})" \
   test "${ROOMY_CLAIM:-claimed nothing}" = "${ROOMY_USABLE:-usable nothing}"
+
+# #210's acceptance, in the only shape a barrier-driven mechanism can have:
+# the packet that causes the loan is refused, and the one after it is not.
+#
+# THE FIRST TWO ASSERTIONS ARE THE CONTROL, and they are what stops this
+# section passing on a box that lends nothing: if the second subscriber was
+# served straight away, the slice was not empty and the retry proves nothing.
+# A box with one worker skips all three and says so.
+if [ "${LEND_STATE:-skipped}" = measured ]; then
+  expect "the subscribers that fill the slice are served" \
+    test "${LEND_FIRST#*-> 0.0.0.0:0}" = "$LEND_FIRST"
+  expect "and the second is refused, which is the defect #210 is about" \
+    test "${LEND_SECOND#*-> 0.0.0.0:0}" != "$LEND_SECOND"
+  expect "and one tick later the same subscriber is served, from a block \
+another worker lent" \
+    test "${LEND_RETRY#*-> 0.0.0.0:0}" = "$LEND_RETRY"
+else
+  echo "  [skip] one worker: no slice to lend from"
+fi
 verdict

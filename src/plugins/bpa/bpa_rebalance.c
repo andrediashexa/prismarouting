@@ -14,6 +14,22 @@
 
 #include "bpa_rebalance.h"
 
+u32
+bpa_rebalance_spare (u32 n_local, u32 n_alloc, u32 n_lent, u32 peak)
+{
+  /*
+   * AGAINST THE PEAK, not against what is held this instant: a slice whose
+   * blocks are free right now may be one whose subscribers are between
+   * packets, and lending one then is what cost a live allocation when this
+   * was measured - the dynamic lab went from 3 allocations and 1 refusal to
+   * 2 and 2.
+   */
+  u32 need = n_alloc > peak ? n_alloc : peak;
+  u32 spoken_for = need + n_lent;
+
+  return n_local > spoken_for ? n_local - spoken_for : 0;
+}
+
 /*
  * WHAT A SLICE MAY LEND is what it holds beyond its own refusals.
  *

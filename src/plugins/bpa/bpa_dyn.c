@@ -123,6 +123,7 @@ bpa_dyn_free (bpa_dyn_t *d)
      vec_free a pointer that has just been zeroed, so the vector leaks and
      the call looks right. */
   vec_free (d->foreign);
+  vec_free (d->foreign_idle);
   hash_free (d->by_sub);
   clib_memset (d, 0, sizeof (*d));
 }
@@ -549,6 +550,7 @@ bpa_dyn_borrow (bpa_dyn_t *d, u32 block_idx)
     {
       slot = vec_len (d->foreign);
       vec_add1 (d->foreign, block_idx);
+      vec_add1 (d->foreign_idle, 0);
       /* One more slot in every array the slice indexes by local. They are
          grown together because every one of them is read by local index and
          a short one is a read past the end on the first borrowed block. */
@@ -559,6 +561,8 @@ bpa_dyn_borrow (bpa_dyn_t *d, u32 block_idx)
     }
   else
     d->foreign[slot] = block_idx;
+  /* A fresh loan has not been sitting idle, whatever the slot held before. */
+  d->foreign_idle[slot] = 0;
 
   d->owner[d->n_local + slot] = BPA_NO_BLOCK;
   d->idle_since[d->n_local + slot] = 0;

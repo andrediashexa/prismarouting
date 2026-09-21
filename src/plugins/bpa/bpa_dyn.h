@@ -161,6 +161,30 @@ typedef struct
    * bounds the array at the most this worker ever borrowed at one time.
    */
   u32 *foreign;
+  /*
+   * Parallel to foreign[]: has this borrowed block been free since the last
+   * tick? One byte per slot, and the slots are bounded by the most this
+   * worker ever borrowed at one time (#210).
+   */
+  u8 *foreign_idle;
+
+/*
+ * HOW MANY TICKS A LOAN NOBODY HAS USED IS KEPT, and the number is about
+ * what a refused subscriber does next rather than about this allocator.
+ *
+ * The block is lent because somebody was refused, and that somebody will try
+ * again: a DNS client retries in about a second, a TCP SYN is retransmitted
+ * at 1 s and then at 3 s. A loan returned on the next tick is a block that
+ * was available for one second and is gone before the second attempt -
+ * measured, in `LAB_WORKERS=1 sh tools/lab.sh dynamic`, where the box lent a
+ * block at 09:48:51 and took it home at 09:48:52 while the retry was still
+ * coming.
+ *
+ * Five ticks covers the second and third attempts. It is also the whole
+ * window in which the lender is without a block it owns, which is the cost:
+ * the measurement that set this number is in the lab's header.
+ */
+#define BPA_LOAN_GRACE_TICKS 5
   u64 n_allocations;
   u64 n_extensions;   /* blocks handed out as extensions *//* lifetime; becomes natEvent 16 count */
   /*
@@ -200,6 +224,53 @@ typedef struct
   u64 n_paired_missed;
   u64 n_releases;   /* lifetime; becomes natEvent 17 count */
   u64 n_exhausted;  /* allocation refused; becomes natEvent 12 */
+  /*
+   * What n_exhausted was at the last rebalance tick (#210).
+   *
+   * The demand the rebalance acts on is the DELTA: a worker short an hour
+   * ago and served since would otherwise pull blocks towards itself for
+   * ever, with the pull growing as the box ages. Kept beside the counter it
+   * is read against rather than in a table of its own, because a second
+   * structure indexed by (thread, pool) is a second thing to keep in step
+   * with pools being created and deleted.
+   */
+  u64 n_exhausted_seen;
+  /*
+   * What this slice had free at the last rebalance tick (#210).
+   *
+   * THE LOAN NEEDS HYSTERESIS, and this is the measurement that says so. The
+   * first tick lent on the same pass as the first refusal, using a free
+   * count that included blocks the lender's own subscribers were about to
+   * ask for - and `LAB_WORKERS=1 sh tools/lab.sh dynamic` went from
+   * "3 allocations, 3 releases, 1 refusals" to "2 allocations, 2 releases,
+   * 2 refusals". The mechanism built to recover a refused subscriber cost
+   * one.
+   *
+   * So what a slice may lend is what was free at the PREVIOUS tick and is
+   * still free now: a block that has sat unused across a full interval,
+   * rather than one that is free for the instant between two packets.
+   */
+  u32 n_free_seen;
+  /*
+   * THE HIGH-WATER MARK OF THIS SLICE'S OWN USE, decaying by one a tick.
+   *
+   * What a slice may lend is what it holds above what it has recently
+   * needed, and "recently" has to be measured rather than assumed: a slice
+   * whose blocks are free this instant may be one whose subscribers are
+   * between packets. Both ends of that were measured (#210):
+   *
+   *   lending on free-right-now  - the dynamic lab went from 3 allocations
+   *                                and 1 refusal to 2 and 2: the mechanism
+   *                                built to recover a refused subscriber
+   *                                cost a live one
+   *   lending above the peak     - the slice that had served two subscribers
+   *                                lends nothing, and the slice that has
+   *                                served none lends its block
+   *
+   * It decays so that a slice which was busy an hour ago is not held to it
+   * for ever: one block a tick, so a minute of quiet forgives sixty.
+   */
+  u32 n_peak;
   u8 active;
   /*
    * Extension blocks: (subscriber, local block) pairs beyond the one in

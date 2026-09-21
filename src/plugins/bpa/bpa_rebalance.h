@@ -81,4 +81,15 @@ typedef struct
 u32 bpa_rebalance_plan (const bpa_rebalance_slice_t *slices, u32 n_slices,
 			bpa_rebalance_move_t *out, u32 max_moves);
 
+/**
+ * What a slice may lend: what it holds above what it has recently needed.
+ *
+ * Here rather than beside the tick because it is arithmetic over four
+ * numbers and every way of getting it wrong is a block lent that should not
+ * have been - which cost a live allocation when this was first measured
+ * (#210). `peak` is the high-water mark of recent use, `lent` what is
+ * already out on loan.
+ */
+u32 bpa_rebalance_spare (u32 n_local, u32 n_alloc, u32 n_lent, u32 peak);
+
 #endif /* __included_bpa_rebalance_h__ */
