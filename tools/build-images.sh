@@ -61,8 +61,14 @@ fi
 
 CTX=$(mktemp -d)
 trap 'rm -rf "$CTX"' EXIT
-mkdir -p "$CTX/vpp_plugins"
+mkdir -p "$CTX/vpp_plugins" "$CTX/appliance/systemd"
 cp "$PLUGIN_SO" "$CTX/vpp_plugins/"
+# The entrypoint and the drop-in it reads, at the paths the Dockerfile names.
+# A build context of the whole repository would send 200 MB of history to the
+# daemon and would let a Dockerfile copy in anything; this one holds the four
+# files the images are made of.
+cp "$REPO/appliance/vpp-entrypoint" "$CTX/appliance/"
+cp "$REPO/appliance/systemd/vpp-stop-drain.conf" "$CTX/appliance/systemd/"
 
 echo "==> dataplane image, VPP $VPP_VERSION with this tree's plugin"
 docker build -q -f "$REPO/build/Dockerfile.vpp" \
@@ -93,7 +99,11 @@ if [ "$TARGET" = check ]; then
   ok()  { echo "  [ ok ] $*"; }
 
   echo "==> the dataplane image, started"
-  out=$(docker run --rm --privileged "prisma-vpp:$VERSION" sh -c '
+  # --entrypoint sh, because the image HAS one now: without it the `sh -c`
+  # below becomes an argument to the wrapper, which ignores it and starts VPP
+  # for ever. Measured the slow way - a container sat Up for twenty minutes
+  # while this check waited for output it was never going to get.
+  out=$(docker run --rm --privileged --entrypoint sh "prisma-vpp:$VERSION" -c '
     mkdir -p /run/vpp
     cat > /tmp/check.conf <<CONF
 unix { nodaemon cli-listen /run/vpp/cli.sock }
@@ -152,17 +162,36 @@ CONF
   # the first person to notice will be the one asking why the dataplane can
   # compile.
   for tool in gcc cc cmake ninja; do
-    if docker run --rm "prisma-vpp:$VERSION" sh -c "command -v $tool" >/dev/null 2>&1; then
+    if docker run --rm --entrypoint sh "prisma-vpp:$VERSION" -c "command -v $tool" >/dev/null 2>&1; then
       bad "the dataplane image carries $tool: it is a runtime image and this is build/Dockerfile.dev's job"
     fi
   done
   [ "$fails" -eq 0 ] && ok "and no compiler came with it"
 
+  # PID 1 IS THE WRAPPER, asked of the image rather than of the Dockerfile.
+  # test/test_vpp_entrypoint.sh proves the wrapper waits for the drain; this
+  # proves the image is actually running it, which is the half a file cannot
+  # answer.
+  ep=$(docker image inspect "prisma-vpp:$VERSION" --format '{{json .Config.Entrypoint}}')
+  case "$ep" in
+    *vpp-entrypoint*) ok "PID 1 in the dataplane image is the wrapper" ;;
+    *) bad "the image's entrypoint is $ep, so a stop would signal VPP with no drain in front of it" ;;
+  esac
+  # AND THE DROP-IN IS IN THERE, because the wrapper reads the drain out of
+  # it and one that finds none says so and drains nothing.
+  if docker run --rm --entrypoint sh "prisma-vpp:$VERSION" -c \
+       'grep -q "^ExecStop" /etc/systemd/system/vpp.service.d/vpp-stop-drain.conf' \
+       >/dev/null 2>&1; then
+    ok "and the drain it reads is in the image"
+  else
+    bad "the image carries no vpp-stop-drain.conf, so the wrapper would start VPP and drain nothing on the way down"
+  fi
+
   echo "==> the control-plane image, asked its version"
   # /usr/lib/frr, not the PATH: FRR installs its daemons there and puts none
   # of them on the PATH, so `bgpd --version` is "executable file not found"
   # and reads like an image without FRR in it.
-  frr=$(docker run --rm "prisma-frr:$VERSION" /usr/lib/frr/bgpd --version 2>&1 | head -1)
+  frr=$(docker run --rm --entrypoint /usr/lib/frr/bgpd "prisma-frr:$VERSION" --version 2>&1 | head -1)
   # The package pin carries a Debian revision (10.7.1-0~deb12u1) and the
   # daemon prints the upstream version (10.7.1), so the comparison is against
   # the part they share rather than against the whole string.

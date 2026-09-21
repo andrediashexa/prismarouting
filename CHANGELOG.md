@@ -77,7 +77,57 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A PID 1 that drains and waits, because Compose has no pre-stop hook**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396),
+  decision 4). `docker stop` sends `SIGTERM` and waits out a grace period;
+  there is no "run this, wait for it, then signal", which is exactly what an
+  `ExecStop` is. Kubernetes has `preStop`; Compose does not.
+
+  That is load-bearing here. VPP's UDP IPFIX export is not a kernel socket -
+  it is a packet the dataplane sends, handed to `ip4-lookup` as a frame - so
+  once the graph stops, the release record is written and swallowed. In
+  dynamic mode that record IS the connection record the Marco Civil requires
+  to be kept for a year.
+
+  `appliance/vpp-entrypoint` starts VPP in the background, traps `SIGTERM`
+  and `SIGINT`, runs the drain, **waits for it**, and only then signals VPP.
+  It **reads the drain out of the shipped drop-in** rather than retyping it,
+  and the dataplane image carries that drop-in for no other reason: one
+  statement of what stopping this dataplane means, for both supervisors.
+
+  `test/test_vpp_entrypoint.sh` drives it with a VPP and a `vppctl` that are
+  stubs and requires the drain's line **first** - the assertion no lab can
+  make, because a lab supplies the ordering itself. Four mutations watched
+  red, the sharpest being one character: the drain backgrounded.
+
+  Found writing the harness, and worth knowing: **a command started in the
+  background by a non-interactive shell has `SIGINT` set to ignore**, the
+  disposition survives `exec`, and a shell cannot trap a signal it was
+  entered with ignored. So `sh wrapper & kill -INT` hangs for ever - it did,
+  until it was killed. A container's PID 1 is started with the default
+  disposition, so the suite restores it before exec.
+
 ### Fixed
+
+* **The rule about stop-time commands followed the drain into the container**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  `test/test_stop_is_not_a_teardown.py` enforces that a stop-time command MAY
+  ask a running process to flush state it already holds and MUST NOT reach
+  the configuration surface - the defect being that an `ExecStop` fires on
+  every **restart**, so a teardown there arrives during an ordinary upgrade
+  on a box that was working ([#238](https://github.com/andrediashexa/hexarouting/issues/238)).
+
+  It read unit files. Under a container supervisor there are none, so the
+  rule would have gone quiet at exactly the moment the thing it guards became
+  our code - and a trap handler grows a second command far more easily than a
+  declarative line does. It now judges the wrapper too: no stop-time command
+  of its own, the drain it read actually run, and **not backgrounded**.
+
+  It also stopped reading a *reader* of the directive as a declaration of
+  one: the wrapper's `sed -n 's/^ExecStop=...'` was refused as a unit
+  declaring `ExecStop='-\{0,1\}//p'`, and obeying that refusal would have
+  pushed the wrapper into retyping the command, which is the one thing the
+  drop-in exists to prevent.
 
 ## 0.111.3 - the images, and what they would cost the medium
 

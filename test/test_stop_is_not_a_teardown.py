@@ -252,6 +252,20 @@ for root, dirs, files in os.walk(os.path.join(REPO, "appliance")):
             # of it is the "n" of a literal \n, which is a word character. The
             # word boundary was never there and the installer-written unit
             # sailed through green.
+            # A READER OF THE DIRECTIVE IS NOT A DECLARATION OF ONE, and
+            # this is not hypothetical: appliance/vpp-entrypoint carries
+            # `sed -n 's/^ExecStop=-\{0,1\}//p'` because it reads the drain
+            # out of the shipped drop-in instead of retyping it, and this
+            # check read that pattern as a unit declaring
+            # `ExecStop='-\{0,1\}//p'`. Refusing it would push the wrapper
+            # into retyping the command, which is the one thing the drop-in
+            # exists to prevent. lab/ipfix-stop.sh reads it the same way.
+            #
+            # Narrow on purpose: the line must be RUNNING a text tool. A unit
+            # file has no sed in it, so nothing this rule is about can hide
+            # behind this.
+            if re.search(r"\b(sed|grep|awk)\b", s.split("ExecStop")[0]):
+                continue
             m = re.search("(" + "|".join(STOP_DIRECTIVES) + r")\s*=\s*(.*)", s)
             if m:
                 # Cut at a literal \n so a generated line is quoted back as the
@@ -285,6 +299,63 @@ for rel, entries in ALLOWED_STOP.items():
                 f"and it does not. Either the drain was removed - which "
                 f"reopens #217 - or it was reworded, and this check has been "
                 f"blessing a line that is no longer there")
+
+
+print("\n=== the container's stop path is judged by the same rule ===")
+# THE RULE HAD TO FOLLOW THE DRAIN (#396). Everything above reads ExecStop
+# lines in unit files, and under a container supervisor there are none: the
+# ordering moves into appliance/vpp-entrypoint, because Compose has no
+# pre-stop hook. A rule that only reads unit files would have gone quiet at
+# exactly the moment the thing it guards became OUR code instead of
+# systemd's - and a trap handler can grow a second command far more easily
+# than a declarative line can.
+ENTRY = os.path.join(REPO, "appliance", "vpp-entrypoint")
+if not os.path.exists(ENTRY):
+    bad("appliance/vpp-entrypoint is gone, and with it the only thing that "
+        "runs the drain before a container's SIGTERM reaches VPP")
+else:
+    entry = open(ENTRY, encoding="utf-8").read()
+    body = [l for l in entry.splitlines() if not l.lstrip().startswith("#")]
+
+    # IT RUNS WHAT THE DROP-IN SAYS, and nothing it typed itself. A literal
+    # command here is a second statement of what stopping means, which can be
+    # a teardown while the drop-in is a drain - and this file would be
+    # reading the wrong one.
+    typed = [l.strip() for l in body
+             if re.search(r"\b(vppctl|prismash|vtysh)\b", l)
+             and "VPP_BIN" not in l]
+    if typed:
+        bad(f"appliance/vpp-entrypoint runs a command of its own at stop "
+            f"time: {typed}. It reads the drain out of the drop-in so that "
+            f"the two supervisors cannot disagree about what stopping means, "
+            f"and a line typed here is judged by nobody")
+    else:
+        ok("the wrapper types no stop-time command of its own")
+
+    # AND IT WAITS FOR IT. A drain that is backgrounded is the defect
+    # lab/ipfix-stop.sh no-wait measures: the graph stops before the release
+    # record can be sent over UDP, and the stopped box reads exactly like one
+    # that fell over (#217).
+    drains = [l.strip() for l in body if re.search(r"\$DRAIN\b", l)]
+    ran = [l for l in drains if not l.startswith("if") and "-n" not in l]
+    if not ran:
+        bad("appliance/vpp-entrypoint never runs $DRAIN, so the drain it "
+            "read out of the drop-in is not what stops the box")
+    elif any(l.rstrip().endswith("&") for l in ran):
+        bad(f"appliance/vpp-entrypoint backgrounds the drain: {ran}. The "
+            f"signal then reaches VPP while the drain is still running, the "
+            f"release record goes into a graph that has stopped, and a "
+            f"stopped box becomes indistinguishable from one that fell over")
+    else:
+        ok(f"and it waits for the drain it read: {ran[0]}")
+
+    # AND THE ORDER IS DRIVEN SOMEWHERE. This file reads text; only
+    # test/test_vpp_entrypoint.sh can watch the ordering happen.
+    if not os.path.exists(os.path.join(REPO, "test", "test_vpp_entrypoint.sh")):
+        bad("test/test_vpp_entrypoint.sh is gone, and nothing then watches "
+            "the wrapper's ordering with the drain actually running")
+    else:
+        ok("and the ordering itself is driven in test_vpp_entrypoint.sh")
 
 
 print("\n=== and being in the table is not enough on its own ===")

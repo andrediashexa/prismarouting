@@ -119,6 +119,57 @@ elif re.search(r"^RUN.*(cmake|ninja|make)\b", vpp_df, re.M):
 else:
     ok("the dataplane image takes the plugin this repository compiled")
 
+
+# THE COPY INSTRUCTION, not the string. A Dockerfile mentions that file in
+# its comment too, so `"vpp-stop-drain.conf" in text` is satisfied by a
+# COPY that has been commented out - measured: that mutation passed.
+def copies(df, name):
+    """Is there an uncommented COPY whose text names `name`?"""
+    joined, out = "", []
+    for line in df.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        joined += line
+        if joined.rstrip().endswith("\\"):
+            joined = joined.rstrip()[:-1]
+            continue
+        out.append(joined)
+        joined = ""
+    return any(l.strip().startswith("COPY") and name in l for l in out)
+
+
+print("\n=== the dataplane image runs the wrapper, and carries its drain ===")
+# The ordering itself is test/test_vpp_entrypoint.sh's - it drives the
+# wrapper with stubs and requires the drain's line first. What is read here
+# is that the image will actually RUN it: an image whose entrypoint is vpp
+# would take SIGTERM straight to the graph, and the release record for every
+# block it held would be written into a dataplane that has stopped.
+if not any(l.strip().startswith("ENTRYPOINT") and "vpp-entrypoint" in l
+           for l in vpp_df.splitlines() if not l.lstrip().startswith("#")) \
+        or not copies(vpp_df, "appliance/vpp-entrypoint"):
+    bad("build/Dockerfile.vpp does not make appliance/vpp-entrypoint its "
+        "ENTRYPOINT, so `docker stop` signals VPP with no drain in front of "
+        "it and a stopped box looks exactly like one that fell over (#217)")
+else:
+    ok("PID 1 is the wrapper")
+if not copies(vpp_df, "vpp-stop-drain.conf"):
+    bad("build/Dockerfile.vpp does not copy the drain's drop-in in, and the "
+        "wrapper reads the command out of it: it would start VPP and drain "
+        "nothing on the way down")
+else:
+    ok("and the drop-in it reads the drain out of is in the image")
+# NOT RETYPED. The whole argument for copying that file is that there is one
+# statement of what stopping this dataplane means; a wrapper with the command
+# written into it is a second one, which can be right while the drop-in is
+# wrong.
+entry = read("appliance", "vpp-entrypoint")
+if "bpa stop-drain" in entry:
+    bad("appliance/vpp-entrypoint writes the drain command in its own code: "
+        "it is read out of the drop-in so that systemd and the container "
+        "cannot come to disagree about what stopping means")
+else:
+    ok("and the wrapper reads that command rather than repeating it")
+
 print("\n=== and nothing here has been started, which is the other check ===")
 # Said out loud, because a suite that reads a file and reports on an image is
 # the shape that lets a broken image pass. `sh tools/build-images.sh check`

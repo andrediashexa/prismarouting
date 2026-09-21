@@ -2661,6 +2661,8 @@ running container can say what apt resolved and what VPP loaded:
   [ ok ] and it is this tree's plugin: 0.111.2, commit 595354b
   [ ok ] VPP is the pinned 26.06-release
   [ ok ] and no compiler came with it
+  [ ok ] PID 1 in the dataplane image is the wrapper
+  [ ok ] and the drain it reads is in the image
 ==> the control-plane image, asked its version
   [ ok ] FRR is the pinned 10.7.1
 IMAGES PASSED
@@ -2679,11 +2681,47 @@ image installs a compiler.
   above. Putting 118 MB into every ISO before anything starts them is a
   bigger medium for no behaviour, and the release that starts them is the
   release that should carry them.
-* **There is no entrypoint.** The drain that must run before the dataplane
-  stops is an `ExecStop` today, and Compose has no pre-stop hook: the PID 1
-  that traps `SIGTERM`, drains, **waits**, and only then forwards the signal
-  is the whole of decision 4 on that issue. An entrypoint written before that
-  is decided is a shape somebody will mistake for the answer.
+* **Nothing is started by a supervisor.** There is an entrypoint now - see
+  below - but no compose file and no unit runs it, so the images are still
+  something a person starts by hand.
+
+### The PID 1 that waits for the drain
+
+`docker stop` sends `SIGTERM` and waits `stop_grace_period`. **Compose has no
+pre-stop hook**: there is no "run this, wait for it, then signal", which is
+precisely what an `ExecStop` is. Kubernetes has `preStop`; Compose does not.
+
+That matters here more than it would in most products. In dynamic mode the
+block allocation log **is** the connection record the Marco Civil requires to
+be kept for a year, and VPP's UDP IPFIX export is not a kernel socket - it is
+a packet the dataplane sends, handed to `ip4-lookup` as a frame. Once the
+graph stops, the release record is written and swallowed. So the drain has to
+finish **while VPP is still forwarding**.
+
+`appliance/vpp-entrypoint` is that ordering, moved from systemd into our own
+code: it starts VPP in the background, traps `SIGTERM` and `SIGINT`, runs the
+drain, **waits for it**, and only then signals VPP.
+
+**It reads the drain out of the shipped drop-in**,
+`appliance/systemd/vpp-stop-drain.conf`, which the image carries for that
+purpose alone - one statement of what stopping this dataplane means, for both
+supervisors. A drop-in that loses its `ExecStop` takes the wrapper and
+`lab/ipfix-stop.sh` with it.
+
+What a wrapper that forwards the signal **without** waiting costs is measured,
+not argued: `sh tools/lab.sh ipfix-stop no-wait` starts the drain and does not
+wait for it, and two of that lab's checks go red - the release count is zero,
+and the stopped box's block is read as *ended at the restart* rather than
+released on the way out. The stopped box becomes indistinguishable from one
+that fell over, which is
+[#217](https://github.com/andrediashexa/hexarouting/issues/217) returning. The
+rows themselves are in that lab's header, where they can be compared against
+what it prints.
+
+`test/test_vpp_entrypoint.sh` drives the wrapper with a VPP and a `vppctl`
+that are stubs and requires the drain's line to come **first**, which no lab
+can check: a lab supplies the ordering itself. Four mutations were watched
+red, including the one-word version of the defect - the drain backgrounded.
 
 ## What is still missing
 

@@ -1,0 +1,92 @@
+#!/bin/sh
+# PID 1 for the dataplane container: start VPP, and on the way down run the
+# retention drain and WAIT for it before the signal reaches VPP.
+#
+# WHY THIS FILE EXISTS AT ALL. On a systemd box the ordering is systemd's:
+# appliance/systemd/vpp-stop-drain.conf carries an ExecStop, and systemd runs
+# it, waits for it, and only then sends SIGTERM. Compose has no pre-stop hook
+# - `docker stop` sends SIGTERM and waits `stop_grace_period`, and there is no
+# "run this, wait, then signal" anywhere in it. Kubernetes has `preStop`;
+# Compose does not. So under a container supervisor that contract stops being
+# systemd's documented behaviour and becomes OUR code, which is this file
+# (#396, decision 4).
+#
+# WHAT GOES WRONG WITHOUT THE WAIT, measured rather than argued. In dynamic
+# mode the block allocation log IS the connection record the Marco Civil
+# requires to be kept for a year. VPP's UDP IPFIX export is not a kernel
+# socket - it is a packet the dataplane sends, handed to ip4-lookup as a
+# frame - so once the graph stops, the release record is written and
+# swallowed. `sh tools/lab.sh ipfix-stop no-wait` starts the drain and does
+# not wait for it, and the collector then reads the STOPPED box exactly like
+# a box that fell over:
+#
+#   [FAIL] and released it on the way out (got 0)
+#   [FAIL] the stopped box's block is not left open at all (got ENDED AT RESTART)
+#
+# That is #217 returning, produced by the defect this wrapper is the one thing
+# standing in front of.
+#
+# THE DRAIN COMMAND IS READ OUT OF THE SHIPPED DROP-IN, never retyped here.
+# One statement of what the drain is, for both supervisors: a drop-in that
+# loses its ExecStop takes this wrapper with it, and lab/ipfix-stop.sh reads
+# the same line for the same reason. Retyping it is how the two supervisors
+# would come to disagree about what stopping means.
+set -u
+
+DROPIN=${VPP_STOP_DRAIN_CONF:-/etc/systemd/system/vpp.service.d/vpp-stop-drain.conf}
+DRAIN=$(sed -n 's/^ExecStop=-\{0,1\}//p' "$DROPIN" 2>/dev/null | head -1)
+
+# A wrapper that cannot find the drain MUST say so and still run. Refusing to
+# start the dataplane because a drop-in is missing would turn a retention
+# defect into an outage, and the box would be forwarding nothing while
+# somebody works out why. It is loud and it keeps going, which is the same
+# choice the ExecStop's "-" makes.
+if [ -z "$DRAIN" ]; then
+  echo "vpp-entrypoint: no ExecStop in $DROPIN, so nothing will be drained" >&2
+  echo "vpp-entrypoint: on the way down - a block held when this container" >&2
+  echo "vpp-entrypoint: stops will be left open in the retention log" >&2
+fi
+
+VPP_BIN=${VPP_BIN:-/usr/bin/vpp}
+VPP_CONF=${VPP_CONF:-/etc/vpp/startup.conf}
+
+# THE SIGNAL HAS TO REACH A PROCESS THAT IS NOT THIS ONE. `exec vpp` would
+# make VPP its own PID 1 and there would be nowhere to hang the drain; so VPP
+# runs in the background and this shell waits. A shell waiting on a child
+# handles the trap between signal and reaping, which is the whole mechanism.
+"$VPP_BIN" -c "$VPP_CONF" &
+VPP_PID=$!
+
+drained=0
+on_term() {
+  # ONCE. `docker stop` sends SIGTERM and, after the grace period, SIGKILL -
+  # but a supervisor that sends a second TERM, or an operator who does, must
+  # not start a second drain while the first is still running. The latch is
+  # here and not only in the plugin, because the plugin's latch cannot be
+  # asked about from out here.
+  if [ "$drained" = 0 ]; then
+    drained=1
+    if [ -n "$DRAIN" ]; then
+      # NOT BACKGROUNDED, and that is the whole file. The drain must finish
+      # while the graph is still running: this is the line a wrapper written
+      # in a hurry gets wrong, and nothing downstream would notice, because
+      # the records simply stop arriving.
+      $DRAIN >/dev/null 2>&1 || true
+    fi
+  fi
+  kill -TERM "$VPP_PID" 2>/dev/null || true
+}
+
+trap on_term TERM INT
+
+# `wait` returns when a signal is handled, with the child still running, so
+# the wait is a loop rather than one call. kill -0 is what says the child is
+# still there: a `wait` that returns 127 for a reaped child and a `wait`
+# interrupted by the trap look the same from here.
+wait "$VPP_PID"
+status=$?
+while kill -0 "$VPP_PID" 2>/dev/null; do
+  wait "$VPP_PID"
+  status=$?
+done
+exit "$status"
