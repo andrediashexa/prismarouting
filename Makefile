@@ -15,6 +15,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog \
       $(BUILD)/test_bpa_identity $(BUILD)/test_bpa_md5 \
       $(BUILD)/test_bpa_block_ident \
+      $(BUILD)/test_bpa_rebalance \
       $(BUILD)/test_bpa_radius
 	@sh tools/run-tests.sh
 
@@ -226,6 +227,19 @@ $(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
 # VPP: it is a store, and every way of getting it wrong - the holder now, the
 # holder before a block was reused, the subscriber of a deleted pool - produces
 # a record that PARSES and attributes traffic to the wrong person.
+# Which blocks move between workers' slices when a subscriber is refused with
+# blocks free next door (#210). Standalone because none of it needs a pool, a
+# packet or a VPP: counters in, moves out - and every way of getting it wrong
+# is quiet, from a lender that gives away what it needs to a plan that holds
+# the barrier for as long as the counters say.
+$(BUILD)/test_bpa_rebalance: test/test_bpa_rebalance.c \
+                             src/plugins/bpa/bpa_rebalance.c \
+                             src/plugins/bpa/bpa_rebalance.h \
+                             test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_rebalance.c
+
 $(BUILD)/test_bpa_block_ident: test/test_bpa_block_ident.c \
                                src/plugins/bpa/bpa_block_ident.c \
                                src/plugins/bpa/bpa_block_ident.h \

@@ -77,6 +77,42 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The arithmetic of moving a block between workers**
+  ([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
+  A dynamic pool's blocks are partitioned per worker and the
+  subscriber-to-worker assignment is a hash; nothing makes the two agree, so
+  a subscriber is refused while blocks sit free next door. The maintainer
+  chose to move the **block**, not the subscriber - `bpa_handoff.c` needs the
+  owner computable from the packet alone.
+
+  `bpa_rebalance.c` is the decision and nothing else: counters in, moves out.
+  No pool, no packet, no VPP, so every way of getting it wrong is reachable
+  from a plain `cc` harness - the same reason `bpa_block_ident.c` is its own
+  file ([#397](https://github.com/andrediashexa/hexarouting/issues/397)).
+
+  What it decides, each with a case behind it: a lender keeps what its own
+  refusals need (lending it moves the shortage and the next tick moves it
+  back, which is churn under a barrier that stops the world); a borrower asks
+  only for what it cannot serve itself; the fullest lends to the neediest;
+  **a tie goes to the lower index**, which is the whole of the determinism;
+  and the plan stops at **8 moves a tick**, because every move is a write
+  into two slices while the world is stopped and the tick comes round again
+  in a second.
+
+  A box where nobody was refused plans nothing - that is every box that has
+  never exhausted a slice, and it runs once a second for the life of the box.
+  A box that is simply full plans nothing either: moving blocks between
+  slices would refuse the same subscribers in a different order.
+
+  Five mutations watched red, including the tie-break: with `>=` instead of
+  `>` every other case stays green, which is why the tie has a case of its
+  own.
+
+  **Nothing calls this yet.** The lending itself - `BPA_LENT`, the borrower's
+  side, the read on the `out2in` miss path - is the next piece, and the
+  measurement that has to come before it is `lab/throughput.sh` on a box
+  where nothing is lent.
+
 ### Fixed
 
 ## 0.111.7 - the card the container is handed
