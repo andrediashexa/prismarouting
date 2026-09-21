@@ -50,6 +50,14 @@ ExecStartPre=/bin/sh -c 'test -f /usr/lib/prisma-routing/images.tar.gz && docker
 # card's node to the two above rather than replacing them.
 ExecStartPre=/bin/sh -c 'install -d -m 0755 /run/prisma-routing && /usr/lib/prisma-routing/bind-dataplane-nic --compose-devices > /run/prisma-routing/compose-devices.yaml'
 ExecStart=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml -f /run/prisma-routing/compose-devices.yaml up -d
+# THE BINARY API, MADE REACHABLE BY THE ACCOUNTS THIS BOX GAVE A ROLE.
+# prismash runs on the HOST and maps /dev/shm/global_vm and /dev/shm/vpe-api.
+# The dataplane in a container creates them in the host's /dev/shm because
+# compose.yaml says `ipc: host` - measured: without it the host's /dev/shm
+# stays empty and the VTY has no API at all - and they come out root:root,
+# so the same chgrp vpp.service's drop-in does has to be done here. One
+# script for both, because a rule written twice is corrected once.
+ExecStartPost=/usr/lib/prisma-routing/share-the-api-segment
 # `down` and not `stop`: the containers are recreated from the compose file
 # on every start, so leaving them around buys nothing and a stopped container
 # holding /run/vpp is a dataplane the next start cannot bind.

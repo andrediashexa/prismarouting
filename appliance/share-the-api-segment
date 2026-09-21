@@ -1,0 +1,62 @@
+#!/bin/sh
+# The binary API segment, made reachable by the accounts this box gave a role.
+#
+# WHY THIS FILE EXISTS AT ALL. VPP's `api-segment { gid vpp }` group-owns
+# /dev/shm/vpe-api and NOT /dev/shm/global_vm, which a client maps as well -
+# so an operator account in group vpp can open one of the two and the API call
+# fails anyway. That is #76, and the fix used to live inside a drop-in on
+# vpp.service as a line of shell.
+#
+# It is a file of its own now because there are TWO dataplanes to do it for:
+# vpp.service, and the dataplane in a container (#396). The container shares
+# the host's /dev/shm - `ipc: host`, measured, without which the segment is
+# created inside the container and the VTY on the host has no API at all -
+# so the file to fix is the same file, and the rule about which group owns it
+# must not be written down twice.
+#
+# WHAT IT DOES NOT DO: create the group, or decide who is in it. The VTY does
+# that when it gives an account a role, and appliance/selftest asserts the end
+# rather than the means by making a real API call as a real account (#184).
+set -u
+
+ROOT=${PRISMA_ROOT:-}
+SHM=${PRISMA_SHM_DIR:-$ROOT/dev/shm}
+GROUP=${PRISMA_API_GROUP:-vpp}
+# Both segments. vpe-api is already group-owned by VPP itself on a box whose
+# startup.conf names the group, and doing it again costs nothing and covers
+# the box whose startup.conf does not.
+SEGMENTS="global_vm vpe-api"
+
+# THE WAIT IS THE POINT, and 10 seconds is what the drop-in used: the segment
+# is created by the dataplane after this runs, and a chgrp that fires before
+# the file exists is a chgrp that silently did nothing. 40 quarter-seconds.
+n=0
+while [ ! -e "$SHM/global_vm" ] && [ "$n" -lt 40 ]; do
+  sleep 0.25
+  n=$((n + 1))
+done
+if [ ! -e "$SHM/global_vm" ]; then
+  # NOT AN ERROR EXIT. This runs as ExecStartPost, and failing here would
+  # take down a dataplane that is forwarding - over a permission that makes
+  # the VTY need root rather than making the box stop. The self-test is what
+  # reports it, by making the call.
+  echo "share-the-api-segment: $SHM/global_vm never appeared, so the binary" >&2
+  echo "share-the-api-segment: API stays root-only. The VTY will refuse every" >&2
+  echo "share-the-api-segment: commit for an operator account." >&2
+  exit 0
+fi
+
+# EXIT 0 WHATEVER HAPPENS, for the same reason the wait does not fail: this
+# is an ExecStartPost, and a non-zero exit here stops a dataplane that is
+# forwarding. What a failure costs is that the VTY needs root, which the
+# self-test reports by making a real call as a real account.
+for s in $SEGMENTS; do
+  [ -e "$SHM/$s" ] || continue
+  if chgrp "$GROUP" "$SHM/$s" 2>/dev/null; then
+    chmod 0660 "$SHM/$s" 2>/dev/null \
+      || echo "share-the-api-segment: cannot set mode 660 on $SHM/$s" >&2
+  else
+    echo "share-the-api-segment: cannot give $SHM/$s to group $GROUP" >&2
+  fi
+done
+exit 0

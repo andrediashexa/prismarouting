@@ -349,6 +349,20 @@ OVR
       *) bad "the dataplane could not create a TAP ('$tapout'), so linux_cp would pair no card into Linux and the control plane would route over nothing" ;;
     esac
 
+    # THE BINARY API, ON THIS HOST'S /dev/shm, WHICH IS WHERE THE VTY LOOKS.
+    # prismash is a host tool - one of the costs written on #396 - and it
+    # maps /dev/shm/global_vm and /dev/shm/vpe-api. Docker gives a container
+    # its own 64 MB /dev/shm by default, and the segments then exist only
+    # inside it: the box would run, forward, and have a VTY that cannot
+    # commit anything. `ipc: host` in the shipped compose file is what puts
+    # them here, and this reads THIS MACHINE's /dev/shm rather than the
+    # container's, because the container's is not the question.
+    if [ -e /dev/shm/global_vm ] && [ -e /dev/shm/vpe-api ]; then
+      ok "the API segments are on the host's /dev/shm, where the VTY maps them"
+    else
+      bad "the dataplane's API segments are not on this host's /dev/shm, so prismash - which runs on the box and not in a container - would have no binary API and every commit would fail: appliance/compose.yaml needs ipc: host"
+    fi
+
     # AND THE WORKERS ARE WHERE startup.conf PUT THEM. The tuner computes
     # `corelist-workers` from the NIC's NUMA node and the physical cores, and
     # a container that confines the process to some other set would leave

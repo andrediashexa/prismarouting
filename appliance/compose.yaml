@@ -17,6 +17,19 @@ services:
     image: prisma-vpp:${PRISMA_VERSION:-latest}
     network_mode: host
     pid: host
+    # THE HOST'S /dev/shm, AND THE VTY IS WHY (#426). prismash runs on the
+    # box and not in a container - it is a host tool, which is one of the
+    # costs written on #396 - and it reaches the dataplane by mapping
+    # /dev/shm/global_vm and /dev/shm/vpe-api. Docker gives a container its
+    # own 64 MB /dev/shm by default, and measured on 2026-09-21 that is
+    # exactly what happens: the two segments appear INSIDE the container and
+    # the host's /dev/shm stays empty, so the VTY has no binary API at all
+    # and every commit fails.
+    #
+    # With `ipc: host` they appear on the host, 660 root:root - which is why
+    # prisma-routing-containers.service runs share-the-api-segment after
+    # `up`, the same script vpp.service's own drop-in runs.
+    ipc: host
     # NOT `privileged: true`, and every line of this was measured on
     # 2026-09-21 by starting the image with the privilege removed and reading
     # what broke (#396):

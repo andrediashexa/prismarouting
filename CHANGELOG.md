@@ -77,7 +77,40 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The VTY can reach a dataplane that is in a container**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `prismash` runs on the box and not in a container - that is one of the
+  costs written on
+  [#396](https://github.com/andrediashexa/hexarouting/issues/396) - and it
+  reaches the dataplane by mapping `/dev/shm/global_vm` and
+  `/dev/shm/vpe-api`. Docker gives a container its own 64 MB `/dev/shm`, and
+  measured on 2026-09-21 that is exactly what happened: both segments
+  appeared inside the container and this host's `/dev/shm` stayed empty. A
+  box booted that way would run, forward, and have a VTY that cannot commit
+  anything. `appliance/compose.yaml` now says `ipc: host`, and
+  `tools/build-images.sh compose-check` reads **this machine's** `/dev/shm`
+  while the stack is up - red with the line removed, green with it.
+
+  The segments arrive `660 root:root`, so they still need the `chgrp` that
+  `vpp.service`'s drop-in has done since
+  [#76](https://github.com/andrediashexa/hexarouting/issues/76). That shell
+  moved out of the drop-in into
+  `appliance/share-the-api-segment`, which both units now run as
+  `ExecStartPost`: two dataplanes, one rule, because a rule written twice is
+  corrected once. `test/test_share_api_segment.sh` drives it, including the
+  two cases that must not stop a dataplane that is forwarding - a segment
+  that never appeared, and a group that does not exist.
+
 ### Fixed
+
+* **A self-test line was 80 columns on the box it was written for**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)). When the
+  binary API does not work for an operator account, the self-test prints what
+  `/dev/shm/global_vm` actually is. On the box that message is for - the one
+  where the `chgrp` did not happen - that value is `root:root 660`, and the
+  line came to 80 columns on a 79-column console. Found by the width reader
+  going red on a machine that happened to have the segment; it is two lines
+  now.
 
 ## 0.113.1 - the stack is handed the card this boot bound
 

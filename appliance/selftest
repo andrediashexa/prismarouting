@@ -1017,8 +1017,14 @@ else
     ok "the binary API works for $prover, an account that really has the group"
   else
     bad "the binary API does not work for $prover: it would have to be root"
-    say "         /dev/shm/global_vm is $(stat -c '%U:%G %a' /dev/shm/global_vm \
-2>/dev/null || echo 'not there'), and it must be group vpp, mode 660"
+    # TWO LINES, and the reason is a measurement: on a box where the chgrp
+    # did not happen the value is "root:root 660", and the one-line version
+    # of this came to 80 columns - one past the console it is printed on.
+    # The widest value is what the width rule is about, and the widest value
+    # here is exactly the box this message is for.
+    say "         /dev/shm/global_vm is $(stat -c '%U:%G %a' \
+/dev/shm/global_vm 2>/dev/null || echo 'not there')"
+    say "         and it must be group vpp, mode 660"
   fi
 fi
 

@@ -2734,9 +2734,15 @@ that the unit is `disabled`. A box still boots `vpp.service` and
 `frr.service`: the unit conflicts with both, and enabling it in the release
 that first ships it would ask an operator to take the packaging and the
 change of what runs on one upgrade. **What is left** is the release that
-flips the default - the self-test reads `vpp.service stable (0 restarts)` and
-needs a source that is the container, and the gate must boot a box on
-containers and watch it forward before the default moves.
+flips the default, and it is [#426](https://github.com/andrediashexa/hexarouting/issues/426):
+`vpp.service` carries three drop-ins this product installs, and each is a
+protection the container path has to grow its own version of. The first is
+done - the VTY's binary API, which needs `ipc: host` and the same `chgrp` on
+`/dev/shm/global_vm`, because prismash is a host tool. Left: the OOM score
+(#172 is the same question on the unit path), the card handed back when the
+dataplane will not start (#379), a self-test that reads the container instead
+of `vpp.service stable (0 restarts)`, and a `lab/install-iso.sh` that watches
+a booted box FORWARD with the containers up.
 
 **And the distributed version of the same proposal**
 ([#399](https://github.com/andrediashexa/hexarouting/issues/399)) - four planes, a
