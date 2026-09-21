@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.112.0 - a block moves between workers
+
+### Added
+
 * **A block moves between workers, and the trade is measured**
   ([#210](https://github.com/andrediashexa/hexarouting/issues/210)). The tick
   that joins the four pieces: `bpa_expire_process` already takes the barrier
@@ -123,8 +129,6 @@ version has a chance of seeing it.
   `bpa_rebalance_spare()` is the lending rule as arithmetic, driven on its
   own; the tick says at its definition why it has no harness and which lab
   drives it.
-
-### Fixed
 
 ## 0.111.12 - the loan book the return path reads
 
