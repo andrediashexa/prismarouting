@@ -70,6 +70,25 @@ body "$COMPOSE" | grep -q "ipc: host" \
   || bad "compose.yaml has no ipc: host, so the segments would exist only inside the container"
 
 echo
+echo "=== a dataplane that will not start gives the card back on both paths ==="
+# #379: the card is bound to a DPDK driver before the dataplane starts, so a
+# box whose dataplane never comes up has no interface at all and the only way
+# in is a console somebody walks to. On the unit path systemd raises
+# OnFailure= after the restart limit. A container reaches no failed state -
+# the containers unit is a oneshot that exited successfully long before - so
+# Docker's policy has to GIVE UP (on-failure, not unless-stopped) and
+# something has to notice that it did.
+body "$SYSD/vpp-give-card-back.conf" | grep -q "OnFailure=" \
+  && ok "vpp.service raises OnFailure when it gives up" \
+  || bad "no OnFailure on vpp.service: #379 is reopened on the unit path"
+body "$COMPOSE" | grep -q 'restart: "on-failure' \
+  && ok "and the container's policy gives up rather than retrying for ever" \
+  || bad "the dataplane container's restart policy never gives up, so a box that cannot start it stays stranded for ever - which is worse than the unit path on the failure the unit path was built for"
+[ -x "$REPO/appliance/watch-the-dataplane" ] \
+  && ok "and something watches for the container that gave up" \
+  || bad "appliance/watch-the-dataplane is missing or not executable: nothing would notice a dataplane container that stopped, because Docker tells nobody"
+
+echo
 echo "=== the drain runs before the dataplane dies on both paths ==="
 # #217: in dynamic mode the block allocation log IS the connection record, and
 # a block still held when the dataplane stops leaves its allocation open in

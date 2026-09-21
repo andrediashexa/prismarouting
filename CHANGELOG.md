@@ -77,6 +77,41 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A dataplane container that gave up hands the card back**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  The card is bound to a DPDK driver before the dataplane starts, so between
+  the bind and a working dataplane it belongs to neither Linux nor VPP - and
+  a box left in that window has no interface at all and the only way in is a
+  console somebody walks to. That is
+  [#379](https://github.com/andrediashexa/hexarouting/issues/379), and
+  `vpp.service` answers it by reaching `failed` after its restart limit,
+  which raises `OnFailure=`.
+
+  A container reaches no such state: `prisma-routing-containers.service` is
+  a oneshot that exited successfully long before the dataplane mattered. So
+  the container path was strictly worse than the unit path on the exact
+  failure the unit path was built for - `restart: unless-stopped` would have
+  retried for ever and the box would have stayed stranded for ever.
+
+  Three pieces: the dataplane's policy is `on-failure:5`, so Docker gives up
+  (measured under docker-compose 1.29.2 - the policy arrives as `on-failure`
+  with `MaximumRetryCount` 5 and the container is left `exited`);
+  `appliance/watch-the-dataplane` notices that it stopped and undoes the
+  bind, once per boot; and `prisma-routing-card-watch.timer` runs it every 30
+  seconds, because half a minute of being stranded is a reboot's worth of
+  patience and five minutes of it is an engineer in a car.
+
+  It does not restart anything - Docker has already tried five times, and a
+  sixth from here would be a second opinion about the same failure. The three
+  branches that must do **nothing** are the ones the suite cares about most:
+  a box still booting `vpp.service` (which is every box until the default
+  moves), a running container, and one Docker is still retrying. Handing the
+  card back under a dataplane that is forwarding is an outage this script
+  would cause rather than prevent.
+
+  The timer ships **not enabled**, with the containers unit it belongs to.
+
+
 ### Fixed
 
 ## 0.114.1 - the container is not choosable either

@@ -291,6 +291,10 @@ install -D -m 0755 "$REPO/appliance/bind-dataplane-nic" "$DESTDIR/usr/lib/prisma
 # container, prisma-routing-containers.service. It is one file because the
 # rule about which group owns the API segment is one rule (#426).
 install -D -m 0755 "$REPO/appliance/share-the-api-segment" "$DESTDIR/usr/lib/prisma-routing/share-the-api-segment"
+# The watcher that notices a dataplane container which gave up, and the card
+# it is still holding (#426). The unit path gets this from OnFailure= on
+# vpp.service; a container reaches no failed state to raise it.
+install -D -m 0755 "$REPO/appliance/watch-the-dataplane" "$DESTDIR/usr/lib/prisma-routing/watch-the-dataplane"
 install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/prisma-routing/selftest"
 # Beside the self-test, which finds it with `dirname "$0"`, and named by the
 # VTY banner by absolute path. Two readers of one answer (#248).
@@ -331,7 +335,8 @@ install -D -m 0644 "$REPO/appliance/compose.yaml" \
 say "systemd"
 for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selftest.service \
          prisma-routing-installer.service prisma-routing-confirm.service \
-         prisma-routing-confirm.timer prisma-routing-containers.service; do
+         prisma-routing-confirm.timer prisma-routing-containers.service \
+         prisma-routing-card-watch.service prisma-routing-card-watch.timer; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the

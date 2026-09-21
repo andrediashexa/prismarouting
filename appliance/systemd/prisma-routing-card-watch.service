@@ -1,0 +1,21 @@
+# The container that gave up, and the card it is still holding (#426).
+#
+# vpp.service answers this with OnFailure=: systemd raises it when the unit
+# reaches `failed`, after the restart limit, and
+# prisma-routing-give-card-back.service undoes the bind. A CONTAINER REACHES
+# NO SUCH STATE - prisma-routing-containers.service is a oneshot that has
+# already exited successfully by the time the dataplane matters - so Docker's
+# restart policy gives up (on-failure:5 in compose.yaml) and nothing tells
+# anybody. This is what looks.
+[Unit]
+Description=Prisma Routing - notice a dataplane container that gave up
+Documentation=file:/usr/share/doc/prisma-routing/appliance.md
+# Not ordered against the containers unit: the script asks systemd whether it
+# is active, because the answer changes while this timer is running and an
+# ordering is a statement about start-up only.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/prisma-routing/watch-the-dataplane
+StandardOutput=journal
+StandardError=journal
