@@ -94,8 +94,29 @@ def hugepage_supported(root, kb):
         root, "sys/kernel/mm/hugepages", f"hugepages-{kb}kB"))
 
 
-def hugepages_reserved_for(root, kb=1048576):
-    """Pages of size `kb` actually reserved RIGHT NOW."""
+def hugepages_reserved_for(root, kb=1048576, node=None):
+    """Pages of size `kb` actually reserved RIGHT NOW.
+
+    `node` asks the pool of ONE NUMA node rather than the box's total, and
+    the node's is the number that decides whether VPP starts. A boot-time
+    `hugepages=N` is spread across the nodes by the kernel, VPP allocates
+    its heap on the node its main thread runs on, and this file pins that
+    thread to the node the card is on. So on a two-socket box the total can
+    be twice what the dataplane can reach, and the report printed the total:
+    "12 reserved right now" for a node holding 6 (#422).
+
+    A node whose pool directory is missing falls back to the box-wide count.
+    That is the single-node box, where the two numbers are the same one.
+    """
+    if node is not None:
+        v = read(os.path.join(
+            root, "sys/devices/system/node", f"node{node}",
+            "hugepages", f"hugepages-{kb}kB", "nr_hugepages"))
+        if v is not None:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return 0
     v = read(os.path.join(
         root, "sys/kernel/mm/hugepages", f"hugepages-{kb}kB",
         "nr_hugepages"), "0")
@@ -110,7 +131,7 @@ def p_gb_to_pages(gb, kb):
     return gb * (1048576 // kb)
 
 
-def hugepage_choice(root):
+def hugepage_choice(root, node=None):
     """
     (page size in kB, GB already reserved of it) for the size this box can use.
 
@@ -132,7 +153,7 @@ def hugepage_choice(root):
     for kb in HUGEPAGE_KB:
         if hugepage_supported(root, kb):
             per_gb = 1048576 // kb
-            return kb, hugepages_reserved_for(root, kb) // per_gb
+            return kb, hugepages_reserved_for(root, kb, node) // per_gb
     return HUGEPAGE_KB[0], 0
 
 
@@ -420,7 +441,44 @@ class Topology:
         return int(m.group(1)) if m else None
 
     def nic_node(self, ifname):
-        v = read(self.p("sys/class/net", ifname, "device/numa_node"))
+        """
+        NUMA node of the card, or None when it declares none.
+
+        WALKED UP, for the same reason `nic_pci` walks up and read from the
+        same directory it stops at. `numa_node` is a property of the PCI
+        function; `device` points at the device that owns the netdev, and on
+        a virtio guest that is the virtio bus device, which has no
+        `numa_node` at all. Measured on this project's own guest:
+
+            /sys/class/net/ens19/device -> .../0000:00:13.0/virtio4
+            .../virtio4/numa_node       does not exist
+            .../0000:00:13.0/numa_node  -1
+
+        So this returned None on every guest, the tuner fell back to node 0,
+        and the report told the operator the card "declares no NUMA
+        affinity" - a sentence about the reader, printed as one about the
+        card. On a synthetic two-socket root with the card on node 1 it put
+        all seven workers on node 0 and said nothing (#422).
+
+        Bare metal hid it, the same way it hid #286: an Intel or Mellanox
+        card links `device` straight at the PCI function, and there the file
+        is where this used to look.
+        """
+        link = self.p("sys/class/net", ifname, "device")
+        try:
+            path = os.path.realpath(link)
+        except OSError:
+            return None
+        v = None
+        while path and path != "/":
+            if is_pci_addr(os.path.basename(path)):
+                v = read(os.path.join(path, "numa_node"))
+                break
+            path = os.path.dirname(path)
+        if v is None:
+            # Not PCI, or PCI without the file: ask the original place, which
+            # is right for a card whose `device` IS the PCI function.
+            v = read(self.p("sys/class/net", ifname, "device/numa_node"))
         try:
             n = int(v)
         except (TypeError, ValueError):
@@ -914,7 +972,7 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     # reserved now. Both come from the pools that exist rather than from the
     # size this tuner would prefer, so a box that cannot do 1G is tuned on 2M
     # instead of waiting for a page size it will never get (#290).
-    hugepage_kb, reserved = hugepage_choice(topo.root)
+    hugepage_kb, reserved = hugepage_choice(topo.root, node)
     isolated_active = isolated_now(topo.root)
 
     # The tuning only takes effect on the next boot: isolcpus and hugepages
@@ -982,6 +1040,10 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "hugepage_count": p_gb_to_pages(hugepages_gb, hugepage_kb),
         "isolated_active": isolated_active,
         "node": node,
+        # How many NUMA nodes this box has. Carried only so the report can
+        # stay quiet on the single-node box, where "counted on node 0" is
+        # noise, and say it on the box where the count is a choice (#422).
+        "nodes": len(topo.nodes),
         "nic_note": nic_note,
         "os_cpus": os_cpus,
         "main_core": os_core,
@@ -1541,6 +1603,17 @@ def render_report(p, vpp_base):
     out.append(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
           f"(sized for {p['subscribers']} subscribers), "
           f"{p['hugepages_reserved']} reserved right now")
+    if p.get("nodes", 1) > 1:
+        # WHICH NODE the count came from, and only on a box that has more
+        # than one. The kernel spreads a boot-time `hugepages=N` across the
+        # nodes and VPP's heap comes from the node its main thread sits on,
+        # so on a two-socket box the box-wide total is roughly twice what the
+        # dataplane can reach - and that total is what this line used to
+        # print (#422).
+        out.append(f"#          counted on node {p['node']}, of this box's "
+                   f"{p['nodes']}: the heap comes from the")
+        out.append("#          node VPP's main thread is pinned to, not from "
+                   "the box's total.")
     if p["hugepages_capped"]:
         # Said plainly, because the operator's real problem is that the box is
         # too small for the subscriber target - not that a number was adjusted.

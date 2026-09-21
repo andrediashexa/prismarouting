@@ -54,6 +54,8 @@ Rules applied, each with its reason:
 |------|-----|
 | CPU 0 and its SMT sibling stay with the OS and VPP's main thread | Isolating everything leaves the kernel nowhere to run |
 | Workers only on the NIC's NUMA node | Crossing NUMA on the packet path costs more than the extra worker earns |
+| The node comes from the card's **PCI function**, walked up to | `device` points at whatever owns the netdev, and on a virtio guest that is the bus device, which declares no node at all. Reading it there made every guest look like a card with no affinity, and put the workers on node 0 whatever the card said (#422) |
+| Hugepages counted on **that node**, not on the box | The kernel spreads a boot-time `hugepages=N` across the nodes, and VPP's heap comes from the node its main thread is pinned to. The box-wide total can be twice what the dataplane can reach (#422) |
 | One worker per physical core, sibling isolated with it | Otherwise system load competes for the same physical core |
 | `nohz_full` and `rcu_nocbs` follow `isolcpus` | Isolating without removing the tick and RCU callbacks leaves jitter, which shows up as burst loss |
 | 1 GB hugepages sized from the subscriber target | Session and bitmap budget comes from [architecture.md](architecture.md) |
@@ -653,6 +655,24 @@ sub-interfaces, on **one socket, eight cores and 64 GB**:
 #          Put your own statseg in /etc/prisma-routing/vpp-base.conf
 #          to choose the size instead.
 ```
+
+On a box with **two sockets**, the hugepage line says which node it counted,
+because there the count is a choice and not a total:
+
+```
+# 1G hugepages: 6 GB requested (sized for 200000 subscribers), 6 reserved right now
+#          counted on node 1, of this box's 2: the heap comes from the
+#          node VPP's main thread is pinned to, not from the box's total.
+```
+
+Twelve pages can be reserved on that box and six of them be unreachable: the
+kernel splits a boot-time `hugepages=N` evenly, and VPP allocates its heap on
+the node the tuner pinned its main thread to. **Asking the kernel for the
+pages per node is not done** - the command line has a syntax for it, whether
+this product's kernel honours it has not been measured, and a wrong guess
+reserves nothing and leaves an installed box on the first-boot profile. What
+the box does instead is count the node it will actually allocate from and
+print which one that was, so a short node reads differently from a short box.
 
 **The box matters, and only one of those two numbers follows from the 20,000.**
 The segment is 20,000 x 4,793 bytes, so it moves with the interface count and
