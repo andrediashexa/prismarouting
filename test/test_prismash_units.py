@@ -5034,7 +5034,9 @@ for _line, _needle, _mode in (
           f"{_line[:24]!r}: the mode moved to {_sh.mode!r} on a refusal")
     check(not _sh.candidate.pools and not _sh.candidate.users,
           f"{_line[:24]!r}: and nothing was created")
-for _text, _needle in (("A" * 4000, "and the limit is 64"),
+# 63, not 64: VPP truncates a tag to 63 rather than refusing it, so the
+# prompt is the only place that can say so (#424).
+for _text, _needle in (("A" * 4000, "and the limit is 63"),
                        ("up\x07link", "control character")):
     _sh = at()
     with spoken() as _o:

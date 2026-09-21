@@ -79,10 +79,19 @@ READBACK = [
     ("interface vrf", "vrfs", "pg0",
      [1, 5, 4294967295],
      "device_vrfs reads sw_interface_dump; the table id is a u32"),
+    # 63 AND NOT 64, and the difference is a measurement rather than the
+    # field's declared width (#424). VPP's tag is `string tag[64]`, and asked
+    # through sw_interface_tag_add_del it answers retval 0 for 63, 64, 65 and
+    # 100 characters and reads every one of them back as 63: it TRUNCATES.
+    # So the longest description this box can REPORT is 63, and a table
+    # carrying 64 was asserting that the parser must accept a value no
+    # readback can produce - which is how the prompt came to accept one VPP
+    # silently shortened.
     ("interface description", "descriptions", "pg0",
-     ["uplink", "d" * 64, "up\x07link", "trânsito"],
+     ["uplink", "d" * 63, "up\x07link", "trânsito"],
      "device_descriptions reads the interface tag, which is string tag[64] "
-     "in VPP's own vnet/interface.api - 64 BYTES, and anything a byte can be"),
+     "in VPP's own vnet/interface.api and is kept at 63 characters - it "
+     "truncates the rest - and anything a byte can be"),
     ("interface mac", "macs", "pg0",
      ["02:00:00:00:00:01", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01"],
      "device_macs reads l2_address from sw_interface_dump, which is six "

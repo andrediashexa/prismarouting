@@ -1777,9 +1777,10 @@ for _what, (_field, _width, _usable) in _FROM_API.items():
 check(config.TEXT_LIMITS["cgnat identity dhcp-leases"][0] == 256,
       "both identity paths travel in the same field and take the same limit")
 check(config.TEXT_LIMITS["description"] == (
-          64, "VPP's vnet/interface.api, sw_interface_tag_add_del tag[64]"),
+          63, "VPP's vnet/interface.api, sw_interface_tag_add_del tag[64], "
+              "which keeps 63 characters and truncates the rest"),
       "the description's limit names VPP's own field, which is not in this "
-      "repository")
+      "repository, AND what VPP does with more than it (#424)")
 check(config.TEXT_LIMITS["user"][0] == 32
       and "useradd(8)" in config.TEXT_LIMITS["user"][1],
       "and a user name names useradd(8), which is the thing this box runs")
@@ -1792,10 +1793,21 @@ print("\n=== config.text_error: bytes, and what a terminal executes ===")
 # Mutation shown red: len(value) instead of len(value.encode()), which lets a
 # 64-character accented description past a 64-BYTE field - the exact case the
 # byte count exists for.
-check(config.text_error("description", "a" * 64) is None,
-      "64 bytes fits a 64-byte field")
+# 63, NOT 64, and VPP decided it (#424): asked through
+# sw_interface_tag_add_del and read back with sw_interface_dump, 63, 64, 65
+# and 100 characters all answer retval 0 and all read back as 63. It
+# TRUNCATES where the pool name refuses, so a 64-character description was
+# accepted by every screen and kept one character shorter - and a saved file
+# is written from the readback (#419).
+check(config.text_error("description", "a" * 63) is None,
+      "63 bytes is what VPP keeps")
+check(config.text_error("description", "a" * 64) is not None,
+      "and 64 is what it silently turns into 63")
+_d64 = config.text_error("description", "a" * 64)
+check(_d64 and "truncates" in _d64[1],
+      f"the refusal says what VPP does with the rest: {_d64}")
 check(config.text_error("description", "a" * 65) is not None,
-      "and 65 does not")
+      "and 65 does not fit either")
 
 # THE BOUNDARY THE DATAPLANE ACTUALLY DRAWS (#423), and it is one character
 # below the field. A 64-character pool name used to pass this check, be
@@ -1812,8 +1824,14 @@ check(_r64 and "63" in _r64[0],
       f"the refusal has to name the number an operator can act on: {_r64}")
 check(_r64 and "terminator" in _r64[1],
       f"and say why the field's own width is not it: {_r64}")
-check(config.text_error("description", "\u00e1" * 32) is None,
-      "32 accented characters are 64 bytes and fit")
+# THE COUNT IS IN BYTES, which is what this pair is about and which the
+# limit moving from 64 to 63 does not change: 31 accented characters are 62
+# bytes and fit, 32 are 64 and do not - on a field that would take 63 of them
+# if they were ASCII.
+check(config.text_error("description", "\u00e1" * 31) is None,
+      "31 accented characters are 62 bytes and fit")
+check(config.text_error("description", "\u00e1" * 32) is not None,
+      "and 32 of them are 64 bytes, which does not fit 63")
 check(config.text_error("description", "\u00e1" * 33) is not None,
       "33 of them are 66 bytes and do not - the count is bytes, because the "
       "field is")

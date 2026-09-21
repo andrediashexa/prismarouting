@@ -79,6 +79,46 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A 64-character description was stored as 63, and nothing said so**
+  ([#424](https://github.com/andrediashexa/hexarouting/issues/424)).
+  `TEXT_LIMITS` bounded it at 64 because VPP declares
+  `sw_interface_tag_add_del tag[64]`. VPP accepts **any** length and keeps
+  **63** - asked through that message and read back with
+  `sw_interface_dump`, 63, 64, 65 and 100 characters all answer `retval: 0`
+  and all read back as 63.
+
+  So the opposite of
+  [#423](https://github.com/andrediashexa/hexarouting/issues/423): there the
+  dataplane refuses and the commit fails loudly; here nothing fails anywhere.
+  The operator types 64 characters, every screen agrees, the box keeps 63 -
+  and a saved file is written **from the readback**
+  ([#419](https://github.com/andrediashexa/hexarouting/issues/419)), so the
+  configuration silently stops being the one that was typed.
+
+  **The three bounded fields behave in three different ways**, which is the
+  finding under both issues:
+
+  | field | more than it declares |
+  |---|---|
+  | `bpa_pool_add_del name[64]` | **refuses**, `retval: -7` |
+  | `sw_interface_tag_add_del tag[64]` | **accepts and truncates** to 63 |
+  | `bpa_identity_set path[256]` | **accepts 257 and uses it** - the file at that path was found and its entry loaded |
+
+  So a limit read off a declared width is not one rule but three, and only
+  one of them is enforced where an operator can see it.
+
+  `test_a_readback_survives.py` carried the same unmeasured 64: its table said
+  the box can report a 64-byte description, which no readback can produce.
+  Corrected with the measurement - and it was that suite, refusing the change,
+  that found it.
+
+  **`path[256]` is deliberately unchanged**: the dataplane demonstrably uses a
+  257-character path, so its declared width is not a limit and lowering it
+  would refuse a configuration that works today. `secret[128]` stays
+  unmeasured - the box does not print a secret, correctly, so the only way to
+  see what it kept is a RADIUS exchange against `tools/radius_nas.py`, which is the method
+  rather than a guess.
+
 ## 0.112.1 - a name of 64 is one too many
 
 ### Fixed
