@@ -182,10 +182,10 @@ reports it beside `capacity`, and `test/test_bpa_pool.c` asserts it against a
 simulation of the slices rather than against the formula written twice.
 
 * Reporting it is **not** a fix for the refusal, and does not pretend to be.
-  The two that are - assign a subscriber to the worker holding a free block,
-  or let a worker borrow from its neighbour's slice - both need state shared
-  across workers, which is what this partition exists to avoid, and remain
-  open on #210.
+  Of the two that are - assign a subscriber to the worker holding a free
+  block, or let a worker borrow from its neighbour's slice - the **second was
+  chosen**, and it is being built. See *Lending a block* below; until it
+  lands, the floor is the number to size against.
 * Re-partitioning is not a third option. Measured over 2800 combinations of
   blocks, inside addresses and worker count, **no** split of the blocks among
   the workers guarantees more than the even split already does: with a
@@ -196,6 +196,52 @@ simulation of the slices rather than against the formula written twice.
   `sub_idx mod n_workers` then cycles perfectly. It is severe only for small
   pools on many workers - which is dynamic mode's own deployment, since
   dynamic mode is chosen to save IPv4.
+
+### Lending a block
+
+The block moves, and the subscriber does not. `bpa_handoff.c` needs the owner
+of a packet computable **from the packet alone**, by arithmetic and with no
+shared table - that property is why the reverse path works at all - so moving
+the subscriber is not available.
+
+**Where the move happens is what makes it cheap.** `bpa_expire_process`
+already takes `vlib_worker_thread_barrier_sync()` once a second to reap idle
+blocks, and under that barrier every worker's slice is quiescent by
+construction: no new lock, no atomic on the packet path, and
+`bpa_dyn_acquire()` untouched, which is what keeps the fast path at the
+clocks `lab/throughput.sh` measures. What it costs is **latency**: a
+subscriber whose slice is empty is refused until the next tick and served
+after it. Against being refused for ever while blocks sit free, that is the
+trade.
+
+**What decides.** `bpa_rebalance.c`: counters in, moves out. A lender keeps
+what its own refusals need, a borrower asks only for what it cannot serve
+itself, the fullest lends to the neediest, ties go to the lower index, and
+the plan stops at eight moves a tick because every move is a write into two
+slices while the world is stopped.
+
+**The lender's side.** A lent block is a **third state**, `BPA_LENT` in
+`owner[]`: not free, and not held by any subscriber this slice knows. Both of
+the other two answers lose the block - free, and this slice hands it to a
+subscriber the borrower is already translating; held, and the reap releases
+it and the release record names a sentinel as a subscriber. It is out of the
+free list and out of `by_sub`, so every candidate search passes over it
+without being told to, and `n_lent` keeps `free = n_local - n_alloc - n_lent`
+exact. `show bpa blocks` says so when there is any:
+
+```
+  thread 0: 2/5 blocks in use, ...
+             1 lent to another thread, so 1 of this slice is neither in use nor free here
+```
+
+**The index space is the part that is not symmetric.** A block's name in a
+worker's slice is arithmetic - `block_idx = local × n_workers + worker` - so
+every index in a slice is congruent to that worker's id, and a borrowed block
+is congruent to the **lender's**. The borrower therefore cannot hold it as an
+ordinary local block, and the pool-wide index is the only name the two
+workers can both use. That is also why the return path needs a lent-block set
+read on the `out2in` **miss**: the reply arrives at the lender's worker by the
+same arithmetic, and something has to say who is holding the block now.
 
 ## Extended blocks
 

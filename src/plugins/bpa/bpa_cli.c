@@ -2592,6 +2592,20 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			   i, d->n_alloc, d->n_local, d->n_allocations,
 			   d->n_extensions, d->n_releases, d->n_exhausted,
 			   d->n_pinned);
+	  /*
+	   * The blocks this worker has given to another (#210), and only when
+	   * there are any. A slice reading "2/5 blocks in use" with two of
+	   * its five lent has three numbers an operator can subtract and get
+	   * the wrong one; and a column of zeroes on every box that never
+	   * exhausts a slice is a column people learn to skip, which is how
+	   * the one that matters gets skipped too - the same argument the
+	   * guaranteed floor makes about itself.
+	   */
+	  if (d->n_lent)
+	    vlib_cli_output (vm,
+			     "             %u lent to another thread, so %u "
+			     "of this slice is neither in use nor free here",
+			     d->n_lent, d->n_lent);
 	  total += d->n_local;
 	  alloc += d->n_alloc;
 	  allocs += d->n_allocations;

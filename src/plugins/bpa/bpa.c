@@ -1864,6 +1864,14 @@ bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
 
 	  if (d->owner[local] == BPA_NO_BLOCK)
 	    continue;
+	  /*
+	   * Lent to another worker (#210): the subscriber holding it is on
+	   * that worker's books, and this walk would announce the event twice
+	   * - once here naming the sentinel, once there naming the
+	   * subscriber. The borrower is the one that owes the record.
+	   */
+	  if (d->owner[local] == BPA_LENT)
+	    continue;
 	  if (bpa_set_addr_of (&p->inside, d->owner[local], &ip_priv))
 	    continue;
 

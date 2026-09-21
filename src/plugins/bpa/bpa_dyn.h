@@ -49,6 +49,23 @@
 #define BPA_NO_BLOCK ((u32) ~0)
 
 /*
+ * owner[] for a block this worker has LENT to another (#210).
+ *
+ * A third state, because "free" and "held by subscriber N" are both wrong
+ * for it and both wrong in a way that loses the block: free, and this slice
+ * hands it to a subscriber the other worker is already translating; held,
+ * and the reap releases it and the release record names the sentinel as a
+ * subscriber. It is not in the free list and it is not in by_sub, so every
+ * search that looks in either passes over it without being told to.
+ *
+ * ~1 rather than a flag array beside owner[]: a lent block cannot also be
+ * owned, which is the difference from `pinned[]`, and a whole byte per block
+ * per worker for a state that is empty on every box that never exhausts a
+ * slice is a cost paid by everybody for nothing.
+ */
+#define BPA_LENT ((u32) ~1)
+
+/*
  * Blocks of the subscriber's own public address an extension may look at,
  * per walk, before it takes one from the free stack instead.
  *
@@ -115,6 +132,14 @@ typedef struct
   u32 n_local;	    /* blocks in this worker's slice */
   u32 n_alloc;	    /* currently held */
   u32 n_pinned;	    /* of those, held because a forward says so */
+  /*
+   * Blocks of this slice currently held by ANOTHER worker (#210).
+   *
+   * Kept so that free = n_local - n_alloc - n_lent stays exact: without it a
+   * lent block reads as free to everything that subtracts, and `show bpa
+   * pool` would report a capacity the box has already given away.
+   */
+  u32 n_lent;
   u64 n_allocations;
   u64 n_extensions;   /* blocks handed out as extensions *//* lifetime; becomes natEvent 16 count */
   /*
@@ -191,6 +216,36 @@ typedef struct
 clib_error_t *bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker,
 			    u32 n_workers, int reserve);
 void bpa_dyn_free (bpa_dyn_t *d);
+
+/*
+ * LENDS up to `want` free blocks of this slice to another worker (#210).
+ *
+ * Writes the POOL-WIDE block index of each into `out` - not the local one -
+ * because the borrower's index space is its own: local * n_workers + worker
+ * is congruent to the owner's worker id, and a borrowed block is congruent
+ * to the lender's. The only name the two workers can both use is the global
+ * one.
+ *
+ * Returns how many it lent, which is fewer than `want` when the slice runs
+ * out of free blocks. It lends no block that is held, and none that is
+ * pinned - a pinned block is not in the free list, which is where these come
+ * from, so that follows rather than being checked twice.
+ *
+ * CALLED UNDER THE BARRIER, like everything else in the rebalance: this
+ * writes owner[] and the free list of a slice whose worker is stopped.
+ */
+u32 bpa_dyn_lend (bpa_dyn_t *d, u32 worker, u32 n_workers, u32 want,
+		  u32 *out);
+
+/*
+ * TAKES BACK a block this slice lent, by its pool-wide index.
+ *
+ * Returns 0 when the block came home, -1 when this slice never lent it -
+ * which is a bug in the caller rather than a state to recover from, and is
+ * an answer rather than an assert so the barrier is not a place a wrong
+ * index stops the box.
+ */
+int bpa_dyn_take_back (bpa_dyn_t *d, u32 block_idx, u32 n_workers);
 
 /* A block returned to the pool, so the caller can log natEvent 17. */
 typedef struct
