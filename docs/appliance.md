@@ -2831,9 +2831,23 @@ records are on a frame `ip4-lookup` has not run yet, so returning early would
 hand the supervisor back control to send `SIGTERM` through them. **The
 half-second is the drain**; everything else, for one block, was 4 ms.
 
-What is **not** measured is the slope - one block is one point, and a box
-with 200,000 subscribers gives back rather more. The fixed half-second
-dominates here and nothing says it still does there.
+The **slope** is measured too, by `lab/drain-slope.sh`, which fills a pool
+with small blocks and times the drain at four counts:
+
+| blocks held | the drain |
+|---|---|
+| 1 | 503 ms |
+| 50 | 503 ms |
+| 200 | 503 ms |
+| 800 | 505 ms |
+
+**Under 0.005 ms a block** on top of the fixed half-second - two runs give
+0.003 and 0.001, which is this lab's resolution rather than a difference - so
+a box holding 200,000 of them spends about a second more than a box holding
+one, and the 30-second grace period in `compose.yaml` has room by a factor of
+about twenty-five. Eight hundred is not two hundred thousand; what makes the
+extrapolation worth anything is that a per-block cost anywhere near a
+millisecond would have shown as +800 ms at that count, and it showed +1.
 
 ## What is still missing
 

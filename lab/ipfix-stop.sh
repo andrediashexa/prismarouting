@@ -61,9 +61,12 @@
 # half-second is the drain. Everything else for one block was 4 ms, 2 of
 # which was asking.
 #
-# WHAT IS NOT MEASURED is the slope: one block is one point, and a box with
-# 200,000 subscribers releases rather more of them. The fixed half-second
-# dominates at this scale and nothing here says it still does at that one.
+# AND THE SLOPE IS MEASURED TOO, in lab/drain-slope.sh: 503 ms at one block
+# and 504-505 at eight hundred, under 0.005 ms a block on top of the fixed
+# half-second. A box holding 200,000 blocks spends about a second more than
+# one holding a single block - and 800 is not 200,000, but a per-block cost
+# anywhere near a millisecond would have shown as +800 ms there and showed
+# +1.
 #
 # OFF-RED-AT-LEAST: 5
 #

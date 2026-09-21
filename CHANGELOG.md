@@ -77,6 +77,41 @@ version has a chance of seeing it.
 
 ### Added
 
+* **What the stop-drain costs per block, which a grace period rests on**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  `lab/ipfix-stop.sh` measured the drain at 504 ms and said in its own header
+  that the **slope** was not measured - *"one block is one point, and a box
+  with 200,000 subscribers releases rather more of them"*. That number is
+  what `appliance/compose.yaml`'s `stop_grace_period: 30s` was set against,
+  so leaving it unmeasured left the grace period resting on one point.
+
+  `lab/drain-slope.sh` fills a pool with small blocks and times the drain at
+  four counts:
+
+  | blocks held | the drain |
+  |---|---|
+  | 1 | 503 ms |
+  | 50 | 503 ms |
+  | 200 | 503 ms |
+  | 800 | 505 ms |
+
+  **Under 0.005 ms a block** - two runs of the same lab give 0.003 and
+  0.001, which is the resolution talking rather than a difference - on top of
+  the fixed half-second that is the deliberate
+  `vlib_process_suspend (vm, 0.5)`. At that cost a box holding 200,000 blocks
+  spends about a second more than a box holding one, and the 30 s grace
+  period has room by a factor of about twenty-five.
+
+  Eight hundred is not two hundred thousand, and the lab says so. What makes
+  the extrapolation worth anything is that a per-block cost anywhere near a
+  millisecond would have shown as **+800 ms** at that count, and it showed
+  **+1 to +2**.
+
+  The lab asserts the drain's own two claims - that it releases every block
+  it was holding, and that what it costs is bounded - so a drain that grew a
+  per-block cost would take it red rather than quietly lengthening every
+  box's stop.
+
 ### Fixed
 
 ## 0.112.4 - four fields, four behaviours
