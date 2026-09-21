@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.115.0 - a container that gave up hands the card back
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
 * **A dataplane container that gave up hands the card back**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
   The card is bound to a DPDK driver before the dataplane starts, so between
