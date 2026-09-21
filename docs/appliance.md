@@ -2723,6 +2723,27 @@ that are stubs and requires the drain's line to come **first**, which no lab
 can check: a lab supplies the ordering itself. Four mutations were watched
 red, including the one-word version of the defect - the drain backgrounded.
 
+**How long the drain takes, and why a grace period needs the number.**
+`docker stop` gives the wrapper `stop_grace_period` and then kills it, so a
+period shorter than the drain cuts the release records off mid-flight -
+which is the swallowed record again, arriving only on the boxes with the most
+blocks to give back. Measured by `lab/ipfix-stop.sh`, one block held:
+
+| | |
+|---|---|
+| the drain | **504 ms** |
+| a bare `vppctl` round trip on the same box | 2 ms |
+
+It is not the socket and it is not the work. `bpa stop-drain` ends in
+`vlib_process_suspend (vm, 0.5)`, and its own comment says why: the UDP
+records are on a frame `ip4-lookup` has not run yet, so returning early would
+hand the supervisor back control to send `SIGTERM` through them. **The
+half-second is the drain**; everything else, for one block, was 4 ms.
+
+What is **not** measured is the slope - one block is one point, and a box
+with 200,000 subscribers gives back rather more. The fixed half-second
+dominates here and nothing says it still does there.
+
 ## What is still missing
 
 * **HA**: no failover today. Two boxes with the same deterministic pool

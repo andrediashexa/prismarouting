@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **How long the drain takes, which a container supervisor has to know**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  `docker stop` gives the wrapper `stop_grace_period` and then kills it, so a
+  period shorter than the drain cuts the release records off mid-flight - the
+  swallowed record again, arriving only on the boxes with the most blocks to
+  give back. Nothing had the number. `lab/ipfix-stop.sh` prints it now, with
+  a bare `vppctl` round trip beside it so the drain's figure is separable
+  from the cost of asking at all.
+
+  Measured, one block held: **the drain 504 ms, a round trip 2 ms**. It is
+  neither the socket nor the work - `bpa stop-drain` ends in
+  `vlib_process_suspend (vm, 0.5)` because the UDP records are on a frame
+  `ip4-lookup` has not run yet. The half-second **is** the drain; everything
+  else for one block was 4 ms.
+
+  The slope is **not** measured: one block is one point, and a box with
+  200,000 subscribers gives back rather more.
+
 ### Fixed
 
 ## 0.111.4 - a PID 1 that drains and waits
