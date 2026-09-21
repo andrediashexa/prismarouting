@@ -5071,7 +5071,9 @@ for _w, _needle in (
         (["cgnat", "identity", "dhcp-leases", "/" + "d" * 1000],
          "and the limit is 256"),
         (["cgnat", "identity", "radius", "secret", "s" * 500],
-         "and the limit is 128")):
+         # 127, not the field's 128: a 128-character secret arrives at the box as
+        # 127 through both doors, and the box then verifies nothing (#425).
+        "and the limit is 127")):
     _sh = shell()
     _rv, _text = driven(_sh.apply_identity, _w)
     check(_needle in _text,

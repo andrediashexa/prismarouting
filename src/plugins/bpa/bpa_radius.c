@@ -143,9 +143,25 @@ u32
 bpa_radius_acct_response (u8 *out, u32 cap, const bpa_radius_acct_t *req,
 			  const char *secret)
 {
-  u8 buf[128];
+  /*
+   * BIG ENOUGH FOR ANY SECRET THIS BOX CAN HOLD, which 128 was not (#425).
+   *
+   * bpa.api declares `string secret[128]`, so the secret reaching here is up
+   * to 128 bytes, and this scratch carries the 20-byte response header in
+   * front of it: 148. At 128 the guard below refused every secret longer
+   * than 108 - and refusing here is not a refusal an operator ever sees. The
+   * packet had already VERIFIED and the accounting had already been applied;
+   * what was lost was the Accounting-Response, so the NAS retransmitted for
+   * ever and logged this box as dead while its records were arriving.
+   *
+   * Measured: a 108-character secret answered, 109 did not, and the
+   * boundary is exactly 20 + slen > 128.
+   */
+  u8 buf[20 + BPA_RADIUS_SECRET_MAX];
   u32 slen = (u32) strlen (secret ? secret : "");
 
+  /* Kept, and now unreachable for any secret the API can deliver: a guard
+     that cannot fire is cheaper than a buffer nobody bounds. */
   if (cap < 20 || 20 + slen > sizeof (buf))
     return 0;
   out[0] = 5; /* Accounting-Response */

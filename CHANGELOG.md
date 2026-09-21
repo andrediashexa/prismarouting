@@ -79,6 +79,45 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A RADIUS secret longer than 108 characters stopped the box answering the
+  NAS** ([#425](https://github.com/andrediashexa/hexarouting/issues/425)).
+  `bpa_radius_acct_response()` built the reply in a **128-byte** scratch that
+  carries the 20-byte response header in front of the secret, so
+  `20 + slen > 128` returned 0 for every secret longer than 108 - and the
+  caller reads 0 as *do not reply*.
+
+  **Nothing said no anywhere.** The packet verified, the accounting was
+  applied, and what was lost was the Accounting-Response: a NAS retransmits
+  for ever and logs this box as dead while its records are arriving. The
+  scratch is sized from the field now, `20 + BPA_RADIUS_SECRET_MAX`, and the
+  guard that remains cannot fire for any secret the API can deliver.
+
+* **And a 128-character secret is held as 127, so the limit is 127**
+  ([#425](https://github.com/andrediashexa/hexarouting/issues/425)). With the
+  reply fixed, 128 was still met with silence - and a NAS signing with the
+  **first 127** of it was answered, through the VTY and through `vat2`
+  alike. `string secret[128]` spends a byte on the terminator exactly as
+  `name[64]` does ([#423](https://github.com/andrediashexa/hexarouting/issues/423)),
+  so `TEXT_LIMITS` carries 127 with that measurement as its reason.
+
+  This is the entry [#424](https://github.com/andrediashexa/hexarouting/issues/424)
+  left unmeasured, and it needed a packet: a secret cannot be read back,
+  because the box does not print one. `lab/syslog.sh` configures secrets of
+  108, 109 and 127 characters and has `tools/radius_nas.py` sign with each -
+  the NAS prints `accounting-response` only when the box replied, and the box
+  replies only to a packet it verified.
+
+  **How it was found**, because the route matters more than the answer: the
+  bisect said 108/109, which matched no declared width. `bpa_md5` was cleared
+  by comparing it with a known-good MD5 at every length from 0 to 300. The
+  plugin was asked what it received and answered with the right byte count
+  and the right fingerprint. Only then was it clear that the secret was fine
+  and the **reply** was not.
+
+  The section sits at the end of that lab on purpose: in the middle it left
+  identities and sessions behind and took four later checks red with it,
+  which the same lab passing on master is what revealed.
+
 ## 0.112.2 - a description of 64 is stored as 63
 
 ### Fixed

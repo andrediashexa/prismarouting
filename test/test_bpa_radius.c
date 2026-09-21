@@ -99,6 +99,47 @@ main (void)
 	   "and a buffer too small writes nothing rather than half a reply");
   }
 
+  printf ("\n--- and a LONG secret is still answered (#425) ---\n");
+  {
+    /*
+     * THE DEFECT: this function's scratch was 128 bytes and it carries the
+     * 20-byte response header in front of the secret, so `20 + slen > 128`
+     * refused every secret longer than 108 characters - by returning 0,
+     * which the caller reads as "do not reply".
+     *
+     * Nothing said no. The packet had already VERIFIED and the accounting
+     * had already been applied; what was lost was the Accounting-Response,
+     * so a NAS retransmitted for ever and logged this box as dead while its
+     * records were arriving. Measured on a running box in lab/syslog.sh: a
+     * 108-character secret answered and 109 did not.
+     *
+     * Driven at the boundary and at the widest the API field can deliver,
+     * because a buffer sized from the field is the fix and a buffer sized
+     * from "big enough" is what produced this.
+     */
+    static const u32 lens[] = { 107, 108, 109, 127, 128 };
+    u32 k;
+
+    for (k = 0; k < sizeof (lens) / sizeof (lens[0]); k++)
+      {
+	char secret[BPA_RADIUS_SECRET_MAX + 1];
+	u8 want[16], buf[20 + BPA_RADIUS_SECRET_MAX];
+	u32 n;
+
+	memset (secret, 'K', lens[k]);
+	secret[lens[k]] = 0;
+	n = bpa_radius_acct_response (resp, sizeof (resp), &a, secret);
+	memcpy (buf, resp, 20);
+	memcpy (buf + 4, a.request_authenticator, 16);
+	memcpy (buf + 20, secret, lens[k]);
+	bpa_md5 (buf, 20 + lens[k], want);
+	CHECK (n == 20 && memcmp (resp + 4, want, 16) == 0,
+	       "a secret of %u characters is answered, and signed with all "
+	       "of it",
+	       lens[k]);
+      }
+  }
+
   printf ("\n--- a packet signed with another secret is NOT malformed ---\n");
   {
     u8 attrs[] = { 40, 6, 0, 0, 0, BPA_ACCT_STOP };
