@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.112.6 - four answers have a name
+
+### Added
+
 * **Four answers an operator can get, and nothing named them**
   ([#366](https://github.com/andrediashexa/hexarouting/issues/366)'s ceiling,
   lowered). `test/test_plugin_cli_says.py` counts a message as named only
@@ -103,8 +109,6 @@ version has a chance of seeing it.
   The ceiling is **26** now, measured, and the comment beside it says which
   four moved. The remaining twenty-six need a box shaped differently and are
   somebody else's section rather than a wider needle here.
-
-### Fixed
 
 ## 0.112.5 - what the drain costs per block
 
