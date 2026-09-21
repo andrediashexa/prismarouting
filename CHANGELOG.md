@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.5 - the stack, started and stopped for real
+
+### Added
+
 * **The stack, started and stopped by Compose for real**
   ([#396](https://github.com/andrediashexa/hexarouting/issues/396), phase 2's
   first half). `appliance/compose.yaml` is the two containers, and
@@ -126,8 +132,6 @@ version has a chance of seeing it.
 
   The slope is **not** measured: one block is one point, and a box with
   200,000 subscribers gives back rather more.
-
-### Fixed
 
 ## 0.111.4 - a PID 1 that drains and waits
 
