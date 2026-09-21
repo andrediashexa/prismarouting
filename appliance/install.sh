@@ -287,6 +287,10 @@ install -D -m 0755 "$REPO/appliance/prisma-routing-tune" "$DESTDIR/usr/bin/prism
 install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/prisma-routing/wait-for-vpp"
 install -D -m 0755 "$REPO/appliance/apply-tuning"     "$DESTDIR/usr/lib/prisma-routing/apply-tuning"
 install -D -m 0755 "$REPO/appliance/bind-dataplane-nic" "$DESTDIR/usr/lib/prisma-routing/bind-dataplane-nic"
+# Run by TWO units: vpp.service's own drop-in and, for the dataplane in a
+# container, prisma-routing-containers.service. It is one file because the
+# rule about which group owns the API segment is one rule (#426).
+install -D -m 0755 "$REPO/appliance/share-the-api-segment" "$DESTDIR/usr/lib/prisma-routing/share-the-api-segment"
 install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/prisma-routing/selftest"
 # Beside the self-test, which finds it with `dirname "$0"`, and named by the
 # VTY banner by absolute path. Two readers of one answer (#248).
