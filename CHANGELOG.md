@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.114.1 - the container is not choosable either
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
 * **The containerised dataplane is out of the OOM killer's choice too**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
   `vpp.service` has carried `OOMScoreAdjust=-1000` since a 2 GB box killed
