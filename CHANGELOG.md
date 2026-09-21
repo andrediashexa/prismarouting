@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.111.11 - a two-digit patch is not a prefix
+
+### Fixed
+
 * **A two-digit patch is not a prefix of the one-digit one.** `0.111.10` was
   the first release this project has published whose patch digit has two
   characters, and two readers matched a CHANGELOG heading with
