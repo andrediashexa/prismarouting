@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.112.2 - a description of 64 is stored as 63
+
+### Fixed
+
 * **A 64-character description was stored as 63, and nothing said so**
   ([#424](https://github.com/andrediashexa/hexarouting/issues/424)).
   `TEXT_LIMITS` bounded it at 64 because VPP declares
