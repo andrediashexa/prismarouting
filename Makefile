@@ -327,7 +327,14 @@ ISO_DEPS := debootstrap xorriso squashfs-tools dosfstools mtools \
 ISO_RUN = sg docker -c "docker run --rm --privileged --device=/dev/kvm \
 	    -v $$(pwd):/src -w /src prisma-routing-dev:26.06 sh -c '$(1)'"
 
-iso:
+# THE IMAGES FIRST, ON THIS HOST. build-iso.sh runs inside a privileged
+# container that has no docker daemon, so the images cannot be built from
+# there - and a medium built without them carries none, quietly, which is
+# what happened the first time (#396).
+images:
+	sh tools/build-images.sh save
+
+iso: images
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq $(ISO_DEPS) >/dev/null 2>&1; \
 	    sh /src/appliance/build-iso.sh)

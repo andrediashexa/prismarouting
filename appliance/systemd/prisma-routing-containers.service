@@ -1,0 +1,49 @@
+# The dataplane and the control plane as containers (#396).
+#
+# NOT ENABLED BY THIS RELEASE. The medium carries the images and this unit,
+# and a box still boots vpp.service and frr.service exactly as it did - the
+# release that flips the default is the one whose gate boots a box on
+# containers and watches it forward. Enabling a unit that changes what an
+# appliance runs, in the same release that first ships it, would be asking
+# an operator to take both on one upgrade.
+#
+#   systemctl enable --now prisma-routing-containers.service
+#
+# WHAT IT REPLACES, when it is enabled: vpp.service and frr.service. The
+# three cannot run together - the socket paths, the hugepages and the NIC are
+# the same ones - so this unit conflicts with them rather than leaving that
+# to whoever reads the file.
+[Unit]
+Description=Prisma Routing dataplane and control plane, in containers
+Documentation=file:/usr/share/doc/prisma-routing/appliance.md
+After=network-pre.target prisma-routing-tune.service docker.service
+Requires=docker.service
+Conflicts=vpp.service frr.service
+# The tuner writes /etc/vpp/startup.conf and reserves the hugepages the EAL
+# needs; a dataplane started before it reads a configuration from the boot
+# before this one.
+After=prisma-routing-tune.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/etc/prisma-routing
+# The images are loaded from the medium's copy on every start rather than
+# once at install: a box that was rolled back, or whose docker state was
+# cleared, then starts the images it has rather than none. `docker load` on
+# an image that is already there is a no-op that prints the tag.
+ExecStartPre=/bin/sh -c 'test -f /usr/lib/prisma-routing/images.tar.gz && docker load -i /usr/lib/prisma-routing/images.tar.gz >/dev/null || true'
+ExecStart=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml up -d
+# `down` and not `stop`: the containers are recreated from the compose file
+# on every start, so leaving them around buys nothing and a stopped container
+# holding /run/vpp is a dataplane the next start cannot bind.
+#
+# THE TIMEOUT IS THE DRAIN'S. compose.yaml gives the dataplane 30 seconds to
+# stop, and systemd killing this unit before that would cut the drain off -
+# which is the retention record #217 is about. 60 leaves room for the
+# control plane's own stop after it.
+ExecStop=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml down -t 30
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
