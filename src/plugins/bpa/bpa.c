@@ -1857,7 +1857,14 @@ bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
        * block is an owner too. Whatever the block is being held for, it was
        * announced with a natEvent 16 and is about to disappear.
        */
-      for (local = 0; local < d->n_local; local++)
+      /*
+       * Every slot, borrowed ones included (#210): a block this worker took
+       * from another's slice is held by one of ITS subscribers, was
+       * announced with a natEvent 16 by this worker, and is about to
+       * disappear with the pool. The lender's own walk skips it, because
+       * there it reads as lent.
+       */
+      for (local = 0; local < bpa_dyn_slots (d); local++)
 	{
 	  bpa_block_t blk;
 	  u32 ip_priv;
@@ -1875,7 +1882,7 @@ bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
 	  if (bpa_set_addr_of (&p->inside, d->owner[local], &ip_priv))
 	    continue;
 
-	  if (bpa_dyn_addr (d, p, local * nw + w, &blk))
+	  if (bpa_dyn_addr (d, p, bpa_dyn_block_at (d, local, w, nw), &blk))
 	    continue;
 	  bpa_log_queue_event (pt, event, ip_priv, blk.ip_pub, blk.port_lo,
 			       blk.port_hi, pool_index);

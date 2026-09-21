@@ -119,6 +119,10 @@ bpa_dyn_free (bpa_dyn_t *d)
   vec_free (d->free_list);
   vec_free (d->free_pos);
   vec_free (d->extras);
+  /* BEFORE the memset, which is where it was not: freeing after it hands
+     vec_free a pointer that has just been zeroed, so the vector leaks and
+     the call looks right. */
+  vec_free (d->foreign);
   hash_free (d->by_sub);
   clib_memset (d, 0, sizeof (*d));
 }
@@ -154,7 +158,13 @@ bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx, u32 worker,
   *is_new = 1;
 
 found:
-  block_idx = local * n_workers + worker;
+  /*
+   * NOT `local * n_workers + worker` any more: a borrowed slot's block is
+   * another worker's and is not congruent to this one (#210). Every block
+   * below n_local takes the same arithmetic it always did, in the branch
+   * bpa_dyn_block_of() predicts.
+   */
+  block_idx = bpa_dyn_block_at (d, local, worker, n_workers);
   b->sub_idx = sub_idx;
   if (PREDICT_FALSE (bpa_dyn_addr (d, p, block_idx, b)))
     return -1;
@@ -399,7 +409,10 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
   d->n_extensions++;
   *is_new = 1;
 
-  block_idx = local * n_workers + worker;
+  /* Through the helper for the same reason bpa_dyn_acquire does: an
+     extension can come off a borrowed slot, and that block is not this
+     worker's by arithmetic (#210). */
+  block_idx = bpa_dyn_block_at (d, local, worker, n_workers);
   b->sub_idx = sub_idx;
   if (PREDICT_FALSE (bpa_dyn_addr (d, p, block_idx, b)))
     return -1;
@@ -470,14 +483,33 @@ bpa_dyn_lend (bpa_dyn_t *d, u32 worker, u32 n_workers, u32 want, u32 *out)
   if (!d->active || !out)
     return 0;
 
-  while (n < want && vec_len (d->free_list) > 0)
+  while (n < want)
     {
-      u32 local = bpa_dyn_pop (d);
+      u32 top = vec_len (d->free_list), local;
 
       /*
-       * The pop already took it off the stack and cleared free_pos, so the
-       * only thing left is to say WHY it is not there. A block whose owner
-       * is BPA_LENT is skipped by the reap, refused by the pin, and invisible
+       * THE TOPMOST OF THIS SLICE'S OWN BLOCKS. A borrowed block sits on the
+       * same free list - that is what leaves bpa_dyn_acquire() untouched -
+       * and it is not this slice's to lend on (#210): it belongs to another
+       * worker, which holds a slot for it and expects to take it back from
+       * here. Lent a second time, the first lender would wait for ever and
+       * its take_back would refuse.
+       *
+       * Measured before this line existed: draining a borrower's free list
+       * lent the borrowed block away, and the block the loan was for ended
+       * up held by nobody at all.
+       */
+      while (top > 0 && d->free_list[top - 1] >= d->n_local)
+	top--;
+      if (top == 0)
+	break;
+      local = d->free_list[top - 1];
+      bpa_dyn_unfree (d, local);
+
+      /*
+       * The block is off the stack and its free_pos is cleared, so the only
+       * thing left is to say WHY it is not there. A block whose owner is
+       * BPA_LENT is skipped by the reap, refused by the pin, and invisible
        * to every candidate search, because all of them ask whether the owner
        * is BPA_NO_BLOCK.
        */
@@ -488,6 +520,84 @@ bpa_dyn_lend (bpa_dyn_t *d, u32 worker, u32 n_workers, u32 want, u32 *out)
     }
 
   return n;
+}
+
+int
+bpa_dyn_borrow (bpa_dyn_t *d, u32 block_idx)
+{
+  u32 k, slot = BPA_NO_BLOCK;
+
+  if (!d->active || block_idx == BPA_NO_BLOCK)
+    return -1;
+
+  /*
+   * A VACANT SLOT FIRST. Slots are never deleted - by_sub and extras hold
+   * local indices, and deleting one in the middle would move another
+   * subscriber's block out from under them - so a slot whose block went
+   * home is reused, and the array is bounded by the most this worker ever
+   * borrowed at one time rather than by how many times it has borrowed.
+   */
+  for (k = 0; k < vec_len (d->foreign); k++)
+    {
+      if (d->foreign[k] == block_idx)
+	return -1; /* already here: borrowing it twice would free it twice */
+      if (d->foreign[k] == BPA_NO_BLOCK && slot == BPA_NO_BLOCK)
+	slot = k;
+    }
+
+  if (slot == BPA_NO_BLOCK)
+    {
+      slot = vec_len (d->foreign);
+      vec_add1 (d->foreign, block_idx);
+      /* One more slot in every array the slice indexes by local. They are
+         grown together because every one of them is read by local index and
+         a short one is a read past the end on the first borrowed block. */
+      vec_add1 (d->owner, BPA_NO_BLOCK);
+      vec_add1 (d->idle_since, 0);
+      vec_add1 (d->pinned, 0);
+      vec_add1 (d->free_pos, BPA_NO_BLOCK);
+    }
+  else
+    d->foreign[slot] = block_idx;
+
+  d->owner[d->n_local + slot] = BPA_NO_BLOCK;
+  d->idle_since[d->n_local + slot] = 0;
+  d->pinned[d->n_local + slot] = 0;
+  /* IT ARRIVES FREE, on this slice's own free list, which is what leaves
+     bpa_dyn_acquire() untouched: the next subscriber that asks pops it like
+     any other block. */
+  bpa_dyn_push (d, d->n_local + slot);
+  return 0;
+}
+
+int
+bpa_dyn_give_back (bpa_dyn_t *d, u32 block_idx)
+{
+  u32 k;
+
+  if (!d->active)
+    return -1;
+
+  for (k = 0; k < vec_len (d->foreign); k++)
+    {
+      u32 local = d->n_local + k;
+
+      if (d->foreign[k] != block_idx)
+	continue;
+      /*
+       * FREE, OR IT STAYS. A held borrowed block is a subscriber's; handing
+       * it back would let the lender give it to somebody else while this
+       * worker is still translating out of it - two subscribers on one
+       * public port range, which is the defect all of this accounting
+       * exists to prevent. The rebalance asks again next tick.
+       */
+      if (d->owner[local] != BPA_NO_BLOCK)
+	return -1;
+      bpa_dyn_unfree (d, local);
+      d->foreign[k] = BPA_NO_BLOCK;
+      return 0;
+    }
+  return -1;
 }
 
 int
@@ -672,7 +782,14 @@ bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker, u32 n_workers,
   if (!d->active)
     return 0;
 
-  for (i = 0; i < d->n_local; i++)
+  /*
+   * EVERY SLOT, not every block of this worker's own: a borrowed block is
+   * held by a subscriber exactly like an owned one, and a reap that stopped
+   * at n_local would never release it - the block would be held for ever by
+   * a subscriber that left, on a slice that cannot give it back because it
+   * is not free (#210).
+   */
+  for (i = 0; i < bpa_dyn_slots (d); i++)
     {
       if (freed >= max_out)
 	break;
@@ -707,7 +824,7 @@ bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker, u32 n_workers,
 	continue;
 
       out[freed].sub_idx = d->owner[i];
-      out[freed].block_idx = i * n_workers + worker;
+      out[freed].block_idx = bpa_dyn_block_at (d, i, worker, n_workers);
 
       /* Only the primary lives in by_sub; an extension has an entry in
        * extras instead, and removing the wrong one would strand the other. */
