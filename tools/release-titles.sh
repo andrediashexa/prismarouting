@@ -48,8 +48,14 @@ diff=0
 total=0
 while IFS="$(printf '\t')" read -r tag name; do
   ver=${tag#v}
+  # THE NEXT CHARACTER HAS TO BE A SPACE, and that is not pedantry: "## 0.111.1"
+  # is a prefix of "## 0.111.10 - ...", so on the day this project published a
+  # two-digit patch, 0.111.1 was compared against 0.111.10's heading and
+  # reported as carrying the wrong title. The published title was right and
+  # the reader was wrong (#210's release week).
   head=$(awk -v v="## $ver" '
-    index($0, v) == 1 {
+    index($0, v) == 1 &&
+    (length($0) == length(v) || substr($0, length(v) + 1, 1) == " ") {
       sub(/^## [0-9.]+[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*/, "")
       print; exit
     }' "$REPO/CHANGELOG.md")

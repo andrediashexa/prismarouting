@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A two-digit patch is not a prefix of the one-digit one.** `0.111.10` was
+  the first release this project has published whose patch digit has two
+  characters, and two readers matched a CHANGELOG heading with
+  `index($0, "## " ver) == 1`: `## 0.111.1` is a prefix of
+  `## 0.111.10 - ...`, so `tools/release-titles.sh` compared **0.111.1**
+  against **0.111.10's** heading and reported a correctly titled release as
+  wrong.
+
+  A check refusing correct work is the failure that file exists to prevent
+  one level down, and the gate carried the same shape in the two readers that
+  compare a released section against what it shipped - where it would have
+  refused a tag whose CHANGELOG is right.
+
+  Both now require the character after the version to be a space or the end
+  of the line. `test/test_release_titles.sh` has a fixture with `9.0.10`
+  above `9.0.1` and checks both directions: the correct pair is accepted, and
+  a patch wearing its neighbour's heading is still refused - so the fix is a
+  narrower match rather than a looser one. Watched red against the old
+  matcher.
+
 ## 0.111.10 - the borrower's side of a lent block
 
 ### Added
