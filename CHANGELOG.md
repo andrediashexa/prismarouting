@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Fourteen functions a plain-cc harness cannot reach now say so**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `TESTING.md`'s rule is *every function has a unit test, **or says at its
+  definition why it cannot be*** - and fourteen had neither, which is the
+  half that leaves a reader unable to tell "nobody got round to it" from
+  "this needs a running VPP".
+
+  Six in `bpa_pptp.c` and two in `bpa_ftp.c` are **not compiled at all**
+  under `BPA_STANDALONE` - that guard is exactly what leaves the text and
+  arithmetic halves of those ALGs testable - four are VPP `format` functions
+  over a `va_list`, the class `bpa_cli.c`'s header already describes, and two
+  open and read a UDP socket inside VPP's main loop. Each excuse names the
+  lab that drives it, and both of those labs were re-run to check the names
+  are true: `ftp-alg` and `pptp`, green.
+
+  The C ceiling goes **129 → 115**, and the check refused every intermediate
+  number on the way: a ceiling above the count stops holding anything.
+
 ### Fixed
 
 ## 0.112.7 - the overlap rule has a harness
