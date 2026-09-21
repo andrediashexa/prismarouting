@@ -17,13 +17,50 @@ services:
     image: prisma-vpp:${PRISMA_VERSION:-latest}
     network_mode: host
     pid: host
-    # DPDK binds a PCI function, maps hugepages and programs an IOMMU group.
-    # The narrow capability set is a phase-2 question with a measurement
-    # attached; until it is measured this says what it is.
-    privileged: true
+    # NOT `privileged: true`, and every line of this was measured on
+    # 2026-09-21 by starting the image with the privilege removed and reading
+    # what broke (#396):
+    #
+    #   nothing at all      set_mempolicy: Operation not permitted
+    #                       dpdk_config: rte_eal_init failed: Cannot allocate
+    #                       memory (12)                     -> the EAL is dead
+    #   SYS_NICE dropped    the same two lines               -> dead
+    #   NET_ADMIN dropped   create tap: ioctl(TUNSETIFF):
+    #                       Operation not permitted          -> no linux_cp
+    #   IPC_LOCK dropped    nothing, on this box             -> see below
+    #
+    # SYS_NICE is what DPDK's EAL needs for set_mempolicy; without it the
+    # dataplane does not start at all. NET_ADMIN is what creates the TAP, and
+    # linux_cp pairs every dataplane card into Linux through one - a box
+    # without it has a control plane with nothing to route over, which on a
+    # one-card box is a box nobody can reach.
+    #
+    # IPC_LOCK IS NOT EXERCISED HERE and is kept anyway, which is the one
+    # entry that is not a measurement: it is the locked memory VFIO needs to
+    # map DMA, and this machine has no IOMMU and no card DPDK can bind - the
+    # same hardware gap #28 records. Removing it on the strength of a box
+    # that cannot test it would be measuring the wrong thing.
+    cap_add:
+      - SYS_NICE
+      - NET_ADMIN
+      - IPC_LOCK
+    devices:
+      # The TAP linux_cp creates, and the vhost backend it asks for next:
+      # with NET_ADMIN and no /dev/net/tun the failure is
+      # "open '/dev/net/tun': No such file or directory", and with the tun
+      # device and no /dev/vhost-net it moves on to that one. Both, and the
+      # interface appears: `tap0` in `show interface`.
+      - /dev/net/tun
+      - /dev/vhost-net
+    # /dev/vfio IS DELIBERATELY NOT HERE. Compose refuses to start a service
+    # whose device is missing, and a box with no IOMMU has no /dev/vfio at
+    # all - appliance/bind-dataplane-nic falls back to uio_pci_generic on
+    # exactly those boxes and says so. Which device the dataplane is handed
+    # follows from what that script chose, so it belongs in the override the
+    # box generates, beside the card's own address - and that is the next
+    # piece of phase 2, not a line to guess at now.
     volumes:
       - /dev/hugepages:/dev/hugepages
-      - /dev/vfio:/dev/vfio
       - /etc/vpp:/etc/vpp:ro
       - /run/vpp:/run/vpp
       # THE RETENTION LOG, on its own filesystem and under a one-year

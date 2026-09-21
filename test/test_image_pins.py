@@ -222,6 +222,45 @@ else:
         else:
             ok(f"{svc} shares the namespace linux_cp pairs its cards into")
 
+    # NOT PRIVILEGED, and the capability set that replaced it. Each entry
+    # was measured by removing it and reading what broke (#396):
+    # SYS_NICE -> `set_mempolicy: Operation not permitted` and the EAL dies;
+    # NET_ADMIN -> `create tap: ioctl(TUNSETIFF): Operation not permitted`,
+    # so linux_cp pairs no card into Linux. IPC_LOCK is the one entry no box
+    # here can exercise - it is the locked memory VFIO needs to map DMA -
+    # and it is kept for that reason, said out loud rather than dropped on
+    # the strength of a machine with no IOMMU.
+    #
+    # The comments in that file say `privileged: true` while explaining why
+    # it is not there, so the lines are read without them.
+    code = "\n".join(l for l in compose.splitlines()
+                     if not l.lstrip().startswith("#"))
+    if re.search(r"^\s*privileged:\s*true\s*$", code, re.M):
+        bad("appliance/compose.yaml is back to privileged: true. The "
+            "dataplane runs on SYS_NICE, NET_ADMIN and IPC_LOCK - measured "
+            "by removing each and reading what broke - and `privileged` "
+            "hands it every capability the kernel has instead")
+    else:
+        ok("the dataplane is not privileged")
+    for cap, why in (("SYS_NICE", "DPDK's EAL calls set_mempolicy and dies "
+                                  "without it"),
+                     ("NET_ADMIN", "linux_cp creates the TAP every dataplane "
+                                   "card is paired into Linux through"),
+                     ("IPC_LOCK", "VFIO maps DMA out of locked memory")):
+        if not re.search(rf"^\s*-\s*{cap}\s*$", code, re.M):
+            bad(f"appliance/compose.yaml does not grant {cap}: {why}")
+    ok("and it is granted the three capabilities it was measured needing")
+    # AND THE DEVICES linux_cp REACHES FOR. With NET_ADMIN and no
+    # /dev/net/tun the failure is "open '/dev/net/tun': No such file or
+    # directory"; with the tun device and no /dev/vhost-net it moves on to
+    # that one. Both, and the interface appears.
+    for dev in ("/dev/net/tun", "/dev/vhost-net"):
+        if not re.search(rf"^\s*-\s*{re.escape(dev)}\s*$", code, re.M):
+            bad(f"appliance/compose.yaml does not pass {dev}, which "
+                f"linux_cp opens to create the pair: the dataplane would "
+                f"come up and have no way to reach Linux")
+    ok("and the two devices linux_cp opens are passed in")
+
     # AND NOTHING OVERRIDES THE ENTRYPOINT. A compose file that sets
     # `entrypoint:` or a `command:` reaching vpp directly puts the drain back
     # outside the stop path, and every other check here would stay green.

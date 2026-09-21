@@ -77,6 +77,46 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The dataplane runs without `privileged`, and the set that replaced it was
+  measured** ([#396](https://github.com/andrediashexa/hexarouting/issues/396),
+  phase 2). Each entry by removing it and reading what the box said:
+
+  | removed | what the box said |
+  |---|---|
+  | everything | `set_mempolicy: Operation not permitted`, then `rte_eal_init failed: Cannot allocate memory (12)` |
+  | `SYS_NICE` | the same two lines: the dataplane does not start |
+  | `NET_ADMIN` | `create tap: ioctl(TUNSETIFF): Operation not permitted` |
+  | `/dev/net/tun` | `create tap: open '/dev/net/tun': No such file or directory` |
+  | `IPC_LOCK` | nothing, **on this box** |
+
+  So: `SYS_NICE`, `NET_ADMIN`, `IPC_LOCK`, and the devices `/dev/net/tun` and
+  `/dev/vhost-net`. With all of them `create tap` answers `tap0`.
+
+  `IPC_LOCK` is the one entry that is **not** a measurement - it is the
+  locked memory VFIO needs to map DMA, and this machine has no IOMMU and no
+  card DPDK can bind ([#28](https://github.com/andrediashexa/hexarouting/issues/28)).
+  It is kept, and said out loud, rather than dropped on the strength of a box
+  that cannot exercise it.
+
+  `compose-check` measures the narrowed dataplane rather than asserting it:
+  the DPDK plugin loaded means the EAL came up on `cap_add` alone, `create
+  tap` answers `tap0`, and **both workers are on the cores `startup.conf`
+  named** - a container that confined them elsewhere would forward at a
+  fraction of the rate, quietly, which is the failure the whole of this
+  product's tuning exists to prevent. Its `startup.conf` is now the plugin
+  stanza `prisma-routing-tune` writes on a tuned box; with the shorter list
+  it had, `create tap` is not even a command this VPP has.
+
+  Three mutations on the compose file watched red, each failing with the
+  exact line the table predicts, and three more on the file-reading half in
+  `make test`.
+
+  **`/dev/vfio` is deliberately absent.** Compose refuses to start a service
+  whose device is missing, and a box with no IOMMU has no `/dev/vfio` -
+  `bind-dataplane-nic` falls back to `uio_pci_generic` there and says so.
+  Which device the dataplane is handed follows from what that script chose,
+  so it belongs in an override the box generates beside the card's address.
+
 ### Fixed
 
 ## 0.111.5 - the stack, started and stopped for real
