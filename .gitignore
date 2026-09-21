@@ -29,6 +29,12 @@ prisma-routing*.iso
 # the history that somebody later mistakes for a release.
 hexarouting*-upgrade.tar.gz
 prisma-routing*-upgrade.tar.gz
+# And the image tarball `make images` writes for the medium to carry (#396).
+# 118 MB of `docker save`, built on the host because build-iso.sh runs in a
+# container with no daemon - which is exactly what puts it in the tree root
+# next to the ISO, in reach of `git add -A`, and unlike the ISO nothing on
+# the push side would refuse it.
+prisma-routing-images.tar.gz
 boot-console.log
 install-console.log
 

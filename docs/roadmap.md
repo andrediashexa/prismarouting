@@ -2725,6 +2725,19 @@ is finer - the 1G reservation is global on the kernel command line and VPP is
 told `buffers-per-numa` - and whether that is worth anything is a throughput
 question behind #28.
 
+**What of it ships now**: the medium carries `docker.io`, `docker-compose` and
+the two images (`make images` writes the 118 MB tarball on the host, because
+`build-iso.sh` runs in a container with no daemon), the installer puts
+`compose.yaml` and `prisma-routing-containers.service` on the disk, and
+`lab/install-iso.sh` asserts on the INSTALLED disk that all four arrived and
+that the unit is `disabled`. A box still boots `vpp.service` and
+`frr.service`: the unit conflicts with both, and enabling it in the release
+that first ships it would ask an operator to take the packaging and the
+change of what runs on one upgrade. **What is left** is the release that
+flips the default - the self-test reads `vpp.service stable (0 restarts)` and
+needs a source that is the container, and the gate must boot a box on
+containers and watch it forward before the default moves.
+
 **And the distributed version of the same proposal**
 ([#399](https://github.com/andrediashexa/hexarouting/issues/399)) - four planes, a
 state plane, two-node HA, active/active by shard ownership, and a logical

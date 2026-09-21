@@ -153,9 +153,50 @@ chroot "$ROOT" /bin/sh -c "
     vpp=$VPP_VERSION vpp-plugin-core=$VPP_VERSION vpp-plugin-dpdk=$VPP_VERSION \
     libvppinfra=$VPP_VERSION \
     frr=$FRR_VERSION frr-pythontools=$FRR_VERSION \
-    frr-rpki-rtrlib=$FRR_VERSION
+    frr-rpki-rtrlib=$FRR_VERSION \
+    docker.io docker-compose
   apt-get clean
 "
+
+# THE CONTAINER IMAGES, INSIDE THE MEDIUM (#396).
+#
+# An appliance installs from an ISO with no network guaranteed, so an image
+# the box needs at boot has to be in the file it was installed from - the
+# same reason VPP and FRR are apt-installed into the root rather than pulled
+# on first start.
+#
+# Debian's OWN docker.io and docker-compose, and not Docker's repository: the
+# argument is the one docs/appliance.md makes about the kernel, which is that
+# this product inherits security updates by doing nothing and a package from
+# somebody else's repository is one this project would have to track. Measured
+# on bookworm: docker.io 20.10.24 and docker-compose 1.29.2, and that compose
+# reads appliance/compose.yaml as it ships.
+#
+# Built here rather than expected: the tarball is a product of this tree's
+# own plugin, so a medium built from a tag carries the images that tag
+# compiles.
+say "the container images"
+IMAGES=$REPO/prisma-routing-images.tar.gz
+# BUILT BEFORE THIS RUNS, and not here. build-iso.sh executes inside a
+# privileged container with no docker daemon of its own - `make iso` is what
+# puts it there - so a `docker build` at this point talks to nothing and the
+# medium silently carries no images. Measured: the first version warned and
+# shipped a 400 MB ISO with none. The Makefile's `iso` target depends on
+# `images`, which runs tools/build-images.sh on the host where the daemon is.
+if [ "${PRISMA_SKIP_IMAGES:-0}" = 1 ]; then
+  say "skipped: PRISMA_SKIP_IMAGES=1, and the medium will carry none"
+elif [ -f "$IMAGES" ]; then
+  mkdir -p "$ROOT/usr/lib/prisma-routing"
+  cp "$IMAGES" "$ROOT/usr/lib/prisma-routing/images.tar.gz"
+  say "carried: $(( $(wc -c < "$IMAGES") / 1048576 )) MB of images"
+else
+  # LOUD, AND NOT FATAL. A medium without the images still installs and still
+  # boots the systemd units, which is what every box does today; what it
+  # cannot do is start the containers. Refusing here would make a docker
+  # failure on the build host into a release that cannot be cut at all.
+  say "WARNING: no $IMAGES, so this medium carries no container images"
+  say "         build them first: sh tools/build-images.sh save"
+fi
 
 say "Prisma Routing"
 mkdir -p "$ROOT/src"

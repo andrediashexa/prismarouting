@@ -3819,6 +3819,63 @@ then
             echo "         ${RB_WHY:-<nothing>}"
             fail=1 ;;
         esac
+
+        # -- what the medium carried, on the disk it installed to (#396)
+        #
+        # The container stack ships DISABLED in this release: the box still
+        # boots vpp.service and frr.service. So there is nothing here that
+        # asks whether a container is running - it is not, and a check that
+        # expected one would be a lab asserting what the box does wrong.
+        # What this asks is the thing the next release depends on: that an
+        # INSTALLED disk has the runtime, the compose file, the unit and the
+        # images, because all four ride the squashfs and none of them is
+        # fetched at first boot. A box in an ISP has no route to a registry.
+        echo
+        echo "  -- the installed disk carries the container stack (#396)"
+        send 'echo "HX""LAB dk-bin=$(command -v docker-compose >/dev/null 2>&1 && command -v docker >/dev/null 2>&1 && echo both || echo missing)"'
+        wait_for "HXLAB dk-bin=" 60 "the box to say whether it has docker" || fail=1
+        send 'echo "HX""LAB dk-files=$(test -f /etc/prisma-routing/compose.yaml && echo -n compose; test -f /usr/lib/prisma-routing/images.tar.gz && echo -n +images; test -f /lib/systemd/system/prisma-routing-containers.service && echo -n +unit)"'
+        wait_for "HXLAB dk-files=" 60 "the box to list what it carries" || fail=1
+        send 'echo "HX""LAB dk-enabled=$(systemctl is-enabled prisma-routing-containers.service 2>&1 | tr -d "\r")"'
+        wait_for "HXLAB dk-enabled=" 60 "the box to say whether the unit is enabled" \
+          || fail=1
+
+        DK_BIN=$(live_field dk-bin)
+        DK_FILES=$(live_field dk-files)
+        DK_ENABLED=$(live_field dk-enabled)
+        if [ "$DK_BIN" = "both" ]; then
+          echo "  [ ok ] docker and docker-compose are on the installed disk"
+        else
+          echo "  [FAIL] the installed box has no container runtime (dk-bin=${DK_BIN:-<nothing>});"
+          echo "         the medium is supposed to carry docker.io and docker-compose,"
+          echo "         and a box in an ISP cannot fetch them"
+          fail=1
+        fi
+        if [ "$DK_FILES" = "compose+images+unit" ]; then
+          echo "  [ ok ] compose.yaml, images.tar.gz and the unit all installed"
+        else
+          echo "  [FAIL] the disk is missing part of the stack (dk-files=${DK_FILES:-<nothing>});"
+          echo "         expected compose+images+unit. Without images.tar.gz the unit"
+          echo "         would start by pulling from a registry this box cannot reach."
+          fail=1
+        fi
+        case "$DK_ENABLED" in
+          disabled)
+            echo "  [ ok ] the container unit ships disabled, as this release says" ;;
+          "")
+            echo "  [FAIL] the box never answered about the container unit"
+            fail=1 ;;
+          *)
+            # cut to 40: systemd's answer when the unit is absent is a
+            # whole sentence with the path in it, and printed raw it made
+            # this line 120 columns wide on the control run.
+            echo "  [FAIL] prisma-routing-containers.service is not 'disabled':"
+            echo "         $(printf '%.40s' "$DK_ENABLED")"
+            echo "         It Conflicts= vpp.service and frr.service, so an"
+            echo "         enabled unit and an enabled vpp.service race at every boot"
+            echo "         and which one wins is not decided anywhere."
+            fail=1 ;;
+        esac
           send "sync"; send "systemctl poweroff"
         fi
       fi

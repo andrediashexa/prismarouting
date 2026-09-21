@@ -307,10 +307,27 @@ say "dataplane plugin"
 install -D -m 0644 "$SO" "$DESTDIR$PLUGIN_DIR/bpa_plugin.so"
 install -D -m 0644 "$VSO" "$DESTDIR$VAT2_DIR/bpa_test_plugin_bpa_plugin.so"
 
+# THE COMPOSE FILE AND THE UNIT (#396), where the box looks for them rather
+# than where this tree keeps them. Installed on every box, enabled on none:
+# prisma-routing-containers.service is shipped and not started, and says at
+# its own top why.
+#
+# THE IMAGES ARE NOT INSTALLED HERE, and that is not an omission.
+# appliance/build-iso.sh puts them in the medium at
+# /usr/lib/prisma-routing/images.tar.gz, and the disk install is an
+# `unsquashfs` of that medium - so they arrive on the installed box the same
+# way VPP and FRR do. A second copy through this file would be a second
+# place they can go missing from, and on a source install there is no medium
+# to take them from anyway: `sh tools/build-images.sh save` is that box's
+# route.
+say "the container stack, shipped and not started"
+install -D -m 0644 "$REPO/appliance/compose.yaml" \
+  "$DESTDIR/etc/prisma-routing/compose.yaml"
+
 say "systemd"
 for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selftest.service \
          prisma-routing-installer.service prisma-routing-confirm.service \
-         prisma-routing-confirm.timer; do
+         prisma-routing-confirm.timer prisma-routing-containers.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the

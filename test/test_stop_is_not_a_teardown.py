@@ -110,11 +110,27 @@ STOP_DIRECTIVES = ("ExecStop", "ExecStopPost")
 # argument is the mutation this check exists to refuse. A shell is absent
 # because its body is a string this check cannot read, and neither can the
 # person reviewing the diff.
-STOP_PROGRAMS = ("/usr/bin/vppctl",)
+#
+# docker-compose joins it for one verb and one reason (#396). With the
+# dataplane in a container, stopping it IS stopping its container, and the
+# program that does that is compose. What matters for this rule is what the
+# verb leaves behind: `down` removes containers and networks, and volumes
+# ONLY with -v, which is refused below. The retention log, the configuration
+# and the audit trail are bind mounts of directories on the box, so they are
+# exactly where they were - the same as `systemctl stop vpp`, which is what
+# this replaces.
+STOP_PROGRAMS = ("/usr/bin/vppctl", "/usr/bin/docker-compose")
 
 # And of that program, the verbs that only flush. Each one is a promise that
 # running it leaves the configuration exactly as it found it.
-STOP_VERBS = ("bpa stop-drain",)
+STOP_VERBS = ("bpa stop-drain", "down")
+
+#: The words that make a stop-time compose command destructive, whatever else
+#: is on the line. `-v` takes the volumes with it, and a box whose retention
+#: log lived in one would lose a year of connection records on an ordinary
+#: restart; `--rmi` deletes the images the medium carried, leaving a box that
+#: cannot start until somebody reinstalls it.
+COMPOSE_FORBIDDEN = ("-v", "--volumes", "--rmi")
 
 # Words that say the command takes something away. Matched as whole tokens, so
 # "stop-drain" is not "drain" and "no" is not the "no" inside a path. This list
@@ -153,7 +169,29 @@ def teardown_reason(cmd):
                 f"either the configuration surface or a command this check "
                 f"cannot read")
 
+    # THE VERB, AFTER THE OPTIONS THAT NAME A FILE. vppctl's line is the verb
+    # and nothing else; compose's is `-f <path> down -t 30`, so taking
+    # everything after the program would compare a path against a verb list
+    # and refuse a command this table blesses. Only `-f <path>` is skipped -
+    # an option this check does not know stays in `rest` and is refused,
+    # which is the direction to be wrong in.
+    words = list(words)
+    if words[0].endswith("docker-compose"):
+        i = 1
+        while i + 1 < len(words) and words[i] in ("-f", "--file"):
+            i += 2
+        words = [words[0]] + words[i:]
+
     rest = " ".join(words[1:])
+    # And the flags AFTER the verb, which for `down -t 30` is a timeout: a
+    # number is not a verb and refusing it would refuse the drain's own
+    # window. Anything that is not a flag-and-value pair stays.
+    if words[0].endswith("docker-compose") and len(words) > 2:
+        tail = words[2:]
+        if len(tail) == 2 and tail[0] in ("-t", "--timeout") and \
+           tail[1].isdigit():
+            rest = words[1]
+
     if not any(rest == v or rest.startswith(v + " ") for v in STOP_VERBS):
         return (f"{rest!r} is not one of the stop-time verbs "
                 f"({', '.join(repr(v) for v in STOP_VERBS)}); every other "
@@ -166,6 +204,18 @@ def teardown_reason(cmd):
 # teardown. Keyed by the path in the tree; the installed name is different and
 # is `test/test_install_manifest.py`'s business.
 ALLOWED_STOP = {
+    "appliance/systemd/prisma-routing-containers.service": [
+        ("ExecStop",
+         "/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml down -t 30",
+         "#396: with the dataplane in a container, stopping it is stopping "
+         "the container, and compose is what does that. `down` removes "
+         "containers and networks; volumes need -v, which COMPOSE_FORBIDDEN "
+         "refuses. The retention log, /etc/prisma-routing and the audit "
+         "trail are bind mounts of directories on the box and are left "
+         "exactly as they were. The -t 30 is the drain's: compose.yaml gives "
+         "the dataplane 30 seconds to stop, and a shorter timeout here would "
+         "cut off the stop-drain that writes the release records."),
+    ],
     "appliance/systemd/vpp-stop-drain.conf": [
         ("ExecStop", "-/usr/bin/vppctl bpa stop-drain",
          "#217: in dynamic mode the block allocation log IS the connection "
@@ -357,6 +407,25 @@ else:
     else:
         ok("and the ordering itself is driven in test_vpp_entrypoint.sh")
 
+
+print("\n=== a compose stop that would take data with it ===")
+# THE WORDS, not the program. `down` is a stop; `down -v` is a box that lost
+# its volumes on an ordinary restart. Nothing in this tree writes one today,
+# and this is what keeps it that way - including in the table above, which
+# is where somebody would put it if they meant it.
+for _rel, _entries in ALLOWED_STOP.items():
+    for _directive, _value, _reason in _entries:
+        for _word in COMPOSE_FORBIDDEN:
+            if "docker-compose" in _value and \
+               (f" {_word} " in f" {_value} " or _value.endswith(" " + _word)):
+                bad(f"ALLOWED_STOP blesses {_rel}: {_directive}={_value!r}, "
+                    f"and {_word} makes it destructive")
+for _rel, _directive, _value in found:
+    for _word in COMPOSE_FORBIDDEN:
+        if "docker-compose" in _value and \
+           (f" {_word} " in f" {_value} " or _value.endswith(" " + _word)):
+            bad(f"{_rel} runs compose with {_word} at stop time: {_value!r}")
+ok(f"no stop-time compose command carries any of {', '.join(COMPOSE_FORBIDDEN)}")
 
 print("\n=== and being in the table is not enough on its own ===")
 # The mutation the file-name rule cannot see: the unit that already has

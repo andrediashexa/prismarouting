@@ -77,6 +77,43 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The medium carries the containers, and the box still boots without them**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  An appliance installs with no network guaranteed, so a container stack that
+  is pulled at first boot is a stack an ISP's box never gets. The ISO now
+  carries `docker.io` and `docker-compose` out of Debian 12 - 20.10.24 and
+  1.29.2, which is compose v1 and was measured reading
+  `appliance/compose.yaml` unchanged - and a `docker save` of both images at
+  `/usr/lib/prisma-routing/images.tar.gz`. The medium goes from 325 MB to
+  517 MB, 118 MB of which is the images.
+
+  `make images` writes that tarball **on the host**, and `iso:` depends on it,
+  because `build-iso.sh` itself runs in a container with no docker daemon -
+  which is how the first medium built with docker on it came out carrying no
+  images at all.
+
+  **Nothing is enabled.** `prisma-routing-containers.service` is installed and
+  not started; it `Conflicts=vpp.service frr.service`, because the socket
+  paths, the hugepages and the NIC are the same ones and the three cannot run
+  together. A box upgrading to this release boots exactly as it did. The
+  release that flips the default is the one whose gate boots a box on
+  containers and watches it forward - asking an operator to take the
+  packaging and the change of what runs on a single upgrade is two risks
+  sold as one.
+
+  `lab/install-iso.sh` asserts it where it matters, on the disk the installer
+  wrote rather than in the medium: docker and docker-compose present,
+  `compose.yaml`, `images.tar.gz` and the unit all there, and
+  `systemctl is-enabled` answering `disabled`. The images arrive by
+  `unsquashfs` like VPP and FRR do, so `install.sh` deliberately does not copy
+  them a second time - a second copy is a second place they can go missing
+  from.
+
+  `test/test_stop_is_not_a_teardown.py` now reads `docker-compose down` as
+  well as `vppctl bpa stop-drain`, and refuses `-v`, `--volumes` and `--rmi`
+  on a stop path: the retention log #217 is about lives in a bind mount, and
+  a stop that takes the volumes with it is a teardown wearing a stop's name.
+
 * **Fourteen functions a plain-cc harness cannot reach now say so**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   `TESTING.md`'s rule is *every function has a unit test, **or says at its
