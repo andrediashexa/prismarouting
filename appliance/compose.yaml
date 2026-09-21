@@ -73,10 +73,11 @@ services:
     # runs the drain before it forwards the signal. lab/ipfix-stop.sh measures
     # that drain at 504 ms for one block, of which 500 ms is a deliberate
     # `vlib_process_suspend` waiting for the frame carrying the UDP records to
-    # go out. The slope past one block is NOT measured, so this is 30 s: sixty
-    # times the measured figure, and a bound rather than a guess dressed as
-    # one. A box that needs more than 30 s to give its blocks back has a
-    # number worth measuring before it has a longer grace period.
+    # go out. The SLOPE is measured too, in lab/drain-slope.sh: 503 ms at one
+    # block and 504-505 at eight hundred, under 0.005 ms a block - so a box
+    # holding 200,000 of them spends about a second more than a box holding
+    # one, and 30 s has room by a factor of about twenty-five rather than
+    # being a number that sounded safe.
     stop_grace_period: 30s
     # `unless-stopped` and not `always`: they are not the same, and the
     # difference is the one systemd has too - `Restart=always` restarts a
