@@ -42,6 +42,29 @@
 # asserted where a real systemd exists, in lab/install-iso.sh; a container has
 # none.
 #
+# HOW LONG THE DRAIN TAKES, measured here because a container supervisor
+# needs the number and nothing had it (#396). `docker stop` gives the
+# wrapper `stop_grace_period` and then SIGKILLs it, so a grace period shorter
+# than the drain cuts the release records off mid-flight - the same swallowed
+# record as no drain at all, arriving only on the boxes with the most blocks
+# to give back.
+#
+# Measured on 2026-09-21, one block held:
+#
+#   the drain took 504 ms, for 1 block(s) in use
+#   a bare vppctl round trip on this box: 2 ms
+#
+# So it is NOT the socket and it is not the work: `bpa stop-drain` ends in
+# `vlib_process_suspend (vm, 0.5)`, and the reason is in its own comment - the
+# UDP records sit on a frame ip4-lookup has not run yet, and returning early
+# would hand the supervisor back control to send SIGTERM through them. The
+# half-second is the drain. Everything else for one block was 4 ms, 2 of
+# which was asking.
+#
+# WHAT IS NOT MEASURED is the slope: one block is one point, and a box with
+# 200,000 subscribers releases rather more of them. The fixed half-second
+# dominates at this scale and nothing here says it still does at that one.
+#
 # OFF-RED-AT-LEAST: 5
 #
 # A FLOOR, not a target, and the number is measured rather than chosen: it is
@@ -205,7 +228,34 @@ stop_vpp() {
     echo "  wrapper defect a container supervisor makes possible"
     [ -n "$EXECSTOP" ] && ($EXECSTOP >/dev/null 2>&1 &)
   else
+    # HOW LONG THE DRAIN TAKES, in milliseconds, because a container
+    # supervisor needs that number and nothing had it (#396). `docker stop`
+    # gives the wrapper `stop_grace_period` and then SIGKILLs it, so a grace
+    # period shorter than this is a box whose release records are cut off
+    # mid-drain - the same swallowed record as no drain at all, arriving only
+    # on the boxes with the most blocks to release.
+    #
+    # date +%s%N rather than the shell's SECONDS: the drain on this lab's
+    # box is expected to be far under a second, and a clock whose resolution
+    # is a second would report "0" and be quoted as "instant".
+    # The blocks the drain has to release, read off the dataplane rather
+    # than counted from what this script allocated: a number the lab
+    # believes and a number the box holds are two numbers.
+    _held=$(vppctl show bpa blocks 2>/dev/null \
+            | sed -n 's/.* \([0-9][0-9]*\)\/[0-9]* blocks in use.*/\1/p' \
+            | awk '{t += $1} END {print t + 0}')
+    # AND WHAT A vppctl ROUND TRIP COSTS ON ITS OWN, so the drain's number
+    # is separable from the cost of asking at all. Without it "the drain
+    # takes 504 ms" is quoted as the drain's work, and a supervisor's grace
+    # period is sized from a figure that is mostly a socket.
+    _r0=$(date +%s%N)
+    vppctl show version >/dev/null 2>&1
+    _r1=$(date +%s%N)
+    _t0=$(date +%s%N)
     [ -n "$EXECSTOP" ] && $EXECSTOP 2>&1 | sed 's/^/    /'
+    _t1=$(date +%s%N)
+    echo "  the drain took $(( (_t1 - _t0) / 1000000 )) ms, for ${_held:-0} block(s) in use"
+    echo "  a bare vppctl round trip on this box: $(( (_r1 - _r0) / 1000000 )) ms"
   fi
   echo "  SIGTERM -> vpp pid $PID"
   kill -TERM "$PID" 2>/dev/null

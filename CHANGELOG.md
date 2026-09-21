@@ -77,6 +77,56 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The stack, started and stopped by Compose for real**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396), phase 2's
+  first half). `appliance/compose.yaml` is the two containers, and
+  `sh tools/build-images.sh compose-check` drives it - a compose file nothing
+  runs is a file nobody has seen work.
+
+  ```
+  [ ok ] the dataplane came up under compose, with the plugin, in 0s
+  [ ok ] logging enabled, so the drain below takes a box's own branch
+  [ ok ] the drain ran before the signal, releasing 0 block(s)
+  [ ok ] and it exited on its own, code 0, inside the grace period
+  ```
+
+  The middle line is decision 4 end to end: the real supervisor sent the real
+  signal to the real image, and `docker compose stop` ran the drain **through
+  our PID 1** while VPP was still answering. Logging is enabled first so the
+  drain takes a box's own branch rather than returning at *"logging is not
+  enabled"* - which would have proven the wrapper ran it and nothing more.
+  With no cards there are no blocks to release, so what this proves is the
+  **path**, not a record on a collector.
+
+  `stop_grace_period: 30s`, and the number has the measurement behind it:
+  the drain is 504 ms for one block and its slope is unmeasured, so this is
+  sixty times the measured figure. `test/test_image_pins.py` refuses anything
+  under 10 s, refuses a service that is not on the host's network namespace -
+  `linux_cp`'s TAPs live there - and refuses a compose file that overrides
+  the entrypoint, which would put the drain back outside the stop path with
+  every other check still green. Three mutations watched red.
+
+  **Nothing on an installed box starts any of it.** No unit, no install step:
+  the box boots the systemd units exactly as before.
+
+* **How long the drain takes, which a container supervisor has to know**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
+  `docker stop` gives the wrapper `stop_grace_period` and then kills it, so a
+  period shorter than the drain cuts the release records off mid-flight - the
+  swallowed record again, arriving only on the boxes with the most blocks to
+  give back. Nothing had the number. `lab/ipfix-stop.sh` prints it now, with
+  a bare `vppctl` round trip beside it so the drain's figure is separable
+  from the cost of asking at all.
+
+  Measured, one block held: **the drain 504 ms, a round trip 2 ms**. It is
+  neither the socket nor the work - `bpa stop-drain` ends in
+  `vlib_process_suspend (vm, 0.5)` because the UDP records are on a frame
+  `ip4-lookup` has not run yet. The half-second **is** the drain; everything
+  else for one block was 4 ms.
+
+  The slope is **not** measured: one block is one point, and a box with
+  200,000 subscribers gives back rather more.
+
 ### Fixed
 
 ## 0.111.4 - a PID 1 that drains and waits

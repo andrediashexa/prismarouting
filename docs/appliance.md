@@ -2674,6 +2674,38 @@ pin the versions **the medium installs**, that the tool takes those pins out
 of `appliance/build-iso.sh` rather than repeating them, and that no runtime
 image installs a compiler.
 
+### The stack, started and stopped by Compose
+
+`appliance/compose.yaml` is the two containers and the one thing Compose
+cannot do for them. **Nothing on an installed box starts it** - the appliance
+still runs VPP and FRR as systemd units - and it is here rather than in a
+plan because `sh tools/build-images.sh compose-check` drives it:
+
+```
+==> the stack, started by compose
+  [ ok ] the dataplane came up under compose, with the plugin, in 0s
+  [ ok ] logging enabled, so the drain below takes a box's own branch
+==> and stopped, which is the question
+  [ ok ] the drain ran before the signal, releasing 0 block(s)
+  [ ok ] and it exited on its own, code 0, inside the grace period
+COMPOSE PASSED
+```
+
+That is the real supervisor sending the real signal to the real image, and
+the line in the middle is the whole of decision 4: `docker compose stop` ran
+the drain **through our PID 1** and VPP was still answering when it did. With
+no cards there are no blocks to release, so what this proves is the **path**,
+not a record on a collector - `lab/ipfix-stop.sh` is where a real allocation
+is drained and read off one.
+
+| what the file says | why |
+|---|---|
+| `network_mode: host`, both services | `linux_cp` pairs every dataplane card into Linux, FRR routes over those TAPs and `prismash` reads them. Docker's network isolation is not available to this product, for the control path as much as for the packet path |
+| `stop_grace_period: 30s` | `docker stop` kills at the end of it. The drain is **504 ms** for one block and its slope is unmeasured, so this is sixty times the measured figure - a bound, not a guess. `test/test_image_pins.py` refuses anything under 10 s and names that measurement |
+| `restart: unless-stopped` | not `always`, which restarts a clean exit too. A dataplane that exited cleanly did so because somebody asked it to |
+| `/var/log/prisma-routing` bind-mounted | the retention log is on its own filesystem under a one-year obligation, and the audit trail's chain must not break because a container was replaced |
+| no `entrypoint:` | overriding it would put the drain back outside the stop path, and every other check here would stay green |
+
 ### What phase 1 does NOT do
 
 * **Nothing on an installed box changes.** No unit, no install step, no boot.
@@ -2681,9 +2713,10 @@ image installs a compiler.
   above. Putting 118 MB into every ISO before anything starts them is a
   bigger medium for no behaviour, and the release that starts them is the
   release that should carry them.
-* **Nothing is started by a supervisor.** There is an entrypoint now - see
-  below - but no compose file and no unit runs it, so the images are still
-  something a person starts by hand.
+* **Nothing on an installed box starts any of it.** There is an entrypoint
+  and a compose file, and `compose-check` drives them, but no unit and no
+  install step runs either: the box boots the systemd units exactly as
+  before.
 
 ### The PID 1 that waits for the drain
 
@@ -2722,6 +2755,27 @@ what it prints.
 that are stubs and requires the drain's line to come **first**, which no lab
 can check: a lab supplies the ordering itself. Four mutations were watched
 red, including the one-word version of the defect - the drain backgrounded.
+
+**How long the drain takes, and why a grace period needs the number.**
+`docker stop` gives the wrapper `stop_grace_period` and then kills it, so a
+period shorter than the drain cuts the release records off mid-flight -
+which is the swallowed record again, arriving only on the boxes with the most
+blocks to give back. Measured by `lab/ipfix-stop.sh`, one block held:
+
+| | |
+|---|---|
+| the drain | **504 ms** |
+| a bare `vppctl` round trip on the same box | 2 ms |
+
+It is not the socket and it is not the work. `bpa stop-drain` ends in
+`vlib_process_suspend (vm, 0.5)`, and its own comment says why: the UDP
+records are on a frame `ip4-lookup` has not run yet, so returning early would
+hand the supervisor back control to send `SIGTERM` through them. **The
+half-second is the drain**; everything else, for one block, was 4 ms.
+
+What is **not** measured is the slope - one block is one point, and a box
+with 200,000 subscribers gives back rather more. The fixed half-second
+dominates here and nothing says it still does there.
 
 ## What is still missing
 

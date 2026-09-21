@@ -5,6 +5,7 @@
 #   sh tools/build-images.sh          -> prisma-vpp:<version>, prisma-frr:<version>
 #   sh tools/build-images.sh save     -> prisma-routing-images.tar.gz
 #   sh tools/build-images.sh check    -> starts them and asks what they hold
+#   sh tools/build-images.sh compose-check -> starts the stack and stops it
 #
 # WHAT THIS IS FOR, stated so it is not mistaken for the appliance changing
 # shape: #396 phase 1 asks for the images to exist and to be shippable. The
@@ -205,6 +206,135 @@ CONF
     echo "IMAGES PASSED"
   else
     echo "IMAGES FAILED: $fails check(s)"
+    exit 1
+  fi
+  exit 0
+fi
+
+if [ "$TARGET" = compose-check ]; then
+  # THE STACK, STARTED AND STOPPED FOR REAL, and the one question it is here
+  # to answer: does a `docker compose stop` drain before the dataplane dies?
+  # Everything else about decision 4 is proven with stubs
+  # (test/test_vpp_entrypoint.sh) or read off a file - this is the only place
+  # the actual supervisor sends the actual signal to the actual image (#396).
+  #
+  # The shipped appliance/compose.yaml is used as it ships, with ONE override
+  # layered on top: its volumes are the box's paths - /etc/vpp, /dev/vfio,
+  # /var/log/prisma-routing - which this machine has not got. The override
+  # replaces those and nothing else, so `stop_grace_period`, `network_mode`,
+  # the entrypoint and the image tags are the shipped ones under test.
+  fails=0
+  bad() { echo "  [FAIL] $*"; fails=$((fails + 1)); }
+  ok()  { echo "  [ ok ] $*"; }
+
+  CDIR=$(mktemp -d)
+  trap 'docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" -f "$CDIR/override.yaml" down -t 5 >/dev/null 2>&1; rm -rf "$CDIR" "$CTX"' EXIT
+  mkdir -p "$CDIR/vpp" "$CDIR/run" "$CDIR/log" "$CDIR/frr"
+  # A dataplane with no card and no DPDK: this check is about the STOP, and a
+  # VPP that spends its startup failing to bind a NIC this machine does not
+  # have would fail it for a reason that is not the question.
+  cat > "$CDIR/vpp/startup.conf" <<CONF
+unix { nodaemon cli-listen /run/vpp/cli.sock }
+api-segment { gid 0 }
+plugins { plugin default { disable } plugin bpa_plugin.so { enable } }
+CONF
+  cat > "$CDIR/override.yaml" <<OVR
+services:
+  vpp:
+    volumes:
+      - $CDIR/vpp:/etc/vpp:ro
+      - $CDIR/run:/run/vpp
+      - $CDIR/log:/var/log/prisma-routing
+  frr:
+    volumes:
+      - $CDIR/frr:/etc/frr
+      - $CDIR/frr:/var/run/frr
+OVR
+
+  echo "==> the stack, started by compose"
+  export PRISMA_VERSION=$VERSION
+  if ! docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+       -f "$CDIR/override.yaml" up -d >/dev/null 2>&1; then
+    bad "compose could not start the stack"
+  else
+    _n=0
+    while [ "$_n" -lt 30 ] && ! docker compose -p prismacheck \
+        -f "$REPO/appliance/compose.yaml" -f "$CDIR/override.yaml" \
+        exec -T vpp vppctl show version >/dev/null 2>&1; do
+      sleep 1; _n=$((_n + 1))
+    done
+    if docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+       -f "$CDIR/override.yaml" exec -T vpp vppctl show plugins 2>/dev/null \
+       | grep -q bpa_plugin; then
+      ok "the dataplane came up under compose, with the plugin, in ${_n}s"
+    else
+      bad "the dataplane did not answer under compose after ${_n}s"
+    fi
+  fi
+
+  # LOGGING ON, so the drain takes its real branch. With it off the command
+  # answers "logging is not enabled; nothing to drain" and returns before the
+  # suspend - which proves the wrapper RAN it, and not that the path a box in
+  # service takes works. There are no blocks to release on a dataplane with
+  # no cards, so the honest claim this buys is the branch, not the record;
+  # lab/ipfix-stop.sh is where a real allocation is drained and read off a
+  # collector.
+  # A COLLECTOR FIRST, and the refusal if there is none is the product's own
+  # (#209): VPP's exporter has no destination unless something sets one, and
+  # `bpa logging enable` says so rather than enabling an export to nowhere.
+  # Loopback is the destination here because nothing needs to arrive - this
+  # check reads the drain's answer, not a collector's.
+  cexec() {
+    docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+      -f "$CDIR/override.yaml" exec -T vpp vppctl "$@" 2>&1
+  }
+  cexec set ipfix exporter collector 127.0.0.1 port 4739 src 127.0.0.1 \
+    >/dev/null 2>&1
+  logmsg=$(cexec bpa logging enable)
+  case "$logmsg" in
+    "") ok "logging enabled, so the drain below takes a box's own branch" ;;
+    *)  bad "the dataplane would not enable logging ('$logmsg'), so the \
+drain below cannot take the branch a box in service takes" ;;
+  esac
+
+  echo "==> and stopped, which is the question"
+  docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+    -f "$CDIR/override.yaml" stop -t 30 >/dev/null 2>&1
+  logs=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+         -f "$CDIR/override.yaml" logs vpp 2>/dev/null)
+
+  # THE WRAPPER'S OWN LINE. Whatever the drain answered - blocks released, or
+  # "logging is not enabled" on a box exporting nothing - it can only have
+  # been answered by a dataplane that was still running when the stop began.
+  # A container whose PID 1 is VPP prints nothing here at all.
+  said=$(printf '%s' "$logs" | sed -n 's/.*vpp-entrypoint: //p' | head -1)
+  # ONE WORD IN THE HOLE. The drain's own sentence is five words long, and a
+  # verdict row whose slot swallows five words is a row a page can keep after
+  # the product has stopped printing it - which test/test_wiki_screens.py
+  # counts and refuses. The count is what this check is about anyway.
+  nblocks=$(printf '%s' "$said" | sed -n 's/^released \([0-9][0-9]*\) .*/\1/p')
+  case "$said" in
+    "released "*) ok "the drain ran before the signal, releasing $nblocks block(s)" ;;
+    "") bad "nothing in the container's log says the drain ran, so compose stopped the dataplane with no drain in front of it" ;;
+    *)  bad "the drain answered '$said' rather than releasing: it did not take the branch a box in service takes" ;;
+  esac
+
+  # AND IT STOPPED WITHIN THE GRACE PERIOD rather than being killed at the
+  # end of it: a box that is SIGKILLed after 30 s has not drained, it has
+  # been cut off, and the exit code is how that is told apart.
+  code=$(docker inspect -f '{{.State.ExitCode}}' \
+         "$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+            -f "$CDIR/override.yaml" ps -aq vpp 2>/dev/null)" 2>/dev/null)
+  case "$code" in
+    137) bad "the dataplane was SIGKILLed at the end of the grace period: the drain did not finish inside stop_grace_period" ;;
+    "")  bad "the dataplane container's exit code could not be read" ;;
+    *)   ok "and it exited on its own, code $code, inside the grace period" ;;
+  esac
+
+  if [ "$fails" -eq 0 ]; then
+    echo "COMPOSE PASSED"
+  else
+    echo "COMPOSE FAILED: $fails check(s)"
     exit 1
   fi
   exit 0
