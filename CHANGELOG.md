@@ -101,6 +101,26 @@ version has a chance of seeing it.
   `release-titles.sh` has, so every refusal is watched firing without
   publishing a release that carries the defect.
 
+* **A clock inside the upgrade lab**
+  ([#409](https://github.com/andrediashexa/hexarouting/issues/409)).
+  `lab/upgrade.sh` prints the seconds each of its ten phases spent, the same
+  shape `release-gate.sh` and `build-iso.sh` grew in 0.111.0.
+
+  It was built to answer one question and it answered it: **phase 1 — the only
+  phase `.build-old/<tag>` touches — is 11 seconds**, against 2130 for a
+  release. `docs/build-timing.md` rates moving that cache out of the directory
+  the gate deletes as *"high, small"*; the effort is small and the value is
+  **0.5%**, so it has not been moved and the measurement is on the issue
+  instead.
+
+  The run that produced those numbers is also the **first time
+  `.build-old/<tag>` has ever been hit** — `CLAUDE.md` records that it never
+  had been, because the gate deletes its clone's copy before every run.
+
+  And phase 4, the upgrade itself, takes **0 seconds**. The forty-five around
+  it are building an old box to have something to upgrade, and checking what
+  the upgrade did not do.
+
 ### Fixed
 
 ## 0.111.0 - a clock on every step, and the collector retains

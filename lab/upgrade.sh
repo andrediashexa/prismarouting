@@ -230,6 +230,38 @@
 # is staged is a reset frr.conf, which is one of the three doors #294 names and
 # the one an FRR package upgrade opens on its own.
 set -u
+
+# A CLOCK ON EVERY PHASE (#409), the same shape tools/release-gate.sh and
+# appliance/build-iso.sh grew in 0.111.0, and here for a reason that is a
+# measurement rather than a habit: that release's table put this whole lab at
+# 102 s of a 2130 s release, and #409 proposes moving `.build-old/<tag>` out
+# of the directory the gate deletes so its cache can finally be hit. What that
+# would save is ONE `git archive` and ONE plugin build - and nothing says what
+# those cost inside the 102 s.
+#
+# docs/build-timing.md rates that move "high, small". This is what tells
+# whether the first half of that is true.
+#
+# The duration goes UNDER the phase that spent it, which is what #408 got
+# wrong first: a phase is announced before its work runs.
+_PH_LAST=""
+_PH_NAME=""
+phase() {
+  _now=$(date +%s)
+  if [ -n "$_PH_NAME" ]; then
+    printf '    %s: %ss\n' "$_PH_NAME" "$((_now - _PH_LAST))"
+  fi
+  printf '=========== %s ===========\n' "$*"
+  _PH_LAST=$_now
+  _PH_NAME=$*
+}
+
+# The last phase has nothing after it to print its time.
+phase_done() {
+  [ -n "$_PH_NAME" ] || return 0
+  printf '    %s: %ss\n' "$_PH_NAME" "$(( $(date +%s) - _PH_LAST ))"
+  _PH_NAME=""
+}
 . /src/lab/lib.sh      # startup_conf, start_frr, wait_vpp, vc
 . /src/lab/verdict.sh  # expect, expect_in, expect_setup, verdict
 
@@ -257,7 +289,7 @@ give_up() {  # <what could not be built> [detail...]
   verdict
 }
 
-echo "=========== 1. the old release, built and installed ==========="
+phase "1. the old release, built and installed"
 echo "old side: $OLD_TAG   new side: the tree at /src"
 
 rm -rf "$OLD"; mkdir -p "$OLD"
@@ -450,7 +482,7 @@ echo
 SAID=/tmp/old-vty-said.txt
 : > "$SAID"
 
-echo "=========== 2. an operator configures the box ==========="
+phase "2. an operator configures the box"
 # Through /usr/bin/prismash, which is the launcher the INSTALL put on the box,
 # reading /usr/lib/prisma-routing/prismash.py. Every other lab runs
 # "python3 /src/src/prismash/prismash.py" from the source tree, and that is
@@ -503,7 +535,7 @@ $HX -c "configure" \
 $HX -c "save" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
 
 echo
-echo "=========== 3. what the old box is ==========="
+phase "3. what the old box is"
 echo "the readings the upgrade must not change. Taken from the DATAPLANE and"
 echo "from the file, because the whole failure this lab is about is a file"
 echo "that is still on disk and a box that is no longer configured by it."
@@ -586,7 +618,7 @@ has 100.64.0.5 "$OLD_TRACE" || give_up \
   "forwarded anything, and an upgrade would take the blame for it."
 
 echo
-echo "=========== 4. the upgrade ==========="
+phase "4. the upgrade"
 echo "this tree's appliance/install.sh, over the running box. Nothing else:"
 echo "no reinstall, no reboot, no hand editing. This is the path the file"
 echo "itself claims at its line 4."
@@ -608,7 +640,7 @@ echo "  version stamp: '$OLD_STAMP' -> '$NEW_STAMP'"
 echo "  plugin on disk: $OLD_INSTALLED_SUM -> $NEW_INSTALLED_SUM"
 
 echo
-echo "=========== 5. what the upgrade did NOT do ==========="
+phase "5. what the upgrade did NOT do"
 echo "#291 item 2, measured rather than argued. The installer has replaced the"
 echo "plugin file and restarted nothing, so the dataplane carrying traffic is"
 echo "still the one that was there before it ran."
@@ -686,7 +718,7 @@ echo "  and to create a pool it has never seen:"
 printf '%s\n' "$SPLIT_ADD" | sed 's/^/    /'
 
 echo
-echo "=========== 6. the boot ==========="
+phase "6. the boot"
 echo "the dataplane restarted - BY THIS LAB, which is the step install.sh"
 echo "does not take - and then the one command prisma-routing.service runs:"
 echo "  prismash --load $CONF"
@@ -755,7 +787,7 @@ printf '%s\n' "$LOAD" | sed 's/^/  | /'
 echo "  exit status: $LOAD_RC"
 
 echo
-echo "=========== 7. the pool is in the dataplane, not only in the file ==========="
+phase "7. the pool is in the dataplane, not only in the file"
 NEW_POOL=$(vc show bpa pool)
 # `show bpa config` is the dataplane restating the configuration in the words
 # the configuration is written in, which is what lets these needles be the
@@ -779,7 +811,7 @@ printf '%s\n' "$NEW_FRR" | grep "ip route" | sed 's/^/    /'
 printf '%s\n' "$FRR_FILE" | grep "ip route" | sed 's/^/    /'
 
 echo
-echo "=========== 8. the forward still forwards ==========="
+phase "8. the forward still forwards"
 echo "the same packet as section 3, against the new dataplane holding the old"
 echo "configuration. A pool that is in 'show' and does not translate is the"
 echo "failure this section separates from the one above."
@@ -792,7 +824,7 @@ ANSWER_TRACE=$(trace)
 printf '%s\n' "$ANSWER_TRACE" | sed 's/^/  /'
 
 echo
-echo "=========== 9. the old version's rollback revisions ==========="
+phase "9. the old version's rollback revisions"
 echo "written by ${OLD_TAG}'s VTY, into /etc/prisma-routing/rollback, and read"
 echo "here by this tree's. A store the new version cannot read is a box with"
 echo "no way back, discovered in the maintenance window where somebody needs"
@@ -824,7 +856,7 @@ printf '%s\n' "$RB_LOAD" | sed -n '/pool minas/,/ exit/p' | sed 's/^/  /'
 printf '%s\n' "$RB_LOAD" | tail -5 | sed 's/^/  /'
 
 echo
-echo "=========== 10. the trail ==========="
+phase "10. the trail"
 TRAIL_NOW=$(cat "$TRAIL" 2>/dev/null || echo "")
 TRAIL_LINES_NOW=$(wc -l < "$TRAIL" 2>/dev/null || echo 0)
 echo "  $TRAIL_LINES lines before the upgrade, $TRAIL_LINES_NOW after it"
@@ -832,7 +864,8 @@ printf '%s\n' "$TRAIL_NOW" | grep "pool minas" | head -2 | sed 's/^/  /'
 printf '%s\n' "$TRAIL_NOW" | tail -2 | sed 's/^/  /'
 
 echo
-echo "=========== VERDICT ==========="
+phase_done
+phase "VERDICT"
 
 # The fixture first, all of it, so a reader can tell a lab that measured an
 # upgrade from one that never got as far as making one.
