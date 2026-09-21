@@ -1,0 +1,77 @@
+#!/bin/sh
+# The container that gave up, and the card it is still holding (#426).
+#
+# WHY A BOX NEEDS THIS, AND WHY THE UNIT PATH ALREADY HAS IT. The card is
+# bound to a DPDK driver before the dataplane starts, so between the bind and
+# a working dataplane there is a window in which it belongs to neither Linux
+# nor VPP. A box left in that window has no interface at all and the only way
+# in is a console somebody walks to - the state an operator reported on
+# 0.75.0, which is #379. On vpp.service the answer is OnFailure=: systemd
+# raises it when the unit reaches `failed`, after the restart limit, and
+# prisma-routing-give-card-back.service hands the card back.
+#
+# A CONTAINER REACHES NO SUCH STATE. prisma-routing-containers.service is a
+# oneshot that has already exited successfully by the time the dataplane
+# matters, so its OnFailure never fires whatever the container does. The
+# compose file asks for `on-failure:5` rather than `unless-stopped` so that a
+# dataplane which cannot start STOPS TRYING - and this is what notices that
+# it stopped, because Docker tells nobody.
+#
+# WHAT IT IS NOT. It is not a health check and it does not restart anything:
+# Docker's own restart policy has already tried five times, and a sixth from
+# here would be a second opinion about the same failure. It answers one
+# question - is the box stranded - and undoes the bind if it is.
+#
+# ONCE PER BOOT. The stamp is in /run, so a reboot clears it: after the card
+# is back, this must not keep firing ifup at a box an operator may now be
+# working on.
+set -u
+
+ROOT=${PRISMA_ROOT:-}
+STAMP=${PRISMA_CARD_STAMP:-$ROOT/run/prisma-routing/card-given-back}
+DOCKER=${PRISMA_DOCKER:-docker}
+SYSTEMCTL=${PRISMA_SYSTEMCTL:-systemctl}
+GIVEBACK=${PRISMA_GIVEBACK:-$ROOT/usr/lib/prisma-routing/give-the-card-back}
+IFUP=${PRISMA_IFUP:-/sbin/ifup}
+# The name compose gives the dataplane container. Project `prisma-routing`
+# comes from the directory the unit runs in, which is /etc/prisma-routing.
+CONTAINER=${PRISMA_VPP_CONTAINER:-prisma-routing_vpp_1}
+say() { echo "watch-dataplane: $*" >&2; }
+
+# THE STACK HAS TO BE THE ONE THIS BOX IS RUNNING. On a box still booting
+# vpp.service - which is every box until the default moves - the containers
+# unit is inactive and its dataplane is not this box's dataplane. Handing the
+# card back then would take the card off a dataplane that is forwarding.
+if ! "$SYSTEMCTL" is-active --quiet prisma-routing-containers.service; then
+  exit 0
+fi
+
+if [ -e "$STAMP" ]; then
+  exit 0
+fi
+
+state=$("$DOCKER" inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null)
+case "$state" in
+  running|restarting|created)
+    # `restarting` is the policy still trying, and that is not giving up.
+    exit 0 ;;
+  "")
+    # No such container. The stack is up and the dataplane is not there at
+    # all - which is `up -d` having failed rather than a dataplane that died,
+    # and the card was bound by the tuner before either happened.
+    say "the stack is up and there is no $CONTAINER container at all." ;;
+  *)
+    say "the dataplane container is '$state': Docker has stopped restarting" ;;
+esac
+
+say "it. The card was bound to a DPDK driver before it started, so the box"
+say "has no interface until it is given back. Undoing the bind (#379)."
+"$GIVEBACK" || say "give-the-card-back failed; see the journal above"
+# Allowed to fail, exactly as prisma-routing-give-card-back.service allows it:
+# a box whose card is back on its kernel driver is already better off than one
+# with no card, and the addressing is a separate question.
+"$IFUP" -a 2>/dev/null || true
+
+mkdir -p "$(dirname "$STAMP")" 2>/dev/null || true
+: > "$STAMP" 2>/dev/null || true
+exit 0

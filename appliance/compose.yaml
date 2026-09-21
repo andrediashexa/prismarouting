@@ -106,11 +106,31 @@ services:
     # /proc/<pid>/oom_score_adj. The dataplane inherits it: oom_score_adj is
     # carried across fork, and vpp-entrypoint is the parent.
     oom_score_adj: -1000
-    # `unless-stopped` and not `always`: they are not the same, and the
-    # difference is the one systemd has too - `Restart=always` restarts a
-    # clean exit. A dataplane that exited cleanly did so because somebody
-    # asked it to.
-    restart: unless-stopped
+    # `on-failure:5` AND NOT `unless-stopped`, AND THE REASON IS THE CARD.
+    #
+    # The card is bound to a DPDK driver before the dataplane starts, so
+    # between the bind and a working dataplane it belongs to neither Linux
+    # nor VPP. A box left in that window has no interface at all and the only
+    # way in is a console somebody walks to - the state an operator reported
+    # on 0.75.0 (#379). vpp.service answers it by REACHING `failed` after its
+    # restart limit, which is what raises OnFailure= and gives the card back.
+    #
+    # `unless-stopped` never gives up, so a dataplane that cannot start would
+    # be restarted for ever and the box would stay stranded for ever - which
+    # is strictly worse than the unit path, on the failure the unit path was
+    # built for. Five attempts and then stop, measured under docker-compose
+    # 1.29.2: the policy arrives as on-failure with MaximumRetryCount 5 and
+    # the container is left `exited`.
+    #
+    # And the note the line it replaces got wrong: `unless-stopped` restarts
+    # a clean exit too - the only thing it does not restart is a container
+    # somebody stopped by hand. `on-failure` is what actually leaves a
+    # dataplane that exited 0 alone.
+    #
+    # NOTHING RESTARTS IT A SIXTH TIME. appliance/watch-the-dataplane notices
+    # that it stopped and undoes the bind; a retry from there would be a
+    # second opinion about the same failure.
+    restart: "on-failure:5"
 
   frr:
     image: prisma-frr:${PRISMA_VERSION:-latest}
