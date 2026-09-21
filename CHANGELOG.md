@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.10 - the borrower's side of a lent block
+
+### Added
+
 * **The borrower's side: a slot for a block that is not this worker's**
   ([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
   A borrowed block arrives as a **slot past `n_local`**, so `owner[]`,
@@ -119,8 +125,6 @@ version has a chance of seeing it.
   resolution, which is the assertion #210's plan puts first. `dynamic` and
   `datapath` green, and `bpa_dyn_free()` learned to release the new vector
   **before** the memset that had been zeroing the pointer it needed.
-
-### Fixed
 
 ## 0.111.9 - the lender's side of a lent block
 
