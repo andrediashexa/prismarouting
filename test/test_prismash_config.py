@@ -1754,18 +1754,26 @@ _API = os.path.join(os.path.dirname(__file__), "..", "src", "plugins", "bpa",
                     "bpa.api")
 with open(_API) as _f:
     _api_text = _f.read()
+#
+# THE WIDTH AND THE USABLE MAXIMUM ARE TWO NUMBERS, and the difference is a
+# measurement rather than arithmetic about C (#423). `string name[64]` holds
+# 64 bytes and the dataplane refuses a 64-character name with retval -7 -
+# asked, on a running box, one length at a time - so 63 is what an operator
+# may type. The other two rows have NOT been asked, and they keep the width:
+# lowering them on the grounds that C strings have terminators would be
+# lowering a limit an operator reads on a guess.
 _FROM_API = {
-    "cgnat pool": ("name", 64),
-    "cgnat identity file": ("path", 256),
-    "cgnat identity radius secret": ("secret", 128),
+    "cgnat pool": ("name", 64, 63),
+    "cgnat identity file": ("path", 256, 256),
+    "cgnat identity radius secret": ("secret", 128, 128),
 }
-for _what, (_field, _width) in _FROM_API.items():
+for _what, (_field, _width, _usable) in _FROM_API.items():
     check(f"string {_field}[{_width}];" in _api_text,
           f"bpa.api no longer declares 'string {_field}[{_width}]' - the "
           f"limit for {_what!r} was read from it and has to move with it")
-    check(config.TEXT_LIMITS[_what][0] == _width,
-          f"{_what}: the table says {config.TEXT_LIMITS[_what][0]}, the API "
-          f"says {_width}")
+    check(config.TEXT_LIMITS[_what][0] == _usable,
+          f"{_what}: the table says {config.TEXT_LIMITS[_what][0]}, and the "
+          f"field is {_width} with {_usable} usable")
 check(config.TEXT_LIMITS["cgnat identity dhcp-leases"][0] == 256,
       "both identity paths travel in the same field and take the same limit")
 check(config.TEXT_LIMITS["description"] == (
@@ -1788,6 +1796,22 @@ check(config.text_error("description", "a" * 64) is None,
       "64 bytes fits a 64-byte field")
 check(config.text_error("description", "a" * 65) is not None,
       "and 65 does not")
+
+# THE BOUNDARY THE DATAPLANE ACTUALLY DRAWS (#423), and it is one character
+# below the field. A 64-character pool name used to pass this check, be
+# staged, and be refused at the COMMIT with vat2's retval -7 - a refusal
+# arriving where the operator can no longer act on it, which is the whole
+# argument for the candidate model.
+check(config.text_error("cgnat pool", "p" * 63) is None,
+      "63 characters is what the dataplane accepted, and the prompt must too")
+check(config.text_error("cgnat pool", "p" * 64) is not None,
+      "64 characters is what the dataplane refused with retval -7, so the "
+      "prompt has to refuse it first")
+_r64 = config.text_error("cgnat pool", "p" * 64)
+check(_r64 and "63" in _r64[0],
+      f"the refusal has to name the number an operator can act on: {_r64}")
+check(_r64 and "terminator" in _r64[1],
+      f"and say why the field's own width is not it: {_r64}")
 check(config.text_error("description", "\u00e1" * 32) is None,
       "32 accented characters are 64 bytes and fit")
 check(config.text_error("description", "\u00e1" * 33) is not None,
@@ -1834,9 +1858,11 @@ check(config.text_why(("a verdict", "a reason")) == "a verdict - a reason",
 check(config.text_why(("a verdict", "")) == "a verdict",
       "and nothing added when there is no prose")
 check(config.text_why(config.text_error("cgnat pool", "p" * 200))
-      == "cgnat pool: 200 bytes, and the limit is 64 - the field it travels "
-         "in is bpa.api, bpa_pool_add_del name[64]",
-      "and a real refusal reads as one sentence in a log, naming the field")
+      == "cgnat pool: 200 bytes, and the limit is 63 - the field it travels "
+         "in is bpa.api, bpa_pool_add_del name[64], which holds 63 "
+         "characters and a terminator",
+      "and a real refusal reads as one sentence in a log, naming the field "
+      "AND why its width is not the limit (#423)")
 print("  what a file's reader gets, who has no console to fold in")
 
 print("\n=== and every bounded statement, at the file door (#416) ===")
