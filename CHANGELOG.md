@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.112.3 - a long secret stopped the box answering
+
+### Fixed
+
 * **A RADIUS secret longer than 108 characters stopped the box answering the
   NAS** ([#425](https://github.com/andrediashexa/hexarouting/issues/425)).
   `bpa_radius_acct_response()` built the reply in a **128-byte** scratch that
