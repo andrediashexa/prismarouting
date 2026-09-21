@@ -90,14 +90,16 @@ BASENAME = os.path.basename(SOURCE)
 #: be searched for without a match being an accident.
 FLOOR = 10
 
-#: Sites named by nothing in the tree, measured 2026-09-17 against
-#: src/plugins/bpa/bpa_cli.c: 69 sites carry a needle, 28 of them named by
+#: Sites named by nothing in the tree, measured 2026-09-21 against
+#: src/plugins/bpa/bpa_cli.c: 69 sites carry a needle, 26 of them named by
 #: nothing. 37 before lab/troubleshoot.sh, lab/extblocks.sh and lab/forward.sh
 #: asserted nine of the rows whole, on screens the kept corpus of 2026-09-15
-#: shows them printing. Over that corpus 13 of the 28 are printed by nothing
-#: either; the other 15 are printed by a lab that asserts on something else
-#: on the same screen. May only go down; see the header for how.
-NAMED_BY_NOTHING_AT_MOST = 28
+#: shows them printing; 28 until lab/troubleshoot.sh grew four answers an
+#: operator can get and nothing named - an address inside the prefix and
+#: beyond the pool's capacity, a free dynamic block, a port under the pool's
+#: range, and a box with no forwards. May only go down; see the header for
+#: how.
+NAMED_BY_NOTHING_AT_MOST = 26
 
 fail = 0
 
