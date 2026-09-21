@@ -462,6 +462,57 @@ bpa_dyn_unfree (bpa_dyn_t *d, u32 local)
   vec_del1 (d->free_list, i);
 }
 
+u32
+bpa_dyn_lend (bpa_dyn_t *d, u32 worker, u32 n_workers, u32 want, u32 *out)
+{
+  u32 n = 0;
+
+  if (!d->active || !out)
+    return 0;
+
+  while (n < want && vec_len (d->free_list) > 0)
+    {
+      u32 local = bpa_dyn_pop (d);
+
+      /*
+       * The pop already took it off the stack and cleared free_pos, so the
+       * only thing left is to say WHY it is not there. A block whose owner
+       * is BPA_LENT is skipped by the reap, refused by the pin, and invisible
+       * to every candidate search, because all of them ask whether the owner
+       * is BPA_NO_BLOCK.
+       */
+      d->owner[local] = BPA_LENT;
+      d->idle_since[local] = 0;
+      d->n_lent++;
+      out[n++] = local * n_workers + worker;
+    }
+
+  return n;
+}
+
+int
+bpa_dyn_take_back (bpa_dyn_t *d, u32 block_idx, u32 n_workers)
+{
+  u32 local = block_idx / n_workers;
+
+  if (!d->active || local >= d->n_local)
+    return -1;
+  /*
+   * A block that is not lent is not this function's to move. Taking a HELD
+   * block back would push a subscriber's block onto the free list and hand
+   * it to the next one that asks - two subscribers on one public port range,
+   * which is the defect the whole allocation accounting exists to prevent.
+   */
+  if (d->owner[local] != BPA_LENT)
+    return -1;
+
+  d->owner[local] = BPA_NO_BLOCK;
+  d->idle_since[local] = 0;
+  d->n_lent--;
+  bpa_dyn_push (d, local);
+  return 0;
+}
+
 int
 bpa_dyn_pin (bpa_dyn_t *d, u32 block_idx, u32 sub_idx, u32 n_workers, f64 now,
 	     u32 *held_by, int *is_new)
@@ -473,6 +524,18 @@ bpa_dyn_pin (bpa_dyn_t *d, u32 block_idx, u32 sub_idx, u32 n_workers, f64 now,
   if (!d->active || local >= d->n_local)
     return -2;
 
+  /*
+   * LENT, so this slice cannot give it to anybody: the borrower is holding
+   * it for one of its own subscribers. Reported as held by nobody this box
+   * can name, because the alternative is printing ~1 as a subscriber index -
+   * a number that would be looked up, would miss, and would read to an
+   * operator as a forward colliding with a subscriber that does not exist.
+   */
+  if (d->owner[local] == BPA_LENT)
+    {
+      *held_by = BPA_NO_BLOCK;
+      return -1;
+    }
   if (d->owner[local] != BPA_NO_BLOCK && d->owner[local] != sub_idx)
     {
       *held_by = d->owner[local];
@@ -614,6 +677,23 @@ bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker, u32 n_workers,
       if (freed >= max_out)
 	break;
       if (d->owner[i] == BPA_NO_BLOCK)
+	continue;
+      /*
+       * Lent to another worker, which is holding it for a subscriber this
+       * slice knows nothing about (#210). Reaping it would push it onto this
+       * free list while the borrower is still translating out of it, and the
+       * release record would name BPA_LENT as the subscriber.
+       *
+       * REDUNDANT TODAY, and kept: `bpa_dyn_lend` leaves idle_since at 0 and
+       * the line below already skips those, so removing this changes
+       * nothing - measured, as a mutation that no check could catch. What it
+       * costs is one comparison on a walk that runs once a second; what it
+       * buys is that the day somebody gives a lent block an idle time - to
+       * expire a loan, say - the reap does not start releasing other
+       * workers' subscribers. test_bpa_dyn.c asserts the zero this leans on,
+       * so the redundancy is a fact rather than a hope.
+       */
+      if (d->owner[i] == BPA_LENT)
 	continue;
       /* Held by the configuration, not by traffic. Reaping it would give the
        * block to the next subscriber that asks and leave the operator's

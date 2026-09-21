@@ -279,7 +279,13 @@ index_disagreements (const bpa_dyn_t *d)
       else if (d->free_pos[i] != BPA_NO_BLOCK)
 	bad++;
     }
-  if (len + d->n_alloc != d->n_local)
+  /*
+   * free + held + lent = the slice. The lent term is not decoration: a
+   * block given to another worker is out of this stack and owned by nobody
+   * here, so without it this invariant fails the moment lending starts -
+   * and it did, which is how this line came to be written (#210).
+   */
+  if (len + d->n_alloc + d->n_lent != d->n_local)
     bad++;
   return bad;
 }
@@ -1952,6 +1958,141 @@ main (void)
 	   "named takes", index_disagreements (&d));
     printf ("  a named free block comes off the stack with its index, a held "
 	    "one and one past the slice are left alone\n");
+    bpa_dyn_free (&d);
+  }
+
+  printf ("\n=== a block lent to another worker is a third state (#210) ===\n");
+  {
+    /*
+     * A dynamic pool's blocks are partitioned per worker and a subscriber
+     * lands on one by hash; nothing makes the two agree, so a subscriber is
+     * refused with blocks free next door. The block moves - the subscriber
+     * cannot, because bpa_handoff.c computes the owner from the packet
+     * alone.
+     *
+     * WHAT MAKES THESE ABLE TO FAIL: every one of them is a way the lent
+     * block is lost. Left in the free list and this slice hands it to
+     * somebody while the borrower translates out of it; marked held and the
+     * reap releases it under a sentinel subscriber; counted as free and the
+     * box reports capacity it has given away.
+     */
+    bpa_dyn_t d;
+    u32 lent[4], n, free_before;
+
+    CHECK (bpa_dyn_init (&d, &p64, 0, 2, 0) == 0, "the lender's slice refused");
+    free_before = vec_len (d.free_list);
+
+    n = bpa_dyn_lend (&d, 0, 2, 3, lent);
+    CHECK (n == 3, "asked for three blocks and lent %u", n);
+    CHECK (vec_len (d.free_list) == free_before - 3,
+	   "the free stack went from %u to %u, not %u",
+	   free_before, (u32) vec_len (d.free_list), free_before - 3);
+    CHECK (d.n_lent == 3, "n_lent is %u after lending three", d.n_lent);
+    CHECK (d.n_alloc == 0,
+	   "a lent block was counted as held: n_alloc is %u", d.n_alloc);
+
+    /* THE POOL-WIDE INDEX, because the borrower's own index space is
+       congruent to ITS worker id and a borrowed block is congruent to the
+       lender's - the global name is the only one they can both use. */
+    CHECK (lent[0] % 2 == 0 && lent[1] % 2 == 0 && lent[2] % 2 == 0,
+	   "worker 0 lent blocks %u, %u, %u and they are not its own",
+	   lent[0], lent[1], lent[2]);
+
+    /* NOT FREE. A candidate search asks whether the owner is BPA_NO_BLOCK,
+       and a lent block that still answered yes would be handed to a
+       subscriber here while the borrower is translating out of it. */
+    CHECK (d.owner[lent[0] / 2] == BPA_LENT,
+	   "the lent block's owner is %u, not the lent state",
+	   d.owner[lent[0] / 2]);
+    {
+      u32 k, still_there = 0;
+      for (k = 0; k < vec_len (d.free_list); k++)
+	if (d.free_list[k] == lent[0] / 2)
+	  still_there++;
+      CHECK (still_there == 0,
+	     "the lent block is still on the free stack %u time(s)",
+	     still_there);
+    }
+
+    /*
+     * THE ZERO THE REAP LEANS ON. A lent block has no idle time, and the
+     * reap's `idle_since == 0` line is what actually skips it today - its
+     * own `BPA_LENT` line is belt and braces, which a mutation showed by
+     * changing nothing. Asserted here so that the redundancy is a fact: give
+     * a lent block an idle time and this check goes red beside whatever else
+     * breaks.
+     */
+    CHECK (d.idle_since[lent[0] / 2] == 0,
+	   "a lent block has an idle time of %f, and the reap skips it by "
+	   "that zero", d.idle_since[lent[0] / 2]);
+
+    /* AND NOT REAPED. The reap walks owner[] and would push it back here
+       under a sentinel subscriber, while the borrower still holds it. */
+    {
+      bpa_dyn_release_t rel[8];
+      u32 freed = bpa_dyn_reap (&d, 1000.0, 1, 0, 2, rel, 8);
+      CHECK (freed == 0, "the reap took %u lent block(s) back", freed);
+      CHECK (d.n_lent == 3, "the reap changed n_lent to %u", d.n_lent);
+    }
+
+    /* AND THE PIN CANNOT TAKE IT, and says so without naming the sentinel
+       as a subscriber: ~1 printed as a subscriber index is a number an
+       operator would look up and not find. */
+    {
+      u32 held = 12345;
+      int is_new = 0;
+      CHECK (bpa_dyn_pin (&d, lent[0], 7, 2, 1.0, &held, &is_new) != 0,
+	     "a forward pinned a block this worker had lent away");
+      CHECK (held == BPA_NO_BLOCK,
+	     "the refusal named subscriber %u as the holder of a lent block",
+	     held);
+    }
+
+    /* TAKEN BACK, once. */
+    CHECK (bpa_dyn_take_back (&d, lent[0], 2) == 0,
+	   "the lender would not take its own block back");
+    CHECK (d.n_lent == 2, "n_lent is %u after one came home", d.n_lent);
+    CHECK (vec_len (d.free_list) == free_before - 2,
+	   "the returned block is not back on the stack: %u entries",
+	   (u32) vec_len (d.free_list));
+    CHECK (bpa_dyn_take_back (&d, lent[0], 2) != 0,
+	   "a block was taken back twice, which would put it on the free "
+	   "stack twice and hand it to two subscribers");
+    CHECK (index_disagreements (&d) == 0,
+	   "%u disagreements between the stack and its index after a lend "
+	   "and a return", index_disagreements (&d));
+
+    /* A HELD BLOCK IS NOT LENT-BACK-ABLE either: taking one back would push
+       a subscriber's block onto the free list. */
+    {
+      bpa_block_t b;
+      int is_new = 0;
+      CHECK (bpa_dyn_acquire (&d, &p64, 42, 0, 2, &b, &is_new) == 0,
+	     "the slice would not allocate after a lend");
+      CHECK (bpa_dyn_take_back (&d, b.blk_idx, 2) != 0,
+	     "a block held by a subscriber was taken back as if lent");
+    }
+
+    /* AND A SLICE WITH NOTHING FREE LENDS NOTHING rather than inventing a
+       block: the borrower would translate out of one this slice still
+       hands out. */
+    {
+      u32 spare[64], all = 0, none, guard = 0;
+
+      /*
+       * Until it is EMPTY, and not "one big ask": a slice holds more blocks
+       * than any one call's buffer, which is how the first version of this
+       * case asked for 64 of 128 and then declared the rest an empty slice.
+       */
+      while (vec_len (d.free_list) > 0 && guard++ < 1000)
+	all += bpa_dyn_lend (&d, 0, 2, 64, spare);
+      none = bpa_dyn_lend (&d, 0, 2, 4, spare);
+      CHECK (all > 0, "the rest of the slice would not lend");
+      CHECK (none == 0, "an empty slice lent %u block(s)", none);
+      CHECK (d.n_lent + d.n_alloc == d.n_local,
+	     "a slice lent to the last block does not add up: %u lent, %u "
+	     "held, %u blocks", d.n_lent, d.n_alloc, d.n_local);
+    }
     bpa_dyn_free (&d);
   }
 

@@ -77,6 +77,41 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The lender's side of a lent block**
+  ([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
+  A block given to another worker is a **third state**, `BPA_LENT` in
+  `owner[]`: not free, and not held by any subscriber this slice knows.
+  Both of the other two answers lose it - free, and this slice hands it to
+  somebody while the borrower is translating out of it; held, and the reap
+  releases it and the release record names a sentinel as a subscriber.
+
+  It is out of the free list and out of `by_sub`, so every candidate search
+  passes over it without being told to, and `n_lent` keeps
+  `free = n_local - n_alloc - n_lent` exact. `bpa_dyn_lend()` hands out
+  **pool-wide** block indices, not local ones: a slice's index space is
+  congruent to its own worker id - `local × n_workers + worker` - so a
+  borrowed block is congruent to the lender's, and the global name is the
+  only one the two can both use. `bpa_dyn_take_back()` refuses a block that
+  is not lent, because taking a held one back would put a subscriber's block
+  on the free list and hand it to the next subscriber that asks.
+
+  A pin on a lent block is refused **without naming the sentinel as its
+  holder**: `~1` printed as a subscriber index is a number an operator would
+  look up and not find. `show bpa blocks` says how many a thread has lent,
+  and only when there are any.
+
+  **Nothing lends yet**: no caller, so no box changes behaviour.
+  `lab/throughput.sh` reads **3.40e2 clocks per packet at 64 bytes**, the
+  same as before the change, which is the assertion this issue's plan puts
+  first; `lab/dynamic.sh` and `lab/datapath.sh` are green.
+
+  Four mutations red. A fifth - removing the reap's `BPA_LENT` line - changed
+  **nothing**, because `bpa_dyn_lend` leaves `idle_since` at 0 and the reap
+  already skips those. Rather than delete the line or pretend the mutation
+  counted, the zero it leans on is now asserted, so the redundancy is a fact
+  instead of a hope; and the harness's own free/held invariant learned about
+  lending, which is how the missing term was found.
+
 ### Fixed
 
 ## 0.111.8 - the arithmetic of moving a block
