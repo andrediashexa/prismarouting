@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.1 - the X.Y.Z rule has a reader
+
+### Added
+
 * **The X.Y.Z rule has a reader**
   ([#409](https://github.com/andrediashexa/hexarouting/issues/409)).
   `tools/release-digits.sh` reads every published release and refuses one
@@ -122,6 +128,15 @@ version has a chance of seeing it.
   the upgrade did not do.
 
 ### Fixed
+
+* **The `.build-old` row said "high" and nothing had measured it**
+  ([#409](https://github.com/andrediashexa/hexarouting/issues/409)).
+  Two rows of `docs/build-timing.md` rated moving that cache out of the
+  directory the gate deletes as *"high, small"* - high value, small effort.
+  The upgrade clock measured it: **11 s of 2130, 0.5%**, and less than that in
+  practice, because the compile still happens once per machine. The effort is
+  small; the value is not high. The rows now carry the number and where it
+  came from.
 
 ## 0.111.0 - a clock on every step, and the collector retains
 
