@@ -228,7 +228,7 @@ if [ "$TARGET" = compose-check ]; then
   ok()  { echo "  [ ok ] $*"; }
 
   CDIR=$(mktemp -d)
-  trap 'docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" -f "$CDIR/override.yaml" down -t 5 >/dev/null 2>&1; rm -rf "$CDIR" "$CTX"' EXIT
+  trap 'docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" down -t 5 >/dev/null 2>&1; rm -rf "$CDIR" "$CTX"' EXIT
   mkdir -p "$CDIR/vpp" "$CDIR/run" "$CDIR/log" "$CDIR/frr"
   # A dataplane with no card and no DPDK: this check is about the STOP, and a
   # VPP that spends its startup failing to bind a NIC this machine does not
@@ -272,20 +272,45 @@ services:
       - $CDIR/frr:/var/run/frr
 OVR
 
+  # THE FRAGMENT THE UNIT GENERATES, generated the way the unit generates it
+  # (#396). prisma-routing-containers.service runs
+  # `bind-dataplane-nic --compose-devices` into a file and hands that file to
+  # `docker-compose -f`, so the file has to be one compose accepts - and the
+  # case that is easy to get wrong is the box that names no card, where the
+  # mode used to print nothing at all and compose refuses an empty file with
+  # "Top level object needs to be a mapping".
+  #
+  # THIS MACHINE IS THAT BOX. It has no card DPDK can bind (#28), and the
+  # startup.conf above says `no-pci` - so the fragment generated from it is
+  # the empty-list one, and starting the stack with it layered on is the
+  # direct measurement that a no-pci box can run the containers at all.
+  # PRISMA_STARTUP_CONF and not PRISMA_ROOT: the file the container reads is
+  # $CDIR/vpp/startup.conf, mounted at /etc/vpp, and pointing the mode at the
+  # same copy is what makes the fragment describe THIS check's dataplane
+  # rather than a second one written to suit it.
+  PRISMA_STARTUP_CONF=$CDIR/vpp/startup.conf \
+    sh "$REPO/appliance/bind-dataplane-nic" --compose-devices \
+    > "$CDIR/devices.yaml" 2>/dev/null || true
+  if grep -q "^services:" "$CDIR/devices.yaml"; then
+    ok "the generated device fragment is a mapping compose can read"
+  else
+    bad "bind-dataplane-nic --compose-devices wrote something compose refuses: $(head -c 120 "$CDIR/devices.yaml")"
+  fi
+
   echo "==> the stack, started by compose"
   export PRISMA_VERSION=$VERSION
   if ! docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-       -f "$CDIR/override.yaml" up -d >/dev/null 2>&1; then
+       -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" up -d >/dev/null 2>&1; then
     bad "compose could not start the stack"
   else
     _n=0
     while [ "$_n" -lt 30 ] && ! docker compose -p prismacheck \
-        -f "$REPO/appliance/compose.yaml" -f "$CDIR/override.yaml" \
+        -f "$REPO/appliance/compose.yaml" -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" \
         exec -T vpp vppctl show version >/dev/null 2>&1; do
       sleep 1; _n=$((_n + 1))
     done
     if docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-       -f "$CDIR/override.yaml" exec -T vpp vppctl show plugins 2>/dev/null \
+       -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" exec -T vpp vppctl show plugins 2>/dev/null \
        | grep -q bpa_plugin; then
       ok "the dataplane came up under compose, with the plugin, in ${_n}s"
     else
@@ -305,7 +330,7 @@ OVR
        | grep -q "privileged: *true"; then
       bad "appliance/compose.yaml is back to privileged: true, so this check no longer measures a narrowed dataplane"
     elif docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-         -f "$CDIR/override.yaml" exec -T vpp vppctl show plugins 2>/dev/null \
+         -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" exec -T vpp vppctl show plugins 2>/dev/null \
          | grep -q dpdk_plugin; then
       ok "and DPDK initialised with no privileged flag, on cap_add alone"
     else
@@ -318,7 +343,7 @@ OVR
     # removed: `create tap: ioctl(TUNSETIFF): Operation not permitted`, and
     # with it, `tap0`.
     tapout=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-             -f "$CDIR/override.yaml" exec -T vpp vppctl create tap 2>&1 | head -1)
+             -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" exec -T vpp vppctl create tap 2>&1 | head -1)
     case "$tapout" in
       tap[0-9]*) ok "and linux_cp's door is open: created $tapout" ;;
       *) bad "the dataplane could not create a TAP ('$tapout'), so linux_cp would pair no card into Linux and the control plane would route over nothing" ;;
@@ -331,7 +356,7 @@ OVR
     # the forwarding, which is the failure this whole product's tuning
     # exists to prevent.
     thr=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-          -f "$CDIR/override.yaml" exec -T vpp vppctl show threads 2>/dev/null)
+          -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" exec -T vpp vppctl show threads 2>/dev/null)
     cores=$(printf '%s' "$thr" | awk '$2 ~ /^vpp_wk_/ {print $(NF-3)}' | sort -n | tr '\n' ' ')
     case "$cores" in
       "2 3 ") ok "and both workers are on the cores startup.conf named: 2 3" ;;
@@ -354,7 +379,7 @@ OVR
   # check reads the drain's answer, not a collector's.
   cexec() {
     docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-      -f "$CDIR/override.yaml" exec -T vpp vppctl "$@" 2>&1
+      -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" exec -T vpp vppctl "$@" 2>&1
   }
   cexec set ipfix exporter collector 127.0.0.1 port 4739 src 127.0.0.1 \
     >/dev/null 2>&1
@@ -367,9 +392,9 @@ drain below cannot take the branch a box in service takes" ;;
 
   echo "==> and stopped, which is the question"
   docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-    -f "$CDIR/override.yaml" stop -t 30 >/dev/null 2>&1
+    -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" stop -t 30 >/dev/null 2>&1
   logs=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-         -f "$CDIR/override.yaml" logs vpp 2>/dev/null)
+         -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" logs vpp 2>/dev/null)
 
   # THE WRAPPER'S OWN LINE. Whatever the drain answered - blocks released, or
   # "logging is not enabled" on a box exporting nothing - it can only have
@@ -392,7 +417,7 @@ drain below cannot take the branch a box in service takes" ;;
   # been cut off, and the exit code is how that is told apart.
   code=$(docker inspect -f '{{.State.ExitCode}}' \
          "$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
-            -f "$CDIR/override.yaml" ps -aq vpp 2>/dev/null)" 2>/dev/null)
+            -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" ps -aq vpp 2>/dev/null)" 2>/dev/null)
   case "$code" in
     137) bad "the dataplane was SIGKILLed at the end of the grace period: the drain did not finish inside stop_grace_period" ;;
     "")  bad "the dataplane container's exit code could not be read" ;;

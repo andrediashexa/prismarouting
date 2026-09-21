@@ -735,16 +735,46 @@ printf '%s\n' "$OUT" | say_box
   || bad "an unbound card produced (rc=$RC): $OUT"
 rm -rf "$R"
 
-# A box the tuner named no card on: nothing to hand, and nothing said - the
-# no-pci case already has two voices explaining it.
+# A box the tuner named no card on: an EMPTY LIST, and not an empty file.
+#
+# This assertion used to read the opposite - rc=0 and no output at all - and
+# that was right while nothing consumed the fragment. It is wrong now that
+# prisma-routing-containers.service writes it to a file and hands it to
+# `docker-compose -f`: compose refuses an empty file with "Top level object
+# needs to be a mapping", so the quiet answer would leave a no-pci box with
+# a container stack that will not start, for the one condition the tuner and
+# the self-test both treat as ordinary.
+#
+# `devices: []` and not a stanza left out: measured on docker-compose 1.29.2,
+# the version the medium carries, an empty list APPENDS NOTHING and leaves
+# the base file's /dev/net/tun and /dev/vhost-net as they are.
 R=$(mkbox 0000:3b:00.0 eth9 iommu vfio-pci)
 printf 'dpdk {\n}\n' > "$R/etc/vpp/startup.conf"
 OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1); RC=$?
 printf '%s\n' "$OUT" | say_box
-[ "$RC" = 0 ] && [ -z "$OUT" ] \
-  && ok "a box claiming no card is handed nothing, quietly" \
+[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -q "devices: \[\]" \
+  && ok "a box claiming no card is handed an empty list, which is a document" \
   || bad "a box with no card produced (rc=$RC): $OUT"
+printf '%s\n' "$OUT" | grep -q "^services:" \
+  && ok "and the fragment compose is given is a mapping at its top level" \
+  || bad "the no-card fragment has no services: key: $OUT"
+printf '%s\n' "$OUT" | grep -q "/dev/" \
+  && bad "a box with no card was handed a device node: $OUT" \
+  || ok "and it names no device node, because this box has no card to name"
 rm -rf "$R"
+
+# AND THE UNIT ASKS FOR IT THE WAY THIS MODE ANSWERS. Two files that have to
+# agree and are edited apart: a unit that wrote the fragment and did not pass
+# it to `up` would start a dataplane with no card and look healthy doing it.
+U=$(dirname "$BIN")/systemd/prisma-routing-containers.service
+grep -q -- "--compose-devices > /run/prisma-routing/compose-devices.yaml" "$U" \
+  && ok "the unit generates the fragment where it says it does" \
+  || bad "no ExecStartPre in $U generates the compose fragment"
+for verb in "up -d" "down -t 30"; do
+  grep -q -- "-f /run/prisma-routing/compose-devices.yaml $verb" "$U" \
+    && ok "and '$verb' is given the fragment as well as the base file" \
+    || bad "'$verb' in $U does not carry -f the generated fragment"
+done
 
 
 # WHAT THE WIDTH READER MAY STILL FIND, and it may only go down.
