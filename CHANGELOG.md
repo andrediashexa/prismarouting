@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.113.1 - the stack is handed the card this boot bound
+
+Issues: [#396](https://github.com/andrediashexa/hexarouting/issues/396).
+
+### Added
+
 * **The container stack is handed the card this boot bound**
   ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
   `appliance/compose.yaml` names `/dev/net/tun` and `/dev/vhost-net`, which
