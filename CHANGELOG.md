@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.12 - the loan book the return path reads
+
+### Added
+
 * **The loan book the return path reads**
   ([#210](https://github.com/andrediashexa/hexarouting/issues/210), the last
   of the four pieces). A reply steers by arithmetic: `bpa_reverse_sub()`
@@ -123,8 +129,6 @@ version has a chance of seeing it.
   changes behaviour. What is left on that issue is the tick that joins the
   four pieces, and the lab that drives a borrowed block's reply through a
   real handoff.
-
-### Fixed
 
 ## 0.111.11 - a two-digit patch is not a prefix
 
