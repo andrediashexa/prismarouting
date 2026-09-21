@@ -1,0 +1,65 @@
+# The two containers, and the one thing Compose cannot do for them.
+#
+# NOTHING ON AN INSTALLED BOX STARTS THIS YET. The appliance runs VPP and FRR
+# as systemd units; this file is #396 phase 2's shape, and it is here because
+# `sh tools/build-images.sh compose-check` drives it - a file nothing runs is
+# a file nobody has seen work.
+#
+# ONE NETWORK NAMESPACE, WHATEVER THE CONTAINER COUNT, and this is not a
+# convenience. Every dataplane card is paired into Linux by linux_cp under its
+# own name, and on a one-card box the address the operator reaches moves onto
+# that pair - the box is reached THROUGH the dataplane. FRR routes over those
+# TAPs and prismash reads them, so all of them must be in the namespace VPP
+# runs in. Docker's network isolation is therefore not available to this
+# product, for the control path as much as for the packet path (#396 s3p1).
+services:
+  vpp:
+    image: prisma-vpp:${PRISMA_VERSION:-latest}
+    network_mode: host
+    pid: host
+    # DPDK binds a PCI function, maps hugepages and programs an IOMMU group.
+    # The narrow capability set is a phase-2 question with a measurement
+    # attached; until it is measured this says what it is.
+    privileged: true
+    volumes:
+      - /dev/hugepages:/dev/hugepages
+      - /dev/vfio:/dev/vfio
+      - /etc/vpp:/etc/vpp:ro
+      - /run/vpp:/run/vpp
+      # THE RETENTION LOG, on its own filesystem and under a one-year
+      # obligation. It is bind-mounted rather than left in the container for
+      # the obvious reason and one more: the audit trail's chain must not
+      # break because a container was replaced.
+      - /var/log/prisma-routing:/var/log/prisma-routing
+    # LONGER THAN THE DRAIN, WITH THE MEASUREMENT BEHIND IT. `docker stop`
+    # sends SIGTERM, waits this long, and then SIGKILLs - and the entrypoint
+    # runs the drain before it forwards the signal. lab/ipfix-stop.sh measures
+    # that drain at 504 ms for one block, of which 500 ms is a deliberate
+    # `vlib_process_suspend` waiting for the frame carrying the UDP records to
+    # go out. The slope past one block is NOT measured, so this is 30 s: sixty
+    # times the measured figure, and a bound rather than a guess dressed as
+    # one. A box that needs more than 30 s to give its blocks back has a
+    # number worth measuring before it has a longer grace period.
+    stop_grace_period: 30s
+    # `unless-stopped` and not `always`: they are not the same, and the
+    # difference is the one systemd has too - `Restart=always` restarts a
+    # clean exit. A dataplane that exited cleanly did so because somebody
+    # asked it to.
+    restart: unless-stopped
+
+  frr:
+    image: prisma-frr:${PRISMA_VERSION:-latest}
+    network_mode: host
+    # It routes over the TAPs VPP creates, so it has nothing to do until they
+    # exist. This orders the start and nothing more: Compose's depends_on
+    # does not wait for readiness, and FRR retries.
+    depends_on:
+      - vpp
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - NET_RAW
+    volumes:
+      - /etc/frr:/etc/frr
+      - /var/run/frr:/var/run/frr
+    restart: unless-stopped

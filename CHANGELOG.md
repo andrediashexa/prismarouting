@@ -77,6 +77,38 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The stack, started and stopped by Compose for real**
+  ([#396](https://github.com/andrediashexa/hexarouting/issues/396), phase 2's
+  first half). `appliance/compose.yaml` is the two containers, and
+  `sh tools/build-images.sh compose-check` drives it - a compose file nothing
+  runs is a file nobody has seen work.
+
+  ```
+  [ ok ] the dataplane came up under compose, with the plugin, in 0s
+  [ ok ] logging enabled, so the drain below takes a box's own branch
+  [ ok ] the drain ran before the signal, releasing 0 block(s)
+  [ ok ] and it exited on its own, code 0, inside the grace period
+  ```
+
+  The middle line is decision 4 end to end: the real supervisor sent the real
+  signal to the real image, and `docker compose stop` ran the drain **through
+  our PID 1** while VPP was still answering. Logging is enabled first so the
+  drain takes a box's own branch rather than returning at *"logging is not
+  enabled"* - which would have proven the wrapper ran it and nothing more.
+  With no cards there are no blocks to release, so what this proves is the
+  **path**, not a record on a collector.
+
+  `stop_grace_period: 30s`, and the number has the measurement behind it:
+  the drain is 504 ms for one block and its slope is unmeasured, so this is
+  sixty times the measured figure. `test/test_image_pins.py` refuses anything
+  under 10 s, refuses a service that is not on the host's network namespace -
+  `linux_cp`'s TAPs live there - and refuses a compose file that overrides
+  the entrypoint, which would put the drain back outside the stop path with
+  every other check still green. Three mutations watched red.
+
+  **Nothing on an installed box starts any of it.** No unit, no install step:
+  the box boots the systemd units exactly as before.
+
 * **How long the drain takes, which a container supervisor has to know**
   ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
   `docker stop` gives the wrapper `stop_grace_period` and then kills it, so a

@@ -71,7 +71,14 @@ on_term() {
       # while the graph is still running: this is the line a wrapper written
       # in a hurry gets wrong, and nothing downstream would notice, because
       # the records simply stop arriving.
-      $DRAIN >/dev/null 2>&1 || true
+      #
+      # ITS OUTPUT GOES TO THE CONTAINER'S LOG, not to /dev/null. PID 1's
+      # stdout is what `docker logs` shows, and "released 3 block(s) still
+      # held" is the only evidence outside the collector that the stop was a
+      # drain rather than a kill. systemd keeps the equivalent in the
+      # journal; discarding it here would make the container the one
+      # supervisor whose stop cannot be read afterwards.
+      $DRAIN 2>&1 | sed 's/^/vpp-entrypoint: /' || true
     fi
   fi
   kill -TERM "$VPP_PID" 2>/dev/null || true

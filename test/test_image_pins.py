@@ -170,6 +170,69 @@ if "bpa stop-drain" in entry:
 else:
     ok("and the wrapper reads that command rather than repeating it")
 
+print("\n=== the compose file, read against the measurement it depends on ===")
+# THE GRACE PERIOD IS NOT A TASTE. `docker stop` sends SIGTERM, waits
+# stop_grace_period, and then SIGKILLs - and the drain runs inside that
+# window. Too short and the release records are cut off mid-flight, which is
+# the swallowed record again and shows up only on the boxes with the most
+# blocks to give back. lab/ipfix-stop.sh measures the drain at 504 ms for one
+# block, 500 ms of which is a deliberate suspend, and the slope past one
+# block is unmeasured - so the floor here is generous on purpose and the
+# comment says which number it comes from.
+DRAIN_MEASURED_MS = 504
+GRACE_FLOOR_S = 10
+compose_path = os.path.join(REPO, "appliance", "compose.yaml")
+if not os.path.exists(compose_path):
+    bad("appliance/compose.yaml is gone, and tools/build-images.sh "
+        "compose-check has nothing left to start")
+else:
+    compose = read("appliance", "compose.yaml")
+    m = re.search(r"^\s*stop_grace_period:\s*(\d+)([smh])\s*$", compose, re.M)
+    if not m:
+        bad("appliance/compose.yaml sets no stop_grace_period, so docker "
+            "stop uses its 10 s default and nothing here says whether the "
+            f"drain - {DRAIN_MEASURED_MS} ms for ONE block, slope unmeasured "
+            "- fits inside it")
+    else:
+        secs = int(m.group(1)) * {"s": 1, "m": 60, "h": 3600}[m.group(2)]
+        if secs < GRACE_FLOOR_S:
+            bad(f"appliance/compose.yaml gives the drain {secs}s, under the "
+                f"{GRACE_FLOOR_S}s floor. The drain is "
+                f"{DRAIN_MEASURED_MS} ms for one block and its slope is not "
+                f"measured: a box with 200,000 subscribers gives back rather "
+                f"more, and what it loses is the release record")
+        else:
+            ok(f"the drain is given {secs}s, against {DRAIN_MEASURED_MS} ms "
+               f"measured for one block")
+
+    # HOST NETWORKING, BOTH OF THEM, and it is not a shortcut. linux_cp pairs
+    # every dataplane card into Linux, FRR routes over those TAPs and
+    # prismash reads them, so all three are in the namespace VPP runs in. A
+    # compose file that isolates them is a box whose control plane cannot see
+    # its own interfaces - and on a one-card box, one nobody can reach.
+    for svc in ("vpp", "frr"):
+        blk = re.search(rf"^  {svc}:\n(.*?)(?=^  \w|\Z)", compose,
+                        re.M | re.S)
+        if not blk:
+            bad(f"appliance/compose.yaml has no {svc} service")
+        elif not re.search(r"^\s*network_mode:\s*host\s*$", blk.group(1), re.M):
+            bad(f"the {svc} service is not on the host's network namespace: "
+                f"linux_cp's TAPs live there, and a control plane that "
+                f"cannot see them routes over nothing")
+        else:
+            ok(f"{svc} shares the namespace linux_cp pairs its cards into")
+
+    # AND NOTHING OVERRIDES THE ENTRYPOINT. A compose file that sets
+    # `entrypoint:` or a `command:` reaching vpp directly puts the drain back
+    # outside the stop path, and every other check here would stay green.
+    if re.search(r"^\s*entrypoint:", compose, re.M):
+        bad("appliance/compose.yaml overrides the entrypoint, which is the "
+            "wrapper that drains before the signal: the stop would then "
+            "reach VPP with nothing in front of it")
+    else:
+        ok("and nothing in it overrides the wrapper")
+
+
 print("\n=== and nothing here has been started, which is the other check ===")
 # Said out loud, because a suite that reads a file and reports on an image is
 # the shape that lets a broken image pass. `sh tools/build-images.sh check`
