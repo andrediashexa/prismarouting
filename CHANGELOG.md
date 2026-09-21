@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.112.5 - what the drain costs per block
+
+### Added
+
 * **What the stop-drain costs per block, which a grace period rests on**
   ([#396](https://github.com/andrediashexa/hexarouting/issues/396)).
   `lab/ipfix-stop.sh` measured the drain at 504 ms and said in its own header
@@ -111,8 +117,6 @@ version has a chance of seeing it.
   it was holding, and that what it costs is bounded - so a drain that grew a
   per-block cost would take it red rather than quietly lengthening every
   box's stop.
-
-### Fixed
 
 ## 0.112.4 - four fields, four behaviours
 
