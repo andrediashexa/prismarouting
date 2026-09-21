@@ -136,7 +136,7 @@ exactly where to put the clock.
 | The debootstrap tree | a tarball in `/var/cache/prisma`, keyed by `SUITE` + the `--include` list, rebuilt when either changes | the whole `debootstrap` phase |
 | VPP/FRR packages | an apt cache directory bind-mounted into the chroot build, keyed by the two pinned versions | the network-bound half of `make iso` |
 | The whole base rootfs | one squashfs layer for "Debian + VPP + FRR", rebuilt only when a pin moves | both phases above, on every release that does not move a pin |
-| `.build-old/<tag>` | move it to `/var/cache/prisma`, which the gate's `rm -rf` cannot reach | one plugin build and one `git archive` per release |
+| `.build-old/<tag>` | move it to `/var/cache/prisma`, which the gate's `rm -rf` cannot reach | **measured: 0.5%**. Phase 1 of `lab/upgrade.sh` - the only phase this cache touches - is **11 s** of a 2130 s release, and the compile still happens once per machine |
 
 ## Incremental build opportunities
 
@@ -280,7 +280,7 @@ not instrumented yet, which is the first item of the plan below.
 | Bake `ISO_DEPS` and `qemu-system-x86` into the dev image | 4 apt runs per release | high — the work is known, the duration is not |
 | Cache the base rootfs (`debootstrap` + VPP + FRR) | most of `make iso`'s ~10 min on every release that moves no pin | high on the mechanism, medium on the number |
 | `-comp zstd` instead of `xz` | minutes of the squashfs phase, at a cost in image size | medium — needs one measurement of both |
-| Keep `.build-old/<tag>` across runs | one `git archive` and one plugin build per release | high, small |
+| Keep `.build-old/<tag>` across runs | **11 s of 2130 - 0.5%** (measured, 0.111.x) | **small, small**. The effort is small and the value is not high; this row said "high, small" before anything measured it |
 | **Z releases skip the medium entirely** | **~19 min of the 36** — the ISO build, the boot and the install | high: those three steps are exactly what a Z release would not run |
 
 A Z release under this model is roughly the plugin build, the artifact, and
