@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.111.2 - the card says which node it is on
+
+### Fixed
+
 * **The tuner asks where the card is and reads the answer one directory too
   high** ([#422](https://github.com/andrediashexa/hexarouting/issues/422)).
   `nic_node` read `device/numa_node`. `nic_pci`, five lines above it, walks up
@@ -110,8 +116,6 @@ version has a chance of seeing it.
   [#396](https://github.com/andrediashexa/hexarouting/issues/396) listed
   NUMA-aware worker placement as *"a real gap"*. It is not one: the workers
   have always come off the chosen node's CPUs. Its inputs were the gap.
-
-### Fixed
 
 ## 0.111.1 - the X.Y.Z rule has a reader
 
