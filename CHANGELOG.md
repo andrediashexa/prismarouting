@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.117.6 - what a pool change would move is measured
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **How many subscribers a change would move is measured now**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   `bpa_pool_remap_count()` answers the one question an operator has before
