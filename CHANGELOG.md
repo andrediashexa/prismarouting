@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.117.7 - whether a forward can be made is a decision
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **Whether a forward can be made at all is a decision, and it is tested**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). Five
   different things for an operator to do - a protocol that cannot carry a
