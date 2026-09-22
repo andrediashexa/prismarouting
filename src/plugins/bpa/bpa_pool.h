@@ -1481,6 +1481,48 @@ bpa_static_check (const bpa_pool_t *p, const bpa_static_t *sf,
 }
 
 /*
+ * IS THE STRIDE THIS OPERATOR TYPED REACHABLE AT `nw` WORKERS, and if not,
+ * the nearest one that is.
+ *
+ * The worker count comes in already floored at 1: a worker-less box is never
+ * short, because bpa_stride_reachable() answers yes at one worker, and the
+ * floor belongs to the one place that reads how many workers this box has -
+ * bpa.c - rather than to each of the three callers that ask this question.
+ *
+ * AND NO TEST OF THE MODE. A pool that has a stride at all is a dynamic
+ * pool: bpa_pool_init() and bpa_pool_settings_set() are the only two ways a
+ * stride is stored and both refuse it on a deterministic pool through the
+ * one refusal they share (#375). A mode test here would be a second owner of
+ * that rule and could never be shown failing.
+ */
+static_always_inline int
+bpa_stride_short_at (const bpa_pool_t *p, u32 nw, u32 *okp)
+{
+  *okp = 0;
+  if (p->block_stride == 0 || bpa_stride_reachable (p, nw))
+    return 0;
+  *okp = bpa_stride_next_ok (p, p->block_stride, nw);
+  return 1;
+}
+
+/*
+ * HOW MANY OF THIS BOX'S WORKERS THE RESERVE DOES NOT REACH, and 0 when it
+ * reaches all of them.
+ *
+ * The same floor and the same reason: a worker-less box compares one against
+ * one and is never short. A reserve of zero is not a short reserve - it is a
+ * pool that asked for none - which is the case a subtraction alone would get
+ * wrong.
+ */
+static_always_inline u32
+bpa_reserve_short_at (const bpa_pool_t *p, u32 nw)
+{
+  if (p->block_reserve == 0 || p->reserve_count >= nw)
+    return 0;
+  return nw - p->reserve_count;
+}
+
+/*
  * HOW MANY SUBSCRIBERS A NEW DEFINITION OF THIS POOL WOULD MOVE.
  *
  * The one question an operator needs answered before committing a change to

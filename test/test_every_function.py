@@ -187,7 +187,16 @@ MARKER = "not a unit:"
 # comparing a protocol against a second copy of those values, written where
 # the harness could reach it, would be a copy that can disagree.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 80, "shell": 0}
+# 2026-09-22, sixth: 80 to 72. Two more decisions split from the sentences
+# that carry them - whether a stride reaches every worker, and how many
+# workers a reserve misses - and six functions that write those sentences to
+# a vlib_main_t's CLI or log saying so. The floor of one worker stays in
+# bpa.c, which is the one place that reads how many this box has; what moved
+# to bpa_pool.h is the arithmetic, and test/test_bpa_pool.c derives its cases
+# from the pool's own stride unit rather than from numbers that happened to
+# work.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 72, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and
