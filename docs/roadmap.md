@@ -2733,16 +2733,22 @@ the two images (`make images` writes the 118 MB tarball on the host, because
 that the unit is `disabled`. A box still boots `vpp.service` and
 `frr.service`: the unit conflicts with both, and enabling it in the release
 that first ships it would ask an operator to take the packaging and the
-change of what runs on one upgrade. **What is left** is the release that
-flips the default, and it is [#426](https://github.com/andrediashexa/hexarouting/issues/426):
-`vpp.service` carries three drop-ins this product installs, and each is a
-protection the container path has to grow its own version of. The first is
-done - the VTY's binary API, which needs `ipc: host` and the same `chgrp` on
-`/dev/shm/global_vm`, because prismash is a host tool. Left: the OOM score
-(#172 is the same question on the unit path), the card handed back when the
-dataplane will not start (#379), a self-test that reads the container instead
-of `vpp.service stable (0 restarts)`, and a `lab/install-iso.sh` that watches
-a booted box FORWARD with the containers up.
+change of what runs on one upgrade. **And since 0.117.0 the box BOOTS on them**, which was
+[#426](https://github.com/andrediashexa/hexarouting/issues/426): the
+installer enables the container stack and disables `vpp.service` and
+`frr.service`, and every phase of `lab/install-iso.sh` - install, the VTY,
+roles on a real account, a pool committed, the configuration read back, the
+card handed over - now runs against a box whose dataplane is a container.
+The way back is two commands and the same lab drives them.
+
+What it cost to get there is the part worth reading: nine releases, and six
+runs of that lab before it passed once. The two defects the flip itself
+found were both invisible to every check in this repository - an operator
+account told *the dataplane is not answering* by a dataplane that answered
+root, because a bind-mounted socket carried the container's gid; and a
+self-test counting the entrypoint's threads instead of VPP's, so a box with
+seven workers was told it had none. Both are the same shape: a container
+boundary that numbers do not cross by themselves.
 
 **And the distributed version of the same proposal**
 ([#399](https://github.com/andrediashexa/hexarouting/issues/399)) - four planes, a

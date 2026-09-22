@@ -79,6 +79,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.117.1 - the document says what the box runs
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
+### Fixed
+
 * **`docs/appliance.md` said the box runs VPP and FRR as systemd units**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)). It had
   said so under a heading reading *the container images, which nothing on the
