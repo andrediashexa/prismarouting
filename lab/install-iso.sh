@@ -4687,6 +4687,200 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   esac
 fi
 
+# =========================================================================
+# PHASE 6: the same box, booted on the containers, still forwarding (#426)
+# =========================================================================
+#
+# THE ACCEPTANCE FOR THE FLIP, and it is here rather than in a lab of its own
+# for one reason: this is the only box in the repository with a real card that
+# a dataplane has actually taken. Everything #426 has shipped so far - the
+# images on the medium, the device fragment, ipc: host, the OOM score, the
+# card handed back - is proven against a file, a stub or a container on the
+# build machine. None of that answers the only question an operator has:
+# switch this box to the containers and does it still carry packets.
+#
+# WHAT IS ASSERTED, and the order matters. The reachability probe comes FIRST,
+# before anything is typed, and on this box that probe IS the forwarding
+# measurement: PHASE 4 gave the card to the dataplane, so the address the
+# probe connects to lives on a linux_cp pair and every packet of that
+# connection crosses VPP. A box that answers here is a box forwarding on a
+# dataplane in a container.
+#
+# THE SWITCH IS THE ONE AN OPERATOR WOULD MAKE, typed at the VTY's shell:
+# disable the two units, enable the containers unit and its watcher, reboot.
+# Nothing here edits a file, and nothing here is a lab shortcut - if these
+# four commands are not enough, the release that flips the default is not
+# ready, and that is what this phase is for.
+if [ "${HO_DRIVEN:-0}" = 1 ]; then
+  echo
+  echo "=========== PHASE 6: the box boots on the containers ==========="
+  CONSOLE_LOG=/tmp/containers.log
+  CONSOLE_CLEAN=/tmp/containers-clean.log
+  # shellcheck disable=SC2086
+  boot_vm "${CONTAINER_SECS:-1200}" \
+    -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET
+  CT_SWITCH=""
+  if login_root "the box to come back for the switch to containers"; then
+    # `disable --now` on both, then enable the pair. The units conflict, so
+    # the order is not a preference: enabling the containers unit while
+    # vpp.service is running is asking systemd to decide, and what this
+    # measures is a boot, not a race.
+    send 'echo "HX""LAB ct-switch=$(systemctl disable --now vpp.service frr.service > /tmp/ct.log 2>&1; systemctl enable prisma-routing-containers.service prisma-routing-card-watch.timer >> /tmp/ct.log 2>&1; echo rc=$?)"'
+    wait_for "HXLAB ct-switch=" 300 \
+      "the box to switch itself to the container stack" || fail=1
+    CT_SWITCH=$(live_field ct-switch)
+    send "sync"
+    send "systemctl poweroff"
+  else
+    echo "  [FAIL] the box did not come back to be switched to containers"
+    fail=1
+  fi
+  stop_vm 120
+
+  case "$CT_SWITCH" in
+    *rc=0*) echo "  [ ok ] the four commands an operator would type were taken" ;;
+    "")     echo "  [FAIL] the box never answered about the switch"; fail=1 ;;
+    *)      echo "  [FAIL] switching this box to the containers failed"
+            echo "         ($CT_SWITCH). Whatever the release that flips the"
+            echo "         default does, it cannot be less than these four"
+            echo "         commands, so it would fail the same way"
+            fail=1 ;;
+  esac
+
+  # AND NOW THE BOOT THAT MATTERS.
+  CONSOLE_LOG=/tmp/containers2.log
+  CONSOLE_CLEAN=/tmp/containers2-clean.log
+  # shellcheck disable=SC2086
+  boot_vm "${CONTAINER_SECS:-1200}" \
+    -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET
+
+  # FIRST, AND BEFORE ANYTHING IS TYPED: see the note at the top of this
+  # phase. This connection crosses the dataplane.
+  CT_BANNER=$(reachable_over_the_network 480)
+  if [ $? = 0 ]; then
+    echo "  [ ok ] the box answers from outside with its dataplane in a"
+    echo "         container, over the card that dataplane holds:"
+    echo "         $CT_BANNER"
+  else
+    echo "  [FAIL] booted on the containers, the box does not answer on the"
+    echo "         network: ${CT_BANNER:-<nothing at all>}"
+    echo "         The card is the dataplane's and the dataplane is a"
+    echo "         container, so this is the one reading that says whether"
+    echo "         such a box carries packets at all"
+    fail=1
+  fi
+
+  CT_PS=""; CT_DPIF=""; CT_UNIT=""; CT_LOADER=""; CT_SELF=""
+  if login_root "the box to come back on its container stack"; then
+    # WHAT IS ACTUALLY RUNNING. Names and states, from docker itself.
+    send 'echo "HX""LAB ct-ps=$(docker ps --format "{{.Names}}:{{.State}}" 2>/dev/null | sort | tr "\n" " ")"'
+    wait_for "HXLAB ct-ps=" 120 "the box to list its containers" || fail=1
+    # THE HOST VTY AGAINST A CONTAINERISED DATAPLANE. vppctl runs on the box
+    # and reaches /run/vpp/cli.sock, which the compose file bind-mounts; the
+    # binary API it also needs is what ipc: host and share-the-api-segment
+    # are for (0.114.0). An empty answer here is a box whose operator has no
+    # way to configure it.
+    send 'echo "HX""LAB ct-dpif=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ {print \$1}" | grep -v "^Name$" | grep -v "^local0$" | tr "\n" " ")"'
+    wait_for "HXLAB ct-dpif=" 120 \
+      "the dataplane in the container to list its interfaces" || fail=1
+    # AND vpp.service IS NOT RUNNING. Two dataplanes on one card is the state
+    # the Conflicts= exists to prevent, and a lab that did not look would not
+    # notice it.
+    send 'echo "HX""LAB ct-unit=$(systemctl is-active vpp.service 2>&1 | tr -d "\r")"'
+    wait_for "HXLAB ct-unit=" 60 \
+      "the box to say whether vpp.service is running too" || fail=1
+    # THE CONFIGURATION, APPLIED TO THAT DATAPLANE. prisma-routing.service is
+    # what hands the saved configuration to the box at every boot; on this
+    # path it must have waited for the container and succeeded. This is the
+    # reading 0.115.2's change to Requires= was made for.
+    send 'echo "HX""LAB ct-loader=$(systemctl is-active prisma-routing.service 2>&1 | tr -d "\r")"'
+    wait_for "HXLAB ct-loader=" 60 \
+      "the box to say whether its configuration was applied" || fail=1
+    # AND WHAT THE SELF-TEST MAKES OF IT. It is the screen an operator reads
+    # at the console, and on this box it has to name the container rather
+    # than a unit nobody started (0.115.1).
+    send 'echo "HX""LAB ct-self=$(/usr/lib/prisma-routing/selftest 2>&1 | tr -d "\r" | grep -c "the dataplane runs in a container")"'
+    wait_for "HXLAB ct-self=" 300 "the self-test to run on the box" || fail=1
+    CT_PS=$(live_field ct-ps)
+    CT_DPIF=$(live_field ct-dpif)
+    CT_UNIT=$(live_field ct-unit)
+    CT_LOADER=$(live_field ct-loader)
+    CT_SELF=$(live_field ct-self)
+    send "sync"
+    send "systemctl poweroff"
+  else
+    echo "  [FAIL] the box booted on the containers did not reach a login"
+    fail=1
+  fi
+  stop_vm 120
+
+  echo "  -- containers: ${CT_PS:-<none>}"
+  case "$CT_PS" in
+    *prisma-routing_vpp_1:running*prisma-routing_frr_1:running*)
+      echo "  [ ok ] both containers are running, by the names compose gives" ;;
+    *prisma-routing_vpp_1:running*)
+      echo "  [FAIL] the dataplane container is running and the control"
+      echo "         plane is not: '$CT_PS'. The box forwards and learns"
+      echo "         nothing, which is the half-up state HA is built to"
+      echo "         survive and nobody wants to boot into"
+      fail=1 ;;
+    "")
+      echo "  [FAIL] docker lists no container at all on a box whose stack"
+      echo "         was enabled and which has just booted"
+      fail=1 ;;
+    *)
+      echo "  [FAIL] the containers are not both running: '$CT_PS'"
+      fail=1 ;;
+  esac
+
+  echo "  -- the dataplane holds: ${CT_DPIF:-<nothing>}"
+  case "$CT_DPIF" in
+    "")
+      echo "  [FAIL] the VTY on the host got nothing out of the dataplane."
+      echo "         Either the container is not the dataplane, or vppctl"
+      echo "         cannot reach it - and an operator on this box has no"
+      echo "         way to configure anything"
+      fail=1 ;;
+    *tap*)
+      echo "  [ ok ] and the host's own vppctl reads it, pair and all" ;;
+    *)
+      echo "  [ ok ] and the host's own vppctl reads it" ;;
+  esac
+
+  case "$CT_UNIT" in
+    inactive|failed|"")
+      echo "  [ ok ] vpp.service is not running beside it (${CT_UNIT:-not there})" ;;
+    *)
+      echo "  [FAIL] vpp.service is '$CT_UNIT' while the containers are up:"
+      echo "         two dataplanes are being asked to hold one card, which"
+      echo "         is what Conflicts= in the unit exists to prevent"
+      fail=1 ;;
+  esac
+
+  case "$CT_LOADER" in
+    active)
+      echo "  [ ok ] and the saved configuration was applied to it at boot" ;;
+    *)
+      echo "  [FAIL] prisma-routing.service is '${CT_LOADER:-<nothing>}' on a"
+      echo "         box that booted on the containers: the configuration an"
+      echo "         operator saved was not applied, so the box came up with"
+      echo "         no CGNAT at all and nothing on the console says so"
+      fail=1 ;;
+  esac
+
+  case "$CT_SELF" in
+    0|"")
+      echo "  [FAIL] the self-test does not say this box's dataplane is a"
+      echo "         container (it matched '${CT_SELF:-nothing}'), so every"
+      echo "         line it prints about restarts and the OOM score is"
+      echo "         about a unit nobody started"
+      fail=1 ;;
+    *)
+      echo "  [ ok ] and the self-test names the container as this box's"
+      echo "         dataplane, so its readings are about what is running" ;;
+  esac
+fi
+
 
 echo
 if [ "$fail" = 0 ]; then
