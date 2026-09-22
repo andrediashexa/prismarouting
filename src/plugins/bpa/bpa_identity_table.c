@@ -94,6 +94,85 @@ bpa_identity_remove (bpa_identity_table_t *t, u32 ip)
   return 1;
 }
 
+/*
+ * WHAT A FILE'S LINES MEAN ONCE THEY ARE READ, which is three decisions and
+ * not one - and all three are about naming the right subscriber in a record
+ * a court may read.
+ *
+ * They are here, above the guard, because the loader below needs a file and
+ * VPP's vectors and these need neither: they take an array and its length,
+ * and test/test_bpa_identity.c drives them.
+ */
+
+/*
+ * Sorted by address, and within one address by WHERE THE LINE WAS.
+ *
+ * qsort alone cannot give that - it is not stable - so a lease file whose
+ * address appears twice would keep whichever of the two the sort happened to
+ * leave last. For a renewal that is the difference between the current
+ * subscriber and the one before them.
+ *
+ * The keys are (address << 32 | line order) in a u64, sorted as numbers, so
+ * the tiebreak is exact. `keys` and `scratch` are the caller's, both `n`
+ * long: eight and sizeof(entry) bytes per entry for the length of this call,
+ * rather than four more in every entry for the life of the table.
+ */
+static void
+bpa_identity_sort_by_address (bpa_identity_entry_t *v, u32 n, u64 *keys,
+			      bpa_identity_entry_t *scratch)
+{
+  u32 i;
+
+  if (n < 2)
+    return;
+  for (i = 0; i < n; i++)
+    keys[i] = ((u64) v[i].ip << 32) | i;
+  qsort (keys, n, sizeof (keys[0]), bpa_identity_key_cmp);
+  for (i = 0; i < n; i++)
+    scratch[i] = v[keys[i] & 0xffffffffu];
+  for (i = 0; i < n; i++)
+    v[i] = scratch[i];
+}
+
+/*
+ * A lease file names an address again every time it is renewed, and the
+ * LATER entry is the current one - so a duplicate there is ordinary and the
+ * last one wins. Returns how many entries are left.
+ *
+ * Reads the run of one address and keeps its last member, which is the last
+ * LINE of that address because the sort above is stable. Taking the first
+ * would name the subscriber who used to have the address.
+ */
+static u32
+bpa_identity_collapse_leases (bpa_identity_entry_t *v, u32 n)
+{
+  u32 i, w = 0;
+
+  for (i = 0; i < n; i++)
+    if (i + 1 == n || v[i].ip != v[i + 1].ip)
+      v[w++] = v[i];
+  return w;
+}
+
+/*
+ * In a static map a duplicate is two answers to one question and is refused:
+ * picking the later one would be this box deciding which subscriber to name.
+ * Returns 1 and the index of the second of the pair, or 0.
+ */
+static int
+bpa_identity_dup_at (const bpa_identity_entry_t *v, u32 n, u32 *at)
+{
+  u32 i;
+
+  for (i = 1; i < n; i++)
+    if (v[i].ip == v[i - 1].ip)
+      {
+	*at = i;
+	return 1;
+      }
+  return 0;
+}
+
 #ifndef BPA_STANDALONE
 
 /*
@@ -183,19 +262,13 @@ bpa_identity_load_kind (const char *path, bpa_identity_kind_t kind)
   if (vec_len (fresh) > 1)
     {
       u64 *keys = 0;
-      bpa_identity_entry_t *sorted = 0;
-      u32 i;
+      bpa_identity_entry_t *scratch = 0;
 
       vec_validate (keys, vec_len (fresh) - 1);
-      for (i = 0; i < vec_len (fresh); i++)
-	keys[i] = ((u64) fresh[i].ip << 32) | i;
-      qsort (keys, vec_len (keys), sizeof (keys[0]), bpa_identity_key_cmp);
-      vec_validate (sorted, vec_len (fresh) - 1);
-      for (i = 0; i < vec_len (keys); i++)
-	sorted[i] = fresh[keys[i] & 0xffffffffu];
+      vec_validate (scratch, vec_len (fresh) - 1);
+      bpa_identity_sort_by_address (fresh, vec_len (fresh), keys, scratch);
       vec_free (keys);
-      vec_free (fresh);
-      fresh = sorted;
+      vec_free (scratch);
     }
   /* A duplicate address is refused rather than resolved by position: two
    * lines claiming one address are two answers to the question a court asks,
@@ -212,16 +285,10 @@ bpa_identity_load_kind (const char *path, bpa_identity_kind_t kind)
      * two meanings for the same shape, and this is where they part.
      */
     if (kind == BPA_IDENTITY_DHCP_LEASES)
-      {
-	u32 w = 0;
-
-	for (i = 0; i < vec_len (fresh); i++)
-	  if (i + 1 == vec_len (fresh) || fresh[i].ip != fresh[i + 1].ip)
-	    fresh[w++] = fresh[i];
-	vec_set_len (fresh, w);
-      }
-    for (i = 1; kind == BPA_IDENTITY_MAP && i < vec_len (fresh); i++)
-      if (fresh[i].ip == fresh[i - 1].ip)
+      vec_set_len (fresh,
+		   bpa_identity_collapse_leases (fresh, vec_len (fresh)));
+    if (kind == BPA_IDENTITY_MAP
+	&& bpa_identity_dup_at (fresh, vec_len (fresh), &i))
 	{
 	  err = clib_error_return (
 	    0, "'%s' names %u.%u.%u.%u twice, and two identities for one "

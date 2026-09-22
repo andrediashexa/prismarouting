@@ -77,7 +77,35 @@ version has a chance of seeing it.
 
 ### Added
 
+* **What a lease file's lines mean is three decisions, and they are tested**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). All
+  three are about naming the **right** subscriber in a record a court may
+  read, and all three were inside a loader that needs a file and VPP's
+  vectors - so nothing drove them.
+
+  They are above that file's `BPA_STANDALONE` guard now, where
+  `test/test_bpa_identity.c` already reaches: entries sorted by address and,
+  within one address, **by where the line was** - an unstable sort would keep
+  whichever line it happened to leave last, which for a renewal is the
+  subscriber who used to have the address; a lease file's duplicate collapsed
+  to its **later** line, because that is the current subscriber; and a static
+  map's duplicate refused, because two lines claiming one address are two
+  answers to the question a court asks and picking one would be this box
+  deciding which subscriber to name.
+
 ### Fixed
+
+* **A harness did not rebuild when the file it tests changed**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `test/test_bpa_identity.c` includes `bpa_identity_table.c`, and that file
+  was not a prerequisite of the binary - so editing it left the target *up to
+  date* and the suite measured the build from before the change.
+
+  Found the only way it can be found: three mutations in a row came back
+  green, which is the worst answer a mutation can give, because it reads as
+  the code being right. `test/test_makefile_recipes.py` now holds the rule
+  mechanically - whatever a harness **includes** as a `.c` has to be named in
+  the recipe that builds it - across all thirteen harnesses that include one.
 
 ## 0.118.5 - the order 'show bpa top' reads its rows in
 
