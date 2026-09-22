@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.6 - what a lease file's lines mean
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **What a lease file's lines mean is three decisions, and they are tested**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). All
   three are about naming the **right** subscriber in a record a court may
