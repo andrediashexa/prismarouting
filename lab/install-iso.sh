@@ -4772,6 +4772,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
 
   CT_PS=""; CT_DPIF=""; CT_UNIT=""; CT_LOADER=""; CT_SELF=""
   CT_UNITSTATE=""; CT_WHY=""; CT_IMGS=""
+  CT_LOADWHY=""; CT_LINKS=""; CT_THREADS=""; CT_DPLOG=""
   if login_root "the box to come back on its container stack"; then
     # WHAT IS ACTUALLY RUNNING. Names and states, from docker itself.
     send 'echo "HX""LAB ct-ps=$(docker ps --format "{{.Names}}:{{.State}}" 2>/dev/null | sort | tr "\n" " ")"'
@@ -4800,7 +4801,11 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     # AND WHAT THE SELF-TEST MAKES OF IT. It is the screen an operator reads
     # at the console, and on this box it has to name the container rather
     # than a unit nobody started (0.115.1).
-    send 'echo "HX""LAB ct-self=$(/usr/lib/prisma-routing/selftest 2>&1 | tr -d "\r" | grep -c "the dataplane runs in a container")"'
+    # PRISMA_SELFTEST_OUT, because the self-test writes to /dev/console and
+    # not to stdout - so `$( )` around it captured nothing, and this check
+    # read 0 on a box whose console showed the line in full. The variable is
+    # the self-test's own, which is what it is for.
+    send 'echo "HX""LAB ct-self=$(PRISMA_SELFTEST_OUT=/dev/stdout /usr/lib/prisma-routing/selftest 2>&1 | tr -d "\r" | grep -c "the dataplane runs in a container")"'
     wait_for "HXLAB ct-self=" 300 "the self-test to run on the box" || fail=1
     # AND THE REASON, WHATEVER HAPPENED. The first run of this phase found no
     # containers and said exactly that and nothing else, and the box was gone
@@ -4817,6 +4822,28 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send 'echo "HX""LAB ct-imgs=$(docker images --format "{{.Repository}}:{{.Tag}}" 2>/dev/null | tr "\n" " ")"'
     wait_for "HXLAB ct-imgs=" 120 \
       "the box to list the images it has" || fail=1
+    # WHY THE CONFIGURATION WAS REFUSED, if it was. prismash --load refuses a
+    # file whole and says which line and why, and that sentence is in the
+    # journal of this unit and nowhere else - the console only carries the
+    # last four lines of it under the self-test's verdict.
+    send 'echo "HX""LAB ct-loadwhy=$(journalctl -u prisma-routing.service --no-pager -n 20 2>/dev/null | tr -d "\r" | grep -viE "systemd|Starting|Stopped" | tr "\n" "|" | cut -c1-500)"'
+    wait_for "HXLAB ct-loadwhy=" 60 \
+      "the box to say what it made of its own configuration" || fail=1
+    # THE NETDEVS LINUX HAS. On this box the address lives on a linux_cp pair
+    # named after the card, so "which netdevs are there" is the difference
+    # between a box that can be reached and one that cannot.
+    send 'echo "HX""LAB ct-links=$(ip -o link show | awk -F": " "{print \$2}" | tr "\n" " ")"'
+    wait_for "HXLAB ct-links=" 60 "the box to list its netdevs" || fail=1
+    # AND THE DATAPLANE'S OWN THREADS. The self-test reported no worker
+    # thread on a box whose startup.conf pins seven, which is either a
+    # dataplane that could not place them or a reading that does not apply
+    # to a container.
+    send 'echo "HX""LAB ct-threads=$(vppctl show threads 2>/dev/null | tr -d "\r" | awk "NR>1 {print \$1\":\"\$4}" | tr "\n" " ")"'
+    wait_for "HXLAB ct-threads=" 60 \
+      "the dataplane to list its threads" || fail=1
+    send 'echo "HX""LAB ct-dplog=$(docker logs --tail 12 prisma-routing_vpp_1 2>&1 | tr -d "\r" | grep -iE "error|warn|fail|thread|affinity" | tr "\n" "|" | cut -c1-400)"'
+    wait_for "HXLAB ct-dplog=" 120 \
+      "the dataplane container to say what it logged" || fail=1
     CT_PS=$(live_field ct-ps)
     CT_DPIF=$(live_field ct-dpif)
     CT_UNIT=$(live_field ct-unit)
@@ -4825,6 +4852,10 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     CT_UNITSTATE=$(live_field ct-unitstate)
     CT_WHY=$(live_field ct-why)
     CT_IMGS=$(live_field ct-imgs)
+    CT_LOADWHY=$(live_field ct-loadwhy)
+    CT_LINKS=$(live_field ct-links)
+    CT_THREADS=$(live_field ct-threads)
+    CT_DPLOG=$(live_field ct-dplog)
     send "sync"
     send "systemctl poweroff"
   else
@@ -4836,24 +4867,34 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   echo "  -- the container unit is: ${CT_UNITSTATE:-<no answer>}"
   echo "  -- images on the box: ${CT_IMGS:-<none>}"
   echo "  -- what the unit did: ${CT_WHY:-<nothing>}"
+  echo "  -- netdevs Linux has: ${CT_LINKS:-<none>}"
+  echo "  -- dataplane threads: ${CT_THREADS:-<none>}"
+  echo "  -- the dataplane logged: ${CT_DPLOG:-<nothing of note>}"
+  echo "  -- what --load made of the saved file: ${CT_LOADWHY:-<nothing>}"
   echo "  -- containers: ${CT_PS:-<none>}"
-  case "$CT_PS" in
-    *prisma-routing_vpp_1:running*prisma-routing_frr_1:running*)
-      echo "  [ ok ] both containers are running, by the names compose gives" ;;
-    *prisma-routing_vpp_1:running*)
-      echo "  [FAIL] the dataplane container is running and the control"
-      echo "         plane is not: '$CT_PS'. The box forwards and learns"
-      echo "         nothing, which is the half-up state HA is built to"
-      echo "         survive and nobody wants to boot into"
-      fail=1 ;;
-    "")
-      echo "  [FAIL] docker lists no container at all on a box whose stack"
-      echo "         was enabled and which has just booted"
-      fail=1 ;;
-    *)
-      echo "  [FAIL] the containers are not both running: '$CT_PS'"
-      fail=1 ;;
-  esac
+  # ORDER-INDEPENDENT, and that is not tidiness: the reading is `sort`ed, so
+  # frr comes first, and a pattern written vpp-then-frr called a box with
+  # BOTH containers up "the control plane is not running". A lab that reports
+  # a defect of its own making is worse than one that reports nothing.
+  _ct_vpp=no; _ct_frr=no
+  case "$CT_PS" in *prisma-routing_vpp_1:running*) _ct_vpp=yes ;; esac
+  case "$CT_PS" in *prisma-routing_frr_1:running*) _ct_frr=yes ;; esac
+  if [ "$_ct_vpp$_ct_frr" = yesyes ]; then
+    echo "  [ ok ] both containers are running, by the names compose gives"
+  elif [ -z "$CT_PS" ]; then
+    echo "  [FAIL] docker lists no container at all on a box whose stack"
+    echo "         was enabled and which has just booted"
+    fail=1
+  elif [ "$_ct_vpp" = yes ]; then
+    echo "  [FAIL] the dataplane container is running and the control plane"
+    echo "         is not: '$CT_PS'. The box forwards and learns nothing,"
+    echo "         which is the half-up state HA is built to survive and"
+    echo "         nobody wants to boot into"
+    fail=1
+  else
+    echo "  [FAIL] the dataplane container is not running: '$CT_PS'"
+    fail=1
+  fi
 
   echo "  -- the dataplane holds: ${CT_DPIF:-<nothing>}"
   case "$CT_DPIF" in
