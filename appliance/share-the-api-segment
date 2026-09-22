@@ -27,11 +27,21 @@ GROUP=${PRISMA_API_GROUP:-vpp}
 # the box whose startup.conf does not.
 SEGMENTS="global_vm vpe-api"
 
-# THE WAIT IS THE POINT, and 10 seconds is what the drop-in used: the segment
-# is created by the dataplane after this runs, and a chgrp that fires before
-# the file exists is a chgrp that silently did nothing. 40 quarter-seconds.
+# THE WAIT IS THE POINT, and how long it has to be depends on what started
+# the dataplane. The drop-in on vpp.service waited 10 seconds, measured from
+# the moment VPP's own process started. The containers unit runs this after
+# `docker-compose up -d` RETURNS, which is before the dataplane inside the
+# container has initialised the EAL - and on a box with real hugepages and a
+# real card that took longer than the ten: measured on an installed box, the
+# segment had not appeared and every operator account was left needing root
+# (lab/install-iso.sh PHASE 6).
+#
+# 60 seconds, from the caller, in quarter-seconds. It costs nothing on a box
+# where the segment is already there, because the loop ends at the first
+# check.
+WAIT=${PRISMA_API_WAIT:-40}
 n=0
-while [ ! -e "$SHM/global_vm" ] && [ "$n" -lt 40 ]; do
+while [ ! -e "$SHM/global_vm" ] && [ "$n" -lt "$WAIT" ]; do
   sleep 0.25
   n=$((n + 1))
 done

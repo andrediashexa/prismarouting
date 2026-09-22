@@ -1,0 +1,111 @@
+#!/bin/sh
+# PID 1 for the control-plane container, and the two things Docker needs from
+# it that FRR's own init script does not do (#426).
+#
+# WHAT WENT WRONG WITHOUT IT. The image ran `/usr/lib/frr/frrinit.sh start`
+# as its command. That script starts watchfrr and RETURNS - so PID 1 exited,
+# and what an installed box had was a container that Docker kept restarting
+# while `prismash --load` was told `router bgp 65000: bgpd is not running`
+# and refused the whole saved configuration. The box came up with no CGNAT
+# and no BGP, having reported nothing wrong (lab/install-iso.sh PHASE 6).
+#
+# WHICH DAEMONS RUN IS /etc/frr/daemons' BUSINESS, and that file is the box's
+# own: compose bind-mounts /etc/frr into this container. So this starts FRR
+# the way FRR starts itself and reads nothing of its own - a list of daemons
+# written here would be a second copy of a decision the installer already
+# made, and the first thing it would disagree about is bgpd.
+#
+# AND THE STOP IS A REAL STOP. `docker stop` sends SIGTERM to PID 1 and waits;
+# without a handler the daemons are killed where they stand, which for bgpd
+# means no GR-aware close and for zebra means routes left in the kernel.
+set -u
+
+FRRINIT=${FRRINIT:-/usr/lib/frr/frrinit.sh}
+# The two bind mounts, as variables so that test/test_frr_entrypoint.sh can
+# put a box in a temporary directory. On a container they are these paths and
+# nothing sets them.
+ETCFRR=${PRISMA_FRR_ETC:-/etc/frr}
+RUNFRR=${PRISMA_FRR_RUN:-/var/run/frr}
+stopping=0
+
+on_term() {
+  # Latched: `docker stop` may send more than one signal, and running the
+  # stop script twice races with itself.
+  [ "$stopping" = 1 ] && return
+  stopping=1
+  "$FRRINIT" stop 2>&1 | sed 's/^/frr-entrypoint: /'
+  exit 0
+}
+trap on_term TERM INT
+
+# THE IDS THE BOX'S OWN FILES CARRY, and this is not tidiness either.
+#
+# /etc/frr and /var/run/frr are bind-mounted from the host, and a bind mount
+# carries NUMERIC ids. The frr user inside this image comes from the frr
+# package installed here; the frr user on the box comes from the same package
+# installed beside VPP and everything else, and the two numbers are not the
+# same - measured: 103 in the image against the box's own. What that costs is
+# not a warning:
+#
+#   ZEBRA: Can't bind zserv socket on (null): Permission denied
+#   ZEBRA: Can't create pid lock file /var/run/frr/zebra.pid, exiting
+#
+# and watchfrr stays up with nothing under it, so the container reads as
+# running while the box has no control plane at all. That is what
+# `prismash --load` then reports as `bgpd is not running`, refusing the whole
+# saved configuration (#426).
+#
+# The owner of /etc/frr is the answer, because it is the box's own statement
+# about which id owns its routing configuration. Nothing is guessed and
+# nothing is written down twice.
+align_ids() {
+  [ -d "$ETCFRR" ] || return 0
+  want_u=$(stat -c %u "$ETCFRR" 2>/dev/null) || return 0
+  want_g=$(stat -c %g "$ETCFRR" 2>/dev/null) || return 0
+  have_u=$(id -u frr 2>/dev/null)
+  have_g=$(id -g frr 2>/dev/null)
+  # root-owned /etc/frr is a box that never installed FRR's own files; leave
+  # the image's ids alone rather than making the daemons run as root.
+  [ "${want_u:-0}" = 0 ] && return 0
+  if [ "$want_g" != "$have_g" ]; then
+    groupmod -g "$want_g" -o frr 2>/dev/null \
+      || echo "frr-entrypoint: could not move group frr to $want_g" >&2
+  fi
+  if [ "$want_u" != "$have_u" ]; then
+    usermod -u "$want_u" -o frr 2>/dev/null \
+      || echo "frr-entrypoint: could not move user frr to $want_u" >&2
+  fi
+  # The vty sockets' group, which is what an operator account on the box is
+  # put into. Read off the box's own vtysh.conf when it has one.
+  if [ -f "$ETCFRR/vtysh.conf" ]; then
+    want_v=$(stat -c %g "$ETCFRR/vtysh.conf" 2>/dev/null)
+    have_v=$(getent group frrvty | cut -d: -f3)
+    if [ -n "$want_v" ] && [ "$want_v" != "0" ] && [ "$want_v" != "$have_v" ]
+    then
+      groupmod -g "$want_v" -o frrvty 2>/dev/null \
+        || echo "frr-entrypoint: could not move group frrvty to $want_v" >&2
+    fi
+  fi
+  # The runtime directory is the box's, and the daemons write their pid files
+  # and sockets into it as the user above.
+  [ -d "$RUNFRR" ] && chown frr:frr "$RUNFRR" 2>/dev/null
+  return 0
+}
+align_ids
+
+"$FRRINIT" start 2>&1 | sed 's/^/frr-entrypoint: /'
+
+# WAIT ON watchfrr, which is what FRR itself supervises the daemons with: a
+# control plane whose watchfrr has gone is one nothing is restarting, and a
+# container that stays up around it would be reporting health it does not
+# have. `sleep` in the background with `wait` so the trap runs at once rather
+# than at the end of the current sleep.
+while pidof watchfrr >/dev/null 2>&1; do
+  sleep 2 &
+  wait $!
+done
+
+echo "frr-entrypoint: watchfrr is gone, so nothing is supervising the" >&2
+echo "frr-entrypoint: routing daemons; exiting so the restart policy can" >&2
+echo "frr-entrypoint: bring the control plane back." >&2
+exit 1

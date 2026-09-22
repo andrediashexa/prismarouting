@@ -76,6 +76,7 @@ sh test/test_bind_nic.sh
 sh test/test_share_api_segment.sh
 sh test/test_two_dataplanes_one_shape.sh
 sh test/test_watch_dataplane.sh
+sh test/test_load_the_images.sh
 python3 test/test_install_manifest.py
 sh test/test_manifest.sh
 python3 test/test_makefile_recipes.py
@@ -115,3 +116,4 @@ sh test/test_announce_commit.sh
 python3 test/test_image_pins.py
 sh test/test_build_images.sh
 sh test/test_vpp_entrypoint.sh
+sh test/test_frr_entrypoint.sh

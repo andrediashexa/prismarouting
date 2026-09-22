@@ -69,6 +69,7 @@ cp "$PLUGIN_SO" "$CTX/vpp_plugins/"
 # daemon and would let a Dockerfile copy in anything; this one holds the four
 # files the images are made of.
 cp "$REPO/appliance/vpp-entrypoint" "$CTX/appliance/"
+cp "$REPO/appliance/frr-entrypoint" "$CTX/appliance/"
 cp "$REPO/appliance/systemd/vpp-stop-drain.conf" "$CTX/appliance/systemd/"
 
 echo "==> dataplane image, VPP $VPP_VERSION with this tree's plugin"
@@ -362,6 +363,57 @@ OVR
     else
       bad "the dataplane's API segments are not on this host's /dev/shm, so prismash - which runs on the box and not in a container - would have no binary API and every commit would fail: appliance/compose.yaml needs ipc: host"
     fi
+
+    # THE CONTROL PLANE IS ACTUALLY ROUTING, and this is the reading whose
+    # absence cost four lab runs. The image used to run
+    # `/usr/lib/frr/frrinit.sh start` as its command; that script starts
+    # watchfrr and RETURNS, so PID 1 exited - and on an installed box
+    # `prismash --load` was told `router bgp 65000: bgpd is not running` and
+    # refused the whole saved configuration. Nothing here looked, because
+    # nothing here asked the control plane a question.
+    #
+    # bgpd SPECIFICALLY, and not "some daemon is up": which daemons run is
+    # /etc/frr/daemons' business, the override below enables bgpd the way the
+    # installer does on a box, and bgpd is the one the validator asks about.
+    printf 'zebra=yes\nbgpd=yes\nmgmtd=yes\nstaticd=yes\n' > "$CDIR/frr/daemons"
+    docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+      -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" restart frr >/dev/null 2>&1
+    _n=0
+    while [ "$_n" -lt 30 ] && ! docker compose -p prismacheck \
+        -f "$REPO/appliance/compose.yaml" -f "$CDIR/override.yaml" \
+        -f "$CDIR/devices.yaml" exec -T frr sh -c 'pidof bgpd' >/dev/null 2>&1; do
+      sleep 1; _n=$((_n + 1))
+    done
+    if docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+       -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" \
+       exec -T frr sh -c 'pidof bgpd' >/dev/null 2>&1; then
+      ok "and bgpd is running in the control plane, as /etc/frr/daemons asks"
+    else
+      bad "bgpd is not running in the control-plane container although /etc/frr/daemons enables it: prismash --load refuses a saved configuration that names 'router bgp', so a box booting on this stack comes up with no BGP and no CGNAT at all"
+    fi
+
+    # AND IT RUNS CONFINED, which is a reading this check did not take and
+    # should have. Docker loads its `docker-default` AppArmor profile before
+    # starting a container on a kernel that has AppArmor enabled - and on a
+    # box WITHOUT apparmor_parser it does not start the container at all:
+    # `exec: "apparmor_parser": executable file not found in $PATH`. That is
+    # what an installed box did (#426), while this check passed on a build
+    # host that has had the package all along. Reading the profile here is
+    # what makes the two boxes comparable.
+    prof=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+           -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" \
+           exec -T vpp cat /proc/self/attr/current 2>/dev/null | tr -d '\0')
+    case "$prof" in
+      *docker-default*) ok "and the dataplane runs confined: $prof" ;;
+      unconfined*)
+        # Not a failure here: a build host with AppArmor disabled is a
+        # legitimate machine and this check must not depend on which one it
+        # is. What it must not do is stay silent about which was measured.
+        echo "  [info] this host runs containers unconfined, so the profile"
+        echo "         the appliance gets was not measured by this run" ;;
+      *)
+        echo "  [info] could not read the container's AppArmor profile" ;;
+    esac
 
     # AND THE KERNEL HAS THE OOM SCORE, read off /proc and not off the
     # compose file. `oom_score_adj` is a key compose 1.29.2 parses under the

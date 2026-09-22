@@ -128,7 +128,10 @@ for u in "$SYSD"/*.service "$SYSD"/*.timer "$SYSD"/*.conf; do
     # on purpose, and Conflicts starts nothing.
     prisma-routing-containers.service) continue ;;
   esac
-  if body "$u" | grep -qE "^(Requires|Wants|BindsTo)=.*(vpp\.service|prisma-routing-containers\.service)"; then
+  # frr.service is in this list too, and for the same reason one release
+  # later: the control plane is a container on that path, and a host FRR
+  # pulled in beside it is two daemons holding /etc/frr and /var/run/frr.
+  if body "$u" | grep -qE "^(Requires|Wants|BindsTo)=.*(vpp\.service|frr\.service|prisma-routing-containers\.service)"; then
     pullers="$pullers $n"
   fi
 done
@@ -138,6 +141,22 @@ done
 body "$SYSD/prisma-routing.service" | grep -q "^PartOf=.*prisma-routing-containers.service" \
   && ok "and the configuration loader is PartOf both, so it follows whichever runs" \
   || bad "prisma-routing.service is not PartOf prisma-routing-containers.service: on a container box a dataplane restart would leave the CGNAT configuration unapplied and nothing would say so"
+
+echo
+echo "=== the medium carries what docker needs to start a container ==="
+# NOT A PACKAGING DETAIL. Debian's kernel has AppArmor enabled, so docker
+# asks apparmor_parser to load its docker-default profile before it starts
+# anything, and without the parser the start fails with
+# `exec: "apparmor_parser": executable file not found in $PATH`. On an
+# installed box that was the whole difference between a container stack and
+# none - and every compose-check in this repository passed while it was true,
+# because the build host has had the package all along.
+for pkg in docker.io docker-compose apparmor; do
+  grep -qE "^ *docker\.io.*$pkg|^ *$pkg|[[:space:]]$pkg([[:space:]]|$)" \
+    "$REPO/appliance/build-iso.sh" \
+    && ok "the medium installs $pkg" \
+    || bad "appliance/build-iso.sh does not install $pkg, and without it a box cannot start the containers it carries"
+done
 
 echo
 echo "=== the drain runs before the dataplane dies on both paths ==="

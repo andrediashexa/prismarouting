@@ -1,0 +1,81 @@
+#!/bin/sh
+# The images the medium carried, and the version compose is told to run.
+#
+# WHAT THIS EXISTS FOR, measured on a booted box (#426). compose.yaml names
+# `prisma-vpp:${PRISMA_VERSION:-latest}` and tools/build-images.sh saves the
+# images tagged with the VERSION file - `prisma-vpp:0.115.2` and nothing
+# called `latest`. Nothing set PRISMA_VERSION, so on an installed box compose
+# asked for `prisma-vpp:latest`, did not find it, and went to a registry the
+# appliance has no route to. What an operator saw was no containers at all
+# and a self-test reporting a unit nobody started.
+#
+# So the version is READ OFF THE IMAGES THIS BOX HAS, after loading them, and
+# never guessed: a name written in a second place is one that can disagree
+# with the tarball, which is the same argument compose.yaml's device fragment
+# is built on.
+#
+# AND A BOX WITH NO IMAGE IS REFUSED HERE, loudly, rather than left to
+# compose. `docker-compose up` on a missing tag tries to pull, and what it
+# prints is a registry error about a name nobody recognises - on a box whose
+# real problem is that its medium did not carry the images.
+set -u
+
+ROOT=${PRISMA_ROOT:-}
+TARBALL=${PRISMA_IMAGES:-$ROOT/usr/lib/prisma-routing/images.tar.gz}
+ENVFILE=${PRISMA_COMPOSE_ENV:-$ROOT/run/prisma-routing/compose.env}
+STAMP=${PRISMA_VERSION_FILE:-$ROOT/usr/share/prisma-routing/VERSION}
+DOCKER=${PRISMA_DOCKER:-docker}
+say() { echo "load-the-images: $*" >&2; }
+
+# LOADED ON EVERY START and not once at install: a box that was rolled back,
+# or whose docker state was cleared, then starts the images it has rather than
+# none. `docker load` of an image that is already there is a no-op that prints
+# the tag it already had.
+if [ -f "$TARBALL" ]; then
+  "$DOCKER" load -i "$TARBALL" >/dev/null 2>&1 \
+    || say "$TARBALL would not load; falling back to whatever is already here"
+else
+  say "no $TARBALL on this box: the medium carries one, so this is either a"
+  say "source install or a box whose medium was built with PRISMA_SKIP_IMAGES."
+fi
+
+tags=$("$DOCKER" images --format '{{.Tag}}' prisma-vpp 2>/dev/null \
+       | grep -v '^<none>$')
+if [ -z "$tags" ]; then
+  say "there is no prisma-vpp image on this box at all. Compose would ask a"
+  say "registry for it, and an appliance has no route to one - so this is"
+  say "refused here, where the reason is still legible. Put the images back"
+  say "with 'docker load -i $TARBALL', or reinstall from a medium that"
+  say "carries them."
+  exit 1
+fi
+
+# WHICH TAG, when a box has more than one. An upgrade replaces the code and
+# leaves the previous images loaded, so "the only one" is not a safe reading.
+# The box's own version stamp decides: its first word is the version the rest
+# of this install is, and a dataplane from another release is a dataplane
+# whose API the plugin may not match - the pins in build-iso.sh exist for
+# exactly that.
+# awk and not `sed -n 's/...//p'`: with -n, p prints only when the
+# substitution HAPPENED, so a stamp of "0.115.3" with nothing after it
+# printed nothing at all and every box fell through to the newest image.
+# Caught by the upgraded-box case, which is the only one where the two
+# answers differ.
+want=$(awk 'NR == 1 { print $1 }' "$STAMP" 2>/dev/null)
+pick=""
+for t in $tags; do
+  [ "$t" = "$want" ] && pick=$t && break
+done
+if [ -z "$pick" ]; then
+  # Not a failure: a box built from a source tree, or one whose stamp carries
+  # a git hash the images were never tagged with, still has to start. The
+  # first tag docker lists is the newest image.
+  pick=$(printf '%s\n' "$tags" | head -1)
+  say "no prisma-vpp image tagged '${want:-<no stamp>}', which is what this"
+  say "box says it is. Starting '$pick' instead - the images and the code"
+  say "came from different builds."
+fi
+
+mkdir -p "$(dirname "$ENVFILE")" 2>/dev/null || true
+printf 'PRISMA_VERSION=%s\n' "$pick" > "$ENVFILE"
+exit 0
