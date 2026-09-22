@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Whether a forward can be made at all is a decision, and it is tested**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). Five
+  different things for an operator to do - a protocol that cannot carry a
+  forward, a port that is not a port, a public port the pool does not
+  translate, a subscriber the arithmetic reaches no block for, and a public
+  port that belongs to somebody else's block - and each was a branch inside
+  the function that words them, which needs VPP's `format()`.
+
+  `bpa_static_check()` is the decision now, beside the rest of the pool
+  arithmetic, and `test/test_bpa_pool.c` drives all five plus the two fields
+  a legal forward is **completed** with: the public address, and the offset
+  of the port inside the block, which is the bit the port map reserves.
+
+  The refusal that matters most is the last: every block belongs to some
+  subscriber, so taking a port from another one would translate that
+  customer onto a port this box is already sending elsewhere. Watched red -
+  dropping that test accepts it, and the case walks to a second block on the
+  **same public address** rather than assuming the first two subscribers
+  share one.
+
+  `bpa_proto_t` moved from `bpa_session.h` to `bpa_pool.h` with it: comparing
+  a protocol against a second copy of those values, written where a harness
+  could reach it, would be a copy that can disagree with the one the
+  dataplane uses. The ceiling goes 81 → 80.
+
 ### Fixed
 
 ## 0.117.6 - what a pool change would move is measured

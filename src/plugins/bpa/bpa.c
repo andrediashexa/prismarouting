@@ -74,6 +74,14 @@ bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
   return 0;
 }
 
+/* not a unit: it turns bpa_static_check()'s answer into the sentence an
+ * operator reads, which needs VPP's format() and a clib_error_t. WHICH
+ * refusal it is - and the two fields a legal forward is completed with - is
+ * the decision, and test/test_bpa_static.c drives that. Two of the sentences
+ * here name a subscriber this pool's own arithmetic found, which is why the
+ * wording stays where bpa_reverse() and the pool are. lab/forward.sh
+ * produces them on a box, and test/test_prismash_refusals.py reads their
+ * widths. */
 /*
  * Where a forward is refused, and why each refusal exists.
  *
@@ -87,50 +95,33 @@ bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
 static clib_error_t *
 bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
 {
-  ip4_address_t priv, pub;
-  bpa_block_t blk;
+  ip4_address_t priv, pub, o;
+  bpa_static_t checked = { 0 };
+  bpa_block_t blk = { 0 };
   u32 other = 0;
 
   priv.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
 
-  /*
-   * Both modes, and the same arithmetic decides in both.
-   *
-   * In deterministic mode the subscriber's block is the formula's answer and
-   * nothing can move it. In dynamic mode the block moves, so the forward
-   * makes it stop: bpa_static_pin() holds the block whose index IS the
-   * subscriber's dense index - the one bpa_split() would have given it - for
-   * as long as the forward exists.
-   *
-   * Deriving the block from the subscriber instead of letting the operator
-   * name one is what lets every other line of this feature serve both modes
-   * unchanged. bpa_reverse_sub() still recovers the block from (address,
-   * port); the handoff still lands both directions on one worker, because
-   * block_idx == sub_idx takes the same remainder; and
-   * bpa_session_static_open() still finds the block by asking bpa_forward().
-   * An operator-chosen block would have broken all three, and on a box with
-   * workers it would have made most (address, port) pairs unpinnable for a
-   * given subscriber for a reason no operator can be expected to hear.
-   */
-  if (sf->proto != BPA_PROTO_TCP && sf->proto != BPA_PROTO_UDP)
-    return clib_error_return (0, "only tcp and udp can be forwarded");
-
-  if (sf->port_pub == 0 || sf->port_priv == 0)
-    return clib_error_return (0, "port 0 is not a port");
-
-  if (sf->port_pub < p->port_min || sf->port_pub > p->port_max)
-    return clib_error_return (
-      0, "public port %u is outside pool '%v', which translates %u-%u",
-      sf->port_pub, p->name, p->port_min, p->port_max);
-
-  if (bpa_forward (p, sf->ip_priv, &blk))
+  switch (bpa_static_check (p, sf, &blk, &checked))
     {
+    case BPA_STATIC_BAD_PROTO:
+      return clib_error_return (0, "only tcp and udp can be forwarded");
+
+    case BPA_STATIC_BAD_PORT:
+      return clib_error_return (0, "port 0 is not a port");
+
+    case BPA_STATIC_PORT_OUTSIDE:
+      return clib_error_return (
+	0, "public port %u is outside pool '%v', which translates %u-%u",
+	sf->port_pub, p->name, p->port_min, p->port_max);
+
+    case BPA_STATIC_NO_BLOCK:
       /*
-       * A dynamic pool is oversubscribed on purpose - that is what it is for -
-       * so "beyond capacity" is the ordinary case there and not an error the
-       * operator made. It still has no block to pin, and saying so in the
-       * pool's own numbers is the difference between a refusal that can be
-       * acted on and one that reads like a bug.
+       * A dynamic pool is oversubscribed on purpose - that is what it is for
+       * - so "beyond capacity" is the ordinary case there and not an error
+       * the operator made. It still has no block to pin, and saying so in
+       * the pool's own numbers is the difference between a refusal that can
+       * be acted on and one that reads like a bug.
        */
       if (p->mode == BPA_MODE_DYNAMIC
 	  && bpa_set_index_of (&p->inside, sf->ip_priv, &other) == 0)
@@ -143,26 +134,21 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
 	  format_ip4_address, &priv, other, p->name, p->capacity);
 
       return clib_error_return (
-	0, "%U is not a subscriber of pool '%v', or is beyond its capacity of "
-	   "%u",
+	0,
+	"%U is not a subscriber of pool '%v', or is beyond its capacity of "
+	"%u",
 	format_ip4_address, &priv, p->name, p->capacity);
-    }
 
-  /*
-   * The port has to be in this subscriber's own block.
-   *
-   * Anywhere else it is somebody's - the formula assigns every block to some
-   * subscriber - and taking it would translate that customer onto a port this
-   * box is also sending elsewhere. Naming who holds it turns "refused" into
-   * something the operator can act on.
-   */
-  if (sf->port_pub < blk.port_lo || sf->port_pub > blk.port_hi)
-    {
+    case BPA_STATIC_WRONG_BLOCK:
+      /*
+       * Anywhere else the port is somebody's - the formula assigns every
+       * block to some subscriber - and taking it would translate that
+       * customer onto a port this box is also sending elsewhere. Naming who
+       * holds it turns "refused" into something the operator can act on.
+       */
       pub.as_u32 = clib_host_to_net_u32 (blk.ip_pub);
       if (bpa_reverse (p, blk.ip_pub, sf->port_pub, &other) == 0)
 	{
-	  ip4_address_t o;
-
 	  o.as_u32 = clib_host_to_net_u32 (other);
 	  return clib_error_return (
 	    0,
@@ -176,10 +162,12 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
 	0, "public port %u is not in %U's block, which is %U:%u-%u",
 	sf->port_pub, format_ip4_address, &priv, format_ip4_address, &pub,
 	blk.port_lo, blk.port_hi);
+
+    case BPA_STATIC_OK:
+      break;
     }
 
-  sf->ip_pub = blk.ip_pub;
-  sf->port_off = (u16) (sf->port_pub - blk.port_lo);
+  *sf = checked;
   return 0;
 }
 
