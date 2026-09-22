@@ -228,8 +228,13 @@ $(BUILD)/test_bpa_radius: test/test_bpa_radius.c \
 # parse, the search and the unknown marker are standalone because none of them
 # reads a packet, a session or a pool - and because a wrong one is invisible in
 # a log that parses.
+# bpa_identity_table.c IS A PREREQUISITE, and was not: the harness includes
+# it, so editing the file under test left the binary "up to date" and the
+# suite measured the build before the change. Found by mutating three
+# decisions in that file and watching all three stay green.
 $(BUILD)/test_bpa_identity: test/test_bpa_identity.c \
                             src/plugins/bpa/bpa_identity.c \
+                            src/plugins/bpa/bpa_identity_table.c \
                             src/plugins/bpa/bpa_identity.h test/bpa_shim.h \
                             test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)

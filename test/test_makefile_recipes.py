@@ -100,6 +100,50 @@ check(checked >= 5,
       f"only {checked} recipe(s) were expanded, so this file is asserting "
       f"almost nothing. The target regex no longer matches this Makefile")
 
+print()
+print("=== a harness rebuilds when the file it tests changes ===")
+# FOUND BY A MUTATION THAT STAYED GREEN. test/test_bpa_identity.c includes
+# bpa_identity_table.c, and that file was not a prerequisite of the binary -
+# so editing the file under test left the target "up to date" and the suite
+# measured the build from before the change. Three mutations in a row came
+# back green, which is the worst answer a mutation can give: it reads as the
+# code being right.
+#
+# The rule is mechanical, so it is read mechanically: whatever a harness
+# INCLUDES as a .c has to be named in the recipe that builds it.
+import glob                                                  # noqa: E402
+
+rules = dict(re.findall(r"^\$\(BUILD\)/(test_[a-z_0-9]+):"
+                        r"((?:[^\n]*\\\n)*[^\n]*)", MAKEFILE, re.M))
+missing = []
+n_harness = 0
+for f in sorted(glob.glob(os.path.join(REPO, "test", "test_*.c"))):
+    src = open(f, encoding="utf-8").read()
+    incs = re.findall(r'#include "(?:\.\./src/plugins/bpa/)?(bpa_[a-z_0-9]+\.c)"',
+                      src)
+    if not incs:
+        continue
+    n_harness += 1
+    base = os.path.basename(f)
+    tgt = [t for t, b in rules.items() if base in b]
+    if not tgt:
+        missing.append(f"{base}: no recipe in the Makefile names it")
+        continue
+    body = rules[tgt[0]]
+    for inc in incs:
+        if inc not in body:
+            missing.append(f"{base} includes {inc} and the recipe for "
+                           f"{tgt[0]} does not name it")
+check(not missing,
+      "these harnesses do not rebuild when the file they test changes, so a "
+      "change to that file is measured against the binary from before it: "
+      + "; ".join(missing))
+check(n_harness >= 10,
+      f"only {n_harness} harness(es) include a .c, so this check is reading "
+      f"almost nothing")
+if not missing:
+    ok(f"{n_harness} harness(es), each naming the source it includes")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

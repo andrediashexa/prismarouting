@@ -264,6 +264,67 @@ main (void)
      * missing record is worse than an incomplete one. */
   }
 
+  printf ("\n=== what a file's lines mean once they are read ===\n");
+  /*
+   * Three decisions, and all three are about naming the RIGHT subscriber in
+   * a record a court may read. They were inside the loader, which needs a
+   * file and VPP's vectors; they need neither, and nothing drove them.
+   */
+  {
+    bpa_identity_entry_t v[6];
+    bpa_identity_entry_t scratch[6];
+    u64 keys[6];
+    u32 at = 0, n;
+
+    /* A lease file as dhcpd leaves one: the same address renewed, with the
+     * CURRENT subscriber on the later line. Deliberately out of address
+     * order, which is how a lease file comes. */
+    memset (v, 0, sizeof (v));
+    v[0].ip = ip (10, 0, 0, 2); strcpy (v[0].name, "b-old");
+    v[1].ip = ip (10, 0, 0, 1); strcpy (v[1].name, "a");
+    v[2].ip = ip (10, 0, 0, 2); strcpy (v[2].name, "b-now");
+    v[3].ip = ip (10, 0, 0, 3); strcpy (v[3].name, "c");
+
+    bpa_identity_sort_by_address (v, 4, keys, scratch);
+    CHECK (v[0].ip == ip (10, 0, 0, 1) && v[3].ip == ip (10, 0, 0, 3),
+	   "the entries come back in address order");
+    CHECK (strcmp (v[1].name, "b-old") == 0
+	     && strcmp (v[2].name, "b-now") == 0,
+	   "and within one address the file's own order is kept - an "
+	   "unstable sort would keep whichever line it happened to leave "
+	   "last, which for a renewal is the wrong subscriber");
+
+    /* THE LAST LINE WINS, on a lease file. */
+    n = bpa_identity_collapse_leases (v, 4);
+    CHECK (n == 3, "the renewed address is one entry now, not two: %u left", n);
+    CHECK (v[1].ip == ip (10, 0, 0, 2)
+	     && strcmp (v[1].name, "b-now") == 0,
+	   "and it kept '%s', the subscriber on the later line - the "
+	   "earlier one is who used to have the address", v[1].name);
+
+    /* AND IN A STATIC MAP THE SAME SHAPE IS REFUSED. Two lines claiming one
+     * address are two answers to the question a court asks, and picking the
+     * later one would be this box deciding which subscriber to name. */
+    memset (v, 0, sizeof (v));
+    v[0].ip = ip (10, 0, 0, 1); strcpy (v[0].name, "a");
+    v[1].ip = ip (10, 0, 0, 2); strcpy (v[1].name, "b");
+    v[2].ip = ip (10, 0, 0, 2); strcpy (v[2].name, "b-again");
+    v[3].ip = ip (10, 0, 0, 3); strcpy (v[3].name, "c");
+    CHECK (bpa_identity_dup_at (v, 4, &at) == 1 && at == 2,
+	   "a map naming one address twice is refused, at the second of the "
+	   "pair (at=%u)", at);
+    CHECK (bpa_identity_dup_at (v, 2, &at) == 0,
+	   "and a map with no duplicate is not refused");
+    CHECK (bpa_identity_dup_at (v, 0, &at) == 0, "nor an empty one");
+
+    /* A file with one line, and one with none: neither is a duplicate and
+     * neither is a sort. */
+    n = bpa_identity_collapse_leases (v, 1);
+    CHECK (n == 1, "one lease stays one: %u", n);
+    bpa_identity_sort_by_address (v, 1, keys, scratch);
+    CHECK (v[0].ip == ip (10, 0, 0, 1), "and one entry is where it was after the sort");
+  }
+
   printf ("\n%s\n", fail ? "FAILURES" : "ALL TESTS PASSED");
   return fail ? 1 : 0;
 }
