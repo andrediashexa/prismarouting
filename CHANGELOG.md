@@ -79,6 +79,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.115.2 - the loader does not start a second dataplane
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
+### Fixed
+
 * **The configuration loader would have started a second dataplane**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
   `prisma-routing.service` carried `Requires=vpp.service`, and `Requires`
