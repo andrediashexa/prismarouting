@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The arithmetic over a pool's static forwards has a harness**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  Three functions that decide where an operator's forward lands took a
+  `bpa_pool_t`, and with it a VPP vector - so a harness with no vectors could
+  call none of them, and the C ceiling counted them because nothing could.
+  They take `(v, n)` now; the vector stays with the one caller in `bpa.c`
+  that has one, and `test/test_bpa_static.c` drives them over plain arrays.
+  The ceiling goes 88 → 85, this time by being **tested** rather than
+  excused.
+
+  The rule the VTY rests on was held by nothing: a forward that ties on
+  (public port, protocol) goes **after** the ones already there. `prismash`
+  keeps its own copy of a pool's forwards in the order `show bpa config`
+  printed them and diffs both sides of a commit with a stable sort, so a
+  position that put a new tie in front would show the operator a diff on the
+  *next* commit that nobody asked for. Watched red: with `<=` narrowed to
+  `<`, two assertions fail.
+
+  Also held now: one forward stands for a subscriber's block **by identity
+  and not by contents** - a copy of it does not claim the block - and a
+  block is released only when nothing of that subscriber's is left.
+  `lab/forward.sh` passes on the dataplane, and the plugin compiles.
+
 ### Fixed
 
 ## 0.117.3 - twenty-seven functions say why they have no unit

@@ -179,29 +179,6 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
 }
 
 /*
- * Where a forward belongs in a vector ordered by (public port, protocol).
- *
- * Two forwards may now share both, on different public addresses, and a tie
- * goes AFTER the ones already there. The VTY keeps its own copy of a pool's
- * forwards in the order it read them out of "show bpa config" and renders
- * both sides of a commit diff with a stable sort, so a device that inserted a
- * new tie in front of an older one would show a diff on the following commit
- * that nobody asked for. The vector stays ordered by public port, which is
- * the only thing bpa_static_lower() needs.
- */
-static u32
-bpa_static_position (const bpa_pool_t *p, const bpa_static_t *sf)
-{
-  u32 n = vec_len (p->statics);
-  u32 i = bpa_static_lower (p->statics, n, sf->port_pub);
-
-  while (i < n && p->statics[i].port_pub == sf->port_pub
-	 && p->statics[i].proto <= sf->proto)
-    i++;
-  return i;
-}
-
-/*
  * Two forwards that cannot both hold.
  *
  * One public SOCKET serves one subscriber socket, and one subscriber socket
@@ -462,20 +439,6 @@ bpa_static_pin (u32 pool_index, const bpa_pool_t *p, const bpa_static_t *sf,
 			 pool_index);
 }
 
-/* Is this the first forward of its subscriber in the sorted vector? The block
- * is the subscriber's own, so that makes it the one forward that stands for
- * the block. */
-static int
-bpa_static_first_in_block (const bpa_pool_t *p, const bpa_static_t *sf)
-{
-  u32 i;
-
-  vec_foreach_index (i, p->statics)
-    if (p->statics[i].ip_priv == sf->ip_priv)
-      return &p->statics[i] == sf;
-  return 0;
-}
-
 /*
  * Re-announces every pinned block, when the log is switched on.
  *
@@ -524,7 +487,8 @@ bpa_log_pins_replay (void)
 	   * two allocations with no release between them is the hole this is
 	   * closing, not a second copy of the fix. */
 	  if (!d || !bpa_dyn_is_pinned (d, block_idx, nw)
-	      || bpa_static_first_in_block (p, &p->statics[i]) == 0)
+	      || bpa_static_first_in_block (p->statics, vec_len (p->statics),
+					    &p->statics[i]) == 0)
 	    continue;
 
 	  bpa_log_queue_event (vec_elt_at_index (bm->per_thread, ti),
@@ -534,19 +498,6 @@ bpa_log_pins_replay (void)
 	}
     }
   vlib_worker_thread_barrier_release (bm->vlib_main);
-}
-
-/* Is any forward left in the block this one was in? The block is the
- * subscriber's own, so the question is whether the subscriber has another. */
-static int
-bpa_static_last_in_block (const bpa_pool_t *p, const bpa_static_t *sf)
-{
-  u32 i;
-
-  vec_foreach_index (i, p->statics)
-    if (p->statics[i].ip_priv == sf->ip_priv)
-      return 0;
-  return 1;
 }
 
 /*
@@ -684,7 +635,7 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
       vec_delete (p->statics, 1, i);
       /* After the removal, so "is anything still forwarded in this block"
        * is asked of the configuration that is about to be in force. */
-      if (bpa_static_last_in_block (p, &gone))
+      if (bpa_static_last_in_block (p->statics, vec_len (p->statics), &gone))
 	bpa_static_pin (pool_index, p, &gone, 0);
       vlib_worker_thread_barrier_release (bm->vlib_main);
       bpa_audit ("forward-del", p, 0);
@@ -706,7 +657,7 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
   if (e || is_check)
     return e;
 
-  i = bpa_static_position (p, sf);
+  i = bpa_static_position (p->statics, vec_len (p->statics), sf);
   vlib_worker_thread_barrier_sync (bm->vlib_main);
   vec_insert_elts (p->statics, sf, 1, i);
   /* Before the install: the install reserves the forwarded port in the
