@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.117.0 - the box boots on the containers
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
 * **The box boots on the containers**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
   `appliance/install.sh` enables `prisma-routing-containers.service` and its
