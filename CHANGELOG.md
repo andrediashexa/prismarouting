@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The export path says why a harness cannot reach it**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). Twelve
+  functions - the IPFIX writer and its flow-report callbacks, the second
+  transport's connection, the bypass counter and the ICMP error lookup - are
+  each inside VPP's own machinery: the flow-report API and its per-thread
+  buffers, a TCP connection the dataplane owns, a pool read by index, a
+  bihash keyed and sized by VPP.
+
+  Each says which of those it needs and where the behaviour **is** measured:
+  eight labs and three suites between them, and what those read is the record
+  an operator's collector receives - the only place this path can honestly be
+  read. The C ceiling goes 45 → 33.
+
 ### Fixed
 
 ## 0.118.6 - what a lease file's lines mean

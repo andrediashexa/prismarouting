@@ -50,6 +50,11 @@ static ipfix_report_element_t bpa_marker_elements[] = {
   { systemInitTimeMilliseconds, 8 },
 };
 
+/* not a unit: VPP's flow-report machinery calls it with a
+ * flow_report_main_t, an ipfix_exporter_t and a frame to fill - four types
+ * that exist only inside VPP - and what it writes is the IPFIX template's
+ * own fields. lab/ipfix.sh reads the records off a collector and
+ * test/test_ipfix_record.py holds the shape they are written in. */
 static vlib_frame_t *
 bpa_log_data_callback (flow_report_main_t *frm, ipfix_exporter_t *exp,
 		       flow_report_t *fr, vlib_frame_t *f, u32 *to_next,
@@ -63,6 +68,9 @@ bpa_log_data_callback (flow_report_main_t *frm, ipfix_exporter_t *exp,
   return f;
 }
 
+/* not a unit: it registers or removes this plugin's flow report with
+ * VPP's flow_report_main. What switching logging on does to a box is
+ * measured by lab/ipfix.sh, which turns it on and reads the first record. */
 clib_error_t *
 bpa_log_enable (int enable)
 {
@@ -145,6 +153,11 @@ bpa_log_enable (int enable)
  * Queues an event from the dataplane. The queue is per thread, so there is no
  * lock: each worker only ever writes to its own.
  */
+/* not a unit: it appends to a per-worker queue on bpa_main and
+ * takes the subscriber's identity at that instant - the thing #21 is about,
+ * because a lookup at drain time would name whoever holds the address by
+ * then. lab/syslog.sh rewrites every name between the allocation and the
+ * drain and asserts the records carry the first set. */
 void
 bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
 		     u16 port_lo, u16 port_hi, u32 pool_id)
@@ -212,6 +225,9 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
  * pass was lost before the next callback fired, and only the last batch ever
  * reached the collector. Writing and dispatching have to be the same pass.
  */
+/* not a unit: it walks VPP's per-thread flow-report buffers and sends
+ * what is in them. lab/ipfix-outbuf.sh is where a buffer that filled mid
+ * record is read off a collector. */
 static void
 bpa_log_flush (vlib_main_t *vm)
 {
@@ -262,6 +278,9 @@ bpa_log_flush (vlib_main_t *vm)
  * or neither corroborates the other. See
  * https://github.com/andrediashexa/hexarouting/issues/117.
  */
+/* not a unit: it writes one record into the exporter's current buffer
+ * through VPP's flow-report API. What a record CONTAINS is held by
+ * test/test_ipfix_record.py and read off a collector by lab/ipfix.sh. */
 void
 bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
 	      u16 port_hi, u32 pool_id, const char *identity)
@@ -287,6 +306,8 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
  * that one. The wall clock is read once here and handed to both, so the same
  * marker carries the same time on both.
  */
+/* not a unit: it writes the marker record that says where a
+ * restart cut the trail, through the same API. lab/ipfix.sh reads it. */
 void
 bpa_log_marker_emit (vlib_main_t *vm)
 {
@@ -345,6 +366,9 @@ bpa_log_marker_emit (vlib_main_t *vm)
     vm->thread_index, b0);
 }
 
+/* not a unit: it empties every worker's queue into the exporter under
+ * VPP's own clock, which is what the stop-drain calls on the way down.
+ * lab/ipfix-stop.sh measures that drain and lab/drain-slope.sh times it. */
 void
 bpa_log_drain (vlib_main_t *vm)
 {
@@ -444,6 +468,10 @@ bpa_log_drain (vlib_main_t *vm)
   bpa_radius_service ();
 }
 
+/* not a unit: it turns one block event into a record on the
+ * worker that owns the block, through the exporter. The identity it carries
+ * is taken where the block was allocated, not here; lab/ipfix.sh reads the
+ * pair off a collector. */
 void
 bpa_log_block_event (vlib_main_t *vm, u32 thread_index, f64 wall, u8 event,
 		     u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,

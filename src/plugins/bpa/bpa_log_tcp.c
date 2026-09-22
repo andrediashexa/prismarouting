@@ -663,6 +663,11 @@ bpa_log_stream_flush_exit (bpa_log_stream_t *s)
 
 #ifndef BPA_STANDALONE
 
+/* not a unit: it opens or closes a TCP connection to a
+ * collector, and is not compiled under BPA_STANDALONE at all - the guard
+ * below it is what leaves the RECORD WRITER of this file testable, which is
+ * what test/test_bpa_log_tcp.c drives. lab/ipfix-tcp.sh is where a
+ * connection is made to a collector on a box. */
 clib_error_t *
 bpa_log_stream_enable (bpa_log_stream_t *s, ip4_address_t *collector, u16 port, int enable)
 {
@@ -764,6 +769,8 @@ bpa_log_tcp_flush_exit (void)
  * standalone and never see this half - and VPP failed at start with
  * "undefined symbol: bpa_log_tcp_enable". lab/ipfix-tcp.sh is what said so.
  */
+/* not a unit: the one-line door to the above, behind the same
+ * guard and for the same reason. */
 clib_error_t *
 bpa_log_tcp_enable (ip4_address_t *collector, u16 port, int enable)
 {

@@ -99,6 +99,11 @@ typedef enum
  * the packet when the fault is in the box is worse than no counter: it sends
  * whoever reads it looking outward.
  */
+/* not a unit: it looks the embedded flow up in the worker's
+ * bihash - VPP's own hash, keyed and sized by VPP - to find whose session
+ * an ICMP error is about. What an ICMP error CARRIES is
+ * test/test_bpa_icmp.c's, and lab/icmp-tcp.sh sends one to a box and reads
+ * where it landed. */
 static_always_inline int
 bpa_icmp_error_out2in (ip4_header_t *ip, const bpa_icmp_err_t *e,
 		       bpa_per_thread_t *pt, u32 *ip_priv_out, u32 *fib_out)
