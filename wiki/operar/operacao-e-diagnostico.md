@@ -220,28 +220,48 @@ Há mais duas linhas vizinhas, e nenhuma das duas acusa a caixa de nada:
 
 # Serviços e ordem de boot
 
+**Desde a 0.117.0 o dataplane e o roteamento rodam em containers.** A caixa instalada habilita `prisma-routing-containers.service` e desabilita `vpp.service` e `frr.service` — os três não podem rodar juntos, porque disputam os mesmos sockets, as mesmas hugepages e a mesma placa.
+
 ```mermaid
 flowchart LR
-    T["prisma-routing-tune<br/><i>isolcpus, hugepages</i>"] -->|Before| V["vpp.service"]
-    V --> H["prisma-routing.service<br/><i>aplica a config salva</i>"]
-    F["frr.service"] -.->|Wants| H
+    T["prisma-routing-tune<br/><i>isolcpus, hugepages, bind da placa</i>"] -->|Before| C["prisma-routing-containers<br/><i>vpp + frr em containers</i>"]
+    C --> H["prisma-routing.service<br/><i>aplica a config salva</i>"]
     H --> S["prisma-routing-selftest<br/><i>relatório no console</i>"]
+    W["card-watch.timer<br/><i>a cada 30s</i>"] -.->|se o dataplane desistir| C
 ```
 
 | Serviço | Função |
 |---------|--------|
 | `prisma-routing-tune` | tuning de boot (isolcpus, hugepages); roda em **todo** boot, sem sentinela |
-| `vpp.service` | o dataplane |
-| `frr.service` | o roteamento |
+| `prisma-routing-containers` | sobe o dataplane e o roteamento como containers |
+| `prisma-routing-card-watch.timer` | percebe um dataplane que o Docker desistiu de reiniciar e devolve a placa ao kernel |
 | `prisma-routing.service` | aplica a configuração salva (`prismash --load`) |
 | `prisma-routing-selftest` | verifica e reporta no console |
 
+Antes de o compose ver o arquivo, a unit faz três coisas, e cada uma existe porque uma caixa que pulou aquela etapa subiu errada:
+
+
+1. **carrega as imagens** que a mídia trouxe (`/usr/lib/prisma-routing/images.tar.gz`) e escreve a tag encontrada onde o compose a lê — sem isso a caixa pediria uma imagem a um registry, e um appliance não tem rota para nenhum;
+2. **escreve o nó de device da placa** que este boot vinculou, porque qual nó é depende do driver que a caixa conseguiu usar;
+3. depois de subir, **entrega o segmento da API binária ao grupo** `vpp`, que é o que permite uma conta de operador configurar a caixa.
+
 Duas decisões que valem entender:
 
-* **FRR é** `**Wants**`**, não** `**Requires**`**.** Sem roteamento a máquina ainda encaminha pelas rotas estáticas existentes; derrubar o CGNAT junto só ampliaria o estrago.
-* **Não existe** `**ExecStop**`**.** A configuração vive no VPP. Parar o serviço **não** apaga pools de produção — remover um pool é ação do operador, pela VTY.
+* **Nenhuma unit “puxa” um dataplane.** `Requires=` e `Wants=` *iniciam* o que nomeiam: numa caixa em containers isso subiria um segundo dataplane ao lado do que está rodando. O que existe é `After=`, que só ordena.
+* **Não existe** `**ExecStop**` **que apague configuração.** A configuração vive no VPP. Parar o serviço **não** apaga pools de produção — remover um pool é ação do operador, pela VTY.
 
-`prisma-routing.service` espera o VPP **aceitar comandos** antes de aplicar configuração: o systemd considera o `vpp.service` iniciado assim que o processo sobe, mas o socket da CLI e os plugins demoram mais um pouco, e aplicar antes disso falha de forma intermitente.
+### Voltar para as units
+
+Dois comandos, e a caixa continua respondendo pela placa depois deles:
+
+```sh
+systemctl disable --now prisma-routing-containers.service
+systemctl enable --now vpp.service frr.service
+```
+
+Esses dois comandos são percorridos a cada release, numa caixa instalada de verdade, que depois é conferida: ela volta a responder pela placa e volta a aplicar a configuração salva no boot. Um caminho de volta que ninguém percorreu não é um caminho de volta.
+
+`prisma-routing.service` espera o dataplane **aceitar comandos** antes de aplicar configuração: o container é criado antes de o VPP dentro dele estar servindo — e, nas units, o systemd considera o `vpp.service` iniciado assim que o processo sobe. Nos dois casos o socket da CLI e os plugins demoram mais um pouco, e aplicar antes disso falha de forma intermitente.
 
 Essa espera **se explica no console**, que é onde a pessoa está:
 
