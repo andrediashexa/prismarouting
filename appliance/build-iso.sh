@@ -154,7 +154,7 @@ chroot "$ROOT" /bin/sh -c "
     libvppinfra=$VPP_VERSION \
     frr=$FRR_VERSION frr-pythontools=$FRR_VERSION \
     frr-rpki-rtrlib=$FRR_VERSION \
-    docker.io docker-compose
+    docker.io docker-compose apparmor
   apt-get clean
 "
 
@@ -171,6 +171,20 @@ chroot "$ROOT" /bin/sh -c "
 # somebody else's repository is one this project would have to track. Measured
 # on bookworm: docker.io 20.10.24 and docker-compose 1.29.2, and that compose
 # reads appliance/compose.yaml as it ships.
+#
+# AND `apparmor`, WHICH IS NOT OPTIONAL ON THIS KERNEL. Debian's kernel has
+# AppArmor enabled, so docker asks apparmor_parser to load its `docker-
+# default` profile before it starts a container - and with the parser absent
+# the start fails outright:
+#
+#   error: exec: "apparmor_parser": executable file not found in $PATH
+#
+# Measured on an installed box by lab/install-iso.sh's PHASE 6: the unit
+# failed, no container ran, and the only clue was that one line in the
+# journal. The package is Debian's own and 2 MB, and what it buys is a
+# dataplane that runs CONFINED: `docker-default (enforce)`, which the build
+# host has had all along - which is why every compose-check in this
+# repository passed while a real box could not start a container at all.
 #
 # Built here rather than expected: the tarball is a product of this tree's
 # own plugin, so a medium built from a tag carries the images that tag

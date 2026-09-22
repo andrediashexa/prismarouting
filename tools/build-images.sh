@@ -363,6 +363,29 @@ OVR
       bad "the dataplane's API segments are not on this host's /dev/shm, so prismash - which runs on the box and not in a container - would have no binary API and every commit would fail: appliance/compose.yaml needs ipc: host"
     fi
 
+    # AND IT RUNS CONFINED, which is a reading this check did not take and
+    # should have. Docker loads its `docker-default` AppArmor profile before
+    # starting a container on a kernel that has AppArmor enabled - and on a
+    # box WITHOUT apparmor_parser it does not start the container at all:
+    # `exec: "apparmor_parser": executable file not found in $PATH`. That is
+    # what an installed box did (#426), while this check passed on a build
+    # host that has had the package all along. Reading the profile here is
+    # what makes the two boxes comparable.
+    prof=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+           -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" \
+           exec -T vpp cat /proc/self/attr/current 2>/dev/null | tr -d '\0')
+    case "$prof" in
+      *docker-default*) ok "and the dataplane runs confined: $prof" ;;
+      unconfined*)
+        # Not a failure here: a build host with AppArmor disabled is a
+        # legitimate machine and this check must not depend on which one it
+        # is. What it must not do is stay silent about which was measured.
+        echo "  [info] this host runs containers unconfined, so the profile"
+        echo "         the appliance gets was not measured by this run" ;;
+      *)
+        echo "  [info] could not read the container's AppArmor profile" ;;
+    esac
+
     # AND THE KERNEL HAS THE OOM SCORE, read off /proc and not off the
     # compose file. `oom_score_adj` is a key compose 1.29.2 parses under the
     # 3.9 schema; whether it reaches the kernel is a different question, and
