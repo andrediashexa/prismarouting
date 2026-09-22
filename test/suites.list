@@ -116,3 +116,4 @@ sh test/test_announce_commit.sh
 python3 test/test_image_pins.py
 sh test/test_build_images.sh
 sh test/test_vpp_entrypoint.sh
+sh test/test_frr_entrypoint.sh
