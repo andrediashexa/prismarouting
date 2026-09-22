@@ -224,6 +224,62 @@ main (void)
   printf ("  [ ok ] both directions are refused, and neither the protocol "
 	  "nor the public address is confused with the port\n");
 
+  printf ("\n=== which forward the operator meant ===\n");
+  /*
+   * A pool has more than one public address, so the same port can be
+   * forwarded on several of them, to several subscribers. `no forward tcp
+   * 1000` is then a question with more than one answer, and answering it
+   * with the first would end a customer's inbound service because another
+   * customer shares that port's offset.
+   */
+  {
+    const bpa_static_t *first = 0, *second = 0;
+    bpa_static_t v[4];
+
+    memset (v, 0, sizeof (v));
+    /* Three forwards on port 1000: two TCP on different public addresses,
+     * one UDP. The vector is ordered by public port, which is what the
+     * search this walks from depends on. */
+    v[0].ip_priv = 0x0a000001; v[0].ip_pub = 0xcb007110;
+    v[0].port_pub = 1000; v[0].proto = T_TCP;
+    v[1].ip_priv = 0x0a000002; v[1].ip_pub = 0xcb007111;
+    v[1].port_pub = 1000; v[1].proto = T_TCP;
+    v[2].ip_priv = 0x0a000003; v[2].ip_pub = 0xcb007112;
+    v[2].port_pub = 1000; v[2].proto = T_UDP;
+    v[3].ip_priv = 0x0a000004; v[3].ip_pub = 0xcb007110;
+    v[3].port_pub = 2000; v[3].proto = T_TCP;
+
+    /* ONE MATCH is the operator's forward, handed back. */
+    CHECK (bpa_static_on_port (v, 4, 1000, T_UDP, &first, &second) == 1,
+	   "one UDP forward on 1000 was not counted as one");
+    CHECK (first == &v[2] && second == 0,
+	   "the single match was not the UDP row, or a second was named");
+
+    /* TWO IS A REFUSAL, and the caller names both - which is why both come
+     * back and not only the count. */
+    CHECK (bpa_static_on_port (v, 4, 1000, T_TCP, &first, &second) == 2,
+	   "two TCP forwards on one port were not both counted");
+    CHECK (first == &v[0] && second == &v[1],
+	   "the two named are not the two that hold the port");
+
+    /* NONE IS NOT AN ERROR HERE. The caller that has no forward to remove
+     * says so in its own words. */
+    CHECK (bpa_static_on_port (v, 4, 3000, T_TCP, &first, &second) == 0,
+	   "a port nobody forwards was counted");
+    CHECK (first == 0 && second == 0,
+	   "a port nobody forwards named a forward anyway");
+
+    /* AND THE RUN STOPS AT THE PORT. A forward on another port must not be
+     * counted, whatever else it shares - the scan walks one port's run. */
+    CHECK (bpa_static_on_port (v, 4, 2000, T_TCP, &first, &second) == 1,
+	   "the run of port 2000 did not stop at its own rows");
+    CHECK (first == &v[3], "port 2000 named the wrong forward");
+    CHECK (bpa_static_on_port (v, 0, 1000, T_TCP, &first, &second) == 0,
+	   "an empty vector had a forward on 1000");
+  }
+  printf ("  [ ok ] one match is the answer, two are a refusal that can "
+	  "name both\n");
+
   printf ("\n%u check(s)\n", checks);
   if (failures == 0)
     {

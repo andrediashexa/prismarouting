@@ -492,6 +492,12 @@ bpa_log_pins_replay (void)
   vlib_worker_thread_barrier_release (bm->vlib_main);
 }
 
+/* not a unit: it words the refusal, which needs VPP's format() and a
+ * clib_error_t - and the sentence names the first two subscribers, so it
+ * needs them and not only a count. HOW MANY forwards a protocol and a public
+ * port have, and which two to name, is bpa_static_on_port() in bpa_pool.h
+ * and test/test_bpa_static.c drives it. lab/forward.sh produces this refusal
+ * on a box. */
 /*
  * The one forward on (protocol, public port) when the caller did not say which
  * subscriber, or an error naming the ones it could have meant.
@@ -508,23 +514,11 @@ bpa_static_only_on_port (const bpa_pool_t *p, const bpa_static_t *sf,
 			 const bpa_static_t **out)
 {
   const bpa_static_t *first = 0, *second = 0;
-  u32 n = vec_len (p->statics);
-  u32 i = bpa_static_lower (p->statics, n, sf->port_pub);
-  u32 n_match = 0;
   ip4_address_t a;
   clib_error_t *e;
   u8 *who = 0;
-
-  for (; i < n && p->statics[i].port_pub == sf->port_pub; i++)
-    {
-      if (p->statics[i].proto != sf->proto)
-	continue;
-      n_match++;
-      if (!first)
-	first = &p->statics[i];
-      else if (!second)
-	second = &p->statics[i];
-    }
+  u32 n_match = bpa_static_on_port (p->statics, vec_len (p->statics),
+				    sf->port_pub, sf->proto, &first, &second);
 
   if (n_match <= 1)
     {
