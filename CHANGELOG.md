@@ -79,6 +79,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The configuration loader would have started a second dataplane**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `prisma-routing.service` carried `Requires=vpp.service`, and `Requires`
+  **starts** the unit it names. On a box whose dataplane is a container that
+  would have started `vpp.service` - which `Conflicts` with
+  `prisma-routing-containers.service`, so systemd would stop the containers
+  to start it, or refuse, and which of those happens is written nowhere. The
+  box would have had its own configuration loader fighting its dataplane at
+  every boot.
+
+  It is gone. `After=` is kept and now names the containers unit too -
+  ordering starts nothing - and `PartOf=` names both dataplanes, so the
+  loader is restarted with whichever one this box runs; `PartOf` a unit
+  nobody started is inert. Nothing is lost on the unit path: `vpp.service` is
+  enabled on every installed box and is started by its own enablement, and
+  the race that remains is the one `ExecStartPre=wait-for-vpp` has always
+  covered - it waits for a dataplane that **answers**, whichever unit started
+  it.
+
+  `test/test_two_dataplanes_one_shape.sh` now refuses any unit that would
+  `Requires`, `Wants` or `BindsTo` a dataplane, and `lab/install-iso.sh` was
+  run whole against a medium built from this branch - the box loads its
+  configuration at every boot, takes its card and comes back holding it.
+
 ## 0.115.1 - the self-test reads the right dataplane
 
 Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
