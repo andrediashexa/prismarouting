@@ -196,7 +196,14 @@ MARKER = "not a unit:"
 # from the pool's own stride unit rather than from numbers that happened to
 # work.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 72, "shell": 0}
+# 2026-09-22, seventh: 72 to 71. Which forward an operator meant, when they
+# named a protocol and a public port and not a subscriber: a pool has more
+# than one public address, so the same port can be forwarded to several
+# customers, and answering with the first would end one of their inbound
+# service. The count and the two to name are bpa_static_on_port() now; the
+# refusal that names them stays where format() is.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 71, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and

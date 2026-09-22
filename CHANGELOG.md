@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Which forward an operator meant is a count, and it is tested**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). A pool
+  has more than one public address, so the same port can be forwarded to
+  several subscribers - and `no forward tcp 1000` is then a question with
+  more than one answer. Answering it with the first would end a customer's
+  inbound service because another customer shares that port's offset.
+
+  The count, and the two subscribers a refusal names, are
+  `bpa_static_on_port()` in `bpa_pool.h`; the sentence stays where
+  `format()` is. One match is the operator's forward, two are a refusal that
+  can name both, none is not an error here, and the scan stops at the port's
+  own run.
+
+  Watched red - and the first mutation proved nothing and had to be
+  rewritten: dropping the protocol test left `proto` unused, so the build
+  refused it, and a mutation that does not compile is not a measurement. The
+  one that does compare it wrongly refuses two assertions. The ceiling goes
+  72 → 71.
+
 ### Fixed
 
 ## 0.118.2 - the stride and reserve warnings are arithmetic

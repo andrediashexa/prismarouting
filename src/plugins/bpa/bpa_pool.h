@@ -1523,6 +1523,47 @@ bpa_reserve_short_at (const bpa_pool_t *p, u32 nw)
 }
 
 /*
+ * WHICH FORWARD AN OPERATOR MEANT, when they named a protocol and a public
+ * port and not a subscriber.
+ *
+ * A pool has more than one public address, so the same port can be forwarded
+ * on several of them - to several subscribers. Removing "the" forward on that
+ * port is then a question with more than one answer, and answering it with
+ * the first would end a customer's inbound service because another customer
+ * shares the port's offset.
+ *
+ * So this counts them. One match is the operator's forward and is handed
+ * back; more than one is a refusal, and the caller words it with the first
+ * two subscribers named - which is why both are returned rather than only
+ * the count. Zero is not an error here: the caller that has no forward to
+ * remove says so in its own words.
+ *
+ * The scan starts at bpa_static_lower() and stops at the first row with
+ * another public port, so it reads the run of one port and not the vector.
+ */
+static_always_inline u32
+bpa_static_on_port (const bpa_static_t *v, u32 n, u16 port_pub, u8 proto,
+		    const bpa_static_t **first, const bpa_static_t **second)
+{
+  u32 i = bpa_static_lower (v, n, port_pub);
+  u32 n_match = 0;
+
+  *first = 0;
+  *second = 0;
+  for (; i < n && v[i].port_pub == port_pub; i++)
+    {
+      if (v[i].proto != proto)
+	continue;
+      n_match++;
+      if (!*first)
+	*first = &v[i];
+      else if (!*second)
+	*second = &v[i];
+    }
+  return n_match;
+}
+
+/*
  * HOW MANY SUBSCRIBERS A NEW DEFINITION OF THIS POOL WOULD MOVE.
  *
  * The one question an operator needs answered before committing a change to
