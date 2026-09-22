@@ -50,6 +50,34 @@ fi
 VPP_BIN=${VPP_BIN:-/usr/bin/vpp}
 VPP_CONF=${VPP_CONF:-/etc/vpp/startup.conf}
 
+# THE BOX'S OWN vpp GROUP, AND WHY A NUMBER HAS TO CROSS THE BOUNDARY (#426).
+#
+# startup.conf says `unix { ... gid vpp }`, and VPP resolves that name in the
+# container's /etc/group - 999 here. /run/vpp is bind-mounted from the box, so
+# the CLI socket VPP creates in it is group-owned by 999 ON THE BOX, where 999
+# is nobody's group. An operator account is in the box's own `vpp` group and
+# cannot open the socket, so `configure` answers:
+#
+#   error: the dataplane is not answering
+#     so there is nothing to build a candidate from
+#
+# on a box whose dataplane is up and answering root perfectly. Measured on an
+# installed box booted with the containers as the default; root worked
+# throughout, which is what made it invisible until an operator account tried.
+#
+# prisma-routing-containers.service reads the box's gid and passes it in -
+# the host is the only place that knows it, and passing the NUMBER rather
+# than trusting two package installs to agree is the whole point.
+if [ -n "${PRISMA_VPP_GID:-}" ]; then
+  _have=$(getent group vpp 2>/dev/null | cut -d: -f3)
+  if [ "$PRISMA_VPP_GID" != "$_have" ]; then
+    groupmod -g "$PRISMA_VPP_GID" -o vpp 2>/dev/null \
+      || echo "vpp-entrypoint: could not move group vpp to $PRISMA_VPP_GID" >&2
+  fi
+  # And the directory the socket goes in, which VPP does not chgrp itself.
+  [ -d /run/vpp ] && chgrp vpp /run/vpp 2>/dev/null
+fi
+
 # THE SIGNAL HAS TO REACH A PROCESS THAT IS NOT THIS ONE. `exec vpp` would
 # make VPP its own PID 1 and there would be nowhere to hang the drain; so VPP
 # runs in the background and this shell waits. A shell waiting on a child

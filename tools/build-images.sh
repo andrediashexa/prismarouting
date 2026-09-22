@@ -243,14 +243,20 @@ if [ "$TARGET" = compose-check ]; then
   # records. The EAL still initialises, still wants its hugepages and still
   # calls set_mempolicy, which is the part being measured here.
   #
+  # `gid vpp` IN BOTH STANZAS, which is what appliance/etc/vpp-base.conf
+  # writes and what this check left at `gid 0` for its whole life. It is the
+  # difference between measuring the product and measuring the check: with
+  # gid 0 the CLI socket comes out root's on any box, so the one thing an
+  # operator account needs from that socket was never being read (#426).
+  #
   # The plugins stanza is the one appliance/prisma-routing-tune writes on a
   # tuned box - default, bpa, linux_cp, linux_nl - and not a shorter list
   # chosen here. With `plugin default { disable }` even `create tap` is not a
   # command this VPP has, so a check written against that list would be
   # measuring a dataplane the product never runs.
   cat > "$CDIR/vpp/startup.conf" <<CONF
-unix { nodaemon cli-listen /run/vpp/cli.sock }
-api-segment { gid 0 }
+unix { nodaemon cli-listen /run/vpp/cli.sock gid vpp }
+api-segment { gid vpp }
 cpu { main-core 1 corelist-workers 2-3 }
 dpdk { no-pci }
 plugins {
@@ -300,6 +306,13 @@ OVR
 
   echo "==> the stack, started by compose"
   export PRISMA_VERSION=$VERSION
+  # THE NUMBER THE BOX WOULD PASS IN. On an appliance it is the gid of the
+  # box's own `vpp` group; here it is this user's, which is a gid this
+  # machine really has - what is being measured is that the CLI socket comes
+  # out owned by the number that was passed, and not by the image's 999.
+  # Without it an operator account on the box is told "the dataplane is not
+  # answering" by a dataplane that answers root (#426).
+  export PRISMA_VPP_GID=$(id -g)
   if ! docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
        -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" up -d >/dev/null 2>&1; then
     bad "compose could not start the stack"
@@ -390,6 +403,16 @@ OVR
       ok "and bgpd is running in the control plane, as /etc/frr/daemons asks"
     else
       bad "bgpd is not running in the control-plane container although /etc/frr/daemons enables it: prismash --load refuses a saved configuration that names 'router bgp', so a box booting on this stack comes up with no BGP and no CGNAT at all"
+    fi
+
+    # AND THE CLI SOCKET CARRIES THAT GROUP, read off the bind mount from
+    # outside the container - which is where the box's operator accounts
+    # look at it from.
+    sockgid=$(stat -c %g "$CDIR/run/cli.sock" 2>/dev/null)
+    if [ "$sockgid" = "$PRISMA_VPP_GID" ]; then
+      ok "and the dataplane's CLI socket is group $sockgid, the one it was given"
+    else
+      bad "the CLI socket is group '${sockgid:-<not there>}' and the stack was given $PRISMA_VPP_GID: on a box that number is the operator accounts' own group, and a socket carrying the image's instead tells every one of them the dataplane is not answering"
     fi
 
     # AND IT RUNS CONFINED, which is a reading this check did not take and
