@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Twenty-seven functions behind the VPP boundary say so**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `TESTING.md`'s rule is *every function has a unit test, **or says at its
+  definition why it cannot be***, and the C ceiling goes from 115 to 88.
+  Both groups are whole files rather than a pick:
+
+  * the twelve in `bpa_audit.c` live under `#ifndef BPA_STANDALONE` - the
+    guard that file's header explains, which compiles exactly one function
+    standalone: the hex reader that decides whether a line of the trail
+    carries a digest at all;
+  * the fifteen in `bpa_api.c` are the binary API, dispatched from a message
+    on the shared-memory segment and replying through `REPLY_MACRO`.
+
+  Neither exists outside a running VPP, and each excusal names where the
+  behaviour **is** measured: `lab/audit.sh` drives the trail on a box,
+  `lab/vty.sh` drives what the VTY sends through the API, and
+  `test/test_api_widths.py` reads the widths of the message fields off the
+  `.api` file.
+
 ### Fixed
 
 ## 0.117.2 - the wiki says what the box runs
