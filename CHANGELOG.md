@@ -77,7 +77,76 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A booted box runs the container stack, and forwards on it**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `lab/install-iso.sh` grew a sixth phase: the installed disk is switched to
+  the containers with the four commands an operator would type, rebooted,
+  and read. The reachability probe comes **first**, before anything is typed,
+  and on that box it *is* the forwarding measurement - PHASE 4 gave the card
+  to the dataplane, so the address the probe connects to lives on a
+  `linux_cp` pair and every packet of that connection crosses VPP.
+
+  It now passes: both containers running, the card in the dataplane, the
+  host's own `vppctl` reading it, `vpp.service` not running beside it, the
+  saved configuration applied at boot, and the self-test naming the
+  container. It took six runs to get there and each one found something.
+
 ### Fixed
+
+* **The box asked a registry for images it was carrying**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `compose.yaml` names `prisma-vpp:${PRISMA_VERSION:-latest}`,
+  `tools/build-images.sh` saves them tagged with the `VERSION` file, and
+  nothing set `PRISMA_VERSION` - so an installed box asked for
+  `prisma-vpp:latest` and went looking at a registry an appliance has no
+  route to. `appliance/load-the-images` loads the tarball, reads the tag off
+  the images **this box has**, and writes `PRISMA_VERSION` where the unit
+  reads it. A box with no image at all is refused there, with the reason,
+  rather than left to compose.
+
+* **Docker could not start a container at all**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  Debian's kernel has AppArmor enabled, so docker asks `apparmor_parser` to
+  load its `docker-default` profile before starting anything. The medium did
+  not carry the parser: `exec: "apparmor_parser": executable file not found
+  in $PATH`, the unit failed, and nothing ran. The medium carries `apparmor`
+  now, and `compose-check` **reads the profile** it gets - every check in
+  this repository had passed while this was true, because the build host has
+  had the package all along.
+
+* **The control-plane container ran no routing daemons**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)). Two
+  things at once. The image ran `frrinit.sh start` as its command, and that
+  script starts `watchfrr` and returns - a PID 1 that returns is a container
+  that is gone. And `/etc/frr` and `/var/run/frr` are bind mounts, which
+  carry **numeric** ids: the `frr` user inside the image is not the `frr`
+  user on the box, so `zebra` could not write its pid file. `watchfrr` stayed
+  up with nothing under it, the container read as *running*, and
+  `prismash --load` refused the box's whole saved configuration with
+  `router bgp 65000: bgpd is not running` - no BGP, no CGNAT, nothing
+  reported wrong.
+
+  `appliance/frr-entrypoint` is PID 1 now: it moves the container's `frr`
+  user to the ids `/etc/frr` carries - the box's own statement about which id
+  owns its routing configuration - starts FRR the way FRR starts itself,
+  waits on `watchfrr`, and stops the daemons properly on `SIGTERM`.
+
+* **The API segment's wait started at the wrong moment**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `share-the-api-segment` waited ten seconds, which is what `vpp.service`'s
+  drop-in waited - measured from when VPP's own process started. The
+  containers unit runs it after `docker-compose up -d` **returns**, which is
+  when the container has been created and not when the dataplane is serving.
+  On a real box ten was not enough and the binary API stayed root-only. The
+  wait is a parameter now; the containers unit passes sixty seconds.
+
+* **The configuration loader pulled in a host FRR beside the container's**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `prisma-routing.service` carried `Wants=frr.service`, and `Wants` **starts**
+  what it names: on a container box the host FRR came up beside the
+  container's, both holding `/etc/frr` and `/var/run/frr`. `After=` is all
+  that was ever needed, and the parity suite refuses a puller of either
+  dataplane now.
 
 ## 0.115.2 - the loader does not start a second dataplane
 
