@@ -227,6 +227,57 @@ STATIC_DAEMONS = ("mgmtd", "staticd")
 ALWAYS_STARTED = ("zebra", "mgmtd", "staticd")
 
 
+#: The unit that runs this box's dataplane, which is not the same on every
+#: box since 0.117.0: an installed appliance runs prisma-routing-containers
+#: and an operator can put it back on vpp.service, and both are ordinary
+#: states. Sending somebody to `systemctl status vpp` on a container box is
+#: sending them to a unit nobody started - which says "inactive (dead)" and
+#: reads like the answer. appliance/selftest took the same reading for the
+#: same reason (#426); this is the VTY's half, and the screen that showed it
+#: was `show version` on a box whose dataplane had stopped.
+DATAPLANE_UNIT_CONTAINERS = "prisma-routing-containers"
+DATAPLANE_UNIT_VPP = "vpp"
+
+
+def dataplane_unit():
+    """
+    Which unit an operator should look at for this box's dataplane.
+
+    Asked of systemd rather than read from a file: the two units conflict, so
+    exactly one of them can be running, and `is-active` is the whole of the
+    decision. Any failure to ask - no systemd, no permission, a box that is
+    neither - answers vpp.service, which is what every box ran before 0.117.0
+    and what a source install still runs.
+    """
+    try:
+        return (DATAPLANE_UNIT_CONTAINERS
+                if subprocess.run(
+                    ["systemctl", "is-active", "--quiet",
+                     f"{DATAPLANE_UNIT_CONTAINERS}.service"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, check=False).returncode == 0
+                else DATAPLANE_UNIT_VPP)
+    except OSError:
+        return DATAPLANE_UNIT_VPP
+
+
+def dataplane_journal_advice():
+    """
+    Where the reason a silent dataplane is silent is written, on this box.
+
+    On the container path the unit's own journal carries compose's words and
+    not the dataplane's: what VPP said is in the container's log, so both are
+    named. One sentence, because an operator reading it has a box that is not
+    forwarding.
+    """
+    unit = dataplane_unit()
+    if unit == DATAPLANE_UNIT_CONTAINERS:
+        return ("'systemctl status prisma-routing-containers' and "
+                "'docker logs prisma-routing_vpp_1' say why the dataplane "
+                "is silent")
+    return "'systemctl status vpp' and its journal say why the dataplane is silent"
+
+
 def enable_daemon_advice(need):
     """How to get `need` running, which depends on whether it is optional."""
     if need in ALWAYS_STARTED:
@@ -5741,9 +5792,10 @@ class Shell:
                     "build does not have.")
         print(f"    the dataplane is running {build}")
         print_prose("'show version' prints that beside this box's own build. "
-                    "'systemctl restart vpp', or a reboot, makes the new "
-                    "dataplane answer instead - and either one ends every "
-                    "session and every port block this box is carrying.")
+                    f"'systemctl restart {dataplane_unit()}', or a reboot, "
+                    "makes the new dataplane answer instead - and either one "
+                    "ends every session and every port block this box is "
+                    "carrying.")
 
     def say_finding(self, mark, stmt, why):
         """
@@ -14820,9 +14872,9 @@ class Shell:
             print("  plugin:    the dataplane is not answering, so its "
                   "build is not known")
             print_prose("this box is not forwarding at all rather than "
-                        "forwarding with an old build: 'systemctl status "
-                        "vpp' and its journal say why the dataplane is "
-                        "silent", indent=self.VERSION_INDENT)
+                        "forwarding with an old build: "
+                        + dataplane_journal_advice(),
+                        indent=self.VERSION_INDENT)
             return
 
         if not build:
@@ -14837,8 +14889,9 @@ class Shell:
             # question, and it is the same door show_daemons opens for FRR.
             print_prose("VPP is up and did not load bpa_plugin.so, so this "
                         "box forwards and translates nothing: 'systemctl "
-                        "status vpp' and its journal say why the plugin was "
-                        "left out", indent=self.VERSION_INDENT)
+                        f"status {dataplane_unit()}' and its journal say why "
+                        "the plugin was left out",
+                        indent=self.VERSION_INDENT)
             return
 
         print(f"  plugin:    {build}")
@@ -14889,9 +14942,9 @@ class Shell:
                     "last boot, and it is not the Prisma Routing build above. "
                     "An upgrade replaces bpa_plugin.so on disk and does not "
                     "restart the dataplane, so until this box is rebooted, "
-                    "or 'systemctl restart vpp' is run, it goes on "
-                    "translating with the old one - and both of those end "
-                    "every session it is carrying.",
+                    f"or 'systemctl restart {dataplane_unit()}' is run, it "
+                    "goes on translating with the old one - and both of those "
+                    "end every session it is carrying.",
                     indent=self.VERSION_INDENT)
 
     def show_daemons(self):
