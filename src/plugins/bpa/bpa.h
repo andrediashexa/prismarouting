@@ -359,11 +359,11 @@ void bpa_audit_interface (const char *op, u8 *ifname, int is_inside);
 clib_error_t *bpa_pool_validate (bpa_pool_t *cfg);
 /*
  * How many of a running pool's subscribers a proposed definition would move,
- * with up to `max_examples` of their addresses. Both pools MUST be through
+ * with up to `max_examples` of their addresses, is bpa_pool_remap_count() in
+ * bpa_pool.h - it is pool arithmetic and nothing else, so it lives with the
+ * arithmetic and test/test_bpa_pool.c drives it. Both pools MUST be through
  * bpa_pool_init().
  */
-u32 bpa_pool_remap_count (const bpa_pool_t *now, const bpa_pool_t *cfg,
-			  u32 *n_total, u32 *example, u32 max_examples);
 /*
  * One static port forward, added to or removed from a pool that already
  * exists. `is_check` validates and changes nothing.

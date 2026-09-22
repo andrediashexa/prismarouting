@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **How many subscribers a change would move is measured now**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `bpa_pool_remap_count()` answers the one question an operator has before
+  committing a change to a pool that is carrying traffic. This is
+  deterministic CGNAT: a subscriber's public address and port block are a
+  **function** of the pool's definition, so a definition that changes moves
+  some of them - every session they hold dropped, and every log line written
+  before the change pointing at an address that is now somebody else's.
+
+  It lived in `bpa.c` and needed nothing but two pools, which is why nothing
+  drove it. It is in `bpa_pool.h` with the rest of the arithmetic and
+  `test/test_bpa_pool.c` drives it: an unchanged definition moves nobody,
+  doubling the public set moves 1020 of 1024, and the examples it hands back
+  are addresses that really moved - a warning naming one that did not would
+  send an operator to the wrong subscriber.
+
+  The rule nothing held: **an address the new definition does not serve at
+  all has moved**, as surely as one that moved elsewhere. No mapping is the
+  same outage from the subscriber's side and a worse one from the operator's,
+  because nothing will log it. Watched red with exactly that rule inverted -
+  only the narrowing case tells the two apart. The ceiling goes 82 → 81.
+
 ### Fixed
 
 ## 0.117.5 - the clash between two forwards is a decision
