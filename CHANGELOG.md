@@ -79,6 +79,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.118.0 - the default follows the images
+
+Issues: [#427](https://github.com/andrediashexa/hexarouting/issues/427).
+
+### Added
+
+### Fixed
+
 * **An upgrade moved a box to a dataplane it cannot start**
   ([#427](https://github.com/andrediashexa/hexarouting/issues/427)). Found on
   a maintainer's box running 0.117.0: it routed and did not forward, and 120

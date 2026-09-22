@@ -2741,6 +2741,15 @@ roles on a real account, a pool committed, the configuration read back, the
 card handed over - now runs against a box whose dataplane is a container.
 The way back is two commands and the same lab drives them.
 
+**And the first thing an operator found that no lab could**
+([#427](https://github.com/andrediashexa/hexarouting/issues/427)): the
+upgrade artifact carries no images, so a box upgraded from before 0.113.0
+was moved to a dataplane it had no image for. Every lab installs from a
+medium of the release under test - so do the gate's install and upgrade
+steps - and the images are therefore always there and always match. The
+default follows the images since 0.118.0; whether the artifact should carry
+them is a decision with a number on it, about 5 MB against about 120 MB.
+
 What it cost to get there is the part worth reading: nine releases, and six
 runs of that lab before it passed once. The two defects the flip itself
 found were both invisible to every check in this repository - an operator
