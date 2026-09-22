@@ -79,6 +79,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **An upgrade moved a box to a dataplane it cannot start**
+  ([#427](https://github.com/andrediashexa/hexarouting/issues/427)). Found on
+  a maintainer's box running 0.117.0: it routed and did not forward, and 120
+  seconds into the boot the kernel renamed its card back - the card watcher,
+  handing it over because Docker had given up on a dataplane container that
+  could not start.
+
+  **The upgrade artifact carries no container images.** They ride the
+  squashfs, so a box installed from a 0.113.0-or-later medium has them and a
+  box upgraded from anything older has none. 0.117.0's installer enabled the
+  container stack and disabled `vpp.service` and `frr.service` whatever it
+  found, so an upgraded box was moved to a dataplane it had no image for.
+
+  The default follows the images now: a box that has
+  `/usr/lib/prisma-routing/images.tar.gz` runs the containers, a box that
+  does not keeps the units and is **told** which dataplane it is on and what
+  would move it. An upgrade that quietly did nothing is indistinguishable
+  from one that worked.
+
+  No lab could have caught it - every lab installs from a medium of the
+  release under test, and so does the gate's upgrade step, so the images are
+  always there and always match. `test/test_install_containers.sh` drives the
+  decision and holds the four places the installer acts on it.
+
 ## 0.117.8 - the VTY names the unit this box runs
 
 Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).

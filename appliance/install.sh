@@ -568,6 +568,35 @@ for d in architecture routing logging; do
   install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/prisma-routing/$d.md"
 done
 
+# WILL THIS BOX HAVE A DATAPLANE TO RUN? (#426)
+#
+# THE UPGRADE ARTIFACT CARRIES NO IMAGES. They ride the squashfs, so a box
+# INSTALLED from a medium has them and a box UPGRADED from an older release
+# has whatever its own medium carried - which for anything before 0.113.0 is
+# nothing at all. Enabling the container stack there hands the box a
+# dataplane it cannot start: the unit fails, the card is given back by the
+# watcher two minutes later, and what an operator sees is a box that routes
+# and does not forward.
+#
+# That is not hypothetical. It is what a maintainer's box did on 0.117.0,
+# and the lab could not see it because a lab always installs from a medium
+# that carries them.
+#
+# So the default follows the images: a box that has them runs the containers,
+# a box that does not keeps vpp.service and frr.service and is TOLD why. It
+# is the same rule the rest of this file follows - the box is left in a state
+# it can actually boot into - and it costs an upgraded box nothing it had.
+container_default() {  # <root> - does this root have images to run?
+  [ -f "${1}/usr/lib/prisma-routing/images.tar.gz" ]
+}
+
+IMAGES_TARBALL=$DESTDIR/usr/lib/prisma-routing/images.tar.gz
+if container_default "$DESTDIR"; then
+  CONTAINER_DEFAULT=1
+else
+  CONTAINER_DEFAULT=0
+fi
+
 # In a chroot or container there is no systemd running; installing is still
 # valid, only enabling services is not. That is the normal case when the ISO
 # is being assembled.
@@ -578,30 +607,50 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   systemctl daemon-reload
   systemctl enable prisma-routing-tune.service prisma-routing.service \
     prisma-routing-selftest.service prisma-routing-installer.service \
-    prisma-routing-confirm.timer \
-    prisma-routing-containers.service prisma-routing-card-watch.timer
-  # AND THE TWO UNITS THE CONTAINERS REPLACE (#426). They are enabled by
-  # their own Debian packages, and prisma-routing-containers.service
-  # Conflicts with both - so a box with all three enabled asks systemd to
-  # decide at every boot, and nothing in this product says which wins.
-  # Disabled and not masked: an operator who wants the units back types
-  # `systemctl enable --now vpp.service frr.service` and gets them.
-  systemctl disable vpp.service frr.service >/dev/null 2>&1 || true
+    prisma-routing-confirm.timer
+  if [ "$CONTAINER_DEFAULT" = 1 ]; then
+    systemctl enable prisma-routing-containers.service \
+      prisma-routing-card-watch.timer
+    # AND THE TWO UNITS THE CONTAINERS REPLACE (#426). They are enabled by
+    # their own Debian packages, and prisma-routing-containers.service
+    # Conflicts with both - so a box with all three enabled asks systemd to
+    # decide at every boot, and nothing in this product says which wins.
+    # Disabled and not masked: an operator who wants the units back types
+    # `systemctl enable --now vpp.service frr.service` and gets them.
+    systemctl disable vpp.service frr.service >/dev/null 2>&1 || true
+  else
+    say "no container images on this box, so it keeps vpp.service and frr.service"
+    say "  the file a medium carries and an upgrade does not:"
+    say "  $IMAGES_TARBALL"
+    say "  This box goes on running the dataplane and the routing daemons as"
+    say "  systemd units, which is what it was doing before this upgrade."
+    say "  To move it to the containers, install from a medium of this"
+    say "  release - or put that file there and enable the unit by hand."
+  fi
 else
   LIVE_BOX=0
   # offline enablement: creates the link systemctl enable would create
   install -d -m 0755 "$DESTDIR/etc/systemd/system/multi-user.target.wants"
   for u in prisma-routing-tune.service prisma-routing.service \
-           prisma-routing-selftest.service prisma-routing-installer.service \
-           prisma-routing-containers.service; do
+           prisma-routing-selftest.service prisma-routing-installer.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done
-  # AND THE TWO THE CONTAINERS REPLACE, unlinked from what enabled them.
-  # Offline there is no systemctl to ask, so the links Debian's own package
-  # made are removed by name - `systemctl disable` would do exactly this.
-  rm -f "$DESTDIR/etc/systemd/system/multi-user.target.wants/vpp.service" \
-        "$DESTDIR/etc/systemd/system/multi-user.target.wants/frr.service"
+  if [ "$CONTAINER_DEFAULT" = 1 ]; then
+    ln -sf "/lib/systemd/system/prisma-routing-containers.service" \
+      "$DESTDIR/etc/systemd/system/multi-user.target.wants/prisma-routing-containers.service"
+  else
+    say "no container images in this root, so it keeps the units"
+    rm -f "$DESTDIR/etc/systemd/system/multi-user.target.wants/prisma-routing-containers.service"
+  fi
+  # AND THE TWO THE CONTAINERS REPLACE, unlinked from what enabled them -
+  # but only on a root that HAS the images. Offline there is no systemctl to
+  # ask, so the links Debian's own package made are removed by name;
+  # `systemctl disable` would do exactly this.
+  if [ "$CONTAINER_DEFAULT" = 1 ]; then
+    rm -f "$DESTDIR/etc/systemd/system/multi-user.target.wants/vpp.service" \
+          "$DESTDIR/etc/systemd/system/multi-user.target.wants/frr.service"
+  fi
   # The timer is wanted by timers.target and not by multi-user.target, so it
   # needs its own directory. Linking it into the wrong one installs a timer
   # that exists, parses, and never elapses - and the feature it enforces is
@@ -612,8 +661,12 @@ else
   # The card watcher's timer, with the unit it belongs to: on a box running
   # the containers, nothing else notices a dataplane that Docker gave up on,
   # and the card stays bound to DPDK with no interface at all (#379).
-  ln -sf "/lib/systemd/system/prisma-routing-card-watch.timer" \
-    "$DESTDIR/etc/systemd/system/timers.target.wants/prisma-routing-card-watch.timer"
+  if [ "$CONTAINER_DEFAULT" = 1 ]; then
+    ln -sf "/lib/systemd/system/prisma-routing-card-watch.timer" \
+      "$DESTDIR/etc/systemd/system/timers.target.wants/prisma-routing-card-watch.timer"
+  else
+    rm -f "$DESTDIR/etc/systemd/system/timers.target.wants/prisma-routing-card-watch.timer"
+  fi
   say "installed into ${DESTDIR:-/} (services enabled offline)"
 fi
 
