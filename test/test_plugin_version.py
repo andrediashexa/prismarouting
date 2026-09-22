@@ -707,6 +707,61 @@ check(not _wide,
       f"columns", str(_wide))
 
 
+print()
+print("=== which unit an operator is sent to, on this box (#426) ===")
+# THE SCREEN THIS COMES FROM was `show version` on a maintainer's box whose
+# dataplane had stopped: it said `'systemctl status vpp' and its journal say
+# why`, and that box runs the containers - vpp.service is a unit nobody
+# started, which answers "inactive (dead)" and reads like the answer.
+#
+# The stub replaces subprocess.run for the one call the resolver makes,
+# because what is being measured is the decision and not systemd.
+_real_run = prismash.subprocess.run
+
+
+class _Rc:
+    def __init__(self, rc):
+        self.returncode = rc
+
+
+def _run_as(rc, raises=False):
+    def _stub(argv, *a, **kw):
+        if argv[:2] == ["systemctl", "is-active"]:
+            if raises:
+                raise OSError("no systemctl here")
+            return _Rc(rc)
+        return _real_run(argv, *a, **kw)
+    return _stub
+
+
+try:
+    prismash.subprocess.run = _run_as(0)
+    check(prismash.dataplane_unit() == "prisma-routing-containers",
+          "a box whose container stack is active is sent to that unit")
+    _adv = prismash.dataplane_journal_advice()
+    check("prisma-routing-containers" in _adv and "vpp'" not in _adv,
+          "and the advice names it rather than vpp.service", _adv)
+    check("docker logs prisma-routing_vpp_1" in _adv,
+          "and names the container's log, where the dataplane's own words "
+          "are - the unit's journal carries compose's", _adv)
+
+    prismash.subprocess.run = _run_as(3)
+    check(prismash.dataplane_unit() == "vpp",
+          "a box on the units is still sent to vpp.service")
+    check("systemctl status vpp" in prismash.dataplane_journal_advice(),
+          "and its advice is the one every box had before 0.117.0")
+
+    # A BOX THAT CANNOT BE ASKED answers vpp.service: no systemd, no
+    # permission, a container of our own. That is what every box ran before
+    # the default moved and what a source install still runs, so it is the
+    # answer that is right more often when nothing is known.
+    prismash.subprocess.run = _run_as(0, raises=True)
+    check(prismash.dataplane_unit() == "vpp",
+          "a box that cannot be asked falls back to vpp.service")
+finally:
+    prismash.subprocess.run = _real_run
+
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

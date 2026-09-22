@@ -79,6 +79,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The VTY sent an operator to a unit their box does not run**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)). On a box
+  whose dataplane had stopped, `show version` said *'systemctl status vpp'
+  and its journal say why the dataplane is silent* - and that box runs the
+  containers, so `vpp.service` is a unit nobody started. It answers
+  *inactive (dead)*, which reads like the answer and is not one.
+
+  Found on a maintainer's box, from a screenshot of exactly that screen. It
+  is the same reading `appliance/selftest` was given in 0.115.1 and the VTY
+  was not: four messages now name the unit **this box** runs, asked of
+  systemd because the two units conflict and only one can be active. On the
+  container path the advice also names `docker logs prisma-routing_vpp_1`,
+  because the unit's journal carries compose's words and the dataplane's own
+  are in the container's log. A box that cannot be asked answers
+  `vpp.service`, which is what every box ran before 0.117.0 and what a
+  source install still runs.
+
 ## 0.117.7 - whether a forward can be made is a decision
 
 Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
