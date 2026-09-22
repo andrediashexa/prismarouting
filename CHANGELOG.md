@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.7 - the export path says why
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The export path says why a harness cannot reach it**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). Twelve
   functions - the IPFIX writer and its flow-report callbacks, the second
