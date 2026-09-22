@@ -213,7 +213,14 @@ MARKER = "not a unit:"
 # tested. Every file and function named in those reasons was checked to
 # exist; the batch before this one cited two that did not.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 46, "shell": 0}
+# 2026-09-22, ninth: 46 to 45, and this one was already promised. bpa_cli.c's
+# header says the arithmetic in that file is deliberately NOT excused because
+# it waits for a harness, and it named bpa_top_cmp. That function needed
+# nothing but two rows, so it moved to bpa_top.h and test/test_bpa_top.c
+# drives the order `show bpa top` reads its rows in - the screen an operator
+# reads the first lines of and nothing else.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 45, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and
