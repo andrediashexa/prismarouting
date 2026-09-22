@@ -232,6 +232,13 @@ bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
  * by the block sizing and address sets the operator is about to commit, not by
  * the ones currently running.
  */
+/* not a unit: it walks a VPP vector of forwards, building a
+ * second one as it goes so each is checked against the ones before it -
+ * vec_add1 and the pool's own `statics` pointer, neither of which exists
+ * outside VPP. WHAT it checks with is tested: bpa_static_check() for whether
+ * a forward can be made and bpa_static_clash() for whether two can both
+ * hold, both in bpa_pool.h and driven by test/test_bpa_pool.c and
+ * test/test_bpa_static.c. */
 static clib_error_t *
 bpa_statics_validate (bpa_pool_t *p, bpa_static_t *in)
 {
@@ -289,6 +296,10 @@ bpa_statics_validate (bpa_pool_t *p, bpa_static_t *in)
  * block cannot move in the first place, or an address the pool's arithmetic
  * does not reach.
  */
+/* not a unit: it asks bpa_main which worker owns a subscriber's
+ * block, through bpa_sub_thread() and bpa_worker_id(), neither of which
+ * has meaning outside a running VPP with workers. lab/dynamic-workers.sh
+ * drives a pinned forward on a box with several. */
 static int
 bpa_static_pin_site (const bpa_pool_t *p, const bpa_static_t *sf, u32 *ti,
 		     u32 *block_idx, u32 *w, u32 *nw, bpa_block_t *blk)
@@ -305,6 +316,9 @@ bpa_static_pin_site (const bpa_pool_t *p, const bpa_static_t *sf, u32 *ti,
 }
 
 /* The allocator that owns a pool's blocks on one thread, or 0. */
+/* not a unit: it reaches into bpa_main's per-thread state for one
+ * worker's dynamic allocator. The allocator itself is bpa_dyn.c and
+ * test/test_bpa_dyn.c drives it. */
 static bpa_dyn_t *
 bpa_static_dyn (u32 pool_index, u32 ti)
 {
@@ -334,6 +348,9 @@ bpa_static_dyn (u32 pool_index, u32 ti)
  * pool's blocks with the pool, so at the instant it is applied nobody holds
  * anything.
  */
+/* not a unit: it asks that allocator who is holding the block a
+ * forward would pin, which needs the per-worker state above. The refusal it
+ * words is produced on a box by lab/dynamic.sh. */
 static clib_error_t *
 bpa_static_holder (u32 pool_index, const bpa_pool_t *p, const bpa_static_t *sf)
 {
@@ -384,6 +401,9 @@ bpa_static_holder (u32 pool_index, const bpa_pool_t *p, const bpa_static_t *sf)
  * between them is precisely the hole that makes a retention log answer a court
  * order wrongly.
  */
+/* not a unit: it takes the worker barrier and pins or releases a block
+ * in one worker's allocator. bpa_dyn_pin() and bpa_dyn_unpin() are the
+ * arithmetic and test/test_bpa_dyn.c drives them. */
 static void
 bpa_static_pin (u32 pool_index, const bpa_pool_t *p, const bpa_static_t *sf,
 		int is_add)
@@ -451,6 +471,9 @@ bpa_static_pin (u32 pool_index, const bpa_pool_t *p, const bpa_static_t *sf,
  * subscriber's as of now. A record that guessed at the earlier instant would
  * be a fabricated one.
  */
+/* not a unit: it takes the worker barrier and walks every pool in
+ * bpa_main to re-announce the blocks forwards are holding. What a
+ * re-announcement looks like is read on a box by lab/ipfix.sh. */
 void
 bpa_log_pins_replay (void)
 {
@@ -552,6 +575,11 @@ bpa_static_only_on_port (const bpa_pool_t *p, const bpa_static_t *sf,
  * subscriber's block, the address is not in the pool - that an operator must
  * be told before the commit rather than after it.
  */
+/* not a unit: it looks the pool up in bpa_main's hash, mutates the
+ * vector under the worker barrier and pins or releases a block. The
+ * decisions it takes are bpa_static_position(), bpa_static_on_port() and
+ * the two above, all in bpa_pool.h; lab/forward.sh drives the whole thing
+ * on a box. */
 clib_error_t *
 bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
 {
@@ -747,6 +775,11 @@ bpa_check_pool_overlap (const bpa_pool_t *cfg)
  * device will refuse - false confidence exactly where an operator is relying
  * on the check.
  */
+/* not a unit: it is the order the checks run in, and two of them walk
+ * VPP's own pools (bpa_check_local_overlap, bpa_check_pool_overlap). The
+ * order is the finding it carries - the forwards last, because every reason
+ * to refuse one is a fact bpa_pool_init() computes - and lab/two-pools.sh
+ * and lab/forward.sh produce it on a box. */
 clib_error_t *
 bpa_pool_validate (bpa_pool_t *cfg)
 {
@@ -789,6 +822,10 @@ bpa_pool_validate (bpa_pool_t *cfg)
  * pools. Empty when there are no pools, which makes the filter reject
  * everything - correct, because with no pool there is nothing to hairpin to.
  */
+/* not a unit: it walks bpa_main's pools to find the lowest
+ * and highest public address any of them holds. The window it writes is
+ * what the out2in path checks a packet against before looking anything up,
+ * and lab/datapath.sh drives that path. */
 void
 bpa_outside_window_update (void)
 {
@@ -834,6 +871,10 @@ bpa_outside_window_update (void)
  * box with workers would otherwise report no CGNAT interfaces at all and
  * leave "auto" resolving to nothing.
  */
+/* not a unit: it asks vnet whether a CGNAT feature is enabled
+ * on an interface and what that interface's IP4 MTU is - four
+ * vnet_feature_is_enabled() calls and vnet_sw_interface_get_mtu().
+ * lab/mss.sh is where an MTU reaches a subscriber's TCP handshake. */
 static u32
 bpa_interface_cgnat_mtu (vnet_main_t *vnm, u32 sw_if_index)
 {
@@ -856,6 +897,10 @@ bpa_interface_cgnat_mtu (vnet_main_t *vnm, u32 sw_if_index)
 }
 
 /* Points the tracker at the vector, which vec_validate may have moved. */
+/* not a unit: it grows two VPP vectors on bpa_main so they can be
+ * indexed by sw_if_index. What they hold is decided by
+ * bpa_auto_mss_storage() in bpa_auto_mss.h, which test/test_bpa_auto_mss.c
+ * drives. */
 static void
 bpa_auto_mss_slots (bpa_main_t *bm, u32 sw_if_index)
 {
@@ -869,6 +914,9 @@ bpa_auto_mss_slots (bpa_main_t *bm, u32 sw_if_index)
  * MTU, one slot - and no reference at all to how many interfaces the box has,
  * which is the whole of #287.
  */
+/* not a unit: it reads an interface's MTU out of vnet
+ * and writes the clamp into those vectors. The arithmetic - what MSS an MTU
+ * allows - is bpa_auto_mss.h's and is driven by test/test_bpa_auto_mss.c. */
 void
 bpa_auto_mss_interface_update (u32 sw_if_index)
 {
@@ -897,6 +945,9 @@ bpa_auto_mss_interface_update (u32 sw_if_index)
  * that argument fail was not the pass, it was running the pass on every
  * attach as well.
  */
+/* not a unit: the same for every interface this box has, which
+ * means walking vnet's interface pool. lab/mss.sh reads the clamp off a
+ * handshake. */
 void
 bpa_auto_mss_update (void)
 {
@@ -949,6 +1000,10 @@ bpa_auto_mss_update (void)
  * recompute (#183). Whatever the next caller is - a startup file, a
  * netconf agent - it gets the whole thing by calling this.
  */
+/* not a unit: it enables or disables this
+ * plugin's nodes on an interface through vnet_feature_enable_disable(),
+ * which is VPP's graph. test/test_feature_order.py holds the order those
+ * nodes sit in, and lab/datapath.sh sends packets through them. */
 int
 bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
 				      int enable)
@@ -1328,6 +1383,10 @@ bpa_reserve_warn (vlib_main_t *vm, const bpa_pool_t *p)
 		 p->name, p->reserve_count, nw);
 }
 
+/* not a unit: it finds the pool in bpa_main and rewrites the
+ * settings under the barrier, then re-derives what depends on them. The
+ * refusals it applies are shared with bpa_pool_init() by construction
+ * (#375), and lab/vty-pool.sh sets every one of them on a box. */
 clib_error_t *
 bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 		       u32 alg_set, u16 tcp_mss, u8 tcp_mss_auto,
@@ -1400,6 +1459,9 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
   return 0;
 }
 
+/* not a unit: it builds an address set and stores it on a pool in
+ * bpa_main. The set builder is bpa_addr_set_build() in bpa_pool.h, which
+ * test/test_bpa_pool.c drives; lab/bypass.sh sends packets past it. */
 clib_error_t *
 bpa_bypass_set (u8 *name, int is_dst, const u32 *bases, const u32 *counts,
 		u32 n)
@@ -1441,6 +1503,9 @@ bpa_bypass_set (u8 *name, int is_dst, const u32 *bases, const u32 *counts,
   return 0;
 }
 
+/* not a unit: it stores two numbers on a pool in bpa_main. What they do
+ * is measured on a box by lab/limits.sh, which fills a pool to its session
+ * limit and reads the refusal. */
 clib_error_t *
 bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate)
 {
@@ -1465,6 +1530,10 @@ bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate)
   return 0;
 }
 
+/* not a unit: it inserts a pool into bpa_main's pool and hash under the
+ * worker barrier. What it validates with is bpa_pool_validate() above and
+ * bpa_pool_init(), which test/test_bpa_pool.c drives against
+ * ref/bpa_model.py. */
 clib_error_t *
 bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 {
@@ -1674,6 +1743,9 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
  * in while a pool is half deleted. Blocking the main thread for the length of
  * a delete costs nothing that is running - it is the thread that called us.
  */
+/* not a unit: it spins on vlib_time_now() to let workers past the
+ * barrier, which is VPP's clock and VPP's barrier. What it protects is
+ * measured by lab/pool-del.sh, which deletes a pool under traffic. */
 static void
 bpa_barrier_yield (vlib_main_t *vm)
 {
@@ -1727,6 +1799,10 @@ bpa_barrier_yield (vlib_main_t *vm)
  * collector holding an allocation that never ends - naming a subscriber who
  * has been disconnected, for as long as the log is kept (#215).
  */
+/* not a unit: it walks one pool's blocks under the worker barrier
+ * and queues a record for each. What a record contains is
+ * test/test_bpa_log_syslog.c's and test/test_bpa_audit.c's; lab/ipfix.sh
+ * reads them off a collector. */
 static u32
 bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
 {
@@ -1815,6 +1891,9 @@ bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
  * a barrier we did not take is a no-op: the chunks would be real and the
  * outage would not have moved.
  */
+/* not a unit: it takes the worker barrier, drains the pool's blocks and
+ * removes it from bpa_main. lab/pool-del.sh is where a pool is deleted on a
+ * box and the sessions that were on it are read. */
 clib_error_t *
 bpa_pool_del (u8 *name)
 {
@@ -1915,6 +1994,8 @@ bpa_pool_del (u8 *name)
  * exactly the same set: bpa_stop_drain() gives the blocks back and the
  * re-announcement in bpa-expire-process takes them back.
  */
+/* not a unit: the same for every pool, at the moment logging is
+ * switched on. lab/ipfix.sh drives that switch on a box. */
 u32
 bpa_blocks_log_all (u8 event)
 {
@@ -2004,6 +2085,9 @@ bpa_blocks_log_all (u8 event)
  * exactly the boxes that crashed. What tells those apart is the boot marker -
  * bpa_log_marker_emit(), and the argument for its shape in bpa_log.h.
  */
+/* not a unit: it walks a pool's blocks releasing them, under the
+ * barrier, so the log closes every allocation it opened. lab/ipfix-stop.sh
+ * measures the drain on a box and lab/drain-slope.sh times it. */
 u32
 bpa_drain_blocks (vlib_main_t *vm)
 {
@@ -2035,6 +2119,9 @@ bpa_drain_blocks (vlib_main_t *vm)
   return n;
 }
 
+/* not a unit: the CLI's door to that drain, and the one
+ * vpp-stop-drain.conf runs on the way down. test/test_bpa_dyn.c drives the
+ * allocator it empties; lab/ipfix-stop.sh reads the records it writes. */
 static clib_error_t *
 bpa_stop_drain (vlib_main_t *vm)
 {
@@ -2134,6 +2221,10 @@ VLIB_MAIN_LOOP_EXIT_FUNCTION (bpa_stop_drain);
  * pool exists. We cannot refuse it from here, so we make the noise loud
  * enough that it is found before a customer does.
  */
+/* not a unit: a VPP callback: the stack calls it when an
+ * address is added to or removed from an interface, with an
+ * ip4_main_t-registered function pointer that exists nowhere else.
+ * lab/localaddr.sh is where a box's own address meets a pool. */
 static void
 bpa_ip4_address_change (ip4_main_t *im, uword opaque, u32 sw_if_index,
 			ip4_address_t *address, u32 address_length,

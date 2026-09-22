@@ -203,7 +203,17 @@ MARKER = "not a unit:"
 # service. The count and the two to name are bpa_static_on_port() now; the
 # refusal that names them stays where format() is.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 71, "shell": 0}
+# 2026-09-22, eighth: 71 to 46, and this is the rest of bpa.c. What is left
+# in that file after six batches of splitting decisions out of it is the part
+# that IS VPP: the pool of pools and its hash, the worker barrier, the
+# per-worker allocators, vnet's features and MTUs, and the graph. Each of the
+# twenty-five says which of those it needs and where the behaviour is
+# measured instead - twelve name a lab, nine name another suite, and the four
+# validators name the decisions they orchestrate, all of which are now
+# tested. Every file and function named in those reasons was checked to
+# exist; the batch before this one cited two that did not.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 46, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and
