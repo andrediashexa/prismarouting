@@ -79,6 +79,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.117.8 - the VTY names the unit this box runs
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
+### Fixed
+
 * **The VTY sent an operator to a unit their box does not run**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)). On a box
   whose dataplane had stopped, `show version` said *'systemctl status vpp'
