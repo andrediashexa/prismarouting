@@ -18,7 +18,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_rebalance \
       $(BUILD)/test_bpa_lent \
       $(BUILD)/test_bpa_radius \
-      $(BUILD)/test_bpa_static
+      $(BUILD)/test_bpa_static \
+      $(BUILD)/test_bpa_top
 	@sh tools/run-tests.sh
 
 vectors:
@@ -46,6 +47,15 @@ $(BUILD)/test_bpa_static: test/test_bpa_static.c \
                    src/plugins/bpa/bpa_pool.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_static.c
+
+# The order "show bpa top" reads its rows in. bpa_cli.c's own header says the
+# arithmetic in that file is deliberately not excused because it is waiting
+# for a harness; this is the harness, and the arithmetic needs nothing but
+# two rows.
+$(BUILD)/test_bpa_top: test/test_bpa_top.c \
+                   src/plugins/bpa/bpa_top.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_top.c
 
 # The dynamic block allocator, driven rather than evaluated. Standalone
 # because paired address pooling (RFC 4787 REQ-2, the required default under

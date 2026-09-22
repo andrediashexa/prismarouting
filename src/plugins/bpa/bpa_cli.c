@@ -20,9 +20,14 @@
  * can print to be named by a lab, a suite or a document, and the labs capture
  * those screens on a running box. A wrong sentence here is caught there; what
  * is NOT caught is arithmetic, and the functions in this file that do
- * arithmetic - `bpa_top_cmp`, `bpa_counter_total`, the subscriber lookups -
- * are deliberately NOT excused. They are waiting for the harness built against
- * the real VPP, which is the other half of the same decision.
+ * arithmetic - `bpa_counter_total`, the subscriber lookups - are deliberately
+ * NOT excused. They are waiting for the harness built against the real VPP,
+ * which is the other half of the same decision.
+ *
+ * `bpa_top_cmp` was in that list and is not any more: it needed nothing but
+ * two rows, so it moved to bpa_top.h and test/test_bpa_top.c drives it. That
+ * is the shape the rest of this list is waiting for - a harness where one is
+ * possible, an excuse only where it is not.
  *
  * The marker on each one says which of the three classes it is and points
  * here, rather than repeating this paragraph forty-one times: an excuse
@@ -35,6 +40,7 @@
 #include <vnet/ip/ip.h>
 
 #include "bpa.h"
+#include "bpa_top.h"
 #include "bpa_radius.h"
 #include "bpa_mss.h"
 #include "bpa_errors.h"
@@ -1558,26 +1564,12 @@ VLIB_CLI_COMMAND (bpa_show_translation_command, static) = {
   .function = bpa_show_translation_command_fn,
 };
 
-/* One row of "show bpa top". */
-typedef struct
-{
-  u32 ip_priv;
-  u32 pct;
-  u32 used;
-  u32 total;
-  u32 n_blocks;
-  u32 n_refused;
-  u32 pool_index;
-} bpa_top_t;
-
-static int
-bpa_top_cmp (void *a, void *b)
-{
-  bpa_top_t *x = a, *y = b;
-  if (x->pct != y->pct)
-    return (int) y->pct - (int) x->pct;
-  return (int) y->used - (int) x->used;
-}
+/*
+ * The row of "show bpa top" and the order the rows are read in are in
+ * bpa_top.h, which needs nothing but two rows - no pool, no VPP, no vector -
+ * so test/test_bpa_top.c can drive it. That is this file's own argument
+ * about its arithmetic, taken up rather than excused.
+ */
 
 /*
  * The subscribers closest to running out.

@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The order `show bpa top` reads its rows in is tested**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). That
+  screen answers *who is closest to running out*, which is the question that
+  prevents a support call rather than answering one - and an operator reads
+  the first rows and nothing else, so an order that is subtly wrong sends
+  them to the wrong subscriber while looking exactly right.
+
+  `bpa_cli.c`'s own header says the arithmetic in that file is deliberately
+  **not** excused because it waits for a harness, and it named this
+  function. It needed nothing but two rows, so it is `bpa_top.h` now and
+  `test/test_bpa_top.c` drives it: fullest first, a tie broken by ports used,
+  and equal rows equal in both directions - a comparator that answered
+  otherwise would make the screen depend on the order the rows were built in.
+
+  And the comparison is a comparison. `(int) y->used - (int) x->used` is the
+  obvious form and the one that reverses when the difference does not fit in
+  an `int`. No row can reach that today - `used` is bounded by one
+  subscriber's blocks - so this is a class removed rather than a defect
+  fixed, and it is asserted because the next person to write the obvious form
+  would otherwise find nothing red. Restoring the subtraction refuses two
+  assertions.
+
 ### Fixed
 
 ## 0.118.4 - the rest of bpa.c says why
