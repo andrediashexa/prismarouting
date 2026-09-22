@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.1 - the upgrade lab reads what it left behind
+
+Issues: [#427](https://github.com/andrediashexa/hexarouting/issues/427).
+
+### Added
+
 * **The upgrade lab reads which dataplane the box was left on**
   ([#427](https://github.com/andrediashexa/hexarouting/issues/427)). The
   defect that reached a maintainer's box got past this lab, and the reason is
