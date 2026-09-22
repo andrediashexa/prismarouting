@@ -89,6 +89,25 @@ body "$COMPOSE" | grep -q 'restart: "on-failure' \
   || bad "appliance/watch-the-dataplane is missing or not executable: nothing would notice a dataplane container that stopped, because Docker tells nobody"
 
 echo
+echo "=== the self-test reads the dataplane this box is actually running ==="
+# The dangerous answer is the CORRECT one on the wrong path: `systemctl show
+# vpp.service -p NRestarts` on a container box answers 0, about a unit nobody
+# started, and 0 reads as "stable". A box in a restart loop would be reported
+# healthy by the check that exists to catch exactly that.
+grep -q "is-active --quiet prisma-routing-containers.service" \
+  "$REPO/appliance/selftest" \
+  && ok "the self-test asks which path the box is on" \
+  || bad "appliance/selftest never asks whether this box runs the containers, so on a container box it reports a unit nobody started"
+for reader in dataplane_restarts dataplane_pid dataplane_log; do
+  grep -q "^$reader()" "$REPO/appliance/selftest" \
+    && ok "and $reader answers for whichever path that is" \
+    || bad "appliance/selftest has no $reader: one of the three readers went back to asking systemd directly"
+done
+body "$COMPOSE" | grep -q "pid: host" \
+  && ok "and the container's pid is a pid on this box, so /proc can be read" \
+  || bad "compose.yaml dropped pid: host, so the container's PID is from another namespace and the OOM check would read /proc of some other process, or none"
+
+echo
 echo "=== the drain runs before the dataplane dies on both paths ==="
 # #217: in dynamic mode the block allocation log IS the connection record, and
 # a block still held when the dataplane stops leaves its allocation open in

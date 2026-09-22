@@ -208,6 +208,73 @@ else
   warn "CPU lacks avx2: VPP works but delivers less"
 fi
 
+# --- WHICH DATAPLANE THIS BOX IS RUNNING (#426) ---
+#
+# There are two now: vpp.service, and the same VPP in a container under
+# appliance/compose.yaml. Everything below that asked systemd about
+# vpp.service has to ask the box first, because on a container box the answers
+# are all correct and all about a unit that is not running the dataplane -
+# NRestarts 0 for a unit nobody started reads as "stable", which is the worst
+# answer available: a box in a restart loop reported healthy.
+#
+# THE QUESTION IS WHICH UNIT IS ACTIVE, and not which is installed. Both ship
+# on every box since 0.113.0 and the containers unit conflicts with
+# vpp.service, so exactly one of them can be running and `is-active` is the
+# whole of the decision.
+DATAPLANE_PATH=unit
+if systemctl is-active --quiet prisma-routing-containers.service 2>/dev/null
+then
+  DATAPLANE_PATH=container
+fi
+# The name compose gives it: project `prisma-routing` from the working
+# directory the unit runs in, service `vpp`. Measured on docker-compose 1.29.2
+# - v1 does not strip the dash. appliance/watch-the-dataplane names the same
+# container and test/test_watch_dataplane.sh holds the two together.
+VPP_CONTAINER=${PRISMA_VPP_CONTAINER:-prisma-routing_vpp_1}
+
+# What to CALL it in a message. An operator reading "vpp.service stable" on a
+# box whose dataplane is a container would go and look at the wrong thing.
+dataplane_name() {
+  if [ "$DATAPLANE_PATH" = container ]; then
+    echo "the dataplane container"
+  else
+    echo "vpp.service"
+  fi
+}
+# How many times it has been restarted. Docker keeps the same counter Docker's
+# own restart policy counts against, which is the one that matters: five and
+# it stops trying (appliance/compose.yaml).
+dataplane_restarts() {
+  if [ "$DATAPLANE_PATH" = container ]; then
+    docker inspect -f '{{.RestartCount}}' "$VPP_CONTAINER" 2>/dev/null
+  else
+    systemctl show vpp.service -p NRestarts --value 2>/dev/null
+  fi
+}
+# The process the kernel knows, which is what /proc/<pid>/oom_score_adj is
+# read from. `pid: host` in the compose file is what makes the container's PID
+# a PID on this box at all - without it the number would be one from another
+# namespace and /proc/<that>/ would be some other process entirely, or none.
+dataplane_pid() {
+  if [ "$DATAPLANE_PATH" = container ]; then
+    docker inspect -f '{{.State.Pid}}' "$VPP_CONTAINER" 2>/dev/null
+  else
+    systemctl show vpp.service -p MainPID --value 2>/dev/null
+  fi
+}
+# The last lines it printed, for the branches that have already found
+# something wrong.
+dataplane_log() { # <lines>
+  if [ "$DATAPLANE_PATH" = container ]; then
+    docker logs --tail "$1" "$VPP_CONTAINER" 2>&1
+  else
+    journalctl -u vpp.service --no-pager -n "$1" 2>/dev/null
+  fi
+}
+if [ "$DATAPLANE_PATH" = container ]; then
+  ok "the dataplane runs in a container on this box"
+fi
+
 # --- dataplane ---
 if vppctl show version >/dev/null 2>&1; then
   ok "VPP responding: $(vppctl show version 2>/dev/null | cut -d' ' -f1-2)"
@@ -215,26 +282,26 @@ else
   bad "VPP not responding"
   say "        tail of /var/log/vpp/vpp.log:"
   tail -12 /var/log/vpp/vpp.log 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
-  say "        systemctl status vpp:"
-  systemctl status vpp.service --no-pager -n 8 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
+  say "        the last thing $(dataplane_name) said:"
+  dataplane_log 8 | sed 's/^/          /' > "$OUT" 2>/dev/null
 fi
 
 # --- servico instavel: sobe, cai, sobe de novo ---
 # A service in a restart loop can be "active" at the instant you look, and
 # "systemctl status" shows it active. Only the restart counter tells the
 # story - and without it the diagnosis becomes guesswork.
-restarts=$(systemctl show vpp.service -p NRestarts --value 2>/dev/null)
+restarts=$(dataplane_restarts)
 [ -n "$restarts" ] || restarts=0
 if [ "$restarts" -gt 2 ] 2>/dev/null; then
-  bad "vpp.service has restarted $restarts times: it is looping"
+  bad "$(dataplane_name) has restarted $restarts times: it is looping"
   say "        tail of /var/log/vpp/vpp.log:"
   tail -20 /var/log/vpp/vpp.log 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
-  say "        vpp.service journal:"
-  journalctl -u vpp.service --no-pager -n 20 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
+  say "        what $(dataplane_name) said:"
+  dataplane_log 20 | sed 's/^/          /' > "$OUT" 2>/dev/null
 elif [ "$restarts" -gt 0 ] 2>/dev/null; then
-  warn "vpp.service restarted $restarts time(s)"
+  warn "$(dataplane_name) restarted $restarts time(s)"
 else
-  ok "vpp.service stable (0 restarts)"
+  ok "$(dataplane_name) stable (0 restarts)"
 fi
 
 # --- is the dataplane out of the OOM killer's selection? ---
@@ -256,16 +323,16 @@ fi
 # the process out of the selection. Anything else merely reweights it, and a
 # reweighted process is still a candidate - which is why a negative value that
 # is not the minimum is reported rather than accepted.
-vpid=$(systemctl show vpp.service -p MainPID --value 2>/dev/null)
+vpid=$(dataplane_pid)
 [ -n "$vpid" ] || vpid=0
 if [ "$vpid" = 0 ]; then
   # A VPP that is not running at all was already reported above. A VPP that IS
   # running while vpp.service owns no process is a different box: something
   # started the dataplane by hand, and no drop-in on that unit covers it.
   if vppctl show version >/dev/null 2>&1; then
-    warn "VPP is running but vpp.service owns no process: the drop-in"
-    say "         that takes the dataplane out of the OOM killer's selection"
-    say "         does not apply to a VPP somebody started by hand"
+    warn "VPP is running but $(dataplane_name) owns no process: the"
+    say "         protection that takes the dataplane out of the OOM killer's"
+    say "         selection does not apply to a VPP somebody started by hand"
   fi
 elif adj=$(cat "/proc/$vpid/oom_score_adj" 2>/dev/null); then
   case "$adj" in
@@ -277,13 +344,20 @@ elif adj=$(cat "/proc/$vpid/oom_score_adj" 2>/dev/null); then
       say "         box grows, which is how it was killed at 19 MB resident" ;;
     *)
       bad "vpp's oom_score_adj is $adj: the dataplane can be chosen as an"
-      say "        OOM victim for somebody else's allocation. The drop-in"
-      say "        /etc/systemd/system/vpp.service.d/prisma-routing-oom-protect.conf"
-      say "        is missing or did not take effect; check it, then"
-      say "        'systemctl daemon-reload' and restart vpp.service" ;;
+      say "        OOM victim for somebody else's allocation."
+      if [ "$DATAPLANE_PATH" = container ]; then
+        say "        The oom_score_adj in /etc/prisma-routing/compose.yaml"
+        say "        is missing or did not take effect; check it, then"
+        say "        'systemctl restart prisma-routing-containers.service'"
+      else
+        say "        The drop-in"
+        say "        /etc/systemd/system/vpp.service.d/prisma-routing-oom-protect.conf"
+        say "        is missing or did not take effect; check it, then"
+        say "        'systemctl daemon-reload' and restart vpp.service"
+      fi ;;
   esac
 else
-  bad "cannot read /proc/$vpid/oom_score_adj for vpp.service (pid $vpid)"
+  bad "cannot read /proc/$vpid/oom_score_adj for the dataplane (pid $vpid)"
   say "        whether the dataplane is protected from the OOM killer is"
   say "        unknown on this box, which is not the same as protected"
 fi

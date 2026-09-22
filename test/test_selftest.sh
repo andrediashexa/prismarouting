@@ -142,6 +142,33 @@ case "$*" in
   # From the fake box. It was the constant `inactive`, so the branch that
   # reports the CGNAT configuration as not applied had never run (#222).
   "is-failed "*) cat "$FAKE/is_failed" 2>/dev/null || echo inactive ;;
+  # WHICH DATAPLANE THIS BOX RUNS (#426), and it has to be answered from the
+  # fake box for a reason this stub learned the hard way: the catch-all below
+  # ends in `exit 0`, and `is-active --quiet` says "active" with exit 0. So
+  # every box in this file read as a box whose dataplane is a container the
+  # moment the self-test started asking - and the six OOM cases went red at
+  # once, because the container they then asked docker about does not exist.
+  # A stub whose default answer is the interesting one is a stub that decides
+  # the test.
+  # `exit $?` AND NOT A BARE COMMAND: this stub ends in `exit 0`, so a branch
+  # that merely returns non-zero still answers "active". That is the same
+  # trap one line up, from the other side.
+  "is-active --quiet prisma-routing-containers.service")
+    grep -q . "$FAKE/containers_active" 2>/dev/null; exit $? ;;
+  *) : ;;
+esac
+exit 0
+EOF
+# Docker, for the box whose dataplane is a container. Answered from the fake
+# box for the same reason systemctl is: the machine running this suite may
+# have a container of that name, and a test that reads differently there is
+# not a test.
+cat > "$BIN/docker" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *RestartCount*) cat "$FAKE/docker_restarts" 2>/dev/null || echo 0 ;;
+  *State.Pid*)    cat "$FAKE/docker_pid" 2>/dev/null || echo 0 ;;
+  logs*)          cat "$FAKE/docker_logs" 2>/dev/null ;;
   *) : ;;
 esac
 exit 0
@@ -1670,6 +1697,155 @@ else
 operator is told the dataplane is looping and not why: $(printf '%s\n' "$OUTPUT" | grep -A3 -i 'journal' | tr '\n' ' ')"
 fi
 rm -f "$FAKE/nrestarts" "$FAKE/journal_vpp"
+
+echo "=== a box whose dataplane is a container (#426) ==="
+# THE ANSWER ON THE WRONG PATH IS THE DANGEROUS ONE. `systemctl show
+# vpp.service -p NRestarts` on a box running the containers answers 0 -
+# correctly, about a unit nobody started - and 0 reads as "stable". A box in
+# a restart loop would be reported healthy, which is the exact failure this
+# check exists to catch, arriving through the check itself.
+#
+# So every reader that used to ask systemd about vpp.service asks the box
+# first, and this is the box that makes it. `containers_active` is what the
+# stubbed `systemctl is-active` answers from; the counter, the PID and the
+# log come from docker.
+# A LINE IN IT AND NOT AN EMPTY FILE: the stub reads it with `grep -q .`,
+# which answers "no lines" for a file that exists and is empty - so `: >`
+# arranged a box that reads as being on the unit path, and every assertion
+# below went red against the right box for the wrong reason.
+echo active > "$FAKE/containers_active"
+echo 0 > "$FAKE/docker_restarts"
+run
+if said '\[ ok \] the dataplane runs in a container on this box'; then
+  ok "a container box says so, rather than leaving it to be worked out"
+else
+  bad "a box whose dataplane is a container did not say so: $(printf '%s\n' "$OUTPUT" | grep -i container || echo '<nothing>')"
+fi
+if said '\[ ok \] the dataplane container stable \(0 restarts\)'; then
+  ok "and the stable line names the container, not vpp.service"
+else
+  bad "the restart line still names the wrong thing: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
+fi
+if said 'vpp.service stable'; then
+  bad "a container box was told vpp.service is stable, which is true of a unit nobody started and says nothing about the dataplane carrying its subscribers"
+else
+  ok "and vpp.service is not mentioned as this box's dataplane at all"
+fi
+# THE LOOP, ON THE PATH THAT HAS NO systemd COUNTER. Docker keeps the same
+# counter its own restart policy counts against - five and it stops trying.
+echo 7 > "$FAKE/docker_restarts"
+printf 'vpp[1]: dpdk: EAL init failed, no hugepages\n' > "$FAKE/docker_logs"
+run
+if said '\[FAIL\] the dataplane container has restarted 7 times: it is looping'; then
+  ok "a looping container is a FAILED check, and names the count"
+else
+  bad "a looping dataplane container passed: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
+fi
+if said 'EAL init failed, no hugepages'; then
+  ok "and what reaches the console is docker's log, not systemd's journal"
+else
+  bad "the container's own log did not reach the console, so the operator is told it is looping and not why"
+fi
+# AND THE OOM SCORE COMES OFF THE CONTAINER'S PID. `pid: host` in the compose
+# file is what makes that number a PID on this box; without it /proc/<that>
+# would be some other process, or none.
+echo 0 > "$FAKE/docker_restarts"
+echo 4242 > "$FAKE/docker_pid"
+echo -1000 > "$FAKE/oom_score_adj"
+run
+if said "\[ ok \] dataplane out of the OOM killer's selection"; then
+  ok "and the OOM score is read from the container's own pid"
+else
+  bad "the OOM check said nothing on a container box: $(printf '%s\n' "$OUTPUT" | grep -i oom || echo '<nothing>')"
+fi
+echo 0 > "$FAKE/oom_score_adj"
+run
+if said "systemctl restart prisma-routing-containers.service"; then
+  ok "and an unprotected container box is told which unit to restart"
+else
+  bad "a container box with oom_score_adj 0 was given vpp.service's repair: $(printf '%s\n' "$OUTPUT" | grep -A4 -i oom | tr '\n' ' ')"
+fi
+rm -f "$FAKE/containers_active" "$FAKE/docker_restarts" "$FAKE/docker_pid" \
+      "$FAKE/docker_logs" "$FAKE/oom_score_adj"
+
+# AND THE FOUR READERS ARE THE ONLY WAY THE DATAPLANE IS ASKED ABOUT.
+# dataplane_name, dataplane_restarts, dataplane_pid and dataplane_log exist
+# so that no check below has to know which path the box took. A line that
+# goes back to `systemctl show vpp.service` is one that answers correctly
+# about the wrong dataplane, which is how a looping box gets reported
+# healthy - so the count of such lines is held at zero rather than left to
+# a reader's care.
+#
+# CUT OUT AND CALLED, the way test/test_release_gate.sh cuts step_done() out
+# of the gate: they are four lines each and they decide what every check
+# below reads, so driving them through a whole self-test run would be
+# measuring the run. sed takes the block, and the stubs are two shell
+# functions that answer as systemd and docker.
+# One range, from the first reader to the closing brace of the last. The
+# two-range version of this printed dataplane_log's header twice, which is a
+# file no shell will source.
+sed -n '/^dataplane_name()/,/^dataplane_log() {/p' "$ST" \
+  > "$BIN/readers.sh"
+sed -n '/^dataplane_log() {/,/^}/p' "$ST" | tail -n +2 >> "$BIN/readers.sh"
+(
+  DATAPLANE_PATH=unit
+  VPP_CONTAINER=prisma-routing_vpp_1
+  systemctl() { echo "systemd:$*"; }
+  docker()    { echo "docker:$*"; }
+  journalctl() { echo "journal:$*"; }
+  . "$BIN/readers.sh"
+
+  [ "$(dataplane_name)" = "vpp.service" ] \
+    && ok "dataplane_name on the unit path is vpp.service" \
+    || bad "dataplane_name said '$(dataplane_name)' on the unit path"
+  case "$(dataplane_restarts)" in
+    *"-p NRestarts"*) ok "dataplane_restarts asks systemd for NRestarts" ;;
+    *) bad "dataplane_restarts on the unit path did: $(dataplane_restarts)" ;;
+  esac
+  case "$(dataplane_pid)" in
+    *"-p MainPID"*) ok "dataplane_pid asks systemd for the main PID" ;;
+    *) bad "dataplane_pid on the unit path did: $(dataplane_pid)" ;;
+  esac
+  case "$(dataplane_log 9)" in
+    *"-u vpp.service"*|*"journal:"*) ok "dataplane_log reads the journal" ;;
+    *) bad "dataplane_log on the unit path did: $(dataplane_log 9)" ;;
+  esac
+
+  DATAPLANE_PATH=container
+  [ "$(dataplane_name)" = "the dataplane container" ] \
+    && ok "and on the container path it is the dataplane container" \
+    || bad "dataplane_name said '$(dataplane_name)' on the container path"
+  case "$(dataplane_restarts)" in
+    *RestartCount*prisma-routing_vpp_1*)
+      ok "dataplane_restarts asks docker for RestartCount, by the name compose gives" ;;
+    *) bad "dataplane_restarts on the container path did: $(dataplane_restarts)" ;;
+  esac
+  case "$(dataplane_pid)" in
+    *State.Pid*prisma-routing_vpp_1*)
+      ok "dataplane_pid asks docker for the container's pid" ;;
+    *) bad "dataplane_pid on the container path did: $(dataplane_pid)" ;;
+  esac
+  case "$(dataplane_log 9)" in
+    *"logs --tail 9"*) ok "dataplane_log reads docker's log, with the count it was given" ;;
+    *) bad "dataplane_log on the container path did: $(dataplane_log 9)" ;;
+  esac
+  exit 0
+) || fail=$((fail + 1))
+for f in dataplane_name dataplane_restarts dataplane_pid dataplane_log; do
+  grep -q "^$f()" "$ST" \
+    || bad "appliance/selftest has no $f(): a check somewhere below is asking systemd about vpp.service directly, and on a container box that answers about a unit nobody started"
+done
+# INSIDE THOSE FUNCTIONS IS WHERE IT BELONGS, so the count that matters is
+# the one OUTSIDE them: the readers themselves ask systemd, on the unit path,
+# which is their job. awk keeps the name of the function each line is in.
+direct=$(awk '
+  /^[a-z_]+\(\)/ { fn=$0; sub(/\(\).*/, "", fn) }
+  /systemctl show vpp\.service/ {
+    if (fn !~ /^dataplane_/) print FILENAME ":" FNR
+  }' "$ST")
+[ -z "$direct" ] \
+  && ok "and nothing outside them asks systemd about vpp.service" \
+  || bad "these lines in appliance/selftest ask systemd about vpp.service outside the four readers, so on a container box they answer about a unit nobody started: $(printf '%s' "$direct" | tr '\n' ' ')"
 
 echo "=== IS-IS frames punted to the kernel (#222, #168) ==="
 # The reason this line exists: a box with an IS-IS instance and no OSI punt
