@@ -1820,11 +1820,30 @@ sed -n '/^dataplane_log() {/,/^}/p' "$ST" | tail -n +2 >> "$BIN/readers.sh"
       ok "dataplane_restarts asks docker for RestartCount, by the name compose gives" ;;
     *) bad "dataplane_restarts on the container path did: $(dataplane_restarts)" ;;
   esac
-  case "$(dataplane_pid)" in
-    *State.Pid*prisma-routing_vpp_1*)
-      ok "dataplane_pid asks docker for the container's pid" ;;
-    *) bad "dataplane_pid on the container path did: $(dataplane_pid)" ;;
-  esac
+  # THE WRAPPER'S PID IS NOT THE DATAPLANE'S, and this is the case that was
+  # wrong in the shipped version: `.State.Pid` is the entrypoint, which has
+  # one thread, so the worker-thread check reported none while seven were
+  # running. The stub answers with a /proc this test built: a pid whose comm
+  # is the wrapper, with a vpp child.
+  PROC=$(mktemp -d)
+  mkdir -p "$PROC/proc/77/task/77" "$PROC/proc/78"
+  printf 'sh\n'  > "$PROC/proc/77/comm"
+  printf '78\n'  > "$PROC/proc/77/task/77/children"
+  printf 'vpp\n' > "$PROC/proc/78/comm"
+  ROOT=$PROC
+  docker() { echo 77; }
+  [ "$(dataplane_pid)" = 78 ] \
+    && ok "dataplane_pid walks past the entrypoint to the vpp under it" \
+    || bad "dataplane_pid answered '$(dataplane_pid)' where 78 is the vpp and 77 is the wrapper: every thread the dataplane has would be counted against a process that has one"
+  # And a wrapper with no vpp under it answers the wrapper, so the checks
+  # below report a dataplane that is not there rather than a missing pid.
+  printf '\n' > "$PROC/proc/77/task/77/children"
+  [ "$(dataplane_pid)" = 77 ] \
+    && ok "and a wrapper with no dataplane under it still answers a pid" \
+    || bad "dataplane_pid answered '$(dataplane_pid)' when nothing was under the wrapper"
+  rm -rf "$PROC"
+  ROOT=""
+  docker() { echo "docker:$*"; }
   case "$(dataplane_log 9)" in
     *"logs --tail 9"*) ok "dataplane_log reads docker's log, with the count it was given" ;;
     *) bad "dataplane_log on the container path did: $(dataplane_log 9)" ;;

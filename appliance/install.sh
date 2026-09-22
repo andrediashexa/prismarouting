@@ -578,16 +578,30 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   systemctl daemon-reload
   systemctl enable prisma-routing-tune.service prisma-routing.service \
     prisma-routing-selftest.service prisma-routing-installer.service \
-    prisma-routing-confirm.timer
+    prisma-routing-confirm.timer \
+    prisma-routing-containers.service prisma-routing-card-watch.timer
+  # AND THE TWO UNITS THE CONTAINERS REPLACE (#426). They are enabled by
+  # their own Debian packages, and prisma-routing-containers.service
+  # Conflicts with both - so a box with all three enabled asks systemd to
+  # decide at every boot, and nothing in this product says which wins.
+  # Disabled and not masked: an operator who wants the units back types
+  # `systemctl enable --now vpp.service frr.service` and gets them.
+  systemctl disable vpp.service frr.service >/dev/null 2>&1 || true
 else
   LIVE_BOX=0
   # offline enablement: creates the link systemctl enable would create
   install -d -m 0755 "$DESTDIR/etc/systemd/system/multi-user.target.wants"
   for u in prisma-routing-tune.service prisma-routing.service \
-           prisma-routing-selftest.service prisma-routing-installer.service; do
+           prisma-routing-selftest.service prisma-routing-installer.service \
+           prisma-routing-containers.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done
+  # AND THE TWO THE CONTAINERS REPLACE, unlinked from what enabled them.
+  # Offline there is no systemctl to ask, so the links Debian's own package
+  # made are removed by name - `systemctl disable` would do exactly this.
+  rm -f "$DESTDIR/etc/systemd/system/multi-user.target.wants/vpp.service" \
+        "$DESTDIR/etc/systemd/system/multi-user.target.wants/frr.service"
   # The timer is wanted by timers.target and not by multi-user.target, so it
   # needs its own directory. Linking it into the wrong one installs a timer
   # that exists, parses, and never elapses - and the feature it enforces is
@@ -595,6 +609,11 @@ else
   install -d -m 0755 "$DESTDIR/etc/systemd/system/timers.target.wants"
   ln -sf "/lib/systemd/system/prisma-routing-confirm.timer" \
     "$DESTDIR/etc/systemd/system/timers.target.wants/prisma-routing-confirm.timer"
+  # The card watcher's timer, with the unit it belongs to: on a box running
+  # the containers, nothing else notices a dataplane that Docker gave up on,
+  # and the card stays bound to DPDK with no interface at all (#379).
+  ln -sf "/lib/systemd/system/prisma-routing-card-watch.timer" \
+    "$DESTDIR/etc/systemd/system/timers.target.wants/prisma-routing-card-watch.timer"
   say "installed into ${DESTDIR:-/} (services enabled offline)"
 fi
 
