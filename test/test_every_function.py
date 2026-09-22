@@ -140,7 +140,19 @@ MARKER = "not a unit:"
 # buffer, a session pool, a bihash, VPP's format() or the CLI, and waits for
 # the VPP build with bpa_log.c, which needs the ipfix-export infrastructure
 # for all eight of its functions.
-UNTESTED_AT_MOST = {"python": 0, "c": 115, "shell": 0}
+# 2026-09-22: 115 to 88. Twenty-seven more that say so at their definition,
+# and both groups are whole files rather than a pick: the twelve in
+# bpa_audit.c live under `#ifndef BPA_STANDALONE` - the guard that file's
+# header explains, which compiles exactly one function standalone, the hex
+# reader that decides whether a line of the trail carries a digest at all -
+# and the fifteen in bpa_api.c are the binary API, dispatched from a message
+# on the shared-memory segment and replying through REPLY_MACRO. Neither
+# exists outside a running VPP. What they do is measured elsewhere and the
+# excusals name where: lab/audit.sh drives the trail on a box, lab/vty.sh
+# drives what the VTY sends through the API, and test/test_api_widths.py
+# reads the widths of the message fields off the .api file.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 88, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and

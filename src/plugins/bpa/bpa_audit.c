@@ -42,6 +42,8 @@
 #define BPA_AUDIT_PATH_DEFAULT "/var/log/prisma-routing/config-history.log"
 #endif
 
+/* not a unit: it formats a pool with VPP's format() into a u8 vector, and is
+ * not compiled at all under BPA_STANDALONE - the guard above says why. */
 static u8 *
 bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
 {
@@ -131,6 +133,8 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
  *                                  CLI looks like: there is no operator to
  *                                  name, because there is no session to ask.
  */
+/* not a unit: it reads the actor out of bpa_main and formats it with VPP's
+ * format(); not compiled under BPA_STANDALONE. */
 static u8 *
 bpa_audit_format_actor (u8 *s)
 {
@@ -150,6 +154,8 @@ bpa_audit_format_actor (u8 *s)
   return format (s, " via %s", bm->actor_is_api ? "api" : "cli");
 }
 
+/* not a unit: it stores the actor the API handed in, in bpa_main, for the next
+ * entry to name; not compiled under BPA_STANDALONE. */
 void
 bpa_actor_set (const char *user, u32 uid)
 {
@@ -176,6 +182,8 @@ bpa_actor_set (const char *user, u32 uid)
   bm->actor_is_api = 1;
 }
 
+/* not a unit: it drops that actor again, in bpa_main; not compiled under
+ * BPA_STANDALONE. */
 void
 bpa_actor_clear (void)
 {
@@ -219,6 +227,8 @@ bpa_actor_clear (void)
  *   head and sequence are recovered at startup - and after a restart that
  *   followed a truncation, only the remote copy can tell.
  */
+/* not a unit: it chains the entry with vppinfra's SHA-2, which is the one piece
+ * of this file a standalone build has no implementation of. */
 static void
 bpa_audit_digest (const u8 *prev, const u8 *content, uword len, u8 *out)
 {
@@ -272,6 +282,8 @@ bpa_audit_unhex (const char *hex, u8 *out)
  * then on reports a break at the restart - which trains whoever runs it to
  * ignore the answer, and an alarm that is always on is an alarm that is off.
  */
+/* not a unit: it opens the trail on disk and reads the chain back at startup;
+ * not compiled under BPA_STANDALONE, and it needs the file. */
 void
 bpa_audit_recover (void)
 {
@@ -335,6 +347,8 @@ bpa_audit_recover (void)
  * the pool definition does: it is open-ended, and an identity at the end of a
  * line of unknown length is one a reader has to go looking for.
  */
+/* not a unit: it writes an entry to the trail, digesting and appending to a
+ * file; not compiled under BPA_STANDALONE. */
 static void
 bpa_audit_entry (const char *op, const char *kind, u8 *subject, bpa_pool_t *p,
 		 const char *detail)
@@ -451,6 +465,8 @@ done:
   vec_free (line);
 }
 
+/* not a unit: the variadic front door to that write; not compiled under
+ * BPA_STANDALONE. */
 void
 bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
 {
@@ -467,6 +483,8 @@ bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
  * because the entry has to be readable on its own - "attach interface X" does
  * not say which half of the translation was attached.
  */
+/* not a unit: the same write for an interface change, formatting the
+ * interface with VPP's format(); not compiled under BPA_STANDALONE. */
 void
 bpa_audit_interface (const char *op, u8 *ifname, int is_inside)
 {
@@ -483,6 +501,8 @@ bpa_audit_interface (const char *op, u8 *ifname, int is_inside)
  * entry was removed; and a file that simply stops early was truncated, which
  * the file itself cannot tell you.
  */
+/* not a unit: it re-reads the trail from disk and recomputes the chain over
+ * it; not compiled under BPA_STANDALONE, and it needs the file. */
 static void
 bpa_audit_verify (vlib_main_t *vm)
 {
@@ -678,6 +698,8 @@ bpa_audit_verify (vlib_main_t *vm)
     }
 }
 
+/* not a unit: a VPP CLI command handler: it takes an unformat_input_t
+ * and writes to a vlib_main_t's CLI. lab/audit.sh drives it on a box. */
 static clib_error_t *
 bpa_show_history_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			     vlib_cli_command_t *cmd)
@@ -716,6 +738,8 @@ VLIB_CLI_COMMAND (bpa_show_history_command, static) = {
   .function = bpa_show_history_command_fn,
 };
 
+/* not a unit: a VPP CLI command handler, the same class as the one
+ * above. lab/audit.sh drives it on a box. */
 static clib_error_t *
 bpa_audit_path_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			   vlib_cli_command_t *cmd)

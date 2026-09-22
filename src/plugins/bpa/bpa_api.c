@@ -17,6 +17,11 @@
 #define REPLY_MSG_ID_BASE bpa_main.msg_id_base
 #include <vlibapi/api_helper_macros.h>
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
 {
@@ -165,6 +170,11 @@ done:
   REPLY_MACRO (VL_API_BPA_POOL_ADD_DEL_REPLY);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
 {
@@ -206,6 +216,11 @@ vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
   REPLY_MACRO (VL_API_BPA_POOL_SETTINGS_SET_REPLY);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_bypass_set_t_handler (vl_api_bpa_bypass_set_t *mp)
 {
@@ -255,6 +270,11 @@ done:
   REPLY_MACRO (VL_API_BPA_BYPASS_SET_REPLY);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_global_set_t_handler (vl_api_bpa_global_set_t *mp)
 {
@@ -314,6 +334,11 @@ vl_api_bpa_global_set_t_handler (vl_api_bpa_global_set_t *mp)
   REPLY_MACRO (VL_API_BPA_GLOBAL_SET_REPLY);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_logging_set_t_handler (vl_api_bpa_logging_set_t *mp)
 {
@@ -384,6 +409,11 @@ reply:
  * the file whole or refuses it whole. The refusal's sentence goes to the log
  * where the client reads it back, the way every refusal here does.
  */
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_identity_set_t_handler (vl_api_bpa_identity_set_t *mp)
 {
@@ -410,6 +440,11 @@ vl_api_bpa_identity_set_t_handler (vl_api_bpa_identity_set_t *mp)
 
 /* The same table from a lease file (issue #21). The kind decides the grammar
  * the loader reads the file with; everything else is bpa_identity_set's. */
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_identity_source_set_t_handler (vl_api_bpa_identity_source_set_t *mp)
 {
@@ -443,6 +478,11 @@ reply:
 
 /* The accounting listener (issue #21). The secret arrives here and stops
  * here: nothing in the dataplane prints it back. */
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_identity_radius_set_t_handler (vl_api_bpa_identity_radius_set_t *mp)
 {
@@ -477,6 +517,11 @@ vl_api_bpa_identity_radius_set_t_handler (vl_api_bpa_identity_radius_set_t *mp)
   REPLY_MACRO (VL_API_BPA_IDENTITY_RADIUS_SET_REPLY);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_logging_syslog_set_t_handler (vl_api_bpa_logging_syslog_set_t *mp)
 {
@@ -530,6 +575,11 @@ reply:
   REPLY_MACRO (VL_API_BPA_LOGGING_SYSLOG_SET_REPLY);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
 {
@@ -556,6 +606,11 @@ vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
   REPLY_MACRO (VL_API_BPA_LIMITS_SET_REPLY);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
 {
@@ -593,6 +648,11 @@ vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
   REPLY_MACRO (VL_API_BPA_FORWARD_ADD_DEL_REPLY);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_interface_add_del_feature_t_handler (
   vl_api_bpa_interface_add_del_feature_t *mp)
@@ -619,6 +679,8 @@ vl_api_bpa_interface_add_del_feature_t_handler (
   REPLY_MACRO (VL_API_BPA_INTERFACE_ADD_DEL_FEATURE_REPLY);
 }
 
+/* not a unit: it writes a reply message into an API registration's
+ * queue with vl_api_send_msg(); there is no queue outside VPP. */
 static void
 send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
 {
@@ -670,6 +732,11 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
   vl_api_send_msg (reg, (u8 *) mp);
 }
 
+/* not a unit: a binary API message handler. VPP's API machinery dispatches it
+ * from a message on the shared-memory segment and its reply goes back the
+ * same way through REPLY_MACRO - neither exists outside a running VPP.
+ * What the VTY sends through it is driven on a box by lab/vty.sh, and the
+ * widths of the message fields are read by test/test_api_widths.py. */
 static void
 vl_api_bpa_pool_dump_t_handler (vl_api_bpa_pool_dump_t *mp)
 {
@@ -688,6 +755,9 @@ vl_api_bpa_pool_dump_t_handler (vl_api_bpa_pool_dump_t *mp)
 
 #include <bpa/bpa.api.c>
 
+/* not a unit: it registers this plugin's messages with VPP's API at
+ * plugin load, through the api_helper macros. test/test_api_widths.py reads
+ * the .api file those messages are generated from. */
 static clib_error_t *
 bpa_api_hookup (vlib_main_t *vm)
 {
