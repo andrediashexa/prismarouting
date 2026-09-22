@@ -247,12 +247,13 @@ harnesses = sorted(glob.glob(os.path.join(TEST, "test_bpa_*.c")))
 # 18 since #397 added the block-identity store's, 17 since #21 added MD5's and
 # the RADIUS parser's, 15 with the identity
 # table's, 14 since #20 added the syslog line's, and 13 since #390 batch I, which added the PPTP ALG's, the TCP log writer's and
-# the audit trail's. The number is written down so that a glob that stops
+# the audit trail's, and 21 since the arithmetic over a pool's static
+# forwards was given (v, n) and a harness with it. The number is written down so that a glob that stops
 # matching goes red instead of quietly reading fewer files than the
 # repository has - which is what this line is for, and why it moves with the
 # harnesses rather than being loosened to a floor.
-check(len(harnesses) == 20,
-      f"{len(harnesses)} C harnesses found, not the 20 this repository has - "
+check(len(harnesses) == 21,
+      f"{len(harnesses)} C harnesses found, not the 21 this repository has - "
       f"the glob is probably wrong and this suite is reading too little")
 
 n_checks = 0

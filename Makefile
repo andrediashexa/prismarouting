@@ -17,7 +17,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_block_ident \
       $(BUILD)/test_bpa_rebalance \
       $(BUILD)/test_bpa_lent \
-      $(BUILD)/test_bpa_radius
+      $(BUILD)/test_bpa_radius \
+      $(BUILD)/test_bpa_static
 	@sh tools/run-tests.sh
 
 vectors:
@@ -36,6 +37,15 @@ $(BUILD)/test_bpa: test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c \
                    src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vectors.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_pool.c
+
+# The arithmetic over a pool's static forwards, which took a pool - and so a
+# VPP vector - until #390's next batch gave it (v, n). The vector belongs to
+# the one caller in bpa.c that has one; what decides where an operator's
+# forward lands is a header function now, and this drives it over arrays.
+$(BUILD)/test_bpa_static: test/test_bpa_static.c \
+                   src/plugins/bpa/bpa_pool.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_static.c
 
 # The dynamic block allocator, driven rather than evaluated. Standalone
 # because paired address pooling (RFC 4787 REQ-2, the required default under

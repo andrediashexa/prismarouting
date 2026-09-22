@@ -152,7 +152,17 @@ MARKER = "not a unit:"
 # drives what the VTY sends through the API, and test/test_api_widths.py
 # reads the widths of the message fields off the .api file.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 88, "shell": 0}
+# 2026-09-22, later: 88 to 85, and these three went down the OTHER way -
+# they are tested now. The arithmetic over a pool's static forwards took a
+# pool, and so a VPP vector, so a harness with no vectors could not call any
+# of it: where a forward belongs in the ordered list, which forward stands
+# for a subscriber's block, and whether the one just removed was the last.
+# They take (v, n) now, the vector stays with the one caller in bpa.c that
+# has one, and test/test_bpa_static.c drives them over plain arrays. The
+# tie-goes-after rule is the one the VTY's commit diff rests on and it was
+# held by nothing.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 85, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and

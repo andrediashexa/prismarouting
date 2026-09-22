@@ -837,18 +837,24 @@ bpa_is_bypassed (const bpa_pool_t *p, u32 src, u32 dst)
 /* static port forwards                                                */
 
 /*
- * Not in the standalone build. A forward is configuration laid over the
- * mapping, not part of it: ref/bpa_model.py specifies the arithmetic, and the
- * unit test compiles this header against a shim that has no VPP vectors
- * because it has no configuration to hold.
+ * THE ARITHMETIC OVER THE VECTOR, WHICH IS NOT THE VECTOR. Everything from
+ * here to the guard below takes `(v, n)` and never a pool, so it compiles
+ * standalone against a shim with no VPP vectors and test/test_bpa_static.c
+ * drives it. What needs a `bpa_pool_t` - and so a vector - stays behind the
+ * guard, which is the line this file already drew, moved to where the
+ * dependency actually starts.
+ *
+ * A forward is configuration laid over the mapping and not part of it, which
+ * is why none of this is in ref/bpa_model.py: the model specifies where a
+ * subscriber's ports are, and these decide where a configured forward sits
+ * in the list of them.
  */
-#ifndef BPA_STANDALONE
 
 /*
- * Index of the first forward whose public port is >= `port`, or vec_len when
- * there is none. The three callers below are the whole interface; nothing
- * indexes this vector directly, because its ordering is an implementation
- * detail of exactly this search.
+ * Index of the first forward whose public port is >= `port`, or `n` when
+ * there is none. The callers below are the whole interface; nothing indexes
+ * this vector directly, because its ordering is an implementation detail of
+ * exactly this search.
  */
 static_always_inline u32
 bpa_static_lower (const bpa_static_t *v, u32 n, u16 port)
@@ -866,6 +872,65 @@ bpa_static_lower (const bpa_static_t *v, u32 n, u16 port)
     }
   return lo;
 }
+
+/*
+ * Where a forward belongs in a vector ordered by (public port, protocol).
+ *
+ * Two forwards may share both, on different public addresses, and a tie goes
+ * AFTER the ones already there. The VTY keeps its own copy of a pool's
+ * forwards in the order it read them out of `show bpa config` and renders
+ * both sides of a commit diff with a stable sort, so a device that inserted
+ * a new tie in front of an older one would show a diff on the following
+ * commit that nobody asked for.
+ */
+static_always_inline u32
+bpa_static_position (const bpa_static_t *v, u32 n, const bpa_static_t *sf)
+{
+  u32 i = bpa_static_lower (v, n, sf->port_pub);
+
+  while (i < n && v[i].port_pub == sf->port_pub && v[i].proto <= sf->proto)
+    i++;
+  return i;
+}
+
+/*
+ * Is this the first forward of its subscriber in the sorted vector? The block
+ * is the subscriber's own, so that makes it the one forward that stands for
+ * the block.
+ */
+static_always_inline int
+bpa_static_first_in_block (const bpa_static_t *v, u32 n,
+			   const bpa_static_t *sf)
+{
+  u32 i;
+
+  for (i = 0; i < n; i++)
+    if (v[i].ip_priv == sf->ip_priv)
+      return &v[i] == sf;
+  return 0;
+}
+
+/*
+ * Was that the LAST forward its subscriber had? Called after the forward has
+ * already been removed from the vector, so finding none of the subscriber's
+ * own means the block it pinned is no longer pinned by anything.
+ */
+static_always_inline int
+bpa_static_last_in_block (const bpa_static_t *v, u32 n,
+			  const bpa_static_t *sf)
+{
+  u32 i;
+
+  for (i = 0; i < n; i++)
+    if (v[i].ip_priv == sf->ip_priv)
+      return 0;
+  return 1;
+}
+
+/*
+ * From here down a pool is needed, and with it VPP's vectors.
+ */
+#ifndef BPA_STANDALONE
 
 /*
  * The forward that owns (public address, public port, protocol), or 0.
