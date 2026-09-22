@@ -1829,7 +1829,11 @@ sed -n '/^dataplane_log() {/,/^}/p' "$ST" | tail -n +2 >> "$BIN/readers.sh"
   mkdir -p "$PROC/proc/77/task/77" "$PROC/proc/78"
   printf 'sh\n'  > "$PROC/proc/77/comm"
   printf '78\n'  > "$PROC/proc/77/task/77/children"
-  printf 'vpp\n' > "$PROC/proc/78/comm"
+  # vpp_main, because that is what VPP calls its main thread and what /proc
+  # says on this product's own image - the first version of this reader
+  # looked for `vpp`, found nothing, and left every thread count on the
+  # wrapper. Measured: pid1 comm=vpp-entrypoint, child comm=vpp_main.
+  printf 'vpp_main\n' > "$PROC/proc/78/comm"
   ROOT=$PROC
   docker() { echo 77; }
   [ "$(dataplane_pid)" = 78 ] \

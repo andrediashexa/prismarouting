@@ -272,15 +272,21 @@ dataplane_pid() {
     # answered by the first branch.
     _dp=$(docker inspect -f '{{.State.Pid}}' "$VPP_CONTAINER" 2>/dev/null)
     [ -n "$_dp" ] && [ "$_dp" != 0 ] || { echo 0; return; }
-    if [ "$(cat "$ROOT/proc/$_dp/comm" 2>/dev/null)" = vpp ]; then
-      echo "$_dp"
-      return
-    fi
+    # `vpp_main` AND NOT `vpp`, which is the second half of the same
+    # measurement: VPP renames its main thread, so the child of the wrapper
+    # answers `vpp_main` in /proc/<pid>/comm. Looking for `vpp` found
+    # nothing and left the reading on the wrapper, which is the state this
+    # was written to fix. Measured on this product's own image:
+    #
+    #   pid1=52665 comm=vpp-entrypoint
+    #   child 52684 comm=vpp_main threads=4
+    case "$(cat "$ROOT/proc/$_dp/comm" 2>/dev/null)" in
+      vpp|vpp_main) echo "$_dp"; return ;;
+    esac
     for _c in $(cat "$ROOT/proc/$_dp/task/$_dp/children" 2>/dev/null); do
-      if [ "$(cat "$ROOT/proc/$_c/comm" 2>/dev/null)" = vpp ]; then
-        echo "$_c"
-        return
-      fi
+      case "$(cat "$ROOT/proc/$_c/comm" 2>/dev/null)" in
+        vpp|vpp_main) echo "$_c"; return ;;
+      esac
     done
     # No vpp under it: the wrapper is there and the dataplane is not, which
     # the checks below report as what it is rather than as a missing pid.
