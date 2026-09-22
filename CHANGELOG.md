@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The upgrade lab reads which dataplane the box was left on**
+  ([#427](https://github.com/andrediashexa/hexarouting/issues/427)). The
+  defect that reached a maintainer's box got past this lab, and the reason is
+  worth writing down: `lab/upgrade.sh` had the right fixture all along - a
+  source install of an old tag, with no container images anywhere in it,
+  which is exactly what an upgraded appliance looks like - and never asked
+  what the installer enabled.
+
+  It asks now: the container stack must be left **off** on a box with no
+  images, the card watcher with it, and whoever ran the upgrade must be told
+  which dataplane the box is on. Watched red against the installer as
+  0.117.0 shipped it: *container stack enabled: yes* on a box that has no
+  image to start.
+
 ### Fixed
 
 ## 0.118.0 - the default follows the images

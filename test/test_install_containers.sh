@@ -89,6 +89,13 @@ echo "=== and it says so, where somebody is reading ==="
 grep -q "no container images on this box" "$INSTALL" \
   && ok "the installer says a box was left on the units" \
   || bad "a box left on the units is told nothing"
+# BOTH ARMS, and they are different sentences because they are different
+# things: one is a live box being upgraded, the other a root being written
+# into. lab/upgrade.sh reads the second, because a container has no systemd
+# and the installer takes the offline arm there.
+grep -q "no container images in this root" "$INSTALL" \
+  && ok "and says it on the offline arm too, in that arm's own terms" \
+  || bad "the offline arm writes a root that keeps the units and says nothing"
 grep -q "install from a medium of this" "$INSTALL" \
   && ok "and says what would move it" \
   || bad "the message does not say how to get the containers"
