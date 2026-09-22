@@ -171,7 +171,15 @@ MARKER = "not a unit:"
 # pool and bpa_check_pool_overlap() walks bpa_main's pools; both say so, and
 # both name the lab that produces their refusal on a box.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 82, "shell": 0}
+# 2026-09-22, fourth: 82 to 81, tested. bpa_pool_remap_count() answers the
+# one question an operator has before committing a change to a pool that is
+# carrying traffic - how many subscribers it would move - and it needed
+# nothing but two pools, which is why it moved to bpa_pool.h and
+# test/test_bpa_pool.c drives it. An address the new definition does not
+# serve AT ALL counts as moved, and that rule was the one nothing held: its
+# mutation is the narrowing case, and only that case tells the two apart.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 81, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and

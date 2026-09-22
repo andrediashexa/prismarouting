@@ -1400,4 +1400,51 @@ bpa_owner_worker (const bpa_divisor_t *workers, u32 sub_idx)
   return bpa_modulo (workers, sub_idx);
 }
 
+/*
+ * HOW MANY SUBSCRIBERS A NEW DEFINITION OF THIS POOL WOULD MOVE.
+ *
+ * The one question an operator needs answered before committing a change to
+ * a pool that is carrying traffic: this is deterministic CGNAT, so a
+ * subscriber's public address and port block are a FUNCTION of the pool's
+ * definition - change the definition and some of them are somewhere else,
+ * with every session they hold dropped and every log line before the change
+ * pointing at an address that is now somebody else's.
+ *
+ * `example` takes the first `max_examples` addresses that moved, so the
+ * warning can show an operator a few of them rather than only a count. It is
+ * the caller's array and is written only up to that bound.
+ *
+ * AN ADDRESS THE NEW DEFINITION DOES NOT SERVE AT ALL has moved as surely as
+ * one that moved somewhere else: a subscriber who falls outside the new
+ * inside set has no mapping, which is the same outage from the subscriber's
+ * side and a worse one from the operator's, because nothing will log it.
+ */
+static_always_inline u32
+bpa_pool_remap_count (const bpa_pool_t *now, const bpa_pool_t *cfg,
+		      u32 *n_total, u32 *example, u32 max_examples)
+{
+  u32 moved = 0, i;
+  u32 usable = bpa_pool_usable (now);
+
+  *n_total = usable;
+  for (i = 0; i < usable; i++)
+    {
+      bpa_block_t a, b;
+      u32 addr;
+
+      if (bpa_set_addr_of (&now->inside, i, &addr))
+	continue;
+      if (bpa_forward (now, addr, &a))
+	continue;
+      if (bpa_forward (cfg, addr, &b) || a.ip_pub != b.ip_pub
+	  || a.port_lo != b.port_lo)
+	{
+	  if (moved < max_examples)
+	    example[moved] = addr;
+	  moved++;
+	}
+    }
+  return moved;
+}
+
 #endif /* __included_bpa_pool_h__ */

@@ -1970,5 +1970,101 @@ main (void)
 	    (unsigned) (sizeof (cases) / sizeof (cases[0])));
   }
 
+  /*
+   * HOW MANY SUBSCRIBERS A CHANGE WOULD MOVE, which is the number an
+   * operator is shown before committing a change to a pool that is carrying
+   * traffic. This is deterministic CGNAT: a subscriber's public address and
+   * port block are a function of the pool's definition, so a definition that
+   * changes moves some of them - every session they hold dropped, and every
+   * log line written before the change pointing at an address that is now
+   * somebody else's.
+   *
+   * It was in bpa.c and took a bpa_pool_t, which is all it ever needed;
+   * nothing drove it until it moved here.
+   */
+  printf ("\n=== what a new definition of a pool would move ===\n");
+  {
+    bpa_pool_t now, cfg;
+    u32 in_b[1], in_c[1], out_b[1], out_c[1];
+    u32 total = 0, example[4], moved;
+
+    /* 1024 subscribers over four public addresses, 64 ports each. */
+    in_b[0] = 0x64400000; in_c[0] = 1024;	/* 100.64.0.0 + 1024 */
+    out_b[0] = 0xcb007100; out_c[0] = 4;	/* 203.0.113.0 + 4 */
+    memset (&now, 0, sizeof (now));
+    now.name = (u8 *) "remap";
+    now.port_min = 1024; now.port_max = 65535;
+    now.block_size = 64; now.mode = BPA_MODE_DETERMINISTIC;
+    CHECK (bpa_addr_set_build (&now.inside, in_b, in_c, 1) == 0, "inside");
+    CHECK (bpa_addr_set_build (&now.outside, out_b, out_c, 1) == 0, "outside");
+    CHECK (bpa_pool_init (&now) == 0, "the pool under test did not init");
+
+    /* THE SAME DEFINITION MOVES NOBODY. A commit that changes something
+     * else about a pool must not warn about subscribers, or the warning
+     * becomes noise and the operator stops reading it. */
+    cfg = now;
+    moved = bpa_pool_remap_count (&now, &cfg, &total, example, 4);
+    CHECK (moved == 0, "%u subscriber(s) moved under an unchanged definition",
+	   moved);
+    CHECK (total == bpa_pool_usable (&now),
+	   "the total is not the pool's usable count");
+
+    /* ONE MORE PUBLIC ADDRESS AND EVERY SUBSCRIBER MOVES. The join spreads
+     * subscribers across the public set, so widening it renumbers the lot -
+     * which is exactly what an operator must be told before committing. */
+    memset (&cfg, 0, sizeof (cfg));
+    cfg.name = (u8 *) "remap";
+    cfg.port_min = 1024; cfg.port_max = 65535;
+    cfg.block_size = 64; cfg.mode = BPA_MODE_DETERMINISTIC;
+    out_c[0] = 8;
+    CHECK (bpa_addr_set_build (&cfg.inside, in_b, in_c, 1) == 0, "inside 2");
+    CHECK (bpa_addr_set_build (&cfg.outside, out_b, out_c, 1) == 0, "out 2");
+    CHECK (bpa_pool_init (&cfg) == 0, "the proposed pool did not init");
+    moved = bpa_pool_remap_count (&now, &cfg, &total, example, 4);
+    CHECK (moved > 0,
+	   "doubling the public set moved nobody, so the operator would be "
+	   "told a renumbering is free");
+    CHECK (moved <= total, "more moved (%u) than exist (%u)", moved, total);
+
+    /* AND THE EXAMPLES ARE ADDRESSES THAT REALLY MOVED, bounded by what the
+     * caller's array holds. A warning that named an address which did not
+     * move would send an operator to the wrong subscriber. */
+    {
+      u32 k, n_ex = moved < 4 ? moved : 4;
+
+      for (k = 0; k < n_ex; k++)
+	{
+	  bpa_block_t a = { 0 }, b = { 0 };
+	  int ra = bpa_forward (&now, example[k], &a);
+	  int rb = bpa_forward (&cfg, example[k], &b);
+
+	  CHECK (ra == 0, "example %u is not served by the running pool", k);
+	  CHECK (rb != 0 || a.ip_pub != b.ip_pub || a.port_lo != b.port_lo,
+		 "example %u names an address that did not move", k);
+	}
+      printf ("  %u of %u subscriber(s) move, %u example(s) checked\n",
+	      moved, total, n_ex);
+    }
+
+    /* A SUBSCRIBER THE NEW DEFINITION DOES NOT SERVE AT ALL has moved as
+     * surely as one that moved elsewhere: no mapping is the same outage from
+     * the subscriber's side, and a worse one from the operator's, because
+     * nothing will log it. */
+    memset (&cfg, 0, sizeof (cfg));
+    cfg.name = (u8 *) "remap";
+    cfg.port_min = 1024; cfg.port_max = 65535;
+    cfg.block_size = 64; cfg.mode = BPA_MODE_DETERMINISTIC;
+    in_c[0] = 512;			/* half the subscribers, same base */
+    out_c[0] = 4;
+    CHECK (bpa_addr_set_build (&cfg.inside, in_b, in_c, 1) == 0, "inside 3");
+    CHECK (bpa_addr_set_build (&cfg.outside, out_b, out_c, 1) == 0, "out 3");
+    CHECK (bpa_pool_init (&cfg) == 0, "the narrowed pool did not init");
+    moved = bpa_pool_remap_count (&now, &cfg, &total, example, 4);
+    CHECK (moved >= 512,
+	   "narrowing the inside set to half moved only %u of %u: the "
+	   "subscribers it no longer serves were counted as staying put",
+	   moved, total);
+  }
+
   return bpa_test_verdict (checks, failures);
 }
