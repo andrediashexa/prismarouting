@@ -24,6 +24,11 @@ bpa_main_t bpa_main;
  * intermittently with nothing obvious in any log. Catching it here costs
  * one walk over the interface addresses at config time.
  */
+/* not a unit: it walks VPP's own interface pool and every address on it -
+ * vnet_get_main(), pool_foreach over sw_interfaces and
+ * foreach_ip_interface_address - none of which exists outside a running VPP.
+ * The rule it enforces is measured on a box by lab/localaddr.sh, which gives
+ * a pool an address the box itself carries and reads the refusal back. */
 static clib_error_t *
 bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
 {
@@ -178,6 +183,12 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
   return 0;
 }
 
+/* not a unit: it turns bpa_static_clash()'s answer into the sentence an
+ * operator reads, which needs VPP's format() and a clib_error_t. WHICH of the
+ * two clashes it is - and that a difference of protocol or of public address
+ * is not one - is the decision, and test/test_bpa_static.c drives that. The
+ * widths of both sentences are read by test/test_prismash_refusals.py, and
+ * lab/forward.sh produces them on a box. */
 /*
  * Two forwards that cannot both hold.
  *
@@ -204,31 +215,24 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
 static clib_error_t *
 bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
 {
+  const bpa_static_t *o = 0;
   ip4_address_t a, pub;
-  u32 i;
 
-  vec_foreach_index (i, p->statics)
+  switch (bpa_static_clash (p->statics, vec_len (p->statics), sf, &o))
     {
-      const bpa_static_t *o = &p->statics[i];
-
-      if (o->proto != sf->proto)
-	continue;
-      if (o->port_pub == sf->port_pub && o->ip_pub == sf->ip_pub)
-	{
-	  a.as_u32 = clib_host_to_net_u32 (o->ip_priv);
-	  pub.as_u32 = clib_host_to_net_u32 (o->ip_pub);
-	  return clib_error_return (
-	    0, "public port %u on %U is already forwarded to %U:%u",
-	    sf->port_pub, format_ip4_address, &pub, format_ip4_address, &a,
-	    o->port_priv);
-	}
-      if (o->ip_priv == sf->ip_priv && o->port_priv == sf->port_priv)
-	{
-	  a.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
-	  return clib_error_return (
-	    0, "%U:%u is already forwarded from public port %u",
-	    format_ip4_address, &a, sf->port_priv, o->port_pub);
-	}
+    case BPA_STATIC_CLASH_PUB:
+      a.as_u32 = clib_host_to_net_u32 (o->ip_priv);
+      pub.as_u32 = clib_host_to_net_u32 (o->ip_pub);
+      return clib_error_return (
+	0, "public port %u on %U is already forwarded to %U:%u", sf->port_pub,
+	format_ip4_address, &pub, format_ip4_address, &a, o->port_priv);
+    case BPA_STATIC_CLASH_PRIV:
+      a.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
+      return clib_error_return (
+	0, "%U:%u is already forwarded from public port %u",
+	format_ip4_address, &a, sf->port_priv, o->port_pub);
+    case BPA_STATIC_CLASH_NONE:
+      break;
     }
   return 0;
 }
@@ -686,6 +690,11 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
  * for the same packet - when at least one of them is bound to no VRF, or both
  * are bound to the same one.
  */
+/* not a unit: it walks bpa_main's pool of pools with pool_foreach and
+ * formats a clib_error_t. The overlap ARITHMETIC it asks per pair is
+ * bpa_ranges_overlap() in bpa_pool.h, which test/test_bpa_pool.c drives over
+ * the cases this loop hands it (#424); what is left here is the walk and the
+ * sentence, and lab/two-pools.sh produces both on a box. */
 static clib_error_t *
 bpa_check_pool_overlap (const bpa_pool_t *cfg)
 {

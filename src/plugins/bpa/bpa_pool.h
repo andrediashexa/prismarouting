@@ -928,6 +928,62 @@ bpa_static_last_in_block (const bpa_static_t *v, u32 n,
 }
 
 /*
+ * TWO FORWARDS THAT CANNOT BOTH HOLD, decided here and worded in bpa.c.
+ *
+ * One public SOCKET serves one subscriber socket, and one subscriber socket
+ * is reached through one public socket - both directions have to hold or the
+ * translation is ambiguous in one of them. The two clashes are different
+ * failures and an operator needs to be told which: the first says somebody
+ * else already has that public port on that address, the second says this
+ * subscriber socket is already reachable on another one.
+ *
+ * THE ADDRESS IS PART OF THE PUBLIC KEY. A pool has more than one public
+ * address and the same port on two of them is two sockets - keyed on the port
+ * alone, one forward made that port unsellable to every subscriber sharing
+ * its offset on the other addresses (#214).
+ *
+ * The decision is separated from the message because the message needs VPP's
+ * format() and a clib_error_t, and the decision needs neither: this is what
+ * test/test_bpa_static.c drives, and bpa_static_conflict() in bpa.c turns
+ * the answer into the sentence an operator reads.
+ */
+typedef enum
+{
+  BPA_STATIC_CLASH_NONE = 0,
+  BPA_STATIC_CLASH_PUB,	 /* that public socket is already forwarded */
+  BPA_STATIC_CLASH_PRIV, /* that subscriber socket already has a forward */
+} bpa_static_clash_t;
+
+static_always_inline bpa_static_clash_t
+bpa_static_clash (const bpa_static_t *v, u32 n, const bpa_static_t *sf,
+		  const bpa_static_t **other)
+{
+  u32 i;
+
+  for (i = 0; i < n; i++)
+    {
+      const bpa_static_t *o = &v[i];
+
+      /* A forward pins a port of one protocol; TCP 1100 and UDP 1100 are
+       * different sockets and neither says anything about the other. */
+      if (o->proto != sf->proto)
+	continue;
+      if (o->port_pub == sf->port_pub && o->ip_pub == sf->ip_pub)
+	{
+	  *other = o;
+	  return BPA_STATIC_CLASH_PUB;
+	}
+      if (o->ip_priv == sf->ip_priv && o->port_priv == sf->port_priv)
+	{
+	  *other = o;
+	  return BPA_STATIC_CLASH_PRIV;
+	}
+    }
+  *other = 0;
+  return BPA_STATIC_CLASH_NONE;
+}
+
+/*
  * From here down a pool is needed, and with it VPP's vectors.
  */
 #ifndef BPA_STANDALONE
