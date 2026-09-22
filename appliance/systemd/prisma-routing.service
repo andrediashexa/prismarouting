@@ -4,10 +4,31 @@ Documentation=file:///usr/share/doc/prisma-routing/architecture.md
 # FRR is Wants and not Requires: without routing the box still forwards what
 # static routes cover, and taking CGNAT down with it would only widen the
 # damage.
-After=vpp.service frr.service
-Requires=vpp.service
+After=vpp.service frr.service prisma-routing-containers.service
 Wants=frr.service
-PartOf=vpp.service
+# PartOf BOTH DATAPLANES, so this is stopped and restarted with whichever one
+# this box runs. PartOf a unit nobody started is inert, so naming both costs
+# the unit path nothing.
+PartOf=vpp.service prisma-routing-containers.service
+# AND `Requires=vpp.service` IS GONE, WHICH IS THE POINT (#426).
+#
+# Requires PULLS THE UNIT IN: on a box whose dataplane is a container, this
+# would have started vpp.service - and vpp.service Conflicts with
+# prisma-routing-containers.service, so systemd would stop the containers to
+# start it, or refuse, and which of those happens is decided nowhere. The box
+# would end up with the configuration loader fighting its own dataplane at
+# every boot.
+#
+# Wants= is no better: it pulls the unit in just the same, only without
+# failing if it will not start.
+#
+# NOTHING IS LOST ON THE UNIT PATH. vpp.service is enabled on every installed
+# box, so it is started by its own enablement and not by this; the ordering
+# that matters is After=, which is kept, and the race that remains is the one
+# ExecStartPre has always covered - wait-for-vpp waits for a dataplane that
+# ANSWERS, whichever unit started it. A box where the dataplane is genuinely
+# not coming gets the 60-second timeout and its message, which is a better
+# answer than a dependency that starts a second dataplane.
 
 [Service]
 Type=oneshot

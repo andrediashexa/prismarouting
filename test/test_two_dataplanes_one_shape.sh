@@ -108,6 +108,38 @@ body "$COMPOSE" | grep -q "pid: host" \
   || bad "compose.yaml dropped pid: host, so the container's PID is from another namespace and the OOM check would read /proc of some other process, or none"
 
 echo
+echo "=== nothing pulls in the dataplane this box is not running ==="
+# Requires= and Wants= START the unit they name. prisma-routing.service
+# carried Requires=vpp.service, which on a container box would have started
+# vpp.service - and vpp.service Conflicts with the containers unit, so systemd
+# would stop the containers to start it, or refuse, and which of those happens
+# is decided nowhere. The loader would fight its own dataplane at every boot.
+#
+# After= is the ordering and is kept: it is not a dependency and starts
+# nothing. PartOf is kept too, naming both, because PartOf a unit nobody
+# started is inert.
+pullers=""
+for u in "$SYSD"/*.service "$SYSD"/*.timer "$SYSD"/*.conf; do
+  [ -f "$u" ] || continue
+  n=$(basename "$u")
+  case "$n" in
+    # The dataplane units themselves, which are allowed to name what they
+    # replace: the containers unit Conflicts with vpp.service and frr.service
+    # on purpose, and Conflicts starts nothing.
+    prisma-routing-containers.service) continue ;;
+  esac
+  if body "$u" | grep -qE "^(Requires|Wants|BindsTo)=.*(vpp\.service|prisma-routing-containers\.service)"; then
+    pullers="$pullers $n"
+  fi
+done
+[ -z "$pullers" ] \
+  && ok "no unit pulls in a dataplane: After= orders, and starts nothing" \
+  || bad "these units would START a dataplane they only mean to run after:$pullers - on a box running the other one, that is systemd being asked to run both and no file saying which wins"
+body "$SYSD/prisma-routing.service" | grep -q "^PartOf=.*prisma-routing-containers.service" \
+  && ok "and the configuration loader is PartOf both, so it follows whichever runs" \
+  || bad "prisma-routing.service is not PartOf prisma-routing-containers.service: on a container box a dataplane restart would leave the CGNAT configuration unapplied and nothing would say so"
+
+echo
 echo "=== the drain runs before the dataplane dies on both paths ==="
 # #217: in dynamic mode the block allocation log IS the connection record, and
 # a block still held when the dataplane stops leaves its allocation open in
