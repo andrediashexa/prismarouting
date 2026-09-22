@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.3 - which forward an operator meant is a count
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **Which forward an operator meant is a count, and it is tested**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). A pool
   has more than one public address, so the same port can be forwarded to
