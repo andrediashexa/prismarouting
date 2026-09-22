@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.117.5 - the clash between two forwards is a decision
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **Which of two forwards cannot both hold is a decision, and it is tested**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   `bpa_static_conflict()` decided and worded the refusal in one function, and
