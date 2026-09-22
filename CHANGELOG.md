@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **What the box warns an operator about a stride and a reserve is measured**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). Two more
+  decisions split from the sentences that carry them: whether the stride an
+  operator typed reaches every worker, and how many workers a reserve misses.
+  Both read the worker count out of `bpa_main`, so nothing could drive the
+  arithmetic - the box's own numbers were its only witness.
+
+  The floor of one worker stays in `bpa.c`, which is the one place that reads
+  how many this box has; the arithmetic is `bpa_stride_short_at()` and
+  `bpa_reserve_short_at()` in `bpa_pool.h`, and `test/test_bpa_pool.c`
+  derives its cases **from the pool's own stride unit** rather than from
+  numbers that happened to work - the first version of that case picked a
+  stride which turned out to be reachable, and proved nothing.
+
+  Held now: a pool that asked for no stride is not short of one, a reserve of
+  zero is not a reserve missing every worker, a reserve larger than the
+  worker count does not subtract into a very large number, and the stride the
+  refusal offers instead is one that really reaches every worker - an
+  operator who types it must not be warned again. With six functions that
+  write those sentences to a vlib CLI saying why a harness cannot reach them,
+  the ceiling goes 80 → 72.
+
 ### Fixed
 
 ## 0.118.1 - the upgrade lab reads what it left behind

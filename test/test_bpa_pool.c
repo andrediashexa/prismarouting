@@ -2196,5 +2196,98 @@ main (void)
 	    "completed with\n");
   }
 
+  /*
+   * WHAT THE BOX TELLS AN OPERATOR ABOUT A STRIDE AND A RESERVE THAT DO NOT
+   * REACH EVERY WORKER. Both are warnings an operator reads at the moment
+   * they type the number, and both were decided inside functions that read
+   * the worker count out of bpa_main - so the arithmetic could not be driven
+   * by anything, and the box's own numbers were its only witness.
+   */
+  printf ("\n=== a stride and a reserve that do not reach every worker ===\n");
+  {
+    bpa_pool_t p;
+    u32 in_b[1], in_c[1], out_b[1], out_c[1];
+    u32 ok = 0;
+
+    in_b[0] = 0x64400000; in_c[0] = 256;
+    out_b[0] = 0xcb007100; out_c[0] = 4;
+    memset (&p, 0, sizeof (p));
+    p.name = (u8 *) "stride";
+    p.port_min = 1024; p.port_max = 65535;
+    p.block_size = 64; p.mode = BPA_MODE_DYNAMIC;
+    CHECK (bpa_addr_set_build (&p.inside, in_b, in_c, 1) == 0, "inside");
+    CHECK (bpa_addr_set_build (&p.outside, out_b, out_c, 1) == 0, "outside");
+    CHECK (bpa_pool_init (&p) == 0, "the pool under test did not init");
+
+    /* NO STRIDE IS NOT A SHORT STRIDE. A pool that asked for none is not a
+     * pool whose operator should be warned about one. */
+    p.block_stride = 0;
+    CHECK (bpa_stride_short_at (&p, 4, &ok) == 0,
+	   "a pool with no stride was reported as short of one");
+
+    /* A WORKER-LESS BOX IS NEVER SHORT, whatever the stride: with one worker
+     * every block is that worker's. This is the case the floor in bpa.c
+     * exists for, asked here at the value that floor produces. */
+    p.block_stride = 1;
+    CHECK (bpa_stride_short_at (&p, 1, &ok) == 0,
+	   "a box with one worker was told its stride is short");
+
+    /* A STRIDE THAT LEAVES WORKERS OUT, and the numbers come from the
+     * pool's own unit rather than from a guess: a subscriber's nth block
+     * lands stride*unit indices along, so it is in the same slice only when
+     * that product is a multiple of the worker count. With this pool's unit
+     * and THREE workers, a stride of one is not - which is the shape an
+     * operator meets and the reason the refusal names another number. */
+    {
+      u32 unit = bpa_stride_unit (&p);
+      u32 nw = 3;
+
+      CHECK (unit % nw != 0,
+	     "this pool's unit (%u) is a multiple of %u workers, so no "
+	     "stride is short here and the case below proves nothing",
+	     unit, nw);
+      p.block_stride = 1;
+      CHECK (bpa_stride_short_at (&p, nw, &ok) == 1,
+	     "a stride of 1 at %u workers was not reported short, and "
+	     "1*%u is not a multiple of %u", nw, unit, nw);
+      CHECK (ok != 0 && ok != 1,
+	     "a short stride named %u as the nearest that works, which is "
+	     "either nothing or the number already typed", ok);
+      CHECK (((u64) ok * unit) % nw == 0,
+	     "the stride the box offered instead (%u) does not reach every "
+	     "worker either, so an operator who typed it would be warned "
+	     "again", ok);
+      {
+	bpa_pool_t q = p;
+	u32 ok2 = 0;
+
+	q.block_stride = ok;
+	CHECK (bpa_stride_short_at (&q, nw, &ok2) == 0,
+	       "the stride the box offered is short when asked back");
+      }
+    }
+
+    /* THE RESERVE, and the case a subtraction alone gets wrong: a reserve of
+     * zero is a pool that asked for none, not a pool short of every worker. */
+    p.block_reserve = 0; p.reserve_count = 0;
+    CHECK (bpa_reserve_short_at (&p, 4) == 0,
+	   "a pool with no reserve was reported short of four workers");
+    p.block_reserve = 1; p.reserve_count = 1;
+    CHECK (bpa_reserve_short_at (&p, 4) == 3,
+	   "a reserve of one at four workers left %u unreached, not 3",
+	   bpa_reserve_short_at (&p, 4));
+    p.reserve_count = 4;
+    CHECK (bpa_reserve_short_at (&p, 4) == 0,
+	   "a reserve that reaches every worker was still reported short");
+    p.reserve_count = 9;
+    CHECK (bpa_reserve_short_at (&p, 4) == 0,
+	   "a reserve larger than the worker count was reported short, which "
+	   "would subtract into a very large number");
+    p.reserve_count = 1;
+    CHECK (bpa_reserve_short_at (&p, 1) == 0,
+	   "a box with one worker was told its reserve is short");
+    printf ("  a stride that misses workers, and a reserve that does\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

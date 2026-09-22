@@ -1060,6 +1060,10 @@ typedef struct
   u8 *pool;
 } bpa_floor_ctx_t;
 
+/* not a unit: it formats one RFC floor's warning with VPP's format() and
+ * writes it to a vlib_main_t. WHICH floors exist and what each breaks is
+ * the X-macro in bpa_pool.h, which test/test_doc_copies.py reads against the
+ * three places those numbers are written down. */
 static void
 bpa_floor_warn (void *ctxp, const char *name, u32 value, u32 floor,
 		const char *rfc, const char *breaks)
@@ -1089,6 +1093,9 @@ bpa_floor_warn (void *ctxp, const char *name, u32 value, u32 floor,
  * and the pool creation path cannot warn differently - or one of them forget.
  * `vm` may be null, and then only the log hears about it.
  */
+/* not a unit: it walks that X-macro calling the one above, so it needs
+ * the same vlib_main_t, and the numbers it walks are held by
+ * test/test_doc_copies.py. */
 void
 bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
 {
@@ -1139,6 +1146,11 @@ bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
  * agreeing (#375). A mode test here would be a second owner of the same
  * rule and could never be shown failing.
  */
+/* not a unit: it reads how many workers this box has out of bpa_main, which
+ * exists only inside VPP. THE ARITHMETIC is bpa_stride_short_at() in
+ * bpa_pool.h and test/test_bpa_pool.c drives it; what is here is the floor -
+ * one worker on a worker-less box - kept in the one place that reads the
+ * count rather than at each of the three callers. */
 static int
 bpa_stride_short (const bpa_pool_t *p, u32 *nwp, u32 *okp)
 {
@@ -1146,11 +1158,7 @@ bpa_stride_short (const bpa_pool_t *p, u32 *nwp, u32 *okp)
   u32 nw = bm->n_workers ? bm->n_workers : 1;
 
   *nwp = nw;
-  *okp = 0;
-  if (p->block_stride == 0 || bpa_stride_reachable (p, nw))
-    return 0;
-  *okp = bpa_stride_next_ok (p, p->block_stride, nw);
-  return 1;
+  return bpa_stride_short_at (p, nw, okp);
 }
 
 /*
@@ -1168,6 +1176,11 @@ bpa_stride_short (const bpa_pool_t *p, u32 *nwp, u32 *okp)
  * at the prompt and the sentence they are told at the console are the same
  * sentence, so neither can drift into being the friendlier one.
  */
+/* not a unit: it prints the stride warning to a vlib_main_t's CLI, which
+ * is `show bpa pool`'s screen. WHETHER to warn is bpa_stride_short_at() in
+ * bpa_pool.h and is driven there; the words are read by
+ * test/test_plugin_cli_says.py, and lab/crossaddr.sh drives a strided pool
+ * on a box. */
 void
 bpa_stride_say (vlib_main_t *vm, const bpa_pool_t *p)
 {
@@ -1199,6 +1212,8 @@ bpa_stride_say (vlib_main_t *vm, const bpa_pool_t *p)
  * operator at the other end of a message rather than a terminal, and prismash
  * relays the rows from "show bpa pool" instead.
  */
+/* not a unit: the same sentence at the moment the stride is set, written
+ * to vlib's log rather than the CLI. The decision is bpa_stride_short_at(). */
 void
 bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p)
 {
@@ -1250,6 +1265,8 @@ bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p)
  * one against one and is never short, which is why `nw` is floored at 1 here
  * and not at each caller.
  */
+/* not a unit: the same reading, out of the same bpa_main. The arithmetic is
+ * bpa_reserve_short_at() in bpa_pool.h and is driven there. */
 static u32
 bpa_reserve_short (const bpa_pool_t *p, u32 *nwp)
 {
@@ -1257,9 +1274,7 @@ bpa_reserve_short (const bpa_pool_t *p, u32 *nwp)
   u32 nw = bm->n_workers ? bm->n_workers : 1;
 
   *nwp = nw;
-  if (p->block_reserve == 0 || p->reserve_count >= nw)
-    return 0;
-  return nw - p->reserve_count;
+  return bpa_reserve_short_at (p, nw);
 }
 
 /*
@@ -1277,6 +1292,8 @@ bpa_reserve_short (const bpa_pool_t *p, u32 *nwp)
  * at the prompt and the sentence they are told at the console are the same
  * sentence, so neither can drift into being the friendlier one.
  */
+/* not a unit: it prints the reserve warning to a vlib_main_t's CLI. The
+ * decision is bpa_reserve_short_at() in bpa_pool.h, driven there. */
 void
 bpa_reserve_say (vlib_main_t *vm, const bpa_pool_t *p)
 {
@@ -1300,6 +1317,8 @@ bpa_reserve_say (vlib_main_t *vm, const bpa_pool_t *p)
 		       "a warning, not a refusal");
 }
 
+/* not a unit: the same sentence at the moment the reserve is set, to
+ * vlib's log. The decision is bpa_reserve_short_at(). */
 void
 bpa_reserve_warn (vlib_main_t *vm, const bpa_pool_t *p)
 {
