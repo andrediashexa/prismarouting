@@ -634,6 +634,29 @@ sh /src/appliance/install.sh > /tmp/new-install.log 2>&1 || {
 NEW_INSTALL_SAID=$(cat /tmp/new-install.log)
 sed -n '/^==> documentation/,$p' /tmp/new-install.log | sed 's/^/  | /'
 NEW_STAMP=$(cat /usr/share/prisma-routing/VERSION 2>/dev/null || echo "")
+# WHICH DATAPLANE THE UPGRADE LEFT THIS BOX ON (#427).
+#
+# This is the reading that was missing when a maintainer's box came up
+# routing and not forwarding. The upgrade artifact carries no container
+# images - they ride the squashfs - so a box upgraded from a release older
+# than 0.113.0 has none, and an installer that enabled the container stack
+# anyway handed it a dataplane it could not start.
+#
+# THIS FIXTURE IS THAT BOX. It is a source install of an old tag, with no
+# /usr/lib/prisma-routing/images.tar.gz anywhere in it, which is exactly what
+# an upgraded appliance looks like. The links are read rather than systemd
+# asked, because this container has no systemd and install.sh therefore takes
+# its offline arm - the arm that writes what `systemctl enable` would.
+WANTS=/etc/systemd/system/multi-user.target.wants
+TIMERS=/etc/systemd/system/timers.target.wants
+UPG_HAS_IMAGES=no
+[ -f /usr/lib/prisma-routing/images.tar.gz ] && UPG_HAS_IMAGES=yes
+UPG_CONTAINERS=no
+[ -e "$WANTS/prisma-routing-containers.service" ] && UPG_CONTAINERS=yes
+UPG_WATCH=no
+[ -e "$TIMERS/prisma-routing-card-watch.timer" ] && UPG_WATCH=yes
+echo "  images on this box: $UPG_HAS_IMAGES"
+echo "  container stack enabled: $UPG_CONTAINERS, card watcher: $UPG_WATCH"
 NEW_INSTALLED_SUM=$(sha256sum "$PLUGIN_DIR/bpa_plugin.so" 2>/dev/null | cut -c1-16)
 AFTER_SUM=$(sha256sum "$CONF" 2>/dev/null | cut -d' ' -f1)
 echo "  version stamp: '$OLD_STAMP' -> '$NEW_STAMP'"
@@ -947,6 +970,23 @@ hugepages take effect." "$NEW_INSTALL_SAID"
 # The paragraph itself is driven by test/test_install_says.sh.
 expect_not_said "and said nothing about services this root does not have" \
   "it is what translates every packet on this box" "$NEW_INSTALL_SAID"
+# THE BOX IS LEFT ON A DATAPLANE IT CAN START (#427). An upgraded box has no
+# container images, so it must keep vpp.service and frr.service - and the
+# installer must say which dataplane it is on, because an upgrade that
+# quietly did nothing is indistinguishable from one that worked.
+expect_setup "this fixture has no container images, like every upgraded box" \
+  test "$UPG_HAS_IMAGES" = no
+expect "the upgrade did NOT move this box to the containers" \
+  test "$UPG_CONTAINERS" = no
+expect "and did not arm the card watcher either" \
+  test "$UPG_WATCH" = no
+# THE OFFLINE ARM'S WORDS, because that is the arm this container takes:
+# there is no systemd here, so the installer writes the links a real box's
+# `systemctl enable` would and says "this root" where a live box says "this
+# box". test/test_install_containers.sh holds both sentences; what this lab
+# adds is that one of them really reaches the operator running the upgrade.
+expect_said "and it told whoever ran it which dataplane the box is on" \
+  "no container images in this root" "$NEW_INSTALL_SAID"
 expect "and the plugin on disk changed with it" \
   test "$OLD_INSTALLED_SUM" != "$NEW_INSTALLED_SUM"
 expect "the dataplane now runs the plugin the upgrade installed" \
