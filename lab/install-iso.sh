@@ -4772,7 +4772,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
 
   CT_PS=""; CT_DPIF=""; CT_UNIT=""; CT_LOADER=""; CT_SELF=""
   CT_UNITSTATE=""; CT_WHY=""; CT_IMGS=""
-  CT_LOADWHY=""; CT_LINKS=""; CT_THREADS=""; CT_DPLOG=""
+  CT_LOADWHY=""; CT_LINKS=""; CT_THREADS=""; CT_DPLOG=""; CT_FRR=""
   if login_root "the box to come back on its container stack"; then
     # WHAT IS ACTUALLY RUNNING. Names and states, from docker itself.
     send 'echo "HX""LAB ct-ps=$(docker ps --format "{{.Names}}:{{.State}}" 2>/dev/null | sort | tr "\n" " ")"'
@@ -4826,9 +4826,20 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     # file whole and says which line and why, and that sentence is in the
     # journal of this unit and nowhere else - the console only carries the
     # last four lines of it under the self-test's verdict.
-    send 'echo "HX""LAB ct-loadwhy=$(journalctl -u prisma-routing.service --no-pager -n 20 2>/dev/null | tr -d "\r" | grep -viE "systemd|Starting|Stopped" | tr "\n" "|" | cut -c1-500)"'
+    # THE WHOLE REFUSAL AND NOT ITS TAIL. `--load` refuses a file whole and
+    # prints the check that refused it ABOVE the error line, so a capture
+    # that keeps the last 500 characters keeps the error and loses the
+    # reason - which is what the run before this one did, and the diagnosis
+    # had to wait another twenty minutes for it.
+    send 'echo "HX""LAB ct-loadwhy=$(journalctl -u prisma-routing.service --no-pager -n 40 2>/dev/null | tr -d "\r" | sed "s/^.*prismash\[[0-9]*\]: //" | grep -viE "systemd\[|Starting |Stopped |Failed to start" | tr "\n" "|" | cut -c1-1400)"'
     wait_for "HXLAB ct-loadwhy=" 60 \
       "the box to say what it made of its own configuration" || fail=1
+    # AND WHETHER FRR ANSWERS AT ALL from the host, because on this path the
+    # daemons are in a container and vtysh is not: they meet at /var/run/frr,
+    # which compose bind-mounts. A validator that cannot ask FRR anything is
+    # a validator whose refusals are about the wrong thing.
+    send 'echo "HX""LAB ct-frr=$(vtysh -c "show version" 2>&1 | head -1 | tr -d "\r" | cut -c1-80)"'
+    wait_for "HXLAB ct-frr=" 60 "the box to say whether FRR answers" || fail=1
     # THE NETDEVS LINUX HAS. On this box the address lives on a linux_cp pair
     # named after the card, so "which netdevs are there" is the difference
     # between a box that can be reached and one that cannot.
@@ -4853,6 +4864,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     CT_WHY=$(live_field ct-why)
     CT_IMGS=$(live_field ct-imgs)
     CT_LOADWHY=$(live_field ct-loadwhy)
+    CT_FRR=$(live_field ct-frr)
     CT_LINKS=$(live_field ct-links)
     CT_THREADS=$(live_field ct-threads)
     CT_DPLOG=$(live_field ct-dplog)
@@ -4871,6 +4883,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   echo "  -- dataplane threads: ${CT_THREADS:-<none>}"
   echo "  -- the dataplane logged: ${CT_DPLOG:-<nothing of note>}"
   echo "  -- what --load made of the saved file: ${CT_LOADWHY:-<nothing>}"
+  echo "  -- FRR, asked from the host: ${CT_FRR:-<no answer>}"
   echo "  -- containers: ${CT_PS:-<none>}"
   # ORDER-INDEPENDENT, and that is not tidiness: the reading is `sort`ed, so
   # frr comes first, and a pattern written vpp-then-frr called a box with
