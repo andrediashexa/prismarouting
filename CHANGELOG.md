@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.4 - the rest of bpa.c says why
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The rest of `bpa.c` says why a harness cannot reach it**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). What is
   left in that file after six batches of splitting decisions out of it is the
