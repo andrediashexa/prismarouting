@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Which of two forwards cannot both hold is a decision, and it is tested**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `bpa_static_conflict()` decided and worded the refusal in one function, and
+  the wording needs VPP's `format()` - so the decision could not be driven by
+  anything. `bpa_static_clash()` is the decision, in `bpa_pool.h` with the
+  rest of the forward arithmetic; what is left in `bpa.c` turns its answer
+  into the sentence an operator reads, and says so at its definition.
+
+  What is now held: **both directions are refused** - a second forward of one
+  public socket, and a second public socket for one subscriber socket - and
+  neither the protocol nor the public address is confused with the port. That
+  last one is [#214](https://github.com/andrediashexa/hexarouting/issues/214):
+  the same port on another public address is another socket, and refusing it
+  made that port unsellable to every subscriber sharing its offset. Watched
+  red: dropping the address from the public key refuses two assertions, and
+  ignoring the protocol refuses two more.
+
+  With `bpa_check_local_overlap()` and `bpa_check_pool_overlap()` saying why
+  a harness cannot reach them - one walks VPP's interface pool, the other
+  `bpa_main`'s pools, and each names the lab that produces its refusal on a
+  box - the C ceiling goes 85 → 82.
+
 ### Fixed
 
 ## 0.117.4 - the forward arithmetic has a harness

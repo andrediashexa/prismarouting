@@ -162,7 +162,16 @@ MARKER = "not a unit:"
 # tie-goes-after rule is the one the VTY's commit diff rests on and it was
 # held by nothing.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 85, "shell": 0}
+# 2026-09-22, third batch: 85 to 82, and the three are three different
+# answers to the same question. bpa_static_clash() is the DECISION taken out
+# of bpa_static_conflict(): which of the two forwards cannot both hold, and
+# that a difference of protocol or of public address is not a clash at all -
+# tested. What is left of that function is the sentence, which needs VPP's
+# format(), and it says so. bpa_check_local_overlap() walks VPP's interface
+# pool and bpa_check_pool_overlap() walks bpa_main's pools; both say so, and
+# both name the lab that produces their refusal on a box.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 82, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and

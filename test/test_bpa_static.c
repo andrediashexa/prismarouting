@@ -161,6 +161,69 @@ main (void)
   printf ("  [ ok ] the block is released only when nothing of the "
 	  "subscriber's is left\n");
 
+  printf ("\n=== two forwards that cannot both hold ===\n");
+  /* One public socket serves one subscriber socket, and one subscriber
+   * socket is reached through one public socket. Both directions have to
+   * hold, and which one broke is what an operator is told. */
+  {
+    const bpa_static_t *other = 0;
+    bpa_static_t v[3];
+    bpa_static_t cand;
+
+    memset (v, 0, sizeof (v));
+    /* 10.0.0.1:80 reachable on 203.0.113.16:1000, TCP */
+    v[0].ip_priv = 0x0a000001; v[0].port_priv = 80;
+    v[0].ip_pub = 0xcb007110;  v[0].port_pub = 1000; v[0].proto = T_TCP;
+    /* 10.0.0.2:80 on the SAME public port, a different public address */
+    v[1].ip_priv = 0x0a000002; v[1].port_priv = 80;
+    v[1].ip_pub = 0xcb007111;  v[1].port_pub = 1000; v[1].proto = T_TCP;
+
+    /* THE SAME PUBLIC SOCKET: taken. */
+    cand = v[0];
+    cand.ip_priv = 0x0a000009; cand.port_priv = 8080;
+    CHECK (bpa_static_clash (v, 2, &cand, &other) == BPA_STATIC_CLASH_PUB,
+	   "a second forward of one public socket was allowed");
+    CHECK (other == &v[0],
+	   "the clash did not name the forward that already holds it, so the "
+	   "refusal cannot say who has it");
+
+    /* THE SAME SUBSCRIBER SOCKET, reached through another public port:
+     * also refused, because the return direction would be ambiguous. */
+    cand = v[0];
+    cand.port_pub = 2000; cand.ip_pub = 0xcb007112;
+    CHECK (bpa_static_clash (v, 2, &cand, &other) == BPA_STATIC_CLASH_PRIV,
+	   "one subscriber socket was given two public sockets");
+    CHECK (other == &v[0], "the private clash named the wrong forward");
+
+    /* THE ADDRESS IS PART OF THE PUBLIC KEY (#214). The same port on
+     * another public address is another socket, and refusing it made the
+     * port unsellable to every subscriber sharing its offset. */
+    cand = v[0];
+    cand.ip_pub = 0xcb007113; cand.ip_priv = 0x0a00000a; cand.port_priv = 25;
+    CHECK (bpa_static_clash (v, 2, &cand, &other) == BPA_STATIC_CLASH_NONE,
+	   "the same public port on ANOTHER address was refused: one forward "
+	   "would make that port unsellable to every subscriber sharing its "
+	   "offset");
+    CHECK (other == 0, "a clash that did not happen named a forward anyway");
+
+    /* AND A DIFFERENT PROTOCOL IS A DIFFERENT SOCKET. TCP 1000 says nothing
+     * about UDP 1000, in either direction. */
+    cand = v[0];
+    cand.proto = T_UDP; cand.ip_priv = 0x0a00000b; cand.port_priv = 53;
+    CHECK (bpa_static_clash (v, 2, &cand, &other) == BPA_STATIC_CLASH_NONE,
+	   "UDP on a port TCP forwards was refused");
+    cand = v[0];
+    cand.proto = T_UDP; cand.port_pub = 3000; cand.ip_pub = 0xcb007114;
+    CHECK (bpa_static_clash (v, 2, &cand, &other) == BPA_STATIC_CLASH_NONE,
+	   "the same subscriber socket on another protocol was refused");
+
+    /* An empty pool refuses nothing. */
+    CHECK (bpa_static_clash (v, 0, &cand, &other) == BPA_STATIC_CLASH_NONE,
+	   "an empty pool found a clash");
+  }
+  printf ("  [ ok ] both directions are refused, and neither the protocol "
+	  "nor the public address is confused with the port\n");
+
   printf ("\n%u check(s)\n", checks);
   if (failures == 0)
     {
