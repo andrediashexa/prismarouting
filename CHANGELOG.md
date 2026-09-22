@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.117.3 - twenty-seven functions say why they have no unit
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **Twenty-seven functions behind the VPP boundary say so**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   `TESTING.md`'s rule is *every function has a unit test, **or says at its
