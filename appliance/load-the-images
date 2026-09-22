@@ -78,4 +78,18 @@ fi
 
 mkdir -p "$(dirname "$ENVFILE")" 2>/dev/null || true
 printf 'PRISMA_VERSION=%s\n' "$pick" > "$ENVFILE"
+
+# AND THE BOX'S vpp GROUP ID, because the container cannot know it. VPP
+# resolves `gid vpp` in its own /etc/group, and the CLI socket it creates in
+# the bind-mounted /run/vpp is then group-owned by a number that is nobody's
+# group on the box - so an operator account gets "the dataplane is not
+# answering" from a dataplane that is answering root (#426). The host is the
+# only place this number exists; vpp-entrypoint uses it.
+_gid=$(getent group vpp 2>/dev/null | cut -d: -f3)
+if [ -n "$_gid" ]; then
+  printf 'PRISMA_VPP_GID=%s\n' "$_gid" >> "$ENVFILE"
+else
+  say "this box has no 'vpp' group, so the dataplane's CLI socket will be"
+  say "left with the container's own - only root will reach the dataplane."
+fi
 exit 0

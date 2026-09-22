@@ -1804,7 +1804,13 @@ drive_console() {
   wait_for "Prisma Routing VTY" 180 \
     "the account the VTY created to log in and land in the VTY" || return 1
   send "configure"
-  wait_for "entering configuration mode" 60 \
+  # 180 AND NOT 60. On a box whose dataplane is a container the VTY's first
+  # command after login is slower: prismash asks the dataplane and FRR for
+  # what it needs, and both answers now cross a container boundary. Measured
+  # on the flip's first run - the console stopped at the greeting with the
+  # pending-confirm banner printed and no prompt yet, and the driver gave up
+  # with everything about roles unproved. The box was not wrong; the wait was.
+  wait_for "entering configuration mode" 180 \
     "an administrator to be let into configuration mode" || return 1
   # Routing, which is the half a cgnat-operator is refused and the half that
   # was broken for a non-root administrator: frr-reload.py writes its log into
@@ -3822,14 +3828,15 @@ then
 
         # -- what the medium carried, on the disk it installed to (#396)
         #
-        # The container stack ships DISABLED in this release: the box still
-        # boots vpp.service and frr.service. So there is nothing here that
-        # asks whether a container is running - it is not, and a check that
-        # expected one would be a lab asserting what the box does wrong.
-        # What this asks is the thing the next release depends on: that an
-        # INSTALLED disk has the runtime, the compose file, the unit and the
-        # images, because all four ride the squashfs and none of them is
-        # fetched at first boot. A box in an ISP has no route to a registry.
+        # The container stack is WHAT THIS BOX RUNS (#426). What this asks
+        # is that an installed disk has the runtime, the compose file, the
+        # unit and the images - all four ride the squashfs and none of them
+        # is fetched at first boot, because a box in an ISP has no route to
+        # a registry - and that the unit and its watcher are ENABLED while
+        # vpp.service and frr.service are not. Whether the containers then
+        # carry packets is PHASE 2 onwards: this box is reached over ssh,
+        # configured, and reads its own configuration back with the
+        # dataplane in a container throughout.
         echo
         echo "  -- the installed disk carries the container stack (#396)"
         send 'echo "HX""LAB dk-bin=$(command -v docker-compose >/dev/null 2>&1 && command -v docker >/dev/null 2>&1 && echo both || echo missing)"'
@@ -3839,6 +3846,12 @@ then
         send 'echo "HX""LAB dk-enabled=$(systemctl is-enabled prisma-routing-containers.service 2>&1 | tr -d "\r")"'
         wait_for "HXLAB dk-enabled=" 60 "the box to say whether the unit is enabled" \
           || fail=1
+        send 'echo "HX""LAB dk-old=$(systemctl is-enabled vpp.service 2>&1 | tr -d "\r"):$(systemctl is-enabled frr.service 2>&1 | tr -d "\r")"'
+        wait_for "HXLAB dk-old=" 60 \
+          "the box to say whether the units it replaces are enabled" || fail=1
+        send 'echo "HX""LAB dk-timer=$(systemctl is-enabled prisma-routing-card-watch.timer 2>&1 | tr -d "\r")"'
+        wait_for "HXLAB dk-timer=" 60 \
+          "the box to say whether the card watcher is enabled" || fail=1
 
         DK_BIN=$(live_field dk-bin)
         DK_FILES=$(live_field dk-files)
@@ -3859,9 +3872,11 @@ then
           echo "         would start by pulling from a registry this box cannot reach."
           fail=1
         fi
+        DK_OLD=$(live_field dk-old)
+        DK_TIMER=$(live_field dk-timer)
         case "$DK_ENABLED" in
-          disabled)
-            echo "  [ ok ] the container unit ships disabled, as this release says" ;;
+          enabled)
+            echo "  [ ok ] the container stack is what this box boots" ;;
           "")
             echo "  [FAIL] the box never answered about the container unit"
             fail=1 ;;
@@ -3869,11 +3884,37 @@ then
             # cut to 40: systemd's answer when the unit is absent is a
             # whole sentence with the path in it, and printed raw it made
             # this line 120 columns wide on the control run.
-            echo "  [FAIL] prisma-routing-containers.service is not 'disabled':"
+            echo "  [FAIL] prisma-routing-containers.service is not 'enabled':"
             echo "         $(printf '%.40s' "$DK_ENABLED")"
-            echo "         It Conflicts= vpp.service and frr.service, so an"
-            echo "         enabled unit and an enabled vpp.service race at every boot"
-            echo "         and which one wins is not decided anywhere."
+            echo "         This box was installed by a release whose default"
+            echo "         is the container stack, so it would boot nothing"
+            echo "         at all on the dataplane side."
+            fail=1 ;;
+        esac
+        case "$DK_OLD" in
+          disabled:disabled)
+            echo "  [ ok ] and vpp.service and frr.service are disabled, so"
+            echo "         nothing asks systemd to run two dataplanes" ;;
+          "")
+            echo "  [FAIL] the box never said whether vpp.service is enabled"
+            fail=1 ;;
+          *)
+            echo "  [FAIL] vpp.service/frr.service read '$DK_OLD' beside an"
+            echo "         enabled container stack. The unit Conflicts= both,"
+            echo "         so every boot asks systemd to choose and nothing"
+            echo "         in this product says which wins."
+            fail=1 ;;
+        esac
+        case "$DK_TIMER" in
+          enabled)
+            echo "  [ ok ] and the card watcher runs with it, so a dataplane"
+            echo "         Docker gives up on hands the card back (#379)" ;;
+          *)
+            echo "  [FAIL] prisma-routing-card-watch.timer is"
+            echo "         '${DK_TIMER:-<nothing>}': nothing would notice a"
+            echo "         dataplane container that stopped, and the box"
+            echo "         would sit with its card bound to DPDK and no"
+            echo "         interface at all"
             fail=1 ;;
         esac
           send "sync"; send "systemctl poweroff"
@@ -4706,14 +4747,19 @@ fi
 # connection crosses VPP. A box that answers here is a box forwarding on a
 # dataplane in a container.
 #
-# THE SWITCH IS THE ONE AN OPERATOR WOULD MAKE, typed at the VTY's shell:
-# disable the two units, enable the containers unit and its watcher, reboot.
-# Nothing here edits a file, and nothing here is a lab shortcut - if these
-# four commands are not enough, the release that flips the default is not
-# ready, and that is what this phase is for.
+# THE SWITCH IS INVERTED NOW, and that is the release that moved the default
+# (#426): an installed box boots the containers, so what this phase drives is
+# THE WAY BACK - disable the containers unit and its watcher, enable
+# vpp.service and frr.service, reboot. An operator who wants the units has to
+# be able to have them, and a way back nobody has driven is not one.
+#
+# EVERY PHASE ABOVE IS NOW THE CONTAINER PATH, which is what makes this the
+# cheap half: the box that installed, booted, took its card, was reached over
+# ssh, had its configuration read back and gave its card away in PHASE 4 was
+# running the dataplane in a container while it did all of it.
 if [ "${HO_DRIVEN:-0}" = 1 ]; then
   echo
-  echo "=========== PHASE 6: the box boots on the containers ==========="
+  echo "=========== PHASE 6: and it can be put back on the units ==========="
   CONSOLE_LOG=/tmp/containers.log
   CONSOLE_CLEAN=/tmp/containers-clean.log
   # shellcheck disable=SC2086
@@ -4725,9 +4771,9 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     # the order is not a preference: enabling the containers unit while
     # vpp.service is running is asking systemd to decide, and what this
     # measures is a boot, not a race.
-    send 'echo "HX""LAB ct-switch=$(systemctl disable --now vpp.service frr.service > /tmp/ct.log 2>&1; systemctl enable prisma-routing-containers.service prisma-routing-card-watch.timer >> /tmp/ct.log 2>&1; echo rc=$?)"'
+    send 'echo "HX""LAB ct-switch=$(systemctl disable --now prisma-routing-containers.service prisma-routing-card-watch.timer > /tmp/ct.log 2>&1; systemctl enable vpp.service frr.service >> /tmp/ct.log 2>&1; echo rc=$?)"'
     wait_for "HXLAB ct-switch=" 300 \
-      "the box to switch itself to the container stack" || fail=1
+      "the box to switch itself back to the systemd units" || fail=1
     CT_SWITCH=$(live_field ct-switch)
     send "sync"
     send "systemctl poweroff"
@@ -4738,12 +4784,11 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   stop_vm 120
 
   case "$CT_SWITCH" in
-    *rc=0*) echo "  [ ok ] the four commands an operator would type were taken" ;;
+    *rc=0*) echo "  [ ok ] the two commands that put a box back were taken" ;;
     "")     echo "  [FAIL] the box never answered about the switch"; fail=1 ;;
-    *)      echo "  [FAIL] switching this box to the containers failed"
-            echo "         ($CT_SWITCH). Whatever the release that flips the"
-            echo "         default does, it cannot be less than these four"
-            echo "         commands, so it would fail the same way"
+    *)      echo "  [FAIL] putting this box back on vpp.service and"
+            echo "         frr.service failed ($CT_SWITCH). An operator who"
+            echo "         wants the units has no way back from the default"
             fail=1 ;;
   esac
 
@@ -4758,15 +4803,14 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   # phase. This connection crosses the dataplane.
   CT_BANNER=$(reachable_over_the_network 480)
   if [ $? = 0 ]; then
-    echo "  [ ok ] the box answers from outside with its dataplane in a"
-    echo "         container, over the card that dataplane holds:"
+    echo "  [ ok ] put back on vpp.service, the box still answers over the"
+    echo "         card its dataplane holds:"
     echo "         $CT_BANNER"
   else
-    echo "  [FAIL] booted on the containers, the box does not answer on the"
-    echo "         network: ${CT_BANNER:-<nothing at all>}"
-    echo "         The card is the dataplane's and the dataplane is a"
-    echo "         container, so this is the one reading that says whether"
-    echo "         such a box carries packets at all"
+    echo "  [FAIL] put back on vpp.service and frr.service, the box does not"
+    echo "         answer on the network: ${CT_BANNER:-<nothing at all>}"
+    echo "         The way back out of the default is a way back nobody can"
+    echo "         take: this box carries packets on neither path now"
     fail=1
   fi
 
@@ -4892,20 +4936,14 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   _ct_vpp=no; _ct_frr=no
   case "$CT_PS" in *prisma-routing_vpp_1:running*) _ct_vpp=yes ;; esac
   case "$CT_PS" in *prisma-routing_frr_1:running*) _ct_frr=yes ;; esac
-  if [ "$_ct_vpp$_ct_frr" = yesyes ]; then
-    echo "  [ ok ] both containers are running, by the names compose gives"
-  elif [ -z "$CT_PS" ]; then
-    echo "  [FAIL] docker lists no container at all on a box whose stack"
-    echo "         was enabled and which has just booted"
-    fail=1
-  elif [ "$_ct_vpp" = yes ]; then
-    echo "  [FAIL] the dataplane container is running and the control plane"
-    echo "         is not: '$CT_PS'. The box forwards and learns nothing,"
-    echo "         which is the half-up state HA is built to survive and"
-    echo "         nobody wants to boot into"
-    fail=1
+  if [ -z "$CT_PS" ]; then
+    echo "  [ ok ] and no container is running: the stack was stopped and"
+    echo "         stayed stopped across the reboot"
   else
-    echo "  [FAIL] the dataplane container is not running: '$CT_PS'"
+    echo "  [FAIL] a container is still running on a box put back on the"
+    echo "         units: '$CT_PS'. Two dataplanes are holding one card,"
+    echo "         which is what the Conflicts= exists to prevent - and the"
+    echo "         operator asked for one of them, not both"
     fail=1
   fi
 
@@ -4924,12 +4962,12 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   esac
 
   case "$CT_UNIT" in
-    inactive|failed|"")
-      echo "  [ ok ] vpp.service is not running beside it (${CT_UNIT:-not there})" ;;
+    active)
+      echo "  [ ok ] vpp.service is running, which is what was asked for" ;;
     *)
-      echo "  [FAIL] vpp.service is '$CT_UNIT' while the containers are up:"
-      echo "         two dataplanes are being asked to hold one card, which"
-      echo "         is what Conflicts= in the unit exists to prevent"
+      echo "  [FAIL] vpp.service is '${CT_UNIT:-<nothing>}' after an operator"
+      echo "         enabled it and rebooted: the way back off the default"
+      echo "         does not arrive anywhere"
       fail=1 ;;
   esac
 
@@ -4945,15 +4983,19 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   esac
 
   case "$CT_SELF" in
-    0|"")
-      echo "  [FAIL] the self-test does not say this box's dataplane is a"
-      echo "         container (it matched '${CT_SELF:-nothing}'), so every"
-      echo "         line it prints about restarts and the OOM score is"
-      echo "         about a unit nobody started"
+    0)
+      echo "  [ ok ] and the self-test no longer names a container: its"
+      echo "         readings follow the box rather than the release" ;;
+    "")
+      echo "  [FAIL] the self-test did not answer at all"
       fail=1 ;;
     *)
-      echo "  [ ok ] and the self-test names the container as this box's"
-      echo "         dataplane, so its readings are about what is running" ;;
+      echo "  [FAIL] the self-test still calls this box's dataplane a"
+      echo "         container ($CT_SELF line(s)) after it was put back on"
+      echo "         vpp.service: every reading it takes about restarts and"
+      echo "         the OOM score is then about something that is not"
+      echo "         running"
+      fail=1 ;;
   esac
 fi
 

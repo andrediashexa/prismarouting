@@ -257,7 +257,40 @@ dataplane_restarts() {
 # namespace and /proc/<that>/ would be some other process entirely, or none.
 dataplane_pid() {
   if [ "$DATAPLANE_PATH" = container ]; then
-    docker inspect -f '{{.State.Pid}}' "$VPP_CONTAINER" 2>/dev/null
+    # THE PID OF VPP, AND NOT OF PID 1 IN THE CONTAINER. `.State.Pid` is the
+    # entrypoint - the wrapper that runs the stop-drain before forwarding
+    # SIGTERM - and it has exactly one thread. Every reading below that
+    # counts the dataplane's THREADS then found none, and the box was told
+    # "the dataplane has no worker thread at all" while seven were running
+    # beside it (#426, found by booting a box with the containers as the
+    # default). The OOM score is the same on either, because oom_score_adj
+    # is inherited across fork; the thread count is not.
+    #
+    # The child is found through /proc because the container shares this
+    # box's pid namespace - `pid: host` in compose.yaml - so its pids are
+    # pids here. A wrapper that is itself vpp, if that ever changes, is
+    # answered by the first branch.
+    _dp=$(docker inspect -f '{{.State.Pid}}' "$VPP_CONTAINER" 2>/dev/null)
+    [ -n "$_dp" ] && [ "$_dp" != 0 ] || { echo 0; return; }
+    # `vpp_main` AND NOT `vpp`, which is the second half of the same
+    # measurement: VPP renames its main thread, so the child of the wrapper
+    # answers `vpp_main` in /proc/<pid>/comm. Looking for `vpp` found
+    # nothing and left the reading on the wrapper, which is the state this
+    # was written to fix. Measured on this product's own image:
+    #
+    #   pid1=52665 comm=vpp-entrypoint
+    #   child 52684 comm=vpp_main threads=4
+    case "$(cat "$ROOT/proc/$_dp/comm" 2>/dev/null)" in
+      vpp|vpp_main) echo "$_dp"; return ;;
+    esac
+    for _c in $(cat "$ROOT/proc/$_dp/task/$_dp/children" 2>/dev/null); do
+      case "$(cat "$ROOT/proc/$_c/comm" 2>/dev/null)" in
+        vpp|vpp_main) echo "$_c"; return ;;
+      esac
+    done
+    # No vpp under it: the wrapper is there and the dataplane is not, which
+    # the checks below report as what it is rather than as a missing pid.
+    echo "$_dp"
   else
     systemctl show vpp.service -p MainPID --value 2>/dev/null
   fi

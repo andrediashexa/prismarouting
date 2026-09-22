@@ -77,7 +77,57 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The box boots on the containers**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `appliance/install.sh` enables `prisma-routing-containers.service` and its
+  card watcher, and disables `vpp.service` and `frr.service` - which the unit
+  `Conflicts` with, so a box with all three enabled asks systemd to decide at
+  every boot and nothing in this product says which wins. **Disabled and not
+  masked**: the way back is two commands, and `lab/install-iso.sh` PHASE 6
+  drives exactly those on the same box and asserts the box still answers over
+  its card afterwards.
+
+  Every phase of that lab is now the container path. The box that installs,
+  boots, takes its card, is reached over ssh, configures a pool, reads its own
+  configuration back and gives its card away is running the dataplane in a
+  container while it does all of it - and `LAB PASSED` with nothing red.
+
 ### Fixed
+
+* **An operator account could not configure a box that was working**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `startup.conf` says `unix { ... gid vpp }` and VPP resolves that name in the
+  **container's** `/etc/group` - 999 - while `/run/vpp` is a bind mount, so
+  the CLI socket came out group-owned on the box by a number that is nobody's
+  group there. An account with a role got
+
+  ```
+  error: the dataplane is not answering
+      so there is nothing to build a candidate from
+  ```
+
+  from a dataplane that was answering root perfectly, which is what kept it
+  invisible. The host is the only place that number exists, so the host passes
+  it: `load-the-images` writes `PRISMA_VPP_GID`, `compose.yaml` hands it to
+  the dataplane, and `vpp-entrypoint` moves the container's `vpp` group to it
+  before VPP starts.
+
+  `tools/build-images.sh compose-check` could not have caught it: it wrote
+  `api-segment { gid 0 }` and a `cli-listen` with no gid, so the socket came
+  out root's on any box and the one thing an operator account needs from it
+  was never read. It now writes what `appliance/etc/vpp-base.conf` writes and
+  stats the socket from **outside** the container, which is where the accounts
+  look at it from.
+
+* **The self-test counted the wrapper's threads, not the dataplane's**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  `dataplane_pid` answered the container's `.State.Pid`, which is the
+  entrypoint - the wrapper that runs the stop-drain before forwarding
+  `SIGTERM` - and that process has one thread. So a box with seven workers
+  running was told *the dataplane has no worker thread at all*, on the console
+  of a box an operator had just installed. It walks to the `vpp_main` child
+  through `/proc` now, which is legible because the container shares the box's
+  pid namespace.
 
 ## 0.116.0 - a booted box forwards on the containers
 

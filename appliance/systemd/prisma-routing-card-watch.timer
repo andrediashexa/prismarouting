@@ -7,11 +7,11 @@
 # OnBootSec is 2 minutes rather than 0: Docker's own policy is allowed its
 # five attempts first, and a watcher that fires while the dataplane is still
 # being retried would hand the card back underneath it.
-# NOT ENABLED BY THIS RELEASE, and enabled by the one that enables
-# prisma-routing-containers.service. The two belong together: on a box still
-# booting vpp.service the script exits at its first line, so an enabled timer
-# would be half a minute's nothing, for ever, on every box - and a box on the
-# containers without this timer is a box that can be stranded.
+# ENABLED WITH prisma-routing-containers.service, which is what an installed
+# box runs. The two belong together: a box on the containers without this
+# timer is one that can be left stranded with its card bound to DPDK and no
+# interface at all, and on a box an operator has switched back to
+# vpp.service the script exits at its first line and costs nothing.
 [Unit]
 Description=Prisma Routing - look for a dataplane container that gave up
 Documentation=file:/usr/share/doc/prisma-routing/appliance.md

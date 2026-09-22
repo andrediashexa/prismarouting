@@ -1,18 +1,22 @@
 # The dataplane and the control plane as containers (#396).
 #
-# NOT ENABLED BY THIS RELEASE. The medium carries the images and this unit,
-# and a box still boots vpp.service and frr.service exactly as it did - the
-# release that flips the default is the one whose gate boots a box on
-# containers and watches it forward. Enabling a unit that changes what an
-# appliance runs, in the same release that first ships it, would be asking
-# an operator to take both on one upgrade.
+# THIS IS WHAT AN INSTALLED BOX RUNS. appliance/install.sh enables it and
+# disables vpp.service and frr.service, which it replaces: the three cannot
+# run together - the socket paths, the hugepages and the NIC are the same
+# ones - so this unit conflicts with them rather than leaving that to
+# whoever reads the file.
 #
-#   systemctl enable --now prisma-routing-containers.service
+# THE DEFAULT MOVED WHEN A BOX PROVED IT, and not before: lab/install-iso.sh
+# installs a box, boots it on this unit and reads that it forwards over the
+# card the dataplane holds, that the saved configuration was applied, and
+# that the self-test names the container. Six runs of that lab found six
+# things wrong first, each of which an operator would otherwise have found
+# instead (#426).
 #
-# WHAT IT REPLACES, when it is enabled: vpp.service and frr.service. The
-# three cannot run together - the socket paths, the hugepages and the NIC are
-# the same ones - so this unit conflicts with them rather than leaving that
-# to whoever reads the file.
+# GOING BACK IS TWO COMMANDS, and the lab drives them on the same box:
+#
+#   systemctl disable --now prisma-routing-containers.service
+#   systemctl enable --now vpp.service frr.service
 [Unit]
 Description=Prisma Routing dataplane and control plane, in containers
 Documentation=file:/usr/share/doc/prisma-routing/appliance.md

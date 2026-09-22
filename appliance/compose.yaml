@@ -30,6 +30,15 @@ services:
     # prisma-routing-containers.service runs share-the-api-segment after
     # `up`, the same script vpp.service's own drop-in runs.
     ipc: host
+    # THE BOX'S vpp GROUP, passed in as a number by the unit that starts
+    # this stack. VPP resolves `gid vpp` from startup.conf in the
+    # CONTAINER's /etc/group, and /run/vpp is a bind mount - so without
+    # this the CLI socket is group-owned on the box by a gid that is
+    # nobody's, and an operator account is told "the dataplane is not
+    # answering" by a dataplane that answers root. Empty on a box that has
+    # no vpp group, where the entrypoint leaves the image's own.
+    environment:
+      - PRISMA_VPP_GID=${PRISMA_VPP_GID:-}
     # NOT `privileged: true`, and every line of this was measured on
     # 2026-09-21 by starting the image with the privilege removed and reading
     # what broke (#396):
