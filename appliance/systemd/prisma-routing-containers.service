@@ -28,11 +28,30 @@ After=prisma-routing-tune.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/etc/prisma-routing
+# Written by load-the-images, one line: PRISMA_VERSION=<tag>. `-` because
+# the file is in /run and this unit is what creates it.
+EnvironmentFile=-/run/prisma-routing/compose.env
+# THE DEFAULT IS 90 SECONDS AND THE LOAD IS 118 MB OF GZIP. A box that took
+# longer than the default would have its dataplane killed mid-load and the
+# unit marked failed, which on a first boot reads as "the containers do not
+# work on this hardware".
+TimeoutStartSec=600
 # The images are loaded from the medium's copy on every start rather than
 # once at install: a box that was rolled back, or whose docker state was
 # cleared, then starts the images it has rather than none. `docker load` on
 # an image that is already there is a no-op that prints the tag.
-ExecStartPre=/bin/sh -c 'test -f /usr/lib/prisma-routing/images.tar.gz && docker load -i /usr/lib/prisma-routing/images.tar.gz >/dev/null || true'
+#
+# THE IMAGES, AND THE VERSION COMPOSE IS TOLD TO RUN. This was a one-line
+# `docker load` and it was not enough: compose.yaml asks for
+# `prisma-vpp:${PRISMA_VERSION:-latest}`, the images are saved tagged with
+# the VERSION file, and nothing set PRISMA_VERSION - so an installed box
+# asked a registry for `prisma-vpp:latest` and came up with NO CONTAINERS AT
+# ALL. Measured by lab/install-iso.sh's PHASE 6, which is the first thing in
+# this repository to boot a box on the stack.
+#
+# load-the-images loads them, reads the tag off what this box actually has,
+# and writes PRISMA_VERSION into the environment file below.
+ExecStartPre=/usr/lib/prisma-routing/load-the-images
 # THE CARD'S DEVICE NODE, READ OFF THIS BOOT AND NOT GUESSED AT.
 # compose.yaml names /dev/net/tun and /dev/vhost-net, which every box has;
 # it deliberately names no /dev/vfio, because a box with no IOMMU has none

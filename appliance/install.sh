@@ -295,6 +295,9 @@ install -D -m 0755 "$REPO/appliance/share-the-api-segment" "$DESTDIR/usr/lib/pri
 # it is still holding (#426). The unit path gets this from OnFailure= on
 # vpp.service; a container reaches no failed state to raise it.
 install -D -m 0755 "$REPO/appliance/watch-the-dataplane" "$DESTDIR/usr/lib/prisma-routing/watch-the-dataplane"
+# Run by prisma-routing-containers.service before compose: it loads the
+# images the medium carried and tells compose which tag to run (#426).
+install -D -m 0755 "$REPO/appliance/load-the-images" "$DESTDIR/usr/lib/prisma-routing/load-the-images"
 install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/prisma-routing/selftest"
 # Beside the self-test, which finds it with `dirname "$0"`, and named by the
 # VTY banner by absolute path. Two readers of one answer (#248).

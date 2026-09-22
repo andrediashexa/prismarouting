@@ -1,11 +1,18 @@
 [Unit]
 Description=Prisma Routing - apply the CGNAT configuration to the dataplane
 Documentation=file:///usr/share/doc/prisma-routing/architecture.md
-# FRR is Wants and not Requires: without routing the box still forwards what
-# static routes cover, and taking CGNAT down with it would only widen the
-# damage.
+# FRR IS ORDERED AND NOT WANTED, and that is a change #426 measured on a
+# booted box. It was `Wants=frr.service`, on the argument that without
+# routing the box still forwards what static routes cover - which is right,
+# and is an argument for not REQUIRING it. Wants starts it all the same, and
+# on a box whose control plane is a container that is a second FRR: the host
+# one came up beside the container's, both holding /etc/frr and /var/run/frr.
+# lab/install-iso.sh's PHASE 6 watched it happen.
+#
+# Ordering is all that was ever needed. frr.service is enabled by its own
+# package on a box on the unit path, and on a container box the control
+# plane comes up with the stack.
 After=vpp.service frr.service prisma-routing-containers.service
-Wants=frr.service
 # PartOf BOTH DATAPLANES, so this is stopped and restarted with whichever one
 # this box runs. PartOf a unit nobody started is inert, so naming both costs
 # the unit path nothing.

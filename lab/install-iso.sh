@@ -4771,6 +4771,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   fi
 
   CT_PS=""; CT_DPIF=""; CT_UNIT=""; CT_LOADER=""; CT_SELF=""
+  CT_UNITSTATE=""; CT_WHY=""; CT_IMGS=""
   if login_root "the box to come back on its container stack"; then
     # WHAT IS ACTUALLY RUNNING. Names and states, from docker itself.
     send 'echo "HX""LAB ct-ps=$(docker ps --format "{{.Names}}:{{.State}}" 2>/dev/null | sort | tr "\n" " ")"'
@@ -4801,11 +4802,29 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     # than a unit nobody started (0.115.1).
     send 'echo "HX""LAB ct-self=$(/usr/lib/prisma-routing/selftest 2>&1 | tr -d "\r" | grep -c "the dataplane runs in a container")"'
     wait_for "HXLAB ct-self=" 300 "the self-test to run on the box" || fail=1
+    # AND THE REASON, WHATEVER HAPPENED. The first run of this phase found no
+    # containers and said exactly that and nothing else, and the box was gone
+    # by the time anybody could ask it why - the whole diagnosis had to be
+    # made from a boot log that did not contain it. Asked on every run, not
+    # only on a failure: a reading taken only when something is wrong is one
+    # nobody has ever seen working.
+    send 'echo "HX""LAB ct-unitstate=$(systemctl is-active prisma-routing-containers.service 2>&1 | tr -d "\r")"'
+    wait_for "HXLAB ct-unitstate=" 60 \
+      "the box to say what state the container unit is in" || fail=1
+    send 'echo "HX""LAB ct-why=$(journalctl -u prisma-routing-containers.service --no-pager -n 6 2>/dev/null | tr -d "\r" | tr "\n" "|" | cut -c1-400)"'
+    wait_for "HXLAB ct-why=" 60 \
+      "the box to say what the container unit did" || fail=1
+    send 'echo "HX""LAB ct-imgs=$(docker images --format "{{.Repository}}:{{.Tag}}" 2>/dev/null | tr "\n" " ")"'
+    wait_for "HXLAB ct-imgs=" 120 \
+      "the box to list the images it has" || fail=1
     CT_PS=$(live_field ct-ps)
     CT_DPIF=$(live_field ct-dpif)
     CT_UNIT=$(live_field ct-unit)
     CT_LOADER=$(live_field ct-loader)
     CT_SELF=$(live_field ct-self)
+    CT_UNITSTATE=$(live_field ct-unitstate)
+    CT_WHY=$(live_field ct-why)
+    CT_IMGS=$(live_field ct-imgs)
     send "sync"
     send "systemctl poweroff"
   else
@@ -4814,6 +4833,9 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   fi
   stop_vm 120
 
+  echo "  -- the container unit is: ${CT_UNITSTATE:-<no answer>}"
+  echo "  -- images on the box: ${CT_IMGS:-<none>}"
+  echo "  -- what the unit did: ${CT_WHY:-<nothing>}"
   echo "  -- containers: ${CT_PS:-<none>}"
   case "$CT_PS" in
     *prisma-routing_vpp_1:running*prisma-routing_frr_1:running*)

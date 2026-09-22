@@ -128,7 +128,10 @@ for u in "$SYSD"/*.service "$SYSD"/*.timer "$SYSD"/*.conf; do
     # on purpose, and Conflicts starts nothing.
     prisma-routing-containers.service) continue ;;
   esac
-  if body "$u" | grep -qE "^(Requires|Wants|BindsTo)=.*(vpp\.service|prisma-routing-containers\.service)"; then
+  # frr.service is in this list too, and for the same reason one release
+  # later: the control plane is a container on that path, and a host FRR
+  # pulled in beside it is two daemons holding /etc/frr and /var/run/frr.
+  if body "$u" | grep -qE "^(Requires|Wants|BindsTo)=.*(vpp\.service|frr\.service|prisma-routing-containers\.service)"; then
     pullers="$pullers $n"
   fi
 done
