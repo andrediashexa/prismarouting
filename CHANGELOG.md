@@ -79,6 +79,15 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The wiki described a boot the box no longer has**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)). The
+  operations page drew `vpp.service`, `frr.service` and a `Wants` that no
+  longer exists. Since 0.117.0 an installed box runs the dataplane and the
+  control plane as containers, and the unit that does it disables both. The
+  page now carries what the unit does before compose sees the file, the
+  card watcher, the rule that no unit may *pull in* a dataplane, and the two
+  commands that put a box back on the units.
+
 ## 0.117.1 - the document says what the box runs
 
 Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
