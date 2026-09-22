@@ -89,6 +89,7 @@ python3 test/test_stop_is_not_a_teardown.py
 sh test/test_build_iso_preflight.sh
 sh test/test_installer.sh
 sh test/test_install_says.sh
+sh test/test_install_containers.sh
 sh test/test_upgrade_artifact.sh
 sh test/test_no_credentials.sh
 sh test/test_lab_workers.sh
