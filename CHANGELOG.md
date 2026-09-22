@@ -77,6 +77,32 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The self-test reads the dataplane this box is actually running**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
+  Three checks asked systemd about `vpp.service`: the restart counter, the
+  PID the OOM score is read from, and the log printed under a failure. On a
+  box running the containers all three answer **correctly, about a unit
+  nobody started** - and `NRestarts` 0 reads as *stable*. A dataplane in a
+  restart loop would have been reported healthy by the check that exists to
+  catch exactly that.
+
+  `appliance/selftest` now decides which path the box is on -
+  `systemctl is-active --quiet prisma-routing-containers.service`, which is
+  the whole of it, because the two units conflict and only one can be
+  running - and four readers answer for whichever it is:
+  `dataplane_name`, `dataplane_restarts`, `dataplane_pid` and
+  `dataplane_log`. The container's PID is a PID on this box because
+  `compose.yaml` says `pid: host`, which is what makes `/proc/<pid>/
+  oom_score_adj` readable at all.
+
+  A container box now says so, its restart line names the container, its
+  failures print `docker logs` rather than the journal, and an unprotected
+  one is told to restart `prisma-routing-containers.service` and not
+  `vpp.service`. `test/test_selftest.sh` arranges that box, and cuts the
+  four readers out of the script and calls them against stubbed systemd and
+  docker. Watched red: pinning the path to `unit` refused seven assertions.
+
+
 ### Fixed
 
 ## 0.115.0 - a container that gave up hands the card back
