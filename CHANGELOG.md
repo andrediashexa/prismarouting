@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.117.4 - the forward arithmetic has a harness
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The arithmetic over a pool's static forwards has a harness**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   Three functions that decide where an operator's forward lands took a
