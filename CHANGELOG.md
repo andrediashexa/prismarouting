@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.116.0 - a booted box forwards on the containers
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
 * **A booted box runs the container stack, and forwards on it**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
   `lab/install-iso.sh` grew a sixth phase: the installed disk is switched to
