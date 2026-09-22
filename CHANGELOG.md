@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.5 - the order 'show bpa top' reads its rows in
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The order `show bpa top` reads its rows in is tested**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). That
   screen answers *who is closest to running out*, which is the question that
