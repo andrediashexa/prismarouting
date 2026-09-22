@@ -79,6 +79,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.117.2 - the wiki says what the box runs
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
+### Fixed
+
 * **The wiki described a boot the box no longer has**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)). The
   operations page drew `vpp.service`, `frr.service` and a `Wants` that no
