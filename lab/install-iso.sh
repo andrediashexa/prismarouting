@@ -1804,7 +1804,13 @@ drive_console() {
   wait_for "Prisma Routing VTY" 180 \
     "the account the VTY created to log in and land in the VTY" || return 1
   send "configure"
-  wait_for "entering configuration mode" 60 \
+  # 180 AND NOT 60. On a box whose dataplane is a container the VTY's first
+  # command after login is slower: prismash asks the dataplane and FRR for
+  # what it needs, and both answers now cross a container boundary. Measured
+  # on the flip's first run - the console stopped at the greeting with the
+  # pending-confirm banner printed and no prompt yet, and the driver gave up
+  # with everything about roles unproved. The box was not wrong; the wait was.
+  wait_for "entering configuration mode" 180 \
     "an administrator to be let into configuration mode" || return 1
   # Routing, which is the half a cgnat-operator is refused and the half that
   # was broken for a non-root administrator: frr-reload.py writes its log into
