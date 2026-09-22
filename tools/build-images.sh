@@ -426,8 +426,18 @@ OVR
     prof=$(docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
            -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" \
            exec -T vpp cat /proc/self/attr/current 2>/dev/null | tr -d '\0')
+    # TWO HOLES OF ONE WORD EACH, and not one hole holding "docker-default
+    # (enforce)". A hole that swallows a word is how a page keeps a word the
+    # box stopped printing, and test/test_wiki_screens.py counts them: this
+    # line was the sixth against a ceiling of five, which is a ceiling that
+    # may only go down.
     case "$prof" in
-      *docker-default*) ok "and the dataplane runs confined: $prof" ;;
+      *docker-default*)
+        case "$prof" in
+          *"(enforce)"*) _mode=enforcing ;;
+          *) _mode=complaining ;;
+        esac
+        ok "and the dataplane runs confined by ${prof%% *}, $_mode" ;;
       unconfined*)
         # Not a failure here: a build host with AppArmor disabled is a
         # legitimate machine and this check must not depend on which one it

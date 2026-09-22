@@ -2608,14 +2608,89 @@ the target. On an installed box it would mean physical or IPMI access equals
 full access with no password, which is the operator's decision rather than our
 default.
 
-## The container images, which nothing on the box runs yet
+## The containers, which are what the box runs
 
-[#396](https://github.com/andrediashexa/hexarouting/issues/396) asks whether
+Since **0.117.0** an installed box runs the dataplane and the control plane
+as containers. `appliance/install.sh` enables
+`prisma-routing-containers.service` and disables `vpp.service` and
+`frr.service`, which that unit `Conflicts` with - the socket paths, the
+hugepages and the card are the same ones, so the three cannot run together
+and nothing is left to whoever reads the file.
+
+**The way back is two commands**, and `lab/install-iso.sh` drives them on the
+same box it just installed:
+
+```sh
+systemctl disable --now prisma-routing-containers.service
+systemctl enable --now vpp.service frr.service
+```
+
+A box put back that way still answers over the card its dataplane holds, the
+saved configuration is still applied at boot, and the self-test stops naming
+a container - which is the point of reading the box rather than the release.
+
+[#396](https://github.com/andrediashexa/hexarouting/issues/396) asked whether
 the control plane, the agent and the dataplane should be containers on one
-host. Its phase 1 is the smallest honest step: **build the images, prove they
-hold what they claim, and change nothing about how the box boots.** That is
-what is here. The appliance still runs VPP and FRR as systemd units, and
-nothing starts either image.
+host, and [#426](https://github.com/andrediashexa/hexarouting/issues/426) is
+what moved the default. The order mattered: the images first, then the
+medium carrying them, then each protection `vpp.service` had, and the
+default only after a box had booted on the stack and been watched forwarding.
+
+### What the unit does before compose sees the file
+
+Three things, in this order, and each of them exists because a box that
+skipped it came up wrong:
+
+1. **`load-the-images`** loads `/usr/lib/prisma-routing/images.tar.gz` and
+   writes the tag it finds into `/run/prisma-routing/compose.env`, because
+   `compose.yaml` asks for `prisma-vpp:${PRISMA_VERSION}` and the images are
+   saved tagged with the box's version. Without it a box asked a registry for
+   `prisma-vpp:latest` - and an appliance has no route to one. It writes the
+   box's **`vpp` group id** beside it, for the reason in the next section.
+2. **`bind-dataplane-nic --compose-devices`** writes the card's device node
+   into `/run/prisma-routing/compose-devices.yaml`, which is handed to
+   `docker-compose` beside the base file. The driver a box can use decides
+   which node that is, and that script is the one holder of the rule.
+3. **`share-the-api-segment`**, after `up`, gives `/dev/shm/global_vm` and
+   `/dev/shm/vpe-api` to group `vpp`. The same script runs from
+   `vpp.service`'s own drop-in: two dataplanes, one rule.
+
+### The numbers that do not cross a container boundary by themselves
+
+Both defects the flip found were the same shape, and an operator will meet
+neither - they are written here because the shape recurs:
+
+**`/etc/frr` and `/var/run/frr`** carry the `frr` user's uid and gid. The
+user inside the control-plane image is not the user on the box, so `zebra`
+could not write its pid file, `watchfrr` stayed up with nothing under it, the
+container read as `running`, and `prismash --load` refused the box's whole
+saved configuration at every boot - the refusal it prints for a `router bgp`
+statement when bgpd is not running, on a box whose `/etc/frr/daemons` enables
+it.
+
+**`/run/vpp`** carries the `vpp` group's gid. `startup.conf` says
+`unix { ... gid vpp }` and VPP resolves that name inside the container, so
+the CLI socket came out group-owned on the box by a number that is nobody's
+group there. Root worked throughout, which is what kept it invisible until an
+account with a role typed `configure` and was told the dataplane was not
+answering - by a dataplane that was answering root in the same second.
+
+A bind mount carries numeric ids, and the same package installed in two
+places does not produce the same ones. `frr-entrypoint` reads the ids off
+`/etc/frr` - the box's own statement about which id owns its routing
+configuration - and `vpp-entrypoint` is handed the `vpp` gid by the unit,
+because the host is the only place that number exists.
+
+### When the dataplane gives up
+
+`vpp.service` reaches `failed` after its restart limit and systemd raises
+`OnFailure=`, which hands the card back to the kernel driver
+([#379](https://github.com/andrediashexa/hexarouting/issues/379)). A
+container reaches no such state, so the compose file says
+`restart: "on-failure:5"` - Docker gives up - and
+`prisma-routing-card-watch.timer` looks every 30 seconds for a dataplane
+container that stopped, undoes the bind and brings the interface back up,
+once per boot. It restarts nothing: Docker has already tried five times.
 
 ```sh
 sh tools/build-images.sh          # prisma-vpp:<version>, prisma-frr:<version>
@@ -2645,10 +2720,10 @@ a second apt resolution, on a different day.
 
 So shipping them inside the ISO makes it **36% bigger to carry a second copy
 of packages it already installs into its own root**, and an installed disk
-holds both copies. That is the true price of phase 1 taken literally, and it
-buys no behaviour: the duplication only ends in phase 2, when the box starts
-the containers instead of the units and the root can stop installing VPP and
-FRR at all.
+holds both copies. That duplication is still there and is now the box's
+steady state: the root installs VPP and FRR because the way back to the
+units has to exist, and the images are what actually runs. Removing either
+copy is a decision with an operator on the other end of it, not a tidy-up.
 
 ### What the started images say
 
@@ -2677,15 +2752,21 @@ image installs a compiler.
 ### The stack, started and stopped by Compose
 
 `appliance/compose.yaml` is the two containers and the one thing Compose
-cannot do for them. **Nothing on an installed box starts it** - the appliance
-still runs VPP and FRR as systemd units - and it is here rather than in a
-plan because `sh tools/build-images.sh compose-check` drives it:
+cannot do for them. **`prisma-routing-containers.service` starts it on every
+boot**, and `sh tools/build-images.sh compose-check` drives the same file on
+a build machine, which is where a failure costs two minutes instead of the
+twenty-three a lab run costs:
 
 ```
 ==> the stack, started by compose
   [ ok ] the dataplane came up under compose, with the plugin, in 1s
   [ ok ] and DPDK initialised with no privileged flag, on cap_add alone
   [ ok ] and linux_cp's door is open: created tap0
+  [ ok ] the API segments are on the host's /dev/shm, where the VTY maps them
+  [ ok ] and bgpd is running in the control plane, as /etc/frr/daemons asks
+  [ ok ] and the dataplane's CLI socket is group 1000, the one it was given
+  [ ok ] and the dataplane runs confined by docker-default, enforcing
+  [ ok ] and the kernel has the dataplane out of the OOM killer's choice
   [ ok ] and both workers are on the cores startup.conf named: 2 3
   [ ok ] logging enabled, so the drain below takes a box's own branch
 ==> and stopped, which is the question
@@ -2693,6 +2774,13 @@ plan because `sh tools/build-images.sh compose-check` drives it:
   [ ok ] and it exited on its own, code 0, inside the grace period
 COMPOSE PASSED
 ```
+
+**Five of those lines exist because a box did not work.** The first version
+of this check asked whether the dataplane started and whether the drain ran,
+and a box booted on the stack was still missing its binary API, its `bgpd`,
+a CLI socket its operator accounts could open, and a dataplane the kernel
+would not choose as an OOM victim. Each line was added with the fix, and each
+one is red without it.
 
 That is the real supervisor sending the real signal to the real image, and
 the line in the middle is the whole of decision 4: `docker compose stop` ran

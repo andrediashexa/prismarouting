@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`docs/appliance.md` said the box runs VPP and FRR as systemd units**
+  ([#426](https://github.com/andrediashexa/hexarouting/issues/426)). It had
+  said so under a heading reading *the container images, which nothing on the
+  box runs yet* since the images were first built, and since 0.117.0 it is
+  the opposite of what an installed box does. The section now says what the
+  box runs, what the unit does before compose sees the file, the two commands
+  that put a box back on the units, and the shape both of the flip's defects
+  had: **a bind mount carries numeric ids, and the same package installed in
+  two places does not produce the same ones.**
+
+  `tools/build-images.sh` prints the AppArmor profile as two values rather
+  than one - `confined by docker-default, enforcing` - because the quoted
+  screen was the sixth match in `test/test_wiki_screens.py` leaning on a hole
+  that holds more than one word, against a ceiling of five that may only go
+  down.
+
 ## 0.117.0 - the box boots on the containers
 
 Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
