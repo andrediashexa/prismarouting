@@ -984,6 +984,36 @@ bpa_static_clash (const bpa_static_t *v, u32 n, const bpa_static_t *sf,
 }
 
 /*
+ * THE PROTOCOLS THIS PRODUCT KNOWS, and it lives here rather than in
+ * bpa_session.h because the arithmetic below compares one: this header is
+ * what a standalone harness includes, and a second copy of these values for
+ * the harness to compare against would be a copy that can disagree.
+ */
+typedef enum
+{
+  BPA_PROTO_TCP = 0,
+  BPA_PROTO_UDP,
+  BPA_PROTO_ICMP,
+  /*
+   * GRE, and only the enhanced GRE of RFC 2637 - the one PPTP carries its
+   * payload in. Its Call ID stands in for a port everywhere below.
+   *
+   * Plain GRE (RFC 2784) has no per-flow identifier at all, so several
+   * subscribers behind one public address cannot be told apart and it is not
+   * translated. That is a property of the protocol, not a gap here.
+   */
+  BPA_PROTO_GRE,
+  /*
+   * IPsec ESP (RFC 4303). Portless like GRE, and unlike GRE there is nothing
+   * in it this box may rewrite - the SPI is inside the integrity check. It is
+   * here as a protocol the session table knows about so that a tunnel can be
+   * bound to a subscriber at all; see bpa_esp.h for what binds it.
+   */
+  BPA_PROTO_ESP,
+  BPA_N_PROTO,
+} bpa_proto_t;
+
+/*
  * From here down a pool is needed, and with it VPP's vectors.
  */
 #ifndef BPA_STANDALONE
@@ -1398,6 +1428,56 @@ static_always_inline u32
 bpa_owner_worker (const bpa_divisor_t *workers, u32 sub_idx)
 {
   return bpa_modulo (workers, sub_idx);
+}
+
+/*
+ * WHETHER A FORWARD CAN BE MADE AT ALL, decided here and worded in bpa.c.
+ *
+ * Every refusal below is a different thing for an operator to do, which is
+ * why they are an enum and not a boolean: a protocol that cannot carry a
+ * forward, a port that is not a port, a public port outside the pool, a
+ * subscriber the pool's arithmetic reaches no block for, and a public port
+ * that belongs to somebody else's block.
+ *
+ * THE BLOCK IS DERIVED AND NEVER NAMED. In deterministic mode it is the
+ * formula's answer; in dynamic mode the forward is what makes the block stop
+ * moving. Letting an operator name one instead would have broken the return
+ * path, the handoff and the session open - all three ask bpa_forward() for
+ * the same block this asks for.
+ *
+ * On BPA_STATIC_OK - and only then - `out` carries the two derived fields a
+ * forward is stored with: the public address, and the offset of the port
+ * inside the block, which is the bit the port map reserves.
+ */
+typedef enum
+{
+  BPA_STATIC_OK = 0,
+  BPA_STATIC_BAD_PROTO,	   /* not TCP and not UDP */
+  BPA_STATIC_BAD_PORT,	   /* port 0, on either side */
+  BPA_STATIC_PORT_OUTSIDE, /* the public port is not one this pool translates */
+  BPA_STATIC_NO_BLOCK,	   /* the pool reaches no block for this subscriber */
+  BPA_STATIC_WRONG_BLOCK,  /* the public port is in another subscriber's */
+} bpa_static_check_t;
+
+static_always_inline bpa_static_check_t
+bpa_static_check (const bpa_pool_t *p, const bpa_static_t *sf,
+		  bpa_block_t *blk, bpa_static_t *out)
+{
+  if (sf->proto != BPA_PROTO_TCP && sf->proto != BPA_PROTO_UDP)
+    return BPA_STATIC_BAD_PROTO;
+  if (sf->port_pub == 0 || sf->port_priv == 0)
+    return BPA_STATIC_BAD_PORT;
+  if (sf->port_pub < p->port_min || sf->port_pub > p->port_max)
+    return BPA_STATIC_PORT_OUTSIDE;
+  if (bpa_forward (p, sf->ip_priv, blk))
+    return BPA_STATIC_NO_BLOCK;
+  if (sf->port_pub < blk->port_lo || sf->port_pub > blk->port_hi)
+    return BPA_STATIC_WRONG_BLOCK;
+
+  *out = *sf;
+  out->ip_pub = blk->ip_pub;
+  out->port_off = (u16) (sf->port_pub - blk->port_lo);
+  return BPA_STATIC_OK;
 }
 
 /*

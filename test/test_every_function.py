@@ -179,7 +179,15 @@ MARKER = "not a unit:"
 # serve AT ALL counts as moved, and that rule was the one nothing held: its
 # mutation is the narrowing case, and only that case tells the two apart.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 81, "shell": 0}
+# 2026-09-22, fifth: 81 to 80, and the same split as the third - the
+# DECISION out of the function that words it. Whether a forward can be made
+# at all is five different things for an operator to do, and each was a
+# branch inside a function that needs VPP's format() to say them. It is
+# bpa_static_check() now, and bpa_proto_t moved to bpa_pool.h with it:
+# comparing a protocol against a second copy of those values, written where
+# the harness could reach it, would be a copy that can disagree.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 80, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and

@@ -2066,5 +2066,135 @@ main (void)
 	   moved, total);
   }
 
+  /*
+   * WHETHER A FORWARD CAN BE MADE AT ALL, which is five different things for
+   * an operator to do and was decided inside the function that words them.
+   * The wording needs VPP's format(); the decision needs a pool and nothing
+   * else, so nothing drove it until it moved here.
+   */
+  printf ("\n=== whether a forward can be made at all ===\n");
+  {
+    bpa_pool_t p;
+    bpa_static_t sf, out;
+    bpa_block_t blk;
+    u32 in_b[1], in_c[1], out_b[1], out_c[1];
+    u32 sub2;
+
+    in_b[0] = 0x64400000; in_c[0] = 64;
+    out_b[0] = 0xcb007100; out_c[0] = 2;
+    memset (&p, 0, sizeof (p));
+    p.name = (u8 *) "fwd";
+    p.port_min = 1024; p.port_max = 65535;
+    p.block_size = 512; p.mode = BPA_MODE_DETERMINISTIC;
+    CHECK (bpa_addr_set_build (&p.inside, in_b, in_c, 1) == 0, "inside");
+    CHECK (bpa_addr_set_build (&p.outside, out_b, out_c, 1) == 0, "outside");
+    CHECK (bpa_pool_init (&p) == 0, "the pool under test did not init");
+
+    /* The first subscriber's own block, asked of the same arithmetic the
+     * check uses, so the cases below are about the rules and not about
+     * where a block happens to be. */
+    memset (&blk, 0, sizeof (blk));
+    CHECK (bpa_forward (&p, in_b[0], &blk) == 0, "subscriber 0 has no block");
+
+    memset (&sf, 0, sizeof (sf));
+    sf.ip_priv = in_b[0];
+    sf.port_priv = 80;
+    sf.port_pub = blk.port_lo + 5;
+    sf.proto = BPA_PROTO_TCP;
+
+    /* THE ONE THAT MUST PASS, and the two fields it completes. A forward is
+     * stored with the public address and the offset of its port inside the
+     * block - the bit the port map reserves - and deriving them anywhere
+     * else would be a second answer to the same question. */
+    memset (&out, 0, sizeof (out));
+    CHECK (bpa_static_check (&p, &sf, &blk, &out) == BPA_STATIC_OK,
+	   "a port in the subscriber's own block was refused");
+    CHECK (out.ip_pub == blk.ip_pub,
+	   "the forward was not completed with its public address");
+    CHECK (out.port_off == 5,
+	   "the port offset inside the block is %u, not 5", out.port_off);
+
+    /* ONLY TCP AND UDP. ICMP has no port to pin and GRE and ESP have no
+     * per-flow identifier this box may rewrite. */
+    { bpa_static_t b = sf; b.proto = BPA_PROTO_ICMP;
+      CHECK (bpa_static_check (&p, &b, &blk, &out) == BPA_STATIC_BAD_PROTO,
+	     "ICMP was accepted as a forward, and it has no port to pin"); }
+    { bpa_static_t b = sf; b.proto = BPA_PROTO_GRE;
+      CHECK (bpa_static_check (&p, &b, &blk, &out) == BPA_STATIC_BAD_PROTO,
+	     "GRE was accepted as a forward"); }
+    { bpa_static_t b = sf; b.proto = BPA_PROTO_UDP;
+      CHECK (bpa_static_check (&p, &b, &blk, &out) == BPA_STATIC_OK,
+	     "UDP was refused, and it is one of the two that can be pinned"); }
+
+    /* PORT 0 IS NOT A PORT, on either side. */
+    { bpa_static_t b = sf; b.port_pub = 0;
+      CHECK (bpa_static_check (&p, &b, &blk, &out) == BPA_STATIC_BAD_PORT,
+	     "public port 0 was accepted"); }
+    { bpa_static_t b = sf; b.port_priv = 0;
+      CHECK (bpa_static_check (&p, &b, &blk, &out) == BPA_STATIC_BAD_PORT,
+	     "private port 0 was accepted"); }
+
+    /* A PUBLIC PORT THIS POOL DOES NOT TRANSLATE. Below port_min is the
+     * well-known range the pool deliberately leaves alone. */
+    { bpa_static_t b = sf; b.port_pub = 80;
+      CHECK (bpa_static_check (&p, &b, &blk, &out) == BPA_STATIC_PORT_OUTSIDE,
+	     "a public port below the pool's range was accepted"); }
+
+    /* A SUBSCRIBER THE POOL REACHES NO BLOCK FOR. An address outside the
+     * inside set is not this pool's customer at all. */
+    { bpa_static_t b = sf; b.ip_priv = 0x0a000001;
+      CHECK (bpa_static_check (&p, &b, &blk, &out) == BPA_STATIC_NO_BLOCK,
+	     "an address the pool does not serve was given a forward"); }
+
+    /* AND A PORT IN SOMEBODY ELSE'S BLOCK. This is the refusal that matters
+     * most: every block belongs to some subscriber, so taking a port from
+     * another one would translate that customer onto a port this box is
+     * already sending elsewhere. */
+    {
+      bpa_block_t other_blk;
+      bpa_static_t b = sf;
+
+      memset (&other_blk, 0, sizeof (other_blk));
+      sub2 = in_b[0] + 1;
+      CHECK (bpa_forward (&p, sub2, &other_blk) == 0,
+	     "the second subscriber has no block, so this case is empty");
+      if (other_blk.ip_pub == blk.ip_pub)
+	{
+	  b.port_pub = other_blk.port_lo;
+	  CHECK (bpa_static_check (&p, &b, &blk, &out)
+		   == BPA_STATIC_WRONG_BLOCK,
+		 "a port from another subscriber's block was accepted: that "
+		 "customer would be translated onto a port this box is "
+		 "already sending somewhere else");
+	}
+      else
+	{
+	  /* The two subscribers landed on different public addresses, so
+	     the port of one is not in the other's address at all. Walk to
+	     a block that IS on the first one. */
+	  u32 k;
+
+	  for (k = 2; k < 64; k++)
+	    {
+	      if (bpa_forward (&p, in_b[0] + k, &other_blk))
+		continue;
+	      if (other_blk.ip_pub != blk.ip_pub
+		  || other_blk.port_lo == blk.port_lo)
+		continue;
+	      b.port_pub = other_blk.port_lo;
+	      CHECK (bpa_static_check (&p, &b, &blk, &out)
+		       == BPA_STATIC_WRONG_BLOCK,
+		     "a port from another subscriber's block on the same "
+		     "public address was accepted");
+	      break;
+	    }
+	  CHECK (k < 64, "no second block on the same public address was "
+			 "found, so this case proved nothing");
+	}
+    }
+    printf ("  five refusals, and the two fields a legal forward is "
+	    "completed with\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

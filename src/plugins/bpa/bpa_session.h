@@ -48,29 +48,12 @@ typedef enum
   BPA_TCP_CLOSED,   /* RST: expires on the next sweep */
 } bpa_tcp_state_t;
 
-typedef enum
-{
-  BPA_PROTO_TCP = 0,
-  BPA_PROTO_UDP,
-  BPA_PROTO_ICMP,
-  /*
-   * GRE, and only the enhanced GRE of RFC 2637 - the one PPTP carries its
-   * payload in. Its Call ID stands in for a port everywhere below.
-   *
-   * Plain GRE (RFC 2784) has no per-flow identifier at all, so several
-   * subscribers behind one public address cannot be told apart and it is not
-   * translated. That is a property of the protocol, not a gap here.
-   */
-  BPA_PROTO_GRE,
-  /*
-   * IPsec ESP (RFC 4303). Portless like GRE, and unlike GRE there is nothing
-   * in it this box may rewrite - the SPI is inside the integrity check. It is
-   * here as a protocol the session table knows about so that a tunnel can be
-   * bound to a subscriber at all; see bpa_esp.h for what binds it.
-   */
-  BPA_PROTO_ESP,
-  BPA_N_PROTO,
-} bpa_proto_t;
+/*
+ * bpa_proto_t moved to bpa_pool.h, which every build of this plugin includes
+ * and a standalone harness can too: bpa_static_check() compares a forward's
+ * protocol, and a second copy of these values written where the harness
+ * could reach them would be a copy that can disagree with this one.
+ */
 
 #include "bpa_seq.h"
 
