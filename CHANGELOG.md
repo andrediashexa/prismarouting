@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.2 - the stride and reserve warnings are arithmetic
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **What the box warns an operator about a stride and a reserve is measured**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). Two more
   decisions split from the sentences that carry them: whether the stride an
