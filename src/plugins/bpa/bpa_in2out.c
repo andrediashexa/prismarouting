@@ -89,6 +89,10 @@ typedef enum
  * to the next feature" - no session, no port, no log record. A bypass that
  * allocates first is not a bypass.
  */
+/* not a unit: it reads a pool out of bpa_main by index and counts a
+ * packet that went past the translation, on the worker's own counters. The
+ * SET it consults is bpa_addr_set_t and test/test_bpa_pool.c drives that;
+ * lab/bypass.sh sends packets past a bypass on a box and reads the counts. */
 static_always_inline int
 bpa_bypass_packet (bpa_main_t *bm, bpa_per_thread_t *pt, u32 pool_index,
 		   u32 src, u32 dst, u32 *n_src, u32 *n_dst)

@@ -220,7 +220,15 @@ MARKER = "not a unit:"
 # drives the order `show bpa top` reads its rows in - the screen an operator
 # reads the first lines of and nothing else.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 45, "shell": 0}
+# 2026-09-22, tenth: 45 to 33 - the export path, the second transport's
+# connection, and the two node helpers. Every one of them is inside VPP's
+# own machinery: the flow-report API and its per-thread buffers, a TCP
+# connection the dataplane owns, a pool read by index, a bihash keyed by
+# VPP. The twelve reasons name eight labs and three suites between them, and
+# what those measure is the record an operator's collector receives - which
+# is the only place this path can honestly be read.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 33, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and
