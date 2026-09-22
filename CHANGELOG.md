@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.115.1 - the self-test reads the right dataplane
+
+Issues: [#426](https://github.com/andrediashexa/hexarouting/issues/426).
+
+### Added
+
 * **The self-test reads the dataplane this box is actually running**
   ([#426](https://github.com/andrediashexa/hexarouting/issues/426)).
   Three checks asked systemd about `vpp.service`: the restart counter, the
