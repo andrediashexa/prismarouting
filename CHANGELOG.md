@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The rest of `bpa.c` says why a harness cannot reach it**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). What is
+  left in that file after six batches of splitting decisions out of it is the
+  part that **is** VPP: the pool of pools and its hash, the worker barrier,
+  the per-worker allocators, vnet's features and MTUs, and the graph.
+
+  Twenty-five functions now say which of those they need and where the
+  behaviour is measured instead - twelve name a lab, nine name another suite,
+  and the four validators name the decisions they orchestrate, every one of
+  which is now tested. The C ceiling goes 71 → 46, which is where this file
+  stood at 171 in July.
+
+  Every file and function named in those reasons was checked to exist before
+  the reason was written. The batch before this one cited a `lab/stride.sh`
+  and a `test/test_timeout_floors.py` that do not - an excuse that sends a
+  reader to a file that is not there is worse than no excuse, because it
+  reads as an answer.
+
 ### Fixed
 
 ## 0.118.3 - which forward an operator meant is a count
