@@ -107,8 +107,12 @@ FLOOR = 10
 #: header for how. 19 since lab/limits.sh carried the rate-cap row WHOLE -
 #: it had the tail of that sentence and a slice names nothing - and
 #: lab/bypass.sh named the line the bypass command answers with, which says
-#: how many prefixes it took and on which side.
-NAMED_BY_NOTHING_AT_MOST = 19
+#: how many prefixes it took and on which side. 16 after two of the rows
+#: lab/troubleshoot.sh had named were found to be carrying only their
+#: OPENING - the count went on listing them, correctly - and lab/ipfix-stop.sh
+#: read the line the drain prints, which is the last thing a box says before
+#: it goes and the operator's only evidence that it ran.
+NAMED_BY_NOTHING_AT_MOST = 16
 
 fail = 0
 
