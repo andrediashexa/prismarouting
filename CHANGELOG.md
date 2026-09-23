@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.119.0 - the box that had never been booted
+
+### Added
+
 * **`lab/install-iso.sh` can install onto a guest with no 1G pages**, with
   `BOOT_NO_1G=1`, which drops `pdpe1gb` from the CPU the guest is given. That
   is not an exotic machine: it is the default CPU model of a Proxmox VM, and
