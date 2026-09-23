@@ -967,6 +967,42 @@ step "installing it to a disk and booting the disk"
   exit 1
 }
 
+# AND ONCE MORE ON THE MACHINE A CUSTOMER ACTUALLY HAS (#429).
+#
+# The run above gives its guest `-cpu host`, so it inherits this machine's
+# flags - and this machine has pdpe1gb. Every installed box this repository
+# had ever booted therefore reserved 1G hugepages and took one of the two
+# paths the tuner can take. The other one had a unit test and no box, for
+# the life of the product, and the first machine to walk it was a
+# customer's: a Proxmox VM on the default CPU model, which advertises no
+# pdpe1gb. Four defects were on that path and three of them were invisible
+# (#428). Clearing them took five releases.
+#
+# So one more install, with pdpe1gb dropped and no virtual IOMMU - which is
+# a stock Proxmox VM in both respects, and the shape that was broken worst:
+# the card binds uio_pci_generic and its registers are I/O ports.
+#
+# WHAT IT COSTS, and it is not a rounding error: about 23 minutes, measured
+# across eight runs of this lab between 1251s and 1400s. docs/build-timing.md
+# carries it beside the others. GATE_2M=0 turns it off for a release that
+# must go out now - deliberately, and not by never having had it.
+GATE_2M=${GATE_2M:-1}
+if [ "$GATE_2M" = 1 ]; then
+  step "installing it again on a guest with no 1G pages and no IOMMU"
+  ( cd "$WORK" && BOOT_NO_1G=1 BOOT_IOMMU=0 sh tools/lab.sh install-iso ) \
+      > "$WORK/install-2m.log" 2>&1 || {
+    echo "error: the medium installs on a box with 1G pages and not on one" >&2
+    echo "       without them, which is every Proxmox VM on the default CPU" >&2
+    echo "       model. This is #428's shape and it reached a customer once." >&2
+    grep -E "\[FAIL\]" "$WORK/install-2m.log" | head -10 >&2
+    echo "       full console: $WORK/install-2m.log" >&2
+    echo "       reproduce: BOOT_NO_1G=1 BOOT_IOMMU=0 sh tools/lab.sh install-iso" >&2
+    exit 1
+  }
+else
+  echo "    GATE_2M=0: the box with no 1G pages was NOT installed this time" >&2
+fi
+
 # AND THE ARTIFACT THE BOXES ALREADY IN THE FIELD TAKE.
 #
 # A release that publishes only a medium publishes only a route that erases the

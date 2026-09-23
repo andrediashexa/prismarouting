@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-**A release takes 36 minutes of wall clock, and about 30 seconds of it is
+**A release takes 59 minutes of wall clock, and about 30 seconds of it is
 compiling this product.** Measured over the six releases cut on 2026-09-19:
 36, 36, 36, 36, 36 and 38 minutes from tag to the gate's last line. A cold
 build of the `bpa` plugin — from a clone with no build directory at all — is
@@ -38,13 +38,13 @@ release and puts the new one on top of it.
 
 | | |
 |---|---|
-| **What** | Where the 36 minutes of a release go, what is rebuilt that did not change, and what a patch-level release could skip. |
+| **What** | Where the 59 minutes of a release go, what is rebuilt that did not change, and what a patch-level release could skip. |
 | **Why** | The waiting is the cost of the release discipline, and the discipline is not negotiable — so the waiting has to be attacked where it is not buying evidence. |
 | **Who** | Whoever cuts a release, which today is one command: `tools/release-gate.sh`. |
 | **Where** | `tools/release-gate.sh`, `appliance/build-iso.sh`, the `iso`/`test-*` targets in `Makefile`, `lab/boot-iso.sh`, `lab/install-iso.sh`, `lab/upgrade.sh`. |
 | **When** | Before changing the versioning strategy, so the change is aimed at the measured cost. |
 | **How** | Read the scripts, measure what is cheap to measure, and say plainly which numbers are measured and which are not. |
-| **How much** | 36 min today. The measured floor of what must stay is about 20 min; the rest is rebuild and reinstall of things that did not change. |
+| **How much** | 59 min today. The measured floor of what must stay is about 20 min; the rest is rebuild and reinstall of things that did not change. |
 
 ## Current build pipeline
 
@@ -92,11 +92,23 @@ exactly where to put the clock.
 | **`make iso` total** | **~10 min** (stated in `TESTING.md`; not instrumented per phase) | every run | mostly | partly |
 | `lab/boot-iso.sh` (QEMU) | ≤ 7 min, `BOOT_SECS` default 420 (measured as a bound) | every run | no | no |
 | `lab/install-iso.sh` (QEMU) | **687–692 s** ≈ 11.5 min (measured, recorded in the file) | every run | no | no |
+| `lab/install-iso.sh` again, `BOOT_NO_1G=1 BOOT_IOMMU=0` | **1251–1400 s** ≈ 23 min (measured, eight runs) | every X/Y run, unless `GATE_2M=0` | no | no |
 | `build-upgrade.sh` | "seconds, no root and no container" (`TESTING.md`) | every run | n/a | n/a |
 | `lab/upgrade.sh` | not instrumented; extracts the **previous tag** and **compiles its plugin again** | every run | **yes — `.build-old/<tag>` is already a cache, and the gate deletes it** | yes |
-| **Total** | **36 min** (measured, six consecutive releases) | | | |
+| **Total** | **59 min** (36 measured over six consecutive releases, plus the 23 the second install adds) | | | |
 
 ## Biggest bottlenecks
+
+0. **`lab/install-iso.sh`, twice — ~11.5 min and ~23 min, measured.** The
+   second run is the same lab on a guest with no `pdpe1gb` and no virtual
+   IOMMU, which is a stock Proxmox VM in both respects. It is the single
+   most expensive thing in a release and it exists because the path it
+   walks had a unit test and no box for the life of this product: four
+   defects were sitting on it, three of them invisible, and the first
+   machine to find them was a customer's ([#428](https://github.com/andrediashexa/hexarouting/issues/428),
+   [#429](https://github.com/andrediashexa/hexarouting/issues/429)). It is
+   slower than the first run because a 2M pool is 2560 pages where a 1G one
+   is five. `GATE_2M=0` turns it off for a release that must go out now.
 
 1. **`lab/install-iso.sh` — ~11.5 min, measured.** One QEMU boot, an install
    to a virtual disk, a reboot with the medium detached, and the self-test read
@@ -170,7 +182,7 @@ side of the medium.
 
 Two consequences worth stating plainly:
 
-* A release whose only change is one line of Python pays the same 36 minutes
+* A release whose only change is one line of Python pays the same 59 minutes
   as one that changes the dataplane.
 * The ISO's reproducibility today rests on the pinned versions and on Debian's
   archive, not on anything this repository keeps. A cached base tarball would

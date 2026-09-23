@@ -72,13 +72,13 @@ sh tools/lab.sh            # list the dataplane labs
 sh tools/lab.sh vty        # run one, in docker
 sh tools/run-all-labs.sh   # the whole lab suite, about twenty minutes
 sh tools/vty.sh            # open the VTY against a local dataplane
-sh tools/release-gate.sh v0.109.0   # the release procedure, about 36 minutes
+sh tools/release-gate.sh v0.109.0   # the release procedure, about 59 minutes
 sh tools/roadmap-state.sh  # does the roadmap agree with the tracker
 sh tools/wiki-status.sh    # is anything drafted here and not published
 ```
 
 `TESTING.md` says what each level proves and what it does not.
-`docs/build-timing.md` says where the gate's 36 minutes go — about 30 seconds
+`docs/build-timing.md` says where the gate's 59 minutes go — about 30 seconds
 of it is compiling this product, so do not optimise the compile.
 
 ## Cutting a release, as steps
@@ -102,7 +102,7 @@ two of them have bitten when done late.
    booted, installed to a disk and booted again, and upgraded from the previous
    release*. A Z release MUST NOT claim that: it did none of it.
 6. `sh tools/release-gate.sh vX.Y.Z`, detached (see below). It reads which
-   digit moved and takes the matching path: about 36 minutes for an X or Y,
+   digit moved and takes the matching path: about 59 minutes for an X or Y,
    minutes for a Z — which builds no medium and says so.
 7. `git push origin master --follow-tags`, then `gh release create`. The title
    is the `CHANGELOG` heading, version included.
@@ -180,4 +180,4 @@ That is deliberate: the alternative is a rule about which commits count.
 | High availability, VRRP, the pair | `docs/ha.md` |
 | What to do next | `docs/roadmap.md`, then `docs/handoff.md` |
 | How a wiki page is written | `PADRAO-DOCUMENTACAO.md` |
-| Why a release takes 36 minutes | `docs/build-timing.md` |
+| Why a release takes 59 minutes | `docs/build-timing.md` |
