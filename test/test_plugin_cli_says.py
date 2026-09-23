@@ -120,7 +120,16 @@ FLOOR = 10
 #: does not exist: the lab printed `expect_in: not found` to stderr, has no
 #: `set -e`, and PASSED with four checks that had never run. They are below
 #: it now, and one was watched red with a mutated needle.
-NAMED_BY_NOTHING_AT_MOST = 13
+#: 13 to 10 after lab/dynamic.sh read the three answers `show bpa
+#: translation` gives when there is no subscriber behind the port: it is
+#: outside anything the pool hands out, or it is in a block nobody is
+#: holding at this instant. An operator arrives at that screen with a port
+#: and a complaint and nothing else, and cannot otherwise tell "my records
+#: are incomplete" from "there is nothing to find". The caveat under the
+#: second - `this answers for NOW ONLY` - is held too, because without it
+#: `nobody, right now` reads as `nobody, ever` and a complaint about last
+#: Tuesday gets closed as unfounded.
+NAMED_BY_NOTHING_AT_MOST = 10
 
 fail = 0
 

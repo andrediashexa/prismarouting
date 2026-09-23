@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The three screens an operator sees when a port is all they have were
+  held by nothing.** A complaint arrives as *this public address and this
+  port did something*, and `show bpa translation` is the only way back to
+  who. Two of its answers are not a subscriber at all — the port is outside
+  anything that pool hands out, or it is inside a block nobody is holding at
+  this instant — and an operator who cannot tell those apart cannot tell *my
+  records are incomplete* from *there is nothing to find*. `lab/dynamic.sh`
+  reads all three off a real box now, including the caveat under the second:
+  `this answers for NOW ONLY`, which is the sentence that keeps *nobody,
+  right now* from being read as *nobody, ever* and a complaint about last
+  Tuesday closed as unfounded. The count of `bpa_cli.c` messages named by
+  nothing goes from 13 to 10.
+
+  Two mistakes on the way, both the kind this repository writes rules about.
+  The first needle was a **slice** — it stopped before `so nothing was ever
+  translated here` — and the count went on listing that message, correctly.
+  The fix for that was then written as two adjacent strings, which in `sh` is
+  two arguments and not one literal: `expect_in` would have taken half as the
+  needle and half as the haystack and passed on a box that says neither.
+
 ## 0.122.2 - a needle matches the thing
 
 ### Added

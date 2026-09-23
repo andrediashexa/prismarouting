@@ -418,6 +418,29 @@ else
   LEND_STATE=measured
 fi
 
+# THE TWO SCREENS AN OPERATOR READS WHEN A PORT IS ALL THEY HAVE.
+#
+# A complaint arrives as "this public address and this port did something",
+# and `show bpa translation <public-address> <port>` is the only way back to
+# who. Two of
+# its answers are not a subscriber at all, and both were named by nothing:
+# the port is outside anything this pool ever hands out, or it is inside a
+# block that nobody is holding at this instant. An operator who cannot tell
+# those two apart cannot tell "my records are incomplete" from "there is
+# nothing to find".
+#
+# `din` is 200.150.0.16/32 with 16384-port blocks, so its three blocks are
+# 1024-17407, 17408-33791 and 33792-50175. Port 100 is below all of them and
+# 60000 is above.
+echo
+echo "=== a port, and nobody behind it: the two screens that are not a subscriber ==="
+REV_LOW=$(vppctl show bpa translation 200.150.0.16 100)
+printf '%s\n' "$REV_LOW" | sed 's/^/  /'
+REV_HIGH=$(vppctl show bpa translation 200.150.0.16 60000)
+printf '%s\n' "$REV_HIGH" | sed 's/^/  /'
+REV_FREE=$(vppctl show bpa translation 200.150.0.16 20000)
+printf '%s\n' "$REV_FREE" | sed 's/^/  /'
+
 echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
@@ -440,6 +463,32 @@ else
   expect_not_in "with one thread there is no shard, and no caveat printed" \
     "whatever the addresses are" "$POOLCAP"
 fi
+# THE TWO ANSWERS THAT ARE NOT A SUBSCRIBER, held whole: each is a sentence
+# an operator reads at the worst moment, with a port and a complaint and
+# nothing else, and neither was named by any lab, suite, wiki page or
+# document before this.
+# ONE VARIABLE AND NOT TWO ADJACENT STRINGS. `"a" "b"` is two arguments in
+# sh, not one literal - expect_in would take the first half as the needle and
+# the second as the haystack, and pass on a box that says neither.
+NO_BLOCK="but to no block: the port is outside the pool's usable range, so nothing was ever translated here"
+expect_in "a port below everything the pool hands out names the pool and refuses the block" \
+  "$NO_BLOCK" "$REV_LOW"
+expect_in "and a port above them says the same thing rather than a different one" \
+  "$NO_BLOCK" "$REV_HIGH"
+expect_in "a port in a block nobody holds answers nobody, rather than naming a subscriber" \
+  "->  nobody, right now" "$REV_FREE"
+expect_in "and says which pool and block, and that the block is dynamic" \
+  ", DYNAMIC: no subscriber holds this block at the moment" "$REV_FREE"
+# AND THE CAVEAT UNDER IT, which is the load-bearing sentence on that screen.
+# Without it "nobody, right now" reads as "nobody, ever", and an operator
+# holding a complaint about last Tuesday closes it as unfounded. The screen
+# sends them to the RFC 8158 log instead, which is the thing that can answer
+# for a past instant.
+expect_in "and sends an operator asking about a past instant to the log" \
+  "this answers for NOW ONLY" "$REV_FREE"
+expect_in "naming what the log records" \
+  "when each block was assigned and released" "$REV_FREE"
+
 expect_in "the subscriber's sessions are gone" "total: 0 sessions" "$SESS6"
 expect_not_in "and it is not reported as holding no block while it holds one" \
   "holds no block" "$SUB6"
