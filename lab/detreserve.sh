@@ -723,6 +723,31 @@ expect "the second subscriber found the reserve empty and stayed on one block" \
   test "${NBLK2:-0}" -eq 1
 expect "and the box counted the refusal as a reserve exhaustion" \
   test "${EXH:-0}" -ge 1
+# THE SENTENCE THAT COUNT COMES IN, held whole. The assertion above reads a
+# number this lab cut out with sed, which says nothing about the words
+# around it - and the words are what an operator reads. `reserve exhausted
+# N time(s)` on its own is a number with no cause; the run below is the box
+# saying which of the three ways to run out this was: the subscriber filled
+# its block, it was still UNDER max-blocks so it was allowed more, and the
+# reserve had nothing to give. A different exhaustion is a different fix.
+expect_in "and says which kind of exhaustion it was, not just how many" \
+  "time(s): a subscriber filled its block, was under max-blocks" "$BLOCKS"
+expect_in "and that the reserve, not the cap, is what ran out" \
+  ", and the reserve had nothing left" "$BLOCKS"
+# AND THE HEADER THE COUNT SITS UNDER. A deterministic pool's line is the
+# only place the box states the reserve's shape - how many blocks each
+# public address carries and how many that is in all - and an operator
+# sizing a reserve reads it before anything else on the screen.
+expect_in "the deterministic pool names the shape of its reserve" \
+  " block(s) per public address, " "$BLOCKS"
+expect_in "and says it is a reserve rather than an ordinary pool" \
+  " (deterministic reserve, " "$BLOCKS"
+# AND THE HOLD-DOWN, which is on both kinds of pool header and is the
+# number that decides how long a released block is unusable. A lab that
+# never reads it is a lab that would not notice the box printing somebody
+# else's default.
+expect_in "and how long a released block is held down before reuse" \
+  ", hold-down " "$BLOCKS"
 expect "which is a different number from the extensions it did hand out" \
   test "${EXTS:-0}" -ge 1
 # 4. The log. Both halves, because an allocation with no release names a

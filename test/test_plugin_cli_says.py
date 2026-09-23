@@ -129,7 +129,16 @@ FLOOR = 10
 #: second - `this answers for NOW ONLY` - is held too, because without it
 #: `nobody, right now` reads as `nobody, ever` and a complaint about last
 #: Tuesday gets closed as unfounded.
-NAMED_BY_NOTHING_AT_MOST = 10
+#: 10 to 7, and all three are `show bpa blocks`. lab/detreserve.sh already
+#: cut the exhaustion COUNT out of that screen with sed, which says nothing
+#: about the words around it - and the words are the whole answer: `reserve
+#: exhausted N time(s)` is a number with no cause, while the run beside it
+#: names which of the three ways to run out this was. It now holds that, the
+#: deterministic header's statement of the reserve's shape, and the
+#: hold-down; lab/dynamic.sh holds the one-line header a dynamic pool's
+#: blocks sit under, which carries the only number on that screen that is a
+#: policy rather than a measurement.
+NAMED_BY_NOTHING_AT_MOST = 7
 
 fail = 0
 

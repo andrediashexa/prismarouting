@@ -489,6 +489,15 @@ expect_in "and sends an operator asking about a past instant to the log" \
 expect_in "naming what the log records" \
   "when each block was assigned and released" "$REV_FREE"
 
+# THE HEADER A DYNAMIC POOL'S BLOCKS SIT UNDER. It is one short line and it
+# carries the only number on the screen that is a policy rather than a
+# measurement: how long a released block stays unusable. A deterministic
+# pool states its reserve's shape there too (lab/detreserve.sh holds that
+# one); a dynamic pool has nothing to state but this, which is why the line
+# is easy to write off and why nothing was holding it.
+expect_in "a dynamic pool's blocks sit under a header naming the hold-down" \
+  " (hold-down " "$HELD"
+
 expect_in "the subscriber's sessions are gone" "total: 0 sessions" "$SESS6"
 expect_not_in "and it is not reported as holding no block while it holds one" \
   "holds no block" "$SUB6"
