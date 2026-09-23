@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.9 - the session table says why
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The session table says why a harness cannot reach it**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   Twenty-five functions, and what they share is that the session table **is**
