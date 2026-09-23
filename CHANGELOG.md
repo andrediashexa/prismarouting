@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.122.4 - what the blocks screen says
+
+### Fixed
+
 * **`show bpa blocks` said three things nothing was holding.** The count of
   `bpa_cli.c` messages named by nothing goes from 10 to 7, and all three
   were on one screen.
