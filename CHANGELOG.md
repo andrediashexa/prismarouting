@@ -79,6 +79,25 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show bpa blocks` said three things nothing was holding.** The count of
+  `bpa_cli.c` messages named by nothing goes from 10 to 7, and all three
+  were on one screen.
+
+  `lab/detreserve.sh` already cut the exhaustion **count** out of that
+  screen with `sed` — and a number says nothing about the words around it.
+  `reserve exhausted 1 time(s)` on its own is a count with no cause; the run
+  beside it is the box naming which of the three ways to run out this was:
+  *a subscriber filled its block, was under max-blocks N, and the reserve
+  had nothing left*. A different exhaustion is a different fix, and the lab
+  could not have told them apart. It holds that now, with the deterministic
+  header's statement of the reserve's shape — how many blocks each public
+  address carries, and how many that is in all — which is what an operator
+  sizing a reserve reads before anything else.
+
+  And the hold-down, on both kinds of pool: it is the only number on that
+  screen that is a **policy** rather than a measurement, and on a dynamic
+  pool it is the whole header. `lab/dynamic.sh` holds that one.
+
 ## 0.122.3 - a port, and nobody behind it
 
 ### Fixed
