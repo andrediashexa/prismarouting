@@ -173,6 +173,31 @@ this repository had ever booted had `pdpe1gb` — `lab/install-iso.sh` runs its
 guest with `-cpu host` — so the 2M path had a unit test and no box. It has one
 now: `BOOT_NO_1G=1 sh tools/lab.sh install-iso`.
 
+### And on a 2M box the card is addressed by physical address
+
+The `dpdk` stanza the tuner writes carries `iova-mode pa` when, and only when,
+this box's hugepages are 2M.
+
+DPDK chooses IOVA-as-VA when the card sits behind an IOMMU and IOVA-as-PA
+otherwise. On 1G pages VA works; on 2M pages it does not, and the failure is
+not a degradation — `rte_eal_init` returns `Cannot allocate memory (12)` and
+the dataplane never starts. Measured on an installed box with 2560 × 2M
+reserved and free:
+
+| the stanza | what the box did |
+|---|---|
+| no `iova-mode` | `rte_eal_init failed: Cannot allocate memory (12)` |
+| `iova-mode va` | the same |
+| `iova-mode pa` | the dataplane answered after 45 s |
+
+Same pool, same heap, same buffers, same seven workers, one line different.
+`dpdk { no-pci }` also started it, which is what says the memory was never the
+problem and the card was.
+
+**Only on the 2M box.** PA is not better than VA; it is what works there. The
+1G path is the one every lab and every release has booted, and changing the
+mode under it would be an unmeasured change to the half that is not broken.
+
 `GRUB_DISABLE_OS_PROBER=true` goes on the same file and is not a kernel
 parameter: `os-prober` scans every block device looking for other operating
 systems, finds nothing on an appliance, and can spend minutes doing it inside

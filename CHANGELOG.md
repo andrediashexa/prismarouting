@@ -79,6 +79,44 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box whose pages are 2M could not give its card an address the
+  dataplane can use, and never started.** This is the other half of
+  [#428](https://github.com/andrediashexa/hexarouting/issues/428) and the
+  half that stops a box forwarding. DPDK chooses IOVA-as-VA when the card is
+  behind an IOMMU and IOVA-as-PA otherwise; on a box whose hugepages are 1G,
+  VA works - that is every box this repository has ever booted - and on a box
+  whose hugepages are 2M it does not. `rte_eal_init` fails with `Cannot
+  allocate memory (12)` before a single packet, the container gives up on the
+  fifth attempt, and the card goes back to the kernel at 120 seconds.
+  Measured on an installed box with 2560 x 2M reserved and free, one line
+  different between the three:
+
+  | the dpdk stanza | what the box did |
+  |---|---|
+  | no `iova-mode` | `rte_eal_init failed: Cannot allocate memory (12)` |
+  | `iova-mode va` | the same |
+  | `iova-mode pa` | **the dataplane answered after 45s** |
+
+  Same pool, same heap, same buffers, same seven workers. `no-pci` also
+  started it, which is what says the memory was never the problem and the
+  card was. The tuner writes `iova-mode pa` on a 2M box and **only** there:
+  PA is not better than VA, it is what works here, and the 1G path is the one
+  every lab and every release has booted.
+* **And in a container the dataplane could not read a physical address at
+  all.** `iova-mode pa` turned the failure above from `Cannot allocate memory`
+  into `Invalid argument (22)`, which is DPDK saying it has no physical
+  addresses. It reads them out of `/proc/self/pagemap`, and since Linux 4.0
+  the kernel zeroes the PFN for a reader without `CAP_SYS_ADMIN` - which a
+  container has to be given and which `vpp.service`, running as root, has
+  always had for free. That asymmetry is invisible from the VTY: the box looks
+  the same on both paths. Measured on this image and a 2M host, one variable
+  changed at a time - the three capabilities the dataplane had: `EINVAL`;
+  plus `PERFMON`, which is the narrower capability and was tried first:
+  `EINVAL`; plus `SYS_ADMIN`: the dataplane stayed up. `compose.yaml` gives
+  it `SYS_ADMIN`, and `test/test_two_dataplanes_one_shape.sh` now holds the
+  row - it is the same shape as every other row in that file, one level down
+  ([#428](https://github.com/andrediashexa/hexarouting/issues/428)).
+
 ## 0.119.0 - the box that had never been booted
 
 ### Added
