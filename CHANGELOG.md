@@ -77,7 +77,26 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The line a box prints last is read now**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `bpa stop-drain` answers with how many blocks it released, and that is the
+  last thing a box says before it goes - the operator's only evidence the
+  drain ran at all. `lab/ipfix-stop.sh` ran the command and threw the line
+  away. It keeps it now and holds two things: that the row is there, and that
+  the number **is the one the box said it held**, read off `show bpa blocks`
+  before the drain. Two numbers, and a drain that released a different count
+  missed a block or counted one twice.
+
 ### Fixed
+
+* **Two rows this repository thought it had named carried only their opening**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `lab/troubleshoot.sh` quoted *no pool on this box allocates blocks* and
+  *nothing is sent over UDP* without the rest of either sentence, and
+  `test/test_plugin_cli_says.py` went on counting both as named by nothing -
+  correctly, because a slice holds the words it quotes and says nothing about
+  the rest of the row, which is where the reason lives. Both are carried
+  whole now, and the count goes 19 → 16.
 
 ## 0.118.11 - two more screens have a name
 

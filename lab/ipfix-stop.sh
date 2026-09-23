@@ -255,7 +255,12 @@ stop_vpp() {
     vppctl show version >/dev/null 2>&1
     _r1=$(date +%s%N)
     _t0=$(date +%s%N)
-    [ -n "$EXECSTOP" ] && $EXECSTOP 2>&1 | sed 's/^/    /'
+    # KEPT, not only printed. What the drain says is the operator's whole
+    # evidence that it ran at all - it is the last line a box prints before
+    # it goes - and nothing in this tree named that sentence.
+    DRAIN_SAID=""
+    [ -n "$EXECSTOP" ] && DRAIN_SAID=$($EXECSTOP 2>&1)
+    printf '%s\n' "$DRAIN_SAID" | sed 's/^/    /'
     _t1=$(date +%s%N)
     echo "  the drain took $(( (_t1 - _t0) / 1000000 )) ms, for ${_held:-0} block(s) in use"
     echo "  a bare vppctl round trip on this box: $(( (_r1 - _r0) / 1000000 )) ms"
@@ -473,6 +478,21 @@ worst_skew() {
     tr -d '+-' | sort -n | tail -1
 }
 SKEW=$(worst_skew "$C")
+# WHAT THE DRAIN SAID, which is the last line a box prints before it goes and
+# the operator's only evidence that it ran. A slice would hold the words it
+# quotes and nothing about the count, so the row is carried whole: the number
+# is the box's, the words either side are the plugin's.
+if [ "$MODE" != no-wait ] && [ -n "${DRAIN_SAID:-}" ]; then
+  expect_in "the drain says how many blocks it released" \
+    " block(s) still held" "$DRAIN_SAID"
+  # AND THE NUMBER IS THE ONE THE BOX SAID IT HELD, read off `show bpa
+  # blocks` before the drain ran. Two numbers - what the box reported in use
+  # and what the drain reports released - and a drain that released a
+  # different count is a drain that missed a block or double-counted one.
+  expect_in "and the number is the one the box said it held" \
+    "released ${_held:-0} block(s) still held" "$DRAIN_SAID"
+fi
+
 expect "every record carries the time of day, not time since boot (worst ${SKEW:-none}s)" \
   test "${SKEW:-99999}" -lt 120
 verdict

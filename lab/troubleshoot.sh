@@ -57,10 +57,15 @@ expect_in "before any traffic, top says nobody holds a block" \
 # block is the formula's answer and no allocator is involved. Saying so is
 # the difference between "this box allocates nothing" and "this screen is
 # broken".
+# THE ROW WHOLE. The first version of this assertion carried the opening
+# only, and test/test_plugin_cli_says.py went on counting the message as
+# named by nothing - correctly: a slice holds the words it quotes and
+# nothing about the rest of the sentence, which is where the reason lives.
+BLOCKS_ROW="no pool on this box allocates blocks: no dynamic pool, and no deterministic pool with a reserve"
 expect_in "and blocks says why there is nothing to show" \
-  "no pool on this box allocates blocks" "$BARE_BLOCKS"
+  "$BLOCKS_ROW" "$BARE_BLOCKS"
 expect_in "logging says nothing is sent over UDP, rather than nothing" \
-  "nothing is sent over UDP" "$BARE_LOGGING"
+  "exporter    none: nothing is sent over UDP" "$BARE_LOGGING"
 # The legend belongs on the screen: an operator reading a collector's
 # capture needs the numbers, and the box is where they are written down.
 expect_in "and it names the event numbers a collector will see" \
