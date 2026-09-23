@@ -79,6 +79,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The roadmap said #428 was waiting on a file, and it has not been for
+  three releases.** It now carries what the box turned out to be saying:
+  that this appliance had never started a dataplane on any machine without
+  1G hugepage support, not once in its life, and the four things that were
+  wrong on that path - two of which were the same shape as the two the
+  container flip itself found. *What root has for free, a container has to
+  be given, and there is no line on the unit path to compare against.*
+
 ## 0.121.0 - a card whose registers are ports
 
 ### Fixed

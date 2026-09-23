@@ -2760,9 +2760,49 @@ nothing recorded WHY. `docker logs prisma-routing_vpp_1` answered nothing by
 the time anybody ran it, because the operator had rebooted and the reboot
 took the container's log. Since 0.118.13 the watcher takes the copy first,
 into `/var/log/prisma-routing/why-the-dataplane-stopped`, and both the VTY
-and the self-test read it. A medium built at 0.118.12 passes
-`lab/install-iso.sh` on a virtio guest with no IOMMU - the same shape of
-machine - so what remains is hardware-specific and waits on that file.
+and the self-test read it.
+
+**And then the box said it**, and what it said was that this appliance had
+never started a dataplane on any machine without 1G hugepage support. Not
+once, in its whole life. `lab/install-iso.sh` gives its guest `-cpu host` on
+a build machine that has `pdpe1gb`, so every box this repository had ever
+booted took the 1G path; the 2M fallback had a unit test and no box. The
+first machine to walk it was a customer's, and a Proxmox VM on the default
+CPU model - `kvm64`, no `pdpe1gb` - walks it on every install.
+
+Four things were wrong on that path, and three of them were invisible:
+
+1. **The pool was shrunk after the kernel reserved it.**
+   `/etc/sysctl.d/80-vpp.conf`, shipped by VPP's own package, sets
+   `vm.nr_hugepages=1024` - a knob that addresses whichever page size is the
+   default. On 1G it asks for a terabyte and is ignored; on 2M it asks for
+   2 GB and is obeyed. 0.119.0 restates the count in a file that sorts after
+   it: `HugePages_Total` went from 1024 to 2560 on the box.
+2. **The dataplane had nowhere to write its log**, on every box this product
+   has ever installed, because nothing created `/var/log/vpp`. That is why a
+   dataplane that would not start had only ever printed two lines about why.
+   0.119.0 creates it and mounts it from the host.
+3. **The card could not be addressed.** DPDK picks IOVA-as-VA behind an
+   IOMMU; on 2M pages `rte_eal_init` then fails with ENOMEM. 0.120.0 writes
+   `iova-mode pa` on a 2M box and only there.
+4. **And then the container could not read a physical address, nor reach a
+   legacy card's I/O ports.** `CAP_SYS_ADMIN` for `/proc/self/pagemap`,
+   `CAP_SYS_RAWIO` for `iopl()` - both of which `vpp.service`, running as
+   root, has always had for free. 0.120.0 and 0.121.0.
+
+The last two are the same shape as the two the container flip itself found,
+and the shape is worth the name: **what root has for free, a container has
+to be given, and there is no line on the unit path to compare against.**
+`test/test_two_dataplanes_one_shape.sh` holds both rows now.
+
+Both shapes of a 2M guest pass the whole install lab on the 0.121.0 medium -
+1398 s with no IOMMU, 1400 s with one - and either is reproduced in one
+command:
+
+```sh
+BOOT_NO_1G=1 sh tools/lab.sh install-iso              # vIOMMU, vfio-pci
+BOOT_NO_1G=1 BOOT_IOMMU=0 sh tools/lab.sh install-iso # no IOMMU, uio_pci_generic
+```
 
 What it cost to get there is the part worth reading: nine releases, and six
 runs of that lab before it passed once. The two defects the flip itself
