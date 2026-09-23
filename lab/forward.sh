@@ -150,6 +150,13 @@ else
   echo "  the same port on each of two public addresses:"
   echo "  .17: ${R_SHARED_A:-accepted}"
   echo "  .18: ${R_SHARED_B:-accepted}"
+  # A forward ASKED ABOUT rather than made: `check` validates it against the
+  # pool and creates nothing, and "forward is valid" is the whole answer an
+  # operator gets. Nothing held that answer, and nothing held that the check
+  # left the port free - which is the difference between a question and a
+  # forward nobody meant to open (#390).
+  R_CHECK=$(vppctl bpa forward lab tcp 1602 to 100.64.0.5 82 check 2>&1)
+  echo "  a forward that is only checked: ${R_CHECK:-<nothing>}"
 fi
 SHARED=$(vppctl show bpa forward lab)
 
@@ -391,6 +398,10 @@ expect_in "the second address reached its own subscriber" \
   "200.150.0.18:1650 -> 100.64.0.6:8081" "$SHARED_B"
 expect_not_in "and not the subscriber on the other address" \
   "-> 100.64.0.5" "$SHARED_B"
+expect_in "a forward that is only checked is called valid" \
+  "forward is valid" "$R_CHECK"
+expect_not_in "and was not created: the check opened no port" \
+  ":1602 ->" "$SHARED"
 expect_not_in "the neighbouring port was not translated" \
   "-> 100.64.0.5" "$NEIGHBOUR"
 expect_in "the neighbouring port was counted as having no session" \

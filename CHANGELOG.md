@@ -79,6 +79,27 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **What `check` answers at the dataplane's console was held by nothing.**
+  Four messages, and the count of `bpa_cli.c` messages named by nothing goes
+  from 7 to 3.
+
+  `lab/commit.sh` measured the remap an operator is warned about before a
+  pool is replaced, and it measured it only through `prismash` — which takes
+  the `remap:` prefix off those lines and re-wraps them at 79 columns, so not
+  one of the dataplane's sentences reached it whole. It now asks the
+  dataplane itself, about a pool that loses the low half of its inside set:
+  the pool is valid, the first subscriber dropped is named with the block it
+  holds today — checked against `ref/bpa_model.py` — and *now served by no
+  block at all*, and the closing sentence is held whole: *every session on
+  this pool ends when it is applied*, and past answers stay resolvable. The
+  shrink is from the low end on purpose: the box's examples are the first
+  addresses that move, and only a shrink from there puts the no-block branch
+  among them. The control is that the pool asked about still serves its
+  whole `/24` afterwards.
+
+  `lab/forward.sh` holds `forward is valid` on a forward it only checked, and
+  that the check opened no port.
+
 ## 0.122.4 - what the blocks screen says
 
 ### Fixed

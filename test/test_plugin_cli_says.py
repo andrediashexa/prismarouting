@@ -138,7 +138,15 @@ FLOOR = 10
 #: hold-down; lab/dynamic.sh holds the one-line header a dynamic pool's
 #: blocks sit under, which carries the only number on that screen that is a
 #: policy rather than a measurement.
-NAMED_BY_NOTHING_AT_MOST = 7
+#: 7 to 3, and all four are what `check` answers at the dataplane's own
+#: console. The remap lines never reach the VTY whole - prismash takes the
+#: `remap:` prefix off and re-wraps them - so lab/commit.sh, which read the
+#: remap only through prismash, held none of them; it now asks the
+#: dataplane about a pool shrinking from its low end, which is what puts a
+#: subscriber served by NO block into the examples, and holds the closing
+#: sentence whole. lab/forward.sh holds "forward is valid" on a forward it
+#: only checked, and that the check opened no port.
+NAMED_BY_NOTHING_AT_MOST = 3
 
 fail = 0
 
