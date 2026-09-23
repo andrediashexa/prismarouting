@@ -386,6 +386,64 @@ expect_in "asked for by name, it applies" "commit complete" "$RES_NAMED"
 # promise an operator subscribers it is about to drop.
 expect "and the capacity the box reports is the one the model predicts" \
   test "${RES_CAP_AFTER:-x}" = "${RES_MODEL_CAP:-y}"
+# --- what the DATAPLANE says before a pool is replaced (#390) ---
+#
+# Everything above reads the remap through prismash, and prismash does not
+# relay those lines: it takes the `remap:` prefix off and re-wraps them at 79
+# columns, so no sentence of the dataplane's reaches the VTY whole. But
+# `bpa pool ... check` is also typed at the dataplane's own console, by an
+# operator the VTY has not reached yet, and there the lines are what the
+# plugin prints. Three of them were held by nothing: the pool being valid, a
+# subscriber the new definition does not serve at all, and the closing
+# sentence that says the sessions go and the past answers do not.
+#
+# The change shrinks the inside set from its LOW end on purpose.
+# bpa_pool_remap_count() keeps the first addresses that move as its
+# examples, in order, so a pool that loses 100.64.66.0-127 names .0 and .1
+# as the examples - and each of those is served by no block at all, which is
+# the branch nothing else in this lab reaches. A shrink from the top would
+# leave the examples on the "moves from" branch the resize above holds.
+vppctl bpa pool shrunk inside 100.64.66.0/24 outside 203.0.113.32/28 \
+  block 1024 >/dev/null
+SHRINK=$(vppctl bpa pool shrunk inside 100.64.66.128/25 \
+           outside 203.0.113.32/28 block 1024 check 2>&1 | tr -d '\r')
+echo
+echo "=========== the dataplane's own check, on a pool that shrinks ==========="
+printf '%s\n' "$SHRINK" | sed 's/^/  /'
+SHRINK_AFTER=$(vppctl show bpa pool shrunk 2>&1 | tr -d '\r')
+# Where .0 is today, from the specification: the example line quotes the
+# block the subscriber is losing, and "no block at all" is only half the
+# claim if the block it names is not the one the subscriber holds.
+SHRINK_WAS=$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "/src/ref")
+from bpa_model import PoolConfig
+p = PoolConfig("shrunk", ["100.64.66.0/24"], ["203.0.113.32/28"],
+               block_size=1024)
+f = p.forward("100.64.66.0")
+print("100.64.66.0 was %s:%d-%d" % (f["ip_pub"], f["port_lo"], f["port_hi"]))
+PY
+)
+echo "  the model says: $SHRINK_WAS"
+expect_in "the dataplane's check says the replacement pool is valid" \
+  "pool 'shrunk' is valid" "$SHRINK"
+expect_in "and names the first subscriber the new definition drops" \
+  "$SHRINK_WAS, now served by no block at all" "$SHRINK"
+expect_in "and closes with what applying it costs, and what it does not" \
+  "remap: every session on this pool ends when it is applied. Past answers stay resolvable - the configuration trail records which definition was in force - but the subscribers do not." \
+  "$SHRINK"
+# The control. `check` is the half that must not act: a pool that shrank
+# while being asked about it is the outage the sentence above describes,
+# delivered by the command that exists to prevent it.
+#
+# Watched red against a pool that really shrank (deleted and made again as
+# the /25), and NOT against the same command with `check` taken off: at this
+# console a name that exists is refused with `pool already exists` - the
+# replace is the API's - so dropping `check` changes nothing and this line
+# stays green, correctly. A mutation that cannot make the pool change is not
+# evidence that this line would see it.
+expect_in "and the pool it was asked about still serves the whole /24" \
+  "100.64.66.0+256" "$SHRINK_AFTER"
 # --- the global settings, over the binary API (#76) ---
 #
 # Timeouts, the block hold-down and the session table sizing used to reach the
