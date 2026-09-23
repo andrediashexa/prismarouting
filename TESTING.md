@@ -139,7 +139,7 @@ follows - so a third one added tomorrow is named on the next run by nobody's
 decision. There is no allowlist to keep true, because an allowlist is what the
 next person does not update.
 
-### Showing a check fail: four ways the mutation lies
+### Showing a check fail: five ways the mutation lies
 
 Nothing here is trusted until it has been seen red. Breaking the product on
 purpose and watching a check notice is the only evidence that check is worth
@@ -175,6 +175,37 @@ arithmetic: an assertion whose expected value is computed by the function
 under test. `bpa_stride_block()` was asserted against its own return value and
 survived `nth * p->block_stride` cut to `nth * 1`. Mutate the shared branch,
 or assert against what the operator's number is supposed to mean.
+
+**A needle that matches the sentence describing the thing, instead of the
+thing.** Three times a check here has passed on prose while the defect it
+was written to refuse was present:
+
+| the check | what it matched instead |
+|---|---|
+| `tools/build-images.sh`, `grep -q "privileged: *true"` on `compose.yaml` | the comment in that file **explaining** that it is not privileged |
+| the chgrp reader in `test/test_share_api_segment.sh` | the same shape, in the same file |
+| `test/test_release_gate.sh`, looking for the gate's second install | the gate's own refusal, which ends `reproduce: BOOT_NO_1G=1 BOOT_IOMMU=0 sh tools/lab.sh install-iso` |
+
+The first two were fixed by stripping comments before grepping, and several
+suites carry a `body()` helper that does exactly that. **The third shows
+that habit is not the rule**: the gate's error message is not a comment, it
+is a string the product prints, and it carried the command because a good
+refusal tells an operator how to reproduce it. Stripping comments would not
+have caught it; the mutation did.
+
+So: **a needle matches the thing being done, not the sentence describing
+it.** Prefer the shape only the behaviour can produce - the invocation with
+its arguments, the assignment with its value - over a fragment that a
+comment, an error message or a usage line could also carry.
+
+There is no reader for this one and there is not going to be. The general
+form is *the needle matched text the target says about itself*, which covers
+comments, `echo`, usage strings and every refusal this product is proud of,
+so a detector fires hardest on the files that document themselves best - and
+in this repository that is all of them. An automated attempt scored **0
+hits** against all three instances above
+([#430](https://github.com/andrediashexa/hexarouting/issues/430)). Watching
+the assertion go red is what catches it, which is what this section is for.
 
 ## Cutting a release
 
