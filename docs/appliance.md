@@ -2692,6 +2692,20 @@ container reaches no such state, so the compose file says
 container that stopped, undoes the bind and brings the interface back up,
 once per boot. It restarts nothing: Docker has already tried five times.
 
+**Before it undoes the bind it writes down why**, into
+`/var/log/prisma-routing/why-the-dataplane-stopped`: the container's state,
+its exit code, and the last eighty lines the dataplane printed. That file is
+the reason [#428](https://github.com/andrediashexa/hexarouting/issues/428)
+exists. A box was installed, its dataplane never came up, and the one command
+that would have named the cause - `docker logs prisma-routing_vpp_1` -
+answered nothing by the time anybody ran it: the operator had rebooted, which
+is what anybody does to a box with no interfaces, and a reboot takes the
+container's log with it. The copy is taken at the only moment it can still be
+taken, and it is under `/var/log` and not `/run` for exactly the same reason.
+
+When that file is there, `prismash` names it instead of the two commands: on
+the box that has it, both of them are empty.
+
 ```sh
 sh tools/build-images.sh          # prisma-vpp:<version>, prisma-frr:<version>
 sh tools/build-images.sh check    # start them, and ask what they hold

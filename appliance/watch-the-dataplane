@@ -36,7 +36,40 @@ IFUP=${PRISMA_IFUP:-/sbin/ifup}
 # The name compose gives the dataplane container. Project `prisma-routing`
 # comes from the directory the unit runs in, which is /etc/prisma-routing.
 CONTAINER=${PRISMA_VPP_CONTAINER:-prisma-routing_vpp_1}
+# WHERE THE REASON IS KEPT, AND WHY IT IS NOT IN /run. The stamp above is in
+# /run because it must not survive a reboot; this must. An operator who finds
+# a box with no dataplane reboots it - that is the first thing anybody does -
+# and a reason written in /run is a reason the reboot deletes. The container
+# is `exited` by now, and `docker logs` on a box that has since restarted
+# Docker has nothing either: the only copy of why the dataplane died is the
+# one taken here.
+#
+# THE DIRECTORY IS ONE THE BOX ALREADY HAS. compose.yaml mounts
+# /var/log/prisma-routing into the dataplane, install.sh creates it, and the
+# installer gives it the log volume. Nothing new to provision.
+REPORT=${PRISMA_DATAPLANE_REPORT:-$ROOT/var/log/prisma-routing/why-the-dataplane-stopped}
+#: How many lines of the dataplane's log to keep. The EAL says why it failed
+#: in its last handful of lines and VPP's startup banner is about forty, so
+#: 80 carries both: the failure AND the configuration it was reading when it
+#: failed, which is the pair that identifies the defect.
+REPORT_LINES=${PRISMA_DATAPLANE_REPORT_LINES:-80}
 say() { echo "watch-dataplane: $*" >&2; }
+
+record_why() { # <state> - keep what the dataplane said before it died
+  mkdir -p "$(dirname "$REPORT")" 2>/dev/null || true
+  {
+    echo "# Why this box's dataplane stopped, written by watch-the-dataplane."
+    echo "# Read it with: prismash -c 'show version', or cat this file."
+    echo "when:      $(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+    echo "container: $CONTAINER"
+    echo "state:     $1"
+    echo "inspect:   $("$DOCKER" inspect \
+      -f 'exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' \
+      "$CONTAINER" 2>&1)"
+    echo "--- the last $REPORT_LINES lines the dataplane printed ---"
+    "$DOCKER" logs --tail "$REPORT_LINES" "$CONTAINER" 2>&1
+  } > "$REPORT" 2>/dev/null || say "could not write $REPORT"
+}
 
 # THE STACK HAS TO BE THE ONE THIS BOX IS RUNNING. On a box still booting
 # vpp.service - which is every box until the default moves - the containers
@@ -64,8 +97,13 @@ case "$state" in
     say "the dataplane container is '$state': Docker has stopped restarting" ;;
 esac
 
+# BEFORE THE BIND IS UNDONE, because `ifup -a` below can take the box's
+# management address with it on a bad day and a reason written after that is
+# a reason nobody gets. It is also before the reboot an operator does next.
+record_why "${state:-none}"
 say "it. The card was bound to a DPDK driver before it started, so the box"
 say "has no interface until it is given back. Undoing the bind (#379)."
+say "why it stopped is kept in $REPORT"
 "$GIVEBACK" || say "give-the-card-back failed; see the journal above"
 # Allowed to fail, exactly as prisma-routing-give-card-back.service allows it:
 # a box whose card is back on its kernel driver is already better off than one

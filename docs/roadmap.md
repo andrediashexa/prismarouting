@@ -2750,6 +2750,20 @@ steps - and the images are therefore always there and always match. The
 default follows the images since 0.118.0; whether the artifact should carry
 them is a decision with a number on it, about 5 MB against about 120 MB.
 
+**And the second thing an operator found that no lab could**
+([#428](https://github.com/andrediashexa/hexarouting/issues/428)): a fresh
+install of 0.118.0 came up with no dataplane at all. Everything the box did
+was what it was built to do - the container failed, Docker gave up on the
+fifth attempt, `watch-the-dataplane` handed the card back, which is the
+`ens18: renamed from eth0` an operator reads at 120 seconds as a boot - and
+nothing recorded WHY. `docker logs prisma-routing_vpp_1` answered nothing by
+the time anybody ran it, because the operator had rebooted and the reboot
+took the container's log. Since 0.118.13 the watcher takes the copy first,
+into `/var/log/prisma-routing/why-the-dataplane-stopped`, and both the VTY
+and the self-test read it. A medium built at 0.118.12 passes
+`lab/install-iso.sh` on a virtio guest with no IOMMU - the same shape of
+machine - so what remains is hardware-specific and waits on that file.
+
 What it cost to get there is the part worth reading: nine releases, and six
 runs of that lab before it passed once. The two defects the flip itself
 found were both invisible to every check in this repository - an operator

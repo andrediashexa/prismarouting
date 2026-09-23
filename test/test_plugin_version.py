@@ -751,6 +751,32 @@ try:
     check("systemctl status vpp" in prismash.dataplane_journal_advice(),
           "and its advice is the one every box had before 0.117.0")
 
+    # AND THE BOX THAT ALREADY WROTE THE ANSWER DOWN. This is the shape of
+    # the field report in #428: the dataplane never started, the container
+    # is long gone, the operator rebooted - so `docker logs` answers
+    # nothing and the two commands above send them nowhere. The copy
+    # appliance/watch-the-dataplane took is the only evidence left, and the
+    # advice has to name it INSTEAD OF, not after, a command that is empty.
+    _why = tempfile.NamedTemporaryFile(delete=False)
+    _why.close()
+    _real_why = prismash.DATAPLANE_WHY
+    try:
+        prismash.DATAPLANE_WHY = _why.name
+        prismash.subprocess.run = _run_as(0)
+        _adv = prismash.dataplane_journal_advice()
+        check(_why.name in _adv,
+              "a box that recorded why its dataplane stopped is sent to "
+              "that file", _adv)
+        check("docker logs" not in _adv,
+              "and not to a container log that a reboot already emptied",
+              _adv)
+    finally:
+        prismash.DATAPLANE_WHY = _real_why
+        os.unlink(_why.name)
+
+    check(prismash.DATAPLANE_WHY == "/var/log/prisma-routing/why-the-dataplane-stopped",
+          "and the path the VTY names is the one watch-the-dataplane writes")
+
     # A BOX THAT CANNOT BE ASKED answers vpp.service: no systemd, no
     # permission, a container of our own. That is what every box ran before
     # the default moved and what a source install still runs, so it is the
