@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.122.0 - the box a customer has, on every release
+
+### Added
+
 * **The release gate installs the medium twice, and the second guest is the
   one a customer has.** `#428` was four defects on the code path taken by
   every machine without 1G hugepage support, and it reached an operator
@@ -95,8 +101,6 @@ version has a chance of seeing it.
   carrying the cost. `GATE_2M=0` turns it off for a release that must go out
   now — deliberately, rather than by never having had it
   ([#429](https://github.com/andrediashexa/hexarouting/issues/429)).
-
-### Fixed
 
 ## 0.121.1 - what the box turned out to be saying
 

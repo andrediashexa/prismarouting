@@ -2795,6 +2795,15 @@ and the shape is worth the name: **what root has for free, a container has
 to be given, and there is no line on the unit path to compare against.**
 `test/test_two_dataplanes_one_shape.sh` holds both rows now.
 
+**And since 0.122.0 the gate installs on one of them on every X/Y release**
+([#429](https://github.com/andrediashexa/hexarouting/issues/429)), because a
+lab nothing runs is a comment: the state after the fix was the state before
+the report - that path had a reader only when somebody remembered. The
+second guest is the no-IOMMU one, since a stock Proxmox VM has no virtual
+IOMMU and that is the shape that was broken worst. It costs about 23
+minutes and takes a release from 36 to 59; `docs/build-timing.md` carries
+the number and `GATE_2M=0` turns it off deliberately.
+
 Both shapes of a 2M guest pass the whole install lab on the 0.121.0 medium -
 1398 s with no IOMMU, 1400 s with one - and either is reproduced in one
 command:
