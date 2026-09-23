@@ -79,6 +79,37 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`cpufreq governor: performance (0 changed)` was three different boxes
+  wearing one sentence.** Two of the loose ends
+  [#163](https://github.com/andrediashexa/hexarouting/issues/163) left open
+  deliberately. A zero there meant *every policy was already on performance*,
+  or *every write failed* — `2>/dev/null` swallows the error — or *no policy
+  offers a performance governor at all*. The first is a tuned box and the
+  second is an untuned appliance carrying subscribers, and the line an
+  operator reads was identical. Each outcome is counted now and only the ones
+  that happened are named, and a refusal says what it costs: *those cores
+  keep scaling their frequency, which is jitter on a worker that never
+  sleeps.*
+
+  **And the suite found a fourth box while the third was being written.**
+  The loop skipped a policy it could not write *before* recording that a
+  policy exists, so a box that **has** cpufreq and cannot be written said
+  `no cpufreq policy exposed: skipping governor` — a sentence about a machine
+  with no cpufreq at all. Two different boxes, one line, and the one being
+  described was the working one. The guard is `-e` now: whether it can be
+  written is what the write answers, and asking twice is what let the answer
+  go missing.
+
+* **A box with an IOMMU was told it had none.** `iommu=pt` is read back from
+  the `type` of every IOMMU group, and when no group carried one the verdict
+  said *there is no IOMMU group here to carry a type*. That is true of a box
+  with no IOMMU and false about a box whose kernel is older than the `type`
+  attribute — which has groups, and can see them. The verdict stays
+  `cannot-tell` for both, deliberately: without `type` there is nothing to
+  read passthrough back from. Only the reason differs, and the reason is the
+  whole value of a cannot-tell
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
+
 ## 0.122.0 - the box a customer has, on every release
 
 ### Added
