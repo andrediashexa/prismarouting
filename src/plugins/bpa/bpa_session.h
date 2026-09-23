@@ -20,6 +20,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa_pool.h"
+#include "bpa_rate.h"
 #include "bpa_ports.h"
 #include "bpa_dyn.h"
 #include "bpa_log.h"

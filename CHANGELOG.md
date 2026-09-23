@@ -77,6 +77,30 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The subscriber's creation-rate bucket is tested**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `max-rate` on a pool is how fast **one** subscriber may open new sessions,
+  and therefore how quickly a single infected CPE can fill a box every other
+  customer is also behind. Too strict and an ordinary browser is refused; too
+  loose and the rule buys nothing - and neither failure looks like anything
+  on a screen, because the box goes on forwarding and what changes is which
+  sessions exist.
+
+  It touched two fields and a clock - no session, no pool, no VPP - and lived
+  inside `bpa_session.c`, so nothing drove it. It is `bpa_rate.h` now and
+  `test/test_bpa_rate.c` holds: a new subscriber's first ask is not refused
+  (the empty bucket of a record created a moment ago is not a subscriber who
+  has been waiting since the epoch); the burst is capped at one second's
+  worth, so an hour of silence still buys ten at ten a second; and half a
+  second at 100/s is fifty.
+
+  One thing the file says it **cannot** show, rather than leaving a gap
+  somebody later reads as covered: `dt > 0` and `dt != 0` are not
+  distinguishable by any sequence of asks at one rate - a backwards reading
+  subtracts exactly what the next forward ask adds. The guard stays because
+  tokens that went negative are a bucket holding a debt nobody agreed to, not
+  because a mutation of it goes red.
+
 ### Fixed
 
 ## 0.118.7 - the export path says why
