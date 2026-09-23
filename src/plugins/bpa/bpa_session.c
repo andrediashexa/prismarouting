@@ -17,6 +17,9 @@
  * raises it in startup.conf, whoever has a small box does not pay for it.
  */
 
+/* not a unit: it creates this worker's bihash and its pools at the
+ * size bpa_main was configured with, which is VPP allocating. lab/soak.sh
+ * fills those tables on a box and lab/handoff.sh drives two workers. */
 clib_error_t *
 bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
 {
@@ -47,6 +50,11 @@ bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
  * path by which it can be given to another flow - not a check that could be
  * forgotten on one of the paths that allocate.
  */
+/* not a unit: the session table is VPP's: a bihash the worker owns, a pool of
+ * subscribers indexed by a hash, and per-thread vectors. This adds a
+ * block to one subscriber's list. What a block IS and where it comes from is
+ * bpa_pool.h's and bpa_dyn.c's, both driven by their own harnesses;
+ * lab/extblocks.sh watches a subscriber take a second one on a box. */
 static void
 bpa_sub_add_block (bpa_sub_t *sub, const bpa_pool_t *p, const bpa_block_t *b)
 {
@@ -70,6 +78,10 @@ bpa_sub_add_block (bpa_sub_t *sub, const bpa_pool_t *p, const bpa_block_t *b)
 }
 
 /* Returns the subscriber's port state, creating it on first use. */
+/* not a unit: the session table is VPP's: a bihash the worker owns, a pool of
+ * subscribers indexed by a hash, and per-thread vectors. This finds or
+ * creates the record, which is a hash lookup and a pool allocation.
+ * lab/datapath.sh sends the first packet of a subscriber through a box. */
 static bpa_sub_t *
 bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 	     const bpa_block_t *b)
@@ -88,6 +100,10 @@ bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   return sub;
 }
 
+/* not a unit: the session table is VPP's: a bihash the worker owns, a pool of
+ * subscribers indexed by a hash, and per-thread vectors. This returns the
+ * record when its last session goes, releasing the blocks with it.
+ * lab/ipfix-stop.sh reads the records that release writes. */
 static void
 bpa_sub_put (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 	     bpa_sub_t *sub)
@@ -109,6 +125,9 @@ bpa_sub_put (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
  * allowed. Used by the datapath to decide whether to ask for an extension
  * before giving up on the packet.
  */
+/* not a unit: it asks the worker's hash how many blocks a subscriber
+ * holds. The count it returns is read on a box by lab/extblocks.sh, which
+ * is where a subscriber gets a second block and gives it back. */
 u32
 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx)
 {
@@ -125,6 +144,9 @@ bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx)
  * hand out. Nothing here checks where the block came from, because the two
  * modes answer that differently and only the caller knows which it is.
  */
+/* not a unit: it asks the dynamic allocator for another block for a
+ * subscriber that filled the one it had. bpa_dyn.c is that allocator and
+ * test/test_bpa_dyn.c drives it; lab/extblocks.sh is the box. */
 void
 bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 		u32 sub_idx, const bpa_block_t *b)
@@ -150,6 +172,9 @@ bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
  * A subscriber with no sessions has no record and needs none: the record is
  * built from the pinned block when its first packet arrives.
  */
+/* not a unit: it moves a block into a subscriber's list after the
+ * allocator handed it over, under the worker's own state.
+ * lab/dynamic-workers.sh drives the path on a box with several workers. */
 void
 bpa_sub_adopt_block (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 		     const bpa_block_t *b)
@@ -180,6 +205,9 @@ bpa_sub_adopt_block (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
  * two hash insertions, and a session indexed in one direction only is a
  * mapping that translates outbound and drops every reply.
  */
+/* not a unit: it writes the session into the worker's bihash, which
+ * is where every packet after the first finds it. lab/datapath.sh sends
+ * those packets. */
 static bpa_session_t *
 bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 		  bpa_sub_t *sub, const bpa_subblock_t *sb, u32 blk_idx,
@@ -252,6 +280,9 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
  * announced port pair that does not behave as a pair is the failure this
  * exists to prevent, so half of one is worse than none.
  */
+/* not a unit: it reserves the SECOND port an ALG needs - RTP
+ * beside RTCP - in the subscriber's own block, through the port map and the
+ * bihash. lab/rtsp.sh and lab/sip.sh drive the ALGs that ask for it. */
 int
 bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 		      u32 pool_index, u32 sub_idx, u32 want_ip_pub,
@@ -388,6 +419,9 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
  * nothing of VPP - so it lives where test/test_bpa_rate.c can call it. What
  * is here is the subscriber whose fields they are.
  */
+/* not a unit: a one-line wrapper over bpa_rate_take() in bpa_rate.h,
+ * which test/test_bpa_rate.c drives; what is here is the subscriber record
+ * whose two fields it passes. */
 static_always_inline int
 bpa_sub_rate_take (bpa_sub_t *sub, u32 rate, f64 now)
 {
@@ -395,6 +429,11 @@ bpa_sub_rate_take (bpa_sub_t *sub, u32 rate, f64 now)
 }
 
 
+/* not a unit: the whole creation path: a port out of the map, a
+ * record in the bihash, a counter on the worker, and the refusals that stop
+ * each of those. lab/datapath.sh, lab/limits.sh and lab/soak.sh drive it,
+ * and the decisions it consults - the port map, the bucket, the block
+ * arithmetic - are driven by their own harnesses. */
 bpa_session_t *
 bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 		    const bpa_block_t *b, u16 port_priv, u8 proto, u32 fib,
@@ -528,6 +567,9 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
  * the PPTP ALG, on a control connection that is itself a translated session,
  * so a block was allocated before the call request was ever sent.
  */
+/* not a unit: the same for the enhanced GRE that PPTP carries
+ * its payload in, whose Call ID stands in for a port. lab/pptp.sh drives a
+ * call through a box. */
 bpa_session_t *
 bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
 			u32 pool_index, u32 sub_idx, u32 ip_pub, u16 call_id,
@@ -634,6 +676,8 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
  * that keeps a dynamic block out of hold-down, and the public address the
  * block already decided.
  */
+/* not a unit: the same for IPsec ESP, which has no port at all
+ * and is bound by SPI. lab/esp.sh drives a tunnel through a box. */
 bpa_session_t *
 bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
 			u32 pool_index, const bpa_block_t *b, u32 remote,
@@ -738,6 +782,9 @@ bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
  * outbound GRE packets will carry from now on. Only now can the outbound
  * direction be keyed at all.
  */
+/* not a unit: it moves a GRE session out of its half-open
+ * state when the peer's Call ID arrives. lab/pptp.sh is where both
+ * directions of a call are seen. */
 void
 bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
 			     u16 peer_call_id)
@@ -795,6 +842,9 @@ bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
  * The head advances rather than the vector being shifted; it is reset when the
  * queue empties, which is the common case between bursts.
  */
+/* not a unit: it walks the quarantine list under the worker's
+ * clock, returning ports whose wait is over. lab/icmp-tcp.sh is where a
+ * quarantined port is watched on a box. */
 static u32
 bpa_quarantine_drain (bpa_per_thread_t *pt, f64 now, u32 budget)
 {
@@ -841,6 +891,9 @@ bpa_quarantine_drain (bpa_per_thread_t *pt, f64 now, u32 budget)
  * Immediately when the hold-down is zero, so a deployment that does not want
  * it pays nothing - not even the queue.
  */
+/* not a unit: it gives a port back to the subscriber's map, or to
+ * the quarantine when the protocol asks for one. lab/nat-behaviour.sh reads
+ * what a released port does next on a box. */
 static void
 bpa_port_release (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 		  u8 blk_idx, u16 port_off, f64 now)
@@ -882,6 +935,8 @@ bpa_port_release (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
   q->until = now + (f64) bm->timeouts.port_holddown;
 }
 
+/* not a unit: it removes the session from the worker's bihash and
+ * everything that hangs off it. lab/soak.sh ends sessions in bulk on a box. */
 void
 bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 {
@@ -1000,6 +1055,9 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
  * reserved. Everything else - the subscriber record, the block, both hash
  * insertions - is the same, which is why bpa_session_bind() exists.
  */
+/* not a unit: it opens the session a static forward needs, on
+ * the worker that owns the block, which it finds by asking bpa_forward().
+ * lab/forward.sh sends the first inbound packet of a forward on a box. */
 bpa_session_t *
 bpa_session_static_open (bpa_per_thread_t *pt, const bpa_pool_t *p,
 			 u32 pool_index, const bpa_static_t *sf, f64 now)
@@ -1063,6 +1121,8 @@ bpa_session_static_open (bpa_per_thread_t *pt, const bpa_pool_t *p,
  * entry name a pool index no subscriber can be found under, which the drain
  * already treats as "the subscriber went away".
  */
+/* not a unit: it takes a port back out of that list when the
+ * same subscriber asks for it again. lab/icmp-tcp.sh drives it. */
 static void
 bpa_quarantine_cancel (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 		       u8 blk_idx, u16 port_off)
@@ -1080,6 +1140,9 @@ bpa_quarantine_cancel (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 }
 
 /* The subscriber's block that contains a forwarded port, or 0. */
+/* not a unit: it finds the block a forward pins, in the worker's own
+ * state. The arithmetic that decides WHICH block is bpa_pool.h's and is
+ * driven by test/test_bpa_pool.c; lab/forward.sh is the box. */
 static bpa_subblock_t *
 bpa_static_block (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 		  const bpa_static_t *sf, u32 *blk_idx)
@@ -1108,6 +1171,8 @@ bpa_static_block (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 }
 
 /* Frees the session under `kv`, if there is one. */
+/* not a unit: the same by key, for the paths that have one and
+ * not the record. lab/datapath.sh drives them. */
 static void
 bpa_session_free_key (bpa_per_thread_t *pt, clib_bihash_16_8_t *h,
 		      clib_bihash_kv_16_8_t *kv, f64 now)
@@ -1132,6 +1197,9 @@ bpa_session_free_key (bpa_per_thread_t *pt, clib_bihash_16_8_t *h,
  * forward is accepted, reported by "show", and does not work until whatever
  * held the port happens to expire.
  */
+/* not a unit: it puts a forward's port into the subscriber's map
+ * and its session into the bihash, under the barrier. lab/forward.sh drives
+ * the whole thing. */
 void
 bpa_static_install (u32 pool_index, const bpa_static_t *sf)
 {
@@ -1178,6 +1246,8 @@ bpa_static_install (u32 pool_index, const bpa_static_t *sf)
 }
 
 /* The mirror: the port goes back to the allocator it was withheld from. */
+/* not a unit: the same in reverse, and it is where a removed
+ * forward gives its port back. lab/forward.sh removes one on a box. */
 void
 bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf)
 {
@@ -1228,6 +1298,8 @@ bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf)
  *
  * Returns non-zero when this thread has nothing of the pool left.
  */
+/* not a unit: it walks every session of a pool being deleted, on every
+ * worker, under the barrier. lab/pool-del.sh deletes a pool under traffic. */
 int
 bpa_pool_drain (bpa_per_thread_t *pt, u32 pool_index, u32 *cursor,
 		u32 scan_budget, u32 free_budget, f64 now)
@@ -1258,6 +1330,10 @@ bpa_pool_drain (bpa_per_thread_t *pt, u32 pool_index, u32 *cursor,
  * Budgeted expiry walk. Called from the process node so a large table
  * never stalls a worker: it resumes where it stopped.
  */
+/* not a unit: the worker's own expiry walk, driven by VPP's clock and
+ * its input node - a process node that exists nowhere else. lab/soak.sh
+ * runs long enough for it to matter and lab/datapath.sh reads a session
+ * that expired. */
 u32
 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
 		 u32 budget)

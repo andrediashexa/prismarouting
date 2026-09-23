@@ -228,7 +228,22 @@ MARKER = "not a unit:"
 # what those measure is the record an operator's collector receives - which
 # is the only place this path can honestly be read.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 33, "shell": 0}
+# 2026-09-22, eleventh: 33 to 6, which is the session table and the two file
+# loaders. The session table is VPP's - a bihash the worker owns, a pool of
+# subscribers indexed by a hash, per-thread vectors and a process node on
+# VPP's clock - and each of the twenty-five says which of those it needs and
+# which lab sends the packet that reaches it. The loaders open a file and
+# rebuild the table under the barrier; what a LINE means and what a FILE
+# means are five functions in the same file, all driven by
+# test/test_bpa_identity.c.
+#
+# The six that are left are bpa_cli.c's, and they stay counted ON PURPOSE.
+# That file's own header says its arithmetic waits for a harness built
+# against the real VPP rather than an excuse, and one of them - bpa_top_cmp -
+# was paid that way this morning. Excusing the rest would be taking back the
+# argument the file makes about itself.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 6, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and
