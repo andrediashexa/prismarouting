@@ -77,7 +77,55 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`lab/install-iso.sh` can install onto a guest with no 1G pages**, with
+  `BOOT_NO_1G=1`, which drops `pdpe1gb` from the CPU the guest is given. That
+  is not an exotic machine: it is the default CPU model of a Proxmox VM, and
+  it is the shape of box the defect below reached. Every run this lab had ever
+  made used `-cpu host` on a build machine that has `pdpe1gb`, so the tuner's
+  2M fallback - which has had a unit test for months - had never been booted
+  on a box at all.
+* **A silent box is asked why, at its own console, before the lab gives up.**
+  `lab/install-iso.sh` used to report *the dataplane was not answering* and
+  stop, and somebody then had to reproduce it by hand - on the run that
+  mattered the box was gone by then. It now opens a shell and asks eleven
+  questions, in the order that eliminates things: the unit, the container, the
+  dataplane's log, the startup.conf, what the kernel actually reserved, and
+  the card. Its two existing diagnostic headings printed **nothing** on the
+  box that needed them - one grepped for `1G hugepages` on a 2M box, the other
+  for `vpp.service` on a box whose dataplane is a container - and both were
+  wrong in the same way: they could only describe the box they were written on.
+
 ### Fixed
+
+* **A fresh install came up with no dataplane on any machine without
+  `pdpe1gb`, and VPP's own packaged sysctl was the reason.**
+  `/etc/sysctl.d/80-vpp.conf`, shipped by the VPP package, sets
+  `vm.nr_hugepages=1024`. That knob addresses whichever page size is the
+  **default**. On a box tuned for 1G pages it asks for 1024 GB, the kernel
+  cannot give it, and the line has been invisible for the life of this
+  product. On a box tuned for **2M** pages it asks for exactly 1024 pages -
+  2 GB - and the kernel **obeys**: the pool the kernel command line had
+  already reserved is shrunk after the fact, from 5 GB to 2 GB, and the
+  dataplane dies with `dpdk_config: rte_eal_init failed: Cannot allocate
+  memory (12)`. The box then gives the card back at 120 seconds, which is the
+  `ens18: renamed from eth0` an operator reads as a boot.
+  `appliance/prisma-routing-tune` now writes
+  `/etc/sysctl.d/99-prisma-routing-hugepages.conf` beside the kernel command
+  line it restates, carrying the same count from the same plan - `99-` sorts
+  after `80-`, so it is the last word `systemd-sysctl` reads, and the two
+  numbers cannot drift
+  ([#428](https://github.com/andrediashexa/hexarouting/issues/428)).
+* **The dataplane had nowhere to write its log, on every box this product
+  has ever installed.** `vpp-base.conf` says `log /var/log/vpp/vpp.log`, VPP
+  cannot create the directory, and the installer never made it - so every
+  dataplane began with `unix_config:445: couldn't open log
+  '/var/log/vpp/vpp.log'` and then threw away everything it would have
+  written there. That line is in the console transcript of every failing box
+  in this repository's history and was read as noise. It is why a dataplane
+  that will not start has only ever printed two lines about why. The
+  installer creates the directory and `compose.yaml` mounts it from the host,
+  so the account survives the container being recreated - which every start
+  does ([#428](https://github.com/andrediashexa/hexarouting/issues/428)).
 
 ## 0.118.14 - four checks that had never run
 

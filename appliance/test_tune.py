@@ -2864,6 +2864,38 @@ with tempfile.TemporaryDirectory() as root:
     check(tune.render_grub(dict(p, isolated=[])).startswith("# no core")
           and "isolcpus" not in tune.render_grub(dict(p, isolated=[])),
           "a box with no core to isolate was given an isolcpus= anyway")
+    # THE HUGEPAGE COUNT, RESTATED AS A SYSCTL, AND THE DEFECT IT ANSWERS.
+    #
+    # VPP's own package ships /etc/sysctl.d/80-vpp.conf with
+    # `vm.nr_hugepages=1024`, and that knob addresses whichever page size is
+    # the DEFAULT. On a 1G box it asks for 1 TB, the kernel refuses, and the
+    # line has been invisible for the life of this product. On a 2M box it
+    # asks for exactly 1024 pages - 2 GB - and the kernel OBEYS: the pool the
+    # kernel command line reserved at boot is shrunk after the fact, and the
+    # dataplane dies with `rte_eal_init failed: Cannot allocate memory (12)`.
+    # Measured on an installed box whose CPU has no pdpe1gb (#428), which is
+    # the default CPU model of every Proxmox VM.
+    #
+    # 99- sorts after 80-, so this file is the last word systemd-sysctl reads.
+    hs = tune.render_hugepage_sysctl(p)
+    check(f"vm.nr_hugepages = {p['hugepage_count']}" in hs,
+          f"the sysctl does not restate the count the command line asks "
+          f"for: {hs!r}")
+    check(str(p["hugepage_count"]) in tune.render_grub(p),
+          "the grub line and the sysctl disagree about how many pages this "
+          "box reserves, which is the one thing writing it twice must not do")
+    check(tune.HUGEPAGE_SYSCTL_FILE.startswith("/etc/sysctl.d/99-"),
+          f"the file does not sort after /etc/sysctl.d/80-vpp.conf, so VPP's "
+          f"packaged 1024 is still the last word: "
+          f"{tune.HUGEPAGE_SYSCTL_FILE}")
+    # AND A BOX THAT ASKS FOR NO HUGEPAGES MUST NOT LEAVE A COUNT BEHIND.
+    # The file is written on every boot, so one carrying a number from a
+    # previous configuration would reserve pages this box decided against.
+    for _dead in (dict(p, isolated=[]), dict(p, hugepage_count=0)):
+        check("vm.nr_hugepages" not in tune.render_hugepage_sysctl(_dead),
+              "a box that asked for no hugepages was given a count anyway: "
+              f"{tune.render_hugepage_sysctl(_dead)!r}")
+
     # The IRQ ban, from the same isolated set.
     check("IRQBALANCE_BANNED_CPULIST=1-3\n" in tune.render_irqbalance(p),
           f"the ban does not name the isolated cpus: "

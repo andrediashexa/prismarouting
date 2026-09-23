@@ -461,6 +461,22 @@ fi
 # given instant, which is what makes an answer to a court order defensible.
 # 0750: it names subscribers and their public addresses.
 install -d -m 0750 "$DESTDIR/var/log/prisma-routing"
+# AND THE DATAPLANE'S OWN LOG DIRECTORY, which was on no installed box.
+# /etc/prisma-routing/vpp-base.conf says `log /var/log/vpp/vpp.log`, VPP
+# cannot create the directory, and so every dataplane this product has ever
+# shipped began with
+#
+#   unix_config:445: couldn't open log '/var/log/vpp/vpp.log'
+#
+# and then threw away everything it would have written there. That line is
+# in the console transcript of every failing box in this repository's
+# history and was read as noise. It is not: it is the reason a dataplane
+# that will not start has only ever printed two lines about why, and the
+# reason #428 took six boots of an installed box to diagnose.
+#
+# 0755 and root: it is a log an operator reads, and the dataplane writes it
+# as root on the unit path and inside the container on the other.
+install -d -m 0755 "$DESTDIR/var/log/vpp"
 keep 0644 "$REPO/appliance/etc/tune.env" "$DESTDIR/etc/prisma-routing/tune.env"
 keep 0644 "$REPO/appliance/etc/vpp-base.conf" \
      "$DESTDIR/etc/prisma-routing/vpp-base.conf"

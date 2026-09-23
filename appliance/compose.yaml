@@ -90,6 +90,13 @@ services:
       # the obvious reason and one more: the audit trail's chain must not
       # break because a container was replaced.
       - /var/log/prisma-routing:/var/log/prisma-routing
+      # THE DATAPLANE'S OWN LOG, and on the host so it survives the container
+      # being recreated - which `down`/`up` does on every start. Without it
+      # VPP says `unix_config:445: couldn't open log '/var/log/vpp/vpp.log'`
+      # and throws away everything it would have written: on a box whose
+      # dataplane will not start, that file is the only account of why, and
+      # `docker logs` carries two lines of it (#428).
+      - /var/log/vpp:/var/log/vpp
     # LONGER THAN THE DRAIN, WITH THE MEASUREMENT BEHIND IT. `docker stop`
     # sends SIGTERM, waits this long, and then SIGKILLs - and the entrypoint
     # runs the drain before it forwards the signal. lab/ipfix-stop.sh measures
