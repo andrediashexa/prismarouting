@@ -139,7 +139,8 @@ fi
 
 echo
 echo "=== what the dataplane has, after the VTY ==="
-vppctl show bpa logging | sed 's/^/  /'
+LOG_ON=$(vppctl show bpa logging)
+printf '%s\n' "$LOG_ON" | sed 's/^/  /'
 BPA_CONFIG=$(vppctl show bpa config | tr -d '\r')
 echo "  -- the running configuration it reads back:"
 printf '%s\n' "$BPA_CONFIG" | grep '^cgnat logging' | sed 's/^/    /'
@@ -350,6 +351,31 @@ expect_not_in "the exporter really went away first" "10.0.0.2" "$LOG_OFF"
 expect_in "reloading the saved configuration brought the exporter back" \
   "10.0.0.2:4739 src 10.0.0.1" "$LOG_BACK"
 expect_in "and the export state with it" "state       enabled" "$LOG_BACK"
+
+# THE SCREEN AN OPERATOR HANDS THEIR COLLECTOR TEAM, held row by row.
+#
+# Three of these rows were named by nothing, and each answers a question
+# somebody asks while a capture is open in front of them: how big a record
+# is, when this box thinks it booted - which is what every record's
+# timestamp is relative to - and whether a flush went out with data, with
+# nothing, or failed to get a buffer at all. The third is the one that tells
+# "the collector sees nothing because nothing happened" from "the collector
+# sees nothing because this box could not get a buffer".
+#
+# BELOW THE SOURCE OF verdict.sh, and that is not tidiness. These four were
+# written above it first, where expect_in does not exist yet: the shell said
+# "expect_in: not found" to stderr, the lab has no `set -e`, and it PASSED
+# with four assertions that had never run. A lab that asserts nothing is the
+# failure mode this repository already named - it is worse than no lab -
+# and here it wore the shape of four green lines nobody counted.
+expect_in "the logging screen names the record size" \
+  " bytes per record)" "$LOG_ON"
+expect_in "and when this box thinks it booted, by IANA element" \
+  "Z (IE 160 systemInitTimeMilliseconds)" "$LOG_ON"
+expect_in "and tells an empty flush from one that got no buffer" \
+  "flushes     " "$LOG_ON"
+expect_in "naming all three outcomes" "without buffer" "$LOG_ON"
+
 
 # Pinning a block for a forward, and giving it back. The subscriber and the
 # port range are asserted, not just the event: a record that names the wrong
