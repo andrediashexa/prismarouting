@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.118.13 - the reason a reboot used to delete
+
+### Fixed
+
 * **A box that stranded itself did not say why, and the only copy of the
   reason was one a reboot deleted.** A fresh install of 0.118.0 came up with
   no dataplane. The box behaved as designed - the container failed, Docker
