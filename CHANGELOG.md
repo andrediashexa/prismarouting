@@ -77,6 +77,21 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A fifth way a mutation lies, in `TESTING.md`.** Three times a check in
+  this repository has passed on prose rather than on behaviour, and each
+  time the defect it was written to refuse was present while the check was
+  green: twice on a comment **explaining** the thing being looked for, and
+  once — on 2026-09-23 — on the gate's own refusal, which carries the
+  command it was greping for because a good refusal tells an operator how to
+  reproduce it. Stripping comments, which is the habit the first two
+  produced, would not have caught the third.
+
+  The rule is written down with the three instances beside it, and so is why
+  there is no reader for it: the general form is *the needle matched text the
+  target says about itself*, so a detector fires hardest on the files that
+  document themselves best. An automated attempt scored 0 hits against all
+  three ([#430](https://github.com/andrediashexa/hexarouting/issues/430)).
+
 ### Fixed
 
 ## 0.122.1 - three boxes wearing one sentence
