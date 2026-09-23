@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.11 - two more screens have a name
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **Two more screens an operator acts on have a name**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   `lab/limits.sh` had the **tail** of the rate-cap sentence and nothing had
