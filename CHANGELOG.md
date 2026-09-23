@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The release gate installs the medium twice, and the second guest is the
+  one a customer has.** `#428` was four defects on the code path taken by
+  every machine without 1G hugepage support, and it reached an operator
+  because **no box on that path had ever been booted here**: the gate's
+  install gives its guest `-cpu host`, and this build machine has `pdpe1gb`.
+  A second install with the flag dropped and no virtual IOMMU — a stock
+  Proxmox VM in both respects, and the shape that was broken worst — now
+  runs on every X/Y release.
+
+  It costs **about 23 minutes**, measured across eight runs between 1251 s
+  and 1400 s, and takes the gate from 36 minutes to 59. That number is not
+  hidden: `docs/build-timing.md` carries it in the table beside the others
+  and names it the most expensive single thing in a release, and
+  `test/test_release_gate.sh` refuses a gate that drops the step, a
+  `GATE_2M` that does not default to on, and a `build-timing.md` that stops
+  carrying the cost. `GATE_2M=0` turns it off for a release that must go out
+  now — deliberately, rather than by never having had it
+  ([#429](https://github.com/andrediashexa/hexarouting/issues/429)).
+
 ### Fixed
 
 ## 0.121.1 - what the box turned out to be saying

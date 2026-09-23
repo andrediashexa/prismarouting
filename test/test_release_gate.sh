@@ -863,5 +863,36 @@ grep -q 'printf' "$WORK/step.sh" \
   && ok "and it prints rather than calling itself, which the first version did" \
   || bad "step does not print: $(cat "$WORK/step.sh")"
 
+echo "=== and the box a customer has is installed on every X/Y release ==="
+# WHY THIS ROW EXISTS. The gate's first install gives its guest `-cpu host`,
+# so it inherits the build machine's flags - and this machine has pdpe1gb.
+# Every installed box this repository had ever booted therefore reserved 1G
+# hugepages. The other path the tuner can take had a unit test and no box
+# for the life of the product; four defects were sitting on it, three of
+# them invisible, and the first machine to walk it was a customer's (#428).
+#
+# A second install with pdpe1gb dropped is what keeps that from happening
+# twice. It costs about 23 minutes and docs/build-timing.md says so (#429).
+GATE=$REPO/tools/release-gate.sh
+# THE INVOCATION AND NOT THE SENTENCE. The refusal this step prints ends
+# with `reproduce: BOOT_NO_1G=1 BOOT_IOMMU=0 sh tools/lab.sh install-iso`,
+# so a check that greps the command line goes GREEN on the error message
+# after somebody deletes the step - measured, this one did. That is the
+# third time in this repository a reader has passed on its own prose.
+grep -q '( cd "$WORK" && BOOT_NO_1G=1 BOOT_IOMMU=0 sh tools/lab.sh install-iso )' "$GATE" \
+  && ok "the gate installs the medium on a guest with no 1G pages and no IOMMU" \
+  || bad "the gate installs on one page size only: a 2M box can break again and no release would notice (#429)"
+# AND IT IS ON BY DEFAULT. A guard that has to be switched on is one that is
+# off on the release that needed it.
+grep -q 'GATE_2M=${GATE_2M:-1}' "$GATE" \
+  && ok "and it is on unless a release turns it off deliberately" \
+  || bad "GATE_2M does not default to 1, so the second install runs only when somebody remembers"
+# AND THE COST IS WRITTEN DOWN. docs/build-timing.md is what somebody reads
+# before deciding the gate is too slow, and a number it does not carry is a
+# number that gets attacked blind.
+grep -q "BOOT_NO_1G=1 BOOT_IOMMU=0" "$REPO/docs/build-timing.md" \
+  && ok "and what it costs is in docs/build-timing.md with the others" \
+  || bad "docs/build-timing.md does not carry the second install's cost, so the 59 minutes has an unexplained 23 in it"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
