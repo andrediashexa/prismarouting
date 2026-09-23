@@ -104,8 +104,11 @@ FLOOR = 10
 #: none, logging with no exporter and the event numbers a collector will see,
 #: a drain with logging off, the per-worker session count, and a
 #: deterministic port answering with its block. May only go down; see the
-#: header for how.
-NAMED_BY_NOTHING_AT_MOST = 21
+#: header for how. 19 since lab/limits.sh carried the rate-cap row WHOLE -
+#: it had the tail of that sentence and a slice names nothing - and
+#: lab/bypass.sh named the line the bypass command answers with, which says
+#: how many prefixes it took and on which side.
+NAMED_BY_NOTHING_AT_MOST = 19
 
 fail = 0
 

@@ -112,8 +112,9 @@ if [ "$MODE" = off ]; then
   echo "  MODE=off: nothing is bypassed. Every check below that claims a"
   echo "  packet left untranslated MUST fail."
 else
-  vppctl bpa bypass lab destination 10.0.0.0/8 | sed 's/^/  /'
-  vppctl bpa bypass lab source 100.64.1.0/24 | sed 's/^/  /'
+  BYP_DST=$(vppctl bpa bypass lab destination 10.0.0.0/8 2>&1)
+  BYP_SRC=$(vppctl bpa bypass lab source 100.64.1.0/24 2>&1)
+  printf '%s\n%s\n' "$BYP_DST" "$BYP_SRC" | sed 's/^/  /'
   vppctl show bpa config | grep bypass | sed 's/^/  /'
 fi
 
@@ -189,6 +190,17 @@ echo "=========== VERDICT ==========="
 expect_in "before the lists, the destination case was translated" \
   "200.150.0." "$BEFORE_DST_WIRE"
 expect_in "and so was the source case" "200.150.0." "$BEFORE_SRC_WIRE"
+
+# WHAT THE COMMAND SAID WHEN IT TOOK THE LIST. An operator types this and
+# reads one line back; until now nothing named that line, so it could have
+# said a different number of prefixes, or the wrong direction, with every
+# packet assertion below still green.
+if [ "$MODE" != off ]; then
+  expect_in "the command confirms how many prefixes it took, and which side" \
+    "1 destination prefix(es) bypassed" "$BYP_DST"
+  expect_in "and the same for the source list" \
+    "1 source prefix(es) bypassed" "$BYP_SRC"
+fi
 
 expect_in "a bypassed destination keeps the real source on the wire" \
   "100.64.0.6" "$DST_WIRE"

@@ -189,6 +189,16 @@ expect "and let some of it through" test "${RATED:-0}" -ge 3
 expect "rate refusals are counted apart from cap refusals" \
   sh -c 'vppctl show bpa subscriber 100.64.0.7 | grep -q "rate cap [1-9]"' 
 expect_in "and say what they usually mean" "usually an infection" "$SUB7"
+# THE ROW WHOLE, and not only its tail. The sentence an operator reads is
+# what tells a rate refusal from a cap refusal, and until now nothing named
+# its opening - so the two halves could drift apart with the tail still
+# asserted and the row reading as something else.
+# THE WHOLE RUN, because a slice names nothing: test_plugin_cli_says.py
+# counts a message as held only when something carries its literal whole,
+# after a rule that accepted ten-character slices named 65 of 69 sites
+# through fragments like " the pool ".
+RATE_ROW="rate-cap refusals: this host is opening sessions faster than the pool allows, which is usually an infection rather than a customer"
+expect_in "and the row says which cap refused, whole" "$RATE_ROW" "$SUB7"
 expect "the bucket refilled and the next session was allowed" \
   test "${REFILL:-0}" -gt "${RATED:-0}"
 
