@@ -148,5 +148,84 @@ grep -v '^[[:space:]]*#' "$REPO/appliance/compose.yaml" \
   && ok "the dataplane's restart policy stops after five attempts" \
   || bad "appliance/compose.yaml does not say on-failure:5 for the dataplane, so Docker would retry for ever and this watcher would never fire"
 
+echo "=== and it keeps what the dataplane said before it died ==="
+# THE DEFECT THIS ANSWERS, AND IT IS A FIELD ONE. A box was installed, its
+# dataplane did not come up, and the report that reached this repository was
+# `show interface` printing nothing and a kernel line at 120 seconds - which
+# was this script giving the card back. The ONE thing that would have named
+# the cause, `docker logs prisma-routing_vpp_1`, was gone: the operator had
+# rebooted, which is what anybody does to a box with no interfaces (#428).
+#
+# So the box has to take the copy itself, at the only moment it still can.
+mkwhybox() { # <docker-state> - a box whose docker stub answers `logs` properly
+  B=$(mktemp -d)
+  mkdir -p "$B/bin" "$B/run/prisma-routing" "$B/var/log/prisma-routing"
+  printf '#!/bin/sh\nexit 0\n' > "$B/bin/systemctl"
+  cat > "$B/bin/docker" <<DC
+#!/bin/sh
+case "\$1" in
+  inspect)
+    case "\$3" in
+      *ExitCode*) printf 'exit=139 oom=false error=EAL: No free hugepages' ;;
+      *)          printf '%s' "$1" ;;
+    esac ;;
+  logs) printf 'vpp[1]: EAL: No free 2048 kB hugepages reported\n' ;;
+esac
+DC
+  printf '#!/bin/sh\n' > "$B/bin/giveback"
+  printf '#!/bin/sh\n' > "$B/bin/ifup"
+  chmod +x "$B/bin/"*
+  echo "$B"
+}
+runwhy() { # <box>
+  PRISMA_ROOT=$1 PRISMA_SYSTEMCTL=$1/bin/systemctl PRISMA_DOCKER=$1/bin/docker \
+  PRISMA_GIVEBACK=$1/bin/giveback PRISMA_IFUP=$1/bin/ifup \
+  PRISMA_CARD_STAMP=$1/run/prisma-routing/card-given-back \
+  PRISMA_DATAPLANE_REPORT=$1/var/log/prisma-routing/why-the-dataplane-stopped \
+  sh "$BIN" 2>&1
+}
+
+B=$(mkwhybox exited)
+OUT=$(runwhy "$B")
+R=$B/var/log/prisma-routing/why-the-dataplane-stopped
+if [ -f "$R" ]; then
+  ok "a box that stranded itself wrote down why"
+  grep -q "state:     exited" "$R" \
+    && ok "and the state Docker left the container in" \
+    || bad "the report does not carry the container's state: $(cat "$R")"
+  grep -q "exit=139" "$R" \
+    && ok "and the exit code, which is the difference between a crash and a refusal" \
+    || bad "the report does not carry the container's exit code: $(cat "$R")"
+  grep -q "EAL: No free 2048 kB hugepages reported" "$R" \
+    && ok "and the last thing the dataplane printed, which is the cause" \
+    || bad "the report does not carry the dataplane's log: $(cat "$R")"
+  grep -q "container: prisma-routing_vpp_1" "$R" \
+    && ok "and names the container, so the next person can ask Docker themselves" \
+    || bad "the report does not name the container: $(cat "$R")"
+else
+  bad "the card was given back and nothing was written down: the next field report has no cause attached, which is exactly #428"
+fi
+case "$OUT" in
+  *"why it stopped is kept in $R"*)
+    ok "and the console says where it is, at the moment it is written" ;;
+  *) bad "it did not say where the reason is: $OUT" ;;
+esac
+rm -rf "$B"
+
+# NOT IN /run, and this is the whole point: /run is cleared on reboot and a
+# reboot is the first thing an operator does to a box with no interfaces.
+grep -q 'PRISMA_DATAPLANE_REPORT:-$ROOT/var/log/prisma-routing/' "$BIN" \
+  && ok "and it is kept somewhere a reboot does not delete" \
+  || bad "the report defaults somewhere other than /var/log/prisma-routing; if it is under /run the reboot an operator does next deletes the only copy"
+
+# AND A BOX THAT IS FINE WRITES NOTHING. A report left by a run that decided
+# to do nothing is a report that outlives the failure it describes.
+B=$(mkwhybox running)
+runwhy "$B" >/dev/null
+[ -f "$B/var/log/prisma-routing/why-the-dataplane-stopped" ] \
+  && bad "it wrote a failure report about a dataplane that is running" \
+  || ok "a running dataplane leaves no report behind"
+rm -rf "$B"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

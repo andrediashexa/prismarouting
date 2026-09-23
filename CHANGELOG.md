@@ -79,6 +79,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box that stranded itself did not say why, and the only copy of the
+  reason was one a reboot deleted.** A fresh install of 0.118.0 came up with
+  no dataplane. The box behaved as designed - the container failed, Docker
+  stopped restarting it on the fifth attempt, `watch-the-dataplane` gave the
+  card back to the kernel driver, which is the `ens18: renamed from eth0` an
+  operator sees at 120 seconds - but the one command that would have named
+  the cause, `docker logs prisma-routing_vpp_1`, answered nothing by the time
+  anybody ran it. The operator had rebooted, which is what anybody does to a
+  box with no interfaces, and the reboot took the container's log with it.
+  The watcher now takes a copy first: the container's state, its exit code
+  and the last eighty lines the dataplane printed, into
+  `/var/log/prisma-routing/why-the-dataplane-stopped`, which is under
+  `/var/log` and not `/run` precisely because the reboot is the next thing to
+  happen. When that file is there, `prismash` names it instead of the two
+  commands that are empty on that box
+  ([#428](https://github.com/andrediashexa/hexarouting/issues/428)).
+
 ## 0.118.12 - the line a box prints last
 
 Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).

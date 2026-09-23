@@ -261,6 +261,15 @@ def dataplane_unit():
         return DATAPLANE_UNIT_VPP
 
 
+#: Where appliance/watch-the-dataplane writes what the dataplane said before
+#: it died. The file exists only on a box that stranded itself, which is
+#: exactly the box whose container log is already gone - `docker logs` on a
+#: container Docker removed, or on a box that has since rebooted, answers
+#: nothing. So when this file is here it is named FIRST and the two commands
+#: are the fallback, not the other way round (#428).
+DATAPLANE_WHY = "/var/log/prisma-routing/why-the-dataplane-stopped"
+
+
 def dataplane_journal_advice():
     """
     Where the reason a silent dataplane is silent is written, on this box.
@@ -269,7 +278,16 @@ def dataplane_journal_advice():
     not the dataplane's: what VPP said is in the container's log, so both are
     named. One sentence, because an operator reading it has a box that is not
     forwarding.
+
+    AND WHEN THE BOX ALREADY WROTE THE ANSWER DOWN, that is what it says.
+    The field report this came from (#428) was a box whose dataplane never
+    started: by the time anybody read a screen, the container was gone and
+    the operator had rebooted, so both commands below answered nothing at
+    all. The copy in DATAPLANE_WHY is the one thing that survives that.
     """
+    if os.path.exists(DATAPLANE_WHY):
+        return (f"the dataplane gave up and {DATAPLANE_WHY} has what it "
+                "printed before it did")
     unit = dataplane_unit()
     if unit == DATAPLANE_UNIT_CONTAINERS:
         return ("'systemctl status prisma-routing-containers' and "

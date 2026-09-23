@@ -297,9 +297,28 @@ dataplane_pid() {
 }
 # The last lines it printed, for the branches that have already found
 # something wrong.
+#: What appliance/watch-the-dataplane wrote down before it gave the card
+#: back. On the box this matters for there is nothing else left: the
+#: container is gone, so `docker logs` answers nothing at all (#428).
+DATAPLANE_WHY=${PRISMA_DATAPLANE_REPORT:-/var/log/prisma-routing/why-the-dataplane-stopped}
 dataplane_log() { # <lines>
   if [ "$DATAPLANE_PATH" = container ]; then
-    docker logs --tail "$1" "$VPP_CONTAINER" 2>&1
+    _dl=$(docker logs --tail "$1" "$VPP_CONTAINER" 2>&1)
+    # EMPTY IS THE CASE THIS EXISTS FOR, and it is the common one rather
+    # than the odd one: a dataplane that never started is a container the
+    # watcher has already given up on, and a box that was rebooted since
+    # has no container to ask. The saved copy is then the only evidence
+    # this screen can carry.
+    if [ -n "$_dl" ]; then
+      printf '%s\n' "$_dl"
+    elif [ -f "$DATAPLANE_WHY" ]; then
+      # TWO LINES, and that is not style. The path is 52 columns and this
+      # screen is indented ten, so one line carrying both the sentence and
+      # the path is 93 on a console that is 79 (TESTING.md).
+      echo "(the container is gone. What it said before it went is in"
+      echo "$DATAPLANE_WHY:)"
+      tail -n "$1" "$DATAPLANE_WHY" 2>/dev/null
+    fi
   else
     journalctl -u vpp.service --no-pager -n "$1" 2>/dev/null
   fi
