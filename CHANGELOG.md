@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Two more screens an operator acts on have a name**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  `lab/limits.sh` had the **tail** of the rate-cap sentence and nothing had
+  its opening, so the two halves could drift apart with the tail still
+  asserted - and that row is what tells a rate refusal from a concurrency
+  one, which is the difference between *this customer is infected* and *this
+  cap is too low*. It carries the row whole now, because a slice names
+  nothing: the rule that accepted ten-character slices once named 65 of 69
+  sites through fragments like `" the pool "`.
+
+  And `lab/bypass.sh` ran `bpa bypass` and never read the line it answers
+  with. An operator types that command and reads one line back; it could have
+  said a different number of prefixes, or the wrong side, with every packet
+  assertion in that lab still green.
+
+  The count of messages named by nothing goes 21 → 19.
+
 ### Fixed
 
 ## 0.118.10 - the screens of a bare box
