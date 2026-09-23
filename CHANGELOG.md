@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.121.0 - a card whose registers are ports
+
+### Fixed
+
 * **A legacy virtio card was left untaken, and the box said nothing.** The
   last of [#428](https://github.com/andrediashexa/hexarouting/issues/428).
   On a guest with no IOMMU — a stock Proxmox VM — the card binds
