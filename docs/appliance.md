@@ -134,14 +134,44 @@ failure rather than a document that stopped being true without telling anyone.
 | `isolcpus` | computed | no | The worker cores and their SMT siblings, from the topology |
 | `nohz_full` | computed | no | The same list: an isolated core still taking the timer tick is not isolated |
 | `rcu_nocbs` | computed | no | The same list again: otherwise RCU callbacks run on the worker |
-| `default_hugepagesz` | `1G` | no | So that `hugepages=` below is counted in 1 GB units and not 2 MB ones |
-| `hugepagesz` | `1G` | no | Reserves the 1 GB pool |
+| `default_hugepagesz` | `1G` or `2M` | no | So that `hugepages=` below is counted in units of the size this box can have. A CPU with no `pdpe1gb` has no 1G pool at all, and asking for one is silently ignored (#290) |
+| `hugepagesz` | the same | no | Reserves that pool |
 | `hugepages` | computed | no | Sized from `PRISMA_SUBSCRIBERS`, then capped by the RAM the box actually has |
 | `intel_iommu` | `on` | no | `vfio-pci` hands the NIC to userspace, and it needs an IOMMU to do that safely |
 | `iommu` | `pt` | no | Pass-through: the IOMMU is here for the device assignment, and full translation on the DMA path costs throughput for a protection a single-purpose appliance does not buy |
 | `intel_idle.max_cstate` | `0` | **yes** | Deep C-states off, for the `intel_idle` driver |
 | `processor.max_cstate` | `1` | **yes** | The same, for the ACPI driver that takes over when `intel_idle` is not in play |
 | `transparent_hugepage` | `never` | **yes** | `khugepaged` compacts memory in the background and the compaction stalls whichever CPU holds the page |
+
+### And the count is restated as a sysctl, because a packaged file undoes it
+
+`/etc/sysctl.d/99-prisma-routing-hugepages.conf` is written on every boot
+beside the kernel command line above, carrying the same count from the same
+plan. It exists because of a file this project does not own.
+
+`/etc/sysctl.d/80-vpp.conf`, shipped by the VPP package, sets
+`vm.nr_hugepages=1024`. That knob addresses whichever page size is the
+**default**, whatever that is:
+
+* On a box tuned for **1G** pages it asks for 1024 GB. The kernel cannot give
+  it, the pool stands, and the line has been invisible for the life of this
+  product.
+* On a box tuned for **2M** pages it asks for exactly 1024 pages — 2 GB — and
+  the kernel **obeys**. The pool the kernel command line reserved at boot is
+  shrunk after the fact, and the dataplane then dies with
+  `dpdk_config: rte_eal_init failed: Cannot allocate memory (12)`.
+
+`99-` sorts after `80-`, so the generated file is the last word
+`systemd-sysctl` reads. It is written from the same plan as the grub line
+rather than computed again, because the two numbers are one decision and a
+copy that can drift from its original is a defect waiting for a page size to
+change.
+
+This was found in the field, not here
+([#428](https://github.com/andrediashexa/hexarouting/issues/428)). Every box
+this repository had ever booted had `pdpe1gb` — `lab/install-iso.sh` runs its
+guest with `-cpu host` — so the 2M path had a unit test and no box. It has one
+now: `BOOT_NO_1G=1 sh tools/lab.sh install-iso`.
 
 `GRUB_DISABLE_OS_PROBER=true` goes on the same file and is not a kernel
 parameter: `os-prober` scans every block device looking for other operating

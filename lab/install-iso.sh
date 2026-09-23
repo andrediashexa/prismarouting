@@ -530,9 +530,25 @@ if [ "${BOOT_IOMMU:-1}" = 1 ]; then
   IOMMU_ARGS="intel_iommu=on iommu=pt"
 fi
 
+# A GUEST WITH NO 1G PAGES, WHICH IS THE COMMON GUEST AND NOT THE ODD ONE.
+#
+# -cpu host hands the guest this machine's flags, and this machine has
+# pdpe1gb - so every installed box this lab has ever booted reserved 1G
+# hugepages and took the tuner's preferred path. A Proxmox VM on the default
+# CPU model (kvm64) advertises NO pdpe1gb: the kernel grants zero 1G pages,
+# appliance/prisma-routing-tune falls back to 2M, and the startup.conf the
+# dataplane reads is a DIFFERENT file. That fallback has a unit test and had
+# never been booted on a box (#428).
+#
+#   BOOT_NO_1G=1 sh tools/lab.sh install-iso
+#
+# -pdpe1gb rather than a named model, because everything else about the guest
+# should stay what the other runs measured: one flag changed, one path moved.
+NO_1G=""
+[ "${BOOT_NO_1G:-0}" = 1 ] && NO_1G=",-pdpe1gb"
 if [ -w /dev/kvm ]; then
-  ACCEL="-enable-kvm -cpu host"
-  echo "accelerating with KVM"
+  ACCEL="-enable-kvm -cpu host$NO_1G"
+  echo "accelerating with KVM${NO_1G:+ (and no 1G pages: $NO_1G)}"
 else
   ACCEL="-cpu ${BOOT_CPU:-Nehalem}"
   echo "no KVM: emulating with ${BOOT_CPU:-Nehalem} (slow)"
@@ -1345,6 +1361,60 @@ expect_one_of() {  # <good> <bad> <seconds> <what the driver was doing>
 # "HX""LAB" - so that what comes back is the box's ANSWER and never the
 # driver's own keystrokes echoed back at it. Every assertion below anchors on
 # the start of a line for the same reason.
+# WHAT A BOX WITH NO DATAPLANE IS ASKED, at the console, before the lab gives
+# up on it (#428).
+#
+# This lab used to report `the dataplane was not answering` and stop. Every
+# time that happened somebody then had to reproduce it by hand to find out
+# WHY - and on the run that mattered the box was gone by then. The box is
+# still sitting at a prompt at this point and it can be asked, so it is.
+#
+# Ten questions, in the order they eliminate things: is the unit even up,
+# does the container exist, what did the dataplane say, what did the tuner
+# write, what did the kernel actually reserve, and what does the card look
+# like. The answers land on the console this lab is already capturing.
+ask_the_silent_box() {
+  send "start shell"
+  wait_for "entering /bin" 60 "root's shell escape to open" || return 0
+  # ONE AT A TIME, WAITING FOR THE PROMPT BETWEEN THEM. A serial console is
+  # a pipe, not a terminal with flow control: ten sends in a row were ECHOED
+  # and not run, and the lab printed ten command lines and no answers.
+  ask() { send "$*"; wait_for "root@$NEW_HOST" 90 "the box to answer: $*" \
+            || true; }
+  send 'echo "HX""LAB ---- why the dataplane is silent ----"'
+  wait_for "HXLAB ---- why" 60 "the shell to be taking commands" || return 0
+  ask 'systemctl is-active prisma-routing-containers.service vpp.service'
+  ask 'systemctl status prisma-routing-containers.service --no-pager -l | tail -20'
+  ask 'docker ps -a --format "{{.Names}} {{.Status}}"'
+  ask 'docker logs --tail 40 prisma-routing_vpp_1 2>&1 | tail -40'
+  ask 'cat /var/log/prisma-routing/why-the-dataplane-stopped 2>/dev/null | tail -30'
+  ask 'grep -E "^(cpu|buffers|memory|dpdk)|page-size|heap|corelist|dev " /etc/vpp/startup.conf'
+  ask 'grep Huge /proc/meminfo'
+  ask 'ls /etc/sysctl.d/; grep -rn nr_hugepages /etc/sysctl.d/ /usr/lib/sysctl.d/ 2>/dev/null'
+  ask 'journalctl -b -u systemd-sysctl --no-pager | tail -6'
+  ask 'cat /run/prisma-routing/compose.env /run/prisma-routing/compose-devices.yaml 2>/dev/null'
+  ask 'ip -o link | cut -c1-70'
+  # AND THE SAME CONFIGURATION ON THE UNIT PATH, which is the one experiment
+  # that tells a wrong startup.conf from a wrong container. Both read the
+  # same /etc/vpp/startup.conf; only the boundary differs (#428).
+  ask 'systemctl disable --now prisma-routing-containers.service >/dev/null 2>&1; systemctl enable --now vpp.service >/dev/null 2>&1; sleep 15; systemctl is-active vpp.service'
+  ask 'journalctl -b -u vpp.service --no-pager | tail -20'
+  # THE WHOLE STARTUP.CONF, because every look at it so far has been through
+  # a grep written before the box that needed it existed - one that matched
+  # `1G hugepages` on a 2M box and `vpp.service` on a box whose dataplane is
+  # a container, and printed nothing under both of its headings (#428).
+  ask 'cat /etc/vpp/startup.conf'
+  # THE DATAPLANE'S OWN LOG. It is empty or missing on a box whose dataplane
+  # never started - and it is empty for a reason worth reading: until
+  # 0.119.0 the installer never created /var/log/vpp, so VPP opened nothing
+  # and threw away every word it would have written there (#428).
+  ask 'ls -ld /var/log/vpp 2>&1; tail -20 /var/log/vpp/vpp.log 2>&1'
+  send 'echo "HX""LAB ---- end ----"'
+  wait_for "HXLAB ---- end ----" 120 "the box to answer the ten questions" || true
+  send "exit"
+  wait_for "prisma> " 60 "the shell escape to return to the VTY" || true
+}
+
 drive_console() {
   # ------------------------------------- the FIRST prompt the box ever offers
   #
@@ -1481,6 +1551,12 @@ drive_console() {
        echo "         The VTY is right to refuse - this is the getty half of"
        echo "         #211, and the ordering drop-in did not survive the"
        echo "         install."
+       # AND THE BOX IS STILL THERE, so it is asked rather than guessed at.
+       # NO `exit` FIRST: the refusal means no candidate was ever opened, so
+       # the session is still at the operational prompt and `exit` ends it -
+       # measured, the driver then waited 60s for a prompt that had become a
+       # login prompt.
+       ask_the_silent_box
        fail=1; return 1 ;;
     *) return 1 ;;
   esac
@@ -2428,12 +2504,28 @@ if said_a_failed_verdict /tmp/disk-clean.log; then
   echo "=========== THE INSTALLED SYSTEM CAME UP AND FAILED ITS CHECKS ==========="
   sed -n '/boot self-test/,/=====$/p' /tmp/disk-clean.log \
     | grep -E "\[FAIL\]|\[warn\]" | sed 's/^/  /'
+  # AND THE WHOLE SCREEN UNDER IT, because the grep above keeps the first
+  # line of each check and throws away its continuations - which is where
+  # every number is. `requested and NOT in effect: hugepages` was printed
+  # with the counts on the next two lines, and the lab showed the sentence
+  # and dropped the evidence (#428).
+  echo "  --- the whole self-test screen, continuations and all ---"
+  sed -n '/boot self-test/,/=====$/p' /tmp/disk-clean.log | sed 's/^/  /'
   echo "  --- what the tuner decided, and from what ---"
-  grep -E "prisma-routing-tune|1G hugepages|WARNING|cmdline hugepages|reserved 1G" \
-    /tmp/disk-clean.log | tail -8 | sed 's/^/  /'
+  # NOT `1G hugepages`, WHICH IS WHAT THIS GREP USED TO SAY. A box whose CPU
+  # has no pdpe1gb is tuned on 2M pages, and every line the tuner prints then
+  # says "2M hugepages" - so on exactly the box that needed diagnosing, this
+  # heading was followed by nothing at all. Measured: BOOT_NO_1G=1 failed with
+  # both diagnostic headings empty (#428).
+  grep -iE "prisma-routing-tune|hugepage|WARNING|cmdline|isolcpus" \
+    /tmp/disk-clean.log | tail -10 | sed 's/^/  /'
   echo "  --- what the dataplane said ---"
-  grep -iE "vpp.service|SEGV|Killed|Out of memory" /tmp/disk-clean.log \
-    | tail -6 | sed 's/^/  /'
+  # AND THE DATAPLANE IS A CONTAINER SINCE 0.117.0, so `vpp.service` is the
+  # one name it does not go by. compose, the container, the EAL's refusal and
+  # the file appliance/watch-the-dataplane leaves behind are all on the same
+  # console, and none of them carried that string.
+  grep -iE "vpp|dataplane|EAL|SEGV|Killed|Out of memory|prisma-routing_vpp|containers.service" \
+    /tmp/disk-clean.log | tail -12 | sed 's/^/  /'
   fail=1
 elif ! said_a_verdict /tmp/disk-clean.log; then
   echo
