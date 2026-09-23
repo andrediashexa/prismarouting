@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.122.3 - a port, and nobody behind it
+
+### Fixed
+
 * **The three screens an operator sees when a port is all they have were
   held by nothing.** A complaint arrives as *this public address and this
   port did something*, and `show bpa translation` is the only way back to
