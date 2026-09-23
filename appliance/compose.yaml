@@ -62,10 +62,35 @@ services:
     # map DMA, and this machine has no IOMMU and no card DPDK can bind - the
     # same hardware gap #28 records. Removing it on the strength of a box
     # that cannot test it would be measuring the wrong thing.
+    #
+    # SYS_ADMIN IS FOR A PHYSICAL ADDRESS, AND IT IS THE NARROWEST THING
+    # THAT WORKS. On a box whose hugepages are 2M the dataplane must address
+    # its card by physical address - `iova-mode pa`, see
+    # appliance/prisma-routing-tune and #428 - and DPDK reads those out of
+    # /proc/self/pagemap. Since Linux 4.0 the kernel zeroes the PFN for a
+    # reader without CAP_SYS_ADMIN, DPDK cannot tell that from "no physical
+    # addresses available", and rte_eal_init returns EINVAL:
+    #
+    #   vpp[1]: dpdk_config: rte_eal_init failed: Invalid argument (22)
+    #
+    # Measured on 2026-09-23, this image, a 2M host, one variable changed:
+    #
+    #   SYS_NICE NET_ADMIN IPC_LOCK            EINVAL (22)
+    #   ... + PERFMON                          EINVAL (22)
+    #   ... + SYS_ADMIN                        the dataplane stayed up
+    #
+    # PERFMON was tried FIRST and is the narrower capability - since 5.8 it
+    # is meant to cover exactly this - and on this kernel it does not. So
+    # the entry is SYS_ADMIN, because a capability that does not work is not
+    # a smaller risk, it is a box that does not forward.
+    #
+    # The control plane below already has SYS_ADMIN for its own reasons, so
+    # this does not add a capability to the stack that was not in it.
     cap_add:
       - SYS_NICE
       - NET_ADMIN
       - IPC_LOCK
+      - SYS_ADMIN
     devices:
       # The TAP linux_cp creates, and the vhost backend it asks for next:
       # with NET_ADMIN and no /dev/net/tun the failure is

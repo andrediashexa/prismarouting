@@ -175,5 +175,36 @@ body "$COMPOSE" | grep -q "stop_grace_period" \
   && ok "and compose gives it a grace period to do it in" \
   || bad "compose.yaml sets no stop_grace_period, so docker stop's default 10s would cut the drain off"
 
+echo "=== and what root has for free, the container has to be given ==="
+# THE SAME SHAPE AS EVERY OTHER ROW HERE, one level down. vpp.service runs
+# as root with every capability, so nothing on the unit path ever had to
+# name one. The container names three - and on a box whose hugepages are 2M
+# it needs a fourth.
+#
+# The dataplane there addresses its card by physical address (`iova-mode
+# pa`, written by appliance/prisma-routing-tune), and DPDK reads those out
+# of /proc/self/pagemap. Since Linux 4.0 the kernel zeroes the PFN for a
+# reader without CAP_SYS_ADMIN; DPDK cannot tell that from "no physical
+# addresses available" and rte_eal_init returns EINVAL. Measured on
+# 2026-09-23, one variable changed at a time, on a 2M host:
+#
+#   SYS_NICE NET_ADMIN IPC_LOCK     rte_eal_init failed: Invalid argument
+#   ... + PERFMON                   the same
+#   ... + SYS_ADMIN                 the dataplane stayed up
+#
+# PERFMON is the narrower capability and was tried first (#428).
+if body "$COMPOSE" | sed -n "/^  vpp:/,/^  [a-z]/p" | grep -q "SYS_ADMIN"; then
+  ok "the dataplane container is given SYS_ADMIN, which is what lets it read a physical address"
+else
+  bad "the dataplane container has no SYS_ADMIN: on a box whose pages are 2M, rte_eal_init fails with EINVAL and the box never forwards (#428)"
+fi
+# AND THE UNIT PATH HAS IT WITHOUT SAYING SO, which is the whole reason this
+# row is easy to miss: there is no line to compare it against.
+if body "$SYSD"/vpp-*.conf | grep -q "CapabilityBoundingSet"; then
+  bad "vpp.service now bounds its capabilities, so root no longer has SYS_ADMIN for free and the two paths have to be compared line for line here"
+else
+  ok "and vpp.service bounds no capabilities, so root has it there without a line"
+fi
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

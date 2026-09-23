@@ -1796,6 +1796,15 @@ check("FIRST BOOT" not in _o2,
       f"{[l for l in _o2.splitlines() if 'state:' in l]}")
 check("plugin dpdk_plugin.so { disable }" not in _o2,
       "DPDK was left disabled on a box that has hugepages")
+# AND HOW IT ADDRESSES THE MEMORY IT GIVES THE CARD. On a 2M box DPDK's
+# default - IOVA-as-VA behind an IOMMU - fails rte_eal_init with ENOMEM
+# before a packet is forwarded, and the box strands itself. Measured on an
+# installed box with 2560 x 2M reserved and free: no iova-mode and
+# `iova-mode va` both failed, `iova-mode pa` answered after 45 seconds, one
+# line different (#428).
+check("iova-mode pa" in _o2,
+      f"a 2M box was left on DPDK's default IOVA mode, which cannot start "
+      f"on it: {[l for l in _o2.splitlines() if 'iova' in l or 'dpdk' in l]}")
 check("2M hugepages:" in _o2,
       f"the report says 1G on a box getting 2M pages: "
       f"{[l for l in _o2.splitlines() if 'hugepages:' in l]}")
@@ -2905,6 +2914,13 @@ with tempfile.TemporaryDirectory() as root:
           "with nothing isolated a ban was still written")
     # The startup.conf stanzas, tuned and first-boot.
     v = tune.render_vpp(p)
+    # AND THE 1G BOX IS LEFT ALONE. PA is not better than VA; it is what
+    # works on a box whose pages are 2M. Writing it here too would be an
+    # unmeasured change to the path every lab and every release has booted
+    # (#428).
+    check("iova-mode" not in v,
+          f"a 1G box was given an IOVA mode it never needed: "
+          f"{[l for l in v.splitlines() if 'iova' in l]}")
     check("main-core 0\n" in v and "corelist-workers 1-3\n" in v,
           f"the cpu stanza does not pin the plan: {v!r}")
     check("dev 0000:3b:00.0 {\n    name eth0\n    num-rx-queues 1\n"
