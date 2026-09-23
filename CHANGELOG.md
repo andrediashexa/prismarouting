@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.10 - the screens of a bare box
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The screens of a box nothing has happened on yet**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). Seven
   sentences an operator reads **first** - on a box that was just configured,
