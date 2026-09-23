@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.122.5 - what check answers
+
+### Fixed
+
 * **What `check` answers at the dataplane's console was held by nothing.**
   Four messages, and the count of `bpa_cli.c` messages named by nothing goes
   from 7 to 3.
