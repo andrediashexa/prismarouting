@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.121.1 - what the box turned out to be saying
+
+### Fixed
+
 * **The roadmap said #428 was waiting on a file, and it has not been for
   three releases.** It now carries what the box turned out to be saying:
   that this appliance had never started a dataplane on any machine without
