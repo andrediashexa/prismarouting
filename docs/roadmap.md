@@ -2226,8 +2226,18 @@ which is what a lab that performs the step is for.
 are now enough of them here to know the shapes by name: a constant stub, a
 fixture that answers by accident, a needle matching a label, an empty haystack,
 and an assertion whose expected value is computed by the function under test.
-`TESTING.md` records the four ways a **mutation** lies, which is the other half
-and cost more time this week than the defects did.
+`TESTING.md` records the ways a **mutation** lies, which is the other half
+and cost more time this week than the defects did. There are **five** since
+[#430](https://github.com/andrediashexa/hexarouting/issues/430): the fifth is
+*a needle that matches the sentence describing the thing, instead of the
+thing*, and it is there because the habit the first instances produced -
+strip the comments before grepping - did not catch the third. That one
+matched the release gate's own **refusal**, which carries the command it
+greps for because a good refusal tells an operator how to reproduce it. The
+entry also says out loud that there will be no reader for it: the general
+form is *the needle matched text the target says about itself*, so a
+detector fires hardest on the files that document themselves best, and an
+automated attempt scored 0 hits against all three known instances.
 
 * [#338](https://github.com/andrediashexa/hexarouting/issues/338) -
   `appliance/test_startup_conf.sh` and `appliance/test_tuned_conf.sh` ran only

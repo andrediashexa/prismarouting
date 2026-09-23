@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.122.2 - a needle matches the thing
+
+### Added
+
 * **A fifth way a mutation lies, in `TESTING.md`.** Three times a check in
   this repository has passed on prose rather than on behaviour, and each
   time the defect it was written to refuse was present while the check was
@@ -91,8 +97,6 @@ version has a chance of seeing it.
   target says about itself*, so a detector fires hardest on the files that
   document themselves best. An automated attempt scored 0 hits against all
   three ([#430](https://github.com/andrediashexa/hexarouting/issues/430)).
-
-### Fixed
 
 ## 0.122.1 - three boxes wearing one sentence
 
