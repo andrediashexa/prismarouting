@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.12 - the line a box prints last
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The line a box prints last is read now**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   `bpa stop-drain` answers with how many blocks it released, and that is the
