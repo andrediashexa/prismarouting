@@ -92,26 +92,65 @@ esac
 # ondemand/schedutil the OS core drops in frequency while the box is quiet,
 # and the first burst arrives before it has ramped up - loss that shows up as
 # an unexplained micro-burst.
+# `(0 changed)` WAS THREE DIFFERENT BOXES WEARING ONE SENTENCE (#163).
+#
+# This used to print `cpufreq governor: performance (N changed)`, and a zero
+# there could mean any of:
+#
+#   * every policy was already on performance - nothing to do, all is well;
+#   * every write FAILED, because `2>/dev/null` swallows the error;
+#   * no policy offers a performance governor at all, because the loop's
+#     `continue` skipped them before any write was attempted.
+#
+# The first is a tuned box and the second is an untuned one, and the line
+# an operator reads was the same. That is the shape this repository refuses
+# everywhere else: a claim the box cannot support. So each outcome is
+# counted and only the ones that happened are named.
 governor_performance() {
-  found=0
-  changed=0
+  found=0 changed=0 already=0 refused=0 absent=0
   for g in "$CPUFREQ"/policy*/scaling_governor; do
-    [ -w "$g" ] || continue
+    # -e AND NOT -w, and the suite found this one. An unwritable policy was
+    # skipped before `found` was set, so a box that HAS cpufreq and cannot be
+    # written said `no cpufreq policy exposed` - a sentence about a box with
+    # no cpufreq at all. Two different machines, one line, and the one being
+    # described was the broken one. The write below is what answers whether
+    # it can be written; asking twice is what let the answer go missing.
+    [ -e "$g" ] || continue
     found=1
     avail=$(cat "$(dirname "$g")/scaling_available_governors" 2>/dev/null || echo "")
     case " $avail " in
       *" performance "*) ;;
-      *) continue ;;
+      *) absent=$((absent + 1)); continue ;;
     esac
-    [ "$(cat "$g")" = performance ] && continue
-    echo performance > "$g" 2>/dev/null && changed=$((changed + 1))
+    if [ "$(cat "$g")" = performance ]; then
+      already=$((already + 1)); continue
+    fi
+    if echo performance > "$g" 2>/dev/null; then
+      changed=$((changed + 1))
+    else
+      refused=$((refused + 1))
+    fi
   done
   if [ "$found" = 0 ]; then
     # Common in a VM: with no cpufreq exposed there is nothing to set, and
     # that is not an error.
     echo "no cpufreq policy exposed: skipping governor"
-  else
-    echo "cpufreq governor: performance ($changed changed)"
+    return 0
+  fi
+  # ONLY WHAT HAPPENED. A line listing four counts of which three are zero
+  # is a line nobody finishes reading, and the one number that matters -
+  # refused - is then the easiest to miss.
+  _say=""
+  [ "$changed" -gt 0 ] && _say="$changed set to performance"
+  [ "$already" -gt 0 ] && _say="${_say:+$_say, }$already already there"
+  [ "$refused" -gt 0 ] && _say="${_say:+$_say, }$refused REFUSED the write"
+  [ "$absent" -gt 0 ] && _say="${_say:+$_say, }$absent have no such governor"
+  echo "cpufreq governor: $_say"
+  # AND THE REFUSAL SAYS WHAT IT COSTS, because a count on its own is a
+  # number an operator skims past.
+  if [ "$refused" -gt 0 ]; then
+    echo "  the kernel refused $refused of them: those cores keep scaling" >&2
+    echo "  their frequency, which is jitter on a worker that never sleeps" >&2
   fi
 }
 

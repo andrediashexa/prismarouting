@@ -3092,8 +3092,24 @@ with tempfile.TemporaryDirectory() as root:
           == (tune.EFFECT_TAKEN, "the kernel exposes dmar0"),
           f"dmar0 is exposed and the readback says "
           f"{tune._rb_intel_iommu(root, 'on', {})}")
-    check(tune._rb_iommu_pt(root, "pt", {})[0] == tune.EFFECT_UNREADABLE,
+    _s, _d = tune._rb_iommu_pt(root, "pt", {})
+    check(_s == tune.EFFECT_UNREADABLE,
           "with no IOMMU group the passthrough readback guessed")
+    check("no IOMMU group here" in _d,
+          f"a box with no groups was not told it has none: {_d}")
+    # AND A BOX THAT HAS GROUPS AND NO `type` IN THEM IS A THIRD MACHINE.
+    # `type` appeared in 5.10; an older kernel exposes the groups and not
+    # the attribute, and telling that operator "there is no IOMMU group
+    # here" is false about the one thing they can see for themselves. The
+    # verdict stays cannot-tell either way - without `type` there is nothing
+    # to read passthrough back from - and only the reason differs, which is
+    # the whole value of a cannot-tell (#163).
+    os.makedirs(f"{root}/sys/kernel/iommu_groups/7", exist_ok=True)
+    _s, _d = tune._rb_iommu_pt(root, "pt", {})
+    check(_s == tune.EFFECT_UNREADABLE,
+          f"a group with no type file was not a cannot-tell: {_s}")
+    check("1 IOMMU group(s)" in _d and "no IOMMU group here" not in _d,
+          f"a box WITH an IOMMU group was told it has none: {_d}")
     w(f"{root}/sys/kernel/iommu_groups/0/type", "identity")
     w(f"{root}/sys/kernel/iommu_groups/1/type", "identity")
     check(tune._rb_iommu_pt(root, "pt", {})[0] == tune.EFFECT_TAKEN

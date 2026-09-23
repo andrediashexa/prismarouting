@@ -170,6 +170,59 @@ esac
   || bad "PRISMA_LOW_LATENCY=0 still forced the governor to '$(gov)'"
 
 echo
+echo "=== '(0 changed)' was three boxes wearing one sentence (#163) ==="
+# The old line was `cpufreq governor: performance (N changed)`, and a zero
+# there was a tuned box, a box whose every write failed, and a box with no
+# performance governor at all - indistinguishable. The first is fine and the
+# second is an untuned appliance carrying subscribers.
+
+# A BOX ALREADY ON PERFORMANCE says so, and does not claim to have set it.
+mkbox performance
+run PRISMA_LOW_LATENCY=1
+said "1 already there" \
+  && ok "a box already on performance says so" \
+  || bad "a tuned box did not say its governor was already right: $OUT"
+said "set to performance" \
+  && bad "a box that changed nothing claimed it set the governor: $OUT" \
+  || ok "and does not claim a change it did not make"
+
+# A BOX THAT WAS CHANGED says that, and not the other.
+mkbox powersave
+run PRISMA_LOW_LATENCY=1
+said "1 set to performance" \
+  && ok "a box that was on powersave says it was set" \
+  || bad "the governor was set and the line does not say so: $OUT"
+
+# A BOX WHOSE KERNEL REFUSES THE WRITE. read-only is how a policy that
+# cannot be set looks from here, and it is the case the old line hid: the
+# count was 0 and `(0 changed)` read as "nothing to do".
+mkbox powersave
+chmod 0444 "$R/sys/devices/system/cpu/cpufreq/policy0/scaling_governor"
+run PRISMA_LOW_LATENCY=1
+chmod 0644 "$R/sys/devices/system/cpu/cpufreq/policy0/scaling_governor"
+if said "REFUSED the write"; then
+  ok "a kernel that refuses the write is reported as a refusal"
+  said "keep scaling" \
+    && ok "and the line says what that costs a worker" \
+    || bad "the refusal is a count with no consequence beside it: $OUT"
+else
+  # [ -w ] skips an unwritable file, so this box may report nothing at all -
+  # which is its own defect and the same silence.
+  bad "a box whose governor could not be written said nothing about it: $OUT"
+fi
+
+# A BOX WITH NO PERFORMANCE GOVERNOR is a third thing again, and it is not
+# a refusal: nothing was refused, there was nothing to ask for.
+mkbox powersave "powersave conservative"
+run PRISMA_LOW_LATENCY=1
+said "have no such governor" \
+  && ok "a box whose cpufreq driver has no performance governor says that" \
+  || bad "a box with no performance governor was not told apart from a tuned one: $OUT"
+said "REFUSED" \
+  && bad "a box with nothing to ask for reported a refusal: $OUT" \
+  || ok "and it is not called a refusal, because nothing refused anything"
+
+echo
 echo "=== a value tune.env should not carry is refused, and says what is ==="
 # The regression this suite was written for. A refusal that only says no is
 # read on a serial console by somebody who then has to guess the spelling.

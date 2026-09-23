@@ -2105,6 +2105,26 @@ def _rb_iommu_pt(root, want, booted):
         if t:
             types.add(t)
     if not types:
+        # TWO DIFFERENT BOXES, AND THE SENTENCE NAMED ONLY ONE (#163).
+        #
+        # A box with no IOMMU has no groups, and the intel_iommu line above
+        # has already said so - repeating it here is the same sentence
+        # twice on an 80-column console. But a box that HAS groups and whose
+        # kernel carries no `type` file in them is a different machine
+        # entirely, and telling it "there is no IOMMU group here" is false
+        # about the one thing it can see for itself.
+        #
+        # The verdict is the same either way, and deliberately: `type`
+        # appeared in 5.10 and this appliance has no way to read passthrough
+        # back without it, so both are cannot-tell rather than a guess. Only
+        # the reason differs - and the reason is the whole value of a
+        # cannot-tell.
+        if groups:
+            return EFFECT_UNREADABLE, (
+                f"this box has {len(groups)} IOMMU group(s) and none of them "
+                f"carries a 'type', so there is nothing here that says "
+                f"whether passthrough took: the kernel is older than the "
+                f"sysfs attribute, not missing an IOMMU")
         return EFFECT_UNREADABLE, (
             "there is no IOMMU group here to carry a type, which the line "
             "for intel_iommu has already said and this must not say twice")
