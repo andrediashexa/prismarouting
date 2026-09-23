@@ -19,7 +19,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_lent \
       $(BUILD)/test_bpa_radius \
       $(BUILD)/test_bpa_static \
-      $(BUILD)/test_bpa_top
+      $(BUILD)/test_bpa_top \
+      $(BUILD)/test_bpa_rate
 	@sh tools/run-tests.sh
 
 vectors:
@@ -56,6 +57,14 @@ $(BUILD)/test_bpa_top: test/test_bpa_top.c \
                    src/plugins/bpa/bpa_top.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_top.c
+
+# The subscriber's creation-rate bucket: two fields and a clock, which is
+# what `max-rate` on a pool buys. It was inside bpa_session.c and nothing
+# drove it.
+$(BUILD)/test_bpa_rate: test/test_bpa_rate.c \
+                   src/plugins/bpa/bpa_rate.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rate.c
 
 # The dynamic block allocator, driven rather than evaluated. Standalone
 # because paired address pooling (RFC 4787 REQ-2, the required default under

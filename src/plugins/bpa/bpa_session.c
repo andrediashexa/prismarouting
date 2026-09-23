@@ -384,45 +384,16 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 }
 
 /*
- * One token out of the subscriber's creation-rate bucket.
- *
- * Refilled by elapsed time rather than on a timer, so a subscriber that has
- * been quiet costs nothing to keep: the bucket is only ever touched when it
- * asks for a session. Capped at one second's worth, which is the burst the
- * operator is agreeing to when they set the rate.
- *
- * Returns 0 when there was no token, which is a refusal.
+ * The creation-rate bucket is bpa_rate.h: two fields and a clock, and
+ * nothing of VPP - so it lives where test/test_bpa_rate.c can call it. What
+ * is here is the subscriber whose fields they are.
  */
 static_always_inline int
-bpa_rate_take (bpa_sub_t *sub, u32 rate, f64 now)
+bpa_sub_rate_take (bpa_sub_t *sub, u32 rate, f64 now)
 {
-  f32 fill = (f32) rate;
-
-  /* First ask: start full, so a subscriber is not refused for the accident of
-   * having its record created a moment ago. */
-  if (PREDICT_FALSE (sub->rate_last == 0.))
-    {
-      sub->rate_last = now;
-      sub->tokens = fill;
-    }
-  else
-    {
-      f64 dt = now - sub->rate_last;
-
-      if (dt > 0.)
-	{
-	  sub->rate_last = now;
-	  sub->tokens += (f32) (dt * (f64) rate);
-	  if (sub->tokens > fill)
-	    sub->tokens = fill;
-	}
-    }
-
-  if (sub->tokens < 1.f)
-    return 0;
-  sub->tokens -= 1.f;
-  return 1;
+  return bpa_rate_take (&sub->tokens, &sub->rate_last, rate, now);
 }
+
 
 bpa_session_t *
 bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
@@ -455,7 +426,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
       return 0;
     }
   if (PREDICT_FALSE (kind == BPA_CREATE_TRAFFIC && p->max_rate
-		     && !bpa_rate_take (sub, p->max_rate, now)))
+		     && !bpa_sub_rate_take (sub, p->max_rate, now)))
     {
       sub->n_refused_rate++;
       *why = BPA_CREATE_OVER_RATE;
@@ -709,7 +680,7 @@ bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
       bpa_sub_put (pt, pool_index, b->sub_idx, sub);
       return 0;
     }
-  if (PREDICT_FALSE (p->max_rate && !bpa_rate_take (sub, p->max_rate, now)))
+  if (PREDICT_FALSE (p->max_rate && !bpa_sub_rate_take (sub, p->max_rate, now)))
     {
       sub->n_refused_rate++;
       *why = BPA_CREATE_OVER_RATE;
