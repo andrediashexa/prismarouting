@@ -97,9 +97,15 @@ FLOOR = 10
 #: shows them printing; 28 until lab/troubleshoot.sh grew four answers an
 #: operator can get and nothing named - an address inside the prefix and
 #: beyond the pool's capacity, a free dynamic block, a port under the pool's
-#: range, and a box with no forwards. May only go down; see the header for
-#: how.
-NAMED_BY_NOTHING_AT_MOST = 26
+#: range, and a box with no forwards. 21 since it grew the screens of a box
+#: NOTHING HAS HAPPENED ON YET - the ones an operator reads first, on a box
+#: just configured, and therefore at the worst moment to read a sentence
+#: nobody is holding: top with no block held, blocks on a pool that allocates
+#: none, logging with no exporter and the event numbers a collector will see,
+#: a drain with logging off, the per-worker session count, and a
+#: deterministic port answering with its block. May only go down; see the
+#: header for how.
+NAMED_BY_NOTHING_AT_MOST = 21
 
 fail = 0
 

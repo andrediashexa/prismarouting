@@ -77,6 +77,26 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The screens of a box nothing has happened on yet**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)). Seven
+  sentences an operator reads **first** - on a box that was just configured,
+  before any subscriber has sent a packet - were named by no lab, no suite,
+  no wiki page and no document. That is the worst moment for a screen nobody
+  is holding: it is read while somebody is deciding whether the box works at
+  all.
+
+  `lab/troubleshoot.sh` produces them on a running dataplane now: `top` with
+  no block held, `blocks` on a pool that allocates none - a deterministic
+  pool with no reserve allocates nothing, and saying so is the difference
+  between *this box allocates nothing* and *this screen is broken* -
+  `logging` with no exporter and the event numbers a collector will see, a
+  drain with logging off, the per-worker session count, and a port of a
+  deterministic pool answering with its **block** rather than a session,
+  which is what a court order asks about a time nobody was watching.
+
+  `test/test_plugin_cli_says.py`'s count of messages named by nothing goes
+  26 → 21.
+
 ### Fixed
 
 ## 0.118.9 - the session table says why

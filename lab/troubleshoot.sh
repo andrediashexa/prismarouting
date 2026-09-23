@@ -32,6 +32,45 @@ vppctl bpa pool nb inside 100.64.0.0/22 outside 200.150.0.16/30 block 512
 vppctl set interface bpa in2out pg0
 vppctl set interface bpa out2in pg1
 
+# ------------------------------------------------------------------
+# THE SCREENS OF A BOX NOTHING HAS HAPPENED ON YET.
+#
+# Every one of these is a sentence an operator reads FIRST - on a box that
+# was just configured, before any subscriber has sent a packet - and each was
+# named by no lab, no suite, no wiki page and no document
+# (test/test_plugin_cli_says.py's count). A screen nothing names is a screen
+# whose wording can drift with nobody noticing, and these are the ones read
+# at the worst moment: when somebody is deciding whether the box is working.
+#
+# vppctl and not prismash, for the three that are the dataplane's own
+# screens: the VTY does not proxy them, and what is being held here is the
+# wording the plugin prints. Everything else in this lab goes through
+# prismash, for the reason in its header.
+BARE_TOP=$(vppctl show bpa top 2>&1)
+BARE_BLOCKS=$(vppctl show bpa blocks 2>&1)
+BARE_LOGGING=$(vppctl show bpa logging 2>&1)
+BARE_DRAIN=$(vppctl bpa stop-drain 2>&1)
+
+expect_in "before any traffic, top says nobody holds a block" \
+  "no subscriber holds a block right now" "$BARE_TOP"
+# A deterministic pool with no reserve allocates nothing: every subscriber's
+# block is the formula's answer and no allocator is involved. Saying so is
+# the difference between "this box allocates nothing" and "this screen is
+# broken".
+expect_in "and blocks says why there is nothing to show" \
+  "no pool on this box allocates blocks" "$BARE_BLOCKS"
+expect_in "logging says nothing is sent over UDP, rather than nothing" \
+  "nothing is sent over UDP" "$BARE_LOGGING"
+# The legend belongs on the screen: an operator reading a collector's
+# capture needs the numbers, and the box is where they are written down.
+expect_in "and it names the event numbers a collector will see" \
+  "natEvent    16 allocation, 17 de-allocation, 12 exhaustion" "$BARE_LOGGING"
+# The drain is what vpp-stop-drain.conf runs on the way down (#217). With
+# logging off there is nothing to write, and it says that instead of
+# reporting a drain it did not do.
+expect_in "and a drain with logging off says there is nothing to drain" \
+  "logging is not enabled; nothing to drain" "$BARE_DRAIN"
+
 # What the specification says this subscriber must get.
 EXPECT=$(python3 - "$SUB" <<'PY'
 import sys
@@ -176,6 +215,23 @@ expect_in "top lists the busiest subscriber" "$SUB" "$TOP"
 expect_in "with the ports it holds" "3/512" "$TOP"
 expect_in "and closes with how many hold a block: the three this lab arranged" \
   "3 subscriber(s) holding blocks" "$TOP"
+
+# AND THE TWO SCREENS THAT ONLY EXIST ONCE TRAFFIC HAS BEEN THROUGH.
+#
+# `show bpa session` is the per-worker count an operator reads when they are
+# asking whether the box is doing anything at all, and the reverse lookup of
+# a port inside a deterministic pool names the block rather than a session.
+# Both were named by nothing.
+SESS=$(vppctl show bpa session 2>&1)
+REV=$(vppctl show bpa translation "$E_IP" "$E_LO" 2>&1)
+expect_in "the session screen counts subscribers per worker" \
+  "active subscribers," "$SESS"
+# DETERMINISTIC in the answer is the whole difference between "this port is
+# whoever the formula says" and "this port was handed out": in the first, the
+# answer is true whether or not a session exists, which is what a court order
+# asks about a time nobody was watching.
+expect_in "and a port of a deterministic pool answers with its block" \
+  ", DETERMINISTIC" "$REV"
 
 expect_in "drops names the packet with no pool" "no pool for source address" \
   "$DROP_SECTION"
