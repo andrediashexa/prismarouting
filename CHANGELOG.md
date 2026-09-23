@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The session table says why a harness cannot reach it**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
+  Twenty-five functions, and what they share is that the session table **is**
+  VPP: a bihash the worker owns, a pool of subscribers indexed by a hash,
+  per-thread vectors, and an expiry walk on VPP's own clock. Each says which
+  of those it needs and which lab sends the packet that reaches it - and the
+  decisions they consult, the port map, the block arithmetic, the rate
+  bucket, are driven by their own harnesses. With the two identity loaders
+  beside them, the C ceiling goes 33 → **6**.
+
+  **Those six stay counted on purpose.** They are `bpa_cli.c`'s, and that
+  file's own header says its arithmetic waits for a harness built against the
+  real VPP rather than an excuse. One of them was paid that way this morning
+  - `bpa_top_cmp` moved out and is tested. Excusing the other five would be
+  taking back the argument the file makes about itself, which is worth more
+  than the number.
+
 ### Fixed
 
 ## 0.118.8 - the creation-rate bucket is tested

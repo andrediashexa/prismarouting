@@ -188,12 +188,21 @@ bpa_identity_dup_at (const bpa_identity_entry_t *v, u32 n, u32 *at)
  * never will be: this is personal data, and its presence in the log is the
  * reason the log is protected (#21).
  */
+/* not a unit: the door the control plane uses, which picks the kind
+ * and calls the loader below. lab/syslog.sh loads a map on a box and reads
+ * the identity in the records that follow. */
 clib_error_t *
 bpa_identity_load (const char *path)
 {
   return bpa_identity_load_kind (path, BPA_IDENTITY_MAP);
 }
 
+/* not a unit: it opens a file, reads it line by line and
+ * rebuilds the table under the worker barrier. WHAT A LINE MEANS is
+ * bpa_identity_parse_line() and bpa_identity_lease_line(), and what a whole
+ * file means once read - the stable sort, the lease that wins, the map
+ * duplicate refused - is the three functions above the guard; all five are
+ * driven by test/test_bpa_identity.c. */
 clib_error_t *
 bpa_identity_load_kind (const char *path, bpa_identity_kind_t kind)
 {
