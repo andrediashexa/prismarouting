@@ -79,6 +79,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Four assertions in `lab/ipfix.sh` had never run, and the lab passed.**
+  They were written above the line that sources `lab/verdict.sh`, where
+  `expect_in` does not exist yet: the shell said `expect_in: not found` to
+  stderr, the lab has no `set -e`, and the run came out green with four
+  checks that had never been made. That is the failure this repository
+  already has a name for - a lab that asserts nothing is worse than no lab.
+  They are below the source now, one was watched red with a mutated needle,
+  and what they hold is the logging screen an operator hands their collector
+  team: how big a record is, when this box thinks it booted by IANA element,
+  and the three flush outcomes - which are what tell *the collector sees
+  nothing because nothing happened* from *the collector sees nothing because
+  this box could not get a buffer*. The count of `bpa_cli.c` messages named
+  by nothing goes from 16 to 13.
+
 ## 0.118.13 - the reason a reboot used to delete
 
 ### Fixed

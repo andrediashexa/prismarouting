@@ -112,7 +112,15 @@ FLOOR = 10
 #: OPENING - the count went on listing them, correctly - and lab/ipfix-stop.sh
 #: read the line the drain prints, which is the last thing a box says before
 #: it goes and the operator's only evidence that it ran.
-NAMED_BY_NOTHING_AT_MOST = 16
+#: 16 to 13 after lab/ipfix.sh read the logging screen an operator hands
+#: their collector team: how big a record is, when this box thinks it booted
+#: by IANA element, and the flush counters - which are what tell "nothing
+#: happened" from "this box could not get a buffer". Those four assertions
+#: were written ABOVE the source of lab/verdict.sh first, where expect_in
+#: does not exist: the lab printed `expect_in: not found` to stderr, has no
+#: `set -e`, and PASSED with four checks that had never run. They are below
+#: it now, and one was watched red with a mutated needle.
+NAMED_BY_NOTHING_AT_MOST = 13
 
 fail = 0
 
