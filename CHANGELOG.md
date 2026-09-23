@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.120.0 - the address a dataplane gives its card
+
+### Fixed
+
 * **A box whose pages are 2M could not give its card an address the
   dataplane can use, and never started.** This is the other half of
   [#428](https://github.com/andrediashexa/hexarouting/issues/428) and the
