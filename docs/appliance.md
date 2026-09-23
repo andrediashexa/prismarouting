@@ -198,6 +198,26 @@ problem and the card was.
 1G path is the one every lab and every release has booted, and changing the
 mode under it would be an unmeasured change to the half that is not broken.
 
+### And two capabilities the container has to be given
+
+`vpp.service` runs as root, so nothing on the unit path ever had to name a
+capability. The container names five, and two of them are here because of
+[#428](https://github.com/andrediashexa/hexarouting/issues/428):
+
+| capability | what it is for |
+|---|---|
+| `SYS_ADMIN` | reading a physical address out of `/proc/self/pagemap`, which `iova-mode pa` needs. Since Linux 4.0 the kernel zeroes the PFN for a reader without it, DPDK cannot tell that from *no physical addresses available*, and `rte_eal_init` returns `EINVAL` |
+| `SYS_RAWIO` | `iopl()`, which is how DPDK reaches the I/O BAR of a **legacy** virtio card (`1af4:1000`) bound to `uio_pci_generic` — that driver creates no `/sys/class/uio/uioX/portio` for DPDK to use instead |
+
+`PERFMON` is narrower than `SYS_ADMIN` and was tried first. It does not do it
+on this kernel.
+
+Without `SYS_RAWIO` the dataplane **starts** and takes no port, which is worse
+than a refusal: `show version` answers, `show interface` has only `local0`, and
+nothing says a card was turned away. `test/test_two_dataplanes_one_shape.sh`
+holds both rows, because what root has for free is exactly what nobody thinks
+to compare.
+
 `GRUB_DISABLE_OS_PROBER=true` goes on the same file and is not a kernel
 parameter: `os-prober` scans every block device looking for other operating
 systems, finds nothing on an appliance, and can spend minutes doing it inside

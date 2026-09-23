@@ -198,6 +198,25 @@ if body "$COMPOSE" | sed -n "/^  vpp:/,/^  [a-z]/p" | grep -q "SYS_ADMIN"; then
 else
   bad "the dataplane container has no SYS_ADMIN: on a box whose pages are 2M, rte_eal_init fails with EINVAL and the box never forwards (#428)"
 fi
+# AND THE PORT A LEGACY CARD SPEAKS THROUGH. 1af4:1000 - the virtio-net
+# every qemu and Proxmox guest gets unless told otherwise - keeps its
+# registers in an I/O BAR. uio_pci_generic creates no
+# /sys/class/uio/uioX/portio, measured on the box, so DPDK falls back to
+# iopl(), and iopl() needs CAP_SYS_RAWIO.
+#
+# Without it the dataplane STARTS and takes no port, which is worse than a
+# refusal: `show version` answers and `show interface` has only local0.
+# Measured on one installed box, one boot, the stack recreated twice so the
+# recreate itself is the control:
+#
+#   [IPC_LOCK NET_ADMIN SYS_ADMIN SYS_NICE]            local0 only
+#   [IPC_LOCK NET_ADMIN SYS_ADMIN SYS_NICE SYS_RAWIO]  ens9 up, rx/tx
+if body "$COMPOSE" | sed -n "/^  vpp:/,/^  [a-z]/p" | grep -q "SYS_RAWIO"; then
+  ok "and SYS_RAWIO, which is how it reaches a legacy card's I/O ports"
+else
+  bad "the dataplane container has no SYS_RAWIO: a legacy virtio card on uio_pci_generic is left untaken, and the box says nothing (#428)"
+fi
+
 # AND THE UNIT PATH HAS IT WITHOUT SAYING SO, which is the whole reason this
 # row is easy to miss: there is no line to compare it against.
 if body "$SYSD"/vpp-*.conf | grep -q "CapabilityBoundingSet"; then

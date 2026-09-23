@@ -79,6 +79,32 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A legacy virtio card was left untaken, and the box said nothing.** The
+  last of [#428](https://github.com/andrediashexa/hexarouting/issues/428).
+  On a guest with no IOMMU — a stock Proxmox VM — the card binds
+  `uio_pci_generic`, and the card qemu gives that guest is PCI `1af4:1000`,
+  a **legacy** virtio-net whose registers live in an I/O BAR rather than in
+  memory. DPDK finds that port under `/sys/class/uio/uioX/portio/` when
+  `igb_uio` bound the card; `uio_pci_generic` creates no such directory —
+  measured on the box, `No such file or directory` — so DPDK falls back to
+  `iopl()`, and `iopl()` needs `CAP_SYS_RAWIO`, which the dataplane
+  container was not given. `vpp.service`, running as root, has always had it.
+
+  The shape of the failure is the reason this is worth a release of its own:
+  the dataplane **started**. `show version` answered, `show interface` had
+  only `local0`, and nothing anywhere said a card had been refused. Measured
+  on one installed box, one boot, the stack taken down and brought up twice
+  so that the recreate is its own control:
+
+  | the dataplane's capabilities | `show interface` |
+  |---|---|
+  | `IPC_LOCK NET_ADMIN SYS_ADMIN SYS_NICE` | `local0` only |
+  | `... SYS_RAWIO` | `ens9` up, rx/tx counting |
+
+  On the unit path, root with every capability, the same card and the same
+  `startup.conf` come up — which is what says this was the container
+  boundary and not the PMD.
+
 ## 0.120.0 - the address a dataplane gives its card
 
 ### Fixed
