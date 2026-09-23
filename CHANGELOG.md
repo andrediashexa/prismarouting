@@ -77,6 +77,14 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.118.8 - the creation-rate bucket is tested
+
+Issues: [#390](https://github.com/andrediashexa/hexarouting/issues/390).
+
+### Added
+
 * **The subscriber's creation-rate bucket is tested**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)).
   `max-rate` on a pool is how fast **one** subscriber may open new sessions,
