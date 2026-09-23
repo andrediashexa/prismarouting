@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.118.14 - four checks that had never run
+
+### Fixed
+
 * **Four assertions in `lab/ipfix.sh` had never run, and the lab passed.**
   They were written above the line that sources `lab/verdict.sh`, where
   `expect_in` does not exist yet: the shell said `expect_in: not found` to
