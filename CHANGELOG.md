@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.122.1 - three boxes wearing one sentence
+
+### Fixed
+
 * **`cpufreq governor: performance (0 changed)` was three different boxes
   wearing one sentence.** Two of the loose ends
   [#163](https://github.com/andrediashexa/hexarouting/issues/163) left open
