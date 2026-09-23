@@ -91,6 +91,30 @@ services:
       - NET_ADMIN
       - IPC_LOCK
       - SYS_ADMIN
+      # SYS_RAWIO IS FOR A CARD WHOSE REGISTERS ARE PORTS, not memory.
+      #
+      # A LEGACY virtio-net device - PCI id 1af4:1000, which is what qemu
+      # and Proxmox give a guest unless told otherwise - keeps its registers
+      # in an I/O BAR. DPDK finds that port under
+      # /sys/class/uio/uioX/portio/ when igb_uio bound the card, and
+      # uio_pci_generic CREATES NO SUCH DIRECTORY - measured on the box:
+      # `ls /sys/class/uio/uio0/portio/` is "No such file or directory". So
+      # DPDK falls back to iopl(), and iopl() needs CAP_SYS_RAWIO.
+      #
+      # Without it the dataplane STARTS and takes no port. That is the worst
+      # shape available: `show version` answers, `show interface` has only
+      # local0, and nothing anywhere says the card was refused.
+      #
+      # Measured on 2026-09-23 on one installed box, one boot, the stack
+      # taken down and brought up twice - the recreate is the control:
+      #
+      #   [IPC_LOCK NET_ADMIN SYS_ADMIN SYS_NICE]            local0 only
+      #   [IPC_LOCK NET_ADMIN SYS_ADMIN SYS_NICE SYS_RAWIO]  ens9 up, rx/tx
+      #
+      # And on the unit path, root with every capability, the same card and
+      # the same startup.conf come up - which is what says this is the
+      # container boundary and not the PMD (#428).
+      - SYS_RAWIO
     devices:
       # The TAP linux_cp creates, and the vhost backend it asks for next:
       # with NET_ADMIN and no /dev/net/tun the failure is
