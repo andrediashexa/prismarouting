@@ -2694,9 +2694,9 @@ during the install.
 |---|---|
 | Console or SSH login | Lands in `prismash` |
 | `start shell` inside the VTY | Opens a shell as a child; `exit` returns to the VTY |
-| `scp`, `rsync`, `git` over SSH | Reach a real shell — a login shell invoked with `-c` passes through |
-| `prismash` fails to start | Falls back to a shell **with the reason printed** |
-| Boot with `prismash=off` | Skips the VTY entirely; the ISO offers it as a menu entry |
+| `scp`, `rsync`, `git`, any `ssh <box> <command>` | **root or `prisma-admin`**: reach a real shell, since a login shell invoked with `-c` passes through. **Any other account**: the command is run by the VTY as one `prismash -c`, with its role ([#442](https://github.com/andrediashexa/hexarouting/issues/442)) |
+| `prismash` fails to start | **root or `prisma-admin`**: falls back to a shell, **with the reason printed**. **Any other account**: the reason is printed and the session ends |
+| Boot with `prismash=off` | Skips the VTY entirely, for root or `prisma-admin`; the ISO offers it as a menu entry |
 
 `start shell` is **in** the command tree: completion and `?` offer it, and it is
 **restricted to administrators** — a read-only or CGNAT account that types it is
@@ -2710,7 +2710,9 @@ at an application creates a lockout risk: a `prismash` that fails to start would
 otherwise leave nobody able to reach the box, over console or SSH. That is a
 worse failure than the one landing in the VTY solves, so there are two
 independent ways out, and the second does not depend on `prismash` working at
-all.
+all. Both are an administrator's. Every account the VTY owns is in the groups
+that open the dataplane's CLI and FRR's, so a shell for any other account is
+every capability its role withholds (#442).
 
 `install.sh` does **not** change any login shell unless `PRISMA_VTY_LOGIN=1` is
 set. On an existing Debian the machine may have other jobs, and silently

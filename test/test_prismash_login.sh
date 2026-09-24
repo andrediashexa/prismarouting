@@ -12,6 +12,10 @@ bad() { echo "  FAIL: $*"; fail=$((fail+1)); }
 W=$(cd "$(dirname "$0")/.." && pwd)/appliance/prismash-login
 
 d=$(mktemp -d); mkdir -p "$d/bin"
+# Every check down to the last section is an ADMINISTRATOR's login - the one
+# the fallback exists for (#442) - arranged by naming a group the account
+# running this suite is in. The last section is everybody else.
+PRISMA_ADMIN_GROUP=$(id -gn); export PRISMA_ADMIN_GROUP
 cat > "$d/bin/fakeshell" <<'EOF'
 #!/bin/sh
 echo "FELL-BACK-TO-SHELL"
@@ -159,6 +163,57 @@ case "$out" in
   *FELL-BACK-TO-SHELL*) bad "typing 'exit' in the VTY dropped the operator \
 into a shell instead of logging them out; got: $out" ;;
   *) ok "and typing 'exit' logs out rather than opening a shell" ;;
+esac
+
+echo "=== an account that is not an administrator is never handed a shell (#442) ==="
+# Every account this VTY owns is in vpp, frr and frrvty, so a shell is vppctl
+# and vtysh with everything its role withholds. `start shell` refuses such an
+# account; this wrapper handed one over on three paths, and the first needed
+# no crash: `ssh readonly@box vppctl ...`.
+# Mutation shown red: may_have_shell() answering yes for everybody - every
+# check in this section fails.
+PRISMA_ADMIN_GROUP=no-such-group-prisma-test
+cat > "$d/bin/argv-prismash" <<'EOF'
+#!/bin/sh
+printf 'VTY-GOT:'; for a; do printf ' [%s]' "$a"; done; echo
+EOF
+chmod +x "$d/bin/argv-prismash"
+out=$(PRISMA_PRISMASH="$d/bin/argv-prismash" \
+      PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" -c 'vppctl show version' 2>&1)
+case "$out" in
+  *FELL-BACK-TO-SHELL*) bad "a non-interactive ssh command reached a shell: $out" ;;
+  *"VTY-GOT: [-c] [vppctl show version]"*) ok "an ssh command is the VTY's, as one -c" ;;
+  *) bad "an ssh command did not reach the VTY: $out" ;;
+esac
+out=$(PRISMA_PRISMASH="$d/bin/no-such-prismash" \
+      PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" -c 'id' 2>&1); rc=$?
+case "$out" in
+  *FELL-BACK-TO-SHELL*) bad "with no VTY, an ssh command reached a shell: $out" ;;
+  *"a shell is for an"*) [ "$rc" -ne 0 ] && ok "and with no VTY to run it, it is refused and says why" \
+                         || bad "refused with status 0: $rc" ;;
+  *) bad "no VTY and no reason given: $out" ;;
+esac
+out=$(PRISMA_PRISMASH="$d/bin/dying-prismash" \
+      PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1); rc=$?
+case "$out" in
+  *FELL-BACK-TO-SHELL*) bad "a VTY that died handed its account a shell: $out" ;;
+  *"prismash exited with status 1"*) [ "$rc" -eq 1 ] && ok "a VTY that dies ends the session, says why, and keeps the status" \
+                                     || bad "the status was lost: $rc" ;;
+  *) bad "the session ended without saying why: $out" ;;
+esac
+out=$(PRISMA_PRISMASH="$d/bin/no-such-prismash" \
+      PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1)
+case "$out" in
+  *FELL-BACK-TO-SHELL*) bad "no VTY installed handed its account a shell: $out" ;;
+  *"not installed"*) ok "no VTY installed is said, not a shell" ;;
+  *) bad "no VTY and nothing said: $out" ;;
+esac
+echo "prismash=off quiet ro root=/dev/sda2" > "$d/cmdline"
+out=$(PATH="$d/bin:$PATH" PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1)
+case "$out" in
+  *FELL-BACK-TO-SHELL*) bad "prismash=off handed a non-administrator a shell: $out" ;;
+  *"kernel command line"*) ok "prismash=off is said, and is for an administrator" ;;
+  *) bad "prismash=off and nothing said: $out" ;;
 esac
 
 rm -rf "$d"

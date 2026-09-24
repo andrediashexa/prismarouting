@@ -79,6 +79,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Security: the login handed a system shell to accounts that are not
+  administrators**
+  ([#442](https://github.com/andrediashexa/hexarouting/issues/442)). Every
+  account the VTY owns is in the groups that open the dataplane's CLI and
+  FRR's, so a shell is `vppctl` and `vtysh` with everything its role
+  withholds. `start shell` refused such an account, and the login wrapper
+  did not: any `ssh <account>@<box> <command>` ran the command in a shell,
+  which needs no crash at all. A VTY that exited with an error, or
+  `prismash=off`, did the same. Now only root and `prisma-admin` are handed a
+  shell, and they keep scp, rsync and the fallback that keeps them from being
+  locked out of a broken box. Any other account's ssh command is run by the
+  VTY with its role, and a crash ends its session with a sentence saying
+  why.
+
 ## 0.123.4 - every message held
 
 ### Fixed
@@ -151,7 +165,6 @@ version has a chance of seeing it.
   refusal. It also creates `/run/sshd`: `sshd -t` refuses to run without it,
   nothing makes it in the lab container, and three checks were red over the
   fixture rather than the box.
-
 ## 0.123.0 - resolvers from the VTY
 
 ### Added

@@ -2318,11 +2318,13 @@ and `?` offer it.
   ([#194](https://github.com/andrediashexa/hexarouting/issues/194)). A
   read-only or CGNAT account that types it is refused by name -
   `error: start shell: permission denied for a read-only account`.
-* A shell **MUST** remain reachable. Recovery, `tcpdump`, and reading a log the
-  VTY does not expose all need one, and an appliance that makes them impossible
-  gets a permanent hole opened by the first operator who needs one.
-* Booting with `prismash=off` skips the VTY entirely, and **MUST** keep working
-  even when `prismash` is broken - it is read from `/proc/cmdline` by the
+* A shell **MUST** remain reachable **for an administrator**. Recovery,
+  `tcpdump`, and reading a log the VTY does not expose all need one, and an
+  appliance that makes them impossible gets a permanent hole opened by the
+  first operator who needs one. For any other account it **MUST NOT** be
+  (#442): see below.
+* Booting with `prismash=off` skips the VTY entirely for an administrator, and
+  **MUST** keep working even when `prismash` is broken - it is read from `/proc/cmdline` by the
   wrapper, so it does not depend on the VTY starting.
 
 See [appliance.md](appliance.md) for the login table and the recovery paths.
@@ -2353,6 +2355,26 @@ meant to be out of reach
 `test/test_prismash_ctrl_c.py` presses the key on a real pty, because only a
 terminal turns it into SIGINT. The unit box for `sigint_ignored()` holds the
 part a pty cannot see: that a child started during a commit survives it.
+
+### Only an administrator is handed a shell by the login, either
+
+`start shell` refuses an account that is not an administrator, and until
+[#442](https://github.com/andrediashexa/hexarouting/issues/442) the login
+wrapper did not. It handed a login shell to **every** account on three paths:
+a non-interactive ssh command (`ssh <account>@<box> <command>`, which sshd
+runs as the login shell's `-c`), `prismash=off` on the kernel command line,
+and a VTY that exited with an error. Every account this VTY owns is in `vpp`,
+`frr` and `frrvty`, because it could not read the dataplane or FRR otherwise.
+So a shell was `vppctl` and `vtysh` with every capability the role withholds,
+and the first path needed no crash at all.
+
+`appliance/prismash-login` now asks one question on every path: root or
+`prisma-admin`. Those keep everything they had: scp and rsync, the fallback
+that keeps them from being locked out of a box whose VTY is broken, and
+`prismash=off`. Any other account's ssh command is run by the **VTY** as one
+`prismash -c`, where its role applies, so `ssh noc@box "show cgnat pool"`
+works. A crash, a missing VTY or `prismash=off` ends that account's session
+with a sentence saying why. `test/test_prismash_login.sh` holds both sides.
 
 ### How prismash reaches the dataplane
 

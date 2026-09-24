@@ -14,17 +14,32 @@ set -u
 SHELL_FALLBACK=${PRISMA_FALLBACK_SHELL:-/bin/bash}
 [ -x "$SHELL_FALLBACK" ] || SHELL_FALLBACK=/bin/sh
 
-# A login shell is invoked with "-c <command>" for scp, rsync, git and any
-# non-interactive ssh. Those must reach a real shell, or file copies to the
-# appliance break in a way that looks like a network problem.
-if [ "$#" -gt 0 ]; then
-  exec "$SHELL_FALLBACK" "$@"
-fi
+# WHO MAY BE HANDED A SHELL (#442). Every account this VTY owns is in vpp, frr
+# and frrvty, the read-only ones too - they could not read the dataplane or
+# FRR otherwise - so a shell for any of them is vppctl and vtysh with every
+# capability its role withholds. `start shell` has been an administrator's
+# only since #35; this script handed a shell to everybody on three paths
+# (a non-interactive ssh command, prismash=off, and a VTY that exited with an
+# error), and the first needs no crash at all: `ssh readonly@box vppctl ...`.
+# So the shell below is for root and for prisma-admin - the accounts that can
+# `start shell` anyway, and the ones that must never be locked out of a box
+# whose VTY is broken - and for nobody else.
+#
+# PRISMA_ADMIN_GROUP is the test's seam: test/test_prismash_login.sh names a
+# group the account running it is in. Nothing on a box sets it.
+may_have_shell() {
+  [ "$(id -u)" = 0 ] && return 0
+  id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "${PRISMA_ADMIN_GROUP:-prisma-admin}"
+}
 
-if grep -qw "prismash=off" /proc/cmdline 2>/dev/null; then
-  echo "prismash=off on the kernel command line: starting $SHELL_FALLBACK" >&2
-  exec "$SHELL_FALLBACK" -l
-fi
+# Said, not silently refused: an account that is turned away at a closed
+# session and cannot tell why is an account that calls the NOC.
+no_shell() {
+  echo "$1" >&2
+  echo "This account's interface is the VTY, and a shell is for an" >&2
+  echo "administrator only. An administrator can reach this box." >&2
+  exit "${2:-1}"
+}
 
 # PRISMA_PRISMASH is the same kind of seam as PRISMA_FALLBACK_SHELL above, and the
 # reason it exists is the whole of what this script is for. The path was
@@ -36,7 +51,28 @@ fi
 # by nothing on a real box.
 PRISMASH=${PRISMA_PRISMASH:-/usr/bin/prismash}
 
+# A login shell is invoked with "-c <command>" for scp, rsync, git and any
+# non-interactive ssh. An administrator's reach a real shell, or file copies to
+# the appliance break in a way that looks like a network problem. Anybody
+# else's command is the VTY's, as one `prismash -c`: `ssh noc@box "show cgnat
+# pool"` works, and is answered with the account's role, and `ssh noc@box
+# vppctl ...` is a VTY statement that does not exist.
+if [ "$#" -gt 0 ]; then
+  may_have_shell && exec "$SHELL_FALLBACK" "$@"
+  if [ "$1" = -c ] && [ "$#" -eq 2 ] && [ -x "$PRISMASH" ]; then
+    exec "$PRISMASH" -c "$2"
+  fi
+  no_shell "a command over ssh is run by the VTY: ssh <account>@<box> \"<VTY command>\"" 1
+fi
+
+if grep -qw "prismash=off" /proc/cmdline 2>/dev/null; then
+  may_have_shell || no_shell "prismash=off on the kernel command line, and no VTY to land in."
+  echo "prismash=off on the kernel command line: starting $SHELL_FALLBACK" >&2
+  exec "$SHELL_FALLBACK" -l
+fi
+
 if [ ! -x "$PRISMASH" ]; then
+  may_have_shell || no_shell "prismash is not installed."
   echo "prismash is not installed; starting $SHELL_FALLBACK" >&2
   exec "$SHELL_FALLBACK" -l
 fi
@@ -48,6 +84,7 @@ rc=$?
 # Anything else means the VTY failed, and the operator needs a shell rather
 # than a closed session they cannot diagnose.
 [ "$rc" -eq 0 ] && exit 0
+may_have_shell || { echo "" >&2; no_shell "prismash exited with status $rc." "$rc"; }
 echo "" >&2
 echo "prismash exited with status $rc. Starting $SHELL_FALLBACK so the box stays" >&2
 echo "reachable. Boot with 'prismash=off' to skip the VTY entirely." >&2
