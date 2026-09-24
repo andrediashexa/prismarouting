@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.122.6 - refused where it is typed
+
+### Fixed
+
 * **A statement FRR does not accept is refused where it is typed**
   ([#431](https://github.com/andrediashexa/hexarouting/issues/431)). Every
   line that reached the routing passthrough used to be staged unread:
