@@ -19,6 +19,12 @@ export PRISMA_CONFIG=/etc/prisma-routing/prisma-routing.conf
 # The VTY marks its accounts by their login shell, so it has to exist.
 install -D -m 0755 /src/appliance/prismash-login /usr/bin/prismash-login
 ssh-keygen -A >/dev/null 2>&1
+# sshd -t and sshd -T refuse to run without their privilege separation
+# directory, which systemd creates on a box. Nothing creates it in this
+# container, and the openssh-server package lab.sh installs on every run does
+# not either: `sshd -t` answered "Missing privilege separation directory:
+# /run/sshd", and three checks below were red over the fixture (#434).
+mkdir -p /run/sshd
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 wait_vpp
@@ -61,11 +67,14 @@ BADP=$($HX -c "configure" -c "ssh port 99999" -c "commit" 2>&1)
 printf '%s\n' "$BADP" | sed 's/^/  /'
 
 echo
-echo "=========== 4b. a value only sshd can refuse ==========="
-# listen-address is a free-form string here on purpose: this VTY has no
-# business re-implementing sshd's address grammar. So the daemon is the thing
-# that says no - and it MUST say so before it is reloaded, because a syntax
-# error that stops sshd starting is the same lockout by another route.
+echo "=========== 4b. a listen address that is not an address ==========="
+# The VTY refuses it itself, where it is typed. Until 0.110.0 this section
+# said listen-address was free text "on purpose" and asserted that sshd was
+# the one to say no; #413 made the VTY read it as an address, the value never
+# reached sshd again, and this lab asserted a refusal nobody was making from
+# then on - red for every run of the suite, and a Z release runs none (#434).
+# What still matters is the other half, and it is kept: the refused commit
+# leaves sshd with a configuration it would start with.
 BADA=$($HX -c "configure" -c "ssh listen-address not:an:address" \
            -c "commit" 2>&1)
 printf '%s\n' "$BADA" | sed 's/^/  /'
@@ -135,7 +144,9 @@ expect "the refused change was not applied: the account is still there" \
   test -n "${STILL:-}"
 
 expect_in "the VTY refuses an impossible port itself" "expected 1-65535" "$BADP"
-expect_in "sshd refuses what the VTY let through" "sshd refused" "$BADA"
+expect_in "the VTY refuses a listen address that is not one" \
+  "not an IP address" "$BADA"
+expect_not_in "and commits nothing on its account" "commit complete" "$BADA"
 expect_in "sshd could be asked what it would run with at all" \
   "listenaddress" "$SSHD_SAID"
 expect_not_in "and the address it refused is not in effect" \
