@@ -406,6 +406,18 @@ install -d -m 0755 "$DESTDIR/usr/share/prisma-routing"
 printf '%s\n' "$stamp" > "$DESTDIR/usr/share/prisma-routing/VERSION"
 chmod 0644 "$DESTDIR/usr/share/prisma-routing/VERSION"
 
+# What the operating system says it is (#438): os-release, the login banners,
+# the motd and the boot menu's name, from the stamp just written. Here and
+# not only in build-iso.sh, so a box that is upgraded says the new version
+# too. The script is installed as well, so the box can say it again after
+# anything that rewrites those files.
+say "the system's name"
+install -D -m 0755 "$REPO/appliance/prisma-identity" \
+    "$DESTDIR/usr/lib/prisma-routing/prisma-identity"
+sh "$REPO/appliance/prisma-identity" "${DESTDIR:-/}" "$stamp"
+install -D -m 0644 "$REPO/appliance/etc/sshd-identity.conf" \
+    "$DESTDIR/etc/ssh/sshd_config.d/00-identity.conf"
+
 say "kernel knobs"
 install -D -m 0644 "$REPO/appliance/etc/sysctl.conf" \
     "$DESTDIR/etc/sysctl.d/99-prisma-routing.conf"

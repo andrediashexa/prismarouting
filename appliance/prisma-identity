@@ -1,0 +1,113 @@
+#!/bin/sh
+# What the operating system says it is: Prisma Routing, not Debian (#438).
+#
+#   prisma-identity [<root>] [<version>]
+#
+# Run by appliance/build-iso.sh into the image it builds and by
+# appliance/install.sh on the box it installs onto, so a medium and an
+# upgraded box say the same thing. <root> defaults to /, <version> to the
+# stamp install.sh writes.
+#
+# WHAT IT CHANGES, measured against a stock bookworm (debian:12):
+#
+#   /usr/lib/os-release   what hostnamectl, neofetch-style tools and any script
+#                         asking "which OS" read. NOT a conffile of base-files,
+#                         so an apt upgrade of base-files puts Debian's back -
+#                         which is why it is DIVERTED rather than written over.
+#                         ID_LIKE=debian stays: apt, and every script that asks
+#                         whether this is a Debian-like system, keep working.
+#   /etc/issue            the console's login banner ("Debian GNU/Linux 12 \n \l")
+#   /etc/issue.net        the ssh pre-login banner, when one is configured.
+#                         Both ARE conffiles, so dpkg keeps a local edit.
+#   /etc/motd             Debian's licence paragraph, printed at every ssh login.
+#                         Not a conffile: base-files' postinst copies it in on
+#                         the first install only, so an upgrade leaves it.
+#   /etc/update-motd.d/10-uname
+#                         prints `uname -snrvm` at every login, and the kernel
+#                         calls itself Debian. Turned off, not deleted: it is a
+#                         conffile, and an absent conffile is one dpkg restores.
+#   /etc/default/grub     GRUB_DISTRIBUTOR, the name on the boot menu an
+#                         installed disk shows. update-grub reads it.
+#
+# And appliance/install.sh installs etc/sshd-identity.conf beside it, which
+# takes "Debian-2+deb12u10" out of the version string sshd hands to anything
+# that connects to port 22 - the one place the old name reached the network.
+#
+# WHAT IT DOES NOT CHANGE: `uname`. The kernel's release and version strings
+# are compiled into the image, and changing them is a kernel build this
+# product decided against (#163). That is the maintainer's call and is on
+# #438.
+set -eu
+ROOT=${1:-/}
+ROOT=${ROOT%/}
+VER=${2:-$(cat "$ROOT/usr/share/prisma-routing/VERSION" 2>/dev/null || true)}
+VER=${VER%% *}
+NAME="Prisma Routing"
+URL=https://hexarouting.hexanetworks.com.br
+
+say() { echo "  identity: $*"; }
+
+# The divert first, so the write below lands on a path dpkg no longer owns.
+# Asked, not assumed: a second run - every upgrade is one - finds it done.
+# Only on a root dpkg manages: a throwaway directory an install is proved in
+# (appliance/build-upgrade.sh, test/test_upgrade_artifact.sh) has no
+# /var/lib/dpkg, and dpkg-divert refuses to run there at all.
+if command -v dpkg-divert >/dev/null 2>&1 && [ -f "$ROOT/var/lib/dpkg/status" ]; then
+  if ! dpkg-divert --root="$ROOT/" --listpackage /usr/lib/os-release \
+       2>/dev/null | grep -qx LOCAL; then
+    # --no-rename: the file stays where it is until the write below replaces
+    # it. dpkg refuses to call --rename safe on an Essential package's file,
+    # because between the rename and the write the system has no os-release.
+    dpkg-divert --root="$ROOT/" --local --no-rename \
+      --divert /usr/lib/os-release.debian --add /usr/lib/os-release >/dev/null
+    say "os-release diverted: base-files now writes Debian's to os-release.debian"
+  fi
+else
+  say "not a dpkg root: os-release written without a diversion"
+fi
+
+mkdir -p "$ROOT/usr/lib" "$ROOT/etc"
+# The version lines are built here, not with ${VER:+...} inside the heredoc:
+# dash removes the double quotes within that expansion, and os-release came
+# out VERSION_ID=0.125.0, unquoted, which test/test_prisma_identity.sh caught.
+VLINES=
+[ -n "$VER" ] && VLINES="VERSION_ID=\"$VER\"
+VERSION=\"$VER\"
+"
+cat > "$ROOT/usr/lib/os-release" <<EOF
+PRETTY_NAME="$NAME${VER:+ $VER}"
+NAME="$NAME"
+${VLINES}ID=prisma-routing
+ID_LIKE=debian
+VERSION_CODENAME=bookworm
+HOME_URL="$URL"
+SUPPORT_URL="$URL"
+EOF
+# /etc/os-release is a relative link to it on bookworm; made so if it is not.
+[ -L "$ROOT/etc/os-release" ] || ln -sfn ../usr/lib/os-release "$ROOT/etc/os-release"
+
+printf '%s \\n \\l\n\n' "$NAME${VER:+ $VER}" > "$ROOT/etc/issue"
+printf '%s\n' "$NAME${VER:+ $VER}" > "$ROOT/etc/issue.net"
+printf '\n%s%s. %s\n\n' "$NAME" "${VER:+ $VER}" "$URL" > "$ROOT/etc/motd"
+[ -f "$ROOT/etc/update-motd.d/10-uname" ] && chmod a-x "$ROOT/etc/update-motd.d/10-uname"
+
+if [ -f "$ROOT/etc/default/grub" ] &&
+   ! grep -qx "GRUB_DISTRIBUTOR=\"$NAME\"" "$ROOT/etc/default/grub"; then
+  if grep -q '^GRUB_DISTRIBUTOR=' "$ROOT/etc/default/grub"; then
+    sed -i "s|^GRUB_DISTRIBUTOR=.*|GRUB_DISTRIBUTOR=\"$NAME\"|" "$ROOT/etc/default/grub"
+  else
+    printf 'GRUB_DISTRIBUTOR="%s"\n' "$NAME" >> "$ROOT/etc/default/grub"
+  fi
+  # The menu a disk boots from is /boot/grub/grub.cfg, which update-grub
+  # writes from the file above, and nothing else runs it until the next kernel
+  # package does - so a box UPGRADED to this would say Debian at its next boot
+  # regardless. Only on the running root that has a grub.cfg: the ISO build's
+  # chroot has none (prisma-routing-install runs update-grub on the disk it
+  # makes), and a directory this is proved in is nobody's boot menu.
+  if [ "$ROOT" = "" ] && [ -f /boot/grub/grub.cfg ] &&
+     command -v update-grub >/dev/null 2>&1; then
+    update-grub >/dev/null 2>&1 && say "boot menu rewritten" ||
+      say "update-grub failed: the boot menu says the old name until it runs"
+  fi
+fi
+say "the system says $NAME${VER:+ $VER}"

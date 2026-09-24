@@ -194,7 +194,7 @@ echo "=== and the list is of the root, not of a list somebody kept ==="
 # does not name a file cannot report anything about that file. install.sh has
 # no list - `install` is a shell function that records where it put things -
 # and this is what holds that true. Every regular file under an installed root
-# is in the manifest, or it is one of three named below with a reason.
+# is in the manifest, or it is one of seven named below with a reason.
 #
 # A `cp` added to install.sh tomorrow goes red here, which is the direction
 # that matters: the file would otherwise be on every box, unchecked, and
@@ -207,17 +207,26 @@ echo "=== and the list is of the root, not of a list somebody kept ==="
 # etc/frr/daemons is the Debian package's file, which this installer edits in
 # place and did not put there - it belongs to frr, and reporting an frr
 # upgrade as this product's corruption would be a check nobody believes.
+# etc/issue, etc/issue.net, etc/motd and usr/lib/os-release are base-files'
+# paths, rewritten by appliance/prisma-identity (#438) the same way: the first
+# three are files an operator is entitled to edit - a login banner is the
+# commonest local change there is - and the fourth is diverted, so it is ours
+# only until somebody removes the diversion. None is a claim about the build.
 cat > "$WORK/expected-absent" <<'ABSENT'
 etc/frr/daemons
+etc/issue
+etc/issue.net
+etc/motd
+usr/lib/os-release
 usr/share/prisma-routing/MANIFEST
 usr/share/prisma-routing/VERSION
 ABSENT
 UNNAMED=$(comm -23 "$WORK/on-root" "$WORK/in-manifest" | sort)
 if [ "$UNNAMED" = "$(cat "$WORK/expected-absent")" ]; then
-  ok "every file on the root is in the manifest but the three that cannot be"
+  ok "every file on the root is in the manifest but the seven that cannot be"
 else
   bad "the manifest and the root disagree about what was installed.
-        on the root and not in the manifest, beyond the three expected:
+        on the root and not in the manifest, beyond the seven expected:
 $(comm -23 "$WORK/on-root" "$WORK/in-manifest" | comm -23 - "$WORK/expected-absent" | sed 's/^/          /')
         expected and not found:
 $(printf '%s\n' "$UNNAMED" | comm -13 - "$WORK/expected-absent" | sed 's/^/          /')"
