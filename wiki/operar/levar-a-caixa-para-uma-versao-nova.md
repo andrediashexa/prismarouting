@@ -55,6 +55,7 @@ Sem versão, ele diz qual versão a caixa roda e qual é a mais nova publicada, 
 
 Os passos abaixo são o mesmo processo à mão, para uma caixa que não alcança a internet.
 
+
 :::info
 **Desde a 0.125.0 o pacote leva as imagens dos contêineres**, por isso tem cerca de 120 MB e não alguns megabytes. Uma caixa que foi atualizada em vez de instalada, e ainda roda o dataplane e o roteamento como serviços do systemd, **passa para os contêineres no próximo boot**, igual a uma caixa instalada pela mídia. Uma caixa que já roda nos contêineres passa a usar as imagens da versão nova, e não mais as da versão anterior.
 
