@@ -561,7 +561,11 @@ boots, and a container that installs its own tools four times. The maintainer
 set the rule that follows from it - a **Z** release publishes the upgrade
 artifact and no medium, and may change only what that artifact carries - and
 the three issues are the order: a clock on every step first, then the
-versioned base rootfs, then the gate learning which digit moved.
+versioned base rootfs, then the gate learning which digit moved. The clock
+then re-aimed #409: `make iso` was 16% of a release and the three QEMU boots
+79%. With the maintainer's agreement (2026-09-24) #409 was closed by running
+the three at once, which took the block from 3597 s to 1868 s, measured. The
+versioned rootfs is not built, because what it could save is 7.6% of a release.
 
 A plan that says this out loud is worth more than one that reads as if work
 were queued: what this product needs next is a box with a real NIC in it and a
