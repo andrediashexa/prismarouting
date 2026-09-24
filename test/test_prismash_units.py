@@ -5641,5 +5641,53 @@ finally:
     _srv.shutdown()
 ok("downloaded, verified, and run through the upgrade a hand would run")
 
+print("\n=== a dynamic pool nothing exports is said at commit (#444) ===")
+# Mutations shown red, one at a time: the UDP test without its collector
+# half (enable alone passes as exported); tcp/syslog `disable` counted as a
+# collector; the mode test dropped (a deterministic pool is warned).
+_dyn = Pool("dinamico")
+_dyn.mode = "dynamic"
+_det = Pool("residencial")
+_def = prismash.dynamic_export_findings
+check(_def({"residencial": _det}, []) == [],
+      "a deterministic pool owes no export and is told nothing")
+_detr = Pool("reservado")
+_detr.block_reserve = 2
+_f = _def({"reservado": _detr}, [])
+check(len(_f) == 1 and "a reserve" in _f[0][2]
+      and "formula does not produce" in _f[0][2],
+      f"but one with a reserve owes it for those blocks, and is told: {_f!r}")
+_f = prismash.dynamic_export_findings({"dinamico": _dyn}, [])
+check(len(_f) == 1 and _f[0][0] == "warning"
+      and _f[0][1] == "nat cgnat pool dinamico"
+      and "nothing exports" in _f[0][2],
+      f"a dynamic pool with no export at all is warned, by name: {_f!r}")
+for _g, _warned, _what in (
+        (["cgnat logging udp 10.0.0.9 src 10.0.0.1",
+          "cgnat logging enable"], False, "UDP enabled with a collector"),
+        (["cgnat logging enable"], True, "UDP enabled with no collector"),
+        (["cgnat logging udp 10.0.0.9 src 10.0.0.1"], True,
+         "a UDP collector that is not enabled"),
+        (["cgnat logging tcp 10.0.0.9"], False, "a TCP collector"),
+        (["cgnat logging tcp disable"], True, "TCP turned off"),
+        (["cgnat logging syslog 10.0.0.9 enterprise 32473"], False,
+         "a syslog collector"),
+        (["cgnat logging syslog disable"], True, "syslog turned off")):
+    check(bool(_def({"dinamico": _dyn}, _g)) == _warned,
+          f"{_what}: {'warned' if _warned else 'not warned'}")
+_dyn2 = Pool("dinamico2")
+_dyn2.mode = "dynamic"
+check([f[1] for f in _def({"dinamico2": _dyn2, "dinamico": _dyn,
+                           "residencial": _det}, [])]
+      == ["nat cgnat pool dinamico", "nat cgnat pool dinamico2"],
+      "every dynamic pool is named, in order, and only those")
+_sh = shell()
+for _one in _def({"dinamico": _dyn, "reservado": _detr}, []):
+    rv, text = driven(_sh.say_finding, *_one)
+    check(all(len(r) <= 79 for r in text.splitlines())
+          and text.splitlines()[-1].strip() == _one[1],
+          f"and it prints inside the console, the pool on its own row: "
+          f"{text!r}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
