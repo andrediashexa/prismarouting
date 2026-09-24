@@ -28,6 +28,7 @@ import os
 import re
 import sys
 import shlex
+import shutil
 import tempfile
 import types
 
@@ -409,7 +410,7 @@ ok("subtree, hint, or nothing")
 print("\n=== tree_walk: the same walk from a mode's root ===")
 # Mutation shown red: walk TREE["config"] whatever the mode.
 sub, hint = prismash.tree_walk("operational", ["system"])
-check(isinstance(sub, dict) and set(sub) == {"reboot", "shutdown"}
+check(isinstance(sub, dict) and set(sub) == {"reboot", "shutdown", "upgrade"}
       and hint is None, f"'system' in operational mode: {(sub, hint)!r}")
 check(prismash.tree_walk("operational", ["clear", "ospf", "neighbor"])
       == (None, "<A.B.C.D>"), "a hint reached three words down")
@@ -5509,6 +5510,136 @@ for _typed, _needle in (("dns server dns.google", "expected an address"),
     check(_needle in _o.getvalue()
           and _sh.candidate.dns_servers == ["1.1.1.1", "9.9.9.9"],
           f"{_typed!r} is refused, and nothing changes: {_o.getvalue()!r}")
+
+print("\n=== system upgrade: from the releases directory, verified (#440) ===")
+# A releases directory of this suite's own, served over HTTP on loopback, so
+# what is asked is a download and not a function returning bytes.
+# Mutations shown red, one at a time: the sha256 comparison removed (a
+# package that does not match is unpacked and run); the older-version test
+# removed (0.99.6 is installed over 0.99.7); extract_within() without its
+# path test (a member at ../ lands outside the package).
+import http.server as _hs
+import tarfile as _tf
+import threading as _th
+import hashlib as _hl
+
+assert prismash.version_tuple("0.122.9 (f8448d7)") == (0, 122, 9)
+check(prismash.version_tuple("0.122.10") > prismash.version_tuple("0.122.9"),
+      "0.122.10 is newer than 0.122.9: numbers, not strings")
+for _bad in ("0.122", "banana", "", "0.\u0661.2"):
+    check(prismash.version_tuple(_bad) is None, f"{_bad!r} is not a version")
+
+_rel = os.path.join(_root, "releases")
+
+
+def _package(version, rc=0, evil=None):
+    name = f"prisma-routing-{version}-upgrade"
+    src = os.path.join(_root, "pkgsrc", name)
+    os.makedirs(os.path.join(src, "appliance"), exist_ok=True)
+    with open(os.path.join(src, "appliance", "upgrade"), "w") as f:
+        f.write(f"#!/bin/sh\necho UPGRADE-RAN {version}\nexit {rc}\n")
+    if os.path.lexists(os.path.join(src, "upgrade")):
+        os.unlink(os.path.join(src, "upgrade"))
+    os.symlink("appliance/upgrade", os.path.join(src, "upgrade"))
+    d = os.path.join(_rel, version)
+    os.makedirs(d, exist_ok=True)
+    tgz = os.path.join(d, name + ".tar.gz")
+    with _tf.open(tgz, "w:gz") as t:
+        t.add(src, arcname=name)
+        if evil:
+            info = _tf.TarInfo(evil)
+            data = b"x"
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+    with open(tgz, "rb") as f:
+        digest = _hl.sha256(f.read()).hexdigest()
+    with open(tgz + ".sha256", "w") as f:
+        f.write(f"{digest}  {name}.tar.gz\n")
+    return tgz
+
+
+_package("0.99.8")
+_package("0.99.9", rc=3)
+_package("0.100.0")
+os.symlink("0.100.0", os.path.join(_rel, "latest"))
+_srv = _hs.ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k:
+    _hs.SimpleHTTPRequestHandler(*a, directory=_rel, **k))
+_srv.RequestHandlerClass.log_message = lambda *a: None
+_th.Thread(target=_srv.serve_forever, daemon=True).start()
+_saved_url, _saved_work = prismash.RELEASES_URL, prismash.UPGRADE_WORK
+prismash.RELEASES_URL = f"http://127.0.0.1:{_srv.server_address[1]}"
+prismash.UPGRADE_WORK = os.path.join(_root, "upgrade-work")
+os.makedirs(prismash.UPGRADE_WORK, exist_ok=True)
+try:
+    check(prismash.latest_release() == ("0.100.0", ""),
+          f"the newest is read off latest/: {prismash.latest_release()!r}")
+    check(prismash.latest_release(lambda u: (b"<html></html>", ""))[0] is None,
+          "a latest/ with no package in it is no answer, said")
+    check(prismash.fetch_url(prismash.RELEASES_URL + "/9.9.9/x")[0] is None,
+          "a missing file is a sentence, not a traceback")
+
+    _sh = shell()
+    rv, text = driven(_sh.system_upgrade, [])
+    check("this box runs: 0.99.7" in text and "newest published: 0.100.0" in text
+          and "system upgrade 0.100.0" in text,
+          f"with no version it says where the box is and where it could be: "
+          f"{text!r}")
+    for _v, _needle in (("0.99.7", "not newer than this box"), ("0.99.6", "not newer than this box"),
+                        ("banana", "usage: system upgrade")):
+        rv, text = driven(_sh.system_upgrade, [_v])
+        check(_needle in text and "downloading" not in text,
+              f"{_v!r} is refused before anything is downloaded: {text!r}")
+
+    rv, text = driven(lambda: _sh.system_upgrade(["0.99.8"]))
+    check("sha256" in text and "matches" in text
+          and "UPGRADE-RAN 0.99.8" in text and "upgraded to 0.99.8" in text
+          and "'save' before rebooting" in " ".join(text.split()),
+          f"a release is downloaded, verified, and its own upgrade run: "
+          f"{text!r}")
+    check(os.listdir(prismash.UPGRADE_WORK) == [],
+          "and the unpacked package is gone once it succeeded")
+
+    rv, text = driven(_sh.system_upgrade, ["0.99.9"])
+    check("UPGRADE-RAN 0.99.9" in text and "stopped with status 3" in " ".join(text.split())
+          and "upgraded to" not in text,
+          f"upgrade's own refusal is shown, with its status: {text!r}")
+    check(len(os.listdir(prismash.UPGRADE_WORK)) == 1,
+          "and the package is kept for whoever reads it next")
+    for _d in os.listdir(prismash.UPGRADE_WORK):
+        shutil.rmtree(os.path.join(prismash.UPGRADE_WORK, _d))
+
+    # A package that does not match its sum is refused, and not unpacked.
+    _t = os.path.join(_rel, "0.100.0", "prisma-routing-0.100.0-upgrade.tar.gz")
+    with open(_t + ".sha256", "w") as _f:
+        _f.write("0" * 64 + "  x\n")
+    rv, text = driven(lambda: _sh.run_upgrade("0.100.0"))
+    check("does not match its sha256" in text and "UPGRADE-RAN" not in text
+          and os.listdir(prismash.UPGRADE_WORK) == [],
+          f"a sum that does not match: refused, nothing unpacked: {text!r}")
+
+    _cg = shell()
+    _cg.caps = {prismash.CAP_CGNAT}
+    rv, text = driven(_cg.system_upgrade, ["0.100.0"])
+    check("downloading" not in text and "permission" in text.lower(),
+          f"a CGNAT account is refused before anything is asked: {text!r}")
+
+    _evil = _package("0.101.0", evil="../outside-the-package")
+    _dest = os.path.join(_root, "extract-here")
+    os.makedirs(_dest, exist_ok=True)
+    why = prismash.extract_within(_evil, _dest)
+    check(why and "outside the package" in why
+          and not os.path.exists(os.path.join(_root, "outside-the-package")),
+          f"a member at ../ is refused and nothing is written: {why!r}")
+    _ok_pkg = os.path.join(_rel, "0.99.8", "prisma-routing-0.99.8-upgrade.tar.gz")
+    _dest2 = os.path.join(_root, "extract-ok")
+    os.makedirs(_dest2, exist_ok=True)
+    check(prismash.extract_within(_ok_pkg, _dest2) is None and os.path.exists(
+          os.path.join(_dest2, "prisma-routing-0.99.8-upgrade", "upgrade")),
+          "a package whose link stays inside unpacks whole")
+finally:
+    prismash.RELEASES_URL, prismash.UPGRADE_WORK = _saved_url, _saved_work
+    _srv.shutdown()
+ok("downloaded, verified, and run through the upgrade a hand would run")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

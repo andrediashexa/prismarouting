@@ -15,6 +15,7 @@ and does not pin us to an FRR release.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import ipaddress
 import json
@@ -25,6 +26,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import textwrap
 import time
@@ -406,6 +408,95 @@ def prisma_routing_version_source():
 def prisma_routing_version():
     """Version of this build, or a string that admits it is unknown."""
     return prisma_routing_version_source()[0]
+
+
+# Where `system upgrade` finds releases (#440), the public directory #439
+# publishes to. A box behind a mirror points this elsewhere; nothing on a box
+# sets it otherwise.
+RELEASES_URL = os.environ.get("PRISMA_RELEASES_URL",
+                              "https://hexarouting.hexanetworks.com.br/releases")
+#: Where a downloaded release is unpacked: /var/tmp, which survives the
+#: session that asked and is not /tmp's tmpfs on a box short of memory.
+UPGRADE_WORK = os.environ.get("PRISMA_UPGRADE_WORK", "/var/tmp")
+
+
+def version_tuple(text):
+    """
+    (X, Y, Z) out of the front of `text`, or None when it is not one.
+
+    The front, because this box's own version reads "0.122.9 (f8448d7)" and
+    the build hash is not part of the order. Digits only, by is_number(): a
+    version is compared as numbers, so 0.122.10 is newer than 0.122.9.
+    """
+    head = (text or "").split()[:1]
+    parts = head[0].split(".") if head else []
+    if len(parts) != 3 or not all(is_number(p) for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def fetch_url(url, timeout=30):
+    """(bytes, "") from `url`, or (None, why). Never raises: a box that cannot
+    reach the releases is a sentence, not a traceback."""
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.read(), ""
+    except urllib.error.HTTPError as e:
+        return None, f"{url}: HTTP {e.code}"
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return None, f"{url}: {getattr(e, 'reason', e)}"
+
+
+def latest_release(fetch=fetch_url, base=None):
+    """
+    (version, "") of the newest published release, or (None, why).
+
+    Read off `latest/`'s listing, where the package's own name carries its
+    version - so the answer is what an operator would download, not a
+    number written somewhere beside it.
+    """
+    body, why = fetch((base or RELEASES_URL).rstrip("/") + "/latest/")
+    if body is None:
+        return None, why
+    found = re.findall(r"prisma-routing-(\d+\.\d+\.\d+)-upgrade\.tar\.gz",
+                       body.decode("utf-8", "replace"))
+    if not found:
+        return None, "the releases' latest/ lists no upgrade package"
+    return max(found, key=version_tuple), ""
+
+
+def extract_within(tar_path, dest):
+    """
+    Unpack `tar_path` into `dest`, or say why not; None when done.
+
+    Every member is checked BEFORE anything is written: a path that leaves
+    `dest`, a link whose target does, and anything that is not a file, a
+    directory or a link is refused whole. The package carries one link of its
+    own - `upgrade` pointing into `appliance/` - and it stays inside. Checked
+    here rather than by tarfile's extraction filters, which the Python on a
+    bookworm box cannot be counted on to have.
+    """
+    root = os.path.realpath(dest)
+    try:
+        with tarfile.open(tar_path, "r:gz") as t:
+            members = t.getmembers()
+            for m in members:
+                target = os.path.realpath(os.path.join(root, m.name))
+                if target != root and not target.startswith(root + os.sep):
+                    return f"'{m.name}' would land outside the package"
+                if m.issym() or m.islnk():
+                    base = os.path.dirname(target) if m.issym() else root
+                    to = os.path.realpath(os.path.join(base, m.linkname))
+                    if not to.startswith(root + os.sep):
+                        return f"'{m.name}' links outside the package"
+                elif not (m.isfile() or m.isdir()):
+                    return f"'{m.name}' is not a file, a directory or a link"
+            t.extractall(root, members)
+    except (tarfile.TarError, OSError, EOFError) as e:
+        return f"the package could not be unpacked: {e}"
+    return None
 
 
 def version_split(build, mine, source):
@@ -2080,6 +2171,8 @@ TREE = {
                        "back by itself", None),
             "shutdown": ("every session ends, unsaved changes are lost; the "
                          "box stays off", None),
+            "upgrade": ("the newest published release, or download, verify "
+                        "and install the one named", "[<version>]"),
         }),
         "exit": ("end the session", None),
     },
@@ -10911,7 +11004,122 @@ class Shell:
             if rc != 0:
                 self.err_prose("the box could not be shut down", *said)
             return
+        if rest[:1] == ["upgrade"]:
+            self.system_upgrade(rest[1:])
+            return
         self.err("usage: system reboot | system shutdown")
+
+    def system_upgrade(self, args):
+        """
+        `system upgrade [<version>]` (#440): a release, from where the box can
+        download it, through the same `upgrade` an operator runs by hand.
+
+        Without a version it says which one this box runs and which one is
+        the newest published, and changes nothing. With one it downloads the
+        package and its sha256 from RELEASES_URL, refuses a sum that does not
+        match before anything is unpacked, unpacks inside a directory of its
+        own, and runs the package's `upgrade`, showing every row it prints.
+        Its refusals are its own and stay intact. Same gate as `system
+        reboot`, and in practice root, for the reason do_system() measures.
+
+        The version this box runs and an older one are refused: going back
+        is a decision with costs of its own (#436 changed a spelling an older
+        release does not read), and it stays the hand-run path.
+
+        Ctrl-C does nothing while `upgrade` runs, for the reason it does
+        nothing during a commit (#441): a box half upgraded is worse than a
+        slow one. The terminal would send SIGINT to `upgrade` too, so it is
+        ignored in both, by sigint_ignored().
+        """
+        if not self.require(CAP_ALL, "system upgrade"):
+            return
+        mine = prisma_routing_version()
+        if not args:
+            newest, why = latest_release()
+            print(f"this box runs: {mine}")
+            if newest is None:
+                self.err_prose("the newest release could not be read", why)
+                return
+            print(f"newest published: {newest}")
+            if version_tuple(newest) and version_tuple(mine) \
+                    and version_tuple(newest) > version_tuple(mine):
+                print_prose(f"'system upgrade {newest}' takes this box to it")
+            return
+        if len(args) != 1 or version_tuple(args[0]) is None:
+            self.err("usage: system upgrade [<version>], as in "
+                     "'system upgrade 0.123.0'")
+            return
+        want = args[0]
+        have = version_tuple(mine)
+        if have and version_tuple(want) <= have:
+            self.err_prose("system upgrade: not newer than this box",
+                           f"'{want}', and it runs {mine}; going back is the "
+                           f"hand-run path, with its own costs")
+            return
+        self.run_upgrade(want)
+
+    @sigint_ignored
+    def run_upgrade(self, want):
+        """Download, verify, unpack and run release `want`; see
+        system_upgrade(). SIGINT is ignored for the whole of it."""
+        name = f"prisma-routing-{want}-upgrade"
+        base = f"{RELEASES_URL.rstrip('/')}/{want}/{name}.tar.gz"
+        print(f"downloading {base}")
+        pkg, why = fetch_url(base, timeout=300)
+        if pkg is None:
+            self.err_prose("system upgrade: the package could not be "
+                           "downloaded; nothing was changed", why)
+            return
+        summ, why = fetch_url(base + ".sha256")
+        if summ is None:
+            self.err_prose("system upgrade: its sha256 could not be "
+                           "downloaded; nothing was changed", why)
+            return
+        published = (summ.decode("ascii", "replace").split() or [""])[0]
+        got = hashlib.sha256(pkg).hexdigest()
+        if got != published.lower():
+            self.err_prose("system upgrade: it does not match its sha256",
+                           "nothing was changed",
+                           f"published {published or '(nothing)'}, "
+                           f"downloaded {got}")
+            return
+        print("the package matches its published sha256:")
+        print(f"    {got}")
+        work = tempfile.mkdtemp(prefix=f"prisma-upgrade-{want}-",
+                                dir=UPGRADE_WORK)
+        tar_path = os.path.join(work, name + ".tar.gz")
+        with open(tar_path, "wb") as f:
+            f.write(pkg)
+        why = extract_within(tar_path, work)
+        script = os.path.join(work, name, "upgrade")
+        if why is None and not os.path.exists(script):
+            why = f"it has no {name}/upgrade"
+        if why:
+            self.err_prose("system upgrade: the package was refused; nothing "
+                           "was changed", why)
+            shutil.rmtree(work, ignore_errors=True)
+            return
+        try:
+            p = subprocess.Popen(["sh", script], stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, text=True,
+                                 cwd=os.path.join(work, name))
+            for row in p.stdout:
+                print(row.rstrip("\n"))
+            rc = p.wait()
+        except OSError as e:
+            print(f"  {e}")
+            rc = 127
+        if rc != 0:
+            self.err_prose("system upgrade: 'upgrade' did not finish",
+                           f"it stopped with status {rc}; what it said is "
+                           f"above, and the package is kept in {work} for "
+                           f"whoever reads it next")
+            return
+        shutil.rmtree(work, ignore_errors=True)
+        print(f"upgraded to {want}")
+        print_prose("the running configuration is what a reboot replays: "
+                    "'save' before rebooting, so the box comes back as it "
+                    "is now")
 
     def say_system_cost(self):
         """

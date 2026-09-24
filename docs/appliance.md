@@ -2367,6 +2367,39 @@ all. Three changes, all of which **MUST** hold:
 Diagnosing a box whose profile did not match its hardware meant guessing across
 whole build cycles, because the one component that knew why discarded it.
 
+## Upgrading from the VTY: `system upgrade`
+
+```
+prisma> system upgrade
+prisma> system upgrade 0.123.0
+```
+
+Added in [#440](https://github.com/andrediashexa/hexarouting/issues/440), on
+the public releases directory #439 publishes. With no version it prints which
+release this box runs and which is the newest published, read off
+`releases/latest/`, where the package's own name carries its version. It
+changes nothing. With a version it:
+
+1. downloads the package and its `sha256` from `PRISMA_RELEASES_URL`, which
+   defaults to the public directory and can point a box at a mirror;
+2. computes the sum here and **refuses a mismatch before anything is
+   unpacked**;
+3. unpacks into a directory of its own under `/var/tmp`, refusing any member
+   that would land, or link, outside it;
+4. runs the package's own `upgrade`, the one an operator runs by hand, and
+   shows every row it prints. Its refusals (a platform the package cannot
+   carry, a box still carrying the pre-rename name) are unchanged, and a
+   refusal keeps the package for whoever reads it next;
+5. says that `save` comes before any reboot, because the running
+   configuration is what a reboot replays.
+
+The version the box runs, and any older one, are refused. Going back has costs
+of its own (#436 changed a spelling an older release does not read), and it
+stays the hand-run path. The gate is `system reboot`'s: an administrator, and
+in practice root, because the upgrade writes the product's files. Ctrl-C does
+nothing while `upgrade` runs, for the reason it does nothing during a commit
+(#441).
+
 ## The kernel question: upgrade it, or build our own?
 
 "We should upgrade or rebuild the kernel for performance" is the kind of
