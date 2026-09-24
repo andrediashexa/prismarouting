@@ -256,6 +256,8 @@ Os servidores DNS que a caixa consulta, sem editar `/etc/resolv.conf` à mão. A
 
 `show running-config` mostra os `dns server` que foram configurados pela VTY. Os servidores recebidos do DHCP não aparecem ali, porque não são uma configuração sua.
 
+**Comando por ssh cai no VTY.** `ssh <conta>@<caixa> "show cgnat pool"` é executado pelo VTY, com o papel da conta. Só root e administradores (`prisma-admin`) recebem um shell do sistema, seja por comando direto, por `scp`/`rsync` ou quando o VTY falha. Uma conta de CGNAT ou somente leitura que tenta um comando do sistema recebe uma explicação e a sessão termina.
+
 # Contas de usuário
 
 ```
