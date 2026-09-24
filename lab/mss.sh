@@ -48,6 +48,13 @@ vppctl set ip neighbor pg0 100.64.0.5 02:00:00:00:00:05
 vppctl ip route add 8.8.8.8/32 via 200.150.0.2 pg1
 vppctl ip route add 100.64.0.0/22 via 100.64.3.253 pg0
 vppctl bpa pool lab inside 100.64.0.0/22 outside 200.150.0.16/30 block 512
+# `auto` BEFORE any interface has joined the CGNAT (#390). There is no MTU to
+# derive a clamp from yet, so the pool is configured and clamps nothing - and
+# the box has to say so, because silence here reads as the clamp working.
+# Asked, then put back to off, so everything below starts where it did.
+AUTO_EARLY=$(vppctl bpa tcp-mss lab auto 2>&1)
+vppctl bpa tcp-mss lab off >/dev/null 2>&1
+echo "  'auto' with no CGNAT interface yet: ${AUTO_EARLY:-<nothing>}"
 vppctl set interface bpa in2out pg0
 vppctl set interface bpa out2in pg1
 
@@ -133,7 +140,7 @@ echo
 echo "=========== 8. auto, from the interface MTUs ==========="
 vppctl set interface mtu packet 1400 pg1 >/dev/null 2>&1
 if [ "$MODE" != off ]; then
-  vppctl bpa tcp-mss lab auto
+  AUTO_LATE=$(vppctl bpa tcp-mss lab auto 2>&1)
 fi
 # The resolved number is recomputed by the process node, so give it a tick.
 sleep 2
@@ -194,6 +201,13 @@ expect_in "a clamp above a jumbo frame is refused" "536-9000" "$R_HIGH"
 expect_in "an unknown pool is refused" "no such pool" "$R_POOL"
 
 expect_in "the clamp is in the running configuration" " tcp-mss auto" "$CONF"
+expect_in "'auto' with no CGNAT interface yet says it clamps nothing, until one does" \
+  "note: no CGNAT interface has an MTU yet, so 'auto' clamps nothing until one does" \
+  "$AUTO_EARLY"
+# The control: the same statement once an interface has an MTU says nothing,
+# or the note would be a caution printed every time and read by nobody.
+expect_not_in "and once an interface has one, 'auto' is taken without the note" \
+  "clamps nothing" "${AUTO_LATE:-}"
 expect_in "clamped options were counted" "MSS options lowered" "$ERR"
 
 verdict
