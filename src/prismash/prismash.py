@@ -1504,6 +1504,37 @@ CGNAT_CONFIG = {
     "session-table": ("session table sizing", "buckets <n> memory <MB>"),
 }
 
+
+def cgnat_statement_short(words):
+    """
+    Why `cgnat <words>` stops short of a statement, as prose, or () if not.
+
+    `words` starts at the setting, which the caller has already found in
+    CGNAT_CONFIG. The walk ends well only on a leaf (None) or on an argument
+    hint with at least one word given for it; the VALUE is the caller's to
+    judge, since the hint is prose and not a grammar. Ending on a dict is a
+    statement that stopped halfway, and a word the dict does not have is one
+    this box does not take - both staged in silence until #431.
+
+    The operator's words go in the prose and not in a verdict, for the width
+    #363 gives: they are theirs, and have no widest value.
+    """
+    node, i = CGNAT_CONFIG[words[0]][1], 1
+    while True:
+        said = "cgnat " + " ".join(words[:i])
+        if node is None:
+            return ()
+        if isinstance(node, str):
+            if len(words) > i:
+                return ()
+            return (f"'{said}' needs a value: {said} {node}",)
+        if len(words) <= i:
+            return (f"'{said}' needs one of: " + ", ".join(sorted(node)),)
+        if words[i] not in node:
+            return (f"'{words[i]}' is not one of them; '{said}' takes: "
+                    + ", ".join(sorted(node)),)
+        node, i = node[words[i]][1], i + 1
+
 COMMIT = {
     "check": ("validate the candidate without applying it, and report which "
               "subscribers a change would re-map", None),
@@ -5304,6 +5335,66 @@ class Frr:
                 return "\n".join(said[-6:])
         return "\n".join(keep[-4:]) if keep else (
             out.splitlines()[-1] if out else "")
+
+    #: The three answers `dryrun` gives. Three and not two: a statement FRR
+    #: could not be asked about is neither accepted nor refused, and printing
+    #: either would be a guess (#431).
+    DRYRUN_ACCEPTED, DRYRUN_REFUSED, DRYRUN_UNCHECKED = (
+        "accepted", "refused", "unchecked")
+
+    def dryrun(self, ctx, line):
+        """
+        Would FRR accept `line`, typed inside the blocks `ctx` names?
+
+        Returns (verdict, words): FRR's own refusal for DRYRUN_REFUSED, the
+        reason nothing was asked for DRYRUN_UNCHECKED, "" when accepted.
+
+        `vtysh --dryrun` parses a file against FRR's whole grammar and applies
+        nothing. MEASURED on FRR 10.7.1 with NO daemon running, which is the
+        property this rests on - a box whose bgpd is down still gets its typo
+        caught: `bananas` inside `router bgp` is `rc=2 % Unknown command`,
+        `neighbor` alone is `rc=4 % Command incomplete`, a good statement is
+        rc 0, in about 18 ms a run. The file is the open block path and then
+        the line, because the same word is a statement in one block and
+        nothing in another.
+
+        `% Unknown command` is also FRR's answer to a bad VALUE - `bgp
+        router-id 999.1.1.1` gets it - so the caller quotes FRR rather than
+        naming the word it thinks was wrong.
+        """
+        fd, path = tempfile.mkstemp(prefix="prismash-dryrun-", suffix=".conf")
+        try:
+            with os.fdopen(fd, "w") as f:
+                for depth, block in enumerate(ctx):
+                    f.write(" " * depth + block + "\n")
+                f.write(" " * len(ctx) + line + "\n")
+            try:
+                p = subprocess.run([VTYSH, "--dryrun", "-f", path],
+                                   capture_output=True, text=True, timeout=10)
+            except FileNotFoundError:
+                return self.DRYRUN_UNCHECKED, f"{VTYSH} not found"
+            except subprocess.TimeoutExpired:
+                return self.DRYRUN_UNCHECKED, "vtysh did not answer in 10s"
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        if p.returncode == 0:
+            return self.DRYRUN_ACCEPTED, ""
+        said = ((p.stdout or "") + (p.stderr or "")).splitlines()
+        # `line 3: % Unknown command[31]: netwrk 10.0.0.0/8` is what FRR
+        # prints. The line number is of a file the operator never saw, and
+        # the bracket is a column into it; what is left is FRR's sentence.
+        for s in said:
+            m = re.search(r"(%\s[^\[:]+)(?:\[\d+\])?:\s*(.*)$", s)
+            if m:
+                return self.DRYRUN_REFUSED, f"{m.group(1).strip()}: {m.group(2)}"
+        # A failure with no `%` sentence is vtysh failing, not FRR refusing:
+        # a file it could not read, a permission. Not a verdict on the line.
+        why = next((s.strip() for s in said if s.strip()),
+                   f"vtysh exited {p.returncode}")
+        return self.DRYRUN_UNCHECKED, why
 
     def _exec(self, args):
         try:
@@ -11219,6 +11310,19 @@ class Shell:
             if why:
                 self.err(f"cgnat {why}")
                 return True
+            # #273 closed the FIRST word and nothing after it (#431). `cgnat
+            # interface` with no name was staged - it does not reach its own
+            # branch, which wants a space after the word - and so were `cgnat
+            # pool`, `cgnat timeout` and `cgnat logging foo`: known first
+            # word, the rest unread. Walked against the same table `?` offers
+            # from, so the refusal and the completion cannot disagree. After
+            # the two checks above, which name a wrong timeout better than a
+            # walk can.
+            short = cgnat_statement_short(w[1:])
+            if short:
+                self.err_prose("not a whole cgnat statement; nothing staged",
+                               *short)
+                return True
             key = global_key(line)
             self.candidate.globals = [g for g in self.candidate.globals
                                       if global_key(g) != key]
@@ -11558,6 +11662,30 @@ class Shell:
                 if existing.strip() == negated:
                     del self.candidate.routing[i]
                     return True
+        # FRR IS ASKED BEFORE ANYTHING IS STAGED (#431). Until this, every
+        # line that reached here went into the candidate unread - `banana
+        # split` at [edit], `netwrk 10.0.0.0/8` inside an address-family -
+        # and the operator met it at `commit`, in FRR's words, lines away
+        # from where it was typed. Before the block below is entered, too: a
+        # `router bgp` FRR refuses must not leave the operator standing
+        # inside it with every next line landing there.
+        #
+        # `router static` is this VTY's block and not FRR's - FRR 10.7.1 says
+        # `% Unknown command: router static` - and what is typed inside it
+        # is stored as a top-level `ip route`. Left in the path, FRR refused
+        # the BLOCK, and every static route typed there was refused with it:
+        # lab/vty.sh went red on seven checks the first time this ran.
+        verdict, frr_said = self.frr.dryrun(
+            [b for b in self.frr_ctx if b != STATIC_BLOCK], line)
+        if verdict == Frr.DRYRUN_REFUSED:
+            self.err_prose("not a statement FRR accepts here; nothing staged",
+                           f"FRR answered: {frr_said}",
+                           "'?' lists what this level takes")
+            return True
+        if verdict == Frr.DRYRUN_UNCHECKED:
+            print_prose(f"note: staged WITHOUT being checked, because FRR "
+                        f"could not be asked ({frr_said}); 'commit check' "
+                        f"asks it again")
         self.candidate.routing.append(line)
         # `address-family` is a block, and leaving it out was not an omission
         # anybody noticed - it was invisible because everything in the routing

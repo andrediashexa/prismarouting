@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/02-horizontal/prisma-horizontal-negative-transparent.png">
+    <img alt="Prisma Routing" src="docs/brand/02-horizontal/prisma-horizontal-positive-transparent.png" width="420">
+  </picture>
+</p>
+
 # Prisma Routing
 
 ## TL;DR
@@ -5,9 +12,12 @@
 Software router with built-in CGNAT using **BPA** (*Bloco de Portas Alocadas* —
 allocated port blocks). VPP/DPDK dataplane, FRR control plane, IPFIX logging
 per RFC 8158, single VTY. Targets 100 Gbps+ and 200k+ subscribers, shipped as
-an installable Debian appliance. Called Prisma Routing until 0.76.1: the name
-changed, and the paths, the units, the `prismash` command and this repository
-kept theirs, on purpose (see `CHANGELOG.md`).
+an installable Debian appliance. Called HexaRouting until 0.76.1; the rename
+was a clean break, so the paths, the units and the `prismash` command carry
+the new name and nothing migrates from the old one
+([#202](https://github.com/andrediashexa/hexarouting/issues/202)). Issue links
+written before the repository was renamed still say `hexarouting`, and GitHub
+redirects them.
 
 Verified on real hardware with real Internet traffic: subscribers translated
 to the exact public addresses the reference model predicts, ICMP and HTTPS
@@ -77,7 +87,7 @@ PADRAO-DOCUMENTACAO.md how a wiki page is written (not the same as CONTRIBUTING)
 wiki/                  mirror of the wiki; tools/wiki-status.sh says what is unpublished
 ref/                   executable reference model of BPA, in Python
 src/plugins/bpa/       the VPP CGNAT plugin
-src/prismash/            the VTY
+src/prismash/          the VTY
 test/                  core tests: no VPP, no root
 lab/                   executable labs, from packet injection to real traffic
 appliance/             boot tuning, systemd units, installer, ISO builder
@@ -134,7 +144,7 @@ stays on `0.x.x` until it is declared ready for production; see
 | Dataplane (translation, handoff, dynamic mode, fragments, ICMP errors, TCP state) | Verified with injected and real traffic |
 | Routing (BGP, OSPF, IS-IS) | Verified — routes reach the VPP FIB |
 | IPFIX logging (UDP and TCP) | Verified with a decoding collector |
-| VTY (`prismash`) | Candidate/`commit`/`rollback`, roles, `show route` against the FIB, `show this`, and completion of live values — interfaces from the dataplane, pools from the candidate |
+| VTY (`prismash`) | Candidate/`commit`/`rollback`, roles, `show route` against the FIB, `show this`, and completion of live values — interfaces from the dataplane, pools from the candidate. A statement is refused **where it is typed** at every level: this VTY's own grammar for what it owns, and FRR's whole grammar (`vtysh --dryrun`, no daemon needed) for everything it hands to FRR ([#431](https://github.com/andrediashexa/hexarouting/issues/431)) |
 | Configuration trail | Attributable and tamper-evident: every entry says **who asked**, and one that cannot be attributed says so rather than leaving the field off; chained by SHA-256. A change typed at the dataplane's own CLI has no session to ask, and is recorded `by unattributed via cli` |
 | Appliance (ISO, tuning, systemd) | ISO boots clean, self-test reports ready; **since v0.28.0** every release is built from its tag, booted, installed to a disk and booted again from that disk before publishing, by `tools/release-gate.sh`. The 26 releases before it, v0.2.0 to v0.27.0, were published without that gate |
 | Connection records | On their own filesystem, so a full log cannot stop the box working |

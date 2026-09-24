@@ -27,6 +27,7 @@ the suite's directory.
 import os
 import re
 import sys
+import shlex
 import tempfile
 import types
 
@@ -781,13 +782,26 @@ class RecFrr(prismash.Frr):
     the table lacks is what a daemon that is down answers: rc 1, nothing.
     """
 
-    def __init__(self, shows=None, up=True):
+    def __init__(self, shows=None, up=True, refuses=None):
         self.shows = dict(shows or {})
         self.up = up
         self.asked = []
+        # `dryrun` is FRR's grammar, which this stub does not have: it
+        # accepts every statement but the ones `refuses` names, by prefix,
+        # with the words FRR would say (#431). The real one is driven with a
+        # stand-in vtysh further down.
+        self.refuses = dict(refuses or {})
+        self.dry = []
 
     def available(self):
         return self.up
+
+    def dryrun(self, ctx, line):
+        self.dry.append((list(ctx), line))
+        for prefix, words in self.refuses.items():
+            if line.startswith(prefix):
+                return prismash.Frr.DRYRUN_REFUSED, words
+        return prismash.Frr.DRYRUN_ACCEPTED, ""
 
     def show(self, cmd):
         self.asked.append(cmd)
@@ -2206,6 +2220,9 @@ def frr_stub(shows=None, available=True):
         "available": lambda self: available,
         "show": show,
         "reload": lambda self, lines, check_only=False: (0, ""),
+        # FRR's grammar is not this stub's to have: it accepts every
+        # statement, and the refusals are driven with RecFrr (#431).
+        "dryrun": lambda self, ctx, line: (prismash.Frr.DRYRUN_ACCEPTED, ""),
     })()
 
 
@@ -5126,6 +5143,181 @@ with spoken() as _o:
 check(_sh.candidate.globals == ["cgnat timeout udp 300"] and not _o.getvalue(),
       f"a real one is staged in silence: {_sh.candidate.globals!r}")
 ok("the name and the number, both where the operator can act on them")
+
+print("\n=== Frr.dryrun: FRR's grammar, asked before a statement is staged "
+      "(#431) ===")
+# A stand-in vtysh answering in the words FRR 10.7.1 answered in, measured
+# with no daemon running. It keeps the file it was handed, because the block
+# path in that file is half of what is being asked.
+# Mutations shown red: the returncode test inverted; the `%` regex's bracket
+# group dropped (FRR's sentence is then not recognised, and a refusal is
+# reported as not checked); the ctx lines left out of the file; the unlink
+# removed. The temporary file goes to a directory of this suite's own, so
+# "it is gone" is asked of files this run made and of nobody else's.
+_kept = os.path.join(_root, "dryrun-kept.conf")
+_drydir = os.path.join(_root, "dryrun-tmp")
+os.makedirs(_drydir, exist_ok=True)
+
+
+def _vtysh(name, rc, says):
+    return script(name, "#!/bin/sh\n"
+                  f"[ \"$1\" = --dryrun ] && [ \"$2\" = -f ] || exit 99\n"
+                  f"cp \"$3\" '{_kept}'\n"
+                  f"printf '%s\\n' {shlex.quote(says)}\n"
+                  f"exit {rc}\n")
+
+
+_saved_vtysh, _saved_tmp = prismash.VTYSH, tempfile.tempdir
+try:
+    tempfile.tempdir = _drydir
+    prismash.VTYSH = _vtysh("vtysh-ok", 0, "")
+    _v, _w = prismash.Frr().dryrun(["router bgp 65000",
+                                    "address-family ipv4 unicast"],
+                                   "network 10.0.0.0/8")
+    check((_v, _w) == (prismash.Frr.DRYRUN_ACCEPTED, ""),
+          f"rc 0 is accepted, with nothing to say: {(_v, _w)!r}")
+    with open(_kept) as _f:
+        _asked = _f.read()
+    check(_asked == "router bgp 65000\n address-family ipv4 unicast\n"
+                   "  network 10.0.0.0/8\n",
+          f"and FRR was handed the block path, then the line: {_asked!r}")
+    check(os.listdir(_drydir) == [],
+          f"and the file it was handed is gone afterwards: "
+          f"{os.listdir(_drydir)!r}")
+
+    prismash.VTYSH = _vtysh(
+        "vtysh-unknown", 2,
+        "line 2: % Unknown command[28]: bananas\n"
+        "Configuration file[/etc/frr/frr.conf] processing failure: 2")
+    _v, _w = prismash.Frr().dryrun(["router bgp 65000"], "bananas")
+    check((_v, _w) == (prismash.Frr.DRYRUN_REFUSED,
+                       "% Unknown command: bananas"),
+          f"an unknown command is refused in FRR's sentence, with no line "
+          f"number of a file the operator never saw: {(_v, _w)!r}")
+
+    prismash.VTYSH = _vtysh("vtysh-incomplete", 4,
+                            "line 2: % Command incomplete[28]: neighbor")
+    _v, _w = prismash.Frr().dryrun(["router bgp 65000"], "neighbor")
+    check((_v, _w) == (prismash.Frr.DRYRUN_REFUSED,
+                       "% Command incomplete: neighbor"),
+          f"so is an incomplete one, which is rc 4 and not 2: {(_v, _w)!r}")
+
+    # vtysh failing is not FRR refusing: no `%` sentence, no verdict.
+    prismash.VTYSH = _vtysh("vtysh-broken", 1,
+                            "vtysh: failed to open configuration file")
+    _v, _w = prismash.Frr().dryrun([], "router bgp 65000")
+    check((_v, _w) == (prismash.Frr.DRYRUN_UNCHECKED,
+                       "vtysh: failed to open configuration file"),
+          f"a vtysh that could not read the file checked nothing: {(_v, _w)!r}")
+
+    prismash.VTYSH = os.path.join(_root, "no-such-vtysh")
+    _v, _w = prismash.Frr().dryrun([], "router bgp 65000")
+    check(_v == prismash.Frr.DRYRUN_UNCHECKED and "not found" in _w,
+          f"and a box with no vtysh at all is not reported as checked: "
+          f"{(_v, _w)!r}")
+finally:
+    prismash.VTYSH, tempfile.tempdir = _saved_vtysh, _saved_tmp
+ok("accepted, refused in FRR's words, or not asked - never a guess between")
+
+print("\n=== the prompt refuses what FRR refuses, and stages nothing (#431) ===")
+# Mutations shown red: the dryrun call removed from do_config (the refused
+# line is staged, and `router ospf vrf X` leaves the operator inside it);
+# DRYRUN_UNCHECKED staged with no note.
+_sh = at(ctx=["router bgp 65000"])
+_sh.frr = RecFrr(refuses={"bananas": "% Unknown command: bananas"})
+with spoken() as _o:
+    _sh.do_config("bananas")
+check("not a statement FRR accepts here" in _o.getvalue()
+      and "% Unknown command: bananas" in _o.getvalue(),
+      f"a statement FRR refuses is refused, in FRR's words: "
+      f"{_o.getvalue()!r}")
+check(_sh.candidate.routing == [],
+      f"and nothing was staged: {_sh.candidate.routing!r}")
+check(_sh.frr.dry == [(["router bgp 65000"], "bananas")],
+      f"and FRR was asked with the block the operator is in: {_sh.frr.dry!r}")
+# A block FRR refuses is not entered: the next line would land inside it.
+_sh = at()
+_sh.frr = RecFrr(refuses={"router ospf vrf": "% Unknown command: x"})
+with spoken() as _o:
+    _sh.do_config("router ospf vrf nosuch")
+check(_sh.frr_ctx == [] and _sh.candidate.routing == [],
+      f"a block FRR refuses is neither staged nor entered: "
+      f"{_sh.frr_ctx!r} {_sh.candidate.routing!r}")
+# The control: what FRR accepts is staged exactly as before, in silence.
+_sh = at(ctx=["router bgp 65000"])
+_sh.frr = RecFrr()
+with spoken() as _o:
+    _sh.do_config("neighbor 192.0.2.1 remote-as 65001")
+check(_sh.candidate.routing == ["neighbor 192.0.2.1 remote-as 65001"]
+      and not _o.getvalue(),
+      f"a statement FRR accepts is staged in silence: "
+      f"{_sh.candidate.routing!r} {_o.getvalue()!r}")
+# Inside `router static`, FRR is asked about the `ip route` the line becomes
+# and NOT about the block, which is this VTY's and which FRR does not have.
+# lab/vty.sh found it: with the block in the path FRR refused `router
+# static` itself, and every static route with it.
+# Mutation shown red: the STATIC_BLOCK filter removed from the dryrun call.
+_sh = at(ctx=["router static"])
+_sh.frr = RecFrr()
+_sh.do_config("route 10.9.0.0/16 10.0.0.9")
+check(_sh.frr.dry == [([], "ip route 10.9.0.0/16 10.0.0.9")],
+      f"a static route is asked about as FRR stores it, outside any block: "
+      f"{_sh.frr.dry!r}")
+# Removing a statement the candidate holds asks nobody: it was asked about
+# when it went in.
+_sh = at(candidate=Config())
+_sh.candidate.routing = ["ip prefix-list P seq 5 permit 10.0.0.0/8"]
+_sh.frr = RecFrr()
+_sh.do_config("no ip prefix-list P seq 5 permit 10.0.0.0/8")
+check(_sh.candidate.routing == [] and _sh.frr.dry == [],
+      f"a `no` that removes a staged line is not sent to FRR: "
+      f"{_sh.candidate.routing!r} {_sh.frr.dry!r}")
+
+
+class _Unasked(RecFrr):
+    def dryrun(self, ctx, line):
+        return prismash.Frr.DRYRUN_UNCHECKED, "vtysh not found"
+
+
+_sh = at()
+_sh.frr = _Unasked()
+with spoken() as _o:
+    _sh.do_config("ip prefix-list P seq 5 permit 10.0.0.0/8")
+check(_sh.candidate.routing == ["ip prefix-list P seq 5 permit 10.0.0.0/8"]
+      and "WITHOUT being checked" in " ".join(_o.getvalue().split())
+      and "vtysh not found" in " ".join(_o.getvalue().split()),
+      f"FRR not asked: staged, and the prompt says it was not checked: "
+      f"{_sh.candidate.routing!r} {_o.getvalue()!r}")
+ok("refused where it is typed, or staged and said to be unchecked")
+
+print("\n=== cgnat_statement_short: a cgnat statement is walked to its end "
+      "(#431) ===")
+# Mutations shown red: the `isinstance(node, str)` branch returning () with
+# no value given (`cgnat interface` staged again); the membership test on
+# the dict dropped (the walk then fails on `foo` with a KeyError).
+for _words, _needle in (
+        (["interface"], "'cgnat interface' needs a value"),
+        (["pool"], "'cgnat pool' needs a value"),
+        (["timeout"], "'cgnat timeout' needs one of: icmp,"),
+        (["timeout", "udp"], "'cgnat timeout udp' needs a value"),
+        (["logging"], "'cgnat logging' needs one of:"),
+        (["logging", "foo"], "'foo' is not one of them"),
+        (["session-table"], "'cgnat session-table' needs a value")):
+    _got = " ".join(prismash.cgnat_statement_short(_words))
+    check(_needle in _got, f"{_words!r}: {_needle!r} not in {_got!r}")
+for _words in (["timeout", "udp", "60"], ["logging", "enable"],
+               ["logging", "udp", "192.0.2.9", "src", "10.0.0.1"],
+               ["identity", "none"], ["block-holddown", "30"]):
+    check(prismash.cgnat_statement_short(_words) == (),
+          f"{_words!r} is a whole statement and is not refused")
+_sh = at()
+with spoken() as _o:
+    _sh.do_config("cgnat interface")
+check("not a whole cgnat statement" in _o.getvalue()
+      and not _sh.candidate.globals and not _sh.candidate.interfaces,
+      f"`cgnat interface` with no name is refused at the prompt: "
+      f"{_o.getvalue()!r} {_sh.candidate.globals!r}")
+ok("halfway is refused, and so is a word the table does not have")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

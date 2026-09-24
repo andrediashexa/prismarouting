@@ -83,7 +83,7 @@ A contagem é das sentenças que a caixa repassou ao roteamento sem ler. `show c
 
 
 :::warning
-Statements de roteamento — prefix-list, route-map, vizinhos BGP — são conferidos apenas na forma. Quem valida o conteúdo é o roteamento, e só no `commit`.
+Cada statement de roteamento — prefix-list, route-map, vizinhos BGP — é conferido pela gramática do próprio roteamento **no momento em que é digitado**, dentro do bloco em que você está: um statement que o roteamento não aceita é recusado ali mesmo, com as palavras dele, e nada entra na candidata. O que essa conferência não vê é o que só faz sentido diante da configuração inteira — e isso o roteamento só decide no `commit`.
 
 Isso significa que um `commit check` aprovado **não garante** que o `commit` seguinte vai passar.
 
