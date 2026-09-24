@@ -863,6 +863,40 @@ grep -q 'printf' "$WORK/step.sh" \
   && ok "and it prints rather than calling itself, which the first version did" \
   || bad "step does not print: $(cat "$WORK/step.sh")"
 
+echo "=== timed, timed_rc and timed_secs: the three guests at once (#409) ==="
+# Cut out and run alone, the way step() is above. A run's status and its
+# seconds are written where the checks read them, a failing run's status is
+# its own and not 1, and a run that never wrote its file reads as a failure
+# rather than as the pass an empty string would compare to.
+sed -n '/^timed() /,/^}/p;/^timed_rc() /p;/^timed_secs() /p' \
+  "$REPO/tools/release-gate.sh" > "$WORK/timed.sh"
+TW=$WORK/timed-work; mkdir -p "$TW"
+( . "$WORK/timed.sh"; WORK=$TW
+  timed ok "$TW/ok.log" sh -c 'echo said-this'
+  timed bad "$TW/bad.log" sh -c 'exit 3'
+  timed slow "$TW/slow.log" sleep 1
+  echo "$(timed_rc ok) $(timed_rc bad) $(timed_rc never) $(timed_secs slow) $(timed_secs never)"
+) > "$WORK/timed.out" 2>&1
+set -- $(cat "$WORK/timed.out")
+[ "${1:-}" = 0 ] && grep -q said-this "$TW/ok.log" \
+  && ok "a run that passed reads 0, and what it said is in its log" \
+  || bad "timed on a passing run: $(cat "$WORK/timed.out")"
+[ "${2:-}" = 3 ] && ok "a failing run keeps its own status: 3" \
+  || bad "timed on 'exit 3' read '${2:-}'"
+[ "${3:-}" = 99 ] && ok "a run that wrote nothing reads as failed, not as passed" \
+  || bad "timed_rc of a run that never ran read '${3:-}'"
+[ "${4:-0}" -ge 1 ] 2>/dev/null && ok "and its seconds are its own: ${4}s for a sleep 1" \
+  || bad "timed_secs of sleep 1 read '${4:-}'"
+[ "${5:-}" = "?" ] && ok "and a run with no clock says so, rather than 0" \
+  || bad "timed_secs of a run that never ran read '${5:-}'"
+# AND THE THREE RUNS ARE STARTED BEFORE ANY OF THEM IS WAITED ON, which is
+# the whole change: three `&` and then one `wait`, on the parallel arm.
+sed -n '/^if \[ "\$GATE_PARALLEL" = 1 \]; then/,/^else/p' "$REPO/tools/release-gate.sh" \
+  > "$WORK/par-arm.sh"
+[ "$(grep -c ' &$' "$WORK/par-arm.sh")" = 3 ] && grep -q '^  wait$' "$WORK/par-arm.sh" \
+  && ok "the three guests are started together and waited on once" \
+  || bad "the parallel arm does not start three runs before one wait: $(cat "$WORK/par-arm.sh")"
+
 echo "=== and the box a customer has is installed on every X/Y release ==="
 # WHY THIS ROW EXISTS. The gate's first install gives its guest `-cpu host`,
 # so it inherits the build machine's flags - and this machine has pdpe1gb.
@@ -879,7 +913,11 @@ GATE=$REPO/tools/release-gate.sh
 # so a check that greps the command line goes GREEN on the error message
 # after somebody deletes the step - measured, this one did. That is the
 # third time in this repository a reader has passed on its own prose.
-grep -q '( cd "$WORK" && BOOT_NO_1G=1 BOOT_IOMMU=0 sh tools/lab.sh install-iso )' "$GATE" \
+# Since #409 the run is a `timed install-2m` whose command spans three
+# lines, so the lines under that call are joined and read - still the
+# invocation, never the refusal's sentence, which carries no `timed`.
+sed -n '/^    timed install-2m /,/install-iso/p' "$GATE" | tr -d '\\\n' \
+  | grep -q 'LOGCOPY=/src/install-2m-console.log BOOT_NO_1G=1 BOOT_IOMMU=0 *sh tools/lab.sh install-iso' \
   && ok "the gate installs the medium on a guest with no 1G pages and no IOMMU" \
   || bad "the gate installs on one page size only: a 2M box can break again and no release would notice (#429)"
 # AND IT IS ON BY DEFAULT. A guard that has to be switched on is one that is
