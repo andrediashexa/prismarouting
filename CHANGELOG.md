@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.122.9 - Ctrl-C keeps the session
+
+### Fixed
+
 * **Ctrl-C ended the ssh session**
   ([#441](https://github.com/andrediashexa/hexarouting/issues/441)), reported
   from a box. At the prompt it was handled like Ctrl-D, so the VTY exited and
