@@ -2,6 +2,8 @@
 
 A ISO é um **meio de instalação**, não uma appliance para uso direto. Ela dá boot sem credencial nenhuma, roda o produto para inspeção, e oferece um comando que a transforma em uma máquina com dono.
 
+A ISO fica em <https://hexarouting.hexanetworks.com.br/releases/>, na pasta da versão, com o `sha256` ao lado. Confira antes de gravar: `sha256sum -c prisma-routing-<versão>.iso.sha256` tem que responder `OK`. Nem toda versão traz ISO. As que só trazem o pacote de atualização são correções que se aplicam por cima de uma caixa já instalada. Para uma máquina nova, use a ISO mais recente da pasta e depois aplique o pacote mais novo, como explica [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X).
+
 ```mermaid
 flowchart TD
     A["boot pela ISO"] --> B["VTY do meio de instalação"]

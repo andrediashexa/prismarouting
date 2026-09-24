@@ -77,6 +77,26 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Every release can be downloaded by an operator**
+  ([#439](https://github.com/andrediashexa/hexarouting/issues/439)). This
+  repository is private, so the wiki's instruction to download the upgrade
+  package "from the release page" sent an operator to a page they cannot open.
+  Each release is now also at
+  `https://hexarouting.hexanetworks.com.br/releases/<version>/`, public and
+  read-only, with a `sha256` beside every file and `latest` pointing at the
+  newest. It carries every upgrade package from 0.79.0, the first version with
+  the current name, and the ISO of the latest full release. For 0.79.0 to
+  0.82.0, which were published without a `sha256`, the sum was computed when
+  the file was copied, and the wiki says so.
+
+  `tools/publish-release.sh` is step 7 of the release procedure now. It
+  uploads through an account that can write that directory and nothing else,
+  reads every file back from the public URL before calling it published, and
+  moves `latest` only forward. `test/test_publish_release.sh` drives it
+  against a host that is a directory. The wiki's upgrade page gives the three
+  commands an operator runs on the box, and the installation page says where
+  the ISO is.
+
 ### Fixed
 
 ## 0.122.7 - the banner spells the name
