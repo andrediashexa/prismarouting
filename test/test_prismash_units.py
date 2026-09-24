@@ -5319,5 +5319,25 @@ check("not a whole cgnat statement" in _o.getvalue()
       f"{_o.getvalue()!r} {_sh.candidate.globals!r}")
 ok("halfway is refused, and so is a word the table does not have")
 
+print("\n=== BANNER: fits a serial console, in characters it can draw (#433) ===")
+# Mutation shown red: the 115-column block-character candidate the
+# maintainer sent first, put in BANNER - all four checks.
+_rows = prismash.BANNER.split("\n")
+check(max(len(r) for r in _rows) <= 79,
+      f"every banner row fits a 79-column console: "
+      f"{max(len(r) for r in _rows)} at its widest")
+check(prismash.BANNER.isascii(),
+      "the banner is plain ASCII, which a BMC's serial console can draw: "
+      + repr(sorted({c for c in prismash.BANNER if not c.isascii()})))
+check(len(_rows) <= 8,
+      f"and no taller than the signature it replaced, so the lines under it "
+      f"stay on the screen: {len(_rows)} rows")
+_kit = os.path.join(os.path.dirname(prismash.__file__), "..", "..", "docs",
+                    "brand", "07-ascii", "prisma-routing-wordmark.txt")
+with open(_kit) as _f:
+    check([r.rstrip() for r in _f.read().rstrip("\n").split("\n")] == _rows,
+          "and it is the brand kit's wordmark, row for row")
+ok("the banner is measured, not assumed")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
