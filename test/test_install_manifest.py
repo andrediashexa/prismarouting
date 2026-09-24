@@ -78,6 +78,7 @@ print("=== every file the installer names is in the repository ===")
 # The two loops are expanded rather than skipped: a unit or a document dropped
 # from the tree and left in the loop is the same defect as a misspelled path,
 # and skipping them would leave nine of the files unchecked.
+BUILD_PRODUCTS = {"prisma-routing-images.tar.gz"}
 named, missing, unresolved = [], [], []
 for m in re.finditer(r'"\$REPO/([^"]+)"', SCRIPT):
     path = m.group(1)
@@ -93,8 +94,12 @@ for m in re.finditer(r'"\$REPO/([^"]+)"', SCRIPT):
     for v in variants:
         named.append(v)
         # .build-vpp holds the compiled plugin, which exists only after a
-        # build. Its absence here is not a defect in the installer.
-        if v.startswith(".build-vpp/"):
+        # build. Its absence here is not a defect in the installer. The
+        # container images are the same kind of file (#427): written by
+        # tools/build-images.sh save, installed only when present, and
+        # refused by build-upgrade.sh when absent - so a clean tree without
+        # them is the ordinary state, not a missing path.
+        if v.startswith(".build-vpp/") or v in BUILD_PRODUCTS:
             continue
         if not os.path.exists(os.path.join(REPO, v)) and v not in missing:
             missing.append(v)
@@ -136,7 +141,7 @@ carried = set(re.findall(r'\"\$REPO/([^\"/]+)\"', m.group(1))) if m else set()
 # compiled plugin, which build-iso.sh copies by itself as $PLUGIN_SO and
 # $VAT2_SO rather than as part of the tree, so it is not expected in the list
 # above and its absence is not a defect.
-reads = {p.split("/")[0] for p in named} - {".build-vpp"}
+reads = {p.split("/")[0] for p in named} - {".build-vpp"} - BUILD_PRODUCTS
 
 if not carried or not reads:
     bad(f"this check could not read one of its two lists: build-iso.sh copies "

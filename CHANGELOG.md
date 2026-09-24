@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The upgrade package carries the container images**
+  ([#427](https://github.com/andrediashexa/hexarouting/issues/427)), by the
+  maintainer's decision of 2026-09-24. Until now only the medium carried them,
+  so a box that had been upgraded rather than installed could never move to
+  the containers. A box already on them kept starting the previous release's
+  dataplane image, with the previous release's plugin in it, under the new
+  release's VTY. Now `appliance/install.sh` installs
+  `prisma-routing-images.tar.gz` from whichever tree it runs out of: the ISO's
+  chroot, the artifact or a source tree. `appliance/build-upgrade.sh` refuses
+  to cut an artifact without the images unless `PRISMA_SKIP_IMAGES=1` says so,
+  and the gate's patch path builds them first. The package grows from about
+  5 MB to about 120 MB, so `system upgrade` writes it to disk as it downloads
+  and sums it on the way, instead of holding it in memory. The manifest names
+  the images, so the boot self-test says when they are not the box's build.
+  That costs one `sha256` over 118 MB at every boot, measured at 0.8 s.
+  `lab/upgrade.sh` asserts each case as itself: a new side that carries the
+  images, and one that carries none.
+
 ### Fixed
 
 ## 0.124.4 - an applied route says so

@@ -5606,6 +5606,28 @@ try:
     check(prismash.fetch_url(prismash.RELEASES_URL + "/9.9.9/x")[0] is None,
           "a missing file is a sentence, not a traceback")
 
+    # download_to() streams to disk and sums on the way (#427): bigger than
+    # one read, so a loop that kept only the last chunk writes a short file
+    # and a sum that is not the file's.
+    _big = os.path.join(_rel, "big.bin")
+    with open(_big, "wb") as _f:
+        _f.write(os.urandom(3 * (1 << 20) + 12345))
+    with open(_big, "rb") as _f:
+        _want = _hl.sha256(_f.read()).hexdigest()
+    _got_path = os.path.join(_root, "big.copy")
+    _sum, _n, _why = prismash.download_to(
+        prismash.RELEASES_URL + "/big.bin", _got_path)
+    with open(_got_path, "rb") as _f:
+        _copied = _hl.sha256(_f.read()).hexdigest()
+    check(_sum == _want == _copied and _n == 3 * (1 << 20) + 12345
+          and _why == "",
+          f"download_to writes the whole file and returns its sum: "
+          f"{_n} bytes, {_sum} against {_want}")
+    _sum, _n, _why = prismash.download_to(
+        prismash.RELEASES_URL + "/9.9.9/x", os.path.join(_root, "none"))
+    check(_sum is None and _n == 0 and "HTTP 404" in _why,
+          f"and a missing one is a sentence, not a traceback: {_why!r}")
+
     _sh = shell()
     rv, text = driven(_sh.system_upgrade, [])
     check("this box runs: 0.99.7" in text and "newest published: 0.100.0" in text

@@ -200,8 +200,11 @@ IMAGES=$REPO/prisma-routing-images.tar.gz
 if [ "${PRISMA_SKIP_IMAGES:-0}" = 1 ]; then
   say "skipped: PRISMA_SKIP_IMAGES=1, and the medium will carry none"
 elif [ -f "$IMAGES" ]; then
-  mkdir -p "$ROOT/usr/lib/prisma-routing"
-  cp "$IMAGES" "$ROOT/usr/lib/prisma-routing/images.tar.gz"
+  # Into the tree install.sh runs from below, not onto the root: install.sh
+  # places them, exactly as it does out of an upgrade artifact (#427), so the
+  # manifest names them on a box from a medium and on an upgraded box alike.
+  mkdir -p "$ROOT/src"
+  cp "$IMAGES" "$ROOT/src/prisma-routing-images.tar.gz"
   say "carried: $(( $(wc -c < "$IMAGES") / 1048576 )) MB of images"
 else
   # LOUD, AND NOT FATAL. A medium without the images still installs and still

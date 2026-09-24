@@ -2776,8 +2776,9 @@ upgrade artifact carries no images, so a box upgraded from before 0.113.0
 was moved to a dataplane it had no image for. Every lab installs from a
 medium of the release under test - so do the gate's install and upgrade
 steps - and the images are therefore always there and always match. The
-default follows the images since 0.118.0; whether the artifact should carry
-them is a decision with a number on it, about 5 MB against about 120 MB.
+default follows the images since 0.118.0, and since 0.125.0 the artifact
+carries them, by the maintainer's decision of 2026-09-24. That makes it about
+120 MB instead of 5.
 
 **And the second thing an operator found that no lab could**
 ([#428](https://github.com/andrediashexa/hexarouting/issues/428)): a fresh

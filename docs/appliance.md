@@ -2381,9 +2381,12 @@ release this box runs and which is the newest published, read off
 changes nothing. With a version it:
 
 1. downloads the package and its `sha256` from `PRISMA_RELEASES_URL`, which
-   defaults to the public directory and can point a box at a mirror;
-2. computes the sum here and **refuses a mismatch before anything is
-   unpacked**;
+   defaults to the public directory and can point a box at a mirror. The
+   package is about 120 MB since 0.125.0, because it carries the container
+   images (#427), so it is written to disk as it arrives rather than held in
+   the VTY's memory;
+2. computes the sum as it downloads and **refuses a mismatch before anything
+   is unpacked**;
 3. unpacks into a directory of its own under `/var/tmp`, refusing any member
    that would land, or link, outside it;
 4. runs the package's own `upgrade`, the one an operator runs by hand, and
@@ -2823,6 +2826,37 @@ host, and [#426](https://github.com/andrediashexa/hexarouting/issues/426) is
 what moved the default. The order mattered: the images first, then the
 medium carrying them, then each protection `vpp.service` had, and the
 default only after a box had booted on the stack and been watched forwarding.
+
+### How the images reach a box
+
+One line of `appliance/install.sh` installs them, from
+`prisma-routing-images.tar.gz` at the top of the tree it runs out of, to
+`/usr/lib/prisma-routing/images.tar.gz`. Three trees have that file:
+
+| Tree | Who puts the file there |
+|---|---|
+| the ISO build's chroot | `appliance/build-iso.sh`, from the one `make images` saved |
+| an upgrade artifact | `appliance/build-upgrade.sh`, which **refuses** to cut one without them unless `PRISMA_SKIP_IMAGES=1` says so on purpose |
+| a source tree | `sh tools/build-images.sh save` |
+
+A tree without the file installs nothing, and the default then follows what is
+already on the box.
+
+**Until 0.125.0 the upgrade artifact carried no images**
+([#427](https://github.com/andrediashexa/hexarouting/issues/427)). A box that
+had been upgraded rather than installed could never move to the containers,
+and a box already on them kept starting the previous release's dataplane
+image, with the previous release's plugin in it, under the new release's VTY.
+The only warning was `load-the-images` saying that the images and the code
+came from different builds. The maintainer decided on 2026-09-24 that the
+artifact carries them. It costs about 115 MB more on every release, against
+about 5 MB before.
+
+**The manifest names them**, because they go through `install`. So the boot
+self-test says so when a box's images are not the build its version stamp
+claims. That costs the self-test one `sha256` over about 118 MB at every boot,
+measured at 0.8 s on the build host (a Xeon E5-2680 v4, warm or cold). Before
+this the whole manifest check took 34 ms.
 
 ### What the unit does before compose sees the file
 

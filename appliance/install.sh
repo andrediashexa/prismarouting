@@ -328,14 +328,28 @@ install -D -m 0644 "$VSO" "$DESTDIR$VAT2_DIR/bpa_test_plugin_bpa_plugin.so"
 # prisma-routing-containers.service is shipped and not started, and says at
 # its own top why.
 #
-# THE IMAGES ARE NOT INSTALLED HERE, and that is not an omission.
-# appliance/build-iso.sh puts them in the medium at
-# /usr/lib/prisma-routing/images.tar.gz, and the disk install is an
-# `unsquashfs` of that medium - so they arrive on the installed box the same
-# way VPP and FRR do. A second copy through this file would be a second
-# place they can go missing from, and on a source install there is no medium
-# to take them from anyway: `sh tools/build-images.sh save` is that box's
-# route.
+# THE IMAGES, from the tree this runs out of, when it has them (#427).
+# tools/build-images.sh writes prisma-routing-images.tar.gz at the top of a
+# source tree, build-upgrade.sh packs it at the same place in an artifact,
+# and build-iso.sh puts it there in the chroot's /src - so a medium, an
+# upgrade and a source install are one line here rather than three routes.
+# Through install(), so the manifest names it and the boot self-test says so
+# when a box's images are not this build's.
+#
+# UNTIL 0.125.0 THEY WERE NOT INSTALLED HERE. They rode the medium alone, and
+# an upgrade carried none: an upgraded box on the systemd units could never
+# move to the containers, and one already on them kept starting the previous
+# release's dataplane image, with the previous release's plugin in it, under
+# this release's code. The maintainer decided on 2026-09-24 that the artifact
+# carries them, at about 120 MB instead of 5.
+#
+# A tree without them installs nothing here and leaves what the box has:
+# the default below then follows what is on the box, as it always has.
+if [ -f "$REPO/prisma-routing-images.tar.gz" ]; then
+  say "the container images"
+  install -D -m 0644 "$REPO/prisma-routing-images.tar.gz" \
+    "$DESTDIR/usr/lib/prisma-routing/images.tar.gz"
+fi
 say "the container stack, shipped and not started"
 install -D -m 0644 "$REPO/appliance/compose.yaml" \
   "$DESTDIR/etc/prisma-routing/compose.yaml"

@@ -141,6 +141,37 @@ mkdir -p "$STAGE/.build-vpp/lib/vpp_plugins" "$STAGE/.build-vpp/lib/vat2_plugins
 cp "$SO"  "$STAGE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
 cp "$VSO" "$STAGE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
 
+# THE CONTAINER IMAGES (#427), at the path install.sh looks for them in the
+# tree it runs from - the same name tools/build-images.sh writes, so a source
+# tree and an artifact are one case to install.sh rather than two.
+#
+# The maintainer's decision of 2026-09-24: the artifact carries them. Without
+# them an upgrade could not move a box that runs the systemd units onto the
+# containers, and a box ALREADY on the containers went on starting the
+# previous release's dataplane image - whose plugin is the previous
+# release's - under this release's VTY, told only by load-the-images that the
+# images and the code came from different builds. The cost is the size: about
+# 5 MB of artifact becomes about 120, on every release.
+#
+# REFUSED WITHOUT THEM, and not warned: build-iso.sh can afford to warn,
+# because a medium's first boot is somebody watching it, and an upgrade is a
+# box in service. PRISMA_SKIP_IMAGES=1 is the same deliberate knob
+# build-iso.sh reads, for a build that knows it carries none.
+IMAGES=$REPO/prisma-routing-images.tar.gz
+if [ -f "$IMAGES" ]; then
+  cp "$IMAGES" "$STAGE/prisma-routing-images.tar.gz"
+  say "container images: $(( $(wc -c < "$IMAGES") / 1048576 )) MB"
+elif [ "${PRISMA_SKIP_IMAGES:-0}" = 1 ]; then
+  say "container images: skipped, PRISMA_SKIP_IMAGES=1"
+else
+  echo "no $IMAGES, so this artifact would carry no container images:" >&2
+  echo "a box on the containers would go on starting the previous release's" >&2
+  echo "dataplane under this release's code (#427). Build them first with" >&2
+  echo "'sh tools/build-images.sh save', or set PRISMA_SKIP_IMAGES=1 to cut" >&2
+  echo "an artifact that says it carries none." >&2
+  exit 1
+fi
+
 { printf 'stamp=%s\n' "$STAMP"
   printf 'vpp=%s\n'   "$VPP_PIN"
   printf 'frr=%s\n'   "$FRR_PIN"; } > "$STAGE/RELEASE"

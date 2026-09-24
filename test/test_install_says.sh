@@ -795,6 +795,35 @@ measured is the branch every other run in this file already takes" \
   || ok "and not the offline line, which is the other arm"
 
 echo
+echo "=== a tree that carries the container images (#427) ==="
+# What an upgrade artifact is since 0.125.0, and what the ISO's chroot is: the
+# images at the top of the tree. On a root of its own, so every run above and
+# below keeps the root that has none - a box upgraded from before the images
+# existed, which is what most of them are about.
+head -c 4096 /dev/urandom > "$TREE/prisma-routing-images.tar.gz"
+_SAVED_DEST=$DEST
+DEST=$WORK/root-images
+mkdir -p "$DEST/etc/frr"
+cp "$_SAVED_DEST/etc/frr/daemons" "$DEST/etc/frr/daemons"
+if install_run "$NEW_V" "$WORK/run-images"; then
+  said "$(cat "$WORK/run-images")" "the container images" \
+    && ok "it says it is installing them" \
+    || bad "it installed from a tree with images and did not say so"
+  cmp -s "$TREE/prisma-routing-images.tar.gz" \
+         "$DEST/usr/lib/prisma-routing/images.tar.gz" \
+    && ok "and they are where load-the-images reads them" \
+    || bad "the images did not reach usr/lib/prisma-routing/images.tar.gz"
+  said "$(cat "$WORK/run-images")" "no container images in this root" \
+    && bad "and then said the root has none" \
+    || ok "and it does not then say the root has none"
+else
+  bad "the installer failed on a tree carrying images:"
+  sed 's/^/        /' "$WORK/run-images"
+fi
+DEST=$_SAVED_DEST
+rm -f "$TREE/prisma-routing-images.tar.gz"
+
+echo
 echo "=== and this suite is reading something ==="
 # Without this the whole file passes on an install.sh that prints nothing at
 # all, which is the shape #151 spent an issue on: every needle above that

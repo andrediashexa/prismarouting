@@ -735,15 +735,11 @@ fi
 # the plugin is compiled in, and the image is built by hand - `sh
 # tools/build.sh image` - never rebuilt by appliance/build-upgrade.sh. So an
 # edit to it reaches a box only through a medium built afterwards, which is
-# this rule exactly. build/Dockerfile.vpp and build/Dockerfile.frr are the
-# runtime images of #396 phase 1: nothing on a box runs them, the medium does
-# not carry them and neither does the artifact, so they ship NOWHERE - the
-# same class as test/ and lab/, which this list has never held.
-#
-# WHEN PHASE 2 PUTS THEM INSIDE THE MEDIUM THIS PATTERN MOVES WITH THEM, and
-# that is not a note somebody has to remember: appliance/build-iso.sh is
-# already on the list, so the commit that teaches it to copy an image in is
-# itself a minor.
+# this rule exactly. build/Dockerfile.vpp and build/Dockerfile.frr build the
+# runtime images, and since 0.125.0 the artifact carries those images as well
+# as the medium (#427) - so an edit to them reaches a box through a patch, and
+# they stay off this list for that reason now rather than for shipping
+# nowhere, which was true of them until #396 phase 2.
 if [ "$KIND" = patch ] && [ -n "$PREV_TAG" ]; then
   medium_only=$(git -C "$WORK" diff --name-only "$PREV_TAG" "$TAG" | grep -E \
     '^(appliance/build-iso\.sh|appliance/install\.sh|build/Dockerfile\.dev|CMakeLists\.txt)' \
@@ -797,6 +793,17 @@ if [ "$KIND" = patch ]; then
 
   step "building the plugin"
   sh "$WORK/tools/build.sh" plugin >/dev/null
+
+  # The images before the artifact, because the artifact carries them and
+  # refuses to be cut without them (#427). `make iso` builds them on the
+  # minor path; here nothing else would.
+  step "building the container images"
+  ( cd "$WORK" && sh tools/build-images.sh save ) > "$WORK/images.log" 2>&1 || {
+    echo "error: the container images could not be built, and the upgrade" >&2
+    echo "       artifact carries them." >&2
+    tail -20 "$WORK/images.log" >&2
+    exit 1
+  }
 
   step "building the upgrade artifact"
   ( cd "$WORK" && sh appliance/build-upgrade.sh ) > "$WORK/upgrade.log" 2>&1 || {
