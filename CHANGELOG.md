@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.124.1 - the CGNAT, step by step
+
+### Added
+
 * **The wiki walks an operator through configuring the CGNAT, step by step**
   ([#443](https://github.com/andrediashexa/hexarouting/issues/443)), asked
   for by the maintainer. *Configurar o CGNAT passo a passo* goes from the two
@@ -91,8 +97,6 @@ version has a chance of seeing it.
   now and a one-card box asks for no confirming `commit`.
   `test/test_wiki_screens.py` drives the new page's announce warning with the
   page's own values, as it does the page that already quoted it.
-
-### Fixed
 
 ## 0.124.0 - the box says Prisma Routing
 
