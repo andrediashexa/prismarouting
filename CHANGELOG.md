@@ -77,6 +77,21 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The VTY's login banner spells out the product name**
+  ([#433](https://github.com/andrediashexa/hexarouting/issues/433)), as the
+  maintainer asked, in place of the brand kit's hexagon signature. It is 70
+  columns and eight lines of plain ASCII, the same height as the banner it
+  replaces, so it fits the 80-column serial console a racked box is reached
+  on. A first candidate was 115 columns of Unicode blocks and was set aside
+  for that reason. `test/test_prismash_units.py` now holds the width, the
+  character set and the height, which nothing held before. The brand kit
+  carries the banner as `07-ascii/prisma-routing-wordmark.txt`.
+
+  The paragraph beside it in `prismash.py` said the command and the paths had
+  kept their old names, and then listed the new ones: the #202 rename had
+  replaced the old names in the very sentence that was about them. It now
+  says what happened.
+
 ### Fixed
 
 ## 0.122.6 - refused where it is typed

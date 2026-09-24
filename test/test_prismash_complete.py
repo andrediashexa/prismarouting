@@ -504,7 +504,12 @@ def _on_a_pty(env=None):
 
 
 _tty = _on_a_pty()
-check("\\____\\/______/" in _tty, "the banner must appear on a terminal")
+# Read out of BANNER rather than quoted: this needle was a row of the hexagon
+# signature, and replacing the banner (#433) turned it red for a reason that
+# was not about whether a banner appears. Every row, so a banner drawn half
+# way is not a pass.
+check(all(r.rstrip() in _tty for r in prismash.BANNER.split("\n")),
+      "the banner must appear on a terminal, every row of it")
 check("Prisma Routing VTY" in _tty,
       "the version line must survive the banner: the banner identifies the "
       "product, the version identifies the build, and an operator on the "

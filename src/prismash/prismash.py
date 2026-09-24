@@ -1556,34 +1556,35 @@ COMMIT = {
 # not be one keystroke of TAB completion away from "interface".
 # Identifies the product before anything else on the screen.
 #
-# The brand kit's terminal signature, docs/brand/07-ascii/prisma-ascii.txt,
-# copied rather than read at runtime because the kit is not installed on a
-# box. Plain ASCII, 42 columns at its widest, eight lines. A racked box is
-# reached by serial console and that console is 80 columns of whatever font
-# the BMC decided on; box drawing characters render as noise there, and a
-# banner that wraps is worse than none. Measured before it was chosen: the
-# full signature is 42 columns and the compact one 20, so both fit, and the
-# full one is the kit's primary. It also has to leave room for the version,
-# the hint, and - on the installation medium - the line telling the operator
-# to type "install", which is the one thing on that screen nobody can afford
-# to miss.
+# The product's name written out - the brand kit's
+# docs/brand/07-ascii/prisma-routing-wordmark.txt, chosen by the maintainer on
+# 2026-09-23 (#433) in place of the kit's hexagon signature. Copied rather than
+# read at runtime because the kit is not installed on a box. A racked box is
+# reached by serial console and that console is 80 columns of whatever font the
+# BMC decided on; box drawing and block characters render as noise there, and a
+# banner that wraps is worse than none. So: plain ASCII, 70 columns at its
+# widest, eight lines - the same height as the signature it replaced, which
+# keeps the version, the hint and, on the installation medium, the line telling
+# the operator to type "install" where they were. A first candidate was 115
+# columns of Unicode blocks and was measured out for exactly that reason.
+# test_prismash_units.py holds the width and the character set, so the next
+# banner is measured too.
 #
-# THE NAME IS "Prisma Routing", TWO WORDS (#202). The command is still
-# `prismash`, the paths are still /etc/prisma-routing and /var/log/prisma-routing, the
-# units are still prisma-routing*.service and the environment is still PRISMA_*:
-# the rename changed what a person reads and nothing a box already in service
-# has on its disk, because an installed box carries those names in
-# /etc/passwd, in fstab and in a year of connection records under a retention
-# obligation, and a release that moved them would need a migration this one
-# deliberately does not carry.
-BANNER = r"""        /\
-   ____/  \____
-  /    /\      \        o
- /____/  \______\------o
- \    \  /      /------o   PRISMA
-  \____\/______/       o    Routing System
-       /\
-      /__\
+# THE NAME IS "Prisma Routing", TWO WORDS (#202). It was HexaRouting until
+# 0.76.1, and the rename was a clean break: the command, /etc/prisma-routing,
+# /var/log/prisma-routing, the prisma-routing*.service units and the PRISMA_*
+# environment all carry the new name, and NOTHING MIGRATES - appliance/upgrade
+# refuses a box still carrying the old one. This paragraph used to say the
+# opposite: the rename replaced the old names in it too, so it read as if the
+# new names were the ones that had been kept.
+BANNER = r"""______     _                      ______            _   _
+| ___ \   (_)                     | ___ \          | | (_)
+| |_/ / __ _ ___ _ __ ___   __ _  | |_/ /___  _   _| |_ _ _ __   __ _
+|  __/ '__| / __| '_ ` _ \ / _` | |    // _ \| | | | __| | '_ \ / _` |
+| |  | |  | \__ \ | | | | | (_| | | |\ \ (_) | |_| | |_| | | | | (_| |
+\_|  |_|  |_|___/_| |_| |_|\__,_| \_| \_\___/ \__,_|\__|_|_| |_|\__, |
+                                                                 __/ |
+                                                                |___/
 """.rstrip("\n")
 
 LIVE_SQUASHFS = os.environ.get(

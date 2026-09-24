@@ -31,7 +31,7 @@ Sistema Linux de roteamento com CGNAT, desenvolvido sob a identidade visual da H
 
 ## ASCII
 
-`prisma-ascii.txt` é universal e não depende de cor. `prisma-ansi.txt` usa códigos ANSI para exibir o símbolo em verde em terminais compatíveis.
+`prisma-routing-wordmark.txt` é o nome do produto por extenso em ASCII puro, 70 colunas por 8 linhas: é o banner de login do VTY, e cabe num console serial de 80 colunas. `prisma-ascii.txt` é universal e não depende de cor. `prisma-ansi.txt` usa códigos ANSI para exibir o símbolo em verde em terminais compatíveis.
 
 ## Observação sobre os vetores
 
