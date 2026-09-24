@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.123.0 - resolvers from the VTY
+
+### Added
+
 * **DNS resolvers from the VTY**
   ([#437](https://github.com/andrediashexa/hexarouting/issues/437)), as the
   maintainer asked: `dns server <address>`, up to three, committed and rolled
@@ -88,8 +94,6 @@ version has a chance of seeing it.
   Removing the last server gives the file back to DHCP or the installer. The
   resolvers a lease gave are not reported as statements, so `save` does not
   pin them.
-
-### Fixed
 
 ## 0.122.10 - a static route says where it goes
 
