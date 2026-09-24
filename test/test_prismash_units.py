@@ -5339,5 +5339,48 @@ with open(_kit) as _f:
           "and it is the brand kit's wordmark, row for row")
 ok("the banner is measured, not assumed")
 
+print("\n=== sigint_ignored: a commit cannot be stopped halfway (#441) ===")
+# The terminal sends SIGINT to the whole foreground group, so what matters is
+# that the CHILD a commit runs survives it, not only this process.
+# Mutation shown red: SIG_IGN replaced by a Python handler that swallows the
+# signal - this process survives and the child dies, which is the half-applied
+# commit the decorator exists to prevent.
+import signal as _signal
+import subprocess as _sp
+
+
+def _applying_body():
+    os.kill(os.getpid(), _signal.SIGINT)     # the key, arriving here
+    time.sleep(0.05)
+    child = _sp.run(["sh", "-c", "kill -INT $$; echo survived"],
+                    capture_output=True, text=True)
+    return child.stdout.strip()
+
+
+_applying = prismash.sigint_ignored(_applying_body)
+try:
+    _said = _applying()
+    check(_said == "survived",
+          f"a child started while held survives SIGINT, as frr-reload must: "
+          f"{_said!r}")
+except KeyboardInterrupt:
+    check(False, "the held function was interrupted by SIGINT")
+check(_signal.getsignal(_signal.SIGINT) is _signal.default_int_handler,
+      "and Ctrl-C is an interrupt again once it returns")
+
+
+def _fails_body():
+    raise ValueError("refused")
+
+
+_fails = prismash.sigint_ignored(_fails_body)
+try:
+    _fails()
+except ValueError:
+    pass
+check(_signal.getsignal(_signal.SIGINT) is _signal.default_int_handler,
+      "including when the held function raises")
+ok("held while it applies, and given back afterwards")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
