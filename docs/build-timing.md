@@ -34,6 +34,37 @@ release and puts the new one on top of it.
 > are to be interpreted as described in
 > [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
+## The three guests at once, measured (#409)
+
+The gate now runs the medium's boot and both installs **in parallel**. They
+are three claims about one file, and none of them reads anything another
+writes. Measured on the machine that cuts the releases (32 cores, 31 GB, KVM),
+against the published 0.124.0 medium, nothing else running:
+
+| Step | One after another (0.124.0's gate) | All three at once |
+|---|---|---|
+| `lab/boot-iso.sh` | 480 s | 498 s |
+| `make test-install` | 1750 s | 1868 s |
+| `lab/install-iso.sh`, no 1G pages and no IOMMU | 1367 s | 1524 s |
+| **the three together, wall clock** | **3597 s** | **1868 s** |
+
+Each run is 4 to 11% slower for sharing the machine, and the block is 29
+minutes shorter, on every X or Y release. Two measurements taken with other work on the
+machine (a lab, `make test`) ran the install up to 2467 s. So the
+figure above holds for a gate that has the machine to itself, which is how the
+gate is run.
+
+What it gives up is the one thing running them in order bought: a medium that
+does not boot no longer saves the two installs, which now run to their end
+beside it. The checks after them read the same logs in the same order, so a
+refusal still names the step it always named. `GATE_PARALLEL=0` puts the order
+back.
+
+The two installs used to write one console copy, `/src/install-console.log`,
+and the second run overwrote the first. The second one now writes
+`install-2m-console.log`, through a `LOGCOPY` that `tools/lab.sh` passes into
+the container.
+
 ## 5W2H
 
 | | |

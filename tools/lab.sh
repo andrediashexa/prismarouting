@@ -99,6 +99,7 @@ exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e ISO="${ISO:-}" \
   -e BOOT_NO_1G="${BOOT_NO_1G:-}" \
   -e BOOT_IOMMU="${BOOT_IOMMU:-}" \
+  -e LOGCOPY="${LOGCOPY:-}" \
   -e PRISMA_VERSION_STAMP="$PRISMA_VERSION_STAMP" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "cat > /etc/apt/apt.conf.d/99lab <<'APTCONF'
