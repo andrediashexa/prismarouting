@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The installed system calls itself Prisma Routing, not Debian**
+  ([#438](https://github.com/andrediashexa/hexarouting/issues/438)).
+  `os-release` (`ID=prisma-routing`, `ID_LIKE=debian` kept for apt), the
+  console and ssh login banners, the motd, the boot menu of an installed disk,
+  and the version string sshd sends before any login, which carried
+  `Debian-2+deb12u10` to every scanner on the network. `os-release` is
+  diverted, so an apt upgrade of `base-files` does not put Debian's back.
+  `appliance/prisma-identity` does it on every install and upgrade, and runs
+  `update-grub` on an upgraded box. `uname` still names Debian's kernel: that
+  string is compiled in, and changing it means the custom kernel
+  `docs/appliance.md` refuses. The first version of the script wrote
+  `VERSION_ID` unquoted under dash; its test caught it.
+
 ### Fixed
 
 ## 0.123.6 - upgrade from the VTY

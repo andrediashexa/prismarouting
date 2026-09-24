@@ -2400,6 +2400,45 @@ in practice root, because the upgrade writes the product's files. Ctrl-C does
 nothing while `upgrade` runs, for the reason it does nothing during a commit
 (#441).
 
+## What the system calls itself
+
+The box is a Debian 12 underneath, and until
+[#438](https://github.com/andrediashexa/hexarouting/issues/438) it said so
+everywhere an operator or a scanner looks. `appliance/prisma-identity`, run by
+`appliance/install.sh` on every install and upgrade (and so by
+`appliance/build-iso.sh` too, which runs install.sh into the image), renames
+it:
+
+| Where | Before | After |
+|---|---|---|
+| `/usr/lib/os-release` (`hostnamectl`, `lsb_release`, anything asking which OS) | `PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"`, `ID=debian` | `PRETTY_NAME="Prisma Routing 0.124.0"`, `ID=prisma-routing`, `ID_LIKE=debian` |
+| `/etc/issue`, the console login banner | `Debian GNU/Linux 12 \n \l` | `Prisma Routing 0.124.0 \n \l` |
+| `/etc/issue.net`, `/etc/motd` | Debian's name and licence paragraph | the product's name, version and site |
+| `/etc/update-motd.d/10-uname`, run at every login | prints `uname -snrvm` | no longer executable |
+| the boot menu of an installed disk | `Debian GNU/Linux` | `Prisma Routing GNU/Linux` |
+| the banner sshd sends before any login | `SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u10` | `SSH-2.0-OpenSSH_9.2p1` |
+
+`ID_LIKE=debian` stays on purpose: apt, and every script that asks whether it
+is on a Debian-like system, keep working. `os-release` is not a conffile, so an
+apt upgrade of `base-files` would put Debian's back; it is **diverted**
+(`dpkg-divert --local --no-rename`), and base-files writes its copy to
+`/usr/lib/os-release.debian` instead. `/etc/issue`, `/etc/issue.net` and
+`10-uname` are conffiles of base-files, which dpkg keeps when they are edited;
+`/etc/motd` is copied in by base-files' postinst on the first install only, and
+never again. `10-uname` is made non-executable rather than deleted, because
+dpkg restores a conffile that is missing. On a box that is
+upgraded, the script runs `update-grub` itself, since nothing else would
+rewrite the menu until the next kernel package.
+
+`test/test_prisma_identity.sh` runs it against a copy of debian:12's own files
+and checks each row above, and that a second run changes nothing.
+
+**What still says Debian: `uname`.** The kernel's release and version strings
+(`6.1.0-52-amd64`, `#1 SMP PREEMPT_DYNAMIC Debian 6.1.180-1`) are compiled
+into the image. Changing them means building the kernel, which the next section
+refuses for a reason that has nothing to do with names: a custom kernel ends
+the security updates Debian ships. The hostname in `uname -n` is the box's own.
+
 ## The kernel question: upgrade it, or build our own?
 
 "We should upgrade or rebuild the kernel for performance" is the kind of
