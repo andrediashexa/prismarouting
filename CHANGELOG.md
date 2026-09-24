@@ -77,6 +77,15 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`system upgrade [<version>]` from the VTY**
+  ([#440](https://github.com/andrediashexa/hexarouting/issues/440)). With no
+  version it says which release the box runs and which is the newest
+  published. With one it downloads the package from the public releases
+  directory, refuses it before unpacking anything if it does not match its
+  `sha256`, and runs the same `upgrade` an operator runs by hand, showing
+  everything it says. The version the box runs and older ones are refused.
+  Going back stays the hand-run path.
+
 ### Fixed
 
 ## 0.123.5 - a shell for administrators only

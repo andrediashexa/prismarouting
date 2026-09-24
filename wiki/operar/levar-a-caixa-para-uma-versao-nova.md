@@ -44,6 +44,17 @@ E um passo que deixou de existir: **naquela caixa de uma placa só, entregar a p
 
 # O pacote de atualização
 
+**O caminho curto é pelo próprio VTY**, com a caixa alcançando a internet (e resolvendo nomes: `dns server`, se a gerência não tiver DNS):
+
+```
+prisma> system upgrade
+prisma> system upgrade <versão>
+```
+
+Sem versão, ele diz qual versão a caixa roda e qual é a mais nova publicada, e não muda nada. Com a versão, ele baixa o pacote, confere o `sha256` antes de abrir qualquer coisa, e roda o mesmo `upgrade` dos passos abaixo, mostrando tudo o que ele diz. Uma versão igual ou mais antiga que a da caixa é recusada: voltar de versão é o caminho manual. Depois dele, vale o que vale para o caminho manual: `save` antes de reiniciar.
+
+Os passos abaixo são o mesmo processo à mão, para uma caixa que não alcança a internet.
+
 ## 1. Anote a versão que está rodando
 
 ```
