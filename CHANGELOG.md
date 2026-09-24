@@ -79,6 +79,15 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`lab/vty-ssh.sh` had been red since 0.110.0**
+  ([#434](https://github.com/andrediashexa/hexarouting/issues/434)). It
+  asserted that sshd refuses a listen address that is not an address. Since
+  #413 the VTY refuses it at the prompt, so sshd never saw it again, and a Z
+  release runs no labs, so nothing noticed. The lab now asserts the VTY's
+  refusal. It also creates `/run/sshd`: `sshd -t` refuses to run without it,
+  nothing makes it in the lab container, and three checks were red over the
+  fixture rather than the box.
+
 ## 0.123.0 - resolvers from the VTY
 
 ### Added
