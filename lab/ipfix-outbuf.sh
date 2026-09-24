@@ -343,8 +343,12 @@ EXECSTOP=$(sed -n 's/^ExecStop=-\{0,1\}//p' \
 stop_vpp() {
   PID=$VPP_PID
   [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null || { echo "  no vpp to stop"; exit 1; }
-  echo "  ExecStop: ${EXECSTOP:-(none in the drop-in)}"
-  [ -n "$EXECSTOP" ] && $EXECSTOP 2>&1 | sed 's/^/    /'
+  if [ "${1:-}" = without-execstop ]; then
+    echo "  ExecStop: not run - the stop where it did not drain"
+  else
+    echo "  ExecStop: ${EXECSTOP:-(none in the drop-in)}"
+    [ -n "$EXECSTOP" ] && $EXECSTOP 2>&1 | sed 's/^/    /'
+  fi
   # The drain RELEASES the blocks; it does not flush the exporter. Only the
   # exit hook does that, which is why the counters below read zero here and why
   # the spill's own failure has to be produced another way entirely (#259).
@@ -538,7 +542,18 @@ ${SPILLED_F:-?}, dropped ${DROPPED_E:-none} -> ${DROPPED_F:-none}"
   # collector never took.
   echo "  buffered at the stop: $(tcp_pending 2>/dev/null || echo '?') byte(s)"
   DROPPED_STOP=$(tcp_dropped)
-  stop_vpp
+  # WITHOUT the ExecStop, and that is the case this message exists for
+  # (#435). The ExecStop drains and flushes before the SIGTERM, and on this
+  # full filesystem its flush drops what it cannot write and counts it,
+  # while the box can still be asked. Whatever is left at the exit is what
+  # this message reports, and with the ExecStop run that is a race.
+  # Measured, same build, two runs: 3296248 dropped by the drain and 0 left
+  # for the exit - no message, and the lab red - or 3296212 dropped and 36
+  # bytes left - the message, and the lab green. It is `ExecStop=-`: allowed
+  # to fail, and when it does the exit hook drains alone, every record it
+  # writes fails, and the process is the only thing that can say so. That
+  # is deterministic, and it is the stop the sentence is for.
+  stop_vpp without-execstop
   umount /var/log/prisma-routing 2>/dev/null
   echo "  what the process said on its way out:"
   EXIT_SAID=$(grep -iE "could NOT be written|went to the spill file" \
