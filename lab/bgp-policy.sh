@@ -290,7 +290,7 @@ expect_not_in "and redistribution silences it, because it cannot be seen" \
 RSTAT=$($HX -c "configure" \
         -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
         -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
-        -c "router static" -c "route 200.150.9.0/24 blackhole" -c "exit" \
+        -c "router static" -c "200.150.9.0/24 next-hop blackhole" -c "exit" \
         -c "router bgp 65000" -c "address-family ipv4 unicast" \
         -c "redistribute static" -c "exit-address-family" -c "exit" \
         -c "commit check" 2>&1)
@@ -305,7 +305,7 @@ expect_not_in "a blackhole route redistributed into BGP announces the pool" \
 RELSE=$($HX -c "configure" \
         -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
         -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
-        -c "router static" -c "route 10.0.0.0/8 blackhole" -c "exit" \
+        -c "router static" -c "10.0.0.0/8 next-hop blackhole" -c "exit" \
         -c "router bgp 65000" -c "address-family ipv4 unicast" \
         -c "redistribute static" -c "exit-address-family" -c "exit" \
         -c "commit check" 2>&1)
@@ -322,7 +322,7 @@ expect_in "a static route covering something else announces nothing" \
 ROSPF=$($HX -c "configure" \
         -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
         -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
-        -c "router static" -c "route 200.150.9.0/24 blackhole" -c "exit" \
+        -c "router static" -c "200.150.9.0/24 next-hop blackhole" -c "exit" \
         -c "router ospf" -c "redistribute static" -c "exit" \
         -c "router bgp 65000" -c "address-family ipv4 unicast" \
         -c "exit-address-family" -c "exit" \
@@ -395,7 +395,7 @@ expect_not_said "an iBGP neighbour is not this check's business" \
 # the alarm nobody reads, and these two are in the running configuration from
 # the section that brought them up.
 QUIET=$($HX -c "configure" -c "router static" \
-        -c "route 192.0.2.0/24 blackhole" -c "exit" \
+        -c "192.0.2.0/24 next-hop blackhole" -c "exit" \
         -c "commit check" 2>&1)
 printf '%s\n' "$QUIET" | tail -4 | sed 's/^/  check: /'
 expect_not_said "a box already in that state is not warned again" \

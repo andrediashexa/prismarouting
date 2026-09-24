@@ -39,7 +39,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     ROUTING_HEADER,
                     strip_nat, as_hierarchy, group_static,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
-                    is_static_route,
+                    is_static_route, static_route, static_route_key,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     prefix_error, prefix_why, address_error,
                     text_error, text_why,
@@ -62,6 +62,11 @@ import vppapi
 readline = None
 
 CONFIG_PATH = os.environ.get("PRISMA_CONFIG", "/etc/prisma-routing/prisma-routing.conf")
+# A static route's description (#436). FRR has no field for one, so the box
+# keeps it here, written by commit and read back by running_config(), beside
+# the saved configuration and under the same umask.
+STATIC_DESC_PATH = os.environ.get(
+    "PRISMA_STATIC_DESC", "/etc/prisma-routing/static-route-descriptions")
 ROLLBACK_DIR = os.environ.get("PRISMA_ROLLBACK", "/etc/prisma-routing/rollback")
 ROLLBACK_KEEP = 20
 # Where a "commit confirmed" waits for its confirmation.
@@ -649,10 +654,40 @@ SHOW = {
 # Offered inside `router static`. FRR has no such block - its static routes are
 # top-level `ip route` statements - so this is a hierarchy this VTY provides and
 # translates, which is the whole reason it needs a grammar of its own here.
+#: A word of the operator's that the tree READS rather than lists: a key in
+#: this table rides in a node beside the keywords, like `<interface>`, but
+#: where `<interface>` is offered from the box, these are recognised by their
+#: shape (#436). A static route starts with its prefix, and without this the
+#: tree could walk no further than the first word of one.
+ARG_STATIC_PREFIX = "<prefix>"
+VALUE_SHAPES = {
+    ARG_STATIC_PREFIX: lambda w: "/" in w and _is_network(w),
+}
+
+
+def _is_network(word) -> bool:
+    """An IPv4 or IPv6 prefix, host bits allowed - FRR's call, not this one's.
+
+    Not prefix_error(): that one is the CGNAT's, and the CGNAT is IPv4 only,
+    where a static route is either family (#436)."""
+    try:
+        ipaddress.ip_network(word, strict=False)
+        return True
+    except ValueError:
+        return False
+
+_STATIC_ROUTE = {
+    "next-hop": ("where it goes: an address, an interface, blackhole, Null0 "
+                 "or reject",
+                 "<next-hop> [distance <1-255>] [tag <1-4294967295>] "
+                 "[description <text>]"),
+}
 STATIC_BLOCK_GRAMMAR = {
-    "route": ("a destination this box is told about, rather than taught",
-              "<prefix> <next-hop|interface|blackhole|Null0> [distance]"),
-    "no": ("remove", {"route": ("remove a static route", "<prefix> ...")}),
+    ARG_STATIC_PREFIX: ("a destination this box is told about, rather than "
+                        "taught: '<prefix> next-hop <next-hop>'",
+                        _STATIC_ROUTE),
+    "no": ("remove", {ARG_STATIC_PREFIX: ("remove the static route to it",
+                                          _STATIC_ROUTE)}),
     "exit": ("leave the block", None),
 }
 
@@ -1655,7 +1690,8 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "limits_set", "bypass_set", "fwd_add", "fwd_del", "if_add",
                "if_remove", "globals")
 DELTA_ADMIN = ("vrrp_set", "vrrp_del",
-               "routing_changed", "ssh_changed", "users_changed",
+               "routing_changed", "route_desc_changed", "ssh_changed",
+               "users_changed",
                "snmp_changed", "dataplane_if_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
@@ -2322,10 +2358,18 @@ def _starts(candidate, prefix):
     return candidate.lower().startswith(prefix.lower())
 
 
-def _frr_static(rest):
-    """`route <prefix> ...` as the `ip route` / `ipv6 route` FRR understands."""
-    family = "ipv6" if ":" in rest[0] else "ip"
-    return f"{family} route " + " ".join(rest)
+def shaped_entry(node, word):
+    """
+    The entry of `node` whose VALUE_SHAPES key `word` is shaped like, or None.
+
+    What lets the tree walk past a word it could never list - a prefix - so
+    that `?` offers `next-hop` after one and a static route is marked as
+    read, not as handed to FRR unread (#436).
+    """
+    for key, shaped in VALUE_SHAPES.items():
+        if key in node and shaped(word):
+            return node[key]
+    return None
 
 
 def tree_walk(mode, words):
@@ -2347,7 +2391,7 @@ def walk_from(node, words):
     for w in words:
         if not isinstance(node, dict):
             return None, hint
-        entry = node.get(w)
+        entry = node.get(w) or shaped_entry(node, w)
         if entry is None:
             return None, None       # unknown word: FRR territory from here
         _, sub = entry
@@ -2551,7 +2595,7 @@ def _tree_reads(node, words):
             return True         # an argument: the rest is its business
         if node is None:
             return False        # the statement ended here and went on anyway
-        entry = node.get(word)
+        entry = node.get(word) or shaped_entry(node, word)
         if entry is None:
             return False
         node = entry[1]
@@ -5774,6 +5818,9 @@ class Shell:
         self.user = None               # user being edited
         self.snmp_user = None          # SNMP v3 user being edited
         self.candidate = None          # Config being edited
+        # A static route parsed by hierarchy_rewrite and waiting for FRR's
+        # answer before it is staged: (key, description) or None (#436).
+        self.static_pending = None
         self.frr_ctx = []              # FRR block context inside config mode
         self.failed = 0
         # The statements a `prismash -c` batch asked for and did not get. It is
@@ -6026,6 +6073,7 @@ class Shell:
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
+        cfg.static_descriptions = self.read_static_descriptions(cfg.routing)
         # The Linux end of every linux_cp pair, out. The dataplane reads above
         # report EVERY interface VPP has, and one of them is the pair's own
         # TAP - so `save` wrote `interface tap4097` into the file that
@@ -6038,6 +6086,73 @@ class Shell:
         # `create tap` produces and dropping that would be #47.
         cfg.drop_lcp_taps(self.device_lcp_taps())
         return cfg
+
+    def remove_static_route(self, key):
+        """
+        Take the candidate's top-level static route with this key out, and
+        its description with it (#436).
+
+        Top-level only: a route inside a `vrf` block is in another table and
+        is spelled the same, so matching it by words alone would remove a
+        route from a table the operator is not in.
+        """
+        routing = self.candidate.routing
+        paths = block_paths(routing)
+        self.candidate.routing = [
+            line for path, line in zip(paths, routing)
+            if not (path == [] and is_static_route(line.strip())
+                    and static_route_key(line.strip()) == key)]
+        self.candidate.static_descriptions.pop(key, None)
+
+    def read_static_descriptions(self, routing) -> dict:
+        """
+        {route key: text} from STATIC_DESC_PATH, for the routes FRR has.
+
+        Read back like everything running_config() returns, and FILTERED by
+        what FRR holds: a description whose route is gone - removed at
+        vtysh, or never applied - describes nothing, and showing it would be
+        the box claiming a route it has not got (#436). A file that cannot be
+        read is no descriptions, not a failure: the routes still route.
+        """
+        have = {static_route_key(line)
+                for path, line in zip(block_paths(routing), routing)
+                if path == [] and is_static_route(line.strip())}
+        out = {}
+        try:
+            with open(STATIC_DESC_PATH) as f:
+                for row in f:
+                    key, sep, text = row.rstrip("\n").partition("\t")
+                    if sep and text and key in have:
+                        out[key] = text
+        except OSError:
+            pass
+        return out
+
+    def write_static_descriptions(self, descriptions) -> bool:
+        """
+        Write STATIC_DESC_PATH, whole, by rename - so a reader never sees half.
+
+        One route per row, its key and its text separated by a tab. Neither
+        can hold one: a key is FRR's words and a description refuses control
+        characters at both doors (text_error). False, and said, when it could
+        not be written; the routes are applied either way.
+        """
+        old_umask = os.umask(CONFIG_UMASK)
+        tmp = STATIC_DESC_PATH + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                for key in sorted(descriptions):
+                    f.write(f"{key}\t{descriptions[key]}\n")
+            os.replace(tmp, STATIC_DESC_PATH)
+            return True
+        except OSError as e:
+            self.err_prose("static route descriptions: not written",
+                           f"{STATIC_DESC_PATH}: {e.strerror}",
+                           "the routes are applied; their descriptions are "
+                           "what this box could not keep")
+            return False
+        finally:
+            os.umask(old_umask)
 
     def device_lcp_taps(self) -> set:
         """
@@ -9025,6 +9140,11 @@ class Shell:
                 return False
             # Otherwise there is nothing here for FRR: interface stanzas whose
             # contents this VTY applies to the dataplane itself.
+        # After the routes, so a description is only ever written for a route
+        # FRR took (#436). Its own delta key, so a commit that changes only a
+        # description is applied rather than reported as having nothing to do.
+        if d.get("route_desc_changed"):
+            self.write_static_descriptions(target.static_descriptions)
         return True
 
     def relay_pool_warnings(self, pools):
@@ -11053,15 +11173,31 @@ class Shell:
             return ""
         if not (self.frr_ctx and self.frr_ctx[-1] == STATIC_BLOCK):
             return line
-        # Inside the block. The family comes from the prefix, because a prefix
-        # with a colon in it is IPv6 and nothing else; asking for the family as
-        # well would be asking the operator to contradict themselves.
-        if w[:1] == ["route"] and len(w) > 2:
-            return _frr_static(w[1:])
-        if w[:2] == ["no", "route"] and len(w) > 3:
-            return "no " + _frr_static(w[2:])
-        if w[:1] == ["ip"] or w[:1] == ["ipv6"]:
-            return line          # FRR's own spelling, typed inside the block
+        # Inside the block, ONE statement (#436): `<prefix> next-hop <hop>
+        # [distance <n>] [tag <n>] [description <text>]`, parsed by the same
+        # config.static_route() a saved file goes through. `route ...` and
+        # FRR's own `ip route ...` are refused here, by the maintainer's
+        # decision not to carry a second spelling.
+        self.static_pending = None
+        if w[0] == "no":
+            frr, _, why = static_route(w[1:])
+            if why is not None:
+                self.err_prose(*why)
+                return ""
+            self.remove_static_route(static_route_key(frr))
+            return ""
+        if "/" in w[0] or w[0] in ("route", "ip", "ipv6"):
+            if w[0] in ("ip", "ipv6"):
+                w = ["route"] + w[2:]
+            frr, desc, why = static_route(w)
+            if why is not None:
+                self.err_prose(*why)
+                return ""
+            # Staged by do_config, after FRR has been asked (#431). What is
+            # left to do once it is - replace the route this one re-types,
+            # and keep its description - rides here.
+            self.static_pending = (static_route_key(frr), desc)
+            return frr
         # The words that are not this block's business: the ways out, the
         # readers, and the words every configuration level owns. They are
         # handed BACK so `do_config` dispatches them through `owns_word`.
@@ -11081,7 +11217,7 @@ class Shell:
         # reaches it.
         self.err_prose("not a statement of 'router static'",
                        f"'{w[0]}' is not one; what is entered here is "
-                       f"'route <prefix> <next-hop>', or 'exit'")
+                       f"'<prefix> next-hop <next-hop>', or 'exit'")
         return ""
 
     def do_config(self, line):
@@ -11716,6 +11852,7 @@ class Shell:
         verdict, frr_said = self.frr.dryrun(
             [b for b in self.frr_ctx if b != STATIC_BLOCK], line)
         if verdict == Frr.DRYRUN_REFUSED:
+            self.static_pending = None
             self.err_prose("not a statement FRR accepts here; nothing staged",
                            f"FRR answered: {frr_said}",
                            "'?' lists what this level takes")
@@ -11724,6 +11861,16 @@ class Shell:
             print_prose(f"note: staged WITHOUT being checked, because FRR "
                         f"could not be asked ({frr_said}); 'commit check' "
                         f"asks it again")
+        pending, self.static_pending = self.static_pending, None
+        if pending is not None:
+            # A route is its prefix and next hop: typing the pair again
+            # changes that route rather than adding a second one (#436).
+            key, desc = pending
+            self.remove_static_route(key)
+            self.candidate.routing.append(line)
+            if desc:
+                self.candidate.static_descriptions[key] = desc
+            return True
         self.candidate.routing.append(line)
         # `address-family` is a block, and leaving it out was not an omission
         # anybody noticed - it was invisible because everything in the routing
@@ -12438,7 +12585,8 @@ class Shell:
             # `password` - which is an argument keyword - and what follows is
             # the argument's business.
             body, more = mark_routing(
-                redact(frr_block_lines(cfg.routing, self.frr_ctx)),
+                redact(frr_block_lines(cfg.routing, self.frr_ctx,
+                                      cfg.static_descriptions)),
                 self.frr_ctx)
             for line in body:
                 print(line)

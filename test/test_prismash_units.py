@@ -362,14 +362,24 @@ check(prismash._starts("ens19", "ens19x") is False,
       "a prefix longer than the candidate is not it")
 ok("case-insensitive prefix")
 
-print("\n=== _frr_static: route <prefix> ... in FRR's spelling ===")
-# Mutation shown red: pick the family off the next hop instead of the prefix.
-check(prismash._frr_static(["10.0.0.0/8", "10.1.1.1"])
-      == "ip route 10.0.0.0/8 10.1.1.1", "an IPv4 prefix is 'ip route'")
-check(prismash._frr_static(["2001:db8::/32", "2001:db8:1::1", "vppwan0"])
-      == "ipv6 route 2001:db8::/32 2001:db8:1::1 vppwan0",
-      "an IPv6 prefix is 'ipv6 route', the rest handed on")
-ok("family from the prefix, the rest verbatim")
+print("\n=== shaped_entry: a prefix is walked, a word is not (#436) ===")
+# Mutation shown red: the shape test answering True for any word - `?` then
+# offers `next-hop` after `banana`, and a typo is marked as read.
+_node = prismash.STATIC_BLOCK_GRAMMAR
+check(prismash.shaped_entry(_node, "192.168.0.0/24") is not None,
+      "a prefix finds the <prefix> entry")
+check(prismash.shaped_entry(_node, "2001:db8::/32") is not None,
+      "and so does an IPv6 one")
+check(prismash.shaped_entry(_node, "banana") is None,
+      "a word that is not one does not")
+check(prismash.shaped_entry(_node, "10.0.0.300/8") is None,
+      "nor does a prefix that is no address")
+check(prismash.shaped_entry({"exit": ("x", None)}, "10.0.0.0/8") is None,
+      "and a node with no <prefix> in it matches nothing")
+check(prismash.walk_from(_node, ["10.0.0.0/8", "next-hop"])[1]
+      .startswith("<next-hop>"),
+      "so the walk reaches next-hop's hint through the operator's prefix")
+ok("the tree reads a prefix by its shape")
 
 print("\n=== walk_from: where a walk of words ends in a grammar ===")
 # Mutation shown red: return (None, None) for a string subtree, dropping
@@ -4781,7 +4791,7 @@ print("\n=== router static: the words are not refused by its grammar ===")
 # there is one here now.
 sh = at()
 with spoken() as o:
-    for _line in ("router static", "route 198.19.0.0/24 10.0.0.2", "top"):
+    for _line in ("router static", "198.19.0.0/24 next-hop 10.0.0.2", "top"):
         sh.do_config(_line)
 check(sh.config_depth() == 0 and "error" not in o.getvalue(),
       f"'top' leaves 'router static' like any other level: "
@@ -5259,7 +5269,7 @@ check(_sh.candidate.routing == ["neighbor 192.0.2.1 remote-as 65001"]
 # Mutation shown red: the STATIC_BLOCK filter removed from the dryrun call.
 _sh = at(ctx=["router static"])
 _sh.frr = RecFrr()
-_sh.do_config("route 10.9.0.0/16 10.0.0.9")
+_sh.do_config("10.9.0.0/16 next-hop 10.0.0.9")
 check(_sh.frr.dry == [([], "ip route 10.9.0.0/16 10.0.0.9")],
       f"a static route is asked about as FRR stores it, outside any block: "
       f"{_sh.frr.dry!r}")
@@ -5381,6 +5391,96 @@ except ValueError:
 check(_signal.getsignal(_signal.SIGINT) is _signal.default_int_handler,
       "including when the held function raises")
 ok("held while it applies, and given back afterwards")
+
+print("\n=== router static: next-hop, description, and one route per pair "
+      "(#436) ===")
+# Mutations shown red: the remove_static_route() call before staging taken
+# out (re-typing a route adds a second one); its block_paths filter removed
+# (a `no` in router static takes a vrf's route with the same words).
+assert prismash._is_network("10.0.0.0/8") and prismash._is_network("::/0")
+assert not prismash._is_network("banana")
+_sh = at(ctx=["router static"])
+_sh.frr = RecFrr()
+with spoken() as _o:
+    _sh.do_config("192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 "
+                  "description link to POP-2")
+_key = "ip route 192.168.0.0/24 172.16.0.1"
+check(_sh.candidate.routing == [_key + " tag 100 200"] and not _o.getvalue(),
+      f"staged in FRR's spelling, in silence: {_sh.candidate.routing!r}")
+check(_sh.candidate.static_descriptions == {_key: "link to POP-2"},
+      f"and its description kept by its key: "
+      f"{_sh.candidate.static_descriptions!r}")
+check(_sh.frr.dry == [([], _key + " tag 100 200")],
+      f"FRR was asked about the route, never about the description: "
+      f"{_sh.frr.dry!r}")
+_sh.do_config("192.168.0.0/24 next-hop 172.16.0.1 tag 5")
+check(_sh.candidate.routing == [_key + " tag 5"]
+      and _sh.candidate.static_descriptions == {},
+      f"re-typing the pair changes that route, it does not add one: "
+      f"{_sh.candidate.routing!r} {_sh.candidate.static_descriptions!r}")
+_sh.candidate.static_descriptions["ip route 172.16.0.0/12 blackhole"] = "x"
+_sh.candidate.routing.append("ip route 172.16.0.0/12 blackhole tag 3")
+_sh.remove_static_route("ip route 172.16.0.0/12 blackhole")
+check(_sh.candidate.routing == [_key + " tag 5"]
+      and "ip route 172.16.0.0/12 blackhole" not in
+      _sh.candidate.static_descriptions,
+      "remove_static_route takes the route by its key, tag and all, and its "
+      "description with it")
+_sh.candidate.routing += ["vrf red", " ip route 10.0.0.0/8 blackhole",
+                          "exit-vrf", "ip route 10.0.0.0/8 blackhole"]
+_sh.do_config("no 10.0.0.0/8 next-hop blackhole")
+check(_sh.candidate.routing == [_key + " tag 5", "vrf red",
+                                " ip route 10.0.0.0/8 blackhole", "exit-vrf"],
+      f"'no' removes the global route and leaves the vrf's: "
+      f"{_sh.candidate.routing!r}")
+_sh = at(ctx=["router static"])
+_sh.frr = RecFrr(refuses={"ip route 10.": "% Unknown command: x"})
+_sh.do_config("10.1.0.0/16 next-hop 1.2.3.4 description never staged")
+check(_sh.candidate.routing == [] and _sh.candidate.static_descriptions == {}
+      and _sh.static_pending is None,
+      f"a route FRR refuses leaves no description behind either: "
+      f"{_sh.candidate.static_descriptions!r} {_sh.static_pending!r}")
+_sh = at(ctx=["router static"])
+for _typed, _needle in (("route 10.9.0.0/16 10.0.0.9", "'route' is not"),
+                        ("ip route 10.9.0.0/16 10.0.0.9", "'route' is not"),
+                        ("no banana", "starts with its prefix"),
+                        ("banana", "not a statement of 'router static'")):
+    with spoken() as _o:
+        _sh.do_config(_typed)
+    check(_needle in _o.getvalue() and _sh.candidate.routing == [],
+          f"{_typed!r} is refused in the block: {_o.getvalue()!r}")
+
+print("\n=== the description file: written at commit, read back filtered "
+      "(#436) ===")
+# Mutation shown red: read_static_descriptions() without the filter - a
+# description of a route FRR no longer has comes back and is shown.
+_desc_path = os.path.join(_root, "static-route-descriptions")
+_saved_path = prismash.STATIC_DESC_PATH
+prismash.STATIC_DESC_PATH = _desc_path
+try:
+    _sh = shell()
+    check(_sh.read_static_descriptions(["ip route 10.0.0.0/8 1.2.3.4"]) == {},
+          "no file is no descriptions, not a failure")
+    check(_sh.write_static_descriptions(
+              {"ip route 10.0.0.0/8 1.2.3.4": "to POP-1",
+               "ip route 10.9.0.0/16 blackhole": "gone from FRR"}),
+          "the file is written")
+    check(not os.path.exists(_desc_path + ".tmp"),
+          "by rename, with nothing left beside it")
+    got = _sh.read_static_descriptions(
+        ["ip route 10.0.0.0/8 1.2.3.4 tag 9 20", "vrf red",
+         " ip route 10.9.0.0/16 blackhole", "exit-vrf"])
+    check(got == {"ip route 10.0.0.0/8 1.2.3.4": "to POP-1"},
+          f"read back for the global routes FRR has, and no others: {got!r}")
+    prismash.STATIC_DESC_PATH = os.path.join(_root, "no-such-dir", "f")
+    with spoken() as _o:
+        _okw = _sh.write_static_descriptions({"k": "v"})
+    check(not _okw and "not written" in _o.getvalue(),
+          f"a file that cannot be written is said, not swallowed: "
+          f"{_o.getvalue()!r}")
+finally:
+    prismash.STATIC_DESC_PATH = _saved_path
+ok("a description is this box's, kept where the box keeps its own settings")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

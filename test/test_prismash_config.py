@@ -413,7 +413,8 @@ check("ip route 0.0.0.0/0 10.0.0.2" in old.routing,
 new_text = old.text()
 check("nat cgnat pool residential" in new_text,
       f"CGNAT is written under nat: {new_text}")
-check("router static" in new_text and " route 0.0.0.0/0 10.0.0.2" in new_text,
+check("router static" in new_text
+      and " 0.0.0.0/0 next-hop 10.0.0.2" in new_text,
       f"and static routes as a block under router: {new_text}")
 check("\nip route " not in new_text,
       "the flat spelling is not written twice")
@@ -449,9 +450,9 @@ lines = config.group_static(typed.routing)
 in_vrf = "ip route 10.0.0.0/8 192.0.2.1" in lines
 check(in_vrf and lines.index("vrf red") < lines.index("ip route 10.0.0.0/8 192.0.2.1"),
       f"a route typed inside a vrf stays inside it: {lines}")
-check(" route 0.0.0.0/0 10.0.0.2" in lines,
+check(" 0.0.0.0/0 next-hop 10.0.0.2" in lines,
       f"while the one typed outside is still grouped: {lines}")
-check(" route 10.0.0.0/8 192.0.2.1" not in lines,
+check(" 10.0.0.0/8 next-hop 192.0.2.1" not in lines,
       f"and the vrf's is not grouped with it: {lines}")
 check(back.routing.index("vrf red") < back.routing.index(" ip route 10.0.0.0/8 192.0.2.1"),
       "and is still inside it after a round trip")
@@ -504,7 +505,7 @@ check("  maximum-paths 4" in held,
 # The family comes from the prefix, not from a keyword: a prefix with a colon
 # in it is IPv6 and nothing else, and asking for it twice is asking the
 # operator to contradict themselves.
-v6 = config.Config.parse("! routing\nrouter static\n route 2001:db8::/32 fe80::1\n exit\n")
+v6 = config.Config.parse("! routing\nrouter static\n 2001:db8::/32 next-hop fe80::1\n exit\n")
 check(v6.routing == ["ipv6 route 2001:db8::/32 fe80::1"],
       f"an IPv6 prefix becomes an ipv6 route: {v6.routing}")
 
@@ -516,7 +517,7 @@ nat cgnat interface pg0 inside
 cgnat interface pg1 outside
 ! routing
 router static
- route 0.0.0.0/0 10.0.0.2
+ 0.0.0.0/0 next-hop 10.0.0.2
  exit
 ip route 198.51.100.0/24 blackhole
 """)
@@ -867,9 +868,9 @@ check(not config.is_static_route(""), "an empty line is not")
 # ungroup_static: the router static block back into FRR's words, family by
 # the prefix, with everything outside the block untouched.
 _GROUPED = ["router static",
-            " route 10.0.0.0/8 10.0.0.1",
-            " route 2001:db8::/32 2001:db8::1",
-            " no route 10.1.0.0/16 10.0.0.1",
+            " 10.0.0.0/8 next-hop 10.0.0.1",
+            " 2001:db8::/32 next-hop 2001:db8::1",
+            " no 10.1.0.0/16 next-hop 10.0.0.1",
             "exit",
             "interface vppwan0",
             " ip ospf area 0",
@@ -1907,6 +1908,112 @@ check(not _cfg.unknown and "residential" in _cfg.pools
       f"{_cfg.unknown!r}")
 print(f"  {len(_TEXT_DOORS)} refused in a file, and a real configuration "
       f"untouched")
+
+print("\n=== static_route: one statement, both doors (#436) ===")
+# Mutations shown red, one at a time: the family check removed (an IPv6 hop
+# on an IPv4 prefix is handed to FRR); tag and distance written in the order
+# typed rather than FRR's; the `route` refusal removed (the old spelling is
+# staged again).
+for words, frr, desc in (
+        ("192.168.0.0/24 next-hop 172.16.0.1",
+         "ip route 192.168.0.0/24 172.16.0.1", None),
+        ("192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 "
+         "description link to POP-2",
+         "ip route 192.168.0.0/24 172.16.0.1 tag 100 200", "link to POP-2"),
+        ("192.168.0.0/24 next-hop 172.16.0.1 tag 100 distance 200",
+         "ip route 192.168.0.0/24 172.16.0.1 tag 100 200", None),
+        ("10.0.0.0/8 next-hop blackhole tag 7",
+         "ip route 10.0.0.0/8 blackhole tag 7", None),
+        ("2001:db8::/32 next-hop Null0 distance 50",
+         "ipv6 route 2001:db8::/32 Null0 50", None),
+        ("10.0.0.0/8 next-hop 10.1.1.1 vppwan0 onlink distance 5",
+         "ip route 10.0.0.0/8 10.1.1.1 vppwan0 onlink 5", None),
+        ("10.0.0.0/8 next-hop vppwan0", "ip route 10.0.0.0/8 vppwan0", None)):
+    got = config.static_route(words.split())
+    check(got == (frr, desc, None), f"{words!r} -> {got!r}")
+for words, needle in (
+        ("", "an empty static route"),
+        ("route 10.9.0.0/16 10.0.0.9", "'route' is not a statement here"),
+        ("10.0.0.0 next-hop 1.2.3.4", "starts with its prefix"),
+        ("banana next-hop 1.2.3.4", "starts with its prefix"),
+        ("10.0.0.0/8 via 1.2.3.4", "needs 'next-hop <next-hop>'"),
+        ("10.0.0.0/8 next-hop", "needs 'next-hop <next-hop>'"),
+        ("10.0.0.0/8 next-hop 1.2.3", "the next hop is not an address"),
+        ("10.0.0.0/8 next-hop 2001:db8::1", "not in the prefix's family"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 distance", "distance: no value"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 distance 0", "distance: expected 1-255"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 distance 256", "expected 1-255"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 distance \u0661", "expected 1-255"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 tag 4294967296",
+         "tag: expected 1-4294967295"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 tag 1 tag 2", "tag: given twice"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 tag 1 onlink", "words after distance"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 description", "no text after it"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 description " + "x" * 64,
+         "64 bytes, and the limit is 63"),
+        ("10.0.0.0/8 next-hop 1.2.3.4 description a\x07b",
+         "a control character")):
+    got = config.static_route(words.split())
+    text = " ".join(got[2] or ())
+    check(got[0] is None and needle in text,
+          f"{words!r} is refused with {needle!r}: {got!r}")
+
+print("\n=== static_route_key and static_route_words (#436) ===")
+# Mutation shown red: the key keeping the distance - re-typing a route with
+# a new distance then adds a second route beside the first.
+check(config.static_route_key("ip route 192.168.0.0/24 172.16.0.1 tag 100 200")
+      == "ip route 192.168.0.0/24 172.16.0.1",
+      "a route's key is its prefix and hop, not its tag or distance")
+check(config.static_route_key("ip route 10.0.0.0/8 10.1.1.1 table 5 7")
+      == "ip route 10.0.0.0/8 10.1.1.1 table 5",
+      "and a number after 'table' is the table's, not a distance")
+check(config.static_route_words("ip route 192.168.0.0/24 172.16.0.1 tag 100 200", "link to POP-2")
+      == "192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 "
+         "description link to POP-2",
+      "FRR's spelling comes back in the block's words, description last")
+check(config.static_route_words("ipv6 route 2001:db8::/32 Null0") == "2001:db8::/32 next-hop Null0",
+      "with nothing after the hop when there is nothing")
+for typed in ("192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100",
+              "10.0.0.0/8 next-hop 10.1.1.1 vppwan0 onlink distance 5"):
+    frr = config.static_route(typed.split())[0]
+    check(config.static_route_words(frr) == typed and config.static_route(config.static_route_words(frr).split())[0] == frr,
+          f"typed, stored and shown are one route: {typed!r} {frr!r} {config.static_route_words(frr)!r}")
+
+print("\n=== a saved file carries a description, and refuses what the "
+      "prompt refuses (#436) ===")
+_desc_file = config.Config.parse("""! routing
+router static
+ 192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 description link to POP-2
+ 10.0.0.0/8 next-hop blackhole
+ exit
+""")
+check(_desc_file.routing == ["ip route 192.168.0.0/24 172.16.0.1 tag 100 200",
+                             "ip route 10.0.0.0/8 blackhole"]
+      and not _desc_file.unknown,
+      f"the routes, in FRR's spelling: {_desc_file.routing!r} "
+      f"{_desc_file.unknown!r}")
+check(_desc_file.static_descriptions
+      == {"ip route 192.168.0.0/24 172.16.0.1": "link to POP-2"},
+      f"and the description kept by the route's key: "
+      f"{_desc_file.static_descriptions!r}")
+check(" 192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 description "
+      "link to POP-2" in _desc_file.text().splitlines(),
+      "written back exactly as it was read")
+_old_file = config.Config.parse("! routing\nrouter static\n"
+                                " route 10.9.0.0/16 10.0.0.9\n exit\n")
+check(_old_file.routing == []
+      and [(n, t) for n, t, _ in _old_file.unknown]
+      == [(3, "route 10.9.0.0/16 10.0.0.9")],
+      f"the old spelling is refused, by its line number in the file: "
+      f"{_old_file.unknown!r}")
+_bare = config.Config(); _bare.routing = ["ip route 10.0.0.0/8 1.2.3.4"]
+_d = config.Config(); _d.routing = list(_bare.routing)
+_d.static_descriptions = {"ip route 10.0.0.0/8 1.2.3.4": "to the POP"}
+check(_bare.delta_to(_d)["route_desc_changed"]
+      and not _bare.delta_to(_d)["routing_changed"],
+      "a changed description is a change of its own, and not a routing one")
+check(not _bare.is_same(_d),
+      "so a candidate that changes only a description is not 'the same'")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

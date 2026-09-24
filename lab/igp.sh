@@ -1003,7 +1003,7 @@ expect_in "and the stall is named in the words commit already used" \
   "carries OSPF and its MTU is $HERE while its Linux side vppwan0 is at $THERE" \
   "$SPLITIF"
 MTUWARN=$($HX -c "configure" -c "router static" \
-          -c "route 10.77.0.0/16 blackhole" -c "commit check" 2>&1)
+          -c "10.77.0.0/16 next-hop blackhole" -c "commit check" 2>&1)
 expect_in "which is the sentence commit check prints, word for word" \
   "carries OSPF and its MTU is $HERE while its Linux side vppwan0 is at $THERE" \
   "$MTUWARN"

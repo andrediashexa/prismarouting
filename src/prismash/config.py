@@ -272,7 +272,7 @@ def as_hierarchy(stmt: str, ctx=()) -> str:
             # static routes in their own spelling inside the block, and
             # `group_static` only ever hoists the top-level ones.
             return " / ".join(path + [s])
-        return f"{STATIC_BLOCK} / route " + " ".join(s.split()[2:])
+        return f"{STATIC_BLOCK} / " + static_route_words(s)
     return s
 
 
@@ -292,7 +292,185 @@ def is_static_route(line: str) -> bool:
                                                ["ipv6", "route"])
 
 
-def group_static(routing: list) -> list:
+#: The next hops that are not an address or an interface: FRR's words for
+#: "drop it here". Offered by name, and not checked as an address.
+STATIC_DROP_HOPS = ("blackhole", "Null0", "reject")
+#: Where a static route's own words end and the next begins (#436).
+STATIC_KEYWORDS = ("distance", "tag", "description")
+
+
+def static_route(words):
+    """
+    A statement typed inside `router static`, as (frr_line, description,
+    refusal). Exactly one of frr_line and refusal is None.
+
+    ONE PARSER FOR BOTH DOORS (#436): the prompt calls it from
+    `hierarchy_rewrite` and the file from `ungroup_static`, so a route the
+    prompt refuses is a route a saved file cannot carry either.
+
+    Two spellings. The one an operator types:
+
+        <prefix> next-hop <hop> [distance <1-255>] [tag <1-4294967295>]
+                 [description <text>]
+
+    and nothing else. The spelling before it, `route <prefix> <hop>`, is
+    REFUSED at both doors, by the maintainer's decision of 2026-09-24 not to
+    carry it (#436). A box whose saved file still has it refuses that file at
+    boot, and the upgrade page of the wiki says so before anybody upgrades.
+
+    distance and tag in either order; description last, because it takes
+    the rest of the line. Words between the hop and the first of those -
+    an interface after an address, `onlink` - are FRR's, handed over as
+    typed, and FRR's grammar checks them where they are typed (#431).
+    MEASURED on FRR 10.7.1: `ip route P NH tag T D` is the spelling FRR reads
+    back, whatever order it was given in, so that is the one produced here.
+
+    The refusal is (verdict, prose): the operator's words go in the prose,
+    for the width #363 gives.
+    """
+    if not words:
+        return None, None, ("an empty static route",
+                            "type '<prefix> next-hop <next-hop>'")
+    if words[0] == "route":
+        return None, None, ("'route' is not a statement here any more",
+                            "a static route is '<prefix> next-hop "
+                            "<next-hop>', as in '192.168.0.0/24 next-hop "
+                            "172.16.0.1'")
+    prefix = words[0]
+    try:
+        net = ipaddress.ip_network(prefix, strict=False)
+        if "/" not in prefix:
+            raise ValueError
+    except ValueError:
+        return None, None, ("a static route starts with its prefix",
+                            f"'{prefix}' is not one; type "
+                            f"'<prefix> next-hop <next-hop>', as in "
+                            f"'192.168.0.0/24 next-hop 172.16.0.1'")
+    if len(words) < 3 or words[1] != "next-hop":
+        return None, None, ("a static route needs 'next-hop <next-hop>'",
+                            f"after '{prefix}': an address, an interface, "
+                            f"or " + ", ".join(STATIC_DROP_HOPS))
+    hop = words[2]
+    if hop not in STATIC_DROP_HOPS and any(c in hop for c in ".:"):
+        try:
+            addr = ipaddress.ip_address(hop)
+        except ValueError:
+            return None, None, ("the next hop is not an address",
+                                f"'{hop}' is not one, nor an interface or "
+                                + ", ".join(STATIC_DROP_HOPS))
+        if addr.version != net.version:
+            return None, None, ("the next hop is not in the prefix's family",
+                                f"'{hop}' is IPv{addr.version} and "
+                                f"'{prefix}' is IPv{net.version}")
+    extra, distance, tag, description = [], None, None, None
+    i = 3
+    while i < len(words):
+        w = words[i]
+        if w == "description":
+            text = " ".join(words[i + 1:])
+            if not text:
+                return None, None, ("description: no text after it",
+                                    "it takes the rest of the line")
+            why = text_error("static route description", text)
+            if why:
+                return None, None, why
+            description = text
+            break
+        if w in ("distance", "tag"):
+            if i + 1 >= len(words):
+                return None, None, (f"{w}: no value after it",
+                                    "distance is 1-255, tag 1-4294967295")
+            value = words[i + 1]
+            top = 255 if w == "distance" else 4294967295
+            if not (is_number(value)
+                    and 1 <= int(value) <= top):
+                return None, None, (f"{w}: expected 1-{top}",
+                                    f"'{value}' is not in that range")
+            if (distance if w == "distance" else tag) is not None:
+                return None, None, (f"{w}: given twice",
+                                    "a route has one of each")
+            if w == "distance":
+                distance = str(int(value))
+            else:
+                tag = str(int(value))
+            i += 2
+            continue
+        if distance is not None or tag is not None:
+            return None, None, ("a static route: words after distance or tag",
+                                f"'{w}' comes after them; FRR's own words go "
+                                f"straight after the next hop, and "
+                                f"'description' last")
+        extra.append(w)
+        i += 1
+    family = "ipv6" if net.version == 6 else "ip"
+    line = f"{family} route {prefix} {hop}"
+    if extra:
+        line += " " + " ".join(extra)
+    if tag is not None:
+        line += f" tag {tag}"
+    if distance is not None:
+        line += f" {distance}"
+    return line, description, None
+
+
+def static_route_key(line: str) -> str:
+    """
+    A static route's identity: its FRR line without the tag and distance.
+
+    A route IS its prefix and next hop (and whatever else FRR keys it on - an
+    interface, a table). Its tag and distance are attributes: typing the
+    same pair again with a different tag changes that route, and `no <prefix>
+    next-hop <hop>` removes it whatever it carries (#436). A distance is the
+    bare number in FRR's spelling, so it is told apart from a `table <n>` or
+    a `label <n>` by the word in front of it.
+    """
+    w = line.split()
+    keep, i = w[:4], 4
+    while i < len(w):
+        if w[i] == "tag" and i + 1 < len(w):
+            i += 2
+            continue
+        if is_number(w[i]) and w[i - 1] not in ("table", "label", "color"):
+            i += 1
+            continue
+        keep.append(w[i])
+        i += 1
+    return " ".join(keep)
+
+
+def static_route_words(line: str, description=None) -> str:
+    """
+    An FRR static route, in the words `router static` takes (#436).
+
+    The inverse of static_route(): FRR's `ip route P NH [..] tag T D` becomes
+    `P next-hop NH [..] distance D tag T`, with the description this box
+    keeps for it on the end. What FRR carries that this spelling has no word
+    for stays where FRR put it, after the next hop, so it survives the trip.
+    """
+    w = line.split()
+    extra, distance, tag, i = [], None, None, 4
+    while i < len(w):
+        if w[i] == "tag" and i + 1 < len(w):
+            tag, i = w[i + 1], i + 2
+            continue
+        if is_number(w[i]) and w[i - 1] not in ("table", "label", "color"):
+            distance, i = w[i], i + 1
+            continue
+        extra.append(w[i])
+        i += 1
+    out = f"{w[2]} next-hop {w[3]}"
+    if extra:
+        out += " " + " ".join(extra)
+    if distance is not None:
+        out += f" distance {distance}"
+    if tag is not None:
+        out += f" tag {tag}"
+    if description:
+        out += f" description {description}"
+    return out
+
+
+def group_static(routing: list, descriptions=None) -> list:
     """
     FRR's flat `ip route` lines, shown as the block this VTY takes.
 
@@ -313,13 +491,15 @@ def group_static(routing: list) -> list:
         if emitted:
             continue          # already inside the block above
         out.append(STATIC_BLOCK)
-        out += [" route " + " ".join(s.split()[2:]) for s in statics]
+        out += [" " + static_route_words(
+                    s, (descriptions or {}).get(static_route_key(s)))
+                for s in statics]
         out.append(" exit")
         emitted = True
     return out
 
 
-def frr_block_lines(routing: list, ctx: list) -> list:
+def frr_block_lines(routing: list, ctx: list, descriptions=None) -> list:
     """
     What the block at path `ctx` holds, in the words it was entered in.
 
@@ -334,7 +514,7 @@ def frr_block_lines(routing: list, ctx: list) -> list:
     what `show this` says a block holds is what a commit will write.
     """
     want = [c.strip() for c in ctx]
-    grouped = group_static(routing)
+    grouped = group_static(routing, descriptions)
     out = []
     for path, line in zip(block_paths(grouped), grouped):
         if path is not None and path[:len(want)] == want:
@@ -342,7 +522,7 @@ def frr_block_lines(routing: list, ctx: list) -> list:
     return out
 
 
-def ungroup_static(lines: list) -> list:
+def ungroup_static(lines: list, descriptions=None, refused=None) -> list:
     """
     The inverse: a `router static` block back into what FRR understands.
 
@@ -351,7 +531,7 @@ def ungroup_static(lines: list) -> list:
     to say so twice is asking them to contradict themselves.
     """
     out, inside = [], False
-    for line in lines:
+    for idx, line in enumerate(lines):
         s = line.strip()
         if s == STATIC_BLOCK:
             inside = True
@@ -359,15 +539,24 @@ def ungroup_static(lines: list) -> list:
         if inside and s in ("exit", "exit-vrf"):
             inside = False
             continue
-        if inside and s.split()[:1] == ["route"] and len(s.split()) > 2:
-            rest = s.split(None, 1)[1]
-            family = "ipv6" if ":" in rest.split()[0] else "ip"
-            out.append(f"{family} route {rest}")
-            continue
-        if inside and s.split()[:2] == ["no", "route"]:
-            rest = s.split(None, 2)[2]
-            family = "ipv6" if ":" in rest.split()[0] else "ip"
-            out.append(f"no {family} route {rest}")
+        if inside:
+            # The prompt's parser, so the file refuses what the prompt
+            # refuses (#436). A line it refuses is REPORTED, index and
+            # reason, and not passed to FRR: `refused` is how Config.parse
+            # names it with its line number.
+            w = s.split()
+            neg = w[:1] == ["no"]
+            frr, desc, why = static_route(w[1:] if neg else w)
+            if why is not None:
+                if refused is not None:
+                    refused.append((idx, s, " - ".join(why)))
+                continue
+            if neg:
+                out.append("no " + frr)
+                continue
+            out.append(frr)
+            if desc and descriptions is not None:
+                descriptions[static_route_key(frr)] = desc
             continue
         out.append(line)
     return out
@@ -1189,6 +1378,12 @@ TEXT_LIMITS = {
     #: the refusal arrives at the prompt where an operator can act on it,
     #: and neither claims the box would fail - going past a declared width
     #: is relying on behaviour nothing documents.
+    #: A static route's description is not held by FRR at all - `ip route
+    #: ... description x` is `% Unknown command` on 10.7.1 - so it lives in
+    #: this box's own file and the bound is this box's choice (#436). The same
+    #: 63 an interface description has, so one habit fits both.
+    "static route description": (63, "this box's own file; kept to what an "
+                                     "interface description holds"),
     "cgnat identity file": (256, "bpa.api, bpa_identity_set path[256]"),
     "cgnat identity dhcp-leases": (256, "bpa.api, bpa_identity_set path[256]"),
     #: 127, measured with a packet (#425). A secret cannot be read back -
@@ -1854,6 +2049,9 @@ class Config:
         # this VTY. A description only the VTY knows is one that disagrees with
         # every other tool on the box.
         self.descriptions: dict[str, str] = {}   # name -> text
+        # A static route's description, keyed by static_route_key(): FRR has
+        # no field for one, so this box keeps it (#436).
+        self.static_descriptions: dict[str, str] = {}
         # Addresses per interface, in the order written. A list and not a set:
         # more than one address per family is ordinary on a router, and the
         # order is what an operator reads back to check their own work.
@@ -2098,7 +2296,7 @@ class Config:
         # still loads too - which is what lab/upgrade.sh puts through it.
         out += [f"{NAT_HIERARCHY} {g}" for g in ordered_globals(self.globals)]
         out.append(ROUTING_HEADER)
-        out += group_static(self.routing)
+        out += group_static(self.routing, self.static_descriptions)
         return "\n".join(out) + "\n"
 
     def frr_interface_names(self) -> list:
@@ -2309,6 +2507,7 @@ class Config:
     def parse(cls, text: str) -> "Config":
         cfg = cls()
         section = "cgnat"
+        routing_lines = []     # the file's line number of each routing line
         pool = None
         iface = None
         user = None
@@ -2342,6 +2541,7 @@ class Config:
             if section == "routing":
                 cfg.n_statements += 1
                 cfg.routing.append(line)
+                routing_lines.append(lineno)
                 continue
 
             # `!` is the comment marker in this file format - the same one FRR
@@ -2695,7 +2895,11 @@ class Config:
         # `router static` back into the top-level `ip route` statements FRR
         # takes. Done after the loop rather than in it, because the block is
         # only recognisable as one from its own `exit`.
-        cfg.routing = ungroup_static(cfg.routing)
+        refused = []
+        cfg.routing = ungroup_static(cfg.routing, cfg.static_descriptions,
+                                     refused)
+        for idx, text, why in refused:
+            cfg.unknown.append((routing_lines[idx], text, why))
         # NOT dropping linux_cp TAPs here. A file is parsed with no dataplane
         # in reach - `prismash --load` runs before anything asks VPP anything -
         # so this is the one place that cannot tell a pair's TAP from a TAP an
@@ -3235,4 +3439,6 @@ class Config:
             "vrrp_del": vrrp_del,
             "globals": [g for g in other.globals if g not in self.globals],
             "routing_changed": self.routing != other.routing,
+            "route_desc_changed": (self.static_descriptions
+                                   != other.static_descriptions),
         }

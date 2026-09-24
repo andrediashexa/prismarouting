@@ -229,9 +229,9 @@ Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e
 
 
 :::info
-**Duas hierarquias mudaram de lugar.** O CGNAT ficou embaixo de `nat` (`nat cgnat pool ...`, `nat cgnat interface ...`) e as rotas estáticas viraram um bloco embaixo de `router` (`router static`, com `route <prefixo> <próximo-salto>` dentro). É onde o operador procura por elas.
+**Duas hierarquias mudaram de lugar.** O CGNAT ficou embaixo de `nat` (`nat cgnat pool ...`, `nat cgnat interface ...`) e as rotas estáticas viraram um bloco embaixo de `router` (`router static`, com `<prefixo> next-hop <próximo-salto>` dentro). É onde o operador procura por elas.
 
-As grafias antigas — `cgnat ...` no topo do modo de configuração e `ip route ...` — **continuam aceitas**, digitadas ou lidas de um arquivo salvo, para que nenhuma caixa em serviço perca a própria configuração. Só as novas são oferecidas por TAB e `?`, e é nelas que a caixa escreve o que mostra e o que salva.
+`cgnat ...` no topo do modo de configuração continua aceito, digitado ou lido de um arquivo salvo, e `ip route ...` no topo continua indo para o roteamento. Dentro de `router static`, a única forma é `<prefixo> next-hop ...`: a forma `route ...` dentro do bloco foi retirada, e um arquivo salvo que ainda a tenha é recusado inteiro.
 
 :::
 

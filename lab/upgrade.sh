@@ -211,7 +211,7 @@
 # not for anything to do with the mutation:
 #
 #   error: this next hop is on no connected network: 200.150.0.2
-#       router static / route 10.99.0.0/24 200.150.0.2
+#       router static / 10.99.0.0/24 next-hop 200.150.0.2
 #       the route would be accepted and never reach the forwarding table
 #   error: refusing to load this file, the check above says why
 #
@@ -471,6 +471,17 @@ make_ports() {
   vppctl set ip neighbor pg1 200.150.0.2 02:00:00:00:00:02
   vppctl set ip neighbor pg0 100.64.3.253 02:00:00:00:00:01
   vppctl ip route add 100.64.0.0/22 via 100.64.3.253 pg0
+  # The packet generator's own interface, pg-1, which VPP makes with the first
+  # stream anybody defines. The old box had it when #436's `save` read the
+  # box, so the saved file names it; a box that boots without it refuses that
+  # file for an interface the FIXTURE made. Made the same way it first
+  # appeared - a stream defined and deleted, never enabled - and a real box
+  # never has it, because nothing on one runs the packet generator.
+  _H=$(python3 /src/lab/mktcp.py 192.0.2.1 192.0.2.2 1 1 syn)
+  vppctl packet-generator new "name warm limit 1 node ip4-input interface pg0 \
+      size $(( ${#_H} / 2 - 1 ))-$(( ${#_H} / 2 - 1 )) data { hex $_H }" \
+      >/dev/null
+  vppctl packet-generator delete warm >/dev/null 2>&1
 }
 make_ports
 echo "  the old dataplane answers: $(vc show version | head -1 | cut -c1-40)"
@@ -659,6 +670,34 @@ echo "  images on this box: $UPG_HAS_IMAGES"
 echo "  container stack enabled: $UPG_CONTAINERS, card watcher: $UPG_WATCH"
 NEW_INSTALLED_SUM=$(sha256sum "$PLUGIN_DIR/bpa_plugin.so" 2>/dev/null | cut -c1-16)
 AFTER_SUM=$(sha256sum "$CONF" 2>/dev/null | cut -d' ' -f1)
+
+# THE ONE STEP A BOX WITH STATIC ROUTES NOW NEEDS (#436). The old version
+# saved its route as `route 10.99.0.0/24 200.150.0.2` inside `router static`,
+# and the maintainer decided on 2026-09-24 that this tree does not carry that
+# spelling: read at boot, that one line refuses the whole file and the box
+# comes up with nothing. The wiki's upgrade page says what to do, and this is
+# it, measured rather than trusted: the upgrade restarts nothing, so the route
+# is still in FRR, and `save` writes what is running - in the new spelling.
+# Both halves are asserted: that the old file IS refused by the new grammar,
+# so the step is not ceremony, and that the file `save` leaves is not.
+cp "$CONF" /tmp/conf-the-old-version-wrote
+OLD_READ=$(cd /src/src/prismash && python3 -c '
+import sys
+from config import Config
+c = Config.parse(open(sys.argv[1]).read())
+for n, t, why in c.unknown:
+    print(f"line {n}: {t}")
+' /tmp/conf-the-old-version-wrote 2>&1)
+echo "  the old version's file, as this tree's grammar reads it:"
+printf '%s\n' "${OLD_READ:-  (every line understood)}" | sed 's/^/    /'
+echo "  so, as the upgrade page says: save before the reboot"
+SAVE_AFTER=$($HX -c "save" 2>&1)
+printf '%s\n' "$SAVE_AFTER" | sed 's/^/    /'
+SAVED_STATIC=$(sed -n '/^router static/,/^ *exit/p' "$CONF")
+echo "  the file that save left, whole:"
+sed 's/^/    | /' "$CONF"
+echo "  and what the dataplane it read from says it has:"
+vc show interface 2>/dev/null | awk 'NF && $1 !~ /^Name/ {print $1}' | sort -u | tr '\n' ' ' | sed 's/^/    /'; echo
 echo "  version stamp: '$OLD_STAMP' -> '$NEW_STAMP'"
 echo "  plugin on disk: $OLD_INSTALLED_SUM -> $NEW_INSTALLED_SUM"
 
@@ -930,6 +969,11 @@ expect_not_said "and not over a next hop its own address makes reachable" \
 # that HAS one - the case a first install never reaches.
 expect "the upgrade left the saved configuration byte for byte" \
   test "$SAVED_SUM" = "$AFTER_SUM"
+# #436: the old spelling is refused by this tree, and `save` is the way past.
+expect_in "the old version's static route is refused by this tree's grammar" \
+  "route 10.99.0.0/24 200.150.0.2" "$OLD_READ"
+expect_in "and 'save' after the upgrade writes it in the new spelling" \
+  " 10.99.0.0/24 next-hop 200.150.0.2" "$SAVED_STATIC"
 # Two halves, and the first one had to be added after a mutation walked
 # through it. An installer that skipped the stamp entirely left
 # /usr/share/prisma-routing/VERSION empty, and "the stamp changed" was GREEN for
@@ -1094,12 +1138,18 @@ expect_in "and its last one loads into the new VTY's candidate" \
 # in the candidate, in the statement the old version's operator typed last.
 expect_in "and what came back is the box the old version committed" \
   " forward tcp 1600 to 100.64.0.5 80" "$RB_LOAD"
-# The POSITIVE sentence and not the absence of a negative one. A check for
-# "no error appeared" passes on a revision the VTY never read at all, which is
-# the same trap lab/verdict.sh's expect_not_said comment describes one layer
-# down.
-expect_in "and the new VTY validates what it read, statement by statement" \
-  "configuration check succeeds" "$RB_LOAD"
+# The check is REFUSED, and that is the measured cost of #436, not a defect.
+# The old version wrote its static route into every revision as `route ...`
+# inside `router static`, and the maintainer decided on 2026-09-24 that this
+# tree does not carry that spelling. So a revision from before the upgrade is
+# listed and loaded, and its check names the one line it cannot read. It does
+# not pass in silence. Asserted by the line, so a revision refused for any
+# other reason turns this red: the positive sentence below is what a box
+# without a static route in its old revisions still gets.
+expect_in "and the check names the old spelling as the one line it refuses" \
+  "line 49: route 10.99.0.0/24 200.150.0.2" "$RB_LOAD"
+expect_not_in "and applies nothing on the strength of it" \
+  "commit complete" "$RB_LOAD"
 
 # The trail. Appended to, not restarted: the upgrade is a line in the history
 # of the box and not a new history.

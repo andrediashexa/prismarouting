@@ -558,7 +558,7 @@ echo "=========== a static route through the VTY ==========="
 # would not be anywhere. The old spelling is still accepted and is exercised
 # further down, in the MTU section, which types `ip route` directly.
 $HX -c "configure" -c "router static" \
-    -c "route 192.168.77.0/24 10.0.0.2" -c "exit" -c "commit" \
+    -c "192.168.77.0/24 next-hop 10.0.0.2" -c "exit" -c "commit" \
   > /tmp/staticroute.log 2>&1 || true
 cat /tmp/staticroute.log | sed 's/^/  commit: /'
 echo "  --- what FRR holds now ---"
@@ -878,7 +878,7 @@ sleep 2
 # which is the most common statement there is on an edge box.
 echo "=========== a static route with staticd stopped ==========="
 OKSTATIC=$($HX -c "configure" -c "router static" \
-           -c "route 10.66.0.0/16 blackhole" -c "exit" -c "commit" 2>&1)
+           -c "10.66.0.0/16 next-hop blackhole" -c "exit" -c "commit" 2>&1)
 expect_in "with staticd running, a static route commits" "commit complete" \
   "$OKSTATIC"
 expect "and FRR really holds it" \
@@ -888,7 +888,7 @@ pkill -f 'frr/staticd' 2>/dev/null
 sleep 2
 echo "  daemons now: $(vtysh -c 'show daemons' 2>&1 | head -1)"
 BADSTATIC=$($HX -c "configure" -c "router static" \
-            -c "route 10.67.0.0/16 blackhole" -c "exit" -c "commit" 2>&1)
+            -c "10.67.0.0/16 next-hop blackhole" -c "exit" -c "commit" 2>&1)
 echo "$BADSTATIC" | tail -4 | sed 's/^/  /'
 expect_in "with staticd stopped, the commit is refused" "staticd" "$BADSTATIC"
 expect_in "and says what the route would do" "forward nothing" "$BADSTATIC"
@@ -897,8 +897,10 @@ expect_in "and says what the route would do" "forward nothing" "$BADSTATIC"
 # used to name a statement that appears nowhere in what was typed and nowhere
 # in `show configuration` either - an operator who then searched for "ip route"
 # found nothing.
-expect_in "and names it as the VTY spells it" "router static / route" \
-  "$BADSTATIC"
+# The first static route of the candidate, whichever that is, in the words
+# `router static` takes (#436): `<prefix> next-hop <hop>`, not FRR's `ip route`.
+expect "and names it as the VTY spells it" \
+  sh -c 'printf "%s\n" "$1" | grep -Eq "first one: router static / [0-9./]+ next-hop "' _ "$BADSTATIC"
 expect_not_in "and nothing was applied" "commit complete" "$BADSTATIC"
 expect "and FRR does not hold the route either" \
   sh -c "! vtysh -c 'show running-config' | grep -q '10.67.0.0/16'"
@@ -1265,5 +1267,52 @@ AGREE=$($HX -c "configure" -c "ip route 10.78.0.0/16 blackhole" \
 expect_not_in "and it is silent when the two agree" \
   "carries OSPF and its MTU is" "$AGREE"
 vppctl lcp lcp-sync on
+
+
+echo
+echo "=========== a static route with a distance, a tag and a description (#436) ==========="
+# On the box and not in a fixture: FRR's readback of the tag and distance,
+# and the description, which FRR cannot hold, surviving the commit, a
+# description-only commit and the route's removal. Placed last so that no
+# rollback above counts these commits.
+SR_TYPED="192.168.88.0/24 next-hop 10.0.0.2 distance 200 tag 100 description link to POP-2"
+SR_ADD=$($HX -c "configure" -c "router static" -c "$SR_TYPED" -c "exit" \
+            -c "commit" 2>&1)
+printf '%s\n' "$SR_ADD" | tail -2 | sed 's/^/  /'
+SR_FRR=$(vtysh -c "show running-config" 2>/dev/null | grep "192.168.88.0/24")
+SR_RUN=$($HX -c "show running-config" 2>&1)
+echo "  FRR holds: ${SR_FRR:-<nothing>}"
+# The description alone. A commit with nothing else in it is the one that
+# would report having nothing to do if the description were not a change.
+SR_DESC=$($HX -c "configure" -c "router static" \
+             -c "192.168.88.0/24 next-hop 10.0.0.2 distance 200 tag 100 description link to POP-3" \
+             -c "exit" -c "commit" 2>&1)
+SR_RUN2=$($HX -c "show running-config" 2>&1)
+SR_FILE=$(cat /etc/prisma-routing/static-route-descriptions 2>/dev/null)
+echo "  the box's own file: ${SR_FILE:-<nothing>}"
+SR_DEL=$($HX -c "configure" -c "router static" \
+            -c "no 192.168.88.0/24 next-hop 10.0.0.2" -c "exit" -c "commit" 2>&1)
+SR_RUN3=$($HX -c "show running-config" 2>&1)
+SR_FRR3=$(vtysh -c "show running-config" 2>/dev/null | grep -c "192.168.88.0/24")
+SR_OLD=$($HX -c "configure" -c "router static" \
+            -c "route 192.168.89.0/24 10.0.0.2" -c "exit" -c "commit" 2>&1)
+
+expect_in "a static route's tag and distance reach FRR, in FRR's order" \
+  "ip route 192.168.88.0/24 10.0.0.2 tag 100 200" "$SR_FRR"
+expect_in "and the box shows it as it was typed, description and all" \
+  " $SR_TYPED" "$SR_RUN"
+expect_in "a commit that changes only the description is applied" \
+  "commit complete" "$SR_DESC"
+expect_in "and the new description is what the box now shows" \
+  "description link to POP-3" "$SR_RUN2"
+expect_in "kept in the box's own file, because FRR has no field for it" \
+  "ip route 192.168.88.0/24 10.0.0.2	link to POP-3" "$SR_FILE"
+expect "'no <prefix> next-hop <hop>' removes it from FRR, tag and all" \
+  test "${SR_FRR3:-1}" = 0
+expect_not_in "and its description goes with it" "POP-3" "$SR_RUN3"
+expect_in "the old spelling is refused at the prompt" \
+  "'route' is not a statement here any more" "$SR_OLD"
+expect_not_in "and nothing is committed on its account" \
+  "commit complete" "$SR_OLD"
 
 verdict

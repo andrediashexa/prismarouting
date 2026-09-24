@@ -291,7 +291,7 @@ A VTY não conseguiu falar com o dataplane, então ela não pode nem aplicar nem
 
 ```
 error: FRR accepted 1 statement(s) of this commit and did not keep them
-    router static / route 203.0.113.0/24 blackhole
+    router static / 203.0.113.0/24 next-hop blackhole
     this commit is NOT in effect as written, and nothing was rolled back: the
     rest of it is applied. 'rollback 1' puts the box back
     the configuration this box holds and the one FRR is running are not the

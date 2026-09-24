@@ -66,6 +66,14 @@ Só continue se a última linha terminar em `OK`. Qualquer outra resposta quer d
 
 A pasta tem todas as versões que ainda sabem atualizar uma caixa, a partir da 0.79.0, que foi a primeira com o nome atual. Nas versões de 0.79.0 a 0.82.0 o `sha256` foi calculado quando o arquivo foi copiado para lá, porque essas versões foram publicadas sem ele.
 
+
+:::warning
+**Caixa com rota estática: rode** `**save**` **depois de atualizar e antes de reiniciar.** A partir da 0.122.10, a forma `route <prefixo> <próximo-salto>` dentro de `router static` não é mais aceita, nem num arquivo salvo. Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot e sobe **sem configuração nenhuma**, CGNAT inclusive. As rotas continuam valendo depois do pacote, porque ele não reinicia nada, e o `save` grava o que está valendo já na forma nova. É só isso: `save`, e só então reiniciar.
+
+As revisões de rollback anteriores à atualização continuam na forma antiga, e o `save` não chega nelas. Numa caixa com rota estática, voltar para uma delas depois de atualizar é recusado: o `commit check` aponta a linha da rota e nada é aplicado. Se precisar voltar para a configuração de antes, volte primeiro a caixa para a versão anterior.
+
+:::
+
 ## 3. Descompacte e rode
 
 ```

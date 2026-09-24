@@ -768,7 +768,7 @@ SAVED_ROUTE = """interface GigabitEthernet0/12/0
  exit
 ! routing
 router static
- route 200.150.0.0/24 200.150.0.2
+ 200.150.0.0/24 next-hop 200.150.0.2
 """
 
 
@@ -844,7 +844,7 @@ print(f"  loaded against an empty dataplane: {_out!r}")
 #    below carries no address for 172.31.99.0/24 and the dataplane has none
 #    either, so nothing anywhere makes this next hop connected.
 _out = load_text(boot_shell(),
-                 SAVED_ROUTE + " route 10.55.0.0/16 172.31.99.1\n")
+                 SAVED_ROUTE + " 10.55.0.0/16 next-hop 172.31.99.1\n")
 check("this next hop is on no connected network: 172.31.99.1" in _out,
       f"--load still refuses a next hop nothing makes connected: {_out!r}")
 check("refusing to load this file" in _out,
@@ -857,7 +857,7 @@ print(f"  a next hop nothing makes reachable: {_out!r}")
 #    `show ip route` looks correct.
 _sh = boot_shell(fib=CONFIGURED_FIB, running_text=SAVED_ROUTE)
 _sh.candidate = config.Config.parse(
-    SAVED_ROUTE + " route 10.55.0.0/16 172.31.99.1\n")
+    SAVED_ROUTE + " 10.55.0.0/16 next-hop 172.31.99.1\n")
 _buf = io.StringIO()
 with contextlib.redirect_stdout(_buf):
     _sh.do_commit(["check"])
@@ -1963,6 +1963,31 @@ check("warning" not in _buf.getvalue(),
       f"a sub-interface, which gets no default, was warned about one: "
       f"{_buf.getvalue()!r}")
 print("  ens19 and loop0: the default returns, said; a sub-interface: not")
+
+
+print("\n=== a commit that changes only a description is applied (#436) ===")
+# FRR has no field for a static route's description, so the box keeps it in
+# its own file and commit writes it. A description is its own delta: without
+# `route_desc_changed` a commit that changes only a description has nothing
+# in it to apply, reports success, and the description is gone at the next
+# read. Mutation shown red: the write in apply() removed.
+_desc_tmp = tempfile.mkdtemp(prefix="static-desc-")
+_saved_desc = prismash.STATIC_DESC_PATH
+prismash.STATIC_DESC_PATH = os.path.join(_desc_tmp, "static-route-descriptions")
+try:
+    _running = "! routing\nip route 10.0.0.0/8 1.2.3.4\n"
+    _sh = shell_with(FakeApi(), _running)
+    _target = config.Config.parse(_running)
+    _target.static_descriptions = {"ip route 10.0.0.0/8 1.2.3.4": "to POP-1"}
+    _ok = _sh.apply(_target)
+    with open(prismash.STATIC_DESC_PATH) as _f:
+        _written = _f.read()
+    check(_ok and _written == "ip route 10.0.0.0/8 1.2.3.4\tto POP-1\n",
+          f"the description is written by the commit that changes only it: "
+          f"{_ok} {_written!r}")
+finally:
+    prismash.STATIC_DESC_PATH = _saved_desc
+print("  a description-only commit reaches the box")
 
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
