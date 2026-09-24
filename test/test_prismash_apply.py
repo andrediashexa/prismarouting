@@ -679,8 +679,13 @@ check("block-stride applies to dynamic pools only" not in out,
 # has no widest, and last on the row the fold lands after the words (#363).
 check("note: block-stride 3 dropped from pool det" in out.splitlines(),
       f"the boot says which statement it left out and from where: {out!r}")
-check("pool dyn" not in out,
+check("dropped from pool dyn" not in out,
       f"and names only the pool it dropped from: {out!r}")
+# And the dynamic pool in this file exports nothing, so the boot that loads
+# it says so too (#444) - the one place a box nobody is typing at is heard.
+check("nothing exports its block events" in " ".join(out.split())
+      and "    nat cgnat pool dyn" in out.splitlines(),
+      f"a loaded dynamic pool with no export is warned at boot too: {out!r}")
 adds = {a["name"]: a for m, a in api.calls
         if m == "bpa_pool_add_del" and a.get("is_add")}
 check(set(adds) == {"det", "dyn"},

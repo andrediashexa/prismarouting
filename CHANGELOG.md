@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dynamic pool with nothing exporting its blocks now says so at `commit
+  check` and `commit`**
+  ([#444](https://github.com/andrediashexa/hexarouting/issues/444)). In
+  dynamic mode the exported record is the only evidence of which subscriber
+  held a public port. Measured on 0.124.0: such a pool passed `commit check`
+  without a word, and `show cgnat logging` read `state disabled`. A box could
+  carry subscribers for months unable to answer a court order. It now gets a
+  warning naming the pool and the two ways to export. It is not a refusal,
+  since a lab, or a pool staged before its collector exists, is a correct
+  configuration. A deterministic pool with a `reserve` gets the same warning,
+  because `docs/logging.md` says its reserve blocks, which the formula does
+  not produce, MUST be exported like dynamic ones.
+
 ## 0.124.2 - the three guests at once
 
 ### Added

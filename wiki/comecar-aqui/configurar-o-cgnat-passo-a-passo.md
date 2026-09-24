@@ -288,7 +288,9 @@ prisma# [edit] commit
 
 `src` é obrigatório, e `enable` sem destino é recusado. Para não perder registro quando o coletor cai, existe também o transporte TCP (`nat cgnat logging tcp <ip-do-coletor>`). [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) explica a diferença.
 
-No modo determinístico este passo é opcional: a fórmula responde sozinha, como mostra o último passo.
+Se você esquecer, o `commit check` e o `commit` avisam, com o nome do pool e os dois jeitos de exportar. É um aviso, não uma recusa, porque um pool montado antes de o coletor existir é uma configuração válida.
+
+No modo determinístico este passo é opcional: a fórmula responde sozinha, como mostra o último passo. A exceção é um pool determinístico com `reserve`, porque os blocos da reserva ficam fora da fórmula e também precisam do coletor.
 
 # 10. Confira com um assinante de verdade
 

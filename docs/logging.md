@@ -35,6 +35,13 @@ the wrong subscriber.
 | Dynamic (PBA) | block allocation and release | ~1 record per block |
 | Per-flow NAT (reference) | every flow | 1 record per connection |
 
+**A pool that owes an export and has none is warned at `commit check` and
+`commit`** ([#444](https://github.com/andrediashexa/hexarouting/issues/444)):
+a dynamic pool, or a deterministic one with a `reserve`, on a box where no UDP
+export is enabled with a collector and no TCP or syslog collector is named. It
+is a warning and never a refusal, for the reason the announce warning gives:
+a pool staged before its collector exists is a correct configuration.
+
 In deterministic mode the proof of who used `(public IP, port, instant)` is the
 algorithm plus the pool configuration. There is no event to record — which is
 precisely why the mode exists. What **MUST** exist instead is a dated
