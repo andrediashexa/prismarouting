@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.123.4 - every message held
+
+### Fixed
+
 * **Every message the plugin's CLI prints is now held by a lab**
   ([#390](https://github.com/andrediashexa/hexarouting/issues/390)): the
   count of `bpa_cli.c` messages named by nothing goes from 3 to 0. The last
