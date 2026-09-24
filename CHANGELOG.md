@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.125.1 - where this stands
+
+### Added
+
 * **`docs/handoff.md` is brought up to 0.125.0.** It had stopped at 0.110.0.
   It now carries the releases since then, what the maintainer decided on
   2026-09-24 (`uname` stays Debian's kernel, the artifact carries the images,
@@ -84,8 +90,6 @@ version has a chance of seeing it.
   what, and what was learnt this session: branches have to be rebased before
   they merge, and two traps catch a lab that captures screens. The roadmap
   records the #337 decision in both places it named the issue as open.
-
-### Fixed
 
 ## 0.125.0 - the upgrade carries the images
 
