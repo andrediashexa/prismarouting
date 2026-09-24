@@ -180,6 +180,13 @@ def markdown_files():
 # the refusal itself, so a page that shows one by mistake still fails.
 AMBIGUOUS_VERDICT = "error: an ambiguous abbreviation"
 SHOWN_REFUSED = set()
+# And a statement FRR refuses at the prompt, shown ON PURPOSE to show that
+# refusal (#431), under the same rule: excused only when the very next line
+# is the refusal, so a page that quotes a typo by mistake still fails. Only
+# the walk is excused - the tree is a partial model of FRR's grammar, so a
+# line it cannot walk is exactly what such a page is showing.
+FRR_REFUSED_VERDICT = "error: not a statement FRR accepts here"
+SHOWN_FRR_REFUSED = set()
 
 
 def prompt_lines():
@@ -195,6 +202,9 @@ def prompt_lines():
                     if (i + 1 < len(rows)
                             and rows[i + 1].startswith(AMBIGUOUS_VERDICT)):
                         SHOWN_REFUSED.add((path, line))
+                    if (i + 1 < len(rows)
+                            and rows[i + 1].startswith(FRR_REFUSED_VERDICT)):
+                        SHOWN_FRR_REFUSED.add((path, line))
                     m = re.match(r"^prisma> (.+)$", line)
                     if m:
                         out.append((path, "operational", "", m.group(1).strip()))
@@ -289,7 +299,8 @@ for path, mode, context, cmd in lines:
         continue
     good, why = walk(sh, spelled)
     walked += 1
-    if not good:
+    shown_line = f"prisma# [edit{' ' + context if context else ''}] {cmd}"
+    if not good and (path, shown_line) not in SHOWN_FRR_REFUSED:
         bad(f"{rel}: '{cmd}' ({mode}): {why}")
 if walked:
     ok(f"{walked} command(s) walked, each as far as the tree enumerates")

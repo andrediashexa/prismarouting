@@ -596,10 +596,27 @@ echo "  -- FRR holds the route typed in a block entered after a 'top': $NAV_FRR"
 NAV_TOO_FAR=$($HX -c "configure" -c "router bgp 65001" -c "up 9" 2>&1)
 NAV_AT_TOP=$($HX -c "configure" -c "up" 2>&1)
 printf '%s\n' "$NAV_TOO_FAR" "$NAV_AT_TOP" | sed 's/^/  /'
-# And the other half of the issue: a word FRR cannot read still gets refused,
-# and the refusal now says where it came from and how to get out of it.
-NAV_BAD=$($HX -c "configure" -c "frobnicate the candidate" -c "commit" 2>&1)
+# A word FRR cannot read is refused WHERE IT IS TYPED since #431: the prompt
+# asks `vtysh --dryrun` before staging, and a batch with a refused statement
+# does not commit.
+NAV_TYPED=$($HX -c "configure" -c "frobnicate the candidate" -c "commit" 2>&1)
+printf '%s\n' "$NAV_TYPED" | sed 's/^/  /'
+# And #400's half, which a box still reaches: a statement staged while FRR
+# could not be asked. A vtysh that fails ONLY the dry run stands in for that -
+# it has no `%` sentence to give, so the prompt stages the line and says it
+# was not checked - and passes everything else to the real one, so `commit`
+# meets the statement exactly as it did before #431.
+cat > /tmp/vtysh-no-dryrun <<'EOF'
+#!/bin/sh
+[ "$1" = --dryrun ] && { echo "vtysh: dry run unavailable" >&2; exit 1; }
+exec /usr/bin/vtysh "$@"
+EOF
+chmod +x /tmp/vtysh-no-dryrun
+NAV_BAD=$(VTYSH=/tmp/vtysh-no-dryrun $HX -c "configure" \
+            -c "frobnicate the candidate" -c "commit" 2>&1)
 printf '%s\n' "$NAV_BAD" | sed 's/^/  /'
+# Both halves leave the running routing configuration without the word.
+NAV_AFTER=$($HX -c "show running-config" 2>&1)
 
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
@@ -1205,6 +1222,17 @@ expect_in "'up' past the top of the tree is refused, not clamped" \
   "there are only 1 level(s)" "$NAV_TOO_FAR"
 expect_in "and 'up' at the top says which word leaves the mode instead" \
   "already at the top" "$NAV_AT_TOP"
+# #431: refused at the prompt, in FRR's words, and never reaches a commit.
+expect_in "a word FRR cannot read is refused where it is typed" \
+  "not a statement FRR accepts here; nothing staged" "$NAV_TYPED"
+expect_in "and the refusal is FRR's own sentence" \
+  "% Unknown command: frobnicate the candidate" "$NAV_TYPED"
+expect_not_in "and the commit behind it applied nothing" \
+  "commit complete" "$NAV_TYPED"
+# FRR not asked: staged, and the prompt says it was not checked, rather than
+# passing the line off as one FRR accepted.
+expect_in "a statement FRR could not be asked about is staged and said to be" \
+  "staged WITHOUT being checked" "$NAV_BAD"
 # The other half of #400: FRR still refuses what it cannot read, and the
 # refusal now says which statement it was handed unread and how to get out.
 expect_in "a word FRR cannot read still fails the commit" \
@@ -1212,5 +1240,7 @@ expect_in "a word FRR cannot read still fails the commit" \
 expect_in "and the refusal names the statement it was handed unread" \
   "frobnicate the candidate" "$NAV_BAD"
 expect_in "and says how to get out of it" "rollback 0" "$NAV_BAD"
+expect_not_in "and neither half left the word in the running configuration" \
+  "frobnicate" "$NAV_AFTER"
 
 verdict

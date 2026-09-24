@@ -1931,6 +1931,72 @@ failure this issue is about, one layer further in. `test/test_prismash_units.py`
 now has a box for it as well, because a defect a lab found and no unit box
 holds is a defect that comes back the next time the list is edited.
 
+### FRR is asked at the prompt, before a statement is staged
+
+Until [#431](https://github.com/andrediashexa/hexarouting/issues/431) the
+passthrough staged whatever reached it, and the first reader of a typed
+routing statement was `frr-reload --test` at `commit`. `banana split` at
+`[edit]` went into the candidate; so did `bananas` inside `router bgp` and
+`netwrk 10.0.0.0/8` inside an address-family. The operator met each one at
+`commit`, in FRR's words, lines away from where it was typed. The maintainer
+filed it from a box.
+
+Every line that reaches the passthrough is now handed to
+`vtysh --dryrun -f <file>` first, where the file is the open block path
+followed by the line. A statement FRR refuses is refused **where it is
+typed**, and nothing is staged:
+
+```
+prisma# [edit router bgp 65000] netwrk 10.0.0.0/8
+error: not a statement FRR accepts here; nothing staged
+    FRR answered: % Unknown command: netwrk 10.0.0.0/8
+    '?' lists what this level takes
+```
+
+**Why FRR's grammar and not this VTY's.** This VTY models a part of each
+FRR grammar on purpose (`statement_grammar()` says why), and a partial model
+cannot answer "does this statement exist". Only the whole grammar can, and
+`vtysh` carries the whole grammar compiled in.
+
+**Measured on FRR 10.7.1, the pinned version, with no daemon running.** This
+is the property the design rests on: a box whose `bgpd` is down still gets its
+typo caught.
+
+| typed | `vtysh --dryrun` |
+|---|---|
+| `banana split` | rc 2, `% Unknown command` |
+| `neighbour-typo ...` inside `router bgp` | rc 2, `% Unknown command` |
+| `bgp router-id 999.1.1.1` inside `router bgp` | rc 2, `% Unknown command`: a bad **value** gets the same words |
+| `neighbor` inside `router bgp` | rc 4, `% Command incomplete` |
+| `neighbor 192.0.2.1 remote-as 65001` | rc 0 |
+
+A run takes about 18 ms. Because a bad value gets the same answer as a bad
+word, the refusal quotes FRR instead of naming a word it guesses was wrong.
+
+**A block FRR refuses is not entered.** The check runs before `frr_ctx`
+grows, so the operator is not left inside a block the box has just refused,
+where every next line would land.
+
+**When FRR cannot be asked** (no `vtysh`, or no answer in 10 s), the statement
+is staged, and the prompt says so: *staged WITHOUT being checked, because FRR
+could not be asked*. Staging it silently would claim a check that did not
+happen. Refusing it would make routing impossible to configure on a box whose
+`vtysh` is missing, when `commit` still runs `frr-reload --test` as the net
+under it.
+
+**What this does not change.** The `<- not checked` marker still means what it
+meant: this VTY's own tree did not read the statement. FRR's grammar did,
+when it was typed. A statement loaded from a saved file was not checked at a
+prompt, and FRR refuses a bad one there as it always has: the whole file, at
+`commit`. The two doors give the same answer. Only the moment differs.
+
+**The VTY-owned hierarchies had one gap of their own.** `cgnat interface`
+with no name did not reach its branch, which wants a space after the word, so
+it was staged as `nat cgnat interface`. The same was true of `cgnat pool`,
+`cgnat timeout` and `cgnat logging foo`: #273 checked the first word after
+`cgnat` and nothing after it. `cgnat_statement_short()` now walks the rest
+against `CGNAT_CONFIG`, the same table `?` offers from.
+
 
 ## Static routes
 

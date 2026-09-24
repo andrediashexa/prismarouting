@@ -79,6 +79,51 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A statement FRR does not accept is refused where it is typed**
+  ([#431](https://github.com/andrediashexa/hexarouting/issues/431)). Every
+  line that reached the routing passthrough used to be staged unread:
+  `banana split` at `[edit]`, `bananas` inside `router bgp`,
+  `netwrk 10.0.0.0/8` inside an address-family. The operator met each one at
+  `commit`, in FRR's words, lines away from where it was typed. Now the prompt
+  hands the line to `vtysh --dryrun`, with the open block path first, and a
+  line FRR refuses is refused on the spot, quoting FRR, with nothing staged:
+
+  ```
+  prisma# [edit router bgp 65000] netwrk 10.0.0.0/8
+  error: not a statement FRR accepts here; nothing staged
+      FRR answered: % Unknown command: netwrk 10.0.0.0/8
+      '?' lists what this level takes
+  ```
+
+  It is FRR's whole grammar, not this VTY's partial model of it. Measured on
+  FRR 10.7.1 with **no daemon running**, a check takes about 18 ms, so a box
+  whose `bgpd` is down still gets its typo caught. A block FRR refuses is not
+  entered. A line FRR could not be asked about is staged, and the prompt says
+  it was not checked; `commit` still runs `frr-reload --test` as the net under
+  it.
+
+  `router static` is this VTY's own block, and FRR refuses the words. The
+  first run of `lab/vty.sh` went red on seven checks because the block was in
+  the path handed to FRR. The routes typed inside it are asked about as FRR
+  stores them, as top-level `ip route` lines.
+
+* **`cgnat interface` with no name was staged as `nat cgnat interface`**, and
+  `cgnat pool`, `cgnat timeout` and `cgnat logging foo` with it. #273 had
+  checked the first word after `cgnat` and nothing after it. The rest of the
+  statement is now walked against the same table `?` offers from.
+
+* **The README said the product was called Prisma Routing until 0.76.1.** The
+  rename in #202 replaced the old name mechanically, including in the one
+  sentence that was about the old name. That sentence also said the paths, the
+  units and the command kept their names, which the clean break made false. It
+  now says HexaRouting, what moved, and why the issue links still say
+  `hexarouting`. The repository's About, which was in Portuguese, is in English
+  now, as CONTRIBUTING section 1 requires of everything the project writes on
+  GitHub. The README opens with the logo from `docs/brand/`: the positive
+  version on a light theme and the negative one on a dark theme, as the brand
+  kit asks, and the PNG and not the SVG, whose reconstruction draws the last
+  letter wrong.
+
 ## 0.122.5 - what check answers
 
 ### Fixed
