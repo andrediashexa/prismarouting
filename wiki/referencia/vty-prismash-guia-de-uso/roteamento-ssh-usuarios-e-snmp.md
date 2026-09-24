@@ -252,7 +252,7 @@ configure
 
 Os servidores DNS que a caixa consulta, sem editar `/etc/resolv.conf` à mão. Até três, consultados na ordem em que foram digitados. Um quarto é recusado, porque o sistema só consulta os três primeiros e um quarto apareceria na configuração sem nunca ser usado. `no dns server <endereço>` remove um.
 
-**Numa caixa com gerência por DHCP, o DHCP para de mexer no DNS enquanto houver `dns server` configurado.** Sem isso, a próxima renovação do lease colocaria de volta os servidores do DHCP, sem aviso. Removido o último `dns server`, a caixa volta a usar o que o DHCP (ou a instalação) tinha definido.
+**Numa caixa com gerência por DHCP, o DHCP para de mexer no DNS enquanto houver** `**dns server**` **configurado.** Sem isso, a próxima renovação do lease colocaria de volta os servidores do DHCP, sem aviso. Removido o último `dns server`, a caixa volta a usar o que o DHCP (ou a instalação) tinha definido.
 
 `show running-config` mostra os `dns server` que foram configurados pela VTY. Os servidores recebidos do DHCP não aparecem ali, porque não são uma configuração sua.
 
