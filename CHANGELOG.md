@@ -79,6 +79,24 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Connection records lost at shutdown could be lost without a word**
+  ([#435](https://github.com/andrediashexa/hexarouting/issues/435)). When the
+  dataplane stops, the plugin drains every held block, and on a stalled
+  collector with an unwritable spill the exporter drops what it cannot
+  keep. The one sentence that reports that loss counted it from after the
+  drain. When the ExecStop's drain had not run first (it is allowed to
+  fail), the drops happened inside the exit hook's own drain and were never
+  counted. Measured with 742000 bytes buffered on a full filesystem: nothing
+  said, three runs out of three. The count now starts before the drain, and
+  the same stop says `1176212 byte(s) ... could NOT be written`. It is the
+  only place those records are accounted for.
+
+  `lab/ipfix-outbuf.sh`, which had been red on and off, was measuring a
+  race: with the ExecStop run first, the last 36 bytes were dropped either
+  by the drain or by the exit, depending on timing. It now stops without the
+  ExecStop, which is the stop this sentence exists for, and is green three
+  runs out of three.
+
 ## 0.123.2 - the right subscriber behind a port
 
 ### Fixed

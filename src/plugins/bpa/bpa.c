@@ -2127,11 +2127,25 @@ bpa_stop_drain (vlib_main_t *vm)
 {
   bpa_main_t *bm = &bpa_main;
   u32 saved;
-  u64 before, lost;
+  u64 before, lost, sys_before;
 
   if (!bpa_log_main.enabled && !bpa_log_tcp.enabled
       && !bpa_log_syslog.enabled)
     return 0;
+
+  /*
+   * The loss is counted from HERE, before the drain, and not from the flush
+   * below (#435). When the ExecStop did not run - it is `ExecStop=-`, allowed
+   * to fail - the drain is this hook's, and on a stalled collector the
+   * releases it writes push the buffer past the spill threshold: an exporter
+   * whose spill cannot be written drops them there, inside the drain. Counted
+   * from after it, those bytes were in no file, in no collector, and in no
+   * sentence either, on the one path whose sentence says it is the only
+   * place the loss is said. Measured with 742000 bytes buffered on a full
+   * filesystem and no ExecStop: nothing said, three runs out of three.
+   */
+  before = bpa_log_tcp.n_dropped;
+  sys_before = bpa_log_syslog.n_dropped;
 
   /*
    * Already done by the ExecStop, moments ago. Emitting the same releases
@@ -2170,7 +2184,6 @@ bpa_stop_drain (vlib_main_t *vm)
    * absent from the process output entirely. Losing a record is an error, so
    * it goes out as one.
    */
-  before = bpa_log_tcp.n_dropped;
   saved = bpa_log_tcp_flush_exit ();
   lost = bpa_log_tcp.n_dropped - before;
 
@@ -2195,7 +2208,6 @@ bpa_stop_drain (vlib_main_t *vm)
    * bound for (#20). */
   if (bpa_log_syslog.enabled)
     {
-      u64 sys_before = bpa_log_syslog.n_dropped;
       u32 sys_saved = bpa_log_stream_flush_exit (&bpa_log_syslog);
       u64 sys_lost = bpa_log_syslog.n_dropped - sys_before;
 
