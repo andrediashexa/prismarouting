@@ -11,7 +11,7 @@ Como colocar uma versão nova do Prisma Routing numa caixa que já está em prod
 | Configuração, contas, comunidades SNMP | Ficam                   | Somem                     |
 | Registros de conexão e trilha de configuração | Ficam                   | Somem                     |
 | Parada | Só o reinício do dataplane, e no horário que você escolher | A janela inteira, com boot pela mídia |
-| Tamanho do download | Alguns megabytes        | Centenas de megabytes     |
+| Tamanho do download | Cerca de 120 MB, com as imagens dos contêineres | Centenas de megabytes     |
 
 **O pacote é o caminho normal.** A reinstalação existe para a máquina nova e para o caso em que a versão nova muda a plataforma por baixo do produto. Você não precisa adivinhar qual é: o pacote confere isso sozinho e **recusa antes de escrever qualquer coisa**, dizendo o que a caixa tem e o que a versão nova precisa.
 
@@ -54,6 +54,12 @@ prisma> system upgrade <versão>
 Sem versão, ele diz qual versão a caixa roda e qual é a mais nova publicada, e não muda nada. Com a versão, ele baixa o pacote, confere o `sha256` antes de abrir qualquer coisa, e roda o mesmo `upgrade` dos passos abaixo, mostrando tudo o que ele diz. Uma versão igual ou mais antiga que a da caixa é recusada: voltar de versão é o caminho manual. Depois dele, vale o que vale para o caminho manual: `save` antes de reiniciar.
 
 Os passos abaixo são o mesmo processo à mão, para uma caixa que não alcança a internet.
+
+
+:::info
+**Desde a 0.125.0 o pacote leva as imagens dos contêineres**, por isso tem cerca de 120 MB e não alguns megabytes. Uma caixa que foi atualizada em vez de instalada, e ainda roda o dataplane e o roteamento como serviços do systemd, **passa para os contêineres no próximo boot**, igual a uma caixa instalada pela mídia. Uma caixa que já roda nos contêineres passa a usar as imagens da versão nova, e não mais as da versão anterior.
+
+:::
 
 ## 1. Anote a versão que está rodando
 

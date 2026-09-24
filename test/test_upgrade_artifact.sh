@@ -64,6 +64,11 @@ fresh_tree() {
   # and the vat2 plugin 50160 on the appliance #295 was written from.
   head -c 1085448 /dev/zero > "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
   head -c 50160  /dev/zero > "$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+  # The container images, where tools/build-images.sh saves them (#427). A
+  # stand-in of 1 MB rather than the real 118: what is asked here is that the
+  # file travels and lands, and its bytes are this suite's own so the copy on
+  # the box can be compared with them.
+  head -c 1048576 /dev/urandom > "$TREE/prisma-routing-images.tar.gz"
 }
 
 build() {  # -> $ART, the unpacked artifact directory; $BUILD_OUT, what it said
@@ -180,7 +185,9 @@ fi
 
 # The size, because the number is the argument. An operator who wants a new
 # version is told to download a 325 MB medium and erase the disk under their
-# configuration trail; what actually changes is this.
+# configuration trail; what actually changes is this. Measured with the 1 MB
+# stand-in images: a real artifact carries about 118 MB of them since 0.125.0
+# (#427), and this bound is on everything else.
 SZ=$(wc -c < "$WORK/artifact.tar.gz")
 if [ "$SZ" -gt 100000 ] && [ "$SZ" -lt 20000000 ]; then
   ok "$((SZ / 1024)) KB against a 325 MB medium"
@@ -244,6 +251,44 @@ else
   bad "the VTY did not reach the box whole, which is #119's shape on the other \
 component: prismash would raise ModuleNotFoundError on every start"
 fi
+
+
+echo
+echo "=== and the container images travel with it (#427) ==="
+[ -f "$ART/prisma-routing-images.tar.gz" ] \
+  && ok "the artifact carries the images at the top of its tree" \
+  || bad "the artifact has no prisma-routing-images.tar.gz: $(ls "$ART" | tr "\n" " ")"
+cmp -s "$TREE/prisma-routing-images.tar.gz" "$BOX/usr/lib/prisma-routing/images.tar.gz" \
+  && ok "and the box has them where load-the-images reads them, byte for byte" \
+  || bad "the images did not reach /usr/lib/prisma-routing/images.tar.gz"
+grep -q ' usr/lib/prisma-routing/images.tar.gz$' "$BOX/usr/share/prisma-routing/MANIFEST" \
+  && ok "and the manifest names them, so the self-test says when they are not this build's" \
+  || bad "the manifest does not name the images"
+[ -L "$BOX/etc/systemd/system/multi-user.target.wants/prisma-routing-containers.service" ] \
+  && ok "so the upgraded box is on the containers, as a box from the medium is" \
+  || bad "the images landed and the container stack was not enabled"
+
+# A TREE WITHOUT THEM IS REFUSED, and the knob that says so on purpose works.
+rm -f "$TREE/prisma-routing-images.tar.gz"
+if build; then
+  bad "an artifact was packed with no container images and nothing said so"
+else
+  case "$BUILD_OUT" in
+    *"carry no container images"*) ok "a tree with no images is refused, saying what that would do" ;;
+    *) bad "the build failed for another reason: $BUILD_OUT" ;;
+  esac
+fi
+_tar=$WORK/skip.tar.gz
+SKIP_OUT=$(OUT="$_tar" PRISMA_VERSION_STAMP="$STAMP" PRISMA_SKIP_IMAGES=1 \
+           sh "$TREE/appliance/build-upgrade.sh" 2>&1)
+case "$SKIP_OUT" in
+  *"skipped, PRISMA_SKIP_IMAGES=1"*) ok "and PRISMA_SKIP_IMAGES=1 cuts one that says it carries none" ;;
+  *) bad "PRISMA_SKIP_IMAGES=1 did not build, or did not say so: $SKIP_OUT" ;;
+esac
+tar tzf "$_tar" 2>/dev/null | grep -q prisma-routing-images.tar.gz \
+  && bad "and yet it carries images" || ok "and it does carry none"
+fresh_tree
+build || bad "the tree could not be rebuilt after the images were put back"
 
 echo
 echo "=== the box is stamped what the artifact says, not what git said ==="

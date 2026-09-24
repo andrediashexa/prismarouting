@@ -432,6 +432,10 @@ if ! PRISMA_VERSION_STAMP="${OLD_TAG#v}" sh "$OLD/appliance/install.sh" \
 fi
 OLD_STAMP=$(cat /usr/share/prisma-routing/VERSION 2>/dev/null || echo "")
 OLD_INSTALLED_SUM=$(sha256sum "$PLUGIN_DIR/bpa_plugin.so" 2>/dev/null | cut -c1-16)
+# Read now for the same reason as the vat2 plugin below: after the new side
+# runs, the answer is about the new side (#427).
+OLD_HAD_IMAGES=no
+[ -f /usr/lib/prisma-routing/images.tar.gz ] && OLD_HAD_IMAGES=yes
 # Read NOW, and not at the verdict. A precondition about what the OLD
 # installer did has to be taken before the new one runs: the first version of
 # this asked "is the vat2 plugin on the box" in the verdict block, where the
@@ -662,6 +666,14 @@ WANTS=/etc/systemd/system/multi-user.target.wants
 TIMERS=/etc/systemd/system/timers.target.wants
 UPG_HAS_IMAGES=no
 [ -f /usr/lib/prisma-routing/images.tar.gz ] && UPG_HAS_IMAGES=yes
+# AND WHETHER THE NEW SIDE BROUGHT ANY (#427). Since 0.125.0 an upgrade
+# carries the images at the top of its tree, as a source tree does once
+# tools/build-images.sh has saved them - which the release gate's clone has,
+# because `make iso` ran first. A developer's tree usually has none. Both are
+# real boxes' cases and each is asserted as itself below.
+NEW_TREE_IMAGES=no
+[ -f /src/prisma-routing-images.tar.gz ] && NEW_TREE_IMAGES=yes
+echo "  the new side carries images: $NEW_TREE_IMAGES"
 UPG_CONTAINERS=no
 [ -e "$WANTS/prisma-routing-containers.service" ] && UPG_CONTAINERS=yes
 UPG_WATCH=no
@@ -1028,23 +1040,44 @@ hugepages take effect." "$NEW_INSTALL_SAID"
 # The paragraph itself is driven by test/test_install_says.sh.
 expect_not_said "and said nothing about services this root does not have" \
   "it is what translates every packet on this box" "$NEW_INSTALL_SAID"
-# THE BOX IS LEFT ON A DATAPLANE IT CAN START (#427). An upgraded box has no
-# container images, so it must keep vpp.service and frr.service - and the
-# installer must say which dataplane it is on, because an upgrade that
-# quietly did nothing is indistinguishable from one that worked.
-expect_setup "this fixture has no container images, like every upgraded box" \
-  test "$UPG_HAS_IMAGES" = no
-expect "the upgrade did NOT move this box to the containers" \
-  test "$UPG_CONTAINERS" = no
-expect "and did not arm the card watcher either" \
-  test "$UPG_WATCH" = no
-# THE OFFLINE ARM'S WORDS, because that is the arm this container takes:
-# there is no systemd here, so the installer writes the links a real box's
-# `systemctl enable` would and says "this root" where a live box says "this
-# box". test/test_install_containers.sh holds both sentences; what this lab
-# adds is that one of them really reaches the operator running the upgrade.
-expect_said "and it told whoever ran it which dataplane the box is on" \
-  "no container images in this root" "$NEW_INSTALL_SAID"
+# THE BOX IS LEFT ON A DATAPLANE IT CAN START (#427), and which one depends
+# on what the new side carried.
+if [ "$NEW_TREE_IMAGES" = yes ]; then
+  # THE UPGRADE BRINGS THEM. The old box had none - a source install of an old
+  # tag, which is what a box from before 0.113.0 is - and the upgrade must
+  # leave it with this release's images and on the containers, as a box
+  # installed from this release's medium is.
+  expect_setup "the old box had no container images before the upgrade" \
+    test "${OLD_HAD_IMAGES:-no}" = no
+  expect "the upgrade put this release's images on the box" \
+    cmp -s /src/prisma-routing-images.tar.gz /usr/lib/prisma-routing/images.tar.gz
+  expect "and moved it to the containers, as a box from the medium is" \
+    test "$UPG_CONTAINERS" = yes
+  expect "and armed the card watcher that goes with them" \
+    test "$UPG_WATCH" = yes
+  expect "and the manifest names the images, so the self-test can check them" \
+    grep -q ' usr/lib/prisma-routing/images.tar.gz$' /usr/share/prisma-routing/MANIFEST
+  expect_said "and it said so to whoever ran it" \
+    "the container images" "$NEW_INSTALL_SAID"
+else
+  # A TREE WITH NONE - a developer's, or an artifact cut with
+  # PRISMA_SKIP_IMAGES=1 - must leave the box on vpp.service and frr.service,
+  # and say which dataplane it is on, because an upgrade that quietly did
+  # nothing is indistinguishable from one that worked.
+  expect_setup "this fixture has no container images, and neither does the new side" \
+    test "$UPG_HAS_IMAGES" = no
+  expect "the upgrade did NOT move this box to the containers" \
+    test "$UPG_CONTAINERS" = no
+  expect "and did not arm the card watcher either" \
+    test "$UPG_WATCH" = no
+  # THE OFFLINE ARM'S WORDS, because that is the arm this container takes:
+  # there is no systemd here, so the installer writes the links a real box's
+  # `systemctl enable` would and says "this root" where a live box says "this
+  # box". test/test_install_containers.sh holds both sentences; what this lab
+  # adds is that one of them really reaches the operator running the upgrade.
+  expect_said "and it told whoever ran it which dataplane the box is on" \
+    "no container images in this root" "$NEW_INSTALL_SAID"
+fi
 expect "and the plugin on disk changed with it" \
   test "$OLD_INSTALLED_SUM" != "$NEW_INSTALLED_SUM"
 expect "the dataplane now runs the plugin the upgrade installed" \

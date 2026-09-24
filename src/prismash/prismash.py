@@ -449,6 +449,37 @@ def fetch_url(url, timeout=30):
         return None, f"{url}: {getattr(e, 'reason', e)}"
 
 
+def download_to(url, path, timeout=300):
+    """
+    (sha256 hex, bytes, "") after writing `url` to `path`, or (None, 0, why).
+    Never raises, like fetch_url().
+
+    Streamed, and summed on the way, because the package is not small any
+    more: it carries the container images since 0.125.0 (#427), about 120 MB,
+    and held whole in memory it was that plus a copy for the write - inside a
+    VTY that exists to stay up while the box is short of everything.
+    """
+    import urllib.error
+    import urllib.request
+    h = hashlib.sha256()
+    n = 0
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r, \
+                open(path, "wb") as f:
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                h.update(chunk)
+                f.write(chunk)
+                n += len(chunk)
+        return h.hexdigest(), n, ""
+    except urllib.error.HTTPError as e:
+        return None, 0, f"{url}: HTTP {e.code}"
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return None, 0, f"{url}: {getattr(e, 'reason', e)}"
+
+
 def latest_release(fetch=fetch_url, base=None):
     """
     (version, "") of the newest published release, or (None, why).
@@ -11153,20 +11184,24 @@ class Shell:
         system_upgrade(). SIGINT is ignored for the whole of it."""
         name = f"prisma-routing-{want}-upgrade"
         base = f"{RELEASES_URL.rstrip('/')}/{want}/{name}.tar.gz"
-        print(f"downloading {base}")
-        pkg, why = fetch_url(base, timeout=300)
-        if pkg is None:
-            self.err_prose("system upgrade: the package could not be "
-                           "downloaded; nothing was changed", why)
-            return
         summ, why = fetch_url(base + ".sha256")
         if summ is None:
             self.err_prose("system upgrade: its sha256 could not be "
                            "downloaded; nothing was changed", why)
             return
         published = (summ.decode("ascii", "replace").split() or [""])[0]
-        got = hashlib.sha256(pkg).hexdigest()
+        work = tempfile.mkdtemp(prefix=f"prisma-upgrade-{want}-",
+                                dir=UPGRADE_WORK)
+        tar_path = os.path.join(work, name + ".tar.gz")
+        print(f"downloading {base}")
+        got, _size, why = download_to(base, tar_path)
+        if got is None:
+            shutil.rmtree(work, ignore_errors=True)
+            self.err_prose("system upgrade: the package could not be "
+                           "downloaded; nothing was changed", why)
+            return
         if got != published.lower():
+            shutil.rmtree(work, ignore_errors=True)
             self.err_prose("system upgrade: it does not match its sha256",
                            "nothing was changed",
                            f"published {published or '(nothing)'}, "
@@ -11174,11 +11209,6 @@ class Shell:
             return
         print("the package matches its published sha256:")
         print(f"    {got}")
-        work = tempfile.mkdtemp(prefix=f"prisma-upgrade-{want}-",
-                                dir=UPGRADE_WORK)
-        tar_path = os.path.join(work, name + ".tar.gz")
-        with open(tar_path, "wb") as f:
-            f.write(pkg)
         why = extract_within(tar_path, work)
         script = os.path.join(work, name, "upgrade")
         if why is None and not os.path.exists(script):
