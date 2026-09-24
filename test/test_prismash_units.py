@@ -997,6 +997,34 @@ check(prismash.Frr.diagnostics(None) == [] and prismash.Frr.diagnostics("") == [
       "nothing said is nothing kept")
 ok("the noise it already knows is dropped, and only that")
 
+# FRR's answer to frr-reload's second pass (#445), as PRISMA_FRR_DUMP
+# recorded it on FRR 10.7.1 for a commit that added a static route. Red with
+# the filter removed (the pair reaches the operator), and with the header
+# dropped whatever is under it (a real note loses its heading).
+_second_pass = """[5720|bgpd] sending configuration
+% Configuration applied with notes:
+No changes found to be committed!
+[5729|staticd] sending configuration
+[5720|bgpd] done"""
+check(prismash.Frr.diagnostics(_second_pass) == [],
+      f"FRR's no-op second pass says nothing: "
+      f"{prismash.Frr.diagnostics(_second_pass)!r}")
+_real_note = """% Configuration applied with notes:
+The route-map 'PL-X' does not exist."""
+check(prismash.Frr.diagnostics(_real_note) == [
+          "% Configuration applied with notes:",
+          "The route-map 'PL-X' does not exist."],
+      f"and a real note keeps its heading: "
+      f"{prismash.Frr.diagnostics(_real_note)!r}")
+_both = """% Configuration applied with notes:
+No changes found to be committed!
+The route-map 'PL-X' does not exist."""
+check(prismash.Frr.diagnostics(_both) == [
+          "% Configuration applied with notes:",
+          "The route-map 'PL-X' does not exist."],
+      f"and a real note beside the no-op one keeps its heading too: "
+      f"{prismash.Frr.diagnostics(_both)!r}")
+
 print("\n=== Frr._summarise: the reason, not the footer twice ===")
 # Mutation shown red: drop the `useful` filter, so the footer alone is the
 # summary.

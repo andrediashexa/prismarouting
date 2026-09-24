@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A commit that applies a route no longer says `No changes found to be
+  committed!`**
+  ([#445](https://github.com/andrediashexa/hexarouting/issues/445)).
+  Measured with `PRISMA_FRR_DUMP` on FRR 10.7.1: frr-reload sends the lines to
+  add twice, and FRR's `mgmtd` answers the second pass, which changes nothing,
+  with `% Configuration applied with notes:` / `No changes found to be
+  committed!`. The route had been installed by the first pass, and `show ip
+  route static` had it, but the VTY passed the note on, so an operator read
+  "no changes" beside the route they had just added. That note is dropped now,
+  and so is its heading when nothing else sits under it. A real note keeps its
+  heading.
+
 ## 0.124.3 - a pool nobody can answer for
 
 ### Fixed
