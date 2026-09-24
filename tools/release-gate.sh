@@ -893,8 +893,57 @@ fi
 # between here and the end is caught, not just a make prerequisite.
 MEDIUM_SHA=$(sha256sum "$WORK/$NAME" | cut -d" " -f1)
 
-step "booting it"
-( cd "$WORK" && sh tools/lab.sh boot-iso ) > "$WORK/boot.log" 2>&1 || {
+# THE THREE GUESTS AT ONCE (#409). Booting the medium, installing it on a
+# guest shaped like this machine, and installing it again on one with no 1G
+# pages and no IOMMU are three claims about ONE file, and none of them reads
+# anything another writes: each runs in its own container, with its own disk
+# under that container's /tmp and its own console copy under /src. Run one
+# after another they were 478 + 1759 + 1366 s of 0.123.0's 4553 - 79% of a
+# release, spent waiting on a machine with 32 cores and 31 GB that was using
+# 8 of the cores and 10 GB at a time.
+#
+# The checks after them are unchanged and read in the same order, so a
+# refusal names the same step it always did; what moves is that a boot which
+# fails no longer saves the other two runs, which is the one thing running
+# them in order bought. GATE_PARALLEL=0 puts the order back.
+GATE_PARALLEL=${GATE_PARALLEL:-1}
+GATE_2M=${GATE_2M:-1}
+timed() {  # <name> <log> <command...> - runs it in $WORK; "<rc> <seconds>" into .timed-<name>
+  _tn=$1; _tl=$2; shift 2
+  _ts=$(date +%s)
+  if ( cd "$WORK" && "$@" ) > "$_tl" 2>&1; then _trc=0; else _trc=$?; fi
+  echo "$_trc $(( $(date +%s) - _ts ))" > "$WORK/.timed-$_tn"
+}
+timed_rc()   { cut -d" " -f1 "$WORK/.timed-$1" 2>/dev/null || echo 99; }
+timed_secs() { cut -d" " -f2 "$WORK/.timed-$1" 2>/dev/null || echo "?"; }
+rm -f "$WORK"/.timed-*
+if [ "$GATE_PARALLEL" = 1 ]; then
+  step "booting it and installing it on both guests, at once"
+  timed boot "$WORK/boot.log" sh tools/lab.sh boot-iso &
+  timed install "$WORK/install.log" make test-install &
+  if [ "$GATE_2M" = 1 ]; then
+    timed install-2m "$WORK/install-2m.log" env \
+      LOGCOPY=/src/install-2m-console.log BOOT_NO_1G=1 BOOT_IOMMU=0 \
+      sh tools/lab.sh install-iso &
+  fi
+  wait
+else
+  step "booting it, then installing it on each guest in turn (GATE_PARALLEL=0)"
+  timed boot "$WORK/boot.log" sh tools/lab.sh boot-iso
+  timed install "$WORK/install.log" make test-install
+  if [ "$GATE_2M" = 1 ]; then
+    timed install-2m "$WORK/install-2m.log" env \
+      LOGCOPY=/src/install-2m-console.log BOOT_NO_1G=1 BOOT_IOMMU=0 \
+      sh tools/lab.sh install-iso
+  fi
+fi
+# Each one's own wall clock, since the step's is now the longest of the three.
+echo "    booting it: $(timed_secs boot)s"
+echo "    installing it to a disk and booting the disk: $(timed_secs install)s"
+[ "$GATE_2M" = 1 ] &&
+  echo "    installing it again on a guest with no 1G pages and no IOMMU: $(timed_secs install-2m)s"
+
+[ "$(timed_rc boot)" = 0 ] || {
   echo "error: the medium did not boot. Last of the console:" >&2
   tail -20 "$WORK/boot.log" >&2
   exit 1
@@ -959,8 +1008,7 @@ said_a_good_verdict "$BOOTLOG" || {
 #
 # So the gate installs to a disk and boots THAT, with the medium detached. The
 # second boot is the assertion; a live image cannot make it.
-step "installing it to a disk and booting the disk"
-( cd "$WORK" && make test-install ) > "$WORK/install.log" 2>&1 || {
+[ "$(timed_rc install)" = 0 ] || {
   echo "error: the medium installed and the installed box failed its checks." >&2
   grep -E "\[FAIL\]" "$WORK/install.log" | head -10 >&2
   echo "       full console: $WORK/install.log" >&2
@@ -986,11 +1034,8 @@ step "installing it to a disk and booting the disk"
 # across eight runs of this lab between 1251s and 1400s. docs/build-timing.md
 # carries it beside the others. GATE_2M=0 turns it off for a release that
 # must go out now - deliberately, and not by never having had it.
-GATE_2M=${GATE_2M:-1}
 if [ "$GATE_2M" = 1 ]; then
-  step "installing it again on a guest with no 1G pages and no IOMMU"
-  ( cd "$WORK" && BOOT_NO_1G=1 BOOT_IOMMU=0 sh tools/lab.sh install-iso ) \
-      > "$WORK/install-2m.log" 2>&1 || {
+  [ "$(timed_rc install-2m)" = 0 ] || {
     echo "error: the medium installs on a box with 1G pages and not on one" >&2
     echo "       without them, which is every Proxmox VM on the default CPU" >&2
     echo "       model. This is #428's shape and it reached a customer once." >&2
