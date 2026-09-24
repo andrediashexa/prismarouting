@@ -960,6 +960,102 @@ check(box.read(STORE) == 'usmUser 1 3 0x80001f88 "bob" "bob" NULL '
       f"{box.read(STORE)!r}")
 
 print()
+print("\n=== dns_error: a resolver is an address (#437) ===")
+# Mutation shown red: the scope test removed - `fe80::1%eth0` is taken,
+# because Python's ipaddress accepts a scope and this is the one place that
+# says it must not.
+for _v in ("1.1.1.1", "2606:4700::1111"):
+    check(system.dns_error(_v) is None, f"{_v} is a resolver")
+for _v, _needle in (("dns.google", "expected an address"),
+                    ("1.1.1", "expected an address"),
+                    ("fe80::1%eth0", "without a scope")):
+    _why = system.dns_error(_v) or ()
+    check(_needle in " ".join(_why), f"{_v!r} is refused: {_why!r}")
+
+print("\n=== write_dns / read_dns: the VTY takes resolv.conf over, and gives "
+      "it back (#437) ===")
+# Mutations shown red, one at a time: the copy into RESOLV_BEFORE removed
+# (giving the file back leaves it empty, and a DHCP box has no resolver until
+# the next renewal); read_dns() without the first-line test (a lease's
+# resolvers are reported as statements, and the next save pins them).
+_r = tempfile.mkdtemp(prefix="dns-root-")
+os.makedirs(os.path.join(_r, "etc", "prisma-routing"))
+_rc = os.path.join(_r, "etc", "resolv.conf")
+_bf = os.path.join(_r, "etc", "prisma-routing", "resolv.conf.before")
+with open(_rc, "w") as _f:
+    _f.write("# from dhclient\nnameserver 192.0.2.53\n")
+_sy = system.System(root=_r)
+check(_sy.read_dns() == [],
+      "a resolv.conf DHCP wrote is not the VTY's, so it reports no servers")
+_ok, _msg = _sy.write_dns(["1.1.1.1", "2606:4700::1111"])
+check(_ok and _sy.read_dns() == ["1.1.1.1", "2606:4700::1111"],
+      f"the VTY's servers, read back out of the file, in order: "
+      f"{_ok} {_msg!r} {_sy.read_dns()!r}")
+check(open(_rc).readline().rstrip("\n") == system.DNS_OWNED,
+      "and the file says on its first line who owns it")
+check(open(_bf).read() == "# from dhclient\nnameserver 192.0.2.53\n",
+      "what was there before is kept")
+check(oct(os.stat(_rc).st_mode & 0o777) == "0o644",
+      "readable by every account, as resolv.conf has to be")
+_sy.write_dns(["9.9.9.9"])
+check(open(_bf).read() == "# from dhclient\nnameserver 192.0.2.53\n",
+      "a second change does not overwrite the keep with the VTY's own file")
+_ok, _msg = _sy.write_dns([])
+check(_ok and open(_rc).read() == "# from dhclient\nnameserver 192.0.2.53\n"
+      and not os.path.exists(_bf),
+      "the last server removed puts the old file back and drops the keep")
+check(_sy.read_dns() == [], "and the VTY no longer reports any")
+_ok, _ = _sy.write_dns([])
+check(_ok and open(_rc).read() == "# from dhclient\nnameserver 192.0.2.53\n",
+      "removing servers from a file the VTY does not own changes nothing")
+os.unlink(_rc)
+os.symlink("/run/somebody/resolv.conf", _rc)
+_ok, _msg = _sy.write_dns(["1.1.1.1"])
+check(not _ok and "something else writes it" in _msg
+      and os.path.islink(_rc),
+      f"a resolv.conf that is a link is somebody else's, and is left alone: "
+      f"{_msg!r}")
+check(system.System._owned(_rc) is False,
+      "_owned answers False for a file it cannot read")
+os.unlink(_rc)
+with open(_rc, "w") as _f:
+    _f.write(system.DNS_OWNED + "\nnameserver 1.1.1.1\nnameserver banana\n"
+             "nameserver 8.8.8.8\nnameserver 9.9.9.9\nnameserver 4.4.4.4\n")
+check(_sy.read_dns() == ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
+      f"a hand-edited file reads back as what glibc asks, and so what the "
+      f"boot's --load accepts: {_sy.read_dns()!r}")
+check(not config.Config.parse(
+          "".join(f"dns server {a}\n" for a in _sy.read_dns())).unknown,
+      "which is a file the parser takes whole")
+_sy._replace(_rc, "x\n")
+check(open(_rc).read() == "x\n" and not os.path.exists(_rc + ".prisma-new"),
+      "_replace leaves the file whole and nothing beside it")
+
+print("\n=== the DHCP hook stands down make_resolv_conf only while the VTY "
+      "owns the file (#437) ===")
+# Sourced the way dhclient-script sources it, after a make_resolv_conf of its
+# own. Mutation shown red: the first-line test dropped from the hook - a box
+# with DHCP resolvers and no `dns server` then never gets a resolver again.
+_hook = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                     "appliance", "dhclient-prisma-routing-dns")
+os.unlink(_rc)
+
+
+def _dhclient(first_line):
+    with open(_rc, "w") as _f:
+        _f.write(first_line + "\nnameserver 1.1.1.1\n")
+    import subprocess as _sp
+    return _sp.run(["sh", "-c", 'make_resolv_conf() { echo DHCP-WROTE; }; '
+                    '. "$1"; make_resolv_conf', "_", _hook],
+                   capture_output=True, text=True,
+                   env=dict(os.environ, PRISMA_RESOLV_CONF=_rc)).stdout.strip()
+
+
+check(_dhclient(system.DNS_OWNED) == "",
+      "while the VTY owns resolv.conf, a lease does not rewrite it")
+check(_dhclient("# from dhclient") == "DHCP-WROTE",
+      "and when it does not, DHCP writes the file as it always did")
+
 if fail:
     print(f"{fail} FAILURES")
     sys.exit(1)

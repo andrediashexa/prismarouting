@@ -50,7 +50,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     VRRP_PRIORITY_DEFAULT,
                     VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
                     vrrp_statement, vrrp_remove, vrrp_pair_findings)
-from system import (System, SnmpDaemon, SnmpUser, User,
+from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
                     snmp_redact, validate_snmp, validate_ssh, validate_role,
@@ -1691,6 +1691,7 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "if_remove", "globals")
 DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "routing_changed", "route_desc_changed", "ssh_changed",
+               "dns_changed",
                "users_changed",
                "snmp_changed", "dataplane_if_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
@@ -2101,7 +2102,11 @@ TREE = {
                                   ARG_INTERFACE)})}),
             "dataplane": ("stop handing a card to the dataplane", {
                 "interface": ("the box claims no card at the next start of "
-                              "the dataplane", None)})}),
+                              "the dataplane", None)}),
+            "dns": ("stop asking a resolver", {
+                "server": ("the last one removed gives /etc/resolv.conf back "
+                           "to DHCP or the installer's answer",
+                           "<address>")})}),
         "ip": ("IP configuration", {
             "prefix-list": ("a named list of prefixes, for matching in policy",
                             ARG_PREFIX_LIST)}),
@@ -2138,6 +2143,9 @@ TREE = {
         "dataplane": ("the card handed to the dataplane", {
             "interface": ("the card carrying subscriber traffic, by the name "
                           "Linux gives it", ARG_HOST_NIC)}),
+        "dns": ("the resolvers this box asks", {
+            "server": ("a resolver, by address; up to 3, asked in the order "
+                       "typed", "<address>")}),
         "ssh": ("the SSH daemon", {
             "port": ("TCP port", ARG_PORT),
             "listen-address": ("address to listen on", ARG_WORD),
@@ -6064,6 +6072,7 @@ class Shell:
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
         cfg.ssh = self.sys.read_ssh()
+        cfg.dns_servers = self.sys.read_dns()
         # From the tuner's own input, which is the only place that knows. Read
         # back rather than remembered for the same reason as everything above,
         # and with one extra consequence: editing that file by hand was the
@@ -8789,6 +8798,11 @@ class Shell:
                 return False
             if msg:
                 print(f"ssh: {msg}")
+        if d.get("dns_changed"):
+            ok, msg = self.sys.write_dns(target.dns_servers)
+            if not ok:
+                self.err_prose("dns: nothing was changed", msg)
+                return False
         if d["snmp_changed"]:
             ok, msg = self.snmp.apply(target.snmp, target.snmp_communities,
                                       target.snmp_users)
@@ -11365,6 +11379,11 @@ class Shell:
                 return True
             self.candidate.dataplane_if = w[2]
             return True
+        if w[:2] == ["dns", "server"] or w[:3] == ["no", "dns", "server"]:
+            return self.dns_statement(w)
+        if w[0] == "dns" or w[:2] == ["no", "dns"]:
+            self.err("usage: [no] dns server <address>")
+            return True
         if w[0] == "ssh":
             if len(w) < 3:
                 self.err("usage: ssh <setting> <value>")
@@ -11902,6 +11921,41 @@ class Shell:
             else:
                 self.frr_ctx = []
             self.frr_ctx.append(line)
+        return True
+
+    def dns_statement(self, w):
+        """
+        `dns server <address>` and `no dns server <address>` (#437).
+
+        The same predicate and the same limit the file parser applies, so a
+        resolver the prompt refuses is one a saved file cannot carry. A
+        server typed twice is one server. The fourth is refused rather than
+        kept: glibc asks three and ignores the rest, so it would be shown and
+        never asked.
+        """
+        neg = w[0] == "no"
+        args = w[3:] if neg else w[2:]
+        if len(args) != 1:
+            self.err("usage: [no] dns server <address>")
+            return True
+        why = dns_error(args[0])
+        if why:
+            self.err_prose(*why)
+            return True
+        servers = self.candidate.dns_servers
+        if neg:
+            if args[0] in servers:
+                servers.remove(args[0])
+            return True
+        if args[0] in servers:
+            return True
+        if len(servers) >= DNS_MAX:
+            self.err_prose(f"dns server: this box already has {DNS_MAX}",
+                           "a resolver past the third is never asked, so it "
+                           "is not taken; 'no dns server <address>' makes "
+                           "room")
+            return True
+        servers.append(args[0])
         return True
 
     def owns_word(self, w):

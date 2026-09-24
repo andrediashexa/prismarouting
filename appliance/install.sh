@@ -299,6 +299,11 @@ install -D -m 0755 "$REPO/appliance/watch-the-dataplane" "$DESTDIR/usr/lib/prism
 # images the medium carried and tells compose which tag to run (#426).
 install -D -m 0755 "$REPO/appliance/load-the-images" "$DESTDIR/usr/lib/prisma-routing/load-the-images"
 install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/prisma-routing/selftest"
+# The DHCP hook that keeps a lease from rewriting the resolvers `dns server`
+# set (#437). A hook directory and not a package's conffile, so an upgrade
+# can carry it.
+install -D -m 0644 "$REPO/appliance/dhclient-prisma-routing-dns" \
+  "$DESTDIR/etc/dhcp/dhclient-enter-hooks.d/prisma-routing-dns"
 # Beside the self-test, which finds it with `dirname "$0"`, and named by the
 # VTY banner by absolute path. Two readers of one answer (#248).
 install -D -m 0755 "$REPO/appliance/ssh-host-key-origin" \

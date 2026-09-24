@@ -2011,6 +2011,45 @@ the evidence.
 That second boot is the acceptance. The question is not whether the box is
 reachable once, it is whether it is reachable tomorrow.
 
+### DNS resolvers from the VTY
+
+```
+prisma# [edit] dns server 1.1.1.1
+prisma# [edit] dns server 2606:4700::1111
+prisma# [edit] commit
+```
+
+Before [#437](https://github.com/andrediashexa/hexarouting/issues/437) the only
+way to change the box's resolvers was to edit `/etc/resolv.conf`. Measured, on
+the image as it is built: ifupdown and isc-dhcp-client 4.4.3-P1-2, with no
+resolvconf, no systemd-resolved and no NetworkManager. A static management
+answer has the installer write the file once. A dhcp one has `dhclient-script`
+rewrite it on **every lease and every renewal**, through `make_resolv_conf()`.
+
+* **`dns server <address>`**, IPv4 or IPv6, **up to three**, asked in the order
+  typed. glibc reads three `nameserver` lines (MAXNS) and ignores the rest, so
+  a fourth would be shown and never asked, and it is refused. A scoped IPv6
+  address is refused as well: the scope names an interface of this box's
+  kernel. `no dns server <address>` removes one.
+* **The file says who owns it.** `commit` writes `/etc/resolv.conf` with a
+  first line saying the VTY owns it, and keeps what was there before in
+  `/etc/prisma-routing/resolv.conf.before`. When the last server is removed,
+  that file goes back in place.
+* **A DHCP lease does not undo it.** `dhclient-script` sources
+  `/etc/dhcp/dhclient-enter-hooks.d/prisma-routing-dns` before it calls
+  `make_resolv_conf()`, and the hook replaces that function with nothing
+  **only while the first line is there**. Once the VTY gives the file back,
+  DHCP writes it again. `lab/dns.sh` drives a renewal through the real
+  `dhclient-script` both ways, and its off run leaves the hook out and goes red.
+* **Read back from the box.** `running_config()` reads the servers out of the
+  file, and only when the first line says the VTY owns it. A box whose
+  resolvers came from DHCP or the installer has no `dns server` statement, so
+  the next `save` does not pin a lease's answer. The read gives what glibc
+  asks, meaning the first three lines it can parse, because a hand-edited file
+  reported whole would be saved and then refused at boot.
+
+Out of scope: `search` and `domain`, and a resolver per VRF.
+
 ### The medium carries no credentials
 
 The live image's root account is **locked** and `ssh.service` is **masked** on

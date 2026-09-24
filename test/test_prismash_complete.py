@@ -3361,7 +3361,7 @@ def box_193():
     sh.frr = type("F", (prismash.Frr,), {"available": lambda s: True,
                             "running": lambda s: ["router bgp 65000"],
                             "show": lambda s, c: (1, "")})()
-    sh.sys = type("S", (), {"read_ssh": lambda s: {},
+    sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [],
                             "read_users": lambda s: {}})()
     sh.snmp = type("N", (), {"read": lambda s: ({}, [], {})})()
     sh.feed("configure")
@@ -3880,7 +3880,7 @@ def box_211(reachable, cfg_text):
                            "reachable": lambda _s: run(_s, "show version")[0] == 0})()
     sh.frr = type("F", (prismash.Frr,), {"available": lambda s: False, "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
-    sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_users": lambda s: {}})()
+    sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [], "read_users": lambda s: {}})()
     sh.snmp = type("N", (), {"read": lambda s: ({}, [], {})})()
     return sh
 
@@ -5636,6 +5636,7 @@ def _shell271(candidate_text, running_text="", caps=None, api=None, dp=None,
         "write_ssh": lambda self, *a, **k: (True, ""),
         "apply_users": lambda self, *a, **k: (True, ""),
         "read_ssh": lambda self: {},
+        "read_dns": lambda self: [],
         "read_users": lambda self: {}})()
     sh.candidate = _cfg.Config.parse(candidate_text)
     sh.running_config = lambda: _cfg.Config.parse(running_text)
