@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.124.3 - a pool nobody can answer for
+
+### Fixed
+
 * **A dynamic pool with nothing exporting its blocks now says so at `commit
   check` and `commit`**
   ([#444](https://github.com/andrediashexa/hexarouting/issues/444)). In
