@@ -5542,7 +5542,36 @@ class Frr:
             if chatty.match(t):
                 continue
             keep.append(t)
-        return keep
+        # FRR'S ANSWER TO ITS OWN SECOND PASS (#445). frr-reload sends the
+        # lines to add twice, the second time after re-reading the running
+        # configuration, and mgmtd answers a pass that changes nothing with
+        #
+        #     % Configuration applied with notes:
+        #     No changes found to be committed!
+        #
+        # Measured on FRR 10.7.1 with PRISMA_FRR_DUMP: a commit adding
+        # `ip route 0.0.0.0/0 198.51.100.1` printed exactly that pair after
+        # the route had been installed by the first pass, and
+        # `show ip route static` then had it. An operator reads "no changes"
+        # beside a route they just added as the route not being applied.
+        # Dropped: the sentence, and the header only when that sentence was
+        # the whole of what it announced - a header with any other note under
+        # it stays, with the note.
+        out = []
+        for i, t in enumerate(keep):
+            if t == "No changes found to be committed!":
+                continue
+            if t == "% Configuration applied with notes:":
+                under = []
+                for r in keep[i + 1:]:
+                    if r.startswith("%"):
+                        break
+                    under.append(r)
+                if all(r == "No changes found to be committed!"
+                       for r in under):
+                    continue
+            out.append(t)
+        return out
 
     @classmethod
     def _summarise(cls, out):
