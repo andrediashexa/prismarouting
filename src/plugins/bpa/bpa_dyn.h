@@ -555,6 +555,54 @@ bpa_dyn_owner (const bpa_dyn_t *d, u32 block_idx, u32 n_workers, u32 *sub_idx)
 }
 
 /*
+ * Which subscriber holds pool-wide block `block_idx` IN THIS SLICE - the
+ * slice of `worker` of `n_workers`. -1 when this slice does not hold it, or
+ * holds it free.
+ *
+ * bpa_dyn_owner() cannot answer that for a caller that asks EVERY worker,
+ * which is what `show bpa translation` does (#432). It divides the block
+ * index by the worker count and reads that slot, and for block 1 the slot on
+ * worker 0 is worker 0's block 0 - somebody else's block. MEASURED with two
+ * workers: 100.64.0.12 held 1024-17407 only, the pool counted 2/3 blocks in
+ * use, and the reverse lookup of port 17408 answered "-> 100.64.0.12". That
+ * is the screen an operator answers an abuse report from.
+ *
+ * So a block is looked for where this slice can hold it: among its own
+ * blocks only if it is congruent to this worker, and among the borrowed
+ * slots by its pool-wide index (#210). The datapath keeps bpa_dyn_owner():
+ * the handoff puts a packet on the worker its block is congruent to, which
+ * is the one case the division is right.
+ */
+static_always_inline int
+bpa_dyn_holder (const bpa_dyn_t *d, u32 block_idx, u32 worker,
+		u32 n_workers, u32 *sub_idx)
+{
+  u32 slot, i;
+
+  if (PREDICT_FALSE (!d->active || n_workers == 0))
+    return -1;
+  if (block_idx % n_workers == worker && block_idx / n_workers < d->n_local)
+    slot = block_idx / n_workers;
+  else
+    {
+      for (i = 0; i < vec_len (d->foreign); i++)
+	if (d->foreign[i] == block_idx)
+	  break;
+      if (i == vec_len (d->foreign))
+	return -1;
+      slot = d->n_local + i;
+    }
+  /* BPA_LENT is the lender's mark for a block another worker is holding:
+     not a subscriber, and not this slice's to answer for (#210). Returned
+     as one, it reached `show bpa translation` as subscriber 4294967294, and
+     only a failed address lookup behind it kept that off the screen. */
+  if (d->owner[slot] == BPA_NO_BLOCK || d->owner[slot] == BPA_LENT)
+    return -1;
+  *sub_idx = d->owner[slot];
+  return 0;
+}
+
+/*
  * The mirror: which block this subscriber holds. -1 when it holds none.
  *
  * Asked by "show bpa subscriber", because the per-subscriber session record

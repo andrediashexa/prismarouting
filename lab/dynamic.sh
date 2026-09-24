@@ -438,7 +438,27 @@ REV_LOW=$(vppctl show bpa translation 200.150.0.16 100)
 printf '%s\n' "$REV_LOW" | sed 's/^/  /'
 REV_HIGH=$(vppctl show bpa translation 200.150.0.16 60000)
 printf '%s\n' "$REV_HIGH" | sed 's/^/  /'
-REV_FREE=$(vppctl show bpa translation 200.150.0.16 20000)
+# A block NOBODY holds, found on this box rather than assumed (#432). This
+# asked port 20000, in block 1, on the belief that block 1 was free, and
+# with workers it went red - and the lab was RIGHT. The pool counted 2/3
+# blocks in use, 100.64.0.12 said it held 1024-17407 only, and the reverse
+# lookup of block 1 answered "-> 100.64.0.12": worker 0 was answering for
+# worker 1's block with its own block 0's subscriber. bpa_dyn_holder() is
+# the fix. The lab still finds the block rather than naming it, because
+# which block is free depends on the worker count: the pool's own count
+# says first that one is, and the block asked about is one whose first port
+# names no subscriber. What is asserted is the WORDING of that answer.
+DIN_IN_USE=$(stanza din "$(vppctl show bpa blocks)" \
+             | sed -n 's/.*total: \([0-9]*\)\/3 in use.*/\1/p' | head -1)
+FREE_PORT=""
+for _p in 1024 17408 33792; do
+  case "$(vppctl show bpa translation 200.150.0.16 $_p)" in
+    *"->  100.64."*) ;;
+    *) FREE_PORT=$_p; break ;;
+  esac
+done
+echo "  din has ${DIN_IN_USE:-?}/3 blocks in use; asking about the one at port ${FREE_PORT:-<none>}"
+REV_FREE=$(vppctl show bpa translation 200.150.0.16 "${FREE_PORT:-20000}")
 printf '%s\n' "$REV_FREE" | sed 's/^/  /'
 
 echo
@@ -475,6 +495,8 @@ expect_in "a port below everything the pool hands out names the pool and refuses
   "$NO_BLOCK" "$REV_LOW"
 expect_in "and a port above them says the same thing rather than a different one" \
   "$NO_BLOCK" "$REV_HIGH"
+expect "the pool has a block nobody holds, by its own count" \
+  test "${DIN_IN_USE:-3}" -lt 3 -a -n "$FREE_PORT"
 expect_in "a port in a block nobody holds answers nobody, rather than naming a subscriber" \
   "->  nobody, right now" "$REV_FREE"
 expect_in "and says which pool and block, and that the block is dynamic" \
