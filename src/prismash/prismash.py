@@ -22,6 +22,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2845,6 +2846,40 @@ def route_column_widths(rows, headings, indent=2, gutter=1, tail=0):
             > CONSOLE_COLUMNS:
         return None
     return widths
+
+
+def sigint_ignored(fn):
+    """
+    `fn`, with Ctrl-C ignored while it runs - for what must not stop halfway.
+
+    A terminal sends SIGINT to the whole foreground process group: to this VTY
+    and to the frr-reload, the vtysh and the ip a commit is running. A Python
+    handler would protect this process alone, because exec resets a caught
+    signal to its default in the child, and the child would die with half a
+    configuration applied. SIG_IGN is the one disposition exec keeps, so it is
+    what makes the children immune too (#441). The price is that the key does
+    nothing visible while a commit applies: the terminal echoes ^C, and the
+    commit finishes and says what it did. A commit half applied because
+    somebody hit a key while it was slow is worse.
+
+    Only on the main thread, where Python allows a handler to be set; the
+    previous disposition is put back whatever `fn` does.
+    """
+    import functools
+    import threading
+
+    # not a unit: the function sigint_ignored() returns, and it is driven
+    # through sigint_ignored() by name in test_prismash_units.py.
+    @functools.wraps(fn)
+    def held(*a, **k):
+        if threading.current_thread() is not threading.main_thread():
+            return fn(*a, **k)
+        before = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            return fn(*a, **k)
+        finally:
+            signal.signal(signal.SIGINT, before)
+    return held
 
 
 def print_prose(text, indent="    "):
@@ -9754,6 +9789,7 @@ class Shell:
         print_prose("'commit' refuses this until it is asked for by name, "
                     "with 'commit diverge'", indent="  ")
 
+    @sigint_ignored
     def do_commit(self, args):
         """commit [check | remap | cutoff | confirmed <min> | comment <text>]"""
         if self.candidate is None:
@@ -10407,6 +10443,7 @@ class Shell:
             self.confirm_backup = None
         self.candidate = self.running_config()
 
+    @sigint_ignored
     def do_rollback(self, args):
         try:
             n = int(args[0]) if args else 0
@@ -16009,6 +16046,7 @@ class Shell:
                 self.batch_refused.append(c)
         return 1 if self.failed else 0
 
+    @sigint_ignored
     def load(self, path):
         """
         Apply a saved configuration file to the device.
@@ -16399,11 +16437,26 @@ class Shell:
         while True:
             try:
                 line = input(self.prompt())
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print()
                 return 0
-            if not self.feed(line):
-                return 0
+            except KeyboardInterrupt:
+                # Ctrl-C discards the line and asks again, as on every router
+                # CLI. It used to be handled like Ctrl-D: this returned 0,
+                # prismash-login exited 0, and the ssh session closed on the
+                # operator (#441).
+                print()
+                continue
+            # And while a command runs, Ctrl-C stops the command and not the
+            # VTY. Uncaught, it killed this process with a traceback, and
+            # prismash-login answers a non-zero exit by starting a login
+            # shell (#441, #442). commit, rollback and load cannot get here:
+            # they run with SIGINT ignored, see sigint_ignored().
+            try:
+                if not self.feed(line):
+                    return 0
+            except KeyboardInterrupt:
+                print()
 
 
 # not a unit: the program's entry; it builds the Shell and hands the

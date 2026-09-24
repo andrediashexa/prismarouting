@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Ctrl-C ended the ssh session**
+  ([#441](https://github.com/andrediashexa/hexarouting/issues/441)), reported
+  from a box. At the prompt it was handled like Ctrl-D, so the VTY exited and
+  the login with it. It now discards the line and asks again, as every router
+  CLI does. During a command that did not catch it, it was worse: the VTY died
+  of the signal with a traceback, and the login wrapper answered that crash
+  with a system shell, even for an account that `start shell` refuses. Ctrl-C
+  now stops the command and returns to the prompt. During `commit`,
+  `rollback` and a configuration load it is ignored, the frr-reload they run
+  included, because a configuration applied halfway is worse than a slow one.
+  `test/test_prismash_ctrl_c.py` presses the key on a real terminal.
+
 ## 0.122.8 - where an operator can download it
 
 ### Added

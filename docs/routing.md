@@ -2295,6 +2295,33 @@ and `?` offer it.
 
 See [appliance.md](appliance.md) for the login table and the recovery paths.
 
+### Ctrl-C stops a command, never the session
+
+Reported from a box over ssh
+([#441](https://github.com/andrediashexa/hexarouting/issues/441)): Ctrl-C at
+the prompt was handled like Ctrl-D. `repl()` returned 0, `prismash-login`
+exited 0, and the session closed. Ctrl-C during a command that did not catch
+it (a `show` waiting on vtysh) was worse. prismash died of SIGINT with a
+traceback, and `prismash-login` answers a non-zero exit by starting a login
+shell, which for an account denied `start shell` is the one thing that was
+meant to be out of reach
+([#442](https://github.com/andrediashexa/hexarouting/issues/442)).
+
+* **At the prompt**, Ctrl-C discards the line and asks again. Ctrl-D leaves.
+* **During a command**, Ctrl-C stops the command and returns to the prompt.
+* **During `commit`, `rollback` and `load`**, SIGINT is ignored until they
+  return: `sigint_ignored()`. The terminal sends the signal to the whole
+  foreground process group, which includes the frr-reload a commit runs. A
+  Python handler would protect this process alone, because exec resets a
+  caught signal to its default in the child. `SIG_IGN` is the one
+  disposition exec keeps. So the key does nothing visible while a commit
+  applies, and that is the trade: a commit half applied because somebody hit
+  a key is worse than a slow one.
+
+`test/test_prismash_ctrl_c.py` presses the key on a real pty, because only a
+terminal turns it into SIGINT. The unit box for `sigint_ignored()` holds the
+part a pty cannot see: that a child started during a commit survives it.
+
 ### How prismash reaches the dataplane
 
 Through the **binary API**, not `vppctl`.
