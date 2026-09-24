@@ -15,7 +15,7 @@ flowchart LR
 |-------|------------|-------------|
 | Rede dos assinantes (atrás da caixa) | `100.64.0.0/22` | o que o seu BNG/OLT entrega; `100.64.0.0/10` é o espaço reservado para isso |
 | Endereços públicos do pool | `203.0.113.0/28` | um prefixo seu, que **não** está configurado em interface nenhuma |
-| Porta dos assinantes | `ens18` | a placa virada para o BNG |
+| Porta dos assinantes | `ens18`    | a placa virada para o BNG |
 | Porta de saída | `ens19`, com `198.51.100.2/30` | a placa virada para o upstream |
 
 # Antes de começar: três decisões
@@ -34,13 +34,15 @@ flowchart TD
 **3. Quantos endereços públicos você precisa.** No determinístico, cada endereço público atende `portas ÷ block-size` assinantes. Com `ports 1024 65535` são 64.512 portas: blocos de 512 dão **126 assinantes por endereço público**. O `/28` do exemplo tem 16 endereços, então comporta 2.016 assinantes, e a rede interna de `/22` tem 1.024. Sobra.
 
 | Assinantes | block-size | Endereços públicos | Prefixo |
-|------------|-----------|--------------------|---------|
-| 1.000      | 512       | 8                  | `/29`   |
-| 10.000     | 512       | 80                 | `/25`   |
-| 200.000    | 512       | 1.588              | `/21`   |
+|------------|------------|--------------------|---------|
+| 1\.000     | 512        | 8                  | `/29`   |
+| 10\.000    | 512        | 80                 | `/25`   |
+| 200\.000   | 512        | 1\.588             | `/21`   |
+
 
 :::warning
 **A interface de gerência nunca entra no CGNAT**, nem como `inside` nem como `outside`. Se você administra a caixa pela rede, anote agora por qual placa, e não a use em nenhum passo desta página.
+
 :::
 
 # 1. Veja as placas que o dataplane tem
@@ -204,8 +206,10 @@ commit complete
 
 O comentário fica na trilha de configuração, junto com a definição do pool, e é o que você vai ler daqui a um ano, quando alguém perguntar desde quando o mapeamento é esse.
 
+
 :::info
 **Mexendo de longe?** `commit confirmed 5` aplica agora e desfaz sozinho em cinco minutos se você não digitar `commit` de novo. Se a mudança cortar o seu acesso, a caixa volta ao que era.
+
 :::
 
 # 7. Faça a internet saber voltar para o pool
@@ -367,8 +371,9 @@ prisma> show cgnat translation 203.0.113.5 1029
 
 No determinístico essa resposta vale para qualquer momento, passado ou presente, enquanto os endereços e o `block-size` do pool não mudarem. É por isso que mudar o mapeamento de um pool em uso não é trivial.
 
+
 :::warning
-**Mudar `inside`, `outside`, `block-size`, `ports`, `policy` ou `mode` num pool em uso muda o endereço e as portas de quase todo mundo, e derruba todas as sessões do pool.** A caixa não deixa isso acontecer por engano: o `commit` recusa, diz quantos assinantes mudam e pede que você confirme pelo nome.
+**Mudar** `**inside**`**,** `**outside**`**,** `**block-size**`**,** `**ports**`**,** `**policy**` **ou** `**mode**` **num pool em uso muda o endereço e as portas de quase todo mundo, e derruba todas as sessões do pool.** A caixa não deixa isso acontecer por engano: o `commit` recusa, diz quantos assinantes mudam e pede que você confirme pelo nome.
 
 ```
 error: this change re-maps subscribers that already have mappings
@@ -377,6 +382,7 @@ error: this change re-maps subscribers that already have mappings
 ```
 
 Para crescer sem derrubar ninguém, o caminho é um **segundo pool**. Ver [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u).
+
 :::
 
 # Como conferir
@@ -393,8 +399,10 @@ Antes de considerar o CGNAT pronto:
 - [ ] no modo dinâmico: `show cgnat logging` diz `state enabled` e o coletor está recebendo
 - [ ] `save` foi executado
 
+
 :::success
 Com todos os itens marcados, o assinante sai pela internet com o endereço público do pool, e qualquer porta usada por ele pode ser rastreada até ele.
+
 :::
 
 # Ver também
