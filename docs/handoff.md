@@ -1,122 +1,124 @@
 # Where this stands, for whoever picks it up next
 
-Written 2026-09-20, at the end of a long session, so the next one starts with
-the state rather than reconstructing it. **This file is a handoff, not a plan**
-— `docs/roadmap.md` is the plan, and where the two disagree the roadmap is
+Written 2026-09-24, at 0.125.1, so the next session starts with the state
+rather than reconstructing it. **This file is a handoff, not a plan** —
+`docs/roadmap.md` is the plan, and where the two disagree the roadmap is
 right. `CLAUDE.md` is how this repository is worked on; read that first.
 
-## Released in that session
+## The short version
+
+**Nothing is on a branch waiting.** Every issue that was work somebody could
+start has been released and closed. What is open is one of three things, and
+none of them is waiting for somebody to start it:
+
+* **a decision the maintainer has not taken**, with the evidence already on
+  the issue;
+* **blocked**, on hardware this project does not have or on an upstream;
+* **deferred by its own issue** until there is demand for it.
+
+The next piece of work will therefore come from the maintainer: a decision on
+one of the issues below, or, as it usually has, something seen on a box.
+
+## Released since the last handoff (0.110.0)
+
+The CHANGELOG has each one. By theme:
 
 | | | |
 |---|---|---|
-| 0.101.0 | `top`, `up [<n>]` and the probes, at every configuration level | #400 |
-| 0.102.0 | a published release title carries its version, and a suite drives the check | #402 |
-| 0.103.0 | the interface screens list what an operator configured, not the TAPs and `local0` | #403 |
-| 0.104.0 | a loopback is paired into Linux by default, so FRR can see it | #404 |
-| 0.105.0 | `?` says which names create a sub-interface or a loopback | #406 |
-| 0.106.0 | a card the box has and the dataplane has not: three screens say the same true thing | #405 |
-| 0.107.0 | a sub-interface under a shut-down parent no longer fails every commit | #407 |
-| 0.108.0 | a release record repeats what its allocation said | #397 |
-| 0.109.0 | where the release time goes, and the X.Y.Z rule that follows | #408, #409, #410 |
-| 0.109.1 | `CLAUDE.md`, and every commit is announced on Discord | — |
-| 0.109.2 | the gate knows which digit moved | #410 |
-| 0.110.0 | what an operator can type, checked at both doors | #411, #412, #413, #414, #415, #416, #417 |
+| 0.110.1 - 0.112.7 | readback validators, the release clock, the X.Y.Z reader, a block that moves between workers | #418 #419 #408 #409 #210 #423 - #425 |
+| 0.113.0 - 0.118.1 | the dataplane and control plane as containers, carried in the medium, and the default that follows the images | #396 #426 #427 |
+| 0.117.3 - 0.123.4 | every C function in the plugin has a unit or says why not, and every CLI message is held by a lab | #390 |
+| 0.119.0 - 0.122.0 | the box a customer has - a real card, its registers, and the release that installs and boots it | #428 #429 |
+| 0.122.1 - 0.122.5 | the kernel's remaining tuning, and three screens that said less than they knew | #163 #430 |
+| 0.122.6 - 0.124.0 | asked for by the maintainer or found on a box, below | |
 
-Everything up to 0.109.0 went through the full gate with an ISO. **0.109.1 and
-0.109.2 are the first two patch releases**: no medium, published as
-pre-releases. 0.110.0 is a minor and takes the full gate again, so `Latest`
-moves to it.
+The last run, in the order they were released:
 
-**0.110.0 is the validation audit, and it is published** - the full gate ran,
-so `Latest` is on it.
+| | | |
+|---|---|---|
+| 0.122.6 | a statement FRR does not accept is refused where it is typed | #431 |
+| 0.122.7 | the login banner spells the product name | #433 |
+| 0.122.8 | a public directory to download each release from | #439 |
+| 0.122.9 | Ctrl-C at the prompt no longer ends the ssh session | #441 |
+| 0.122.10 | static routes as `<prefix> next-hop <address>`, with description, tag and distance | #436 |
+| 0.123.0 | DNS resolvers from the VTY, which a DHCP lease no longer undoes | #437 |
+| 0.123.1 | `lab/vty-ssh.sh` asserts today's box | #434 |
+| 0.123.2 | `show bpa translation` names the right subscriber with workers | #432 |
+| 0.123.3 | a loss at dataplane shutdown is said | #435 |
+| 0.123.4 | every message the plugin's CLI prints is held by a lab | #390 |
+| 0.123.5 | **security**: a shell for administrators only | #442 |
+| 0.123.6 | `system upgrade` from the VTY | #440 |
+| 0.124.0 | the installed system calls itself Prisma Routing | #438 |
+| 0.124.1 | the wiki walks an operator through configuring the CGNAT | #443 |
+| 0.124.2 | the gate boots and installs on both guests at once: 29 minutes off a minor | #409 |
+| 0.124.3 | a dynamic pool nothing exports is warned | #444 |
+| 0.124.4 | an applied route no longer says "No changes found" | #445 |
+| 0.125.0 | the upgrade artifact carries the container images | #427 |
 
-**The one thing to carry out of it**: the gate refused the first attempt, and
-it was right. `address_error` refused `ssh listen-address [::]` - the form
-`sshd -T` gives back - so every commit on an installed box failed, and
-`lab/install-iso.sh` reported *eight* failures for that one defect because
-seven checks never ran. `make test` was green at 95 suites on that tree. The
-general class is **#419** and it has now bitten twice; read it before adding a
-validator to anything the box reads back.
+Of these, 0.123.0, 0.124.0 and 0.125.0 went through the full gate; the rest
+are patches. 0.125.0 was the first through the parallel one.
 
-**0.110.0 is the validation audit.** Every value this VTY takes, driven with
-hostile values at the prompt **and** in a saved file - the file being what
-`prisma-routing.service` replays at every boot, so the unguarded door is the
-one nobody is watching. Thirteen classes of gap; the largest was one wrong
-predicate repeated 43 times, `str.isdigit()` being true for characters `int()`
-refuses, so a single character ended the VTY session and ended the boot. The
-one to read first is **#417**: a reader that walks the grammar, builds hostile
-values out of each statement's own hint, drives both doors and fails when the
-answers differ. No list in it, no ceiling to raise, and it found two of the
-gaps itself on its first run. **#418** is what it states it cannot see.
+## Decided on 2026-09-24
 
-Five of those were defects the maintainer found by **using** a box. That is the
-pattern worth carrying: the suites are green and the box is where the next one
-comes from.
+* **#438, `uname`**: the maintainer asked for a recommendation, and it was to
+  keep Debian's kernel. Only `uname -v` still says Debian, and a kernel of our
+  own ends the security updates. If that is overruled, it is a new issue.
+* **#427**: the artifact carries the images (0.125.0).
+* **#409**: re-aimed at the boots and closed (0.124.2). The versioned rootfs
+  is not built, because what it could save is 7.6% of a release.
+* **#337**: not to be done. Only the maintainer tests boxes for now, so there
+  is nobody to disclose to.
+* **#396** and **#399** are answered for now: containers are delivered to
+  phase 2, and active/active is deferred by decision (2026-09-19).
 
-## Ready to merge, on a branch, green
+## Blocked
 
-Both were finished and tested before the X.Y.Z work interrupted them. Neither
-has been rebased since 0.109.2.
+* **#28, #29** - throughput and symmetric RSS on a NIC DPDK drives natively.
+* **#172**, its last part - giving VPP's main thread a core of its own needs a
+  barrier measurement on real hardware; a virtio VM measures the hypervisor.
+* **#163** - what remains needs the same hardware.
+* **#36** - Debian 13: fd.io still publishes no trixie suite (re-tested
+  2026-09-24: 404).
 
-* **`docs/the-collector-retains-not-the-box` (#401)** — a **minor**: it changes
-  the installer, which exists only on the medium. The whole sweep is written
-  and `make test` is green on it. Every document, screen, self-test line, test
-  needle and wiki page now says the box **exports** its records and keeps none;
-  the log volume holds the configuration trail and the exporter's spill. The
-  wiki pages are published and pulled. Needs a rebase, a bump to 0.110.0 and
-  the full gate.
-* **`issue/390-rendering-excused` (#390 step 1)** — a **patch**: it touches
-  only `bpa_cli.c` comments, `test/` and `docs/`. The forty-one rendering
-  functions carry `not a unit:` with the class each belongs to, the argument
-  made once in that file's header; the C ceiling drops 171 → 130, and the
-  reader takes the reason to be the whole comment block rather than the rest of
-  one line. Rebase, bump, and the gate's patch path — about three minutes.
+## Deferred by their own issues
 
-## Decided and not started
-
-In the order the roadmap gives:
-
-0. **#419** — a validator on a value the box reads back must accept what the
-   box writes. Put first because it is the only item here that has already
-   caused two outages of the configuration path, and because the next person
-   to add a validator is the person who will cause the third. The first half
-   is an enumeration of the readback sources, not a change.
-1. **#210** — the per-worker partition. Option 2 is chosen (the partition
-   follows the hash) and the mechanism is settled in a comment on the issue: a
-   borrower cannot write the lender's slice, so the move happens under the
-   barrier `bpa_expire_process` already takes, with a lent-block set the
-   `out2in` **miss** path consults. Four pieces, three assertions, in that
-   comment. Nothing is written yet, and it is the largest thing in the backlog.
-2. **#408** — a clock on every step of the release, on its own and before any
-   optimisation. `docs/build-timing.md` says exactly where it goes. The
-   maintainer chose that order so the optimisations aim at measured numbers.
-3. **#409** — the versioned base rootfs in `/var/cache/prisma`, the dev image
-   holding its own tools, and `.build-old/<tag>` moved out of the directory the
-   gate deletes. One unfinished piece belongs here: the gate prints
-   `gh release create --prerelease` but does not publish, so nothing yet
-   refuses a patch published as a full release.
-4. **#396 phase 1** and **#337**, the two the maintainer had already answered
-   and neither has been started.
+**#32** PCP, **#80** pool selection by ACL (a sub-issue of **#26**, which adds
+VRF), and **#170**
+BNG, which says why it is a second product rather than a feature.
 
 ## What is worth knowing before touching anything
 
-* **Publish the wiki, pull it and commit the pull *before* the tag.** The gate
-  refused two releases in one day for shipping behind their own wiki, both
-  times after twenty minutes of building. `CONTRIBUTING.md` says so now.
-* **A minor release is 36 minutes; a patch is three.** About 30 seconds of
-  either is compiling this product — do not optimise the compile.
-  `docs/build-timing.md` has the measurement.
-* **The labs are where the interesting failures are found.** #407's fix was
-  wrong twice and both times a lab said so, not a unit test — and `lab/subif.sh`
-  and `lab/routing.sh` had each been *asserting* the defective behaviour as
-  ordinary, which is how it reached a maintainer's box with a green suite
-  behind it.
-* **Two checks were wrong about trees rather than about the product**, and both
-  surfaced only when the gate started running `make test` inside its own clone:
-  the CHANGELOG comparison took the newest *other* tag instead of the tag
-  below, and `test/test_installer.sh` could not run from a tree under `/tmp` —
-  which is where the gate clones. Expect more of that shape wherever a check
-  has only ever been run from one place.
-* **`tools/lab.sh <name>` runs one lab**; the suite is `tools/run-all-labs.sh`
-  and it takes about twenty minutes. A lab launched from a shell that returns
-  is killed with it — use `setsid` to detach it.
+* **A branch cut before a release files its CHANGELOG entry inside that
+  release when it is merged**, cleanly and with no conflict: git anchors it on
+  the `### Fixed` it still sees. `test/test_changelog_landing.py` and the gate
+  refuse it, and the gate refused 0.123.2's first cut for exactly that. Rebase
+  a branch onto `master` before merging it, and check where the entry landed.
+* **A union merge of `docs/roadmap.md` keeps both versions of a row**: the
+  open one and the delivered one. `tools/roadmap-state.sh` reads the issue a
+  row names, not the word next to it, so it passes. `test/test_doc_copies.py`
+  catches a duplicated sentence, and it refused 0.124.4's first cut for
+  exactly that. Rebase a branch onto `master` before merging it, every time.
+* **`appliance/install.sh` is medium-only to the gate**, so any change to it
+  is a minor release with the full gate, whatever the change is. 0.122.11 was
+  refused as a patch for that and re-cut as 0.123.0. The full gate needs about
+  32 GB of RAM.
+* **Every release goes to the public directory as well** -
+  `tools/publish-release.sh`, with the target in `~/.releases-target`. The
+  GitHub release page is private, and the wiki and `system upgrade` both send
+  operators to the directory.
+* **A mutation that does not compile runs a stale binary green.** Watch the
+  build say it built before believing a green run of a C mutation.
+* **The Discord announcement needs `~/.discord-webhook`** on the machine that
+  commits. It was not on the machine this session ran on, so none of its
+  commits was announced - the hook says so on every commit, and does not fail
+  it.
+* **A lab screen needs two lab-only traps disarmed** before traffic goes
+  through: the container's own veth answers ARP for the gateway (VPP drops
+  the frames as `l3 mac mismatch`), and docker's default route (distance 0)
+  outranks a static default, so the dataplane's default is `drop`. #443's
+  capture met both.
+* **The labs are where the interesting failures are found**, and a lab that
+  asserts what the box does wrong is worse than none. Both were true again
+  this session: `lab/dynamic.sh` was blamed for a red that was the screen's
+  defect (#432), and `lab/vty-ssh.sh` had asserted a refusal sshd no longer
+  gets to make for thirteen minors (#434).
