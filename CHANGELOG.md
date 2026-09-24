@@ -77,6 +77,18 @@ version has a chance of seeing it.
 
 ### Added
 
+* **DNS resolvers from the VTY**
+  ([#437](https://github.com/andrediashexa/hexarouting/issues/437)), as the
+  maintainer asked: `dns server <address>`, up to three, committed and rolled
+  back like any other statement, and nobody opens `/etc/resolv.conf`. On a
+  box whose management address comes from DHCP, `dhclient-script` rewrites
+  that file on every renewal, so an upgrade now also installs a DHCP hook
+  that stands down while the VTY owns the file. `lab/dns.sh` drives a
+  renewal through the real `dhclient-script`, and goes red without the hook.
+  Removing the last server gives the file back to DHCP or the installer. The
+  resolvers a lease gave are not reported as statements, so `save` does not
+  pin them.
+
 ### Fixed
 
 ## 0.122.10 - a static route says where it goes

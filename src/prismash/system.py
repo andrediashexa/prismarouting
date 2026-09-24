@@ -18,9 +18,24 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import shutil
 import subprocess
 
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/prisma-routing.conf"
+
+# The resolvers (#437). The image has no resolvconf and no systemd-resolved;
+# a static management answer has the installer write /etc/resolv.conf once,
+# and a dhcp one has dhclient-script rewrite it on every lease. So the VTY
+# writes the file itself, says so on its FIRST LINE, and the DHCP hook
+# appliance/dhclient-prisma-routing-dns stands down make_resolv_conf() for as
+# long as that line is there. What was in the file before the VTY took it
+# over is kept, and put back when the last `dns server` is removed.
+RESOLV_CONF = "/etc/resolv.conf"
+RESOLV_BEFORE = "/etc/prisma-routing/resolv.conf.before"
+DNS_OWNED = "# Written by Prisma Routing: 'dns server' in the VTY owns this file."
+#: glibc reads three `nameserver` lines (MAXNS) and ignores the rest, so a
+#: fourth would be accepted, shown, and never asked.
+DNS_MAX = 3
 LOGIN_SHELL = "/usr/bin/prismash-login"
 
 # Order matters: it is the order these are written out in, and a stable order
@@ -432,6 +447,29 @@ def validate_ssh(settings: dict):
     return None
 
 
+def dns_error(value):
+    """
+    None if `value` is a resolver address `dns server` can take, else why not,
+    as (verdict, prose). One predicate for both doors (#437).
+
+    An address and not a name: the resolver is what turns names into
+    addresses, so it cannot be one. A scoped IPv6 address (`fe80::1%eth0`) is
+    refused, because the scope names an interface of THIS box's kernel, which
+    the dataplane's interfaces are not.
+    """
+    if "%" in value:
+        return ("dns server: an address without a scope",
+                f"'{value}' names an interface of this box's kernel after "
+                f"the %, which the dataplane's interfaces are not")
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return ("dns server: expected an address",
+                f"'{value}' is not an IPv4 or IPv6 address; a resolver is "
+                f"what turns names into addresses, so it cannot be one")
+    return None
+
+
 class System:
     def __init__(self, runner=None, root="", dropin=SSHD_DROPIN,
                  shell=LOGIN_SHELL):
@@ -452,6 +490,92 @@ class System:
             return 124, f"{argv[0]}: timed out"
 
     # -------------------------------------------------------------- reading
+
+    def read_dns(self) -> list:
+        """
+        The resolvers `dns server` set, read out of /etc/resolv.conf - or []
+        when the file is not the VTY's (#437).
+
+        Read from the file and not remembered, like everything else a running
+        configuration reports. And ONLY when its first line says the VTY owns
+        it: a box whose resolvers came from DHCP or from the installer has no
+        `dns server` statement, and reporting theirs as one would have the
+        next `save` pin a lease's answer into the configuration for good.
+        """
+        try:
+            with open(self.root + RESOLV_CONF) as f:
+                lines = f.read().splitlines()
+        except OSError:
+            return []
+        if not lines or lines[0] != DNS_OWNED:
+            return []
+        # What glibc ASKS, and so what survives `save` and the boot's
+        # `--load` (test/test_a_readback_survives.py's rule, #357): the first
+        # DNS_MAX nameserver lines it can parse. A hand-edited owned file with
+        # a fourth server, or a line nobody can resolve through, reported
+        # whole would be saved and then refused at boot - the whole file, and
+        # a box with nothing on it.
+        servers = [w[1] for w in (l.split() for l in lines[1:])
+                   if len(w) >= 2 and w[0] == "nameserver"
+                   and dns_error(w[1]) is None]
+        return servers[:DNS_MAX]
+
+    def write_dns(self, servers):
+        """
+        Make /etc/resolv.conf say `servers`, or give it back when there are
+        none. (ok, message): message is "" when there is nothing to say.
+
+        Taking it over keeps what was there, once, in RESOLV_BEFORE. Giving
+        it back restores that and removes the keep, so DHCP or the installer's
+        answer is in charge again and the DHCP hook stands down with it. By
+        rename, so a resolver lookup never reads half a file. A symlink is
+        refused: something else owns the file, and writing through it would be
+        a second owner.
+        """
+        path = self.root + RESOLV_CONF
+        before = self.root + RESOLV_BEFORE
+        if os.path.islink(path):
+            return False, (f"{RESOLV_CONF} is a link to "
+                           f"{os.readlink(path)}: something else writes it, "
+                           f"so nothing was changed")
+        owned = bool(self.read_dns()) or self._owned(path)
+        try:
+            if servers:
+                if not owned and os.path.exists(path) \
+                        and not os.path.exists(before):
+                    os.makedirs(os.path.dirname(before), exist_ok=True)
+                    shutil.copy2(path, before)
+                body = [DNS_OWNED] + [f"nameserver {a}" for a in servers]
+                self._replace(path, "\n".join(body) + "\n")
+            elif owned:
+                if os.path.exists(before):
+                    with open(before) as f:
+                        self._replace(path, f.read())
+                    os.unlink(before)
+                else:
+                    self._replace(path, "")
+        except OSError as e:
+            return False, f"{RESOLV_CONF}: {e.strerror}"
+        return True, ""
+
+    @staticmethod
+    def _owned(path) -> bool:
+        """Does the file's first line say the VTY owns it?"""
+        try:
+            with open(path) as f:
+                return f.readline().rstrip("\n") == DNS_OWNED
+        except OSError:
+            return False
+
+    @staticmethod
+    def _replace(path, text):
+        """Write `path` whole, by rename, mode 0644 - resolv.conf is read by
+        every account on the box, and a lookup must never see half of it."""
+        tmp = path + ".prisma-new"
+        with open(tmp, "w") as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
 
     def read_ssh(self) -> dict:
         s = dict(SSH_DEFAULTS)

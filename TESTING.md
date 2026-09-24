@@ -325,6 +325,7 @@ sh tools/lab.sh vty-pool       # per-pool settings from the VTY to the dataplane
 sh tools/lab.sh two-pools      # two pools, a subscriber at the same index in each
 sh tools/lab.sh troubleshoot   # the show commands, checked against the model
 sh tools/lab.sh vty-ssh        # the SSH daemon and accounts, and the lockout
+sh tools/lab.sh dns            # resolvers from the VTY, through a real DHCP renewal
 sh tools/lab.sh snmp           # a real snmpget against a real snmpd
 sh tools/lab.sh throughput     # CPU clocks per packet, from VPP's own accounting
 sh tools/lab.sh api            # binary API
@@ -361,6 +362,7 @@ The most instructive to run:
 | `two-pools` | The only lab that configures more than one pool — which is why nothing caught subscribers of two pools sharing one set of port bitmaps |
 | `troubleshoot` | Uses `ref/bpa_model.py` as the oracle, so the show commands cannot agree with the plugin by sharing its arithmetic |
 | `vty-ssh` | Produces the lockout — a change leaving nobody able to log in — and watches the commit refuse it |
+| `dns` | `dns server` takes `/etc/resolv.conf` over, and a renewal through isc-dhcp-client's own `dhclient-script` does not put the lease's resolver back. Removing the last server gives the file back and DHCP writes it again. `dns off` leaves the DHCP hook out, and the renewal checks go red |
 | `snmp` | Kills the dataplane mid-run and asserts the agent serves *nothing* rather than the numbers it last saw |
 | `throughput` | Prints the conditions above the numbers, and asserts the packets were **translated** rather than dropped — its first version measured a drop path and reported it as the cost of translating |
 | `upgrade` | The only lab that puts one version of the product on top of another. It compiles `v0.68.0`'s plugin, runs **that tag's** `appliance/install.sh`, configures the box through the VTY the install put there — pool, attachments, a static forward, addresses, a static route, `save`, three rollback revisions — then runs this tree's `install.sh` over it and asserts the box is still configured: the file the old version saved is accepted **whole** by `prismash --load`, the pool is in the dataplane, the forward still forwards a real packet, the old version's revisions still load, and the configuration trail was appended to rather than restarted. Removing one statement's spelling from the new grammar turns 17 of its 35 checks red, which is the blast radius [#291](https://github.com/andrediashexa/hexarouting/issues/291) is about. It also measures what an upgrade does **not** do: the installer replaces `bpa_plugin.so` under a running VPP — `/proc/<pid>/maps` shows it `(deleted)` — restarts nothing, and in that window the new VTY can change a setting on an existing pool and **cannot create one**, because the API message grew fields the running plugin does not have |

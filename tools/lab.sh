@@ -108,5 +108,5 @@ Acquire::https::Timeout \"20\";
 Acquire::Retries \"2\";
 APTCONF
          apt-get update -qq >/dev/null 2>&1
-         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk squashfs-tools mdadm openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1
+         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk squashfs-tools mdadm openssh-client openssh-server snmpd snmp iptables tcpdump isc-dhcp-client >/dev/null 2>&1
          sh /src/lab/$LAB.sh $LAB_ARGV"

@@ -17,6 +17,7 @@ import unicodedata
 import hashlib
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
+                    dns_error, DNS_MAX,
                     address_error,
                     is_number,
                     validate_role,
@@ -2123,6 +2124,9 @@ class Config:
         # that `commit` did not cover, which made it the one change nobody
         # could undo cleanly.
         self.ssh: dict = dict(SSH_DEFAULTS)
+        # The resolvers `dns server` set, in order (#437). Empty when the
+        # VTY does not own /etc/resolv.conf - DHCP or the installer does.
+        self.dns_servers: list = []
         self.users: dict = {}
         self.snmp: dict = dict(SNMP_DEFAULTS)
         self.snmp_communities: list = []
@@ -2271,6 +2275,7 @@ class Config:
             out.append(f"dataplane interface {self.dataplane_if}")
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
+        out += [f"dns server {a}" for a in self.dns_servers]
         for name in sorted(self.users):
             out += self.users[name].lines()
         for k in SNMP_FIELDS:
@@ -2613,6 +2618,23 @@ class Config:
                         cfg.unknown.append((lineno, s, why))
                     else:
                         cfg.ssh[w[1]] = w[2]
+                continue
+            if s.startswith("dns "):
+                # The prompt's predicate and the prompt's limit, so the file
+                # refuses what `dns server` refuses at the prompt (#437).
+                w = s.split()
+                if len(w) != 3 or w[1] != "server":
+                    cfg.unknown.append((lineno, s, "expected: dns server "
+                                                   "<address>"))
+                elif dns_error(w[2]):
+                    cfg.unknown.append((lineno, s, " - ".join(dns_error(w[2]))))
+                elif w[2] in cfg.dns_servers:
+                    pass
+                elif len(cfg.dns_servers) >= DNS_MAX:
+                    cfg.unknown.append((lineno, s, f"a box reads {DNS_MAX} "
+                                       f"resolvers and ignores the rest"))
+                else:
+                    cfg.dns_servers.append(w[2])
                 continue
             if s == "no dataplane interface":
                 cfg.dataplane_if = ""
@@ -3404,6 +3426,7 @@ class Config:
             "dataplane_if_changed": self.dataplane_if != other.dataplane_if,
             "snmp_changed": snmp_changed,
             "ssh_changed": ssh_changed,
+            "dns_changed": self.dns_servers != other.dns_servers,
             "users_changed": users_changed,
             "pool_add": add,
             "pool_remove": remove,

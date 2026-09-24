@@ -5482,5 +5482,33 @@ finally:
     prismash.STATIC_DESC_PATH = _saved_path
 ok("a description is this box's, kept where the box keeps its own settings")
 
+print("\n=== dns server at the prompt (#437) ===")
+# Mutation shown red: the DNS_MAX test removed - a fourth server is staged,
+# shown, and never asked by the resolver.
+_sh = at()
+for _typed in ("dns server 1.1.1.1", "dns server 8.8.8.8",
+               "dns server 1.1.1.1"):
+    _sh.do_config(_typed)
+check(_sh.candidate.dns_servers == ["1.1.1.1", "8.8.8.8"],
+      f"servers in the order typed, one each: {_sh.candidate.dns_servers!r}")
+_sh.do_config("dns server 9.9.9.9")
+with spoken() as _o:
+    _sh.do_config("dns server 2606:4700::1111")
+check(_sh.candidate.dns_servers == ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+      and "already has 3" in _o.getvalue(),
+      f"the fourth is refused and says why: {_o.getvalue()!r}")
+_sh.dns_statement(["no", "dns", "server", "8.8.8.8"])
+check(_sh.candidate.dns_servers == ["1.1.1.1", "9.9.9.9"],
+      f"'no dns server' removes one: {_sh.candidate.dns_servers!r}")
+for _typed, _needle in (("dns server dns.google", "expected an address"),
+                        ("dns server", "usage: [no] dns server"),
+                        ("dns resolver 1.1.1.1", "usage: [no] dns server"),
+                        ("no dns server fe80::1%eth0", "without a scope")):
+    with spoken() as _o:
+        _sh.do_config(_typed)
+    check(_needle in _o.getvalue()
+          and _sh.candidate.dns_servers == ["1.1.1.1", "9.9.9.9"],
+          f"{_typed!r} is refused, and nothing changes: {_o.getvalue()!r}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

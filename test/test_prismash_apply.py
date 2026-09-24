@@ -1990,5 +1990,21 @@ finally:
 print("  a description-only commit reaches the box")
 
 
+print("\n=== dns servers reach resolv.conf at commit, and are read back (#437) ===")
+# Mutation shown red: the write in apply() removed - the commit reports
+# success and the box asks the resolvers it had.
+_dns_root = tempfile.mkdtemp(prefix="dns-apply-")
+os.makedirs(os.path.join(_dns_root, "etc", "prisma-routing"))
+with open(os.path.join(_dns_root, "etc", "resolv.conf"), "w") as _f:
+    _f.write("nameserver 192.0.2.53\n")
+_sh = shell_with(FakeApi(), "")
+_sh.sys = system.System(root=_dns_root)
+_target = config.Config.parse("dns server 1.1.1.1\ndns server 9.9.9.9\n")
+_ok = _sh.apply(_target)
+check(_ok and _sh.sys.read_dns() == ["1.1.1.1", "9.9.9.9"],
+      f"the servers are what the box now asks: {_ok} {_sh.sys.read_dns()!r}")
+print("  a commit of `dns server` rewrites resolv.conf and reads back")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
