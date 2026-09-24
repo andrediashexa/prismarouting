@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.122.10 - a static route says where it goes
+
+### Added
+
 * **A static route is `<prefix> next-hop <next-hop>`, with a distance, a
   tag and a description**
   ([#436](https://github.com/andrediashexa/hexarouting/issues/436)), as the
@@ -108,8 +114,6 @@ version has a chance of seeing it.
   before the upgrade cannot be rewritten that way: a revision with a static
   route in the old spelling is loaded, and its check names that line and
   applies nothing.
-
-### Fixed
 
 ## 0.122.9 - Ctrl-C keeps the session
 
