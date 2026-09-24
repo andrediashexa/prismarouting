@@ -79,6 +79,21 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show bpa translation` named the wrong subscriber for a free dynamic
+  block on a box with workers**
+  ([#432](https://github.com/andrediashexa/hexarouting/issues/432)). This is
+  the screen an operator answers an abuse report from. Measured with two
+  workers: the pool counted 2 of 3 blocks in use, `100.64.0.12` held ports
+  1024-17407 only, and asking about port 17408 in block 1 answered
+  `-> 100.64.0.12`. The screen asked every worker, and each one read block 1
+  as its own slot 0. Worker 0's slot 0 is its block 0, so worker 0 answered
+  with that block's subscriber. A block a worker has lent answered with the
+  loan's internal mark as if it were a subscriber. The screen now asks each
+  worker only about the blocks its slice holds, owned or borrowed. The packet
+  path was never affected: it hands each packet to the worker that holds the
+  block. `lab/dynamic.sh`, which had gone red with workers and been blamed
+  for it, was right. It now asks about a block the box itself reports free.
+
 ## 0.123.0 - resolvers from the VTY
 
 ### Added

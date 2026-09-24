@@ -2241,6 +2241,72 @@ main (void)
     bpa_dyn_free (&borrower);
   }
 
+  printf ("\n=== bpa_dyn_holder: only the slice that holds a block names "
+	  "its subscriber (#432) ===\n");
+  {
+    /*
+     * `show bpa translation` asks every worker whose block a port is in. With
+     * bpa_dyn_owner() the first worker to answer won, and worker 0 answered
+     * for block 1 with its OWN block 0's subscriber: measured on a lab box as
+     * "-> 100.64.0.12" for a block 100.64.0.12 did not hold.
+     *
+     * Mutation shown red: bpa_dyn_holder() without the congruence test - it
+     * is then bpa_dyn_owner() again, and worker 0 claims block 1.
+     */
+    bpa_dyn_t w0, w1, lender, borrower;
+    bpa_block_t b;
+    u32 sub, lent[1];
+    int is_new = 0;
+
+    CHECK (bpa_dyn_init (&w0, &p64, 0, 2, 0) == 0, "worker 0 refused");
+    CHECK (bpa_dyn_init (&w1, &p64, 1, 2, 0) == 0, "worker 1 refused");
+    CHECK (bpa_dyn_acquire (&w0, &p64, 12, 0, 2, &b, &is_new) == 0,
+	   "worker 0 gave subscriber 12 no block");
+    {
+      /* The block the subscriber got, by its pool-wide index. */
+      u32 blk = ~0u, s12 = ~0u, other = 0xdeadbeef;
+
+      CHECK (bpa_dyn_block_of (&w0, 12, 0, 2, &blk) == 0,
+	     "worker 0 does not know which block subscriber 12 holds");
+      CHECK (bpa_dyn_holder (&w0, blk, 0, 2, &s12) == 0 && s12 == 12,
+	     "block %u is subscriber 12's and worker 0 named %u", blk, s12);
+      CHECK (bpa_dyn_holder (&w0, blk + 1, 0, 2, &other) != 0,
+	     "block %u belongs to worker 1's slice and worker 0 named "
+	     "subscriber %u for it", blk + 1, other);
+      CHECK (other == 0xdeadbeef,
+	     "the refusal wrote %u into the caller's index", other);
+      CHECK (bpa_dyn_holder (&w1, blk + 1, 1, 2, &other) != 0,
+	     "worker 1 holds block %u free and named subscriber %u", blk + 1,
+	     other);
+      CHECK (bpa_dyn_holder (&w1, blk, 1, 2, &other) != 0,
+	     "worker 1 named subscriber %u for worker 0's block %u", other,
+	     blk);
+    }
+    bpa_dyn_free (&w0);
+    bpa_dyn_free (&w1);
+
+    /* A BORROWED block is held by the borrower, and the lender says nobody:
+       it is not congruent to the borrower, so only the walk over the
+       borrowed slots can find it (#210). */
+    CHECK (bpa_dyn_init (&lender, &p64, 0, 2, 0) == 0, "lender refused");
+    CHECK (bpa_dyn_init (&borrower, &p64, 1, 2, 0) == 0, "borrower refused");
+    CHECK (bpa_dyn_lend (&lender, 0, 2, 1, lent) == 1, "nothing was lent");
+    CHECK (bpa_dyn_borrow (&borrower, lent[0]) == 0, "the borrow was refused");
+    CHECK (bpa_dyn_acquire (&borrower, &p64, 40, 1, 2, &b, &is_new) == 0,
+	   "the borrower gave subscriber 40 no block");
+    sub = 0xdeadbeef;
+    CHECK (bpa_dyn_holder (&borrower, lent[0], 1, 2, &sub) == 0 && sub == 40,
+	   "the borrowed block %u is subscriber 40's and the borrower named "
+	   "%u", lent[0], sub);
+    sub = 0xdeadbeef;
+    CHECK (bpa_dyn_holder (&lender, lent[0], 0, 2, &sub) != 0,
+	   "the lender named subscriber %u for a block it lent", sub);
+    bpa_dyn_free (&lender);
+    bpa_dyn_free (&borrower);
+    printf ("  a block is answered for by the slice that holds it, owned or "
+	    "borrowed, and by no other\n");
+  }
+
   (void) i;
   return bpa_test_verdict (checks, failures);
 }

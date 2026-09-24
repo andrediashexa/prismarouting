@@ -1521,8 +1521,10 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  if (!pt->initialised || pool_index >= vec_len (pt->dyn))
 	    continue;
 	  bpa_worker_id (bm, ti, &w, &nw);
-	  if (bpa_dyn_owner (vec_elt_at_index (pt->dyn, pool_index), block_idx,
-			     nw, &sub_idx))
+	  /* bpa_dyn_holder() and not bpa_dyn_owner(): this asks every worker,
+	   * and only the one whose slice holds the block may answer (#432). */
+	  if (bpa_dyn_holder (vec_elt_at_index (pt->dyn, pool_index),
+			      block_idx, w, nw, &sub_idx))
 	    continue;
 	  if (bpa_set_addr_of (&p->inside, sub_idx, &ip_priv))
 	    continue;
