@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.123.3 - a loss at shutdown is said
+
+### Fixed
+
 * **Connection records lost at shutdown could be lost without a word**
   ([#435](https://github.com/andrediashexa/hexarouting/issues/435)). When the
   dataplane stops, the plugin drains every held block, and on a stalled
