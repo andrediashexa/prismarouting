@@ -111,6 +111,14 @@ two of them have bitten when done late.
    * **Z**: `--prerelease`, with the artifact and its `sha256`. Tagged like any
      other release; pre-release so that **Latest** stays on the last medium
      this project actually booted.
+
+   Then `sh tools/publish-release.sh vX.Y.Z`, which puts the same files on
+   the **public** releases directory, reads them back from the public URL and
+   moves `latest` forward. This repository is private, so the GitHub release
+   is a page no operator can open: the directory is where the wiki sends them
+   to download ([#439](https://github.com/andrediashexa/hexarouting/issues/439)).
+   The upload target is `~/.releases-target`, one line, `user@host:/path`, and
+   like the wiki token it is not in this repository.
 8. Close the issue with a comment: what was delivered, what was measured, and
    anything found on the way that is not in the CHANGELOG.
 
