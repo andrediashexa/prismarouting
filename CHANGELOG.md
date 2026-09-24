@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.125.0 - the upgrade carries the images
+
+### Added
+
 * **The upgrade package carries the container images**
   ([#427](https://github.com/andrediashexa/hexarouting/issues/427)), by the
   maintainer's decision of 2026-09-24. Until now only the medium carried them,
@@ -94,8 +100,6 @@ version has a chance of seeing it.
   That costs one `sha256` over 118 MB at every boot, measured at 0.8 s.
   `lab/upgrade.sh` asserts each case as itself: a new side that carries the
   images, and one that carries none.
-
-### Fixed
 
 ## 0.124.4 - an applied route says so
 
