@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.123.1 - the ssh lab asserts today's box
+
+### Fixed
+
 * **`lab/vty-ssh.sh` had been red since 0.110.0**
   ([#434](https://github.com/andrediashexa/hexarouting/issues/434)). It
   asserted that sshd refuses a listen address that is not an address. Since
