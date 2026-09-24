@@ -62,7 +62,7 @@ Dentro do bloco:
 
 
 :::warning
-**A forma `route <prefixo> <próximo-salto>` dentro do bloco não existe mais.** Ela é recusada no prompt e também num arquivo salvo. Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot e sobe sem configuração nenhuma. Numa caixa que tem rota estática, rode `save` depois de atualizar e antes de reiniciar: ele grava as rotas em vigor já na forma nova. [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) explica.
+**A forma** `**route <prefixo> <próximo-salto>**` **dentro do bloco não existe mais.** Ela é recusada no prompt e também num arquivo salvo. Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot e sobe sem configuração nenhuma. Numa caixa que tem rota estática, rode `save` depois de atualizar e antes de reiniciar: ele grava as rotas em vigor já na forma nova. [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) explica.
 
 :::
 
