@@ -429,7 +429,7 @@ sh.feed("exit")
 # lines. The operator is being shown the hierarchy they are editing, so they
 # have to come back in that hierarchy's own words.
 sh.feed("router static")
-sh.feed("route 198.18.0.0/24 10.0.0.2")
+sh.feed("198.18.0.0/24 next-hop 10.0.0.2")
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
     sh.feed("show this")
@@ -452,10 +452,10 @@ echo "=========== show this: mid-edit, and the same block after a commit =======
 # the block's own words: FRR has no `router static` and holds these as
 # top-level `ip route` lines, so what comes back is a transform either way.
 THIS_MID=$($HX -c "configure" -c "router static" \
-               -c "route 198.18.0.0/24 10.0.0.2" -c "show this" 2>&1)
+               -c "198.18.0.0/24 next-hop 10.0.0.2" -c "show this" 2>&1)
 echo "  -- mid-edit, nothing committed:"
 printf '%s\n' "$THIS_MID" | sed 's/^/    /'
-$HX -c "configure" -c "router static" -c "route 198.18.0.0/24 10.0.0.2" \
+$HX -c "configure" -c "router static" -c "198.18.0.0/24 next-hop 10.0.0.2" \
     -c "exit" -c "commit" >/dev/null 2>&1
 FRR_STATIC=$(vtysh -c "show running-config" 2>/dev/null \
              | grep -c "ip route 198.18.0.0/24 10.0.0.2")
@@ -465,8 +465,8 @@ printf '%s\n' "$THIS_AFTER" | sed 's/^/    /'
 # The route's own line, whole and with its indentation, not the blob: the
 # header `router static` is in both outputs and matches any substring test for
 # "route", which is how an assertion here passes with nothing under the header.
-MID_ROUTE=$(printf '%s\n' "$THIS_MID" | grep -x " route 198.18.0.0/24 10.0.0.2")
-AFTER_ROUTE=$(printf '%s\n' "$THIS_AFTER" | grep -x " route 198.18.0.0/24 10.0.0.2")
+MID_ROUTE=$(printf '%s\n' "$THIS_MID" | grep -x " 198.18.0.0/24 next-hop 10.0.0.2")
+AFTER_ROUTE=$(printf '%s\n' "$THIS_AFTER" | grep -x " 198.18.0.0/24 next-hop 10.0.0.2")
 echo "    mid-edit line: '${MID_ROUTE:-<nothing>}'"
 echo "    after commit:  '${AFTER_ROUTE:-<nothing>}'"
 
@@ -578,7 +578,7 @@ NAV=$($HX -c "configure" \
     -c "mtu 1470" \
     -c "up" \
     -c "router static" \
-    -c "route 198.19.0.0/24 10.0.0.2" \
+    -c "198.19.0.0/24 next-hop 10.0.0.2" \
     -c "top" \
     -c "ping 127.0.0.1 count 1" \
     -c "show configuration" \
@@ -973,7 +973,7 @@ expect_in "the router above shows the family under it" \
 expect_in "with its statements one level deeper" \
   "[  maximum-paths 4" "$COMP_BGP_THIS"
 expect_in "a static route shows in the block's own words" \
-  "[ route 198.18.0.0/24 10.0.0.2]" "$COMP_STATIC_THIS"
+  "[ 198.18.0.0/24 next-hop 10.0.0.2]" "$COMP_STATIC_THIS"
 expect_not_in "and not in FRR's, which is not the hierarchy being edited" \
   "ip route" "$COMP_STATIC_THIS"
 

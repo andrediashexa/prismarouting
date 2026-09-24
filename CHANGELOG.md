@@ -77,6 +77,38 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A static route is `<prefix> next-hop <next-hop>`, with a distance, a
+  tag and a description**
+  ([#436](https://github.com/andrediashexa/hexarouting/issues/436)), as the
+  maintainer asked:
+
+  ```
+  prisma# [edit router static] 192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 description link to POP-2
+  ```
+
+  Distance and tag go to FRR, which reads them back as `ip route <prefix>
+  <hop> tag <n> <distance>` (measured on 10.7.1). FRR has no field for a
+  description, so the box keeps it in
+  `/etc/prisma-routing/static-route-descriptions`, written by `commit` and
+  read back for the routes FRR still has. A commit that changes only a
+  description is applied. A route is its prefix and next hop: typing the pair
+  again changes that route, and `no <prefix> next-hop <hop>` removes it with
+  whatever it carries.
+
+### Changed
+
+* **BREAKING: `route <prefix> <next-hop>` inside `router static` is refused**,
+  at the prompt and in a saved file, and so is FRR's `ip route` typed inside
+  the block. The maintainer decided not to carry a second spelling. The file
+  a box saved before this release still has the old spelling, and a box
+  reading it at boot refuses the whole file. **After upgrading a box that has
+  static routes, run `save` before rebooting.** The upgrade restarts nothing,
+  so the routes are still running, and `save` writes them in the new
+  spelling. `lab/upgrade.sh` measures exactly that. Rollback revisions from
+  before the upgrade cannot be rewritten that way: a revision with a static
+  route in the old spelling is loaded, and its check names that line and
+  applies nothing.
+
 ### Fixed
 
 ## 0.122.9 - Ctrl-C keeps the session

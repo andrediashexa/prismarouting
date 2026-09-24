@@ -1360,7 +1360,7 @@ Inside `router static` the routes come back in **that block's own words**:
 ```
 prisma# [edit router static] show this
 router static
- route 0.0.0.0/0 10.0.0.2
+ 0.0.0.0/0 next-hop 10.0.0.2
 ```
 
 FRR has no `router static` at all — these are top-level `ip route` statements —
@@ -1733,7 +1733,7 @@ nat cgnat interface TenGigabitEthernet0/0/0 inside
 nat cgnat timeout udp 300
 
 router static
- route 0.0.0.0/0 200.150.0.1
+ 0.0.0.0/0 next-hop 200.150.0.1
  exit
 ```
 
@@ -1794,8 +1794,8 @@ nothing encloses it; the statement alone cannot answer this, which is why
 `config.is_static_route()` deliberately does not try.
 
 **A message that NAMES one MUST name the block too.** `router static` is the
-global table, so a refusal that calls a VRF's route `router static / route
-10.9.0.0/16 10.0.0.9` sends the operator to a table the route is not in - and
+global table, so a refusal that calls a VRF's route `router static /
+10.9.0.0/16 next-hop 10.0.0.9` sends the operator to a table the route is not in - and
 if they type it where the message said it was, they have put a route meant for
 a VRF in the global table. Measured at FRR 10.7.1: a route typed into `vrf red`
 is read back inside that block, indented, still spelled `ip route`. So a
@@ -2002,16 +2002,48 @@ against `CGNAT_CONFIG`, the same table `?` offers from.
 
 ```
 prisma# [edit] router static
-prisma# [edit router static] route 0.0.0.0/0 200.150.0.1
-prisma# [edit router static] route 2001:db8::/32 2001:db8:0:1::1
+prisma# [edit router static] 0.0.0.0/0 next-hop 200.150.0.1
+prisma# [edit router static] 192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 description link to POP-2
+prisma# [edit router static] 2001:db8::/32 next-hop 2001:db8:0:1::1
 prisma# [edit router static] exit
 prisma# [edit] commit
 ```
 
-There is **one** `route` keyword rather than `ip route` and `ipv6 route`: the
-family comes from the prefix, because a prefix with a colon in it is IPv6 and
-nothing else, and asking for the family as well is asking the operator for the
-chance to contradict themselves.
+**One statement, since
+[#436](https://github.com/andrediashexa/hexarouting/issues/436)**:
+`<prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>]
+[description <text>]`. The next hop is an address, an interface, `blackhole`,
+`Null0` or `reject`. `distance` and `tag` MAY come in either order, and
+`description` MUST be last because it takes the rest of the line. There is no
+`ip route` or `ipv6 route` here: the family comes from the prefix, because a
+prefix with a colon in it is IPv6 and nothing else, and asking for the family
+as well is asking the operator for the chance to contradict themselves.
+
+* **The spelling before it, `route <prefix> <next-hop>`, is refused**, at the
+  prompt and in a saved file, and so is FRR's own `ip route` typed inside the
+  block. The maintainer decided on 2026-09-24 not to carry a second spelling.
+  The consequence is written down on purpose: a box whose saved file still has
+  `route ...` refuses that file at boot. The way through costs one command:
+  the upgrade restarts nothing, so the routes are still in FRR afterwards, and
+  `save` writes what is running, in the new spelling. The wiki's upgrade page
+  says to `save` before rebooting, and lab/upgrade.sh measures exactly that.
+  The rollback revisions written before the upgrade are the part `save`
+  cannot reach. A revision holding a static route in the old spelling is
+  listed and loaded, and its `commit check` names that line and applies
+  nothing. lab/upgrade.sh asserts that too, so the cost is measured.
+* **A route is its prefix and next hop.** Typing the same pair again changes
+  that route, it does not add a second one. `no <prefix> next-hop <next-hop>`
+  removes it, whatever tag and distance it carries.
+* **Tag and distance are FRR's.** Measured on FRR 10.7.1: they are taken in
+  any order and always read back as `ip route <prefix> <hop> tag <n> <distance>`,
+  which is the spelling this VTY stores and translates back.
+* **The description is this box's.** FRR has no field for one: `ip route ...
+  description x` is `% Unknown command`. It is kept in
+  `/etc/prisma-routing/static-route-descriptions`, written by `commit`, and read
+  back by `running_config()` for the routes FRR still has. A description whose
+  route is gone is not shown. Changing only a description is a change of its
+  own (`route_desc_changed`), so that commit is applied, and is not reported as
+  one with nothing to do.
 
 Staged in the candidate and applied by `frr-reload` like every other routing
 statement, so it is committed and rolled back the same way - and a rollback
@@ -2021,7 +2053,7 @@ removes it from the **FIB**, which is the only place that matters.
 
 ```
 error: this next hop is on no connected network: 172.31.99.1
-    router static / route 10.55.0.0/16 172.31.99.1
+    router static / 10.55.0.0/16 next-hop 172.31.99.1
     the route would be accepted and never reach the forwarding table
 ```
 
@@ -2031,7 +2063,7 @@ the prompt than to have somebody find during an outage.
 
 The refusal names the statement the way `show configuration` prints it, which
 is what the operator has on the screen. A top-level `ip route` is translated
-back to `router static / route ...`, this VTY's own spelling, precisely because
+back to `router static / <prefix> next-hop ...`, this VTY's own spelling, precisely because
 searching the screen for `ip route` after reading the error found nothing. A
 route inside a block this VTY has no grammar for keeps FRR's spelling, because
 that is how the block is printed too.
@@ -4642,7 +4674,7 @@ route sits on its own row, greppable in `show configuration`:
 
 ```
 error: this next hop is on no connected network: 172.31.99.1
-    router static / route 10.55.0.0/16 172.31.99.1
+    router static / 10.55.0.0/16 next-hop 172.31.99.1
     the route would be accepted and never reach the forwarding table
 ```
 

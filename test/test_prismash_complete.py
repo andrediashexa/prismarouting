@@ -1202,8 +1202,9 @@ TYPED = [
     # In the BLOCK's own words, not FRR's. `router static` is a hierarchy FRR
     # does not have - its statements are top-level `ip route` lines - and the
     # operator is being shown the hierarchy they are editing.
-    ("router static", ["route 0.0.0.0/0 10.0.0.2", "route 192.0.2.0/24 10.0.0.3"],
-     [" route 0.0.0.0/0 10.0.0.2", " route 192.0.2.0/24 10.0.0.3"]),
+    ("router static", ["0.0.0.0/0 next-hop 10.0.0.2",
+                       "192.0.2.0/24 next-hop 10.0.0.3"],
+     [" 0.0.0.0/0 next-hop 10.0.0.2", " 192.0.2.0/24 next-hop 10.0.0.3"]),
 ]
 for block, typed, expected in TYPED:
     lines = this_in(block, *typed)
@@ -1213,14 +1214,13 @@ for block, typed, expected in TYPED:
               f"{block}: '{want.strip()}' is shown as a statement of it: {lines}")
     print(f"  {block}: " + " / ".join(l.strip() for l in lines[1:]))
 
-# FRR's spelling typed inside the block is shown in the block's words too: it
-# is the same route either way, and showing it twice over would be a lie about
-# what commits.
+# FRR's spelling typed INSIDE the block is refused since #436: the block has
+# one statement, by the maintainer's decision not to carry a second spelling.
+# FRR's own `ip route` still works where FRR's words belong - at [edit] and
+# inside a vrf - and a route FRR reads back is shown in the block's words.
 lines = this_in("router static", "ip route 198.51.100.0/24 blackhole")
-check(" route 198.51.100.0/24 blackhole" in lines,
-      f"FRR's own spelling comes back in the block's words: {lines}")
-check(not any(l.strip().startswith("ip route") for l in lines),
-      f"and not in FRR's as well: {lines}")
+check(lines == ["router static"],
+      f"FRR's own spelling typed in the block is not staged: {lines}")
 
 # A nested block. Standing in the address-family shows its statements; standing
 # in the router above shows them too, one level deeper, because an operator
@@ -1374,16 +1374,16 @@ sh.feed("exit")
 check("exit" in sh.candidate.routing,
       f"leaving a block is recorded in the candidate: {sh.candidate.routing}")
 sh.feed("router static")
-sh.feed("route 0.0.0.0/0 10.0.0.2")
+sh.feed("0.0.0.0/0 next-hop 10.0.0.2")
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     sh.feed("show this")
 after = buf.getvalue().splitlines()
-check(" route 0.0.0.0/0 10.0.0.2" in after,
+check(" 0.0.0.0/0 next-hop 10.0.0.2" in after,
       f"a route typed after leaving a block is in the static block: {after}")
 # And not only on the screen: the file the box would save has to put it there
 # too, or `show this` and the commit are two answers to one question.
-check(" route 0.0.0.0/0 10.0.0.2" in sh.candidate.text().splitlines(),
+check(" 0.0.0.0/0 next-hop 10.0.0.2" in sh.candidate.text().splitlines(),
       f"and the saved file agrees: {sh.candidate.text()}")
 # ...and it is not routing an operator wrote, so it must not make a candidate
 # that only sets an interface MTU look like one that needs FRR (#137).
@@ -3371,8 +3371,8 @@ sh = box_193()
 for line in ("nat cgnat pool residential", "inside 100.64.0.0/22",
              "outside 203.0.113.0/24", "block-size 512", "exit",
              "nat cgnat interface TenGigabitEthernet0/8/0 inside",
-             "router static", "route 0.0.0.0/0 10.0.0.2",
-             "route 2001:db8::/32 fe80::1", "exit"):
+             "router static", "0.0.0.0/0 next-hop 10.0.0.2",
+             "2001:db8::/32 next-hop fe80::1", "exit"):
     sh.feed(line)
 check(list(sh.candidate.pools) == ["residential"],
       f"a pool is made under nat: {list(sh.candidate.pools)}")
@@ -3486,11 +3486,11 @@ check(_lines == ['a"b'],
 # nowhere in `show configuration` either.
 from config import as_hierarchy                                   # noqa: E402
 check(as_hierarchy("ip route 10.55.0.0/16 172.31.99.1")
-      == "router static / route 10.55.0.0/16 172.31.99.1",
+      == "router static / 10.55.0.0/16 next-hop 172.31.99.1",
       f"a static route is named as the VTY spells it: "
       f"{as_hierarchy('ip route 10.55.0.0/16 172.31.99.1')}")
 check(as_hierarchy("ipv6 route 2001:db8::/32 fe80::1")
-      == "router static / route 2001:db8::/32 fe80::1",
+      == "router static / 2001:db8::/32 next-hop fe80::1",
       "and so is an IPv6 one")
 check(as_hierarchy(" neighbor 10.0.0.2 remote-as 65001")
       == "neighbor 10.0.0.2 remote-as 65001",
@@ -4250,7 +4250,8 @@ _sh = prismash.Shell()
 _sh.frr_ctx = []
 check(_sh.hierarchy_rewrite("router static") == "",
       "'router static' is a block this VTY owns, not a statement it passes on")
-_staged = _sh.hierarchy_rewrite("route 200.150.0.0/24 blackhole")
+_sh.frr_ctx = ["router static"]
+_staged = _sh.hierarchy_rewrite("200.150.0.0/24 next-hop blackhole")
 check(_staged == "ip route 200.150.0.0/24 blackhole",
       f"the VTY stages a static route in FRR's spelling: {_staged!r}")
 check(not _ann(BGP + ["  redistribute static", _staged]),
@@ -4981,7 +4982,7 @@ check("commit complete" not in _out,
 # The statement is rendered the way an operator typed it, not the way FRR
 # holds it: `as_hierarchy` turns `ip route ...` back into `router static /
 # route ...`, which is what they will find in `show configuration`.
-check("route 203.0.113.0/24 blackhole" in _out,
+check("203.0.113.0/24 next-hop blackhole" in _out,
       f"the operator is told WHICH statement FRR did not keep: {_out!r}")
 check("rollback" in _out,
       f"and that the rest of the commit is applied, so there is a way "
@@ -5027,7 +5028,8 @@ check(_failed == 0 and "commit complete" in _out,
 # Both tables, because a fix that simply stopped saying `router static` would
 # pass a check that only looked at the VRF.
 _out, _failed = _commit(_STATIC, [])
-check(_failed == 1 and "router static / route 203.0.113.0/24 blackhole" in _out,
+check(_failed == 1
+      and "router static / 203.0.113.0/24 next-hop blackhole" in _out,
       f"a refused GLOBAL static route is still named in 'router static': "
       f"{_out!r}")
 
@@ -5259,7 +5261,7 @@ check(UNCHECKED_MARK in _out,
 # them for `commit check`, met again by a second caller.
 _TYPED_ROUTE = ["ip route 203.0.113.0/24 blackhole"]
 _out, _failed = _commit(_TYPED_ROUTE, [])
-check(_failed == 1 and "route 203.0.113.0/24 blackhole" in _out,
+check(_failed == 1 and "203.0.113.0/24 next-hop blackhole" in _out,
       f"the static route refusal still names the route: {_out!r}")
 check(UNCHECKED_MARK.strip() not in _out,
       f"and a static route is not marked: this VTY has a block for it and "
@@ -5653,8 +5655,8 @@ def _drive271(sh, args, needle):
     return out
 
 
-_ROUTE271 = "! routing\nrouter static\n ip route 10.55.0.0/16 172.31.99.1\n"
-_STATIC271 = "! routing\nrouter static\n ip route 203.0.113.0/24 blackhole\n"
+_ROUTE271 = "! routing\nrouter static\n 10.55.0.0/16 next-hop 172.31.99.1\n"
+_STATIC271 = "! routing\nrouter static\n 203.0.113.0/24 next-hop blackhole\n"
 _USER271 = f"user alice\n password {_HASH271}\n role administrator\n"
 
 # `commit check`: the sentence the command exists to say, and the count beside
@@ -6000,7 +6002,7 @@ _HASH276 = ("$6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRfLb8XkY6nAeUoZgC5iMtNrVwJ0yBpSlDqHx"
 _PASTED276 = _HASH276[1:]
 _BAD276 = "user alice\n password secret\n role administrator\n"
 _WIDE276 = f"user alice\n password {_PASTED276}\n role administrator\n"
-_GOOD276 = "! routing\nrouter static\n ip route 203.0.113.0/24 blackhole\n"
+_GOOD276 = "! routing\nrouter static\n 203.0.113.0/24 next-hop blackhole\n"
 # The box's own paths, not a temporary directory's: the width of a path is
 # the thing being measured, and `/tmp/tmpXXXXXXXX` is not what is printed on
 # an appliance.

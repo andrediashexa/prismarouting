@@ -36,8 +36,9 @@ Uma rota estática não precisa de protocolo nenhum e é a primeira coisa que se
 ```
 configure
  router static
-  route 0.0.0.0/0 200.150.0.1
-  route 2001:db8::/32 2001:db8:0:1::1
+  0.0.0.0/0 next-hop 200.150.0.1
+  192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 description link para o POP-2
+  2001:db8::/32 next-hop 2001:db8:0:1::1
   exit
  commit
 ```
@@ -46,15 +47,22 @@ Dentro do bloco:
 
 | Comando | O que faz |
 |---------|-----------|
-| `route <prefixo> <próximo-salto\|interface\|blackhole\|Null0> [distância]` | uma rota estática |
-| `no route <prefixo> ...` | remove uma rota estática |
+| `<prefixo> next-hop <próximo-salto\|interface\|blackhole\|Null0\|reject>` | uma rota estática |
+| `... distance <1-255>` | a distância administrativa; sem ela vale a do roteamento |
+| `... tag <1-4294967295>` | uma marca numérica, que uma política de redistribuição pode casar |
+| `... description <texto>` | um texto seu sobre a rota, até 63 caracteres; vai sempre por último |
+| `no <prefixo> next-hop <próximo-salto>` | remove a rota, com o que ela tiver de distância, tag e descrição |
 | `exit`  | sai do bloco |
 
-**Há um só** `**route**`**, não um para cada família.** A família sai do prefixo: prefixo com dois-pontos é IPv6 e não pode ser outra coisa. Pedir a família outra vez seria pedir ao operador a chance de se contradizer.
+`distance` e `tag` podem vir em qualquer ordem. **Uma rota é o prefixo e o próximo salto:** digitar o mesmo par de novo muda aquela rota, não cria uma segunda ao lado. Para mudar só a descrição, digite a rota inteira de novo com a descrição nova.
+
+**A família sai do prefixo.** Prefixo com dois-pontos é IPv6 e não pode ser outra coisa, então não existe um comando para cada família. Pedir a família outra vez seria pedir ao operador a chance de se contradizer.
+
+**A descrição fica guardada na própria caixa**, porque o roteamento não tem onde guardá-la. Ela aparece em `show configuration` e `show running-config` junto da rota, entra no `commit` e no `rollback` como qualquer outra mudança, e some sozinha se a rota deixar de existir.
 
 
-:::info
-**A grafia antiga continua aceita.** `ip route 0.0.0.0/0 200.150.0.1` e `ipv6 route ...` digitados no topo do modo de configuração continuam valendo, e é assim que está escrita toda configuração salva antes desta mudança — inclusive as revisões de rollback que a caixa relê a cada boot. O que TAB e `?` oferecem é só `router static`, e é nessa forma que `show running-config`, `show configuration` e o arquivo do `save` passam a mostrar as estáticas: um bloco `router static` com as rotas dentro.
+:::warning
+**A forma `route <prefixo> <próximo-salto>` dentro do bloco não existe mais.** Ela é recusada no prompt e também num arquivo salvo. Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot e sobe sem configuração nenhuma. Numa caixa que tem rota estática, rode `save` depois de atualizar e antes de reiniciar: ele grava as rotas em vigor já na forma nova. [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) explica.
 
 :::
 
@@ -62,13 +70,13 @@ Dentro do bloco:
 
 ```
 error: this next hop is on no connected network: 172.31.99.1
-    router static / route 10.55.0.0/16 172.31.99.1
+    router static / 10.55.0.0/16 next-hop 172.31.99.1
     the route would be accepted and never reach the forwarding table
 ```
 
 Aceita, essa rota ficaria no FRR e nunca chegaria à tabela de encaminhamento.
 
-Repare que a recusa nomeia a rota **no bloco em que ela está** - `router static / route ...` - e não como uma linha solta. É assim mesmo quando você digitou na grafia antiga, `ip route ...`: a caixa mostra onde a rota mora na configuração, que é onde você vai editá-la. Uma estática dentro de uma VRF não tem grafia de topo nenhuma para procurar, e é por isso que o bloco aparece.
+Repare que a recusa nomeia a rota **no bloco em que ela está** - `router static / 10.55.0.0/16 next-hop ...` - e não como uma linha solta. É assim mesmo quando a rota foi digitada no topo, na grafia do roteamento, `ip route ...`: a caixa mostra onde a rota mora na configuração, que é onde você vai editá-la. Uma estática dentro de uma VRF não tem grafia de topo nenhuma para procurar, e é por isso que o bloco aparece.
 
 ## Ver a tabela: `show route`, não `show ip route`
 
