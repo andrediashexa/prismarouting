@@ -681,6 +681,14 @@ AFTER_SUM=$(sha256sum "$CONF" 2>/dev/null | cut -d' ' -f1)
 # Both halves are asserted: that the old file IS refused by the new grammar,
 # so the step is not ceremony, and that the file `save` leaves is not.
 cp "$CONF" /tmp/conf-the-old-version-wrote
+# WHICH SPELLING the old version wrote, read out of its file and not assumed
+# from its tag. The gate runs this lab from the PREVIOUS release, and from
+# 0.122.10 on that one already writes `<prefix> next-hop <hop>`: asserting
+# the refusal there asserted something that cannot happen, and the gate of
+# 0.123.0 was refused for it. 0.79.0, the lab's own default, writes the old
+# spelling. Both are asserted, each on its own branch below.
+OLD_SPELLING=$(grep -c "^ route 10.99.0.0/24 " /tmp/conf-the-old-version-wrote \
+               2>/dev/null || true)
 OLD_READ=$(cd /src/src/prismash && python3 -c '
 import sys
 from config import Config
@@ -970,10 +978,16 @@ expect_not_said "and not over a next hop its own address makes reachable" \
 expect "the upgrade left the saved configuration byte for byte" \
   test "$SAVED_SUM" = "$AFTER_SUM"
 # #436: the old spelling is refused by this tree, and `save` is the way past.
-expect_in "the old version's static route is refused by this tree's grammar" \
-  "route 10.99.0.0/24 200.150.0.2" "$OLD_READ"
-expect_in "and 'save' after the upgrade writes it in the new spelling" \
-  " 10.99.0.0/24 next-hop 200.150.0.2" "$SAVED_STATIC"
+if [ "${OLD_SPELLING:-0}" -gt 0 ]; then
+  expect_in "the old version's static route is refused by this tree's grammar" \
+    "route 10.99.0.0/24 200.150.0.2" "$OLD_READ"
+  expect_in "and 'save' after the upgrade writes it in the new spelling" \
+    " 10.99.0.0/24 next-hop 200.150.0.2" "$SAVED_STATIC"
+else
+  expect_in "the old version wrote its static route in the spelling this tree reads" \
+    " 10.99.0.0/24 next-hop 200.150.0.2" "$(cat /tmp/conf-the-old-version-wrote)"
+  expect "and this tree's grammar reads that file whole" test -z "$OLD_READ"
+fi
 # Two halves, and the first one had to be added after a mutation walked
 # through it. An installer that skipped the stamp entirely left
 # /usr/share/prisma-routing/VERSION empty, and "the stamp changed" was GREEN for
@@ -1146,10 +1160,18 @@ expect_in "and what came back is the box the old version committed" \
 # not pass in silence. Asserted by the line, so a revision refused for any
 # other reason turns this red: the positive sentence below is what a box
 # without a static route in its old revisions still gets.
-expect_in "and the check names the old spelling as the one line it refuses" \
-  "line 49: route 10.99.0.0/24 200.150.0.2" "$RB_LOAD"
-expect_not_in "and applies nothing on the strength of it" \
-  "commit complete" "$RB_LOAD"
+# Its revisions were written in the same spelling as its file.
+if [ "${OLD_SPELLING:-0}" -gt 0 ]; then
+  expect "and the check names the old spelling as the one line it refuses" \
+    sh -c 'printf "%s\n" "$1" | grep -Eq "line [0-9]+: route 10.99.0.0/24 200.150.0.2"' _ "$RB_LOAD"
+  expect_not_in "and applies nothing on the strength of it" \
+    "commit complete" "$RB_LOAD"
+else
+  # The POSITIVE sentence and not the absence of a negative one. A check for
+  # "no error appeared" passes on a revision the VTY never read at all.
+  expect_in "and the new VTY validates what it read, statement by statement" \
+    "configuration check succeeds" "$RB_LOAD"
+fi
 
 # The trail. Appended to, not restarted: the upgrade is a line in the history
 # of the box and not a new history.
