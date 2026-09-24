@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.124.4 - an applied route says so
+
+### Fixed
+
 * **A commit that applies a route no longer says `No changes found to be
   committed!`**
   ([#445](https://github.com/andrediashexa/hexarouting/issues/445)).
