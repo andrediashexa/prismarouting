@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.124.2 - the three guests at once
+
+### Added
+
 * **A minor release is 29 minutes shorter: the gate boots the medium and
   installs it on both guests at once**
   ([#409](https://github.com/andrediashexa/hexarouting/issues/409)), as the
@@ -86,8 +92,6 @@ version has a chance of seeing it.
   slower for sharing. The checks after them are unchanged and read in the same
   order. `GATE_PARALLEL=0` restores the old order. The two installs no longer
   share one console copy: the second one wrote over the first.
-
-### Fixed
 
 ## 0.124.1 - the CGNAT, step by step
 
