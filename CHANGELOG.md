@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.122.7 - the banner spells the name
+
+### Added
+
 * **The VTY's login banner spells out the product name**
   ([#433](https://github.com/andrediashexa/hexarouting/issues/433)), as the
   maintainer asked, in place of the brand kit's hexagon signature. It is 70
@@ -91,8 +97,6 @@ version has a chance of seeing it.
   kept their old names, and then listed the new ones: the #202 rename had
   replaced the old names in the very sentence that was about them. It now
   says what happened.
-
-### Fixed
 
 ## 0.122.6 - refused where it is typed
 
