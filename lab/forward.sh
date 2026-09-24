@@ -308,6 +308,15 @@ echo "  and on the other address, expected: 203.0.113.16:1100 -> 10.0.0.4:8080"
 tcp 8.8.8.8 203.0.113.16 33000 1100 syn pg1
 DYN_IN_B=$(trace)
 echo "$DYN_IN_B" | sed 's/^/  /'
+# THE BLOCK LINE, while the subscriber has sessions on it (#390). The idle
+# screen further down says "PINNED by a forward" in its one-sentence form;
+# the per-block line - what an operator reads while traffic is flowing - says
+# "(pinned by a forward)" beside the block the forward holds, and nothing held
+# it. 10.0.0.20 is the control: a block of its own, taken by an ordinary
+# flow above, with no forward on it.
+PIN_LIVE=$(vppctl show bpa subscriber 10.0.0.5)
+CTL_LIVE=$(vppctl show bpa subscriber 10.0.0.20)
+printf '%s\n' "$PIN_LIVE" | sed 's/^/  |/'
 DYN_TRAIL=$(grep "forward" /var/log/prisma-routing/config-history.log 2>/dev/null | tail -1)
 echo "  trail: $DYN_TRAIL"
 
@@ -399,7 +408,7 @@ expect_in "the second address reached its own subscriber" \
 expect_not_in "and not the subscriber on the other address" \
   "-> 100.64.0.5" "$SHARED_B"
 expect_in "a forward that is only checked is called valid" \
-  "forward is valid" "$R_CHECK"
+  "forward is valid" "${R_CHECK:-}"
 expect_not_in "and was not created: the check opened no port" \
   ":1602 ->" "$SHARED"
 expect_not_in "the neighbouring port was not translated" \
@@ -472,6 +481,12 @@ expect_in "the hold-down did run: an unpinned block went back to the pool" \
 # carries it whole (#366).
 expect_in "and the screen says so in the sentence the operator reads" \
   "no live state: this subscriber holds no block and has no sessions on this box" "$CTL_IDLE"
+expect_in "with traffic on it, the block line names the forward that pins it" \
+  "(pinned by a forward)" "$PIN_LIVE"
+expect_in "and a block with no forward on it is shown as in use" \
+  " in use (" "$CTL_LIVE"
+expect_not_in "without claiming a pin it does not have" \
+  "pinned by a forward" "$CTL_LIVE"
 expect_in "the pinned block is still the subscriber's after ${IDLE}s idle" \
   "PINNED by a forward" "$PIN_IDLE"
 expect_in "and the screen says why it stayed, in the sentence the operator reads" \

@@ -146,7 +146,17 @@ FLOOR = 10
 #: subscriber served by NO block into the examples, and holds the closing
 #: sentence whole. lab/forward.sh holds "forward is valid" on a forward it
 #: only checked, and that the check opened no port.
-NAMED_BY_NOTHING_AT_MOST = 3
+#: 3 to 0, and the last three were one screen each. lab/forward.sh reads
+#: the subscriber screen while the forward's block has traffic on it, where
+#: the per-block line says "(pinned by a forward)" - the idle screen it
+#: already held says it in another sentence - with an unpinned block as the
+#: control. lab/mss.sh asks for `auto` before any interface has joined the
+#: CGNAT, where there is no MTU to derive a clamp from and the box says so,
+#: and asks again after, where it must not. lab/commit.sh reads the session
+#: table's screen, whose caveat - the size is a virtual reservation and the
+#: OOM killer counts it - is the sentence that screen exists for. Every
+#: message bpa_cli.c prints is now named by something that drives it.
+NAMED_BY_NOTHING_AT_MOST = 0
 
 fail = 0
 

@@ -488,5 +488,20 @@ SESS=$($HX -c "configure" -c "cgnat session-table buckets 1024 memory 64" \
 echo "$SESS" | tail -2 | sed 's/^/  /'
 expect_in "resizing the session table with pools configured is refused" \
   "session-table" "$SESS"
+# And what the table IS, on the dataplane's own screen (#390): the size, and
+# the sentence under it that says what the size means. "memory N MB per
+# table" is read as a cost by whoever sizes a box, and it is a virtual
+# reservation that the OOM killer counts as if it were resident - the one
+# thing that sentence is there to say, and nothing held it. The refusal
+# above is only a refusal if the size did not change, so that is asserted
+# on the same screen.
+SESS_SHOW=$(vppctl bpa session-table 2>&1 | tr -d '\r')
+printf '%s\n' "$SESS_SHOW" | sed 's/^/  /'
+expect_in "the session table's screen says what its size means" \
+  "(two tables per thread; the size is a virtual reservation, and the OOM killer counts virtual)" \
+  "$SESS_SHOW"
+expect_in "under the size it has" " MB per table" "$SESS_SHOW"
+expect_not_in "which is not the size the refused commit asked for" \
+  "buckets 1024, memory 64 MB" "$SESS_SHOW"
 
 verdict

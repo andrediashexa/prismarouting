@@ -79,6 +79,21 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Every message the plugin's CLI prints is now held by a lab**
+  ([#390](https://github.com/andrediashexa/hexarouting/issues/390)): the
+  count of `bpa_cli.c` messages named by nothing goes from 3 to 0. The last
+  three were one screen each. `lab/forward.sh` reads the block line
+  `(pinned by a forward)` while the forward's block has traffic on it, with
+  an unpinned block as the control. `lab/mss.sh` asks for `tcp-mss auto`
+  before any interface has joined the CGNAT, where the box says it clamps
+  nothing yet, and again after, where it must not say so. `lab/commit.sh`
+  reads the session table's caveat, that its size is a virtual reservation
+  the OOM killer counts, and that the refused resize left the size alone.
+
+  On the way: `lab/forward.sh off` had aborted at its verdict since 0.122.5,
+  on a variable only its `on` run sets (`set -u`). So the off run proved
+  nothing for four releases. It runs to the end again, 29 checks red.
+
 ## 0.123.0 - resolvers from the VTY
 
 ### Added
