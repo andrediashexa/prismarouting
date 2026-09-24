@@ -1218,6 +1218,12 @@ BGP_RM = ["router bgp 65001", " address-family ipv4 unicast",
           "  neighbor 200.150.0.2 route-map RM-TRANSITO-IN in"]
 POOL = _config.Pool("clientes")
 POOL.outside = ["200.150.0.16/28"]
+# The same warning on the CGNAT step-by-step page (#443), whose example pool
+# is a second, dynamic one beside the one the page has already announced.
+# Driven with the page's own values rather than excused: the row is the
+# product's, and the values in it are the page's.
+POOL_STEP = _config.Pool("dinamico")
+POOL_STEP.outside = ["203.0.113.16/28"]
 
 _AS_BAD = "bgp as-path access-list AS-BAD permit ^65001("
 _PL_BAD = "ip prefix-list PL-CLIENTES seq 10 permit 10.12.0.0/8 ge 24 le 16"
@@ -1258,6 +1264,11 @@ FINDINGS = [
         sh, prismash.pool_announce_findings(
             ["router bgp 65001", " address-family ipv4 unicast"],
             {"clientes": POOL}))),
+    ("a second pool nothing announces", lambda sh: say_announce(
+        sh, prismash.pool_announce_findings(
+            ["router bgp 65000", " address-family ipv4 unicast",
+             "  network 203.0.113.0/28"],
+            {"dinamico": POOL_STEP}))),
     # A neighbour written with the name the DATAPLANE reports rather than the
     # one FRR can act on. The sentence is built in three goes - a literal, the
     # joined Linux-side names, and an f-string - so no pair of strings accounts

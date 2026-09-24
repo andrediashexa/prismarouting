@@ -77,6 +77,21 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The wiki walks an operator through configuring the CGNAT, step by step**
+  ([#443](https://github.com/andrediashexa/hexarouting/issues/443)), asked
+  for by the maintainer. *Configurar o CGNAT passo a passo* goes from the two
+  interfaces to a subscriber's first translated packet. It covers the
+  decisions to make first, sizing, the default route, the pool, `commit
+  check`, announcing the public prefix, the IPFIX collector a dynamic pool
+  needs, and each screen an operator checks it by. Every screen was captured
+  from a box running this release with a real subscriber behind it: a ping
+  and an HTTP request translated to `203.0.113.5`, then looked up again with
+  `show cgnat translation`. *Primeiros passos* lost two checklist items that
+  contradicted its own section 3, since `dataplane interface` is an override
+  now and a one-card box asks for no confirming `commit`.
+  `test/test_wiki_screens.py` drives the new page's announce warning with the
+  page's own values, as it does the page that already quoted it.
+
 ### Fixed
 
 ## 0.124.0 - the box says Prisma Routing
