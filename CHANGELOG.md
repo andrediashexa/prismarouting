@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.122.8 - where an operator can download it
+
+### Added
+
 * **Every release can be downloaded by an operator**
   ([#439](https://github.com/andrediashexa/hexarouting/issues/439)). This
   repository is private, so the wiki's instruction to download the upgrade
@@ -96,8 +102,6 @@ version has a chance of seeing it.
   against a host that is a directory. The wiki's upgrade page gives the three
   commands an operator runs on the box, and the installation page says where
   the ISO is.
-
-### Fixed
 
 ## 0.122.7 - the banner spells the name
 
