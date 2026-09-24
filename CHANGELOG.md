@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.123.5 - a shell for administrators only
+
+### Fixed
+
 * **Security: the login handed a system shell to accounts that are not
   administrators**
   ([#442](https://github.com/andrediashexa/hexarouting/issues/442)). Every
