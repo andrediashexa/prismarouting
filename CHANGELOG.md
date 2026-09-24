@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.123.2 - the right subscriber behind a port
+
+### Fixed
+
 * **`show bpa translation` named the wrong subscriber for a free dynamic
   block on a box with workers**
   ([#432](https://github.com/andrediashexa/hexarouting/issues/432)). This is
