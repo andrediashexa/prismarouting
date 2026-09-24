@@ -5,6 +5,7 @@ Tudo que é preciso para sair de uma máquina sem sistema e chegar a um CGNAT tr
 | Página | Responde |
 |--------|----------|
 | [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) | Do disco vazio até assinantes navegando, em nove passos |
+| [Configurar o CGNAT passo a passo](/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7) | Das duas portas ao primeiro assinante traduzido, com a tela que a caixa mostra em cada passo |
 | [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) | Quanta máquina, quantos IPs públicos e quanto log o seu caso exige |
 | [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) | Como a ISO instala, o que ela pergunta e como automatizar |
 | [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) | Onde você cai ao entrar, e quem pode mudar o quê |

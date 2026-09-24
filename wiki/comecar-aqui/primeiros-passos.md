@@ -203,6 +203,8 @@ Anote qual é a de assinantes (*inside*) e qual é a de upstream (*outside*). Co
 
 ## 5. Criar o pool
 
+Este passo e os três seguintes estão, com cada tela que a caixa mostra e a parte do roteamento que falta aqui, em [Configurar o CGNAT passo a passo](/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7).
+
 ```
 configure
  nat cgnat pool residencial
@@ -309,8 +311,7 @@ configure
 
 Antes de considerar a máquina pronta:
 
-- [ ] `dataplane interface` está definido, com `commit`, e a caixa foi reiniciada depois disso
-- [ ] numa caixa de uma placa só: você entrou de novo depois do reinício e digitou `commit` para confirmar a entrega
+- [ ] `show hardware` mostra as placas que o dataplane reivindicou, e a de gerência não está entre elas (ou, numa caixa de uma placa só, a caixa continua alcançável depois do reinício)
 - [ ] A interface de gerência **não** está no CGNAT
 - [ ] `show cgnat pool` lista o pool
 - [ ] `show cgnat subscriber <ip-de-teste>` devolve endereço público e faixa de portas
