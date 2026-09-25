@@ -22,6 +22,7 @@ LIVEDIR=$ROOT/run/live
 : "${PRISMA_SUBSCRIBERS:=200000}"
 : "${PRISMA_LOW_LATENCY:=1}"
 : "${PRISMA_MAX_WORKERS:=}"
+: "${PRISMA_CGNAT_MEMORY_GB:=}"
 
 # tune.env is a file an operator edits by hand, and every value in it used to
 # be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
@@ -85,6 +86,20 @@ case "$PRISMA_SUBSCRIBERS" in
     echo "  it is digits only: 200000, not 200k and not 200.000." >&2
     say_using "200000, the shipped default"
     PRISMA_SUBSCRIBERS=200000 ;;
+esac
+
+# The memory given to the CGNAT (#454): GB, digits only, or empty for the
+# estimate from PRISMA_SUBSCRIBERS. Refused out loud like the others, and a
+# refusal falls back to the estimate - the box's behaviour before the setting
+# existed - rather than failing the unit.
+case "$PRISMA_CGNAT_MEMORY_GB" in
+  "") ;;
+  *[!0-9]*|0)
+    say_refused PRISMA_CGNAT_MEMORY_GB "$PRISMA_CGNAT_MEMORY_GB"
+    echo "  It is the memory given to the CGNAT's sessions, in whole GB:" >&2
+    echo "  8, not 8G and not 8.5. Empty sizes it from PRISMA_SUBSCRIBERS." >&2
+    say_using "the estimate from PRISMA_SUBSCRIBERS"
+    PRISMA_CGNAT_MEMORY_GB= ;;
 esac
 
 # The governor is runtime state, not a kernel parameter: asking for it in
@@ -164,6 +179,7 @@ before=$(cat "$GRUBFILE" 2>/dev/null || true)
 
 set -- --write --subscribers "$PRISMA_SUBSCRIBERS"
 [ -n "$PRISMA_DATAPLANE_IF" ] && set -- "$@" --interface "$PRISMA_DATAPLANE_IF"
+[ -n "$PRISMA_CGNAT_MEMORY_GB" ] && set -- "$@" --cgnat-memory-gb "$PRISMA_CGNAT_MEMORY_GB"
 [ "$PRISMA_LOW_LATENCY" = 1 ] || set -- "$@" --no-low-latency
 # The tuner has always accepted --max-workers; nothing ever passed it, so the
 # only reachable behaviour was "every core but one is a worker" and the cap

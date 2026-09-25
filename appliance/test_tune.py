@@ -818,8 +818,13 @@ with tempfile.TemporaryDirectory() as root:
           hugepages_gb=8, isolated="1-3", ram_gb=32)
     out = run(root, "--interface", "eth0", "--subscribers", "200000")
     heap = [l for l in out.splitlines() if "main-heap-size" in l]
-    check(any("2G" in l for l in heap),
-          f"a large pool should still get the full heap: {heap}")
+    # NOT CAPPED AT 2G (#454, #460). This asserted the cap: every session
+    # lives in that heap, and the cap held every box to about ten million
+    # sessions whatever its RAM, and a full heap aborted the dataplane. The
+    # pool less the buffers (one GB for three workers) less the one GB kept
+    # for the rest of VPP's physical memory: 8 - 1 - 1.
+    check(any("6G" in l for l in heap),
+          f"a large pool gets the heap it can hold, not 2G: {heap}")
     print(f"  8 GB reserved ->{heap[0].split('main-heap-size')[1]}")
 
 print("\n=== one RX queue per worker, and the NIC's PCI address ===")
@@ -1262,6 +1267,29 @@ with tempfile.TemporaryDirectory() as root:
     check("leave: eth2: PRISMA_DATAPLANE_IF names another card" in out,
           f"an override claims its card and no other, hot or not: "
           f"{out[-200:]!r}")
+
+print("\n=== the memory given to the CGNAT sizes the pool and the heap (#454) ===")
+# The maintainer's figure, in place of the estimate from the subscriber count:
+# the pool is heap + buffers + 1, so on a box given its request the heap is
+# exactly what was given, and the report says how many sessions that holds.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          hugepages_gb=10, isolated="1-3", ram_gb=32)
+    out = run(root, "--interface", "eth0", "--cgnat-memory-gb", "8")
+    check("hugepages=10" in out,
+          f"8 GB for the CGNAT, one for three workers' buffers, one kept: "
+          f"{[l for l in out.splitlines() if 'hugepages=' in l][:1]}")
+    check("main-heap-size 8G" in out,
+          f"and the heap is the 8 GB given: "
+          f"{[l for l in out.splitlines() if 'main-heap-size' in l]}")
+    check("# CGNAT memory: a 8 GB main heap (8 GB given to the CGNAT)" in out
+          and "concurrent sessions" in out,
+          f"and the report says so, with what it holds: "
+          f"{[l for l in out.splitlines() if 'CGNAT memory' in l or 'concurrent' in l]}")
+    out = run(root, "--interface", "eth0", "--subscribers", "200000")
+    check("estimated from 200000 subscribers; PRISMA_CGNAT_MEMORY_GB sets it"
+          in out, "without it, the report says the figure is an estimate "
+          "and which setting replaces it")
 
 print("\n=== and never the last card, whatever the installer answered ===")
 # THE NARROWING. A reserve allowed to take the only card leaves the commonest
@@ -2951,7 +2979,8 @@ with tempfile.TemporaryDirectory() as root:
           "    num-tx-queues 1\n" in v,
           f"a one-queue card beside three workers was not capped at the "
           f"card's count, which is the -22 of #330: {_dpdk_stanza(v)!r}")
-    check("main-heap-size 2G" in v and "buffers-per-numa 49152" in v,
+    check(f"main-heap-size {tune.main_heap_gb(p)}G" in v
+          and "buffers-per-numa 49152" in v,
           f"the heap and the buffers are not sized from the plan: {v!r}")
     check("default-mtu 1500" in v,
           "a 1500 card was left on VPP's 9000 in the tuned profile")
@@ -3242,6 +3271,26 @@ check(tune.render_effective([("isolcpus", "in-effect", "cpus 1-3"),
       f"the format is `<state> <rule>: <detail>`, one per line, and this "
       f"rendered {tune.render_effective([('a', 'b', 'c')])!r}")
 check(tune.render_effective([]) == "", "no rule rendered as something")
+# THE TWO COPIES AGREE (#454). The tuner sizes the heap and the VTY says what
+# it holds, each a program of its own; the measured figures are written in
+# both, and this is what keeps them the same numbers.
+_vty = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                         "src", "prismash", "prismash.py")).read()
+for _k in ("SESSION_BYTES", "HEAP_BASE_MB"):
+    check(f"\n{_k} = {getattr(tune, _k)}\n" in _vty,
+          f"{_k} is {getattr(tune, _k)} in the tuner and not in the VTY")
+# The session capacity a heap holds (#454): the idle base, then ~300 bytes a
+# session, both measured on #460.
+check(tune.session_capacity(1) == (1024 - 256) * (1 << 20) // 300,
+      f"a 1 GB heap: {tune.session_capacity(1)}")
+check(tune.session_capacity(8) > 27_000_000,
+      f"an 8 GB heap holds about 27.7 million: {tune.session_capacity(8)}")
+check(tune.main_heap_gb({"hugepages_reserved": 10, "hugepages_gb": 10,
+                         "workers": [1, 2, 3]}) == 8,
+      "the heap is the pool less the buffers less one")
+check(tune.main_heap_gb({"hugepages_reserved": 2, "hugepages_gb": 2,
+                         "workers": [1, 2, 3, 4, 5, 6, 7]}) == 1,
+      "and never less than 1")
 # would_claim()'s exit status, which is what prisma-hot-card reads (#453).
 _p = {"cards": [{"name": "eth2"}], "claim_why": "all", "reserve": None,
       "host_cards": ["eth2"], "no_way_back": None}
