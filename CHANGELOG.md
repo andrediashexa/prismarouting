@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **All CGNAT configuration lives in the `nat` > `cgnat` levels, and the
+  one-line form is gone**
+  ([#446](https://github.com/andrediashexa/hexarouting/issues/446)), as the
+  maintainer asked and chose on 2026-09-24. `nat` is entered, then `cgnat`,
+  and there the pools, interface attachments, logging, identity and timeouts
+  are typed in their own words (`pool residencial`, `interface ens18 inside`,
+  `logging enable`, `no pool x`). The prompt names each level (`[edit nat /
+  cgnat / pool residencial]`), `?` and TAB offer only what that level takes,
+  `exit`/`up` leave one level, and `top`/`end` leave them all. `show
+  running-config`, `show configuration` and `save` write one block: pools,
+  then attachments, then globals. `nat cgnat pool ...`, `nat cgnat interface
+  ...` and the older `cgnat ...` are refused at the prompt and in a file,
+  which is the #436 precedent. **A box with CGNAT configured MUST run `save`
+  after this upgrade and before its next reboot**, or it refuses its own file
+  at boot. The upgrade page says so, and `lab/upgrade.sh` asserts both halves.
+
+  Found on the way and fixed with it: the boot self-test read the saved file
+  for `^cgnat logging`, which the box had not written since #356, so the
+  export check never saw what the file asked for. And `identity_redact` knew
+  only the one-line form, so the block would have put the RADIUS secret back
+  on `show running-config`.
+
 ### Fixed
 
 ## 0.125.1 - where this stands

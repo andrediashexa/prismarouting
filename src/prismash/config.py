@@ -68,26 +68,126 @@ ROUTING_HEADER = "! routing"
 #:
 #: Neither exists in the tool underneath: VPP's plugin knows `cgnat`, and FRR
 #: has no `router static` at all - static routes are top-level `ip route`
-#: statements. Both spellings are ACCEPTED here, in both directions, and that
-#: is not politeness. Every box already in service has a saved configuration
-#: and up to twenty rollback revisions written in the old words, and a grammar
-#: change that cannot read the box's own file is a grammar change that leaves
-#: the box unconfigured at the next reboot - on a machine nobody is watching,
-#: which is exactly when prisma-routing.service replays that file.
+#: statements. The model holds the tools' words; the file and the prompt use
+#: these. Since #446 CGNAT is a block, `nat` > `cgnat`, and the one-line form
+#: that used to be accepted beside it is refused - the maintainer's decision
+#: of 2026-09-24. A box whose saved file still has it refuses the file at
+#: boot, which is why the upgrade page says `save` comes before the reboot.
 NAT_HIERARCHY = "nat"
 STATIC_BLOCK = "router static"
 
 
-def strip_nat(line: str) -> str:
-    """`nat cgnat ...` written as `cgnat ...`, which is what the model holds."""
-    s = line.strip()
-    if s == NAT_HIERARCHY:
-        return ""
-    for prefix in (NAT_HIERARCHY + " ", "no " + NAT_HIERARCHY + " "):
-        if s.startswith(prefix):
-            keep = s[len(prefix):]
-            return ("no " + keep) if prefix.startswith("no ") else keep
-    return line
+#: The level under `nat` that CGNAT is (#446). A level of its own, and not
+#: `nat` itself, so that other kinds of translation can sit beside it.
+CGNAT_LEVEL = "cgnat"
+
+#: What a statement in the one-line form is told, at the prompt and in a file.
+#: The maintainer's decision of 2026-09-24 was to take the form away rather
+#: than keep two spellings, which is the precedent of #436.
+ONE_LINE_GONE = ("the one-line CGNAT form is gone: enter 'nat', then "
+                 "'cgnat', and type the rest there")
+
+
+def one_line_cgnat(words) -> bool:
+    """Is this the one-line form #446 removed - `nat cgnat ...` or the older
+    `cgnat ...`, with or without `no` in front?"""
+    w = list(words)
+    if w[:1] == ["no"]:
+        w = w[1:]
+    return w[:1] == [CGNAT_LEVEL] or w[:2] == [NAT_HIERARCHY, CGNAT_LEVEL]
+
+
+def nest_cgnat(flat) -> list[str]:
+    """
+    The model's flat CGNAT statements - `cgnat pool p`, its ` inside ...`
+    lines, `cgnat interface ...`, `cgnat timeout ...` - as the `nat` >
+    `cgnat` block (#446). The inverse of denest_nat(), and the one writer of
+    the block: what the box saves, shows and reads back are one shape.
+    """
+    body = []
+    for line in flat:
+        if line.startswith(" "):
+            body.append("  " + line)
+        elif line.startswith(CGNAT_LEVEL + " "):
+            body.append("  " + line[len(CGNAT_LEVEL) + 1:])
+        else:
+            raise ValueError(f"not a CGNAT statement: {line!r}")
+    if not body:
+        return []
+    return [NAT_HIERARCHY, f" {CGNAT_LEVEL}"] + body + ["  exit", " exit"]
+
+
+def denest_nat(numbered):
+    """
+    The `nat` > `cgnat` block of a file, as the flat statements the model
+    holds: `pool residencial` under `cgnat` becomes `cgnat pool residencial`,
+    and a pool's own lines keep their one-space indent.
+
+    `numbered` is [(lineno, line)]. Returns the same list with the block
+    rewritten, and [(lineno, statement, why)] for what cannot be read: the
+    one-line form (#446), and anything under `nat` that is not `cgnat`.
+
+    DONE BEFORE THE PARSE, not inside it, so that the parser - and every
+    check it makes on a pool, an attachment or a global - reads one form, the
+    one it has always read. Only the CGNAT section is rewritten: the routing
+    section is FRR's, and its words are not this file's to reinterpret.
+    """
+    out, bad = [], []
+    depth = 0          # 0 top, 1 in nat, 2 in cgnat, 3 in a pool
+    routing = False
+    for n, raw in numbered:
+        s = raw.strip()
+        if routing or s == ROUTING_HEADER:
+            routing = True
+            out.append((n, raw))
+            continue
+        if not s or s.startswith("!"):
+            out.append((n, raw))
+            continue
+        if depth == 0:
+            if s == NAT_HIERARCHY:
+                depth = 1
+            elif one_line_cgnat(s.split()):
+                bad.append((n, s, ONE_LINE_GONE))
+            else:
+                out.append((n, raw))
+        elif depth == 1:
+            if s == CGNAT_LEVEL:
+                depth = 2
+            elif s in ("exit", "quit", "end"):
+                depth = 0
+            else:
+                bad.append((n, s, "under 'nat' there is 'cgnat' and nothing "
+                                  "else"))
+        elif depth == 2:
+            if s in ("exit", "quit", "end"):
+                depth = 1
+                continue
+            if s.startswith("pool "):
+                depth = 3
+            if s.startswith("no "):
+                out.append((n, f"no {CGNAT_LEVEL} {s[3:]}"))
+            else:
+                out.append((n, f"{CGNAT_LEVEL} {s}"))
+        else:
+            # A pool's own lines are indented under it. One that is not - a
+            # pool a hand closed without its `exit` - ends the pool, and the
+            # line is read at the `cgnat` level it is indented for.
+            if len(raw) - len(raw.lstrip()) <= 2:
+                depth = 2
+                if s in ("exit", "quit", "end"):
+                    depth = 1
+                elif s.startswith("no "):
+                    out.append((n, f"no {CGNAT_LEVEL} {s[3:]}"))
+                else:
+                    if s.startswith("pool "):
+                        depth = 3
+                    out.append((n, f"{CGNAT_LEVEL} {s}"))
+                continue
+            out.append((n, " " + s))
+            if s == "exit":
+                depth = 2
+    return out, bad
 
 
 #: The statements that OPEN an FRR block.
@@ -2243,20 +2343,29 @@ class Config:
                            f"decrement {vr['track'][tracked]}")
         return out
 
+    def cgnat_block(self) -> list[str]:
+        """
+        Every CGNAT statement, as the `nat` > `cgnat` block an operator types
+        (#446): pools, then the interfaces, then the globals. Nothing at all
+        when there is no CGNAT configuration, so an empty box does not carry
+        an empty block.
+
+        ONE BLOCK, where there used to be three groups of one-line statements
+        - and the third of those, the globals, sat at the bottom of the file
+        under the SNMP settings, far from the pools they are about.
+        """
+        flat = []
+        for name in sorted(self.pools):
+            flat += self.pools[name].lines()
+        for ifname in sorted(self.interfaces):
+            flat.append(f"{CGNAT_LEVEL} interface {ifname} "
+                        f"{self.interfaces[ifname]}")
+        flat += ordered_globals(self.globals)
+        return nest_cgnat(flat)
+
     def text(self) -> str:
         out = [CGNAT_HEADER]
-        # `nat ` in front of the CGNAT statements, because the hierarchy is
-        # `nat` now. Written flat rather than as an indented block for the same
-        # reason `cgnat pool residential` is one line and not two: this format
-        # has always flattened a hierarchy onto its statement, and a second
-        # indentation level would need `exit` to mean two different things.
-        for name in sorted(self.pools):
-            pool = self.pools[name].lines()
-            out.append(f"{NAT_HIERARCHY} {pool[0]}")
-            out += pool[1:]
-        for ifname in sorted(self.interfaces):
-            out.append(f"{NAT_HIERARCHY} cgnat interface {ifname} "
-                       f"{self.interfaces[ifname]}")
+        out += self.cgnat_block()
         for ifname in sorted(self.interface_names()):
             out.append(f"interface {ifname}")
             out += self.interface_lines(ifname)
@@ -2286,20 +2395,6 @@ class Config:
             out.append(f"snmp community {c}")
         for name in sorted(self.snmp_users):
             out += self.snmp_users[name].lines()
-        # THE SAME PREFIX THE POOLS AND THE ATTACHMENTS GET. The hierarchy is
-        # `nat` (#193), and this renderer put `nat ` in front of two of the
-        # three groups of CGNAT statements and not the third - so one
-        # configuration came back in two spellings, in `show running-config`,
-        # in `show configuration` and in the file `save` writes, which are all
-        # this one function (#356). An operator reading their own file found
-        # `nat cgnat pool` above `cgnat timeout udp`.
-        #
-        # Safe in both directions because the parser normalises: it has
-        # accepted `nat cgnat ...` and the bare form for every global since
-        # the hierarchy moved, and stores the bare form either way. So a file
-        # written here loads on this box, and a file written by an older one
-        # still loads too - which is what lab/upgrade.sh puts through it.
-        out += [f"{NAT_HIERARCHY} {g}" for g in ordered_globals(self.globals)]
         out.append(ROUTING_HEADER)
         out += group_static(self.routing, self.static_descriptions)
         return "\n".join(out) + "\n"
@@ -2509,7 +2604,19 @@ class Config:
         self.ra_enabled -= taps
 
     @classmethod
-    def parse(cls, text: str) -> "Config":
+    def parse(cls, text: str, dataplane: bool = False) -> "Config":
+        """
+        A configuration from text: a saved file, a rollback revision, the
+        peer's file - or, with `dataplane=True`, what the plugin answers to
+        `show bpa config`.
+
+        THE TWO ARE DIFFERENT FORMATS SINCE #446. A file holds the `nat` >
+        `cgnat` block an operator types; the plugin speaks the flat
+        statements the model holds (`cgnat pool p`), which is the form the
+        file no longer takes. Read as a file, every box's own dataplane was
+        the one-line form, refused - so the plugin's text is read as the
+        model's, and only a file is taken through denest_nat().
+        """
         cfg = cls()
         section = "cgnat"
         routing_lines = []     # the file's line number of each routing line
@@ -2517,7 +2624,12 @@ class Config:
         iface = None
         user = None
         snmp_user = None
-        for lineno, raw in enumerate(text.splitlines(), 1):
+        numbered = list(enumerate(text.splitlines(), 1))
+        if not dataplane:
+            numbered, refused = denest_nat(numbered)
+            cfg.unknown += refused
+            cfg.n_statements += len(refused)
+        for lineno, raw in numbered:
             line = raw.rstrip()
             # A configuration display marks routing statements this VTY did
             # not verify, and closes with a sentence saying how many. Both are
@@ -2530,11 +2642,6 @@ class Config:
                 line = line[:-len(UNCHECKED_MARK)].rstrip()
             if line.strip().startswith(UNCHECKED_NOTE):
                 continue
-            if not line.strip():
-                continue
-            # The hierarchy the file is written in, back to the words the model
-            # holds. Both spellings, in both directions: see NAT_HIERARCHY.
-            line = strip_nat(line)
             if not line.strip():
                 continue
             if line.strip() == ROUTING_HEADER:
@@ -3218,11 +3325,14 @@ class Config:
         for name in sorted(set(self.pools) | set(other.pools)):
             mine = self.pools.get(name)
             theirs = other.pools.get(name)
+            # Named as the path to it in the file both boxes write (#446),
+            # which is what an operator greps `show configuration` for.
+            path = f"{NAT_HIERARCHY} / {CGNAT_LEVEL} / pool {name}"
             if mine is None:
-                findings.append((name, "", "cgnat pool " + name))
+                findings.append((name, "", path))
                 continue
             if theirs is None:
-                findings.append((name, "cgnat pool " + name, ""))
+                findings.append((name, path, ""))
                 continue
             a = mine.lines(in_place=False)
             b = theirs.lines(in_place=False)

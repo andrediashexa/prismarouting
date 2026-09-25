@@ -1,6 +1,6 @@
 # Configuração de pool
 
-Entra-se com `nat cgnat pool <nome>` dentro de `configure`. O prompt vira `prisma# [edit cgnat pool residencial] ` — ele nomeia o pool, e mantém a grafia curta `cgnat pool`, sem o `nat`. Sai-se com `exit`.
+Entra-se em `nat`, depois em `cgnat`, e ali `pool <nome>`. O prompt vira `prisma# [edit nat / cgnat / pool residencial] ` — ele nomeia o pool e os níveis em que ele está. `exit` volta para `cgnat`; `top` vai direto ao topo. A página [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) explica os níveis.
 
 
 :::info
@@ -292,7 +292,7 @@ Os cinco vêm **ligados**. `alg <nome> off` é a exceção escrita no pool, e `n
 Dentro do bloco, `no <ajuste>` tira o ajuste. `no ?` lista o que pode ser tirado, e `?` depois da palavra continua oferecendo o argumento:
 
 ```
-prisma# [edit cgnat pool residencial] no ?
+prisma# [edit nat / cgnat / pool residencial] no ?
   alg                stop choosing for one ALG; the pool takes the device default again
   block-stride       let the pool place a subscriber's extra blocks wherever it has one free
   bypass             stop excluding a prefix from translation
@@ -356,25 +356,29 @@ Já `no timeout udp` num pool que não sobrescreve o timeout de UDP é aceito em
 
 ```
 configure
- nat cgnat pool residencial
-  inside 100.64.0.0/10
-  outside 203.0.113.0/24
-  block-size 512
-  ports 1024 65535
-  policy interleaved
-  mode deterministic
-  timeout udp 300
-  timeout tcp-established 7440
-  max-sessions 2000
-  max-session-rate 200
-  utilisation-alarm 85
-  tcp-mss auto
-  alg ftp on
-  alg pptp on
-  bypass destination 198.51.100.0/24
+ nat
+  cgnat
+   pool residencial
+    inside 100.64.0.0/10
+    outside 203.0.113.0/24
+    block-size 512
+    ports 1024 65535
+    policy interleaved
+    mode deterministic
+    timeout udp 300
+    timeout tcp-established 7440
+    max-sessions 2000
+    max-session-rate 200
+    utilisation-alarm 85
+    tcp-mss auto
+    alg ftp on
+    alg pptp on
+    bypass destination 198.51.100.0/24
+    exit
+   interface ens18 inside
+   interface ens19 outside
+   exit
   exit
- nat cgnat interface ens18 inside
- nat cgnat interface ens19 outside
  show configuration compare
  commit check
  commit comment "pool residencial inicial"
@@ -382,7 +386,7 @@ configure
 save
 ```
 
-Uma configuração salva antes de o CGNAT passar para baixo de `nat` abre o pool com `cgnat pool residencial`, sem o `nat` na frente. **Ela continua sendo aceita** — a caixa relê o próprio arquivo a cada boot — e os campos de dentro do bloco não mudaram. O primeiro `save` depois desta versão reescreve o arquivo já com `nat cgnat pool`.
+Os campos de dentro do pool são os mesmos de sempre. O que mudou foi o caminho até ele: a forma de uma linha só (`nat cgnat pool residencial`, ou a mais antiga `cgnat pool residencial`) **não é mais aceita**, nem digitada nem num arquivo salvo. Depois de atualizar uma caixa, rode `save` antes de reiniciar: ele reescreve o arquivo já no bloco `nat` > `cgnat`, e o boot seguinte lê o arquivo inteiro.
 
 # Ver também
 

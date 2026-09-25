@@ -5,10 +5,14 @@
 ```mermaid
 flowchart LR
     O["operacional<br/><code>prisma&gt;</code>"] -->|configure| G["configuração<br/><code>[edit]</code>"]
-    G -->|"nat cgnat pool NOME"| P["pool<br/><code>[edit cgnat pool]</code>"]
+    G -->|nat| N["nat<br/><code>[edit nat]</code>"]
+    N -->|cgnat| C["cgnat<br/><code>[edit nat / cgnat]</code>"]
+    C -->|"pool NOME"| P["pool<br/><code>[edit nat / cgnat / pool]</code>"]
     G -->|"user NOME"| U["usuário<br/><code>[edit user]</code>"]
     G -->|"snmp-user NOME"| SU["usuário SNMP<br/><code>[edit snmp user]</code>"]
-    P -->|exit| G
+    P -->|exit| C
+    C -->|exit| N
+    N -->|exit| G
     U -->|exit| G
     SU -->|exit| G
     G -->|exit| O
@@ -20,14 +24,16 @@ flowchart LR
 |------|--------|-------------|-----------|
 | Operacional | `prisma> ` | é onde a sessão começa | `exit` encerra a sessão |
 | Configuração | `prisma# [edit] ` | `configure` | `exit`    |
-| Pool | `prisma# [edit cgnat pool residencial] ` | `nat cgnat pool <nome>` | `exit`, `up` ou `top` |
+| NAT | `prisma# [edit nat] ` | `nat` | `exit`, `up` ou `top` |
+| CGNAT | `prisma# [edit nat / cgnat] ` | `cgnat`, dentro de `nat` | `exit`, `up` ou `top` |
+| Pool | `prisma# [edit nat / cgnat / pool residencial] ` | `pool <nome>`, dentro de `cgnat` | `exit` volta para `cgnat`; `top` vai ao topo |
 | Interface | `prisma# [edit interface ens18] ` | `interface <nome>` | `exit`, `up` ou `top` |
 | Usuário | `prisma# [edit user joao] ` | `user <nome>` | `exit`, `up` ou `top` |
 | Usuário SNMP | `prisma# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`, `up` ou `top` |
 | Rotas estáticas | `prisma# [edit router static] ` | `router static` | `exit`, `up` ou `top` |
 | Bloco do FRR | `prisma# [edit router bgp 65000] ` | `router bgp <AS>` | `exit`, `up` ou `top` |
 
-**O prompt nomeia o assunto, não só o tipo de bloco.** `[edit cgnat pool]` seria o mesmo prompt numa caixa com vinte pools: diria que você está *num* pool sem dizer em qual, que é justamente a pergunta que você tem.
+**O prompt nomeia o assunto, não só o tipo de bloco.** `[edit nat / cgnat / pool]` seria o mesmo prompt numa caixa com vinte pools: diria que você está *num* pool sem dizer em qual, que é justamente a pergunta que você tem.
 
 Blocos aninhados aparecem com o mais interno por último, separados por `/`, para que dê para ver o que contém o quê. Um prompt longo demais é truncado pelo começo — o fim é onde a próxima linha vai cair, e é a metade que vale o espaço.
 
@@ -58,9 +64,11 @@ Duas palavras movem você **dentro** do modo de configuração, sem sair dele e 
 | `up <n>` | sobe `n` níveis |
 
 ```
-prisma# [edit] nat cgnat pool residencial
-prisma# [edit cgnat pool residencial] inside 100.64.0.0/10
-prisma# [edit cgnat pool residencial] top
+prisma# [edit] nat
+prisma# [edit nat] cgnat
+prisma# [edit nat / cgnat] pool residencial
+prisma# [edit nat / cgnat / pool residencial] inside 100.64.0.0/10
+prisma# [edit nat / cgnat / pool residencial] top
 prisma# [edit] router bgp 65000
 prisma# [edit router bgp 65000] address-family ipv4 unicast
 prisma# [edit ...r bgp 65000 / address-family ipv4 unicast] up
@@ -209,9 +217,7 @@ Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e
 
 | Comando | O que faz |
 |---------|-----------|
-| `nat cgnat ...` | configuração de CGNAT |
-| `no nat cgnat pool <nome>` | remove um pool |
-| `no nat cgnat interface <nome>` | desabilita CGNAT numa interface |
+| `nat` | entra na hierarquia de NAT; dentro dela, `cgnat` guarda pools, interfaces, logging e timeouts |
 | `router static` | entra no bloco das rotas estáticas |
 | `router bgp <AS>` / `router ospf` / `router isis <nome>` | protocolos de roteamento (FRR) |
 | `interface <nome>` | entra na configuração de uma interface |
@@ -229,9 +235,9 @@ Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e
 
 
 :::info
-**Duas hierarquias mudaram de lugar.** O CGNAT ficou embaixo de `nat` (`nat cgnat pool ...`, `nat cgnat interface ...`) e as rotas estáticas viraram um bloco embaixo de `router` (`router static`, com `<prefixo> next-hop <próximo-salto>` dentro). É onde o operador procura por elas.
+**Duas hierarquias mudaram de lugar.** O CGNAT virou os níveis `nat` > `cgnat`, em que se entra (`nat`, `cgnat`, `pool residencial`), e as rotas estáticas viraram um bloco embaixo de `router` (`router static`, com `<prefixo> next-hop <próximo-salto>` dentro). É onde o operador procura por elas.
 
-`cgnat ...` no topo do modo de configuração continua aceito, digitado ou lido de um arquivo salvo, e `ip route ...` no topo continua indo para o roteamento. Dentro de `router static`, a única forma é `<prefixo> next-hop ...`: a forma `route ...` dentro do bloco foi retirada, e um arquivo salvo que ainda a tenha é recusado inteiro.
+A forma de uma linha só do CGNAT (`nat cgnat pool ...`, `cgnat ...`) é recusada, digitada ou lida de um arquivo salvo: depois de atualizar, rode `save` antes de reiniciar. `ip route ...` no topo continua indo para o roteamento. Dentro de `router static`, a única forma é `<prefixo> next-hop ...`: a forma `route ...` dentro do bloco foi retirada, e um arquivo salvo que ainda a tenha é recusado inteiro.
 
 :::
 
@@ -264,7 +270,7 @@ error: interface ens9: this box has no such interface
 
 `interface ens9` — um erro de digitação de `ens19` — commitava limpo, aparecia na configuração em vigor e não fazia nada. A recusa **lista o que a caixa tem**, porque ela já sabe: é a mesma fonte de onde vem a completação, e quem recebe só um "não" tem de ir procurar.
 
-Vale para **todas** as formas de nomear uma interface, e são sete: o bloco do FRR, o `nat cgnat interface`, e as declarações `mtu`, `urpf`, `ipv4 address`/`ipv6 address`, `description` e `shutdown`. Qualquer uma delas sozinha basta para a recusa aparecer - não é preciso que a interface tenha um bloco inteiro.
+Vale para **todas** as formas de nomear uma interface, e são sete: o bloco do FRR, o `interface` dentro de `nat` > `cgnat`, e as declarações `mtu`, `urpf`, `ipv4 address`/`ipv6 address`, `description` e `shutdown`. Qualquer uma delas sozinha basta para a recusa aparecer - não é preciso que a interface tenha um bloco inteiro.
 
 A exceção é o **loopback**: `interface loop<n>` num nome que a caixa ainda não tem é o que **cria** o loopback, porque não há mais nada de onde criá-lo. Está na página de configuração de interface.
 

@@ -42,23 +42,27 @@ A exportação por UDP precisa saber **para onde** ir antes de ser ligada. São 
 
 ```
 configure
- nat cgnat logging udp <coletor> src <origem> [port <n>]   destino do UDP
- nat cgnat logging enable                                  liga a exportação UDP
+ nat
+  cgnat
+   logging udp <coletor> src <origem> [port <n>]   destino do UDP
+   logging enable                                  liga a exportação UDP
+   exit
+  exit
  commit
 ```
 
 `src` é o endereço de origem dos pacotes IPFIX e **não é opcional**: sem ele a caixa recusa. Use um endereço que o coletor reconheça como sendo desta caixa — normalmente o de gerência. Sem `port`, vale 4739, a porta registrada pelo RFC 7011.
 
-Os demais comandos da hierarquia:
+Os demais comandos, todos dentro de `nat` > `cgnat`:
 
 | Comando | O que faz |
 |---------|-----------|
-| `nat cgnat logging tcp <coletor> [port <n>]` | exportação por TCP |
-| `nat cgnat logging tcp disable` | desliga o transporte TCP |
-| `nat cgnat logging syslog <coletor> enterprise <n> [port <n>] [facility <0-23>] [severity <0-7>]` | exporta os mesmos eventos como linhas syslog (RFC 5424) |
-| `nat cgnat logging syslog disable` | desliga o transporte syslog |
-| `nat cgnat logging udp disable` | apaga o destino UDP |
-| `nat cgnat logging disable` | desliga a exportação UDP |
+| `logging tcp <coletor> [port <n>]` | exportação por TCP |
+| `logging tcp disable` | desliga o transporte TCP |
+| `logging syslog <coletor> enterprise <n> [port <n>] [facility <0-23>] [severity <0-7>]` | exporta os mesmos eventos como linhas syslog (RFC 5424) |
+| `logging syslog disable` | desliga o transporte syslog |
+| `logging udp disable` | apaga o destino UDP |
+| `logging disable` | desliga a exportação UDP |
 
 O destino UDP volta em `show running-config`, sobrevive a `save`, a `rollback` e ao boot — e é reaplicado na ordem certa, o destino antes do estado.
 
@@ -68,14 +72,14 @@ O destino UDP volta em `show running-config`, sobrevive a `save`, a `rollback` e
 
 ```
 error: cgnat logging enable: UDP export has no collector
-    nothing would leave this box; add 'nat cgnat logging udp <collector> src
-    <source>' beside it, or export over TCP with 'nat cgnat logging tcp
+    nothing would leave this box; add 'logging udp <collector> src <source>'
+    beside it under 'nat' / 'cgnat', or export over TCP with 'logging tcp
     <collector>'
     the dataplane refuses the statement, and it would refuse it half way
     through this commit
 ```
 
-`nat cgnat logging tcp` **não** satisfaz esse requisito: os dois transportes são caminhos independentes, e `logging enable` liga o de UDP.
+`logging tcp` **não** satisfaz esse requisito: os dois transportes são caminhos independentes, e `logging enable` liga o de UDP.
 
 A recusa vale quando é **esta mudança** que cria o problema. Numa caixa que já está nesse estado — exportação ligada e o destino apagado por baixo dela — a mesma frase sai como `warning:` e o commit passa, porque senão a única configuração que a caixa não conseguiria aplicar seria justamente a que conserta isso.
 
@@ -194,8 +198,12 @@ Uma ordem judicial nomeia uma pessoa. O registro nomeia um endereço privado num
 A caixa passa a carregar a identidade no próprio registro:
 
 ```
-nat cgnat identity file /etc/prisma-routing/subscribers.map
-nat cgnat identity none
+nat
+ cgnat
+  identity file /etc/prisma-routing/subscribers.map
+  identity none
+  exit
+ exit
 ```
 
 O arquivo é um assinante por linha, escrito pelo seu sistema de provisionamento:
@@ -209,7 +217,11 @@ O arquivo é um assinante por linha, escrito pelo seu sistema de provisionamento
 **Ou direto do arquivo de lease do seu DHCP**, se você roda IPoE e já tem a resposta:
 
 ```
-nat cgnat identity dhcp-leases /var/lib/dhcp/dhcpd.leases
+nat
+ cgnat
+  identity dhcp-leases /var/lib/dhcp/dhcpd.leases
+  exit
+ exit
 ```
 
 A gramática é a do ISC dhcpd. A identidade é o `client-hostname` quando o lease tem um, e o endereço `hardware ethernet` quando não tem — o primeiro é o que o suporte reconhece, o segundo é o que sempre existe. Lease sem nenhum dos dois não vira entrada, e aquele endereço fica `unknown` em vez de ganhar algo inventado.
@@ -221,7 +233,11 @@ A gramática é a do ISC dhcpd. A identidade é o `client-hostname` quando o lea
 **Ou da contabilidade que o seu BNG já manda**, se a autenticação é PPPoE e a resposta já existe num RADIUS:
 
 ```
-nat cgnat identity radius secret <segredo compartilhado> [port <n>]
+nat
+ cgnat
+  identity radius secret <segredo compartilhado> [port <n>]
+  exit
+ exit
 ```
 
 Esta caixa não é um servidor RADIUS: ela não autentica ninguém e não responde Access-Request. Ela é um segundo destino da contabilidade, lendo dela uma coisa só — qual assinante está em qual endereço. Um `Start` ou um `Interim` que traz endereço e nome diz quem está ali, um `Stop` tira o nome, e um `Interim` sem endereço não muda nada, porque adivinhar de qual endereço ele falava é exatamente como um assinante acaba nomeado no registro de outro.
@@ -260,7 +276,11 @@ O exportador **UDP** não mudou: ele continua com os sete campos da RFC 8158 e s
 A maioria dos coletores de ISP lê syslog e mais nada. Os mesmos eventos saem como linhas **RFC 5424**, sem mudar o que é registrado: um registro por alocação e por liberação, nunca por fluxo.
 
 ```
-nat cgnat logging syslog 10.0.0.9 enterprise 44444
+nat
+ cgnat
+  logging syslog 10.0.0.9 enterprise 44444
+  exit
+ exit
 ```
 
 Uma linha de alocação chega assim:
@@ -282,7 +302,7 @@ Os dois podem ficar ligados ao mesmo tempo: o coletor do provedor lendo syslog e
 
 | Você digitou | A caixa diz |
 |--------------|-------------|
-| `nat cgnat logging syslog 10.0.0.9` | `an enterprise number is required`, com o porquê |
+| `logging syslog 10.0.0.9` | `an enterprise number is required`, com o porquê |
 | `... enterprise 9 sideways 2` | `not an option of this statement`, listando as que são |
 | `... enterprise 9 port 70000` | `port is 0-65535` |
 | `... enterprise 9 facility 24` | `facility is 0-23` |

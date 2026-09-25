@@ -172,7 +172,7 @@ echo "=========== the same stride, applied through the VTY ==========="
 HX="python3 /src/src/prismash/prismash.py"
 VTY_STRIDE=1
 VTY_SAY=$($HX -c "configure" \
-    -c "cgnat pool vtystride" \
+    -c "nat" -c "cgnat" -c "pool vtystride" \
     -c "inside 10.30.0.0/24" \
     -c "outside 45.170.20.0/30" \
     -c "block-size 512" \
@@ -196,7 +196,7 @@ echo "  and a stride this box CAN honour, committed the same way:"
 # asked - so a relay that simply forwarded what it read would print that
 # paragraph here, on a commit that had nothing to do with it.
 VTY_QUIET=$($HX -c "configure" \
-    -c "cgnat pool vtyokstride" \
+    -c "nat" -c "cgnat" -c "pool vtyokstride" \
     -c "inside 10.30.1.0/24" \
     -c "outside 45.170.21.0/30" \
     -c "block-size 512" \
@@ -216,7 +216,7 @@ echo "  and the same stride lowered on the pool that was already running:"
 # recreated: the stride decides where the next extension goes, so the device
 # takes it on a live pool and no subscriber moves.
 VTY_CHANGE=$($HX -c "configure" \
-    -c "cgnat pool vtyokstride" \
+    -c "nat" -c "cgnat" -c "pool vtyokstride" \
     -c "block-stride 1" \
     -c "exit" \
     -c "commit" 2>&1)

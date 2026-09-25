@@ -1134,7 +1134,8 @@ with tempfile.TemporaryDirectory() as tmp:
     # statement FRR already has is enough on its own to refuse it - which is
     # the whole defect: not that a change is rejected, but that NO change can
     # be made on that box.
-    said = drive(sh, ["configure", "nat cgnat block-holddown 90", "commit"])
+    said = drive(sh, ["configure", "nat", "cgnat", "block-holddown 90",
+                      "commit"])
     check("commit complete" in said,
           f"a box whose FRR already carries a statement this VTY refuses "
           f"could not commit anything at all, not even an empty change: "

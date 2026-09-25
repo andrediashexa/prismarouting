@@ -6,7 +6,7 @@ As regras que evitam incidente, a ordem em que a máquina sobe, e por onde come�
 
 ## A interface de gerência não vai para o VPP — havendo outra placa
 
-O DPDK tira a NIC do Linux. Numa caixa que tem outra placa, entregar ao VPP a porta pela qual você administra a máquina a deixa **inalcançável** — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece em `nat cgnat interface`. A própria caixa recusa essa entrega, no prompt, e diz qual é a outra placa.
+O DPDK tira a NIC do Linux. Numa caixa que tem outra placa, entregar ao VPP a porta pela qual você administra a máquina a deixa **inalcançável** — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece como `interface` dentro de `nat` > `cgnat`. A própria caixa recusa essa entrega, no prompt, e diz qual é a outra placa.
 
 **A exceção é a caixa que tem uma placa só**, que é como a maioria conhece este produto. Ali não existe outra placa para nomear, a recusa mandaria fazer uma coisa impossível, e a entrega é permitida: o endereço de gerência vai junto com a placa, para o par que o dataplane mantém do lado do Linux, com o mesmo MAC. O que torna isso seguro está descrito na regra seguinte — a entrega é sempre um `commit confirmed`, com trinta minutos, que ninguém confirmando desfaz sozinho. O passo a passo está em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
 

@@ -85,9 +85,14 @@ A pasta tem todas as versões que ainda sabem atualizar uma caixa, a partir da 0
 
 
 :::warning
-**Caixa com rota estática: rode** `**save**` **depois de atualizar e antes de reiniciar.** A partir da 0.122.10, a forma `route <prefixo> <próximo-salto>` dentro de `router static` não é mais aceita, nem num arquivo salvo. Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot e sobe **sem configuração nenhuma**, CGNAT inclusive. As rotas continuam valendo depois do pacote, porque ele não reinicia nada, e o `save` grava o que está valendo já na forma nova. É só isso: `save`, e só então reiniciar.
+**Rode** `**save**` **depois de atualizar e antes de reiniciar.** Duas mudanças de forma fazem uma caixa atualizada recusar o próprio arquivo salvo no boot e subir **sem configuração nenhuma**:
 
-As revisões de rollback anteriores à atualização continuam na forma antiga, e o `save` não chega nelas. Numa caixa com rota estática, voltar para uma delas depois de atualizar é recusado: o `commit check` aponta a linha da rota e nada é aplicado. Se precisar voltar para a configuração de antes, volte primeiro a caixa para a versão anterior.
+* a partir da 0.125.2, o CGNAT fica nos níveis `nat` > `cgnat`, e a forma de uma linha (`nat cgnat pool ...`, `nat cgnat interface ...`) não é mais aceita. **Isso vale para toda caixa que tem CGNAT configurado**;
+* a partir da 0.122.10, a forma `route <prefixo> <próximo-salto>` dentro de `router static` não é mais aceita.
+
+A configuração continua valendo depois do pacote, porque ele não reinicia nada, e o `save` grava o que está valendo já na forma nova. É só isso: `save`, e só então reiniciar. Para conferir antes, `show running-config` já mostra o bloco `nat` > `cgnat` que o `save` vai gravar.
+
+As revisões de rollback anteriores à atualização continuam na forma antiga, e o `save` não chega nelas. Voltar para uma delas depois de atualizar é recusado: o `commit check` aponta a linha na forma antiga e nada é aplicado. Se precisar voltar para a configuração de antes, volte primeiro a caixa para a versão anterior.
 
 :::
 

@@ -227,8 +227,8 @@ vppctl show bpa pool | grep -E "^pool (nostride|strided)|per sub|stride " \
 # with a green lab beside it.
 HX="python3 /src/src/prismash/prismash.py"
 $HX -c "configure" \
-    -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
-    -c "cgnat logging enable" \
+    -c "nat" -c "cgnat" -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+    -c "logging enable" \
     -c "commit" 2>&1 | sed 's/^/    /'
 # 25 seconds, and waited for below rather than slept over: python block-buffers
 # stdout into a file, so the records appear when the collector ENDS. Reading

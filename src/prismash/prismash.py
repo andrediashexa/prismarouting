@@ -37,9 +37,10 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     IFACE_VRF_MAX, IFACE_VRF_RANGE,
                     is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
-                    NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
+                    NAT_HIERARCHY, CGNAT_LEVEL, one_line_cgnat,
+                    STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
-                    strip_nat, as_hierarchy, group_static,
+                    as_hierarchy, group_static,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
                     is_static_route, static_route, static_route_key,
                     _address_family_error, _is_loopback, _is_lcp_tap,
@@ -2209,21 +2210,12 @@ TREE = {
     },
     "config": {
         # CGNAT sits under `nat`, and static routes under `router`, because
-        # that is where an operator looks for them (#193). Both old spellings
-        # - `cgnat ...` at the top level and `ip route ...` - are still
-        # accepted, and are deliberately NOT offered here: a box in service has
-        # a saved configuration and twenty rollback revisions written in them,
-        # so they have to work, but offering both teaches the one being left
-        # behind.
-        "nat": ("address translation", {
-            "cgnat": ("carrier-grade NAT", CGNAT_CONFIG),
-        }),
+        # that is where an operator looks for them (#193). Since #446 `nat`
+        # is a level that is ENTERED, with `cgnat` a level under it; what is
+        # typed there is offered by TREE["nat"] and TREE["cgnat"], which is
+        # where `?` is walked from while the operator stands in one.
+        "nat": ("address translation: enter it, then 'cgnat'", None),
         "no": ("remove configuration", {
-            "nat": ("remove address translation", {
-                "cgnat": ("remove CGNAT configuration", {
-                    "pool": ("remove a pool", ARG_POOL),
-                    "interface": ("disable CGNAT on an interface",
-                                  ARG_INTERFACE)})}),
             "dataplane": ("stop handing a card to the dataplane", {
                 "interface": ("the box claims no card at the next start of "
                               "the dataplane", None)}),
@@ -2312,6 +2304,26 @@ TREE = {
                      "(openssl passwd -6)", "<hash>"),
         "exit": ("leave the user", None),
     },
+}
+
+# THE TWO LEVELS UNDER `nat` (#446), as trees of their own so that `?` and
+# TAB offer what is typed THERE, and nothing from the level above. The words
+# that work at every level - committing, reading, leaving - are the config
+# root's own entries, reused rather than copied.
+_EVERY_LEVEL = {k: TREE["config"][k] for k in ("commit", "rollback", "show")}
+TREE["nat"] = {
+    "cgnat": ("carrier-grade NAT: pools, interfaces, logging, timeouts",
+              None),
+    "exit": ("leave 'nat'", None),
+    **_EVERY_LEVEL,
+}
+TREE["cgnat"] = {
+    **CGNAT_CONFIG,
+    "no": ("remove CGNAT configuration", {
+        "pool": ("remove a pool", ARG_POOL),
+        "interface": ("disable CGNAT on an interface", ARG_INTERFACE)}),
+    "exit": ("leave 'cgnat'", None),
+    **_EVERY_LEVEL,
 }
 
 # `no` in a user block, derived from the block's own statements rather than
@@ -4881,15 +4893,15 @@ def dynamic_export_findings(pools, globals_):
                 for w in words)
     if udp or other:
         return []
-    return [("warning", f"nat cgnat pool {name}",
+    return [("warning", f"nat / cgnat / pool {name}",
              ("dynamic, and nothing exports its block events. " if dyn else
               "a reserve, and nothing exports the blocks it hands out. ")
              + "The exported record is the only evidence of which subscriber "
              "held a public port" + ("" if dyn else " in a reserve block, which "
                                      "the formula does not produce")
              + ": without it that question has no answer. Export with "
-             "'nat cgnat logging udp <collector> src <source>' and 'nat "
-             "cgnat logging enable', or 'nat cgnat logging tcp <collector>'")
+             "'logging udp <collector> src <source>' and 'logging enable' "
+             "under 'nat' / 'cgnat', or 'logging tcp <collector>' there")
             for name, dyn in owed]
 
 
@@ -6036,6 +6048,9 @@ class Shell:
         # answer before it is staged: (key, description) or None (#436).
         self.static_pending = None
         self.frr_ctx = []              # FRR block context inside config mode
+        # The `nat` > `cgnat` levels (#446): [], ["nat"] or ["nat", "cgnat"].
+        # A pool is entered from inside them and returns to them.
+        self.nat_ctx = []
         self.failed = 0
         # The statements a `prismash -c` batch asked for and did not get. It is
         # what `commit` refuses on, it is empty in an interactive session, and
@@ -6052,7 +6067,8 @@ class Shell:
 
     def where(self):
         """
-        The hierarchy being edited, as words - "cgnat pool residential".
+        The hierarchy being edited, as words - "nat / cgnat / pool
+        residential".
 
         It names the SUBJECT, not only the kind. "[edit cgnat pool]" is the
         same prompt on a box with twenty pools: it tells the operator they are
@@ -6065,7 +6081,7 @@ class Shell:
         no warning.
         """
         if self.mode == "pool" and self.pool is not None:
-            return f"cgnat pool {self.pool.name}"
+            return f"{NAT_HIERARCHY} / {CGNAT_LEVEL} / pool {self.pool.name}"
         if self.mode == "user" and self.user is not None:
             return f"user {self.user.name}"
         if self.mode == "snmp-user" and self.snmp_user is not None:
@@ -6074,6 +6090,8 @@ class Shell:
             # Nested blocks show both, innermost last, so the reader can see
             # what contains what.
             return " / ".join(self.frr_ctx)
+        if self.nat_ctx:
+            return " / ".join(self.nat_ctx)
         return ""
 
     #: An 80-column serial console is what a racked box is seen through, and a
@@ -6253,7 +6271,7 @@ class Shell:
         cfg = Config()
         rc, out = self.dp.run("show bpa config")
         if rc == 0 and out.strip():
-            cfg = Config.parse(out)
+            cfg = Config.parse(out, dataplane=True)
         if cfg.unknown:
             self.err("the dataplane reports configuration this VTY does not "
                      "model")
@@ -7934,9 +7952,9 @@ class Shell:
                 # as one line this measured 89 columns as an error and 91 as
                 # a warning, and `err` wraps nothing (#271).
                 said = "cgnat logging enable: UDP export has no collector"
-                advice = ("nothing would leave this box; add 'nat cgnat "
-                          "logging udp <collector> src <source>' beside it, "
-                          "or export over TCP with 'nat cgnat logging tcp "
+                advice = ("nothing would leave this box; add 'logging udp "
+                          "<collector> src <source>' beside it under 'nat' / "
+                          "'cgnat', or export over TCP with 'logging tcp "
                           "<collector>'")
                 if udp_export_without_collector(running.globals):
                     print(f"warning: {said}")
@@ -8626,7 +8644,7 @@ class Shell:
                     # the operator's next move is to grep one of them out of
                     # `show configuration` and delete it (#252).
                     print(f"    interface {ifname} / ipv4 address {addr}")
-                    print(f"    cgnat pool {pname} / outside {hit}")
+                    print(f"    nat / cgnat / pool {pname} / outside {hit}")
                     print_prose("cgnat would translate the box's own "
                                 "control-plane traffic on that address: "
                                 "bpa-out2in runs before the box decides a "
@@ -9619,8 +9637,7 @@ class Shell:
                 if w[i] in ("buckets", "memory") and is_number(w[i + 1]):
                     got[w[i]] = int(w[i + 1])
             if len(got) != 2:
-                self.err("usage: nat cgnat session-table buckets <n> "
-                         "memory <MB>")
+                self.err("usage: session-table buckets <n> memory <MB>")
                 return
             r = self.global_api(set_session_table=True,
                                 session_buckets=got["buckets"],
@@ -9704,7 +9721,7 @@ class Shell:
             shapes = CGNAT_CONFIG["logging"][1]
             self.err_prose(
                 "cgnat logging: not a shape this box takes",
-                *[f"{NAT_HIERARCHY} cgnat logging {word}"
+                *[f"logging {word}"
                   + (f" {hint}" if hint else "")
                   for word, (_what, hint) in shapes.items()])
             return
@@ -9744,9 +9761,9 @@ class Shell:
         else:
             self.err_prose(
                 "cgnat identity: not a shape this box takes",
-                f"{NAT_HIERARCHY} cgnat identity file <path>",
-                f"{NAT_HIERARCHY} cgnat identity dhcp-leases <path>",
-                f"{NAT_HIERARCHY} cgnat identity none")
+                "identity file <path>",
+                "identity dhcp-leases <path>",
+                "identity none")
             return
         # The path against the field it travels in, before it is sent. A
         # longer one is not something the dataplane can hold, and the refusal
@@ -9972,8 +9989,8 @@ class Shell:
 
         if not off:
             if len(w) < 6 or w[4] != "src":
-                self.err("usage: nat cgnat logging udp <collector> src "
-                         "<source> [port <n>]")
+                self.err("usage: logging udp <collector> src <source> "
+                         "[port <n>]")
                 return
             src = w[5]
             if len(w) >= 8 and w[6] == "port":
@@ -11430,6 +11447,7 @@ class Shell:
                 return True
             self.candidate = self.running_config()
             self.mode = "config"
+            self.nat_ctx = []
             print("entering configuration mode")
         elif w[0] in ("exit", "quit", "logout"):
             return False
@@ -11461,6 +11479,59 @@ class Shell:
             self.show_or_pass(line)
         return True
 
+    #: The words that mean the same thing at every level of `nat`, and so are
+    #: not rewritten into a CGNAT statement there: committing, reading,
+    #: moving and leaving.
+    NAT_LEVEL_WORDS = ("commit", "rollback", "show", "top", "up", "exit",
+                       "quit", "end", "start") + tuple(PROBE_TOOLS)
+
+    def nat_rewrite(self, line):
+        """
+        `nat` and `cgnat` as the levels they are (#446), and what is typed in
+        them in the words the model holds.
+
+        At the top, `nat` enters the level and the one-line form that used to
+        stand for it - `nat cgnat pool ...`, `cgnat ...` - is refused, by the
+        maintainer's decision of 2026-09-24. Under `nat` there is `cgnat` and
+        nothing else yet. Under `cgnat`, `pool residencial` is the model's
+        `cgnat pool residencial`, so every check a pool, an attachment or a
+        global has always had applies unchanged.
+
+        Returns the line to go on with, or "" when it was handled here.
+        """
+        w = line.split()
+        if not w:
+            return ""
+        if not self.nat_ctx:
+            if line.strip() == NAT_HIERARCHY:
+                self.nat_ctx = [NAT_HIERARCHY]
+                return ""
+            if one_line_cgnat(w):
+                self.err_prose("the one-line CGNAT form is gone",
+                               "enter 'nat', then 'cgnat', and type the rest "
+                               "there: 'pool <name>', 'interface <name> "
+                               "inside', 'logging ...'")
+                return ""
+            return line
+        if w[0] in self.NAT_LEVEL_WORDS:
+            if w[0] in ("exit", "quit"):
+                self.nat_ctx.pop()
+                return ""
+            if w[0] == "end":
+                self.nat_ctx = []
+                return ""
+            return line
+        if self.nat_ctx == [NAT_HIERARCHY]:
+            if line.strip() == CGNAT_LEVEL:
+                self.nat_ctx.append(CGNAT_LEVEL)
+            else:
+                self.err_prose("under 'nat' there is 'cgnat' and nothing else",
+                               "'cgnat' enters it; 'exit' leaves 'nat'")
+            return ""
+        if w[0] == "no":
+            return f"no {CGNAT_LEVEL} " + " ".join(w[1:])
+        return f"{CGNAT_LEVEL} " + line.strip()
+
     def hierarchy_rewrite(self, line):
         """
         The hierarchy the operator typed, in the words the model holds.
@@ -11490,21 +11561,10 @@ class Shell:
         # would edit somebody's policy on the strength of its first token.
         if self.frr_ctx and self.frr_ctx[-1] != STATIC_BLOCK:
             return line
-        if line.strip() == NAT_HIERARCHY and not self.frr_ctx:
-            # `nat` on its own. Refused rather than entered, because `cgnat`
-            # was never a block either - what is entered is `cgnat pool NAME` -
-            # and inventing one level of block here would make `exit` mean
-            # something different depending on which word opened it.
-            # The verdict is that `nat` is not a block; what to type
-            # instead is a row of its own. One sentence was 91 columns on a
-            # console of 79 and `err` folds nothing (#362), and the statement
-            # the operator has to retype was the tail of it, which is where
-            # the terminal's fold lands.
-            self.err_prose("nat: a hierarchy, not a block",
-                           "what is entered is 'nat cgnat pool <name>' or "
-                           "'nat cgnat interface ...'")
-            return ""
-        line = strip_nat(line) if not self.frr_ctx else line
+        if not self.frr_ctx:
+            line = self.nat_rewrite(line)
+            if not line:
+                return ""
         w = line.split()
         if not w:
             return ""
@@ -11630,6 +11690,7 @@ class Shell:
                       "(use 'commit' to apply them)")
             self.candidate = None
             self.mode = "operational"
+            self.nat_ctx = []
             return True
 
         if line.startswith("cgnat pool "):
@@ -11739,8 +11800,7 @@ class Shell:
             return True
         if line.startswith("cgnat interface "):
             if len(w) < 4 or w[3] not in ("inside", "outside"):
-                self.err("usage: nat cgnat interface <interface> "
-                         "<inside|outside>")
+                self.err("usage: interface <interface> <inside|outside>")
             else:
                 self.candidate.interfaces[w[2]] = w[3]
             return True
@@ -12338,7 +12398,8 @@ class Shell:
         inside the same user spelled any other way - a `top` that silently
         stayed put.
         """
-        return len(self.frr_ctx) + (1 if self.mode in BLOCK_MODES else 0)
+        return (len(self.frr_ctx) + len(self.nat_ctx)
+                + (1 if self.mode in BLOCK_MODES else 0))
 
     def leave_one_level(self):
         """
@@ -12357,6 +12418,9 @@ class Shell:
             self.pool = None
             self.user = None
             self.snmp_user = None
+            return
+        if self.nat_ctx:
+            self.nat_ctx.pop()
             return
         ctx = self.frr_ctx.pop()
         if ctx != STATIC_BLOCK:
@@ -12564,6 +12628,10 @@ class Shell:
         if w[0] in ("exit", "end"):
             self.mode = "config"
             self.pool = None
+            # `exit` returns to `cgnat`, where the pool was entered; `end`
+            # goes to the top, as it does from every level (#446).
+            if w[0] == "end":
+                self.nat_ctx = []
             return True
         # "show this" is most useful exactly here, and each sub-mode
         # dispatches its own lines - so without this it is refused in the one
@@ -12915,9 +12983,21 @@ class Shell:
             return
 
         if self.mode == "pool" and self.pool is not None:
-            print("\n".join(cfg.pools[self.pool.name].lines()
-                             if self.pool.name in cfg.pools
-                             else self.pool.lines()))
+            # In the words the pool is typed in under `cgnat` (#446): `pool
+            # residencial`, not the model's `cgnat pool residencial`.
+            lines = (cfg.pools[self.pool.name].lines()
+                     if self.pool.name in cfg.pools else self.pool.lines())
+            lines[0] = lines[0][len(CGNAT_LEVEL) + 1:]
+            print("\n".join(lines))
+            return
+        # Standing in `nat` or `cgnat` with no pool open: that level's block,
+        # as `show configuration` writes it.
+        if self.nat_ctx and not self.frr_ctx:
+            block = cfg.cgnat_block()
+            if self.nat_ctx[-1] == CGNAT_LEVEL:
+                block = [b[1:] for b in block[1:-1]]
+            print("\n".join(block) if block else
+                  "nothing is configured here yet")
             return
         if self.mode == "user" and self.user is not None:
             print("\n".join(self.user.lines()))
@@ -16287,7 +16367,7 @@ class Shell:
         if ending_word and words:
             prefix = words[-1]
             words = words[:-1]
-        node, hint = tree_walk(self.mode, words)
+        node, hint = tree_walk(self.grammar_mode(), words)
 
         # A block entered by an ARGUMENT is still mode "config", so the tree
         # walk returns the whole configuration tree - fifteen options inside an
@@ -16460,6 +16540,16 @@ class Shell:
             return result
         return handler(line)
 
+    def grammar_mode(self):
+        """
+        Which tree `?`, TAB and abbreviations are read from here: the mode's
+        own, or - standing in `nat` or `cgnat` in configuration mode - that
+        level's (#446). An FRR block is never inside those, so it wins.
+        """
+        if self.mode == "config" and self.nat_ctx and not self.frr_ctx:
+            return self.nat_ctx[-1]
+        return self.mode
+
     def statement_grammar(self):
         """
         The node an abbreviation is resolved against here, or None for none.
@@ -16481,7 +16571,7 @@ class Shell:
         if self.mode != "config":
             return None
         if not self.frr_ctx:
-            return TREE["config"]
+            return TREE[self.grammar_mode()]
         if self.frr_ctx[-1].startswith("interface "):
             return INTERFACE_BLOCK
         return None

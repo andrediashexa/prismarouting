@@ -54,8 +54,12 @@ Câmera, servidor de jogo, VPN. A porta pública fica fixada no socket do client
 
 ```
 configure
- nat cgnat pool residencial
-  forward tcp 8080 to 100.64.3.19 80
+ nat
+  cgnat
+   pool residencial
+    forward tcp 8080 to 100.64.3.19 80
+    exit
+   exit
   exit
  commit
  exit
@@ -82,9 +86,13 @@ Um host varrendo a internet consome o bloco inteiro e depois pede mais.
 
 ```
 configure
- nat cgnat pool residencial
-  max-sessions 2000
-  max-session-rate 200
+ nat
+  cgnat
+   pool residencial
+    max-sessions 2000
+    max-session-rate 200
+    exit
+   exit
   exit
  commit
 ```
@@ -105,12 +113,16 @@ Acrescentar um prefixo em `outside` muda a conta do mapeamento e move **todos** 
 
 ```
 configure
- nat cgnat pool residencial-2
-  inside 100.64.4.0/22
-  outside 45.170.16.0/26
-  block-size 512
-  policy interleaved
-  mode deterministic
+ nat
+  cgnat
+   pool residencial-2
+    inside 100.64.4.0/22
+    outside 45.170.16.0/26
+    block-size 512
+    policy interleaved
+    mode deterministic
+    exit
+   exit
   exit
  commit
  exit
@@ -136,10 +148,14 @@ O procedimento completo dos dois caminhos, com o que muda e o que não muda, est
 
 ```
 configure
- nat cgnat pool residencial
-  timeout udp 300
-  timeout tcp-established 7440
-  timeout port-holddown 120
+ nat
+  cgnat
+   pool residencial
+    timeout udp 300
+    timeout tcp-established 7440
+    timeout port-holddown 120
+    exit
+   exit
   exit
  commit
 ```
@@ -152,9 +168,13 @@ FTP, RTSP e PPTP carregam endereço dentro do payload. Sem o ALG, a conexão de 
 
 ```
 configure
- nat cgnat pool residencial
-  alg ftp on
-  alg pptp on
+ nat
+  cgnat
+   pool residencial
+    alg ftp on
+    alg pptp on
+    exit
+   exit
   exit
  commit
 ```
@@ -169,8 +189,12 @@ Servidor que precisa enxergar o IP real do assinante — um portal interno, um s
 
 ```
 configure
- nat cgnat pool residencial
-  bypass destination 198.51.100.0/24
+ nat
+  cgnat
+   pool residencial
+    bypass destination 198.51.100.0/24
+    exit
+   exit
   exit
  commit
 ```
@@ -183,8 +207,12 @@ Sintoma clássico: a conexão abre, a transferência começa e para. Quase sempr
 
 ```
 configure
- nat cgnat pool residencial
-  tcp-mss auto
+ nat
+  cgnat
+   pool residencial
+    tcp-mss auto
+    exit
+   exit
   exit
  commit
 ```
@@ -308,7 +336,11 @@ openssl passwd -6
 
 ```
 configure
- nat cgnat logging tcp 198.51.100.10 port 4739
+ nat
+  cgnat
+   logging tcp 198.51.100.10 port 4739
+   exit
+  exit
  commit
  exit
 save
@@ -324,8 +356,12 @@ Por UDP são dois comandos, e o destino vem primeiro — sem ele `commit check` 
 
 ```
 configure
- nat cgnat logging udp 198.51.100.10 src 198.51.100.1
- nat cgnat logging enable
+ nat
+  cgnat
+   logging udp 198.51.100.10 src 198.51.100.1
+   logging enable
+   exit
+  exit
  commit
  exit
 save

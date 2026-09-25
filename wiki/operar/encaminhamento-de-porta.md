@@ -8,8 +8,12 @@ Um assinante atrás de CGNAT não é alcançável de fora, e alguns precisam ser
 
 ```
 configure
- nat cgnat pool residencial
-  forward tcp 6200 to 100.64.0.5 80
+ nat
+  cgnat
+   pool residencial
+    forward tcp 6200 to 100.64.0.5 80
+    exit
+   exit
   exit
  commit
  exit
@@ -77,8 +81,12 @@ E também o contrário, dois forwards diferentes apontando para a mesma porta do
 
 ```
 configure
- nat cgnat pool residencial
-  no forward tcp 6200 to 100.64.0.5 80
+ nat
+  cgnat
+   pool residencial
+    no forward tcp 6200 to 100.64.0.5 80
+    exit
+   exit
   exit
  commit
  exit

@@ -50,6 +50,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src",
                                 "prismash"))
 import prismash      # noqa: E402
 from config import Pool      # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nat_fixture import in_nat_block      # noqa: E402
 import system      # noqa: E402
 
 fail = 0
@@ -1271,7 +1273,8 @@ check(len(api.calls) == n and
 rv, text = driven(sh.apply_logging, ["logging", "logging", "sideways"])
 check(len(api.calls) == n and
       rows(text)[0] == "error: cgnat logging: not a shape this box takes"
-      and any("cgnat logging tcp" in r for r in rows(text)),
+      and any(r.strip().startswith("logging tcp <collector>")
+              for r in rows(text)),
       f"a shape it does not take lists the ones it does: {text!r}")
 print("\n=== Shell.apply_identity: a path, and never the file's contents ===")
 # Mutation shown red: args["path"] = "" on the file path.
@@ -1497,7 +1500,7 @@ check(api.calls[-1][1]["collector_address"] == "0.0.0.0"
 n = len(api.calls)
 rv, text = driven(sh.apply_logging_udp,
                   ["logging", "logging", "udp", "10.0.0.9"])
-check(len(api.calls) == n and "error: usage: nat cgnat logging udp "
+check(len(api.calls) == n and "error: usage: logging udp "
       "<collector> src <source> [port <n>]" in rows(text),
       f"no src is a usage line and nothing is sent: {text!r}")
 rv, text = driven(sh.apply_logging_udp,
@@ -2039,8 +2042,9 @@ ROUTING = ("router bgp 65000\n"
            "bgp large-community-list expanded LCL seq 5 permit .*\n"
            "ip prefix-list PL4 seq 5 permit 10.0.0.0/8\n"
            "ipv6 prefix-list PL6 seq 5 permit 2001:db8::/32\n")
-CAND = Config.parse("user alice\n role admin\nsnmp-user mon\n auth sha x\n"
-                    "nat cgnat pool A\n inside 10.0.0.0/8\n")
+CAND = Config.parse(in_nat_block(
+    "user alice\n role admin\nsnmp-user mon\n auth sha x\n"
+    "nat cgnat pool A\n inside 10.0.0.0/8\n exit\n"))
 CAND.routing = ROUTING.splitlines()
 
 print("\n=== Shell.dyn_neighbours: addresses with their AS, groups named "
@@ -2122,8 +2126,9 @@ check(sh.dyn_pools() == {"A": "CGNAT pool"}, f"pools: {sh.dyn_pools()}")
 check(sh.dyn_users() == {"alice": "account"}, f"users: {sh.dyn_users()}")
 check(sh.dyn_snmp_users() == {"mon": "SNMPv3 user"},
       f"snmp users: {sh.dyn_snmp_users()}")
-sh = shell(running="nat cgnat pool B\n inside 10.0.0.0/8\nuser bob\n"
-                   "snmp-user other\n auth sha y\n")
+sh = shell(running=in_nat_block("nat cgnat pool B\n inside 10.0.0.0/8\n"
+                                " exit\nuser bob\n"
+                                "snmp-user other\n auth sha y\n"))
 check(sh.dyn_pools() == {"B": "CGNAT pool"} and sh.dyn_users()
       == {"bob": "account"} and sh.dyn_snmp_users()
       == {"other": "SNMPv3 user"},
@@ -2467,7 +2472,7 @@ print("\n=== Shell.where: the subject being edited, not only its kind ===")
 sh = shell()
 sh.mode = "pool"
 sh.pool = types.SimpleNamespace(name="residential")
-check(sh.where() == "cgnat pool residential",
+check(sh.where() == "nat / cgnat / pool residential",
       f"the pool by name: {sh.where()!r}")
 sh.mode, sh.user = "user", types.SimpleNamespace(name="noc")
 check(sh.where() == "user noc", f"the account by name: {sh.where()!r}")
@@ -4437,7 +4442,7 @@ ok("a banner, not a health line")
 
 # ------------------------------------------- the peer's mapping, at commit (#8)
 
-PAIR_POOL = ("nat cgnat pool residential\n"
+PAIR_POOL = in_nat_block("nat cgnat pool residential\n"
              " inside 100.64.0.0/26\n"
              " outside 200.150.16.0/28\n"
              " block-size 2048\n"
@@ -4714,11 +4719,15 @@ ok("what a dump's sw_if_index is turned back into")
 # there is and ask the same question in each.
 # ---------------------------------------------------------------------------
 
-def at(mode="config", ctx=(), candidate=None):
+CGNAT_AT = ("nat", "cgnat")   # standing in `nat` > `cgnat` (#446)
+
+
+def at(mode="config", ctx=(), candidate=None, nat=()):
     """A Shell standing at a level, with a candidate to write into."""
     sh = shell()
     sh.mode = mode
     sh.frr_ctx = list(ctx)
+    sh.nat_ctx = list(nat)
     sh.candidate = candidate if candidate is not None else Config()
     return sh
 
@@ -5079,9 +5088,9 @@ print("\n=== the prompt bounds the same text a saved file bounds (#416) ===")
 for _line, _needle, _mode in (
         # 63, not the field's 64: the dataplane refuses a 64-character name
         # with retval -7, so the prompt refuses it first (#423).
-        ("cgnat pool " + "p" * 200, "and the limit is 63", "config"),
+        ("pool " + "p" * 200, "and the limit is 63", "config"),
         ("user " + "u" * 200, "and the limit is 32", "config")):
-    _sh = at()
+    _sh = at(nat=CGNAT_AT if _line.startswith("pool ") else ())
     with spoken() as _o:
         _sh.do_config(_line)
     check(_needle in _o.getvalue(),
@@ -5104,9 +5113,9 @@ for _text, _needle in (("A" * 4000, "and the limit is 63"),
           f"description: staged anyway: {_sh.candidate.descriptions!r}")
 # The control, and it is the accented one on purpose: the operator this box is
 # sold to writes Portuguese.
-_sh = at()
+_sh = at(nat=CGNAT_AT)
 with spoken() as _o:
-    _sh.do_config("cgnat pool residential")
+    _sh.do_config("pool residential")
 check(_sh.mode == "pool" and not _o.getvalue(),
       f"a real pool name is taken and the mode moves: {_sh.mode!r}")
 _sh = at()
@@ -5169,16 +5178,16 @@ ok("five words that used to mean 'leave it alone', each refused now")
 print("\n=== and the prompt refuses the NAME, not only the number (#418) ===")
 # Mutation shown red: the TIMEOUT_FIELD test removed - apply_global then
 # refuses it at commit, on a candidate the operator has already built.
-_sh = at()
+_sh = at(nat=CGNAT_AT)
 with spoken() as _o:
-    _sh.do_config("cgnat timeout nosuch 5")
+    _sh.do_config("timeout nosuch 5")
 check("no such timeout" in _o.getvalue(),
       f"an unknown timeout is refused where it is typed: {_o.getvalue()!r}")
 check(not _sh.candidate.globals,
       f"and nothing staged: {_sh.candidate.globals!r}")
-_sh = at()
+_sh = at(nat=CGNAT_AT)
 with spoken() as _o:
-    _sh.do_config("cgnat timeout udp 300")
+    _sh.do_config("timeout udp 300")
 check(_sh.candidate.globals == ["cgnat timeout udp 300"] and not _o.getvalue(),
       f"a real one is staged in silence: {_sh.candidate.globals!r}")
 ok("the name and the number, both where the operator can act on them")
@@ -5349,9 +5358,9 @@ for _words in (["timeout", "udp", "60"], ["logging", "enable"],
                ["identity", "none"], ["block-holddown", "30"]):
     check(prismash.cgnat_statement_short(_words) == (),
           f"{_words!r} is a whole statement and is not refused")
-_sh = at()
+_sh = at(nat=CGNAT_AT)
 with spoken() as _o:
-    _sh.do_config("cgnat interface")
+    _sh.do_config("interface")
 check("not a whole cgnat statement" in _o.getvalue()
       and not _sh.candidate.globals and not _sh.candidate.interfaces,
       f"`cgnat interface` with no name is refused at the prompt: "
@@ -5709,7 +5718,7 @@ check(len(_f) == 1 and "a reserve" in _f[0][2]
       f"but one with a reserve owes it for those blocks, and is told: {_f!r}")
 _f = prismash.dynamic_export_findings({"dinamico": _dyn}, [])
 check(len(_f) == 1 and _f[0][0] == "warning"
-      and _f[0][1] == "nat cgnat pool dinamico"
+      and _f[0][1] == "nat / cgnat / pool dinamico"
       and "nothing exports" in _f[0][2],
       f"a dynamic pool with no export at all is warned, by name: {_f!r}")
 for _g, _warned, _what in (
@@ -5729,7 +5738,7 @@ _dyn2 = Pool("dinamico2")
 _dyn2.mode = "dynamic"
 check([f[1] for f in _def({"dinamico2": _dyn2, "dinamico": _dyn,
                            "residencial": _det}, [])]
-      == ["nat cgnat pool dinamico", "nat cgnat pool dinamico2"],
+      == ["nat / cgnat / pool dinamico", "nat / cgnat / pool dinamico2"],
       "every dynamic pool is named, in order, and only those")
 _sh = shell()
 for _one in _def({"dinamico": _dyn, "reservado": _detr}, []):
@@ -5738,6 +5747,44 @@ for _one in _def({"dinamico": _dyn, "reservado": _detr}, []):
           and text.splitlines()[-1].strip() == _one[1],
           f"and it prints inside the console, the pool on its own row: "
           f"{text!r}")
+
+print("\n=== Shell.nat_rewrite and Shell.grammar_mode: the nat > cgnat levels (#446) ===")
+# Mutations shown red, one at a time: the one-line refusal removed (the line
+# reaches the model); `no` not rewritten under cgnat; grammar_mode answering
+# the mode whatever the level.
+_sh = at()
+rv, text = driven(_sh.nat_rewrite, "nat cgnat pool p")
+check(rv == "" and "one-line CGNAT form is gone" in text,
+      f"the one-line form is refused at the top: {rv!r} {text!r}")
+check(_sh.nat_rewrite("nat") == "" and _sh.nat_ctx == ["nat"],
+      f"nat enters the level: {_sh.nat_ctx}")
+rv, text = driven(_sh.nat_rewrite, "pool p")
+check(rv == "" and "under 'nat' there is 'cgnat'" in text,
+      f"under nat only cgnat is taken: {text!r}")
+check(_sh.nat_rewrite("cgnat") == "" and _sh.nat_ctx == ["nat", "cgnat"],
+      f"cgnat enters its level: {_sh.nat_ctx}")
+check(_sh.nat_rewrite("pool p") == "cgnat pool p",
+      "under cgnat, a statement is the model's cgnat statement")
+check(_sh.nat_rewrite("no pool p") == "no cgnat pool p",
+      "and a removal the model's removal")
+check(_sh.nat_rewrite("commit check") == "commit check"
+      and _sh.nat_rewrite("show this") == "show this",
+      "commit and show mean what they mean everywhere")
+check(_sh.grammar_mode() == "cgnat", f"and ? reads the cgnat tree there: "
+      f"{_sh.grammar_mode()}")
+check(_sh.nat_rewrite("exit") == "" and _sh.nat_ctx == ["nat"]
+      and _sh.grammar_mode() == "nat",
+      f"exit is one level up: {_sh.nat_ctx}")
+check(_sh.nat_rewrite("end") == "" and _sh.nat_ctx == []
+      and _sh.grammar_mode() == "config",
+      f"end is the top: {_sh.nat_ctx}")
+check(_sh.nat_rewrite("interface pg0") == "interface pg0",
+      "and at the top a line that is not CGNAT goes on as it was")
+_sh.frr_ctx = ["router bgp 65000"]
+_sh.nat_ctx = ["nat", "cgnat"]
+check(_sh.grammar_mode() == "config",
+      "an FRR block is never inside nat, so it wins")
+ok("the levels, the refusal, and the tree ? reads")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

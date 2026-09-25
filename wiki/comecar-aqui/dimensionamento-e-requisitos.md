@@ -215,7 +215,11 @@ Por isso o self-test não confere o arquivo: ele confere onde o kernel realmente
 A tabela de sessões é ajustada com:
 
 ```
-nat cgnat session-table buckets <n> memory <MB>
+nat
+ cgnat
+  session-table buckets <n> memory <MB>
+  exit
+ exit
 ```
 
 O padrão é 16 mil buckets e 16 MB por tabela. A reserva é **virtual**: ela não custa RAM enquanto a tabela não é preenchida, e o OOM killer também não a enxerga — quem escolhe a vítima olha memória **residente**, não memória mapeada. O padrão modesto continua certo pelo motivo mais simples: a tabela acaba sendo usada, e uma caixa pequena não tem essa memória. Uma implantação de 200 mil assinantes deve elevar esse valor; uma caixa pequena não deve pagar por capacidade que nunca vai usar.

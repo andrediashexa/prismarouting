@@ -29,7 +29,7 @@ vppctl set interface state pg0 up; vppctl set interface state pg1 up
 
 echo "=========== 1. every per-pool setting, typed into the VTY ==========="
 $HX -c "configure" \
-    -c "cgnat pool lab" \
+    -c "nat" -c "cgnat" -c "pool lab" \
     -c "inside 100.64.0.0/22" \
     -c "outside 200.150.0.16/30" \
     -c "block-size 512" \
@@ -57,7 +57,7 @@ echo "=========== 3. a setting made with vppctl must survive a commit ==========
 # unrelated change silently reverted it.
 vppctl bpa alg lab rtsp off >/dev/null
 BEFORE=$(vppctl show bpa config | grep -c "alg rtsp off")
-$HX -c "configure" -c "cgnat pool lab" -c "timeout icmp 90" -c "exit" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool lab" -c "timeout icmp 90" -c "exit" \
     -c "commit" 2>&1 | sed 's/^/  /'
 AFTER=$(vppctl show bpa config | grep -c "alg rtsp off")
 ICMP=$(vppctl show bpa config | grep -c "timeout icmp 90")
@@ -67,13 +67,17 @@ echo
 echo "=========== 4. a line the VTY cannot hold is refused, not trimmed ==========="
 cat > /tmp/bad.conf <<'EOF'
 ! cgnat
-cgnat pool lab
- inside 100.64.0.0/22
- outside 200.150.0.16/30
- block-size 512
- policy interleaved
- mode deterministic
- wibble 3
+nat
+ cgnat
+  pool lab
+   inside 100.64.0.0/22
+   outside 200.150.0.16/30
+   block-size 512
+   policy interleaved
+   mode deterministic
+   wibble 3
+   exit
+  exit
  exit
 ! routing
 EOF
@@ -88,7 +92,7 @@ echo "=========== 5. a static port forward, through the VTY ==========="
 #
 #   10.0.0.5 is subscriber 5 of this pool -> 203.0.113.17, block 1088-1151
 $HX -c "configure" \
-    -c "cgnat pool fwd" \
+    -c "nat" -c "cgnat" -c "pool fwd" \
     -c "inside 10.0.0.0/24" \
     -c "outside 203.0.113.16/30" \
     -c "block-size 64" \
@@ -107,7 +111,7 @@ MARK=$(wc -l < $TRAIL 2>/dev/null || echo 0)
 # sockets the pool has already given to two customers. The VTY has to let it
 # through - it cannot judge which address a subscriber sends from, and
 # refusing here made a port sellable once per pool.
-$HX -c "configure" -c "cgnat pool fwd" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool fwd" \
     -c "forward udp 1101 to 10.0.0.5 53" \
     -c "forward tcp 1100 to 10.0.0.4 8080" -c "exit" -c "commit" 2>&1 |
   sed 's/^/  /'
@@ -123,7 +127,7 @@ echo "=========== 6. a forward the device would refuse ==========="
 # 2000 is in subscriber 61's block, not subscriber 5's. The check has to say
 # so BEFORE the commit: after it, the operator has an inbound port that
 # belongs to a customer who did not ask for one.
-BADF=$($HX -c "configure" -c "cgnat pool fwd" \
+BADF=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool fwd" \
            -c "forward tcp 2000 to 10.0.0.5 80" \
            -c "exit" -c "commit check" 2>&1); BADFRC=$?
 printf '%s\n' "$BADF" | sed 's/^/  /'
@@ -141,7 +145,7 @@ echo "  and back at the floor there is nothing to say:"
 FLOOR_OK=$(vppctl bpa timeouts tcp-established 7440 2>&1)
 printf '%s\n' "${FLOOR_OK:-  (silence)}" | sed 's/^/  /'
 echo "  through the VTY, where the operator cannot see the dataplane log:"
-VTY_WARN=$($HX -c "configure" -c "cgnat pool lab" -c "timeout udp 30" \
+VTY_WARN=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool lab" -c "timeout udp 30" \
     -c "exit" -c "commit" 2>&1)
 printf '%s\n' "$VTY_WARN" | sed 's/^/  /'
 LOGGED=$(vppctl show logging 2>/dev/null | grep -c "below the")
@@ -194,7 +198,7 @@ expect "a vppctl setting survives an unrelated commit through the VTY" \
 expect "and the commit that had to survive it did take effect" \
   test "${ICMP:-0}" -ge 1
 expect "loading a file with an unknown line fails" test "$BADRC" -ne 0
-expect_in "and says which line, by number" "line 8" "$BAD"
+expect_in "and says which line, by number" "line 10" "$BAD"
 expect_in "and what it did not understand" "wibble" "$BAD"
 
 # #299: the capacity figure with the reason beside it, in both directions.

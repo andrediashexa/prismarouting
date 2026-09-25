@@ -890,7 +890,7 @@ _globals = [
     # it is a table sized against a number nobody gave.
     ("a session table with one of its two numbers", Api(),
      "cgnat session-table buckets 64",
-     "error: usage: nat cgnat session-table buckets <n> memory <MB>"),
+     "error: usage: session-table buckets <n> memory <MB>"),
     ("a session table the dataplane refused",
      Api(refuse={"bpa_global_set"}), "cgnat session-table buckets 64 memory 8",
      f"error: cgnat session-table: {REASON}"),
@@ -963,7 +963,8 @@ print(f"  {len(_logging)} ways the export does not arrive, each said out loud")
 # step, and a list written out here would be the third copy.
 _rv, _text = driven(shell().apply_logging, "cgnat logging sideways".split())
 for _word, (_what, _hint) in prismash.CGNAT_CONFIG["logging"][1].items():
-    _row = (f"    {prismash.NAT_HIERARCHY} cgnat logging {_word}"
+    # In the words typed under `cgnat`, where the statement is (#446).
+    _row = (f"    logging {_word}"
             + (f" {_hint}" if _hint else ""))
     check(_row in _text.splitlines(),
           f"the refusal offers {_word!r} as the tree spells it: {_text!r}")
@@ -1118,7 +1119,9 @@ print("\n=== the rollback store, and the revert that runs unattended ===")
 _sh = shell()
 _sh.running_config = lambda: config.Config()
 _rv, _text = driven(_sh.revert_confirm,
-                    {"config": "cgnat pool subs\n inside 100.64.0.0/22\n"},
+                    {"config": "nat\n cgnat\n  pool subs\n"
+                               "   inside 100.64.0.0/22\n   exit\n"
+                               "  exit\n exit\n"},
                     "commit was not confirmed: rolling back")
 says("revert does not validate", _text,
      "error: the configuration to roll back to does not validate on this box",
@@ -1160,13 +1163,15 @@ print("\n=== a pool statement, typed ===")
 # believing they had changed it. These two are what is left at the bottom of
 # that block: a word this box has no setting for, and a value it cannot read.
 _sh = cfg_shell()
-_sh.do_config("cgnat pool subs")
+_sh.nat_ctx = ["nat", "cgnat"]
+_sh.do_config("pool subs")
 _rv, _text = driven(_sh.do_pool, "gibberish 1")
 says("unknown pool statement", _text,
      "error: unknown statement in pool mode: gibberish", _rv, expect=True)
 
 _sh = cfg_shell()
-_sh.do_config("cgnat pool subs")
+_sh.nat_ctx = ["nat", "cgnat"]
+_sh.do_config("pool subs")
 _rv, _text = driven(_sh.do_pool, "policy sideways")
 says("unreadable pool value", _text,
      "error: invalid argument: policy must be interleaved or blocked", _rv,
@@ -1255,11 +1260,16 @@ _settings = [
     # open: a timeout of zero was accepted, saved and sent to a message that
     # reads zero as "leave this one alone", so the box kept the timeout it
     # already had and the configuration said otherwise (#351).
-    ("a global timeout of zero", "cgnat timeout udp 0",
+    # Typed where it is typed since #446: under `nat` > `cgnat`.
+    ("a global timeout of zero", "nat|cgnat|timeout udp 0",
      "error: cgnat timeout udp 0: expected 1-4294967295"),
 ]
 for _label, _line, _want in _settings:
-    _rv, _text = driven(cfg_shell().do_config, _line)
+    _sh = cfg_shell()
+    *_lead, _line = _line.split("|")
+    for _step in _lead:
+        _sh.do_config(_step)
+    _rv, _text = driven(_sh.do_config, _line)
     says(_label, _text, _want, _rv, expect=True)
 print(f"  {len(_settings)} settings, each refused before it reaches the "
       f"candidate")
@@ -1406,9 +1416,11 @@ print("\n=== and the two interface statements that are refused outside a "
 # `no interface Gi0/1` on a physical port is the one worth its own sentence:
 # the configuration did not create the port and the commit cannot remove it,
 # so accepting the words would promise something nothing carries out.
-_rv, _text = driven(cfg_shell().do_config, "nat cgnat interface pg0 sideways")
+_sh = cfg_shell()
+_sh.nat_ctx = ["nat", "cgnat"]
+_rv, _text = driven(_sh.do_config, "interface pg0 sideways")
 says("cgnat attachment", _text,
-     "error: usage: nat cgnat interface <interface> <inside|outside>", _rv,
+     "error: usage: interface <interface> <inside|outside>", _rv,
      expect=True)
 
 _rv, _text = driven(cfg_shell().do_config, "no interface eth9")

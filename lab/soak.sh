@@ -248,8 +248,8 @@ echo
 echo "=========== the log's far side ==========="
 HX="python3 /src/src/prismash/prismash.py"
 $HX -c "configure" \
-    -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
-    -c "cgnat logging enable" \
+    -c "nat" -c "cgnat" -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+    -c "logging enable" \
     -c "commit" 2>&1 | sed 's/^/  /'
 ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 $COL_SECS \
   "$COL_STOP" > /tmp/collector.out 2>&1 &

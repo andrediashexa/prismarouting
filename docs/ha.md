@@ -316,7 +316,11 @@ error: this change maps subscribers differently from the peer
     translate them there
 error: pool 'business' is on this box and not on the peer, so after a failover
     its subscribers are translated by nothing at all
-    cgnat pool business
+    nat
+     cgnat
+      pool business
+      exit
+     exit
     a takeover would put subscribers on blocks the other box never used, and
     neither box would log anything unusual, because nothing unusual happened to
     either of them
@@ -446,7 +450,8 @@ nothing. The silent acceptance is a defect of its own, filed separately.
 
 **That second finding no longer holds, and saying so is part of keeping this
 page worth reading.** Re-measured at 0.69.0: the same statement the lab types,
-`nat cgnat ha peer 200.150.0.12 priority 200`, is now refused at the prompt
+`nat cgnat ha peer 200.150.0.12 priority 200` then and `ha peer 200.150.0.12
+priority 200` under `nat` > `cgnat` since #446, is now refused at the prompt
 before it can enter the candidate at all.
 
 ```

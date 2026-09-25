@@ -187,6 +187,11 @@ SHOWN_REFUSED = set()
 # line it cannot walk is exactly what such a page is showing.
 FRR_REFUSED_VERDICT = "error: not a statement FRR accepts here"
 SHOWN_FRR_REFUSED = set()
+# And the one-line CGNAT form a page shows ON PURPOSE, to show that it is
+# gone (#446) - excused under the same rule, so a page still teaching it by
+# mistake fails.
+ONE_LINE_VERDICT = ("error: the one-line CGNAT form is gone",
+                    "error: under 'nat' there is 'cgnat' and nothing else")
 
 
 def prompt_lines():
@@ -203,7 +208,8 @@ def prompt_lines():
                             and rows[i + 1].startswith(AMBIGUOUS_VERDICT)):
                         SHOWN_REFUSED.add((path, line))
                     if (i + 1 < len(rows)
-                            and rows[i + 1].startswith(FRR_REFUSED_VERDICT)):
+                            and rows[i + 1].startswith((FRR_REFUSED_VERDICT,)
+                                                       + ONE_LINE_VERDICT)):
                         SHOWN_FRR_REFUSED.add((path, line))
                     m = re.match(r"^prisma> (.+)$", line)
                     if m:

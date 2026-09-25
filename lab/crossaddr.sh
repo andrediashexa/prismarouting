@@ -162,8 +162,8 @@ vppctl bpa pool b16 inside 100.64.1.128/25 outside 200.150.2.0/28 \
     ports 1024-1039 block 4 mode dynamic max-blocks 2
 
 HX="python3 /src/src/prismash/prismash.py"
-$HX -c "configure" -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
-    -c "cgnat logging enable" -c "commit" >/dev/null 2>&1
+$HX -c "configure" -c "nat" -c "cgnat" -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+    -c "logging enable" -c "commit" >/dev/null 2>&1
 # THE COLLECTOR IS TOLD WHEN TO STOP, and the number behind it is a ceiling
 # for a run nobody is watching rather than a guess at how long the box takes.
 # A budget small enough to be reached expires on a loaded machine, the records

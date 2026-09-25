@@ -93,8 +93,8 @@ ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 45 > /tmp/collecto
 sleep 2
 vppctl bpa pool det inside 100.64.0.0/22 outside 200.150.0.16/28 block 512
 $HX -c "configure" \
-    -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
-    -c "cgnat logging enable" -c "commit" 2>&1 | sed 's/^/  /'
+    -c "nat" -c "cgnat" -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+    -c "logging enable" -c "commit" 2>&1 | sed 's/^/  /'
 vppctl show bpa logging | grep -iE "collector|enabled|records" | sed 's/^/  /'
 ARMED=$(vppctl show bpa logging)
 

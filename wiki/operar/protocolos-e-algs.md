@@ -22,11 +22,15 @@ Cinco, ligáveis por pool com `alg <nome> <on|off>`. Todos vêm **ligados**:
 
 ```
 configure
- nat cgnat pool residencial
-  alg ftp on
-  alg rtsp on
-  alg pptp on
-  alg sip on
+ nat
+  cgnat
+   pool residencial
+    alg ftp on
+    alg rtsp on
+    alg pptp on
+    alg sip on
+    exit
+   exit
   exit
  commit
 ```

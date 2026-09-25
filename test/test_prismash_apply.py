@@ -19,6 +19,8 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import config      # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nat_fixture import parse_nested      # noqa: E402
 import prismash      # noqa: E402
 import routes      # noqa: E402
 import system      # noqa: E402
@@ -114,7 +116,7 @@ def shell_with(api, running_text="", caps=None):
                             "show": lambda self, c: (1, ""),
                             "reload": lambda self, l, check_only=False: (0, "")})()
     sh._running_text = running_text
-    sh.running_config = lambda: config.Config.parse(running_text)
+    sh.running_config = lambda: parse_nested(running_text)
     return sh
 
 
@@ -429,7 +431,7 @@ DEMOTED = f"ssh permit-root-login no\nuser noc\n ssh-key {KEY}\n exit\n"
 sh = shell_with(FakeApi(), running_text=RUNNING)
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    ok = sh.apply(config.Config.parse(DEMOTED), check_only=True)
+    ok = sh.apply(parse_nested(DEMOTED), check_only=True)
 check(ok is False, "demoting the last administrator must be refused")
 check("nobody able to configure" in buf.getvalue(),
       f"and say why: {buf.getvalue()!r}")
@@ -441,7 +443,7 @@ print("  " + [l for l in buf.getvalue().splitlines() if "error" in l][0])
 sh = shell_with(FakeApi(), running_text=DEMOTED)
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    ok = sh.apply(config.Config.parse(DEMOTED + "user two\n exit\n"),
+    ok = sh.apply(parse_nested(DEMOTED + "user two\n exit\n"),
                   check_only=True)
 check(ok is True,
       f"a box with no administrator already must still commit: {buf.getvalue()!r}")
@@ -452,7 +454,7 @@ TWO = RUNNING + f"user two\n role administrator\n ssh-key {KEY}\n exit\n"
 sh = shell_with(FakeApi(), running_text=TWO)
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    ok = sh.apply(config.Config.parse(
+    ok = sh.apply(parse_nested(
         DEMOTED + f"user two\n role administrator\n ssh-key {KEY}\n exit\n"),
         check_only=True)
 check(ok is True, f"one of two administrators may be demoted: {buf.getvalue()!r}")
@@ -469,7 +471,9 @@ sh.dp.reachable = lambda: True
 # pool block, not the way in.
 sh.mode = "config"
 sh.candidate = config.Config()
-sh.feed("nat cgnat pool residential")
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("pool residential")
 sh.feed("inside 100.64.0.0/22")
 sh.feed("forward tcp 1650 to 100.64.0.5 8080")
 sh.feed("forward tcp 1650 to 100.64.0.6 8081")
@@ -543,7 +547,7 @@ api = FakeDataplane()
 sh = shell_with(api)
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    ok = sh.apply(config.Config.parse(SAVED_LOOPBACK))
+    ok = sh.apply(parse_nested(SAVED_LOOPBACK))
 check(ok is True,
       f"a box must be able to reload its own saved loopback: {buf.getvalue()!r}")
 order = [m for m, _ in api.calls]
@@ -565,7 +569,7 @@ api = FakeDataplane(existing=("host-veth-vpp",))
 sh = shell_with(api, running_text="")
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    sh.apply(config.Config.parse("""interface host-veth-vpp
+    sh.apply(parse_nested("""interface host-veth-vpp
  shutdown
  mtu 1500
  exit
@@ -651,19 +655,23 @@ api = FakeDataplane()
 sh = shell_with(api)
 sh.running_config = lambda: config.Config()
 with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
-    fh.write("""cgnat pool det
- inside 100.64.0.0/22
- outside 200.150.0.16/30
- mode deterministic
- max-blocks 2
- block-stride 3
- exit
-cgnat pool dyn
- inside 100.64.4.0/22
- outside 200.150.0.20/30
- mode dynamic
- max-blocks 2
- block-stride 3
+    fh.write("""nat
+ cgnat
+  pool det
+   inside 100.64.0.0/22
+   outside 200.150.0.16/30
+   mode deterministic
+   max-blocks 2
+   block-stride 3
+   exit
+  pool dyn
+   inside 100.64.4.0/22
+   outside 200.150.0.20/30
+   mode dynamic
+   max-blocks 2
+   block-stride 3
+   exit
+  exit
  exit
 """)
     saved = fh.name
@@ -684,7 +692,7 @@ check("dropped from pool dyn" not in out,
 # And the dynamic pool in this file exports nothing, so the boot that loads
 # it says so too (#444) - the one place a box nobody is typing at is heard.
 check("nothing exports its block events" in " ".join(out.split())
-      and "    nat cgnat pool dyn" in out.splitlines(),
+      and "    nat / cgnat / pool dyn" in out.splitlines(),
       f"a loaded dynamic pool with no export is warned at boot too: {out!r}")
 adds = {a["name"]: a for m, a in api.calls
         if m == "bpa_pool_add_del" and a.get("is_add")}
@@ -861,7 +869,7 @@ print(f"  a next hop nothing makes reachable: {_out!r}")
 #    check (#95): a route accepted here sits in FRR, never reaches the FIB, and
 #    `show ip route` looks correct.
 _sh = boot_shell(fib=CONFIGURED_FIB, running_text=SAVED_ROUTE)
-_sh.candidate = config.Config.parse(
+_sh.candidate = parse_nested(
     SAVED_ROUTE + " 10.55.0.0/16 next-hop 172.31.99.1\n")
 _buf = io.StringIO()
 with contextlib.redirect_stdout(_buf):
@@ -928,7 +936,7 @@ print(f"  a name nothing creates: {_out!r}")
 # A VRF address in the file makes a VRF route in the same file reachable, the
 # same way the global one does - `vrfs` is already the table number, which is
 # what makes the two halves key the same way (#255).
-_cfg = config.Config.parse("""interface GigabitEthernet0/12/0
+_cfg = parse_nested("""interface GigabitEthernet0/12/0
  vrf 10
  ipv4 address 172.31.99.1/24
  exit
@@ -942,7 +950,7 @@ check(_cfg.connected_prefixes() == {10: ["172.31.99.1/24"]},
 # made, so a key added here would turn the note into a refusal of a
 # configuration this VTY cannot see - the harm #208 was filed for. This half
 # may only ever ADD prefixes.
-_cfg = config.Config.parse("""interface GigabitEthernet0/12/0
+_cfg = parse_nested("""interface GigabitEthernet0/12/0
  vrf 10
  ipv6 address 2001:db8::1/64
  exit
@@ -1156,14 +1164,15 @@ print("\n=== a cgnat setting this VTY does not have is refused (#273) ===")
 
 def cfg_shell():
     sh = shell_with(FakeApi())
-    sh.candidate = config.Config.parse("")
+    sh.candidate = parse_nested("")
     sh.mode = "config"
+    sh.nat_ctx = ["nat", "cgnat"]      # typed where CGNAT is typed (#446)
     sh.failed = 0
     return sh
 
 
 _sh = cfg_shell()
-_sh.do_config("cgnat ha peer 10.0.0.2 priority 200")
+_sh.do_config("ha peer 10.0.0.2 priority 200")
 check(_sh.failed == 1,
       "an HA setting this VTY has no grammar for was accepted: it would be "
       "saved, shown back by 'show configuration', and applied to nothing")
@@ -1172,7 +1181,7 @@ check(not any("ha peer" in g for g in _sh.candidate.globals),
       f"written to the configuration file: {_sh.candidate.globals}")
 
 _sh = cfg_shell()
-_sh.do_config("cgnat completely made up nonsense")
+_sh.do_config("completely made up nonsense")
 check(_sh.failed == 1, "a wholly invented cgnat setting was accepted")
 
 # The other direction, and it is what keeps this from becoming a blanket
@@ -1184,7 +1193,7 @@ for _line in ("cgnat block-holddown 4",
               "cgnat timeout udp 300",
               "cgnat session-table buckets 64 memory 8"):
     _sh = cfg_shell()
-    _sh.do_config(_line)
+    _sh.do_config(_line[len("cgnat "):])
     check(_sh.failed == 0,
           f"{_line!r} was refused, and its setting is in CGNAT_CONFIG: the "
           f"refusal has become a blanket one")
@@ -1197,7 +1206,7 @@ for _line in ("cgnat block-holddown 4",
 _out = io.StringIO()
 _sh = cfg_shell()
 with contextlib.redirect_stdout(_out):
-    _sh.do_config("cgnat ha peer 10.0.0.2")
+    _sh.do_config("ha peer 10.0.0.2")
 _said = _out.getvalue()
 for _w in sorted(prismash.CGNAT_CONFIG):
     check(_w in _said,
@@ -1270,7 +1279,7 @@ check("clash" in _said,
 # the operator's next move (#252).
 check("    interface pg1 / ipv4 address 200.150.0.20/28" in _said,
       f"the address statement is not printed whole: {_said!r}")
-check("    cgnat pool clash / outside 200.150.0.16/28" in _said,
+check("    nat / cgnat / pool clash / outside 200.150.0.16/28" in _said,
       f"the pool statement is not printed whole: {_said!r}")
 # WHAT IT COSTS, not only that it is refused. The needle is collapsed on both
 # sides: console_prose wraps by measurement, so a raw-text needle only matches
@@ -1310,7 +1319,7 @@ _run = "interface pg1\n ipv4 address 200.150.0.20/28\n"
 _out = io.StringIO()
 _sh = shell_with(FakeApi(), running_text=_run)
 with contextlib.redirect_stdout(_out):
-    _ok = _sh.apply(config.Config.parse(
+    _ok = _sh.apply(parse_nested(
         _run + "cgnat pool clash\n inside 100.64.0.0/22\n"
         " outside 200.150.0.16/28\n"), check_only=True)
 check(_ok is False,
@@ -1327,7 +1336,7 @@ _run = ("cgnat pool clash\n inside 100.64.0.0/22\n"
         " outside 200.150.0.16/28\n exit\n")
 _out = io.StringIO()
 _sh = shell_with(FakeApi(), running_text=_run)
-_cand = config.Config.parse(
+_cand = parse_nested(
     _run + "interface pg1\n ipv4 address 200.150.0.20/28\n")
 # The fixture READ back rather than assumed. Without the ` exit` above, the
 # interface statement is swallowed into the pool block, the candidate holds no
@@ -1420,7 +1429,7 @@ _run = ("cgnat pool old\n inside 100.64.0.0/22\n"
         " outside 200.150.9.0/28\n block-size 512\n ports 1000 1100\n exit\n")
 _out = io.StringIO()
 _sh = shell_with(FakeApi(), running_text=_run)
-_cand = config.Config.parse(_run + "interface pg1\n mtu 9000\n")
+_cand = parse_nested(_run + "interface pg1\n mtu 9000\n")
 check(list(_cand.pools) == ["old"] and _cand.pools["old"].ports == "1000 1100",
       f"the fixture does not carry the standing pool: {list(_cand.pools)}")
 with contextlib.redirect_stdout(_out):
@@ -1496,7 +1505,7 @@ def pairs_made(api):
 
 
 _sh = card_shell()
-_target = config.Config.parse("interface ens19\n ipv4 address "
+_target = parse_nested("interface ens19\n ipv4 address "
                               "203.0.113.1/24\n exit\n")
 _buf = io.StringIO()
 with contextlib.redirect_stdout(_buf):
@@ -1518,7 +1527,7 @@ print(f"  interface ens19, no linux-name: pairs {pairs_made(_sh.api)}")
 # That block counts: the operator who typed it is the one expecting FRR to
 # see the port.
 _sh = card_shell()
-_target = config.Config.parse("! routing\ninterface ens19\nexit\n")
+_target = parse_nested("! routing\ninterface ens19\nexit\n")
 check(not _target.interface_names() and _target.frr_interface_names()
       == ["ens19"],
       f"the fixture is not a block held only by the routing section: "
@@ -1539,7 +1548,7 @@ print("  interface ens19 with nothing in it: paired all the same")
 # `loop0` is a name Linux never had - its own loopback is `lo` - so it is free
 # for the same practical reason a claimed card's is.
 _sh = card_shell()
-_target = config.Config.parse("interface loop0\n ipv4 address "
+_target = parse_nested("interface loop0\n ipv4 address "
                               "10.99.0.1/32\n exit\n")
 with contextlib.redirect_stdout(io.StringIO()):
     _ok = _sh.apply(_target)
@@ -1552,7 +1561,7 @@ check(_target.linux_names.get("loop0") == "loop0",
       f"is, so the next commit does not remove it: {_target.linux_names!r}")
 # The override still wins, for a loopback as for a card.
 _sh = card_shell()
-_target = config.Config.parse("interface loop0\n linux-name lo9\n exit\n")
+_target = parse_nested("interface loop0\n linux-name lo9\n exit\n")
 with contextlib.redirect_stdout(io.StringIO()):
     _sh.apply(_target)
 check([p[1:] for p in pairs_made(_sh.api)] == [("lo9", True)],
@@ -1566,7 +1575,7 @@ print("  interface loop0: paired as itself, and the override still wins")
 # go first. The running configuration is read off `show lcp`.
 _sh = card_shell(running_text="interface ens19\n linux-name ens19\n exit\n",
                  lcp="itf-pair: [0] ens19 tap0 ens19 5 type tap\n")
-_target = config.Config.parse("interface ens19\n linux-name wan0\n exit\n")
+_target = parse_nested("interface ens19\n linux-name wan0\n exit\n")
 _buf = io.StringIO()
 with contextlib.redirect_stdout(_buf):
     _ok = _sh.apply(_target)
@@ -1583,7 +1592,7 @@ print(f"  linux-name wan0 over the default: pairs {pairs_made(_sh.api)}")
 # hardware-interfaces`, and every one of them expects no pair it did not ask
 # for.
 _sh = boot_shell()
-_target = config.Config.parse("interface GigabitEthernet0/12/0\n ipv4 "
+_target = parse_nested("interface GigabitEthernet0/12/0\n ipv4 "
                               "address 203.0.113.1/24\n exit\n")
 with contextlib.redirect_stdout(io.StringIO()):
     _sh.apply(_target)
@@ -1626,7 +1635,11 @@ print("\n=== --load on the upgraded box: the saved name is the card's old "
 # that address under its Linux name, and the file is loaded under the new
 # name with a note. Every place the file uses the name, not only the block:
 # the CGNAT attachment, the FRR stanza, a sub-interface's tag kept.
-SAVED_OLD = """nat cgnat interface GigabitEthernet0/13/0 inside
+SAVED_OLD = """nat
+ cgnat
+  interface GigabitEthernet0/13/0 inside
+  exit
+ exit
 interface GigabitEthernet0/13/0
  ipv4 address 203.0.113.1/24
  exit
@@ -1765,7 +1778,11 @@ IF_D8_ONLY = """              Name               Idx    State  MTU (L3/IP4/IP6/M
 ens5f0                            1      up          9000/0/0/0
 local0                            0     down          0/0/0/0
 """
-SAVED_D8 = """nat cgnat interface TenGigabitEthernetd8/0/0 inside
+SAVED_D8 = """nat
+ cgnat
+  interface TenGigabitEthernetd8/0/0 inside
+  exit
+ exit
 interface TenGigabitEthernetd8/0/0
  ipv4 address 203.0.113.1/24
  exit
@@ -1920,7 +1937,7 @@ print("\n=== `no linux-name` on a claimed card: the default returns at "
 # There is no statement that unpairs a card with a block, and `no interface
 # <card>` is refused, so the prompt says which of the two it is.
 _sh = card_shell()
-_sh.candidate = config.Config.parse("interface ens19\n linux-name wan0\n"
+_sh.candidate = parse_nested("interface ens19\n linux-name wan0\n"
                                     " exit\n")
 _sh.mode = "config"
 _sh.frr_ctx = ["interface ens19"]
@@ -1942,7 +1959,7 @@ check("ens19 is a card with an interface block" in flat(_buf.getvalue())
 # loopback is what creates it - one typed a moment ago is on no dataplane to
 # be asked about.
 _sh = card_shell()
-_sh.candidate = config.Config.parse("interface loop0\n linux-name lo9\n"
+_sh.candidate = parse_nested("interface loop0\n linux-name lo9\n"
                                     " exit\n")
 _sh.candidate.loopbacks.add("loop0")
 _sh.mode = "config"
@@ -1957,7 +1974,7 @@ check("the default returns at commit" in _buf.getvalue()
 # And a sub-interface still gets no default, so `no linux-name` on one really
 # does unpair it and a warning there would be false.
 _sh = card_shell()
-_sh.candidate = config.Config.parse("interface ens19.100\n vlan 100\n"
+_sh.candidate = parse_nested("interface ens19.100\n vlan 100\n"
                                     " linux-name sub9\n exit\n")
 _sh.mode = "config"
 _sh.frr_ctx = ["interface ens19.100"]
@@ -1982,7 +1999,7 @@ prismash.STATIC_DESC_PATH = os.path.join(_desc_tmp, "static-route-descriptions")
 try:
     _running = "! routing\nip route 10.0.0.0/8 1.2.3.4\n"
     _sh = shell_with(FakeApi(), _running)
-    _target = config.Config.parse(_running)
+    _target = parse_nested(_running)
     _target.static_descriptions = {"ip route 10.0.0.0/8 1.2.3.4": "to POP-1"}
     _ok = _sh.apply(_target)
     with open(prismash.STATIC_DESC_PATH) as _f:
@@ -2004,7 +2021,7 @@ with open(os.path.join(_dns_root, "etc", "resolv.conf"), "w") as _f:
     _f.write("nameserver 192.0.2.53\n")
 _sh = shell_with(FakeApi(), "")
 _sh.sys = system.System(root=_dns_root)
-_target = config.Config.parse("dns server 1.1.1.1\ndns server 9.9.9.9\n")
+_target = parse_nested("dns server 1.1.1.1\ndns server 9.9.9.9\n")
 _ok = _sh.apply(_target)
 check(_ok and _sh.sys.read_dns() == ["1.1.1.1", "9.9.9.9"],
       f"the servers are what the box now asks: {_ok} {_sh.sys.read_dns()!r}")

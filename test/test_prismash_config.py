@@ -28,6 +28,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import config      # noqa: E402
+sys.path.insert(0, os.path.dirname(__file__))
+from nat_fixture import parse_nested      # noqa: E402
 import system      # noqa: E402
 
 fail = 0
@@ -317,18 +319,23 @@ if m:
     print("  what install.sh writes:")
     for line in default.splitlines():
         print(f"    {line!r}")
-    parsed = config.Config.parse(default)
+    parsed = parse_nested(default)
     check(parsed.unknown == [],
           f"the installer's own default file does not parse: {parsed.unknown}")
     check(parsed.pools == {},
           f"a file of comments must produce no configuration: {parsed.pools}")
 
 print("\n=== '!' is a comment, except where it is a section header ===")
-c = config.Config.parse("""!
+c = parse_nested("""!
 ! a comment
-cgnat pool p
- inside 100.64.0.0/22
- outside 200.150.0.16/30
+nat
+ cgnat
+  ! a comment inside the block
+  pool p
+   inside 100.64.0.0/22
+   outside 200.150.0.16/30
+   exit
+  exit
  exit
 !
 ! routing
@@ -353,45 +360,67 @@ print(f"  routing section: {c.routing}")
 # prisma-routing.service failed on the first boot of every install (#121).
 print("\n=== the installer's own default configuration ===")
 INSTALLED_DEFAULT = "!\n! Prisma Routing\n!\n"
-check(config.Config.parse(INSTALLED_DEFAULT).is_empty(),
+check(parse_nested(INSTALLED_DEFAULT).is_empty(),
       "the file install.sh writes holds no statements")
-check(config.Config.parse("").is_empty(), "and neither does an empty file")
-check(config.Config.parse("\n\n   \n").is_empty(), "nor blank lines")
+check(parse_nested("").is_empty(), "and neither does an empty file")
+check(parse_nested("\n\n   \n").is_empty(), "nor blank lines")
 
 # The distinction that matters, and the one an is_empty() written against the
 # fields gets wrong: ssh and snmp start as copies of their defaults, so a file
 # setting one of them to its default value looks identical to a file that said
 # nothing. It is not nothing - it is a statement, and it MUST be checked like
 # any other.
-check(not config.Config.parse("ssh password-authentication yes\n").is_empty(),
+check(not parse_nested("ssh password-authentication yes\n").is_empty(),
       "a statement whose value happens to be the default is still a statement")
-check(not config.Config.parse("cgnat logging enable\n").is_empty(),
+check(not parse_nested("nat\n cgnat\n  logging enable\n  exit\n exit\n").is_empty(),
       "an ordinary statement is not empty")
-check(not config.Config.parse("! routing\nrouter bgp 65000\n").is_empty(),
+check(not parse_nested("! routing\nrouter bgp 65000\n").is_empty(),
       "a routing section alone is not empty")
 
 
 # ---------------------------------------------------------------------------
-# The hierarchies moved, and every box in service is written in the old ones
-# (#193).
+# The hierarchies (#193, #446).
 #
-# CGNAT is under `nat` now and static routes are under `router`. Neither
-# hierarchy exists in the tool underneath - VPP's plugin knows `cgnat`, FRR has
-# no `router static` at all - so both are translated. The property that matters
-# is not that the new spelling works; it is that the OLD one still does, in
-# both directions, because prisma-routing.service replays a saved file at every
-# boot on a machine nobody is watching, and every rollback revision on a box
-# already in service is written the old way.
+# CGNAT is the `nat` > `cgnat` block and static routes are `router static`.
+# Neither exists in the tool underneath - VPP's plugin knows `cgnat`, FRR has
+# no `router static` at all - so both are translated. Since #446 the
+# one-line CGNAT form a box used to write, and the older bare `cgnat ...`, are
+# REFUSED in a file, by the maintainer's decision of 2026-09-24 (the #436
+# precedent): a file that still has them is refused whole, and the upgrade
+# page says `save` comes before the reboot.
 
 OLD_FILE = """! cgnat
 cgnat pool residential
  inside 100.64.0.0/22
  outside 203.0.113.0/24
- block-size 512
- policy interleaved
- mode deterministic
  exit
-cgnat interface pg0 inside
+nat cgnat interface pg0 inside
+cgnat timeout udp 300
+"""
+old = config.Config.parse(OLD_FILE)
+check([u[1] for u in old.unknown if "one-line" in u[2]]
+      == ["cgnat pool residential", "nat cgnat interface pg0 inside",
+          "cgnat timeout udp 300"],
+      f"every one-line CGNAT statement is refused, by line: {old.unknown}")
+check(all(u[2] == config.ONE_LINE_GONE for u in old.unknown
+          if u[1].startswith(("cgnat", "nat"))),
+      "and says what to type instead")
+check(not old.pools and not old.interfaces and not old.globals,
+      "and none of it is half-read into the model")
+
+NEW_FILE = """! cgnat
+nat
+ cgnat
+  pool residential
+   inside 100.64.0.0/22
+   outside 203.0.113.0/24
+   block-size 512
+   policy interleaved
+   mode deterministic
+   exit
+  interface pg0 inside
+  exit
+ exit
 ! routing
 router bgp 65000
  bgp router-id 10.0.0.1
@@ -401,18 +430,21 @@ vrf red
  ip route 10.0.0.0/8 192.0.2.1
  exit-vrf
 """
-
-old = config.Config.parse(OLD_FILE)
-check(not old.unknown, f"a file in the old hierarchy still loads: {old.unknown}")
+old = parse_nested(NEW_FILE)
+check(not old.unknown, f"a file in the nat > cgnat block loads: {old.unknown}")
 check(list(old.pools) == ["residential"] and old.interfaces == {"pg0": "inside"},
       "with its CGNAT intact")
 check("ip route 0.0.0.0/0 10.0.0.2" in old.routing,
       f"and its static routes: {old.routing}")
+for _bad, _why in (("nat\n pool x\n exit\n", "under 'nat'"),):
+    _u = config.Config.parse(_bad).unknown
+    check(_u and _why in _u[0][2], f"a statement under 'nat' that is not "
+          f"'cgnat' is refused: {_u}")
 
 # Written back out, it comes out in the NEW hierarchy...
 new_text = old.text()
-check("nat cgnat pool residential" in new_text,
-      f"CGNAT is written under nat: {new_text}")
+check("nat\n cgnat\n  pool residential\n   inside 100.64.0.0/22" in new_text,
+      f"CGNAT is written as the nat > cgnat block: {new_text}")
 check("router static" in new_text
       and " 0.0.0.0/0 next-hop 10.0.0.2" in new_text,
       f"and static routes as a block under router: {new_text}")
@@ -422,9 +454,9 @@ check("\nip route " not in new_text,
 # ...and reading that back gives the same configuration. This is the assertion
 # that would fail if the translation were one-way: the box would save a file it
 # could not read at the next boot.
-back = config.Config.parse(new_text)
-check(not back.unknown, f"the new hierarchy loads: {back.unknown}")
-check(back.is_same(old), "an old file and its rewritten form are one configuration")
+back = parse_nested(new_text)
+check(not back.unknown, f"what the box writes, it reads: {back.unknown}")
+check(back.is_same(old), "a file and its rewritten form are one configuration")
 check(back.routing == old.routing,
       f"including the routing lines FRR is handed: {back.routing}")
 
@@ -505,25 +537,19 @@ check("  maximum-paths 4" in held,
 # The family comes from the prefix, not from a keyword: a prefix with a colon
 # in it is IPv6 and nothing else, and asking for it twice is asking the
 # operator to contradict themselves.
-v6 = config.Config.parse("! routing\nrouter static\n 2001:db8::/32 next-hop fe80::1\n exit\n")
+v6 = parse_nested("! routing\nrouter static\n 2001:db8::/32 next-hop fe80::1\n exit\n")
 check(v6.routing == ["ipv6 route 2001:db8::/32 fe80::1"],
       f"an IPv6 prefix becomes an ipv6 route: {v6.routing}")
 
-# Both spellings in ONE file - which is what a hand-edited file looks like
-# during a migration, and what a rollback revision written either side of an
-# upgrade looks like.
-mixed = config.Config.parse("""! cgnat
-nat cgnat interface pg0 inside
-cgnat interface pg1 outside
-! routing
+# Both static-route spellings in ONE file still load (the CGNAT one-line form
+# does not, above): `ip route` is FRR's own statement and the box reads it.
+mixed = parse_nested("""! routing
 router static
  0.0.0.0/0 next-hop 10.0.0.2
  exit
 ip route 198.51.100.0/24 blackhole
 """)
-check(not mixed.unknown, f"a file in both hierarchies loads: {mixed.unknown}")
-check(mixed.interfaces == {"pg0": "inside", "pg1": "outside"},
-      f"both CGNAT spellings: {mixed.interfaces}")
+check(not mixed.unknown, f"a file in both route spellings loads: {mixed.unknown}")
 check(mixed.routing == ["ip route 0.0.0.0/0 10.0.0.2",
                         "ip route 198.51.100.0/24 blackhole"],
       f"both static-route spellings: {mixed.routing}")
@@ -548,21 +574,22 @@ cfg.globals = ["cgnat logging enable",
 # carries it rather than being loosened to match either spelling: a file with
 # one group prefixed and another not is exactly what that issue was.
 written = [l for l in cfg.text().splitlines()
-           if l.startswith("nat cgnat logging")]
-check(written == ["nat cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739",
-                  "nat cgnat logging enable"],
+           if l.startswith("  logging")]
+check(written == ["  logging udp 10.0.0.2 src 10.0.0.1 port 4739",
+                  "  logging enable"],
       f"the exporter comes first however the statements were typed: {written}")
 
 # The rest stays alphabetical, so two boxes holding the same configuration
 # write the same file and a diff of two saved files is a diff of the settings.
-allg = [l for l in cfg.text().splitlines() if l.startswith("nat cgnat ")]
+allg = [l for l in cfg.text().splitlines()
+        if l.startswith("  ") and not l.startswith("   ") and l != "  exit"]
 # Indexed only after it is known to have something in it. `allg[0]` on an
 # empty list is an IndexError, which kills the suite where a red check would
 # have named the defect and let the rest run - and the rest is where the
 # spelling this file is about is measured.
 check(allg, f"the renderer wrote no CGNAT statement at all, so the order "
             f"below is measured on nothing: {cfg.text()!r}")
-check(allg and allg[0] == "nat cgnat block-holddown 11",
+check(allg and allg[0] == "  block-holddown 11",
       f"and everything else keeps its order: {allg}")
 # ONE SPELLING IN THE FILE (#356). The pools and the interface attachments
 # have carried `nat ` since the hierarchy moved and the globals did not, so a
@@ -571,21 +598,21 @@ check(allg and allg[0] == "nat cgnat block-holddown 11",
 cfg2 = config.Config()
 cfg2.globals = ["cgnat timeout udp 300"]
 cfg2.pools["P"] = config.Pool("P")
-_lines = [l for l in cfg2.text().splitlines() if "cgnat" in l]
-check(all(l.startswith("nat cgnat") or l.startswith(" ") or
-          l.startswith("!") for l in _lines),
-      f"the file writes CGNAT statements in two spellings: {_lines}")
+_text = cfg2.text()
+check("\ncgnat" not in _text and "nat cgnat" not in _text
+      and "  pool P" in _text and "  timeout udp 300" in _text,
+      f"the file writes CGNAT statements outside the block: {_text}")
 # And a file written this way still reads back, because the parser has taken
 # both spellings since the hierarchy moved and stores the bare one.
-check(config.Config.parse(cfg2.text()).globals == ["cgnat timeout udp 300"],
+check(parse_nested(cfg2.text()).globals == ["cgnat timeout udp 300"],
       f"a file this box wrote does not load on this box: "
-      f"{config.Config.parse(cfg2.text()).globals} "
-      f"{config.Config.parse(cfg2.text()).unknown}")
+      f"{parse_nested(cfg2.text()).globals} "
+      f"{parse_nested(cfg2.text()).unknown}")
 
 # Read back and written again: a file the box wrote must survive the trip,
 # because that is what `rollback` replays and what the boot applies.
-again = [l for l in config.Config.parse(cfg.text()).text().splitlines()
-         if l.startswith("nat cgnat logging")]
+again = [l for l in parse_nested(cfg.text()).text().splitlines()
+         if l.startswith("  logging")]
 check(again == written, f"and the order survives a round trip: {again}")
 
 # `enable` and `disable` are ONE setting and two values. Keyed on the value,
@@ -632,8 +659,8 @@ check(len(fp.forwards) == 2,
 rt = config.Pool("p")
 rt.forwards = [("tcp", 1650, "100.64.0.5", 8080),
                ("tcp", 1650, "100.64.0.6", 8081)]
-back = config.Config.parse("\n".join(["! cgnat", "cgnat pool p"]
-                                     + rt.lines()))
+back = parse_nested("\n".join(["! cgnat"]
+                                     + config.nest_cgnat(rt.lines())))
 check(sorted(back.pools["p"].forwards) == sorted(rt.forwards),
       f"both survive a round trip through the text: {back.pools['p'].forwards}")
 
@@ -648,7 +675,7 @@ check(sorted(back.pools["p"].forwards) == sorted(rt.forwards),
 # all, which is the symptom #182 was opened about reached through another
 # door. Measured in lab/lcp.sh by taking a pair down and reloading the file
 # the box had saved.
-dev = config.Config.parse("""interface tap4097
+dev = parse_nested("""interface tap4097
  mac-address de:ad:00:00:00:07
  mtu 9000
  exit
@@ -680,7 +707,7 @@ check(dev.linux_names.get("host-veth-vpp") == "vppwan0",
 # Dropping it by shape would take a real interface out of the running
 # configuration and the NEXT commit would remove it from the device, which is
 # #47.
-own = config.Config.parse("""interface tap0
+own = parse_nested("""interface tap0
  mtu 1400
  exit
 """)
@@ -715,7 +742,7 @@ check(s2.interfaces == {"tap4096": "outside", "pg0": "inside"},
 # interface_names is what the load path asks which interfaces a file names,
 # and it is the same union the renderer walks - so a field added to one and
 # not the other cannot go unnoticed.
-named = config.Config.parse("""interface loop3
+named = parse_nested("""interface loop3
  ipv4 address 10.0.0.1/32
  exit
 interface tap4096
@@ -734,10 +761,14 @@ check(named == {"loop3", "tap4096"}, f"the interfaces a file names: {named}")
 # message and the in-place settings message - and a field added to one of them
 # is a feature that exists through whichever path the author happened to test.
 print("\n=== block-stride survives every rendering of a pool ===")
-_p = config.Config.parse("""cgnat pool striding
- inside 100.64.0.0/22
- outside 200.150.0.16/28
- block-stride 3
+_p = parse_nested("""nat
+ cgnat
+  pool striding
+   inside 100.64.0.0/22
+   outside 200.150.0.16/28
+   block-stride 3
+   exit
+  exit
  exit
 """).pools["striding"]
 check(_p.block_stride == 3, f"parsed: {_p.block_stride}")
@@ -768,10 +799,14 @@ print("  parsed, read back, and in both API messages")
 # a dataplane that cannot act on it, and the operator would read their own
 # `reserve 4` back off a box still mapping every block (issue #39).
 print("\n=== reserve is a mapping change, in every rendering ===")
-_r = config.Config.parse("""cgnat pool reserved
- inside 100.64.0.0/22
- outside 200.150.0.16/28
- reserve 4
+_r = parse_nested("""nat
+ cgnat
+  pool reserved
+   inside 100.64.0.0/22
+   outside 200.150.0.16/28
+   reserve 4
+   exit
+  exit
  exit
 """).pools["reserved"]
 check(_r.block_reserve == 4, f"parsed: {_r.block_reserve}")
@@ -813,17 +848,55 @@ check(len(_D) == config.MAPPING_DIGEST_CHARS, f"sixteen characters: {_D}")
 check(config.mapping_digest(["ab"]) != config.mapping_digest(["a", "b"]),
       "the line break is part of the text, so two lines are not one")
 
-# strip_nat: the `nat` hierarchy taken off in both spellings, and a line
-# outside it returned as it was, indentation and all.
-check(config.strip_nat("nat cgnat pool p") == "cgnat pool p",
-      f"nat cgnat -> cgnat: {config.strip_nat('nat cgnat pool p')!r}")
-check(config.strip_nat("no nat cgnat pool p") == "no cgnat pool p",
-      f"no nat cgnat -> no cgnat: {config.strip_nat('no nat cgnat pool p')!r}")
-check(config.strip_nat(" nat ") == "", "the bare hierarchy word is nothing")
-check(config.strip_nat(" interface x") == " interface x",
-      "a line outside the hierarchy is returned verbatim")
-check(config.strip_nat("nature is not nat") == "nature is not nat",
-      "a word that starts with nat is not the hierarchy")
+# one_line_cgnat, nest_cgnat and denest_nat (#446): the form that is gone,
+# and the two directions between the block and the model's flat statements.
+for _w, _is in ((["nat", "cgnat", "pool", "p"], True),
+                (["cgnat", "timeout", "udp", "30"], True),
+                (["no", "nat", "cgnat", "pool", "p"], True),
+                (["no", "cgnat", "interface", "x"], True),
+                (["nat"], False), (["nature"], False),
+                (["interface", "cgnat0"], False)):
+    check(config.one_line_cgnat(_w) == _is,
+          f"one_line_cgnat({' '.join(_w)!r}) is {_is}")
+_flat = ["cgnat pool p", " inside 10.0.0.0/8", " exit",
+         "cgnat interface x inside", "cgnat timeout udp 30"]
+_nested = config.nest_cgnat(_flat)
+check(_nested == ["nat", " cgnat", "  pool p", "   inside 10.0.0.0/8",
+                  "   exit", "  interface x inside", "  timeout udp 30",
+                  "  exit", " exit"],
+      f"nest_cgnat writes the block: {_nested}")
+check(config.nest_cgnat([]) == [], "and nothing at all for nothing")
+_back, _bad = config.denest_nat(enumerate(_nested, 1))
+check([l for _, l in _back] == _flat and not _bad,
+      f"denest_nat reads it back to the same statements: {_back} {_bad}")
+_back, _bad = config.denest_nat(enumerate(
+    ["nat cgnat pool p", "! routing", "cgnat is a word FRR may never say"], 1))
+check([b[1] for b in _bad] == ["nat cgnat pool p"]
+      and (3, "cgnat is a word FRR may never say") in _back,
+      f"the one-line form is refused, and the routing section is not read "
+      f"for it: {_back} {_bad}")
+_back, _bad = config.denest_nat(enumerate(["nat", " pool p", " exit"], 1))
+check(_bad and _bad[0][:2] == (2, "pool p"),
+      f"under 'nat' only 'cgnat' is read: {_bad}")
+# Config.cgnat_block: the model written as the block, nothing for nothing.
+_cb = config.Config()
+check(_cb.cgnat_block() == [] and _cb.is_empty(),
+      "an empty configuration writes no block and is empty")
+_cb.pools["p"] = config.Pool("p")
+_cb.globals = ["cgnat timeout udp 30"]
+_blk = _cb.cgnat_block()
+check(_blk[:3] == ["nat", " cgnat", "  pool p"] and "  timeout udp 30" in _blk
+      and _blk[-2:] == ["  exit", " exit"],
+      f"a pool and a global are the block: {_blk}")
+# is_empty() counts statements READ, so a file holding only the block is not
+# empty - the block's statements are statements (#446).
+check(not config.Config.parse("\n".join(_blk) + "\n").is_empty(),
+      "a file holding only the block is not an empty file")
+try:
+    config.nest_cgnat(["interface x"])
+    check(False, "nest_cgnat takes a statement that is not CGNAT")
+except ValueError:
+    pass
 
 # opens_frr_block: the openers, and rpki as the one with no name.
 check(config.opens_frr_block("router bgp 65000"), "router opens a block")
@@ -1306,7 +1379,10 @@ print("\n=== a pool block a hand cannot crash (#412) ===")
 # block-size, ports and vrf reach it one step later in Pool.api_args, so they
 # crashed the COMMIT rather than the parse - the same defect, further from the
 # operator.
-_POOL_HEAD = "cgnat pool p\n inside 10.0.0.0/8\n outside 200.0.0.0/24\n"
+# In the nat > cgnat block (#446), so the refused statement is line 6 of
+# what a hand would edit.
+_POOL_HEAD = ("nat\n cgnat\n  pool p\n   inside 10.0.0.0/8\n"
+              "   outside 200.0.0.0/24\n")
 _CANNOT_CRASH = [
     ("timeout", " timeout udp abc\n", "timeout udp 'abc'"),
     ("timeout, negative", " timeout udp -5\n", "timeout udp '-5'"),
@@ -1324,7 +1400,7 @@ _CANNOT_CRASH = [
 ]
 for label, stmt, needle in _CANNOT_CRASH:
     try:
-        cfg = config.Config.parse(_POOL_HEAD + stmt)
+        cfg = parse_nested(_POOL_HEAD + "  " + stmt)
     except Exception as e:                                  # noqa: BLE001
         check(False, f"{label}: parse raised {type(e).__name__}: {e}")
         continue
@@ -1332,7 +1408,7 @@ for label, stmt, needle in _CANNOT_CRASH:
           f"{label}: refused as one unknown line, got {cfg.unknown!r}")
     if cfg.unknown:
         lineno, text, why = cfg.unknown[0]
-        check(lineno == 4,
+        check(lineno == 6,
               f"{label}: naming the line a hand would edit, got {lineno}")
         check(text == stmt.strip(),
               f"{label}: and the statement whole, got {text!r}")
@@ -1357,7 +1433,7 @@ _DATAPLANE_SAYS = [
     ("vrf 0, which is a real table", " vrf 0\n"),
 ]
 for label, stmt in _DATAPLANE_SAYS:
-    cfg = config.Config.parse(_POOL_HEAD + stmt)
+    cfg = parse_nested(_POOL_HEAD + stmt)
     check(not cfg.unknown, f"{label}: refused, and must not be: {cfg.unknown!r}")
     if not cfg.unknown:
         pool = cfg.pools["p"]
@@ -1573,7 +1649,7 @@ _ADDRESS_DOORS = [
     ("snmp listen-address", "snmp listen-address potato\n"),
 ]
 for label, text in _ADDRESS_DOORS:
-    cfg = config.Config.parse(text)
+    cfg = parse_nested(text)
     check(len(cfg.unknown) == 1,
           f"{label}: a saved file took it: {cfg.unknown!r}")
 # And the control, because a check that refuses everything is not a check.
@@ -1582,7 +1658,7 @@ _GOOD = ("cgnat pool p\n inside 100.64.0.0/10\n outside 203.0.113.0/24\n"
          "interface pg0\n ipv4 address 10.0.0.5/8\n"
          " ipv6 address 2001:db8::1/64\n"
          "ssh listen-address 0.0.0.0\nsnmp listen-address 127.0.0.1\n")
-_cfg = config.Config.parse(_GOOD)
+_cfg = parse_nested(_GOOD)
 check(not _cfg.unknown, f"a configuration of real values is taken whole: "
                         f"{_cfg.unknown!r}")
 check(_cfg.pools["p"].inside == ["100.64.0.0/10"]
@@ -1649,8 +1725,8 @@ check(config.mac_normal("2:0:0:0:0:1") == "02:00:00:00:00:01",
       "a short octet is padded")
 check(config.mac_normal("AA:BB:CC:DD:EE:FF") == "aa:bb:cc:dd:ee:ff",
       "and the case is the dataplane's")
-_typed = config.Config.parse("interface pg0\n mac-address 2:0:0:0:0:1\n")
-_device = config.Config.parse(
+_typed = parse_nested("interface pg0\n mac-address 2:0:0:0:0:1\n")
+_device = parse_nested(
     "interface pg0\n mac-address 02:00:00:00:00:01\n")
 check(_typed.is_same(_device),
       f"so a short spelling equals what the box reports: {_typed.macs!r} "
@@ -1677,11 +1753,11 @@ print("\n=== a MAC in a saved file: the shape, and not the policy (#419) ===")
 # The shape is still refused at both doors: a word that is not six hex octets
 # is not something any readback can produce.
 for value in ("zz:zz:zz:zz:zz:zz", "1:2:3:4:5:6789"):
-    _cfg = config.Config.parse(f"interface pg0\n mac-address {value}\n")
+    _cfg = parse_nested(f"interface pg0\n mac-address {value}\n")
     check(len(_cfg.unknown) == 1,
           f"a saved file took the malformed {value!r}: {_cfg.unknown!r}")
 for value in ("ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01"):
-    _cfg = config.Config.parse(f"interface pg0\n mac-address {value}\n")
+    _cfg = parse_nested(f"interface pg0\n mac-address {value}\n")
     check(not _cfg.unknown and _cfg.macs == {"pg0": value},
           f"a saved file must TAKE {value!r}, which a box can report: "
           f"{_cfg.unknown!r}")
@@ -1689,7 +1765,7 @@ for value in ("ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01"):
           f"and the prompt must still refuse it: {value!r}")
     check(config.mac_error(value, request=False) is None,
           f"the same value read back as a fact is not refused: {value!r}")
-_cfg = config.Config.parse("interface pg0\n mac-address 02:00:00:00:00:01\n")
+_cfg = parse_nested("interface pg0\n mac-address 02:00:00:00:00:01\n")
 check(not _cfg.unknown and _cfg.macs == {"pg0": "02:00:00:00:00:01"},
       f"and a real one is taken whole: {_cfg.macs!r} {_cfg.unknown!r}")
 print("  the file door, four refusals and a control")
@@ -1861,7 +1937,7 @@ for _bad, _why in (("up\x07link", "a BEL, which a terminal sounds"),
 # The FILE takes it, since #419: an interface tag is 64 bytes of whatever a
 # byte can be, `device_descriptions` reports what the box holds, and refusing
 # one here would refuse a file the box itself wrote.
-_typed = config.Config.parse("interface pg0\n description up\x07link\n")
+_typed = parse_nested("interface pg0\n description up\x07link\n")
 check(not _typed.unknown and _typed.descriptions == {"pg0": "up\x07link"},
       f"a saved file takes what the box can hold: {_typed.unknown!r}")
 check(config.text_error("description", "up\x07link", request=False) is None,
@@ -1895,10 +1971,10 @@ _TEXT_DOORS = [
     ("description", "interface pg0\n description " + "A" * 4000 + "\n"),
 ]
 for _label, _text in _TEXT_DOORS:
-    _cfg = config.Config.parse(_text)
+    _cfg = parse_nested(_text)
     check(len(_cfg.unknown) == 1,
           f"{_label}: a saved file took it: {_cfg.unknown!r}")
-_cfg = config.Config.parse(
+_cfg = parse_nested(
     "cgnat pool residential\n exit\nuser netadm\n exit\n"
     "interface pg0\n description uplink para o tr\u00e2nsito\n")
 check(not _cfg.unknown and "residential" in _cfg.pools
@@ -1981,7 +2057,7 @@ for typed in ("192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100",
 
 print("\n=== a saved file carries a description, and refuses what the "
       "prompt refuses (#436) ===")
-_desc_file = config.Config.parse("""! routing
+_desc_file = parse_nested("""! routing
 router static
  192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 description link to POP-2
  10.0.0.0/8 next-hop blackhole
@@ -1999,7 +2075,7 @@ check(_desc_file.static_descriptions
 check(" 192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100 description "
       "link to POP-2" in _desc_file.text().splitlines(),
       "written back exactly as it was read")
-_old_file = config.Config.parse("! routing\nrouter static\n"
+_old_file = parse_nested("! routing\nrouter static\n"
                                 " route 10.9.0.0/16 10.0.0.9\n exit\n")
 check(_old_file.routing == []
       and [(n, t) for n, t, _ in _old_file.unknown]

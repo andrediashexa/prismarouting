@@ -119,8 +119,8 @@ place to say so is the screen somebody is looking at while they type.
 
 The shapes are in `HINT_NOTES`, keyed by the marker they belong under, and are
 folded to the console by `console_prose` — the sentence is 90 columns and this
-is a screen read on a serial console. `show interface <name>` and `nat cgnat
-interface <name>` keep the plain `<interface>` marker: those take a name the
+is a screen read on a serial console. `show interface <name>` and `interface
+<name>` under `nat` > `cgnat` keep the plain `<interface>` marker: those take a name the
 box HAS, and offering "or invent one" there would be offering a name they
 refuse.
 
@@ -1302,8 +1302,8 @@ and the code says so.
 The configuration of the hierarchy being edited, and nothing above it:
 
 ```
-prisma# [edit cgnat pool residential] show this
-cgnat pool residential
+prisma# [edit nat / cgnat / pool residential] show this
+pool residential
  inside 100.64.0.0/22
  outside 200.150.0.16/30
  block-size 512
@@ -1372,12 +1372,12 @@ description, addresses, VLAN tags, VRF, MTU, uRPF and the rest — beside the FR
 statements typed in the same block. Those fields live in `Config`, not in the
 routing list, and the same list is what `save` writes.
 
-Inside a pool it prints `Pool.lines()`, which opens with `cgnat pool residential`
-— the short form, the same one the prompt names. `show configuration` and
-`show running-config` go through `Config.text()` and therefore carry the `nat`
-prefix and the `router static` block. Both spellings are accepted as input, so
-either screen can be copied into a file and loaded back; the two are worth
-knowing apart when reading a screenshot on a ticket.
+Inside a pool it prints the pool as it is typed under `cgnat` - `pool
+residential` and its lines. In `cgnat` it prints that level's statements, and
+in `nat` the whole block (#446). `show configuration` and `show running-config`
+go through `Config.text()` and therefore carry the `nat` > `cgnat` block and
+the `router static` block, which is also what `save` writes - so the screen
+can be copied into a file and loaded back.
 
 ## The boundary between what was checked and what was carried
 
@@ -1724,13 +1724,19 @@ one stays greppable.
 
 ## Two hierarchies the tools underneath do not have
 
-CGNAT is configured under `nat`, and static routes inside a `router static`
-block:
+CGNAT is configured in the `nat` > `cgnat` levels, and static routes inside
+a `router static` block:
 
 ```
-nat cgnat pool residential
-nat cgnat interface TenGigabitEthernet0/0/0 inside
-nat cgnat timeout udp 300
+nat
+ cgnat
+  pool residential
+   inside 100.64.0.0/22
+   exit
+  interface TenGigabitEthernet0/0/0 inside
+  timeout udp 300
+  exit
+ exit
 
 router static
  0.0.0.0/0 next-hop 200.150.0.1
@@ -1741,45 +1747,57 @@ Neither hierarchy exists in the tool that ends up holding the configuration.
 VPP's plugin knows `cgnat`; FRR has no `router static` at all - its static
 routes are top-level `ip route` statements, and a `router static` line handed to
 `frr-reload` is refused mid-commit. So both are **this VTY's own grammar**,
-translated at the one place typed configuration enters (`hierarchy_rewrite`) and
-at the one place a file is read (`config.strip_nat`, `config.ungroup_static`),
-so the screen and the file cannot drift apart.
+translated at the one place typed configuration enters (`Shell.nat_rewrite`,
+`hierarchy_rewrite`) and at the one place a file is read
+(`config.denest_nat`, `config.ungroup_static`), so the screen and the file
+cannot drift apart. The model underneath still holds the plugin's flat words
+(`cgnat pool residential`), and so does the dataplane's own `show bpa config`,
+which is why `Config.parse(..., dataplane=True)` reads that text without the
+block.
 
-**Both old spellings MUST keep working**, typed and read from a file:
+**`nat` and `cgnat` are levels that are entered** (#446, the maintainer's
+decision of 2026-09-24). `nat` enters `[edit nat]`, where `cgnat` is the only
+statement; `cgnat` enters `[edit nat / cgnat]`, where the pools, the
+interface attachments, logging, identity, the timeouts and the session table
+are typed in their own words - `pool residential`, `interface ens18 inside`,
+`logging enable`, `no pool residential`. A pool is entered from there and
+`exit` returns to it. `exit` and `up` leave one level, `top` and `end` all of
+them, and `commit`, `show` and `rollback` mean the same at every level.
+`cgnat` is a level of its own, rather than `nat` holding the pools directly,
+so that other kinds of translation can sit beside it.
 
-* every box already in service has a saved configuration, and up to twenty
-  rollback revisions, written as `cgnat ...` and `ip route ...`;
-* `prisma-routing.service` replays that file at **every boot**, unattended. A
-  grammar that cannot read the box's own file leaves the box unconfigured, on a
-  machine nobody is watching, and nothing says so until somebody notices the
-  traffic.
+**The one-line form is gone**, typed and in a file, by the same decision:
+`nat cgnat pool ...`, `nat cgnat interface ...` and the older bare
+`cgnat ...` are refused, with what to type instead:
 
-**Only the new spellings are offered.** They are what tab completion and `?`
-list, and `ip route` is gone from the `ip` subtree. Offering both would teach
-the one being left behind, and a grammar that advertises two ways to say one
-thing gets both into the same configuration file.
+```
+error: the one-line CGNAT form is gone
+    enter 'nat', then 'cgnat', and type the rest there: 'pool <name>',
+    'interface <name> inside', 'logging ...'
+```
 
-What the box **writes** is the new hierarchy: `Config.text()` prefixes the CGNAT
-statements with `nat ` and emits the static routes as a `router static` block,
-so `show running-config`, `show configuration` and the file `save` writes all
-carry it. The round trip - a box reading back the file it just wrote, and a box
-reading a file written before the move - is asserted in
-`test/test_prismash_config.py` and end to end in `lab/vty.sh`, which loads an
-old-format file, checks the pool reached the dataplane and the route reached
-FRR, saves, and loads what the box itself wrote.
+A saved file that still carries the form is refused whole at boot, which is
+the #436 precedent: the upgrade page tells the operator to `save` after the
+upgrade and before the reboot, and `save` writes what is running in the
+block. `lab/upgrade.sh` asserts both halves - the old file refused by this
+tree's grammar, and the file `save` leaves holding the block.
 
-Two consequences worth knowing, because both are visible on a screen:
+What the box **writes** is the block: `Config.text()` emits the pools, then the
+attachments, then the globals, inside `nat` > `cgnat`, and the static routes as
+a `router static` block, so `show running-config`, `show configuration` and the
+file `save` writes all carry it. The round trip is asserted in
+`test/test_prismash_config.py` and end to end in `lab/vty.sh`, which loads a
+one-line file and watches it refused with nothing applied, loads the block
+and watches the pool reach the dataplane and the route reach FRR, saves, and
+loads what the box itself wrote.
 
-* `nat` on its own is **refused**, not entered:
+Under `nat` only `cgnat` is taken:
 
-  ```
-  error: nat: a hierarchy, not a block
-      what is entered is 'nat cgnat pool <name>' or 'nat cgnat interface ...'
-  ```
+```
+error: under 'nat' there is 'cgnat' and nothing else
+    'cgnat' enters it; 'exit' leaves 'nat'
+```
 
-  `cgnat` was never a block either - what is entered is `cgnat pool NAME` - and
-  inventing one level of block here would make `exit` mean two different things
-  depending on which word opened it.
 * **Inside a block nothing is rewritten.** A route-map clause or a description
   may legitimately begin with any word, and rewriting on the strength of a first
   token would edit somebody's policy. The rewrite runs only at the top level of
@@ -1818,9 +1836,11 @@ in JunOS `top` and `up` mean what they look like. This VTY means the same thing
 by them:
 
 ```
-prisma# [edit] nat cgnat pool residential
-prisma# [edit cgnat pool residential] inside 100.64.0.0/10
-prisma# [edit cgnat pool residential] top
+prisma# [edit] nat
+prisma# [edit nat] cgnat
+prisma# [edit nat / cgnat] pool residential
+prisma# [edit nat / cgnat / pool residential] inside 100.64.0.0/10
+prisma# [edit nat / cgnat / pool residential] top
 prisma# [edit] router bgp 65000
 prisma# [edit router bgp 65000] address-family ipv4 unicast
 prisma# [edit ...r bgp 65000 / address-family ipv4 unicast] up
@@ -2726,7 +2746,7 @@ files; 200 of them pass more than one statement and 193 carry a `commit`.
 Driving each batch's statements through an offline `Shell` finds a statement
 refused before the `commit` in two of them: `lab/vty-ssh.sh` drives
 `ssh port 99999`, which is the section asserting this VTY bounds the port
-itself, and `lab/ha-failover.sh` drives `nat cgnat ha peer`, which is the
+itself, and `lab/ha-failover.sh` drives `ha peer` under `nat` > `cgnat`, which is the
 section demonstrating that this box has no HA to configure. Neither asserts on
 what the `commit` behind it answered.
 
@@ -2973,7 +2993,7 @@ prisma> show cgnat ?
   top          subscribers closest to exhausting their blocks
   translation  who was behind a public address and port
 
-prisma# [edit cgnat pool residential] inside ?
+prisma# [edit nat / cgnat / pool residential] inside ?
   <A.B.C.D/M>
 ```
 
@@ -3277,7 +3297,7 @@ way, which is the reason `vppapi.py` exists.
 That refusal was permanent on a shipped box, because nothing in this product
 ever configured VPP's exporter and no statement reached it
 ([#209](https://github.com/andrediashexa/hexarouting/issues/209)). The
-statement now exists - `nat cgnat logging udp <collector> src <source>` - and
+statement now exists - `logging udp <collector> src <source>`, under `nat` > `cgnat` - and
 it goes to VPP's **own** `set_ipfix_exporter`, not onto `bpa_logging_set`: the
 exporter is core state shared with anything else that exports, and `libvnet`
 exports no setter a plugin could call, so carrying it on the plugin's message

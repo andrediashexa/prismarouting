@@ -143,7 +143,10 @@ expect_in "the TCP collector is in the running configuration" \
 # The round trip is the assertion that matters: reading it back is only useful
 # if what comes back can be fed to the box. Turn the exporter off, hand the
 # box its own saved configuration, and see the collector return.
-printf '%s\n' "$CFG" | grep '^cgnat logging' > /tmp/logging.conf
+# The dataplane's words, as the nat > cgnat block a saved file holds (#446).
+printf '%s\n' "$CFG" | grep '^cgnat logging' \
+  | { echo nat; echo " cgnat"; sed 's/^cgnat /  /'; echo "  exit"; echo " exit"; } \
+  > /tmp/logging.conf
 vppctl bpa logging tcp disable
 expect_not_in "the exporter really went away first" "10.0.0.2" \
   "$(vppctl show bpa logging)"
