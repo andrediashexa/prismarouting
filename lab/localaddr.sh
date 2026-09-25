@@ -161,10 +161,14 @@ cat > /tmp/localaddr-boot.conf <<'EOF'
 interface pg0
  ipv4 address 200.150.0.20/28
  exit
-cgnat pool boot
- inside 100.64.0.0/22
- outside 200.150.0.16/28
- block-size 512
+nat
+ cgnat
+  pool boot
+   inside 100.64.0.0/22
+   outside 200.150.0.16/28
+   block-size 512
+   exit
+  exit
  exit
 EOF
 sed 's/^/    /' /tmp/localaddr-boot.conf
@@ -189,7 +193,7 @@ echo "=========== 6. and typed at a box that already carries it ==========="
 # halves firing on it is the point rather than a duplication to tidy away.
 $HX -c "configure" -c "interface pg0" -c "ipv4 address 200.150.0.20/28" \
     -c "exit" -c "commit comment \"the uplink address\"" 2>&1 | sed 's/^/    /'
-TYPED=$($HX -c "configure" -c "cgnat pool typed" \
+TYPED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool typed" \
         -c "inside 100.64.0.0/22" -c "outside 200.150.0.16/28" \
         -c "block-size 512" -c "exit" -c "commit" 2>&1); TYPED_RC=$?
 printf '%s\n' "$TYPED" | sed 's/^/    /'
@@ -202,7 +206,7 @@ echo "=========== 7. a pool the VTY has no reason to refuse ==========="
 # The control for sections 5 and 6, and it is the one that matters most here.
 # A VTY that refused every pool would satisfy both of them, and the refusal
 # would have been a blanket one nobody could configure a box through.
-VTY_CLEAN=$($HX -c "configure" -c "cgnat pool vtyclean" \
+VTY_CLEAN=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool vtyclean" \
             -c "inside 100.64.4.0/22" -c "outside 198.51.100.0/28" \
             -c "block-size 512" -c "exit" -c "commit" 2>&1); VTY_CLEAN_RC=$?
 printf '%s\n' "$VTY_CLEAN" | sed 's/^/    /'
@@ -256,7 +260,7 @@ expect_said "and what the operator can do about it" \
 expect_in "and quotes the address statement whole" \
   "    interface pg0 / ipv4 address 200.150.0.20/28" "$BOOTLOAD"
 expect_in "and the pool statement whole" \
-  "    cgnat pool boot / outside 200.150.0.16/28" "$BOOTLOAD"
+  "    nat / cgnat / pool boot / outside 200.150.0.16/28" "$BOOTLOAD"
 expect "and NOTHING was applied: no pool" test "${BOOT_POOLS:-1}" -eq 0
 expect "and no address" test "${BOOT_L3:-1}" -eq 0
 

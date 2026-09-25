@@ -834,9 +834,13 @@ Without a way to say so, the only way to exempt traffic is to keep it out of
 the pool entirely, which is not always possible.
 
 ```
-nat cgnat pool residential
- bypass destination 10.0.0.0/8
- bypass source 100.64.1.0/24
+nat
+ cgnat
+  pool residential
+   bypass destination 10.0.0.0/8
+   bypass source 100.64.1.0/24
+   exit
+  exit
  exit
 ```
 
@@ -941,15 +945,19 @@ one tenant was translated by the other's pool and the second pool translated
 nothing.
 
 ```
-nat cgnat pool tenant-a
- inside 100.64.0.0/22
- outside 200.150.0.16/30
- vrf 1
- exit
-nat cgnat pool tenant-b
- inside 100.64.0.0/22
- outside 200.150.0.32/30
- vrf 2
+nat
+ cgnat
+  pool tenant-a
+   inside 100.64.0.0/22
+   outside 200.150.0.16/30
+   vrf 1
+   exit
+  pool tenant-b
+   inside 100.64.0.0/22
+   outside 200.150.0.32/30
+   vrf 2
+   exit
+  exit
  exit
 ```
 
@@ -1044,8 +1052,12 @@ many*, and `show bpa top` says *which*.
 ### The alarm, once per crossing
 
 ```
-nat cgnat pool residential
- utilisation-alarm 75
+nat
+ cgnat
+  pool residential
+   utilisation-alarm 75
+   exit
+  exit
  exit
 ```
 
@@ -1122,9 +1134,13 @@ the configuration at all, or the reinstall that a change of platform still
 forces, after which the same file is typed back and loaded again.
 
 ```
-nat cgnat pool residential
- max-sessions 512
- max-session-rate 50
+nat
+ cgnat
+  pool residential
+   max-sessions 512
+   max-session-rate 50
+   exit
+  exit
  exit
 ```
 
@@ -1201,8 +1217,12 @@ it is one of the longest tickets an ISP has.
 Clamping the MSS option of the handshake removes the category:
 
 ```
-nat cgnat pool residential
- tcp-mss 1400
+nat
+ cgnat
+  pool residential
+   tcp-mss 1400
+   exit
+  exit
  exit
 ```
 
@@ -1369,8 +1389,12 @@ bpa forward <pool> <tcp|udp> <public-port> to <private-ip> <private-port>
 and in a candidate configuration, inside the pool block:
 
 ```
-nat cgnat pool residential
- forward tcp 6200 to 100.64.0.5 80
+nat
+ cgnat
+  pool residential
+   forward tcp 6200 to 100.64.0.5 80
+   exit
+  exit
  exit
 ```
 

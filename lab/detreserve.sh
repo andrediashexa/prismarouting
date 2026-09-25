@@ -254,8 +254,8 @@ send() {   # inside address, source port
 # the project with a green lab beside it.
 HX="python3 /src/src/prismash/prismash.py"
 $HX -c "configure" \
-    -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
-    -c "cgnat logging enable" \
+    -c "nat" -c "cgnat" -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+    -c "logging enable" \
     -c "commit" 2>&1 | sed 's/^/    /'
 # THE COLLECTOR'S WINDOW IS NOT A GUESS ANY MORE (#342's fix, applied here).
 #
@@ -530,7 +530,7 @@ VTY_RES_BLOCKS=$((VTY_OUT_N * RESERVE))
 VTY_RESLINE=""
 [ "$RESERVE" -gt 0 ] && VTY_RESLINE="reserve $RESERVE"
 VTY_SAY=$($HX -c "configure" \
-    -c "cgnat pool vtyres" \
+    -c "nat" -c "cgnat" -c "pool vtyres" \
     -c "inside $VTY_IN" \
     -c "outside $VTY_OUT" \
     -c "block-size $VTY_BSZ" \
@@ -550,7 +550,7 @@ printf '%s\n' "$VTY_SAY" | sed 's/^/  /'
 # warning an operator learns to scroll past.
 VTY_PAIR_ADDRS=4
 VTY_QUIET=$($HX -c "configure" \
-    -c "cgnat pool vtyres4" \
+    -c "nat" -c "cgnat" -c "pool vtyres4" \
     -c "inside 100.64.13.0/28" \
     -c "outside 200.150.9.16/30" \
     -c "block-size $VTY_BSZ" \
@@ -649,7 +649,7 @@ echo "  the pool screen promises a stride on: ${STRIDE_ROWS:-(nothing)}"
 # order would be just as correct, which is why the answer comes at the commit
 # and not at either line.
 VTY_STRIDE_SAY=$($HX -c "configure" \
-    -c "cgnat pool vtystride" \
+    -c "nat" -c "cgnat" -c "pool vtystride" \
     -c "inside 100.64.16.0/28" \
     -c "outside 200.150.12.16/32" \
     -c "block-size $VTY_BSZ" \
@@ -662,7 +662,7 @@ VTY_STRIDE_SAY=$($HX -c "configure" \
     -c "commit" 2>&1)
 printf '%s\n' "$VTY_STRIDE_SAY" | sed 's/^/  /'
 VTY_DYNSTRIDE_SAY=$($HX -c "configure" \
-    -c "cgnat pool vtydynstride" \
+    -c "nat" -c "cgnat" -c "pool vtydynstride" \
     -c "inside 100.64.17.0/28" \
     -c "outside 200.150.13.16/32" \
     -c "block-size $VTY_BSZ" \

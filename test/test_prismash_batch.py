@@ -154,7 +154,7 @@ def block_size_of(api, name):
     return None
 
 
-THE_POOL = ("configure", "cgnat pool p1", "inside 100.64.0.0/22",
+THE_POOL = ("configure", "nat", "cgnat", "pool p1", "inside 100.64.0.0/22",
             "outside 203.0.113.0/28")
 
 print("=== 1. the batch from the issue: a block size the VTY bounds ===")
@@ -261,7 +261,8 @@ print("=== 6. commit's own refusal is kept, not replaced ===")
 # export to, and the `commit` behind it answering for itself. A refusal from
 # `commit` is not a statement that failed to reach the candidate - the
 # candidate is exactly what was asked for - so it must not be counted here.
-rc, said, api = batch("configure", "cgnat logging enable", "commit check",
+rc, said, api = batch("configure", "nat", "cgnat", "logging enable",
+                      "commit check",
                       "commit")
 print(said.rstrip())
 check("candidate did not pass validation; nothing applied" in said,

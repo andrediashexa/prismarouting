@@ -62,7 +62,7 @@ if [ "$MODE" = off ]; then
 else
   HX_ENV="SUDO_USER=marina"
 fi
-env $HX_ENV $HX -c "configure" -c "cgnat pool provider-b" \
+env $HX_ENV $HX -c "configure" -c "nat" -c "cgnat" -c "pool provider-b" \
     -c "max-sessions 4000" -c "exit" -c "commit" 2>&1 | tail -2 | sed 's/^/  /'
 VTY_LINE=$(grep "limits pool provider-b" /var/log/prisma-routing/config-history.log | tail -1)
 printf '%s\n' "$VTY_LINE" | sed 's/^/  /'
@@ -105,9 +105,9 @@ vppctl create loopback interface >/dev/null
 echo "  the trail before the attach:"
 echo "    interface entries: $(grep -c 'interface loop0' $LOG)"
 MARK=$(wc -l < $LOG)
-env $HX_ENV $HX -c "configure" -c "cgnat interface loop0 inside" \
+env $HX_ENV $HX -c "configure" -c "nat" -c "cgnat" -c "interface loop0 inside" \
     -c "commit" 2>&1 | tail -1 | sed 's/^/  /'
-env $HX_ENV $HX -c "configure" -c "no cgnat interface loop0" \
+env $HX_ENV $HX -c "configure" -c "nat" -c "cgnat" -c "no interface loop0" \
     -c "commit" 2>&1 | tail -1 | sed 's/^/  /'
 IF_NEW=$(tail -n +$((MARK + 1)) $LOG)
 echo "  the trail after the attach and the detach:"

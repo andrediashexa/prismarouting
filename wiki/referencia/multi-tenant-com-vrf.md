@@ -12,15 +12,19 @@ Antes de um pool poder nomear uma VRF, não havia nada que dissesse a qual dos d
 
 ```
 configure
- nat cgnat pool cliente-a
-  inside 100.64.0.0/22
-  outside 200.150.0.16/30
-  vrf 1
-  exit
- nat cgnat pool cliente-b
-  inside 100.64.0.0/22
-  outside 200.150.0.32/30
-  vrf 2
+ nat
+  cgnat
+   pool cliente-a
+    inside 100.64.0.0/22
+    outside 200.150.0.16/30
+    vrf 1
+    exit
+   pool cliente-b
+    inside 100.64.0.0/22
+    outside 200.150.0.32/30
+    vrf 2
+    exit
+   exit
   exit
  commit
 ```

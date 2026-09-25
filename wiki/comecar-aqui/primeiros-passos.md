@@ -207,14 +207,18 @@ Este passo e os três seguintes estão, com cada tela que a caixa mostra e a par
 
 ```
 configure
- nat cgnat pool residencial
-  inside 100.64.0.0/10
-  outside 203.0.113.0/24
-  block-size 512
-  ports 1024 65535
-  policy interleaved
-  mode deterministic
-  tcp-mss auto
+ nat
+  cgnat
+   pool residencial
+    inside 100.64.0.0/10
+    outside 203.0.113.0/24
+    block-size 512
+    ports 1024 65535
+    policy interleaved
+    mode deterministic
+    tcp-mss auto
+    exit
+   exit
   exit
 ```
 
@@ -235,8 +239,12 @@ Não sabe o que digitar? **TAB** completa e `**?**` lista as opções válidas c
 ## 6. Habilitar nas interfaces
 
 ```
-nat cgnat interface ens18 inside
-nat cgnat interface ens19 outside
+nat
+ cgnat
+  interface ens18 inside
+  interface ens19 outside
+  exit
+ exit
 ```
 
 ## 7. Ver o que vai acontecer, antes de acontecer

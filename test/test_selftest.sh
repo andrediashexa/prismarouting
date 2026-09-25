@@ -641,7 +641,7 @@ logging() {  # <state> <exporter line body>
 : > "$FAKE/bpa_config"
 
 echo "--- the box was told to export and the dataplane has it off ---"
-printf 'cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
+printf 'nat\n cgnat\n  logging udp 10.0.0.2 src 10.0.0.1 port 4739\n  logging enable\n  exit\n exit\n' \
   > "$FAKE/prisma-routing.conf"
 logging disabled "none: nothing is sent over UDP"
 run
@@ -679,7 +679,7 @@ else
 fi
 
 echo "--- exporting, which is the only state that passes ---"
-printf 'cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
+printf 'nat\n cgnat\n  logging udp 10.0.0.2 src 10.0.0.1 port 4739\n  logging enable\n  exit\n exit\n' \
   > "$FAKE/prisma-routing.conf"
 logging enabled "10.0.0.2:4739 src 10.0.0.1 (path mtu 512, template every 20s)"
 run
@@ -2993,7 +2993,7 @@ printf 'Plugin path\n bpa_plugin.so\n' > "$FAKE/show_plugins"
 # developer's own pools against the fake dataplane. Set again here, and unset
 # again at the end, for the same reason it was unset there.
 export PRISMA_CONFIG="$FAKE/prisma-routing.conf"
-printf 'nat cgnat pool alpha\n inside 100.64.0.0/24\n exit\nnat cgnat pool beta\n inside 100.64.1.0/24\n exit\n' \
+printf 'nat\n cgnat\n  pool alpha\n   inside 100.64.0.0/24\n   exit\n  pool beta\n   inside 100.64.1.0/24\n   exit\n  exit\n exit\n' \
   > "$FAKE/prisma-routing.conf"
 # The dataplane's own line shape: "pool <name> [<mode> / <policy>]".
 printf 'pool alpha [deterministic / interleaved]\npool beta [dynamic / blocked]\n' \
@@ -3044,7 +3044,7 @@ echo "=== uRPF: on in the file, and on in the dataplane (#172) ==="
 # one. A box whose saved configuration turns it on and whose dataplane does not
 # have it forwards, translates, logs and answers everything, and there is no
 # counter anywhere for a protection that is simply absent.
-printf 'nat cgnat pool alpha\n exit\ninterface TenGigabitEthernet0/0/0\n urpf strict\n exit\n' \
+printf 'nat\n cgnat\n  pool alpha\n   exit\n  exit\n exit\ninterface TenGigabitEthernet0/0/0\n urpf strict\n exit\n' \
   > "$FAKE/prisma-routing.conf"
 printf 'pool alpha [deterministic / interleaved]\n' > "$FAKE/bpa_pools"
 printf 'TenGigabitEthernet0/0/0 strict\n' > "$FAKE/bpa_urpf"
@@ -3069,7 +3069,7 @@ else
 fi
 # A box that never asked for uRPF is told nothing: most boxes do not run it,
 # and an alarm that is always on is one nobody reads.
-printf 'nat cgnat pool alpha\n exit\n' > "$FAKE/prisma-routing.conf"
+printf 'nat\n cgnat\n  pool alpha\n   exit\n  exit\n exit\n' > "$FAKE/prisma-routing.conf"
 run
 if said 'uRPF'; then
   bad "a box that never configured uRPF was told about it: $(printf '%s\n' "$OUTPUT" | grep -i urpf | head -1)"
@@ -3090,7 +3090,7 @@ cat > "$FAKE/show_interface" <<'IFACE'
 TenGigabitEthernet0/0/0           2      up          1500/0/0/0     rx packets                  12
 host-veth-vpp                     1      up          1500/0/0/0
 IFACE
-printf 'nat cgnat pool alpha\n exit\ninterface TenGigabitEthernet0/0/0\n vrrp 1 address 100.64.3.254\n exit\n' \
+printf 'nat\n cgnat\n  pool alpha\n   exit\n  exit\n exit\ninterface TenGigabitEthernet0/0/0\n vrrp 1 address 100.64.3.254\n exit\n' \
   > "$FAKE/prisma-routing.conf"
 printf 'pool alpha [deterministic / interleaved]\n' > "$FAKE/bpa_pools"
 # Copied from a real `show vrrp vr` rather than invented: the check reads the
@@ -3143,7 +3143,7 @@ else
   bad "a router on a missing interface passed: $(printf '%s\n' "$OUTPUT" | grep -i 'virtual router' || echo '<nothing>')"
 fi
 # A box that is not in a pair hears nothing about pairs.
-printf 'nat cgnat pool alpha\n exit\n' > "$FAKE/prisma-routing.conf"
+printf 'nat\n cgnat\n  pool alpha\n   exit\n  exit\n exit\n' > "$FAKE/prisma-routing.conf"
 run
 if said 'virtual router'; then
   bad "a box with no vrrp statement was told about one: $(printf '%s\n' "$OUTPUT" | grep -i 'virtual router' | head -1)"
@@ -3662,12 +3662,16 @@ SEG
   # they agree, which none of them had.
   export PRISMA_CONFIG="$FAKE/prisma-routing.conf"
   cat > "$FAKE/prisma-routing.conf" <<'CONF'
-nat cgnat pool alpha
- inside 100.64.0.0/24
+nat
+ cgnat
+  pool alpha
+   inside 100.64.0.0/24
+   exit
+  logging udp 10.0.0.2 src 10.0.0.1 port 4739
+  logging tcp 10.0.0.2 port 4739
+  logging enable
+  exit
  exit
-cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739
-cgnat logging tcp 10.0.0.2 port 4739
-cgnat logging enable
 interface TenGigabitEthernet3/0/0
  mtu 9000
  ipv4 address 200.150.0.1/24
@@ -3903,7 +3907,7 @@ local0                            0     down          0/0/0/0
 IFACE
 : > "$FAKE/show_lcp"
 rm -f "$FAKE/show_interface_addr"
-printf 'nat cgnat pool alpha\n inside 100.64.0.0/24\n exit\ncgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
+printf 'nat\n cgnat\n  pool alpha\n   inside 100.64.0.0/24\n   exit\n  logging udp 10.0.0.2 src 10.0.0.1 port 4739\n  logging enable\n  exit\n exit\n' \
   > "$FAKE/prisma-routing.conf"
 run
 if said '\[FAIL\]'; then

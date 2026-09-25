@@ -162,7 +162,7 @@ TRAIL=/var/log/prisma-routing/config-history.log
 MARK=$(wc -l < $TRAIL 2>/dev/null || echo 0)
 V0=$(sess)
 if [ "$MODE" != off ]; then
-  $HX -c "configure" -c "cgnat pool lab" \
+  $HX -c "configure" -c "nat" -c "cgnat" -c "pool lab" \
       -c "bypass destination 192.0.2.0/24" -c "exit" -c "commit" 2>&1 |
     sed 's/^/  /'
 fi

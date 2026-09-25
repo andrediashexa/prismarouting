@@ -187,9 +187,9 @@ boot_vpp() {
   vppctl bpa block-holddown 3600
 
   $HX -c "configure" \
-      -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
-      -c "cgnat logging tcp 10.0.0.2 port 4740" \
-      -c "cgnat logging enable" \
+      -c "nat" -c "cgnat" -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+      -c "logging tcp 10.0.0.2 port 4740" \
+      -c "logging enable" \
       -c "commit" > "/tmp/vty-$1.log" 2>&1
   sed 's/^/  /' "/tmp/vty-$1.log"
 }

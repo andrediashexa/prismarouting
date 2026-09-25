@@ -323,8 +323,8 @@ E uma caixa onde o Linux não enxerga placa PCI nenhuma recebe uma frase, não u
 Dentro de um bloco de configuração, mostra o que aquele bloco tem e nada acima dele:
 
 ```
-prisma# [edit cgnat pool residential] show this
-cgnat pool residential
+prisma# [edit nat / cgnat / pool residential] show this
+pool residential
  inside 100.64.0.0/22
  outside 200.150.0.16/30
  block-size 512
@@ -338,9 +338,7 @@ Mostra a **candidata**, não a configuração em vigor: quem está no meio de um
 
 Repare que `policy` e `mode` aparecem sem você ter digitado. Não é a tela acrescentando nada: são os três campos que todo pool tem por construção — `block-size`, `policy` e `mode` —, e um pool sem eles não existe. Se a tela os omitisse quando estão no valor padrão, ela deixaria de dizer o que o pool está fazendo enquanto o pool continua fazendo. É a mesma razão pela qual `no policy` é recusado.
 
-Dentro de um pool, o bloco sai na forma curta — `cgnat pool residential`, sem o `nat` na frente — que é como o prompt também o nomeia. `show configuration` e `show running-config`, que mostram a caixa inteira, saem na hierarquia nova: `nat cgnat pool ...` e as rotas estáticas num bloco `router static`. As duas grafias são aceitas na entrada, então copiar qualquer uma das telas para um arquivo e carregá-lo de volta funciona.
-
-Na caixa inteira, **os ajustes globais de CGNAT também saem com o** `**nat**` na frente — `nat cgnat timeout udp 300`, `nat cgnat block-holddown 90` — e não só os blocos de pool. Por um tempo os pools saíam na hierarquia nova e os globais na antiga, no mesmo arquivo: quem procurasse um timeout por `nat cgnat timeout` não achava. Agora o arquivo inteiro fala uma língua só.
+Dentro de um pool, o bloco sai como se digita ali: `pool residential` e os campos. Em `cgnat`, `show this` mostra o que o nível tem; em `nat`, o bloco inteiro. `show configuration` e `show running-config`, que mostram a caixa inteira, trazem o CGNAT como o bloco `nat` > `cgnat` — pools, interfaces e ajustes globais juntos, na ordem em que se digita — e as rotas estáticas num bloco `router static`. É também como o `save` grava, então copiar a tela para um arquivo e carregá-lo de volta funciona.
 
 O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface ens19]` — para que a próxima declaração não caia no bloco errado.
 

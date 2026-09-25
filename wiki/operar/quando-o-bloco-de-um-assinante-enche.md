@@ -73,8 +73,12 @@ O histograma responde quando você pergunta. O alarme avisa sem ser perguntado, 
 
 ```
 configure
- nat cgnat pool residencial
-  utilisation-alarm 75
+ nat
+  cgnat
+   pool residencial
+    utilisation-alarm 75
+    exit
+   exit
   exit
  commit
 ```
@@ -105,8 +109,12 @@ Com `max-blocks` acima de 1, um assinante cujos blocos estão todos cheios ganha
 
 ```
 configure
- nat cgnat pool residencial
-  max-blocks 2
+ nat
+  cgnat
+   pool residencial
+    max-blocks 2
+    exit
+   exit
   exit
  commit
 ```
@@ -138,9 +146,13 @@ Toda extensão é registrada como `natEvent 16` e sua liberação como `natEvent
 
 ```
 configure
- nat cgnat pool residencial
-  block-size 64
-  max-blocks 8
+ nat
+  cgnat
+   pool residencial
+    block-size 64
+    max-blocks 8
+    exit
+   exit
   exit
  commit
 ```
@@ -175,8 +187,12 @@ O bloco extra cai, sempre que der, **no mesmo endereço público** do assinante.
 
 ```
 configure
- nat cgnat pool residencial
-  block-stride 1
+ nat
+  cgnat
+   pool residencial
+    block-stride 1
+    exit
+   exit
   exit
  commit
 ```
@@ -205,9 +221,13 @@ Dois limites, por pool. **Zero significa ilimitado**, para que uma configuraçã
 
 ```
 configure
- nat cgnat pool residencial
-  max-sessions 512
-  max-session-rate 50
+ nat
+  cgnat
+   pool residencial
+    max-sessions 512
+    max-session-rate 50
+    exit
+   exit
   exit
  commit
 ```

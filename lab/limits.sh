@@ -153,7 +153,7 @@ TRAIL=/var/log/prisma-routing/config-history.log
 MARK=$(wc -l < $TRAIL 2>/dev/null || echo 0)
 BEFORE_VTY=$(vppctl show bpa session | grep -o "total: [0-9]*" | awk '{print $2}')
 if [ "$MODE" != off ]; then
-  $HX -c "configure" -c "cgnat pool lab" -c "max-sessions 64" \
+  $HX -c "configure" -c "nat" -c "cgnat" -c "pool lab" -c "max-sessions 64" \
       -c "max-session-rate 20" -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
 fi
 VTY_CONF=$(vppctl show bpa config)

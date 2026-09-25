@@ -36,6 +36,8 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import config      # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nat_fixture import in_nat_block      # noqa: E402
 import prismash      # noqa: E402
 
 fail = 0
@@ -113,9 +115,12 @@ WORK = tempfile.mkdtemp()
 
 
 def peer_file(text, name):
+    """The peer's saved file. Fixtures here are written in the dataplane's
+    flat words, which is what FakeVpp answers; a saved file is the `nat` >
+    `cgnat` block (#446), so it is written as one."""
     path = os.path.join(WORK, name)
     with open(path, "w") as f:
-        f.write(text)
+        f.write(in_nat_block(text))
     return path
 
 
@@ -123,7 +128,7 @@ print("=== the fingerprint and the comparison never disagree ===")
 # Two ways of asking the same question, and an operator reads both: the digest
 # off the two consoles, and the diff that says which pool. A box where one says
 # "identical" and the other names a pool is a box nobody can act on.
-_base = config.Config.parse(RUNNING)
+_base = config.Config.parse(RUNNING, dataplane=True)
 _cases = {
     "identical": RUNNING,
     "a mapping field moved": RUNNING.replace("block-size 2048",
@@ -135,7 +140,7 @@ _cases = {
         " block-size 4096", " block-size 4096\n tcp-mss 1400"),
 }
 for label, text in _cases.items():
-    other = config.Config.parse(text)
+    other = config.Config.parse(text, dataplane=True)
     same_digest = (_base.mapping_fingerprint() == other.mapping_fingerprint())
     no_findings = not _base.mapping_diff_to(other)
     check(same_digest == no_findings,
@@ -148,19 +153,19 @@ print("\n=== two identical configurations are NOT reported as differing ===")
 # The red that proves the check is not blind. A comparison that always finds
 # something is a comparison nobody reads, and it would fire on every correctly
 # configured pair in service.
-check(_base.mapping_diff_to(config.Config.parse(RUNNING)) == [],
+check(_base.mapping_diff_to(config.Config.parse(RUNNING, dataplane=True)) == [],
       "the same configuration twice must produce no finding")
 check(_base.mapping_fingerprint()
-      == config.Config.parse(RUNNING).mapping_fingerprint(),
+      == config.Config.parse(RUNNING, dataplane=True).mapping_fingerprint(),
       "and the same digest")
 # The same pools, typed in the other order. Two boxes configured by two people
 # are the same box; a digest that said otherwise would refuse a correct pair.
 _first, _second = RUNNING.split("cgnat pool corporate")
 _swapped = "cgnat pool corporate" + _second + _first
-check(config.Config.parse(_swapped).pools.keys() == _base.pools.keys(),
+check(config.Config.parse(_swapped, dataplane=True).pools.keys() == _base.pools.keys(),
       "the reordered fixture must hold the same pools, or it measures "
       "nothing")
-check(config.Config.parse(_swapped).mapping_fingerprint()
+check(config.Config.parse(_swapped, dataplane=True).mapping_fingerprint()
       == _base.mapping_fingerprint(),
       "the same pools in a different order are the same mapping")
 print("  identical configurations, and the same pools written in either "
@@ -181,7 +186,7 @@ for label, mutation in (
         ("a port forward", " forward tcp 8080 to 100.64.0.5 80")):
     other = config.Config.parse(
         RUNNING.replace(" mode deterministic\n exit",
-                        f" mode deterministic\n{mutation}\n exit", 1))
+                        f" mode deterministic\n{mutation}\n exit", 1), dataplane=True)
     check(_base.mapping_diff_to(other) == [],
           f"{label} differing between peers is not a mapping divergence: "
           f"{_base.mapping_diff_to(other)}")
@@ -207,7 +212,7 @@ check("corporate" not in out.split("warning")[-1],
 # recognised by their own shape rather than by the text that happens to be in
 # them: a filter that skipped any row mentioning a statement would also skip a
 # paragraph that quoted one, which is exactly the row that must not wrap.
-_STATEMENT = ("    this box: ", "    the peer: ", "    cgnat pool ")
+_STATEMENT = ("    this box: ", "    the peer: ", "    nat / cgnat / pool ")
 _prose = [l for l in out.splitlines() if not l.startswith(_STATEMENT)]
 check(all(len(l) <= config.CONSOLE_COLUMNS for l in _prose),
       "every prose row must fit the console: "
@@ -243,7 +248,7 @@ print("\n=== the peer file is what `save` writes, not what the device says ===")
 # the SSH and SNMP stanzas and the routing marker - and a comparison that only
 # ever saw a device read-back would report every pool as missing on a box
 # where nothing at all is wrong.
-_device = config.Config.parse(RUNNING)
+_device = config.Config.parse(RUNNING, dataplane=True)
 _as_saved = peer_file(_device.text(), "as-saved.conf")
 _read, _why = prismash.read_peer_config(_as_saved)
 check(_read is not None, f"a saved configuration must be readable: {_why}")
@@ -253,7 +258,7 @@ check(_read is not None
 check(_read is not None and _device.mapping_diff_to(_read) == [],
       f"and no divergence: "
       f"{_device.mapping_diff_to(_read) if _read else None}")
-check("nat cgnat pool" in _device.text(),
+check("\n  pool residential" in _device.text(),
       "the fixture must be the saved spelling, or this case measures nothing")
 print("  a saved file and a device read-back of the same box agree")
 
@@ -320,7 +325,7 @@ print("\n=== commit warns about a divergence and never refuses it ===")
 # instead of the divergence.
 prismash.PEER_CONFIG_PATH = _peer
 sh = shell()
-target = config.Config.parse(RUNNING)
+target = config.Config.parse(RUNNING, dataplane=True)
 out = said(sh.apply, target, True)
 check("residential" in out and "block-size" in out,
       f"commit check must report the divergence:\n{out}")
@@ -333,11 +338,11 @@ print(f"  commit check -> {ok}, errors recorded: {sh.failed}")
 
 print("\n=== and says nothing about a pair that agrees ===")
 prismash.PEER_CONFIG_PATH = _agree
-out = said(shell().apply, config.Config.parse(RUNNING), True)
+out = said(shell().apply, config.Config.parse(RUNNING, dataplane=True), True)
 check("does not map subscribers the same way" not in out,
       f"a pair that agrees must draw no warning at commit:\n{out}")
 prismash.PEER_CONFIG_PATH = os.path.join(WORK, "absent.conf")
-out = said(shell().apply, config.Config.parse(RUNNING), True)
+out = said(shell().apply, config.Config.parse(RUNNING, dataplane=True), True)
 check("does not map subscribers the same way" not in out,
       f"and a box with no peer configuration must not warn at all:\n{out}")
 prismash.PEER_CONFIG_PATH = _saved

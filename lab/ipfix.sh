@@ -117,7 +117,7 @@ echo "=== the box as it ships: 'logging enable' with no exporter ==="
 # the apply, with the pools already changed, and until #76 the VTY threw it
 # away and printed "commit complete".
 NO_EXPORTER=$($HX -c "configure" \
-    -c "cgnat logging enable" \
+    -c "nat" -c "cgnat" -c "logging enable" \
     -c "commit check" \
     -c "commit" 2>&1)
 printf '%s\n' "$NO_EXPORTER" | sed 's/^/  /'
@@ -126,14 +126,14 @@ if [ "$MODE" != no-exporter ]; then
   echo
   echo "=== configuring the exporter and the export, through the VTY ==="
   VTY_OUT=$($HX -c "configure" \
-      -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
-      -c "cgnat logging enable" \
+      -c "nat" -c "cgnat" -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+      -c "logging enable" \
       -c "commit" 2>&1)
   printf '%s\n' "$VTY_OUT" | sed 's/^/  /'
 else
   echo
   echo "=== no-exporter: the export state is asked for and nothing else ==="
-  VTY_OUT=$($HX -c "configure" -c "cgnat logging enable" -c "commit" 2>&1)
+  VTY_OUT=$($HX -c "configure" -c "nat" -c "cgnat" -c "logging enable" -c "commit" 2>&1)
   printf '%s\n' "$VTY_OUT" | sed 's/^/  /'
 fi
 
@@ -275,12 +275,15 @@ echo "=========== THE SAVED CONFIGURATION, RELOADED ==========="
 # "cgnat logging enable" sorts before "cgnat logging udp ..." - so a
 # configuration written in alphabetical order refuses its own second line on
 # reload, on the one path nobody types by hand: the boot.
-printf '%s\n' "$BPA_CONFIG" | grep '^cgnat logging' > /tmp/logging.conf
+# The dataplane's words, as the nat > cgnat block a saved file holds (#446).
+printf '%s\n' "$BPA_CONFIG" | grep '^cgnat logging' \
+  | { echo nat; echo " cgnat"; sed 's/^cgnat /  /'; echo "  exit"; echo " exit"; } \
+  > /tmp/logging.conf
 echo "  the file as the box writes it:"
 sed 's/^/    /' /tmp/logging.conf
 $HX -c "configure" \
-    -c "cgnat logging disable" \
-    -c "cgnat logging udp disable" \
+    -c "nat" -c "cgnat" -c "logging disable" \
+    -c "logging udp disable" \
     -c "commit" > /tmp/off.log 2>&1
 sed 's/^/    off: /' /tmp/off.log
 LOG_OFF=$(vppctl show bpa logging)
@@ -345,8 +348,8 @@ expect_in "every allocation had its release" "Every allocation had its matching"
 expect_in "the exporter is in the running configuration" \
   "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" "$BPA_CONFIG"
 expect "and it is written BEFORE the line that needs it" \
-  sh -c "[ \"\$(grep -n 'cgnat logging' /tmp/logging.conf | head -1 | cut -d: -f2-)\" \
-         = 'cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739' ]"
+  sh -c "[ \"\$(grep -n '^  logging' /tmp/logging.conf | head -1 | cut -d: -f2-)\" \
+         = '  logging udp 10.0.0.2 src 10.0.0.1 port 4739' ]"
 expect_not_in "the exporter really went away first" "10.0.0.2" "$LOG_OFF"
 expect_in "reloading the saved configuration brought the exporter back" \
   "10.0.0.2:4739 src 10.0.0.1" "$LOG_BACK"

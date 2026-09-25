@@ -939,13 +939,19 @@ def identity_redact(lines):
     transform only - the stored configuration keeps the real value, or a box
     could not reload its own listener (#21).
     """
+    # Both spellings: the model's `cgnat identity ...`, and `identity ...`
+    # indented under `cgnat`, which is how the configuration is written since
+    # #446. Matching only the first would have put the secret back on every
+    # `show running-config` the day the file changed shape.
     out = []
     for l in lines:
         w = l.split()
-        if w[:3] == ["cgnat", "identity", "radius"] and "secret" in w:
+        at_level = w[:1] == ["cgnat"]
+        if (w[at_level:at_level + 2] == ["identity", "radius"]
+                and "secret" in w):
             at = w.index("secret")
             kept = w[:at + 1] + ["<set, not shown>"] + w[at + 2:]
-            out.append(" ".join(kept))
+            out.append(l[:len(l) - len(l.lstrip())] + " ".join(kept))
             continue
         out.append(l)
     return out

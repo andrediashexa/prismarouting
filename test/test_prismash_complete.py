@@ -12,6 +12,8 @@ import io
 import os, re, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 import prismash
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nat_fixture import in_nat_block      # noqa: E402
 
 fail = 0
 
@@ -21,9 +23,12 @@ def check(cond, msg):
         fail += 1
         print(f"  FAIL: {msg}")
 
-def opts(mode, line, ending=None):
+def opts(mode, line, ending=None, nat=()):
+    """What `?` offers after `line`; `nat` is the `nat` > `cgnat` level the
+    operator stands in (#446)."""
     sh = prismash.Shell()
     sh.mode = mode
+    sh.nat_ctx = list(nat)
     if ending is None:
         ending = bool(line) and not line.endswith(" ")
     o, hint, prefix = sh._options(line, ending)
@@ -78,7 +83,7 @@ print("\n=== a free argument becomes a hint, not an empty list ===")
 o, hint, _ = opts("pool", "inside ")
 check(hint == prismash.ARG_PREFIX, f"expected a prefix hint, got {hint!r}")
 check(not o, f"should not list options after 'inside': {o}")
-o, hint, _ = opts("config", "nat cgnat block-holddown ")
+o, hint, _ = opts("config", "block-holddown ", nat=("nat", "cgnat"))
 check(hint == prismash.ARG_SECONDS, f"expected a numeric hint, got {hint!r}")
 print(f"  'inside ' -> {prismash.ARG_PREFIX} ; "
       f"'block-holddown ' -> {prismash.ARG_SECONDS}")
@@ -87,13 +92,21 @@ print("\n=== config: CGNAT and routing at the same level ===")
 o, _, _ = opts("config", "")
 check({"nat", "router", "interface", "no", "commit", "rollback", "exit"} <= o,
       f"got {o}")
-# `cgnat` is NOT offered at the top level any more - it moved under `nat`
-# (#193) - and offering both spellings would teach the one being left behind.
+# `cgnat` is NOT offered at the top level: it is a level under `nat` (#193,
+# #446), and `nat` is a word that is entered and takes nothing after it.
 check("cgnat" not in o, f"the old top-level spelling is not offered: {o}")
 o, _, _ = opts("config", "nat ")
-check(o == {"cgnat"}, f"nat holds the CGNAT hierarchy: {o}")
-o, _, _ = opts("config", "nat cgnat ")
-check({"pool", "interface", "timeout", "logging", "block-holddown"} <= o, f"got {o}")
+check(o == set(), f"nothing follows 'nat' on its line: it is entered: {o}")
+o, _, _ = opts("config", "", nat=("nat",))
+check("cgnat" in o and "pool" not in o and "exit" in o,
+      f"standing in nat, cgnat is what is offered: {o}")
+o, _, _ = opts("config", "", nat=("nat", "cgnat"))
+check({"pool", "interface", "timeout", "logging", "block-holddown", "no",
+       "exit", "commit", "show"} <= o and "nat" not in o and "router" not in o,
+      f"standing in cgnat, its own statements and nothing from above: {o}")
+o, _, _ = opts("config", "no ", nat=("nat", "cgnat"))
+check(o == {"pool", "interface"}, f"and 'no' there removes a pool or an "
+      f"attachment: {o}")
 # Static routes moved under `router`, beside the protocols.
 o, _, _ = opts("config", "router ")
 check("static" in o, f"router offers static: {o}")
@@ -159,9 +172,9 @@ _RANGES = [
     # (label, block to enter, statement with {v}, a, b, what holds the value)
     ("interface mtu", ["interface ens19"], "mtu {v}", 576, 9216,
      lambda c: c.mtus.get("ens19")),
-    ("pool block-size", ["nat cgnat pool P"], "block-size {v}", 64, 32768,
+    ("pool block-size", ["nat", "cgnat", "pool P"], "block-size {v}", 64, 32768,
      lambda c: None),
-    ("pool max-blocks", ["nat cgnat pool P"], "max-blocks {v}", 1, 255,
+    ("pool max-blocks", ["nat", "cgnat", "pool P"], "max-blocks {v}", 1, 255,
      lambda c: None),
     # TWO ROWS FOR ONE STATEMENT, because `ports` carries two numbers and
     # each is its own end of the same range. The other half of each template
@@ -170,19 +183,20 @@ _RANGES = [
     # it. Both ends were enforced by nothing at all before #361: `ports 70000
     # 80000` was taken at the prompt and cast into a u16 on the way to the
     # dataplane, where it became 4464-14464.
-    ("pool ports min", ["nat cgnat pool P"], "ports {v} 65535", 1, 65535,
+    ("pool ports min", ["nat", "cgnat", "pool P"], "ports {v} 65535", 1, 65535,
      lambda c: None),
-    ("pool ports max", ["nat cgnat pool P"], "ports 1 {v}", 1, 65535,
+    ("pool ports max", ["nat", "cgnat", "pool P"], "ports 1 {v}", 1, 65535,
      lambda c: None),
-    ("pool block-stride", ["nat cgnat pool P"], "block-stride {v}", 0, 65535,
+    ("pool block-stride", ["nat", "cgnat", "pool P"], "block-stride {v}", 0, 65535,
      lambda c: None),
-    ("pool reserve", ["nat cgnat pool P"], "reserve {v}", 0, 65535,
+    ("pool reserve", ["nat", "cgnat", "pool P"], "reserve {v}", 0, 65535,
      lambda c: None),
-    ("pool utilisation-alarm", ["nat cgnat pool P"],
+    ("pool utilisation-alarm", ["nat", "cgnat", "pool P"],
      "utilisation-alarm {v}", 1, 100, lambda c: None),
-    ("pool timeout udp", ["nat cgnat pool P"], "timeout udp {v}",
+    ("pool timeout udp", ["nat", "cgnat", "pool P"], "timeout udp {v}",
      1, 4294967295, lambda c: None),
-    ("global cgnat timeout udp", [], "cgnat timeout udp {v}", 1, 4294967295,
+    ("global cgnat timeout udp", ["nat", "cgnat"], "timeout udp {v}", 1,
+     4294967295,
      lambda c: None),
     ("interface vlan", ["interface ens19.7"], "vlan 7 inner {v}", 1, 4094,
      lambda c: (c.vlans.get("ens19.7") or {}).get("inner")),
@@ -597,24 +611,27 @@ check(none_opts == {},
 print(f"  interface Ten -> {sorted(opts)}")
 
 print("\n=== names the CANDIDATE knows ===")
-# One pool made in the NEW hierarchy and one in the old, because both have to
-# work: a box in service has a saved configuration and twenty rollback
-# revisions written in the old spelling, and prisma-routing.service replays that
-# file at every boot (#193).
-sh.feed("nat cgnat pool residential")
+# Two pools made at the `cgnat` level (#446), and the names offered back
+# where a pool is named: `pool` and `no pool`, standing there.
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("pool residential")
 sh.feed("inside 100.64.0.0/22")
 sh.feed("exit")
-sh.feed("cgnat pool business")
+sh.feed("pool business")
 sh.feed("exit")
 check(set(sh.candidate.pools) == {"residential", "business"},
-      f"both spellings make a pool: {sorted(sh.candidate.pools)}")
-opts, _, _ = sh._options("nat cgnat pool ", False)
+      f"both pools are made: {sorted(sh.candidate.pools)}")
+check(sh.nat_ctx == ["nat", "cgnat"],
+      f"and leaving a pool returns to cgnat: {sh.nat_ctx}")
+opts, _, _ = sh._options("pool ", False)
 check(set(opts) == {"residential", "business"},
       f"pools come from the candidate being edited: {sorted(opts)}")
-opts, _, _ = sh._options("no nat cgnat pool ", False)
+opts, _, _ = sh._options("no pool ", False)
 check(set(opts) == {"residential", "business"},
       f"and from the removal branch too: {sorted(opts)}")
-print(f"  nat cgnat pool -> {sorted(opts)}")
+sh.feed("top")
+print(f"  pool -> {sorted(opts)}")
 
 print("\n=== a source that cannot answer offers nothing, and does not raise ===")
 # A VTY that becomes unusable when the dataplane is down is a VTY that cannot
@@ -698,15 +715,18 @@ print(f"  {len(prismash.Shell.DYNAMIC)} markers, all sourced: "
 print("\n=== show this ===")
 sh = shell_with_box()
 sh.feed("configure")
-sh.feed("cgnat pool residential")
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("pool residential")
 sh.feed("inside 100.64.0.0/22")
 sh.feed("tcp-mss 1400")
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
     sh.feed("show this")
 text = out.getvalue()
-check("cgnat pool residential" in text and "tcp-mss 1400" in text,
-      f"the pool being edited is shown: {text!r}")
+check(text.startswith("pool residential") and "tcp-mss 1400" in text,
+      f"the pool being edited is shown, in the words it is typed in: "
+      f"{text!r}")
 check("business" not in text,
       "and nothing above it: 'this' is the hierarchy, not the box")
 print("  inside a pool: " + text.strip().replace("\n", " / "))
@@ -716,9 +736,9 @@ print("  inside a pool: " + text.strip().replace("\n", " / "))
 # question they did not ask.
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
-    sh.feed("exit")
+    sh.feed("top")
     sh.feed("show this")
-check("cgnat pool residential" in out.getvalue(),
+check("  pool residential" in out.getvalue(),
       "at the top of config mode it is the whole candidate")
 
 sh2 = shell_with_box()
@@ -818,11 +838,13 @@ sh.feed("exit")
 
 # The blocks the tree knows about were always right; this is the check that
 # they stayed right.
-sh.feed("cgnat pool p")
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("pool p")
 opts, _, _ = sh._options("", False)
 check("inside" in opts and "cgnat" not in opts,
       f"a pool still offers its own tree: {sorted(opts)[:6]}")
-sh.feed("exit")
+sh.feed("top")
 
 print("\n=== ? says which names create an interface (#406) ===")
 # A maintainer asked for sub-interfaces to be implemented on a box that had had
@@ -892,9 +914,10 @@ print("\n=== leaving a block says nothing and lands in config mode ===")
 # complains while working.
 sh = shell_with_box()
 sh.feed("configure")
-for block in ("user noc", "snmp-user alice", "cgnat pool p",
+for block in ("user noc", "snmp-user alice", "nat|cgnat|pool p",
               "interface TenGigabitEthernet0/8/0"):
-    sh.feed(block)
+    for _step in block.split("|"):
+        sh.feed(_step)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         sh.feed("exit")
@@ -902,6 +925,7 @@ for block in ("user noc", "snmp-user alice", "cgnat pool p",
     check(said == "", f"leaving '{block}' printed: {said!r}")
     check(sh.mode == "config",
           f"leaving '{block}' left mode {sh.mode!r}, not config")
+    sh.feed("top")
 print("  four blocks entered and left, in silence")
 
 print("\n=== an interface this box does not have is refused ===")
@@ -955,9 +979,11 @@ check("no such interface" not in commit_check(sh),
 # on a name the dataplane never heard of.
 sh = shell_with_frr()
 sh.feed("configure")
-sh.feed("cgnat interface Gig9 inside")
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("interface Gig9 inside")
 check("no such interface" in commit_check(sh),
-      "'cgnat interface' is checked the same way")
+      "'interface' under cgnat is checked the same way")
 
 # Skipped, not failed. A VTY that cannot commit while the dataplane is down
 # cannot be used to fix it.
@@ -1078,10 +1104,12 @@ check(sh.prompt() == "prisma> ",
 sh.feed("configure")
 check(sh.prompt() == "prisma# [edit] ", f"top of config: {sh.prompt()!r}")
 
-sh.feed("cgnat pool residential")
-check("cgnat pool residential" in sh.prompt(),
-      f"a pool names the pool: {sh.prompt()!r}")
-sh.feed("exit")
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("pool residential")
+check(sh.prompt() == "prisma# [edit nat / cgnat / pool residential] ",
+      f"a pool names the pool, and the levels it is in: {sh.prompt()!r}")
+sh.feed("top")
 
 sh.feed("interface TenGigabitEthernet0/8/0")
 check("interface TenGigabitEthernet0/8/0" in sh.prompt(),
@@ -1096,13 +1124,16 @@ print(f"  {sh.prompt().strip()}")
 # prompt's width, which is the shorter of the two and the one a longer pool
 # name would grow, was never looked at.
 sh.feed("exit")
-for probe in ("cgnat pool residential", "interface TenGigabitEthernet0/8/0"):
-    sh.feed(probe)
+for probe in ("nat|cgnat|pool residential",
+              "nat|cgnat|pool " + "r" * 63,
+              "interface TenGigabitEthernet0/8/0"):
+    for _step in probe.split("|"):
+        sh.feed(_step)
     check(len(sh.prompt()) <= 60,
-          f"the prompt in {probe!r} is {len(sh.prompt())} columns; a racked "
-          f"box has 80 and a prompt that pushes the cursor off the line is "
-          f"worse than a vague one")
-    sh.feed("exit")
+          f"the prompt in {probe[:40]!r} is {len(sh.prompt())} columns; a "
+          f"racked box has 80 and a prompt that pushes the cursor off the "
+          f"line is worse than a vague one")
+    sh.feed("top")
 
 sh.feed("user noc")
 check("user noc" in sh.prompt(), f"a user names the account: {sh.prompt()!r}")
@@ -3354,7 +3385,7 @@ check("pg0" in opts and "terse" not in opts,
 
 
 # ---------------------------------------------------------------------------
-# The typed hierarchies: `nat cgnat ...` and `router static` (#193)
+# The typed hierarchies: `nat` > `cgnat` and `router static` (#193, #446)
 
 def box_193():
     sh = shell_with_box()
@@ -3368,9 +3399,9 @@ def box_193():
     return sh
 
 sh = box_193()
-for line in ("nat cgnat pool residential", "inside 100.64.0.0/22",
+for line in ("nat", "cgnat", "pool residential", "inside 100.64.0.0/22",
              "outside 203.0.113.0/24", "block-size 512", "exit",
-             "nat cgnat interface TenGigabitEthernet0/8/0 inside",
+             "interface TenGigabitEthernet0/8/0 inside", "exit", "exit",
              "router static", "0.0.0.0/0 next-hop 10.0.0.2",
              "2001:db8::/32 next-hop fe80::1", "exit"):
     sh.feed(line)
@@ -3386,16 +3417,64 @@ check("ip route 0.0.0.0/0 10.0.0.2" in sh.candidate.routing
       and "ipv6 route 2001:db8::/32 fe80::1" in sh.candidate.routing,
       f"the routes do, in FRR's own words: {sh.candidate.routing}")
 
-# The old spellings still work, typed. Not because of politeness: a box in
-# service has a saved configuration and up to twenty rollback revisions written
-# in them, and prisma-routing.service replays that file at every boot.
+# The one-line CGNAT form is refused, typed (#446), and stages nothing; the
+# route spelling FRR itself uses still works.
 sh = box_193()
-sh.feed("cgnat interface TenGigabitEthernet0/8/0 outside")
+for _old in ("cgnat interface TenGigabitEthernet0/8/0 outside",
+             "nat cgnat pool residential", "no nat cgnat pool residential"):
+    out = capture(sh, _old)
+    check("the one-line CGNAT form is gone" in out
+          and "enter 'nat', then 'cgnat'" in " ".join(out.split()),
+          f"{_old!r} is refused and says what to type: {out}")
+check(not sh.candidate.interfaces and not sh.candidate.pools
+      and sh.nat_ctx == [] and sh.mode == "config",
+      f"and nothing was staged, and the operator did not move: "
+      f"{sh.candidate.interfaces} {sh.nat_ctx}")
 sh.feed("ip route 198.51.100.0/24 blackhole")
-check(sh.candidate.interfaces == {"TenGigabitEthernet0/8/0": "outside"},
-      f"the old CGNAT spelling still configures: {sh.candidate.interfaces}")
 check("ip route 198.51.100.0/24 blackhole" in sh.candidate.routing,
-      f"and so does the old route spelling: {sh.candidate.routing}")
+      f"FRR's own route spelling still works: {sh.candidate.routing}")
+
+# `exit` walks back up, one level at a time, and `end` goes to the top.
+sh = box_193()
+sh.feed("nat")
+check(sh.nat_ctx == ["nat"] and sh.prompt() == "prisma# [edit nat] ",
+      f"nat is entered: {sh.prompt()!r}")
+out = capture(sh, "pool x")
+check("under 'nat' there is 'cgnat' and nothing else" in out
+      and not sh.candidate.pools, f"and only cgnat is under it: {out}")
+sh.feed("cgnat")
+sh.feed("pool p")
+check(sh.mode == "pool" and sh.nat_ctx == ["nat", "cgnat"],
+      f"a pool is entered from cgnat: {sh.mode} {sh.nat_ctx}")
+sh.feed("exit")
+check(sh.mode == "config" and sh.nat_ctx == ["nat", "cgnat"],
+      f"exit from the pool returns to cgnat: {sh.nat_ctx}")
+sh.feed("exit")
+check(sh.nat_ctx == ["nat"], f"then to nat: {sh.nat_ctx}")
+sh.feed("exit")
+check(sh.nat_ctx == [] and sh.mode == "config",
+      f"then to the top, still in configuration mode: {sh.nat_ctx}")
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("pool p")
+sh.feed("end")
+check(sh.mode == "config" and sh.nat_ctx == [],
+      f"end from a pool goes to the top: {sh.nat_ctx}")
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("up")
+check(sh.nat_ctx == ["nat"], f"up is one level: {sh.nat_ctx}")
+sh.feed("cgnat")
+sh.feed("top")
+check(sh.nat_ctx == [], f"top is all of them: {sh.nat_ctx}")
+# `no` under cgnat removes, in the level's words.
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("pool gone")
+sh.feed("exit")
+sh.feed("no pool gone")
+check("gone" not in sh.candidate.pools,
+      f"'no pool' removes it: {list(sh.candidate.pools)}")
 
 # `exit` leaves the block, and the next statement lands outside it.
 sh = box_193()
@@ -3415,15 +3494,6 @@ out = capture(sh, "neighbor 10.0.0.2 remote-as 65001")
 check("not a statement of 'router static'" in out, f"refused: {out}")
 check("neighbor 10.0.0.2 remote-as 65001" not in sh.candidate.routing,
       "and not staged")
-
-# `nat` on its own is refused, with the statement that follows it. `cgnat` was
-# never a block either - what is entered is `cgnat pool NAME` - and inventing
-# one level of block here would make `exit` mean two different things
-# depending on which word opened it.
-sh = box_193()
-out = capture(sh, "nat")
-check("a hierarchy, not a block" in out, f"nat alone is refused: {out}")
-check("nat cgnat pool" in out, "and says what to type instead")
 
 # Inside another block the words belong to that block's grammar. A route-map
 # or a description may begin with any word at all, and rewriting there would
@@ -4440,7 +4510,7 @@ print("\n=== inside a block, `show` is offered and so is the tree under it ===")
 # Asserted in both halves, because either alone is satisfiable by an accident:
 # that the word is offered, and that the sub-commands under it are, since a
 # `show` with nothing after it leaves the operator exactly where they were.
-for _blk, _mode in (("cgnat pool residential", "pool"),
+for _blk, _mode in (("nat|cgnat|pool residential", "pool"),
                     ("user bob", "user"),
                     ("snmp-user u1", "snmp-user"),
                     ("interface TenGigabitEthernet0/8/0", "config"),
@@ -4448,7 +4518,8 @@ for _blk, _mode in (("cgnat pool residential", "pool"),
     _sh = shell_with_box()
     with contextlib.redirect_stdout(io.StringIO()):
         _sh.feed("configure")
-        _sh.feed(_blk)
+        for _step in _blk.split("|"):
+            _sh.feed(_step)
     _o, _, _ = _sh._options("", False)
     check("show" in _o, f"inside '{_blk}', `?` does not offer show: {sorted(_o)}")
     _o2, _, _ = _sh._options("show ", False)
@@ -4463,7 +4534,9 @@ for _blk, _mode in (("cgnat pool residential", "pool"),
 _sh = shell_with_box()
 with contextlib.redirect_stdout(io.StringIO()):
     _sh.feed("configure")
-    _sh.feed("cgnat pool residential")
+    _sh.feed("nat")
+    _sh.feed("cgnat")
+    _sh.feed("pool residential")
 _o, _, _ = _sh._options("", False)
 check("interface" not in _o and "user" not in _o,
       f"the level above leaked into a pool block: {sorted(_o)}")
@@ -5638,8 +5711,10 @@ def _shell271(candidate_text, running_text="", caps=None, api=None, dp=None,
         "read_ssh": lambda self: {},
         "read_dns": lambda self: [],
         "read_users": lambda self: {}})()
-    sh.candidate = _cfg.Config.parse(candidate_text)
-    sh.running_config = lambda: _cfg.Config.parse(running_text)
+    # Fixtures written flat, in the model's words, and read as the file
+    # format they stand for (#446).
+    sh.candidate = _cfg.Config.parse(in_nat_block(candidate_text))
+    sh.running_config = lambda: _cfg.Config.parse(in_nat_block(running_text))
     return sh
 
 
@@ -5690,7 +5765,7 @@ _drive271(_shell271("ssh permit-root-login no\nssh password-authentication yes\n
           "this change leaves nobody able to configure the box")
 
 # Export turned on with nowhere to send it.
-_drive271(_shell271("! cgnat\nnat cgnat logging enable\n"), [],
+_drive271(_shell271("! cgnat\nnat\n cgnat\n  logging enable\n  exit\n exit\n"), [],
           "UDP export has no collector")
 
 # An interface name this box does not have, in both shapes: a stanza and an
@@ -6263,7 +6338,9 @@ def pool_shell():
     s = shell_with_frr()
     s.mode = "config"
     s.candidate = prismash.Config()
-    s.feed("nat cgnat pool residential")
+    s.feed("nat")
+    s.feed("cgnat")
+    s.feed("pool residential")
     s.feed("inside 100.64.0.0/22")
     return s
 
@@ -7355,7 +7432,7 @@ _DEVICE = ("! cgnat\n"
            " block-size 4\n"
            " utilisation-alarm 0\n"
            " exit\n")
-_read = _config.Config.parse(_DEVICE)
+_read = _config.Config.parse(_DEVICE, dataplane=True)
 check(not _read.unknown,
       f"the VTY cannot model a pool the dataplane built, so every commit on "
       f"that box is refused: {_read.unknown}")
@@ -7366,7 +7443,7 @@ check("det" in _read.pools and _read.pools["det"].block_size == "4",
 for _stmt, _range in (("block-size 4", "64-32768"),
                       ("block-size 65536", "64-32768"),
                       ("utilisation-alarm 0", "1-100")):
-    _s, _refused, _said = _typed(["nat cgnat pool P"], _stmt)
+    _s, _refused, _said = _typed(["nat", "cgnat", "pool P"], _stmt)
     check(_refused,
           f"{_stmt!r} typed at the prompt was taken, and the prompt is where "
           f"a number can still be argued with: {_said.strip()!r}")
@@ -7389,11 +7466,11 @@ print("\n=== the refusals that were a paragraph on one row (#355) ===")
 _WIDE_CASES = [
     ("no vlan on a sub-interface",
      ["interface Gi0/12/0.700", "vlan 700", "no vlan 700"]),
-    ("no policy in a pool", ["nat cgnat pool P", "no policy interleaved"]),
-    ("no block-size in a pool", ["nat cgnat pool P", "no block-size 512"]),
-    ("no mode in a pool", ["nat cgnat pool P", "no mode deterministic"]),
+    ("no policy in a pool", ["nat", "cgnat", "pool P", "no policy interleaved"]),
+    ("no block-size in a pool", ["nat", "cgnat", "pool P", "no block-size 512"]),
+    ("no mode in a pool", ["nat", "cgnat", "pool P", "no mode deterministic"]),
     ("no forward with two subscribers",
-     ["nat cgnat pool P", "inside 10.0.0.0/24", "outside 200.150.0.0/28",
+     ["nat", "cgnat", "pool P", "inside 10.0.0.0/24", "outside 200.150.0.0/28",
       "forward tcp 6200 to 10.0.0.4 6200", "forward tcp 6200 to 10.0.0.5 6200",
       "no forward tcp 6200"]),
     ("a role for root", ["user root", "role administrator"]),
@@ -7437,7 +7514,7 @@ print("\n=== `?` says block-size is a power of two, and now so does the box "
 # that calls Pool.check_pow2() directly is green whatever do_pool does with
 # it. That is how #357's first two test attempts could not fail.
 for _v in (64, 512, 32768):
-    _s, _refused, _said = _typed(["nat cgnat pool P"], f"block-size {_v}")
+    _s, _refused, _said = _typed(["nat", "cgnat", "pool P"], f"block-size {_v}")
     check(not _refused,
           f"block-size {_v} is a power of two inside the range `?` quotes "
           f"and the box refused it: {_said.strip()!r}")
@@ -7448,7 +7525,7 @@ for _v in (64, 512, 32768):
 # what refuses them can only be the shape.
 for _v, _lo, _hi in ((100, 64, 128), (65, 64, 128), (1000, 512, 1024),
                      (32767, 16384, 32768)):
-    _s, _refused, _said = _typed(["nat cgnat pool P"], f"block-size {_v}")
+    _s, _refused, _said = _typed(["nat", "cgnat", "pool P"], f"block-size {_v}")
     check(_refused,
           f"block-size {_v} is inside 64-32768 and is not a power of two, "
           f"and the box took it - the dataplane refuses it at commit time")
@@ -7488,7 +7565,7 @@ for _bs in ("4", "100"):
              " outside 200.150.0.16/32\n"
              f" block-size {_bs}\n"
              " exit\n")
-    _read = _config.Config.parse(_text)
+    _read = _config.Config.parse(_text, dataplane=True)
     check(not _read.unknown,
           f"a configuration carrying `block-size {_bs}` no longer parses, so "
           f"a box whose dataplane reports one cannot be committed at all "
@@ -7529,7 +7606,7 @@ _PORTS_REFUSED = [
     ("ports -1 100", "1-65535", "negative"),
 ]
 for _stmt, _owed, _why in _PORTS_REFUSED:
-    _s, _refused, _said = _typed(["nat cgnat pool P"], _stmt)
+    _s, _refused, _said = _typed(["nat", "cgnat", "pool P"], _stmt)
     check(_refused,
           f"{_stmt!r} ({_why}) was taken at the prompt, and the prompt is "
           f"where a number can still be argued with: {_said.strip()!r}")
@@ -7552,7 +7629,7 @@ for _stmt, _owed, _why in _PORTS_REFUSED:
 # box that refuses every port range: a legal one is accepted and is IN the
 # candidate afterwards.
 for _stmt in ("ports 1 65535", "ports 1024 65535", "ports 2000 2999"):
-    _s, _refused, _said = _typed(["nat cgnat pool P"], _stmt)
+    _s, _refused, _said = _typed(["nat", "cgnat", "pool P"], _stmt)
     check(not _refused,
           f"{_stmt!r} is inside 1-65535 at both ends and in order, and the "
           f"box refused it: {_said.strip()!r}")
@@ -7563,7 +7640,7 @@ for _stmt in ("ports 1 65535", "ports 1024 65535", "ports 2000 2999"):
 # THE ORDERING SAID AS AN ORDERING. `ports 9000 100` breaks neither end's
 # bound, so a refusal quoting 1-65535 would send the operator off to check
 # two numbers that are both fine.
-_s, _refused, _said = _typed(["nat cgnat pool P"], "ports 9000 100")
+_s, _refused, _said = _typed(["nat", "cgnat", "pool P"], "ports 9000 100")
 check("1-65535" not in _said,
       f"the ordering refusal quotes the range, which is the one thing wrong "
       f"with neither of those two numbers: {_said.strip()!r}")
@@ -7590,7 +7667,7 @@ for _range in ("1 65535", "0 65535", "9000 100", "70000 80000"):
              " outside 200.150.0.16/32\n"
              f" ports {_range}\n"
              " exit\n")
-    _read = _config.Config.parse(_text)
+    _read = _config.Config.parse(_text, dataplane=True)
     check(not _read.unknown,
           f"a configuration carrying `ports {_range}` no longer parses, so a "
           f"box whose dataplane reports one cannot be committed at all "
@@ -7610,7 +7687,7 @@ print("\n=== a port range too narrow for one block is asked at COMMIT ===")
 # half. So the line takes it and the commit check refuses it - asserted from
 # both sides here, because "the line takes it" is the half that would rot
 # first if somebody moved the check.
-_s, _refused, _said = _typed(["nat cgnat pool P", "block-size 512"],
+_s, _refused, _said = _typed(["nat", "cgnat", "pool P", "block-size 512"],
                              "ports 1000 1100")
 check(not _refused,
       f"`ports 1000 1100` was refused at the line under block-size 512, "

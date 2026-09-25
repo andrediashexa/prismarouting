@@ -118,18 +118,24 @@ Se o ping não volta, pare aqui: o CGNAT não tem como funcionar sobre um enlace
 
 # 3. Crie o pool
 
+Toda a configuração de CGNAT fica dentro de `nat` e, dentro dele, de `cgnat`. Entre nos dois níveis e crie o pool:
+
 ```
 prisma> configure
-prisma# [edit] nat cgnat pool residencial
-prisma# [edit cgnat pool residencial] inside 100.64.0.0/22
-prisma# [edit cgnat pool residencial] outside 203.0.113.0/28
-prisma# [edit cgnat pool residencial] block-size 512
-prisma# [edit cgnat pool residencial] ports 1024 65535
-prisma# [edit cgnat pool residencial] policy interleaved
-prisma# [edit cgnat pool residencial] mode deterministic
-prisma# [edit cgnat pool residencial] tcp-mss auto
-prisma# [edit cgnat pool residencial] exit
+prisma# [edit] nat
+prisma# [edit nat] cgnat
+prisma# [edit nat / cgnat] pool residencial
+prisma# [edit nat / cgnat / pool residencial] inside 100.64.0.0/22
+prisma# [edit nat / cgnat / pool residencial] outside 203.0.113.0/28
+prisma# [edit nat / cgnat / pool residencial] block-size 512
+prisma# [edit nat / cgnat / pool residencial] ports 1024 65535
+prisma# [edit nat / cgnat / pool residencial] policy interleaved
+prisma# [edit nat / cgnat / pool residencial] mode deterministic
+prisma# [edit nat / cgnat / pool residencial] tcp-mss auto
+prisma# [edit nat / cgnat / pool residencial] exit
 ```
+
+O `exit` do pool volta para `cgnat`, que é onde o próximo passo continua. O prompt mostra sempre em que nível você está.
 
 | Linha | O que decide |
 |-------|--------------|
@@ -145,11 +151,11 @@ Não lembra o que vem depois? **TAB** completa e `?` lista o que vale naquele po
 
 # 4. Diga qual porta é de dentro e qual é de fora
 
-Ainda no modo de configuração:
+Ainda em `cgnat`:
 
 ```
-prisma# [edit] nat cgnat interface ens18 inside
-prisma# [edit] nat cgnat interface ens19 outside
+prisma# [edit nat / cgnat] interface ens18 inside
+prisma# [edit nat / cgnat] interface ens19 outside
 ```
 
 `inside` é a porta por onde os assinantes chegam. `outside` é a porta por onde o tráfego traduzido sai.
@@ -157,27 +163,31 @@ prisma# [edit] nat cgnat interface ens19 outside
 # 5. Confira o que vai mudar, antes de mudar
 
 ```
-prisma# [edit] show configuration compare
+prisma# [edit nat / cgnat] show configuration compare
 ```
 
 ```
-+nat cgnat pool residencial
-+ inside 100.64.0.0/22
-+ outside 203.0.113.0/28
-+ block-size 512
-+ ports 1024 65535
-+ policy interleaved
-+ mode deterministic
-+ tcp-mss auto
++nat
++ cgnat
++  pool residencial
++   inside 100.64.0.0/22
++   outside 203.0.113.0/28
++   block-size 512
++   ports 1024 65535
++   policy interleaved
++   mode deterministic
++   tcp-mss auto
++   exit
++  interface ens18 inside
++  interface ens19 outside
++  exit
 + exit
-+nat cgnat interface ens18 inside
-+nat cgnat interface ens19 outside
 ```
 
 Tudo com `+` é o que entra. Depois peça à caixa para validar, sem aplicar nada:
 
 ```
-prisma# [edit] commit check
+prisma# [edit nat / cgnat] commit check
 ```
 
 ```
@@ -189,7 +199,7 @@ O `commit check` recusa aqui o que não daria certo, e diz por quê. A recusa qu
 ```
 error: pool 'errado': public address 198.51.100.2 is configured on ens19
     interface ens19 / ipv4 address 198.51.100.2/30
-    cgnat pool errado / outside 198.51.100.0/30
+    nat / cgnat / pool errado / outside 198.51.100.0/30
 ```
 
 Ela existe porque o CGNAT olha o pacote antes de a caixa decidir se ele é para ela mesma: um endereço de enlace dentro do pool faz a sessão BGP daquele enlace cair sem motivo aparente. Corrija o `outside` para um prefixo que não esteja em interface nenhuma.
@@ -197,7 +207,7 @@ Ela existe porque o CGNAT olha o pacote antes de a caixa decidir se ele é para 
 # 6. Aplique
 
 ```
-prisma# [edit] commit comment "pool residencial inicial"
+prisma# [edit nat / cgnat] commit comment "pool residencial inicial"
 ```
 
 ```
@@ -281,12 +291,14 @@ No modo dinâmico a caixa decide na hora qual bloco cada assinante recebe, e a �
 
 ```
 prisma> configure
-prisma# [edit] nat cgnat logging udp <ip-do-coletor> src 198.51.100.2
-prisma# [edit] nat cgnat logging enable
-prisma# [edit] commit
+prisma# [edit] nat
+prisma# [edit nat] cgnat
+prisma# [edit nat / cgnat] logging udp <ip-do-coletor> src 198.51.100.2
+prisma# [edit nat / cgnat] logging enable
+prisma# [edit nat / cgnat] commit
 ```
 
-`src` é obrigatório, e `enable` sem destino é recusado. Para não perder registro quando o coletor cai, existe também o transporte TCP (`nat cgnat logging tcp <ip-do-coletor>`). [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) explica a diferença.
+`src` é obrigatório, e `enable` sem destino é recusado. Para não perder registro quando o coletor cai, existe também o transporte TCP (`logging tcp <ip-do-coletor>`, também dentro de `cgnat`). [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) explica a diferença.
 
 Se você esquecer, o `commit check` e o `commit` avisam, com o nome do pool e os dois jeitos de exportar. É um aviso, não uma recusa, porque um pool montado antes de o coletor existir é uma configuração válida.
 
@@ -394,7 +406,7 @@ Antes de considerar o CGNAT pronto:
 - [ ] `show interface terse` mostra as duas portas `up up`, com os endereços certos
 - [ ] o upstream responde ao `ping`
 - [ ] `commit check` passa sem erro, e sem o aviso de prefixo não anunciado (ou você sabe quem anuncia)
-- [ ] a porta de gerência **não** aparece em `nat cgnat interface`
+- [ ] a porta de gerência **não** aparece como `interface` dentro de `nat` > `cgnat`
 - [ ] `show cgnat pool` mostra `usable` menor ou igual a `capacity`
 - [ ] `show cgnat subscriber <ip-de-teste>` mostra bloco e sessões depois que o assinante navega
 - [ ] `show cgnat translation <ip-público> <porta>` devolve o assinante

@@ -381,7 +381,7 @@ echo "=== the pair is asked to diverge, and the commit refuses (#8) ==="
 # `save` on the other box and a copy. Nothing here is the product's work.
 pair_pool() {   # <box>: the same pool on both, which is what makes the
                 # mapping a function of the configuration and not of the box
-  hx "$1" -c "configure" -c "nat cgnat pool residential" \
+  hx "$1" -c "configure" -c "nat" -c "cgnat" -c "pool residential" \
      -c "inside 100.64.0.0/26" -c "outside 200.150.16.0/28" \
      -c "block-size 2048" -c "mode deterministic" -c "exit" -c "commit"
 }
@@ -399,9 +399,9 @@ echo "  box b now holds box a's configuration as its peer file"
 new_pool() {   # <box> <commit words...>
   _box=$1; shift
   PRISMA_PEER_CONFIG=/etc/prisma-routing/peer-for-b.conf \
-  hx "$_box" -c "configure" -c "nat cgnat pool business" \
+  hx "$_box" -c "configure" -c "nat" -c "cgnat" -c "pool business" \
      -c "inside 100.64.1.0/26" -c "outside 200.150.17.0/28" \
-     -c "block-size 2048" -c "mode deterministic" -c "exit" -c "$*"
+     -c "block-size 2048" -c "mode deterministic" -c "exit" -c "top" -c "$*"
 }
 DIVERGE=$(new_pool b commit)
 echo "$DIVERGE" | sed 's/^/  b: /'
@@ -419,7 +419,7 @@ POOL_AFTER=$(hx b -c "show running-config" 2>/dev/null | grep -c "pool business"
 # The pair agrees again before the takeover phase below, which is measured on
 # a pair that agrees - the state the rest of this lab is about.
 PRISMA_PEER_CONFIG=/etc/prisma-routing/peer-for-b.conf \
-  hx b -c "configure" -c "no nat cgnat pool business" \
+  hx b -c "configure" -c "nat" -c "cgnat" -c "no pool business" \
   -c "commit diverge" >/dev/null 2>&1
 
 echo

@@ -511,6 +511,13 @@ phase "2. an operator configures the box"
 # addresses, descriptions and an MTU, a CGNAT pool with a block size and a
 # timeout, the pool attached on both sides, a static port forward, a static
 # route, and three commits so the rollback store has revisions in it.
+# IN THE WORDS THE OLD VTY TAKES (#446). A release from before #446 takes
+# the one-line CGNAT form and no `nat` block; one from #446 on takes only the
+# block. Read off the old tree's own source, not assumed from the tag, for the
+# reason OLD_SPELLING gives below.
+OLD_NAT_BLOCK=$(grep -c "def nat_rewrite" "$OLD/src/prismash/prismash.py" \
+                2>/dev/null || true)
+echo "  the old VTY takes the nat > cgnat block: ${OLD_NAT_BLOCK:-0}"
 $HX -c "configure" \
     -c "interface pg0" \
     -c "description subscribers, south side" \
@@ -521,15 +528,30 @@ $HX -c "configure" \
     -c "description transit, north side" \
     -c "ipv4 address 200.150.0.1/24" \
     -c "exit" \
-    -c "cgnat pool minas" \
-    -c "inside 100.64.0.0/22" \
-    -c "outside 200.150.0.16/30" \
-    -c "block-size 512" \
-    -c "timeout udp 300" \
-    -c "exit" \
-    -c "cgnat interface pg0 inside" \
-    -c "cgnat interface pg1 outside" \
-    -c "commit comment \"pool minas and the two ports\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
+    -c "commit comment \"the two ports\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
+if [ "${OLD_NAT_BLOCK:-0}" -gt 0 ]; then
+  $HX -c "configure" -c "nat" -c "cgnat" \
+      -c "pool minas" \
+      -c "inside 100.64.0.0/22" \
+      -c "outside 200.150.0.16/30" \
+      -c "block-size 512" \
+      -c "timeout udp 300" \
+      -c "exit" \
+      -c "interface pg0 inside" \
+      -c "interface pg1 outside" \
+      -c "commit comment \"pool minas and the two ports\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
+else
+  $HX -c "configure" \
+      -c "cgnat pool minas" \
+      -c "inside 100.64.0.0/22" \
+      -c "outside 200.150.0.16/30" \
+      -c "block-size 512" \
+      -c "timeout udp 300" \
+      -c "exit" \
+      -c "cgnat interface pg0 inside" \
+      -c "cgnat interface pg1 outside" \
+      -c "commit comment \"pool minas and the two ports\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
+fi
 
 # The route in its own commit, so the rollback store holds a revision that is
 # the box WITHOUT it - which is what section 9 loads.
@@ -541,11 +563,19 @@ $HX -c "configure" \
 # .5's block on this pool - 100.64.0.5 is subscriber 5, block 1536-2047 - and
 # the arithmetic is lab/forward.sh's, restated because the packet in section 8
 # depends on it.
-$HX -c "configure" \
-    -c "cgnat pool minas" \
-    -c "forward tcp 1600 to 100.64.0.5 80" \
-    -c "exit" \
-    -c "commit comment \"port 80 for the camera at .5\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
+if [ "${OLD_NAT_BLOCK:-0}" -gt 0 ]; then
+  $HX -c "configure" -c "nat" -c "cgnat" \
+      -c "pool minas" \
+      -c "forward tcp 1600 to 100.64.0.5 80" \
+      -c "exit" \
+      -c "commit comment \"port 80 for the camera at .5\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
+else
+  $HX -c "configure" \
+      -c "cgnat pool minas" \
+      -c "forward tcp 1600 to 100.64.0.5 80" \
+      -c "exit" \
+      -c "commit comment \"port 80 for the camera at .5\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
+fi
 
 $HX -c "save" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
 
@@ -701,6 +731,10 @@ cp "$CONF" /tmp/conf-the-old-version-wrote
 # spelling. Both are asserted, each on its own branch below.
 OLD_SPELLING=$(grep -c "^ route 10.99.0.0/24 " /tmp/conf-the-old-version-wrote \
                2>/dev/null || true)
+# And the CGNAT one (#446): a release before it wrote `nat cgnat pool
+# minas`, one line; this tree reads only the nat > cgnat block.
+OLD_CGNAT_LINE=$(grep -cE "^(nat )?cgnat pool minas" \
+                 /tmp/conf-the-old-version-wrote 2>/dev/null || true)
 OLD_READ=$(cd /src/src/prismash && python3 -c '
 import sys
 from config import Config
@@ -714,6 +748,7 @@ echo "  so, as the upgrade page says: save before the reboot"
 SAVE_AFTER=$($HX -c "save" 2>&1)
 printf '%s\n' "$SAVE_AFTER" | sed 's/^/    /'
 SAVED_STATIC=$(sed -n '/^router static/,/^ *exit/p' "$CONF")
+SAVED_NAT=$(sed -n '/^nat$/,/^ exit$/p' "$CONF")
 echo "  the file that save left, whole:"
 sed 's/^/    | /' "$CONF"
 echo "  and what the dataplane it read from says it has:"
@@ -780,7 +815,7 @@ echo "  test/test_install_says.sh drives those screens directly."
 # Safe to leave behind: the saved file still says 300, section 6 restarts VPP
 # and section 7 asserts the value out of the FILE - so a split-window change
 # that did take effect is undone by the boot, which is itself the point.
-SPLIT=$($HX -c "configure" -c "cgnat pool minas" -c "timeout udp 301" \
+SPLIT=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool minas" -c "timeout udp 301" \
             -c "exit" -c "commit comment \"changed in the split window\"" 2>&1)
 echo "  the new VTY asking the old dataplane to make a change:"
 printf '%s\n' "$SPLIT" | tail -4 | sed 's/^/    /'
@@ -788,7 +823,7 @@ printf '%s\n' "$SPLIT" | tail -4 | sed 's/^/    /'
 # the two answers differ and the difference is the whole news: a setting on an
 # existing pool goes through, and creating one sends a message whose shape
 # moved between the two releases.
-SPLIT_ADD=$($HX -c "configure" -c "cgnat pool split291" \
+SPLIT_ADD=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool split291" \
             -c "inside 10.77.0.0/22" -c "outside 198.51.100.0/30" \
             -c "block-size 512" -c "exit" \
             -c "commit comment \"a pool created in the split window\"" 2>&1)
@@ -998,8 +1033,21 @@ if [ "${OLD_SPELLING:-0}" -gt 0 ]; then
 else
   expect_in "the old version wrote its static route in the spelling this tree reads" \
     " 10.99.0.0/24 next-hop 200.150.0.2" "$(cat /tmp/conf-the-old-version-wrote)"
+fi
+# #446: the same for the CGNAT form. Whatever the old version wrote, what
+# `save` leaves after the upgrade is the block, with the pool in it.
+if [ "${OLD_CGNAT_LINE:-0}" -gt 0 ]; then
+  expect_in "the old version's one-line CGNAT pool is refused by this tree's grammar" \
+    "cgnat pool minas" "$OLD_READ"
+else
+  expect "the old version wrote CGNAT as the block this tree reads" \
+    test -n "$(sed -n '/^nat$/p' /tmp/conf-the-old-version-wrote)"
+fi
+if [ "${OLD_SPELLING:-0}" -eq 0 ] && [ "${OLD_CGNAT_LINE:-0}" -eq 0 ]; then
   expect "and this tree's grammar reads that file whole" test -z "$OLD_READ"
 fi
+expect_in "and 'save' after the upgrade writes CGNAT as the nat > cgnat block" \
+  "$(printf ' cgnat\n  pool minas')" "$SAVED_NAT"
 # Two halves, and the first one had to be added after a mutation walked
 # through it. An installer that skipped the stamp entirely left
 # /usr/share/prisma-routing/VERSION empty, and "the stamp changed" was GREEN for
@@ -1194,9 +1242,15 @@ expect_in "and what came back is the box the old version committed" \
 # other reason turns this red: the positive sentence below is what a box
 # without a static route in its old revisions still gets.
 # Its revisions were written in the same spelling as its file.
-if [ "${OLD_SPELLING:-0}" -gt 0 ]; then
-  expect "and the check names the old spelling as the one line it refuses" \
-    sh -c 'printf "%s\n" "$1" | grep -Eq "line [0-9]+: route 10.99.0.0/24 200.150.0.2"' _ "$RB_LOAD"
+if [ "${OLD_SPELLING:-0}" -gt 0 ] || [ "${OLD_CGNAT_LINE:-0}" -gt 0 ]; then
+  if [ "${OLD_SPELLING:-0}" -gt 0 ]; then
+    expect "and the check names the old route spelling among the lines it refuses" \
+      sh -c 'printf "%s\n" "$1" | grep -Eq "line [0-9]+: route 10.99.0.0/24 200.150.0.2"' _ "$RB_LOAD"
+  fi
+  if [ "${OLD_CGNAT_LINE:-0}" -gt 0 ]; then
+    expect "and names the one-line CGNAT pool among them (#446)" \
+      sh -c 'printf "%s\n" "$1" | grep -Eq "line [0-9]+: (nat )?cgnat pool minas"' _ "$RB_LOAD"
+  fi
   expect_not_in "and applies nothing on the strength of it" \
     "commit complete" "$RB_LOAD"
 else

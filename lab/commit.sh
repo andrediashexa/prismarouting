@@ -29,7 +29,7 @@ HX="python3 /src/src/prismash/prismash.py"
 
 echo "=========== 1. candidate edits do NOT touch the device ==========="
 $HX -c "configure" \
-    -c "cgnat pool alpha" -c "inside 100.64.0.0/22" \
+    -c "nat" -c "cgnat" -c "pool alpha" -c "inside 100.64.0.0/22" \
     -c "outside 198.19.24.0/24" -c "block-size 512" -c "exit" \
     -c "show configuration compare" 2>&1 | sed 's/^/  /'
 echo "  -- device still has:"
@@ -37,15 +37,15 @@ vppctl show bpa pool | head -1 | sed 's/^/    /'
 
 echo
 echo "=========== 2. commit check validates without applying ==========="
-$HX -c "configure" -c "cgnat pool bad" -c "inside 100.64.0.0/22" -c "exit" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool bad" -c "inside 100.64.0.0/22" -c "exit" \
     -c "commit check" 2>&1 | sed 's/^/  /'
 
 echo
 echo "=========== 3. commit applies ==========="
 $HX -c "configure" \
-    -c "cgnat pool alpha" -c "inside 100.64.0.0/22" \
+    -c "nat" -c "cgnat" -c "pool alpha" -c "inside 100.64.0.0/22" \
     -c "outside 198.19.24.0/24" -c "block-size 512" -c "exit" \
-    -c "cgnat interface pg0 inside" \
+    -c "interface pg0 inside" \
     -c "commit comment \"first pool\"" 2>&1 | sed 's/^/  /'
 echo "  -- device now has:"
 vppctl show bpa pool | head -2 | sed 's/^/    /'
@@ -57,7 +57,7 @@ echo "=========== 4. a second commit, changing the block size ==========="
 # name. This section is about rollback, not about the refusal - but it cannot
 # skip past it, and a lab that quietly failed to apply its own change would
 # leave the assertion below passing for the wrong reason.
-$HX -c "configure" -c "cgnat pool alpha" -c "block-size 1024" -c "exit" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool alpha" -c "block-size 1024" -c "exit" \
     -c "commit remap comment \"wider blocks\"" 2>&1 | sed 's/^/  /'
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
 
@@ -83,7 +83,7 @@ echo "=========== 7. a check MUST NOT mutate the device ==========="
 # An earlier version deleted and recreated the running pool to work around a
 # name check. It "worked", and put a production pool one failed command away
 # from disappearing during a read-only operation.
-TRACE=$(PRISMA_TRACE=1 $HX -c "configure" -c "cgnat pool alpha" \
+TRACE=$(PRISMA_TRACE=1 $HX -c "configure" -c "nat" -c "cgnat" -c "pool alpha" \
         -c "block-size 2048" -c "exit" -c "commit check" 2>&1 >/dev/null \
         | grep "^\[device\]")
 echo "$TRACE" | sed 's/^/  /'
@@ -121,7 +121,7 @@ echo "=========== 8. the check still catches what the device refuses ===========
 # and the device does: bpa_addr_set_* rejects the set before the pool is
 # built. Chosen for that reason and checked for it - a change the VTY caught
 # first would put this section back where it was.
-$HX -c "configure" -c "cgnat pool alpha" -c "outside 198.19.24.0/25" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool alpha" -c "outside 198.19.24.0/25" \
     -c "exit" -c "commit check" 2>&1 | grep -vE "entering" | sed 's/^/  /'
 echo "  -- device untouched:"
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
@@ -185,7 +185,7 @@ expect "rollback restored the previous MTU" test "$BACK" = "$BEFORE"
 # before the pool is built, and the VTY has no check of its own for it -
 # verified by driving the four statements through a Shell and seeing nothing
 # refused at the prompt.
-BADC=$($HX -c "configure" -c "cgnat pool doomed" -c "inside 100.64.32.0/22" \
+BADC=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool doomed" -c "inside 100.64.32.0/22" \
              -c "outside 10.0.0.0/30" -c "outside 10.0.0.0/31" \
              -c "exit" -c "commit" 2>&1)
 echo "$BADC" | tail -3 | sed 's/^/  /'
@@ -216,20 +216,20 @@ vppctl bpa pool resize inside 100.64.64.0/24 outside 203.0.113.0/28 block 512 \
 # report the re-mapping, and it printed only that validation passed. Whatever
 # check says here has to be what commit says below - two answers to "how many
 # move" is worse than one, and the numbers come from the same dataplane call.
-CHECK=$($HX -c "configure" -c "cgnat pool resize" -c "block-size 1024" \
+CHECK=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool resize" -c "block-size 1024" \
              -c "exit" -c "commit check" 2>&1)
 echo "$CHECK" | tail -6 | sed 's/^/  /'
 BLOCK_CHECK=$(vppctl show bpa pool | grep -A9 "pool resize" | grep -o "block *[0-9]*" | head -1)
-REMAP=$($HX -c "configure" -c "cgnat pool resize" -c "block-size 1024" \
+REMAP=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool resize" -c "block-size 1024" \
             -c "exit" -c "commit" 2>&1)
 echo "$REMAP" | tail -6 | sed 's/^/  /'
 BLOCK_MID=$(vppctl show bpa pool | grep -A9 "pool resize" | grep -o "block *[0-9]*" | head -1)
-NAMED=$($HX -c "configure" -c "cgnat pool resize" -c "block-size 1024" \
+NAMED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool resize" -c "block-size 1024" \
             -c "exit" -c "commit remap" 2>&1)
 echo "$NAMED" | tail -2 | sed 's/^/  /'
 BLOCK_AFTER=$(vppctl show bpa pool | grep -A9 "pool resize" | grep -o "block *[0-9]*" | head -1)
 # And a change that moves nobody must not ask for anything.
-QUIET=$($HX -c "configure" -c "cgnat pool resize" -c "alg rtsp off" \
+QUIET=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool resize" -c "alg rtsp off" \
             -c "exit" -c "commit" 2>&1)
 
 # --- and a reserve is one of those changes, reached the same way ------------
@@ -248,12 +248,12 @@ QUIET=$($HX -c "configure" -c "cgnat pool resize" -c "alg rtsp off" \
 # re-divides and the number is large.
 vppctl bpa pool reserved inside 100.64.65.0/24 outside 203.0.113.16/28 \
   block 1024 policy blocked >/dev/null
-RES_REMAP=$($HX -c "configure" -c "cgnat pool reserved" -c "reserve 1" \
+RES_REMAP=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool reserved" -c "reserve 1" \
                 -c "exit" -c "commit" 2>&1)
 echo "$RES_REMAP" | tail -5 | sed 's/^/  /'
 RES_CAP_MID=$(vppctl show bpa pool | grep -A14 "pool reserved" \
               | sed -n 's/^ *capacity *\([0-9]*\) subscribers.*/\1/p' | head -1)
-RES_NAMED=$($HX -c "configure" -c "cgnat pool reserved" -c "reserve 1" \
+RES_NAMED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool reserved" -c "reserve 1" \
                 -c "exit" -c "commit remap" 2>&1)
 RES_CAP_AFTER=$(vppctl show bpa pool | grep -A14 "pool reserved" \
                 | sed -n 's/^ *capacity *\([0-9]*\) subscribers.*/\1/p' | head -1)
@@ -456,8 +456,8 @@ expect_in "and the pool it was asked about still serves the whole /24" \
 # would report success either way.
 echo
 echo "=========== global settings over the API ==========="
-$HX -c "configure" -c "cgnat timeout udp 137" \
-    -c "cgnat block-holddown 11" -c "commit" 2>&1 | tail -2 | sed 's/^/  /'
+$HX -c "configure" -c "nat" -c "cgnat" -c "timeout udp 137" \
+    -c "block-holddown 11" -c "commit" 2>&1 | tail -2 | sed 's/^/  /'
 TIMEOUTS=$(vppctl show bpa timeouts)
 echo "  --- what the dataplane reports ---"
 printf '%s\n' "$TIMEOUTS" | sed 's/^/    /'
@@ -477,13 +477,13 @@ expect "the timeout reached the dataplane (udp ${UDP:-none})" \
   test "${UDP:-0}" = "137"
 expect_in "and so did the block hold-down" "block-holddown 11" \
   "$(vppctl bpa block-holddown)"
-expect_in "and both are in the running configuration" "cgnat timeout udp 137" \
+expect_in "and both are in the running configuration" "  timeout udp 137" \
   "$($HX -c 'show running-config')"
 
 # The refusal has to survive the change of transport. The tables are allocated
 # with the first pool, and a new size afterwards would describe a table nobody
 # is using - so the dataplane refuses, and this lab has pools.
-SESS=$($HX -c "configure" -c "cgnat session-table buckets 1024 memory 64" \
+SESS=$($HX -c "configure" -c "nat" -c "cgnat" -c "session-table buckets 1024 memory 64" \
        -c "commit" 2>&1)
 echo "$SESS" | tail -2 | sed 's/^/  /'
 expect_in "resizing the session table with pools configured is refused" \

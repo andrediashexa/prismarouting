@@ -1767,14 +1767,20 @@ if vppctl show version >/dev/null 2>&1; then
   udp_dst=$(echo "$log" | sed -n 's/^  exporter  *\(.*\)$/\1/p')
   case "$udp_dst" in none*|"") udp_dst="" ;; esac
   want_on=no; want_dst=no
-  if [ -f "$LOGCONF" ]; then
-    grep -q "^cgnat logging enable" "$LOGCONF" && want_on=yes
-    grep -q "^cgnat logging udp " "$LOGCONF" && want_dst=yes
-  fi
+  # The CGNAT statements of the saved file, in the words they are typed in
+  # under `nat` > `cgnat` (#446): the lines two spaces in, above the routing
+  # section. This read `^cgnat logging` before, and the file had not been
+  # written that way since #356 put `nat ` in front of every global - so on a
+  # real box both answers were "no" whatever the file said, and only this
+  # suite's fixture, written in the old words, ever made them "yes".
+  cgnat_said=""
+  [ -f "$LOGCONF" ] && cgnat_said=$(sed '/^! routing/q' "$LOGCONF" | sed -n 's/^  \([^ ].*\)$/\1/p')
+  echo "$cgnat_said" | grep -q "^logging enable" && want_on=yes
+  echo "$cgnat_said" | grep -q "^logging udp " && want_dst=yes
 
   if [ "$want_dst" = yes ] && [ -z "$udp_dst" ]; then
     bad "the saved configuration names an IPFIX collector and the dataplane"
-    say "        has none: '$(grep -m1 "^cgnat logging udp " "$LOGCONF")' was"
+    say "        has none: '$(echo "$cgnat_said" | grep -m1 "^logging udp ")' was"
     say "        refused when it was applied. 'journalctl -u prisma-routing' has"
     say "        the reason."
   elif [ "$want_on" = yes ] && [ "$udp_on" = no ]; then
@@ -1789,7 +1795,7 @@ if vppctl show version >/dev/null 2>&1; then
     # "state enabled" on its own is not evidence that anything is sent.
     bad "UDP export is enabled and the IPFIX exporter has no collector:"
     say "        every record is produced and none leaves this box. Set one"
-    say "        with 'nat cgnat logging udp <collector> src <source>'."
+    say "        with 'logging udp <collector> src <source>' under nat / cgnat."
   elif [ "$udp_on" = yes ]; then
     ok "UDP export running"
     say "        $udp_dst"
@@ -1927,7 +1933,9 @@ fi
 # #184 names: a check that recomputes what it is checking agrees with its own
 # arithmetic rather than with the box.
 if vppctl show version >/dev/null 2>&1 && [ -f "$LOGCONF" ]; then
-  want_pools=$(sed -n 's/^nat cgnat pool  *\([^ ]*\).*/\1/p' "$LOGCONF" \
+  # `  pool <name>` inside the `nat` > `cgnat` block the file is written in
+  # since #446, and only above the routing section, which is FRR's.
+  want_pools=$(sed -n '/^! routing/q; s/^  pool  *\([^ ]*\).*/\1/p' "$LOGCONF" \
                | sort -u)
   have_pools=$(vppctl show bpa pool 2>/dev/null \
                | sed -n 's/^pool  *\([^ []*[^ []\).*/\1/p' | sort -u)

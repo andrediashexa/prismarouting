@@ -61,6 +61,8 @@ os.environ["PRISMA_CONFIRM"] = os.path.join(_root, "confirm-pending")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
 
 import config      # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nat_fixture import parse_nested      # noqa: E402
 import prismash      # noqa: E402
 
 fail = 0
@@ -124,7 +126,7 @@ FRESH = config.Config.parse(
     "user root\n password $6$x$installer\n exit\n").text()
 #: The same box after one pool was committed: the one thing on it that the
 #: boot's replay of an empty file does not put back.
-FRESH_POOL = config.Config.parse(
+FRESH_POOL = parse_nested(
     "ssh permit-root-login yes\n"
     "user root\n password $6$x$installer\n exit\n"
     "cgnat pool p\n inside 100.64.0.0/22\n outside 200.150.0.16/30\n"
@@ -709,6 +711,15 @@ check(shown == [
     "cgnat pool residential"],
     f"the secret goes and the port stays, because a port is not a secret: "
     f"{shown}")
+# And as the configuration is written since #446: indented under `cgnat`,
+# with no `cgnat` on the line. Red with the match left on the model's form.
+shown_nested = system.identity_redact([
+    "  identity radius secret s3cr3t port 1813",
+    "  identity file /etc/prisma-routing/subscribers.map"])
+check(shown_nested == ["  identity radius secret <set, not shown> port 1813",
+                       "  identity file /etc/prisma-routing/subscribers.map"],
+      f"the secret goes in the block too, and the indent stays: "
+      f"{shown_nested}")
 check(not any(x in " ".join(shown) for x in ("s3cr3t", "onlythesecret")),
       "and no secret survives on the screen")
 # THE FILE KEEPS THE REAL VALUE. This is a display transform, and a box that

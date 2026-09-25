@@ -26,8 +26,12 @@ O mapeamento é `índice do assinante → (endereço público, bloco de portas)`
 
 ```
 configure
- nat cgnat pool residencial
-  outside 45.170.16.0/26
+ nat
+  cgnat
+   pool residencial
+    outside 45.170.16.0/26
+    exit
+   exit
   exit
  commit
 ```
@@ -81,13 +85,17 @@ Os assinantes reconectam sozinhos — um CPE reabre as sessões em segundos — 
 Um pool é selecionado pelo prefixo interno, então um pool novo servindo uma fatia **diferente** do espaço de assinantes tem o próprio mapeamento e não perturba o existente.
 
 ```
-nat cgnat pool residencial      ← intocado, mantém o mapeamento
- inside 100.64.0.0/22
- outside 200.150.0.16/28
- exit
-nat cgnat pool residencial-2    ← a capacidade nova
- inside 100.64.4.0/22
- outside 45.170.16.0/26
+nat
+ cgnat
+  pool residencial      ← intocado, mantém o mapeamento
+   inside 100.64.0.0/22
+   outside 200.150.0.16/28
+   exit
+  pool residencial-2    ← a capacidade nova
+   inside 100.64.4.0/22
+   outside 45.170.16.0/26
+   exit
+  exit
  exit
 ```
 

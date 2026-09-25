@@ -56,7 +56,7 @@ error: this change maps subscribers differently from the peer
     translate them there
 error: pool 'business' is on this box and not on the peer, so after a failover
     its subscribers are translated by nothing at all
-    cgnat pool business
+    nat / cgnat / pool business
     a takeover would put subscribers on blocks the other box never used, and
     neither box would log anything unusual, because nothing unusual happened to
     either of them
@@ -239,7 +239,7 @@ Alguém ainda entra, mas ninguém que entre tem o papel de administrador. Um ope
 
 ### `cgnat logging enable: UDP export has no collector`
 
-O log está ligado e não há para onde mandar. Uma caixa nesse estado parece registrar tudo e não entrega nada - e o registro é justamente o que precisa existir um ano depois. Acrescente `nat cgnat logging udp <coletor> src <origem>`, ou exporte por TCP com `nat cgnat logging tcp <coletor>`.
+O log está ligado e não há para onde mandar. Uma caixa nesse estado parece registrar tudo e não entrega nada - e o registro é justamente o que precisa existir um ano depois. Acrescente `logging udp <coletor> src <origem>` dentro de `nat` > `cgnat`, ou exporte por TCP com `logging tcp <coletor>`, no mesmo nível.
 
 Vale notar onde isso é recusado: **aqui**, e não no dataplane. Recusado lá, o resto da mudança já teria sido aplicado.
 

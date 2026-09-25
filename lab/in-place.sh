@@ -90,7 +90,7 @@ if [ "$MODE" = off ]; then
   echo "  MODE=off: nothing is changed, so nothing is kept and nothing is"
   echo "  applied. The checks that claim either MUST fail."
 else
-  $HX -c "configure" -c "cgnat pool live" \
+  $HX -c "configure" -c "nat" -c "cgnat" -c "pool live" \
       -c "alg rtsp off" -c "timeout udp 900" -c "max-blocks 2" \
       -c "filter address-dependent" -c "tcp-mss 1400" \
       -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
@@ -112,11 +112,11 @@ MAP_BEFORE=$(sess)
 # asserted below rather than stepped over: a control that quietly stopped
 # applying its own change would leave section 2 passing on a box that never
 # dropped a session for any reason at all.
-REFUSED=$($HX -c "configure" -c "cgnat pool live" -c "block-size 1024" \
+REFUSED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool live" -c "block-size 1024" \
               -c "exit" -c "commit" 2>&1)
 printf '%s\n' "$REFUSED" | tail -4 | sed 's/^/  /'
 REFUSED_AFTER=$(sess)
-$HX -c "configure" -c "cgnat pool live" -c "block-size 1024" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool live" -c "block-size 1024" \
     -c "exit" -c "commit remap" 2>&1 | tail -2 | sed 's/^/  /'
 MAP_AFTER=$(sess)
 MAP_TRAIL=$(tail -n +$((MARK2 + 1)) $TRAIL 2>/dev/null)

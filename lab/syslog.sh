@@ -102,7 +102,7 @@ echo "=== the statement, refused without an enterprise number ==="
 # The refusal an operator meets first, and it is at the prompt rather than in
 # a year of lines a collector misparsed.
 NO_PEN=$($HX -c "configure" \
-    -c "cgnat logging syslog 10.0.0.2" \
+    -c "nat" -c "cgnat" -c "logging syslog 10.0.0.2" \
     -c "commit" 2>&1)
 printf '%s\n' "$NO_PEN" | sed 's/^/  /'
 
@@ -110,7 +110,7 @@ if [ "$MODE" != no-syslog ]; then
   echo
   echo "=== configuring the syslog collector, through the VTY ==="
   VTY_OUT=$($HX -c "configure" \
-      -c "cgnat logging syslog 10.0.0.2 enterprise 44444 port 601" \
+      -c "nat" -c "cgnat" -c "logging syslog 10.0.0.2 enterprise 44444 port 601" \
       -c "commit" 2>&1)
   printf '%s\n' "$VTY_OUT" | sed 's/^/  /'
 else
@@ -138,7 +138,7 @@ cat > /tmp/subscribers.map <<'MAP'
 100.64.0.9 pppoe-4471
 MAP
 IDENT_OUT=$($HX -c "configure" \
-    -c "cgnat identity file /tmp/subscribers.map" \
+    -c "nat" -c "cgnat" -c "identity file /tmp/subscribers.map" \
     -c "commit" 2>&1)
 printf '%s\n' "$IDENT_OUT" | sed 's/^/  /'
 vppctl show bpa identity | tee /tmp/identity-show.txt | sed 's/^/  /'
@@ -182,7 +182,7 @@ lease 100.64.0.9 {
   hardware ethernet 02:00:00:00:00:09;
 }
 LEASES
-$HX -c "configure" -c "cgnat identity dhcp-leases /tmp/dhcpd.leases" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "identity dhcp-leases /tmp/dhcpd.leases" \
     -c "commit" 2>&1 | tail -1 | sed 's/^/  leases: /'
 vppctl show bpa identity | tee /tmp/identity-leases.txt | sed 's/^/  /'
 
@@ -194,7 +194,7 @@ echo "=== and from the accounting a BNG sends (#21) ==="
 # reads them in C. Two implementations that agree is the evidence a fixture
 # written beside the code cannot give.
 $HX -c "configure" \
-    -c "cgnat identity radius secret lab-s3cr3t port 1813" \
+    -c "nat" -c "cgnat" -c "identity radius secret lab-s3cr3t port 1813" \
     -c "commit" 2>&1 | tail -1 | sed 's/^/  listener: /'
 
 python3 /src/tools/radius_nas.py 127.0.0.1 1813 lab-s3cr3t start \
@@ -215,7 +215,7 @@ cat > /tmp/subscribers.map <<'MAP'
 100.64.0.6 SOMEBODY-ELSE-6
 100.64.0.9 SOMEBODY-ELSE-9
 MAP
-$HX -c "configure" -c "cgnat identity file /tmp/subscribers.map" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "identity file /tmp/subscribers.map" \
     -c "commit" 2>&1 | tail -1 | sed 's/^/  reloaded: /'
 
 echo
@@ -285,7 +285,7 @@ echo "=== how long a secret this box keeps (#424) ==="
 for _len in 108 109 127; do
   _sec=$(python3 -c "print('K' * $_len)")
   $HX -c "configure" \
-      -c "cgnat identity radius secret $_sec port 1813" \
+      -c "nat" -c "cgnat" -c "identity radius secret $_sec port 1813" \
       -c "commit" >/dev/null 2>&1
   python3 /src/tools/radius_nas.py 127.0.0.1 1813 "$_sec" start \
       100.64.0.13 "s$_len@isp" > /tmp/sec-$_len.txt 2>&1
@@ -301,7 +301,7 @@ done
 # holding 127 of the 128 it was given.
 _sec128=$(python3 -c "print('K' * 128)")
 _pre127=$(python3 -c "print('K' * 127)")
-$HX -c "configure" -c "cgnat identity radius secret $_sec128 port 1813" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "identity radius secret $_sec128 port 1813" \
     -c "commit" >/dev/null 2>&1
 python3 /src/tools/radius_nas.py 127.0.0.1 1813 "$_pre127" start \
     100.64.0.23 pre127@isp > /tmp/pre127.txt 2>&1
@@ -362,7 +362,7 @@ pad = 'f' * max(1, want - len(p) - 1)
 print(p + '/' + pad[:200])")
   printf '100.64.0.40 path-%s\n' "$_want" > "$_p" 2>/dev/null || {
     echo "  a path of $_want: the filesystem would not make it"; continue; }
-  $HX -c "configure" -c "cgnat identity file $_p" -c "commit" \
+  $HX -c "configure" -c "nat" -c "cgnat" -c "identity file $_p" -c "commit" \
       > /tmp/path-$_want.txt 2>&1
   _n=$(vppctl show bpa identity | sed -n 's/identity table: \([0-9]*\) entry.*/\1/p')
   # "commit complete" is NOT the reading: a statement refused at the prompt
@@ -378,12 +378,12 @@ print(p + '/' + pad[:200])")
     echo "  a path of $(printf '%s' "$_p" | wc -c): no error and no entries"
   fi
 done
-$HX -c "configure" -c "cgnat identity file /tmp/subscribers.map" -c "commit" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "identity file /tmp/subscribers.map" -c "commit" \
     >/dev/null 2>&1
 
 # And back to a short one, so the section leaves the box as it found it and
 # the next section's own secret is the one it expects.
-$HX -c "configure" -c "cgnat identity radius secret lab-s3cr3t port 1813" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "identity radius secret lab-s3cr3t port 1813" \
     -c "commit" >/dev/null 2>&1
 
 sleep 2

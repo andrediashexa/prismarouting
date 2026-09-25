@@ -371,8 +371,12 @@ wrong answer gets sent - so the record carries the identity itself
 ([#21](https://github.com/andrediashexa/hexarouting/issues/21)).
 
 ```
-nat cgnat identity file /etc/prisma-routing/subscribers.map
-nat cgnat identity none
+nat
+ cgnat
+  identity file /etc/prisma-routing/subscribers.map
+  identity none
+  exit
+ exit
 ```
 
 The file is one subscriber per line, `<inside address> <identity>`, with `#`
@@ -388,7 +392,11 @@ already has the answer and should not be asked to transcribe it into a second
 file that goes stale:
 
 ```
-nat cgnat identity dhcp-leases /var/lib/dhcp/dhcpd.leases
+nat
+ cgnat
+  identity dhcp-leases /var/lib/dhcp/dhcpd.leases
+  exit
+ exit
 ```
 
 The grammar is ISC dhcpd's. The identity is the `client-hostname` when the
@@ -407,8 +415,12 @@ that guesses from the file's first line.
 running PPPoE:
 
 ```
-nat cgnat identity radius secret <shared secret> [port <n>]
-nat cgnat identity radius disable
+nat
+ cgnat
+  identity radius secret <shared secret> [port <n>]
+  identity radius disable
+  exit
+ exit
 ```
 
 This box is **not** a RADIUS server. It authenticates nobody and answers no
@@ -519,9 +531,17 @@ that transport to carry.
 ### Syslog implementation
 
 ```
-nat cgnat logging syslog <collector> enterprise <n> [port <n>]
+nat
+ cgnat
+  logging syslog <collector> enterprise <n> [port <n>]
+  exit
+ exit
                                      [facility <0-23>] [severity <0-7>]
-nat cgnat logging syslog disable
+nat
+ cgnat
+  logging syslog disable
+  exit
+ exit
 ```
 
 RFC 5424 over TCP, framed by RFC 6587 **octet counting** - the length and a
@@ -568,16 +588,20 @@ portStart="1024" portEnd="1027" pool="0"]
 reserves a structured-data name without an `@enterprise` suffix for names IANA
 has registered, and this product has none; inventing one would put a name in
 every operator's log that means something else to whoever registers it later.
-So `nat cgnat logging syslog` **MUST** be given an IANA Private Enterprise
+So `logging syslog` (under `nat` > `cgnat`) **MUST** be given an IANA Private Enterprise
 Number and is refused without one - at the prompt, where it can be acted on,
 rather than in a year of lines a collector silently misparsed.
 
 ### UDP implementation
 
 ```
-nat cgnat logging udp <collector> src <source> [port <n>]   where it goes
-nat cgnat logging enable                                    turn it on
-nat cgnat logging udp disable                               clear the exporter
+nat
+ cgnat
+  logging udp <collector> src <source> [port <n>]   where it goes
+  logging enable                                    turn it on
+  logging udp disable                               clear the exporter
+  exit
+ exit
 ```
 
 `bpa logging enable` hands the records to VPP's own flow-report
@@ -593,7 +617,7 @@ leave ([#209](https://github.com/andrediashexa/hexarouting/issues/209)). Until
 `vppctl` exits 0 either way — and the operator got `commit complete` from a
 box that exported nothing.
 
-`nat cgnat logging udp` is the statement that closes it. It is committed,
+`logging udp`, under `nat` > `cgnat`, is the statement that closes it. It is committed,
 rolled back and read back like every other setting: `show bpa config` emits it
 from the exporter the dataplane actually holds, so a saved configuration
 carries the destination and a rollback restores it.
@@ -636,18 +660,22 @@ There is no `show ipfix exporter` command in VPP 26.06 — `show: unknown input`
 #### The refusal happens at `commit check`
 
 ```
-nat cgnat logging enable
+nat
+ cgnat
+  logging enable
+  exit
+ exit
 commit check
 error: cgnat logging enable: UDP export has no collector
-    nothing would leave this box; add 'nat cgnat logging udp <collector> src
-    <source>' beside it, or export over TCP with 'nat cgnat logging tcp
+    nothing would leave this box; add 'logging udp <collector> src <source>'
+    beside it under 'nat' / 'cgnat', or export over TCP with 'logging tcp
     <collector>'
     the dataplane refuses the statement, and it would refuse it half way
     through this commit
 ```
 
 Refused **before** anything is applied, rather than by the dataplane half way
-through the apply with the pools already changed. `nat cgnat logging tcp` does
+through the apply with the pools already changed. `logging tcp` does
 not satisfy it: the two transports are separate paths in the plugin and
 `enable` names the UDP one.
 
@@ -1094,6 +1122,6 @@ to the subscriber it was issued to
 - [x] End-to-end test with a decoding collector (`lab/ipfix.sh`,
       `lab/ipfix-tcp.sh`, `lab/ipfix-stop.sh`), confirming every allocation has
       its matching release, and that the ones that do not are readable
-- [x] Collector selection from the VTY (`nat cgnat logging udp <collector> src
+- [x] Collector selection from the VTY (`logging udp <collector> src
       <source>`), which writes VPP's core exporter rather than plugin-owned
       state - the consequence of that is stated above

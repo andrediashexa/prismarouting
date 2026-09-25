@@ -70,7 +70,7 @@ echo "=========== CGNAT THROUGH THE VTY ==========="
 # This lab used to end at "exit", which now discards the candidate - the
 # check that caught it is the reason each lab states its own verdict.
 $HX -c "configure" \
-    -c "cgnat pool provider-a" \
+    -c "nat" -c "cgnat" -c "pool provider-a" \
     -c "inside 100.64.0.0/22" \
     -c "outside 200.150.0.0/24" \
     -c "outside 45.170.16.0/26" \
@@ -78,8 +78,8 @@ $HX -c "configure" \
     -c "policy interleaved" \
     -c "mode deterministic" \
     -c "exit" \
-    -c "cgnat interface pg0 inside" \
-    -c "cgnat timeout udp 300" \
+    -c "interface pg0 inside" \
+    -c "timeout udp 300" \
     -c "commit"
 echo "  -- did the dataplane receive it?"
 vppctl show bpa pool | sed 's/^/    /'
@@ -109,13 +109,13 @@ $HX -c "show running-config" 2>/dev/null | grep -vE "^(Building|Current|frr vers
 echo
 echo "=========== an invalid pool must be refused and NOT enter the config ==========="
 $HX -c "configure" \
-    -c "cgnat pool bad" \
+    -c "nat" -c "cgnat" -c "pool bad" \
     -c "inside 100.64.0.0/22" \
     -c "outside 10.0.0.0/24" \
     -c "exit" \
     -c "commit" 2>&1 | sed 's/^/  /'
 echo "  -- does 'bad' appear in the running-config? (it must not)"
-$HX -c "show running-config" 2>/dev/null | grep -c "cgnat pool bad" | sed 's/^/    occurrences: /'
+$HX -c "show running-config" 2>/dev/null | grep -c "  pool bad" | sed 's/^/    occurrences: /'
 
 echo
 echo "=========== write memory e recarga ==========="
@@ -234,7 +234,7 @@ echo "  -- read-only account tries to configure"
 RO_CONF=$(as ro -c "'configure'")
 printf '%s\n' "$RO_CONF" | sed 's/^/    /'
 echo "  -- read-only account tries to commit a pool, command issued directly"
-RO_COMMIT=$(as ro -c "'configure'" -c "'cgnat pool nope'" -c "'inside 192.168.0.0/24'" -c "'outside 198.51.100.64/30'" -c "'exit'" -c "'commit'")
+RO_COMMIT=$(as ro -c "'configure'" -c "'nat'" -c "'cgnat'" -c "'pool nope'" -c "'inside 192.168.0.0/24'" -c "'outside 198.51.100.64/30'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$RO_COMMIT" | sed 's/^/    /'
 echo "  -- read-only account tries the hidden shell escape"
 RO_SHELL=$(as ro -c "'start shell'")
@@ -243,7 +243,7 @@ echo "  -- read-only account can still look"
 RO_SHOW=$(as ro -c "'show running-config'")
 printf '%s\n' "$RO_SHOW" | sed 's/^/    /'
 echo "  -- cgnat operator changes a pool setting"
-CG_OK=$(as cg -c "'configure'" -c "'cgnat pool provider-a'" -c "'alg rtsp off'" -c "'exit'" -c "'commit'")
+CG_OK=$(as cg -c "'configure'" -c "'nat'" -c "'cgnat'" -c "'pool provider-a'" -c "'alg rtsp off'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$CG_OK" | sed 's/^/    /'
 echo "  -- and the rollback revision that commit has to record"
 # Asserted rather than read, because the failure is SURVIVABLE: the commit
@@ -293,7 +293,7 @@ printf '%s\n' "$NETADM_ROUTE" | sed 's/^/    /'
 NETADM_IN_FRR=$(vtysh -c "show run" 2>/dev/null | grep -c "NETADM-WAS-HERE")
 echo "    statements FRR holds with that description: $NETADM_IN_FRR"
 echo "  -- and applies a CGNAT change, because prisma-admin carries that too"
-NETADM_POOL=$(as netadm -c "'configure'" -c "'cgnat pool provider-a'" \
+NETADM_POOL=$(as netadm -c "'configure'" -c "'nat'" -c "'cgnat'" -c "'pool provider-a'" \
   -c "'alg ftp off'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$NETADM_POOL" | sed 's/^/    /'
 NETADM_REACHED=$(vppctl show bpa config | grep -c "alg ftp off")
@@ -328,10 +328,11 @@ sh.feed("configure")
 opts, hint, _ = sh._options("interface ", False)
 print("INTERFACES:", " ".join(sorted(opts)))
 print("HINT:", hint)
-# Deliberately the OLD spelling: the pool made here is the one the assertions
-# below read back, so this run proves that a box driven the old way still
-# works after the hierarchy moved (#193).
-sh.feed("cgnat pool lab")
+# Through the nat > cgnat levels (#446): the pool made here is the one the
+# assertions below read back.
+sh.feed("nat")
+sh.feed("cgnat")
+sh.feed("pool lab")
 sh.feed("inside 100.64.0.0/22")
 sh.feed("outside 200.150.0.16/30")
 import io, contextlib
@@ -340,10 +341,12 @@ with contextlib.redirect_stdout(out):
     sh.feed("show this")
 print("THIS:", out.getvalue().replace("\n", " | "))
 sh.feed("exit")
-opts, _, _ = sh._options("nat cgnat pool ", False)
+opts, _, _ = sh._options("pool ", False)
 print("POOLS:", " ".join(sorted(opts)))
-o, _, _ = sh._options("nat ", False)
+sh.feed("up")
+o, _, _ = sh._options("", False)
 print("NATSUB:", " ".join(sorted(o)))
+sh.feed("top")
 o, _, _ = sh._options("router ", False)
 print("ROUTERSUB:", " ".join(sorted(o)))
 # Prefix-lists complete from the control plane, not from a model this VTY
@@ -501,21 +504,21 @@ echo "=========== every configuration change goes over the binary API (#76) ====
 # over the API and both read back. The refusal itself did not go away and is
 # asserted where it belongs, by lab/ipfix.sh, on a box with no exporter.
 API_TRACE=$(PRISMA_TRACE=1 $HX -c "configure" \
-    -c "cgnat pool provider-a" \
+    -c "nat" -c "cgnat" -c "pool provider-a" \
     -c "max-sessions 2000" \
     -c "bypass destination 198.51.100.0/24" \
     -c "exit" \
-    -c "cgnat pool trace-only" \
+    -c "pool trace-only" \
     -c "inside 100.65.0.0/22" \
     -c "outside 45.170.17.0/26" \
     -c "exit" \
-    -c "cgnat interface host-veth-vpp outside" \
-    -c "cgnat timeout icmp 90" \
-    -c "cgnat block-holddown 11" \
-    -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
-    -c "cgnat logging enable" \
-    -c "cgnat logging tcp 10.0.0.2 port 4740" \
-    -c "interface pg0" \
+    -c "interface host-veth-vpp outside" \
+    -c "timeout icmp 90" \
+    -c "block-holddown 11" \
+    -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+    -c "logging enable" \
+    -c "logging tcp 10.0.0.2 port 4740" \
+    -c "top" -c "interface pg0" \
     -c "mtu 1480" \
     -c "urpf strict" \
     -c "exit" \
@@ -621,9 +624,10 @@ NAV_AFTER=$($HX -c "show running-config" 2>&1)
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 R=$($HX -c "show running-config" 2>/dev/null)
-expect_in "CGNAT is in the running config" "cgnat pool" "$R"
+expect_in "CGNAT is in the running config, as the nat > cgnat block" \
+  "  pool provider-a" "$R"
 expect_in "routing is in the same running config" "router bgp 65000" "$R"
-expect_not_in "the refused pool stayed out" "cgnat pool bad" "$R"
+expect_not_in "the refused pool stayed out" "  pool bad" "$R"
 expect "the BGP route reached the VPP FIB" sh -c "vppctl show ip fib 203.0.113.0/24 | grep -q '^203.0.113.0/24'"
 
 # Issue #35. The refusals are asserted at the point of application, with the
@@ -637,7 +641,7 @@ expect_in "and cannot reach a shell" "permission denied" "$RO_SHELL"
 # The other half: a role that refuses everything is not a role, it is a broken
 # VTY. Read-only must still be able to read.
 expect_in "but can still read the running configuration" \
-  "cgnat pool" "$RO_SHOW"
+  "  pool provider-a" "$RO_SHOW"
 # Which needs the dataplane socket AND FRR's, both group-owned: the first line
 # comes from VPP over the binary API and the second from vtysh. An account
 # outside vpp, frr and frrvty reads neither, so this is where those three
@@ -749,7 +753,7 @@ expect_in "the demoted administrator is refused where it was allowed" \
   "permission denied" "$NETADM_AFTER"
 # But not stripped of everything: a demotion makes an account read-only, and a
 # read-only account that cannot read is a broken account, not a demoted one.
-expect_in "and can still read" "cgnat pool" "$NETADM_SHOW_AFTER"
+expect_in "and can still read" "  pool provider-a" "$NETADM_SHOW_AFTER"
 expect_in "  because the reach it needs to read was left alone" " vpp " \
   "$NETADM_GROUPS_AFTER"
 
@@ -779,7 +783,7 @@ expect_in "CGNAT is offered under nat" "NATSUB: cgnat" "$COMP"
 expect_in "and static routes under router, beside the protocols" "static" \
   "$(printf '%s\n' "$COMP" | sed -n 's/^ *ROUTERSUB: *//p')"
 expect_in "show this prints the hierarchy being edited" \
-  "cgnat pool lab" "$COMP"
+  "THIS: pool lab" "$COMP"
 # The prompt must name the subject, not only the kind: "[edit cgnat pool]" is
 # the same prompt on a box with twenty pools.
 expect_in "the prompt names which interface is being edited" \
@@ -1104,13 +1108,12 @@ echo
 # not mention - including this lab's BGP session. Run anywhere but here it takes
 # the rest of the lab's setup away, and five assertions fail for a reason that
 # has nothing to do with what they test. That was measured, not foreseen.
-echo "=========== a file written before the hierarchies moved (#193) ==========="
-# The migration property, on a real box rather than on a parser. CGNAT is under
-# `nat` now and static routes under `router`; every box already in service has
-# a saved configuration and up to twenty rollback revisions written the OLD
-# way, and prisma-routing.service replays that file at every boot on a machine
-# nobody is watching. A grammar that cannot read the box's own file leaves the
-# box unconfigured, and nothing would say so until somebody noticed the traffic.
+echo "=========== a file in the one-line CGNAT form is refused whole (#446) ==========="
+# The maintainer's decision of 2026-09-24: CGNAT lives in the nat > cgnat
+# block and the one-line form is gone, in a file too. So a file still written
+# the old way must be REFUSED at --load - which is what the boot does with it -
+# leaving the box as it was rather than half configured; and what the box
+# itself writes, after the upgrade page's `save`, must load.
 vppctl bpa pool provider-a del 2>/dev/null
 cat > /tmp/old-format.conf <<'OLDEOF'
 ! cgnat
@@ -1124,14 +1127,36 @@ cgnat pool provider-a
 ! routing
 ip route 198.51.100.0/24 blackhole
 OLDEOF
-$HX --load /tmp/old-format.conf 2>&1 | sed 's/^/  /'
+OLD_LOAD=$($HX --load /tmp/old-format.conf 2>&1); OLD_RC=$?
+printf '%s\n' "$OLD_LOAD" | sed 's/^/  /'
 OLD_POOL=$(vppctl show bpa pool | grep -c provider-a)
-OLD_ROUTE=$(vtysh -c "show running-config" 2>/dev/null | grep -c "ip route 198.51.100.0/24")
-echo "  after loading the old format: pool rows $OLD_POOL, route lines $OLD_ROUTE"
-# And what the box writes back is the NEW hierarchy, which must itself load.
+echo "  after loading the old form: rc $OLD_RC, pool rows $OLD_POOL"
+cat > /tmp/new-format.conf <<'NEWEOF'
+! cgnat
+nat
+ cgnat
+  pool provider-a
+   inside 100.64.0.0/22
+   outside 200.150.0.16/30
+   block-size 512
+   policy interleaved
+   mode deterministic
+   exit
+  exit
+ exit
+! routing
+router static
+ 198.51.100.0/24 next-hop blackhole
+ exit
+NEWEOF
+$HX --load /tmp/new-format.conf 2>&1 | sed 's/^/  /'
+NEW_POOL=$(vppctl show bpa pool | grep -c provider-a)
+NEW_ROUTE=$(vtysh -c "show running-config" 2>/dev/null | grep -c "ip route 198.51.100.0/24")
+echo "  after loading the block: pool rows $NEW_POOL, route lines $NEW_ROUTE"
+# And what the box writes back is the same block, which must itself load.
 $HX -c "save" >/dev/null 2>&1
 NEW_TEXT=$(cat "$PRISMA_CONFIG")
-printf '%s\n' "$NEW_TEXT" | grep -E "^nat |^router static|^ route " | sed 's/^/    /'
+printf '%s\n' "$NEW_TEXT" | sed -n '/^nat$/,/^ exit$/p' | sed 's/^/    /'
 vppctl bpa pool provider-a del 2>/dev/null
 $HX --load "$PRISMA_CONFIG" 2>&1 | sed 's/^/  /'
 ROUND=$(vppctl show bpa pool | grep -c provider-a)
@@ -1139,14 +1164,20 @@ echo "  after loading what the box itself wrote: pool rows $ROUND"
 
 echo
 
-# The migration property, measured earlier on a real box: a configuration
-# written before the hierarchies moved still reaches the dataplane and FRR,
-# what the box writes back is the new hierarchy, and the box can read that.
-expect "a configuration in the old hierarchy still reaches the dataplane" \
-  sh -c "[ \"$OLD_POOL\" -ge 1 ]"
-expect "and its static route still reaches FRR" \
-  sh -c "[ \"$OLD_ROUTE\" -ge 1 ]"
-expect_in "the box writes CGNAT under nat" "nat cgnat pool provider-a" "$NEW_TEXT"
+# #446 on a real box: the one-line form is refused whole and changes
+# nothing, the block reaches the dataplane and FRR, and what the box writes
+# back is the block, which it reads.
+expect "a file in the one-line CGNAT form is refused" \
+  sh -c "[ \"$OLD_RC\" -ne 0 ]"
+expect_in "  and it says what to type instead" "enter 'nat', then 'cgnat'" \
+  "$OLD_LOAD"
+expect "  and none of it reached the dataplane" sh -c "[ \"$OLD_POOL\" -eq 0 ]"
+expect "the nat > cgnat block reaches the dataplane" \
+  sh -c "[ \"$NEW_POOL\" -ge 1 ]"
+expect "and its static route reaches FRR" \
+  sh -c "[ \"$NEW_ROUTE\" -ge 1 ]"
+expect_in "the box writes CGNAT as the block" \
+  "$(printf 'nat\n cgnat\n  pool provider-a')" "$NEW_TEXT"
 expect_in "and static routes as a block under router" "router static" "$NEW_TEXT"
 expect "a box can read back the file it just wrote" sh -c "[ \"$ROUND\" -ge 1 ]"
 

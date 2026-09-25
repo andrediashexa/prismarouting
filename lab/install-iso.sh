@@ -1902,12 +1902,20 @@ drive_console() {
   # everybody but root unless the drop-in on vpp.service group-owns
   # /dev/shm/global_vm - a drop-in that runs under systemd, which no other lab
   # in this repository has (#76).
-  send "cgnat pool lab-a"
-  wait_for "[edit cgnat pool lab-a]" 30 "the pool block to open" || return 1
+  # Level by level, as CGNAT is typed since #446: nat, then cgnat, then the
+  # pool - and the prompt naming each level on the way in.
+  send "nat"
+  wait_for "[edit nat]" 30 "the nat level to open" || return 1
+  send "cgnat"
+  wait_for "[edit nat / cgnat]" 30 "the cgnat level to open" || return 1
+  send "pool lab-a"
+  wait_for "[edit nat / cgnat / pool lab-a]" 30 "the pool block to open" || return 1
   send "inside 100.64.0.0/22"
   send "outside 198.51.100.64/30"
   send "exit"
-  wait_for "[edit]" 30 "the pool block to close" || return 1
+  wait_for "[edit nat / cgnat]" 30 "the pool block to close, back to cgnat" || return 1
+  send "top"
+  wait_for "[edit]" 30 "top to reach the top of configuration mode" || return 1
   send "commit"
   wait_for "commit complete" 300 \
     "an administrator's commit to be applied on the installed box" || return 1
@@ -1974,7 +1982,7 @@ drive_console() {
     "the read-only account to read the routing configuration back from FRR" \
     || return 1
   CONSOLE_POS=$_cfg_at
-  wait_for "cgnat pool lab-a" 60 \
+  wait_for "  pool lab-a" 60 \
     "the read-only account to read the pool back from the dataplane" || return 1
   send "exit"
   wait_for "$NEW_HOST login:" 120 \
@@ -3365,7 +3373,7 @@ else
   fi
   # And can still read, through the two sockets it is in the groups for.
   if grep -q "router bgp 65000" /tmp/sec-ro.log 2>/dev/null \
-     && grep -q "cgnat pool lab-a" /tmp/sec-ro.log 2>/dev/null; then
+     && grep -q "  pool lab-a" /tmp/sec-ro.log 2>/dev/null; then
     echo "  [ ok ] and can still read the box: the routing half from FRR and"
     echo "         the CGNAT half from the dataplane"
   else

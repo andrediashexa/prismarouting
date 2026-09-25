@@ -140,7 +140,7 @@ ok(f"{len(READBACK)} field(s), each rendered and each carrying its source")
 print("\n=== the two that have already happened, as regressions ===")
 # #357: a pool the dataplane built with a small block.
 _p = Config.parse("cgnat pool p\n inside 100.64.0.0/10\n outside "
-                  "203.0.113.0/24\n block-size 4\n")
+                  "203.0.113.0/24\n block-size 4\n", dataplane=True)
 check(not _p.unknown,
       f"#357: `block-size 4` is a pool the dataplane builds and this parser "
       f"must take: {_p.unknown!r}")

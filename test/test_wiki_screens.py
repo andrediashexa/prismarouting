@@ -1066,7 +1066,10 @@ def timeout_row(name, value):
 # driven matches is the first number the report prints.
 
 SCENARIOS = [
-    ("nat, which is a hierarchy", {}, ["nat"]),
+    # The nat > cgnat levels (#446): the one-line form refused where it is
+    # typed, and a word under `nat` that is not `cgnat`.
+    ("the one-line CGNAT form", {}, ["nat cgnat pool residencial"]),
+    ("a word under nat that is not cgnat", {}, ["nat", "pool x"]),
     ("an IPv4 prefix under ipv6 address", {},
      ["interface GigabitEthernet0/12/0", "ipv6 address 10.0.0.1/24"]),
     ("a linux-name no kernel would take", {},
@@ -1155,7 +1158,7 @@ SCENARIOS = [
     ("a timeout under the floor its RFC sets",
      {"daemons": "zebra staticd mgmtd bgpd",
       "timeouts": [timeout_row("udp", 119)]},
-     ["nat cgnat timeout udp 119", "commit"]),
+     ["nat", "cgnat", "timeout udp 119", "commit"]),
 ]
 
 # The findings are the other half of the VTY's voice and they are not printed

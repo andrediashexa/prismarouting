@@ -537,9 +537,11 @@ device only on `commit`:
 
 ```
 prisma> configure
-prisma# [edit] nat cgnat pool alpha
-prisma# [edit cgnat pool alpha] inside 100.64.0.0/22
-prisma# [edit cgnat pool alpha] exit
+prisma# [edit] nat
+prisma# [edit nat] cgnat
+prisma# [edit nat / cgnat] pool alpha
+prisma# [edit nat / cgnat / pool alpha] inside 100.64.0.0/22
+prisma# [edit nat / cgnat / pool alpha] top
 prisma# [edit] show configuration compare
 prisma# [edit] commit check
 prisma# [edit] commit comment "first pool"
