@@ -541,6 +541,42 @@ wait "$_probe" 2>/dev/null || true
 $OUT"
 said "did NOT bind" && bad "it said both that the device moved and that it \
 did not: $OUT"
+rm -rf "$R"
+
+# TWO CARDS THAT BOTH MOVE (#451). The box above claims one card, and one was
+# all the success path had ever been driven with - so `exit 0` at the end of
+# bind_one() looked right: it ended the one bind there was. On a box claiming
+# two it ended the SCRIPT after the first, every boot, and the maintainer's
+# box, given a second card, came up with the dataplane down. Same fifo
+# arrangement, one reader serving both writes in the order they come.
+R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+mkdir -p "$R/sys/bus/pci/devices/0000:03:00.1"
+on_driver "$R" ixgbe 0000:03:00.1
+printf 'dpdk {\n  dev 0000:03:00.0 {\n  }\n  dev 0000:03:00.1 {\n  }\n}\n' \
+  > "$R/etc/vpp/startup.conf"
+rm -f "$R/sys/bus/pci/drivers_probe"
+mkfifo "$R/sys/bus/pci/drivers_probe"
+( for _a in 0000:03:00.0 0000:03:00.1; do
+    _n=0
+    while [ ! -s "$R/sys/bus/pci/devices/$_a/driver_override" ] \
+          && [ "$_n" -lt 200 ]; do sleep 0.05; _n=$((_n + 1)); done
+    [ -s "$R/sys/bus/pci/devices/$_a/driver_override" ] || exit 0
+    ln -sfn "../../drivers/vfio-pci" "$R/sys/bus/pci/devices/$_a/driver"
+    cat < "$R/sys/bus/pci/drivers_probe" >/dev/null 2>&1
+  done ) &
+_probe=$!
+OUT=$(PRISMA_ROOT="$R" timeout 20 sh "$BIN" 2>&1); RC=$?
+printf '%s\n' "$OUT" | say_box
+wait "$_probe" 2>/dev/null || true
+[ "$RC" = 0 ] && said "0000:03:00.0 is now on vfio-pci" \
+  && said "0000:03:00.1 is now on vfio-pci" \
+  && ok "two claimed cards that both move are both bound, not the first" \
+  || bad "a box claiming two cards did not bind both: rc=$RC
+$OUT"
+[ "$(cat "$R/sys/bus/pci/devices/0000:03:00.1/driver_override" 2>/dev/null)" \
+    = "vfio-pci" ] \
+  && ok "and the second card was asked for by name" \
+  || bad "the second card never had driver_override written: $OUT"
 
 # And the mode binds nothing: it is called from a VTY that an operator may be
 # typing into while the box is forwarding.
@@ -682,6 +718,7 @@ echo "=== the device nodes a container has to be handed (#396) ==="
 R=$(mkbox 0000:3b:00.0 eth9 iommu vfio-pci uio_pci_generic)
 mkdir -p "$R/sys/kernel/iommu_groups/7"
 ln -s "../../../kernel/iommu_groups/7" "$R/sys/bus/pci/devices/0000:3b:00.0/iommu_group"
+on_driver "$R" vfio-pci 0000:3b:00.0
 OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1)
 printf '%s\n' "$OUT" | say_box
 case "$OUT" in
@@ -703,10 +740,34 @@ rm -rf "$R"
 R=$(mkbox 0000:3b:00.0 eth9 iommu vfio-pci)
 OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1); RC=$?
 printf '%s\n' "$OUT" | say_box
-[ "$RC" != 0 ] && printf '%s
-' "$OUT" | grep -q "no IOMMU group" \
-  && ok "a card in no group is refused, and said" \
+# LEFT OUT AND SAID, NOT FATAL (#451): this was an exit 1, and the unit that
+# merges the fragment failed with it - the whole dataplane down for one card.
+[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -q "no IOMMU group" \
+  && printf '%s\n' "$OUT" | grep -q "devices: \[\]" \
+  && ok "a card in no group is left out and said, and the stack still starts" \
   || bad "a card with no group produced (rc=$RC): $OUT"
+rm -rf "$R"
+
+# Two cards, one bound and one still on its kernel driver (#451): the bound
+# one is handed over and the other is left out and said. Naming the second
+# group anyway was the vfio half of the defect - docker refused the whole
+# stack over a /dev/vfio node that did not exist.
+R=$(mkbox 0000:3b:00.0 eth9 iommu vfio-pci)
+mkdir -p "$R/sys/kernel/iommu_groups/7" "$R/sys/kernel/iommu_groups/8" \
+         "$R/sys/bus/pci/devices/0000:3b:00.1"
+ln -s "../../../kernel/iommu_groups/7" "$R/sys/bus/pci/devices/0000:3b:00.0/iommu_group"
+ln -s "../../../kernel/iommu_groups/8" "$R/sys/bus/pci/devices/0000:3b:00.1/iommu_group"
+on_driver "$R" vfio-pci 0000:3b:00.0
+on_driver "$R" virtio-pci 0000:3b:00.1
+printf 'dpdk {\n  dev 0000:3b:00.0 {\n  }\n  dev 0000:3b:00.1 {\n  }\n}\n' \
+  > "$R/etc/vpp/startup.conf"
+OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1); RC=$?
+printf '%s\n' "$OUT" | say_box
+[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -q -- "- /dev/vfio/7" \
+  && ! printf '%s\n' "$OUT" | grep -q "/dev/vfio/8" \
+  && printf '%s\n' "$OUT" | grep -q "0000:3b:00.1 is not on vfio-pci" \
+  && ok "one card bound and one not: the bound one is handed over, the other said" \
+  || bad "a half-bound box produced (rc=$RC): $OUT"
 rm -rf "$R"
 
 # The box with no IOMMU: uio_pci_generic, and the node the bind produced.
@@ -729,8 +790,8 @@ rm -rf "$R"
 R=$(mkbox 0000:3b:00.0 eth9 noiommu uio_pci_generic)
 OUT=$(PRISMA_ROOT=$R sh "$BIN" --compose-devices 2>&1); RC=$?
 printf '%s\n' "$OUT" | say_box
-[ "$RC" != 0 ] && printf '%s
-' "$OUT" | grep -q "not bound to" \
+[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -q "not bound to" \
+  && ! printf '%s\n' "$OUT" | grep -q "/dev/uio" \
   && ok "and before the bind it says so rather than naming a node" \
   || bad "an unbound card produced (rc=$RC): $OUT"
 rm -rf "$R"
