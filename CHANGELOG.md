@@ -79,6 +79,24 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dataplane whose memory fills with sessions refuses the next ones instead of falling over** ([#460](https://github.com/andrediashexa/hexarouting/issues/460)).
+  Every session, both session hashes and every subscriber record live in
+  VPP's main heap, and an allocation there that fails aborts the process.
+  Measured with a 512 MB heap and two million sessions offered: the dataplane
+  was gone within ten seconds, and every subscriber on the box with it. A
+  session that would not fit is now refused and counted as
+  `no memory for a new session`. Sessions that already exist go on
+  translating. The same load now holds 466,606 sessions, refuses 1,533,394,
+  and stays up. The heap is checked only when the session pool is about to
+  grow, because reading its free space walks every chunk (86 ms at two
+  million sessions).
+
+  Measured on the way, and the reason for #454: a session costs about 300
+  bytes and a subscriber under a kilobyte. The session table's `memory`
+  figure sizes nothing, because this VPP keeps the table in the heap. The
+  tuner caps that heap at 2 GB, roughly ten million sessions, whatever the
+  RAM. The docs and the wiki said otherwise, and now say what was measured.
+
 ## 0.128.0 - a card added to a running box forwards at once
 
 ### Added

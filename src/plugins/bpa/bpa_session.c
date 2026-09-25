@@ -228,6 +228,10 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
    */
   if (PREDICT_FALSE (p->deleted))
     return 0;
+  /* The static forward and the FTP data connection come here without
+   * passing bpa_session_create(): the same gate, for the same abort (#460). */
+  if (PREDICT_FALSE (!bpa_session_room (pt)))
+    return 0;
 
   pool_get_zero (pt->sessions, s);
   s->ip_pub = sb->blk.ip_pub;
@@ -446,6 +450,13 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   int off = -1, preferred;
 
   *why = BPA_CREATE_OK;
+  /* Before anything is taken - the subscriber record, a port - so a refusal
+   * leaves nothing behind to undo (#460). */
+  if (PREDICT_FALSE (!bpa_session_room (pt)))
+    {
+      *why = BPA_CREATE_NO_MEMORY;
+      return 0;
+    }
   sub = bpa_sub_get (pt, p, pool_index, b);
 
   /*
@@ -613,7 +624,7 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
 
   /* GRE builds its own record rather than going through bpa_session_bind(),
    * so it needs the drain gate of its own. See the one there. */
-  if (PREDICT_FALSE (p->deleted))
+  if (PREDICT_FALSE (p->deleted) || PREDICT_FALSE (!bpa_session_room (pt)))
     {
       bpa_portmap_free (&sb->map, (u16) off);
       return 0;
@@ -728,6 +739,12 @@ bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
     {
       sub->n_refused_rate++;
       *why = BPA_CREATE_OVER_RATE;
+      bpa_sub_put (pt, pool_index, b->sub_idx, sub);
+      return 0;
+    }
+  if (PREDICT_FALSE (!bpa_session_room (pt)))
+    {
+      *why = BPA_CREATE_NO_MEMORY;
       bpa_sub_put (pt, pool_index, b->sub_idx, sub);
       return 0;
     }
