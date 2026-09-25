@@ -5637,6 +5637,40 @@ try:
     check(_sum is None and _n == 0 and "HTTP 404" in _why,
           f"and a missing one is a sentence, not a traceback: {_why!r}")
 
+    # WHO IS ASKING (#456). A server that refuses Python's default agent the
+    # way the public releases directory does - measured: 403 for
+    # Python-urllib, 200 for anything else - and both fetchers must get
+    # through it. Mutation shown red: release_request() returning a bare
+    # Request(url), which is the product as 0.127.1 shipped.
+    _seen = []
+
+    class _Picky(_hs.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            _ua = self.headers.get("User-Agent", "")
+            _seen.append(_ua)
+            if _ua.startswith("Python-urllib"):
+                self.send_error(403)
+                return
+            super().do_GET()
+
+        def log_message(self, *a):
+            pass
+    _picky = _hs.ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k:
+                                     _Picky(*a, directory=_rel, **k))
+    _th.Thread(target=_picky.serve_forever, daemon=True).start()
+    _purl = f"http://127.0.0.1:{_picky.server_address[1]}"
+    check(prismash.fetch_url(_purl + "/big.bin")[0] is not None,
+          f"fetch_url gets past a server that refuses Python's agent: {_seen}")
+    check(prismash.download_to(_purl + "/big.bin",
+                               os.path.join(_root, "big.picky"))[0] == _want,
+          f"and so does download_to: {_seen}")
+    check(_seen and all(u.startswith("prisma-routing/") for u in _seen),
+          f"every request names the product and its version: {_seen}")
+    check(prismash.release_request("http://x/").get_header("User-agent")
+          == f"prisma-routing/{prismash.prisma_routing_version()}",
+          "release_request() carries the version this box runs")
+    _picky.shutdown()
+
     _sh = shell()
     rv, text = driven(_sh.system_upgrade, [])
     check("this box runs: 0.99.7" in text and "newest published: 0.100.0" in text

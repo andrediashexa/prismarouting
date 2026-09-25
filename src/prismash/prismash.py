@@ -436,13 +436,31 @@ def version_tuple(text):
     return tuple(int(p) for p in parts)
 
 
+def release_request(url):
+    """
+    The request `system upgrade` sends, saying who is asking (#456).
+
+    Python's default agent, `Python-urllib/3.x`, is REFUSED by the releases
+    server's front: measured on 0.127.1's own sha256, that agent got HTTP 403
+    while curl, a browser and an empty agent got 200 - so every box's
+    `system upgrade` failed against the public directory, and the release
+    procedure never saw it because it reads its files back with curl. Naming
+    the product and its version gets 200, and tells the server's log which
+    versions are still out there asking.
+    """
+    import urllib.request
+    return urllib.request.Request(url, headers={
+        "User-Agent": f"prisma-routing/{prisma_routing_version()}"})
+
+
 def fetch_url(url, timeout=30):
     """(bytes, "") from `url`, or (None, why). Never raises: a box that cannot
     reach the releases is a sentence, not a traceback."""
     import urllib.error
     import urllib.request
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        with urllib.request.urlopen(release_request(url),
+                                    timeout=timeout) as r:
             return r.read(), ""
     except urllib.error.HTTPError as e:
         return None, f"{url}: HTTP {e.code}"
@@ -465,7 +483,8 @@ def download_to(url, path, timeout=300):
     h = hashlib.sha256()
     n = 0
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r, \
+        with urllib.request.urlopen(release_request(url),
+                                    timeout=timeout) as r, \
                 open(path, "wb") as f:
             while True:
                 chunk = r.read(1 << 20)
