@@ -77,7 +77,18 @@ if [ ! -x "$PRISMASH" ]; then
   exec "$SHELL_FALLBACK" -l
 fi
 
-"$PRISMASH"
+# THROUGH THE BROKER when it is installed (#448): this session keeps the
+# terminal and the VTY is handed it, so `start shell` is run here, on the
+# host, by the broker - decided by this host's groups, the same rule as
+# may_have_shell() above - and a VTY that later moves into a container can
+# only ask for one. The broker returns the VTY's own exit status, so the
+# fallback below reads exactly what it read before.
+BROKER=${PRISMA_VTY_BROKER:-/usr/lib/prisma-routing/prisma-vty-broker}
+if [ -x "$BROKER" ]; then
+  "$BROKER" "$PRISMASH"
+else
+  "$PRISMASH"
+fi
 rc=$?
 
 # Exit code 0 means the operator typed "exit": log them out, as a VTY should.
