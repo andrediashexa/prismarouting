@@ -1,0 +1,18 @@
+[Unit]
+Description=Prisma Routing - the containers' backplane on 128.0.0.0/8, in VRF prisma-bp
+Documentation=file:///usr/share/doc/prisma-routing/appliance.md
+# Before the containers, because the backplane is what they attach to
+# (#447, #448). After the network, so the VRF and the bridge come up on a
+# box whose own interfaces are already configured: the backplane takes
+# nothing from them and must not be mistaken for one of them.
+Before=prisma-routing-containers.service vpp.service
+After=networking.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/prisma-routing/prisma-backplane up
+ExecStop=/usr/lib/prisma-routing/prisma-backplane down
+
+[Install]
+WantedBy=multi-user.target

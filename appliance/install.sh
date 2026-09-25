@@ -298,6 +298,9 @@ install -D -m 0755 "$REPO/appliance/watch-the-dataplane" "$DESTDIR/usr/lib/prism
 # Run by prisma-routing-containers.service before compose: it loads the
 # images the medium carried and tells compose which tag to run (#426).
 install -D -m 0755 "$REPO/appliance/load-the-images" "$DESTDIR/usr/lib/prisma-routing/load-the-images"
+# The containers' backplane, 128.0.0.0/8 in VRF prisma-bp (#447), brought up
+# by prisma-routing-backplane.service before them.
+install -D -m 0755 "$REPO/appliance/prisma-backplane" "$DESTDIR/usr/lib/prisma-routing/prisma-backplane"
 install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/prisma-routing/selftest"
 # The DHCP hook that keeps a lease from rewriting the resolvers `dns server`
 # set (#437). A hook directory and not a package's conffile, so an upgrade
@@ -358,7 +361,8 @@ say "systemd"
 for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selftest.service \
          prisma-routing-installer.service prisma-routing-confirm.service \
          prisma-routing-confirm.timer prisma-routing-containers.service \
-         prisma-routing-card-watch.service prisma-routing-card-watch.timer; do
+         prisma-routing-card-watch.service prisma-routing-card-watch.timer \
+         prisma-routing-backplane.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
@@ -654,7 +658,7 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   systemctl daemon-reload
   systemctl enable prisma-routing-tune.service prisma-routing.service \
     prisma-routing-selftest.service prisma-routing-installer.service \
-    prisma-routing-confirm.timer
+    prisma-routing-confirm.timer prisma-routing-backplane.service
   if [ "$CONTAINER_DEFAULT" = 1 ]; then
     systemctl enable prisma-routing-containers.service \
       prisma-routing-card-watch.timer
@@ -679,7 +683,8 @@ else
   # offline enablement: creates the link systemctl enable would create
   install -d -m 0755 "$DESTDIR/etc/systemd/system/multi-user.target.wants"
   for u in prisma-routing-tune.service prisma-routing.service \
-           prisma-routing-selftest.service prisma-routing-installer.service; do
+           prisma-routing-selftest.service prisma-routing-installer.service \
+           prisma-routing-backplane.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done
