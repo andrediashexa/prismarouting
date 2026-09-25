@@ -12,7 +12,10 @@ After=networking.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/lib/prisma-routing/prisma-backplane up
-ExecStop=/usr/lib/prisma-routing/prisma-backplane down
+# NO ExecStop. A stop runs on every restart as well, an upgrade's included
+# (test/test_stop_is_not_a_teardown.py), and taking the backplane down there
+# would cut the management container's network on a box that was working.
+# Left up, it costs nothing; `prisma-backplane down` is there for a hand.
 
 [Install]
 WantedBy=multi-user.target

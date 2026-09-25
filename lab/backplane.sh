@@ -45,7 +45,7 @@ ip netns exec upstream sh -c 'ip link set lo up; ip link set up0 up
 ip netns exec upstream sh -c 'nohup python3 -m http.server 80 --bind 128.66.0.10 >/dev/null 2>&1 &'
 
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
-n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
+wait_vpp /tmp/vpp.log || exit 1
 use_binary_api
 vppctl create host-interface name vin >/dev/null
 vppctl create host-interface name vout >/dev/null
