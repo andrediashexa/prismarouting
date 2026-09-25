@@ -25,6 +25,7 @@ fresh() {  # a running box: VPP answering, eth9 added, no address on it
   : > "$S/calls"; : > "$S/vpp"; : > "$S/addr"; : > "$S/route"
   echo "enp0s20 ens20x" > "$S/alts"
   echo claim > "$S/verdict"; echo up > "$S/vppstate"; : > "$S/refuse"
+  echo eth9 > "$S/names"
 }
 cat > "$T/ip" <<EOF
 #!/bin/sh
@@ -34,6 +35,9 @@ case "\$*" in
   "route show default") cat "$S/route" ;;
   "-d link show dev "*) for a in \$(cat "$S/alts"); do echo "    altname \$a"; done ;;
   "link property del dev "*) sed -i "s/\$7//" "$S/alts" ;;
+  "link show dev "*) grep -qx "\$4" "$S/names"; exit \$? ;;
+  "link set dev "*" name "*) grep -qx "\$4" "$S/names" || exit 1
+                           sed -i "s/^\$4\$/\$6/" "$S/names" ;;
 esac
 exit 0
 EOF
@@ -60,11 +64,18 @@ EOF
 cat > "$T/systemctl" <<EOF
 #!/bin/sh
 echo "systemctl \$*" >> "$S/calls"
+[ "\$*" = "stop prisma-routing-containers.service" ] && [ -e "$S/nostop" ] && exit 1
+exit 0
 EOF
-chmod +x "$T/ip" "$T/vppctl" "$T/tune" "$T/systemctl"
+cat > "$T/udevadm" <<EOF
+#!/bin/sh
+echo "udevadm \$*" >> "$S/calls"
+EOF
+chmod +x "$T/ip" "$T/vppctl" "$T/tune" "$T/systemctl" "$T/udevadm"
 HC() {
   PRISMA_ROOT=$R PRISMA_IP=$T/ip PRISMA_VPPCTL=$T/vppctl PRISMA_TUNE=$T/tune \
-  PRISMA_SYSTEMCTL=$T/systemctl sh "$REPO/appliance/prisma-hot-card" "$@"
+  PRISMA_SYSTEMCTL=$T/systemctl PRISMA_UDEVADM=$T/udevadm \
+  sh "$REPO/appliance/prisma-hot-card" "$@"
 }
 said() { printf '%s\n' "$OUT" | grep -q "$1"; }
 called() { grep -q "$1" "$S/calls"; }
@@ -78,6 +89,9 @@ printf '%s\n' "$OUT" | sed 's/^/    /'
 called "^vppctl create interface af_xdp host-if xdp-eth9 name eth9 num-rx-queues all$" \
   && ok "and the dataplane's interface carries the name the operator knows" \
   || bad "the attach was not asked for as measured: $(grep af_xdp "$S/calls")"
+grep -n "" "$S/calls" | grep -A1 "udevadm settle" | grep -q "ip -d link show dev xdp-eth9" \
+  && ok "the altnames are read only after udev has handled the rename" \
+  || bad "altnames dropped before udev's move put them back: $(cat "$S/calls")"
 called "^ip link property del dev xdp-eth9 altname enp0s20$" \
   && called "^ip link property del dev xdp-eth9 altname ens20x$" \
   && ok "every altname udev gave it is dropped" \
@@ -124,6 +138,22 @@ OUT=$(HC add eth9)
 said "not a PCI card" && ! called "tune" \
   && ok "a netdev with no PCI parent is not offered" || bad "no pci: $OUT"
 
+echo "=== the name still held after the rename: the card stays with Linux ==="
+fresh
+cat > "$T/ip2" <<EOF
+#!/bin/sh
+[ "\$*" = "link show dev eth9" ] && exit 0
+exec "$T/ip" "\$@"
+EOF
+chmod +x "$T/ip2"
+OUT=$(PRISMA_ROOT=$R PRISMA_IP=$T/ip2 PRISMA_VPPCTL=$T/vppctl PRISMA_TUNE=$T/tune \
+      PRISMA_SYSTEMCTL=$T/systemctl PRISMA_UDEVADM=$T/udevadm \
+      sh "$REPO/appliance/prisma-hot-card" add eth9); RC=$?
+[ $RC = 1 ] && said "still held" && ! called "af_xdp" \
+  && called "^ip link set dev xdp-eth9 name eth9$" \
+  && ok "renamed back and not attached, rather than attached under a name it cannot carry" \
+  || bad "a held name (rc=$RC): $OUT"
+
 echo "=== a refused attach puts the card back ==="
 fresh; echo "af_xdp: cannot load program" > "$S/refuse"
 OUT=$(HC add eth9); RC=$?
@@ -132,18 +162,24 @@ OUT=$(HC add eth9); RC=$?
   && ok "the card is renamed back, not left half-taken, and nothing is recorded" \
   || bad "a refused attach (rc=$RC): $OUT"
 
-echo "=== restart-dataplane hands the cards back, then restarts ==="
+echo "=== restart-dataplane: stop, hand the cards back, tune, start ==="
 fresh; HC add eth9 >/dev/null; : > "$S/calls"
 OUT=$(HC restart-dataplane); RC=$?
-[ $RC = 0 ] && called "^ip link set dev xdp-eth9 name eth9$" \
-  && ok "the card is renamed back, so the tuner claims it under its own name" \
-  || bad "not renamed back (rc=$RC): $(cat "$S/calls")"
-grep -n "" "$S/calls" | grep -A1 "name eth9" | grep -q "systemctl restart prisma-routing-tune.service" \
-  && called "^systemctl restart prisma-routing-containers.service$" \
-  && ok "and only then the tuner and the dataplane are restarted" \
-  || bad "the restart order: $(cat "$S/calls")"
+_seq=$(grep -E "^systemctl|name eth9$" "$S/calls" | tr '\n' '|')
+[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing-containers.service|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl start prisma-routing.service|" ] \
+  && ok "stopped first, renamed back, tuned, started, and the configuration replayed" \
+  || bad "the sequence (rc=$RC): $_seq"
+! called "restart prisma-routing-containers" \
+  && ok "and never a restart of the containers unit, which systemd refuses" \
+  || bad "a restart of the containers unit was asked"
 [ ! -e "$R/run/prisma-routing/hot-cards" ] && ok "and the record is cleared" \
   || bad "the record outlived the dataplane that knew it"
+fresh; HC add eth9 >/dev/null; : > "$S/calls"; touch "$S/nostop"
+OUT=$(HC restart-dataplane); RC=$?
+[ $RC = 1 ] && ! called "name eth9$" && ! called "prisma-routing-tune" \
+  && [ -s "$R/run/prisma-routing/hot-cards" ] && said "nothing was changed" \
+  && ok "a dataplane that would not stop is left exactly as it was" \
+  || bad "a failed stop (rc=$RC): $(cat "$S/calls")"
 
 echo "=== the paths it runs are the paths install.sh writes ==="
 # Measured on a KVM guest: the default pointed at /usr/lib/prisma-routing/

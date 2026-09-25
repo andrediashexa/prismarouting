@@ -53,6 +53,7 @@ MGMT_CONF=${PRISMA_MGMT_CONF:-$ROOT/etc/network/interfaces.d/prisma-routing}
 STARTUP=${PRISMA_VPP_STARTUP:-$ROOT/etc/vpp/startup.conf}
 STATE=${PRISMA_HOT_CARDS:-$ROOT/run/prisma-routing/hot-cards}
 SYSTEMCTL=${PRISMA_SYSTEMCTL:-systemctl}
+UDEVADM=${PRISMA_UDEVADM:-udevadm}
 
 say() { echo "prisma-hot-card: $*"; }
 
@@ -119,9 +120,22 @@ add() {  # <netdev>
   k=$(kernel_name "$n")
   $IP link set dev "$n" down || { say "$n: cannot take it down"; return 1; }
   $IP link set dev "$n" name "$k" || { say "$n: cannot rename it to $k"; return 1; }
+  # AFTER udev has handled the rename. The rename is a `move` event, and udev
+  # applies a card's altnames on it - so altnames dropped before it ran were
+  # put back, and the VTY's `linux-name ens20` failed with -13 on a KVM guest
+  # although the script had dropped them (#453). Settled first, then dropped,
+  # then checked: the name must resolve to nothing before the dataplane is
+  # given it.
+  $UDEVADM settle -t 10 >/dev/null 2>&1
   for alt in $($IP -d link show dev "$k" 2>/dev/null | awk '$1 == "altname" {print $2}'); do
     $IP link property del dev "$k" altname "$alt" 2>/dev/null
   done
+  if $IP link show dev "$n" >/dev/null 2>&1; then
+    $IP link set dev "$k" name "$n" 2>/dev/null
+    say "$n: the name is still held in Linux after the rename, so the"
+    say "    dataplane's end could not carry it; the card stays with Linux"
+    return 1
+  fi
   $IP link set dev "$k" up
   if ! out=$($VPPCTL create interface af_xdp host-if "$k" name "$n" num-rx-queues all 2>&1) \
        || ! $VPPCTL show hardware "$n" 2>/dev/null | grep -q "^$n "; then
@@ -150,20 +164,43 @@ list() {
 # dataplane, so the tuner sees the cards as the next boot would and claims
 # them through DPDK. The tuner reads the kernel's names: left as xdp-ens20,
 # the card would come back named that.
+#
+# STOP, THEN START, and never `restart` of the containers unit. Measured on a
+# KVM guest on the containers: `systemctl restart prisma-routing-containers`
+# is refused - "Transaction contains conflicting jobs 'restart' and 'stop' for
+# prisma-routing.service" - because that unit Conflicts=vpp.service and
+# prisma-routing.service is PartOf both, so one transaction asks it to stop
+# and to restart. And the order is the point: the cards are handed back only
+# once the dataplane has let go of them. Renamed while VPP still held them
+# through AF_XDP, the rename did not take, the tuner then bound the card to
+# uio under the name xdp-ens20, and VPP was left on a card the kernel no
+# longer had.
 restart_dataplane() {
+  if ! $SYSTEMCTL stop prisma-routing-containers.service; then
+    say "the dataplane could not be stopped; nothing was changed"
+    return 1
+  fi
+  # The dataplane that knew those interfaces is gone from here on.
   if [ -f "$STATE" ]; then
     while read -r n _pci k; do
       [ -n "$k" ] || continue
       $IP link set dev "$k" down 2>/dev/null
-      $IP link set dev "$k" name "$n" 2>/dev/null \
-        && say "$n: handed back to the kernel under its own name"
+      if $IP link set dev "$k" name "$n" 2>/dev/null; then
+        say "$n: handed back to the kernel under its own name"
+      else
+        say "$n: could not be renamed back from $k; the tuner sees it as $k"
+      fi
     done < "$STATE"
+    rm -f "$STATE"
   fi
-  $SYSTEMCTL restart prisma-routing-tune.service \
-    && $SYSTEMCTL restart prisma-routing-containers.service
-  rc=$?
-  # The dataplane that knew those interfaces is gone either way.
-  rm -f "$STATE"
+  rc=0
+  $SYSTEMCTL restart prisma-routing-tune.service || rc=1
+  # Started whatever the tuner said: a box whose tuner failed still has the
+  # startup.conf it had, and a dataplane on it beats none.
+  $SYSTEMCTL start prisma-routing-containers.service || rc=1
+  # PartOf stopped it with the containers and nothing starts it again: it is
+  # what replays the saved configuration onto the dataplane.
+  $SYSTEMCTL start prisma-routing.service || rc=1
   return $rc
 }
 

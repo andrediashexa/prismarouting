@@ -416,7 +416,7 @@ elif adj=$(cat "/proc/$vpid/oom_score_adj" 2>/dev/null); then
       if [ "$DATAPLANE_PATH" = container ]; then
         say "        The oom_score_adj in /etc/prisma-routing/compose.yaml"
         say "        is missing or did not take effect; check it, then"
-        say "        'systemctl restart prisma-routing-containers.service'"
+        say "        'system dataplane restart' in the VTY"
       else
         say "        The drop-in"
         say "        /etc/systemd/system/vpp.service.d/prisma-routing-oom-protect.conf"

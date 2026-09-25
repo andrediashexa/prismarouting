@@ -1698,6 +1698,21 @@ finally:
     prismash.HOT_CARD_TOOL, prismash.HOT_CARDS = _saved
 ok("the record, the notice and the restart that takes them through DPDK")
 
+# The advice names a command that can be followed (#453): on the containers
+# `systemctl restart prisma-routing-containers` is refused by systemd, so the
+# screens send the operator to the VTY's own command there.
+_du = prismash.dataplane_unit
+try:
+    prismash.dataplane_unit = lambda: prismash.DATAPLANE_UNIT_CONTAINERS
+    check(prismash.dataplane_restart_advice() == "'system dataplane restart'",
+          f"the containers: {prismash.dataplane_restart_advice()!r}")
+    prismash.dataplane_unit = lambda: prismash.DATAPLANE_UNIT_VPP
+    check(prismash.dataplane_restart_advice() == "'systemctl restart vpp'",
+          f"the unit path: {prismash.dataplane_restart_advice()!r}")
+finally:
+    prismash.dataplane_unit = _du
+ok("restart advice that can be followed on either dataplane")
+
 print("\n=== Shell.after_boot: what a replay of the file leaves on the "
       "box ===")
 # Mutation shown red: drop the dataplane_if carry-over.

@@ -1791,7 +1791,7 @@ else
 fi
 echo 0 > "$FAKE/oom_score_adj"
 run
-if said "systemctl restart prisma-routing-containers.service"; then
+if said "'system dataplane restart' in the VTY"; then
   ok "and an unprotected container box is told which unit to restart"
 else
   bad "a container box with oom_score_adj 0 was given vpp.service's repair: $(printf '%s\n' "$OUTPUT" | grep -A4 -i oom | tr '\n' ' ')"

@@ -270,6 +270,22 @@ def dataplane_unit():
         return DATAPLANE_UNIT_VPP
 
 
+def dataplane_restart_advice():
+    """
+    The command an operator is told to type to start the dataplane again.
+
+    On the containers it is the VTY's own `system dataplane restart` (#453),
+    because `systemctl restart prisma-routing-containers` is REFUSED there -
+    measured on a KVM guest: "Transaction contains conflicting jobs 'restart'
+    and 'stop' for prisma-routing.service", since that unit Conflicts with
+    vpp.service and prisma-routing.service is PartOf both. The screens named
+    that command, so the advice they gave could not be followed.
+    """
+    if dataplane_unit() == DATAPLANE_UNIT_CONTAINERS:
+        return "'system dataplane restart'"
+    return f"'systemctl restart {DATAPLANE_UNIT_VPP}'"
+
+
 #: Where appliance/watch-the-dataplane writes what the dataplane said before
 #: it died. The file exists only on a box that stranded itself, which is
 #: exactly the box whose container log is already gone - `docker logs` on a
@@ -6284,7 +6300,7 @@ class Shell:
                     "build does not have.")
         print(f"    the dataplane is running {build}")
         print_prose("'show version' prints that beside this box's own build. "
-                    f"'systemctl restart {dataplane_unit()}', or a reboot, "
+                    f"{dataplane_restart_advice()}, or a reboot, "
                     "makes the new dataplane answer instead - and either one "
                     "ends every session and every port block this box is "
                     "carrying.")
@@ -15888,7 +15904,7 @@ class Shell:
                     "last boot, and it is not the Prisma Routing build above. "
                     "An upgrade replaces bpa_plugin.so on disk and does not "
                     "restart the dataplane, so until this box is rebooted, "
-                    f"or 'systemctl restart {dataplane_unit()}' is run, it "
+                    f"or {dataplane_restart_advice()} is run, it "
                     "goes on translating with the old one - and both of those "
                     "end every session it is carrying.",
                     indent=self.VERSION_INDENT)
