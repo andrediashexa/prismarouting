@@ -86,13 +86,25 @@ for f in $FILES; do
     bad=1
   fi
 done
-# The package itself is a few megabytes, so it is read back whole. The ISO
-# is hundreds, so its size is compared instead.
-got=$(curl -fsL --max-time 120 "$URL/$VER/$ART" | sha256sum | cut -d" " -f1)
+# The package is read back whole, and BY THE PRODUCT'S OWN DOWNLOADER, which
+# is what `system upgrade` on a box uses (#456). Read back with curl, every
+# release since 0.125 passed this check while every box got HTTP 403: the
+# server's front refuses Python's default User-Agent and lets curl through.
+# The ISO is hundreds of megabytes, so its size is compared instead.
+got=$(PRISMA_RB_URL="$URL/$VER/$ART" PRISMA_RB_TMP="$STAGE/readback" \
+      python3 -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import prismash
+s, n, why = prismash.download_to(os.environ["PRISMA_RB_URL"],
+                                 os.environ["PRISMA_RB_TMP"])
+print(s or why)' "$(dirname "$0")/../src/prismash" 2>&1 | tail -1)
+rm -f "$STAGE/readback"
 if [ "$got" = "$(cut -d" " -f1 "$STAGE/$VER/$ART.sha256")" ]; then
-  echo "  $URL/$VER/$ART downloads and verifies"
+  echo "  $URL/$VER/$ART downloads and verifies, fetched the way a box fetches it"
 else
-  echo "error: $URL/$VER/$ART does not download as the file uploaded" >&2
+  echo "error: $URL/$VER/$ART does not download, fetched the way a box" >&2
+  echo "       fetches it: ${got:-nothing}" >&2
   bad=1
 fi
 if [ -f "$SRC/$ISO" ]; then

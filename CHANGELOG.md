@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`system upgrade` says who it is, and the releases server answers it** ([#456](https://github.com/andrediashexa/hexarouting/issues/456)).
+  Reported by the maintainer on 0.127.0: `system upgrade` failed with
+  `HTTP 403`, and the same URL opened in a browser. The front of the releases
+  server refuses Python's default User-Agent. Measured on 0.127.1's own
+  sha256: 403 for `Python-urllib/3.11`, 200 for curl, a browser and an empty
+  agent. Every box's `system upgrade` was affected. The box now sends
+  `prisma-routing/<version>`, which gets 200. The release procedure read its
+  files back with curl, which is why it never saw this. It now reads the
+  package back with the product's own downloader, so a refusal of the box's
+  agent fails the release.
+
 ## 0.127.1 - every claimed card is bound
 
 ### Fixed

@@ -21,7 +21,29 @@ bad() { echo "  FAIL: $1"; fail=$((fail + 1)); }
 
 REMOTE=$T/host/srv/prisma-releases
 mkdir -p "$REMOTE" "$T/bin" "$T/src"
-URL=https://releases.example/releases
+# A REAL HTTP SERVER over the host's directory, because the package is read
+# back by the product's own downloader and not by curl (#456) - and it
+# refuses Python's default agent the way the public server's front does,
+# measured: 403 for Python-urllib, 200 for anything else. A read-back that
+# does not say who it is fails here the way `system upgrade` failed on every
+# box.
+cat > "$T/serve.py" <<EOF
+import http.server, sys
+class H(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.headers.get("User-Agent", "").startswith("Python-urllib"):
+            self.send_error(403); return
+        super().do_GET()
+    def log_message(self, *a): pass
+s = http.server.ThreadingHTTPServer(("127.0.0.1", 0),
+    lambda *a, **k: H(*a, directory="$T/host/srv", **k))
+open("$T/port", "w").write(str(s.server_address[1]))
+s.serve_forever()
+EOF
+python3 "$T/serve.py" & SERVER=$!
+trap 'kill $SERVER 2>/dev/null; rm -rf "$T"' EXIT
+_n=0; while [ ! -s "$T/port" ] && [ $_n -lt 50 ]; do sleep 0.1; _n=$((_n + 1)); done
+URL=http://127.0.0.1:$(cat "$T/port")/prisma-releases
 cat > "$T/bin/rsync" <<EOF
 #!/bin/sh
 # the last two arguments are the source and user@host:/path
