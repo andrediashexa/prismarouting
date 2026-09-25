@@ -52,19 +52,19 @@ ALIVE=yes
 for t in 10 20 30 40; do
   sleep 10
   if ! vppctl show version >/dev/null 2>&1; then ALIVE=no; echo "  t=${t}s: the dataplane is gone"; break; fi
-  echo "  t=${t}s: $(vppctl show bpa session 2>&1 | tail -1) | heap $(vppctl show memory main-heap 2>&1 | grep -o 'used: [^,]*, free: [^,]*')"
+  echo "  t=${t}s: $(vppctl show bpa session 2>&1 | tr -d "\r" | tail -1) | heap $(vppctl show memory main-heap 2>&1 | tr -d "\r" | grep -o 'used: [^,]*, free: [^,]*')"
 done
 [ "$ALIVE" = no ] && tail -8 /tmp/vpp.log | sed 's/^/  vpp: /'
-ERRS=$(vppctl show errors 2>&1 | grep bpa-in2out)
+ERRS=$(vppctl show errors 2>&1 | tr -d "\r" | grep bpa-in2out)
 printf '%s\n' "$ERRS" | sed 's/^/  /'
 REFUSED=$(printf '%s\n' "$ERRS" | awk '/no memory for a new session/ {print $1}')
 CREATED=$(printf '%s\n' "$ERRS" | awk '/sessions created/ {print $1}')
 
 echo; echo "=========== a session made before the heap filled still translates ==========="
 vppctl packet-generator new "{ name again limit 10 size 64-64 node ip4-input interface pg0 data { UDP: 100.64.1.0 -> 8.8.8.8 UDP: 20000 -> 53 incrementing 8 } }" >/dev/null 2>&1
-BEFORE=$(vppctl show errors 2>&1 | awk '/bpa-in2out.*packets translated/ {print $1}')
+BEFORE=$(vppctl show errors 2>&1 | tr -d "\r" | awk '/bpa-in2out.*packets translated/ {print $1}')
 vppctl packet-generator enable-stream again >/dev/null 2>&1; sleep 2
-AFTER=$(vppctl show errors 2>&1 | awk '/bpa-in2out.*packets translated/ {print $1}')
+AFTER=$(vppctl show errors 2>&1 | tr -d "\r" | awk '/bpa-in2out.*packets translated/ {print $1}')
 echo "  packets translated: ${BEFORE:-none} before, ${AFTER:-none} after"
 
 echo; echo "=========== VERDICT ==========="
