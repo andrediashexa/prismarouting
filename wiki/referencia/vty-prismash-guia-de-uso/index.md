@@ -24,7 +24,7 @@ flowchart LR
 |------|--------|-------------|-----------|
 | Operacional | `prisma> ` | é onde a sessão começa | `exit` encerra a sessão |
 | Configuração | `prisma# [edit] ` | `configure` | `exit`    |
-| NAT | `prisma# [edit nat] ` | `nat` | `exit`, `up` ou `top` |
+| NAT  | `prisma# [edit nat] ` | `nat`       | `exit`, `up` ou `top` |
 | CGNAT | `prisma# [edit nat / cgnat] ` | `cgnat`, dentro de `nat` | `exit`, `up` ou `top` |
 | Pool | `prisma# [edit nat / cgnat / pool residencial] ` | `pool <nome>`, dentro de `cgnat` | `exit` volta para `cgnat`; `top` vai ao topo |
 | Interface | `prisma# [edit interface ens18] ` | `interface <nome>` | `exit`, `up` ou `top` |
@@ -217,7 +217,7 @@ Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e
 
 | Comando | O que faz |
 |---------|-----------|
-| `nat` | entra na hierarquia de NAT; dentro dela, `cgnat` guarda pools, interfaces, logging e timeouts |
+| `nat`   | entra na hierarquia de NAT; dentro dela, `cgnat` guarda pools, interfaces, logging e timeouts |
 | `router static` | entra no bloco das rotas estáticas |
 | `router bgp <AS>` / `router ospf` / `router isis <nome>` | protocolos de roteamento (FRR) |
 | `interface <nome>` | entra na configuração de uma interface |

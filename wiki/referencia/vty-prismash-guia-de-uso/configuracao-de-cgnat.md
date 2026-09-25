@@ -32,6 +32,7 @@ error: under 'nat' there is 'cgnat' and nothing else
     'cgnat' enters it; 'exit' leaves 'nat'
 ```
 
+
 :::warning
 **A forma de uma linha só não existe mais.** `nat cgnat pool residencial`, `nat cgnat interface ens18 inside` e a grafia mais antiga `cgnat pool ...` são recusadas no prompt e também num arquivo salvo:
 
@@ -43,6 +44,7 @@ error: the one-line CGNAT form is gone
 ```
 
 Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot. Depois de atualizar, e **antes de reiniciar**, rode `save`: ele grava o que está rodando já na forma nova. [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) explica.
+
 :::
 
 ## O que fica em `cgnat`
@@ -121,8 +123,10 @@ prisma# [edit nat / cgnat] interface ens18 inside
 prisma# [edit nat / cgnat] interface ens19 outside
 ```
 
+
 :::warning
 **Nunca entregue ao VPP a interface de gerência.** O DPDK tira a NIC do Linux. Entregue a porta pela qual você administra a máquina e ela fica inalcançável, e uma caixa inalcançável não tem conserto remoto. Identifique a placa de gerência antes de configurar qualquer coisa e confirme que ela não aparece como `interface` dentro de `cgnat`.
+
 :::
 
 # Ver também
