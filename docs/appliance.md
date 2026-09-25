@@ -1195,6 +1195,68 @@ It read as a harmless fallback and it was the defect, written down and
 guarded. **A test can hold a bug in place**, and this one did — passing on
 every run while the behaviour it protected removed boxes from the network.
 
+### A card added to the running box
+
+VPP's DPDK driver takes cards only when it starts. A card added in the
+hypervisor while the box runs used to wait for the next boot, and restarting
+the dataplane to take it throws away the CGNAT's state: every subscriber's
+port block and open sessions. The maintainer chose (2026-09-25) to have the
+card forward **at once**, through AF_XDP, and move to DPDK when the operator
+decides ([#453](https://github.com/andrediashexa/hexarouting/issues/453)).
+
+**What happens.**
+- udev announces the card, and `90-prisma-hot-card.rules` starts
+  `prisma-routing-hot-card@<card>.service`, which runs
+  `/usr/lib/prisma-routing/prisma-hot-card add <card>`.
+- **It takes the card only if the boot's rule would.** It asks
+  `prisma-routing-tune --would-claim`, so the reserve and
+  `PRISMA_DATAPLANE_IF` hold at a click exactly as at boot. It leaves:
+  - a card carrying an IPv4 address or the default route;
+  - a card the running `startup.conf` already names, because udev announces
+    every card at boot too;
+  - every card while the dataplane is not answering. The next start takes
+    those through DPDK.
+- **To take a card, it:**
+  - renames the kernel's card (`ens20` becomes `xdp-ens20`);
+  - drops the altnames udev gave it;
+  - attaches it with `create interface af_xdp ... name ens20`;
+  - gives the dataplane the card's own MAC;
+  - records it in `/run/prisma-routing/hot-cards`.
+- **The card is then configured in the VTY like any other**:
+  `interface ens20`, `linux-name ens20`, an address, `no shutdown`.
+  `show interface` says under its count that it forwards through AF_XDP until
+  the dataplane restarts, and what moves it.
+- **`system dataplane restart`** says what it costs, then:
+  - hands each hot card back to the kernel under its own name;
+  - restarts `prisma-routing-tune` (which binds the claimed cards) and the
+    containers.
+
+  The card then comes back through DPDK, under the same name. A reboot does
+  the same.
+
+**Each of these was measured**, on 0.126.0 in a KVM guest with a virtio-net card
+added by `device_add` while VPP ran in its container:
+- The **rename** exists because the dataplane's interface and its Linux end
+  must carry the name the operator knows.
+- The **altnames** go because udev gives a card `enp0s20` and `ens20`, a
+  rename keeps them, and `lcp create ... host-if ens20` then failed with `-13`
+  while an address typed for `ens20` quietly landed on the kernel's card. A
+  veth has none, which is why a lab did not show it.
+- The **MAC** is the card's own because VPP invents one for an af_xdp
+  interface, and a virtio card filters unicast to any MAC but its own. ARP,
+  a broadcast, was answered, and every ping after it was dropped by the card.
+  With the card's MAC, 70 of 70 echo replies.
+
+**The cost of AF_XDP** is speed, not correctness: the card is read through the
+kernel's driver. On a one-queue virtio card the kernel said so itself: `XDP
+request 9 queues but max is 1. XDP_TX and XDP_REDIRECT will operate in a slower
+locked tx mode`. How much slower than DPDK is still to be measured (#453).
+
+`lab/hot-card.sh` attaches a card that appears after the dataplane is up,
+configures it in the VTY and pings through it. Its off mode, the script not
+run, turns 7 checks red. `test/test_prisma_hot_card.sh` holds what the script
+takes and leaves, and `appliance/test_tune.py` the `--would-claim` rule.
+
 ### The MTU the card can carry
 
 **A card whose maximum MTU is below 9000 - which is every virtual machine -

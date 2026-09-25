@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A card added to the running box forwards at once, and moves to DPDK when you say** ([#453](https://github.com/andrediashexa/hexarouting/issues/453)).
+  Asked for by the maintainer. VPP's DPDK driver takes cards only when it
+  starts, and restarting it throws away every subscriber's port block, so a
+  card added in the hypervisor used to wait for the next boot. Now udev hands
+  it to `prisma-hot-card`. If the boot's rule would claim it (asked of the
+  tuner, so the reserve and `PRISMA_DATAPLANE_IF` hold), the card is attached
+  to the running dataplane through AF_XDP, under the name Linux gave it and
+  with its own MAC. It is then configured in the VTY like any other card.
+  `show interface` says it is on AF_XDP, and `system dataplane restart` moves
+  it to DPDK in the window the operator chooses. Measured in a KVM guest with
+  a virtio card added by `device_add`: 70 of 70 echo replies through the
+  dataplane, with no restart. Two things only a real card showed: udev's
+  altnames kept the name taken, and VPP's invented MAC was filtered by the
+  card.
+* **The wiki says how the box sizes the dataplane's memory** ([#454](https://github.com/andrediashexa/hexarouting/issues/454)),
+  step by step with a table by RAM, and that 8 GB is the floor to use in a VM
+  until #452 measures it again: a 6 GB guest did not start the dataplane.
+
 ### Fixed
 
 ## 0.127.2 - system upgrade says who it is

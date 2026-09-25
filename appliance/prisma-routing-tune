@@ -2392,6 +2392,40 @@ def render_effective(rules):
 
 # not a unit: the program's entry; it parses the arguments and writes the
 # files, and appliance/test_tune.py drives it as a program.
+def would_claim(p, name):
+    """
+    0 and "claim: <name>" if the plan claims card `name`, else 1 and
+    "leave: <name>: <why>" (#453).
+
+    The ONE rule, asked at a different moment. A card added to a running box
+    is attached through AF_XDP by prisma-hot-card, and whether it should be is
+    exactly the question this tuner answers at boot: the override, the
+    reserve, the card the box is reached on. A second copy of that rule in
+    the hotplug path would be a second answer to one question - the
+    reservation would hold at boot and not at a click in the hypervisor.
+
+    Asked on a running box the claimed cards are already bound and have no
+    netdev, so they are not in the plan's list of cards; the new one is, with
+    whatever Linux still holds. That is the same list the next boot will see
+    minus the cards it already has, which is the list that matters.
+    """
+    if name in [c["name"] for c in p["cards"]]:
+        print(f"claim: {name}")
+        return 0
+    if p.get("no_way_back") == name:
+        why = "this box is reached on it, and no way back could be worked out"
+    elif p.get("reserve") == name:
+        why = "reserved for Linux: the management network it was installed with"
+    elif p["claim_why"] == "override":
+        why = "PRISMA_DATAPLANE_IF names another card"
+    elif name not in p.get("host_cards", []):
+        why = "not a PCI network card"
+    else:
+        why = "not claimed by this box's rule"
+    print(f"leave: {name}: {why}")
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2423,6 +2457,10 @@ def main():
     # asked. appliance/selftest runs it on every boot and renders it onto the
     # console, because an appliance that says it is tuned when the kernel
     # refused the parameter is worse than one that says nothing (#163).
+    ap.add_argument("--would-claim", metavar="NETDEV",
+                    help="say whether this box would claim that card for the "
+                         "dataplane now, by the same rule as at boot, and exit "
+                         "0 if it would and 1 if not (#453)")
     ap.add_argument("--report-effective", action="store_true",
                     help="report the tuning in effect on this box, rather "
                          "than computing the tuning to request")
@@ -2441,6 +2479,9 @@ def main():
              low_latency=not a.no_low_latency,
              config_path=a.config, vpp_base=a.vpp_base,
              mgmt_conf=a.mgmt_conf)
+
+    if a.would_claim:
+        return would_claim(p, a.would_claim)
 
     grub = render_grub(p)
     vpp = render_vpp(p)

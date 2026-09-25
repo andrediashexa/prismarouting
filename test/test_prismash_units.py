@@ -412,7 +412,8 @@ ok("subtree, hint, or nothing")
 print("\n=== tree_walk: the same walk from a mode's root ===")
 # Mutation shown red: walk TREE["config"] whatever the mode.
 sub, hint = prismash.tree_walk("operational", ["system"])
-check(isinstance(sub, dict) and set(sub) == {"reboot", "shutdown", "upgrade"}
+check(isinstance(sub, dict) and set(sub) == {"reboot", "shutdown", "upgrade",
+                                             "dataplane"}
       and hint is None, f"'system' in operational mode: {(sub, hint)!r}")
 check(prismash.tree_walk("operational", ["clear", "ospf", "neighbor"])
       == (None, "<A.B.C.D>"), "a hint reached three words down")
@@ -1641,9 +1642,61 @@ run = RecRunner()
 sh = shell(runner=run)
 rv, text = driven(lambda: sh.do_system(["halt"]))
 check(run.asked == [] and rows(text)
-      == ["error: usage: system reboot | system shutdown"],
+      == ["error: usage: system reboot | shutdown | upgrade | dataplane "
+          "restart"],
       f"a verb it has not got is a usage line: {text!r}")
 ok("two verbs, two units, the role checked first and the cost said first")
+
+print("\n=== cards added to the running box, on AF_XDP (#453) ===")
+_hd = tempfile.mkdtemp()
+_hf = os.path.join(_hd, "hot-cards")
+check(prismash.hot_cards(_hf) == {}, "no record is no hot card")
+with open(_hf, "w") as _f:
+    _f.write("ens20 0000:00:14.0 xdp-ens20\nens21 0000:00:15.0 xdp-ens21\n")
+check(prismash.hot_cards(_hf) == {"ens20": "0000:00:14.0",
+                                  "ens21": "0000:00:15.0"},
+      f"read as name and PCI: {prismash.hot_cards(_hf)!r}")
+_notes = prismash.hot_card_notes({"ens20": {}, "ens18": {}}, _hf)
+check(len(_notes) == 2 and _notes[0].startswith("  ens20: added to the running")
+      and "ens21" not in _notes[0] and "system dataplane restart" in _notes[1],
+      f"show interface names the hot cards it lists, and what moves them: "
+      f"{_notes!r}")
+check(all(len(l) <= 79 for l in _notes), "each row fits the console")
+check(prismash.hot_card_notes({"ens18": {}}, _hf) == [],
+      "and says nothing when none of them is on the screen")
+# Mutation shown red: system_dataplane_restart() calling the tool before
+# the cost is said - the screen at the instant it is run is read here.
+_tool = os.path.join(_hd, "tool")
+with open(_tool, "w") as _f:
+    _f.write("#!/bin/sh\necho \"$@\" > " + os.path.join(_hd, "asked") +
+             "\nexit ${HOTRC:-0}\n")
+os.chmod(_tool, 0o755)
+_saved = prismash.HOT_CARD_TOOL, prismash.HOT_CARDS
+prismash.HOT_CARD_TOOL, prismash.HOT_CARDS = _tool, _hf
+try:
+    sh = shell()
+    rv, text = driven(lambda: sh.system_dataplane_restart())
+    with open(os.path.join(_hd, "asked")) as _f:
+        _asked = _f.read().strip()
+    check(_asked == "restart-dataplane"
+          and "port block" in text and "ens20, ens21" in text
+          and "the dataplane is starting" in text,
+          f"it says the cost and which cards move, then asks the tool: "
+          f"{_asked!r} {text!r}")
+    os.environ["HOTRC"] = "3"
+    rv, text = driven(lambda: sh.do_system(["dataplane", "restart"]))
+    check("the dataplane could not be restarted" in text,
+          f"a restart that failed is said as one: {text!r}")
+    sh = shell(caps={prismash.CAP_CGNAT})
+    os.remove(os.path.join(_hd, "asked"))
+    rv, text = driven(lambda: sh.do_system(["dataplane", "restart"]))
+    check("permission denied" in text
+          and not os.path.exists(os.path.join(_hd, "asked")),
+          f"a cgnat account is refused before anything runs: {text!r}")
+finally:
+    os.environ.pop("HOTRC", None)
+    prismash.HOT_CARD_TOOL, prismash.HOT_CARDS = _saved
+ok("the record, the notice and the restart that takes them through DPDK")
 
 print("\n=== Shell.after_boot: what a replay of the file leaves on the "
       "box ===")

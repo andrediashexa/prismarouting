@@ -367,6 +367,32 @@ A diferença é prática. Numa caixa que ainda não recebeu placa nenhuma o data
 
 O `commit` guarda a escolha, recalcula o ajuste de boot e **não reinicia o dataplane** — a entrega derruba todas as sessões da caixa, inclusive a sua, então a janela é sua. A placa que carrega a rota default é recusada na hora em que você digita, e um nome que a caixa não tem também, com a lista dos que ela tem. Os dois casos, com o que a caixa imprime, estão em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
 
+## Placa adicionada com a caixa rodando
+
+O dataplane só pega placas pelo DPDK quando **inicia**. Para uma placa adicionada no hypervisor com a caixa no ar, a caixa não espera o próximo boot, e também não reinicia o dataplane sozinha: um reinício derruba o CGNAT inteiro, com o bloco de portas e as sessões de todos os assinantes.
+
+Em vez disso ela **anexa a placa ao dataplane em funcionamento pelo AF_XDP**, que lê a placa pelo driver do kernel. A placa encaminha na hora, e ninguém perde sessão.
+
+**O que a caixa faz sozinha**, segundos depois de a placa aparecer:
+
+* confere se a regra do boot pegaria essa placa. A placa reservada para gerência, o `PRISMA_DATAPLANE_IF` e a placa que tem endereço ou a rota default continuam sendo do Linux, exatamente como no boot;
+* anexa a placa com o **mesmo nome** que o Linux deu a ela (`ens20`, por exemplo) e com o MAC dela mesma.
+
+**O que você faz** é configurar a placa como qualquer outra: `interface ens20`, `linux-name ens20`, o endereço e `no shutdown`. O `show interface` avisa, embaixo da contagem, que ela está no AF_XDP e o que a leva para o DPDK.
+
+**Passar a placa para o DPDK** é uma decisão sua, na janela que você escolher:
+
+```
+prisma> system dataplane restart
+```
+
+O comando diz o que custa e reinicia o dataplane. A placa volta pelo DPDK, com o mesmo nome e a mesma configuração. Um reboot faz o mesmo.
+
+:::info
+**O custo do AF_XDP é velocidade, não correção.** Numa placa virtio com uma fila só, o próprio kernel avisa que o envio fica num modo mais lento. Para uma placa que vai carregar assinantes em volume, deixe no AF_XDP só até a próxima janela.
+
+:::
+
 # Como conferir
 
 * `show interface <nome>` traz o relatório, com estado, endereços, VRF, MAC e contadores;
