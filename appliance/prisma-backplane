@@ -1,0 +1,103 @@
+#!/bin/sh
+# The backplane the containers talk on: 128.0.0.0/8, in a routing table of
+# its own (#447).
+#
+#   prisma-backplane up       build it (idempotent: a second run changes nothing)
+#   prisma-backplane down     take it away
+#   prisma-backplane check    say what is there, and exit 1 if it leaks
+#
+# WHY 128.0.0.0/8, AND WHY NOT IN THE MAIN TABLE. The maintainer chose the
+# prefix Juniper uses between its routing engine and its line cards (2026-09-24).
+# 128.0.0.0/8 is real public space, and Juniper gets away with it because that
+# network lives in a private routing instance, apart from the forwarding table.
+# Here the same: a Linux VRF, `prisma-bp`, owns the bridge and the addresses. In
+# the main table every real 128.x - a university, a CDN, a customer - would stop
+# being reachable from this box and from every subscriber it routes, because the
+# main table is what linux_nl copies into the dataplane.
+#
+# THE ADDRESSING PLAN, one address per member, the host first:
+#   128.0.0.1   the host (this script)
+#   128.0.0.2   the management-plane container (#448)
+# The rest of the /8 is unused, and stays so until something is given a line
+# here.
+#
+# THE UNREACHABLE DEFAULT IN THE VRF TABLE is the half that is easy to forget. A
+# lookup a VRF cannot answer falls through to the next rule, which is the main
+# table - so without it, a backplane member asking for any address outside
+# 128/8 would be routed out of the box's real interfaces. Measured in
+# lab/backplane.sh with the route removed: a ping from the management netns
+# to 128.66.0.10 still FAILED - there is no way back to 128.0.0.2 - but a
+# capture on the upstream counted 2 packets from 128.0.0.2 leaving the box.
+# With it, 0. "No reply" is not "nothing left", which is why the lab counts
+# packets on the far side. Metric 4278198272 is the standard VRF practice, so
+# that nothing a person adds by hand sorts below it.
+set -eu
+
+VRF=${PRISMA_BP_VRF:-prisma-bp}
+TABLE=${PRISMA_BP_TABLE:-128}
+BRIDGE=${PRISMA_BP_BRIDGE:-bp0}
+HOST_ADDR=128.0.0.1/8
+PREFIX=128.0.0.0/8
+IP=${PRISMA_IP:-ip}
+
+say() { echo "prisma-backplane: $*"; }
+
+up() {
+  # The module is loaded on demand by `ip link add ... type vrf` on every
+  # kernel this medium has shipped; asked for explicitly so a failure names it.
+  modprobe vrf 2>/dev/null || true
+  $IP link show "$VRF" >/dev/null 2>&1 \
+    || $IP link add "$VRF" type vrf table "$TABLE"
+  $IP link set "$VRF" up
+  $IP link show "$BRIDGE" >/dev/null 2>&1 \
+    || $IP link add "$BRIDGE" type bridge
+  $IP link set "$BRIDGE" master "$VRF"
+  $IP addr replace "$HOST_ADDR" dev "$BRIDGE"
+  $IP link set "$BRIDGE" up
+  $IP route replace unreachable default metric 4278198272 table "$TABLE"
+  say "up: $BRIDGE in $VRF (table $TABLE), this host $HOST_ADDR"
+}
+
+down() {
+  $IP link del "$BRIDGE" 2>/dev/null || true
+  $IP link del "$VRF" 2>/dev/null || true
+  $IP route flush table "$TABLE" 2>/dev/null || true
+  say "down"
+}
+
+# What is there, and whether it leaks. A leak is any route for 128/8, or
+# anything inside it, in the MAIN table through the bridge - the one state
+# that makes real 128.x addresses unreachable.
+check() {
+  rc=0
+  if ! $IP link show "$VRF" >/dev/null 2>&1; then
+    say "no $VRF: the backplane is not up"
+    return 1
+  fi
+  master=$($IP -o link show "$BRIDGE" 2>/dev/null \
+           | sed -n 's/.* master \([^ ]*\) .*/\1/p')
+  if [ "$master" != "$VRF" ]; then
+    say "LEAK: $BRIDGE is not in $VRF (master: ${master:-none})"
+    rc=1
+  fi
+  leaked=$($IP route show table main 2>/dev/null | grep " dev $BRIDGE" || true)
+  if [ -n "$leaked" ]; then
+    say "LEAK: the main table routes through $BRIDGE:"
+    printf '%s\n' "$leaked" | sed 's/^/    /'
+    rc=1
+  fi
+  if ! $IP route show table "$TABLE" 2>/dev/null | grep -q "^unreachable default"; then
+    say "LEAK: table $TABLE has no unreachable default, so a lookup it"
+    say "      cannot answer falls through to the main table"
+    rc=1
+  fi
+  [ $rc -eq 0 ] && say "$BRIDGE in $VRF (table $TABLE), $PREFIX kept out of the main table"
+  return $rc
+}
+
+case "${1:-}" in
+  up) up ;;
+  down) down ;;
+  check) check ;;
+  *) echo "usage: prisma-backplane up|down|check" >&2; exit 2 ;;
+esac

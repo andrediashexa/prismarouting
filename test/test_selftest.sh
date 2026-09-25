@@ -720,6 +720,37 @@ unset PRISMA_CONFIG
 # A test that exits before its assertions is the same defect class as a lab
 # that crashes before reaching one, and it is invisible for the same reason.
 
+echo "=== the containers' backplane, in its own table or not (#447) ==="
+# The self-test asks appliance/prisma-backplane itself, so the stubs here are
+# the two answers it gives: up and clean, or a leak with what leaked. What is
+# asserted is what the box says about each. Red with the check's two branches
+# swapped, and with the leak's own lines dropped (the reason is then lost).
+printf '#!/bin/sh\necho "prisma-backplane: bp0 in prisma-bp (table 128), 128.0.0.0/8 kept out of the main table"\n' \
+  > "$FAKE/bp-ok"
+printf '#!/bin/sh\necho "prisma-backplane: LEAK: the main table routes through bp0:"\necho "    128.0.0.0/8 dev bp0 proto kernel scope link src 128.0.0.1"\nexit 1\n' \
+  > "$FAKE/bp-leak"
+PRISMA_BACKPLANE="$FAKE/bp-ok" run
+if said '\[ ok \] backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table'; then
+  ok "a backplane in its own table is reported as such"
+else
+  bad "a clean backplane was not reported ok"
+fi
+PRISMA_BACKPLANE="$FAKE/bp-leak" run
+if said "\[FAIL\] the containers' backplane is not what it must be:" \
+   && said '^        LEAK: the main table routes through bp0:' \
+   && said '^            128.0.0.0/8 dev bp0'; then
+  ok "a leaking backplane is a FAILED check, and says what leaked"
+else
+  bad "a backplane in the main table was not reported with what leaked"
+fi
+PRISMA_BACKPLANE="$FAKE/no-such-script" run
+if said 'backplane'; then
+  bad "a box without the backplane script said something about a backplane"
+else
+  ok "and a box that has no backplane script says nothing about one"
+fi
+echo
+
 echo "=== a dataplane interface with no linux_cp pair (#182) ==="
 # The defect this file's newest check exists for. FRR only ever sees a pair:
 # with none, the port that carries traffic has no netdev, and BGP, OSPF and

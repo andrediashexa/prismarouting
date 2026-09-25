@@ -327,6 +327,22 @@ if [ "$DATAPLANE_PATH" = container ]; then
   ok "the dataplane runs in a container on this box"
 fi
 
+# --- the containers' backplane, 128.0.0.0/8 in a table of its own (#447) ---
+# Asked of the script that builds it, so the rule for "up and not leaking" is
+# written once. A leak is the one state that costs the box something outside
+# itself: 128.0.0.0/8 is real public space, and in the main table every real
+# 128.x becomes unreachable from this box - measured in lab/backplane.sh off.
+BACKPLANE=${PRISMA_BACKPLANE:-/usr/lib/prisma-routing/prisma-backplane}
+if [ -f "$BACKPLANE" ]; then
+  if bp_said=$(sh "$BACKPLANE" check 2>&1); then
+    ok "backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table"
+  else
+    bad "the containers' backplane is not what it must be:"
+    printf '%s\n' "$bp_said" | sed 's/^prisma-backplane: //' \
+      | while IFS= read -r _l; do say "        $_l"; done
+  fi
+fi
+
 # --- dataplane ---
 if vppctl show version >/dev/null 2>&1; then
   ok "VPP responding: $(vppctl show version 2>/dev/null | cut -d' ' -f1-2)"

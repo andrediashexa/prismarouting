@@ -321,7 +321,7 @@ BOTH_WAYS="bypass detreserve dynamic esp extblocks forward frag ftp-alg
 # check until #259, #262 and #263 were asserted there; it is eight now, because
 # the spill-failure phase cannot be produced without stalling the collector
 # either, and the header says so.
-OFF_MODES="audit:off control-plane-dies:kill-vpp detreserve:off dns:off drain-slope:no-drain ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off
+OFF_MODES="audit:off backplane:off control-plane-dies:kill-vpp detreserve:off dns:off drain-slope:no-drain ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off
            in-place:off
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent oom:off pptp:off

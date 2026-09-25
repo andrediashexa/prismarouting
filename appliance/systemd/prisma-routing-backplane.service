@@ -1,0 +1,21 @@
+[Unit]
+Description=Prisma Routing - the containers' backplane on 128.0.0.0/8, in VRF prisma-bp
+Documentation=file:///usr/share/doc/prisma-routing/appliance.md
+# Before the containers, because the backplane is what they attach to
+# (#447, #448). After the network, so the VRF and the bridge come up on a
+# box whose own interfaces are already configured: the backplane takes
+# nothing from them and must not be mistaken for one of them.
+Before=prisma-routing-containers.service vpp.service
+After=networking.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/prisma-routing/prisma-backplane up
+# NO ExecStop. A stop runs on every restart as well, an upgrade's included
+# (test/test_stop_is_not_a_teardown.py), and taking the backplane down there
+# would cut the management container's network on a box that was working.
+# Left up, it costs nothing; `prisma-backplane down` is there for a hand.
+
+[Install]
+WantedBy=multi-user.target

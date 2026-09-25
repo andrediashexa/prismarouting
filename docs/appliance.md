@@ -3173,6 +3173,51 @@ about twenty-five. Eight hundred is not two hundred thousand; what makes the
 extrapolation worth anything is that a per-block cost anywhere near a
 millisecond would have shown as +800 ms at that count, and it showed +1.
 
+## The containers' backplane: 128.0.0.0/8, in a table of its own
+
+The containers talk to each other on 128.0.0.0/8 - the maintainer's choice,
+after the prefix Juniper uses between its routing engine and its line cards
+([#447](https://github.com/andrediashexa/hexarouting/issues/447)). The
+dataplane and the control plane keep sharing the host's network namespace,
+because FRR has to see the TAPs VPP creates; the backplane is for what is
+added beside them, the management plane first
+([#448](https://github.com/andrediashexa/hexarouting/issues/448)).
+
+**It lives in a VRF, `prisma-bp` (table 128), and never in the main table.**
+128.0.0.0/8 is real public space. Juniper gets away with it because that
+network sits in a private routing instance; here the same, and the reason is
+measured rather than argued. `lab/backplane.sh off` builds the same bridge in
+the main table, and the box itself loses a server at 128.66.0.10:
+`ip route get` answers `dev bp0` and a ping from the box gets nothing back.
+Subscribers still reach it in that run, because linux_nl copies nothing
+through an interface that is not the dataplane's. That is luck of the
+implementation, not a design to rely on.
+
+| | |
+|---|---|
+| the VRF | `prisma-bp`, table 128 |
+| the bridge | `bp0`, inside it |
+| this host | 128.0.0.1/8 |
+| the management container | 128.0.0.2 (#448) |
+| the unit | `prisma-routing-backplane.service`, before the containers |
+| the script | `/usr/lib/prisma-routing/prisma-backplane up\|down\|check` |
+
+**The unreachable default in table 128 is the half that is easy to forget.**
+A lookup the VRF cannot answer falls through to the main table. Measured with
+the route removed: a ping from the management namespace to 128.66.0.10 still
+failed, because nothing routes back to 128.0.0.2, but a capture on the
+upstream counted 2 packets from 128.0.0.2 that had left the box. With the
+route, it counted 0. So the lab counts packets on the far side instead of
+trusting a failed ping.
+
+The boot self-test asks `prisma-backplane check` and prints either
+`backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table` or a FAIL
+naming what leaked: a route through `bp0` in the main table, the bridge
+outside the VRF, or the table with no fence. `test/test_prisma_backplane.sh`
+drives the script against a stand-in `ip`; `lab/backplane.sh` drives it
+against a real VRF, a real VPP and a subscriber reaching 128.66.0.10 through
+the CGNAT.
+
 ## What is still missing
 
 * **HA**: no failover today. Two boxes with the same deterministic pool

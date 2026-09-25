@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The containers have a backplane on 128.0.0.0/8, in a VRF of its own**
+  ([#447](https://github.com/andrediashexa/hexarouting/issues/447)), as the
+  maintainer asked. It is the prefix Juniper uses internally, and the maintainer
+  chose to isolate it. `prisma-routing-backplane.service` builds VRF
+  `prisma-bp` (table 128) with bridge `bp0`, the host at 128.0.0.1, and an
+  unreachable default so that nothing falls through to the main table.
+  128.0.0.0/8 is real public space. Measured in `lab/backplane.sh`: with the
+  backplane up, a subscriber still reaches a server at 128.66.0.10 through the
+  CGNAT and so does the box. With the same bridge in the main table (`off`),
+  the box loses it. Without the unreachable default, 2 packets from 128.0.0.2
+  left the box, even though the ping looked as if it had failed. The boot
+  self-test reports the backplane, and names a leak when there is one. It is
+  the ground the management-plane container (#448) is built on.
+
 ### Fixed
 
 ## 0.125.2 - CGNAT under nat
