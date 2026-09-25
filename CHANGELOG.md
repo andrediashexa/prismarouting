@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.127.0 - the host runs start shell
+
+### Added
+
 * **`start shell` is run by the host, not by the VTY** ([#448](https://github.com/andrediashexa/hexarouting/issues/448)).
   An interactive login now runs `prisma-vty-broker`, which keeps the terminal,
   hands it to the VTY over a unix socket, relays Ctrl-C and resizes, and runs
@@ -88,8 +94,6 @@ version has a chance of seeing it.
   VTY's exit status reaches `prismash-login`'s fallback, and an account the
   host refuses gets no shell. Without the broker installed the login behaves
   as before.
-
-### Fixed
 
 ## 0.126.0 - a backplane of its own
 
