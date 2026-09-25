@@ -246,7 +246,7 @@ Quando o teto corta o desejado, o log do ajuste avisa quantos GB faltaram para o
 | Estrutura | Dimensionamento | Ordem de grandeza |
 |-----------|-----------------|-------------------|
 | Bitmap de portas | `block-size` bits por assinante ativo | 64 bytes com blocos de 512 → \~13 MB para 200 mil assinantes |
-| Tabelas de sessão | duas por worker | 16 MB cada por padrão |
+| Sessões   | um pool e duas tabelas por worker | \~300 bytes por sessão, medido com 2 milhões de sessões |
 | Posse de bloco (modo dinâmico) | 4 bytes por bloco, por fatia de worker |                   |
 
 A tabela de sessões é ajustada com:
@@ -259,7 +259,11 @@ nat
  exit
 ```
 
-O padrão é 16 mil buckets e 16 MB por tabela. A reserva é **virtual**: ela não custa RAM enquanto a tabela não é preenchida, e o OOM killer também não a enxerga — quem escolhe a vítima olha memória **residente**, não memória mapeada. O padrão modesto continua certo pelo motivo mais simples: a tabela acaba sendo usada, e uma caixa pequena não tem essa memória. Uma implantação de 200 mil assinantes deve elevar esse valor; uma caixa pequena não deve pagar por capacidade que nunca vai usar.
+O padrão é 16 mil buckets. **O número de** `**memory**` **não dimensiona nada:** as tabelas, como todas as sessões, ficam no heap principal do dataplane, e é esse heap que enche.
+
+**Quem decide a memória é o número de sessões, não o de assinantes.** Medido: um assinante custa menos de 1 KB, e uma sessão cerca de 300 bytes quando são milhões. 200 mil assinantes com 100 sessões cada são 20 milhões de sessões, uns 6 GB.
+
+Quando o heap enche, a caixa **recusa a sessão nova e conta**, e o dataplane continua de pé: as sessões que já existem seguem traduzindo. O contador aparece como `no memory for a new session`. Antes disso o dataplane caía inteiro, levando todos os assinantes junto.
 
 # O segmento de contadores, que derruba o dataplane quando enche
 

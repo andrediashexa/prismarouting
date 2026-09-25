@@ -327,9 +327,12 @@ with VPP holding only **19 MB resident**. It was not the glutton; it was the
 chosen victim. Installed to disk the requirement drops, since there is no RAM
 overlay, but 4 GB remains the sensible floor for a dataplane.
 
-Session tables are sized with `bpa session-table buckets <n> memory <MB>`,
-defaulting to 16k buckets and 16 MB per table. The size is a virtual
-reservation, and the OOM killer does **not** count it: the kernel scores a
+Session tables are shaped with `bpa session-table buckets <n> memory <MB>`,
+defaulting to 16k buckets. The **memory figure sizes nothing**: VPP builds the
+session hash with `BIHASH_USE_HEAP`, so the tables, like every session, live in
+the main heap, and the heap is what runs out (#460, `docs/architecture.md`).
+What was said here about the size being virtual was measured on a mapping this
+VPP does not make. The OOM killer does **not** count mapped memory: the kernel scores a
 process by what it holds **resident** (RSS, swap and page tables), not by what
 it maps. Measured in `lab/oom.sh`: VPP with 17 GB mapped and 354 MB resident,
 inside a 502 MB cgroup, has `oom_score` 670 out of 1000, which is its resident

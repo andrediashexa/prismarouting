@@ -332,6 +332,9 @@ typedef struct
    * so the datapath never grows a vector.
    */
   u64 *n_bypassed;
+  /* Sessions refused because the heap could not take the session pool's
+   * next growth (#460). A refusal instead of the abort it used to be. */
+  u64 n_no_memory;
   u8 initialised;
 } bpa_per_thread_t;
 
@@ -509,7 +512,67 @@ typedef enum
    * binding is not taken from its owner and not shared; see bpa_esp.h.
    */
   BPA_CREATE_ESP_PEER_TAKEN,
+  /* The dataplane's heap cannot take the session pool's next growth (#460). */
+  BPA_CREATE_NO_MEMORY,
 } bpa_create_why_t;
+
+/*
+ * WHETHER THE HEAP CAN TAKE THE NEXT GROWTH OF THIS WORKER'S SESSION POOL
+ * (#460).
+ *
+ * The session pool, both session hashes (BIHASH_USE_HEAP is 1 for 16_8, so
+ * the bihash ignores its memory size and lives in the heap) and the
+ * subscriber records are all in VPP's main heap - and a heap allocation that
+ * fails ABORTS the process. Measured with a 512 MB heap and two million
+ * sessions offered: VPP was gone within ten seconds, the backtrace ending in
+ * _vec_realloc_internal from bpa_session_bind, and every subscriber on the
+ * box lost service at once.
+ *
+ * ASKED ONLY WHEN THE POOL IS ABOUT TO GROW, which is the moment that
+ * aborted: pool_get takes a free element when there is one and grows the
+ * vector by half when there is not (vec.c: req_size += n_data_bytes / 2),
+ * and a realloc can need the old block and the new one together. Reading the
+ * heap's free space is not an option on this path: clib_mem_get_heap_usage
+ * walks every chunk, measured at 86 ms with two million sessions, against 3
+ * ms for a trivial CLI command.
+ *
+ * So it ASKS FOR THE MEMORY, without aborting, and gives it straight back:
+ * the pool's next size, plus the hash growth of the sessions that fit before
+ * the growth after it (BPA_HEAP_HASH_BYTES each, measured at about 300 bytes
+ * a session all told at two million), plus a fixed margin for everything
+ * else that allocates meanwhile. Conservative near the ceiling by design: a
+ * session refused and counted is an answer; an abort is an outage.
+ */
+#define BPA_HEAP_HASH_BYTES 256
+#define BPA_HEAP_MARGIN (32ULL << 20)
+
+static_always_inline int
+bpa_session_room (bpa_per_thread_t *pt)
+{
+  uword len, bytes, probe;
+  void *m;
+
+  if (PREDICT_TRUE (pool_free_elts (pt->sessions) > 0))
+    return 1;
+  len = vec_len (pt->sessions);
+  if (PREDICT_TRUE (len < vec_max_len (pt->sessions)))
+    return 1;
+#ifdef BPA_HEAP_GUARD_OFF
+  /* lab/heap-full.sh's off mode builds the plugin this way, to show the
+   * abort this gate exists for. No box is built with it. */
+  return 1;
+#endif
+  bytes = len * sizeof (bpa_session_t);
+  probe = bytes + bytes / 2 + (len / 2) * BPA_HEAP_HASH_BYTES + BPA_HEAP_MARGIN;
+  m = clib_mem_alloc_aligned_or_null (probe, CLIB_CACHE_LINE_BYTES);
+  if (PREDICT_FALSE (m == 0))
+    {
+      pt->n_no_memory++;
+      return 0;
+    }
+  clib_mem_free (m);
+  return 1;
+}
 
 /*
  * Who is asking for the mapping.

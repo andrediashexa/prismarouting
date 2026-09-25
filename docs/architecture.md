@@ -578,7 +578,7 @@ unique by accident. `lab/two-pools.sh` is the one that does not.
 | Structure | Sizing | Notes |
 |---|---|---|
 | Port bitmap | `block_size` bits per active subscriber | 64 bytes at 512 ports; ~13 MB for 200k |
-| Session tables | Two bihash tables per worker | Default 16 MB each, configurable via `bpa session-table` |
+| Sessions | A pool per worker, and two bihash tables per worker | **About 300 bytes a session** all told, measured at two million sessions; all of it in the main heap ([#460](https://github.com/andrediashexa/hexarouting/issues/460)) |
 | Block ownership (dynamic) | 21 bytes per block per worker slice | owner, idle-since, pinned flag, free-list slot and its position in that list, one array each |
 | Block identity (dynamic, and only with an identity table loaded) | 40 bytes per **held** block, plus its hash entry, on the worker holding it | the name the block's allocation record carried, so its release record can carry the same one ([#397](https://github.com/andrediashexa/hexarouting/issues/397)) |
 
@@ -598,10 +598,31 @@ alternative was to pair allocation and release by address, ports and time at
 the collector, which is work this box can do once and every collector would
 otherwise have to do for ever.
 
-Session table size is a **virtual** reservation, but the OOM killer counts
-virtual memory. The default is therefore modest: a deployment with 200k
-subscribers **SHOULD** raise it, and a small box **MUST NOT** pay for capacity
-it will never use.
+**SESSIONS DECIDE THE MEMORY, AND ALL OF IT IS THE MAIN HEAP** (#460). Measured
+in a lab, one worker, a dynamic pool with blocks of 512:
+
+| Load | main heap used | VPP resident |
+|---|---|---|
+| idle | 242.8 MB | 382 MB |
+| 200,000 subscribers, one session each | 335.9 MB | 561 MB |
+| 499 subscribers, 199,600 sessions | 277.2 MB | 497 MB |
+| 4,001 subscribers, 2,000,000 sessions | 848.2 MB | 1,190 MB |
+
+A subscriber costs well under a kilobyte; a session about 180 bytes when few
+and about 300 at two million, where the pool and the hash grow in steps. VPP's
+`bihash_16_8.h` sets `BIHASH_USE_HEAP 1`, and `bihash_template.c` then ignores
+the memory size it is given: `bpa session-table ... memory <MB>` sizes nothing,
+and the tables, the session pool and the subscriber records all live in the
+main heap.
+
+**A heap that fills used to abort the dataplane**: with 512 MB and two million
+sessions offered, VPP was gone within ten seconds, in `_vec_realloc_internal`
+from `bpa_session_bind`. `bpa_session_room()` now asks for the pool's next
+growth before it happens, without aborting, and a session that would not fit
+is refused and counted as `no memory for a new session`. The same lab holds
+466,606 sessions, refuses 1,533,394, and stays up (`lab/heap-full.sh`). The heap
+is read only at those growth moments: reading its free space walks every
+chunk, measured at 86 ms with two million sessions.
 
 ## TCP and ICMP handling
 
