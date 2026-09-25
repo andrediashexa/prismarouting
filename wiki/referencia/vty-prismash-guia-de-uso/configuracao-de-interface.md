@@ -386,7 +386,7 @@ Em vez disso ela **anexa a placa ao dataplane em funcionamento pelo AF_XDP**, qu
 prisma> system dataplane restart
 ```
 
-O comando diz o que custa e reinicia o dataplane. A placa volta pelo DPDK, com o mesmo nome e a mesma configuração. Um reboot faz o mesmo.
+**Dê `save` antes.** O que volta depois do reinício é a configuração **salva**, e o comando avisa se houver algo confirmado e não salvo. Ele diz o que custa e reinicia o dataplane. A placa volta pelo DPDK, com o mesmo nome e a mesma configuração, junto com as outras placas de dados. Medido numa VM: o encaminhamento parou por 18 segundos e voltou sem perda. Um reboot faz o mesmo.
 
 :::info
 **O custo do AF_XDP é velocidade, não correção.** Numa placa virtio com uma fila só, o próprio kernel avisa que o envio fica num modo mais lento. Para uma placa que vai carregar assinantes em volume, deixe no AF_XDP só até a próxima janela.

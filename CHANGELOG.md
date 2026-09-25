@@ -86,11 +86,33 @@ version has a chance of seeing it.
   to the running dataplane through AF_XDP, under the name Linux gave it and
   with its own MAC. It is then configured in the VTY like any other card.
   `show interface` says it is on AF_XDP, and `system dataplane restart` moves
-  it to DPDK in the window the operator chooses. Measured in a KVM guest with
-  a virtio card added by `device_add`: 70 of 70 echo replies through the
-  dataplane, with no restart. Two things only a real card showed: udev's
-  altnames kept the name taken, and VPP's invented MAC was filtered by the
-  card.
+  it to DPDK in the window the operator chooses. Measured end to end on a KVM
+  guest, with a virtio card added by `device_add` while the dataplane ran in
+  its container:
+  - udev attached the card within seconds;
+  - the VTY configured it, and a neighbour was answered through it with no
+    restart;
+  - `system dataplane restart` brought both dataplane cards back through
+    DPDK, the hot one under the same name with its saved configuration;
+  - forwarding stopped for 18 seconds and then ran without loss.
+
+  What a real card showed that a lab did not:
+  - udev acts on the `move` a rename ends with, not the `add`;
+  - udev puts the altnames back after a rename unless it has settled first;
+  - VPP's invented MAC is filtered by the card;
+  - the tuner sees only cards Linux holds, so every claimed card is handed
+    back before it runs, as at boot.
+* **A dataplane that gives up returns every claimed card to Linux, not the first** ([#453](https://github.com/andrediashexa/hexarouting/issues/453)).
+  `give-the-card-back` read only the first card in `startup.conf`, the same
+  shape #451 found in the bind, so a box with two dataplane cards got one
+  back.
+* **The screens tell a container box to type a restart that works** ([#459](https://github.com/andrediashexa/hexarouting/issues/459)).
+  `systemctl restart prisma-routing-containers` is refused by systemd on every
+  container box, with "conflicting jobs 'restart' and 'stop' for
+  prisma-routing.service". `show version`, the refusal from an old dataplane
+  after an upgrade, the self-test's OOM finding and the upgrade's closing
+  words named it. They now name `system dataplane restart` there. The unit
+  graph itself is left to #459.
 * **The wiki says how the box sizes the dataplane's memory** ([#454](https://github.com/andrediashexa/hexarouting/issues/454)),
   step by step with a table by RAM, and that 8 GB is the floor to use in a VM
   until #452 measures it again: a 6 GB guest did not start the dataplane.

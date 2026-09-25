@@ -1226,13 +1226,23 @@ decides ([#453](https://github.com/andrediashexa/hexarouting/issues/453)).
   `interface ens20`, `linux-name ens20`, an address, `no shutdown`.
   `show interface` says under its count that it forwards through AF_XDP until
   the dataplane restarts, and what moves it.
-- **`system dataplane restart`** says what it costs, then:
-  - hands each hot card back to the kernel under its own name;
-  - restarts `prisma-routing-tune` (which binds the claimed cards) and the
-    containers.
+- **`system dataplane restart`** says what it costs, including anything
+  committed and not saved, because the saved file is what is replayed. Then
+  `prisma-hot-card restart-dataplane`, in this order:
+  1. **stops** the containers. A `restart` of that unit is refused by systemd
+     on every container box (#459).
+  2. gives **every** claimed card back to its kernel driver with
+     `give-the-card-back restart`. The tuner sees only cards Linux holds:
+     measured, a restart that skipped this came back claiming the hot card
+     alone, and ens19 was gone from the dataplane.
+  3. renames each hot card back to its own name, now that VPP has let go of it.
+  4. restarts the tuner, which claims and binds them all.
+  5. starts the containers, then `prisma-routing.service`, which the stop
+     took down and which replays the saved configuration.
 
-  The card then comes back through DPDK, under the same name. A reboot does
-  the same.
+  The card then comes back through DPDK under the same name. Measured end to
+  end on a KVM guest: forwarding stopped for 18 seconds and then ran without
+  loss, both dataplane cards on DPDK. A reboot does the same.
 
 **Each of these was measured**, on 0.126.0 in a KVM guest with a virtio-net card
 added by `device_add` while VPP ran in its container:
