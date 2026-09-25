@@ -212,34 +212,49 @@ Por isso o self-test não confere o arquivo: ele confere onde o kernel realmente
 
 # Como a caixa calcula a memória do dataplane
 
-A cada boot, o `prisma-routing-tune` decide quantas páginas de 1 GB (hugepages) o kernel reserva para o VPP. É memória que sai do Linux e fica dedicada ao dataplane: tabelas do CGNAT, buffers de pacote e o heap do VPP. A conta tem cinco passos.
+A cada boot, o `prisma-routing-tune` decide quantas páginas de 1 GB (hugepages) o kernel reserva para o VPP. É memória que sai do Linux e fica dedicada ao dataplane. Dentro dela fica o **heap principal**, que é a memória do CGNAT: todas as sessões, as duas tabelas de sessão e os registros de assinante moram ali.
 
-**1. Assinantes.** `PRISMA_SUBSCRIBERS` × 13,5 KB, arredondado para GB, no mínimo 1. Com o padrão de 200000 dá 2,7, arredondado para **3 GB**.
+## Dando ao CGNAT uma memória sua
+
+```
+prisma> configure
+prisma# [edit] nat
+prisma# [edit nat] cgnat
+prisma# [edit nat / cgnat] memory 8
+prisma# [edit nat / cgnat] exit
+prisma# [edit nat] exit
+prisma# [edit] commit
+```
+
+O `commit` diz quantas sessões esse número comporta e que ele **vale a partir do próximo reboot**: a memória é reservada pela linha de comando do kernel, e até lá o dataplane tem a que tinha no boot. Dê `save` e reinicie na sua janela. `no memory` volta para a estimativa.
+
+**Como escolher o número.** O que decide é o número de **sessões** abertas ao mesmo tempo, não o de assinantes. Medido: cerca de 300 bytes por sessão com milhões delas, e menos de 1 KB por assinante. 200 mil assinantes com 100 sessões cada são 20 milhões de sessões, uns **6 GB**. Com 300 sessões cada, uns 17 GB.
+
+`show cgnat memory` mostra o tamanho do heap, quanto está em uso, quantas sessões ainda cabem, quantas foram recusadas por falta de memória e se o número dado já está em vigor.
+
+## A conta
+
+**1. A memória do CGNAT.** O número que você deu. Sem ele, uma estimativa: `PRISMA_SUBSCRIBERS` × 13,5 KB, arredondado para GB, no mínimo 1. Com o padrão de 200000 dá **3 GB**, umas 45 sessões por assinante.
 
 **2. Buffers de pacote.** 1 GB para cada 4 workers, arredondando para cima, no mínimo 1. Numa máquina de 8 núcleos, 1 fica para o sistema e 7 viram workers: **2 GB**.
 
-**3. Folga para o heap do VPP.** **1 GB**, fixo.
+**3. Folga.** **1 GB**, fixo, para o resto da memória física do VPP.
 
-**4. O desejado** é a soma: 3 + 2 + 1 = **6 GB**.
+**4. O desejado** é a soma. Com 8 GB dados: 8 + 2 + 1 = **11 GB**.
 
-**5. O teto pela RAM da máquina.** O Linux, o Docker e o FRR ficam fora das hugepages, com `máx(2, RAM ÷ 4)` GB. A RAM entra em GB inteiros, arredondada para baixo, e uma VM de "8 GB" mostra uns 7,7, que viram 7. Então ficam 2 GB para o sistema, o teto é 7 − 2 = 5, e a caixa reserva **mín(6, 5) = 5 GB**.
+**5. O teto pela RAM da máquina.** O Linux, o Docker e o FRR ficam fora das hugepages, com `máx(2, RAM ÷ 4)` GB. A RAM entra em GB inteiros, arredondada para baixo: uma VM de "16 GB" mostra uns 15,6, que viram 15. Então ficam 3 GB para o sistema, o teto é 12, e a caixa reserva **mín(11, 12) = 11 GB**.
 
-| RAM da VM | Para o sistema | Teto | Reservado (200 mil assinantes, 7 workers) |
-|-----------|----------------|------|-------------------------------------------|
-| 6 GB      | 2 GB           | 3 GB | 3 GB, e o VPP não subiu                   |
-| 8 GB      | 2 GB           | 5 GB | 5 GB                                      |
-| 16 GB     | 3 GB           | 12 GB | 6 GB, o desejado cabe                     |
-| 32 GB     | 7 GB           | 24 GB | 6 GB                                      |
+**6. O heap** é o reservado, menos os buffers, menos a folga: 11 − 2 − 1 = **8 GB**, exatamente o que foi dado. **Não há mais teto de 2 GB**: esse teto segurava qualquer caixa em uns 10 milhões de sessões, fosse qual fosse a RAM.
 
-Quando o teto corta o desejado, o log do ajuste avisa quantos GB faltaram para o número de assinantes configurado. Abaixo de 2 GB a caixa não reserva nada e sobe no perfil conservador, que funciona mas não tem desempenho.
+| RAM da VM | Memória do CGNAT pedida | Reservado | Heap do CGNAT | Sessões, cerca de |
+|-----------|-------------------------|-----------|---------------|-------------------|
+| 8 GB      | estimativa (3 GB)       | 5 GB      | 2 GB          | 6 milhões         |
+| 16 GB     | 8 GB                    | 11 GB     | 8 GB          | 27 milhões        |
+| 32 GB     | 16 GB                   | 19 GB     | 16 GB         | 56 milhões        |
 
-`**PRISMA_SUBSCRIBERS**` **não limita assinantes.** Ele só entra no passo 1. Uma caixa com o valor baixo não recusa o assinante seguinte: ela só tem menos memória dedicada do que a carga real pede. Mudar o valor vale no boot seguinte, porque as hugepages são reservadas pela linha de comando do kernel.
+Quando o teto corta o desejado, o log do ajuste avisa quantos GB faltaram. Abaixo de 2 GB a caixa não reserva nada e sobe no perfil conservador, que funciona mas não tem desempenho.
 
-
-:::warning
-**O passo 1 está em revisão.** Os 13,5 KB por assinante supõem uma tabela de sessões de \~2,6 GB para 200 mil assinantes. Só que a tabela de sessões padrão tem 16 MB por tabela, duas por worker (seção abaixo), e cresce só quando você a configura. Falta medir onde a memória do VPP realmente vai, com 0, 20 mil e 200 mil assinantes. A direção combinada é que a memória dedicada ao CGNAT seja **um número que você define**, e não uma estimativa.
-
-:::
+**Quando o heap enche, a caixa recusa a sessão nova e conta**, e o dataplane continua de pé: as sessões que já existem seguem traduzindo.
 
 # Memória por estrutura
 

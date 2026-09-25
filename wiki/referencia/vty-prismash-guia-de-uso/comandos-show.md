@@ -14,6 +14,7 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 | `show cgnat drops` |           | por que pacotes não passaram |
 | `show cgnat pool` |           | pools configurados, a capacidade de cada um e a distribuição de quanto os assinantes usam do próprio bloco |
 | `show cgnat session` |           | sessões ativas por thread |
+| `show cgnat memory` |           | a memória do CGNAT: quanto o heap tem, quanto está em uso, quantas sessões ainda cabem e o valor dado |
 | `show cgnat blocks` |           | blocos alocados em modo dinâmico, e quantos um encaminhamento de porta prende |
 | `show cgnat logging` |           | estado da exportação IPFIX |
 | `show cgnat history` |           | trilha datada de configuração |
