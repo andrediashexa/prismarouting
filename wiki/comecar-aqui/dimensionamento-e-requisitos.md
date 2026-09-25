@@ -18,6 +18,11 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 
 Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed process (vpp)` com o VPP segurando apenas **19 MB residentes** — ele não era o glutão, era a vítima escolhida. Instalado em disco o consumo cai, porque não há a sobreposição em RAM, mas 4 GB continua sendo o piso sensato para um dataplane.
 
+:::warning
+**Até o piso ser medido de novo, use 8 GB numa VM.** Numa VM de 6 GB com a 0.126.0 instalada, a caixa reservou 3 GB de hugepages e o VPP não subiu (`rte_eal_init failed`), com uma placa de dados ou com duas. Com 8 GB ele subiu e encaminhou. O piso de 4 GB da tabela acima está em revisão na [#452](https://github.com/andrediashexa/hexarouting/issues/452).
+
+:::
+
 # Quantas placas de rede
 
 **Uma placa já serve, e é assim que a maioria das pessoas conhece este produto:** uma máquina virtual com uma placa virtual. O dataplane fica com a porta e o endereço de gerência vai junto, para a interface que o dataplane mantém emparelhada com ela do lado do Linux. A caixa deixa de ser alcançada *ao lado* do dataplane e passa a ser alcançada *através* dele, com o mesmo MAC, então nada do outro lado do cabo precisa reaprender.
@@ -203,6 +208,36 @@ O equipamento calcula o plano de núcleos a cada boot e o grava em um arquivo qu
 Nos dois casos a caixa dá boot, encaminha, responde a tudo e entrega uma fração da capacidade. **Não há contador que denuncie isso**: uma thread que nunca dorme marca 100% de uso tendo ou não o núcleo só para ela.
 
 Por isso o self-test não confere o arquivo: ele confere onde o kernel realmente colocou as threads do dataplane e quais núcleos o kernel realmente está isolando, e reclama quando os três não concordam. Reiniciar o dataplane resolve o primeiro caso; o segundo pede um `update-grub` e um reboot.
+
+# Como a caixa calcula a memória do dataplane
+
+A cada boot, o `prisma-routing-tune` decide quantas páginas de 1 GB (hugepages) o kernel reserva para o VPP. É memória que sai do Linux e fica dedicada ao dataplane: tabelas do CGNAT, buffers de pacote e o heap do VPP. A conta tem cinco passos.
+
+**1. Assinantes.** `PRISMA_SUBSCRIBERS` × 13,5 KB, arredondado para GB, no mínimo 1. Com o padrão de 200000 dá 2,7, arredondado para **3 GB**.
+
+**2. Buffers de pacote.** 1 GB para cada 4 workers, arredondando para cima, no mínimo 1. Numa máquina de 8 núcleos, 1 fica para o sistema e 7 viram workers: **2 GB**.
+
+**3. Folga para o heap do VPP.** **1 GB**, fixo.
+
+**4. O desejado** é a soma: 3 + 2 + 1 = **6 GB**.
+
+**5. O teto pela RAM da máquina.** O Linux, o Docker e o FRR ficam fora das hugepages, com `máx(2, RAM ÷ 4)` GB. A RAM entra em GB inteiros, arredondada para baixo, e uma VM de "8 GB" mostra uns 7,7, que viram 7. Então ficam 2 GB para o sistema, o teto é 7 − 2 = 5, e a caixa reserva **mín(6, 5) = 5 GB**.
+
+| RAM da VM | Para o sistema | Teto | Reservado (200 mil assinantes, 7 workers) |
+|-----------|----------------|------|--------------------------------------------|
+| 6 GB  | 2 GB | 3 GB  | 3 GB, e o VPP não subiu ([#452](https://github.com/andrediashexa/hexarouting/issues/452)) |
+| 8 GB  | 2 GB | 5 GB  | 5 GB |
+| 16 GB | 3 GB | 12 GB | 6 GB, o desejado cabe |
+| 32 GB | 7 GB | 24 GB | 6 GB |
+
+Quando o teto corta o desejado, o log do ajuste avisa quantos GB faltaram para o número de assinantes configurado. Abaixo de 2 GB a caixa não reserva nada e sobe no perfil conservador, que funciona mas não tem desempenho.
+
+**`PRISMA_SUBSCRIBERS` não limita assinantes.** Ele só entra no passo 1. Uma caixa com o valor baixo não recusa o assinante seguinte: ela só tem menos memória dedicada do que a carga real pede. Mudar o valor vale no boot seguinte, porque as hugepages são reservadas pela linha de comando do kernel.
+
+:::warning
+**O passo 1 está em revisão ([#454](https://github.com/andrediashexa/hexarouting/issues/454)).** Os 13,5 KB por assinante supõem uma tabela de sessões de ~2,6 GB para 200 mil assinantes. Só que a tabela de sessões padrão tem 16 MB por tabela, duas por worker (seção abaixo), e cresce só quando você a configura. Falta medir onde a memória do VPP realmente vai, com 0, 20 mil e 200 mil assinantes. A direção combinada é que a memória dedicada ao CGNAT seja **um número que você define**, e não uma estimativa.
+
+:::
 
 # Memória por estrutura
 
