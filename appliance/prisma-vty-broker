@@ -64,6 +64,8 @@ def host_shell():
     if not os.path.exists(shell):
         shell = "/bin/sh"
     saved = termios.tcgetattr(0)
+    print(f"entering {shell} on the host; type 'exit' to return to the VTY",
+          flush=True)
     pid = os.fork()
     if pid == 0:
         os.setpgid(0, 0)

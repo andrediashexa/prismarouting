@@ -5880,7 +5880,7 @@ _saved = prismash.ATTACHED
 prismash.ATTACHED = _Chan(("done", 0))
 try:
     rv, text = driven(_sh.start_shell)
-    check(prismash.ATTACHED.asked == 1 and "on the host" in text,
+    check(prismash.ATTACHED.asked == 1 and "back in the Prisma Routing VTY" in text,
           f"start_shell goes to the broker when attached, and spawns nothing: "
           f"{text!r}")
 finally:

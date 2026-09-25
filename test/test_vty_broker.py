@@ -75,6 +75,12 @@ send(fd, "start shell\r"); time.sleep(0.8)
 send(fd, "echo HOSTSHELL=$PRISMA_HOST_SHELL PARENT=$PPID\r")
 out, ok = read_until(fd, "PARENT=")
 out2, _ = read_until(fd, "\n", 3); out += out2
+# The line lab/install-iso.sh waits for, "entering /bin...": 0.127.0's first
+# gate was refused on it, twelve checks deep into an installed box, because
+# the attached path printed other words. Here it costs a second.
+check("entering /bin/" in out and "on the host; type 'exit'" in out,
+      f"the broker says which shell it enters, in the words a login waits "
+      f"for: {out[:160]!r}")
 check(f"HOSTSHELL=1 PARENT={pid}" in out,
       f"the shell is the broker's child (pid {pid}), not the VTY's: {out[-100:]!r}")
 send(fd, "sleep 20\r"); time.sleep(0.8); send(fd, "\x03"); time.sleep(0.4)

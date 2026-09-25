@@ -10878,8 +10878,10 @@ class Shell:
         VTY in a container must not be able to give itself a host shell. The
         candidate is untouched across it, because this process never ends.
         """
-        print("entering a shell on the host; type 'exit' to return to the "
-              "VTY")
+        # The "entering" line is the broker's: it is the one that knows which
+        # shell it runs, and the line keeps the shape an operator and
+        # lab/install-iso.sh wait for - 0.127.0's first gate was refused
+        # because this printed "entering a shell on the host" instead.
         how, status = channel.request_shell()
         if how == "denied":
             self.err_prose("start shell: the host refused a shell for this "
