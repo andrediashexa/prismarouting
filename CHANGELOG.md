@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box that claims two cards binds both, and one card that does not bind no longer takes the dataplane down** ([#451](https://github.com/andrediashexa/hexarouting/issues/451)).
+  Reported by the maintainer: a box installed with one card and given a
+  second came up with no dataplane at all, and `docker ps` was empty. After a
+  successful bind, `bind-dataplane-nic` ended the whole script instead of the
+  one card's bind, so every boot bound only the first claimed card. The
+  container unit then refused to start over the unbound second one.
+  Reproduced on 0.126.0 in QEMU with virtio cards, on the uio and vfio paths
+  alike. Now every claimed card is bound, and a card that still is not bound
+  is left out of the container's devices with a message, so the dataplane
+  starts on the cards that are. The unit test drives a bind that succeeds for
+  two cards, which is the case it had never run.
+
 ## 0.127.0 - the host runs start shell
 
 ### Added

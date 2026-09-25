@@ -2901,7 +2901,12 @@ skipped it came up wrong:
 2. **`bind-dataplane-nic --compose-devices`** writes the card's device node
    into `/run/prisma-routing/compose-devices.yaml`, which is handed to
    `docker-compose` beside the base file. The driver a box can use decides
-   which node that is, and that script is the one holder of the rule.
+   which node that is, and that script is the one holder of the rule. **A
+   claimed card with no node is left out and said, not fatal**
+   ([#451](https://github.com/andrediashexa/hexarouting/issues/451)): it
+   used to fail the unit, and one unbound card took the whole dataplane down
+   with it — the cards that did bind included. The dataplane starts on the
+   cards it has, and the boot journal names the one it has not.
 3. **`share-the-api-segment`**, after `up`, gives `/dev/shm/global_vm` and
    `/dev/shm/vpe-api` to group `vpp`. The same script runs from
    `vpp.service`'s own drop-in: two dataplanes, one rule.

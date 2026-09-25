@@ -151,30 +151,48 @@ fi
 if [ "${1:-}" = "--compose-devices" ]; then
   _want=$(dpdk_driver)
   _nodes=""
+  # A CARD THAT IS NOT READY IS LEFT OUT, AND SAID; THE REST ARE HANDED OVER
+  # (#451). This used to exit 1 on the first such card, and the unit that
+  # merges this fragment failed with it: one unbound card took the WHOLE
+  # dataplane down, the cards that did bind included, and `docker ps` was
+  # empty on the maintainer's box. The bind has already said why that card
+  # did not bind; a dataplane forwarding on the cards it has is the answer,
+  # and DPDK skips an allowlisted device no DPDK driver holds.
+  _vfio_cards=""
   if [ "$_want" = "vfio-pci" ]; then
-    # The container device itself, once, plus one group node per card. A
-    # container given the groups and not /dev/vfio/vfio cannot open the
-    # VFIO container at all, and the EAL fails with the cards in front of it.
-    _nodes="/dev/vfio/vfio"
     for a in $ADDRS; do
       _g=$(readlink "$SYSBUS/devices/$a/iommu_group" 2>/dev/null)
       _g=${_g##*/}
+      _on=""
+      [ -e "$SYSBUS/devices/$a/driver" ] \
+        && _on=$(basename "$(readlink -f "$SYSBUS/devices/$a/driver")")
       if [ -z "$_g" ]; then
         say "compose: $a is in no IOMMU group, so there is no /dev/vfio node"
-        say "compose: to hand a container. The card is not bound to vfio-pci"
-        say "compose: yet, or this box's firmware groups it elsewhere."
-        exit 1
+        say "compose: to hand a container; the dataplane starts without it."
+        continue
       fi
-      _nodes="$_nodes /dev/vfio/$_g"
+      # The group node exists only while vfio-pci holds the card. Named
+      # without it, docker refused the whole stack: "error gathering device
+      # information while adding custom device /dev/vfio/5".
+      if [ "$_on" != "vfio-pci" ]; then
+        say "compose: $a is not on vfio-pci, so its group has no node;"
+        say "compose: the dataplane starts without it."
+        continue
+      fi
+      _vfio_cards="$_vfio_cards /dev/vfio/$_g"
     done
+    # The container device itself, once, plus one group node per card - and
+    # only when there is a group to open through it. A container given the
+    # groups and not /dev/vfio/vfio cannot open the VFIO container at all,
+    # and the EAL fails with the cards in front of it.
+    [ -n "$_vfio_cards" ] && _nodes="/dev/vfio/vfio$_vfio_cards"
   else
     for a in $ADDRS; do
       _u=$(ls "$SYSBUS/devices/$a/uio" 2>/dev/null | head -1)
       if [ -z "$_u" ]; then
         say "compose: $a has no uio node, so it is not bound to"
-        say "compose: uio_pci_generic yet. This mode reads what the bind"
-        say "compose: produced; run it after the bind, not before."
-        exit 1
+        say "compose: uio_pci_generic; the dataplane starts without it."
+        continue
       fi
       _nodes="$_nodes /dev/$_u"
     done
@@ -185,6 +203,12 @@ if [ "${1:-}" = "--compose-devices" ]; then
   echo "# off this boot."
   echo "services:"
   echo "  vpp:"
+  if [ -z "$_nodes" ]; then
+    # Every claimed card left out above: the empty list, for the reason the
+    # no-card case gives - `devices:` with nothing under it is null, not a list.
+    echo "    devices: []"
+    exit 0
+  fi
   echo "    devices:"
   for n in $_nodes; do
     echo "      - $n"
@@ -276,18 +300,25 @@ bind_one() {  # <pci address> <driver to use>
   # one when both ports are the same part, which is the ordinary case on a
   # two-port card. driver_override names this one device and nothing else.
   echo "$want" > "$DEV/driver_override" 2>/dev/null || {
-    say "bind: cannot write driver_override for $ADDR"; exit 1; }
+    say "bind: cannot write driver_override for $ADDR"; return 1; }
   if [ -n "$current" ]; then
     echo "$ADDR" > "$DEV/driver/unbind" 2>/dev/null || {
-      say "bind: cannot unbind $ADDR from $current"; exit 1; }
+      say "bind: cannot unbind $ADDR from $current"; return 1; }
   fi
   echo "$ADDR" > "$SYSBUS/drivers_probe" 2>/dev/null || true
 
   now=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
   [ "$now" = "." ] && now=""
+  # RETURN, not exit (#451). This was `exit 0`, which ends the SCRIPT: the
+  # loop below that binds every claimed card (#378) stopped at the first one
+  # that actually needed binding - and after every reboot all of them do,
+  # since driver_override does not survive one. A box installed with one card
+  # worked; the same box given a second one bound ens18, left ens19 on
+  # virtio-pci, and the dataplane did not start. Reproduced on 0.126.0 in
+  # QEMU with virtio cards, uio and vfio alike.
   if [ "$now" = "$want" ]; then
     say "bind: $ADDR is now on $want"
-    exit 0
+    return 0
   fi
 
   # Said as a failure, because it is one, and with the state it ended in. A
