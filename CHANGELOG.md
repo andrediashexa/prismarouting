@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.127.2 - system upgrade says who it is
+
+### Fixed
+
 * **`system upgrade` says who it is, and the releases server answers it** ([#456](https://github.com/andrediashexa/hexarouting/issues/456)).
   Reported by the maintainer on 0.127.0: `system upgrade` failed with
   `HTTP 403`, and the same URL opened in a browser. The front of the releases
