@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.129.0 - the CGNAT gets the memory you give it
+
+### Added
+
 * **The CGNAT gets the memory you give it** ([#454](https://github.com/andrediashexa/hexarouting/issues/454)).
   Asked for by the maintainer: memory dedicated to the CGNAT, as a figure he
   sets rather than an estimate. `memory <GB>`, under `nat` > `cgnat`, is the
@@ -92,8 +98,6 @@ version has a chance of seeing it.
   million sessions whatever its RAM. Without a figure, the estimate from the
   subscriber target is kept (`PRISMA_CGNAT_MEMORY_GB` in `tune.env` is the
   same setting, refused out loud when it is not whole GB).
-
-### Fixed
 
 ## 0.128.1 - a full memory refuses instead of falling over
 
