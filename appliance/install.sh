@@ -282,6 +282,11 @@ for f in "$REPO"/src/prismash/*.py; do
   install -D -m 0644 "$f" "$DESTDIR/usr/lib/prisma-routing/$(basename "$f")"
 done
 chmod 0755 "$DESTDIR/usr/lib/prisma-routing/prismash.py"
+# The login's end of a VTY session (#448): prismash-login runs the VTY
+# through it, so the terminal stays with the login and `start shell` is
+# decided and run on the host.
+install -D -m 0755 "$REPO/appliance/prisma-vty-broker" \
+    "$DESTDIR/usr/lib/prisma-routing/prisma-vty-broker"
 install -D -m 0755 "$REPO/appliance/prismash-launcher" "$DESTDIR/usr/bin/prismash"
 install -D -m 0755 "$REPO/appliance/prisma-routing-tune" "$DESTDIR/usr/bin/prisma-routing-tune"
 install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/prisma-routing/wait-for-vpp"

@@ -2768,7 +2768,7 @@ during the install.
 | Situation | What happens |
 |---|---|
 | Console or SSH login | Lands in `prismash` |
-| `start shell` inside the VTY | Opens a shell as a child; `exit` returns to the VTY |
+| `start shell` inside the VTY | Opens a shell **on the host**, run by the login broker; `exit` returns to the VTY |
 | `scp`, `rsync`, `git`, any `ssh <box> <command>` | **root or `prisma-admin`**: reach a real shell, since a login shell invoked with `-c` passes through. **Any other account**: the command is run by the VTY as one `prismash -c`, with its role ([#442](https://github.com/andrediashexa/hexarouting/issues/442)) |
 | `prismash` fails to start | **root or `prisma-admin`**: falls back to a shell, **with the reason printed**. **Any other account**: the reason is printed and the session ends |
 | Boot with `prismash=off` | Skips the VTY entirely, for root or `prisma-admin`; the ISO offers it as a menu entry |
@@ -2788,6 +2788,35 @@ independent ways out, and the second does not depend on `prismash` working at
 all. Both are an administrator's. Every account the VTY owns is in the groups
 that open the dataplane's CLI and FRR's, so a shell for any other account is
 every capability its role withholds (#442).
+
+### The login broker: who owns the terminal
+
+An interactive login does not run `prismash` directly. `prismash-login` runs
+`/usr/lib/prisma-routing/prisma-vty-broker`, which keeps the terminal and
+starts the VTY with none: the VTY connects to a unix socket in the session's
+runtime directory, mode 0600, and receives the terminal's three descriptors
+over it (`SCM_RIGHTS`). From then on the VTY reads and writes the terminal
+itself; nothing relays the bytes
+([#448](https://github.com/andrediashexa/hexarouting/issues/448)).
+
+This is the first step of moving the VTY into a container of its own. A
+process in a container cannot open a shell on the host, and must not be able
+to, so `start shell` is no longer the VTY's to run. The VTY checks the role as
+before, then **asks** the broker; the broker decides again from the host's own
+groups — root or `prisma-admin`, the rule `prismash-login` states — forks the
+shell in a process group of its own, makes it the terminal's foreground, and
+puts the terminal's settings back when it exits. A VTY that asks for an
+account the host refuses gets a refusal and nothing else.
+
+The broker owns the controlling terminal, so Ctrl-C and a resize arrive at it
+and are passed to the VTY as lines on the socket, where the VTY raises them in
+itself (#441 holds: Ctrl-C clears a line and never ends the session). The VTY
+runs in a session of its own. Measured in `test/test_vty_broker.py`: started
+in the login's process group it took every Ctrl-C twice, and the second,
+arriving late, threw away the next line typed.
+
+If the broker is missing or not executable, `prismash-login` runs `prismash`
+as it always did, and `start shell` opens a shell as the VTY's child.
 
 `install.sh` does **not** change any login shell unless `PRISMA_VTY_LOGIN=1` is
 set. On an existing Debian the machine may have other jobs, and silently

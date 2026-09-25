@@ -1,0 +1,203 @@
+#!/usr/bin/python3
+"""
+The host's end of a VTY session (#448): it keeps the terminal, hands it to the
+VTY, relays the terminal's signals, and runs `start shell` ON THE HOST.
+
+    prisma-vty-broker <the VTY's command ...>
+
+Run by prismash-login for an interactive login. The VTY is started as
+`<command> --attach <socket>`, with no terminal of its own; it connects, and
+this hands it stdin, stdout and stderr by SCM_RIGHTS. From then on the VTY
+reads and writes the user's terminal directly - there is no relay of the
+bytes, which is what makes it work the same whether the VTY runs here or in a
+container.
+
+THIS PROCESS STAYS THE SESSION'S FOREGROUND. It owns the controlling terminal,
+so Ctrl-C (SIGINT) and a resize (SIGWINCH) arrive here and are passed on as
+lines. The VTY raises them in itself, which keeps #441: Ctrl-C clears a line
+or stops a command, and never ends the session.
+
+`start shell` IS DECIDED HERE, from the host's own groups: root or
+prisma-admin, the rule prismash-login's may_have_shell() states (#442). The
+VTY checks its own role first and then only ASKS; a VTY that asked for an
+account the host refuses gets SHELLDENIED and nothing else. When allowed, the
+shell is forked here, in its own process group, made the terminal's foreground
+group for as long as it runs, and the terminal's settings are put back after
+it, because the shell and the VTY's readline each set their own.
+
+Exit status: the VTY's own. prismash-login decides what an unexpected exit
+means (#442), exactly as it did when it ran the VTY itself.
+"""
+import grp
+import os
+import select
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import termios
+
+ADMIN_GROUP = os.environ.get("PRISMA_ADMIN_GROUP", "prisma-admin")
+CONNECT_SECS = 30
+
+
+def may_have_shell(uid=None, groups=None):
+    """prismash-login's rule, on the host: root, or in the admin group."""
+    uid = os.getuid() if uid is None else uid
+    if uid == 0:
+        return True
+    names = set()
+    for gid in (os.getgroups() if groups is None else groups):
+        try:
+            names.add(grp.getgrgid(gid).gr_name)
+        except KeyError:
+            pass
+    return ADMIN_GROUP in names
+
+
+# not a unit: it forks a shell on the controlling terminal, which only a pty
+# gives; test/test_vty_broker.py drives it on one
+def host_shell():
+    """A shell on this host, on this terminal, until it exits. Its status."""
+    shell = os.environ.get("PRISMA_SHELL") or "/bin/bash"
+    if not os.path.exists(shell):
+        shell = "/bin/sh"
+    saved = termios.tcgetattr(0)
+    print(f"entering {shell} on the host; type 'exit' to return to the VTY",
+          flush=True)
+    pid = os.fork()
+    if pid == 0:
+        os.setpgid(0, 0)
+        os.tcsetpgrp(0, os.getpid())
+        for s in (signal.SIGINT, signal.SIGQUIT, signal.SIGTSTP,
+                  signal.SIGTTOU, signal.SIGWINCH):
+            signal.signal(s, signal.SIG_DFL)
+        os.environ["PRISMA_HOST_SHELL"] = "1"
+        os.execv(shell, [shell, "-i"])
+    try:
+        os.setpgid(pid, pid)
+    except OSError:
+        pass                      # the child already did it
+    os.tcsetpgrp(0, pid)
+    while True:
+        _, status = os.waitpid(pid, os.WUNTRACED)
+        if os.WIFSTOPPED(status):
+            # A job the shell stopped (Ctrl-Z) stops the shell's group; give
+            # it back rather than leave the session hanging on a stopped shell.
+            os.kill(pid, signal.SIGCONT)
+            continue
+        break
+    os.tcsetpgrp(0, os.getpgrp())
+    termios.tcsetattr(0, termios.TCSANOW, saved)
+    return os.waitstatus_to_exitcode(status)
+
+
+def serve(conn):
+    """Answer the VTY until it closes the socket."""
+    buf = b""
+    while True:
+        try:
+            select.select([conn], [], [])
+            data = conn.recv(4096)
+        except InterruptedError:
+            continue
+        except OSError:
+            return
+        if not data:
+            return
+        buf += data
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            if line != b"SHELL":
+                continue
+            if not may_have_shell():
+                reply = b"SHELLDENIED\n"
+            else:
+                reply = f"SHELLDONE {host_shell()}\n".encode()
+            try:
+                conn.sendall(reply)
+            except OSError:
+                # The VTY went away while the shell was open (#448's
+                # prototype: a container killed mid-shell). Nothing to go
+                # back to; prismash-login decides from the exit status.
+                return
+
+
+def main(argv):
+    if not argv:
+        print("usage: prisma-vty-broker <the VTY's command ...>", file=sys.stderr)
+        return 2
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base or not os.path.isdir(base):
+        base = None
+    workdir = tempfile.mkdtemp(prefix="prisma-vty-", dir=base)
+    path = os.path.join(workdir, "vty.sock")
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(path)
+    os.chmod(path, 0o600)
+    srv.listen(1)
+    try:
+        # IN A SESSION OF ITS OWN, so the terminal is not its controlling
+        # terminal and the tty's signals reach only this process. Measured by
+        # test/test_vty_broker.py: started in the login's process group, the
+        # VTY took every Ctrl-C twice - once from the tty, once relayed - and
+        # the second, arriving late, threw away the NEXT line typed. In a
+        # container (#448) it is outside the session anyway; this makes the
+        # host case the same one.
+        vty = subprocess.Popen(argv + ["--attach", path],
+                               stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL,
+                               start_new_session=True)
+    except OSError as e:
+        print(f"prisma-vty-broker: cannot start the VTY: {e}", file=sys.stderr)
+        return 127
+    srv.settimeout(1)
+    conn = None
+    for _ in range(CONNECT_SECS):
+        try:
+            conn, _ = srv.accept()
+            break
+        except socket.timeout:
+            if vty.poll() is not None:
+                break
+    if conn is None:
+        # The VTY never connected: it failed at start. Its status is the
+        # answer, and prismash-login applies its rule to it.
+        if vty.poll() is None:
+            vty.kill()
+        rc = vty.wait()
+        os.unlink(path); os.rmdir(workdir)
+        return rc if rc else 1
+    srv.close()
+    socket.send_fds(conn, [b"tty"], [0, 1, 2])
+
+    # not a unit: a closure over the live connection, run by the terminal's
+    # signals; test/test_vty_broker.py sends them on a pty
+    def relay(msg):
+        try:
+            conn.sendall(msg)
+        except OSError:
+            pass
+    signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+    signal.signal(signal.SIGTSTP, signal.SIG_IGN)
+    signal.signal(signal.SIGQUIT, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, lambda *_: relay(b"INT\n"))
+    signal.signal(signal.SIGWINCH, lambda *_: relay(b"WINCH\n"))
+
+    serve(conn)
+    try:
+        rc = vty.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        vty.kill()
+        rc = vty.wait()
+    try:
+        os.unlink(path)
+        os.rmdir(workdir)
+    except OSError:
+        pass
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

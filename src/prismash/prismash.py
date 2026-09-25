@@ -10855,6 +10855,9 @@ class Shell:
         """
         if not self.require(CAP_ALL, "start shell"):
             return
+        if ATTACHED is not None:
+            self.host_shell(ATTACHED)
+            return
         shell = os.environ.get("PRISMA_SHELL") or "/bin/bash"
         if not os.path.exists(shell):
             shell = "/bin/sh"
@@ -10863,6 +10866,31 @@ class Shell:
             subprocess.call([shell, "-i"])
         except OSError as e:
             self.err(f"cannot start {shell}: {e}")
+            return
+        print("back in the Prisma Routing VTY")
+
+    def host_shell(self, channel):
+        """
+        `start shell` through the login broker (#448): the HOST runs it.
+
+        This VTY has already checked its own role; the host checks again,
+        from the host's groups, and its answer is the one that counts - a
+        VTY in a container must not be able to give itself a host shell. The
+        candidate is untouched across it, because this process never ends.
+        """
+        # The "entering" line is the broker's: it is the one that knows which
+        # shell it runs, and the line keeps the shape an operator and
+        # lab/install-iso.sh wait for - 0.127.0's first gate was refused
+        # because this printed "entering a shell on the host" instead.
+        how, status = channel.request_shell()
+        if how == "denied":
+            self.err_prose("start shell: the host refused a shell for this "
+                           "account",
+                           "a shell is for root and prisma-admin, decided on "
+                           "the host and not here")
+            return
+        if how == "gone":
+            self.err("start shell: the login session is gone")
             return
         print("back in the Prisma Routing VTY")
 
@@ -17080,9 +17108,20 @@ class Shell:
 
 # not a unit: the program's entry; it builds the Shell and hands the
 # arguments to feed_batch() or repl(), and those are tested by name.
+#: The login broker this VTY was handed its terminal by (#448), or None when
+#: it was started on a terminal of its own. start_shell() asks the host
+#: through it instead of spawning a shell here.
+ATTACHED = None
+
+
 def main():
-    sh = Shell()
+    global ATTACHED
     args = sys.argv[1:]
+    if args[:1] == ["--attach"] and len(args) > 1:
+        import vtyattach
+        ATTACHED = vtyattach.attach(args[1])
+        args = args[2:]
+    sh = Shell()
 
     if args and args[0] == "--load":
         sh.load(args[1] if len(args) > 1 else CONFIG_PATH)

@@ -216,6 +216,28 @@ case "$out" in
   *) bad "prismash=off and nothing said: $out" ;;
 esac
 
+echo "=== the interactive VTY goes through the login broker when it is there (#448) ==="
+# The broker keeps the terminal and runs `start shell` on the host; what this
+# wrapper still owns is the rule for a VTY that dies, which reads the broker's
+# status as it read the VTY's. Red with the broker bypassed: the stand-in is
+# never called and the status it returns never reaches the fallback.
+cat > "$d/bin/broker" <<EOF
+#!/bin/sh
+echo "\$@" > "$d/broker-args"
+exit 1
+EOF
+chmod +x "$d/bin/broker"
+rm -f "$d/broker-args"
+out=$(PRISMA_VTY_BROKER="$d/bin/broker" PRISMA_PRISMASH="$d/bin/clean-prismash" \
+      PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1)
+[ "$(cat "$d/broker-args" 2>/dev/null)" = "$d/bin/clean-prismash" ] \
+  && ok "the broker is started with the VTY's own command" \
+  || bad "the broker was not used: args '$(cat "$d/broker-args" 2>/dev/null)'"
+case "$out" in
+  *"prismash exited with status 1"*) ok "and its status is what the fallback reads" ;;
+  *) bad "the broker's failure did not reach the fallback: $out" ;;
+esac
+
 rm -rf "$d"
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

@@ -77,6 +77,18 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`start shell` is run by the host, not by the VTY** ([#448](https://github.com/andrediashexa/hexarouting/issues/448)).
+  An interactive login now runs `prisma-vty-broker`, which keeps the terminal,
+  hands it to the VTY over a unix socket, relays Ctrl-C and resizes, and runs
+  `start shell` itself after checking the account against the host's groups.
+  It is the first step of moving the VTY into a container: the shell has to
+  land on the host, and a container must not be able to open one there.
+  Measured on a pty in `test/test_vty_broker.py`: the candidate survives a
+  shell, Ctrl-C in the shell stays in the shell, a resize reaches the VTY, the
+  VTY's exit status reaches `prismash-login`'s fallback, and an account the
+  host refuses gets no shell. Without the broker installed the login behaves
+  as before.
+
 ### Fixed
 
 ## 0.126.0 - a backplane of its own

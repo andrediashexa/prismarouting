@@ -5786,5 +5786,106 @@ check(_sh.grammar_mode() == "config",
       "an FRR block is never inside nat, so it wins")
 ok("the levels, the refusal, and the tree ? reads")
 
+print("\n=== vtyattach and Shell.host_shell: the VTY's end of the broker (#448) ===")
+# The broker itself is driven on a real pty by test_vty_broker.py; here the
+# module's logic against a socketpair standing in for it. Mutations shown
+# red: dispatch() queueing INT instead of raising it; request_shell()
+# treating SHELLDENIED as done; host_shell() spawning a local shell when
+# attached.
+import socket as _socket
+import vtyattach
+_a, _b = _socket.socketpair()
+_ch = vtyattach.Channel(_a)
+_got = []
+_old = _signal.signal(_signal.SIGWINCH, lambda *_: _got.append("WINCH"))
+_ch.dispatch("WINCH")
+time.sleep(0.1)
+_signal.signal(_signal.SIGWINCH, _old)
+check(_got == ["WINCH"], f"a relayed WINCH is raised in this process: {_got}")
+_ch.dispatch("SHELLDONE 3")
+check(_ch.replies.get(timeout=1) == "SHELLDONE 3", "an answer is queued, not raised")
+_b.sendall(b"SHELLDONE 0\n")
+check(_ch.request_shell() == ("done", 0) and _b.recv(64) == b"SHELL\n",
+      "request_shell sends SHELL and returns the host's status")
+_b.sendall(b"SHELLDENIED\n")
+check(_ch.request_shell() == ("denied", None), "a refusal is a refusal")
+_b.close(); time.sleep(0.2)
+check(_ch.request_shell() == ("gone", None),
+      "and a broker that went away is said as gone, not waited on for ever")
+
+# attach(): the three descriptors handed over by SCM_RIGHTS become 0, 1, 2.
+_srv = os.path.join(_root, "attach.sock")
+_l = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+_l.bind(_srv); _l.listen(1)
+_rd, _wr = os.pipe()
+_pid = os.fork()
+if _pid == 0:
+    _c = vtyattach.attach(_srv)
+    os.write(1, b"through the handed fd\n")
+    os._exit(0)
+_conn, _ = _l.accept()
+_socket.send_fds(_conn, [b"tty"], [_rd, _wr, _wr])
+os.waitpid(_pid, 0)
+os.close(_wr)
+check(os.read(_rd, 64) == b"through the handed fd\n",
+      "attach() makes the handed descriptors this process's stdout")
+
+class _Chan:
+    def __init__(self, answer): self.answer, self.asked = answer, 0
+    def request_shell(self): self.asked += 1; return self.answer
+_sh = shell()
+_c = _Chan(("done", 0))
+rv, text = driven(lambda: _sh.host_shell(_c))
+check(_c.asked == 1 and "back in the Prisma Routing VTY" in text,
+      f"host_shell asks the broker and comes back: {text!r}")
+_c = _Chan(("denied", None))
+rv, text = driven(lambda: _sh.host_shell(_c))
+check("the host refused a shell for this account" in text,
+      f"and says the host refused, when it did: {text!r}")
+_c = _Chan(("gone", None))
+rv, text = driven(lambda: _sh.host_shell(_c))
+check("start shell: the login session is gone" in text,
+      f"and a login that went away is said, not waited on: {text!r}")
+
+# The broker's own rule, called by name: may_have_shell() is prismash-login's
+# rule on the host, and the one answer that decides a host shell. Loaded from
+# its path, since it has no .py suffix.
+def load_broker():
+    import importlib.machinery as im, importlib.util as iu, grp
+    os.environ["PRISMA_ADMIN_GROUP"] = grp.getgrgid(os.getgid()).gr_name
+    ld = im.SourceFileLoader("prisma_vty_broker", os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "appliance",
+        "prisma-vty-broker"))
+    mod = iu.module_from_spec(iu.spec_from_loader("prisma_vty_broker", ld))
+    ld.exec_module(mod)
+    return mod
+_brk = load_broker()
+check(_brk.may_have_shell(uid=0, groups=[]), "root may have a host shell")
+check(_brk.may_have_shell(uid=4242, groups=[os.getgid()]),
+      "an account in the admin group may")
+check(not _brk.may_have_shell(uid=4242, groups=[]),
+      "and one in neither may not, whatever the VTY asked")
+check(_brk.main([]) == 2, "the broker with no VTY to run is a usage line")
+# serve() answers a request the host refuses with SHELLDENIED and nothing
+# else - no shell is forked - and ignores a line it does not know. The rule is
+# replaced, so this holds for whoever runs the suite, root included.
+_brk.may_have_shell = lambda *a, **k: False
+_a, _b = _socket.socketpair()
+_b.sendall(b"NONSENSE\nSHELL\n"); _b.shutdown(_socket.SHUT_WR)
+_brk.serve(_a)
+check(_b.recv(100) == b"SHELLDENIED\n",
+      "serve() refuses a shell the host's rule refuses, and says only that")
+_a.close(); _b.close()
+_saved = prismash.ATTACHED
+prismash.ATTACHED = _Chan(("done", 0))
+try:
+    rv, text = driven(_sh.start_shell)
+    check(prismash.ATTACHED.asked == 1 and "back in the Prisma Routing VTY" in text,
+          f"start_shell goes to the broker when attached, and spawns nothing: "
+          f"{text!r}")
+finally:
+    prismash.ATTACHED = _saved
+ok("the module and the VTY's use of it")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
