@@ -1750,8 +1750,10 @@ def render_report(p, vpp_base):
         out.append(f"# CGNAT memory: a {_heap} GB main heap ({_given}),")
         out.append(f"#          about {session_capacity(_heap):,} concurrent "
                    f"sessions at ~{SESSION_BYTES} bytes each")
+    _for = (f"the CGNAT's {p['cgnat_memory_gb']} GB, buffers and 1 GB kept"
+            if p.get("cgnat_memory_gb") else f"{p['subscribers']} subscribers")
     out.append(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
-          f"(sized for {p['subscribers']} subscribers), "
+          f"(sized for {_for}), "
           f"{p['hugepages_reserved']} reserved right now")
     if p.get("nodes", 1) > 1:
         # WHICH NODE the count came from, and only on a box that has more

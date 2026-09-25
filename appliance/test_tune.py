@@ -1279,6 +1279,9 @@ with tempfile.TemporaryDirectory() as root:
     check("hugepages=10" in out,
           f"8 GB for the CGNAT, one for three workers' buffers, one kept: "
           f"{[l for l in out.splitlines() if 'hugepages=' in l][:1]}")
+    check("(sized for the CGNAT's 8 GB, buffers and 1 GB kept)" in out,
+          f"the request is said to come from the figure given, not the "
+          f"subscribers: {[l for l in out.splitlines() if 'requested' in l]}")
     check("main-heap-size 8G" in out,
           f"and the heap is the 8 GB given: "
           f"{[l for l in out.splitlines() if 'main-heap-size' in l]}")
