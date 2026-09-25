@@ -80,6 +80,10 @@ STATIC_BLOCK = "router static"
 #: The level under `nat` that CGNAT is (#446). A level of its own, and not
 #: `nat` itself, so that other kinds of translation can sit beside it.
 CGNAT_LEVEL = "cgnat"
+#: The most memory `cgnat memory` takes, in GB (#454): a bound on a typo, not
+#: on a machine. The tuner caps what is asked at what the box's RAM can give,
+#: and says so.
+CGNAT_MEMORY_MAX_GB = 4096
 
 #: What a statement in the one-line form is told, at the prompt and in a file.
 #: The maintainer's decision of 2026-09-24 was to take the form away rather
@@ -2249,6 +2253,12 @@ class Config:
         # whatever NIC it finds, and on a single-NIC box that is the
         # management port.
         self.dataplane_if: str = ""
+        # The memory given to the CGNAT, in GB (#454): 0 is unset, and the
+        # tuner then sizes it from the subscriber target. A box setting like
+        # dataplane_if - it goes to tune.env and takes effect at the next
+        # boot, not to the dataplane - though it is written in the cgnat
+        # block, because that is what an operator looks for it under.
+        self.cgnat_memory_gb: int = 0
         # Lines this VTY once held and no longer does, dropped from the file
         # on purpose rather than refused with it: (lineno, text, why). One
         # statement is in here today, `dataplane management`, which #303
@@ -2360,6 +2370,8 @@ class Config:
         for ifname in sorted(self.interfaces):
             flat.append(f"{CGNAT_LEVEL} interface {ifname} "
                         f"{self.interfaces[ifname]}")
+        if self.cgnat_memory_gb:
+            flat.append(f"{CGNAT_LEVEL} memory {self.cgnat_memory_gb}")
         flat += ordered_globals(self.globals)
         return nest_cgnat(flat)
 
@@ -3017,6 +3029,15 @@ class Config:
                                     "<text>', 'shutdown', 'mtu <n>', "
                                     "'urpf <strict|loose|off>' and "
                                     "'" + VRRP_USAGE + "'"))
+            elif s.split()[:2] == ["cgnat", "memory"]:
+                w = s.split()
+                if len(w) == 3 and is_number(w[2]) \
+                        and 1 <= int(w[2]) <= CGNAT_MEMORY_MAX_GB:
+                    cfg.cgnat_memory_gb = int(w[2])
+                else:
+                    cfg.unknown.append(
+                        (lineno, s, f"expected: memory <GB>, whole GB from 1 "
+                                    f"to {CGNAT_MEMORY_MAX_GB}"))
             elif s.startswith("cgnat "):
                 cfg.globals.append(s)
             else:
@@ -3534,6 +3555,8 @@ class Config:
             # claiming the card, or a rollback could hand one over and never
             # take it back.
             "dataplane_if_changed": self.dataplane_if != other.dataplane_if,
+            "cgnat_memory_changed":
+                self.cgnat_memory_gb != other.cgnat_memory_gb,
             "snmp_changed": snmp_changed,
             "ssh_changed": ssh_changed,
             "dns_changed": self.dns_servers != other.dns_servers,

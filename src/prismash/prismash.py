@@ -38,6 +38,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, CGNAT_LEVEL, one_line_cgnat,
+                    CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
                     as_hierarchy, group_static,
@@ -268,6 +269,60 @@ def dataplane_unit():
                 else DATAPLANE_UNIT_VPP)
     except OSError:
         return DATAPLANE_UNIT_VPP
+
+
+#: What a session costs in the dataplane's main heap, everything counted, and
+#: what the heap holds idle - both measured on #460, and the same two numbers
+#: appliance/prisma-routing-tune sizes the heap with (test_tune checks that
+#: the two copies agree).
+SESSION_BYTES = 300
+HEAP_BASE_MB = 256
+
+
+def cgnat_session_capacity(heap_gb):
+    """About how many concurrent sessions a main heap of `heap_gb` holds."""
+    return max(0, int((heap_gb * 1024 - HEAP_BASE_MB) * (1 << 20)
+                      // SESSION_BYTES))
+
+
+def size_bytes(text):
+    """`848.18M` -> bytes, as VPP prints a size; None if it is not one."""
+    m = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([KMGT]?)", (text or "").strip())
+    if not m:
+        return None
+    return int(float(m.group(1)) * (1 << (10 * " KMGT".index(m.group(2) or " "))))
+
+
+def heap_figures(text):
+    """
+    (total, used, free) in bytes from `show memory main-heap`, or None.
+
+    Read off the one line VPP prints them on - `total: 4.00G, used: 848.18M,
+    free: 3.17G, trimmable: ...` - and nothing else: the page statistics
+    around it change shape between VPP releases.
+    """
+    m = re.search(r"total:\s*([0-9.]+[KMGT]?),\s*used:\s*([0-9.]+[KMGT]?),"
+                  r"\s*free:\s*([0-9.]+[KMGT]?)", text or "")
+    if not m:
+        return None
+    return tuple(size_bytes(g) for g in m.groups())
+
+
+def sessions_now(text):
+    """The box's session count from `show bpa session`'s total line."""
+    m = re.search(r"^total:\s*([0-9]+) sessions", text or "", re.M)
+    return int(m.group(1)) if m else None
+
+
+def refused_for_memory(text):
+    """Sessions refused for want of memory, summed over `show errors` (#460)."""
+    n = 0
+    for line in (text or "").splitlines():
+        if "no memory for a new session" in line:
+            w = line.split()
+            if w and is_number(w[0]):
+                n += int(w[0])
+    return n
 
 
 def dataplane_restart_advice():
@@ -760,6 +815,7 @@ SHOW_CGNAT = {
                     "<public-address> <port>"),
     "top": ("subscribers closest to exhausting their blocks", "[<n>]"),
     "drops": ("why packets did not get through", None),
+    "memory": ("the CGNAT's memory: what it holds and what still fits", None),
     "pool": ("configured CGNAT pools", None),
     "session": ("active sessions per thread", None),
     "blocks": ("blocks allocated in dynamic mode, and how many a forward pins",
@@ -1740,6 +1796,10 @@ CGNAT_CONFIG = {
                  "file <path> | dhcp-leases <path> | "
                  "radius secret <s> [port <n>] | none"),
     "session-table": ("session table sizing", "buckets <n> memory <MB>"),
+    # A box setting written where an operator looks for it (#454): tune.env,
+    # read by the tuner at the next boot, not the dataplane.
+    "memory": ("memory given to the CGNAT's sessions, from the next reboot",
+               "<GB>"),
 }
 
 
@@ -1895,7 +1955,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "routing_changed", "route_desc_changed", "ssh_changed",
                "dns_changed",
                "users_changed",
-               "snmp_changed", "dataplane_if_changed",
+               "snmp_changed", "dataplane_if_changed", "cgnat_memory_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -9106,6 +9166,11 @@ class Shell:
                 self.err(f"dataplane interface: {msg}")
                 return False
             self.say_dataplane_if_pending(target.dataplane_if, msg)
+        if d["cgnat_memory_changed"]:
+            ok, msg = self.apply_cgnat_memory(target.cgnat_memory_gb)
+            if not ok:
+                self.err(f"cgnat memory: {msg}")
+                return False
         if d["ssh_changed"]:
             ok, msg = self.sys.write_ssh(target.ssh)
             if not ok:
@@ -12000,6 +12065,21 @@ class Shell:
         if line.startswith("no cgnat interface "):
             self.candidate.interfaces.pop(w[3], None)
             return True
+        # The memory given to the CGNAT (#454): a field of its own and not a
+        # global, because a global is only ever applied - one removed from the
+        # candidate is undone nowhere - and `no memory` has to take the line
+        # out of tune.env, the way `no dataplane interface` does.
+        if line == f"no {CGNAT_LEVEL} memory":
+            self.candidate.cgnat_memory_gb = 0
+            return True
+        if w[:2] == [CGNAT_LEVEL, "memory"]:
+            if len(w) != 3 or not is_number(w[2]) \
+                    or not 1 <= int(w[2]) <= CGNAT_MEMORY_MAX_GB:
+                self.err(f"usage: memory <GB>, whole GB from 1 to "
+                         f"{CGNAT_MEMORY_MAX_GB}")
+                return True
+            self.candidate.cgnat_memory_gb = int(w[2])
+            return True
         if line.startswith("cgnat "):
             # Only the words this VTY actually has, and CGNAT_CONFIG is where
             # they are written down - the same table `?` offers from, so a
@@ -13025,6 +13105,53 @@ class Shell:
 
     # ---------------------------------------------------------- show
 
+    def show_cgnat_memory(self):
+        """
+        `show cgnat memory` (#454): the memory the CGNAT has now, what it
+        holds, what still fits, and what was asked for the next boot.
+
+        Every session and subscriber record lives in the dataplane's main
+        heap, so the heap is the CGNAT's memory; what fits in its free part
+        is at the measured ~300 bytes a session. The given figure is read
+        from tune.env and compared with the heap the dataplane actually has,
+        because a figure committed today is not in effect until the box boots.
+        """
+        rc, out = self.dp.run("show memory main-heap")
+        fig = heap_figures(out) if rc == 0 else None
+        if fig is None:
+            self.err_dataplane("show cgnat memory: the dataplane's heap "
+                               "could not be read")
+            return
+        total, used, free = fig
+        rc, out = self.dp.run("show bpa session")
+        now = sessions_now(out) if rc == 0 else None
+        rc, out = self.dp.run("show errors")
+        refused = refused_for_memory(out) if rc == 0 else 0
+        given = self.read_tune_key("PRISMA_CGNAT_MEMORY_GB")
+        # Each value LAST on its row, with nothing of this VTY's after it: a
+        # count has no widest, and words behind one fold wherever the
+        # operator's window happens to end (#363).
+        gib = 1 << 30
+        print(f"  {'main heap GB':<22}{total / gib:.2f}")
+        print(f"  {'in use GB':<22}{used / gib:.2f}")
+        if now is not None:
+            print(f"  {'sessions now':<22}{now:,}")
+        print(f"  {'sessions that fit':<22}{free // SESSION_BYTES:,}")
+        if refused:
+            print(f"  {'refused, no memory':<22}{refused:,}")
+            print_prose("sessions refused for want of memory since the "
+                        "dataplane started; the ones already open go on")
+        if given and is_number(given):
+            print(f"  {'given GB':<22}{given}")
+            print_prose("in effect" if abs(total / gib - int(given)) < 0.5
+                        else "from the next reboot: the dataplane has what "
+                             "it booted with until then")
+        else:
+            print(f"  {'given GB':<22}-")
+            print_prose("sized from the subscriber target; 'memory <GB>' "
+                        "under 'nat', 'cgnat' gives the CGNAT a figure of "
+                        "its own")
+
     def show_or_pass(self, line):
         m = {
             "show cgnat pool": "show bpa pool",
@@ -13041,6 +13168,9 @@ class Shell:
         }
         if line in m:
             self.vpp(m[line])
+            return
+        if line == "show cgnat memory":
+            self.show_cgnat_memory()
             return
         # Before the forwarding below, which would otherwise hand `ha` to a
         # dataplane that has no such command.
@@ -14613,6 +14743,36 @@ class Shell:
         if rc != 0:
             return True, ("stored, but the tuner did not run: "
                           + out.strip()[:120])
+        return True, ""
+
+    def apply_cgnat_memory(self, gb):
+        """
+        The memory given to the CGNAT (#454): stored in tune.env, the tuner
+        run, and what is still outstanding said.
+
+        Stored and NOT in effect. The heap is reserved as hugepages on the
+        kernel command line, so the dataplane has the memory it booted with
+        until the box boots again - and the sentence the operator needs after
+        `commit complete` is exactly that, with what the figure will hold.
+        """
+        ok, why = self.write_tune_key("PRISMA_CGNAT_MEMORY_GB",
+                                      str(gb) if gb else "")
+        if not ok:
+            return False, why
+        rc, out = self.sys._run(["systemctl", "restart", self.TUNE_UNIT])
+        if gb:
+            print(f"cgnat memory GB: {gb}")
+            print_prose(f"about {cgnat_session_capacity(gb):,} concurrent "
+                        "sessions, at the ~300 bytes each measured")
+        else:
+            print("cgnat memory: back to the estimate from the subscriber "
+                  "target")
+        print_prose("in effect from the next reboot: the memory is reserved "
+                    "on the kernel command line, and until then the dataplane "
+                    "has what it booted with. 'show cgnat memory' says both")
+        if rc not in (0, 127):
+            print_prose("the tuner did not run, so the boot configuration is "
+                        "not recomputed yet: " + " ".join(out.split())[:120])
         return True, ""
 
     def say_dataplane_if_pending(self, name, note=""):

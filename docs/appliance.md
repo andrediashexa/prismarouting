@@ -58,7 +58,7 @@ Rules applied, each with its reason:
 | Hugepages counted on **that node**, not on the box | The kernel spreads a boot-time `hugepages=N` across the nodes, and VPP's heap comes from the node its main thread is pinned to. The box-wide total can be twice what the dataplane can reach (#422) |
 | One worker per physical core, sibling isolated with it | Otherwise system load competes for the same physical core |
 | `nohz_full` and `rcu_nocbs` follow `isolcpus` | Isolating without removing the tick and RCU callbacks leaves jitter, which shows up as burst loss |
-| 1 GB hugepages sized from the subscriber target | Session and bitmap budget comes from [architecture.md](architecture.md) |
+| 1 GB hugepages sized from the memory given to the CGNAT, or from the subscriber target | `PRISMA_CGNAT_MEMORY_GB` (`nat cgnat memory <GB>` in the VTY) is the main heap, where every session lives at ~300 bytes; without it the estimate is 13.5 KB a subscriber. The heap is the reserved pool less the buffers less one GB, **no longer capped at 2 GB**: that cap held every box to about ten million sessions whatever its RAM (#454, #460) |
 | Deep C-states off (`processor.max_cstate=1`, `intel_idle.max_cstate=0`) | A poll-mode worker never sleeps, but the OS core does, and waking it costs tens of microseconds in the middle of a burst |
 | `transparent_hugepage=never` | `khugepaged` compacts memory in the background, and compaction stalls whichever CPU holds the page |
 | `cpufreq` governor forced to `performance` on every boot | The governor is runtime state, not a kernel parameter: it does not survive a reboot on its own, and on `schedutil` the first burst arrives before the core has ramped up |
@@ -97,6 +97,7 @@ carried, applied to the other two.
 | `PRISMA_SUBSCRIBERS` | digits only | `200000` | `200000` |
 | `PRISMA_LOW_LATENCY` | `1` or `0`, nothing else | `1` | `1`, because this is a router |
 | `PRISMA_MAX_WORKERS` | digits only, or empty for no cap | empty | no cap |
+| `PRISMA_CGNAT_MEMORY_GB` | whole GB, or empty for the estimate from `PRISMA_SUBSCRIBERS` | empty | the estimate |
 
 **A refusal says what the box does accept**, with what each value would do, not
 only that this one was wrong: it is read on a serial console by somebody who

@@ -2987,6 +2987,7 @@ prisma> show cgnat ?
   history      dated configuration trail
   identity     how many identities this box holds, and when it read them
   logging      IPFIX export state
+  memory       the CGNAT's memory: what it holds and what still fits
   pool         configured CGNAT pools
   session      active sessions per thread
   subscriber   everything about one subscriber

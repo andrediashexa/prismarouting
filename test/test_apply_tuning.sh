@@ -282,6 +282,33 @@ case "$(argv)" in
 esac
 
 echo
+echo "=== PRISMA_CGNAT_MEMORY_GB, the memory given to the CGNAT (#454) ==="
+mkbox
+run PRISMA_CGNAT_MEMORY_GB=8
+case "$(argv)" in
+  *"--cgnat-memory-gb 8"*) ok "a number of GB reaches the tuner: $(argv)" ;;
+  *) bad "PRISMA_CGNAT_MEMORY_GB=8 did not reach the tuner: $(argv)" ;;
+esac
+mkbox
+run PRISMA_CGNAT_MEMORY_GB=8G
+said "REFUSED PRISMA_CGNAT_MEMORY_GB, in tune.env" && said "  '8G'" \
+  && said "in whole GB:" && said "8, not 8G and not 8.5" \
+  && said "the estimate from PRISMA_SUBSCRIBERS" \
+  && ok "8G is refused by name, with what is accepted and what is used instead" \
+  || bad "PRISMA_CGNAT_MEMORY_GB=8G was not refused as the others are. Output: $OUT"
+case "$(argv)" in
+  *"--cgnat-memory-gb"*) bad "a refused value still reached the tuner: $(argv)" ;;
+  *) ok "and the tuner ran on the estimate instead" ;;
+esac
+[ "$RC" = 0 ] && ok "and the unit exits 0" || bad "apply-tuning exited $RC on 8G"
+mkbox
+run PRISMA_CGNAT_MEMORY_GB=
+case "$(argv)" in
+  *"--cgnat-memory-gb"*) bad "an empty value was passed on: $(argv)" ;;
+  *) ok "empty is the estimate, as on every box before the setting existed" ;;
+esac
+
+echo
 echo "=== PRISMA_MAX_WORKERS ==="
 mkbox
 run PRISMA_MAX_WORKERS=4

@@ -54,7 +54,8 @@ Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no bo
 | `pool <nome>` | `<word>`  | cria ou edita um pool (entra no pool) |
 | `interface <if> inside\|outside` |           | habilita CGNAT numa interface, do lado interno ou externo |
 | `block-holddown <s>` | `<1-4294967295>` | segundos que um bloco fica reservado depois de ocioso |
-| `session-table buckets <n> memory <MB>` |           | dimensionamento da tabela de sessões |
+| `session-table buckets <n> memory <MB>` |           | quantos buckets a tabela de sessões tem; o número de `memory` não dimensiona nada |
+| `memory` | `<GB>`    | a memória dada ao CGNAT, em GB inteiros; vale a partir do próximo reboot |
 | `timeout <tipo> <segundos>` |           | timeouts globais, na tabela abaixo |
 | `logging ...` |           | exportação IPFIX, na tabela abaixo |
 | `no pool <nome>` |           | remove um pool |

@@ -58,7 +58,10 @@ check(o == {"pool", "session", "blocks", "logging", "history",
             "ha",
             # The count of subscriber identities and when they were read -
             # never an entry, which is why this screen exists at all (#21).
-            "identity"}, f"got {o}")
+            "identity",
+            # The CGNAT's memory: what the heap holds and what still fits
+            # (#454). This VTY's own reading of three dataplane screens.
+            "memory"}, f"got {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== a partial prefix completes ===")

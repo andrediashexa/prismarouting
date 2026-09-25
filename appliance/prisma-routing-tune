@@ -765,7 +765,7 @@ def write_management_path(handover, path=None):
 
 
 def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
-         config_path=None, vpp_base=None, mgmt_conf=None):
+         config_path=None, vpp_base=None, mgmt_conf=None, cgnat_memory_gb=None):
     # The card this box is reached on, read for one reason: so the way back
     # can be computed off it below, before the bind takes it. It used to be
     # read to REFUSE that card when it was named (#123), and to let it
@@ -938,7 +938,18 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     # 1G hugepages. The per-subscriber budget comes from docs/architecture.md:
     # ~13 MB of bitmap and ~2.6 GB of session table for 200k subscribers,
     # plus buffers per worker.
-    session_gb = max(1, round(subscribers * 13.5e-6 * 1024 / 1024))
+    #
+    # OR THE NUMBER THE OPERATOR GAVE THE CGNAT (#454), which replaces that
+    # estimate outright. Measured (#460): every session, both session hashes
+    # and every subscriber record live in VPP's main heap, at about 300 bytes
+    # a session with two million of them and under a kilobyte a subscriber -
+    # so what decides the memory is sessions, and how many a subscriber keeps
+    # open is the operator's knowledge, not this box's. The maintainer asked
+    # for memory dedicated to the CGNAT as a figure he sets (2026-09-25).
+    if cgnat_memory_gb:
+        session_gb = cgnat_memory_gb
+    else:
+        session_gb = max(1, round(subscribers * 13.5e-6 * 1024 / 1024))
     buffers_gb = max(1, (len(workers) + 3) // 4)
     want_gb = session_gb + buffers_gb + 1  # +1 of slack for the main heap
 
@@ -1051,6 +1062,8 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "isolated": isolated,
         "hugepages_gb": hugepages_gb,
         "subscribers": subscribers,
+        "cgnat_memory_gb": cgnat_memory_gb,
+        "session_gb": session_gb,
         "total_cpus": len(topo.cpus),
         # Read off the box's own configuration, not derived from the
         # subscriber target (#288). None means there was no count to be had,
@@ -1384,8 +1397,17 @@ def render_vpp(p):
     # dies with SIGSEGV - which is what a box did after its RAM was reduced
     # between one boot and the next. Reserved pages are ground truth; the
     # request is only an intention.
-    pool_gb = p["hugepages_reserved"] or p["hugepages_gb"]
-    heap_gb = max(1, min(2, pool_gb - max(1, (len(p["workers"]) + 3) // 4)))
+    #
+    # AND IT IS NOT CAPPED AT 2 GB ANY MORE (#454, #460). It was, whatever the
+    # box had: the pages the subscriber estimate asked for beyond that were
+    # reserved and never used, and the heap - which holds every session - was
+    # full at about ten million sessions on any machine; a full heap aborted
+    # the dataplane until 0.128.1. The pool is asked for as heap + buffers +
+    # 1, so the heap is the pool less the buffers less that one GB, which is
+    # left for the buffers' own overhead and the rest of VPP's physical
+    # memory. On a box given its full request that makes the heap exactly
+    # session_gb - the figure the operator gave the CGNAT.
+    heap_gb = main_heap_gb(p)
 
     # ONE QUEUE PER WORKER, OR AS MANY AS THE CARD HAS - whichever is fewer.
     #
@@ -1593,6 +1615,37 @@ def render_vpp(p):
     )
 
 
+#: What a session costs in the main heap, everything counted: the session, its
+#: two hash entries, and the pool's and the hash's growth in steps. Measured at
+#: two million sessions (#460): 848.2 MB used against 242.8 MB idle.
+SESSION_BYTES = 300
+#: What VPP's main heap holds with no subscriber at all, measured idle (#460).
+HEAP_BASE_MB = 256
+
+
+def main_heap_gb(p):
+    """
+    The main heap startup.conf asks for, in GB (#454).
+
+    The pool is asked for as heap + buffers + 1, so the heap is the pool the
+    kernel ACTUALLY reserved, less the buffers, less that one GB - left for
+    the buffers' own overhead and the rest of VPP's physical memory. Sized
+    from the reserved pages and not from the request: a heap larger than the
+    pool starts VPP on memory that is not there, and it dies with SIGSEGV,
+    which is what a box did after its RAM was reduced between two boots.
+    NOT CAPPED at 2 GB any more: that cap held every box to about ten million
+    sessions, whatever its RAM, and a full heap aborted the dataplane.
+    """
+    pool_gb = p["hugepages_reserved"] or p["hugepages_gb"]
+    return max(1, pool_gb - max(1, (len(p["workers"]) + 3) // 4) - 1)
+
+
+def session_capacity(heap_gb):
+    """About how many sessions a main heap of `heap_gb` holds (#454)."""
+    return max(0, int((heap_gb * 1024 - HEAP_BASE_MB) * (1 << 20)
+                      // SESSION_BYTES))
+
+
 def render_report(p, vpp_base):
     """The commented report the tuner prints above the files it generates.
 
@@ -1688,8 +1741,19 @@ def render_report(p, vpp_base):
                    "refuses the port:")
         out.append("#          'show interface' reports it in 'error' state "
                    "and it forwards nothing.")
+    if p["hugepages_gb"]:
+        _heap = main_heap_gb(p)
+        _given = (f"{p['cgnat_memory_gb']} GB given to the CGNAT"
+                  if p.get("cgnat_memory_gb") else
+                  f"estimated from {p['subscribers']} subscribers; "
+                  "PRISMA_CGNAT_MEMORY_GB sets it")
+        out.append(f"# CGNAT memory: a {_heap} GB main heap ({_given}),")
+        out.append(f"#          about {session_capacity(_heap):,} concurrent "
+                   f"sessions at ~{SESSION_BYTES} bytes each")
+    _for = (f"the CGNAT's {p['cgnat_memory_gb']} GB, buffers and 1 GB kept"
+            if p.get("cgnat_memory_gb") else f"{p['subscribers']} subscribers")
     out.append(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
-          f"(sized for {p['subscribers']} subscribers), "
+          f"(sized for {_for}), "
           f"{p['hugepages_reserved']} reserved right now")
     if p.get("nodes", 1) > 1:
         # WHICH NODE the count came from, and only on a box that has more
@@ -2431,6 +2495,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--interface", help="dataplane NIC, to choose the NUMA node")
     ap.add_argument("--subscribers", type=int, default=200000)
+    ap.add_argument("--cgnat-memory-gb", type=int,
+                    help="memory given to the CGNAT's sessions and subscribers, "
+                         "in GB; replaces the estimate from --subscribers (#454)")
     ap.add_argument("--max-workers", type=int)
     ap.add_argument("--no-low-latency", action="store_true",
                     help="do not disable C-states or THP on the kernel line")
@@ -2478,7 +2545,7 @@ def main():
     p = plan(topo, a.interface, a.subscribers, a.max_workers,
              low_latency=not a.no_low_latency,
              config_path=a.config, vpp_base=a.vpp_base,
-             mgmt_conf=a.mgmt_conf)
+             mgmt_conf=a.mgmt_conf, cgnat_memory_gb=a.cgnat_memory_gb)
 
     if a.would_claim:
         return would_claim(p, a.would_claim)

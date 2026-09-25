@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The CGNAT gets the memory you give it** ([#454](https://github.com/andrediashexa/hexarouting/issues/454)).
+  Asked for by the maintainer: memory dedicated to the CGNAT, as a figure he
+  sets rather than an estimate. `memory <GB>`, under `nat` > `cgnat`, is the
+  dataplane's main heap, where every session and every subscriber record
+  lives. The tuner reserves the hugepages for it from the next boot, and the
+  commit says how many concurrent sessions it holds, at the ~300 bytes each
+  measured on #460. `show cgnat memory` says:
+  - how large the heap is and how much of it is in use;
+  - how many more sessions fit, and how many were refused for want of memory;
+  - whether the figure given is in effect yet.
+
+  The heap is no longer capped at 2 GB: that cap held every box to about ten
+  million sessions whatever its RAM. Without a figure, the estimate from the
+  subscriber target is kept (`PRISMA_CGNAT_MEMORY_GB` in `tune.env` is the
+  same setting, refused out loud when it is not whole GB).
+
 ### Fixed
 
 ## 0.128.1 - a full memory refuses instead of falling over

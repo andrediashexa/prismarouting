@@ -1861,6 +1861,91 @@ ok("each statement staged on the pool, each bound refused with its row")
 
 # -------------------------------------------------- the tuner's file
 
+print("\n=== the CGNAT's memory: what the heap holds and what fits (#454) ===")
+# The parsers, on VPP's own text as it printed it in lab/heap-full.sh.
+check(prismash.size_bytes("848.18M") == int(848.18 * (1 << 20))
+      and prismash.size_bytes("4.00G") == 4 << 30
+      and prismash.size_bytes("512") == 512
+      and prismash.size_bytes("lots") is None, "a VPP size, read in bytes")
+_heap = ("  base 0x7f, size 4g, locked, name 'main heap'\n"
+         "    page stats: page-size 4K, total 1048576\n"
+         "    total: 4.00G, used: 848.18M, free: 3.17G, trimmable: 3.05G\n")
+check(prismash.heap_figures(_heap) == (4 << 30, int(848.18 * (1 << 20)),
+                                       int(3.17 * (1 << 30))),
+      f"the heap's three figures: {prismash.heap_figures(_heap)}")
+check(prismash.heap_figures("unknown input") is None, "and none from nothing")
+_ses = "thread 0: 2000000 sessions, 4001 active subscribers\ntotal: 2000000 sessions\n"
+check(prismash.sessions_now(_ses) == 2000000, "the session total")
+check(prismash.sessions_now("") is None, "and no answer from nothing")
+_errs = ("     1533394             bpa-in2out                no memory for a new session       error\n"
+         "         7             bpa-in2out                no memory for a new session       error\n"
+         "    466606             bpa-in2out                     packets translated           error\n")
+check(prismash.refused_for_memory(_errs) == 1533401,
+      "the refusals, summed over every line that carries them")
+check(prismash.cgnat_session_capacity(8) > 27_000_000
+      and prismash.cgnat_session_capacity(0) == 0,
+      f"what a heap holds: {prismash.cgnat_session_capacity(8):,} in 8 GB")
+
+_tune = os.path.join(_root, "tune-mem", "tune.env")
+_saved_te = prismash.Shell.TUNE_ENV
+try:
+    prismash.Shell.TUNE_ENV = _tune
+    os.makedirs(os.path.dirname(_tune), exist_ok=True)
+    with open(_tune, "w") as _f:
+        _f.write("PRISMA_SUBSCRIBERS=200000\nPRISMA_CGNAT_MEMORY_GB=8\n")
+    sh = shell(dp=RecDp({"show memory main-heap": (0, _heap),
+                         "show bpa session": (0, _ses),
+                         "show errors": (0, _errs)}))
+    rv, text = driven(lambda: sh.show_cgnat_memory())
+    check("main heap GB          4.00" in text and "in use GB             0.83" in text
+          and "sessions now          2,000,000" in text
+          and "refused, no memory    1,533,401" in text
+          and "given GB              8" in text and "from the next reboot" in text,
+          f"the screen: the heap, what it holds and what fits, the refusals, "
+          f"and a figure not yet in effect said as one: {text!r}")
+    sh = shell(dp=RecDp({"show memory main-heap": (1, "unknown input")}))
+    rv, text = driven(lambda: sh.show_cgnat_memory())
+    check("show cgnat memory: the dataplane's heap could not be read" in text,
+          f"a heap that cannot be read is said: {text!r}")
+    # apply_cgnat_memory: the key written, the tuner asked, the sentence said.
+    run = RecRunner()
+    sh = shell(runner=run)
+    ok_, msg = sh.apply_cgnat_memory(16)
+    with open(_tune) as _f:
+        _got = _f.read()
+    check(ok_ and "PRISMA_CGNAT_MEMORY_GB=16" in _got,
+          f"the figure reaches tune.env: {_got!r}")
+    ok_, msg = sh.apply_cgnat_memory(0)
+    with open(_tune) as _f:
+        _got = _f.read()
+    check(ok_ and "PRISMA_CGNAT_MEMORY_GB=\n" in _got,
+          f"and 'no memory' empties it: {_got!r}")
+    prismash.Shell.TUNE_ENV = os.path.join(_root, "no-such", "deeper", "x")
+    os.makedirs(os.path.join(_root, "no-such"), exist_ok=True)
+    with open(os.path.join(_root, "no-such", "deeper"), "w") as _f:
+        _f.write("a file where a directory is wanted")
+    sh = shell()
+    sh.candidate = sh.running_config()
+    sh.candidate.cgnat_memory_gb = 8
+    rv, text = driven(lambda: sh.do_commit([]))
+    check("cgnat memory:" in text and "commit" in text,
+          f"a tune.env that cannot be written fails the commit, said: {text!r}")
+finally:
+    prismash.Shell.TUNE_ENV = _saved_te
+# The statement at the prompt: a number of whole GB, and nothing else.
+sh = shell()
+sh.candidate = sh.running_config()
+driven(lambda: sh.do_config("nat"))
+driven(lambda: sh.do_config("cgnat"))
+rv, text = driven(lambda: sh.do_config("memory 8G"))
+check("usage: memory <GB>, whole GB from 1 to 4096" in text
+      and sh.candidate.cgnat_memory_gb == 0, f"8G is refused: {text!r}")
+driven(lambda: sh.do_config("memory 8"))
+check(sh.candidate.cgnat_memory_gb == 8, "8 is staged")
+driven(lambda: sh.do_config("no memory"))
+check(sh.candidate.cgnat_memory_gb == 0, "and 'no memory' takes it out")
+ok("the CGNAT's memory: stored, shown, refused when it is not a figure")
+
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
 # Mutation shown red: write only the assignment, dropping the other lines.
 tune = os.path.join(_root, "tune", "tune.env")
