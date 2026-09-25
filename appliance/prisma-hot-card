@@ -54,6 +54,7 @@ STARTUP=${PRISMA_VPP_STARTUP:-$ROOT/etc/vpp/startup.conf}
 STATE=${PRISMA_HOT_CARDS:-$ROOT/run/prisma-routing/hot-cards}
 SYSTEMCTL=${PRISMA_SYSTEMCTL:-systemctl}
 UDEVADM=${PRISMA_UDEVADM:-udevadm}
+GIVE_BACK=${PRISMA_GIVE_BACK:-/usr/lib/prisma-routing/give-the-card-back}
 
 say() { echo "prisma-hot-card: $*"; }
 
@@ -180,6 +181,12 @@ restart_dataplane() {
     say "the dataplane could not be stopped; nothing was changed"
     return 1
   fi
+  # EVERY CLAIMED CARD BACK TO ITS KERNEL DRIVER, as at boot, before the tuner
+  # runs. The tuner sees only the cards Linux holds: measured on a KVM guest,
+  # a restart that left ens19 on uio_pci_generic came back "claiming 1 of this
+  # box's 2 cards" - ens20 alone - and ens19 was gone from the dataplane, with
+  # the saved configuration that named it refused on replay.
+  $GIVE_BACK restart 2>&1 | sed 's/^/    /'
   # The dataplane that knew those interfaces is gone from here on.
   if [ -f "$STATE" ]; then
     while read -r n _pci k; do

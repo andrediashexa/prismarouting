@@ -67,14 +67,18 @@ echo "systemctl \$*" >> "$S/calls"
 [ "\$*" = "stop prisma-routing-containers.service" ] && [ -e "$S/nostop" ] && exit 1
 exit 0
 EOF
+cat > "$T/giveback" <<EOF
+#!/bin/sh
+echo "giveback \$*" >> "$S/calls"
+EOF
 cat > "$T/udevadm" <<EOF
 #!/bin/sh
 echo "udevadm \$*" >> "$S/calls"
 EOF
-chmod +x "$T/ip" "$T/vppctl" "$T/tune" "$T/systemctl" "$T/udevadm"
+chmod +x "$T/ip" "$T/vppctl" "$T/tune" "$T/systemctl" "$T/udevadm" "$T/giveback"
 HC() {
   PRISMA_ROOT=$R PRISMA_IP=$T/ip PRISMA_VPPCTL=$T/vppctl PRISMA_TUNE=$T/tune \
-  PRISMA_SYSTEMCTL=$T/systemctl PRISMA_UDEVADM=$T/udevadm \
+  PRISMA_SYSTEMCTL=$T/systemctl PRISMA_UDEVADM=$T/udevadm PRISMA_GIVE_BACK=$T/giveback \
   sh "$REPO/appliance/prisma-hot-card" "$@"
 }
 said() { printf '%s\n' "$OUT" | grep -q "$1"; }
@@ -165,9 +169,9 @@ OUT=$(HC add eth9); RC=$?
 echo "=== restart-dataplane: stop, hand the cards back, tune, start ==="
 fresh; HC add eth9 >/dev/null; : > "$S/calls"
 OUT=$(HC restart-dataplane); RC=$?
-_seq=$(grep -E "^systemctl|name eth9$" "$S/calls" | tr '\n' '|')
-[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing-containers.service|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl start prisma-routing.service|" ] \
-  && ok "stopped first, renamed back, tuned, started, and the configuration replayed" \
+_seq=$(grep -E "^systemctl|^giveback|name eth9$" "$S/calls" | tr '\n' '|')
+[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing-containers.service|giveback restart|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl start prisma-routing.service|" ] \
+  && ok "stopped, every claimed card given back, renamed back, tuned, started, replayed" \
   || bad "the sequence (rc=$RC): $_seq"
 ! called "restart prisma-routing-containers" \
   && ok "and never a restart of the containers unit, which systemd refuses" \
@@ -176,7 +180,7 @@ _seq=$(grep -E "^systemctl|name eth9$" "$S/calls" | tr '\n' '|')
   || bad "the record outlived the dataplane that knew it"
 fresh; HC add eth9 >/dev/null; : > "$S/calls"; touch "$S/nostop"
 OUT=$(HC restart-dataplane); RC=$?
-[ $RC = 1 ] && ! called "name eth9$" && ! called "prisma-routing-tune" \
+[ $RC = 1 ] && ! called "name eth9$" && ! called "prisma-routing-tune" && ! called "giveback" \
   && [ -s "$R/run/prisma-routing/hot-cards" ] && said "nothing was changed" \
   && ok "a dataplane that would not stop is left exactly as it was" \
   || bad "a failed stop (rc=$RC): $(cat "$S/calls")"
@@ -194,6 +198,10 @@ grep -q "\$DESTDIR/usr/lib/prisma-routing/prisma-hot-card\"" "$REPO/appliance/in
   && grep -q '"/usr/lib/prisma-routing/prisma-hot-card")' "$REPO/src/prismash/prismash.py" \
   && ok "and the VTY runs the script from where install.sh puts it" \
   || bad "the VTY's HOT_CARD_TOOL and install.sh disagree"
+grep -q '^GIVE_BACK=${PRISMA_GIVE_BACK:-/usr/lib/prisma-routing/give-the-card-back}$' "$REPO/appliance/prisma-hot-card" \
+  && grep -q '"$DESTDIR/usr/lib/prisma-routing/give-the-card-back"' "$REPO/appliance/install.sh" \
+  && ok "and the give-back it runs is where install.sh puts it" \
+  || bad "prisma-hot-card's GIVE_BACK and install.sh disagree"
 grep -q 'ACTION=="add|move"' "$REPO/appliance/udev/90-prisma-hot-card.rules" \
   && ok "the udev rule answers the move a renamed card ends with" \
   || bad "the rule answers add only, and systemd acts on the move"
