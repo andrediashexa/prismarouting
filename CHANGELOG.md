@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.125.2 - CGNAT under nat
+
+### Added
+
 * **All CGNAT configuration lives in the `nat` > `cgnat` levels, and the
   one-line form is gone**
   ([#446](https://github.com/andrediashexa/hexarouting/issues/446)), as the
@@ -98,8 +104,6 @@ version has a chance of seeing it.
   export check never saw what the file asked for. And `identity_redact` knew
   only the one-line form, so the block would have put the RADIUS secret back
   on `show running-config`.
-
-### Fixed
 
 ## 0.125.1 - where this stands
 
