@@ -246,7 +246,7 @@ Quando o teto corta o desejado, o log do ajuste avisa quantos GB faltaram para o
 | Estrutura | Dimensionamento | Ordem de grandeza |
 |-----------|-----------------|-------------------|
 | Bitmap de portas | `block-size` bits por assinante ativo | 64 bytes com blocos de 512 → \~13 MB para 200 mil assinantes |
-| Sessões | um pool e duas tabelas por worker | \~300 bytes por sessão, medido com 2 milhões de sessões |
+| Sessões   | um pool e duas tabelas por worker | \~300 bytes por sessão, medido com 2 milhões de sessões |
 | Posse de bloco (modo dinâmico) | 4 bytes por bloco, por fatia de worker |                   |
 
 A tabela de sessões é ajustada com:
@@ -259,7 +259,7 @@ nat
  exit
 ```
 
-O padrão é 16 mil buckets. **O número de `memory` não dimensiona nada:** as tabelas, como todas as sessões, ficam no heap principal do dataplane, e é esse heap que enche.
+O padrão é 16 mil buckets. **O número de** `**memory**` **não dimensiona nada:** as tabelas, como todas as sessões, ficam no heap principal do dataplane, e é esse heap que enche.
 
 **Quem decide a memória é o número de sessões, não o de assinantes.** Medido: um assinante custa menos de 1 KB, e uma sessão cerca de 300 bytes quando são milhões. 200 mil assinantes com 100 sessões cada são 20 milhões de sessões, uns 6 GB.
 
