@@ -618,7 +618,8 @@ chmod +x "$STUB/systemctl"
 
 screen() {  # <prev stamp> <live box 0|1> <active units, newline separated> <tag>
   printf '%s\n' "$3" > "$WORK/active"
-  { echo "PREV_STAMP='$1'; stamp='$NEW_V'; LIVE_BOX=$2"; cat "$CLOSING"; } \
+  { echo "PREV_STAMP='$1'; stamp='$NEW_V'; LIVE_BOX=$2; CONTAINER_DEFAULT=${CD:-0}"
+    cat "$CLOSING"; } \
     > "$WORK/drive.sh"
   # INTO A FILE AND THEN OUT AGAIN, rather than straight to the caller's
   # command substitution. These screens are the three the reader at the bottom
@@ -697,6 +698,23 @@ said "$UP" "systemctl restart prisma-routing-tune.service" \
   && ok "and names the unit to run first when a reboot is not wanted" \
   || bad "it says a reboot is needed and does not give the operator the one \
 command that avoids it"
+said "$UP" "system dataplane restart" \
+  && bad "a box on the unit path was sent to the containers' command: $UP" \
+  || ok "a box on vpp.service is not sent to the containers' command"
+
+# A BOX ON THE CONTAINERS (#453, #459). Measured on a KVM guest: the screen
+# above was all it got, naming vpp.service, which that box does not run - and
+# the containers' own `systemctl restart` is refused by systemd there. It is
+# sent to the VTY's command, priced, and told the saved file is what returns.
+CUP=$(CD=1 screen "$OLD_V" 1 "prisma-routing-containers.service
+prisma-routing.service" cup)
+said "$CUP" "system dataplane restart     (typed in the VTY)" \
+  && ok "a container box is given the command that restarts its dataplane" \
+  || bad "a container box was not told how to restart its dataplane: $CUP"
+said "$CUP" "DROPS EVERY SESSION AND EVERY PORT BLOCK on this" \
+  && said "$CUP" "'save' first anything committed since" \
+  && ok "priced, and told that the saved configuration is what comes back" \
+  || bad "the containers' advice is not priced or does not say to save: $CUP"
 said "$UP" "'show version' on this box reads both builds and compares them." \
   && ok "and it points at 'show version' for the comparison" \
   || bad "the upgrade screen does not send the operator to 'show version', \

@@ -1,0 +1,16 @@
+# A card added to the running box, attached to the dataplane through AF_XDP
+# (#453). Started by appliance/udev/90-prisma-hot-card.rules with the card's
+# kernel name as the instance; prisma-hot-card decides whether to take it.
+[Unit]
+Description=Prisma Routing - attach a card added to the running box (%i)
+Documentation=file:/usr/share/doc/prisma-routing/appliance.md
+# udev announces every card at boot as well. Ordered after the dataplane's own
+# start so a boot-time announcement finds the card already claimed through
+# DPDK (and gone from Linux) or named in startup.conf, and leaves it.
+After=prisma-routing-containers.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/prisma-routing/prisma-hot-card add %i
+StandardOutput=journal
+StandardError=journal

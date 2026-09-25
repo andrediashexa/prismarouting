@@ -1239,6 +1239,30 @@ with tempfile.TemporaryDirectory() as root:
           f"the report does not say which card was reserved or why: "
           f"{[l for l in out.splitlines() if l.startswith('#')][:6]}")
 
+print("\n=== --would-claim: the boot's rule, asked about a card added later (#453) ===")
+# A running box: eth0 is already the dataplane's (bound, so no netdev - it is
+# simply absent from sys/class/net here), eth1 is the management card the
+# installer recorded, and eth2 has just been added in the hypervisor. The
+# question prisma-hot-card asks is whether THIS rule claims eth2 - and it
+# must never say yes to eth1, the reserve, which is the whole reason the
+# question goes to the tuner instead of being answered again in shell.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    add_nic(root, "eth2", "0000:3b:00.2")
+    reserve(root, "eth1")
+    out = run(root, "--would-claim", "eth2")
+    check("claim: eth2" in out, f"a card added to a running box is claimed "
+                                f"by the boot's rule: {out[-200:]!r}")
+    out = run(root, "--would-claim", "eth1")
+    check("leave: eth1: reserved for Linux" in out,
+          f"and the reserve is left, said as the reserve: {out[-200:]!r}")
+    out = run(root, "--interface", "eth0", "--would-claim", "eth2")
+    check("leave: eth2: PRISMA_DATAPLANE_IF names another card" in out,
+          f"an override claims its card and no other, hot or not: "
+          f"{out[-200:]!r}")
+
 print("\n=== and never the last card, whatever the installer answered ===")
 # THE NARROWING. A reserve allowed to take the only card leaves the commonest
 # box there is - a VM with one NIC - installed, correct, and unable to
@@ -3218,6 +3242,14 @@ check(tune.render_effective([("isolcpus", "in-effect", "cpus 1-3"),
       f"the format is `<state> <rule>: <detail>`, one per line, and this "
       f"rendered {tune.render_effective([('a', 'b', 'c')])!r}")
 check(tune.render_effective([]) == "", "no rule rendered as something")
+# would_claim()'s exit status, which is what prisma-hot-card reads (#453).
+_p = {"cards": [{"name": "eth2"}], "claim_why": "all", "reserve": None,
+      "host_cards": ["eth2"], "no_way_back": None}
+check(tune.would_claim(_p, "eth2") == 0, "a claimed card is status 0")
+check(tune.would_claim(_p, "veth9") == 1, "and anything else is status 1")
+_p["no_way_back"] = "eth3"
+_p["host_cards"].append("eth3")
+check(tune.would_claim(_p, "eth3") == 1, "the card the box is reached on is 1")
 print("  [ ok ] every function in the tuner, called on its own")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

@@ -306,6 +306,12 @@ install -D -m 0755 "$REPO/appliance/load-the-images" "$DESTDIR/usr/lib/prisma-ro
 # The containers' backplane, 128.0.0.0/8 in VRF prisma-bp (#447), brought up
 # by prisma-routing-backplane.service before them.
 install -D -m 0755 "$REPO/appliance/prisma-backplane" "$DESTDIR/usr/lib/prisma-routing/prisma-backplane"
+# A card added to the running box, attached through AF_XDP (#453): the script,
+# and the udev rule that starts prisma-routing-hot-card@<card>.service for it.
+# The template needs no enabling; udev's SYSTEMD_WANTS starts it.
+install -D -m 0755 "$REPO/appliance/prisma-hot-card" "$DESTDIR/usr/lib/prisma-routing/prisma-hot-card"
+install -D -m 0644 "$REPO/appliance/udev/90-prisma-hot-card.rules" \
+  "$DESTDIR/lib/udev/rules.d/90-prisma-hot-card.rules"
 install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/prisma-routing/selftest"
 # The DHCP hook that keeps a lease from rewriting the resolvers `dns server`
 # set (#437). A hook directory and not a package's conffile, so an upgrade
@@ -367,7 +373,7 @@ for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selft
          prisma-routing-installer.service prisma-routing-confirm.service \
          prisma-routing-confirm.timer prisma-routing-containers.service \
          prisma-routing-card-watch.service prisma-routing-card-watch.timer \
-         prisma-routing-backplane.service; do
+         prisma-routing-backplane.service prisma-routing-hot-card@.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
@@ -661,6 +667,8 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   LIVE_BOX=1
   say "enabling services"
   systemctl daemon-reload
+  # The hot-card rule (#453) is read by a udev that is already running.
+  udevadm control --reload >/dev/null 2>&1 || true
   systemctl enable prisma-routing-tune.service prisma-routing.service \
     prisma-routing-selftest.service prisma-routing-installer.service \
     prisma-routing-confirm.timer prisma-routing-backplane.service
@@ -902,6 +910,20 @@ if [ -n "$PREV_STAMP" ] && [ "$LIVE_BOX" = 1 ]; then
   echo "Clearing the split is the operator's call, and this installer does"
   echo "not take it, because neither restart is free:"
   echo
+  # ON A BOX WHOSE DATAPLANE IS A CONTAINER the unit below is not the one
+  # running it, and this paragraph named only it: measured on a KVM guest on
+  # the containers, the upgrade ended telling the operator to restart
+  # vpp.service (#453). The VTY's own command restarts the tuner and the
+  # containers, which is what that box needs, and says what it costs first.
+  if [ "$CONTAINER_DEFAULT" = 1 ]; then
+  echo "  system dataplane restart     (typed in the VTY)"
+  echo "      re-runs the tuner, starts the dataplane again on the new images"
+  echo "      and plugin, and DROPS EVERY SESSION AND EVERY PORT BLOCK on this"
+  echo "      box. The SAVED configuration is replayed when it is back, so"
+  echo "      'save' first anything committed since. It says all of this"
+  echo "      before it acts."
+  echo
+  fi
   echo "  systemctl restart vpp.service"
   echo "      picks up the new plugin, and DROPS EVERY SESSION AND EVERY PORT"
   echo "      BLOCK on this box: every subscriber behind it is translated"

@@ -380,7 +380,7 @@ print()
 print("=== 7. the menu with no verb, or a verb it has not got ===")
 for line in ("system", "system halt", "system reboot now"):
     rv, said, sd, sh = driven(ADMIN, line)
-    check("error: usage: system reboot | system shutdown" in rows(said),
+    check("error: usage: system reboot | shutdown | upgrade | dataplane restart" in rows(said),
           f"{line!r} is answered with the usage: {rows(said)[:1]}")
     check(sd.asked == [], f"and systemd was not asked: {sd.asked}")
 

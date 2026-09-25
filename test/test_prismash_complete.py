@@ -383,8 +383,10 @@ print("\n=== 'system' is offered, with reboot and shutdown under it ===")
 o, _, _ = opts("operational", "")
 check("system" in o, f"'system' is offered at the top level: {sorted(o)}")
 o, hint, _ = opts("operational", "system ")
-check(o == {"reboot", "shutdown", "upgrade"},
-      f"and exactly the three verbs under it (#440): {sorted(o)}")
+check(o == {"reboot", "shutdown", "upgrade", "dataplane"},
+      f"and exactly the four under it (#440, #453): {sorted(o)}")
+o, _, _ = opts("operational", "system dataplane ")
+check(o == {"restart"}, f"and 'restart' under dataplane (#453): {sorted(o)}")
 check(hint is None, f"with no argument hint beside them: {hint!r}")
 o, _, prefix = opts("operational", "syst")
 check(o == {"system"} and prefix == "syst",

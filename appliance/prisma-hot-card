@@ -1,0 +1,220 @@
+#!/bin/sh
+# A card added to a running box forwards at once, through AF_XDP (#453).
+#
+#   prisma-hot-card add <netdev>       udev runs this, through
+#                                      prisma-routing-hot-card@.service
+#   prisma-hot-card list               the cards attached this way, one a line
+#   prisma-hot-card restart-dataplane  hand them back and restart the dataplane,
+#                                      so the next start claims them through
+#                                      DPDK like any other card
+#
+# WHY NOT A RESTART ON HOTPLUG. VPP's DPDK driver takes cards only when it
+# starts, so the obvious answer to "a card appeared" is to restart the
+# dataplane. That stops forwarding and throws away the CGNAT's state - every
+# subscriber's port block and open sessions - on a click in the hypervisor.
+# The maintainer chose this instead (2026-09-25): the card is attached to the
+# RUNNING dataplane through AF_XDP, which reads it through the kernel's
+# driver, and moves to DPDK when the operator decides.
+#
+# WHAT THE ATTACH TAKES, each measured on 0.126.0 in a KVM guest with a
+# virtio-net card added by `device_add` while VPP ran in its container (#453):
+#
+#   * The kernel netdev is RENAMED, because the dataplane's interface and its
+#     Linux end must carry the name the operator knows (ens20), and the
+#     kernel's card is holding it.
+#   * Its ALTNAMES are dropped. udev gives a card `enp0s20` and `ens20` as
+#     altnames, a rename keeps them, and `lcp create ... host-if ens20` then
+#     failed with -13 while `ip addr add ... dev ens20` quietly landed on the
+#     kernel's card. A veth has none, which is why the lab did not show it.
+#   * VPP is given the card's OWN MAC. It invents one (02:fe:...) for an
+#     af_xdp interface, and a virtio card filters unicast to any MAC but its
+#     own: ARP, broadcast, got through and was answered, and every ping after
+#     it was dropped by the card. With the card's MAC, 70 of 70 echo replies.
+#
+# WHAT IT NEVER TAKES:
+#   * a card the boot's rule would not claim - asked of prisma-routing-tune
+#     --would-claim, the same rule, so the reserve and PRISMA_DATAPLANE_IF
+#     hold at a click exactly as they hold at boot;
+#   * a card Linux is using: one carrying an IPv4 address or the default
+#     route is somebody's way into this box;
+#   * a card the running startup.conf already names: that is the boot's own
+#     claim, and udev announces every card at boot too.
+# And it does nothing while the dataplane is not answering: the next start
+# claims the card through DPDK, which is the better answer anyway.
+set -u
+
+ROOT=${PRISMA_ROOT:-}
+SYSNET=$ROOT/sys/class/net
+IP=${PRISMA_IP:-ip}
+VPPCTL=${PRISMA_VPPCTL:-vppctl}
+TUNE=${PRISMA_TUNE:-/usr/bin/prisma-routing-tune}
+TUNE_ENV=${PRISMA_TUNE_ENV:-$ROOT/etc/prisma-routing/tune.env}
+MGMT_CONF=${PRISMA_MGMT_CONF:-$ROOT/etc/network/interfaces.d/prisma-routing}
+STARTUP=${PRISMA_VPP_STARTUP:-$ROOT/etc/vpp/startup.conf}
+STATE=${PRISMA_HOT_CARDS:-$ROOT/run/prisma-routing/hot-cards}
+SYSTEMCTL=${PRISMA_SYSTEMCTL:-systemctl}
+UDEVADM=${PRISMA_UDEVADM:-udevadm}
+GIVE_BACK=${PRISMA_GIVE_BACK:-/usr/lib/prisma-routing/give-the-card-back}
+
+say() { echo "prisma-hot-card: $*"; }
+
+# The kernel's name for a card the dataplane has taken: short enough for the
+# kernel's 15 characters whatever the card was called.
+kernel_name() {  # <netdev>
+  if [ ${#1} -le 11 ]; then
+    echo "xdp-$1"
+  else
+    echo "x$(printf '%s' "$1" | tail -c 14)"
+  fi
+}
+
+pci_of() {  # <netdev>
+  basename "$(readlink -f "$SYSNET/$1/device" 2>/dev/null)" 2>/dev/null
+}
+
+# 0 when Linux is using the card: an IPv4 address, or the default route.
+linux_uses() {  # <netdev>
+  [ -n "$($IP -4 -o addr show dev "$1" 2>/dev/null)" ] && return 0
+  $IP route show default 2>/dev/null | grep -q " dev $1\( \|$\)" && return 0
+  return 1
+}
+
+add() {  # <netdev>
+  n=$1
+  if [ ! -e "$SYSNET/$n" ]; then
+    # The ordinary answer at boot: udev announced the card, and by the time
+    # this ran the dataplane had claimed it through DPDK and it left Linux.
+    say "$n: no longer a Linux interface; nothing to attach"
+    return 0
+  fi
+  if [ ! -e "$SYSNET/$n/device" ]; then
+    say "$n: not a PCI card, left to Linux"
+    return 0
+  fi
+  pci=$(pci_of "$n")
+  if [ -n "$pci" ] && grep -q "dev $pci" "$STARTUP" 2>/dev/null; then
+    say "$n: startup.conf already names $pci; the boot's claim, left to it"
+    return 0
+  fi
+  if ! $VPPCTL show version >/dev/null 2>&1; then
+    say "$n: the dataplane is not answering; its next start claims the card"
+    return 0
+  fi
+  if $VPPCTL show hardware "$n" 2>/dev/null | grep -q "^$n "; then
+    say "$n: already on the dataplane"
+    return 0
+  fi
+  # The override is read the way apply-tuning reads it: one line of tune.env.
+  over=$(sed -n 's/^PRISMA_DATAPLANE_IF=\(.*\)$/\1/p' "$TUNE_ENV" 2>/dev/null | tail -1)
+  verdict=$("$TUNE" --sysfs-root "${ROOT:-/}" --mgmt-conf "$MGMT_CONF" \
+              ${over:+--interface "$over"} --would-claim "$n" 2>/dev/null | tail -1)
+  case "$verdict" in
+    "claim: $n") ;;
+    *) say "${verdict:-$n: the tuner gave no answer; left to Linux}"; return 0 ;;
+  esac
+  if linux_uses "$n"; then
+    say "$n: Linux has an address or the default route on it; left to Linux"
+    return 0
+  fi
+
+  mac=$(cat "$SYSNET/$n/address" 2>/dev/null)
+  k=$(kernel_name "$n")
+  $IP link set dev "$n" down || { say "$n: cannot take it down"; return 1; }
+  $IP link set dev "$n" name "$k" || { say "$n: cannot rename it to $k"; return 1; }
+  # AFTER udev has handled the rename. The rename is a `move` event, and udev
+  # applies a card's altnames on it - so altnames dropped before it ran were
+  # put back, and the VTY's `linux-name ens20` failed with -13 on a KVM guest
+  # although the script had dropped them (#453). Settled first, then dropped,
+  # then checked: the name must resolve to nothing before the dataplane is
+  # given it.
+  $UDEVADM settle -t 10 >/dev/null 2>&1
+  for alt in $($IP -d link show dev "$k" 2>/dev/null | awk '$1 == "altname" {print $2}'); do
+    $IP link property del dev "$k" altname "$alt" 2>/dev/null
+  done
+  if $IP link show dev "$n" >/dev/null 2>&1; then
+    $IP link set dev "$k" name "$n" 2>/dev/null
+    say "$n: the name is still held in Linux after the rename, so the"
+    say "    dataplane's end could not carry it; the card stays with Linux"
+    return 1
+  fi
+  $IP link set dev "$k" up
+  if ! out=$($VPPCTL create interface af_xdp host-if "$k" name "$n" num-rx-queues all 2>&1) \
+       || ! $VPPCTL show hardware "$n" 2>/dev/null | grep -q "^$n "; then
+    # Put the card back exactly as it came: a card half-taken is one neither
+    # Linux nor the dataplane can use.
+    $IP link set dev "$k" down
+    $IP link set dev "$k" name "$n"
+    say "$n: the dataplane refused it through AF_XDP, so it stays with Linux:"
+    say "    $out"
+    return 1
+  fi
+  [ -n "$mac" ] && $VPPCTL set interface mac address "$n" "$mac" >/dev/null 2>&1
+  mkdir -p "$(dirname "$STATE")"
+  echo "$n ${pci:--} $k" >> "$STATE"
+  say "$n: on the dataplane through AF_XDP (kernel name $k), forwarding now."
+  say "    'system dataplane restart' moves it to DPDK when you choose."
+  return 0
+}
+
+list() {
+  [ -f "$STATE" ] && cat "$STATE"
+  return 0
+}
+
+# Hand every card back to the kernel under its own name and restart the
+# dataplane, so the tuner sees the cards as the next boot would and claims
+# them through DPDK. The tuner reads the kernel's names: left as xdp-ens20,
+# the card would come back named that.
+#
+# STOP, THEN START, and never `restart` of the containers unit. Measured on a
+# KVM guest on the containers: `systemctl restart prisma-routing-containers`
+# is refused - "Transaction contains conflicting jobs 'restart' and 'stop' for
+# prisma-routing.service" - because that unit Conflicts=vpp.service and
+# prisma-routing.service is PartOf both, so one transaction asks it to stop
+# and to restart. And the order is the point: the cards are handed back only
+# once the dataplane has let go of them. Renamed while VPP still held them
+# through AF_XDP, the rename did not take, the tuner then bound the card to
+# uio under the name xdp-ens20, and VPP was left on a card the kernel no
+# longer had.
+restart_dataplane() {
+  if ! $SYSTEMCTL stop prisma-routing-containers.service; then
+    say "the dataplane could not be stopped; nothing was changed"
+    return 1
+  fi
+  # EVERY CLAIMED CARD BACK TO ITS KERNEL DRIVER, as at boot, before the tuner
+  # runs. The tuner sees only the cards Linux holds: measured on a KVM guest,
+  # a restart that left ens19 on uio_pci_generic came back "claiming 1 of this
+  # box's 2 cards" - ens20 alone - and ens19 was gone from the dataplane, with
+  # the saved configuration that named it refused on replay.
+  $GIVE_BACK restart 2>&1 | sed 's/^/    /'
+  # The dataplane that knew those interfaces is gone from here on.
+  if [ -f "$STATE" ]; then
+    while read -r n _pci k; do
+      [ -n "$k" ] || continue
+      $IP link set dev "$k" down 2>/dev/null
+      if $IP link set dev "$k" name "$n" 2>/dev/null; then
+        say "$n: handed back to the kernel under its own name"
+      else
+        say "$n: could not be renamed back from $k; the tuner sees it as $k"
+      fi
+    done < "$STATE"
+    rm -f "$STATE"
+  fi
+  rc=0
+  $SYSTEMCTL restart prisma-routing-tune.service || rc=1
+  # Started whatever the tuner said: a box whose tuner failed still has the
+  # startup.conf it had, and a dataplane on it beats none.
+  $SYSTEMCTL start prisma-routing-containers.service || rc=1
+  # PartOf stopped it with the containers and nothing starts it again: it is
+  # what replays the saved configuration onto the dataplane.
+  $SYSTEMCTL start prisma-routing.service || rc=1
+  return $rc
+}
+
+case "${1:-}" in
+  add) [ -n "${2:-}" ] || { echo "usage: prisma-hot-card add <netdev>" >&2; exit 2; }
+       add "$2" ;;
+  list) list ;;
+  restart-dataplane) restart_dataplane ;;
+  *) echo "usage: prisma-hot-card add <netdev> | list | restart-dataplane" >&2; exit 2 ;;
+esac

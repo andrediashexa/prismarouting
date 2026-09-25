@@ -673,6 +673,33 @@ printf '%s\n' "$OUT" | grep -q "reachable only from" \
 rm -rf "$R"
 
 echo
+echo "=== EVERY card startup.conf names is given back, not the first (#453) ==="
+# This read `head -1`, the shape #451 found in the bind: a box claiming two
+# cards got one back. In the fixture nothing moves a device, so both cards
+# keep the driver link they had - which is exactly what shows that the script
+# reached each of them and cleared each override. Mutation shown red: the
+# loop reduced to its first address.
+R=$(mkbox 0000:03:00.0 eth9 iommu uio_pci_generic)
+on_driver "$R" uio_pci_generic 0000:03:00.0
+mkdir -p "$R/sys/bus/pci/devices/0000:03:00.1"
+on_driver "$R" uio_pci_generic 0000:03:00.1
+printf 'dpdk {\n  dev 0000:03:00.0 {\n  }\n  dev 0000:03:00.1 {\n  }\n}\n' \
+  > "$R/etc/vpp/startup.conf"
+OUT=$(PRISMA_ROOT="$R" sh "$GIVE" restart 2>&1); RC=$?
+printf '%s\n' "$OUT" | say_box
+[ "$(cat "$R/sys/bus/pci/devices/0000:03:00.1/driver_override" 2>/dev/null)" = "" ] \
+  && [ -e "$R/sys/bus/pci/devices/0000:03:00.1/driver_override" ] \
+  && printf '%s\n' "$OUT" | grep -q "0000:03:00.0" \
+  && printf '%s\n' "$OUT" | grep -q "0000:03:00.1" \
+  && ok "both cards were given back, each by name" \
+  || bad "a box with two claimed cards got one back: $OUT"
+printf '%s\n' "$OUT" | grep -q "for the tuner to claim it" \
+  && ! printf '%s\n' "$OUT" | grep -q "did not start" \
+  && ok "and a restart is not reported as a dataplane that failed to start" \
+  || bad "the restart mode said the failure's sentence: $OUT"
+rm -rf "$R"
+
+echo
 echo "=== the drop-in arms it on the failure, not on every restart ==="
 # vpp.service carries Restart=always, so a dataplane that crashes once is
 # restarted and that is not a failure. OnFailure is raised only when the unit

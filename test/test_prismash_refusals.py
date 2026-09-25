@@ -1813,7 +1813,7 @@ _sh = shell()
 _sh.sys = _systemd(0, "")
 _rv, _text = driven(_sh.do_operational, "system halt")
 says("a verb the menu has not got", _text,
-     "error: usage: system reboot | system shutdown", _rv, expect=True)
+     "error: usage: system reboot | shutdown | upgrade | dataplane restart", _rv, expect=True)
 check(_asked == [], f"and systemd was not asked: {_asked}")
 print("  refused by role before the ask, refused by systemd after it, and a "
       "verb it has not got")

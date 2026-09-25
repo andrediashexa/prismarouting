@@ -270,6 +270,22 @@ def dataplane_unit():
         return DATAPLANE_UNIT_VPP
 
 
+def dataplane_restart_advice():
+    """
+    The command an operator is told to type to start the dataplane again.
+
+    On the containers it is the VTY's own `system dataplane restart` (#453),
+    because `systemctl restart prisma-routing-containers` is REFUSED there -
+    measured on a KVM guest: "Transaction contains conflicting jobs 'restart'
+    and 'stop' for prisma-routing.service", since that unit Conflicts with
+    vpp.service and prisma-routing.service is PartOf both. The screens named
+    that command, so the advice they gave could not be followed.
+    """
+    if dataplane_unit() == DATAPLANE_UNIT_CONTAINERS:
+        return "'system dataplane restart'"
+    return f"'systemctl restart {DATAPLANE_UNIT_VPP}'"
+
+
 #: Where appliance/watch-the-dataplane writes what the dataplane said before
 #: it died. The file exists only on a box that stranded itself, which is
 #: exactly the box whose container log is already gone - `docker logs` on a
@@ -419,6 +435,50 @@ RELEASES_URL = os.environ.get("PRISMA_RELEASES_URL",
 #: Where a downloaded release is unpacked: /var/tmp, which survives the
 #: session that asked and is not /tmp's tmpfs on a box short of memory.
 UPGRADE_WORK = os.environ.get("PRISMA_UPGRADE_WORK", "/var/tmp")
+#: Cards added to the running box and attached through AF_XDP (#453), one a
+#: line: the name, the PCI address and the kernel's name for the card.
+#: Written by appliance/prisma-hot-card, in /run because the dataplane that
+#: knows them does not outlive a boot.
+HOT_CARDS = os.environ.get("PRISMA_HOT_CARDS", "/run/prisma-routing/hot-cards")
+HOT_CARD_TOOL = os.environ.get("PRISMA_HOT_CARD_TOOL",
+                               "/usr/lib/prisma-routing/prisma-hot-card")
+
+
+def hot_cards(path=None):
+    """
+    {name: pci} of the cards attached through AF_XDP since the dataplane
+    started (#453). Empty when there are none, or no record to read.
+    """
+    out = {}
+    try:
+        with open(path or HOT_CARDS) as f:
+            for line in f:
+                w = line.split()
+                if w:
+                    out[w[0]] = w[1] if len(w) > 1 else "-"
+    except OSError:
+        pass
+    return out
+
+
+def hot_card_notes(names, path=None):
+    """
+    The rows `show interface` prints under its count for the cards among
+    `names` that are on AF_XDP (#453), or none.
+
+    Said on the screen an operator reads for "is it forwarding", because the
+    one thing that differs about such a card is not whether it forwards - it
+    does - but how fast it can, and what moves it: a card on AF_XDP reads
+    through the kernel's driver, and on a one-queue virtio card the kernel
+    itself warned of "a slower locked tx mode" (measured, #453).
+    """
+    hot = sorted(n for n in hot_cards(path) if n in names)
+    if not hot:
+        return []
+    return ["  " + ", ".join(hot) + ": added to the running box, forwarding "
+            "through AF_XDP",
+            "    until the dataplane restarts; 'system dataplane restart' "
+            "moves it to DPDK"]
 
 
 def version_tuple(text):
@@ -2224,6 +2284,11 @@ TREE = {
                          "box stays off", None),
             "upgrade": ("the newest published release, or download, verify "
                         "and install the one named", "[<version>]"),
+            "dataplane": ("the forwarding engine itself", {
+                "restart": ("stops forwarding and drops every subscriber's "
+                            "port block; takes added cards through DPDK",
+                            None),
+            }),
         }),
         "exit": ("end the session", None),
     },
@@ -6235,7 +6300,7 @@ class Shell:
                     "build does not have.")
         print(f"    the dataplane is running {build}")
         print_prose("'show version' prints that beside this box's own build. "
-                    f"'systemctl restart {dataplane_unit()}', or a reboot, "
+                    f"{dataplane_restart_advice()}, or a reboot, "
                     "makes the new dataplane answer instead - and either one "
                     "ends every session and every port block this box is "
                     "carrying.")
@@ -11191,7 +11256,60 @@ class Shell:
         if rest[:1] == ["upgrade"]:
             self.system_upgrade(rest[1:])
             return
-        self.err("usage: system reboot | system shutdown")
+        if rest == ["dataplane", "restart"]:
+            self.system_dataplane_restart()
+            return
+        self.err("usage: system reboot | shutdown | upgrade | dataplane "
+                 "restart")
+
+    def system_dataplane_restart(self):
+        """
+        `system dataplane restart` (#453): the dataplane, stopped and started
+        again, and the cards added to the running box taken through DPDK.
+
+        A card added while the box runs forwards at once through AF_XDP
+        (appliance/prisma-hot-card). Moving it to DPDK needs the dataplane to
+        start again, because VPP's DPDK driver takes cards only when it
+        starts - and a start throws away the CGNAT's state. That is exactly
+        why a hotplug does not do it by itself; the maintainer chose to have
+        it done when the operator decides (2026-09-25). So, like `system
+        reboot`, it says what it costs and then does it, without a question:
+        a runbook's `prismash -c` must be able to type it.
+
+        The work is prisma-hot-card's, which hands each card back to the
+        kernel under its own name first. Restarted with the card still named
+        xdp-ens20, the tuner would claim it under that name, and the
+        configuration written for ens20 would find no interface.
+        """
+        if not self.require(CAP_ALL, "system dataplane restart"):
+            return
+        hot = sorted(hot_cards())
+        print("restarting the dataplane")
+        print_prose("forwarding stops until it is back, and every subscriber's "
+                    "port block and open sessions are dropped; blocks are "
+                    "allocated again as traffic returns")
+        if hot:
+            print_prose("taken through DPDK when it starts: " + ", ".join(hot))
+        # The configuration the dataplane gets back is the SAVED one:
+        # prisma-routing.service is PartOf the containers and replays the
+        # file when they start. So a card configured and committed and not
+        # saved comes back with nothing on it - the case this command exists
+        # for - and it is said here the way `system reboot` says it.
+        self.say_unsaved()
+        self.say_unconfirmed()
+        try:
+            p = subprocess.run([HOT_CARD_TOOL, "restart-dataplane"],
+                               capture_output=True, text=True, timeout=300)
+            rc, said = p.returncode, (p.stdout + p.stderr).splitlines()
+        except (OSError, subprocess.TimeoutExpired) as e:
+            rc, said = 127, [str(e)]
+        if rc != 0:
+            self.err_prose("the dataplane could not be restarted",
+                           *[" ".join(l.split()) for l in said if l.strip()]
+                           or [f"it exited {rc} and said nothing"])
+            return
+        print("the dataplane is starting; 'show interface' says when it "
+              "forwards")
 
     def system_upgrade(self, args):
         """
@@ -13214,6 +13332,8 @@ class Shell:
             print(f"\n  {shown} interface(s) on the dataplane can forward")
         for line in note:
             print(line)
+        for line in hot_card_notes(ifaces):
+            print(line)
         if mismatched:
             # The one conclusion this view exists to make reachable without
             # being read for.
@@ -14716,6 +14836,8 @@ class Shell:
         print(f"\n  {shown} interface(s) on the dataplane can forward")
         for line in note:
             print(line)
+        for line in hot_card_notes(ifaces):
+            print(line)
 
 
     def show_bgp(self, args):
@@ -15782,7 +15904,7 @@ class Shell:
                     "last boot, and it is not the Prisma Routing build above. "
                     "An upgrade replaces bpa_plugin.so on disk and does not "
                     "restart the dataplane, so until this box is rebooted, "
-                    f"or 'systemctl restart {dataplane_unit()}' is run, it "
+                    f"or {dataplane_restart_advice()} is run, it "
                     "goes on translating with the old one - and both of those "
                     "end every session it is carrying.",
                     indent=self.VERSION_INDENT)

@@ -36,79 +36,104 @@ VPPCONF=${PRISMA_STARTUP_CONF:-$ROOT/etc/vpp/startup.conf}
 SYSBUS=${PRISMA_PCI_BUS:-$ROOT/sys/bus/pci}
 say() { echo "$@" >&2; }
 
-# The device the tuner named, read from the file the binder binds FROM. One
-# source, one answer: a second way of working out which card this is could
+# The devices the tuner named, read from the file the binder binds FROM. One
+# source, one answer: a second way of working out which cards these are could
 # disagree with the bind it is undoing, and would then hand back a card the
 # box never took.
-ADDR=$(sed -n 's/^[[:space:]]*dev[[:space:]]\{1,\}\([0-9a-fA-F:.]\{7,\}\).*/\1/p' \
-       "$VPPCONF" 2>/dev/null | head -1)
-[ -n "$ADDR" ] || {
+#
+# EVERY ONE, not the first (#453). This read `head -1`: a box claiming two
+# cards whose dataplane gave up got ONE back - the same shape #451 found in
+# the bind. And `system dataplane restart` hands every claimed card back
+# before the tuner runs, because the tuner only sees cards Linux holds: measured
+# on a KVM guest, a restart that left ens19 on uio_pci_generic came back
+# claiming only ens20, and ens19 was gone from the dataplane.
+#
+# MODE: nothing, for the failure this was written for (#379); `restart`, for a
+# dataplane stopped on purpose that the tuner is about to claim again - the
+# same work, and a different sentence, because "the dataplane did not start"
+# said on a restart is false.
+MODE=${1:-failure}
+ADDRS=$(sed -n 's/^[[:space:]]*dev[[:space:]]\{1,\}\([0-9a-fA-F:.]\{7,\}\).*/\1/p' \
+       "$VPPCONF" 2>/dev/null)
+[ -n "$ADDRS" ] || {
   say "give-back: startup.conf names no PCI device, so nothing was taken"
   say "           and there is nothing to give back."
   exit 0
 }
 
-DEV=$SYSBUS/devices/$ADDR
-[ -d "$DEV" ] || {
-  say "give-back: no such PCI device as $ADDR on this box."
-  exit 1
+driver_of() {  # <device dir>
+  # ASKED WHETHER THE LINK IS THERE BEFORE READING IT. `readlink -f` on a path
+  # that does not exist prints the path, so basename hands back the literal
+  # word `driver` - which reads as a kernel driver called "driver" and sent
+  # this script down the "already back, nothing to do" branch on exactly the
+  # box it exists for: a device holding no driver at all. Caught by its own
+  # check.
+  if [ -e "$1/driver" ]; then
+    _d=$(basename "$(readlink -f "$1/driver" 2>/dev/null)" 2>/dev/null)
+    [ "$_d" = "." ] && _d=""
+    echo "$_d"
+  fi
 }
 
-# ASKED WHETHER THE LINK IS THERE BEFORE READING IT. `readlink -f` on a path
-# that does not exist prints the path, so basename hands back the literal word
-# `driver` - which reads as a kernel driver called "driver" and sent this
-# script down the "already back, nothing to do" branch on exactly the box it
-# exists for: a device holding no driver at all. Caught by its own check.
-if [ -e "$DEV/driver" ]; then
-  current=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
-  [ "$current" = "." ] && current=""
-else
-  current=""
-fi
-case "$current" in
-  vfio-pci|uio_pci_generic|igb_uio) ;;
-  "")
-    say "give-back: $ADDR has no driver at all. Probing for a kernel one."
-    ;;
-  *)
-    # Already back, or never left. Saying so and stopping is not a no-op worth
-    # hiding: this unit fires on a failure, and "the card was not the problem"
-    # is what an operator reading the journal needs to see.
-    say "give-back: $ADDR is on $current, which is not a DPDK driver, so the"
-    say "           card is already where the kernel can use it. Nothing done."
-    exit 0
-    ;;
-esac
+give_one() {  # <pci address>
+  ADDR=$1
+  DEV=$SYSBUS/devices/$ADDR
+  [ -d "$DEV" ] || {
+    say "give-back: no such PCI device as $ADDR on this box."
+    return 1
+  }
+  current=$(driver_of "$DEV")
+  case "$current" in
+    vfio-pci|uio_pci_generic|igb_uio) ;;
+    "")
+      say "give-back: $ADDR has no driver at all. Probing for a kernel one."
+      ;;
+    *)
+      # Already back, or never left. Saying so and stopping is not a no-op
+      # worth hiding: this unit fires on a failure, and "the card was not the
+      # problem" is what an operator reading the journal needs to see.
+      say "give-back: $ADDR is on $current, which is not a DPDK driver, so the"
+      say "           card is already where the kernel can use it. Nothing done."
+      return 0
+      ;;
+  esac
 
-# THE OVERRIDE FIRST. driver_override is what made the DPDK driver win the
-# probe; clearing it before unbinding is what lets the kernel's own driver win
-# the next one. Unbinding with the override still set hands the device straight
-# back to the same DPDK driver, which looks like the command did nothing.
-printf '\n' > "$DEV/driver_override" 2>/dev/null || {
-  say "give-back: cannot clear driver_override for $ADDR"; exit 1; }
-if [ -n "$current" ]; then
-  echo "$ADDR" > "$DEV/driver/unbind" 2>/dev/null || {
-    say "give-back: cannot unbind $ADDR from $current"; exit 1; }
-fi
-echo "$ADDR" > "$SYSBUS/drivers_probe" 2>/dev/null || true
+  # THE OVERRIDE FIRST. driver_override is what made the DPDK driver win the
+  # probe; clearing it before unbinding is what lets the kernel's own driver
+  # win the next one. Unbinding with the override still set hands the device
+  # straight back to the same DPDK driver, which looks like the command did
+  # nothing.
+  printf '\n' > "$DEV/driver_override" 2>/dev/null || {
+    say "give-back: cannot clear driver_override for $ADDR"; return 1; }
+  if [ -n "$current" ]; then
+    echo "$ADDR" > "$DEV/driver/unbind" 2>/dev/null || {
+      say "give-back: cannot unbind $ADDR from $current"; return 1; }
+  fi
+  echo "$ADDR" > "$SYSBUS/drivers_probe" 2>/dev/null || true
 
-if [ -e "$DEV/driver" ]; then
-  now=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
-  [ "$now" = "." ] && now=""
-else
-  now=""
-fi
-if [ -n "$now" ]; then
-  say "give-back: the dataplane did not start, so $ADDR is on $now again and"
-  say "           this box is reachable. Read 'journalctl -u vpp' for why, fix"
-  say "           it, and reboot: the card is taken again at the next boot."
-  exit 0
-fi
+  now=$(driver_of "$DEV")
+  if [ -n "$now" ]; then
+    if [ "$MODE" = restart ]; then
+      say "give-back: $ADDR is on $now again, for the tuner to claim it."
+    else
+      say "give-back: the dataplane did not start, so $ADDR is on $now again and"
+      say "           this box is reachable. Read 'journalctl -u vpp' for why, fix"
+      say "           it, and reboot: the card is taken again at the next boot."
+    fi
+    return 0
+  fi
 
-# Said as a failure, because it is one, and with the state it ended in - the
-# same rule the bind itself keeps. A device with no driver is the outcome this
-# file exists to end, so ending in it is worth the loudest sentence here.
-say "give-back: $ADDR came off its DPDK driver and the kernel claimed nothing."
-say "           This box has no network interface. It is reachable only from"
-say "           its console."
-exit 1
+  # Said as a failure, because it is one, and with the state it ended in - the
+  # same rule the bind itself keeps. A device with no driver is the outcome
+  # this file exists to end, so ending in it is worth the loudest sentence.
+  say "give-back: $ADDR came off its DPDK driver and the kernel claimed nothing."
+  say "           This card has no network interface. If it was the box's only"
+  say "           way in, the box is reachable only from its console."
+  return 1
+}
+
+rc=0
+for a in $ADDRS; do
+  give_one "$a" || rc=1
+done
+exit "$rc"
