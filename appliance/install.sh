@@ -910,6 +910,20 @@ if [ -n "$PREV_STAMP" ] && [ "$LIVE_BOX" = 1 ]; then
   echo "Clearing the split is the operator's call, and this installer does"
   echo "not take it, because neither restart is free:"
   echo
+  # ON A BOX WHOSE DATAPLANE IS A CONTAINER the unit below is not the one
+  # running it, and this paragraph named only it: measured on a KVM guest on
+  # the containers, the upgrade ended telling the operator to restart
+  # vpp.service (#453). The VTY's own command restarts the tuner and the
+  # containers, which is what that box needs, and says what it costs first.
+  if [ "$CONTAINER_DEFAULT" = 1 ]; then
+  echo "  system dataplane restart     (typed in the VTY)"
+  echo "      re-runs the tuner, starts the dataplane again on the new images"
+  echo "      and plugin, and DROPS EVERY SESSION AND EVERY PORT BLOCK on this"
+  echo "      box. The SAVED configuration is replayed when it is back, so"
+  echo "      'save' first anything committed since. It says all of this"
+  echo "      before it acts."
+  echo
+  fi
   echo "  systemctl restart vpp.service"
   echo "      picks up the new plugin, and DROPS EVERY SESSION AND EVERY PORT"
   echo "      BLOCK on this box: every subscriber behind it is translated"

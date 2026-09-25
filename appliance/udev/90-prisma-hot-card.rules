@@ -2,4 +2,12 @@
 # (#453). Only a PCI card: a veth, a bridge or a tap has no PCI parent. The
 # unit, not RUN directly: udev kills a RUN program after a few seconds, and
 # the attach talks to the dataplane.
-ACTION=="add", SUBSYSTEM=="net", SUBSYSTEMS=="pci", KERNEL!="xdp-*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="prisma-routing-hot-card@$name.service"
+#
+# add AND move. Measured in a KVM guest with `udevadm monitor` over a card
+# added by device_add: the add event carried SYSTEMD_WANTS, then udev renamed
+# eth0 to ens20 and emitted a move, and systemd started nothing - the unit ran
+# only when the event was triggered again by hand. The move is what systemd
+# acts on for a renamed card. Our own rename to xdp-* is excluded below, and
+# the rename back in restart-dataplane finds the card already on the
+# dataplane, or the dataplane not answering, and leaves it.
+ACTION=="add|move", SUBSYSTEM=="net", SUBSYSTEMS=="pci", KERNEL!="xdp-*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="prisma-routing-hot-card@$name.service"

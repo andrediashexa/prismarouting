@@ -19,7 +19,7 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed process (vpp)` com o VPP segurando apenas **19 MB residentes** — ele não era o glutão, era a vítima escolhida. Instalado em disco o consumo cai, porque não há a sobreposição em RAM, mas 4 GB continua sendo o piso sensato para um dataplane.
 
 :::warning
-**Até o piso ser medido de novo, use 8 GB numa VM.** Numa VM de 6 GB com a 0.126.0 instalada, a caixa reservou 3 GB de hugepages e o VPP não subiu (`rte_eal_init failed`), com uma placa de dados ou com duas. Com 8 GB ele subiu e encaminhou. O piso de 4 GB da tabela acima está em revisão na [#452](https://github.com/andrediashexa/hexarouting/issues/452).
+**Até o piso ser medido de novo, use 8 GB numa VM.** Numa VM de 6 GB com a 0.126.0 instalada, a caixa reservou 3 GB de hugepages e o VPP não subiu (`rte_eal_init failed`), com uma placa de dados ou com duas. Com 8 GB ele subiu e encaminhou. O piso de 4 GB da tabela acima está sendo medido de novo.
 
 :::
 
@@ -225,7 +225,7 @@ A cada boot, o `prisma-routing-tune` decide quantas páginas de 1 GB (hugepages)
 
 | RAM da VM | Para o sistema | Teto | Reservado (200 mil assinantes, 7 workers) |
 |-----------|----------------|------|--------------------------------------------|
-| 6 GB  | 2 GB | 3 GB  | 3 GB, e o VPP não subiu ([#452](https://github.com/andrediashexa/hexarouting/issues/452)) |
+| 6 GB  | 2 GB | 3 GB  | 3 GB, e o VPP não subiu |
 | 8 GB  | 2 GB | 5 GB  | 5 GB |
 | 16 GB | 3 GB | 12 GB | 6 GB, o desejado cabe |
 | 32 GB | 7 GB | 24 GB | 6 GB |
@@ -235,7 +235,7 @@ Quando o teto corta o desejado, o log do ajuste avisa quantos GB faltaram para o
 **`PRISMA_SUBSCRIBERS` não limita assinantes.** Ele só entra no passo 1. Uma caixa com o valor baixo não recusa o assinante seguinte: ela só tem menos memória dedicada do que a carga real pede. Mudar o valor vale no boot seguinte, porque as hugepages são reservadas pela linha de comando do kernel.
 
 :::warning
-**O passo 1 está em revisão ([#454](https://github.com/andrediashexa/hexarouting/issues/454)).** Os 13,5 KB por assinante supõem uma tabela de sessões de ~2,6 GB para 200 mil assinantes. Só que a tabela de sessões padrão tem 16 MB por tabela, duas por worker (seção abaixo), e cresce só quando você a configura. Falta medir onde a memória do VPP realmente vai, com 0, 20 mil e 200 mil assinantes. A direção combinada é que a memória dedicada ao CGNAT seja **um número que você define**, e não uma estimativa.
+**O passo 1 está em revisão.** Os 13,5 KB por assinante supõem uma tabela de sessões de ~2,6 GB para 200 mil assinantes. Só que a tabela de sessões padrão tem 16 MB por tabela, duas por worker (seção abaixo), e cresce só quando você a configura. Falta medir onde a memória do VPP realmente vai, com 0, 20 mil e 200 mil assinantes. A direção combinada é que a memória dedicada ao CGNAT seja **um número que você define**, e não uma estimativa.
 
 :::
 

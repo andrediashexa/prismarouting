@@ -145,6 +145,23 @@ grep -n "" "$S/calls" | grep -A1 "name eth9" | grep -q "systemctl restart prisma
 [ ! -e "$R/run/prisma-routing/hot-cards" ] && ok "and the record is cleared" \
   || bad "the record outlived the dataplane that knew it"
 
+echo "=== the paths it runs are the paths install.sh writes ==="
+# Measured on a KVM guest: the default pointed at /usr/lib/prisma-routing/
+# prisma-routing-tune, install.sh puts the tuner in /usr/bin, and every hot
+# card was "left to Linux" because the tuner gave no answer. Every stub above
+# overrides the path, so nothing else here could see it.
+_tune=$(sed -n 's/^TUNE=\${PRISMA_TUNE:-\(.*\)}$/\1/p' "$REPO/appliance/prisma-hot-card")
+grep -q "appliance/prisma-routing-tune\" \"\$DESTDIR$_tune\"" "$REPO/appliance/install.sh" \
+  && ok "the tuner's default path ($_tune) is where install.sh puts it" \
+  || bad "prisma-hot-card runs '$_tune', which install.sh does not write"
+grep -q "\$DESTDIR/usr/lib/prisma-routing/prisma-hot-card\"" "$REPO/appliance/install.sh" \
+  && grep -q '"/usr/lib/prisma-routing/prisma-hot-card")' "$REPO/src/prismash/prismash.py" \
+  && ok "and the VTY runs the script from where install.sh puts it" \
+  || bad "the VTY's HOT_CARD_TOOL and install.sh disagree"
+grep -q 'ACTION=="add|move"' "$REPO/appliance/udev/90-prisma-hot-card.rules" \
+  && ok "the udev rule answers the move a renamed card ends with" \
+  || bad "the rule answers add only, and systemd acts on the move"
+
 echo
 [ "$fail" = 0 ] && echo "ALL TESTS PASSED" || echo "$fail FAILURES"
 [ "$fail" = 0 ]

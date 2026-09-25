@@ -11274,6 +11274,13 @@ class Shell:
                     "allocated again as traffic returns")
         if hot:
             print_prose("taken through DPDK when it starts: " + ", ".join(hot))
+        # The configuration the dataplane gets back is the SAVED one:
+        # prisma-routing.service is PartOf the containers and replays the
+        # file when they start. So a card configured and committed and not
+        # saved comes back with nothing on it - the case this command exists
+        # for - and it is said here the way `system reboot` says it.
+        self.say_unsaved()
+        self.say_unconfirmed()
         try:
             p = subprocess.run([HOT_CARD_TOOL, "restart-dataplane"],
                                capture_output=True, text=True, timeout=300)
