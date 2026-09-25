@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.127.1 - every claimed card is bound
+
+### Fixed
+
 * **A box that claims two cards binds both, and one card that does not bind no longer takes the dataplane down** ([#451](https://github.com/andrediashexa/hexarouting/issues/451)).
   Reported by the maintainer: a box installed with one card and given a
   second came up with no dataplane at all, and `docker ps` was empty. After a
