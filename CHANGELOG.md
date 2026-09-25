@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.128.0 - a card added to a running box forwards at once
+
+### Added
+
 * **A card added to the running box forwards at once, and moves to DPDK when you say** ([#453](https://github.com/andrediashexa/hexarouting/issues/453)).
   Asked for by the maintainer. VPP's DPDK driver takes cards only when it
   starts, and restarting it throws away every subscriber's port block, so a
@@ -116,8 +122,6 @@ version has a chance of seeing it.
 * **The wiki says how the box sizes the dataplane's memory** ([#454](https://github.com/andrediashexa/hexarouting/issues/454)),
   step by step with a table by RAM, and that 8 GB is the floor to use in a VM
   until #452 measures it again: a 6 GB guest did not start the dataplane.
-
-### Fixed
 
 ## 0.127.2 - system upgrade says who it is
 
