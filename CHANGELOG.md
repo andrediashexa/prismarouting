@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.128.1 - a full memory refuses instead of falling over
+
+### Fixed
+
 * **A dataplane whose memory fills with sessions refuses the next ones instead of falling over** ([#460](https://github.com/andrediashexa/hexarouting/issues/460)).
   Every session, both session hashes and every subscriber record live in
   VPP's main heap, and an allocation there that fails aborts the process.
