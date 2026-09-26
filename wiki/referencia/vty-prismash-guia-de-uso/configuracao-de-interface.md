@@ -61,13 +61,13 @@ Ao trocar um endereço por outro, o antigo sai antes de o novo entrar — quem e
 
 :::
 
-## `linux-name` — o nome pelo qual o roteamento vê a porta
+## O nome pelo qual o roteamento vê a porta
 
-O dataplane e o sistema operacional são dois mundos, e o roteamento mora no segundo. O que liga os dois é o par: o nome pelo qual o kernel, o `ip` e o FRR enxergam esta interface.
+O dataplane e o sistema operacional são dois mundos, e o roteamento mora no segundo. O que liga os dois é o par: a interface pela qual o kernel, o `ip` e o FRR enxergam a porta do dataplane.
 
-**Uma placa entra no Linux com o próprio nome.** A caixa batiza cada placa que reivindica com o nome que ela tinha no Linux, e assim que a placa tem um bloco `interface` - com qualquer coisa dentro, até só um `no shutdown` - ela aparece no `ip` e no roteamento com esse mesmo nome. A `ens18` do dataplane é a `ens18` do FRR, sem nenhuma linha a mais, e `interface ens18` num bloco de roteamento age sobre a porta.
+**Toda interface entra no Linux com o próprio nome, sozinha.** Assim que uma interface tem um bloco `interface` - com qualquer coisa dentro, até só um `no shutdown` -, ela aparece no `ip` e no roteamento com o mesmo nome. Isso vale para placa, sub-interface, loopback e placa adicionada com a caixa rodando. A `ens18` do dataplane é a `ens18` do FRR, e nada disso aparece na configuração: não há linha a escrever.
 
-`linux-name` é o que escolhe **outro** nome para o par, e o que cria o par numa interface que não é placa - um loopback:
+O nome é do Linux, e as regras dele valem: no máximo 15 caracteres e nenhuma barra. Uma placa que ninguém nomeou fica com a grafia que o dataplane dá a ela, cheia de barras, e essa o Linux não aceita. Para essa, e para quem quer outro nome, existe `linux-name`:
 
 ```
 interface ens18
@@ -76,19 +76,15 @@ interface ens18
  exit
 ```
 
-
-:::warning
-**Num loopback sem** `**linux-name**`**, BGP, OSPF e IS-IS são configuráveis e inertes.** A configuração é aceita, commita limpa, a estrofe aparece na configuração em vigor — e nenhuma adjacência sobe, porque o roteamento não tem interface nenhuma com aquele nome para usar.
-
-:::
-
-O nome é do Linux, e as regras dele valem: no máximo 15 caracteres e nenhuma barra. Uma placa que ninguém nomeou fica com a grafia que o dataplane dá a ela - cheia de barras - e copiar essa grafia é o engano óbvio, recusado dizendo por quê:
+Só nesse caso a linha aparece na configuração: quando diz um nome **diferente** do da interface. Um nome que o Linux não aceita é recusado dizendo por quê:
 
 ```
 error: linux-name: 'GigabitEthernet0/12/0' cannot be a Linux interface name (15 characters, no '/')
 ```
 
-O par é **lido de volta** do equipamento, não lembrado pela VTY: um estado que se liga e não se lê de volta é um estado que o operador não consegue desligar. Por isso o nome que a placa recebeu por padrão aparece na configuração como um `linux-name ens18` escrito: `show configuration` mostra, `save` grava, e trocar por outro nome é trocar essa linha.
+O par é **lido de volta** do equipamento, não lembrado pela VTY. Uma configuração salva por uma versão anterior, que traz `linux-name ens18` em `interface ens18`, é lida normalmente, e o próximo `save` grava o arquivo sem a linha. A caixa continua exatamente igual.
+
+A caixa não toma um nome que o Linux já usa para outra coisa: pedir o par com um nome ocupado falha, e derrubaria o `commit` inteiro.
 
 Uma porta cujo nome o roteamento não aceita - mais de 16 caracteres, que é o que uma placa sem nome recebe do dataplane - é recusada no `commit`, com o limite na frase, antes de qualquer coisa ser aplicada. Numa caixa instalada isso não acontece: toda placa reivindicada leva o nome que tinha.
 

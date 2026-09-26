@@ -1042,13 +1042,15 @@ expect "and the kernel has it, so FRR can" \
   sh -c "ip link show loop0 >/dev/null 2>&1"
 expect "with the address on it" \
   sh -c "ip -br addr show loop0 | grep -q 10.99.0.1"
-expect_in "the pair is in the running configuration, read back from the box" \
+# SINCE #461 THE PAIR IS READ BACK AND NOT PRINTED. A Linux end named like the
+# interface is the default, and the text leaves out what is the default - the
+# line was noise on every interface of every box. So what is asserted is the
+# pair where the box reports it, `show interface`, whose last column is the
+# Linux end; and that the running configuration no longer carries the line.
+expect "the pair is read back from the box: show interface names the Linux end" \
+  sh -c "$HX -c 'show interface' | awk '\$1 == \"loop0\" && \$NF == \"loop0\"{f=1} END{exit !f}'"
+expect_not_in "and the running configuration does not print the default name (#461)" \
   "linux-name loop0" "$($HX -c 'show running-config')"
-# The default is WRITTEN, not implied: the running configuration is read off
-# `show lcp`, so a pair that existed only in a rule would be a statement in the
-# running text and not in the candidate, and the next commit would remove it.
-expect_in "and it was never typed - the default put it there (#404)" \
-  "linux-name loop0" "$($HX -c 'show configuration')"
 # And it is usable for what it exists for: FRR has to hold a REAL interface,
 # not the placeholder object zebra makes for any interface its configuration
 # names. The marker is measured rather than guessed - see the negative half at

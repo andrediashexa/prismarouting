@@ -791,15 +791,15 @@ else
 fi
 # Not "something is wrong". Whoever is at the console has to be able to act,
 # and the statement that fixes it is one line in the VTY.
-if said "linux-name <name>"; then
+if said "Give each one an 'interface' block in prismash"; then
   ok "and it names the statement that creates the pair"
 else
   bad "the report does not say how to create the pair"
 fi
-# AND THE DEFAULT A CARD GETS (#389): a card named after its Linux card is
-# paired under that name by any 'interface' block, so the operator at this
-# console is told the shortest way there and not only the override.
-if said "paired under that name by any 'interface' block"; then
+# AND THE DEFAULT EVERY INTERFACE GETS (#389, #461): a block pairs it under
+# its own name, so the operator at this console is told the shortest way
+# there, and the override only for a name Linux cannot take.
+if said "the block pairs it under its own name, or under"; then
   ok "and that a card's own block pairs it under the card's name"
 else
   bad "the report does not say a card's block pairs it by default"

@@ -141,7 +141,7 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   ipv4         IPv4 addressing
   ipv6         IPv6 addressing
   isis         IS-IS settings on this interface
-  linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
+  linux-name   another name for FRR and 'ip' to see this interface by; without one it is its own
   mac-address  the MAC this interface answers to
   mtr          ping every hop of the path, as a report
   mtu          MTU, on both the dataplane interface and its TAP
@@ -761,7 +761,7 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   ipv4         IPv4 addressing
   ipv6         IPv6 addressing
   isis         IS-IS settings on this interface
-  linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
+  linux-name   another name for FRR and 'ip' to see this interface by; without one it is its own
   mac-address  the MAC this interface answers to
   mtr          ping every hop of the path, as a report
   mtu          MTU, on both the dataplane interface and its TAP
@@ -1082,10 +1082,17 @@ whole purpose is to be reachable by the routing daemons was the one they could
 not see. Measured on a box in service — four statements, `commit complete`, the
 address on the dataplane, and `vtysh` calling `loop0` a *pseudo interface*.
 
-The default is **written into the configuration** at apply, so `show
-configuration` prints the `linux-name` nobody typed and the next commit does
-not take it away; `linux-name <other>` overrides it, and `no linux-name` takes
-the override back rather than unpairing, which the prompt says as it is typed.
+The default is put into the model at apply, so the next commit does not take
+it away, and it is **not written** when it is the interface's own name
+([#461](https://github.com/andrediashexa/hexarouting/issues/461)): the
+maintainer called `linux-name ens19` under `interface ens19` useless, and it
+said nothing a block does not. Since #461 the default covers **every**
+interface with a block whose name Linux can take and does not already hold for
+something else - a sub-interface and a hot card as well as a card and a
+loopback. `linux-name <other>` overrides it and is the only form the text
+carries; `no linux-name` takes the override back rather than unpairing, which
+the prompt says as it is typed. A file with the old same-name line is read, and
+an interface whose block held nothing else keeps its block and its pair.
 A loopback's name is free in Linux for a different reason than a card's — a
 card's is free because the card left Linux, while `loop0` is a name VPP invents
 for an interface Linux never had, its own loopback being `lo` — and either way

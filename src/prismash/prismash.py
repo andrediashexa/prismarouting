@@ -1190,8 +1190,8 @@ INTERFACE_BLOCK = {
              f"{VLAN_RANGE} [inner {VLAN_RANGE}]"),
     "vrf": ("the routing table this interface's addresses live in; 0 takes "
             "the interface back out of one", ARG_VRF),
-    "linux-name": ("the name FRR and 'ip' see this interface by; without one "
-                   "the routing daemons cannot see it at all", "<name>"),
+    "linux-name": ("another name for FRR and 'ip' to see this interface by; "
+                   "without one it is its own", "<name>"),
     "mac-address": ("the MAC this interface answers to", "<xx:xx:xx:xx:xx:xx>"),
     "ipv4": ("IPv4 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
@@ -7466,6 +7466,27 @@ class Shell:
             return False
         return True
 
+    def try_default_pair(self, ifname, host_name):
+        """
+        A pair the box decided on its own (#461), tried and not insisted on:
+        True when it was made, False - said as a note, not an error - when
+        the dataplane would not pair this kind of interface.
+        """
+        idx = self.api.interface_index(ifname)
+        r = None
+        if idx is not None:
+            r = self.api_call("lcp_itf_pair_add_del",
+                              {"is_add": True, "sw_if_index": idx,
+                               "host_if_name": host_name,
+                               "host_if_type": "LCP_API_ITF_HOST_TAP",
+                               "netns": ""})
+        if r is not None and r.state == vppapi.OK:
+            return True
+        print_prose(f"note: {ifname} has no Linux end: the dataplane would "
+                    f"not pair it, so routing does not see it; the rest of "
+                    f"the commit is applied")
+        return False
+
     def set_lcp_pair(self, ifname, host_name, is_add=True):
         """
         Pair an interface into the kernel, so FRR can see it.
@@ -7692,7 +7713,27 @@ class Shell:
             return {}
         return routes.parse_hardware_pci(out)
 
-    def pair_cards(self, target):
+    #: Where Linux lists its interfaces; a name held there by something that is
+    #: not this box's own pair is not taken (#461). A seam for the suites.
+    SYS_NET = "/sys/class/net"
+
+    def dataplane_names(self) -> set:
+        """
+        The interfaces the dataplane holds, read off `show interface` - the
+        same reading `commit check` makes when it asks whether a name is on
+        the box, so the pair's default and that refusal cannot disagree about
+        what exists. Empty when the dataplane cannot be asked.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0 or not out.strip():
+            return set()
+        return set(routes.parse_interfaces(out))
+
+    def linux_holds(self, name):
+        """Whether Linux already has an interface called `name`."""
+        return os.path.exists(os.path.join(self.SYS_NET, name))
+
+    def pair_cards(self, target, running=None):
         """
         The default a claimed card's Linux end gets when nobody chose one
         (#389): a card with an `interface` block is paired into Linux under
@@ -7753,6 +7794,40 @@ class Shell:
         for card in defaulted:
             if card in blocks and card not in target.linux_names:
                 target.linux_names[card] = card
+        # AND EVERY OTHER INTERFACE WITH A BLOCK (#461). The maintainer called
+        # `linux-name` useless in the configuration, and it now is: a
+        # sub-interface, a hot card on AF_XDP (#453), any interface the
+        # configuration opens a block for, is paired under its own name when
+        # Linux can take the name. Not when Linux already has an interface
+        # called that which is not this box's own pair - measured on #453, a
+        # pair asked for a name Linux holds fails with -13 and takes the
+        # commit with it.
+        #
+        # ONLY AN INTERFACE THAT IS THERE, or that this configuration makes: a
+        # block for a name the dataplane has not got is refused later, by name
+        # ("the dataplane does not have it"), and a pair asked for it first
+        # would fail in the dataplane with a bare retval instead. A
+        # sub-interface and a loopback are created by the same commit, so they
+        # count before they exist.
+        #
+        # AND ON A BEST-EFFORT FOOTING. Not every interface VPP holds can be
+        # paired: lab/bypass.sh configures the packet generator's pg0, VPP
+        # answers "Call failed" to a pair for it, and the commit that asked
+        # for nothing of the kind failed and rolled back. A pair the box
+        # decided on its own that the dataplane refuses is said and left out;
+        # a pair the operator asked for with `linux-name` still fails the
+        # commit, as it always has.
+        paired = running.linux_names if running is not None else {}
+        present = self.dataplane_names() | set(target.vlans) \
+            | set(target.loopbacks)
+        for name in blocks:
+            if name in target.linux_names or linux_ifname_error(name):
+                continue
+            if name not in present:
+                continue
+            if not self.linux_holds(name) or paired.get(name) == name:
+                target.linux_names[name] = name
+                target.soft_pairs.add(name)
 
     def defaulted_cards(self) -> set:
         """
@@ -8004,7 +8079,7 @@ class Shell:
         running = self.running_config()
         # The default a claimed card's pair gets, written into the target
         # before the delta is taken so that the delta carries it (#389).
-        self.pair_cards(target)
+        self.pair_cards(target, running)
         d = running.delta_to(target)
         self.remap = []
         self.cutoff = []
@@ -9287,6 +9362,10 @@ class Shell:
             if had and had != host and not self.set_lcp_pair(ifname, "",
                                                              False):
                 return False
+            if ifname in target.soft_pairs:
+                if not self.try_default_pair(ifname, host):
+                    target.linux_names.pop(ifname, None)
+                continue
             if not self.set_lcp_pair(ifname, host, True):
                 return False
 
@@ -12128,6 +12207,7 @@ class Shell:
             self.candidate.macs.pop(gone, None)
             self.candidate.vrfs.pop(gone, None)
             self.candidate.ra_enabled.discard(gone)
+            self.candidate.declared.discard(gone)
             return True
 
         if line.startswith("no cgnat interface "):

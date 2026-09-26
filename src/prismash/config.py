@@ -2255,6 +2255,16 @@ class Config:
         # could not turn it off and the running configuration did not admit
         # it was on.
         self.linux_names: dict[str, str] = {}
+        # Interfaces whose block holds nothing a dictionary above carries
+        # (#461): since the same-name pair is not written, `interface ens19`
+        # with nothing under it is what a file says for a card that is only
+        # paired. Kept, so the block survives a save and the pair a commit.
+        self.declared: set[str] = set()
+        # Which of linux_names the box decided on its own, best-effort
+        # (#461); never rendered. On the Config and not the Shell, because a
+        # commit applies the same target twice - a check, then the change -
+        # and the first pass has already written the name the second reads.
+        self.soft_pairs: set[str] = set()
         # Loopbacks this configuration says should exist. A loopback is
         # CREATED by naming it, the way a sub-interface is, because there is
         # nothing else to create it from - and an ISP router needs one for a
@@ -2382,7 +2392,12 @@ class Config:
         out = []
         # Description first: it is what the interface IS, and a reader
         # scanning a long configuration for one port finds it by name.
-        if ifname in self.linux_names:
+        # ONLY WHEN IT IS NOT THE INTERFACE'S OWN NAME (#461). The box pairs a
+        # card and a loopback under their own names by itself (#389, #404),
+        # and every configuration carried `linux-name ens19` under `interface
+        # ens19` saying so. A different name - one VPP invented with a '/' in
+        # it, or one an operator chose - is still a statement, and shown.
+        if self.linux_names.get(ifname, ifname) != ifname:
             out.append(f" linux-name {self.linux_names[ifname]}")
         if ifname in self.macs:
             out.append(f" mac-address {self.macs[ifname]}")
@@ -2540,7 +2555,7 @@ class Config:
                 | set(self.admin_down) | set(self.addresses) | set(self.vlans)
                 | set(self.vrfs) | set(self.macs) | set(self.linux_names)
                 | set(self.loopbacks) | set(self.ra_enabled)
-                | set(self.vrrp))
+                | set(self.vrrp) | self.declared)
 
     def connected_prefixes(self) -> dict:
         """
@@ -2678,6 +2693,7 @@ class Config:
                 del d[name]
         self.admin_down -= taps
         self.ra_enabled -= taps
+        self.declared -= taps
 
     @classmethod
     def parse(cls, text: str, dataplane: bool = False) -> "Config":
@@ -2694,6 +2710,7 @@ class Config:
         model's, and only a file is taken through denest_nat().
         """
         cfg = cls()
+        headers = []           # every `interface` block the file opens
         section = "cgnat"
         routing_lines = []     # the file's line number of each routing line
         pool = None
@@ -2921,9 +2938,11 @@ class Config:
                 cfg.macs.pop(gone, None)
                 cfg.vrfs.pop(gone, None)
                 cfg.ra_enabled.discard(gone)
+                cfg.declared.discard(gone)
                 cfg.vrrp.pop(gone, None)
             elif s.startswith("interface "):
                 iface = s.split()[1]
+                headers.append(iface)
                 # A loopback is created by being named, the way a
                 # sub-interface is: there is nothing else on the box to
                 # create it from. `loop<n>` is VPP's own spelling, so the
@@ -3121,6 +3140,24 @@ class Config:
         # in reach - `prismash --load` runs before anything asks VPP anything -
         # so this is the one place that cannot tell a pair's TAP from a TAP an
         # operator made. Shell.load does it, where the box can be asked.
+        #
+        # A BLOCK WITH NOTHING ELSE IN IT IS THE SAME-NAME PAIR (#461). The
+        # Linux end of an interface takes the interface's own name, and that
+        # name is not written - it is what `linux-name <the same name>` said,
+        # and the maintainer called the line useless. The block stays, so the
+        # interface does, and reading it back gives the pair its name again:
+        # without this a card whose only statement was its pair would drop
+        # out of the file at the next save and lose the pair at the commit
+        # after.
+        #
+        # DECLARED, NOT PAIRED, and that difference was measured: a pair
+        # invented here is one a commit insists on, and lab/bypass.sh's pg-1
+        # - an interface VPP will not pair - then failed every commit. The
+        # block is kept; whether it gets a pair is Shell.pair_cards()'s to
+        # decide, where the box can be asked.
+        for iface in headers:
+            if iface not in cfg.interface_names():
+                cfg.declared.add(iface)
         return cfg
 
     @staticmethod

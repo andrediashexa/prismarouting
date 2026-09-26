@@ -153,6 +153,24 @@ IF_NAMED=$($HX -c "show interface $TAPNAME" 2>&1)
 printf '%s\n' "$IF_NAMED" | sed 's/^/  named: /'
 
 echo
+echo "=== a block alone pairs an interface under its own name (#461) ==="
+# The maintainer called `linux-name` useless in the configuration. A second
+# veth, with nothing typed for it but a description: its Linux end must come
+# up as host-veth2, and the configuration must not carry a linux-name line.
+ip link add veth2-out type veth peer name veth2 2>/dev/null
+ip link set veth2-out up; ip link set veth2 up
+vppctl create host-interface name veth2 >/dev/null
+BLOCK=$($HX -c "configure" -c "interface host-veth2" -c "description uplink2" \
+        -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$BLOCK" | tail -2 | sed 's/^/  /'
+BLOCK_LCP=$(vppctl show lcp 2>&1 | tr -d '\r')
+printf '%s\n' "$BLOCK_LCP" | grep -i veth2 | sed 's/^/  /'
+BLOCK_LINK=$(ip -br link show host-veth2 2>&1)
+echo "  $BLOCK_LINK"
+BLOCK_RUN=$($HX -c "show running-config" 2>&1)
+printf '%s\n' "$BLOCK_RUN" | grep -A3 "interface host-veth2" | sed 's/^/  /'
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 # The negative half first: with no pair there is no Linux interface at all.
@@ -165,9 +183,14 @@ expect_in "the product creates the pair, and the commit says so" \
 # Requirement 3 of #182, measured against a real dataplane and not a stub.
 expect_in "the self-test names the unpaired port before anything is committed" \
   "no linux_cp pair on: host-veth-vpp" "$ST_BEFORE"
-expect_in "and says what creates one" "linux-name <name>" "$ST_BEFORE"
+expect_in "and says what creates one" "an 'interface' block" "$ST_BEFORE"
 expect_in "and once the product has paired it, it says so instead" \
   "1 dataplane interface(s) paired into the kernel" "$ST_AFTER"
+expect_in "a block with no linux-name pairs the interface under its own name" \
+  "host-veth2" "$BLOCK_LCP"
+expect_in "  and Linux has it by that name" "host-veth2" "$BLOCK_LINK"
+expect_not_in "  and the configuration carries no linux-name for it" \
+  "linux-name host-veth2" "$BLOCK_RUN"
 expect_not_in "with nothing still reported unpaired" \
   "no linux_cp pair on" "$ST_AFTER"
 expect "the TAP exists in Linux" ip link show vppctl0

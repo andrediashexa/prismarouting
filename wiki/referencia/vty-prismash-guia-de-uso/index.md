@@ -292,7 +292,7 @@ Com o dataplane inalcançável a checagem é **pulada, não reprovada**: uma VTY
 
 O bloco BGP tem página própria também: [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinho, peer group, família de endereço, e o que o equipamento recusa antes de mandar para o roteamento.
 
-O bloco de interface tem onze declarações — endereços IPv4 e IPv6, VLAN, VRF, MTU, MAC, `linux-name`, estado administrativo, descrição, anúncio de roteador IPv6 e uRPF — e ganhou página própria: [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ). É lá que está o `linux-name`, sem o qual o roteamento não enxerga a porta, e a criação de loopbacks.
+O bloco de interface tem onze declarações — endereços IPv4 e IPv6, VLAN, VRF, MTU, MAC, `linux-name`, estado administrativo, descrição, anúncio de roteador IPv6 e uRPF — e ganhou página própria: [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ). É lá que está como o roteamento enxerga cada porta com o próprio nome, o `linux-name` para quando é preciso outro, e a criação de loopbacks.
 
 # Ver também
 
@@ -313,7 +313,7 @@ prisma# [edit interface ens18] ?
   ipv4         IPv4 addressing
   ipv6         IPv6 addressing
   isis         IS-IS settings on this interface
-  linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
+  linux-name   another name for FRR and 'ip' to see this interface by; without one it is its own
   mac-address  the MAC this interface answers to
   mtr          ping every hop of the path, as a report
   mtu          MTU, on both the dataplane interface and its TAP

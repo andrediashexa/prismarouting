@@ -1533,15 +1533,14 @@ if vppctl show version >/dev/null 2>&1; then
       say "        BGP, OSPF and IS-IS will never form an adjacency."
     fi
     say "        without a pair:$unpaired"
-    say "        give each one a 'linux-name <name>' under 'interface' in"
-    say "        prismash, and commit. A card named after its Linux card is"
-    say "        paired under that name by any 'interface' block for it."
+    say "        give each one an 'interface' block in prismash, and commit:"
+    say "        the block pairs it under its own name."
   elif [ -n "$unpaired" ]; then
     warn "no linux_cp pair on:$unpaired"
     say "         FRR and 'ip' cannot see these, so no routing protocol can"
-    say "         run on them. Set 'linux-name <name>' under 'interface' in"
-    say "         prismash, and commit. A card named after its Linux card is"
-    say "         paired under that name by any 'interface' block for it."
+    say "         run on them. Give each one an 'interface' block in prismash,"
+    say "         and commit: the block pairs it under its own name, or under"
+    say "         'linux-name <name>' when Linux cannot take that one."
   else
     ok "$npaired dataplane interface(s) paired into the kernel, so FRR sees them"
   fi
