@@ -58,6 +58,18 @@ NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 DEFAULT_SEQ = 65535
 #: The directions a policy is applied in, and the suffix FRR's map gets.
 DIRECTIONS = {"import": "IN", "export": "OUT"}
+#: The IGPs a policy can be exported into (#458 step 2), and the protocols
+#: each can redistribute from, as FRR's `redistribute` names them. An export
+#: into an IGP is one route-map per source protocol: FRR's ospfd and isisd
+#: evaluate a redistribute route-map without knowing the route's origin, so
+#: the origin is chosen by which `redistribute` carries the map.
+IGPS = {"ospf": ("bgp", "connected", "kernel", "static", "isis"),
+        "isis": ("bgp", "connected", "kernel", "static", "ospf")}
+#: What `from protocol` takes. Junos says `direct` for connected; both are
+#: read, and held as FRR's word.
+PROTOCOLS = ("bgp", "ospf", "isis", "static", "connected", "kernel")
+PROTOCOL_ALIASES = {"direct": "connected"}
+U32 = 4294967295
 FILTER_KINDS = ("exact", "orlonger", "longer", "upto")
 COMMUNITY_OPS = ("add", "set", "delete")
 
@@ -71,6 +83,9 @@ class Term:
         self.filters = []        # (network, kind, upto length or None)
         self.communities = []
         self.as_paths = []
+        self.protocols = []      # FRR's words; empty is every protocol
+        self.tags = []
+        self.metrics = []
         self.sets = []           # (what, [args])
         self.then = None         # "accept" | "reject" | "next term" | None
 
@@ -217,8 +232,21 @@ def _parse_term(term, w):
         if w[1] == "as-path" and len(w) == 3:
             term.as_paths.append(w[2])
             return None
-        return ("from: prefix-list <name>, route-filter <network> <how>, "
-                "community <name> or as-path <name>")
+        if w[1] == "protocol" and len(w) == 3:
+            proto = PROTOCOL_ALIASES.get(w[2], w[2])
+            if proto not in PROTOCOLS:
+                return ("from protocol: bgp, ospf, isis, static, direct "
+                        "or kernel")
+            if proto not in term.protocols:
+                term.protocols.append(proto)
+            return None
+        if w[1] in ("tag", "metric") and len(w) == 3:
+            if not re.fullmatch(r"\d+", w[2]) or int(w[2]) > U32:
+                return f"from {w[1]} <0-{U32}>"
+            (term.tags if w[1] == "tag" else term.metrics).append(w[2])
+            return None
+        return ("from: prefix-list, route-filter, community, as-path, "
+                "protocol, tag or metric")
     if w[0] == "set" and len(w) >= 3:
         if w[1] == "local-preference" and len(w) == 3 \
                 and re.fullmatch(r"\d+", w[2]) and int(w[2]) <= 4294967295:
@@ -232,8 +260,19 @@ def _parse_term(term, w):
                 for a in w[2:]):
             term.sets.append(("as-path-prepend", list(w[2:])))
             return None
-        return ("set: local-preference <0-4294967295>, community "
-                "add|set|delete <name>, or as-path-prepend <asn>...")
+        if w[1] in ("metric", "tag") and len(w) == 3 \
+                and re.fullmatch(r"\d+", w[2]) and int(w[2]) <= U32:
+            term.sets.append((w[1], [w[2]]))
+            return None
+        if w[1] == "next-hop" and len(w) == 3:
+            try:
+                ipaddress.ip_address(w[2])
+            except ValueError:
+                return f"set next-hop: '{w[2]}' is not an address"
+            term.sets.append(("next-hop", [w[2]]))
+            return None
+        return ("set: local-preference, community add|set|delete, "
+                "as-path-prepend, metric, tag or next-hop")
     if w[0] == "then" and w[1:] in (["accept"], ["reject"], ["next", "term"]):
         term.then = " ".join(w[1:])
         return None
@@ -355,8 +394,60 @@ def unnest(numbered):
 
 
 def map_name(policy, direction):
-    """The FRR route-map a policy becomes when used in `direction`."""
-    return f"{PREFIX}{policy}-{DIRECTIONS[direction]}"
+    """
+    The FRR route-map a policy becomes when used in `direction`: `import`
+    or `export` on a BGP neighbor, or `<igp>:<protocol>` for the part of an
+    export into an IGP that redistributes from one protocol.
+    """
+    if direction in DIRECTIONS:
+        return f"{PREFIX}{policy}-{DIRECTIONS[direction]}"
+    igp, proto = direction.split(":")
+    return f"{PREFIX}{policy}-{igp.upper()}-{proto.upper()}"
+
+
+def export_lines(policy, igp):
+    """
+    The `redistribute` statements an `export <policy>` inside `router
+    <igp>` stands for: one per protocol the IGP can take routes from, each
+    with the route-map compiled for that protocol. Every protocol, not only
+    the ones the policy names today, so a term added to the policy later
+    applies without the export being typed again; a protocol no term
+    accepts gets a map whose only clause is the default, reject.
+    """
+    out = []
+    for proto in IGPS[igp]:
+        rmap = map_name(policy, f"{igp}:{proto}")
+        if igp == "ospf":
+            out.append(f" redistribute {proto} route-map {rmap}")
+        else:
+            for fam, src in (("ipv4", proto), ("ipv6",
+                             "ospf6" if proto == "ospf" else proto)):
+                for level in ("level-1", "level-2"):
+                    out.append(f" redistribute {fam} {src} {level} "
+                               f"route-map {rmap}")
+    return out
+
+
+def igp_findings(pol, policy):
+    """
+    Why `policy` cannot be exported into an IGP, one reason per term that
+    says something only a BGP route has, or [] when it can. Refused at the
+    export rather than compiled into a map that would ignore it.
+    """
+    out = []
+    for term in pol.statements.get(policy, {}).values():
+        bgp_only = []
+        if term.communities:
+            bgp_only.append("from community")
+        if term.as_paths:
+            bgp_only.append("from as-path")
+        bgp_only += [f"set {what}" for what, _ in term.sets
+                     if what in ("local-preference", "community",
+                                 "as-path-prepend", "next-hop")]
+        if bgp_only:
+            out.append(f"term {term.name}: {', '.join(bgp_only)} is for "
+                       f"BGP routes")
+    return out
 
 
 def _filter_entry(network, kind, upto):
@@ -388,8 +479,15 @@ def compile_policy(pol, policy, direction):
     """
     terms = pol.statements.get(policy, {})
     rmap = map_name(policy, direction)
+    # Which protocol's routes this map sees: BGP's on a neighbor, and on an
+    # export into an IGP the one its `redistribute` names. A term naming
+    # other protocols never matches here, so it is left out rather than
+    # compiled into a clause FRR would evaluate against the wrong routes.
+    origin = "bgp" if direction in DIRECTIONS else direction.split(":")[1]
     lists, clauses = [], []
     for pos, term in enumerate(terms.values(), start=1):
+        if term.protocols and origin not in term.protocols:
+            continue
         base = f"{PREFIX}{policy}-T{term.name}"
         # The prefix conditions of the term, ORed, into one list per family.
         per_family = {"ip": [], "ipv6": []}
@@ -430,12 +528,23 @@ def compile_policy(pol, policy, direction):
                 clause.append(f" match community {comm}")
             if aspath:
                 clause.append(f" match as-path {aspath}")
+            # One value each: FRR takes one `match tag` and one `match
+            # metric` per clause, and a second replaces the first.
+            if term.tags:
+                clause.append(f" match tag {term.tags[-1]}")
+            if term.metrics:
+                clause.append(f" match metric {term.metrics[-1]}")
             if action == "permit":
                 clause += _set_lines(pol, term)
                 if term.then != "accept":
                     clause.append(" on-match next")
             clauses += clause + ["exit"]
-    clauses += [f"route-map {rmap} permit {DEFAULT_SEQ}", "exit"]
+    # THE JUNOS DEFAULT, which is not one default: a BGP route no term
+    # decided is accepted (the maintainer chose it for #458), and a route no
+    # term decided on its way into an IGP is not exported - Junos's OSPF and
+    # IS-IS export nothing that no policy accepts.
+    default = "permit" if direction in DIRECTIONS else "deny"
+    clauses += [f"route-map {rmap} {default} {DEFAULT_SEQ}", "exit"]
     return lists + clauses
 
 
@@ -456,6 +565,12 @@ def _set_lines(pol, term):
                 out.append(f" set community {members}")
             else:
                 out.append(f" set comm-list {PREFIX}C-{name} delete")
+        elif what in ("metric", "tag"):
+            out.append(f" set {what} {args[0]}")
+        elif what == "next-hop":
+            fam = "ipv6" if ":" in args[0] else "ip"
+            out.append(f" set {fam} next-hop "
+                       f"{'global ' if fam == 'ipv6' else ''}{args[0]}")
     return out
 
 
@@ -477,4 +592,14 @@ def compile_all(pol, uses):
                        f"{seq * 5} permit {member}")
     for policy, direction in sorted(uses):
         out += compile_policy(pol, policy, direction)
-    return out
+    # A policy used twice - imported on one session and exported on another,
+    # or exported into an IGP from five protocols - emits its prefix lists
+    # once per use. Handed to FRR once each.
+    seen, unique = set(), []
+    for line in out:
+        if not line.startswith((" ", "exit", "route-map ")):
+            if line in seen:
+                continue
+            seen.add(line)
+        unique.append(line)
+    return unique
