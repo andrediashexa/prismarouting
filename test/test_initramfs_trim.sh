@@ -10,10 +10,11 @@ ok()  { echo "  [ ok ] $1"; }
 bad() { echo "  FAIL: $1"; fail=$((fail + 1)); }
 V=6.1.0-50-amd64
 K=$T/usr/lib/modules/$V/kernel
-for d in drivers/net/ethernet/intel drivers/gpu/drm drivers/infiniband \
+for d in drivers/net/ethernet/intel drivers/net/wireless/intel drivers/gpu/drm drivers/infiniband \
          fs/xfs fs/btrfs fs/nfs \
          drivers/ata drivers/scsi drivers/nvme drivers/block drivers/md \
          drivers/usb/storage drivers/hid drivers/input drivers/virtio \
+         drivers/net/virtio drivers/net/phy \
          fs/ext4 fs/squashfs fs/overlayfs fs/isofs fs/fat; do
   mkdir -p "$K/$d"; : > "$K/$d/x.ko"
 done
@@ -23,8 +24,14 @@ echo "=== prereqs, as initramfs-tools asks every hook ==="
 echo "=== what goes, and what stays ==="
 DESTDIR=$T version=$V sh "$REPO/appliance/initramfs/prisma-trim"; RC=$?
 [ $RC = 0 ] && ok "the hook exits 0" || bad "the hook exited $RC"
-for gone in drivers/net drivers/gpu drivers/infiniband fs/xfs fs/btrfs fs/nfs; do
+for gone in drivers/net/wireless drivers/gpu drivers/infiniband fs/xfs fs/btrfs fs/nfs; do
   [ -e "$K/$gone" ] && bad "$gone was kept" || ok "$gone dropped"
+done
+# The NICs (#468): loaded from the root, they came up after the network and
+# the tuner had run, and a fresh 0.133.0 booted with no management address
+# and no card in VPP. drivers/net/virtio stands in for virtio_net.ko.
+for kept in drivers/net/ethernet/intel drivers/net/virtio drivers/net/phy; do
+  [ -e "$K/$kept/x.ko" ] && ok "$kept kept" || bad "$kept was dropped: the card would exist only after the network and the tuner ran"
 done
 for kept in drivers/ata drivers/scsi drivers/nvme drivers/block drivers/md \
             drivers/usb/storage drivers/hid drivers/input drivers/virtio \

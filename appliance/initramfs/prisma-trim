@@ -6,11 +6,23 @@
 # the kernel prints a word, which is the long first line an operator stares
 # at. Measured on 0.126.0's initrd, by what it held:
 #
-#   drivers/net       41 MB   NICs load from the root; no root here is on the network
+#   drivers/net       41 MB   of which only the classes no box forwards on go:
+#                               wireless, wwan, ieee802154, CAN, arcnet, FDDI,
+#                               WAN, hamradio (about half of it)
 #   drivers/gpu       17 MB   the console is the firmware's framebuffer until the root is up
 #   infiniband, wwan, ieee802154, ppp   ~5 MB
 #   fs/ xfs btrfs nfs f2fs and kin      ~13 MB   the live root is iso9660 + squashfs
 #                                                + overlay; an installed one is ext4
+#
+# THE ETHERNET DRIVERS ARE KEPT (#468). 0.132.0 dropped the whole of
+# drivers/net on the argument that no root here is on the network, and the
+# argument was right and the conclusion wrong: a NIC driver loaded from the
+# root loads after udev coldplug, and nothing orders networking.service or the
+# tuner after it. Measured on a freshly installed 0.133.0: both ran before the
+# cards existed, so the management card came up DOWN with no address and the
+# tuner gave VPP no NIC ('ens19' was named and VPP was given no NIC). Loaded
+# here, each card exists under its final name before the root is mounted,
+# which is what every release before 0.132.0 relied on without saying so.
 #
 # KEPT, all of it: every storage, USB, input and block driver, ext4, squashfs,
 # overlay, isofs and fat - a disk this box cannot find at boot is a box that
@@ -23,7 +35,10 @@ case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
 K="${DESTDIR}/usr/lib/modules/${version}/kernel"
 [ -d "$K" ] || K="${DESTDIR}/lib/modules/${version}/kernel"
 [ -d "$K" ] || exit 0
-for d in drivers/net drivers/gpu drivers/infiniband drivers/media \
+for d in drivers/net/wireless drivers/net/wwan drivers/net/ieee802154 \
+         drivers/net/can drivers/net/arcnet drivers/net/fddi drivers/net/wan \
+         drivers/net/hamradio \
+         drivers/gpu drivers/infiniband drivers/media \
          drivers/staging sound \
          fs/xfs fs/btrfs fs/nfs fs/nfsd fs/f2fs fs/ocfs2 fs/gfs2 fs/jfs \
          fs/reiserfs fs/ceph fs/smb fs/cifs fs/nilfs2 fs/ubifs; do
