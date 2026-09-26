@@ -13,7 +13,8 @@ reader behind it is a comment.
 ## The product, in three sentences
 
 Prisma Routing is an installable Debian appliance: a VPP/DPDK dataplane with a
-CGNAT that allocates a **port block** per subscriber (BPA), FRR for routing,
+CGNAT that gives each subscriber a **port block** - by formula (deterministic)
+or allocated on demand (BPA, bulk port allocation) - FRR for routing,
 and one VTY — `prismash` — for both. It is sold to ISPs, it carries
 subscribers, and the thing it is judged on is whether an operator can trust
 what the box says about itself. `README.md` has the product; `docs/context.md`

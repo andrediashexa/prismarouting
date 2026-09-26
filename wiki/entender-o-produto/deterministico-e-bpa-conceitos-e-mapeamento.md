@@ -1,4 +1,4 @@
-# BPA — conceitos e mapeamento
+# Determinístico e BPA — conceitos e mapeamento
 
 A aritmética que substitui a tabela de alocação, e as consequências práticas dela. Leia antes de mexer em qualquer campo de mapeamento de um pool.
 
@@ -52,22 +52,22 @@ O estado de sessão e o bitmap de portas por assinante são **por worker e sem l
 
 O equipamento resolve isso encaminhando o pacote ao worker dono do assinante, antes de traduzir — e isso é verificado sobre pacotes reais, não sobre contadores.
 
-# BPA é a técnica; determinístico e dinâmico são os modos dela
+# Determinístico e BPA: duas formas de CGNAT por bloco
 
-Esta distinção é a que mais se perde, e perdê-la leva a conclusões erradas sobre o produto:
+Os dois dão a cada assinante um **bloco contíguo de portas**, em vez de um registro por fluxo. O que muda é como o bloco é atribuído, e com isso o que precisa ser registrado:
 
-* **BPA** — *Bloco de Portas Alocadas* — é a **técnica**: um bloco contíguo de portas por assinante, em vez de um registro por fluxo.
-* **Determinístico** e **dinâmico** são os **dois modos dentro do BPA**. Os dois alocam por bloco; o que muda é *como* o bloco é atribuído.
+* **Determinístico** — o bloco sai de uma **fórmula** sobre a configuração do pool. Para achar quem usava um IP e uma porta basta a conta, sem log nenhum de alocação. É o `mode deterministic`.
+* **BPA** — *Bulk Port Allocation* — os blocos são **alocados dinamicamente**, sob demanda: o assinante recebe uma primeira alocação e ganha mais blocos em degraus, conforme enche os que tem. Cada alocação e cada liberação vira um registro, e são esses registros que respondem quem usava a porta. É o `mode dynamic`, com `block-size` como degrau e `max-blocks` como teto.
 
-A escolha é entre os dois modos. Nunca entre "BPA" e um deles — não existe um sem o outro, e nenhum dos dois é uma técnica diferente do BPA.
+Os comandos `show bpa ...` e os contadores do dataplane usam o nome `bpa` para os dois modos. É o nome do módulo que faz as duas coisas, e continua assim para não quebrar scripts e caixas instaladas, mas não quer dizer que um pool determinístico seja BPA.
 
-|     | Modo determinístico | Modo dinâmico |
-|-----|---------------------|---------------|
-| Como o bloco é atribuído | por fórmula         | sob demanda   |
-| Log de alocação | **nenhum**          | um registro IPFIX por bloco |
-| Endereços públicos necessários | todos os assinantes precisam caber | sobreassinatura possível |
+|     | Determinístico (`mode deterministic`) | BPA (`mode dynamic`) |
+|-----|-------------------------------------|--------------------|
+| Como o bloco é atribuído | por fórmula                         | sob demanda        |
+| Log de alocação | **nenhum**                          | um registro IPFIX por bloco |
+| Endereços públicos necessários | todos os assinantes precisam caber  | sobreassinatura possível |
 | Prova para autoridade | algoritmo + configuração vigente (trilha) | os registros IPFIX |
-| Blocos estendidos | não                 | sim — assinante que enche o bloco recebe outro |
+| Blocos estendidos | não                                 | sim — assinante que enche o bloco recebe outro |
 
 200 mil assinantes em determinístico com blocos de 512 portas exigem um `/21` público. Em dinâmico com sobreassinatura, bem menos.
 

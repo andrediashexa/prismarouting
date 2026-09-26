@@ -410,7 +410,7 @@ Entradas escritas antes da corrente existir continuam legíveis e são reportada
 
 # O que é recusado
 
-**Log por fluxo não existe e não vai existir.** É precisamente o que o BPA foi feito para evitar. Um CGNAT registrando cada fluxo gera volume que nenhum provedor consegue guardar por um ano de forma útil.
+**Log por fluxo não existe e não vai existir.** É precisamente o que o bloco de portas foi feito para evitar. Um CGNAT registrando cada fluxo gera volume que nenhum provedor consegue guardar por um ano de forma útil.
 
 # Ver também
 

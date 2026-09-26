@@ -19,4 +19,4 @@ Antes do primeiro comando, decida qual interface é a de gerência. Ela **não**
 # Ver também
 
 * [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — depois que estiver no ar
-* [BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que o mapeamento é uma conta e não uma tabela
+* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que o mapeamento é uma conta e não uma tabela
