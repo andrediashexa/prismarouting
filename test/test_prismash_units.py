@@ -4852,8 +4852,12 @@ _sh.frr_ctx = []
 check(_sh.statement_grammar() is prismash.TREE["config"],
       "and so does the top level of configuration mode")
 _sh.frr_ctx = ["interface pg0"]
-check(_sh.statement_grammar() is prismash.INTERFACE_BLOCK,
+check(_sh.statement_grammar() is prismash.PORT_BLOCK,
       "an interface block resolves against the block's own statements")
+# A bundle's own statements only in a bundle (#455).
+_sh.frr_ctx = ["interface ae0"]
+check(_sh.statement_grammar() is prismash.INTERFACE_BLOCK,
+      "and a bundle's block against the whole of it, member and lacp too")
 for _block in ("router bgp 65001", "route-map RM permit 10",
                "router ospf", "vrf red"):
     _sh.frr_ctx = [_block]

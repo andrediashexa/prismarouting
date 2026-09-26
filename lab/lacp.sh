@@ -87,8 +87,6 @@ expect_in "the box's own show lacp says both members distribute" \
   "MUX-state: COLLECTING_DISTRIBUTING" "$LACP"
 expect_in "packets cross the bundle" " 0% packet loss" "$PING"
 expect_in "and still cross it with one member cut" " 0% packet loss" "$PING2"
-expect_in "the running configuration reads the bundle back" \
-  "interface ae0
- member host-m1
- member host-m2" "$RUN"
+expect_said "the running configuration reads the bundle back" \
+  "interface ae0 member host-m1 member host-m2" "$RUN"
 verdict

@@ -1423,6 +1423,13 @@ INTERFACE_BLOCK["no"] = ("remove a statement from this interface",
                          {k: v for k, v in INTERFACE_BLOCK.items()
                           if k not in ("exit",)
                           and k not in INTERFACE_NO_REFUSED})
+#: An interface that is not a bundle: the same block without a bundle's own
+#: statements (#455), which are refused there.
+BUNDLE_ONLY = ("member", "lacp", "load-balance")
+PORT_BLOCK = {k: v for k, v in INTERFACE_BLOCK.items() if k not in BUNDLE_ONLY}
+PORT_BLOCK["no"] = (INTERFACE_BLOCK["no"][0],
+                    {k: v for k, v in INTERFACE_BLOCK["no"][1].items()
+                     if k not in BUNDLE_ONLY})
 
 
 def dataplane_statement(words):
@@ -3033,7 +3040,10 @@ def block_grammar(block, words):
     if block.strip() == STATIC_BLOCK:
         return STATIC_BLOCK_GRAMMAR
     if block.startswith("interface "):
-        return INTERFACE_BLOCK
+        # A bundle's own statements only in a bundle (#455).
+        if len(block.split()) > 1 and _is_bundle(block.split()[1]):
+            return INTERFACE_BLOCK
+        return PORT_BLOCK
     if block.strip() == "rpki":
         return RPKI_BLOCK
     if block.split()[:2] == ["router", "isis"]:
@@ -7793,7 +7803,7 @@ class Shell:
         bidx = self.api.interface_index(ifname)
         midx = self.api.interface_index(member)
         if bidx is None or midx is None:
-            self.err(f"{ifname}: no interface named {member}")
+            self.err(f"no interface named {member}")
             return False
         if not self.set_admin(member, True):
             return False
@@ -7802,7 +7812,7 @@ class Shell:
                            "is_passive": bundle["lacp"] == "passive",
                            "is_long_timeout": bundle["rate"] == "slow"})
         if r.state != vppapi.OK:
-            self.err_dataplane(f"could not add {member} to {ifname}: "
+            self.err_dataplane(f"could not add {member} to its bundle: "
                                f"{r.reason}")
             return False
         return True
@@ -18123,7 +18133,11 @@ class Shell:
         if not self.frr_ctx:
             return TREE[self.grammar_mode()]
         if self.frr_ctx[-1].startswith("interface "):
-            return INTERFACE_BLOCK
+            # A bundle's own statements only in a bundle (#455): on a port
+            # they are refused, so `?` there does not offer them.
+            if _is_bundle(self.frr_ctx[-1].split()[1]):
+                return INTERFACE_BLOCK
+            return PORT_BLOCK
         return None
 
     def spell_out(self, line):

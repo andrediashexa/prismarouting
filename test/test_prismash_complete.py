@@ -7823,5 +7823,19 @@ check("bundle member" not in _t and "two bundles" not in _t,
       f"two real ports in one bundle pass: {_t!r}")
 print("  a missing port, a port twice, a member with config: refused")
 
+# And at the prompt, before any commit: a bundle as a member, and a setting
+# bundle_statement() does not know.
+for _l, _want in (("member ae1", "a bundle's member is a port, not a bundle"),
+                  ("lacp mode sideways", "lacp mode")):
+    sh = shell_with_frr()
+    sh.feed("configure")
+    sh.feed("interface ae0")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.feed(_l)
+    check("error:" in out.getvalue() and _want in out.getvalue(),
+          f"{_l!r} is refused at the prompt: {out.getvalue().strip()!r}")
+print("  a bundle as a member, and an unknown lacp mode: refused at the prompt")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
