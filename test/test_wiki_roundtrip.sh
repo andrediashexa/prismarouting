@@ -206,6 +206,25 @@ else
 fi
 [ -f "$STUB/sent.json" ] && bad "it refused and sent the document anyway"
 
+echo "=== the same heading, with WIKI_RETITLE=1, renames the document (#463) ==="
+# The one way a heading that differs is published: asked for by name. It goes
+# as the title FIELD, and the body still opens with no heading - the #165 rule
+# holds for a rename too.
+rm -f "$STUB/sent.json"
+if WIKI_RETITLE=1 sh "$WORK/repo/tools/wiki-push.sh" "$DOCID" "$WORK/wrong.md" \
+     > "$WORK/retitle.log" 2>&1 && [ -f "$STUB/sent.json" ]; then
+  python3 - "$STUB/sent.json" <<'PYEOF' && ok "sent as the title, the body without it" || bad "the rename was not sent as a title field: $(cat "$STUB/sent.json")"
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("title") == "Outra coisa qualquer"
+         and not d["text"].startswith("# ") and d["text"].startswith("texto")
+         else 1)
+PYEOF
+else
+  bad "WIKI_RETITLE=1 did not publish the rename:"
+  sed 's/^/    /' "$WORK/retitle.log"
+fi
+
 echo "=== a file with no heading at all is sent as it stands ==="
 # Not every file comes from a pull. One written by hand has no title line and
 # must not have its first line eaten.
