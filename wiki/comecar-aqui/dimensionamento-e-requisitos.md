@@ -182,6 +182,8 @@ O modo conservador do segundo caso não é um defeito: o equipamento não pode f
 
 Quem decide quanto de CPU o plano de controle tem é a divisão dos núcleos por papel, logo abaixo, e isso é uma decisão de dimensionamento, não um limite de processo.
 
+:::
+
 ## Núcleos por papel: plano de controle, thread principal e workers
 
 Os núcleos físicos do processador que atende a placa são distribuídos nesta ordem: primeiro os do **plano de controle**, depois - se pedido - um só para a **thread principal do dataplane**, e o resto vira **worker**. Isso se configura na VTY, em `system` > `cpu`:
@@ -217,8 +219,6 @@ this boot:
   VPP workers           1-3
   isolated from Linux   1-3
 ```
-
-:::
 
 ## O que o arquivo de ajuste aceita
 
