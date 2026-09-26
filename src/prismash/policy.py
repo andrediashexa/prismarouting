@@ -74,9 +74,6 @@ class Term:
         self.sets = []           # (what, [args])
         self.then = None         # "accept" | "reject" | "next term" | None
 
-    def matches_prefixes(self):
-        return bool(self.prefix_lists or self.filters)
-
 
 class Policies:
     """Everything `policy-options` holds."""

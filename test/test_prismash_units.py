@@ -2049,6 +2049,78 @@ check(sh.system_rewrite("exit") == "" and sh.nat_ctx == ["system"],
       "exit leaves one level")
 ok("system > dataplane, read and written in one shape")
 
+print("\n=== routing policy in the VTY (#458) ===")
+check(prismash.compiled_object("route-map PO-P-IN permit 10")
+      and prismash.compiled_object(" ip prefix-list PO-X seq 5 permit 10.0.0.0/8")
+      and not prismash.compiled_object("route-map MINE permit 10"),
+      "the compiler's namespace, and nothing else")
+_run = ["route-map PO-P-IN permit 10", " match ip address prefix-list PO-P-T1-4",
+        "exit", "ip prefix-list PO-P-T1-4 seq 5 permit 10.0.0.0/8",
+        "route-map MINE permit 10", " set local-preference 50", "exit",
+        "router bgp 65000", " address-family ipv4 unicast",
+        "  neighbor 192.0.2.1 route-map PO-P-IN in",
+        "  neighbor 192.0.2.1 route-map PO-Q-OUT out", " exit-address-family",
+        "exit"]
+check(prismash.strip_compiled(_run) == _run[4:],
+      f"what the compiler emitted comes out, the operator's route-map stays: "
+      f"{prismash.strip_compiled(_run)}")
+check(prismash.policy_uses(_run) == {("P", "import"), ("Q", "export")},
+      f"the uses, read off the neighbors: {prismash.policy_uses(_run)}")
+_c = Config()
+_c.policy = ["policy-options policy-statement P term 1 then reject",
+             "policy-options policy-statement Q term 1 then accept"]
+_c.routing = prismash.strip_compiled(_run)
+_fl = prismash.frr_lines(_c)
+check(_fl[-len(_c.routing):] == _c.routing
+      and "route-map PO-P-IN deny 10" in _fl
+      and "route-map PO-Q-OUT permit 10" in _fl,
+      f"FRR is handed the compiled uses, then the routing: {_fl[:6]}")
+_pdir = tempfile.mkdtemp()
+_saved_pp = prismash.POLICY_PATH
+prismash.POLICY_PATH = os.path.join(_pdir, "policy-options")
+try:
+    sh = shell()
+    check(sh.read_policy() == [], "no file is no policy")
+    check(sh.write_policy(_c.policy) and sh.read_policy() == _c.policy,
+          "written by rename, and read back")
+    prismash.POLICY_PATH = os.path.join(_pdir, "no", "such", "dir")
+    rv, text = driven(lambda: sh.write_policy(_c.policy))
+    check("policy-options: its source was not written" in text,
+          f"a file that cannot be written is said: {text!r}")
+finally:
+    prismash.POLICY_PATH = _saved_pp
+sh = shell()
+sh.candidate = Config()
+sh.mode = "config"
+for _l in ("policy-options", "prefix-list C", "203.0.113.0/24", "exit",
+           "policy-statement P", "term 10", "from prefix-list C",
+           "then accept", "then reject"):
+    driven(lambda: sh.do_config(_l))
+check(sh.nat_ctx == ["policy-options", "policy-statement P", "term 10"],
+      f"the levels: {sh.nat_ctx}")
+check("policy-options policy-statement P term 10 then reject"
+      in sh.candidate.policy
+      and "policy-options policy-statement P term 10 then accept"
+      not in sh.candidate.policy,
+      "a then replaces the term's then: the last word said holds")
+check(sh.policy_rewrite("no then reject")
+      == "no policy-options policy-statement P term 10 then reject",
+      "no, inside a term, is the model's line with no")
+rv, text = driven(lambda: sh.stage_policy("policy-options community X "
+                                          "members 1"))
+check("is not a community" in text, f"a bad statement is refused: {text!r}")
+rv, text = driven(lambda: sh.stage_policy("no policy-options prefix-list Z"))
+check("this policy has no such statement" in text,
+      f"removing what is not there is said: {text!r}")
+driven(lambda: sh.stage_policy("no policy-options policy-statement P"))
+check(not any("policy-statement P" in l for l in sh.candidate.policy),
+      "no policy-statement takes it and every term under it")
+driven(lambda: sh.do_config("end"))
+rv, text = driven(lambda: sh.do_config("route-map PO-X permit 10"))
+check("the PO- names belong to policy-options" in text,
+      f"the compiler's namespace is refused at the prompt: {text!r}")
+ok("the namespace, the file, the levels, the staging")
+
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
 # Mutation shown red: write only the assignment, dropping the other lines.
 tune = os.path.join(_root, "tune", "tune.env")

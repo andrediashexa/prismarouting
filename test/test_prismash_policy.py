@@ -103,15 +103,14 @@ check(policy.network_error("10.0.0.0/8") is None
 ok("each refused with the reason")
 
 print("\n=== route-filter: each kind as the prefix-list entry it becomes ===")
-F = policy._filter_entry
-check(F("10.0.0.0/8", "exact", None) == "10.0.0.0/8", "exact")
-check(F("10.0.0.0/8", "orlonger", None) == "10.0.0.0/8 le 32", "orlonger")
-check(F("10.0.0.0/8", "longer", None) == "10.0.0.0/8 ge 9 le 32", "longer")
-check(F("10.0.0.1/32", "longer", None) is None,
+check(policy._filter_entry("10.0.0.0/8", "exact", None) == "10.0.0.0/8", "exact")
+check(policy._filter_entry("10.0.0.0/8", "orlonger", None) == "10.0.0.0/8 le 32", "orlonger")
+check(policy._filter_entry("10.0.0.0/8", "longer", None) == "10.0.0.0/8 ge 9 le 32", "longer")
+check(policy._filter_entry("10.0.0.1/32", "longer", None) is None,
       "longer than a host route is nothing")
-check(F("10.0.0.0/8", "upto", 24) == "10.0.0.0/8 le 24", "upto /24")
-check(F("10.0.0.0/8", "upto", 8) == "10.0.0.0/8", "upto its own length")
-check(F("2001:db8::/32", "orlonger", None) == "2001:db8::/32 le 128",
+check(policy._filter_entry("10.0.0.0/8", "upto", 24) == "10.0.0.0/8 le 24", "upto /24")
+check(policy._filter_entry("10.0.0.0/8", "upto", 8) == "10.0.0.0/8", "upto its own length")
+check(policy._filter_entry("2001:db8::/32", "orlonger", None) == "2001:db8::/32 le 128",
       "an IPv6 network orlonger goes to 128")
 ok("exact, orlonger, longer, upto")
 
@@ -176,6 +175,22 @@ check(bad and "terms, 'term <name>'" in bad[0][2],
 _out, _ = policy.unnest(list(enumerate(["ssh port 22"], 1)))
 check(_out == [(1, "ssh port 22")], "and a line outside the block passes")
 ok("one shape, written and read")
+
+print("\n=== the small pieces, each called on its own ===")
+_pp = policy.Policies()
+check(policy._parse_one(_pp, ["prefix-list", "L", "10.0.0.0/8"]) is None
+      and _pp.prefix_lists == {"L": ["10.0.0.0/8"]}, "one statement in")
+_t = policy.Term("1")
+check(policy._parse_term(_t, ["then", "accept"]) is None
+      and _t.then == "accept", "one term statement in")
+check(policy._family("2001:db8::/32") == "ipv6"
+      and policy._family("10.0.0.0/8") == "ip", "the family of a network")
+_pp.communities["X"] = ["65000:1"]
+_t.sets = [("community", ["set", "X"]), ("local-preference", ["50"])]
+check(policy._set_lines(_pp, _t) == [" set community 65000:1",
+                                     " set local-preference 50"],
+      f"a term's sets as FRR writes them: {policy._set_lines(_pp, _t)}")
+ok("parse one, term one, family, sets")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -86,6 +86,8 @@ CGNAT_LEVEL = "cgnat"
 #: > `interface <card>`. The maintainer asked for the dataplane statement
 #: under `system` and nothing else yet (2026-09-25).
 SYSTEM_HIERARCHY = "system"
+#: The routing policy's hierarchy (#458), Junos-style.
+POLICY_HIERARCHY = "policy-options"
 DATAPLANE_LEVEL = "dataplane"
 #: The most memory `cgnat memory` takes, in GB (#454): a bound on a typo, not
 #: on a machine. The tuner caps what is asked at what the box's RAM can give,
@@ -3735,7 +3737,10 @@ class Config:
             "vrrp_set": vrrp_set,
             "vrrp_del": vrrp_del,
             "globals": [g for g in other.globals if g not in self.globals],
-            "routing_changed": self.routing != other.routing,
+            # A policy is routing: it is compiled into what FRR is handed,
+            # so a change to it is a reload like any other (#458).
+            "routing_changed": (self.routing != other.routing
+                                or self.policy != other.policy),
             "route_desc_changed": (self.static_descriptions
                                    != other.static_descriptions),
         }
