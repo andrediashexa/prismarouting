@@ -13884,8 +13884,10 @@ class Shell:
             if name not in pol.statements:
                 self.err(f"no policy-statement named {name}")
                 return
-            print(f"policy-statement {name}: "
-                  f"{len(pol.statements[name])} term(s)")
+            # The name last, on its own row: it is as long as the operator
+            # made it.
+            print(f"policy-statement {name}")
+            print(f"  terms: {len(pol.statements[name])}")
             if args:
                 block = policy_mod.nest([l for l in self.policy_in_view()
                                          if l.split()[1:3] ==

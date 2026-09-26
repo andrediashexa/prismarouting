@@ -158,7 +158,8 @@ Medido num laboratório com dois enlaces para o mesmo trânsito e um terceiro AS
 
 ```
 prisma> show policy
-policy-statement UP: 2 term(s)
+policy-statement UP
+  terms: 2
   applied: neighbor 10.0.0.2 import, ospf export
 ```
 

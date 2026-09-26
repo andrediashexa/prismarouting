@@ -2340,7 +2340,7 @@ sh.read_policy = lambda: list(_UP)
 check(sh.policy_in_view() == _UP,
       "in operational mode the policy in view is the box's own file")
 rv, text = driven(lambda: sh.show_policy([]))
-check("policy-statement UP: 2 term(s)" in text
+check("policy-statement UP\n  terms: 2" in text
       and "applied: neighbor 10.0.0.2 import, ospf export" in text,
       f"show policy: each one, and where: {text!r}")
 rv, text = driven(lambda: sh.show_policy(["UP"]))
