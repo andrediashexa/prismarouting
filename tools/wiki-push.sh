@@ -122,8 +122,17 @@ print("  %s last changed %s; mirror pulled %s" % (d.get("title"), updated, pulle
 title = d.get("title") or ""
 text = open(path).read()
 head = "# %s\n" % title
+new_title = None
 if text.startswith(head):
     body = text[len(head):].lstrip("\n")
+elif text.lstrip().startswith("# ") and os.environ.get("WIKI_RETITLE") == "1":
+    # A RENAME, asked for by name (#463): the file's heading becomes the
+    # document's title, sent as the title field and never as body text, so
+    # the rule above still holds. Only with WIKI_RETITLE=1, because a
+    # heading that differs by accident is still the #165 defect.
+    first, _, rest = text.lstrip().partition("\n")
+    new_title = first[2:].strip()
+    body = rest.lstrip("\n")
 elif text.lstrip().startswith("# "):
     first = text.lstrip().split("\n", 1)[0]
     sys.exit("error: %s opens with %r, which is not this document's title "
@@ -132,7 +141,11 @@ elif text.lstrip().startswith("# "):
              "writes." % (path, first, title))
 else:
     body = text
-json.dump({"id": doc_id, "text": body, "publish": True}, open(payload, "w"))
+_doc = {"id": doc_id, "text": body, "publish": True}
+if new_title:
+    _doc["title"] = new_title
+    print("  retitled: %r -> %r" % (title, new_title))
+json.dump(_doc, open(payload, "w"))
 PYEOF
 
 curl -sk -X POST "$URL/api/documents.update" \

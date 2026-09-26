@@ -62,12 +62,12 @@ Os dois dão a cada assinante um **bloco contíguo de portas**, em vez de um reg
 Os comandos `show bpa ...` e os contadores do dataplane usam o nome `bpa` para os dois modos. É o nome do módulo que faz as duas coisas, e continua assim para não quebrar scripts e caixas instaladas, mas não quer dizer que um pool determinístico seja BPA.
 
 |     | Determinístico (`mode deterministic`) | BPA (`mode dynamic`) |
-|-----|---------------------|---------------|
-| Como o bloco é atribuído | por fórmula         | sob demanda   |
-| Log de alocação | **nenhum**          | um registro IPFIX por bloco |
-| Endereços públicos necessários | todos os assinantes precisam caber | sobreassinatura possível |
+|-----|-------------------------------------|--------------------|
+| Como o bloco é atribuído | por fórmula                         | sob demanda        |
+| Log de alocação | **nenhum**                          | um registro IPFIX por bloco |
+| Endereços públicos necessários | todos os assinantes precisam caber  | sobreassinatura possível |
 | Prova para autoridade | algoritmo + configuração vigente (trilha) | os registros IPFIX |
-| Blocos estendidos | não                 | sim — assinante que enche o bloco recebe outro |
+| Blocos estendidos | não                                 | sim — assinante que enche o bloco recebe outro |
 
 200 mil assinantes em determinístico com blocos de 512 portas exigem um `/21` público. Em dinâmico com sobreassinatura, bem menos.
 

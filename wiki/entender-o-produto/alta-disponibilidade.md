@@ -28,12 +28,12 @@ flowchart TB
 ```
 
 | Depois do failover | NAT convencional | CGNAT determinístico |
-|--------------------|------------------|--------------------|
-| IP público do assinante | muda             | **não muda**       |
-| Bloco de portas    | muda             | **não muda**       |
-| Conexões em curso  | caem             | caem               |
+|--------------------|------------------|----------------------|
+| IP público do assinante | muda             | **não muda**         |
+| Bloco de portas    | muda             | **não muda**         |
+| Conexões em curso  | caem             | caem                 |
 | Conexões novas     | precisam de alocação nova | funcionam de imediato |
-| Estado a sincronizar para o acima | a tabela inteira | **nenhum**         |
+| Estado a sincronizar para o acima | a tabela inteira | **nenhum**           |
 
 A linha que importa: conexões em curso caem nos dois casos, mas no determinístico elas se restabelecem **no mesmo endereço público**. Para o assinante, a diferença entre "caiu e voltou" e "caiu, voltou e agora meu IP é outro" é grande — a segunda quebra tudo que dependia do endereço.
 
