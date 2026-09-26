@@ -658,6 +658,19 @@ if container_default "$DESTDIR"; then
 else
   CONTAINER_DEFAULT=0
 fi
+# THE LOADER IS PART OF THE DATAPLANE THIS BOX RUNS (#459). On the unit path
+# it is PartOf=vpp.service as well, through a drop-in; on the containers it
+# must not be, because the containers unit Conflicts=vpp.service and PartOf
+# both made `systemctl restart prisma-routing-containers` a transaction
+# systemd refuses. Removed as well as written, so a box that moves to the
+# containers loses it.
+UNITPATH_DROPIN=$DESTDIR/etc/systemd/system/prisma-routing.service.d/prisma-routing-unit-path.conf
+if [ "$CONTAINER_DEFAULT" = 1 ]; then
+  rm -f "$UNITPATH_DROPIN"
+else
+  install -D -m 0644 "$REPO/appliance/systemd/prisma-routing-unit-path.conf" \
+    "$UNITPATH_DROPIN"
+fi
 
 # In a chroot or container there is no systemd running; installing is still
 # valid, only enabling services is not. That is the normal case when the ISO

@@ -79,6 +79,15 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`systemctl restart prisma-routing-containers` works on a container box** ([#459](https://github.com/andrediashexa/hexarouting/issues/459)).
+  systemd refused it on every one, with "Transaction contains conflicting jobs
+  'restart' and 'stop' for prisma-routing.service". The containers unit
+  Conflicts=vpp.service, and the configuration loader was PartOf both
+  dataplanes, so one transaction asked it to stop and to restart. The loader
+  is now PartOf the containers in its unit, and PartOf vpp.service only
+  through a drop-in that the installer writes on a box that runs
+  vpp.service.
+
 ## 0.130.0 - dataplane lives under system
 
 ### Added

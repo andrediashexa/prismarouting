@@ -116,8 +116,10 @@ echo "=== nothing pulls in the dataplane this box is not running ==="
 # is decided nowhere. The loader would fight its own dataplane at every boot.
 #
 # After= is the ordering and is kept: it is not a dependency and starts
-# nothing. PartOf is kept too, naming both, because PartOf a unit nobody
-# started is inert.
+# nothing. PartOf follows the dataplane the box runs: the containers in the
+# unit, vpp.service in a drop-in only a unit-path box gets (#459). Naming both
+# was not inert - it made a restart of the containers a transaction systemd
+# refuses, "conflicting jobs 'restart' and 'stop' for prisma-routing.service".
 pullers=""
 for u in "$SYSD"/*.service "$SYSD"/*.timer "$SYSD"/*.conf; do
   [ -f "$u" ] || continue
@@ -138,8 +140,15 @@ done
 [ -z "$pullers" ] \
   && ok "no unit pulls in a dataplane: After= orders, and starts nothing" \
   || bad "these units would START a dataplane they only mean to run after:$pullers - on a box running the other one, that is systemd being asked to run both and no file saying which wins"
+body "$SYSD/prisma-routing.service" | grep -q "^PartOf=.*vpp.service" \
+  && bad "prisma-routing.service is PartOf vpp.service in the unit itself: on a container box that makes 'systemctl restart prisma-routing-containers' a transaction systemd refuses (#459)" \
+  || ok "the loader is not PartOf vpp.service in the unit every box gets"
+body "$SYSD/prisma-routing-unit-path.conf" | grep -qx "PartOf=vpp.service" \
+  && grep -q 'prisma-routing-unit-path.conf' "$REPO/appliance/install.sh" \
+  && ok "the unit path adds it in a drop-in install.sh writes only there" \
+  || bad "nothing makes the loader PartOf vpp.service on a unit-path box"
 body "$SYSD/prisma-routing.service" | grep -q "^PartOf=.*prisma-routing-containers.service" \
-  && ok "and the configuration loader is PartOf both, so it follows whichever runs" \
+  && ok "and the configuration loader is PartOf the containers, so it follows them" \
   || bad "prisma-routing.service is not PartOf prisma-routing-containers.service: on a container box a dataplane restart would leave the CGNAT configuration unapplied and nothing would say so"
 
 echo
