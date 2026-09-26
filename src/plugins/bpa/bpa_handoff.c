@@ -276,9 +276,9 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	   */
 	  u32 owner =
 	    bm->n_workers
-	      ? vlib_get_worker_thread_index (
+	      ? vlib_get_worker_thread_index (bm->owner_wid[
 		  lent_owner != ~0u ? lent_owner
-				    : bpa_owner_worker (&bm->workers, sub_idx))
+				    : bpa_owner_worker (&bm->workers, sub_idx)])
 	      : 0;
 	  ti[0] = (u16) owner;
 	  if (owner == this_thread)

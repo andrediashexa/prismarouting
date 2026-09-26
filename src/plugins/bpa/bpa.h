@@ -108,6 +108,20 @@ typedef struct
   u32 out2in_fq_index;
   u32 n_workers;
   bpa_divisor_t workers; /* spreads subscribers over the workers */
+  /*
+   * WHICH WORKERS TRANSLATE (#466). n_workers above counts the workers that
+   * own subscribers - every VPP worker, unless `bpa { cgnat-workers <list> }`
+   * in startup.conf names fewer. The rest only take packets off the cards
+   * and hand them to the owner, which is the split the maintainer asked to
+   * be able to benchmark against every worker doing both.
+   *
+   * owner_wid[w] is the VPP worker id of BPA worker w; thread_w[thread] is
+   * the BPA worker a thread is, or ~0 for the main thread and for a worker
+   * that only receives. Everything that turns one into the other goes
+   * through bpa_worker_id() and bpa_sub_thread() below.
+   */
+  u32 *owner_wid;
+  u32 *thread_w;
 
   /*
    * WHO IS HOLDING A BLOCK THAT WAS LENT (#210), keyed by pool and block.
@@ -385,6 +399,8 @@ clib_error_t *bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate);
  * clamp and the lifetimes. Everything that changes the MAPPING is
  * deliberately absent.
  */
+/* The workers that own subscribers (#466); see the definition. */
+void bpa_set_owners (bpa_main_t *bm, u32 *wids);
 clib_error_t *bpa_pool_settings_set (u8 *name, bpa_filter_t filter,
 				     u8 max_blocks, u8 initial_blocks,
 				     u32 alg, u32 alg_set,
@@ -546,7 +562,8 @@ bpa_worker_id (const bpa_main_t *bm, u32 thread_index, u32 *w, u32 *nw)
   if (PREDICT_TRUE (bm->n_workers != 0))
     {
       *nw = bm->n_workers;
-      *w = thread_index - 1;
+      *w = thread_index < vec_len (bm->thread_w) ? bm->thread_w[thread_index]
+						   : ~0;
     }
   else
     {
@@ -568,7 +585,8 @@ bpa_sub_thread (const bpa_main_t *bm, u32 sub_idx)
 {
   if (bm->n_workers == 0)
     return 0;
-  return bpa_owner_worker (&bm->workers, sub_idx) + 1;
+  return vlib_get_worker_thread_index (
+    bm->owner_wid[bpa_owner_worker (&bm->workers, sub_idx)]);
 }
 
 /* IP protocol number -> bpa_proto_t, or -1 when we do not translate it. */

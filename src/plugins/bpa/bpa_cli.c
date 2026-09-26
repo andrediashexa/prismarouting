@@ -3436,3 +3436,39 @@ VLIB_CLI_COMMAND (bpa_sessions_command, static) = {
   .short_help = "bpa session-table [buckets <n> memory <MB>]",
   .function = bpa_sessions_command_fn,
 };
+
+/*
+ * `show bpa workers` (#466): which workers translate and which only receive.
+ * The split is startup.conf's (`bpa { cgnat-workers <list> }`), and this is
+ * the dataplane saying what it took from it.
+ */
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
+static clib_error_t *
+bpa_show_workers_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			     vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 k, t;
+
+  if (vlib_num_workers () == 0)
+    {
+      vlib_cli_output (vm, "no workers: the main thread translates");
+      return 0;
+    }
+  for (k = 0; k < vlib_num_workers (); k++)
+    {
+      t = vlib_get_worker_thread_index (k);
+      vlib_cli_output (vm, "worker %u (thread %u): %s", k, t,
+		       t < vec_len (bm->thread_w) && bm->thread_w[t] != ~0
+			 ? "translates" : "receives and hands over");
+    }
+  vlib_cli_output (vm, "%u of %u worker(s) translate", bm->n_workers,
+		   vlib_num_workers ());
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_workers_command, static) = {
+  .path = "show bpa workers",
+  .short_help = "show bpa workers",
+  .function = bpa_show_workers_command_fn,
+};

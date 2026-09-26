@@ -1011,7 +1011,10 @@ bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
   const char *feature;
   int rv;
 
-  if (bpa_main.n_workers)
+  /* On any box with workers, and not only when every worker translates:
+   * with `cgnat-workers` naming fewer, a packet can arrive on a worker that
+   * owns nobody, and only the handoff takes it to one that does (#466). */
+  if (vlib_num_workers ())
     feature = is_inside ? "bpa-in2out-handoff" : "bpa-out2in-handoff";
   else
     feature = is_inside ? "bpa-in2out" : "bpa-out2in";
@@ -1616,8 +1619,10 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 	{
 	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
 
-	  /* thread 0 only carries blocks when there are no workers */
-	  if (bm->n_workers && i == 0)
+	  /* thread 0 only carries blocks when there are no workers, and a
+	   * worker that only receives carries none (#466) */
+	  if (bm->n_workers
+	      && (i >= vec_len (bm->thread_w) || bm->thread_w[i] == ~0))
 	    continue;
 
 	  bpa_worker_id (bm, i, &w, &nw);
@@ -2347,8 +2352,13 @@ bpa_init (vlib_main_t *vm)
    * With no workers configured everything stays on thread 0 and the
    * handoff nodes are never put on the feature arc.
    */
-  bm->n_workers = vlib_num_workers ();
-  bpa_divisor_init (&bm->workers, bm->n_workers ? bm->n_workers : 1);
+  {
+    u32 *all = 0, k;
+
+    for (k = 0; k < vlib_num_workers (); k++)
+      vec_add1 (all, k);
+    bpa_set_owners (bm, all);
+  }
 
   bm->in2out_fq_index =
     vlib_frame_queue_main_init (bpa_in2out_node.index, 0);
@@ -2380,6 +2390,77 @@ bpa_init (vlib_main_t *vm)
 }
 
 VLIB_INIT_FUNCTION (bpa_init);
+
+/*
+ * The workers that own subscribers (#466): `wids` is a vector of VPP worker
+ * ids, taken over by the call. Every worker by default; fewer only from
+ * startup.conf, before any pool exists - a pool's dynamic slices are sharded
+ * by this count, so it is never changed under one.
+ */
+/* not a unit: it reads VPP's thread layout (vlib_get_worker_thread_index)
+ * and resets bpa_main's worker tables; lab/cgnat-workers.sh starts a
+ * dataplane with a split and sends traffic through it. */
+void
+bpa_set_owners (bpa_main_t *bm, u32 *wids)
+{
+  u32 k;
+
+  vec_free (bm->owner_wid);
+  bm->owner_wid = wids;
+  bm->n_workers = vec_len (wids);
+  vec_free (bm->thread_w);
+  vec_validate_init_empty (bm->thread_w, vlib_num_workers (), ~0);
+  for (k = 0; k < vec_len (wids); k++)
+    bm->thread_w[vlib_get_worker_thread_index (wids[k])] = k;
+  bpa_divisor_init (&bm->workers, bm->n_workers ? bm->n_workers : 1);
+}
+
+/*
+ * `bpa { cgnat-workers <list> }` in startup.conf (#466): the VPP worker ids
+ * that translate, the rest only receive and hand over. Refused rather than
+ * trimmed when it names a worker this dataplane does not have, or none -
+ * a box whose CGNAT runs on a different set than its startup.conf says is
+ * the benchmark measuring something else.
+ */
+/* not a unit: a VLIB_CONFIG_FUNCTION, called by VPP with its own parser
+ * while it reads startup.conf; lab/cgnat-workers.sh gives it one. */
+static clib_error_t *
+bpa_config (vlib_main_t *vm, unformat_input_t *input)
+{
+  uword *bitmap = 0;
+  u32 *wids = 0, i;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "cgnat-workers %U", unformat_bitmap_list, &bitmap))
+	;
+      else
+	return clib_error_return (0, "bpa: unknown input '%U'",
+				  format_unformat_error, input);
+    }
+  if (!bitmap)
+    return 0;
+  clib_bitmap_foreach (i, bitmap)
+    {
+      if (i >= vlib_num_workers ())
+	{
+	  clib_bitmap_free (bitmap);
+	  vec_free (wids);
+	  return clib_error_return (
+	    0, "bpa: cgnat-workers names worker %u, and this dataplane has "
+	       "%u (0-%u)",
+	    i, vlib_num_workers (), vlib_num_workers () - 1);
+	}
+      vec_add1 (wids, i);
+    }
+  clib_bitmap_free (bitmap);
+  if (vec_len (wids) == 0)
+    return clib_error_return (0, "bpa: cgnat-workers names no worker");
+  bpa_set_owners (&bpa_main, wids);
+  return 0;
+}
+
+VLIB_CONFIG_FUNCTION (bpa_config, "bpa");
 
 /*
  * The version column of `show plugins`, and the only version the LOADED
