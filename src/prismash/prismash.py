@@ -383,6 +383,31 @@ def policy_uses(routing):
     return uses
 
 
+def policy_applications(routing):
+    """
+    {policy: ["neighbor <peer> import", "ospf export", ...]}: where the
+    routing applies each policy, read off the compiled route-maps it names
+    (#458 step 3). An IGP export is one line per source protocol, and said
+    once.
+    """
+    out = {}
+    for line in routing:
+        m = re.fullmatch(r"\s*neighbor (\S+) route-map PO-(\S+)-(IN|OUT) "
+                         r"(in|out)", line)
+        if m:
+            out.setdefault(m.group(2), []).append(
+                f"neighbor {m.group(1)} "
+                f"{'import' if m.group(3) == 'IN' else 'export'}")
+            continue
+        m = re.fullmatch(r"\s*redistribute .*route-map "
+                         r"PO-(\S+)-(OSPF|ISIS)-[A-Z]+", line)
+        if m:
+            where = f"{m.group(2).lower()} export"
+            if where not in out.setdefault(m.group(1), []):
+                out[m.group(1)].append(where)
+    return out
+
+
 def frr_lines(cfg):
     """
     The routing FRR is handed for `cfg`: what the policy compiles to for the
@@ -975,6 +1000,8 @@ SHOW = {
     "hardware": ("the box's physical NICs as Linux has them, and which one "
                  "carries the default route", None),
     "version": ("Prisma Routing, VPP and FRR versions", None),
+    "policy": ("routing policies: each one, its terms, and where it is "
+               "applied", "[<policy>]"),
     "system": ("this machine", {
         "cpu": ("which cores do what: configured, and in effect", None)}),
     "logging": ("system log (FRR)", None),
@@ -2383,6 +2410,11 @@ def running_from_live_medium():
 TREE = {
     "operational": {
         "configure": ("edit the candidate configuration", None),
+        # `test policy` (#458 step 3), Junos's word: what a policy does with a
+        # route to a prefix, term by term, before it is applied anywhere.
+        "test": ("try something before it is applied", {
+            "policy": ("what a policy does with a route to a prefix, term by "
+                       "term", "<policy> <prefix>")}),
         # Offered rather than hidden. The comment on start_shell() already
         # made this argument: hiding it was never the boundary, the capability
         # check is - and a command an administrator cannot find is one they
@@ -12033,6 +12065,8 @@ class Shell:
             self.do_probe(w[0], w[1:])
         elif w[0] == "clear":
             self.do_clear(line)
+        elif w[:2] == ["test", "policy"]:
+            self.test_policy(w[2:])
         elif w[0] == "system":
             # Before show_or_pass, which hands every word it does not know to
             # FRR: typed today, `system reboot` reached vtysh and was refused
@@ -13821,6 +13855,86 @@ class Shell:
             fence = ""
         print(f"  control plane held to {fence or '(not held)'}")
 
+    def policy_in_view(self):
+        """
+        The policy source this screen is about: the candidate's in
+        configuration mode, where what is being written is the question, and
+        the box's own file otherwise.
+        """
+        if self.mode != "operational" and self.candidate is not None:
+            return list(self.candidate.policy)
+        return self.read_policy()
+
+    def show_policy(self, args):
+        """
+        `show policy [<policy>]` (#458 step 3): every policy-statement with
+        its terms and where the running routing applies it, or one of them
+        in full, as it is typed under `policy-options`.
+        """
+        pol, _ = policy_mod.parse(self.policy_in_view())
+        if len(args) > 1:
+            self.err("usage: show policy [<policy>]")
+            return
+        names = args or sorted(pol.statements)
+        if not names:
+            print("no policy-statement is configured")
+            return
+        uses = policy_applications(self.frr.running())
+        for name in names:
+            if name not in pol.statements:
+                self.err(f"no policy-statement named {name}")
+                return
+            # The name last, on its own row: it is as long as the operator
+            # made it.
+            print(f"policy-statement {name}")
+            print(f"  terms: {len(pol.statements[name])}")
+            if args:
+                block = policy_mod.nest([l for l in self.policy_in_view()
+                                         if l.split()[1:3] ==
+                                         ["policy-statement", name]])
+                for line in block[2:-2]:
+                    print(" " + line[1:])
+            where = uses.get(name, [])
+            print("  applied: " + (", ".join(where) if where
+                                   else "nowhere in the running routing"))
+
+    def test_policy(self, args):
+        """
+        `test policy <policy> <prefix>` (#458 step 3): what the policy does
+        with a route to that prefix, term by term, from policy.evaluate().
+        A condition the prefix alone cannot answer is said, not guessed.
+        """
+        if len(args) != 2:
+            self.err("usage: test policy <policy> <prefix>")
+            return
+        name, prefix = args
+        pol, _ = policy_mod.parse(self.policy_in_view())
+        if name not in pol.statements:
+            self.err(f"no policy-statement named {name}")
+            return
+        try:
+            ipaddress.ip_network(prefix, strict=False)
+        except ValueError:
+            self.err(f"not a prefix: {prefix}")
+            return
+        rows = policy_mod.evaluate(pol, name, prefix)
+        # The default row is left to the result below, which says it for
+        # both uses; evaluate() cannot know which one this is.
+        for term, verdict, why in rows:
+            if term is None:
+                continue
+            print(f"  term {term}: {verdict}")
+            print(f"      {why}")
+        term, verdict, _ = rows[-1]
+        if term is not None:
+            print(f"result: {verdict}, by term {term}")
+        else:
+            # The default depends on the use, and a test is asked before
+            # any use - so both are said.
+            print("result: no term decided it")
+            print_prose("on a BGP neighbor that is accepted; exported into "
+                        "OSPF or IS-IS it is not")
+
     def show_cgnat_memory(self):
         """
         `show cgnat memory` (#454): the memory the CGNAT has now, what it
@@ -13890,6 +14004,9 @@ class Shell:
             return
         if line == "show system cpu":
             self.show_system_cpu()
+            return
+        if line.split()[:2] == ["show", "policy"]:
+            self.show_policy(line.split()[2:])
             return
         # Before the forwarding below, which would otherwise hand `ha` to a
         # dataplane that has no such command.

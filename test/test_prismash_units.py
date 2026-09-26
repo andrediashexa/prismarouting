@@ -2317,6 +2317,64 @@ check("redistribute ipv6 static level-2 route-map PO-EXT-ISIS-STATIC"
 sh.frr_ctx = []
 ok("the namespace, the file, the levels, the staging")
 
+print("\n=== show policy and test policy (#458 step 3) ===")
+_run = ["router bgp 65000", " address-family ipv4 unicast",
+        "  neighbor 10.0.0.2 route-map PO-UP-IN in",
+        "router ospf", " redistribute static route-map PO-UP-OSPF-STATIC",
+        " redistribute bgp route-map PO-UP-OSPF-BGP"]
+check(prismash.policy_applications(_run)
+      == {"UP": ["neighbor 10.0.0.2 import", "ospf export"]},
+      f"where a policy is applied, an IGP export said once: "
+      f"{prismash.policy_applications(_run)}")
+_UP = ["policy-options prefix-list C 203.0.113.0/24",
+       "policy-options policy-statement UP term 10 from prefix-list C",
+       "policy-options policy-statement UP term 10 then accept",
+       "policy-options policy-statement UP term 20 from route-filter "
+       "198.51.100.0/22 upto /24",
+       "policy-options policy-statement UP term 20 then reject"]
+sh = shell()
+sh.frr = type("F", (prismash.Frr,), {"available": lambda s: False,
+                                     "running": lambda s: _run,
+                                     "show": lambda s, c: (1, "")})()
+sh.read_policy = lambda: list(_UP)
+check(sh.policy_in_view() == _UP,
+      "in operational mode the policy in view is the box's own file")
+rv, text = driven(lambda: sh.show_policy([]))
+check("policy-statement UP\n  terms: 2" in text
+      and "applied: neighbor 10.0.0.2 import, ospf export" in text,
+      f"show policy: each one, and where: {text!r}")
+rv, text = driven(lambda: sh.show_policy(["UP"]))
+check("  term 20\n   from route-filter 198.51.100.0/22 upto /24" in text,
+      f"show policy UP: its terms as they are typed: {text!r}")
+for _a, _why in ((["NOPE"], "no policy-statement named NOPE"),
+                 (["a", "b"], "usage: show policy [<policy>]")):
+    rv, text = driven(lambda: sh.show_policy(_a))
+    check(_why in text, f"show policy {_a}: {text!r}")
+rv, text = driven(lambda: sh.test_policy(["UP", "198.51.100.0/23"]))
+check("term 20: reject" in text and "result: reject, by term 20" in text,
+      f"test policy: the term that decides: {text!r}")
+rv, text = driven(lambda: sh.test_policy(["UP", "10.0.0.0/8"]))
+check("result: no term decided it" in text
+      and "exported into OSPF or IS-IS it is not" in text
+      and "default" not in text,
+      f"no term decided: both defaults said, no default row: {text!r}")
+for _a, _why in ((["UP"], "usage: test policy <policy> <prefix>"),
+                 (["NOPE", "1.0.0.0/8"], "no policy-statement named NOPE"),
+                 (["UP", "banana"], "not a prefix: banana")):
+    rv, text = driven(lambda: sh.test_policy(_a))
+    check(_why in text, f"test policy {_a}: {text!r}")
+sh.candidate = Config()
+sh.candidate.policy = ["policy-options policy-statement DRAFT term 1 then "
+                       "reject"]
+sh.mode = "config"
+rv, text = driven(lambda: sh.show_policy([]))
+check("policy-statement DRAFT" in text and "UP" not in text,
+      f"in configuration mode it is the candidate's: {text!r}")
+sh.candidate.policy = []
+rv, text = driven(lambda: sh.show_policy([]))
+check("no policy-statement is configured" in text, f"none: {text!r}")
+ok("where, what, and a prefix walked through it")
+
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
 # Mutation shown red: write only the assignment, dropping the other lines.
 tune = os.path.join(_root, "tune", "tune.env")

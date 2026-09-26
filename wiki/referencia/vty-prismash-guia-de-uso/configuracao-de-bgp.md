@@ -152,6 +152,32 @@ Medido num laboratório com dois enlaces para o mesmo trânsito e um terceiro AS
 * o `export` com `as-path-prepend` e `community add` chegou ao vizinho assim;
 * sem as linhas de `import` e `export`, nada disso aconteceu.
 
+## Conferindo uma política: `show policy` e `test policy`
+
+`show policy` lista as políticas, quantos terms cada uma tem e onde o roteamento em vigor as aplica. Com o nome, mostra os terms como foram digitados:
+
+```
+prisma> show policy
+policy-statement UP
+  terms: 2
+  applied: neighbor 10.0.0.2 import, ospf export
+```
+
+`test policy <política> <prefixo>` mostra o que a política faz com uma rota para aquele prefixo, term por term, antes de você aplicá-la em qualquer lugar:
+
+```
+prisma> test policy UP 198.51.100.0/23
+  term 10: no match
+      the prefix is in none of its lists or filters
+  term 20: reject
+      matches
+result: reject, by term 20
+```
+
+O teste parte só do prefixo. Uma condição que o prefixo sozinho não responde - community, as-path, protocolo, tag, métrica - não é adivinhada: o term aparece como "decide, se a rota tiver aquilo", e o teste segue como se não tivesse, para você ver os dois caminhos. Quando nenhum term decide, a resposta diz os dois padrões: aceito num vizinho BGP, não exportado para OSPF ou IS-IS.
+
+Em modo de configuração os dois comandos olham a candidata, ou seja, o que você está escrevendo e ainda não aplicou.
+
 ## Exportando para OSPF e IS-IS
 
 A mesma política exporta rotas para dentro do OSPF ou do IS-IS. Dentro do `router ospf` ou do `router isis`, `export <política>` redistribui o que ela aceita, e só isso:

@@ -4278,6 +4278,20 @@ worked on; a commit that introduces the reference is refused.
 `description` an operator writes a sentence in. Read as references, the first
 would refuse a commit over a timer and the second over a comment.
 
+### `show policy` and `test policy` (step 3)
+
+`show policy [<policy>]` lists each policy-statement, its terms, and where
+the running routing applies it (`policy_applications()`, read off the
+compiled route-maps FRR holds). `test policy <policy> <prefix>` walks a route
+to that prefix through the terms (`policy.evaluate()`). It works from the
+prefix alone: a prefix list matches exactly, as FRR's `permit <network>`
+does, and a route-filter as its kind says. A condition the prefix cannot
+answer - community, AS path, protocol, tag, metric - is reported as deciding
+only if the route carries it, and the walk goes on, so both outcomes are on
+the screen. When no term decides, both defaults are said, because a test is
+asked before any use: accepted on a BGP neighbor, not exported into an IGP.
+In configuration mode both read the candidate.
+
 ### Exported into OSPF and IS-IS (step 2)
 
 `export <policy>` inside `router ospf` or `router isis` redistributes what the

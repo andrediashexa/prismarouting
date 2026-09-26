@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show policy` and `test policy`**
+  ([#458](https://github.com/andrediashexa/hexarouting/issues/458), step 3).
+  - **`show policy [<policy>]`** lists each policy-statement, its terms, and
+    where the running routing applies it: which neighbor imports or exports
+    it, and whether an IGP exports it.
+  - **`test policy <policy> <prefix>`** walks a route to that prefix through
+    the terms and names the one that decides it.
+  - **What the prefix alone cannot answer** - a community, an AS path, a
+    protocol - is said, not guessed. When no term decides, both defaults are
+    given: accepted on a BGP neighbor, not exported into an IGP.
+  - **In configuration mode,** both read the candidate, so a policy can be
+    checked before it is committed.
+
 ### Fixed
 
 ## 0.133.0 - the control plane fenced
