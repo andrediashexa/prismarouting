@@ -6,7 +6,7 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 
 | Recurso | Mínimo | Por quê |
 |---------|--------|---------|
-| RAM     | **4 GB** | rodando pela ISO, a raiz gravável fica inteira em RAM sobre o squashfs; com 2 GB o OOM killer mata o VPP e leva o resto do boot junto |
+| RAM     | **6 GB** (8 GB recomendado) | com menos, a caixa sobe e não encaminha: medido com 4 GB, o dataplane fica sem placa nenhuma |
 | CPU     | **SSE4.2** | o binário do VPP assume SSE4.2 e usa AVX quando existe |
 | Placas de rede | **1**  | uma basta, e a caixa entrega essa mesma placa ao dataplane levando o endereço de gerência junto; duas é o formato de uma appliance no rack |
 
@@ -16,11 +16,19 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 
 :::
 
-Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed process (vpp)` com o VPP segurando apenas **19 MB residentes** — ele não era o glutão, era a vítima escolhida. Instalado em disco o consumo cai, porque não há a sobreposição em RAM, mas 4 GB continua sendo o piso sensato para um dataplane.
+Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed process (vpp)` com o VPP segurando apenas **19 MB residentes** — ele não era o glutão, era a vítima escolhida. Instalado em disco o consumo cai, porque não há a sobreposição em RAM, mas o piso de uma caixa que encaminha é 6 GB, pelo motivo da tabela acima.
 
 
 :::warning
-**Até o piso ser medido de novo, use 8 GB numa VM.** Numa VM de 6 GB com a 0.126.0 instalada, a caixa reservou 3 GB de hugepages e o VPP não subiu (`rte_eal_init failed`), com uma placa de dados ou com duas. Com 8 GB ele subiu e encaminhou. O piso de 4 GB da tabela acima está sendo medido de novo.
+**Abaixo de 6 GB a caixa não encaminha.** Medido numa VM com 8 núcleos, depois do reboot que aplica o ajuste:
+
+| RAM | O que a caixa faz |
+|-----|-------------------|
+| 4 GB | sobe no perfil conservador, sem hugepages: o dataplane não recebe placa e **não encaminha nada** |
+| 6 GB | encaminha, com 1 GB de heap: cabem umas 2,7 milhões de sessões |
+| 8 GB | encaminha, com 2 GB de heap |
+
+Até a versão 0.128 uma VM de 6 GB não subia o VPP; desde a 0.129 ela sobe.
 
 :::
 
@@ -115,15 +123,15 @@ Por um tempo as duas caixas recebiam a mesma frase — *"numa caixa com IOMMU a 
 
 # Se a caixa vai receber a tabela BGP completa
 
-4 GB é o piso de uma caixa que **não** carrega tabela cheia. Recebendo uma tabela IPv4 completa de um trânsito, o roteamento sozinho passa a ocupar cerca de **1,4 GB** de RAM. Medido com uma sessão e um milhão de prefixos: o `bgpd` ficou com \~840 MB e o `zebra` com \~550 MB, contra 37 MB somados numa caixa que só recebe rota padrão. Cada trânsito adicional com tabela cheia soma de novo, e IPv6 soma por cima.
+6 GB é o piso de uma caixa que **não** carrega tabela cheia. Recebendo uma tabela IPv4 completa de um trânsito, o roteamento sozinho passa a ocupar cerca de **1,4 GB** de RAM. Medido com uma sessão e um milhão de prefixos: o `bgpd` ficou com \~840 MB e o `zebra` com \~550 MB, contra 37 MB somados numa caixa que só recebe rota padrão. Cada trânsito adicional com tabela cheia soma de novo, e IPv6 soma por cima.
 
 | Cenário de peering | RAM só para o roteamento | Piso recomendado da máquina |
 |--------------------|-------------------------:|----------------------------:|
-| Só rota padrão     | \~40 MB                  | 4 GB                        |
+| Só rota padrão     | \~40 MB                  | 6 GB                        |
 | Uma tabela IPv4 cheia | \~1,4 GB                 | 16 GB                       |
 | Dois trânsitos com tabela cheia, mais IPv6 | mais que isso            | 32 GB                       |
 
-O dataplane reserva a maior parte da RAM em hugepages e deixa `máx(2, RAM/4)` GB para todo o resto. Numa caixa de 4 GB isso são 2 GB, e uma tabela cheia sozinha já ocupa quase tudo — por isso 8 GB já é apertado e 16 GB é o número sensato.
+O dataplane reserva a maior parte da RAM em hugepages e deixa `máx(2, RAM/4)` GB para todo o resto. Numa caixa de 6 GB isso são 2 GB, e uma tabela cheia sozinha já ocupa quase tudo — por isso 8 GB já é apertado e 16 GB é o número sensato.
 
 
 :::info
@@ -327,7 +335,7 @@ Reinicie a caixa depois. O ajuste automático de boot **nunca sobrescreve** esse
 
 
 :::warning
-**Esse segmento é RAM que sai do resto.** Não peça 1 GB numa caixa de 4 GB por precaução. Peça o que o número de interfaces da sua topologia pede, e confira no self-test do boot seguinte quanto disso está realmente sendo usado.
+**Esse segmento é RAM que sai do resto.** Não peça 1 GB numa caixa de 6 GB por precaução. Peça o que o número de interfaces da sua topologia pede, e confira no self-test do boot seguinte quanto disso está realmente sendo usado.
 
 :::
 

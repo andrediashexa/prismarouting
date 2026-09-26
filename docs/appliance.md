@@ -8,9 +8,10 @@ comes up, forwards, and underperforms. `prisma-routing-tune` computes CPU
 isolation, hugepages and pinning from the actual hardware instead of copied
 values.
 
-Minimum requirements: **4 GB RAM** and a CPU with **SSE4.2**. Below either, VPP
-dies — by OOM or by SIGILL — and the boot self-test says so on the console
-before the operator has to guess.
+Minimum requirements: **6 GB RAM** and a CPU with **SSE4.2**. Below 6 GB the
+box comes up and forwards nothing (below); without SSE4.2 VPP dies by
+SIGILL - and the boot self-test says so on the console before the operator
+has to guess.
 
 Two standing answers about the kernel live here as well, so that neither is
 re-derived every six months: a **custom-built kernel MUST NOT be introduced**
@@ -319,9 +320,21 @@ design defect, not merely an effect of `update-grub`.
 
 ## Memory requirement
 
-**Minimum 4 GB.** A live system keeps its writable root entirely in RAM as an
-overlay on the squashfs; together with VPP, 2 GB is not enough and the OOM
-killer takes VPP — and the rest of the boot with it.
+**Minimum 6 GB to forward, 8 GB advised** (#452, measured on 0.130.0 in a KVM
+guest, eight vCPUs, two boots each so the tuner's hugepages took effect):
+
+| RAM | hugepages | main heap | what the box does |
+|---|---|---|---|
+| 4 GB | none | 256 MB | comes up on the conservative profile, which hands the dataplane **no card**: `show interface` holds only local0, and it forwards nothing |
+| 6 GB | 3 | 1 GB | forwards; about 2.7 million sessions fit |
+| 8 GB | 5 | 2 GB | forwards |
+
+4 GB was the documented floor, set when the question was whether VPP
+survived the OOM killer; it does, and forwards nothing. 6 GB failed on
+0.126.0 (`rte_eal_init failed`), because the heap took the whole pool, and works
+since 0.129.0 keeps a GB of it out of the heap. A live system also keeps its
+writable root in RAM as an overlay on the squashfs; with 2 GB the OOM killer
+takes VPP and the rest of the boot with it.
 
 Measured while booting the ISO with 2 GB: `Out of memory: Killed process (vpp)`,
 with VPP holding only **19 MB resident**. It was not the glutton; it was the

@@ -79,6 +79,21 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The documented minimum RAM is the RAM a box forwards with: 6 GB, 8 advised** ([#452](https://github.com/andrediashexa/hexarouting/issues/452)).
+  The documents said 4 GB. Measured on 0.130.0 in a KVM guest, with two
+  boots each so the tuner's hugepages took effect:
+  - **4 GB:** the box comes up on the conservative profile, where the
+    dataplane is handed no card, so `show interface` holds only local0 and
+    it forwards nothing;
+  - **6 GB:** it forwards, with a 1 GB heap and about 2.7 million sessions;
+  - **8 GB:** a 2 GB heap.
+
+  The 6 GB failure found in #451 (`rte_eal_init failed`) is gone since
+  0.129.0. The tuner's warning now says a box below the floor forwards
+  **nothing**; it used to say it "runs but does not perform". It also names
+  the memory given to the CGNAT when that figure is what set the size,
+  instead of "200000 subscribers".
+
 ## 0.131.4 - BPA is the dynamic allocation
 
 ### Fixed
