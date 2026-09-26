@@ -77,7 +77,7 @@ for line, want in (
         (f"{P} policy-statement P term 1 from route-filter 10.0.0.0/8 maybe",
          "exact, orlonger, longer or upto"),
         (f"{P} policy-statement P term 1 set local-preference high",
-         "local-preference <0-4294967295>"),
+         "set: local-preference, community"),
         (f"{P} policy-statement P term 1 then local-preference 200",
          "a change to the route is 'set ...'"),
         (f"{P} policy-statement P term 1 whatever", "a term takes"),
@@ -191,6 +191,71 @@ check(policy._set_lines(_pp, _t) == [" set community 65000:1",
                                      " set local-preference 50"],
       f"a term's sets as FRR writes them: {policy._set_lines(_pp, _t)}")
 ok("parse one, term one, family, sets")
+
+print("\n=== step 2: from protocol, tag and metric; set metric, tag, next-hop "
+      "(#458) ===")
+_L = [f"{P} prefix-list LOOPS 10.255.0.0/16",
+      f"{P} policy-statement EXT term 1 from protocol static",
+      f"{P} policy-statement EXT term 1 set metric 20",
+      f"{P} policy-statement EXT term 1 set tag 7",
+      f"{P} policy-statement EXT term 1 then accept",
+      f"{P} policy-statement EXT term 2 from protocol direct",
+      f"{P} policy-statement EXT term 2 from prefix-list LOOPS",
+      f"{P} policy-statement EXT term 2 then accept",
+      f"{P} policy-statement NH term 1 from tag 7",
+      f"{P} policy-statement NH term 1 from metric 20",
+      f"{P} policy-statement NH term 1 set next-hop 192.0.2.1",
+      f"{P} policy-statement NH term 2 from protocol ospf",
+      f"{P} policy-statement NH term 2 then reject"]
+_pol, _bad = policy.parse(_L)
+check(_bad == [] and _pol.statements["EXT"]["2"].protocols == ["connected"],
+      f"direct is read as FRR's connected: {_bad}")
+for _line, _want in ((f"{P} policy-statement X term 1 from protocol rip",
+                      "from protocol: bgp, ospf"),
+                     (f"{P} policy-statement X term 1 from tag x",
+                      "from tag <0-4294967295>"),
+                     (f"{P} policy-statement X term 1 set next-hop nowhere",
+                      "is not an address")):
+    _, _b = policy.parse([_line])
+    check(_b and _want in _b[0][1], f"{_line!r}: {_b}")
+check(policy.map_name("EXT", "ospf:static") == "PO-EXT-OSPF-STATIC",
+      "an export into an IGP is a map per source protocol")
+_ex = policy.export_lines("EXT", "ospf")
+check(_ex[:1] == [" redistribute bgp route-map PO-EXT-OSPF-BGP"]
+      and len(_ex) == len(policy.IGPS["ospf"]),
+      f"OSPF: one redistribute per protocol it can take: {_ex}")
+_ix = policy.export_lines("EXT", "isis")
+check(" redistribute ipv6 ospf6 level-2 route-map PO-EXT-ISIS-OSPF" in _ix
+      and " redistribute ipv4 static level-1 route-map PO-EXT-ISIS-STATIC"
+      in _ix and len(_ix) == len(policy.IGPS["isis"]) * 4,
+      f"IS-IS: both families and both levels, ospf6 for IPv6: {_ix}")
+_st = "\n".join(policy.compile_policy(_pol, "EXT", "ospf:static"))
+check("route-map PO-EXT-OSPF-STATIC permit 10\n set metric 20\n set tag 7"
+      "\nexit" in _st and "route-map PO-EXT-OSPF-STATIC deny 65535" in _st
+      and "LOOPS" not in _st and "PO-EXT-T2" not in _st,
+      f"the static map: term 1 only, and the IGP default rejects: {_st}")
+_bg = "\n".join(policy.compile_policy(_pol, "EXT", "ospf:bgp"))
+check(_bg == "route-map PO-EXT-OSPF-BGP deny 65535\nexit",
+      f"a protocol no term names exports nothing: {_bg!r}")
+_nh = "\n".join(policy.compile_policy(_pol, "NH", "import"))
+check(" match tag 7\n match metric 20\n set ip next-hop 192.0.2.1" in _nh
+      and "PO-NH-IN deny 20" not in _nh
+      and "route-map PO-NH-IN permit 65535" in _nh,
+      f"on a neighbor: tag, metric, next-hop; the ospf-only term left out; "
+      f"BGP's default still accepts: {_nh}")
+check(policy.igp_findings(_pol, "EXT") == []
+      and policy.igp_findings(policy.parse([
+          f"{P} policy-statement B term 1 set local-preference 5",
+          f"{P} community C members 1:1",
+          f"{P} policy-statement B term 2 from community C"])[0], "B")
+      == ["term 1: set local-preference is for BGP routes",
+          "term 2: from community is for BGP routes"],
+      "what only a BGP route has is said, per term, before an IGP export")
+_twice = policy.compile_all(_pol, {("EXT", "ospf:connected"),
+                                   ("EXT", "isis:connected")})
+check(sum(1 for l in _twice if l.startswith("ip prefix-list")) == 1,
+      f"a list two maps share is handed to FRR once: {_twice}")
+ok("protocol, tag, metric; per-protocol maps; the IGP default; findings")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

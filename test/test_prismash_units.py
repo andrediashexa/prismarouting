@@ -2255,6 +2255,44 @@ check("no policy-statement named NOPE" in text
       and sh.candidate.routing == _before,
       f"an import naming no policy is refused, nothing staged: {text!r}")
 sh.frr_ctx = []
+# `export <policy>` inside an IGP (#458 step 2): the redistribute lines it
+# stands for, staged together; refused for a policy that is not there and for
+# one whose terms say what only a BGP route has.
+sh.candidate.policy += [
+    "policy-options policy-statement EXT term 1 from protocol static",
+    "policy-options policy-statement EXT term 1 then accept",
+    "policy-options community K members 1:1",
+    "policy-options policy-statement BGPONLY term 1 from community K"]
+sh.frr_ctx = ["router ospf"]
+_before = list(sh.candidate.routing)
+rv, text = driven(lambda: sh.do_config("export EXT"))
+_added = sh.candidate.routing[len(_before):]
+check(_added[:1] == ["redistribute bgp route-map PO-EXT-OSPF-BGP"]
+      and "redistribute static route-map PO-EXT-OSPF-STATIC" in _added
+      and len(_added) == len(prismash.policy_mod.IGPS["ospf"]),
+      f"export stages a redistribute per protocol: {_added} {text!r}")
+check(("EXT", "ospf:static") in prismash.policy_uses(sh.candidate.routing),
+      "and the uses read it back, so the maps are compiled")
+rv, text = driven(lambda: sh.do_config("no export EXT"))
+check(sh.candidate.routing[-1] == "no redistribute isis route-map "
+                                  "PO-EXT-OSPF-ISIS",
+      f"no export takes every one of them back: {sh.candidate.routing[-3:]}")
+_before = list(sh.candidate.routing)
+for _bad, _why in (("export NOPE", "no policy-statement named NOPE"),
+                   ("export BGPONLY", "cannot be exported into ospf"),
+                   ("export", "usage: [no] export <policy>")):
+    rv, text = driven(lambda: sh.do_config(_bad))
+    check(_why in text and sh.candidate.routing == _before,
+          f"{_bad!r} refused, nothing staged: {text!r}")
+rv, text = driven(lambda: sh.igp_export("ospf", ["no", "export"]))
+check("usage: [no] export <policy>" in text,
+      f"Shell.igp_export, called on its own, with no policy: {text!r}")
+sh.frr_ctx = ["router isis CORE"]
+rv, text = driven(lambda: sh.do_config("export EXT"))
+check("redistribute ipv6 static level-2 route-map PO-EXT-ISIS-STATIC"
+      in sh.candidate.routing,
+      f"inside IS-IS, both families and both levels: {text!r}")
+sh.frr_ctx = []
 ok("the namespace, the file, the levels, the staging")
 
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
