@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.131.2 - commit from inside a pool
+
+### Fixed
+
 * **`commit` works from inside a pool, a user and an SNMP user**
   ([#464](https://github.com/andrediashexa/hexarouting/issues/464)). The
   three blocks entered as modes of their own answered "unknown statement" to
