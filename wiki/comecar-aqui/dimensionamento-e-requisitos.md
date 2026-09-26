@@ -20,7 +20,11 @@ Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed proc
 
 
 :::warning
-**Abaixo de 6 GB a caixa não encaminha.** Medido numa VM com 8 núcleos, depois do reboot que aplica o ajuste:
+**Abaixo de 6 GB a caixa não encaminha.** Numa VM de 4 GB ela sobe no perfil conservador, sem hugepages, e o dataplane não recebe placa nenhuma.
+
+:::
+
+Medido numa VM com 8 núcleos, depois do reboot que aplica o ajuste:
 
 | RAM | O que a caixa faz |
 |-----|-------------------|
@@ -29,8 +33,6 @@ Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed proc
 | 8 GB | encaminha, com 2 GB de heap |
 
 Até a versão 0.128 uma VM de 6 GB não subia o VPP; desde a 0.129 ela sobe.
-
-:::
 
 # Quantas placas de rede
 
