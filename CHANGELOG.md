@@ -77,6 +77,21 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The RAM by role is set from the VTY: `system` > `memory`**
+  ([#466](https://github.com/andrediashexa/hexarouting/issues/466), third
+  part).
+  - **`control-plane <GB>`:** the RAM kept out of the hugepages for the OS,
+    FRR, sshd, the VTY and the containers. A hugepage is never reclaimed, so
+    this is the only floor the control plane has. Unset, it is a quarter of
+    the RAM, at least 2 GB, as before.
+  - **`buffers <n>`:** the packet buffers per NUMA node. Unset, it is 16384
+    per worker.
+  - **Where it goes:** tune.env, in effect from the next boot. The CGNAT's
+    own figure stays `nat cgnat memory`.
+  - **Reading it:** `show system memory` puts what is configured beside this
+    boot's RAM, hugepages, main heap, buffers, statistics segment, and what
+    the control plane is using now.
+
 ### Fixed
 
 ## 0.133.1 - show policy and test policy

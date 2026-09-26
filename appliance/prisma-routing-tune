@@ -797,7 +797,8 @@ def write_management_path(handover, path=None):
 
 def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
          config_path=None, vpp_base=None, mgmt_conf=None, cgnat_memory_gb=None,
-         control_plane_cores=None, main_thread="shared"):
+         control_plane_cores=None, main_thread="shared",
+         control_plane_memory_gb=None, buffers_per_numa=None):
     # The card this box is reached on, read for one reason: so the way back
     # can be computed off it below, before the bind takes it. It used to be
     # read to REFUSE that card when it was named (#123), and to let it
@@ -1041,9 +1042,18 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     if total_gb:
         # The operating system, VPP's own non-huge memory and the page cache
         # all live outside the hugepage pool.
-        for_os = max(2, total_gb // 4)
+        #
+        # OR THE FIGURE THE OPERATOR GAVE THE CONTROL PLANE (#466): the RAM
+        # that is never turned into hugepages, which is the only floor that
+        # holds - a hugepage is not reclaimed for anybody. A full BGP table
+        # has a known size (837 MB for bgpd and 553 MB for zebra, measured
+        # and recorded in docs/appliance.md), so an operator carrying two can
+        # say how much the control plane needs rather than take a quarter.
+        for_os = (control_plane_memory_gb if control_plane_memory_gb
+                  else max(2, total_gb // 4))
         cap_gb = max(0, total_gb - for_os)
     else:
+        for_os = None
         cap_gb = want_gb          # unknown RAM: do not silently shrink
     hugepages_gb = min(want_gb, cap_gb)
 
@@ -1138,6 +1148,12 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         # then runs on the control plane's first core, as it always did.
         "main_cpus": main_cpus,
         "cpu_notes": cpu_notes,
+        # The memory by role (#466): what the control plane keeps, and the
+        # packet buffers when the operator set them; None is the computed
+        # figure, as on every box before this.
+        "control_plane_memory_gb": control_plane_memory_gb,
+        "control_plane_keeps_gb": for_os,
+        "buffers_per_numa": buffers_per_numa,
         "workers": workers,
         "isolated": isolated,
         "hugepages_gb": hugepages_gb,
@@ -1682,7 +1698,8 @@ def render_vpp(p):
         "cpu {\n" + cpu + "}\n\n"
         + dpdk +
         "buffers {\n"
-        f"  buffers-per-numa {max(16384, len(p['workers']) * 16384)}\n"
+        f"  buffers-per-numa "
+        f"{p.get('buffers_per_numa') or max(16384, len(p['workers']) * 16384)}\n"
         "  default data-size 2048\n"
         "  page-size default-hugepage\n"
         "}\n\n"
@@ -1752,6 +1769,11 @@ def render_report(p, vpp_base):
                    f"{fmt_list(p['os_cpus'])}")
     for _n in p.get("cpu_notes", []):
         out.append(f"# WARNING: {_n}")
+    if p.get("control_plane_keeps_gb") is not None:
+        out.append(f"# control plane keeps {p['control_plane_keeps_gb']} GB "
+                   f"of RAM out of the hugepages ("
+                   + ("as set" if p.get("control_plane_memory_gb")
+                      else "a quarter of the RAM, at least 2") + ")")
     out.append(f"# workers ({len(p['workers'])}): {fmt_list(p['workers'])}")
     out.append(f"# isolated: {fmt_list(p['isolated']) or '(none)'}")
     # The card's own limits, beside the figures read off the machine, because
@@ -2603,6 +2625,13 @@ def main():
     ap.add_argument("--control-plane-cores", type=int,
                     help="physical cores left to the control plane - the OS, "
                          "FRR, sshd, the VTY; 1 is the default (#466)")
+    ap.add_argument("--control-plane-memory-gb", type=int,
+                    help="RAM kept out of the hugepage pool for the control "
+                         "plane, in GB; empty is a quarter of the RAM, at "
+                         "least 2 (#466)")
+    ap.add_argument("--buffers-per-numa", type=int,
+                    help="packet buffers per NUMA node; empty is 16384 per "
+                         "worker (#466)")
     ap.add_argument("--main-thread", choices=("shared", "dedicated"),
                     default="shared",
                     help="whether VPP's main thread shares the control "
@@ -2662,7 +2691,9 @@ def main():
              config_path=a.config, vpp_base=a.vpp_base,
              mgmt_conf=a.mgmt_conf, cgnat_memory_gb=a.cgnat_memory_gb,
              control_plane_cores=a.control_plane_cores,
-             main_thread=a.main_thread)
+             main_thread=a.main_thread,
+             control_plane_memory_gb=a.control_plane_memory_gb,
+             buffers_per_numa=a.buffers_per_numa)
 
     if a.would_claim:
         return would_claim(p, a.would_claim)

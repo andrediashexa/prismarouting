@@ -382,6 +382,27 @@ run STUB_FENCE=
   || bad "a fence was set with nothing isolated: $(cat "$REC/fenced")"
 
 echo
+echo "=== PRISMA_CONTROL_PLANE_MEMORY_GB and PRISMA_BUFFERS_PER_NUMA (#466) ==="
+mkbox
+run PRISMA_CONTROL_PLANE_MEMORY_GB=8 PRISMA_BUFFERS_PER_NUMA=65536
+case "$(argv)" in
+  *"--control-plane-memory-gb 8"*"--buffers-per-numa 65536"*)
+    ok "both reach the tuner: $(argv)" ;;
+  *) bad "the memory by role did not reach the tuner: $(argv)" ;;
+esac
+mkbox
+run PRISMA_CONTROL_PLANE_MEMORY_GB=0 PRISMA_BUFFERS_PER_NUMA=lots
+said "REFUSED PRISMA_CONTROL_PLANE_MEMORY_GB, in tune.env" \
+  && said "REFUSED PRISMA_BUFFERS_PER_NUMA, in tune.env" \
+  && ok "each malformed figure refused by name" \
+  || bad "a malformed memory figure was not refused. Output: $OUT"
+case "$(argv)" in
+  *--control-plane-memory-gb*|*--buffers-per-numa*)
+    bad "a refused figure was passed on: $(argv)" ;;
+  *) ok "  and neither is passed: the computed figures stand" ;;
+esac
+
+echo
 echo "=== PRISMA_CONTROL_PLANE_CORES and PRISMA_MAIN_THREAD (#466) ==="
 mkbox
 run PRISMA_CONTROL_PLANE_CORES=2 PRISMA_MAIN_THREAD=dedicated

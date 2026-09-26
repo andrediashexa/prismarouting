@@ -219,6 +219,45 @@ this boot:
   control plane held to 0
 ```
 
+## Memória por papel: plano de controle, CGNAT e buffers
+
+A RAM da caixa se divide em dois lados. As **hugepages** são do dataplane: a memória do CGNAT (sessões e assinantes), os buffers de pacote e uma folga. O **resto** é do plano de controle: o sistema, o roteamento, o SSH, a VTY e os containers. Uma hugepage nunca é devolvida para ninguém, então o que o plano de controle tem garantido é exatamente a RAM que não virou hugepage.
+
+Os três números se configuram na VTY:
+
+```
+prisma# [edit] system
+prisma# [edit system] memory
+prisma# [edit system / memory] control-plane 12
+prisma# [edit system / memory] buffers 65536
+prisma# [edit system / memory] commit
+```
+
+| Comando | O que faz | Sem ele |
+|---------|-----------|---------|
+| `system memory control-plane <GB>` | a RAM que o plano de controle mantém, fora das hugepages | um quarto da RAM, no mínimo 2 GB |
+| `system memory buffers <n>` | quantos buffers de pacote por nó NUMA | 16384 por worker |
+| `nat cgnat memory <GB>` | a memória das sessões e dos assinantes do CGNAT | calculada pela meta de assinantes |
+
+Uma tabela BGP completa ocupa uns 840 MB no bgpd e uns 550 MB no zebra, medidos. Uma caixa que recebe duas tabelas completas e ainda serve consultas quer mais do que o padrão numa máquina pequena. Se a soma pedida passar do que a RAM dá, o boot limita as hugepages e diz isso no relatório.
+
+Vale no boot seguinte, porque as hugepages são reservadas na linha de comando do kernel. `show system memory` mostra lado a lado o configurado e o que este boot tem:
+
+```
+prisma> show system memory
+configured, in effect from the next reboot:
+  control plane keeps   12 GB
+  CGNAT memory          8 GB
+  packet buffers        65536 per NUMA node
+this boot:
+  RAM                   16.0 GB
+  hugepages             4.0 GB
+  VPP main heap         2G
+  packet buffers        49152 per NUMA node
+  statistics segment    VPP default, 32M
+  control plane uses    3.0 GB
+```
+
 ## O que o arquivo de ajuste aceita
 
 `/etc/prisma-routing/tune.env` é lido a cada boot, e cada valor dele tem uma forma. Um valor fora dessa forma é **recusado em voz alta**, com o nome da variável e o valor entre aspas, e a caixa usa o padrão de fábrica no lugar.
@@ -231,6 +270,8 @@ this boot:
 | `PRISMA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio      | sem limite      |
 | `PRISMA_CONTROL_PLANE_CORES` | só dígitos, 1 ou mais, ou vazio | vazio (um núcleo) | um núcleo       |
 | `PRISMA_MAIN_THREAD` | `shared` ou `dedicated`, ou vazio | vazio (`shared`) | `shared`        |
+| `PRISMA_CONTROL_PLANE_MEMORY_GB` | GB inteiros, 1 ou mais, ou vazio | vazio (um quarto da RAM) | um quarto da RAM |
+| `PRISMA_BUFFERS_PER_NUMA` | só dígitos, ou vazio | vazio (16384 por worker) | 16384 por worker |
 
 `PRISMA_LOW_LATENCY=1` desliga os estados profundos de economia de energia do processador, desliga as páginas grandes transparentes e mantém o governador de frequência em `performance`. Custa energia e compra rajada previsível, e é por isso que vem `1`: isto é um roteador. `0` deixa os três em paz, para uma caixa que precisa economizar mais do que precisa encaminhar.
 

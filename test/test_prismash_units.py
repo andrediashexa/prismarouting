@@ -2143,6 +2143,94 @@ finally:
     prismash.Shell.TUNE_ENV = _saved_te
     prismash.Shell.CPU_ISOLATED = _saved_iso
     prismash.Shell.STARTUP_CONF = _saved_sc
+
+print("\n=== system memory: the RAM by role, typed, stored, read back (#466) ===")
+check(_config.memory_error("control-plane", "8") is None
+      and _config.memory_error("buffers", "65536") is None
+      and _config.memory_error("control-plane", "0").startswith("expected")
+      and _config.memory_error("buffers", "10").startswith("expected")
+      and "'control-plane' and 'buffers'" in _config.memory_error("x", "1"),
+      "memory_error: the two statements, at their bounds, and a third refused")
+_tune = os.path.join(_root, "tune-mem2", "tune.env")
+_saved_te = prismash.Shell.TUNE_ENV
+_saved_sc = prismash.Shell.STARTUP_CONF
+_saved_mi = prismash.Shell.MEMINFO
+_saved_cm = prismash.Shell.CP_MEMORY_NOW
+try:
+    prismash.Shell.TUNE_ENV = _tune
+    os.makedirs(os.path.dirname(_tune), exist_ok=True)
+    with open(_tune, "w") as _f:
+        _f.write("PRISMA_CGNAT_MEMORY_GB=8\n")
+    sh = shell()
+    _real = lambda: prismash.Shell.running_config(sh)
+    sh.candidate = _real()
+    check(sh.candidate.memory == {}, "nothing set, nothing read back")
+    for _l in ("system", "memory", "control-plane 12", "buffers 65536"):
+        driven(lambda: sh.do_config(_l))
+    check(sh.candidate.memory == {"control-plane": "12",
+                                  "buffers": "65536"},
+          f"typed under system > memory: {sh.candidate.memory}")
+    rv, text = driven(lambda: sh.do_config("show this"))
+    check(text.split() == ["control-plane", "12", "buffers", "65536"],
+          f"show this at the memory level: {text!r}")
+    for _bad, _why in (("buffers 5", "expected: buffers <1024-"),
+                       ("no turbo", "memory: no control-plane, or no "
+                                    "buffers")):
+        rv, text = driven(lambda: sh.do_config(_bad))
+        check(_why in text, f"{_bad!r} refused: {text!r}")
+    ok_, msg = sh.apply_memory(sh.candidate.memory)
+    with open(_tune) as _f:
+        _got = _f.read()
+    check(ok_ and "PRISMA_CONTROL_PLANE_MEMORY_GB=12\n" in _got
+          and "PRISMA_BUFFERS_PER_NUMA=65536\n" in _got
+          and "PRISMA_CGNAT_MEMORY_GB=8\n" in _got,
+          f"both keys reach tune.env, the rest stays: {_got!r}")
+    check(_real().memory == {"control-plane": "12", "buffers": "65536"},
+          "and are read back into the running configuration")
+    check("system\n memory\n  control-plane 12\n  buffers 65536\n  exit"
+          in _real().text(), "which writes them in the system block")
+    _d = os.path.join(_root, "tune-mem2")
+    with open(os.path.join(_d, "meminfo"), "w") as _f:
+        _f.write("MemTotal:       16777216 kB\nHugePages_Total:       4\n"
+                 "Hugepagesize:    1048576 kB\n")
+    with open(os.path.join(_d, "startup.conf"), "w") as _f:
+        _f.write("buffers {\n  buffers-per-numa 49152\n}\nmemory {\n"
+                 "  main-heap-size 2G\n}\n")
+    with open(os.path.join(_d, "cp"), "w") as _f:
+        _f.write(str(3 * 1073741824) + "\n")
+    prismash.Shell.MEMINFO = os.path.join(_d, "meminfo")
+    prismash.Shell.STARTUP_CONF = os.path.join(_d, "startup.conf")
+    prismash.Shell.CP_MEMORY_NOW = os.path.join(_d, "cp")
+    rv, text = driven(lambda: sh.show_system_memory())
+    check("control plane keeps   12 GB" in text
+          and "CGNAT memory          8 GB" in text
+          and "RAM                   16.0 GB" in text
+          and "hugepages             4.0 GB" in text
+          and "VPP main heap         2G" in text
+          and "packet buffers        49152 per NUMA node" in text
+          and "statistics segment    VPP default, 32M" in text
+          and "control plane uses    3.0 GB" in text,
+          f"show system memory: configured beside this boot: {text!r}")
+    prismash.Shell.MEMINFO = os.path.join(_d, "none")
+    prismash.Shell.STARTUP_CONF = os.path.join(_d, "none")
+    prismash.Shell.CP_MEMORY_NOW = os.path.join(_d, "none")
+    rv, text = driven(lambda: sh.show_system_memory())
+    check("RAM                   (unknown)" in text
+          and "VPP main heap         (not named)" in text
+          and "control plane uses    (unknown)" in text,
+          f"what cannot be read is said: {text!r}")
+    prismash.Shell.TUNE_ENV = os.path.join(_root, "no-such", "deeper", "z")
+    sh2 = shell()
+    sh2.candidate = prismash.Shell.running_config(sh2)
+    sh2.candidate.memory = {"buffers": "65536"}
+    rv, text = driven(lambda: sh2.do_commit([]))
+    check("memory:" in text, f"an unwritable tune.env fails the commit: "
+                             f"{text!r}")
+finally:
+    prismash.Shell.TUNE_ENV = _saved_te
+    prismash.Shell.STARTUP_CONF = _saved_sc
+    prismash.Shell.MEMINFO = _saved_mi
+    prismash.Shell.CP_MEMORY_NOW = _saved_cm
 # The statement at the prompt: a number of whole GB, and nothing else.
 sh = shell()
 sh.candidate = sh.running_config()
@@ -2172,7 +2260,7 @@ _n, _bad = _config.denest_system(list(enumerate(
 check([l for _, l in _n] == ["dataplane interface ens19"] and _bad == [],
       "the old top-level line is still read: a box replays its file at boot")
 _n, _bad = _config.denest_system(list(enumerate(["system", " dns", " exit"], 1)))
-check(_bad and "there is 'dataplane' and 'cpu'" in _bad[0][2],
+check(_bad and "there is 'dataplane', 'cpu' and 'memory'" in _bad[0][2],
       f"anything else under system is said: {_bad}")
 _c = _config.Config.parse("system\n dataplane\n  interface ens19\n  exit\n exit\n")
 check(_c.dataplane_if == "ens19" and not _c.unknown
@@ -2187,8 +2275,8 @@ check("'dataplane' has moved under 'system'" in text
 check(sh.system_rewrite("system") == "" and sh.nat_ctx == ["system"],
       "system enters its level")
 rv, text = driven(lambda: sh.do_config("dns"))
-check("under 'system' there is 'dataplane' and 'cpu'" in text,
-      f"and only dataplane and cpu are under it (#466): {text!r}")
+check("under 'system' there is 'dataplane', 'cpu' and 'memory'" in text,
+      f"and only those three are under it (#466): {text!r}")
 check(sh.system_rewrite("dataplane") == ""
       and sh.nat_ctx == ["system", "dataplane"], "dataplane enters its level")
 check(sh.system_rewrite("interface ens19") == "dataplane interface ens19"
