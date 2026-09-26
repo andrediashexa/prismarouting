@@ -4135,10 +4135,11 @@ peer group, inside the address family, as `neighbor X import <policy>` or
 `export <policy>`.
 
 - **`from`** conditions: `prefix-list`, `route-filter <net>
-  exact|orlonger|longer|upto /n`, `community`, `as-path`. Conditions of the
-  same kind are ORed; different kinds are ANDed.
+  exact|orlonger|longer|upto /n`, `community`, `as-path`, and since step 2
+  `protocol`, `tag` and `metric`. Conditions of the same kind are ORed;
+  different kinds are ANDed.
 - **`set`** actions: `local-preference`, `community add|set|delete`,
-  `as-path-prepend`.
+  `as-path-prepend`, and since step 2 `metric`, `tag` and `next-hop`.
 - **`then`**: `accept` and `reject` end the evaluation. `next term`, or no
   `then`, applies the sets and goes on.
 - **The default, decided with the maintainer, is Junos's.** A route no term
@@ -4276,6 +4277,33 @@ worked on; a commit that introduces the reference is refused.
 `bgp route-map delay-timer 10` names no route-map, and neither does a
 `description` an operator writes a sentence in. Read as references, the first
 would refuse a commit over a timer and the second over a comment.
+
+### Exported into OSPF and IS-IS (step 2)
+
+`export <policy>` inside `router ospf` or `router isis` redistributes what the
+policy accepts. It is staged as one `redistribute` per protocol the IGP can
+take routes from (`policy.export_lines()`), each with a map compiled for that
+protocol alone, `PO-<policy>-OSPF-STATIC` and so on. A map per source
+protocol, because ospfd and isisd evaluate a redistribute route-map without
+knowing where the route came from: which `redistribute` carries the map is
+what says it. A term whose `from protocol` names another protocol is left out
+of that map rather than compiled into a clause that would match the wrong
+routes. Every protocol gets its `redistribute`, not only the ones the policy
+names today, so a term added later applies without the export being typed
+again. IS-IS takes both families and both levels, `ospf6` for IPv6.
+
+**The default is Junos's, and it is not BGP's.** A route no term decided is
+not exported into an IGP, so those maps end in `deny 65535`. What only a BGP
+route has - `from community`, `from as-path`, and the `local-preference`,
+`community`, `as-path-prepend` and `next-hop` sets - is refused at the
+export (`policy.igp_findings()`). A map that ignored the condition would
+export exactly what the term was written to hold back.
+
+Measured in `lab/policy-igp.sh`: a policy accepting one of two static routes,
+from protocol static, with `set metric 77`, put that route in the OSPF
+neighbour's table at cost 77 and not the other. With FRR's plain
+`redistribute static` instead, both arrived at the default metric (the off
+run).
 
 ## A policy that withdraws the prefix carrying this session
 

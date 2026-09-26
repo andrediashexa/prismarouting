@@ -127,8 +127,8 @@ Cada `term` é avaliado na ordem em que foi digitado, e tem três partes:
 
 | Parte | O que diz |
 |-------|-----------|
-| `from` | o que a rota precisa casar: `prefix-list <nome>`, `route-filter <rede> exact\|orlonger\|longer\|upto /<n>`, `community <nome>`, `as-path <nome>`. Várias do mesmo tipo valem como "ou"; de tipos diferentes, como "e". Sem `from`, o term casa com tudo |
-| `set` | o que muda na rota: `local-preference <n>`, `community add\|set\|delete <nome>`, `as-path-prepend <asn>...` |
+| `from` | o que a rota precisa casar: `prefix-list <nome>`, `route-filter <rede> exact\|orlonger\|longer\|upto /<n>`, `community <nome>`, `as-path <nome>`, `protocol bgp\|ospf\|isis\|static\|direct\|kernel`, `tag <n>`, `metric <n>`. Várias do mesmo tipo valem como "ou"; de tipos diferentes, como "e". Sem `from`, o term casa com tudo |
+| `set` | o que muda na rota: `local-preference <n>`, `community add\|set\|delete <nome>`, `as-path-prepend <asn>...`, `metric <n>`, `tag <n>`, `next-hop <endereço>` |
 | `then` | como o term termina: `accept` ou `reject` param a avaliação; `next term`, ou nenhum `then`, aplica os `set` e segue para o próximo term |
 
 **Uma rota que nenhum term decidiu é aceita**, no `import` e no `export`, como no Junos. Para rejeitar o resto, termine com um term sem `from` e com `then reject`.
@@ -151,6 +151,33 @@ Medido num laboratório com dois enlaces para o mesmo trânsito e um terceiro AS
 * `set local-preference 200` num enlace fez dele o caminho escolhido, e o dataplane passou a encaminhar só por ele;
 * o `export` com `as-path-prepend` e `community add` chegou ao vizinho assim;
 * sem as linhas de `import` e `export`, nada disso aconteceu.
+
+## Exportando para OSPF e IS-IS
+
+A mesma política exporta rotas para dentro do OSPF ou do IS-IS. Dentro do `router ospf` ou do `router isis`, `export <política>` redistribui o que ela aceita, e só isso:
+
+```
+prisma# [edit] policy-options
+prisma# [edit policy-options] prefix-list LOOPBACKS
+prisma# [edit policy-options / prefix-list LOOPBACKS] 10.255.0.0/16
+prisma# [edit policy-options / prefix-list LOOPBACKS] exit
+prisma# [edit policy-options] policy-statement PARA-O-OSPF
+prisma# [edit policy-options / policy-statement PARA-O-OSPF] term estaticas
+prisma# [edit policy-options / policy-statement PARA-O-OSPF / term estaticas] from protocol static
+prisma# [edit policy-options / policy-statement PARA-O-OSPF / term estaticas] set metric 77
+prisma# [edit policy-options / policy-statement PARA-O-OSPF / term estaticas] then accept
+prisma# [edit policy-options / policy-statement PARA-O-OSPF / term estaticas] top
+prisma# [edit] router ospf
+prisma# [edit router ospf] export PARA-O-OSPF
+```
+
+**Numa exportação para OSPF ou IS-IS, uma rota que nenhum term aceitou não é exportada**, como no Junos. É o contrário do BGP, onde o que ninguém decidiu passa: aqui, só entra no protocolo o que a política aceitou de propósito. `from protocol` diz de onde a rota veio - `static`, `direct` (as redes das interfaces), `kernel`, `bgp`, ou o outro protocolo interno; um term sem `from protocol` vale para qualquer origem.
+
+`no export <política>` desfaz. No IS-IS a exportação vale para IPv4 e IPv6 e para os dois níveis.
+
+**O que só existe numa rota BGP é recusado numa exportação para OSPF ou IS-IS:** `from community`, `from as-path`, `set local-preference`, `set community`, `set as-path-prepend` e `set next-hop`. Um mapa que ignorasse em silêncio a condição de um term exportaria justamente o que aquele term foi escrito para segurar.
+
+Medido num laboratório com uma adjacência OSPF e duas rotas estáticas: a política que aceitava só uma delas, com `set metric 77`, fez o vizinho receber aquela rota com custo 77, e só ela. Com `redistribute static` no lugar da política, as duas chegaram, com o custo padrão.
 
 # O que é recusado antes de chegar ao roteamento
 

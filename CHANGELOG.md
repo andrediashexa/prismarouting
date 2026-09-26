@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Routing policy exported into OSPF and IS-IS, and more to match and set**
+  ([#458](https://github.com/andrediashexa/hexarouting/issues/458), step 2).
+  - **`export <policy>`** inside `router ospf` or `router isis` redistributes
+    what the policy accepts. A route no term accepted is not exported, as in
+    Junos, which is the opposite of BGP's default.
+  - **Staging:** the export is staged as one `redistribute` per protocol, each
+    with a map compiled for that protocol, so `from protocol` decides which
+    routes each map sees.
+  - **Refused at the export:** what only a BGP route carries - a community,
+    an AS path, local-preference, a prepend, a next hop - instead of being
+    silently ignored.
+  - **New in a term:** `from protocol|tag|metric`, and `set
+    metric|tag|next-hop`.
+  - **Measured in `lab/policy-igp.sh`:** a policy accepting one of two static
+    routes with `set metric 77` put only that route in the OSPF neighbour's
+    table, at cost 77. Plain `redistribute static` put both there, at the
+    default metric.
+
 ### Fixed
 
 ## 0.132.0 - a smaller initrd

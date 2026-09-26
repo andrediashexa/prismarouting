@@ -2613,12 +2613,21 @@ TREE["term"] = {
                                   "upto /<length>",
                                   "<network> <how>"),
                  "community": ("carrying a community set", "<name>"),
-                 "as-path": ("whose AS path matches", "<name>")}),
+                 "as-path": ("whose AS path matches", "<name>"),
+                 "protocol": ("learnt from this protocol", {
+                     p: ("", None) for p in
+                     ("bgp", "ospf", "isis", "static", "direct", "kernel")}),
+                 "tag": ("carrying this route tag", "<0-4294967295>"),
+                 "metric": ("with this metric", "<0-4294967295>")}),
     "set": ("what changes when the term matches", {
         "local-preference": ("the BGP local preference", "<0-4294967295>"),
         "community": ("add, set or delete a community set",
                       "add|set|delete <name>"),
-        "as-path-prepend": ("prepend these ASNs", "<asn>...")}),
+        "as-path-prepend": ("prepend these ASNs", "<asn>..."),
+        "metric": ("the metric: the MED on BGP, the cost in OSPF and IS-IS",
+                   "<0-4294967295>"),
+        "tag": ("the route tag", "<0-4294967295>"),
+        "next-hop": ("the BGP next hop", "<address>")}),
     "then": ("how the term ends", {
         "accept": ("accept the route, and stop", None),
         "reject": ("reject the route, and stop", None),
