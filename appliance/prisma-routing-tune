@@ -1769,12 +1769,25 @@ def render_report(p, vpp_base):
     if p["hugepages_capped"]:
         # Said plainly, because the operator's real problem is that the box is
         # too small for the subscriber target - not that a number was adjusted.
+        # For WHAT, in the words the operator used (#452): a box given a
+        # figure for the CGNAT was told the pages were "for 200000
+        # subscribers" - measured on a KVM guest with memory 8 set.
+        _for = (f"the {p['cgnat_memory_gb']} GB given to the CGNAT"
+                if p.get("cgnat_memory_gb")
+                else f"{p['subscribers']} subscribers")
         out.append(f"# WARNING: {p['hugepages_wanted']} GB of hugepages were needed "
-              f"for {p['subscribers']} subscribers, but this machine has "
+              f"for {_for}, but this machine has "
               f"{p['total_gb']} GB of RAM.")
         if p["hugepages_gb"] == 0:
+            # NOT "runs but does not perform", which is what this said. The
+            # conservative profile disables the DPDK plugin, so the
+            # dataplane is handed no card at all: measured on a KVM guest
+            # with 4 GB, VPP up and `show interface` holding only local0 -
+            # a box that forwards nothing. At 6 GB the same box forwards.
             out.append("#          Hugepages disabled: the box stays on the "
-                  "conservative profile, where it runs but does not perform.")
+                  "conservative profile, where the dataplane is handed no")
+            out.append("#          card and forwards NOTHING. A box that "
+                  "forwards needs 6 GB of RAM (measured); 8 GB is advised.")
         else:
             out.append(f"#          Capped at {p['hugepages_gb']} GB. Expect fewer "
                   "subscribers than configured, or add RAM.")

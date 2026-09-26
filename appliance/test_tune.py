@@ -798,7 +798,24 @@ with tempfile.TemporaryDirectory() as root:
     out = run(root, "--interface", "eth0", "--subscribers", "2000000")
     check("WARNING" in out, "an oversized target on a small box must warn")
     check("add RAM" in out, "and say what to do about it")
+    check("for 2000000 subscribers" in out,
+          "the warning names what the pages were for: the subscribers")
+    out = run(root, "--interface", "eth0", "--cgnat-memory-gb", "20")
+    check("for the 20 GB given to the CGNAT" in out,
+          f"or the figure given to the CGNAT, not the subscriber default "
+          f"(#452): {[l for l in out.splitlines() if 'WARNING' in l]}")
     print("  8 GB box, 2M subscribers -> capped and warned")
+
+# BELOW THE FLOOR (#452): the conservative profile hands the dataplane no
+# card, so the warning says the box forwards nothing, and what it needs.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_gb=0, isolated="", ram_gb=3)
+    out = run(root, "--interface", "eth0")
+    check("card and forwards NOTHING" in out
+          and "A box that forwards needs 6 GB of RAM (measured)" in out,
+          f"a box too small to forward is told so, not that it 'does not "
+          f"perform': {[l for l in out.splitlines() if l.startswith('#  ') or 'WARNING' in l][:4]}")
 
 print("\n=== the main heap is sized from the pages actually reserved ===")
 # A fixed 2G heap against a smaller pool starts VPP on memory that is not
