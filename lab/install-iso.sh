@@ -4157,6 +4157,11 @@ then
          echo "         there is no second card to give the dataplane instead"
          fail=1 ;;
     esac
+    # Out of `dataplane`, then `system`, then configuration mode: an `exit`
+    # leaves one level (#457). One `exit` left the driver in [edit system]
+    # waiting for a `prisma> ` that could not come, on 0.130.0's first gate.
+    send "exit"
+    send "exit"
     send "exit"
     wait_for "prisma> " 120 "the VTY to leave configuration mode" || fail=1
 
