@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.133.1 - show policy and test policy
+
+### Added
+
 * **`show policy` and `test policy`**
   ([#458](https://github.com/andrediashexa/hexarouting/issues/458), step 3).
   - **`show policy [<policy>]`** lists each policy-statement, its terms, and
@@ -89,8 +95,6 @@ version has a chance of seeing it.
     given: accepted on a BGP neighbor, not exported into an IGP.
   - **In configuration mode,** both read the candidate, so a policy can be
     checked before it is committed.
-
-### Fixed
 
 ## 0.133.0 - the control plane fenced
 
