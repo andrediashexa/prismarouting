@@ -92,6 +92,14 @@ version has a chance of seeing it.
   holds that list. The hook is installed on an upgraded box too, and takes
   effect at its next kernel update.
 
+  Measured against 0.131.0's medium:
+  - **Size:** the initrd went from 43.2 MB of gzip (155 MB unpacked) to
+    19.1 MB of zstd (76 MB unpacked), and the whole ISO from 542 MB to 473 MB.
+  - **Unpacking:** 1.1 s against 0.15 s on the build host. It takes longer
+    on a small guest's CPU.
+  - **Loading:** GRUB reads 24 MB less off the medium before the kernel
+    starts. Over a BMC's virtual CD, at a few MB/s, that is the frozen first
+    line the maintainer reported.
 
 ## 0.131.8 - cores by role
 
