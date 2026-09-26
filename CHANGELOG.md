@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.131.3 - the CGNAT side is on the interface
+
+### Added
+
 * **An interface's side of the CGNAT is written on the interface**
   ([#465](https://github.com/andrediashexa/hexarouting/issues/465)). The
   maintainer's decision: `cgnat inside` or `cgnat outside` in the interface's
@@ -88,8 +94,6 @@ version has a chance of seeing it.
   `cgnat` level, with a note naming where it will appear, so runbooks and
   scripts keep working. A file saved by an older version is read as before,
   and the next `save` rewrites it.
-
-### Fixed
 
 ## 0.131.2 - commit from inside a pool
 
