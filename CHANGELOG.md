@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.133.2 - memory by role
+
+### Added
+
 * **The RAM by role is set from the VTY: `system` > `memory`**
   ([#466](https://github.com/andrediashexa/hexarouting/issues/466), third
   part).
@@ -91,8 +97,6 @@ version has a chance of seeing it.
   - **Reading it:** `show system memory` puts what is configured beside this
     boot's RAM, hugepages, main heap, buffers, statistics segment, and what
     the control plane is using now.
-
-### Fixed
 
 ## 0.133.1 - show policy and test policy
 
