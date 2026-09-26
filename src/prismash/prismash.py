@@ -374,6 +374,12 @@ def policy_uses(routing):
         if m:
             uses.add((m.group(1), "import" if m.group(2) == "IN"
                       else "export"))
+        # An export into an IGP (#458 step 2): one map per source protocol.
+        m = re.fullmatch(r"\s*redistribute .*route-map "
+                         r"PO-(\S+)-(OSPF|ISIS)-([A-Z]+)", line)
+        if m:
+            uses.add((m.group(1), f"{m.group(2).lower()}:"
+                                  f"{m.group(3).lower()}"))
     return uses
 
 
@@ -1038,6 +1044,9 @@ ISIS_BLOCK = {
     "set-overload-bit": ("tell everybody not to transit through this box - "
                          "IS-IS's maintenance drain",
                          "[on-startup <0-86400>]"),
+    "export": ("export routes into IS-IS through a policy-statement: "
+               "what it accepts is redistributed, the rest is not",
+               "<policy>"),
     "redistribute": ("inject routes from another source", {
         "ipv4": ("IPv4", "<proto> level-1|level-2 [metric <n>] "
                  "[route-map <name>]"),
@@ -1102,6 +1111,8 @@ OSPF_BLOCK = {
                       "[always] [metric <n>] [metric-type 1|2] "
                       "[route-map <name>]"),
     }),
+    "export": ("export routes into OSPF through a policy-statement: what "
+               "it accepts is redistributed, the rest is not", "<policy>"),
     "redistribute": ("inject routes from another source", {
         "connected": ("directly attached networks",
                       "[metric <n>] [metric-type 1|2] [route-map <name>]"),
@@ -13033,6 +13044,15 @@ class Shell:
             line = (f"neighbor {_w[1]} route-map "
                     f"{policy_mod.map_name(_w[3], _w[2])} "
                     f"{'in' if _w[2] == 'import' else 'out'}")
+        # `export <policy>` inside `router ospf` or `router isis` (#458 step
+        # 2): the `redistribute` statements it stands for, one per protocol
+        # the IGP takes routes from, each with its own compiled map. Checked
+        # and staged together, or not at all.
+        _igp = next((b.split()[1] for b in self.frr_ctx
+                     if b.split()[:2] in (["router", "ospf"],
+                                          ["router", "isis"])), None)
+        if _igp and (_w[:1] == ["export"] or _w[:2] == ["no", "export"]):
+            return self.igp_export(_igp, _w)
         verdict, frr_said = self.frr.dryrun(
             [b for b in self.frr_ctx if b != STATIC_BLOCK], line)
         if verdict == Frr.DRYRUN_REFUSED:
@@ -13086,6 +13106,44 @@ class Shell:
             else:
                 self.frr_ctx = []
             self.frr_ctx.append(line)
+        return True
+
+    def igp_export(self, igp, w):
+        """
+        `[no] export <policy>` inside an IGP (#458 step 2), staged as the
+        `redistribute` lines policy.export_lines() gives. Refused when the
+        policy does not exist, and when a term says something only a BGP
+        route has - a community, an AS path, a local preference - because a
+        map that silently ignored it would export what the operator's term
+        was written to hold back.
+        """
+        neg = w[0] == "no"
+        args = w[2:] if neg else w[1:]
+        if len(args) != 1:
+            self.err("usage: [no] export <policy>")
+            return True
+        name = args[0]
+        pol, _ = policy_mod.parse(self.candidate.policy)
+        if not neg and name not in pol.statements:
+            self.err(f"no policy-statement named {name}")
+            return True
+        why = [] if neg else policy_mod.igp_findings(pol, name)
+        if why:
+            self.err_prose(f"this policy cannot be exported into {igp}; "
+                           "nothing staged", *why)
+            return True
+        # export_lines() indents each statement for the block it goes in;
+        # `no` goes in front of the statement, not of the indent.
+        lines = [("no " if neg else "") + l.strip()
+                 for l in policy_mod.export_lines(name, igp)]
+        ctx = [b for b in self.frr_ctx if b != STATIC_BLOCK]
+        for l in lines:
+            verdict, frr_said = self.frr.dryrun(ctx, l)
+            if verdict == Frr.DRYRUN_REFUSED:
+                self.err_prose("not a statement FRR accepts here; nothing "
+                               "staged", f"FRR answered: {frr_said}", l)
+                return True
+        self.candidate.routing += lines
         return True
 
     def dns_statement(self, w):
