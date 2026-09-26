@@ -198,10 +198,10 @@ prisma# [edit system / cpu] commit
 
 | Comando | O que faz | Padrão |
 |---------|-----------|--------|
-| `control-plane <n>` | quantos núcleos físicos ficam com o sistema, o roteamento, o SSH, a VTY e os containers | `1` |
-| `main-thread shared` | a thread principal do dataplane divide o primeiro núcleo do plano de controle | sim |
-| `main-thread dedicated` | a thread principal ganha um núcleo só dela, isolado como o de um worker; custa um worker | não |
-| `no control-plane`, `no main-thread` | volta ao padrão | |
+| `control-plane <n>` | quantos núcleos físicos ficam com o sistema, o roteamento, o SSH, a VTY e os containers | `1`    |
+| `main-thread shared` | a thread principal do dataplane divide o primeiro núcleo do plano de controle | sim    |
+| `main-thread dedicated` | a thread principal ganha um núcleo só dela, isolado como o de um worker; custa um worker | não    |
+| `no control-plane`, `no main-thread` | volta ao padrão |        |
 
 **Por que dar um núcleo à thread principal:** uma vez por segundo ela para os workers para expirar sessões, e o encaminhamento espera enquanto ela não roda. Dividindo núcleo com o roteamento, ela espera o roteamento - numa tabela BGP cheia convergindo, isso aparece. Num núcleo só dela, não espera ninguém.
 
@@ -230,8 +230,8 @@ this boot:
 | `PRISMA_SUBSCRIBERS` | só dígitos | `200000`   | `200000`        |
 | `PRISMA_LOW_LATENCY` | `1` ou `0`, mais nada | `1`        | `1`             |
 | `PRISMA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio      | sem limite      |
-| `PRISMA_CONTROL_PLANE_CORES` | só dígitos, 1 ou mais, ou vazio | vazio (um núcleo) | um núcleo |
-| `PRISMA_MAIN_THREAD` | `shared` ou `dedicated`, ou vazio | vazio (`shared`) | `shared` |
+| `PRISMA_CONTROL_PLANE_CORES` | só dígitos, 1 ou mais, ou vazio | vazio (um núcleo) | um núcleo       |
+| `PRISMA_MAIN_THREAD` | `shared` ou `dedicated`, ou vazio | vazio (`shared`) | `shared`        |
 
 `PRISMA_LOW_LATENCY=1` desliga os estados profundos de economia de energia do processador, desliga as páginas grandes transparentes e mantém o governador de frequência em `performance`. Custa energia e compra rajada previsível, e é por isso que vem `1`: isto é um roteador. `0` deixa os três em paz, para uma caixa que precisa economizar mais do que precisa encaminhar.
 
