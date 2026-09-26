@@ -1,0 +1,32 @@
+#!/bin/sh
+# What the initramfs does not need to find and mount a root (#450).
+#
+# MODULES=most copies every driver a root COULD sit behind, and on this box
+# that was 151 MB unpacked, 42 MB gzip - read by GRUB from the medium before
+# the kernel prints a word, which is the long first line an operator stares
+# at. Measured on 0.126.0's initrd, by what it held:
+#
+#   drivers/net       41 MB   NICs load from the root; no root here is on the network
+#   drivers/gpu       17 MB   the console is the firmware's framebuffer until the root is up
+#   infiniband, wwan, ieee802154, ppp   ~5 MB
+#   fs/ xfs btrfs nfs f2fs and kin      ~13 MB   the live root is iso9660 + squashfs
+#                                                + overlay; an installed one is ext4
+#
+# KEPT, all of it: every storage, USB, input and block driver, ext4, squashfs,
+# overlay, isofs and fat - a disk this box cannot find at boot is a box that
+# does not boot, and the gate installs to disk and boots it again to prove
+# this left them.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+
+K="${DESTDIR}/usr/lib/modules/${version}/kernel"
+[ -d "$K" ] || K="${DESTDIR}/lib/modules/${version}/kernel"
+[ -d "$K" ] || exit 0
+for d in drivers/net drivers/gpu drivers/infiniband drivers/media \
+         drivers/staging sound \
+         fs/xfs fs/btrfs fs/nfs fs/nfsd fs/f2fs fs/ocfs2 fs/gfs2 fs/jfs \
+         fs/reiserfs fs/ceph fs/smb fs/cifs fs/nilfs2 fs/ubifs; do
+  rm -rf "${K:?}/$d"
+done
+exit 0
