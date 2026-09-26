@@ -307,6 +307,7 @@ Dentro de um bloco, apenas o que vale ali:
 
 ```
 prisma# [edit interface ens18] ?
+  cgnat        this interface's side of the CGNAT
   description  what this interface is for
   exit         leave the interface
   ip           routing-protocol settings FRR owns on this interface

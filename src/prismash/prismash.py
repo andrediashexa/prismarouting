@@ -1193,6 +1193,9 @@ INTERFACE_BLOCK = {
     "linux-name": ("another name for FRR and 'ip' to see this interface by; "
                    "without one it is its own", "<name>"),
     "mac-address": ("the MAC this interface answers to", "<xx:xx:xx:xx:xx:xx>"),
+    "cgnat": ("this interface's side of the CGNAT", {
+        "inside": ("subscribers arrive here", None),
+        "outside": ("translated traffic leaves here", None)}),
     "ipv4": ("IPv4 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
     }),
@@ -1258,6 +1261,7 @@ INTERFACE_BLOCK = {
 # changes nothing yet - it is here so that one added later cannot be shadowed
 # by a shorter entry above it and silently stop being intercepted.
 INTERFACE_DATAPLANE = (
+    ("cgnat",),
     ("ipv6", "nd", "suppress-ra"),
     ("ipv4", "address"),
     ("ipv6", "address"),
@@ -12185,11 +12189,32 @@ class Shell:
             else:
                 self.candidate.users.pop(w[2], None)
             return True
+        # The interface's CGNAT role (#465), the same field `interface <name>
+        # inside` under `cgnat` fills - one model, two places to type it.
+        # HERE, ahead of the `cgnat ...` branches below: inside an interface
+        # block `cgnat inside` is this statement, and those would take it for
+        # a CGNAT setting called `inside` and refuse it.
+        _in_if = (self.frr_ctx[-1].split()[1]
+                  if self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                  else None)
+        if _in_if and (w[:1] == ["cgnat"] or w[:2] == ["no", "cgnat"]):
+            if w[0] == "no":
+                self.candidate.interfaces.pop(_in_if, None)
+            elif len(w) != 2 or w[1] not in ("inside", "outside"):
+                self.err("an interface's cgnat side is inside or outside")
+            else:
+                self.candidate.interfaces[_in_if] = w[1]
+            return True
         if line.startswith("cgnat interface "):
             if len(w) < 4 or w[3] not in ("inside", "outside"):
                 self.err("usage: interface <interface> <inside|outside>")
             else:
                 self.candidate.interfaces[w[2]] = w[3]
+                # Taken, so a runbook and a script that type it still work;
+                # and said, because the configuration will show it somewhere
+                # else from now on (#465).
+                print(f"  note: kept as 'cgnat {w[3]}' in the block of "
+                      f"interface {w[2]}")
             return True
         # `no interface <name>` deletes what this configuration CREATED, and
         # with it whatever was on it: a sub-interface or a loopback. Not a

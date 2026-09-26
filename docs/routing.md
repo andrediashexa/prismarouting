@@ -135,6 +135,7 @@ Inside a block, `?` offers **only what is valid there**:
 
 ```
 prisma# [edit interface GigabitEthernet0/12/0] ?
+  cgnat        this interface's side of the CGNAT
   description  what this interface is for
   exit         leave the interface
   ip           routing-protocol settings FRR owns on this interface
@@ -755,6 +756,7 @@ outside the routing section.
 
 ```
 prisma# [edit interface GigabitEthernet0/12/0] ?
+  cgnat        this interface's side of the CGNAT
   description  what this interface is for
   exit         leave the interface
   ip           routing-protocol settings FRR owns on this interface
@@ -1740,9 +1742,12 @@ nat
   pool residential
    inside 100.64.0.0/22
    exit
-  interface TenGigabitEthernet0/0/0 inside
   timeout udp 300
   exit
+ exit
+
+interface TenGigabitEthernet0/0/0
+ cgnat inside
  exit
 
 router static
@@ -1764,11 +1769,20 @@ block.
 
 **`nat` and `cgnat` are levels that are entered** (#446, the maintainer's
 decision of 2026-09-24). `nat` enters `[edit nat]`, where `cgnat` is the only
-statement; `cgnat` enters `[edit nat / cgnat]`, where the pools, the
-interface attachments, logging, identity, the timeouts and the session table
-are typed in their own words - `pool residential`, `interface ens18 inside`,
-`logging enable`, `no pool residential`. A pool is entered from there and
-`exit` returns to it. `exit` and `up` leave one level, `top` and `end` all of
+statement; `cgnat` enters `[edit nat / cgnat]`, where the pools, logging,
+identity, the timeouts and the session table are typed in their own words -
+`pool residential`, `logging enable`, `no pool residential`. A pool is entered
+from there and `exit` returns to it.
+
+**An interface's side of the CGNAT is on the interface** (#465, the
+maintainer's decision of 2026-09-26): `cgnat inside` or `cgnat outside` in its
+block, `no cgnat` to take it out. The model is the one field it always was,
+`Config.interfaces`, and only where it is written moved. `interface ens18
+inside` under `cgnat` is still taken, with a note naming where it will be
+shown, because runbooks and scripts type it. A file saved with it under
+`cgnat` is still read, the next `save` writes it in the interface's block, and
+`show bpa config` still reads back the plugin's flat
+`cgnat interface <name> <side>`. `exit` and `up` leave one level, `top` and `end` all of
 them, and `commit`, `show` and `rollback` mean the same at every level.
 `cgnat` is a level of its own, rather than `nat` holding the pools directly,
 so that other kinds of translation can sit beside it.

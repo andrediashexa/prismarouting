@@ -156,7 +156,9 @@ def denest_nat(numbered):
         if depth == 0:
             if s == NAT_HIERARCHY:
                 depth = 1
-            elif one_line_cgnat(s.split()):
+            # At column 0 only: indented, `cgnat inside` is a statement of
+            # the interface block it sits in (#465), not the one-line form.
+            elif not raw[:1].isspace() and one_line_cgnat(s.split()):
                 bad.append((n, s, ONE_LINE_GONE))
             else:
                 out.append((n, raw))
@@ -2419,6 +2421,12 @@ class Config:
             out.append(f" mtu {self.mtus[ifname]}")
         if ifname in self.urpf:
             out.append(f" urpf {self.urpf[ifname]}")
+        # The CGNAT role, on the interface it is a property of (#465). It sat
+        # under `nat cgnat` as `interface <name> inside`, a list of names
+        # somewhere else in the file; an operator reading a port could not
+        # see from its block that subscribers arrive on it.
+        if ifname in self.interfaces:
+            out.append(f" cgnat {self.interfaces[ifname]}")
         # Last, and each virtual router's statements together: an operator
         # reading a port wants to know what it IS before being told which
         # service address it may take over.
@@ -2436,9 +2444,9 @@ class Config:
     def cgnat_block(self) -> list[str]:
         """
         Every CGNAT statement, as the `nat` > `cgnat` block an operator types
-        (#446): pools, then the interfaces, then the globals. Nothing at all
-        when there is no CGNAT configuration, so an empty box does not carry
-        an empty block.
+        (#446): pools, then the globals. The interfaces' roles are in their
+        own blocks since #465. Nothing at all when there is no CGNAT
+        configuration, so an empty box does not carry an empty block.
 
         ONE BLOCK, where there used to be three groups of one-line statements
         - and the third of those, the globals, sat at the bottom of the file
@@ -2447,9 +2455,8 @@ class Config:
         flat = []
         for name in sorted(self.pools):
             flat += self.pools[name].lines()
-        for ifname in sorted(self.interfaces):
-            flat.append(f"{CGNAT_LEVEL} interface {ifname} "
-                        f"{self.interfaces[ifname]}")
+        # No interface lines: the role is written in the interface's own
+        # block since #465.
         if self.cgnat_memory_gb:
             flat.append(f"{CGNAT_LEVEL} memory {self.cgnat_memory_gb}")
         flat += ordered_globals(self.globals)
@@ -2555,7 +2562,7 @@ class Config:
                 | set(self.admin_down) | set(self.addresses) | set(self.vlans)
                 | set(self.vrfs) | set(self.macs) | set(self.linux_names)
                 | set(self.loopbacks) | set(self.ra_enabled)
-                | set(self.vrrp) | self.declared)
+                | set(self.vrrp) | set(self.interfaces) | self.declared)
 
     def connected_prefixes(self) -> dict:
         """
@@ -2985,6 +2992,18 @@ class Config:
                         cfg.linux_names[iface] = w[1]
                 elif s == "no linux-name":
                     cfg.linux_names.pop(iface, None)
+                elif w[0] == "cgnat":
+                    # The interface's CGNAT role, where it now lives (#465).
+                    # The form under `nat cgnat` is still read below, so a
+                    # file saved by an older box keeps its CGNAT; the next
+                    # save writes it here.
+                    if len(w) != 2 or w[1] not in ("inside", "outside"):
+                        cfg.unknown.append(
+                            (lineno, s, "expected: cgnat <inside|outside>"))
+                    else:
+                        cfg.interfaces[iface] = w[1]
+                elif s == "no cgnat":
+                    cfg.interfaces.pop(iface, None)
                 elif w[0] == "mac-address" and len(w) > 1:
                     why = mac_error(w[1], request=False)
                     if why:

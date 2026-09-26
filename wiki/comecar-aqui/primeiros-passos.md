@@ -240,12 +240,14 @@ Não sabe o que digitar? **TAB** completa e `**?**` lista as opções válidas c
 
 ## 6. Habilitar nas interfaces
 
+O lado do CGNAT é digitado no bloco de cada interface:
+
 ```
-nat
- cgnat
-  interface ens18 inside
-  interface ens19 outside
-  exit
+interface ens18
+ cgnat inside
+ exit
+interface ens19
+ cgnat outside
  exit
 ```
 

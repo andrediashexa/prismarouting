@@ -151,11 +151,16 @@ Não lembra o que vem depois? **TAB** completa e `?` lista o que vale naquele po
 
 # 4. Diga qual porta é de dentro e qual é de fora
 
-Ainda em `cgnat`:
+O lado do CGNAT é uma propriedade da interface, e se digita no bloco dela:
 
 ```
-prisma# [edit nat / cgnat] interface ens18 inside
-prisma# [edit nat / cgnat] interface ens19 outside
+prisma# [edit nat / cgnat] top
+prisma# [edit] interface ens18
+prisma# [edit interface ens18] cgnat inside
+prisma# [edit interface ens18] exit
+prisma# [edit] interface ens19
+prisma# [edit interface ens19] cgnat outside
+prisma# [edit interface ens19] exit
 ```
 
 `inside` é a porta por onde os assinantes chegam. `outside` é a porta por onde o tráfego traduzido sai.
@@ -163,7 +168,7 @@ prisma# [edit nat / cgnat] interface ens19 outside
 # 5. Confira o que vai mudar, antes de mudar
 
 ```
-prisma# [edit nat / cgnat] show configuration compare
+prisma# [edit] show configuration compare
 ```
 
 ```
@@ -178,16 +183,20 @@ prisma# [edit nat / cgnat] show configuration compare
 +   mode deterministic
 +   tcp-mss auto
 +   exit
-+  interface ens18 inside
-+  interface ens19 outside
 +  exit
 + exit
+ interface ens18
+  ipv4 address 100.64.0.1/22
++ cgnat inside
+  exit
 ```
+
+E, mais abaixo, a mesma linha `+ cgnat outside` no bloco da `ens19`.
 
 Tudo com `+` é o que entra. Depois peça à caixa para validar, sem aplicar nada:
 
 ```
-prisma# [edit nat / cgnat] commit check
+prisma# [edit] commit check
 ```
 
 ```
@@ -207,7 +216,7 @@ Ela existe porque o CGNAT olha o pacote antes de a caixa decidir se ele é para 
 # 6. Aplique
 
 ```
-prisma# [edit nat / cgnat] commit comment "pool residencial inicial"
+prisma# [edit] commit comment "pool residencial inicial"
 ```
 
 ```

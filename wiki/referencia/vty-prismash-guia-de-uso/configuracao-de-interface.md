@@ -27,6 +27,8 @@ O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali den
 | `vrf`   | `<1-4294967295>` | tabela de roteamento onde os endereços vivem; `0` tira a interface de uma |
 | `vlan`  | `<1-4094> [inner <1-4094>]` | tag da sub-interface |
 | `mac-address` | `<xx:xx:xx:xx:xx:xx>` | o MAC ao qual a interface responde |
+| `cgnat` | `inside\|outside` | o lado desta interface no CGNAT: `inside` é por onde os assinantes chegam, `outside` por onde o tráfego traduzido sai |
+| `no cgnat` |           | tira a interface do CGNAT |
 | `no ipv6 nd suppress-ra` |           | anuncia esta caixa como roteador nesta porta (por padrão não anuncia) |
 | `urpf`  | `strict\|loose\|off` | descarta pacotes cuja origem não volta por aqui |
 | `vrrp`  | `<1-255> address <A.B.C.D>` | um endereço de serviço que esta caixa disputa com o par (RFC 5798) |

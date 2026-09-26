@@ -787,7 +787,9 @@ check(set(opts) <= set(INTERFACE_BLOCK) | LEVEL,
       f"{sorted(set(opts) - set(INTERFACE_BLOCK) - LEVEL)}")
 check({"mtu", "urpf"} <= set(opts),
       f"and it does offer them: {sorted(opts)}")
-check(not ({"cgnat", "user", "commit", "rollback"} & set(opts)),
+# `cgnat` is not in the list since #465: `cgnat inside|outside` is a statement
+# OF the interface now. `pool` is the CGNAT level's own word, and is.
+check(not ({"pool", "user", "commit", "rollback"} & set(opts)),
       f"and nothing from the level above leaks in: {sorted(opts)}")
 print(f"  interface -> {sorted(opts)}")
 sh.feed("exit")
