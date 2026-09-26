@@ -38,6 +38,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, CGNAT_LEVEL, one_line_cgnat,
+                    SYSTEM_HIERARCHY, DATAPLANE_LEVEL, nest_system,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
@@ -2360,9 +2361,6 @@ TREE = {
         # where `?` is walked from while the operator stands in one.
         "nat": ("address translation: enter it, then 'cgnat'", None),
         "no": ("remove configuration", {
-            "dataplane": ("stop handing a card to the dataplane", {
-                "interface": ("the box claims no card at the next start of "
-                              "the dataplane", None)}),
             "dns": ("stop asking a resolver", {
                 "server": ("the last one removed gives /etc/resolv.conf back "
                            "to DHCP or the installer's answer",
@@ -2400,9 +2398,7 @@ TREE = {
         # The card the dataplane is GIVEN, which is not one of the interfaces
         # the dataplane has - a fresh appliance has none of those, and the
         # only way to name one used to be editing a file in Linux (#283).
-        "dataplane": ("the card handed to the dataplane", {
-            "interface": ("the card carrying subscriber traffic, by the name "
-                          "Linux gives it", ARG_HOST_NIC)}),
+        "system": ("this machine: the card the dataplane is given", None),
         "dns": ("the resolvers this box asks", {
             "server": ("a resolver, by address; up to 3, asked in the order "
                        "typed", "<address>")}),
@@ -2459,6 +2455,22 @@ TREE["nat"] = {
     "cgnat": ("carrier-grade NAT: pools, interfaces, logging, timeouts",
               None),
     "exit": ("leave 'nat'", None),
+    **_EVERY_LEVEL,
+}
+# THE TWO LEVELS UNDER `system` (#457), the same way: what is typed there,
+# and nothing from the level above.
+TREE["system"] = {
+    "dataplane": ("the card the dataplane is given", None),
+    "exit": ("leave 'system'", None),
+    **_EVERY_LEVEL,
+}
+TREE["dataplane"] = {
+    "interface": ("the card carrying subscriber traffic, by the name Linux "
+                  "gives it", ARG_HOST_NIC),
+    "no": ("stop handing a card to the dataplane", {
+        "interface": ("the box claims no card at the next start of the "
+                      "dataplane", None)}),
+    "exit": ("leave 'dataplane'", None),
     **_EVERY_LEVEL,
 }
 TREE["cgnat"] = {
@@ -11715,6 +11727,57 @@ class Shell:
     NAT_LEVEL_WORDS = ("commit", "rollback", "show", "top", "up", "exit",
                        "quit", "end", "start") + tuple(PROBE_TOOLS)
 
+    def system_rewrite(self, line):
+        """
+        `system` and `dataplane` as the levels they are (#457), and what is
+        typed in them in the words the model holds.
+
+        At the top, `system` enters the level, and the old top-level
+        `dataplane interface <card>` is refused with where it went - the
+        maintainer's decision for #446, applied here: one spelling, not two.
+        A saved file still reads the old line (config.denest_system), because
+        a box replays its file at boot where nobody can be told anything.
+        Under `system` there is `dataplane`; under `dataplane`, `interface
+        <card>` is the model's `dataplane interface <card>`.
+
+        Returns the line to go on with, or "" when it was handled here. A
+        line inside `nat` is not this function's.
+        """
+        w = line.split()
+        if not w:
+            return ""
+        if self.nat_ctx and self.nat_ctx[0] != SYSTEM_HIERARCHY:
+            return line
+        if not self.nat_ctx:
+            if line.strip() == SYSTEM_HIERARCHY:
+                self.nat_ctx = [SYSTEM_HIERARCHY]
+                return ""
+            if w[0] == DATAPLANE_LEVEL or w[:2] == ["no", DATAPLANE_LEVEL]:
+                self.err_prose("'dataplane' has moved under 'system'",
+                               "enter 'system', then 'dataplane', and type "
+                               "'interface <card>' or 'no interface' there")
+                return ""
+            return line
+        if w[0] in self.NAT_LEVEL_WORDS:
+            if w[0] in ("exit", "quit"):
+                self.nat_ctx.pop()
+                return ""
+            if w[0] == "end":
+                self.nat_ctx = []
+                return ""
+            return line
+        if self.nat_ctx == [SYSTEM_HIERARCHY]:
+            if line.strip() == DATAPLANE_LEVEL:
+                self.nat_ctx.append(DATAPLANE_LEVEL)
+            else:
+                self.err_prose("under 'system' there is 'dataplane' and "
+                               "nothing else yet",
+                               "'dataplane' enters it; 'exit' leaves 'system'")
+            return ""
+        if w[0] == "no":
+            return f"no {DATAPLANE_LEVEL} " + " ".join(w[1:])
+        return f"{DATAPLANE_LEVEL} " + line.strip()
+
     def nat_rewrite(self, line):
         """
         `nat` and `cgnat` as the levels they are (#446), and what is typed in
@@ -11732,6 +11795,8 @@ class Shell:
         w = line.split()
         if not w:
             return ""
+        if self.nat_ctx and self.nat_ctx[0] == SYSTEM_HIERARCHY:
+            return line
         if not self.nat_ctx:
             if line.strip() == NAT_HIERARCHY:
                 self.nat_ctx = [NAT_HIERARCHY]
@@ -11792,6 +11857,9 @@ class Shell:
         if self.frr_ctx and self.frr_ctx[-1] != STATIC_BLOCK:
             return line
         if not self.frr_ctx:
+            line = self.system_rewrite(line)
+            if not line:
+                return ""
             line = self.nat_rewrite(line)
             if not line:
                 return ""
@@ -11974,7 +12042,7 @@ class Shell:
             return True
         if w[0] == "dataplane":
             if w[1:2] != ["interface"] or len(w) != 3:
-                self.err("usage: dataplane interface <name>")
+                self.err("usage: interface <card>, under 'system' > 'dataplane'")
                 return True
             # REFUSED HERE, at the prompt, and checked again at commit.
             #
@@ -13285,6 +13353,15 @@ class Shell:
             lines[0] = lines[0][len(CGNAT_LEVEL) + 1:]
             print("\n".join(lines))
             return
+        # Standing in `system` or `dataplane`: that level's block (#457).
+        if self.nat_ctx and self.nat_ctx[0] == SYSTEM_HIERARCHY \
+                and not self.frr_ctx:
+            block = nest_system(cfg.dataplane_if)
+            if self.nat_ctx[-1] == DATAPLANE_LEVEL:
+                block = [b[2:] for b in block[2:-2]]
+            print("\n".join(block) if block else
+                  "nothing is configured here yet")
+            return
         # Standing in `nat` or `cgnat` with no pool open: that level's block,
         # as `show configuration` writes it.
         if self.nat_ctx and not self.frr_ctx:
@@ -13900,11 +13977,11 @@ class Shell:
                 # here, and advice that sends them to Linux contradicts it in
                 # the one message they read when the box forwards nothing.
                 return ["no interface was named, so VPP was given no NIC.",
-                        "Name it here: 'configure', then 'dataplane "
-                        "interface <name>',",
-                        "then 'commit'. A name this box has not got is "
-                        "refused, and the",
-                        "refusal says which ones it has.",
+                        "Name it here: 'configure', 'system', 'dataplane', "
+                        "then",
+                        "'interface <name>' and 'commit'. A name this box has "
+                        "not got is",
+                        "refused, and the refusal says which ones it has.",
                         "'show hardware' is where the names come from: it "
                         "lists this box's cards as Linux has them, and marks "
                         "the one carrying the default route."]
@@ -13984,7 +14061,7 @@ class Shell:
         """
         named = self.read_dataplane_if()
         if named:
-            return [f"'dataplane interface' names '{named}', so the dataplane "
+            return [f"'system', 'dataplane', 'interface' names '{named}', so the dataplane "
                     f"claims that card and no other.",
                     "Remove it with 'no dataplane interface' to let the box "
                     "choose again."]
@@ -14000,7 +14077,7 @@ class Shell:
                     f"  {reserve}",
                     "It is the management network this box was installed "
                     "with.",
-                    "'dataplane interface <name>' claims that card alone "
+                    "'interface <name>' under 'system', 'dataplane' claims that card alone "
                     "instead."]
         if reserve and reserve in have:
             # THE NARROWING, and the box it is about is the commonest there
@@ -14017,12 +14094,12 @@ class Shell:
             return [f"The dataplane claims all {len(have)}. '{reserve}' was "
                     f"reserved for Linux when this box was installed and is "
                     f"not here now.",
-                    "'dataplane interface <name>' claims one card alone "
+                    "'interface <name>' under 'system', 'dataplane' claims one card alone "
                     "instead."]
         return [f"The dataplane claims all {len(have)}. No card is reserved "
                 f"for Linux: this box was installed with no management "
                 f"network, so it is reached at its console.",
-                "'dataplane interface <name>' claims that card alone "
+                "'interface <name>' under 'system', 'dataplane' claims that card alone "
                 "instead."]
 
     def waiting_note(self, nics, held):
@@ -14683,7 +14760,7 @@ class Shell:
             # either, and refusing here would leave the operator with no way
             # to proceed from the VTY - which is the defect being repaired.
             lines = ["# Written by prismash. Set through the VTY: "
-                     "'dataplane interface <name>'."]
+                     "'interface <name>' under 'system', 'dataplane'."]
         except OSError as e:
             return False, f"{self.TUNE_ENV}: {e.strerror}"
 

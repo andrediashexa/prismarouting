@@ -25,7 +25,7 @@ Numa caixa **já em serviço**, isso muda de dono no próximo boot. Leia a sua l
 |----------------|----------------------------|
 | tem **uma** placa | o dataplane fica com ela. Endereço, MAC e gateway passam para o par `linux_cp`, e a caixa passa a ser alcançada *através* do dataplane. Nada a fazer |
 | tem **várias** e você guardou uma para o Linux só não nomeando ela | **o dataplane vai pegar essa placa.** Só é poupada a que está gravada como rede de gerência da instalação. Uma placa que você usava para VLAN de gerência, caminho de backup ou storage é reivindicada |
-| já nomeia uma placa com `dataplane interface` | não muda, e agora é **exclusivo**: a caixa pega aquela e nenhuma outra. É assim que se guardam placas para o Linux |
+| já nomeia uma placa com `dataplane interface` (hoje `interface`, em `system` > `dataplane`) | não muda, e agora é **exclusivo**: a caixa pega aquela e nenhuma outra. É assim que se guardam placas para o Linux |
 | mistura placa de MTU 1500 com uma que aceita jumbo | toda interface começa no **menor** máximo entre as placas reivindicadas, porque o dataplane usa um valor só para todas. `mtu <n>` dentro de `interface` levanta uma porta depois |
 | foi instalada nomeando uma placa que ela não tem mais | nada fica reservado, então **todas** são reivindicadas |
 | foi instalada respondendo `none` à pergunta da rede de gerência | **nada pode ficar reservado**, porque a reserva É essa resposta: todas as placas são reivindicadas, inclusive a que você administra. A caixa não se perde — o endereço passa para o par do dataplane — mas o caminho muda, e o autoteste passa a avisar em todo boot |
@@ -34,7 +34,7 @@ Numa caixa **já em serviço**, isso muda de dono no próximo boot. Leia a sua l
 :::warning
 O caso do meio é o que morde. Uma caixa com várias placas em que você simplesmente nunca nomeou a de gerência perde essa placa para o dataplane no primeiro boot depois da atualização — e, se não for a que carrega a rota default gravada na instalação, ela não volta sozinha.
 
-Antes de reiniciar, resolva com uma linha: nomeie a placa dos assinantes com `dataplane interface <nome>` e dê `commit`. A partir daí a caixa reivindica só aquela, e todas as outras ficam com o Linux.
+Antes de reiniciar, resolva com uma linha: nomeie a placa dos assinantes com `interface <nome>`, em `system` > `dataplane`, e dê `commit`. A partir daí a caixa reivindica só aquela, e todas as outras ficam com o Linux.
 
 :::
 

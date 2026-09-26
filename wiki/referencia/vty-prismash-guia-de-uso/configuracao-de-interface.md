@@ -354,7 +354,9 @@ O nome exato tem precedência: pedir `ens18` numa caixa que também tem `ens18.1
 
 ```
 prisma> configure
-prisma# [edit] dataplane interface enp2s0
+prisma# [edit] system
+prisma# [edit system] dataplane
+prisma# [edit system / dataplane] interface enp2s0
 prisma# [edit] commit
 ```
 
@@ -362,8 +364,8 @@ A diferença é prática. Numa caixa que ainda não recebeu placa nenhuma o data
 
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
-| `dataplane interface` | `<placa>` | entrega esta placa ao dataplane no próximo início dele |
-| `no dataplane interface` |           | a caixa deixa de pegar placa: estado seguro, alcançável por rede |
+| `interface`, em `system` > `dataplane` | `<placa>` | entrega esta placa ao dataplane no próximo início dele |
+| `no interface`, no mesmo nível |           | a caixa deixa de pegar placa: estado seguro, alcançável por rede |
 
 O `commit` guarda a escolha, recalcula o ajuste de boot e **não reinicia o dataplane** — a entrega derruba todas as sessões da caixa, inclusive a sua, então a janela é sua. A placa que carrega a rota default é recusada na hora em que você digita, e um nome que a caixa não tem também, com a lista dos que ela tem. Os dois casos, com o que a caixa imprime, estão em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
 

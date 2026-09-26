@@ -189,9 +189,9 @@ O que vale saber para ler o gráfico:
 prisma> show hardware
   the dataplane has no interface to forward on: no interface was named, so VPP
   was given no NIC.
-  Name it here: 'configure', then 'dataplane interface <name>',
-  then 'commit'. A name this box has not got is refused, and the
-  refusal says which ones it has.
+  Name it here: 'configure', 'system', 'dataplane', then
+  'interface <name>' and 'commit'. A name this box has not got is
+  refused, and the refusal says which ones it has.
   'show hardware' is where the names come from: it lists this box's cards as
   Linux has them, and marks the one carrying the default route.
 
@@ -239,7 +239,8 @@ Numa caixa que tem **só essa** placa, a marca não é uma recusa: é um aviso d
   This box has one NIC, 'ens18', and it carries the default route, so giving it
   to the dataplane is also giving away the path this box is reached on.
   It can still be done, and the address goes with it: name it with 'configure',
-  'dataplane interface ens18', 'commit', and the box keeps that address on the
+  'system', 'dataplane', 'interface ens18', 'commit', and the box keeps that
+  address on the
   linux_cp pair the dataplane holds for the card.
   The commit is a confirmed one whether or not you ask: restart the box, log
   back in and type 'commit' to keep it, and if nobody does the box puts the

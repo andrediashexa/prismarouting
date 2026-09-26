@@ -363,9 +363,9 @@ that is decoration
 prisma> show hardware
   the dataplane has no interface to forward on: no interface was named, so VPP
   was given no NIC.
-  Name it here: 'configure', then 'dataplane interface <name>',
-  then 'commit'. A name this box has not got is refused, and the
-  refusal says which ones it has.
+  Name it here: 'configure', 'system', 'dataplane', then
+  'interface <name>' and 'commit'. A name this box has not got is
+  refused, and the refusal says which ones it has.
   'show hardware' is where the names come from: it lists this box's cards as
   Linux has them, and marks the one carrying the default route.
 
@@ -385,7 +385,7 @@ prisma> show hardware
   2 NIC(s) on this box, as Linux has them
   The dataplane claims all 2. No card is reserved for Linux: this box was
   installed with no management network, so it is reached at its console.
-  'dataplane interface <name>' claims that card alone instead.
+  'interface <name>' under 'system', 'dataplane' claims that card alone instead.
   'eno1' carries the default route: it is how this box is reached. If the
   dataplane takes it, named or claimed, its address moves onto the linux_cp
   pair the dataplane keeps for it, and this box is then reached through the
@@ -554,7 +554,7 @@ three things off the live card on the boot that claims it, whichever box it is
 on and whether or not the card was named, and leaves them in
 `/run/prisma-routing/dataplane-management`; a record taken at the prompt was a
 second copy of a fact the box recomputes, and one that could be a day older
-than the boot that used it. So `dataplane interface <card>` is accepted like
+than the boot that used it. So `interface <card>` under `system` > `dataplane` is accepted like
 any other statement, and the commit says what it says for every card: the
 dataplane claims it when it starts, and this commit does not restart it.
 

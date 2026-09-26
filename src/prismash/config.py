@@ -80,6 +80,11 @@ STATIC_BLOCK = "router static"
 #: The level under `nat` that CGNAT is (#446). A level of its own, and not
 #: `nat` itself, so that other kinds of translation can sit beside it.
 CGNAT_LEVEL = "cgnat"
+#: The machine's own configuration, as levels (#457): `system` > `dataplane`
+#: > `interface <card>`. The maintainer asked for the dataplane statement
+#: under `system` and nothing else yet (2026-09-25).
+SYSTEM_HIERARCHY = "system"
+DATAPLANE_LEVEL = "dataplane"
 #: The most memory `cgnat memory` takes, in GB (#454): a bound on a typo, not
 #: on a machine. The tuner caps what is asked at what the box's RAM can give,
 #: and says so.
@@ -191,6 +196,66 @@ def denest_nat(numbered):
             out.append((n, " " + s))
             if s == "exit":
                 depth = 2
+    return out, bad
+
+
+def nest_system(dataplane_if) -> list[str]:
+    """
+    The `system` > `dataplane` block a file carries for the card (#457), or
+    nothing when no card was named. The one writer of the block: the box
+    saves, shows and reads back one shape.
+    """
+    if not dataplane_if:
+        return []
+    return [SYSTEM_HIERARCHY, f" {DATAPLANE_LEVEL}",
+            f"  interface {dataplane_if}", "  exit", " exit"]
+
+
+def denest_system(numbered):
+    """
+    The `system` > `dataplane` block of a file as the statement the model
+    holds (#457): `interface ens19` under `dataplane` is `dataplane interface
+    ens19`. Returns the rewritten list and [(lineno, statement, why)] for what
+    cannot be read.
+
+    THE OLD FLAT LINE IS STILL READ. Every box in service has a saved file and
+    up to twenty rollback revisions that say `dataplane interface <card>` at
+    the top, and prisma-routing.service replays the file at every boot on a
+    machine nobody is watching; the next `save` writes the block. Only the
+    prompt refuses the old spelling - where there is somebody to be told.
+    """
+    out, bad = [], []
+    depth = 0          # 0 top, 1 in system, 2 in dataplane
+    routing = False
+    for n, raw in numbered:
+        s = raw.strip()
+        if routing or s == ROUTING_HEADER:
+            routing = True
+            out.append((n, raw))
+            continue
+        if not s or s.startswith("!"):
+            out.append((n, raw))
+            continue
+        if depth == 0:
+            if s == SYSTEM_HIERARCHY:
+                depth = 1
+            else:
+                out.append((n, raw))
+        elif depth == 1:
+            if s == DATAPLANE_LEVEL:
+                depth = 2
+            elif s in ("exit", "quit", "end"):
+                depth = 0
+            else:
+                bad.append((n, s, "under 'system' there is 'dataplane' and "
+                                  "nothing else"))
+        else:
+            if s in ("exit", "quit", "end"):
+                depth = 1
+            elif s.startswith("no "):
+                out.append((n, f"no {DATAPLANE_LEVEL} {s[3:]}"))
+            else:
+                out.append((n, f"{DATAPLANE_LEVEL} {s}"))
     return out, bad
 
 
@@ -2392,8 +2457,7 @@ class Config:
         # carries no statement, the same way an interface nobody shut down
         # carries no `shutdown`: recording an absence would put a line on every
         # box and make the file describe a decision nobody took.
-        if self.dataplane_if:
-            out.append(f"dataplane interface {self.dataplane_if}")
+        out += nest_system(self.dataplane_if)
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
         out += [f"dns server {a}" for a in self.dns_servers]
@@ -2639,6 +2703,9 @@ class Config:
         numbered = list(enumerate(text.splitlines(), 1))
         if not dataplane:
             numbered, refused = denest_nat(numbered)
+            cfg.unknown += refused
+            cfg.n_statements += len(refused)
+            numbered, refused = denest_system(numbered)
             cfg.unknown += refused
             cfg.n_statements += len(refused)
         for lineno, raw in numbered:

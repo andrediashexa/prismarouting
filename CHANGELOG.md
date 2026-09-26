@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`dataplane` lives under `system`** ([#457](https://github.com/andrediashexa/hexarouting/issues/457)).
+  Asked for by the maintainer: which card the box hands to the dataplane is a
+  fact about the machine. It is typed as `system` > `dataplane` >
+  `interface <card>` (and `no interface` there), shown and saved as that
+  block, and `?` and TAB offer what each level holds.
+
+  The old top-level `dataplane interface` is refused at the prompt, with
+  where it went, as #446 did for the one-line CGNAT form. A saved file or a
+  rollback revision that carries the old line is still read, because a box
+  replays its file at boot where nobody can be told anything; the next `save`
+  writes the block. `show hardware` and the other screens that told the
+  operator what to type now say the new words.
+
 ### Fixed
 
 ## 0.129.0 - the CGNAT gets the memory you give it
