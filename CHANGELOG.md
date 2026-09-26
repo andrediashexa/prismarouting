@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.132.1 - policy exported into OSPF and IS-IS
+
+### Added
+
 * **Routing policy exported into OSPF and IS-IS, and more to match and set**
   ([#458](https://github.com/andrediashexa/hexarouting/issues/458), step 2).
   - **`export <policy>`** inside `router ospf` or `router isis` redistributes
@@ -94,8 +100,6 @@ version has a chance of seeing it.
     routes with `set metric 77` put only that route in the OSPF neighbour's
     table, at cost 77. Plain `redistribute static` put both there, at the
     default metric.
-
-### Fixed
 
 ## 0.132.0 - a smaller initrd
 
