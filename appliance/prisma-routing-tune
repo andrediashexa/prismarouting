@@ -1592,7 +1592,7 @@ def render_vpp(p):
               "no card on this box could be claimed.")
         dpdk = ("dpdk {\n"
                 f"  # {_why}\n"
-                "  # 'dataplane interface <name>' in the VTY names one by\n"
+                "  # 'interface <name>' under 'system' > 'dataplane' in the VTY names one by\n"
                 "  # hand; the box needs no help on ordinary hardware.\n"
                 "  no-pci\n"
                 "}\n\n")

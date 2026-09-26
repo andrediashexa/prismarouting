@@ -17,7 +17,7 @@ flowchart TD
 
 ## Antes de começar, decida duas coisas
 
-**1. Se alguma placa precisa ficar com o Linux.** Numa caixa com várias placas, o dataplane fica com todas menos a que foi gravada como rede de gerência na instalação. Se você quer guardar outra — VLAN de gerência, caminho de backup, storage —, é `dataplane interface <placa-dos-assinantes>`, que faz a caixa reivindicar aquela e só aquela. Numa caixa de uma placa só não há o que decidir: ela vai para o dataplane e o endereço vai junto.
+**1. Se alguma placa precisa ficar com o Linux.** Numa caixa com várias placas, o dataplane fica com todas menos a que foi gravada como rede de gerência na instalação. Se você quer guardar outra — VLAN de gerência, caminho de backup, storage —, é `interface <placa-dos-assinantes>` em `system` > `dataplane`, que faz a caixa reivindicar aquela e só aquela. Numa caixa de uma placa só não há o que decidir: ela vai para o dataplane e o endereço vai junto.
 
 **2. Determinístico ou dinâmico.**
 
@@ -93,22 +93,24 @@ seguido do nome da placa e da frase que diz que ela é a rede de gerência com q
 
 Uma caixa que comesse uma placa em silêncio seria pior do que uma que pergunta; e uma que poupasse uma em silêncio deixaria o operador sem explicação para uma placa ausente. Por isso as duas metades são ditas.
 
-### Quando você quer escolher: `dataplane interface`
+### Quando você quer escolher: `system` > `dataplane`
 
 O comando continua existindo, e mudou de papel: era passo obrigatório, agora é **override**. Ele é **exclusivo** — nomear uma placa faz a caixa reivindicar aquela e **nenhuma outra**:
 
 ```
 prisma> configure
-prisma# [edit] dataplane interface enp2s0
-prisma# [edit] commit
+prisma# [edit] system
+prisma# [edit system] dataplane
+prisma# [edit system / dataplane] interface enp2s0
+prisma# [edit system / dataplane] commit
 ```
 
-É assim que se guarda placa para o Linux numa caixa com várias: nomeie a que carrega os assinantes, e todas as demais ficam. `no dataplane interface` devolve a escolha para a caixa.
+É assim que se guarda placa para o Linux numa caixa com várias: nomeie a que carrega os assinantes, e todas as demais ficam. `no interface`, no mesmo nível, devolve a escolha para a caixa.
 
 O nome é o que o **Linux** dá à placa. **TAB** e `?` listam as que a caixa tem e marcam qual carrega a rota default:
 
 ```
-prisma# [edit] dataplane interface ?
+prisma# [edit system / dataplane] interface ?
 
   enp1s0  carries the default route: its address moves with it
   enp2s0  card
@@ -129,7 +131,7 @@ Só entram na lista as placas que **têm endereço PCI** — as únicas que o da
 **Um nome que a caixa não tem também é recusado, e ela diz quais tem:**
 
 ```
-prisma# [edit] dataplane interface eth9
+prisma# [edit system / dataplane] interface eth9
 error: dataplane interface eth9: this box has no such interface
     the cards it has: enp1s0, enp2s0
     this is the name LINUX gives the card, which is what the dataplane is

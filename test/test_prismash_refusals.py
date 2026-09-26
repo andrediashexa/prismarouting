@@ -1247,9 +1247,13 @@ _settings = [
     # with a note rather than refused - test/test_dataplane_if.py holds that.
     ("a statement this VTY no longer has",
      "dataplane management ens18 address 10.0.0.2/24 mac 02:00:00:00:00:09",
-     "error: usage: dataplane interface <name>"),
-    ("dataplane with no card named", "dataplane interface",
-     "error: usage: dataplane interface <name>"),
+     "error: 'dataplane' has moved under 'system'"),
+    # Under `system` > `dataplane` since #457: the word alone at the top is
+    # refused with where it went, and inside it the statement's usage.
+    ("dataplane with no card named", "system|dataplane|interface",
+     "error: usage: interface <card>, under 'system' > 'dataplane'"),
+    ("something under system that is not dataplane", "system|dns",
+     "error: under 'system' there is 'dataplane' and nothing else yet"),
     ("ssh with no value", "ssh port",
      "error: usage: ssh <setting> <value>"),
     ("an ssh value sshd would not take", "ssh permit-root-login maybe",

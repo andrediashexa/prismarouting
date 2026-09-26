@@ -1946,6 +1946,47 @@ driven(lambda: sh.do_config("no memory"))
 check(sh.candidate.cgnat_memory_gb == 0, "and 'no memory' takes it out")
 ok("the CGNAT's memory: stored, shown, refused when it is not a figure")
 
+print("\n=== system > dataplane: the levels, the file and the old line (#457) ===")
+check(_config.nest_system("ens19") == ["system", " dataplane", "  interface ens19",
+                                      "  exit", " exit"],
+      f"the block a file carries: {_config.nest_system('ens19')}")
+check(_config.nest_system("") == [], "and nothing when no card was named")
+_n, _bad = _config.denest_system(list(enumerate(
+    ["system", " dataplane", "  interface ens19", "  exit", " exit",
+     "ssh port 22"], 1)))
+check([l for _, l in _n] == ["dataplane interface ens19", "ssh port 22"]
+      and _bad == [], f"read back as the model's statement: {_n} {_bad}")
+_n, _bad = _config.denest_system(list(enumerate(
+    ["dataplane interface ens19"], 1)))
+check([l for _, l in _n] == ["dataplane interface ens19"] and _bad == [],
+      "the old top-level line is still read: a box replays its file at boot")
+_n, _bad = _config.denest_system(list(enumerate(["system", " dns", " exit"], 1)))
+check(_bad and "nothing else" in _bad[0][2],
+      f"anything else under system is said: {_bad}")
+_c = _config.Config.parse("system\n dataplane\n  interface ens19\n  exit\n exit\n")
+check(_c.dataplane_if == "ens19" and not _c.unknown
+      and "  interface ens19" in _c.text().splitlines(),
+      f"a file round-trips through the block: {_c.dataplane_if!r} {_c.unknown}")
+sh = shell()
+sh.candidate = sh.running_config()
+rv, text = driven(lambda: sh.do_config("dataplane interface ens19"))
+check("'dataplane' has moved under 'system'" in text
+      and sh.candidate.dataplane_if == "",
+      f"the old spelling at the prompt is refused with where it went: {text!r}")
+check(sh.system_rewrite("system") == "" and sh.nat_ctx == ["system"],
+      "system enters its level")
+rv, text = driven(lambda: sh.do_config("dns"))
+check("under 'system' there is 'dataplane' and nothing else yet" in text,
+      f"and only dataplane is under it: {text!r}")
+check(sh.system_rewrite("dataplane") == ""
+      and sh.nat_ctx == ["system", "dataplane"], "dataplane enters its level")
+check(sh.system_rewrite("interface ens19") == "dataplane interface ens19"
+      and sh.system_rewrite("no interface") == "no dataplane interface",
+      "and inside it the statement is the model's")
+check(sh.system_rewrite("exit") == "" and sh.nat_ctx == ["system"],
+      "exit leaves one level")
+ok("system > dataplane, read and written in one shape")
+
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
 # Mutation shown red: write only the assignment, dropping the other lines.
 tune = os.path.join(_root, "tune", "tune.env")

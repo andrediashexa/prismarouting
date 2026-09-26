@@ -276,13 +276,13 @@ def drive(sh, lines):
 print("=== the setting goes into the candidate and is rendered back ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    said = drive(sh, ["configure", "dataplane interface enp2s0"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0"])
     check(sh.candidate is not None and sh.candidate.dataplane_if == "enp2s0",
           f"the card did not reach the candidate: {said!r}")
     check("error" not in said,
           f"a card this box has and does not route over was refused: {said!r}")
     text = sh.candidate.text()
-    check("dataplane interface enp2s0" in text.splitlines(),
+    check("  interface enp2s0" in text.splitlines(),
           f"the candidate does not render the statement back: {text!r}")
     print(f"  candidate holds {sh.candidate.dataplane_if!r} and renders it")
 
@@ -307,8 +307,8 @@ print(f"  {(_rendered[0] if _rendered else '(nothing)')!r} renders, parses, "
 print("\n=== 'no dataplane interface' takes it out again ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    drive(sh, ["configure", "dataplane interface enp2s0",
-               "no dataplane interface"])
+    drive(sh, ["configure", "system", "dataplane", "interface enp2s0",
+               "no interface"])
     check(sh.candidate.dataplane_if == "",
           f"the statement could be set and not removed: "
           f"{sh.candidate.dataplane_if!r}")
@@ -339,7 +339,7 @@ print("\n=== the card carrying the default route is ACCEPTED at the prompt (#385
 # default route, so the fixture reaches the line the refusal used to fire on.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    said = drive(sh, ["configure", "dataplane interface enp1s0"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp1s0"])
     check("error:" not in said,
           f"the card carrying the default route was refused at the prompt, "
           f"which is the refusal #385 removed: {said!r}")
@@ -405,7 +405,7 @@ print("\n=== a card this box has not got is refused, and it says what it has "
       "===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    said = drive(sh, ["configure", "dataplane interface eth9"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface eth9"])
     check("error:" in said and "no such interface" in said,
           f"a name the box does not have was accepted: {said!r}")
     # The CARDS, not every name under /sys/class/net. `lo` is in the fake box
@@ -430,7 +430,7 @@ print("\n=== a box whose card list cannot be read refuses nothing ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     sh.SYS_CLASS_NET = f"{tmp}/nothing-here"
-    said = drive(sh, ["configure", "dataplane interface enp2s0"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0"])
     check(sh.candidate.dataplane_if == "enp2s0",
           f"the check refused a name because it could not look: {said!r}")
     print("  cannot look is not 'the box has none'")
@@ -463,7 +463,7 @@ print("\n=== commit writes the tuner's input and changes nothing else ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     before = open(sh.TUNE_ENV).read()
-    said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check("commit complete" in said, f"the commit did not complete: {said!r}")
     after = open(sh.TUNE_ENV).read()
     check("PRISMA_DATAPLANE_IF=enp2s0" in after.splitlines(),
@@ -485,7 +485,7 @@ with tempfile.TemporaryDirectory() as tmp:
 print("\n=== commit runs the tuner, and does NOT restart the dataplane ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check(["systemctl", "restart", "prisma-routing-tune"] in sh.ran,
           f"the tuner was never run, so startup.conf still names no device "
           f"and the operator would have to run it themselves: {sh.ran!r}")
@@ -508,7 +508,7 @@ with tempfile.TemporaryDirectory() as tmp:
 print("\n=== and it says what is still needed, and what that costs ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check("NOT IN EFFECT YET" in said,
           f"the commit reported success over a card the dataplane has not "
           f"got, which is the sentence the operator builds the next hour of "
@@ -530,17 +530,17 @@ print("\n=== nothing on that screen wraps on an 80-column console ===")
 _measured = []
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    _measured.append(drive(sh, ["configure", "dataplane interface enp1s0"]))
+    _measured.append(drive(sh, ["configure", "system", "dataplane", "interface enp1s0"]))
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    _measured.append(drive(sh, ["configure", "dataplane interface eth9"]))
+    _measured.append(drive(sh, ["configure", "system", "dataplane", "interface eth9"]))
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    _measured.append(drive(sh, ["configure", "dataplane interface enp2s0",
+    _measured.append(drive(sh, ["configure", "system", "dataplane", "interface enp2s0",
                                 "commit"]))
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    _measured.append(drive(sh, ["configure", "dataplane interface enp2s0",
+    _measured.append(drive(sh, ["configure", "system", "dataplane", "interface enp2s0",
                                 "commit", "no dataplane interface", "commit"]))
 _wide = [l for out in _measured for l in out.splitlines()
          if len(l) > CONSOLE_COLUMNS]
@@ -555,7 +555,7 @@ print(f"  widest line these printed: "
 _LONGEST = "enp129s0f1np15"[:15] + "x"
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    said = drive(sh, ["configure", f"dataplane interface {_LONGEST}"])
+    said = drive(sh, ["configure", "system", "dataplane", f"interface {_LONGEST}"])
     _lines = [l for l in said.splitlines() if l.startswith("error:")]
     check(_lines and len(_lines[0]) <= CONSOLE_COLUMNS,
           f"the refusal headline is {len(_lines[0]) if _lines else 0} columns "
@@ -577,8 +577,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check(running.dataplane_if == "enp2s0",
           f"a card set by hand in the file is invisible to the VTY: "
           f"{running.dataplane_if!r}")
-    said = drive(sh, ["show running-config | include dataplane"])
-    check("dataplane interface enp2s0" in said,
+    said = drive(sh, ["show running-config | include interface enp2s0"])
+    check("  interface enp2s0" in said,
           f"'show running-config' does not show the box's own card: {said!r}")
     print("  a hand-edited file shows up in 'show running-config'")
 
@@ -586,7 +586,7 @@ print("\n=== so a commit that changes nothing writes nothing ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, tune=TUNE_ENV_SHIPPED.replace(
         "PRISMA_DATAPLANE_IF=", "PRISMA_DATAPLANE_IF=enp2s0"))
-    said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check("no changes to commit" in said,
           f"setting the card the box already has was treated as a change, so "
           f"every commit would re-run the tuner: {said!r}")
@@ -605,7 +605,8 @@ with tempfile.TemporaryDirectory() as tmp:
         saved = open(prismash.CONFIG_PATH).read()
     finally:
         prismash.CONFIG_PATH = _was
-    check("dataplane interface enp2s0" in saved.splitlines(),
+    check("  interface enp2s0" in saved.splitlines()
+          and "system" in saved.splitlines(),
           f"'save' wrote a file that does not name the box's card, so the "
           f"next boot replays a configuration missing it: {saved!r}")
     check(not config.Config.parse(saved).unknown,
@@ -618,7 +619,7 @@ with tempfile.TemporaryDirectory() as tmp:
 print("\n=== a tuner file with no such setting in it gains one ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, tune="# nothing but a comment\nPRISMA_SUBSCRIBERS=10\n")
-    drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     after = open(sh.TUNE_ENV).read()
     check("PRISMA_DATAPLANE_IF=enp2s0" in after.splitlines(),
           f"a file that never had the setting did not gain it: {after!r}")
@@ -632,7 +633,7 @@ print("\n=== a box with no tuner file at all is still configurable ===")
 # defect being repaired rather than a safe default.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, tune=None)
-    said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check("commit complete" in said,
           f"a box with no tuner file could not be given a card: {said!r}")
     check(sh.read_dataplane_if() == "enp2s0",
@@ -644,7 +645,7 @@ print("\n=== a file that cannot be written fails the commit, and says so ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     sh.TUNE_ENV = f"{tmp}/etc/prisma-routing"      # a directory, not a file
-    said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check("commit complete" not in said,
           f"the write failed and the commit reported success: {said!r}")
     check("error:" in said and "dataplane interface" in said,
@@ -660,7 +661,7 @@ print("\n=== and one that cannot be REPLACED fails it too ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     os.makedirs(sh.TUNE_ENV + ".new")
-    said = drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check("commit complete" not in said,
           f"the file could not be replaced and the commit reported success, "
           f"so the box would boot on the old card: {said!r}")
@@ -1057,7 +1058,7 @@ print("\n=== a box with ONE card is accepted, and nothing is written down for it
 # than it says for one.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp)
-    said = drive(sh, ["configure", "dataplane interface ens18"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface ens18"])
     check("error:" not in said,
           f"the only card a box has was refused, which is the dead end #303 "
           f"is about: {said!r}")
@@ -1096,7 +1097,7 @@ for _name, _cards, _route, _addrs in (
         (_LONG, (_LONG, "lo"), _LONG_ROUTE, _LONG_ADDRS)):
     with tempfile.TemporaryDirectory() as tmp:
         sh = one_card_box(tmp, cards=_cards, route=_route, addrs=_addrs)
-        _said = drive(sh, ["configure", f"dataplane interface {_name}"])
+        _said = drive(sh, ["configure", "system", "dataplane", f"interface {_name}"])
         # The box has to have ACCEPTED it, or the rows measured below are
         # offered for a name the box then turns down.
         check("error:" not in _said,
@@ -1196,7 +1197,7 @@ def section(path, start, stop):
 
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp)
-    said = drive(sh, ["configure", "dataplane interface ens18", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface ens18", "commit"])
     check(sh.confirm.read() is None,
           f"the one-card handover armed a window again: its revert clears the "
           f"setting, and a one-card box with that setting empty claims the "
@@ -1204,7 +1205,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check(sh.confirm.read() is None,
           "a box with a second card armed a confirmed commit for a handover "
           "that never touches the session it was typed in")
@@ -1250,7 +1251,7 @@ check("commit confirmed 30" not in inv,
       "what makes unreachable fixable remotely, and that window is gone: the "
       "invariant is true for other reasons now and has to say which")
 # AND THE APPLIANCE GUIDE'S PROCEDURE, which carried the same window.
-proc = section(APPLIANCE, "`dataplane interface <name>` remains",
+proc = section(APPLIANCE, "`interface <name>` under `system` > `dataplane`",
                "## What the console shows")
 check(proc, "docs/appliance.md no longer has the override paragraph this "
             "section is anchored on")
@@ -1266,7 +1267,7 @@ print("\n=== and on the two-card box, no record is written for it ===")
 # whichever box it is on.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    said = drive(sh, ["configure", "dataplane interface enp1s0"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface enp1s0"])
     check("error:" not in said and sh.candidate.dataplane_if == "enp1s0",
           f"the two-card box refused the card it is reached on: {said!r}")
     check("192.168.2.50" not in sh.candidate.text(),
@@ -1285,7 +1286,7 @@ print("\n=== a card whose management state cannot be read is accepted too ===")
 # box may or may not be able to read at its next boot.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp, addrs={})
-    said = drive(sh, ["configure", "dataplane interface ens18"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface ens18"])
     check("error:" not in said,
           f"a card with no address was refused at the prompt, which is the "
           f"refusal #385 removed: {said!r}")
@@ -1298,7 +1299,7 @@ with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp, addrs={
         "ens18": IP_ADDRS["ens18"] + "\n2: ens18    inet 10.0.9.9/24 scope "
                                      "global secondary ens18"})
-    said = drive(sh, ["configure", "dataplane interface ens18"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface ens18"])
     check("error:" not in said and sh.candidate.dataplane_if == "ens18",
           f"a card with two addresses was refused at the prompt: {said!r}")
     check("10.0.9.9" not in sh.candidate.text()
@@ -1316,7 +1317,7 @@ print("\n=== commit writes the card into tune.env and nothing beside it (#385) =
 # each time. Held against the file, because "not written" is what this is.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp)
-    said = drive(sh, ["configure", "dataplane interface ens18", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface ens18", "commit"])
     check("commit complete" in said, f"the commit did not complete: {said!r}")
     tune = open(sh.TUNE_ENV).read()
     check("PRISMA_DATAPLANE_IF=ens18" in tune.splitlines(),
@@ -1366,7 +1367,8 @@ with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp)
     said = drive(sh, ["configure", "dataplane management ens18 address "
                                    "10.95.200.198/24 mac 52:54:00:00:00:01"])
-    check("error: usage: dataplane interface <name>" in said,
+    # Since #457 the top-level word itself is refused, with where it went.
+    check("error: 'dataplane' has moved under 'system'" in said,
           f"the prompt still takes the statement: {said!r}")
 print("  parsed minus the line, and refused at the prompt")
 
@@ -1385,7 +1387,7 @@ print("\n=== handing over the management card arms NO window (#378) ===")
 # it. The card stays either way.
 with tempfile.TemporaryDirectory() as tmp:
     sh = one_card_box(tmp)
-    said = drive(sh, ["configure", "dataplane interface ens18", "commit"])
+    said = drive(sh, ["configure", "system", "dataplane", "interface ens18", "commit"])
     check(sh.confirm.read() is None,
           f"the handover armed a window whose revert reverts nothing, so the "
           f"box promises to give a card back that it re-claims: {said!r}")
@@ -1734,7 +1736,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # itself now. Committing first and arming second would arm a window whose
     # backup already has the card in it, so the revert would restore the card
     # rather than remove it - measuring the wrong box.
-    drive(sh, ["configure", "dataplane interface ens18",
+    drive(sh, ["configure", "system", "dataplane", "interface ens18",
                "commit confirmed 5"])
     pending = sh.confirm.read()
     check(pending is not None,
@@ -1767,8 +1769,8 @@ print("\n=== NO revert reboots the box, whatever it reverted (#378) ===")
 # What is left is worth keeping and is stronger than either: a revert is a
 # configuration and never a restart. Held on both boxes, because "no reboot
 # here" is only interesting beside a box that could plausibly have wanted one.
-for _what, _lines in (("a handover", ["configure",
-                                      "dataplane interface ens18",
+for _what, _lines in (("a handover", ["configure", "system", "dataplane",
+                                      "interface ens18",
                                       "commit confirmed 5"]),
                       ("an ssh change", ["configure", "ssh port 2222",
                                          "commit"])):
@@ -1824,7 +1826,7 @@ NO_DEFAULT_ROUTE = (
 print("\n=== what the restart costs is asked, not stated ===")
 with tempfile.TemporaryDirectory() as tmp:
     said = drive(shell_on(tmp),
-                 ["configure", "dataplane interface enp2s0", "commit"])
+                 ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check("including this one" not in said,
           f"a box reached on enp1s0 was told that handing enp2s0 over ends "
           f"this session, which would make it a change nobody can make "
@@ -1837,7 +1839,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 with tempfile.TemporaryDirectory() as tmp:
     said = drive(one_card_box(tmp),
-                 ["configure", "dataplane interface ens18", "commit"])
+                 ["configure", "system", "dataplane", "interface ens18", "commit"])
     check("ends every session on this box, including this one"
           in " ".join(said.split()),
           f"the box whose ONLY card carries the management address was not "
@@ -1853,7 +1855,7 @@ with tempfile.TemporaryDirectory() as tmp:
 with tempfile.TemporaryDirectory() as tmp:
     said = drive(shell_on(tmp, route=PAIR_ROUTE, tune=TUNE_HANDED_OVER,
                           cards=("enp2s0", "lo")),
-                 ["configure", "dataplane interface enp2s0", "commit"])
+                 ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     _flat = " ".join(said.split())
     check("which Linux keeps" not in _flat,
           f"a box reached THROUGH the dataplane was told the path it is "
@@ -1867,7 +1869,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 with tempfile.TemporaryDirectory() as tmp:
     said = drive(shell_on(tmp, route=NO_DEFAULT_ROUTE),
-                 ["configure", "dataplane interface enp2s0", "commit"])
+                 ["configure", "system", "dataplane", "interface enp2s0", "commit"])
     check("cannot be read" in said and "which Linux keeps" not in said,
           f"a box that carries no default route cannot say which path this "
           f"session arrived on, and answered anyway: {said!r}")

@@ -4121,9 +4121,12 @@ then
       "the VTY to enter configuration mode for the handover" || fail=1
     # live_field and not mfield: the clean console is only written when the
     # machine stops, and this card has to be named while it is running.
-    send "dataplane interface $(live_field ho-if)"
+    # Under `system` > `dataplane` since #457.
+    send "system"
+    send "dataplane"
+    send "interface $(live_field ho-if)"
     HO_NAMED=0
-    if wait_for "[edit]" 60 "the VTY to answer the dataplane interface line"
+    if wait_for "[edit system / dataplane]" 60 "the VTY to answer the interface line under dataplane"
     then
       HO_NAMED=1
     fi
@@ -4154,6 +4157,11 @@ then
          echo "         there is no second card to give the dataplane instead"
          fail=1 ;;
     esac
+    # Out of `dataplane`, then `system`, then configuration mode: an `exit`
+    # leaves one level (#457). One `exit` left the driver in [edit system]
+    # waiting for a `prisma> ` that could not come, on 0.130.0's first gate.
+    send "exit"
+    send "exit"
     send "exit"
     wait_for "prisma> " 120 "the VTY to leave configuration mode" || fail=1
 

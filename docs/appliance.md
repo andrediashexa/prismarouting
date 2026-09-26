@@ -1051,7 +1051,9 @@ It is now a statement like any other — in the candidate, committed, saved by
 
 ```
 prisma> configure
-prisma# [edit] dataplane interface enp2s0
+prisma# [edit] system
+prisma# [edit system] dataplane
+prisma# [edit system / dataplane] interface enp2s0
 prisma# [edit] commit
 dataplane interface: enp2s0
     stored, and the boot tuning was recomputed for it
@@ -1622,10 +1624,10 @@ installed with a management network on, and never the last one
 ([#378](https://github.com/andrediashexa/hexarouting/issues/378)).
 `show hardware` says which cards it took and why.
 
-`dataplane interface <name>` remains, and it is an **override**: the box then
+`interface <name>` under `system` > `dataplane` (#457; a top-level `dataplane interface` until then, which a saved file may still say) remains, and it is an **override**: the box then
 claims that card and no other. It is worth typing on a machine with several
 cards where only one carries subscriber traffic and the rest are wanted
-elsewhere; `no dataplane interface` gives the choice back to the box.
+elsewhere; `no interface` at the same level gives the choice back to the box.
 
 **On a box whose only card is the one being named, naming it changes nothing
 the box was not going to do anyway.** A reserve never takes the last card, so
