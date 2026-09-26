@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.134.0 - the cards are there when the box boots
+
+### Fixed
+
 * **A box installed from 0.132.0 or later boots with its cards missing** ([#468](https://github.com/andrediashexa/hexarouting/issues/468)).
   #450 took the NIC drivers out of the initramfs. They then loaded from the
   root, after udev coldplug, and nothing ordered `networking.service` or the
