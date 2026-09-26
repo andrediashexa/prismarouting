@@ -2964,6 +2964,25 @@ with tempfile.TemporaryDirectory() as root:
           f"{_r['cpu_notes']}")
     check("# WARNING: 9 control-plane core(s) asked for"
           in tune.render_report(_r, None), "and the report warns")
+    # THE MEMORY BY ROLE (#466): the control plane's RAM caps the hugepages,
+    # and the buffers go into startup.conf as set. 64 GB here, so the
+    # default keeps 16 and a figure of 60 leaves 4 for the pool.
+    _m = tune.plan(topo, "eth0", 200000, control_plane_memory_gb=60,
+                   buffers_per_numa=65536)
+    check(_m["control_plane_keeps_gb"] == 60 and _m["hugepages_gb"] == 4
+          and _m["hugepages_capped"],
+          f"60 GB kept for the control plane caps the pool at 4: "
+          f"{_m['hugepages_gb']} capped {_m['hugepages_capped']}")
+    check("buffers-per-numa 65536" in tune.render_vpp(_m),
+          "the buffers as set reach startup.conf")
+    check("# control plane keeps 60 GB of RAM out of the hugepages (as set)"
+          in tune.render_report(_m, None), "and the report says it")
+    _d = tune.plan(topo, "eth0", 200000)
+    check(_d["control_plane_keeps_gb"] == 16
+          and "buffers-per-numa 49152" in tune.render_vpp(_d)
+          and "(a quarter of the RAM, at least 2)"
+          in tune.render_report(_d, None),
+          "unset: a quarter of 64 GB, and 16384 buffers per worker")
     # The default is the layout every box has had.
     _r = tune.plan(topo, "eth0", 200000)
     check(_r["main_cpus"] == [] and _r["os_cpus"] == [0]

@@ -40,6 +40,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     NAT_HIERARCHY, CGNAT_LEVEL, one_line_cgnat,
                     SYSTEM_HIERARCHY, DATAPLANE_LEVEL, POLICY_HIERARCHY, nest_system,
                     CPU_LEVEL, CPU_KEYS, cpu_error,
+                    MEMORY_LEVEL, SYSTEM_SETTINGS,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
@@ -1003,7 +1004,8 @@ SHOW = {
     "policy": ("routing policies: each one, its terms, and where it is "
                "applied", "[<policy>]"),
     "system": ("this machine", {
-        "cpu": ("which cores do what: configured, and in effect", None)}),
+        "cpu": ("which cores do what: configured, and in effect", None),
+        "memory": ("the RAM by role: configured, and in effect", None)}),
     "logging": ("system log (FRR)", None),
 }
 
@@ -2068,7 +2070,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "dns_changed",
                "users_changed",
                "snmp_changed", "dataplane_if_changed", "cgnat_memory_changed",
-               "policy_changed", "cpu_changed",
+               "policy_changed", "cpu_changed", "memory_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -2580,6 +2582,8 @@ TREE["nat"] = {
 # and nothing from the level above.
 TREE["system"] = {
     "dataplane": ("the card the dataplane is given", None),
+    "memory": ("the RAM by role: what the control plane keeps, the packet "
+               "buffers", None),
     "cpu": ("which cores do what: the control plane's, VPP's main thread's",
             None),
     "exit": ("leave 'system'", None),
@@ -2587,6 +2591,18 @@ TREE["system"] = {
 }
 # THE CORES BY ROLE (#466), a level of its own under `system`. Both settings
 # go to tune.env and take effect at the next boot, as `dataplane` does.
+TREE["memory"] = {
+    "control-plane": ("GB of RAM kept out of the hugepages for the OS, FRR "
+                      "and the containers; a quarter of the RAM when unset",
+                      "<1-4096>"),
+    "buffers": ("packet buffers per NUMA node; 16384 per worker when unset",
+                "<1024-16777216>"),
+    "no": ("go back to the computed figure", {
+        "control-plane": ("a quarter of the RAM, at least 2 GB", None),
+        "buffers": ("16384 per worker", None)}),
+    "exit": ("leave 'memory'", None),
+    **_EVERY_LEVEL,
+}
 TREE["cpu"] = {
     "control-plane": ("physical cores for the OS, FRR, sshd and the VTY; "
                       "1 is the default", "<1-1024>"),
@@ -6673,12 +6689,14 @@ class Shell:
         cfg.cgnat_memory_gb = (int(_gb) if is_number(_gb)
                                and 1 <= int(_gb) <= CGNAT_MEMORY_MAX_GB
                                else 0)
-        cfg.cpu = {}
-        for _k, _key in CPU_KEYS.items():
-            _v = self.read_tune_key(_key)
-            if _v and cpu_error(_k, _v) is None \
-                    and not (_k == "main-thread" and _v == "shared"):
-                cfg.cpu[_k] = _v
+        for _lvl, (_keys, _error) in SYSTEM_SETTINGS.items():
+            _held = {}
+            for _k, _key in _keys.items():
+                _v = self.read_tune_key(_key)
+                if _v and _error(_k, _v) is None \
+                        and not (_k == "main-thread" and _v == "shared"):
+                    _held[_k] = _v
+            setattr(cfg, _lvl, _held)
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         # What the policy compiler emitted is not the operator's routing: it
@@ -9530,6 +9548,11 @@ class Shell:
             if not ok:
                 self.err(f"cpu: {msg}")
                 return False
+        if d.get("memory_changed"):
+            ok, msg = self.apply_memory(target.memory)
+            if not ok:
+                self.err(f"memory: {msg}")
+                return False
         if d["cgnat_memory_changed"]:
             ok, msg = self.apply_cgnat_memory(target.cgnat_memory_gb)
             if not ok:
@@ -12211,11 +12234,12 @@ class Shell:
                 return ""
             return line
         if self.nat_ctx == [SYSTEM_HIERARCHY]:
-            if line.strip() in (DATAPLANE_LEVEL, CPU_LEVEL):
+            if line.strip() == DATAPLANE_LEVEL \
+                    or line.strip() in SYSTEM_SETTINGS:
                 self.nat_ctx.append(line.strip())
             else:
-                self.err_prose("under 'system' there is 'dataplane' and "
-                               "'cpu'",
+                self.err_prose("under 'system' there is 'dataplane', 'cpu' "
+                               "and 'memory'",
                                "each enters its level; 'exit' leaves "
                                "'system'")
             return ""
@@ -12615,19 +12639,24 @@ class Shell:
         # <value>`, which system_rewrite made of what was typed under
         # `system` > `cpu`. Checked here, where the operator is, by the rule
         # a saved file is read with.
-        if w[:1] == [CPU_LEVEL] or w[:2] == ["no", CPU_LEVEL]:
+        # And the memory by role, under `system` > `memory`, the same way:
+        # one table, config.SYSTEM_SETTINGS, says what each level takes.
+        _lvl = w[1] if w[:1] == ["no"] and len(w) > 1 else w[0]
+        if _lvl in SYSTEM_SETTINGS:
+            keys, error = SYSTEM_SETTINGS[_lvl]
+            held = getattr(self.candidate, _lvl)
             if w[0] == "no":
-                if len(w) != 3 or w[2] not in CPU_KEYS:
-                    self.err("cpu: no control-plane, or no main-thread")
+                if len(w) != 3 or w[2] not in keys:
+                    self.err(f"{_lvl}: no " + ", or no ".join(keys))
                 else:
-                    self.candidate.cpu.pop(w[2], None)
+                    held.pop(w[2], None)
                 return True
-            why = cpu_error(w[1] if len(w) > 1 else "",
-                            w[2] if len(w) == 3 else "")
+            why = error(w[1] if len(w) > 1 else "",
+                        w[2] if len(w) == 3 else "")
             if why:
-                self.err(f"cpu: {why}")
+                self.err(f"{_lvl}: {why}")
             else:
-                self.candidate.cpu[w[1]] = w[2]
+                held[w[1]] = w[2]
             return True
         if w[:2] == [CGNAT_LEVEL, "memory"]:
             if len(w) != 3 or not is_number(w[2]) \
@@ -13935,6 +13964,72 @@ class Shell:
             print_prose("on a BGP neighbor that is accepted; exported into "
                         "OSPF or IS-IS it is not")
 
+    #: Where the kernel says how much RAM and how many hugepages (#466), and
+    #: what the control plane's slice is using now.
+    MEMINFO = os.environ.get("PRISMA_MEMINFO", "/proc/meminfo")
+    CP_MEMORY_NOW = os.environ.get(
+        "PRISMA_CP_MEMORY_NOW", "/sys/fs/cgroup/system.slice/memory.current")
+
+    def show_system_memory(self):
+        """
+        The RAM by role (#466): what is configured - tune.env, in effect from
+        the next boot - beside what this boot has, read off the kernel and
+        the dataplane's startup.conf. The show_system_cpu() shape, for the
+        same reason: the gap between the two is a reboot, and a benchmark
+        has to know which side of it it is measuring.
+        """
+        cp = self.read_tune_key("PRISMA_CONTROL_PLANE_MEMORY_GB")
+        buf = self.read_tune_key("PRISMA_BUFFERS_PER_NUMA")
+        cgnat = self.read_tune_key("PRISMA_CGNAT_MEMORY_GB")
+        print("configured, in effect from the next reboot:")
+        print(f"  control plane keeps   "
+              f"{cp + ' GB' if cp else 'a quarter of the RAM, at least 2 GB'}")
+        print(f"  CGNAT memory          "
+              f"{cgnat + ' GB' if cgnat else 'from the subscriber target'}")
+        print(f"  packet buffers        "
+              f"{buf + ' per NUMA node' if buf else '16384 per worker'}")
+        info = {}
+        try:
+            with open(self.MEMINFO) as f:
+                for raw in f:
+                    k, _, v = raw.partition(":")
+                    info[k.strip()] = v.split()[0] if v.split() else ""
+        except OSError:
+            pass
+        heap = buffers = statseg = ""
+        try:
+            with open(self.STARTUP_CONF) as f:
+                for raw in f:
+                    w = raw.split()
+                    if w[:1] == ["main-heap-size"] and len(w) > 1:
+                        heap = w[1]
+                    elif w[:1] == ["buffers-per-numa"] and len(w) > 1:
+                        buffers = w[1]
+                    elif w[:1] == ["size"] and len(w) > 1:
+                        statseg = w[1]
+        except OSError:
+            pass
+        try:
+            with open(self.CP_MEMORY_NOW) as f:
+                used = int(f.read().strip())
+        except (OSError, ValueError):
+            used = None
+        gb = lambda kb: f"{int(kb) / 1048576:.1f} GB" if is_number(kb) \
+            else "(unknown)"
+        pages = info.get("HugePages_Total", "")
+        size = info.get("Hugepagesize", "")
+        huge = (gb(int(pages) * int(size)) if is_number(pages)
+                and is_number(size) else "(unknown)")
+        print("this boot:")
+        print(f"  RAM                   {gb(info.get('MemTotal', ''))}")
+        print(f"  hugepages             {huge}")
+        print(f"  VPP main heap         {heap or '(not named)'}")
+        print(f"  packet buffers        "
+              f"{buffers + ' per NUMA node' if buffers else '(not named)'}")
+        print(f"  statistics segment    {statseg or 'VPP default, 32M'}")
+        print(f"  control plane uses    "
+              f"{f'{used / 1073741824:.1f} GB' if used is not None else '(unknown)'}")
+
     def show_cgnat_memory(self):
         """
         `show cgnat memory` (#454): the memory the CGNAT has now, what it
@@ -14007,6 +14102,9 @@ class Shell:
             return
         if line.split()[:2] == ["show", "policy"]:
             self.show_policy(line.split()[2:])
+            return
+        if line == "show system memory":
+            self.show_system_memory()
             return
         # Before the forwarding below, which would otherwise hand `ha` to a
         # dataplane that has no such command.
@@ -14124,13 +14222,13 @@ class Shell:
         # Standing in `system` or `dataplane`: that level's block (#457).
         if self.nat_ctx and self.nat_ctx[0] == SYSTEM_HIERARCHY \
                 and not self.frr_ctx:
-            block = nest_system(cfg.dataplane_if, cfg.cpu)
-            if self.nat_ctx[-1] in (DATAPLANE_LEVEL, CPU_LEVEL):
+            block = nest_system(cfg.dataplane_if, cfg.cpu, cfg.memory)
+            _lvl = self.nat_ctx[-1]
+            if _lvl == DATAPLANE_LEVEL or _lvl in SYSTEM_SETTINGS:
                 # That level's own lines, from the whole block.
-                _lvl = self.nat_ctx[-1]
-                _sub = (nest_system(cfg.dataplane_if, None)
+                _sub = (nest_system(cfg.dataplane_if)
                         if _lvl == DATAPLANE_LEVEL
-                        else nest_system(None, cfg.cpu))
+                        else nest_system(None, **{_lvl: getattr(cfg, _lvl)}))
                 block = [b[2:] for b in _sub[2:-2]]
             print("\n".join(block) if block else
                   "nothing is configured here yet")
@@ -15612,6 +15710,33 @@ class Shell:
         print_prose("in effect from the next reboot: the cores are isolated "
                     "on the kernel command line, and until then each keeps "
                     "the role it booted with. 'show system cpu' says both")
+        if rc not in (0, 127):
+            print_prose("the tuner did not run, so the boot configuration is "
+                        "not recomputed yet: " + " ".join(out.split())[:120])
+        return True, ""
+
+    def apply_memory(self, memory):
+        """
+        The memory by role (#466), apply_cpu()'s shape: stored in tune.env,
+        the tuner run, and what is outstanding said. The hugepages are
+        reserved on the kernel command line, so what the control plane keeps
+        changes at the next boot, and so do the buffers VPP allocates at its
+        start.
+        """
+        for k, key in SYSTEM_SETTINGS[MEMORY_LEVEL][0].items():
+            ok, why = self.write_tune_key(key, memory.get(k, ""))
+            if not ok:
+                return False, why
+        rc, out = self.sys._run(["systemctl", "restart", self.TUNE_UNIT])
+        cp = memory.get("control-plane")
+        # One figure a row, and last on it.
+        print(f"memory: the control plane keeps "
+              f"{cp + ' GB' if cp else 'a quarter of the RAM'}")
+        print(f"memory: packet buffers per NUMA node "
+              f"{memory.get('buffers', '16384 per worker')}")
+        print_prose("in effect from the next reboot: the hugepages are "
+                    "reserved on the kernel command line. 'show system "
+                    "memory' says both")
         if rc not in (0, 127):
             print_prose("the tuner did not run, so the boot configuration is "
                         "not recomputed yet: " + " ".join(out.split())[:120])

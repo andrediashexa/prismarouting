@@ -101,6 +101,8 @@ carried, applied to the other two.
 | `PRISMA_CGNAT_MEMORY_GB` | whole GB, or empty for the estimate from `PRISMA_SUBSCRIBERS` | empty | the estimate |
 | `PRISMA_CONTROL_PLANE_CORES` | digits, 1 or more, or empty for one | empty | one core |
 | `PRISMA_MAIN_THREAD` | `shared` or `dedicated`, or empty for shared | empty | shared |
+| `PRISMA_CONTROL_PLANE_MEMORY_GB` | whole GB, 1 or more, or empty for a quarter of the RAM | empty | a quarter of the RAM, at least 2 |
+| `PRISMA_BUFFERS_PER_NUMA` | digits, or empty for 16384 per worker | empty | 16384 per worker |
 
 **A refusal says what the box does accept**, with what each value would do, not
 only that this one was wrong: it is read on a serial console by somebody who
@@ -232,6 +234,17 @@ future knob follows.** A parameter that costs power or costs a diagnostic
 belongs in `LOW_LATENCY_CMDLINE`, never in the unconditional line — see
 *Boot tuning still on the table* below, where every candidate is classified
 that way before it is measured, let alone shipped.
+
+**Memory by role** (#466, third part). The RAM splits in two: the hugepage
+pool is the dataplane's (the CGNAT's heap, the packet buffers, slack), and
+the rest is the control plane's. A hugepage is never reclaimed, so the only
+floor the control plane has is the RAM that is not turned into one - which
+is what `PRISMA_CONTROL_PLANE_MEMORY_GB` sets, replacing the quarter of the
+RAM (at least 2 GB) the tuner used to keep. `PRISMA_BUFFERS_PER_NUMA`
+replaces 16384 per worker in `buffers-per-numa`. The VTY writes both from
+`system` > `memory` and reads them back, and `show system memory` puts them
+beside this boot's RAM, hugepages, main heap, buffers, statistics segment and
+what `system.slice` is using now.
 
 **Cores by role** (#466). The node's physical cores are taken in order: the
 control plane's (`PRISMA_CONTROL_PLANE_CORES`, one by default), then - with

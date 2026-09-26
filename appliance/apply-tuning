@@ -25,6 +25,8 @@ LIVEDIR=$ROOT/run/live
 : "${PRISMA_CGNAT_MEMORY_GB:=}"
 : "${PRISMA_CONTROL_PLANE_CORES:=}"
 : "${PRISMA_MAIN_THREAD:=}"
+: "${PRISMA_CONTROL_PLANE_MEMORY_GB:=}"
+: "${PRISMA_BUFFERS_PER_NUMA:=}"
 
 # tune.env is a file an operator edits by hand, and every value in it used to
 # be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
@@ -220,6 +222,26 @@ case "$PRISMA_MAIN_THREAD" in
     say_refused PRISMA_MAIN_THREAD "$PRISMA_MAIN_THREAD"
     echo "  It is shared or dedicated - or empty, which is shared." >&2
     say_using "VPP's main thread on the control plane's first core" ;;
+esac
+# THE MEMORY BY ROLE (#466), refused the same way: a typo costs the box the
+# setting and keeps the computed figure.
+case "$PRISMA_CONTROL_PLANE_MEMORY_GB" in
+  "") ;;
+  0|*[!0-9]*)
+    say_refused PRISMA_CONTROL_PLANE_MEMORY_GB "$PRISMA_CONTROL_PLANE_MEMORY_GB"
+    echo "  It is whole GB, 1 or more - or empty, which keeps a quarter of" >&2
+    echo "  the RAM, at least 2 GB." >&2
+    say_using "a quarter of the RAM for the control plane" ;;
+  *) set -- "$@" --control-plane-memory-gb "$PRISMA_CONTROL_PLANE_MEMORY_GB" ;;
+esac
+case "$PRISMA_BUFFERS_PER_NUMA" in
+  "") ;;
+  *[!0-9]*)
+    say_refused PRISMA_BUFFERS_PER_NUMA "$PRISMA_BUFFERS_PER_NUMA"
+    echo "  It is a number of packet buffers - or empty, which is 16384 per" >&2
+    echo "  worker." >&2
+    say_using "16384 packet buffers per worker" ;;
+  *) set -- "$@" --buffers-per-numa "$PRISMA_BUFFERS_PER_NUMA" ;;
 esac
 # The decision goes to the journal. Diagnosing a box whose profile did not
 # match its hardware meant guessing across whole build cycles, because the one
