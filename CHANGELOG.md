@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.133.0 - the control plane fenced
+
+### Added
+
 * **The control plane is held off the dataplane's CPUs by cgroup, not only by
   inheritance** ([#466](https://github.com/andrediashexa/hexarouting/issues/466),
   second part). Measured on a 4-CPU guest with 1-3 isolated: since FRR moved
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   - **Measured on an installed box upgraded to it:** everything of the
     control plane on CPU 0, the VPP workers on 1-3, `taskset -c 3` refused,
     and no unit failed.
-
-### Fixed
 
 ## 0.132.1 - policy exported into OSPF and IS-IS
 
