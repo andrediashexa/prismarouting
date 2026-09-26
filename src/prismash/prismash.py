@@ -8783,6 +8783,9 @@ class Shell:
             # What an operator can still do is fix the statement, which turns
             # the finding off. What they cannot be made to do is fix it before
             # they are allowed to change anything else.
+            # The operator's route-maps only: what the policy compiler writes
+            # is correct by construction, and its `permit 65535` with no
+            # `match` is the Junos default on purpose (#458).
             rm_already = {stmt for sev, stmt, _
                           in route_map_findings(running.routing)
                           if sev == "error"}
@@ -8809,10 +8812,14 @@ class Shell:
             # carries the reference would come up with nothing on it at all -
             # which is a worse outcome than the fault being refused, and the
             # same trap the stale `tap<n>` stanza in Shell.load() exists for.
+            # WHAT FRR IS HANDED, policy and all (#458): a neighbor's
+            # `import <policy>` names a route-map the compiler writes, which
+            # is in frr_lines() and never in the routing an operator typed.
             already = {stmt for sev, stmt, _
-                       in route_map_reference_findings(running.routing)
+                       in route_map_reference_findings(frr_lines(running))
                        if sev == "error"}
-            for sev, stmt, why in route_map_reference_findings(target.routing):
+            for sev, stmt, why in route_map_reference_findings(
+                    frr_lines(target)):
                 if sev == "error" and stmt not in already:
                     self.say_finding("error", stmt, why)
                     ok = False
@@ -9792,6 +9799,11 @@ class Shell:
         # description is applied rather than reported as having nothing to do.
         if d.get("route_desc_changed"):
             self.write_static_descriptions(target.static_descriptions)
+        # The policy's source, after FRR took what it compiled to (#458), on
+        # its own delta key: it was first written only when a static route's
+        # description changed, and lab/policy.sh found every policy gone
+        # from the running configuration the moment it was committed.
+        if d.get("policy_changed"):
             self.write_policy(target.policy)
         return True
 
