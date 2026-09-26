@@ -2494,7 +2494,9 @@ check(r and "no interface was named" in r[0],
 # was not an editor in Linux, so this advice named a path; now the box has a
 # command for it, and advice that still sends the operator to Linux is advice
 # that contradicts the feature. The words are the boot self-test's, on purpose.
-check(any("dataplane interface" in l for l in r),
+# Under `system` > `dataplane` since #457, and named in those words.
+check(any("'system', 'dataplane'" in l for l in r)
+      and any("'interface <name>'" in l for l in r),
       f"the statement that gives the box a card is not named: {r!r}")
 check(any("commit" in l for l in r),
       f"and nothing says the change has to be committed: {r!r}")

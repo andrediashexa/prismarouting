@@ -1699,8 +1699,9 @@ for _bad in ("name the dataplane NIC from the VTY",
 # instruction must not remove the statement. A box with several cards where
 # one carries subscribers needs it, and a document that never mentions it
 # leaves that operator with no way to choose.
-check("dataplane interface <name>" in _doc,
-      "docs/appliance.md no longer mentions 'dataplane interface <name>' at "
+check("`interface <name>` under `system` > `dataplane`" in _doc,
+      "docs/appliance.md no longer mentions the statement that names the "
+      "card (under system > dataplane since #457) at "
       "all, so an operator with several cards has no documented way to "
       "choose which one the dataplane gets")
 

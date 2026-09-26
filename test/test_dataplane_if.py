@@ -1251,7 +1251,7 @@ check("commit confirmed 30" not in inv,
       "what makes unreachable fixable remotely, and that window is gone: the "
       "invariant is true for other reasons now and has to say which")
 # AND THE APPLIANCE GUIDE'S PROCEDURE, which carried the same window.
-proc = section(APPLIANCE, "`dataplane interface <name>` remains",
+proc = section(APPLIANCE, "`interface <name>` under `system` > `dataplane`",
                "## What the console shows")
 check(proc, "docs/appliance.md no longer has the override paragraph this "
             "section is anchored on")
