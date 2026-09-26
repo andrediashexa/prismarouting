@@ -1,7 +1,8 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 3
-# The host's doors (#448, phase B): the VTY's accounts are made by the doors
-# daemon, and the daemon runs them for root only.
+# OFF-RED-AT-LEAST: 6
+# The host's doors (#448, phase B): the VTY's accounts, and the files it
+# writes on the host (resolv.conf, authorized_keys, snmpd.conf), are made by
+# the doors daemon, and the daemon does them for root only.
 #
 # The daemon runs as root, as systemd runs it on a box. The VTY commits three
 # accounts, a role, a password, and then removes one; each is asserted on the
@@ -34,6 +35,11 @@ groupadd -f prisma-admin 2>/dev/null
 groupadd -f prisma-cgnat 2>/dev/null
 install -D -m 0755 /src/appliance/prismash-login /usr/bin/prismash-login
 
+# resolv.conf is docker's bind mount; a rename onto it fails. lab/dns.sh does
+# the same, for the same reason.
+umount /etc/resolv.conf 2>/dev/null
+printf 'nameserver 192.0.2.53\n' > /etc/resolv.conf
+
 # The daemon, where the unit puts its socket.
 if [ "$MODE" = on ]; then
   python3 /src/src/prismash/doors.py --serve > /tmp/doors.log 2>&1 &
@@ -54,6 +60,19 @@ MAKE=$($HX -c "configure" \
     -c "commit" 2>&1)
 printf '%s\n' "$MAKE" | sed 's/^/    /'
 DEL=$($HX -c "configure" -c "no user gone" -c "commit" 2>&1)
+printf '%s\n' "$DEL" | sed 's/^/    /'
+
+echo "  -- the files: a resolver, a key, the SNMP agent"
+FILES=$($HX -c "configure" -c "dns server 198.51.100.53" \
+    -c "user ro" -c "ssh-key ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDoorlab ro@lab" -c "exit" \
+    -c "snmp enabled yes" -c "snmp listen-address 127.0.0.1" \
+    -c "snmp community doorlabro" -c "commit" 2>&1)
+printf '%s\n' "$FILES" | sed 's/^/    /'
+RESOLV=$(cat /etc/resolv.conf)
+KEYS=$(cat /home/ro/.ssh/authorized_keys 2>&1)
+KEYMODE=$(stat -c %a /home/ro/.ssh/authorized_keys 2>&1)
+SNMPMODE=$(stat -c %a /etc/snmp/snmpd.conf 2>&1)
+echo "    resolv: $(echo $RESOLV) | keys $KEYMODE: $KEYS | snmpd.conf $SNMPMODE"
 printf '%s\n' "$DEL" | sed 's/^/    /'
 IDS="ro=$(id -nG ro 2>&1) | netadm=$(id -nG netadm 2>&1) | gone=$(id -u gone 2>&1)"
 echo "    $IDS"
@@ -88,6 +107,21 @@ case "$(cat /tmp/doors.log)" in
   *'$6$lab$'*) echo "  [FAIL] the daemon's log carries the password hash"
                VERDICT_FAILURES=$((VERDICT_FAILURES + 1)) ;;
   *) echo "  [ ok ] the daemon's log carries no password hash" ;;
+esac
+expect_said "the resolver reached resolv.conf" "nameserver 198.51.100.53" "$RESOLV"
+expect_said "the daemon wrote resolv.conf" "door: uid 0: write /etc/resolv.conf -> 0" "$(cat /tmp/doors.log)"
+expect_said "the key reached the account, 0600" "600: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDoorlab" "$KEYMODE: $KEYS"
+expect_said "the daemon wrote the key" "door: uid 0: keys /home/ro -> 0" "$(cat /tmp/doors.log)"
+expect_said "the daemon wrote snmpd.conf" "door: uid 0: write /etc/snmp/snmpd.conf -> 0" "$(cat /tmp/doors.log)"
+case "$SNMPMODE" in
+  600) echo "  [ ok ] snmpd.conf is 0600: the community is in it" ;;
+  *) echo "  [FAIL] snmpd.conf is $SNMPMODE"
+     VERDICT_FAILURES=$((VERDICT_FAILURES + 1)) ;;
+esac
+case "$(cat /tmp/doors.log)" in
+  *doorlabro*) echo "  [FAIL] the daemon's log carries the community"
+               VERDICT_FAILURES=$((VERDICT_FAILURES + 1)) ;;
+  *) echo "  [ ok ] the daemon's log carries no community" ;;
 esac
 case "$SNEAK" in
   *"no such user"*) echo "  [ ok ] an account with no privilege made nothing" ;;

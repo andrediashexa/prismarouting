@@ -6429,8 +6429,8 @@ class Shell:
     def __init__(self):
         # Through the host's doors (#448, phase B), which run the command
         # itself when no daemon listens.
-        self.sys = System(runner=doors.runner())
-        self.snmp = SnmpDaemon(runner=doors.runner())
+        self.sys = System(runner=doors.runner(), files=doors.DoorFiles())
+        self.snmp = SnmpDaemon(runner=doors.runner(), files=doors.DoorFiles())
         self.dp = Vpp()
         self.api = vppapi.Vat2()
         self.frr = Frr()

@@ -2983,7 +2983,9 @@ as it always did, and `start shell` opens a shell as the VTY's child.
 
 The second step (#448, phase B). What the VTY does to the host — creating,
 changing and removing accounts, their groups and passwords, checking and
-reloading sshd, starting and stopping snmpd — it now **asks** of
+reloading sshd, starting and stopping snmpd, and writing the files behind
+them (`/etc/resolv.conf`, the sshd drop-in, each account's `authorized_keys`,
+`snmpd.conf` and net-snmp's v3 store) — it now **asks** of
 `prisma-routing-doors.service`, a root daemon on
 `/run/prisma-routing/doors.sock`, instead of running the command itself. From
 inside a container it could not run them, and a container that could would
@@ -2994,7 +2996,12 @@ list of commands, and checks every argument against what the VTY actually puts
 there. An account name can never be read as an option or a path, and `root`
 is refused where the VTY never sends it. The shell is only the VTY's login
 shell, and the groups are only the ones the VTY manages. `chpasswd` takes one
-`name:hash` line. Anything else is refused, whoever asks. `test/test_doors.py`
+`name:hash` line. A file door names one of a fixed set of paths, and the
+daemon, not the caller, decides its mode and whether it is replaced by rename;
+`authorized_keys` goes only under `/root` or `/home/<account>`, and never
+through a symbolic link — a `.ssh` an account had made a link was followed by
+the old code, as root, and the `chmod 0700` landed on its target. Anything
+else is refused, whoever asks. `test/test_doors.py`
 reads every command `system.py` runs off its source and requires each to be a
 door, so a new one fails there and not on a box.
 
@@ -3013,11 +3020,13 @@ while the daemon restarts.
 Measured in `lab/doors.sh`, with the daemon running as root:
 - three accounts, a role, a password and a removal were made by the daemon,
   as its log shows, and reached `id` and the shadow file;
-- the log carried no hash;
+- a resolver, a key and an SNMP community were written by the daemon, the key
+  and `snmpd.conf` 0600;
+- the log carried no hash and no community;
 - an unprivileged account asking the same socket for `useradd` was refused,
   and no account was made.
 
-With no daemon, the three checks that say the daemon did it go red.
+With no daemon, the six checks that say the daemon did it go red.
 
 `install.sh` does **not** change any login shell unless `PRISMA_VTY_LOGIN=1` is
 set. On an existing Debian the machine may have other jobs, and silently

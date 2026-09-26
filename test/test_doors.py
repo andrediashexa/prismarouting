@@ -192,5 +192,187 @@ check("door: uid 0: chpasswd -e -> 0" in _o.getvalue()
       and "SECRETHASH" not in _o.getvalue(),
       f"say: the argv, the uid and the result, never stdin: {_o.getvalue()!r}")
 
+
+print("\n=== every file system.py writes is a file door, as the door writes it ===")
+# Driven, not read off the source: the paths are expressions (root + a
+# constant, a home), so the flows are run against a scratch root with a
+# LocalFiles that records each write - relative to that root, which is the
+# path the door would be sent on a box - and then does it.
+import system  # noqa: E402
+
+
+class RecFiles:
+    """A LocalFiles that records each write, relative to `root`, then does
+    it. By __getattr__ and not by overriding: a test that defines `unlink`
+    would stop test_every_function seeing the product's."""
+
+    def __init__(self, root):
+        self.root, self.did, self.real = root, [], system.LocalFiles()
+
+    def __getattr__(self, op):
+        fn = getattr(self.real, op)
+
+        def rec(path, *a, **kw):
+            rel = path[len(self.root):]
+            if op == "copy":
+                self.did.append(("copy", rel, a[0][len(self.root):], None))
+            elif op == "write":
+                self.did.append(("write", rel, kw.get("mode", a[1] if len(a) > 1 else None),
+                                 kw.get("atomic", a[2] if len(a) > 2 else False)))
+            elif op == "append":
+                self.did.append(("append", rel, kw.get("mode", a[1] if len(a) > 1 else None), None))
+            else:
+                self.did.append(({"write_keys": "keys"}.get(op, op), rel, None, None))
+            return fn(path, *a, **kw)
+        return rec
+
+
+root = tempfile.mkdtemp()
+os.makedirs(root + "/etc", exist_ok=True)
+with open(root + "/etc/resolv.conf", "w") as f:
+    f.write("nameserver 10.0.2.3\n")
+rec = RecFiles(root)
+sy = system.System(runner=lambda a, stdin=None, timeout=30: (0, ""),
+                   root=root, files=rec)
+sy.write_dns(["192.0.2.1"])
+sy.write_dns([])
+sy.write_ssh({"port": "2222"})
+sy.write_ssh({"port": "2223"})
+u = system.User("ops")
+u.keys = ["ssh-ed25519 AAAA ops"]
+sy._write_keys("ops", u.keys)
+sy._write_keys("root", u.keys)
+os.makedirs(root + "/run/systemd/system", exist_ok=True)
+sn = system.SnmpDaemon(runner=lambda a, stdin=None, timeout=30: (0, ""),
+                       root=root, files=rec, agent="/x/agent")
+v3 = system.SnmpUser("zed")
+v3.auth, v3.priv = "sha passphrase1", "aes passphrase2"
+sn.apply({"enabled": "yes"}, ["public"], {"zed": v3})
+sn.apply({"enabled": "no"}, [], {})
+ops = {d[0] for d in rec.did}
+check(ops >= {"write", "append", "unlink", "copy", "mkdir", "keys"},
+      f"the flows reached every kind of write: {sorted(ops)}")
+for op, path, a, b in rec.did:
+    req = {"file": op, "path": path, "text": ""}
+    if op == "copy":
+        req["dst"] = a
+    verb = doors.file_verb(req)
+    if verb is None:
+        check(False, f"{op} {path}: not a file door")
+        continue
+    how = verb[2]
+    if op == "write":
+        check((how["mode"], how["atomic"]) == (a, b),
+              f"write {path}: the door writes it as system.py did "
+              f"(mode {oct(a) if a else a}, atomic {b})")
+    elif op == "append":
+        check(how["mode"] == a, f"append {path}: mode {oct(a)}")
+    else:
+        check(True, f"{op} {path} is a file door")
+
+print("\n=== and no other file ===")
+for req, why in (
+        ({"file": "write", "path": "/etc/shadow", "text": "x"}, "the shadow file"),
+        ({"file": "write", "path": "/etc/resolv.conf/../shadow", "text": "x"},
+         "a path through the one allowed"),
+        ({"file": "unlink", "path": "/etc/resolv.conf"}, "an unlink it never does"),
+        ({"file": "copy", "path": "/etc/resolv.conf", "dst": "/tmp/x"},
+         "a copy to elsewhere"),
+        ({"file": "keys", "path": "/home/../etc", "text": "x"}, "a home that climbs"),
+        ({"file": "keys", "path": "/etc", "text": "x"}, "a home that is not one"),
+        ({"file": "write", "path": system.SSHD_DROPIN}, "a write with no text"),
+        ({"file": "chmod", "path": system.SSHD_DROPIN}, "an operation it has not")):
+    check(doors.file_verb(req) is None, f"refused: {why}")
+r = doors.answer(json.dumps({"file": "mkdir", "path": "/run/sshd"}), 1000,
+                 files=RecFiles(root))
+check(r["rc"] == 126 and "only root" in r["out"], f"and the uid decides: {r}")
+
+print("\n=== authorized_keys is never written through a link ===")
+home = tempfile.mkdtemp()
+os.symlink(root, home + "/.ssh")
+try:
+    system.LocalFiles().write_keys(home, "k\n")
+    check(False, "a .ssh that is a link was written through")
+except OSError:
+    check(not os.path.exists(root + "/authorized_keys"),
+          "a .ssh that is a link is refused, and nothing lands where it points")
+home2 = tempfile.mkdtemp()
+os.makedirs(home2 + "/.ssh")
+os.symlink(root + "/target", home2 + "/.ssh/authorized_keys")
+try:
+    system.LocalFiles().write_keys(home2, "k\n")
+    check(False, "an authorized_keys that is a link was written through")
+except OSError:
+    check(not os.path.exists(root + "/target"),
+          "an authorized_keys that is a link is refused")
+
+print("\n=== a file door over the socket ===")
+fpath = os.path.join(d, "run", "files.sock")
+ready2 = threading.Event()
+threading.Thread(target=doors.serve, daemon=True,
+                 kwargs={"path": fpath, "allowed_uids": (me,),
+                         "ready": ready2}).start()
+check(ready2.wait(5), "the daemon listens")
+df = doors.DoorFiles(fpath)
+try:
+    df.write("/etc/shadow", "x")
+    check(False, "the daemon wrote /etc/shadow")
+except OSError as e:
+    check("not a file the VTY writes" in str(e),
+          f"a path outside the doors comes back as an OSError: {e}")
+kh = tempfile.mkdtemp()
+_before = doors.HOME
+doors.HOME = __import__("re").compile(r"^" + __import__("re").escape(kh) + r"$")
+try:
+    df.write_keys(kh, "ssh-ed25519 AAAA x\n")
+    body = open(kh + "/.ssh/authorized_keys").read()
+    mode = oct(os.stat(kh + "/.ssh/authorized_keys").st_mode & 0o777)
+    check(body == "ssh-ed25519 AAAA x\n" and mode == "0o600",
+          f"authorized_keys written by the daemon, 0600: {mode}")
+finally:
+    doors.HOME = _before
+nofile = doors.DoorFiles(os.path.join(d, "none.sock"))
+lp = os.path.join(root, "local-fallback")
+nofile.write(lp, "here")
+check(open(lp).read() == "here", "no daemon: the file is written here")
+
+
+print("\n=== the file doors' pieces, one at a time ===")
+lf = system.LocalFiles()
+t = tempfile.mkdtemp()
+lf.mkdir(t + "/a/b")
+check(os.path.isdir(t + "/a/b"), "LocalFiles.mkdir: the directory and its parents")
+open(t + "/a/f", "w").write("x")
+lf.copy(t + "/a/f", t + "/c/f")
+check(open(t + "/c/f").read() == "x", "LocalFiles.copy: into a directory it makes")
+lf.unlink(t + "/c/f")
+check(not os.path.exists(t + "/c/f"), "LocalFiles.unlink: gone")
+got = doors.answer_file({"file": "mkdir", "path": "/run/sshd"}, 0, files=RecFiles(t))
+check(got == {"rc": 0, "out": ""}, f"answer_file: a door, for root, is done: {got}")
+got = doors.answer_file({"file": "unlink", "path": system.SSHD_DROPIN}, 0,
+                        files=system.LocalFiles())
+check(got["rc"] == 1 and system.SSHD_DROPIN in got["out"],
+      f"answer_file: a failure comes back with the path: {got}")
+rf = RecFiles("")
+doors.do_file({"file": "mkdir", "path": t + "/m"}, {}, files=rf)
+check(rf.did == [("mkdir", t + "/m", None, None)] and os.path.isdir(t + "/m"),
+      f"do_file: the operation the request names: {rf.did}")
+df2 = doors.DoorFiles(fpath)
+for call, why in ((lambda: df2.unlink("/etc/passwd"), "unlink"),
+                  (lambda: df2.copy("/etc/passwd", "/tmp/p"), "copy"),
+                  (lambda: df2.mkdir("/etc/x"), "mkdir")):
+    try:
+        call()
+        check(False, f"DoorFiles.{why}: the daemon did it outside the doors")
+    except OSError as e:
+        check("not a file the VTY writes" in str(e),
+              f"DoorFiles.{why}: sent to the daemon, which refused it")
+try:
+    df2._ask({"file": "nothing"}, lambda: None)
+    check(False, "DoorFiles._ask: a refusal was not raised")
+except OSError as e:
+    check(e.errno == __import__("errno").EPERM,
+          f"DoorFiles._ask: a refusal is an OSError, EPERM: {e}")
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

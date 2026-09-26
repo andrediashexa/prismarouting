@@ -83,10 +83,15 @@ version has a chance of seeing it.
   every argument checked, and runs them only for a caller the kernel says is
   root, which is the rule the box already had. The VTY sends accounts, their
   groups and passwords, sshd's check and reload, and snmpd's start and stop
-  there instead of running them itself. This is what lets the VTY move into a
+  there instead of running them itself. The files behind them go there too
+  (`resolv.conf`, the sshd drop-in, `authorized_keys`, `snmpd.conf`), to a
+  fixed set of paths with the mode decided by the daemon. `authorized_keys` is
+  no longer written through a symbolic link: the old code followed a `.ssh`
+  link as root and its `chmod 0700` landed on the target. This is what lets the VTY move into a
   container in phase C. Each request is a journal line (command, uid, exit
-  status), never with the password hash. Measured in `lab/doors.sh`: the
-  accounts were made by the daemon, and an unprivileged caller was refused.
+  status), never with the password hash or a file's contents. Measured in
+  `lab/doors.sh`: the accounts, the resolver, the key and the SNMP community
+  were made by the daemon, and an unprivileged caller was refused.
 
 ### Fixed
 

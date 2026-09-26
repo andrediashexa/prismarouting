@@ -30,6 +30,7 @@ listening it runs the command itself, as the VTY always has, so a box
 upgraded before its daemon started is a box that still works.
 """
 
+import errno
 import json
 import os
 import re
@@ -39,7 +40,8 @@ import subprocess
 import sys
 import threading
 
-from system import LOGIN_SHELL, MANAGED_GROUPS
+from system import (LOGIN_SHELL, MANAGED_GROUPS, LocalFiles, RESOLV_CONF,
+                    RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF)
 
 SOCKET = "/run/prisma-routing/doors.sock"
 
@@ -106,6 +108,121 @@ def verb_of(argv, stdin=None):
     return None
 
 
+#: The files a door writes, and HOW: each (operation, path) the daemon takes,
+#: with the mode and the atomicity it decides. The caller names a path and
+#: sends the text; it cannot choose another path, and cannot choose the mode.
+#: They are what system.py set before the doors (test_doors.py drives it).
+SNMP_V3_STORE = "/var/lib/snmp/snmpd.conf"
+FILE_DOORS = {
+    ("write", RESOLV_CONF): {"mode": 0o644, "atomic": True},
+    ("write", SSHD_DROPIN): {"mode": None, "atomic": False},
+    ("write", SNMPD_CONF): {"mode": 0o600, "atomic": False},
+    ("append", SNMP_V3_STORE): {"mode": 0o600},
+    ("unlink", RESOLV_BEFORE): {},
+    ("unlink", SSHD_DROPIN): {},
+    ("unlink", SNMPD_CONF): {},
+    ("copy", RESOLV_CONF): {"dst": RESOLV_BEFORE},
+    ("mkdir", "/run/sshd"): {},
+}
+
+#: The home an authorized_keys door writes under: root's, or an account's.
+HOME = re.compile(r"^/(root|home/[A-Za-z0-9_][A-Za-z0-9_.-]{0,31})$")
+
+
+def file_verb(req):
+    """
+    The file door `req` is, as (operation, path, how), or None.
+
+    `req` is the request's dict: {"file": operation, "path": ..., ...}.
+    """
+    op, path = req.get("file"), req.get("path")
+    if not isinstance(op, str) or not isinstance(path, str):
+        return None
+    if op == "keys":
+        return (op, path, {}) if HOME.match(path) and ".." not in path \
+            else None
+    how = FILE_DOORS.get((op, path))
+    if how is None:
+        return None
+    if op == "copy" and req.get("dst") != how["dst"]:
+        return None
+    if op in ("write", "append", "keys") and \
+            not isinstance(req.get("text"), str):
+        return None
+    return op, path, how
+
+
+def do_file(req, how, files=None):
+    """The file door carried out, as `how` says. Raises OSError."""
+    files = files or LocalFiles()
+    op, path = req["file"], req["path"]
+    if op == "write":
+        files.write(path, req["text"], mode=how["mode"], atomic=how["atomic"])
+    elif op == "append":
+        files.append(path, req["text"], mode=how["mode"])
+    elif op == "unlink":
+        files.unlink(path)
+    elif op == "copy":
+        files.copy(path, how["dst"])
+    elif op == "mkdir":
+        files.mkdir(path)
+    elif op == "keys":
+        files.write_keys(path, req["text"])
+
+
+class DoorFiles:
+    """
+    system.LocalFiles, through the door at `path`: each write is sent to the
+    daemon, and a refusal or a failure comes back as the OSError the local
+    write would have raised. With no daemon listening, the local write.
+    """
+
+    def __init__(self, path=SOCKET):
+        self.path = path
+
+    def _ask(self, req, local):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            s.connect(self.path)
+        except OSError:
+            s.close()
+            return local()
+        try:
+            s.settimeout(30)
+            s.sendall(json.dumps(req).encode() + b"\n")
+            r = json.loads(_read_line(s))
+        except (OSError, ValueError) as e:
+            raise OSError(errno.EIO, f"the host's door did not answer: {e}")
+        finally:
+            s.close()
+        if r.get("rc") != 0:
+            raise OSError(errno.EPERM, str(r.get("out", "refused")))
+
+    def write(self, path, text, mode=None, atomic=False):
+        self._ask({"file": "write", "path": path, "text": text},
+                  lambda: LocalFiles().write(path, text, mode, atomic))
+
+    def append(self, path, text, mode=None):
+        self._ask({"file": "append", "path": path, "text": text},
+                  lambda: LocalFiles().append(path, text, mode))
+
+    def unlink(self, path):
+        self._ask({"file": "unlink", "path": path},
+                  lambda: LocalFiles().unlink(path))
+
+    def copy(self, src, dst):
+        self._ask({"file": "copy", "path": src, "dst": dst},
+                  lambda: LocalFiles().copy(src, dst))
+
+    def mkdir(self, path):
+        self._ask({"file": "mkdir", "path": path},
+                  lambda: LocalFiles().mkdir(path))
+
+    def write_keys(self, home, text):
+        self._ask({"file": "keys", "path": home, "text": text},
+                  lambda: LocalFiles().write_keys(home, text))
+
+
 def run_locally(argv, stdin=None, timeout=30):
     """The command run here, as the VTY ran it before the doors."""
     try:
@@ -164,7 +281,7 @@ def peer_uid(conn):
     return struct.unpack("3i", cred)[1]
 
 
-def answer(request, uid, allowed_uids=(0,), execute=run_locally):
+def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None):
     """
     What the daemon replies to `request` from `uid`: {"rc", "out"}.
 
@@ -173,6 +290,8 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally):
     """
     try:
         r = json.loads(request)
+        if isinstance(r, dict) and "file" in r:
+            return answer_file(r, uid, allowed_uids, files)
         argv, stdin = r["argv"], r.get("stdin")
         timeout = r.get("timeout", 30)
     except (ValueError, KeyError, TypeError):
@@ -195,12 +314,31 @@ def say(request, uid, reply):
     NEVER stdin, which is where chpasswd's hash travels.
     """
     try:
-        argv = json.loads(request).get("argv")
+        r = json.loads(request)
+        argv = r.get("argv")
+        if "file" in r and argv is None:
+            argv = [str(r.get("file")), str(r.get("path"))]
     except (ValueError, AttributeError):
         argv = None
     words = " ".join(argv) if isinstance(argv, list) and \
         all(isinstance(a, str) for a in argv) else "<not a request>"
     print(f"door: uid {uid}: {words[:200]} -> {reply['rc']}", flush=True)
+
+
+def answer_file(r, uid, allowed_uids=(0,), files=None):
+    """answer(), for a file door: {"rc": 0} or a refusal or the error."""
+    verb = file_verb(r)
+    if verb is None:
+        return {"rc": 126, "out": "the host's door: not a file the VTY "
+                                  "writes on the host"}
+    if uid not in allowed_uids:
+        return {"rc": 126, "out": f"the host's door: {verb[0]} {verb[1]}: "
+                                  "only root may"}
+    try:
+        do_file(r, verb[2], files)
+    except OSError as e:
+        return {"rc": 1, "out": f"{verb[1]}: {e.strerror or e}"}
+    return {"rc": 0, "out": ""}
 
 
 def serve(path=SOCKET, allowed_uids=(0,), execute=run_locally, ready=None):
