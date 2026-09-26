@@ -2932,6 +2932,42 @@ with tempfile.TemporaryDirectory() as root:
           "a box with its pages reserved and its cpus isolated is not tuned")
     check(tune.plan(topo, "eth0", 200000, max_workers=2)["workers"] == [1, 2],
           "the worker cap did not shorten the worker list")
+    # THE CORES BY ROLE (#466), on the same four-core node. Two control-plane
+    # cores and a dedicated main thread leave one worker; the main thread's
+    # core is isolated with it, and the control plane's are not.
+    _r = tune.plan(topo, "eth0", 200000, control_plane_cores=2,
+                   main_thread="dedicated")
+    check(_r["os_cpus"] == [0, 1] and _r["main_core"] == 2
+          and _r["main_cpus"] == [2] and _r["workers"] == [3]
+          and _r["isolated"] == [2, 3] and _r["cpu_notes"] == [],
+          f"two control-plane cores and a dedicated main thread: os "
+          f"{_r['os_cpus']}, main {_r['main_core']}, workers "
+          f"{_r['workers']}, isolated {_r['isolated']}")
+    _rep = tune.render_report(_r, None)
+    check("# control plane: 0-1" in _rep
+          and "# VPP main thread, on a core of its own: 2" in _rep,
+          f"the report says which core does what: {_rep[:300]!r}")
+    # Too much asked: a worker is kept, the dedicated main thread goes first,
+    # and each give-up is said.
+    _r = tune.plan(topo, "eth0", 200000, control_plane_cores=3,
+                   main_thread="dedicated")
+    check(_r["workers"] == [3] and _r["main_cpus"] == []
+          and _r["main_core"] == 0 and _r["os_cpus"] == [0, 1, 2]
+          and len(_r["cpu_notes"]) == 1
+          and "shares the control plane's" in _r["cpu_notes"][0],
+          f"three control-plane cores and a dedicated main thread on four: "
+          f"workers {_r['workers']}, notes {_r['cpu_notes']}")
+    _r = tune.plan(topo, "eth0", 200000, control_plane_cores=9)
+    check(_r["workers"] == [3] and _r["os_cpus"] == [0, 1, 2]
+          and "9 control-plane core(s) asked for, 3 given" in _r["cpu_notes"][0],
+          f"nine control-plane cores on four: {_r['os_cpus']} "
+          f"{_r['cpu_notes']}")
+    check("# WARNING: 9 control-plane core(s) asked for"
+          in tune.render_report(_r, None), "and the report warns")
+    # The default is the layout every box has had.
+    _r = tune.plan(topo, "eth0", 200000)
+    check(_r["main_cpus"] == [] and _r["os_cpus"] == [0]
+          and _r["cpu_notes"] == [], "nothing asked, nothing moved")
     # The GRUB line, from that plan.
     g = tune.render_grub(p)
     check("isolcpus=1-3 nohz_full=1-3 rcu_nocbs=1-3" in g

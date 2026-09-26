@@ -99,6 +99,8 @@ carried, applied to the other two.
 | `PRISMA_LOW_LATENCY` | `1` or `0`, nothing else | `1` | `1`, because this is a router |
 | `PRISMA_MAX_WORKERS` | digits only, or empty for no cap | empty | no cap |
 | `PRISMA_CGNAT_MEMORY_GB` | whole GB, or empty for the estimate from `PRISMA_SUBSCRIBERS` | empty | the estimate |
+| `PRISMA_CONTROL_PLANE_CORES` | digits, 1 or more, or empty for one | empty | one core |
+| `PRISMA_MAIN_THREAD` | `shared` or `dedicated`, or empty for shared | empty | shared |
 
 **A refusal says what the box does accept**, with what each value would do, not
 only that this one was wrong: it is read on a serial console by somebody who
@@ -230,6 +232,19 @@ future knob follows.** A parameter that costs power or costs a diagnostic
 belongs in `LOW_LATENCY_CMDLINE`, never in the unconditional line — see
 *Boot tuning still on the table* below, where every candidate is classified
 that way before it is measured, let alone shipped.
+
+**Cores by role** (#466). The node's physical cores are taken in order: the
+control plane's (`PRISMA_CONTROL_PLANE_CORES`, one by default), then - with
+`PRISMA_MAIN_THREAD=dedicated` - one for VPP's main thread alone, isolated like
+a worker's, then the workers. The default is the layout every box has had. A
+box too small for what was asked keeps one worker, gives up the dedicated main
+thread first and control-plane cores after that, and the tuner's report says
+so on a `WARNING` row. The VTY writes both keys from `system` > `cpu`, reads
+them back into the running configuration, and `show system cpu` puts them
+beside what this boot runs - startup.conf's `main-core` and
+`corelist-workers`, and `/sys/devices/system/cpu/isolated`. What is not done
+yet is holding the control plane to its cores by cgroup, and splitting
+workers into RX and CGNAT sets; both are on #466, to be measured.
 
 `PRISMA_MAX_WORKERS` in the same file caps how many physical cores become
 forwarding workers. It ships **empty**, which means no cap and is exactly the

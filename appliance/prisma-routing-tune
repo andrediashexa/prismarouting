@@ -765,7 +765,8 @@ def write_management_path(handover, path=None):
 
 
 def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
-         config_path=None, vpp_base=None, mgmt_conf=None, cgnat_memory_gb=None):
+         config_path=None, vpp_base=None, mgmt_conf=None, cgnat_memory_gb=None,
+         control_plane_cores=None, main_thread="shared"):
     # The card this box is reached on, read for one reason: so the way back
     # can be computed off it below, before the bind takes it. It used to be
     # read to REFUSE that card when it was named (#123), and to let it
@@ -926,14 +927,58 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     node_cpus = [c for c in topo.nodes[node] if c in topo.cpus]
     cores = topo.physical_cores(node_cpus)
 
-    # the node's first physical core stays with the OS and VPP's main thread
-    os_core, os_cpus = cores[0]
-    worker_cores = cores[1:]
+    # THE CORES BY ROLE (#466), in the order they are taken from the node:
+    # the control plane's, then - when asked - one for VPP's main thread
+    # alone, then the workers.
+    #
+    # The default is the layout every box has had: ONE control-plane core,
+    # and VPP's main thread on it. The maintainer asked for the split to be
+    # set rather than chosen for him, for benchmarks on physical boxes, so
+    # what changes a box's layout is a line in tune.env and nothing else.
+    #
+    # Why a DEDICATED main thread is worth a core: bpa-expire-process takes
+    # the worker barrier on it once a second, and forwarding stops for as
+    # long as that thread is off the CPU. Sharing its core with FRR, sshd and
+    # the VTY is sharing it with whatever they are busy with at that second.
+    #
+    # A WORKER IS NEVER GIVEN UP FOR EITHER. A box too small for what was
+    # asked keeps one worker, gives up the dedicated main thread first and
+    # control-plane cores after that, and says so: a box that stops
+    # forwarding because a benchmark setting did not fit is the wrong way to
+    # fail.
+    cp_n = max(1, control_plane_cores or 1)
+    dedicated = main_thread == "dedicated"
+    cpu_notes = []
+    if dedicated and len(cores) < cp_n + 2:
+        dedicated = False
+        cpu_notes.append(f"VPP's main thread was asked for a core of its own "
+                         f"and shares the control plane's: node {node} has "
+                         f"{len(cores)} physical core(s), and a worker comes "
+                         f"first")
+    if len(cores) > 1 and cp_n > len(cores) - 1:
+        cpu_notes.append(f"{cp_n} control-plane core(s) asked for, "
+                         f"{len(cores) - 1} given: node {node} has "
+                         f"{len(cores)} physical core(s), and one stays a "
+                         f"worker")
+        cp_n = len(cores) - 1
+    cp_n = min(cp_n, len(cores))
+    cp_cores = cores[:cp_n]
+    os_core = cp_cores[0][0]
+    os_cpus = sorted(c for _, sibs in cp_cores for c in sibs)
+    rest = cores[cp_n:]
+    main_cpus = []
+    if dedicated:
+        os_core, main_cpus = rest[0]
+        rest = rest[1:]
+    worker_cores = rest
     if max_workers:
         worker_cores = worker_cores[:max_workers]
 
     workers = [lead for lead, _ in worker_cores]
-    isolated = sorted(c for _, sibs in worker_cores for c in sibs)
+    # The dedicated main thread is isolated with the workers: kept off the
+    # scheduler is the whole of what "dedicated" buys.
+    isolated = sorted(main_cpus
+                      + [c for _, sibs in worker_cores for c in sibs])
 
     # 1G hugepages. The per-subscriber budget comes from docs/architecture.md:
     # ~13 MB of bitmap and ~2.6 GB of session table for 200k subscribers,
@@ -1058,6 +1103,10 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "nic_note": nic_note,
         "os_cpus": os_cpus,
         "main_core": os_core,
+        # The main thread's own core when it has one (#466), else empty: it
+        # then runs on the control plane's first core, as it always did.
+        "main_cpus": main_cpus,
+        "cpu_notes": cpu_notes,
         "workers": workers,
         "isolated": isolated,
         "hugepages_gb": hugepages_gb,
@@ -1663,7 +1712,15 @@ def render_report(p, vpp_base):
     out = []
     out.append(f"# {p['nic_note']}")
     out.append(f"# {p['total_cpus']} CPUs total; chosen NUMA node: {p['node']}")
-    out.append(f"# operating system and VPP main: {fmt_list(p['os_cpus'])}")
+    if p.get("main_cpus"):
+        out.append(f"# control plane: {fmt_list(p['os_cpus'])}")
+        out.append(f"# VPP main thread, on a core of its own: "
+                   f"{fmt_list(p['main_cpus'])}")
+    else:
+        out.append(f"# operating system and VPP main: "
+                   f"{fmt_list(p['os_cpus'])}")
+    for _n in p.get("cpu_notes", []):
+        out.append(f"# WARNING: {_n}")
     out.append(f"# workers ({len(p['workers'])}): {fmt_list(p['workers'])}")
     out.append(f"# isolated: {fmt_list(p['isolated']) or '(none)'}")
     # The card's own limits, beside the figures read off the machine, because
@@ -2512,6 +2569,13 @@ def main():
                     help="memory given to the CGNAT's sessions and subscribers, "
                          "in GB; replaces the estimate from --subscribers (#454)")
     ap.add_argument("--max-workers", type=int)
+    ap.add_argument("--control-plane-cores", type=int,
+                    help="physical cores left to the control plane - the OS, "
+                         "FRR, sshd, the VTY; 1 is the default (#466)")
+    ap.add_argument("--main-thread", choices=("shared", "dedicated"),
+                    default="shared",
+                    help="whether VPP's main thread shares the control "
+                         "plane's first core or has one of its own (#466)")
     ap.add_argument("--no-low-latency", action="store_true",
                     help="do not disable C-states or THP on the kernel line")
     ap.add_argument("--sysfs-root", default="/")
@@ -2558,7 +2622,9 @@ def main():
     p = plan(topo, a.interface, a.subscribers, a.max_workers,
              low_latency=not a.no_low_latency,
              config_path=a.config, vpp_base=a.vpp_base,
-             mgmt_conf=a.mgmt_conf, cgnat_memory_gb=a.cgnat_memory_gb)
+             mgmt_conf=a.mgmt_conf, cgnat_memory_gb=a.cgnat_memory_gb,
+             control_plane_cores=a.control_plane_cores,
+             main_thread=a.main_thread)
 
     if a.would_claim:
         return would_claim(p, a.would_claim)

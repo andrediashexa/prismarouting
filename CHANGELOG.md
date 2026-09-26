@@ -77,7 +77,38 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The cores by role are set from the VTY: `system` > `cpu`**
+  ([#466](https://github.com/andrediashexa/hexarouting/issues/466), first
+  part). The maintainer asked to pin cores for the control plane and for the
+  dataplane so they do not compete, and to set the split himself, for
+  benchmarks on physical boxes.
+  - **What it sets:** `control-plane <n>` gives the OS, FRR, sshd, the VTY and
+    the containers that many physical cores. `main-thread dedicated` gives
+    VPP's main thread a core of its own, isolated like a worker's. That is
+    the thread that stops the workers once a second to expire sessions, and
+    on the control plane's core it waits for whatever FRR is doing.
+  - **Defaults:** one core, shared, which is the layout every box has had.
+  - **Where it goes:** tune.env (`PRISMA_CONTROL_PLANE_CORES`,
+    `PRISMA_MAIN_THREAD`), in effect from the next boot, refused by name when
+    malformed, like every other key there.
+  - **Too small a box:** it keeps one worker, gives up the dedicated main
+    thread first and control-plane cores after, and says so in the tuner's
+    report.
+  - **Reading it:** `show system cpu` puts what is configured beside what
+    this boot runs.
+  - **Not yet:** holding the control plane to its cores by cgroup, splitting
+    the workers into RX and CGNAT sets, and setting the memory of each role.
+    Those are the rest of #466.
+
 ### Fixed
+
+* **`nat cgnat memory` vanished from the running configuration after the
+  commit that set it** (found with
+  [#466](https://github.com/andrediashexa/hexarouting/issues/466)). The figure
+  was written to tune.env and never read back, so `show running-config`
+  stopped showing `memory <GB>` and `save` wrote the file without it. The
+  tuner still had it, so the box kept its memory. It is read back from
+  tune.env now, like the card and the cores.
 
 ## 0.131.7 - a first allocation larger than the step
 

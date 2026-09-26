@@ -180,9 +180,45 @@ O modo conservador do segundo caso não é um defeito: o equipamento não pode f
 
 **Herdado não é o mesmo que imposto.** Na mesma caixa, um processo que pede explicitamente para rodar no núcleo isolado **consegue**. Quem escreve numa sessão de shell que quer um núcleo de encaminhamento pediu aquilo de propósito, e nada que o produto instala faz isso sozinho, mas vale saber que a proteção é por herança e não por cerca.
 
-Quem decide quanto de CPU o plano de controle tem é `PRISMA_MAX_WORKERS`, e isso é uma decisão de dimensionamento, não um limite de processo.
+Quem decide quanto de CPU o plano de controle tem é a divisão dos núcleos por papel, logo abaixo, e isso é uma decisão de dimensionamento, não um limite de processo.
 
 :::
+
+## Núcleos por papel: plano de controle, thread principal e workers
+
+Os núcleos físicos do processador que atende a placa são distribuídos nesta ordem: primeiro os do **plano de controle**, depois - se pedido - um só para a **thread principal do dataplane**, e o resto vira **worker**. Isso se configura na VTY, em `system` > `cpu`:
+
+```
+prisma# [edit] system
+prisma# [edit system] cpu
+prisma# [edit system / cpu] control-plane 2
+prisma# [edit system / cpu] main-thread dedicated
+prisma# [edit system / cpu] commit
+```
+
+| Comando | O que faz | Padrão |
+|---------|-----------|--------|
+| `control-plane <n>` | quantos núcleos físicos ficam com o sistema, o roteamento, o SSH, a VTY e os containers | `1`    |
+| `main-thread shared` | a thread principal do dataplane divide o primeiro núcleo do plano de controle | sim    |
+| `main-thread dedicated` | a thread principal ganha um núcleo só dela, isolado como o de um worker; custa um worker | não    |
+| `no control-plane`, `no main-thread` | volta ao padrão |        |
+
+**Por que dar um núcleo à thread principal:** uma vez por segundo ela para os workers para expirar sessões, e o encaminhamento espera enquanto ela não roda. Dividindo núcleo com o roteamento, ela espera o roteamento - numa tabela BGP cheia convergindo, isso aparece. Num núcleo só dela, não espera ninguém.
+
+**O worker vem primeiro.** Numa caixa pequena demais para o que foi pedido, a caixa mantém pelo menos um worker, abre mão primeiro do núcleo dedicado e depois de núcleos do plano de controle, e diz isso no relatório de boot com uma linha `WARNING`.
+
+A mudança vai para `tune.env` (`PRISMA_CONTROL_PLANE_CORES` e `PRISMA_MAIN_THREAD`) e **vale no boot seguinte**, como tudo o que é isolamento de núcleo - e com a mesma regra da seção anterior: tirar núcleos do plano de controle isola núcleos que não estavam isolados, e isso passa por um boot em modo conservador antes do plano completo. `show system cpu` mostra lado a lado o que está configurado e o que este boot está rodando:
+
+```
+prisma> show system cpu
+configured, in effect from the next reboot:
+  control-plane cores   2
+  VPP main thread       dedicated
+this boot:
+  VPP main thread       core 0
+  VPP workers           1-3
+  isolated from Linux   1-3
+```
 
 ## O que o arquivo de ajuste aceita
 
@@ -194,6 +230,8 @@ Quem decide quanto de CPU o plano de controle tem é `PRISMA_MAX_WORKERS`, e iss
 | `PRISMA_SUBSCRIBERS` | só dígitos | `200000`   | `200000`        |
 | `PRISMA_LOW_LATENCY` | `1` ou `0`, mais nada | `1`        | `1`             |
 | `PRISMA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio      | sem limite      |
+| `PRISMA_CONTROL_PLANE_CORES` | só dígitos, 1 ou mais, ou vazio | vazio (um núcleo) | um núcleo       |
+| `PRISMA_MAIN_THREAD` | `shared` ou `dedicated`, ou vazio | vazio (`shared`) | `shared`        |
 
 `PRISMA_LOW_LATENCY=1` desliga os estados profundos de economia de energia do processador, desliga as páginas grandes transparentes e mantém o governador de frequência em `performance`. Custa energia e compra rajada previsível, e é por isso que vem `1`: isto é um roteador. `0` deixa os três em paz, para uma caixa que precisa economizar mais do que precisa encaminhar.
 

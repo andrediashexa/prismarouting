@@ -23,6 +23,8 @@ LIVEDIR=$ROOT/run/live
 : "${PRISMA_LOW_LATENCY:=1}"
 : "${PRISMA_MAX_WORKERS:=}"
 : "${PRISMA_CGNAT_MEMORY_GB:=}"
+: "${PRISMA_CONTROL_PLANE_CORES:=}"
+: "${PRISMA_MAIN_THREAD:=}"
 
 # tune.env is a file an operator edits by hand, and every value in it used to
 # be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
@@ -199,6 +201,25 @@ case "$PRISMA_MAX_WORKERS" in
     echo "  empty, which is the shipped value and means no cap." >&2
     say_using "no cap: every physical core on the dataplane node but the first" ;;
   *) set -- "$@" --max-workers "$PRISMA_MAX_WORKERS" ;;
+esac
+# THE CORES BY ROLE (#466), refused the way PRISMA_MAX_WORKERS is and for the
+# same reason: a typo must cost the box the setting, not its tuning.
+case "$PRISMA_CONTROL_PLANE_CORES" in
+  "") ;;
+  0|*[!0-9]*)
+    say_refused PRISMA_CONTROL_PLANE_CORES "$PRISMA_CONTROL_PLANE_CORES"
+    echo "  It is a number of physical cores, 1 or more - or empty, which" >&2
+    echo "  is the shipped value and means one." >&2
+    say_using "one control-plane core" ;;
+  *) set -- "$@" --control-plane-cores "$PRISMA_CONTROL_PLANE_CORES" ;;
+esac
+case "$PRISMA_MAIN_THREAD" in
+  ""|shared) ;;
+  dedicated) set -- "$@" --main-thread dedicated ;;
+  *)
+    say_refused PRISMA_MAIN_THREAD "$PRISMA_MAIN_THREAD"
+    echo "  It is shared or dedicated - or empty, which is shared." >&2
+    say_using "VPP's main thread on the control plane's first core" ;;
 esac
 # The decision goes to the journal. Diagnosing a box whose profile did not
 # match its hardware meant guessing across whole build cycles, because the one
