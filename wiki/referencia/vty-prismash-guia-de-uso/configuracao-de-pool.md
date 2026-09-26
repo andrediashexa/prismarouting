@@ -375,9 +375,13 @@ configure
     alg pptp on
     bypass destination 198.51.100.0/24
     exit
-   interface ens18 inside
-   interface ens19 outside
    exit
+  exit
+ interface ens18
+  cgnat inside
+  exit
+ interface ens19
+  cgnat outside
   exit
  show configuration compare
  commit check

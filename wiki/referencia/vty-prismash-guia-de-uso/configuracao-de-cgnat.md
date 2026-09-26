@@ -1,6 +1,6 @@
 # Configuração de CGNAT
 
-Toda a configuração de CGNAT fica dentro de uma hierarquia: entra-se em `nat`, depois em `cgnat`, e é ali que ficam pools, interfaces, logging e timeouts. Esta página diz o que existe em cada nível e como se anda entre eles.
+A configuração de CGNAT fica dentro de uma hierarquia: entra-se em `nat`, depois em `cgnat`, e é ali que ficam pools, logging e timeouts. O lado de cada interface (`inside` ou `outside`) fica no bloco da própria interface. Esta página diz o que existe em cada nível e como se anda entre eles.
 
 ```
 prisma> configure
@@ -9,7 +9,9 @@ prisma# [edit nat] cgnat
 prisma# [edit nat / cgnat] pool residencial
 prisma# [edit nat / cgnat / pool residencial] inside 100.64.0.0/22
 prisma# [edit nat / cgnat / pool residencial] exit
-prisma# [edit nat / cgnat] interface ens18 inside
+prisma# [edit nat / cgnat] top
+prisma# [edit] interface ens18
+prisma# [edit interface ens18] cgnat inside
 ```
 
 O prompt diz sempre em que nível você está. `?` e TAB oferecem só o que vale naquele nível: em `nat` aparece `cgnat`; em `cgnat` aparecem `pool`, `interface`, `logging`, `timeout` e o resto desta página.
@@ -109,24 +111,45 @@ nat
    policy interleaved
    mode deterministic
    exit
-  interface ens18 inside
-  interface ens19 outside
   exit
+ exit
+interface ens18
+ cgnat inside
+ exit
+interface ens19
+ cgnat outside
  exit
 ```
 
-Pools primeiro, depois as interfaces, depois os ajustes globais, todos no mesmo bloco.
+Dentro de `nat` / `cgnat` ficam os pools e depois os ajustes globais. O lado de cada interface aparece no bloco dela, junto com o endereço, a descrição e o MTU: quem lê uma porta vê ali mesmo que os assinantes chegam por ela.
 
 ## Habilitando numa interface
 
+O lado do CGNAT é uma propriedade da interface e se digita no bloco dela:
+
+```
+prisma# [edit] interface ens18
+prisma# [edit interface ens18] cgnat inside
+prisma# [edit interface ens18] exit
+prisma# [edit] interface ens19
+prisma# [edit interface ens19] cgnat outside
+prisma# [edit interface ens19] exit
+```
+
+`inside` é a porta por onde os assinantes chegam; `outside`, a porta por onde o tráfego traduzido sai. `no cgnat`, dentro do bloco, tira a interface do CGNAT.
+
+A forma antiga, `interface ens18 inside` dentro de `nat` / `cgnat`, continua aceita, para que roteiros e scripts já escritos sigam funcionando. A caixa avisa onde a linha passa a aparecer:
+
 ```
 prisma# [edit nat / cgnat] interface ens18 inside
-prisma# [edit nat / cgnat] interface ens19 outside
+  note: kept as 'cgnat inside' in the block of interface ens18
 ```
+
+Um arquivo salvo por uma versão anterior, com as linhas dentro de `cgnat`, é lido normalmente, e o próximo `save` grava cada uma no bloco da sua interface.
 
 
 :::warning
-**Nunca entregue ao VPP a interface de gerência.** O DPDK tira a NIC do Linux. Entregue a porta pela qual você administra a máquina e ela fica inalcançável, e uma caixa inalcançável não tem conserto remoto. Identifique a placa de gerência antes de configurar qualquer coisa e confirme que ela não aparece como `interface` dentro de `cgnat`.
+**Nunca entregue ao VPP a interface de gerência.** O DPDK tira a NIC do Linux. Entregue a porta pela qual você administra a máquina e ela fica inalcançável, e uma caixa inalcançável não tem conserto remoto. Identifique a placa de gerência antes de configurar qualquer coisa e confirme que o bloco dela não tem `cgnat inside` nem `cgnat outside`.
 
 :::
 
