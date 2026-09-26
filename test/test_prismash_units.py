@@ -2284,6 +2284,9 @@ for _bad, _why in (("export NOPE", "no policy-statement named NOPE"),
     rv, text = driven(lambda: sh.do_config(_bad))
     check(_why in text and sh.candidate.routing == _before,
           f"{_bad!r} refused, nothing staged: {text!r}")
+rv, text = driven(lambda: sh.igp_export("ospf", ["no", "export"]))
+check("usage: [no] export <policy>" in text,
+      f"Shell.igp_export, called on its own, with no policy: {text!r}")
 sh.frr_ctx = ["router isis CORE"]
 rv, text = driven(lambda: sh.do_config("export EXT"))
 check("redistribute ipv6 static level-2 route-map PO-EXT-ISIS-STATIC"
