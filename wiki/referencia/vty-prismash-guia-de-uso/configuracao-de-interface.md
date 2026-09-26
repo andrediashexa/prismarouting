@@ -127,12 +127,12 @@ configure
 
 | Comando | O que faz | Padrão |
 |---------|-----------|--------|
-| `member <porta>` | uma porta no bundle; pode repetir | |
+| `member <porta>` | uma porta no bundle; pode repetir |        |
 | `lacp mode active\|passive` | quem começa a negociação | `active` |
 | `lacp rate fast\|slow` | LACP a cada segundo ou a cada 30 | `slow` |
-| `load-balance l2\|l23\|l34` | como os fluxos se espalham pelos membros | `l34` |
-| `no member <porta>` | tira a porta do bundle | |
-| `no interface ae0` | desfaz o bundle; as portas voltam a ser portas | |
+| `load-balance l2\|l23\|l34` | como os fluxos se espalham pelos membros | `l34`  |
+| `no member <porta>` | tira a porta do bundle |        |
+| `no interface ae0` | desfaz o bundle; as portas voltam a ser portas |        |
 
 Endereços, MTU, descrição, OSPF, BGP e o lado do CGNAT vão no `ae0`, nunca nos membros. O `commit` recusa um membro que a caixa não tem, uma porta em dois bundles e um membro com configuração própria.
 
