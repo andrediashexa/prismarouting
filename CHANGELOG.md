@@ -79,6 +79,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box installed from 0.132.0 or later boots with its cards missing** ([#468](https://github.com/andrediashexa/hexarouting/issues/468)).
+  #450 took the NIC drivers out of the initramfs. They then loaded from the
+  root, after udev coldplug, and nothing ordered `networking.service` or the
+  tuner after them. On a freshly installed 0.133.0 both ran before the cards
+  existed: the management card came up DOWN with no address, and `show
+  interface` said *'ens19' was named and VPP was given no NIC*. The Ethernet
+  and virtio drivers are back in the initramfs, so each card exists under its
+  final name before the root is mounted. Only the classes no box forwards on
+  stay out: wireless, wwan, ieee802154, CAN, arcnet, FDDI, WAN and hamradio.
+  An upgrade now rebuilds the initrd when the hook has changed, so a box
+  already affected recovers from the upgrade alone and does not have to wait
+  for a kernel update. `test/test_initramfs_trim.sh` holds the Ethernet,
+  virtio and PHY drivers in, and was shown red against 0.132.0's hook.
+
 ## 0.133.4 - LACP bundles
 
 ### Added

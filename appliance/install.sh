@@ -307,10 +307,24 @@ install -D -m 0755 "$REPO/appliance/load-the-images" "$DESTDIR/usr/lib/prisma-ro
 # by prisma-routing-backplane.service before them.
 install -D -m 0755 "$REPO/appliance/prisma-backplane" "$DESTDIR/usr/lib/prisma-routing/prisma-backplane"
 # The initramfs hook that leaves out what no root on this box sits behind
-# (#450). The medium builds its initrd with it; on an upgraded box it takes
-# effect at the next kernel update, which is when the initrd is rebuilt.
-install -D -m 0755 "$REPO/appliance/initramfs/prisma-trim" \
-  "$DESTDIR/etc/initramfs-tools/hooks/prisma-trim"
+# (#450). The medium builds its initrd with it.
+#
+# AND ON A RUNNING BOX A CHANGED HOOK REBUILDS THE INITRD NOW (#468). It used
+# to wait for the next kernel update, which was harmless while the hook only
+# ever dropped more - and is exactly wrong for a box whose initrd was built by
+# 0.132.0's hook, which dropped the NIC drivers and booted with its cards
+# missing. Left for a kernel update, the upgrade that fixes it would fix
+# nothing. Rebuilt only when the hook differs, so an upgrade that does not
+# touch it costs nothing.
+_trim="$DESTDIR/etc/initramfs-tools/hooks/prisma-trim"
+_trim_was=$(cat "$_trim" 2>/dev/null || true)
+install -D -m 0755 "$REPO/appliance/initramfs/prisma-trim" "$_trim"
+if [ -z "$DESTDIR" ] && [ "$_trim_was" != "$(cat "$_trim")" ] \
+    && command -v update-initramfs >/dev/null 2>&1; then
+  say "the initramfs hook changed: rebuilding the initrd"
+  update-initramfs -u >/dev/null 2>&1 \
+    || say "  update-initramfs failed; the hook applies at the next kernel update"
+fi
 # A card added to the running box, attached through AF_XDP (#453): the script,
 # and the udev rule that starts prisma-routing-hot-card@<card>.service for it.
 # The template needs no enabling; udev's SYSTEMD_WANTS starts it.
