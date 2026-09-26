@@ -6104,6 +6104,16 @@ class ConfirmPending:
 #: `up` leaves one of these the same way it leaves an FRR block.
 BLOCK_MODES = ("pool", "user", "snmp-user")
 
+# `commit` inside the three blocks entered as modes of their own (#464). Every
+# other level took it - `nat`, `cgnat`, `system`, every FRR block - and these
+# three answered "unknown statement", so an operator building a pool had to
+# walk out of it to apply it and walk back in to change it. In the tree as
+# well as in the handler, because the tree is what `?`, TAB and the
+# abbreviations read: a word the handler takes and `?` does not offer is one
+# the operator never learns is there.
+for _m in BLOCK_MODES:
+    TREE[_m] = {**TREE[_m], "commit": TREE["config"]["commit"]}
+
 #: The words every configuration level owns, and what `?` says about each.
 #:
 #: They are not in `TREE` on purpose. `TREE` is walked per mode and per block,
@@ -12755,7 +12765,54 @@ class Shell:
         if w[0] in PROBE_TOOLS:
             self.do_probe(w[0], w[1:])
             return True
+        if w[0] == "commit" and self.mode in BLOCK_MODES:
+            self.commit_from_block(w[1:])
+            return True
         return False
+
+    def block_store(self):
+        """
+        The candidate's dictionary the block being edited lives in, and the
+        block's name: where to find it again after the candidate changes.
+        """
+        cfg = self.candidate
+        if self.mode == "pool" and self.pool is not None:
+            return (cfg.pools if cfg else None), self.pool.name
+        if self.mode == "user" and self.user is not None:
+            return (cfg.users if cfg else None), self.user.name
+        if self.mode == "snmp-user" and self.snmp_user is not None:
+            return (cfg.snmp_users if cfg else None), self.snmp_user.name
+        return None, None
+
+    def commit_from_block(self, args):
+        """
+        `commit` typed inside a pool, a user or an SNMP user (#464).
+
+        The block is already in the candidate - it was put there when it was
+        entered - so this is the same commit `[edit]` runs. What is particular
+        to a block is AFTERWARDS: a commit that is refused, rolled back or
+        not confirmed can leave a different candidate behind, and the object
+        this session was editing would then be one the candidate no longer
+        holds - statements typed into it would go nowhere, with no word said.
+        So the block is looked up again by name, and when the candidate no
+        longer has it the operator is taken back to `[edit]` and told.
+        """
+        name = self.block_store()[1]
+        self.do_commit(args)
+        store, _ = self.block_store()
+        held = store.get(name) if store is not None else None
+        if held is None:
+            self.err(f"the candidate after this commit no longer holds {name}")
+            print("    back at [edit]")
+            self.mode = "config"
+            self.pool = self.user = self.snmp_user = None
+            return
+        if self.mode == "pool":
+            self.pool = held
+        elif self.mode == "user":
+            self.user = held
+        else:
+            self.snmp_user = held
 
     def level_words(self):
         """

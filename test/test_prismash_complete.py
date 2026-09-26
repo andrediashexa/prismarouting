@@ -7731,5 +7731,64 @@ print("  taken at the line, refused at the commit, and silent on a range it "
       "cannot read")
 
 
+
+print("\n=== commit from inside a pool, a user and an SNMP user (#464) ===")
+# Each of the three answered "unknown statement" to `commit`, so a pool had to
+# be walked out of to be applied. The commit itself is the one `[edit]` runs;
+# what these pin is that it is REACHED, offered, and that the block the
+# operator is standing in is still the candidate's afterwards.
+for _enter, _mode in (("nat|cgnat|pool P", "pool"), ("user ops", "user"),
+                      ("snmp-user mon", "snmp-user")):
+    sh = shell_with_frr()
+    sh.feed("configure")
+    for _l in _enter.split("|"):
+        sh.feed(_l)
+    check(sh.mode == _mode, f"{_enter!r} did not enter {_mode}: {sh.mode}")
+    _opts, _, _ = sh._options("comm", True)
+    check("commit" in _opts, f"`?` does not offer commit in {_mode}: "
+                             f"{sorted(_opts)}")
+    _out = commit_check(sh)
+    check("unknown" not in _out.lower() and sh.mode == _mode,
+          f"`commit check` in {_mode} was not a commit, or left the block: "
+          f"{_out!r} {sh.mode}")
+    _store, _name = sh.block_store()
+    check(_store is not None and _store.get(_name) is not None,
+          f"the {_mode} block is not the candidate's after the commit")
+    print(f"  {_mode}: offered, committed, still standing in it")
+
+# A commit that leaves a DIFFERENT candidate behind: the block is found again
+# by name, not kept as an object the candidate no longer holds.
+sh = shell_with_frr()
+sh.feed("configure")
+for _l in ("nat", "cgnat", "pool P"):
+    sh.feed(_l)
+_before = sh.pool
+_fresh = _config.Config.parse(sh.candidate.text())
+sh.do_commit = lambda args: setattr(sh, "candidate", _fresh)
+sh.feed("commit")
+check(sh.mode == "pool" and sh.pool is _fresh.pools.get("P")
+      and sh.pool is not _before,
+      "after a commit that replaced the candidate the pool being edited is "
+      "still the old object, so what is typed next goes nowhere")
+# And one that leaves a candidate WITHOUT it: back to [edit], and said.
+_bare = _config.Config.parse("")
+sh.do_commit = lambda args: setattr(sh, "candidate", _bare)
+_o = io.StringIO()
+with contextlib.redirect_stdout(_o):
+    sh.feed("commit")
+check(sh.mode == "config" and sh.pool is None
+      and "the candidate after this commit no longer holds P" in _o.getvalue(),
+      f"a pool the candidate lost kept the operator typing into it: "
+      f"{sh.mode} {_o.getvalue()!r}")
+sh2 = shell_with_frr()
+with contextlib.redirect_stdout(io.StringIO()):
+    sh2.feed("configure")
+    sh2.feed("user ops")
+    sh2.do_commit = lambda args: setattr(sh2, "candidate", None)
+    sh2.commit_from_block([])
+check(sh2.mode == "config" and sh2.user is None,
+      "a commit that left no candidate at all kept the user block open")
+print("  found again by name, or left and said")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

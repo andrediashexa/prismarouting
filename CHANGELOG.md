@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`commit` works from inside a pool, a user and an SNMP user**
+  ([#464](https://github.com/andrediashexa/hexarouting/issues/464)). The
+  three blocks entered as modes of their own answered "unknown statement" to
+  it, so an operator building a pool had to walk out of it to apply it. The
+  wiki said `commit` worked at every level, which was true everywhere except
+  there. It is the same commit `[edit]` runs, every argument included, and
+  `?` offers it. Afterwards the operator is still in the block, which is
+  looked up again by name in the candidate the commit left behind. A block
+  that candidate no longer holds takes the operator back to `[edit]` and
+  says so, instead of taking statements that would go nowhere.
+
 ## 0.131.1 - the Linux end takes the interface's name
 
 ### Added
@@ -98,7 +109,6 @@ version has a chance of seeing it.
   `save` writes it without them. Measured in `lab/lcp.sh`: an interface given
   only a description came up in Linux as `host-veth2`, and the configuration
   carries no `linux-name` for it.
-
 ## 0.131.0 - the containers restart when asked
 
 ### Fixed

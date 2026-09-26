@@ -22,7 +22,7 @@ O prompt diz sempre em que nível você está. `?` e TAB oferecem só o que vale
 | `up`    | um nível acima, igual a `exit` |
 | `top` ou `end` | o topo do modo de configuração, de qualquer nível |
 
-`commit`, `commit check`, `show` e `rollback` funcionam em qualquer nível. Não é preciso sair para aplicar.
+`commit`, `commit check` e `show` funcionam em qualquer nível, inclusive dentro de um pool. Não é preciso sair para aplicar, e depois do `commit` você continua no nível em que estava. `rollback` funciona em `nat` e em `cgnat`; dentro de um pool, dê `exit` antes.
 
 Em `nat` só existe `cgnat`. Qualquer outra coisa é recusada:
 
