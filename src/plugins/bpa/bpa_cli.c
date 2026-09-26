@@ -229,7 +229,17 @@ format_bpa_pool (u8 *s, va_list *args)
    * block to somebody, so there is none to give - and max-blocks above 1 on
    * such a pool describes a growth that cannot happen (#39).
    */
-  if ((p->mode == BPA_MODE_DYNAMIC || p->block_reserve) && p->max_blocks > 1)
+  /* A first allocation above one block (#462) moves the bottom of the range:
+   * a new subscriber starts there, and grows from there a block at a time. */
+  if (p->mode == BPA_MODE_DYNAMIC && p->initial_blocks > 1)
+    s = format (s, "\n%Uper sub      %u-%u ports (starts at %u blocks, grown "
+		   "one at a time to %u as each fills)",
+		format_white_space, indent + 2,
+		p->block_size * p->initial_blocks,
+		p->block_size * p->max_blocks, p->initial_blocks,
+		p->max_blocks);
+  else if ((p->mode == BPA_MODE_DYNAMIC || p->block_reserve)
+	   && p->max_blocks > 1)
     s = format (s, "\n%Uper sub      %u-%u ports (1-%u blocks, grown one at a "
 		   "time as each fills)",
 		format_white_space, indent + 2, p->block_size,
@@ -476,7 +486,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   u32 block = 512, port_min = 1024, port_max = 65535, mss = 0, vrf = 0;
   u32 tv = 0;
 
-  u32 maxb = 0, stride = 0, reserve = 0;
+  u32 maxb = 0, initb = 0, stride = 0, reserve = 0;
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
   u32 *bys_b = 0, *bys_c = 0, *byd_b = 0, *byd_c = 0;
   bpa_pool_t cfg = { 0 };
@@ -563,6 +573,18 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       else if (unformat (line_input, "max-blocks %u", &maxb))
 	cfg.max_blocks = (u8) maxb;
+      else if (unformat (line_input, "initial-blocks %u", &initb))
+	{
+	  /* The field is a u8, as max_blocks is: 256 would arrive as 0 and be
+	   * a first allocation of one block with no word said (#351). */
+	  if (initb > 255)
+	    {
+	      error = clib_error_return (
+		0, "initial-blocks %u: expected 1-255 blocks", initb);
+	      goto done;
+	    }
+	  cfg.initial_blocks = (u8) initb;
+	}
       else if (unformat (line_input, "block-stride %u", &stride))
 	{
 	  if (stride > 65535)
@@ -969,7 +991,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[utilisation-alarm <percent>] "
     "[max-sessions <n>] [max-session-rate <n>] "
     "[tcp-mss <bytes|auto>] "
-    "[max-blocks <n>] [block-stride <n>] [reserve <n>] "
+    "[max-blocks <n>] [initial-blocks <n>] [block-stride <n>] [reserve <n>] "
     "[forward <tcp|udp> <public-port> to <private-ip> <private-port>] "
     "[check] | bpa pool <name> del",
   .function = bpa_pool_add_command_fn,
@@ -3059,6 +3081,8 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       if (p->max_blocks > 1)
 	s = format (s, " max-blocks %u\n", p->max_blocks);
+      if (p->initial_blocks > 1)
+	s = format (s, " initial-blocks %u\n", p->initial_blocks);
       if (p->block_stride)
 	s = format (s, " block-stride %u\n", p->block_stride);
       if (p->block_reserve)

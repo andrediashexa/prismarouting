@@ -103,6 +103,7 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
   cfg.mode = (bpa_mode_t) mp->mode;
   cfg.filter = (bpa_filter_t) mp->filter;
   cfg.max_blocks = mp->max_blocks;
+  cfg.initial_blocks = mp->initial_blocks;
 
   /*
    * Two masks, as the pool stores them: what is enabled, and what the caller
@@ -199,6 +200,7 @@ vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
   t.alg_expect = clib_net_to_host_u32 (mp->timeouts.alg_expect);
 
   e = bpa_pool_settings_set (name, (bpa_filter_t) mp->filter, mp->max_blocks,
+			     mp->initial_blocks,
 			     clib_net_to_host_u32 (mp->alg),
 			     clib_net_to_host_u32 (mp->alg_set),
 			     clib_net_to_host_u16 (mp->tcp_mss),
@@ -700,6 +702,7 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
   mp->mode = (vl_api_bpa_mode_t) p->mode;
   mp->filter = (vl_api_bpa_filter_t) p->filter;
   mp->max_blocks = p->max_blocks;
+  mp->initial_blocks = p->initial_blocks;
   mp->block_stride = clib_host_to_net_u16 (p->block_stride);
   mp->block_reserve = clib_host_to_net_u16 (p->block_reserve);
   mp->alg = clib_host_to_net_u32 (p->alg);

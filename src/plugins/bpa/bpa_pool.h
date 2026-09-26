@@ -410,6 +410,19 @@ typedef struct
   u8 max_blocks;
 
   /*
+   * How many blocks a subscriber is given at once when its first block is
+   * taken: the first allocation, where max_blocks is the most it may grow
+   * to (#462). 0 and 1 are the historical behaviour, one block. Asked for by
+   * the maintainer as a first allocation of 512 ports growing in steps of
+   * 256 - block_size 256, initial_blocks 2 - and read only in dynamic mode,
+   * where the allocator decides at the first packet what a subscriber gets.
+   *
+   * NOT part of the mapping, like block_stride below: it changes what the
+   * NEXT new subscriber is handed and moves nothing already held.
+   */
+  u8 initial_blocks;
+
+  /*
    * Distance between the blocks one subscriber holds, in blocks of its own
    * public address. Zero is what the allocator has always done: an extension
    * is whatever comes off the free list next.
@@ -616,6 +629,15 @@ clib_error_t *bpa_pool_init (bpa_pool_t *p);
  * still carries its old one. Nothing is written; zero is never refused.
  */
 clib_error_t *bpa_pool_stride_refusal (const bpa_pool_t *p, u32 stride);
+/*
+ * The first allocation, refused where it could never be what it says (#462):
+ * on a pool that is not dynamic, and above the cap the same message carries.
+ * `initial` and `max_blocks` are arguments for the reason `stride` is one
+ * above: on the settings route the pool still carries its old values.
+ * Nothing is written; 0 and 1 are never refused.
+ */
+clib_error_t *bpa_pool_initial_refusal (const bpa_pool_t *p, u32 initial,
+					u32 max_blocks);
 clib_error_t *bpa_addr_set_build (bpa_addr_set_t *s, const u32 *bases,
 				  const u32 *counts, u32 n);
 

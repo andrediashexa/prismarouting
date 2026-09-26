@@ -1427,6 +1427,37 @@ check(_ok is True,
 check("usable ports" not in _out.getvalue(),
       f"and it said so anyway: {_out.getvalue()!r}")
 
+print("\n=== a first allocation that cannot be what it says is refused at check "
+      "(#462) ===")
+# Driven through apply(check_only=True) for block_fits()'s reason above: the
+# predicate is proved in test_prismash_units.py, and what is proved here is
+# that the commit asks it, on the pool being written, and lets the right one
+# through.
+for _mode, _ports, _want in (("dynamic", 300, "not 300"),
+                             ("dynamic", 4096, "allows: 4096"),
+                             ("deterministic", 1024, "dynamic pools only")):
+    _cfg = target_with("first", "100.64.0.0/22", "200.150.9.0/28")
+    _pool = _cfg.pools["first"]
+    _pool.mode, _pool.max_blocks, _pool.initial_ports = _mode, 4, _ports
+    _out = io.StringIO()
+    with contextlib.redirect_stdout(_out):
+        _ok = shell_with(FakeApi()).apply(_cfg, check_only=True)
+    check(_ok is False and "pool 'first': initial-allocation" in _out.getvalue()
+          and _want in _out.getvalue(),
+          f"initial-allocation {_ports} on a {_mode} pool passed the check: "
+          f"{_out.getvalue()!r}")
+_cfg = target_with("first", "100.64.0.0/22", "200.150.9.0/28")
+_pool = _cfg.pools["first"]
+_pool.mode, _pool.max_blocks, _pool.initial_ports = "dynamic", 4, 1024
+_out = io.StringIO()
+with contextlib.redirect_stdout(_out):
+    _ok = shell_with(FakeApi()).apply(_cfg, check_only=True)
+check(_ok is True and "initial-allocation" not in _out.getvalue(),
+      f"two 512-port blocks under max-blocks 4 on a dynamic pool were "
+      f"refused: {_out.getvalue()!r}")
+print("  not whole blocks, over the cap, deterministic: refused; the right "
+      "one through")
+
 print("\n=== a pool the box ALREADY has is not re-judged by it (#357) ===")
 # The #357 rule at commit level. A pool that is not in this candidate's
 # pool_add or pool_replace is a fact rather than a request, and a check that

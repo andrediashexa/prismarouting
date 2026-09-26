@@ -128,7 +128,17 @@
  * than discovered by a client that silently stops working; lab/api.sh pins
  * the JSON shape and is what fails when this happens.
  */
-option version = "0.17.0";
+/*
+ * 0.18.0 adds initial_blocks to bpa_pool_add_del, bpa_pool_settings_set and
+ * bpa_pool_details: how many blocks a new subscriber of a dynamic pool is
+ * given at once, where max_blocks is the most it may grow to (#462). On the
+ * settings message too, for block_stride's reason: it changes what the NEXT
+ * subscriber gets and moves nothing already handed out.
+ *
+ * It CHANGES THE LAYOUT of those three messages, so a client built against
+ * 0.17.0 must be rebuilt. lab/api.sh pins the JSON shape.
+ */
+option version = "0.18.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -171,6 +181,8 @@ typedef bpa_timeouts
     @param block_size - ports per block, a power of two
     @param filter - which inbound packets a mapping accepts (RFC 4787 REQ-8)
     @param max_blocks - how many blocks one subscriber may hold; 0 means one
+    @param initial_blocks - how many a new subscriber of a dynamic pool is
+                            given at once; 0 and 1 mean one
     @param block_stride - blocks of the subscriber's own public address
                           between the blocks it holds; 0 is whatever the
                           allocator has free, which is the historical
@@ -233,6 +245,7 @@ autoreply define bpa_pool_add_del
   vl_api_bpa_mode_t mode;
   vl_api_bpa_filter_t filter;
   u8 max_blocks;
+  u8 initial_blocks;
   u16 block_stride;
   u16 block_reserve;
   u32 alg;
@@ -260,6 +273,7 @@ autoreply define bpa_pool_add_del
     @param name - the pool
     @param filter - which inbound packets a mapping accepts
     @param max_blocks - blocks one subscriber may hold; 0 means one
+    @param initial_blocks - blocks a new subscriber is given at once
     @param block_stride - blocks between the ones a subscriber holds; 0 is
                           whatever the allocator has free
     @param alg - which ALGs are enabled
@@ -276,6 +290,7 @@ autoreply define bpa_pool_settings_set
   string name[64];
   vl_api_bpa_filter_t filter;
   u8 max_blocks;
+  u8 initial_blocks;
   u16 block_stride;
   u32 alg;
   u32 alg_set;
@@ -591,6 +606,7 @@ define bpa_pool_details
   vl_api_bpa_mode_t mode;
   vl_api_bpa_filter_t filter;
   u8 max_blocks;
+  u8 initial_blocks;
   u16 block_stride;
   u16 block_reserve;
   u32 alg;
