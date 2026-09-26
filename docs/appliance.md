@@ -2985,7 +2985,9 @@ The second step (#448, phase B). What the VTY does to the host — creating,
 changing and removing accounts, their groups and passwords, checking and
 reloading sshd, starting and stopping snmpd, and writing the files behind
 them (`/etc/resolv.conf`, the sshd drop-in, each account's `authorized_keys`,
-`snmpd.conf` and net-snmp's v3 store) — it now **asks** of
+`snmpd.conf` and net-snmp's v3 store), and setting the Linux end of a
+dataplane interface up or down, its MTU and its description — it now
+**asks** of
 `prisma-routing-doors.service`, a root daemon on
 `/run/prisma-routing/doors.sock`, instead of running the command itself. From
 inside a container it could not run them, and a container that could would
@@ -3022,11 +3024,14 @@ Measured in `lab/doors.sh`, with the daemon running as root:
   as its log shows, and reached `id` and the shadow file;
 - a resolver, a key and an SNMP community were written by the daemon, the key
   and `snmpd.conf` 0600;
+- a dataplane interface's description and MTU reached its Linux end, set by
+  the daemon. From a container the same `ip link` would act on the
+  container's own interfaces and report success, which is why this is a door;
 - the log carried no hash and no community;
 - an unprivileged account asking the same socket for `useradd` was refused,
   and no account was made.
 
-With no daemon, the six checks that say the daemon did it go red.
+With no daemon, the eight checks that say the daemon did it go red.
 
 `install.sh` does **not** change any login shell unless `PRISMA_VTY_LOGIN=1` is
 set. On an existing Debian the machine may have other jobs, and silently

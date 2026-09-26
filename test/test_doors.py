@@ -44,39 +44,59 @@ print("=== every command system.py runs is a door ===")
 # `name`, every managed group for `g`, the login shell for `self.shell`. A
 # slot this does not know is a failure, so a new kind of argument is looked
 # at before it is let through.
-SLOTS = {"name": ["ops"], "g": list(MANAGED_GROUPS)}
-tree = ast.parse(open(os.path.join(SRC, "system.py")).read())
+# In prismash.py the doors are `self.host_run([...])`: the Linux end of a
+# dataplane interface (`host`), its MTU, `up`/`down`, and a description.
+SLOTS = {"name": ["ops"], "g": list(MANAGED_GROUPS), "host": ["tap4096", "ens19"]}
+
+
+def slot(e):
+    """What the VTY puts in one argv slot, or None when this does not know."""
+    if isinstance(e, ast.Constant):
+        return [e.value]
+    if isinstance(e, ast.Name) and e.id in SLOTS:
+        return SLOTS[e.id]
+    if isinstance(e, ast.Attribute) and e.attr == "shell":
+        return [LOGIN_SHELL]
+    if isinstance(e, ast.IfExp):
+        a, b = slot(e.body), slot(e.orelse)
+        return a + b if a is not None and b is not None else None
+    if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) \
+            and e.func.id == "str" and ast.unparse(e.args[0]) == "mtu":
+        return ["68", "1500", "9000"]
+    if isinstance(e, ast.BoolOp) and ast.unparse(e) == "text or ''":
+        return ["uplink to the transit", ""]
+    return None
+
+
 sites = []
-for node in ast.walk(tree):
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-            and node.func.attr == "_run" and node.args \
-            and isinstance(node.args[0], ast.List):
-        choices = [[]]
-        for e in node.args[0].elts:
-            if isinstance(e, ast.Constant):
-                vals = [e.value]
-            elif isinstance(e, ast.Name) and e.id in SLOTS:
-                vals = SLOTS[e.id]
-            elif isinstance(e, ast.Attribute) and e.attr == "shell":
-                vals = [LOGIN_SHELL]
-            else:
-                vals = None
-            if vals is None:
-                choices = None
-                break
-            choices = [c + [v] for c in choices for v in vals]
-        stdin = None
-        if any(k.arg == "stdin" for k in node.keywords):
-            stdin = "ops:$6$salt$hash\n"
-        sites.append((node.lineno, choices, stdin))
-check(len(sites) >= 12, f"{len(sites)} command site(s) read off system.py")
-for line, choices, stdin in sites:
+for src, attr in (("system.py", "_run"), ("prismash.py", "host_run")):
+    tree = ast.parse(open(os.path.join(SRC, src)).read())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr == attr and node.args \
+                and isinstance(node.args[0], ast.List):
+            choices = [[]]
+            for e in node.args[0].elts:
+                vals = slot(e)
+                if vals is None:
+                    choices = None
+                    break
+                choices = [c + [v] for c in choices for v in vals]
+            stdin = None
+            if any(k.arg == "stdin" for k in node.keywords):
+                stdin = "ops:$6$salt$hash\n"
+            sites.append((f"{src}:{node.lineno}", choices, stdin))
+check(len([x for x in sites if x[0].startswith("system")]) >= 12,
+      "at least 12 command sites read off system.py")
+check(len([x for x in sites if x[0].startswith("prismash")]) >= 4,
+      "and the 4 ip-link sites off prismash.py")
+for where, choices, stdin in sites:
     if choices is None:
-        check(False, f"system.py:{line}: an argument this suite does not know")
+        check(False, f"{where}: an argument this suite does not know")
         continue
     for argv in choices:
         check(doors.verb_of(argv, stdin) is not None,
-              f"system.py:{line}: {' '.join(argv)} is a door")
+              f"{where}: {' '.join(argv)} is a door")
 
 print("\n=== and nothing else is ===")
 for argv, stdin, why in (
@@ -95,7 +115,16 @@ for argv, stdin, why in (
         (["sh", "-c", "id"], None, "a shell"),
         (["useradd", "-m", "-s", LOGIN_SHELL, "a" * 33], None, "33 characters"),
         ("userdel -r ops", None, "a string, not an argv"),
-        ([1, 2], None, "not strings")):
+        ([1, 2], None, "not strings"),
+        (["ip", "link", "set", "dev", "-x", "up"], None, "an option for a netdev"),
+        (["ip", "link", "set", "dev", "a" * 16, "up"], None, "16 characters"),
+        (["ip", "link", "set", "dev", "../x", "up"], None, "a path for a netdev"),
+        (["ip", "link", "set", "dev", "ens19", "mtu", "67"], None, "MTU 67"),
+        (["ip", "link", "set", "dev", "ens19", "mtu", "1e3"], None, "MTU not a number"),
+        (["ip", "link", "set", "dev", "ens19", "alias", "a\nb"], None, "an alias with a newline"),
+        (["ip", "link", "set", "dev", "ens19", "alias", "x" * 256], None, "an alias of 256"),
+        (["ip", "link", "set", "dev", "ens19", "netns", "1"], None, "another ip-link verb"),
+        (["ip", "link", "del", "ens19"], None, "a deletion")):
     check(doors.verb_of(argv, stdin) is None, f"refused: {why}")
 check(doors.verb_of(["useradd", "-m", "-s", LOGIN_SHELL, "a" * 32]) is not None,
       "and 32 characters is an account, useradd(8)'s limit")
@@ -373,6 +402,13 @@ try:
 except OSError as e:
     check(e.errno == __import__("errno").EPERM,
           f"DoorFiles._ask: a refusal is an OSError, EPERM: {e}")
+
+
+print("\n=== Shell.host_run: the VTY's own way to the host ===")
+import prismash  # noqa: E402
+got = prismash.Shell.__new__(prismash.Shell).host_run(["sh", "-c", "echo here"])
+check(got == (0, "here\n"),
+      f"with no daemon listening, the command runs here, as before: {got}")
 
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

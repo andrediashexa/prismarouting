@@ -77,6 +77,15 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The Linux end of a dataplane interface is set through the host's doors** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase B).
+  Up or down, its MTU and its description (`ip link set dev <pair> ...`),
+  and the MTU read-back behind the OSPF MTU-mismatch finding. The Linux end
+  lives in the host's network namespace, and from a container the same
+  `ip link` would act on the container's own interfaces and report success.
+  The netdev is checked (at most 15 characters, never an option), the MTU is
+  68-65535, and the description is one line. Measured in `lab/doors.sh`: a
+  description and an MTU of 1400 reached `host-dv0`, set by the daemon.
+
 * **The host's doors: the VTY asks the host to change accounts, sshd and snmpd** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase B).
   `prisma-routing-doors.service` is a root daemon on
   `/run/prisma-routing/doors.sock`. It runs a closed list of commands, with

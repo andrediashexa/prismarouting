@@ -42,6 +42,7 @@ import threading
 
 from system import (LOGIN_SHELL, MANAGED_GROUPS, LocalFiles, RESOLV_CONF,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF)
+from config import LINUX_IFNAME_MAX
 
 SOCKET = "/run/prisma-routing/doors.sock"
 
@@ -54,6 +55,18 @@ ACCOUNT = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$")
 #: hash has no ':' and no newline, so the line cannot name a second account.
 CHPASSWD_LINE = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_.-]{0,31}):"
                            r"(\$[A-Za-z0-9./$=,+-]{1,512})\n$")
+
+#: A Linux netdev as a door takes it: at most IFNAMSIZ-1 characters, never an
+#: option, never a path. The ip-link doors act on the LINUX end of a dataplane
+#: interface (its LCP pair), in the host's network namespace - which is why
+#: they are doors at all: from a container the same `ip link` would act on the
+#: container's own interfaces and report success (#448's inventory).
+NETDEV = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:@-]{0,%d}$"
+                    % (LINUX_IFNAME_MAX - 1))
+
+#: IFALIASZ is 256 with the terminator. The VTY's description is shorter
+#: (63), so this bounds what a door takes, not what the VTY sends.
+ALIAS_MAX = 255
 
 #: The doors that take no argument: the argv is the whole shape.
 FIXED = {
@@ -105,6 +118,21 @@ def verb_of(argv, stdin=None):
     if argv == ("chpasswd", "-e") and isinstance(stdin, str) \
             and CHPASSWD_LINE.match(stdin):
         return "set a password"
+    if n == 6 and argv[:4] == ("ip", "link", "set", "dev") \
+            and NETDEV.match(argv[4]) and argv[5] in ("up", "down"):
+        return "set a Linux interface up or down"
+    if n == 7 and argv[:4] == ("ip", "link", "set", "dev") \
+            and NETDEV.match(argv[4]) and argv[5] == "mtu" \
+            and argv[6].isdigit() and 68 <= int(argv[6]) <= 65535:
+        return "set a Linux interface's MTU"
+    if n == 7 and argv[:4] == ("ip", "link", "set", "dev") \
+            and NETDEV.match(argv[4]) and argv[5] == "alias" \
+            and len(argv[6]) <= ALIAS_MAX and "\n" not in argv[6] \
+            and "\0" not in argv[6]:
+        return "set a Linux interface's description"
+    if n == 6 and argv[:5] == ("ip", "-o", "link", "show", "dev") \
+            and NETDEV.match(argv[5]):
+        return "read a Linux interface"
     return None
 
 

@@ -1,8 +1,10 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 6
+# OFF-RED-AT-LEAST: 8
 # The host's doors (#448, phase B): the VTY's accounts, and the files it
 # writes on the host (resolv.conf, authorized_keys, snmpd.conf), are made by
-# the doors daemon, and the daemon does them for root only.
+# the doors daemon, and the daemon does them for root only. So is the Linux
+# end of a dataplane interface: its description and MTU are set through a
+# door, because it lives in the host's network namespace.
 #
 # The daemon runs as root, as systemd runs it on a box. The VTY commits three
 # accounts, a role, a password, and then removes one; each is asserted on the
@@ -80,6 +82,16 @@ SHADOW=$(getent shadow netadm | cut -d: -f2)
 echo "  -- the daemon's log"
 sed 's/^/    /' /tmp/doors.log
 
+echo "  -- a dataplane interface's Linux end: description and MTU"
+ip link add dv0 type veth peer name dv0p 2>/dev/null
+ip link set dv0 up; ip link set dv0p up
+vppctl create host-interface name dv0 >/dev/null
+LINK=$($HX -c "configure" -c "interface host-dv0" -c "description door-uplink" \
+    -c "mtu 1400" -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$LINK" | sed 's/^/    /'
+LINUX_END=$(ip -o link show dev host-dv0 2>&1)
+echo "    $LINUX_END"
+
 echo "  -- an account with no privilege asks the daemon itself"
 useradd -M -s /bin/sh doorlab 2>/dev/null
 ASKED=$(su doorlab -s /bin/sh -c "cd /src/src/prismash && python3 -c '
@@ -123,6 +135,10 @@ case "$(cat /tmp/doors.log)" in
                VERDICT_FAILURES=$((VERDICT_FAILURES + 1)) ;;
   *) echo "  [ ok ] the daemon's log carries no community" ;;
 esac
+expect_said "the description reached the Linux end" "alias door-uplink" "$LINUX_END"
+expect_said "the daemon set it" "door: uid 0: ip link set dev host-dv0 alias door-uplink -> 0" "$(cat /tmp/doors.log)"
+expect_said "the MTU reached the Linux end" "mtu 1400" "$LINUX_END"
+expect_said "the daemon set that too" "door: uid 0: ip link set dev host-dv0 mtu 1400 -> 0" "$(cat /tmp/doors.log)"
 case "$SNEAK" in
   *"no such user"*) echo "  [ ok ] an account with no privilege made nothing" ;;
   *) echo "  [FAIL] an account with no privilege made 'sneak': $SNEAK"
