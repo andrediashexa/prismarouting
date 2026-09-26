@@ -13,10 +13,21 @@ Documentation=file:///usr/share/doc/prisma-routing/architecture.md
 # package on a box on the unit path, and on a container box the control
 # plane comes up with the stack.
 After=vpp.service frr.service prisma-routing-containers.service
-# PartOf BOTH DATAPLANES, so this is stopped and restarted with whichever one
-# this box runs. PartOf a unit nobody started is inert, so naming both costs
-# the unit path nothing.
-PartOf=vpp.service prisma-routing-containers.service
+# PartOf THE DATAPLANE THIS BOX RUNS, so this is stopped and restarted with
+# it. The containers here; the unit path adds `PartOf=vpp.service` in
+# prisma-routing-unit-path.conf, which install.sh puts only on a box that runs
+# vpp.service (#459).
+#
+# NOT BOTH, which is what this said until #459, on the argument that PartOf a
+# unit nobody started is inert. It is not inert in a transaction: the
+# containers unit Conflicts=vpp.service, so `systemctl restart
+# prisma-routing-containers` queued a stop of vpp.service, PartOf carried that
+# stop to this unit, and PartOf carried the restart too - and systemd refused
+# the whole transaction: "Transaction contains conflicting jobs 'restart' and
+# 'stop' for prisma-routing.service". Measured on a KVM guest on the
+# containers; every screen that told an operator to type that command was
+# telling them to type a refusal.
+PartOf=prisma-routing-containers.service
 # AND `Requires=vpp.service` IS GONE, WHICH IS THE POINT (#426).
 #
 # Requires PULLS THE UNIT IN: on a box whose dataplane is a container, this
