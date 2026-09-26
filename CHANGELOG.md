@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.132.0 - a smaller initrd
+
+### Fixed
+
 * **The initramfs is zstd, as it always said, and carries no NIC driver**
   ([#450](https://github.com/andrediashexa/hexarouting/issues/450)).
   `initramfs.conf` has asked for zstd since the first medium, but zstd was not
