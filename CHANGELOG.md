@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.131.1 - the Linux end takes the interface's name
+
+### Added
+
 * **`linux-name` is gone from the configuration** ([#461](https://github.com/andrediashexa/hexarouting/issues/461)).
   The maintainer called it useless, and it was: the box already paired every
   claimed card and loopback into Linux under its own name, and wrote
@@ -92,8 +98,6 @@ version has a chance of seeing it.
   `save` writes it without them. Measured in `lab/lcp.sh`: an interface given
   only a description came up in Linux as `host-veth2`, and the configuration
   carries no `linux-name` for it.
-
-### Fixed
 
 ## 0.131.0 - the containers restart when asked
 
