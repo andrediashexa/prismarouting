@@ -92,4 +92,4 @@ Dois pools listados, o mesmo endereço interno resolvendo para blocos públicos 
 
 * [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — `vrf` e `outside-vrf` entre os campos de mapeamento
 * [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — VRF resolve tenancy, não capacidade
-* [BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que o índice do assinante é por pool
+* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que o índice do assinante é por pool
