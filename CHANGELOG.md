@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.133.4 - LACP bundles
+
+### Added
+
 * **LACP: `interface ae<n>`, a bundle of ports as one interface (802.3ad)**
   ([#455](https://github.com/andrediashexa/hexarouting/issues/455)).
   - **Configuring it:** `member <port>`, `lacp mode active|passive`,
@@ -90,8 +96,6 @@ version has a chance of seeing it.
   - **Measured against a Linux 802.3ad bond:** both members collecting and
     distributing, and traffic across the bundle with and without one member
     cut.
-
-### Fixed
 
 ## 0.133.3 - RX and CGNAT workers
 
