@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.131.7 - a first allocation larger than the step
+
+### Added
+
 * **A dynamic pool's first allocation can be larger than its step:
   `initial-allocation <ports>`**
   ([#462](https://github.com/andrediashexa/hexarouting/issues/462)). Asked for
@@ -98,8 +104,6 @@ version has a chance of seeing it.
     allocation.
   - **Measured:** `lab/initial.sh` shows two blocks held after one packet, and
     one with the setting off.
-
-### Fixed
 
 ## 0.131.6 - routing policy, Junos-style
 
