@@ -195,6 +195,42 @@ bpa_pool_stride_refusal (const bpa_pool_t *p, u32 stride)
   return 0;
 }
 
+/*
+ * A first allocation larger than one block, on the two pools it cannot mean
+ * anything on (#462).
+ *
+ * NOT DYNAMIC. A deterministic subscriber's first block is the formula's,
+ * and anything past it comes out of the reserve only when that block fills;
+ * handing a new subscriber reserve blocks up front would spend the reserve
+ * on subscribers that never needed it, and the reserve is what the formula
+ * pays capacity for. Refused rather than stored and inert, the reasoning
+ * bpa_pool_stride_refusal() gives.
+ *
+ * ABOVE THE CAP. max_blocks is the most a subscriber may hold; a first
+ * allocation over it would be one the allocator stops short of without a
+ * word, and the operator would read a number the box never honours. A cap of
+ * 0 is one block, the way bpa_pool_init() and the settings route store it.
+ */
+clib_error_t *
+bpa_pool_initial_refusal (const bpa_pool_t *p, u32 initial, u32 max_blocks)
+{
+  u32 cap = max_blocks ? max_blocks : 1;
+
+  if (initial <= 1)
+    return 0;
+  if (p->mode != BPA_MODE_DYNAMIC)
+    return clib_error_return (
+      0, "pool '%v': initial-blocks applies to dynamic pools only; a "
+	 "deterministic subscriber's first block is the formula's",
+      p->name);
+  if (initial > cap)
+    return clib_error_return (
+      0, "pool '%v': initial-blocks %u is above max-blocks %u, the most a "
+	 "subscriber may hold",
+      p->name, initial, cap);
+  return 0;
+}
+
 clib_error_t *
 bpa_pool_init (bpa_pool_t *p)
 {
@@ -271,6 +307,8 @@ bpa_pool_init (bpa_pool_t *p)
    * the in-place route so that the two cannot refuse different pools.
    */
   if ((e = bpa_pool_stride_refusal (p, p->block_stride)))
+    return e;
+  if ((e = bpa_pool_initial_refusal (p, p->initial_blocks, p->max_blocks)))
     return e;
 
   /*

@@ -1612,6 +1612,9 @@ CGNAT_POOL = {
         "alg-expect": ("seconds an announced media port waits", ARG_SECONDS),
     }),
     "max-blocks": ("how many blocks one subscriber may hold", "<1-255>"),
+    "initial-allocation": ("ports a new subscriber of a dynamic pool is given "
+                           "at once; it grows from there a block at a time",
+                           "<ports>"),
     "block-stride": ("blocks between the ones a subscriber holds; 1 puts them "
                      "side by side, 0 lets the pool place them", "<0-65535>"),
     "reserve": ("blocks per public address kept aside so a deterministic "
@@ -1788,6 +1791,8 @@ POOL_NEGATE = {
                 "again", CGNAT_POOL["timeout"][1], _pool_no_timeout),
     "max-blocks": ("go back to one block per subscriber", None,
                    _pool_no_clear("max_blocks", 0)),
+    "initial-allocation": ("a new subscriber starts with one block again",
+                           None, _pool_no_clear("initial_ports", 0)),
     "block-stride": ("let the pool place a subscriber's extra blocks wherever "
                      "it has one free", None,
                      _pool_no_clear("block_stride", 0)),
@@ -9148,6 +9153,15 @@ class Shell:
                 # lines past the ordering clause, so a commit allowed through
                 # here fails at the write instead - later, and with the
                 # candidate already half applied.
+                # The first allocation, asked of the finished pool for the
+                # same reason (#462). bpa_pool_initial_refusal() refuses two
+                # of its three clauses too; the third - ports that are not a
+                # whole number of blocks - only ports can get wrong.
+                why = pool.initial_fits()
+                if why:
+                    self.err(f"pool '{pool.name}': {why}")
+                    ok = False
+                    continue
                 why = pool.block_fits()
                 if why:
                     self.err(f"pool '{pool.name}': {why}")
@@ -13506,6 +13520,13 @@ class Shell:
             elif w[0] == "max-blocks":
                 self.pool_range("max-blocks", w[1])
                 p.max_blocks = int(w[1])
+            elif w[0] == "initial-allocation":
+                # Only the range here. Whether it is whole blocks, under the
+                # cap and on a dynamic pool reads three other statements an
+                # operator may type after this one, so it is asked of the
+                # finished pool at commit - Pool.initial_fits() (#462).
+                self.pool_range("initial-allocation", w[1])
+                p.initial_ports = int(w[1])
             elif w[0] == "block-stride":
                 self.pool_range("block-stride", w[1])
                 p.block_stride = int(w[1])

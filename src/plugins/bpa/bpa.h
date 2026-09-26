@@ -386,7 +386,8 @@ clib_error_t *bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate);
  * deliberately absent.
  */
 clib_error_t *bpa_pool_settings_set (u8 *name, bpa_filter_t filter,
-				     u8 max_blocks, u32 alg, u32 alg_set,
+				     u8 max_blocks, u8 initial_blocks,
+				     u32 alg, u32 alg_set,
 				     u16 tcp_mss, u8 tcp_mss_auto,
 				     u8 util_alarm, u16 block_stride,
 				     const bpa_timeouts_t *timeouts);

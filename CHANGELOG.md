@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A dynamic pool's first allocation can be larger than its step:
+  `initial-allocation <ports>`**
+  ([#462](https://github.com/andrediashexa/hexarouting/issues/462)). Asked for
+  by the maintainer as "a first allocation of 512, then steps of 256", which
+  is `block-size 256`, `max-blocks 10`, `initial-allocation 512`. A new
+  subscriber is given that many ports at its first packet and grows from
+  there a block at a time.
+  - **Dataplane:** the extra blocks are taken through the path extensions
+    already use (stride, paired-address preference, hold-down, release) and
+    each is logged as natEvent 16. It is `initial-blocks` on the plugin and
+    `initial_blocks` in bpa.api 0.18.0, whose three pool messages change
+    layout.
+  - **Refused:** `commit` refuses ports that are not a whole number of blocks,
+    a first allocation above `max-blocks`, and a deterministic pool. The
+    dataplane refuses the last two as well.
+  - **Applied in place:** the setting changes what the next new subscriber
+    gets and moves nothing already held.
+  - **Read back:** `show cgnat pool` states the range from the first
+    allocation.
+  - **Measured:** `lab/initial.sh` shows two blocks held after one packet, and
+    one with the setting off.
+
 ### Fixed
 
 ## 0.131.6 - routing policy, Junos-style

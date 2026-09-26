@@ -85,6 +85,10 @@ MUTATIONS = {
     # --- settings the dataplane changes under a worker barrier, in place.
     "timeouts":     (lambda p: p.timeouts.update({"udp": 900}), "settings_set"),
     "max_blocks":   (lambda p: setattr(p, "max_blocks", 2), "settings_set"),
+    # In place for the stride's reason (#462): it decides what the NEXT new
+    # subscriber is given, and nothing already held moves.
+    "initial_ports": (lambda p: setattr(p, "initial_ports", 1024),
+                      "settings_set"),
     # In place, and the reason is the whole argument for it being a setting:
     # a stride says where the NEXT extension goes. Nothing already handed out
     # moves, and bpa_forward() never reads it, so no subscriber's own block

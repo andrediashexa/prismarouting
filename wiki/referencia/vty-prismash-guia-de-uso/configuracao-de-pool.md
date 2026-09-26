@@ -25,6 +25,7 @@ Alguns campos **reconstroem o pool**, e todas as sessões nele morrem no instant
 | `outside-vrf`                                  | `filter`                                     |
 |                                                | `alg ...`                                    |
 |                                                | `forward ...`                                |
+|                                                | `initial-allocation`                         |
 
 ```mermaid
 flowchart TD
@@ -119,6 +120,7 @@ As duas sentenças saem inteiras, cada uma na sua linha, pelo mesmo motivo de se
 | Comando | Argumento | O que limita |
 |---------|-----------|--------------|
 | `max-blocks <n>` | `<1-255>` | quantos blocos um assinante pode segurar |
+| `initial-allocation <portas>` | um número inteiro de blocos | quantas portas um assinante novo de um pool dinâmico recebe de uma vez |
 | `block-stride <n>` | `<0-65535>` | distância entre os blocos de um mesmo assinante; `0` deixa o pool escolher |
 | `max-sessions <n>` | `<0-4294967295>` | máximo de sessões simultâneas por assinante; `0` = ilimitado |
 | `max-session-rate <n>` | `<0-4294967295>` | máximo de sessões novas por segundo, por assinante; `0` = ilimitado |
@@ -142,6 +144,32 @@ Um assinante **começa com 64 portas**. Só recebe um segundo bloco quando enche
 ```
   per sub      64-512 ports (1-8 blocks, grown one at a time as each fills)
 ```
+
+## Uma primeira alocação maior que o degrau
+
+Num pool `mode dynamic`, a primeira alocação pode ser maior que o degrau em que o assinante cresce. Para começar com 512 portas e crescer de 256 em 256, até 2560:
+
+```
+block-size 256
+max-blocks 10
+initial-allocation 512
+```
+
+O bloco é de 256 portas, e é esse o degrau. `initial-allocation 512` faz o assinante novo receber **dois** blocos já no primeiro pacote. Dali em diante ele ganha um bloco de 256 cada vez que enche os que tem, até os 10 blocos do `max-blocks`. `show cgnat pool` mostra a faixa a partir da primeira alocação:
+
+```
+  per sub      512-2560 ports (starts at 2 blocks, grown one at a time to 10 as each fills)
+```
+
+O `commit` recusa três coisas, porque em nenhuma delas o número faria o que diz:
+
+* **portas que não fecham um número inteiro de blocos** (`initial-allocation 300` com `block-size 256`);
+* **mais do que o `max-blocks` permite** (`initial-allocation 4096` com 10 blocos de 256);
+* **um pool `mode deterministic`**, em que o primeiro bloco do assinante é o da fórmula.
+
+Cada bloco da primeira alocação vira um registro próprio no log de blocos, exatamente como se tivesse sido entregue um de cada vez. Mudar `initial-allocation` vale para os **próximos** assinantes novos e não mexe em quem já tem blocos, por isso é aplicado no lugar, sem derrubar sessão.
+
+Um assinante que fica sem sessão nenhuma e volta antes de o bloco dele ser liberado recebe de volta o mesmo primeiro bloco, e cresce dali pelos degraus normais. A primeira alocação completa é para quem chega sem bloco nenhum.
 
 O preço de um bloco pequeno é o **volume de registro**: cada bloco entregue a um assinante vira um registro próprio no log de blocos. Uma casa que chega a 8 blocos gera 8 registros; com `block-size 512` e um bloco só, gera 1. Escolha o menor bloco que ainda deixe a maioria dos assinantes dentro de **um** bloco, e use `max-blocks` para a minoria que precisa de mais.
 
@@ -298,6 +326,7 @@ prisma# [edit nat / cgnat / pool residencial] no ?
   bypass             stop excluding a prefix from translation
   filter             go back to endpoint-independent filtering
   forward            remove one inbound port forward
+  initial-allocation a new subscriber starts with one block again
   inside             remove one inside prefix
   max-blocks         go back to one block per subscriber
   max-session-rate   no per-subscriber session rate cap

@@ -1186,6 +1186,50 @@ main (void)
   }
 
   /*
+   * The first allocation (#462), on the same two routes as the stride: the
+   * pool being built reads its own field, the settings route passes the
+   * values it is about to store. Refused on a pool that is not dynamic and
+   * above the cap; 0 and 1 - one block, every pool written before this - are
+   * never refused, and the cap of 0 is one block, as it is stored.
+   */
+  printf ("\n=== initial-blocks: dynamic only, and not above the cap ===\n");
+  {
+    bpa_pool_t p;
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    CHECK (bpa_pool_initial_refusal (&p, 2, 8) != 0,
+	   "a first allocation of two blocks was accepted on a deterministic "
+	   "pool, where the formula gives the first block");
+    CHECK (bpa_pool_initial_refusal (&p, 1, 8) == 0
+	     && bpa_pool_initial_refusal (&p, 0, 0) == 0,
+	   "one block was refused on a deterministic pool, which is every "
+	   "deterministic pool there is");
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.mode = BPA_MODE_DYNAMIC;
+    p.block_reserve = 0;
+    CHECK (bpa_pool_initial_refusal (&p, 2, 10) == 0,
+	   "a first allocation of 2 under a cap of 10 was refused");
+    CHECK (bpa_pool_initial_refusal (&p, 10, 10) == 0,
+	   "a first allocation equal to the cap was refused");
+    CHECK (bpa_pool_initial_refusal (&p, 11, 10) != 0,
+	   "a first allocation above the cap was accepted, and the allocator "
+	   "would stop short of it without a word");
+    CHECK (bpa_pool_initial_refusal (&p, 2, 0) != 0,
+	   "two blocks under a cap of 0 - one block - were accepted");
+    p.initial_blocks = 3;
+    p.max_blocks = 2;
+    CHECK (bpa_pool_init (&p) != 0,
+	   "a pool built with initial-blocks 3 and max-blocks 2 was accepted");
+    p.max_blocks = 4;
+    CHECK (bpa_pool_init (&p) == 0,
+	   "a dynamic pool with initial-blocks 3 under max-blocks 4 did not "
+	   "build");
+    printf ("  refused on a deterministic pool and above the cap; one block "
+	    "never refused\n");
+  }
+
+  /*
    * The number an operator buys addresses against.
    *
    * Measured, and this is the defect it comes from: a three-block pool in

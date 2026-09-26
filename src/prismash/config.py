@@ -799,6 +799,11 @@ class Pool:
         "ports": (1, 65535),
         "utilisation-alarm": (1, 100),
         "max-blocks": (1, 255),
+        # In ports, because ports are what an operator sells (#462). The top
+        # is the most a subscriber can hold at all - 255 blocks of the
+        # largest block - and the commit check is what holds it to this
+        # pool's own `max-blocks`.
+        "initial-allocation": (1, 255 * 65536),
         "block-stride": (0, 65535),
         "reserve": (0, 65535),
         "max-sessions": (0, 4294967295),
@@ -977,6 +982,13 @@ class Pool:
         # global change into a diff against every pool.
         self.timeouts: dict[str, int] = {}
         self.max_blocks = 0             # 0 means the device default of one
+        # The first allocation, in ports (#462): what a new subscriber of a
+        # dynamic pool is given at once, where max_blocks is the most it may
+        # grow to. 0 is one block, every configuration written before this.
+        # Ports and not blocks because the maintainer asked for it in ports -
+        # "a first allocation of 512, then steps of 256" - and the plugin's
+        # own `initial-blocks` is derived from it and read back into it.
+        self.initial_ports = 0
         # Blocks between the ones a subscriber holds. 0 is the device's own
         # behaviour and every configuration written before this existed:
         # an extra block goes wherever the pool has one free.
@@ -1064,6 +1076,8 @@ class Pool:
                     out.append(f" timeout {t} {self.timeouts[t]}")
             if self.max_blocks > 1:
                 out.append(f" max-blocks {self.max_blocks}")
+            if self.initial_ports:
+                out.append(f" initial-allocation {self.initial_ports}")
             if self.block_stride:
                 out.append(f" block-stride {self.block_stride}")
         if in_place:
@@ -1113,6 +1127,8 @@ class Pool:
                 parts += ["timeout", t, str(self.timeouts[t])]
         if self.max_blocks > 1:
             parts += ["max-blocks", str(self.max_blocks)]
+        if self.initial_blocks() > 1:
+            parts += ["initial-blocks", str(self.initial_blocks())]
         if self.block_stride:
             parts += ["block-stride", str(self.block_stride)]
         for p in sorted(self.bypass_src):
@@ -1179,6 +1195,7 @@ class Pool:
             "filter": "BPA_API_FILTER_"
                       + self.filter.upper().replace("-", "_"),
             "max_blocks": int(self.max_blocks),
+            "initial_blocks": self.initial_blocks(),
             "block_stride": int(self.block_stride),
             "alg": alg,
             "alg_set": alg_set,
@@ -1263,6 +1280,7 @@ class Pool:
             "filter": "BPA_API_FILTER_"
                       + self.filter.upper().replace("-", "_"),
             "max_blocks": int(self.max_blocks),
+            "initial_blocks": self.initial_blocks(),
             "block_stride": int(self.block_stride),
             # On the creation message only. bpa_pool_settings_set has no such
             # field, because everything on that message is safe to change on a
@@ -1277,6 +1295,49 @@ class Pool:
             "n_prefixes": len(self.inside) + len(self.outside),
             "prefixes": list(self.inside) + list(self.outside),
         }
+
+    def initial_blocks(self) -> int:
+        """
+        The first allocation in the plugin's unit, blocks (#462): what
+        `initial-blocks` and the API's initial_blocks carry. 0 when there is
+        none, and when the ports are not a whole number of blocks -
+        initial_fits() refuses that at commit, and nothing else should turn
+        it into a number of blocks the operator did not ask for.
+        """
+        if not self.initial_ports or not is_number(str(self.block_size)):
+            return 0
+        size = int(self.block_size)
+        if size == 0 or self.initial_ports % size:
+            return 0
+        return self.initial_ports // size
+
+    def initial_fits(self):
+        """
+        Why this pool's first allocation cannot be what it says, or None.
+
+        A method on the finished pool, for block_fits()'s reason: it reads
+        `block-size`, `max-blocks` and `mode`, each of which may be typed
+        after it. The same two refusals the dataplane makes in
+        bpa_pool_initial_refusal() - dynamic pools only, and not above the
+        cap - plus the one only ports can get wrong: a number of ports that is
+        not a whole number of blocks.
+        """
+        if not self.initial_ports:
+            return None
+        if self.mode != "dynamic":
+            return ("initial-allocation applies to dynamic pools only; a "
+                    "deterministic subscriber's first block is the formula's")
+        if not is_number(str(self.block_size)) or not int(self.block_size):
+            return None
+        size = int(self.block_size)
+        if self.initial_ports % size:
+            return (f"initial-allocation is a whole number of {size}-port "
+                    f"blocks, not {self.initial_ports}")
+        cap = max(int(self.max_blocks), 1)
+        if self.initial_ports // size > cap:
+            return (f"initial-allocation is above the {cap * size} ports "
+                    f"max-blocks {cap} allows: {self.initial_ports}")
+        return None
 
     def block_fits(self):
         """
@@ -3319,6 +3380,18 @@ class Config:
             if why:
                 return why
             pool.max_blocks = int(w[1])
+        elif w[0] == "initial-allocation" and len(w) > 1:
+            why = Pool.check_number("initial-allocation", w[1])
+            if why:
+                return why
+            pool.initial_ports = int(w[1])
+        elif w[0] == "initial-blocks" and len(w) > 1:
+            # The plugin's word, which `show bpa config` prints: read back
+            # into ports against the block size it printed above it (#462).
+            why = Pool.check_number("initial-blocks", w[1])
+            if why:
+                return why
+            pool.initial_ports = int(w[1]) * int(pool.block_size)
         elif w[0] == "block-stride" and len(w) > 1:
             why = Pool.check_number("block-stride", w[1])
             if why:

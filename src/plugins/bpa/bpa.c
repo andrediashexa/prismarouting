@@ -1388,9 +1388,9 @@ bpa_reserve_warn (vlib_main_t *vm, const bpa_pool_t *p)
  * refusals it applies are shared with bpa_pool_init() by construction
  * (#375), and lab/vty-pool.sh sets every one of them on a box. */
 clib_error_t *
-bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
-		       u32 alg_set, u16 tcp_mss, u8 tcp_mss_auto,
-		       u8 util_alarm, u16 block_stride,
+bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks,
+		       u8 initial_blocks, u32 alg, u32 alg_set, u16 tcp_mss,
+		       u8 tcp_mss_auto, u8 util_alarm, u16 block_stride,
 		       const bpa_timeouts_t *timeouts)
 {
   bpa_main_t *bm = &bpa_main;
@@ -1422,6 +1422,8 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
   {
     clib_error_t *e = bpa_pool_stride_refusal (p, block_stride);
 
+    if (!e)
+      e = bpa_pool_initial_refusal (p, initial_blocks, max_blocks);
     if (e)
       return e;
   }
@@ -1432,6 +1434,9 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
   vlib_worker_thread_barrier_sync (bm->vlib_main);
   p->filter = filter;
   p->max_blocks = max_blocks ? max_blocks : 1;
+  /* In place for the stride's reason below: it decides what the NEXT new
+   * subscriber is given, and nothing already held moves (#462). */
+  p->initial_blocks = initial_blocks;
   p->alg = alg;
   p->alg_set = alg_set;
   p->tcp_mss = tcp_mss;

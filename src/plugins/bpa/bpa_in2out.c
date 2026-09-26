@@ -83,6 +83,54 @@ typedef enum
 } bpa_in2out_next_t;
 
 /*
+ * A new subscriber's first allocation, when the pool makes it larger than one
+ * block (#462): the blocks after the first, taken at once.
+ *
+ * Called after the subscriber's first session exists, because that is when
+ * its record does - bpa_sub_extend() attaches to a record and does nothing
+ * without one. Through the extension path and nothing of its own: the same
+ * stride, the same paired-address preference, the same hold-down and release,
+ * and a natEvent 16 for every block, so the log attributes these ports
+ * exactly as it would the same blocks taken one at a time.
+ *
+ * Stops quietly when the free list is empty. The subscriber already has its
+ * first block and is translating; an extension it did not ask for is not a
+ * port exhaustion, and counting it as one would raise the alarm the operator
+ * reads for customers losing traffic.
+ */
+/* not a unit: it takes blocks from a worker's dynamic allocator and attaches
+ * them to a subscriber record the session table owns. bpa_dyn.c is that
+ * allocator and test/test_bpa_dyn.c drives it; lab/initial.sh is the box. */
+static_always_inline void
+bpa_take_initial (const bpa_main_t *bm, bpa_per_thread_t *pt,
+		  const bpa_pool_t *p, u32 pool_index, u32 sub_idx,
+		  u32 src_host, u32 thread_index)
+{
+  u32 w, nw, primary = BPA_NO_BLOCK, held, want;
+  bpa_dyn_t *d;
+
+  if (pool_index >= vec_len (pt->dyn))
+    return;
+  d = vec_elt_at_index (pt->dyn, pool_index);
+  want = clib_min (p->initial_blocks, p->max_blocks);
+  bpa_worker_id (bm, thread_index, &w, &nw);
+  bpa_dyn_block_of (d, sub_idx, w, nw, &primary);
+  for (held = bpa_sub_n_blocks (pt, pool_index, sub_idx);
+       held != 0 && held < want && vec_len (d->free_list) != 0; held++)
+    {
+      bpa_block_t ext;
+      int is_new = 0;
+
+      if (bpa_dyn_acquire_extra (d, p, sub_idx, w, nw, primary, held, &ext,
+				 &is_new))
+	break;
+      bpa_sub_extend (pt, p, pool_index, sub_idx, &ext);
+      bpa_log_queue_event (pt, BPA_NAT_EVENT_BLOCK_ALLOC, src_host,
+			   ext.ip_pub, ext.port_lo, ext.port_hi, pool_index);
+    }
+}
+
+/*
  * Lets a packet past untranslated, and says so.
  *
  * Returns 1 when the packet was bypassed, which the caller turns into "hand it
@@ -156,6 +204,8 @@ VLIB_NODE_FN (bpa_in2out_node)
       u16 port_priv = 0;
       bpa_create_why_t why = BPA_CREATE_OK;
       int proto, created = 0, bypassed = 0;
+      /* The subscriber's first block was taken by this packet (#462). */
+      int fresh = 0;
 
       next[0] = BPA_IN2OUT_NEXT_DROP;
       /* captured before any rewrite: the trace must show the pre-NAT source */
@@ -310,6 +360,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 	    bpa_log_queue_event (pt, BPA_NAT_EVENT_BLOCK_ALLOC, src_host,
 				 blk.ip_pub, blk.port_lo, blk.port_hi,
 				 pool_index);
+	  fresh = is_new;
 	}
 
       /*
@@ -440,6 +491,9 @@ VLIB_NODE_FN (bpa_in2out_node)
 	}
       created = 1;
       n_new++;
+      if (PREDICT_FALSE (fresh && p->initial_blocks > 1))
+	bpa_take_initial (bm, pt, p, pool_index, sub_idx, src_host,
+			  thread_index);
 
     translate:
       /*

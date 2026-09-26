@@ -240,6 +240,41 @@ check(prismash._pool_no_clear("vrf", "")(p, None) is None and p.vrf == "",
       f"vrf is back at the empty string, not None: {p.vrf!r}")
 ok("the field is set to exactly the value handed in")
 
+print("\n=== the first allocation: in ports, sent in blocks, refused when "
+      "it cannot be (#462)")
+p = Pool("B")
+p.block_size = "256"
+p.mode = "dynamic"
+p.max_blocks = 10
+check(p.initial_blocks() == 0 and p.initial_fits() is None,
+      "no first allocation: nothing sent, nothing refused")
+p.initial_ports = 512
+check(p.initial_blocks() == 2 and p.initial_fits() is None,
+      f"512 ports of 256-port blocks is two blocks: {p.initial_blocks()}")
+check("initial-blocks 2" in p.device_command()
+      and p.api_args(True)["initial_blocks"] == 2
+      and p.settings_api_args()["initial_blocks"] == 2,
+      "and two is what the device command and both messages carry")
+check(" initial-allocation 512" in p.lines(),
+      "the file carries it in ports, as it was typed")
+p.initial_ports = 300
+check(p.initial_blocks() == 0
+      and p.initial_fits() == "initial-allocation is a whole number of "
+                              "256-port blocks, not 300",
+      f"ports that are not whole blocks send nothing and are refused: "
+      f"{p.initial_fits()!r}")
+p.initial_ports = 4096
+check(p.initial_fits() == "initial-allocation is above the 2560 ports "
+                          "max-blocks 10 allows: 4096",
+      f"above the cap: {p.initial_fits()!r}")
+p.initial_ports = 512
+p.mode = "deterministic"
+check((p.initial_fits() or "").startswith("initial-allocation applies to "
+                                          "dynamic pools only"),
+      f"on a deterministic pool: {p.initial_fits()!r}")
+ok("512 over 256-port blocks is 2; not whole, over the cap, not dynamic: "
+   "refused")
+
 # -------------------------------------------------------------- the roles
 
 

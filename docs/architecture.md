@@ -524,6 +524,18 @@ grows only the ones that fill them, one block at a time, as far as 512. The
 meter never asks for its second block. `show bpa pool` prints that range in
 ports, because ports are the unit an operator sells in and nothing said so.
 
+**The bottom of the range can be raised** (#462): `initial-allocation <ports>`
+on a dynamic pool gives a new subscriber that many ports at its first packet -
+`block-size 256`, `max-blocks 10`, `initial-allocation 512` starts every
+subscriber at 512 and grows it by 256 to 2560. The blocks after the first are
+taken by `bpa_take_initial()` in `bpa_in2out.c`, after the first session makes
+the subscriber's record, through `bpa_dyn_acquire_extra()`: the same stride,
+paired-address preference, hold-down and natEvent 16 as an extension, and no
+second way to hand out a block. It is read only at a subscriber's FIRST block;
+one that returns inside the hold-down gets its old block back and grows by
+steps. Not in deterministic mode, where the first block is the formula's and
+anything more would spend the reserve on subscribers that never filled a block.
+
 The price of a small block is **log volume**, not datapath cost: a household
 that reaches eight blocks produces eight `natEvent 16` records where one large
 block produces one. The datapath cost of holding many blocks was measured and is
