@@ -2110,7 +2110,7 @@ rv, text = driven(lambda: sh.stage_policy("policy-options community X "
                                           "members 1"))
 check("is not a community" in text, f"a bad statement is refused: {text!r}")
 rv, text = driven(lambda: sh.stage_policy("no policy-options prefix-list Z"))
-check("this policy has no such statement" in text,
+check("policy-options has no such statement" in text,
       f"removing what is not there is said: {text!r}")
 driven(lambda: sh.stage_policy("no policy-options policy-statement P"))
 check(not any("policy-statement P" in l for l in sh.candidate.policy),
@@ -2119,6 +2119,15 @@ driven(lambda: sh.do_config("end"))
 rv, text = driven(lambda: sh.do_config("route-map PO-X permit 10"))
 check("the PO- names belong to policy-options" in text,
       f"the compiler's namespace is refused at the prompt: {text!r}")
+# A policy applied to a neighbor that nothing defines, refused at the prompt
+# rather than at commit, and nothing staged.
+sh.frr_ctx = ["router bgp 65000"]
+_before = list(sh.candidate.routing)
+rv, text = driven(lambda: sh.do_config("neighbor 10.0.0.2 import NOPE"))
+check("no policy-statement named NOPE" in text
+      and sh.candidate.routing == _before,
+      f"an import naming no policy is refused, nothing staged: {text!r}")
+sh.frr_ctx = []
 ok("the namespace, the file, the levels, the staging")
 
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")

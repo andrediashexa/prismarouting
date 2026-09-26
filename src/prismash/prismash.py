@@ -2022,6 +2022,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "dns_changed",
                "users_changed",
                "snmp_changed", "dataplane_if_changed", "cgnat_memory_changed",
+               "policy_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -11996,8 +11997,11 @@ class Shell:
             pol[:] = [l for l in pol if l != gone
                       and not l.startswith(gone + " ")]
             if len(pol) == before:
-                self.err(f"no {gone[len(POLICY_HIERARCHY) + 1:]}: this "
-                         f"policy has no such statement")
+                # The statement last and on a row of its own: it is as long
+                # as the operator made it.
+                self.err_prose("policy-options has no such statement; "
+                               "nothing removed",
+                               gone[len(POLICY_HIERARCHY) + 1:])
             return True
         _, bad = policy_mod.parse([line])
         if bad:
@@ -12947,8 +12951,9 @@ class Shell:
                 and any(b.startswith("router bgp") for b in self.frr_ctx):
             _pol, _ = policy_mod.parse(self.candidate.policy)
             if _w[3] not in _pol.statements:
-                self.err(f"neighbor {_w[1]} {_w[2]} {_w[3]}: no "
-                         f"policy-statement {_w[3]}")
+                # One value, and last: the policy's name is the one thing
+                # the operator has to go and fix.
+                self.err(f"no policy-statement named {_w[3]}")
                 return True
             line = (f"neighbor {_w[1]} route-map "
                     f"{policy_mod.map_name(_w[3], _w[2])} "
