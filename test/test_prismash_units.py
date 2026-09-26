@@ -1216,6 +1216,50 @@ target.mtus["GigabitEthernet0/14/0"] = "9000"
 sh.pair_cards(target)
 check(target.linux_names == {},
       f"a name Linux cannot take gets no default: {target.linux_names}")
+# EVERY INTERFACE WITH A BLOCK (#461), not only cards and loopbacks: a
+# sub-interface, a hot card, anything whose name Linux can take - unless Linux
+# already holds that name for something that is not this box's own pair.
+_net = tempfile.mkdtemp()
+_saved_net = prismash.Shell.SYS_NET
+prismash.Shell.SYS_NET = _net
+try:
+    _show_if = ("              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count\n"
+                "vin                               3      up          9000/0/0/0\n"
+                "ghost0                            4      up          9000/0/0/0\n")
+    sh = shell(dp=RecDp({"show hardware-interfaces": (0, _HW),
+                         "show interface": (0, _show_if)}))
+    check(sh.dataplane_names() >= {"vin", "ghost0"},
+          f"the dataplane's names, read as commit check reads them: "
+          f"{sh.dataplane_names()}")
+    check(not sh.linux_holds("ens19.100"), "nothing in an empty sysfs")
+    target = Config()
+    target.vlans["ens19.100"] = {"vlan": 100}
+    target.addresses["ens19.100"] = ["192.0.2.1/24"]
+    sh.pair_cards(target)
+    check(target.linux_names.get("ens19.100") == "ens19.100",
+          f"a sub-interface with a block is paired under its own name: "
+          f"{target.linux_names}")
+    os.makedirs(os.path.join(_net, "vin"))
+    check(sh.linux_holds("vin"), "a name Linux has is seen")
+    target = Config()
+    target.addresses["vin"] = ["192.0.2.1/24"]
+    sh.pair_cards(target)
+    check("vin" not in target.linux_names,
+          f"a name Linux already holds for something else is not taken: "
+          f"{target.linux_names}")
+    running = Config()
+    running.linux_names["vin"] = "vin"
+    sh.pair_cards(target, running)
+    check(target.linux_names.get("vin") == "vin",
+          "but this box's own pair, already there, is kept")
+    target = Config()
+    target.addresses["nosuch0"] = ["192.0.2.9/24"]
+    sh.pair_cards(target)
+    check("nosuch0" not in target.linux_names,
+          "and a name the dataplane has not got is left to the refusal "
+          "that names it")
+finally:
+    prismash.Shell.SYS_NET = _saved_net
 ok("written into the configuration, at apply, for cards with a block")
 
 # ------------------------------------------------- the CGNAT globals

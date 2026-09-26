@@ -2091,5 +2091,25 @@ check(_bare.delta_to(_d)["route_desc_changed"]
 check(not _bare.is_same(_d),
       "so a candidate that changes only a description is not 'the same'")
 
+print("\n=== linux-name is not written when it is the interface's own (#461) ===")
+_c = config.Config.parse("interface ens19\n linux-name ens19\n exit\n"
+                  "interface ens20\n linux-name ens20\n ipv4 address 192.0.2.1/24\n exit\n"
+                  "interface host-veth-vpp\n linux-name vppwan0\n exit\n")
+_t = _c.text()
+check(" linux-name ens19" not in _t and " linux-name ens20" not in _t,
+      f"the same-name pair is not written: {_t!r}")
+check(" linux-name vppwan0" in _t,
+      "a different name is still a statement, and written")
+check("interface ens19\n exit" in _t,
+      "an interface whose only statement was its pair keeps its block")
+_back = config.Config.parse(_t)
+check(_back.linux_names.get("ens19") == "ens19"
+      and _back.linux_names.get("host-veth-vpp") == "vppwan0",
+      f"and reading it back gives the empty block its pair again: "
+      f"{_back.linux_names}")
+check(config.Config.parse(_back.text()).text() == _t, "and the text is stable")
+print("  written only when it says something")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

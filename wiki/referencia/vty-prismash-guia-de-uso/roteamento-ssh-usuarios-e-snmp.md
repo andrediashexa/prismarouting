@@ -198,7 +198,6 @@ Na prática, endereços de pool normalmente **não** são endereços de interfac
 ```
 configure
  interface <nome>
-  linux-name <nome-no-linux>
   mtu <576-9216>
   urpf strict|loose|off
   exit
@@ -206,7 +205,7 @@ configure
 
 | Comando | Efeito |
 |---------|--------|
-| `linux-name` | cria o par pelo qual o roteamento e o `ip` enxergam esta interface |
+| `linux-name` | **outro** nome para o roteamento e o `ip` enxergarem esta interface; sem ele, é o nome dela mesma |
 | `mtu`   | ajusta a MTU **na interface do dataplane e no TAP dela** — as duas juntas |
 | `urpf strict` | a origem precisa rotear de volta por esta interface |
 | `urpf loose` | a origem precisa ter rota em algum lugar |
@@ -215,10 +214,8 @@ configure
 uRPF numa interface interna é o que impede uma origem forjada de ser traduzida.
 
 
-:::warning
-**Uma interface sem** `**linux-name**` **não existe para o roteamento.** BGP, OSPF e IS-IS aceitam ser configurados sobre ela, o `commit` passa limpo, a estrofe aparece na configuração em vigor — e nenhuma adjacência sobe, porque o roteamento não tem interface nenhuma com aquele nome.
-
-É a primeira coisa a conferir numa porta nova que "está configurada e não fala com ninguém".
+:::info
+**Toda interface com um bloco** `**interface**` **existe para o roteamento com o próprio nome.** Não há linha a escrever: o par que o roteamento enxerga é criado sozinho. Uma porta que "está configurada e não fala com ninguém" é outro assunto; o self-test do boot diz quais portas ficaram sem par, se alguma ficou.
 
 :::
 

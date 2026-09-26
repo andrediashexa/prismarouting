@@ -970,14 +970,17 @@ so no name: it is Linux's, under that same name.
 once the card is bound to `vfio-pci`, so the name is free, and a card with an
 `interface` block MUST be paired into Linux as itself - `ip link` and FRR see
 `ens19` where the dataplane does - unless `linux-name` names the pair
-otherwise. That default is written into the configuration at apply time, on
-every path that reaches the box, so `show configuration`, the rollback
-revision and `save` all carry ` linux-name ens19` and the running
-configuration read back from `show lcp` agrees with them; a default that
-lived only in a rule would be a statement in the running text and not in the
-candidate, and every commit would remove the pair. A loopback, a
-sub-interface and a host interface are not cards and keep the rule they had:
-their pair is the operator's to ask for with `linux-name`.
+otherwise. That default is put into the model at apply time, on every path
+that reaches the box, so the running configuration read back from `show lcp`
+agrees with the target; a default that lived only in a rule would be removed
+by the next commit. It is **not written** in the text when it is the
+interface's own name
+([#461](https://github.com/andrediashexa/hexarouting/issues/461)):
+`show configuration`, the rollback revision and `save` carry ` linux-name`
+only when it names something else. And since #461 the default is not only a
+card's: a loopback, a sub-interface, a hot card and a host interface with a
+block are paired under their own names too, unless Linux already holds the
+name for something that is not this box's pair.
 
 `no linux-name` on a card takes an override back and nothing more: the
 default returns at the next commit, and the prompt says so as the statement

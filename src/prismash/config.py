@@ -2382,7 +2382,12 @@ class Config:
         out = []
         # Description first: it is what the interface IS, and a reader
         # scanning a long configuration for one port finds it by name.
-        if ifname in self.linux_names:
+        # ONLY WHEN IT IS NOT THE INTERFACE'S OWN NAME (#461). The box pairs a
+        # card and a loopback under their own names by itself (#389, #404),
+        # and every configuration carried `linux-name ens19` under `interface
+        # ens19` saying so. A different name - one VPP invented with a '/' in
+        # it, or one an operator chose - is still a statement, and shown.
+        if self.linux_names.get(ifname, ifname) != ifname:
             out.append(f" linux-name {self.linux_names[ifname]}")
         if ifname in self.macs:
             out.append(f" mac-address {self.macs[ifname]}")
@@ -2694,6 +2699,7 @@ class Config:
         model's, and only a file is taken through denest_nat().
         """
         cfg = cls()
+        headers = []           # every `interface` block the file opens
         section = "cgnat"
         routing_lines = []     # the file's line number of each routing line
         pool = None
@@ -2924,6 +2930,7 @@ class Config:
                 cfg.vrrp.pop(gone, None)
             elif s.startswith("interface "):
                 iface = s.split()[1]
+                headers.append(iface)
                 # A loopback is created by being named, the way a
                 # sub-interface is: there is nothing else on the box to
                 # create it from. `loop<n>` is VPP's own spelling, so the
@@ -3121,6 +3128,19 @@ class Config:
         # in reach - `prismash --load` runs before anything asks VPP anything -
         # so this is the one place that cannot tell a pair's TAP from a TAP an
         # operator made. Shell.load does it, where the box can be asked.
+        #
+        # A BLOCK WITH NOTHING ELSE IN IT IS THE SAME-NAME PAIR (#461). The
+        # Linux end of an interface takes the interface's own name, and that
+        # name is not written - it is what `linux-name <the same name>` said,
+        # and the maintainer called the line useless. The block stays, so the
+        # interface does, and reading it back gives the pair its name again:
+        # without this a card whose only statement was its pair would drop
+        # out of the file at the next save and lose the pair at the commit
+        # after.
+        for iface in headers:
+            if iface not in cfg.interface_names() \
+                    and not linux_ifname_error(iface):
+                cfg.linux_names[iface] = iface
         return cfg
 
     @staticmethod

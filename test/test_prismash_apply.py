@@ -535,6 +535,15 @@ class FakeDataplane(FakeApi):
         if message == "create_loopback_instance":
             n = args["user_instance"]
             self.have[f"loop{n}"] = 100 + n
+        if message == "create_vlan_subif":
+            # VPP names a sub-interface <parent>.<id>, and has it from then
+            # on - which the pair a sub-interface gets by default (#461)
+            # needs, in the same commit that created it.
+            parent = {i: n for n, i in self.have.items()}.get(
+                args["sw_if_index"])
+            if parent:
+                self.have[f"{parent}.{args['vlan_id']}"] = \
+                    1000 + args["vlan_id"]
         return vppapi.Reply(vppapi.OK)
 
 
@@ -1517,8 +1526,12 @@ check(_target.linux_names == {"ens19": "ens19"},
       f"the default is not written into the configuration that was "
       f"committed, so `save` and `show lcp` would disagree: "
       f"{_target.linux_names}")
-check(" linux-name ens19" in _target.text(),
-      f"and the committed text does not carry it: {_target.text()!r}")
+# NOT WRITTEN since #461: the pair is in the model, and the text says
+# nothing a block does not.
+check(" linux-name ens19" not in _target.text()
+      and "interface ens19" in _target.text(),
+      f"and the committed text does not carry the same-name line: "
+      f"{_target.text()!r}")
 print(f"  interface ens19, no linux-name: pairs {pairs_made(_sh.api)}")
 
 # THE MAINTAINER'S TRANSCRIPT: `interface ens19 / no shutdown / commit`. Every
@@ -1670,7 +1683,9 @@ _feat = [a for m, a in _sh.api.calls
          if m == "bpa_interface_add_del_feature"]
 check(any(a.get("sw_if_index") == 1 for a in _feat),
       f"the CGNAT attachment did not follow the rename: {_sh.api.calls}")
-check(pairs_made(_sh.api) == [(1, "ens19", True)],
+# And the sub-interface under its own name, since #461, in the same load
+# that created it.
+check(pairs_made(_sh.api) == [(1, "ens19", True), (1100, "ens19.100", True)],
       f"and the renamed card was not paired under its name: "
       f"{pairs_made(_sh.api)}")
 print(f"  loaded: {_out[:160]!r}")
