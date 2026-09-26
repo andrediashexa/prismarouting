@@ -2095,6 +2095,14 @@ try:
     check(ok_ and "PRISMA_CONTROL_PLANE_CORES=\n" in _got
           and "PRISMA_MAIN_THREAD=\n" in _got and _real().cpu == {},
           f"'no' empties both, which is the default: {_got!r}")
+    # A tune.env that cannot be written fails the commit, and says so.
+    prismash.Shell.TUNE_ENV = os.path.join(_root, "no-such", "deeper", "y")
+    sh2 = shell()
+    sh2.candidate = prismash.Shell.running_config(sh2)
+    sh2.candidate.cpu = {"control-plane": "2"}
+    rv, text = driven(lambda: sh2.do_commit([]))
+    check("cpu:" in text, f"an unwritable tune.env fails the commit: {text!r}")
+    prismash.Shell.TUNE_ENV = _tune
     # show system cpu: configured beside this boot.
     _iso = os.path.join(_root, "tune-cpu", "isolated")
     _sc = os.path.join(_root, "tune-cpu", "startup.conf")
