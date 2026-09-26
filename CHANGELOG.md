@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.131.4 - BPA is the dynamic allocation
+
+### Fixed
+
 * **The documents called deterministic NAT BPA** ([#463](https://github.com/andrediashexa/hexarouting/issues/463)).
   The maintainer's correction, which is also the industry's usage: BPA is bulk
   port allocation, meaning blocks allocated on demand in steps and logged,
