@@ -16,6 +16,8 @@ import ipaddress
 import unicodedata
 import hashlib
 
+import policy as policy_mod
+
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
                     dns_error, DNS_MAX,
                     address_error,
@@ -84,6 +86,8 @@ CGNAT_LEVEL = "cgnat"
 #: > `interface <card>`. The maintainer asked for the dataplane statement
 #: under `system` and nothing else yet (2026-09-25).
 SYSTEM_HIERARCHY = "system"
+#: The routing policy's hierarchy (#458), Junos-style.
+POLICY_HIERARCHY = "policy-options"
 DATAPLANE_LEVEL = "dataplane"
 #: The most memory `cgnat memory` takes, in GB (#454): a bound on a typo, not
 #: on a machine. The tuner caps what is asked at what the box's RAM can give,
@@ -2336,6 +2340,11 @@ class Config:
         # boot, not to the dataplane - though it is written in the cgnat
         # block, because that is what an operator looks for it under.
         self.cgnat_memory_gb: int = 0
+        # The routing policy, Junos-style (#458): the model's flat
+        # `policy-options ...` lines, compiled to FRR route-maps at apply by
+        # policy.py. FRR hands back only the compiled text, so the source is
+        # kept here and, on the box, in a file beside the configuration.
+        self.policy: list[str] = []
         # Lines this VTY once held and no longer does, dropped from the file
         # on purpose rather than refused with it: (lineno, text, why). One
         # statement is in here today, `dataplane management`, which #303
@@ -2480,6 +2489,7 @@ class Config:
         # carries no `shutdown`: recording an absence would put a line on every
         # box and make the file describe a decision nobody took.
         out += nest_system(self.dataplane_if)
+        out += policy_mod.nest(self.policy)
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
         out += [f"dns server {a}" for a in self.dns_servers]
@@ -2730,6 +2740,9 @@ class Config:
             cfg.unknown += refused
             cfg.n_statements += len(refused)
             numbered, refused = denest_system(numbered)
+            cfg.unknown += refused
+            cfg.n_statements += len(refused)
+            numbered, refused = policy_mod.unnest(numbered)
             cfg.unknown += refused
             cfg.n_statements += len(refused)
         for lineno, raw in numbered:
@@ -3143,6 +3156,12 @@ class Config:
                     cfg.unknown.append(
                         (lineno, s, f"expected: memory <GB>, whole GB from 1 "
                                     f"to {CGNAT_MEMORY_MAX_GB}"))
+            elif s.startswith("policy-options "):
+                _, why = policy_mod.parse([s])
+                if why:
+                    cfg.unknown.append((lineno, s, why[0][1]))
+                else:
+                    cfg.policy.append(s)
             elif s.startswith("cgnat "):
                 cfg.globals.append(s)
             else:
@@ -3678,6 +3697,7 @@ class Config:
             # claiming the card, or a rollback could hand one over and never
             # take it back.
             "dataplane_if_changed": self.dataplane_if != other.dataplane_if,
+            "policy_changed": self.policy != other.policy,
             "cgnat_memory_changed":
                 self.cgnat_memory_gb != other.cgnat_memory_gb,
             "snmp_changed": snmp_changed,
@@ -3717,7 +3737,10 @@ class Config:
             "vrrp_set": vrrp_set,
             "vrrp_del": vrrp_del,
             "globals": [g for g in other.globals if g not in self.globals],
-            "routing_changed": self.routing != other.routing,
+            # A policy is routing: it is compiled into what FRR is handed,
+            # so a change to it is a reload like any other (#458).
+            "routing_changed": (self.routing != other.routing
+                                or self.policy != other.policy),
             "route_desc_changed": (self.static_descriptions
                                    != other.static_descriptions),
         }

@@ -4211,7 +4211,8 @@ class _AllOutstanding:
 
 def _nothing_took(added, candidate=None):
     sh = prismash.Shell()
-    sh.candidate = type("C", (), {"routing": candidate or added})()
+    sh.candidate = type("C", (), {"routing": candidate or added,
+                                  "policy": []})()
     sh.frr = _AllOutstanding(added)
     return sh.nothing_took(added)
 

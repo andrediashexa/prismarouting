@@ -107,6 +107,51 @@ router bgp 65000
 
 Ao completar `neighbor` com TAB, o equipamento mostra os vizinhos que existem com o AS do outro lado ao lado, e marca quais nomes são grupos — um grupo não é um roteador, e procurar por ele como se fosse custa tempo.
 
+# Política de roteamento: `policy-options`
+
+A política é escrita uma vez, com nome, e aplicada em cada vizinho como `import` (o que entra) ou `export` (o que sai). O formato é o do Junos. As listas nomeadas e as políticas ficam em `policy-options`:
+
+```
+prisma# [edit] policy-options
+prisma# [edit policy-options] prefix-list OUTRO-AS
+prisma# [edit policy-options / prefix-list OUTRO-AS] 198.51.100.0/24
+prisma# [edit policy-options / prefix-list OUTRO-AS] exit
+prisma# [edit policy-options] community NOSSA members 65000:100
+prisma# [edit policy-options] policy-statement DO-TRANSITO
+prisma# [edit policy-options / policy-statement DO-TRANSITO] term sem-outro-as
+prisma# [edit policy-options / policy-statement DO-TRANSITO / term sem-outro-as] from prefix-list OUTRO-AS
+prisma# [edit policy-options / policy-statement DO-TRANSITO / term sem-outro-as] then reject
+```
+
+Cada `term` é avaliado na ordem em que foi digitado, e tem três partes:
+
+| Parte | O que diz |
+|-------|-----------|
+| `from` | o que a rota precisa casar: `prefix-list <nome>`, `route-filter <rede> exact\|orlonger\|longer\|upto /<n>`, `community <nome>`, `as-path <nome>`. Várias do mesmo tipo valem como "ou"; de tipos diferentes, como "e". Sem `from`, o term casa com tudo |
+| `set` | o que muda na rota: `local-preference <n>`, `community add\|set\|delete <nome>`, `as-path-prepend <asn>...` |
+| `then` | como o term termina: `accept` ou `reject` param a avaliação; `next term`, ou nenhum `then`, aplica os `set` e segue para o próximo term |
+
+**Uma rota que nenhum term decidiu é aceita**, no `import` e no `export`, como no Junos. Para rejeitar o resto, termine com um term sem `from` e com `then reject`.
+
+A política é aplicada dentro da família de endereço do BGP, por vizinho ou peer group:
+
+```
+router bgp 65000
+ address-family ipv4 unicast
+  neighbor 10.0.0.2 import DO-TRANSITO
+  neighbor 10.0.0.2 export PARA-O-TRANSITO
+ exit-address-family
+```
+
+A caixa traduz cada política aplicada para o que o roteamento entende. Na configuração em vigor, o vizinho aparece com `route-map PO-DO-TRANSITO-IN in`. Os nomes começados por `PO-` são dessa tradução: uma `route-map` ou uma `prefix-list` digitada à mão com esse começo é recusada.
+
+Medido num laboratório com dois enlaces para o mesmo trânsito e um terceiro AS atrás dele:
+
+* o `import` com `then reject` tirou do enlace o prefixo do outro AS;
+* `set local-preference 200` num enlace fez dele o caminho escolhido, e o dataplane passou a encaminhar só por ele;
+* o `export` com `as-path-prepend` e `community add` chegou ao vizinho assim;
+* sem as linhas de `import` e `export`, nada disso aconteceu.
+
 # O que é recusado antes de chegar ao roteamento
 
 São recusas de **forma**, não de funcionamento: se o vizinho vai responder não está na configuração, e o equipamento não finge saber.

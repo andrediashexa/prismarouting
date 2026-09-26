@@ -38,7 +38,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, CGNAT_LEVEL, one_line_cgnat,
-                    SYSTEM_HIERARCHY, DATAPLANE_LEVEL, nest_system,
+                    SYSTEM_HIERARCHY, DATAPLANE_LEVEL, POLICY_HIERARCHY, nest_system,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
@@ -63,6 +63,7 @@ from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     ROLE_ADMIN, ROLE_CGNAT)
 import routes
 import vppapi
+import policy as policy_mod
 
 readline = None
 
@@ -324,6 +325,66 @@ def refused_for_memory(text):
             if w and is_number(w[0]):
                 n += int(w[0])
     return n
+
+
+#: Where the box keeps its routing policy's source (#458). FRR hands back only
+#: the route-maps a policy compiled to, so the policy-statement an operator
+#: wrote is kept here, written after FRR took the compiled text, the way the
+#: static routes' descriptions are.
+POLICY_PATH = os.environ.get("PRISMA_POLICY_PATH",
+                             "/etc/prisma-routing/policy-options")
+_COMPILED = ("route-map PO-", "ip prefix-list PO-", "ipv6 prefix-list PO-",
+             "bgp community-list standard PO-", "bgp as-path access-list PO-")
+
+
+def compiled_object(line):
+    """Whether `line` opens or names an FRR object of the policy compiler."""
+    return line.strip().startswith(_COMPILED)
+
+
+def strip_compiled(routing):
+    """
+    FRR's running routing without what the policy compiler emitted (#458):
+    the PO- lists and every line of a PO- route-map. What is left is the
+    operator's, and the policy comes back from its own file.
+    """
+    out, inside = [], False
+    for line in routing:
+        s = line.strip()
+        if inside:
+            if s == "exit" and not line.startswith(" "):
+                inside = False
+            continue
+        if s.startswith("route-map PO-"):
+            inside = True
+            continue
+        if compiled_object(s):
+            continue
+        out.append(line)
+    return out
+
+
+def policy_uses(routing):
+    """{(policy, "import"|"export")} the routing applies, from its route-maps."""
+    uses = set()
+    for line in routing:
+        m = re.fullmatch(r"\s*neighbor \S+ route-map PO-(\S+)-(IN|OUT) "
+                         r"(in|out)", line)
+        if m:
+            uses.add((m.group(1), "import" if m.group(2) == "IN"
+                      else "export"))
+    return uses
+
+
+def frr_lines(cfg):
+    """
+    The routing FRR is handed for `cfg`: what the policy compiles to for the
+    uses its routing makes, then the routing itself. The one place both are
+    joined, so a reload, a check and a commit check hand FRR the same text.
+    """
+    pol, _ = policy_mod.parse(cfg.policy)
+    return policy_mod.compile_all(pol, policy_uses(cfg.routing)) \
+        + list(cfg.routing)
 
 
 def dataplane_restart_advice():
@@ -1961,6 +2022,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "dns_changed",
                "users_changed",
                "snmp_changed", "dataplane_if_changed", "cgnat_memory_changed",
+               "policy_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -2403,6 +2465,8 @@ TREE = {
         # the dataplane has - a fresh appliance has none of those, and the
         # only way to name one used to be editing a file in Linux (#283).
         "system": ("this machine: the card the dataplane is given", None),
+        "policy-options": ("routing policy: prefix lists, communities, "
+                           "policy-statements", None),
         "dns": ("the resolvers this box asks", {
             "server": ("a resolver, by address; up to 3, asked in the order "
                        "typed", "<address>")}),
@@ -2475,6 +2539,55 @@ TREE["dataplane"] = {
         "interface": ("the box claims no card at the next start of the "
                       "dataplane", None)}),
     "exit": ("leave 'dataplane'", None),
+    **_EVERY_LEVEL,
+}
+# THE ROUTING POLICY'S LEVELS (#458), Junos-style: what each one takes, and
+# nothing from the level above.
+TREE["policy-options"] = {
+    "prefix-list": ("a named list of networks; enter it and type them",
+                    "<name>"),
+    "community": ("a named set of BGP communities",
+                  "<name> members <asn:value>..."),
+    "as-path": ("a named AS-path regular expression", "<name> <regex>"),
+    "policy-statement": ("a named policy, made of ordered terms", "<name>"),
+    "no": ("remove a list, a community, an as-path or a policy",
+           "<statement>"),
+    "exit": ("leave 'policy-options'", None),
+    **_EVERY_LEVEL,
+}
+TREE["prefix-list"] = {
+    "<network>": ("a network in the list, address/length", None),
+    "no": ("take a network out", "<network>"),
+    "exit": ("leave the prefix list", None),
+    **_EVERY_LEVEL,
+}
+TREE["policy-statement"] = {
+    "term": ("a term, evaluated in the order the terms were typed",
+             "<name>"),
+    "no": ("remove a term", "term <name>"),
+    "exit": ("leave the policy-statement", None),
+    **_EVERY_LEVEL,
+}
+TREE["term"] = {
+    "from": ("what a route must match; same kind ORed, different kinds "
+             "ANDed", {
+                 "prefix-list": ("in a prefix list", "<name>"),
+                 "route-filter": ("in a network, exact|orlonger|longer|"
+                                  "upto /<length>",
+                                  "<network> <how>"),
+                 "community": ("carrying a community set", "<name>"),
+                 "as-path": ("whose AS path matches", "<name>")}),
+    "set": ("what changes when the term matches", {
+        "local-preference": ("the BGP local preference", "<0-4294967295>"),
+        "community": ("add, set or delete a community set",
+                      "add|set|delete <name>"),
+        "as-path-prepend": ("prepend these ASNs", "<asn>...")}),
+    "then": ("how the term ends", {
+        "accept": ("accept the route, and stop", None),
+        "reject": ("reject the route, and stop", None),
+        "next": ("apply the sets and go on", {"term": ("", None)})}),
+    "no": ("remove a from, set or then", "<statement>"),
+    "exit": ("leave the term", None),
     **_EVERY_LEVEL,
 }
 TREE["cgnat"] = {
@@ -6475,7 +6588,11 @@ class Shell:
         cfg.dataplane_if = self.read_dataplane_if()
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
-        cfg.routing = self.frr.running()
+        # What the policy compiler emitted is not the operator's routing: it
+        # is taken out, and the policy it came from is read back from its own
+        # file (#458).
+        cfg.routing = strip_compiled(self.frr.running())
+        cfg.policy = self.read_policy()
         cfg.static_descriptions = self.read_static_descriptions(cfg.routing)
         # The Linux end of every linux_cp pair, out. The dataplane reads above
         # report EVERY interface VPP has, and one of them is the pair's own
@@ -6530,6 +6647,37 @@ class Shell:
         except OSError:
             pass
         return out
+
+    def read_policy(self) -> list:
+        """
+        The routing policy's source, as the model's flat lines (#458). A
+        file that cannot be read is no policy: what FRR holds still routes,
+        and `show running-config` says what this box can vouch for.
+        """
+        try:
+            with open(POLICY_PATH) as f:
+                return [l.rstrip("\n") for l in f
+                        if l.startswith("policy-options ")]
+        except OSError:
+            return []
+
+    def write_policy(self, lines) -> bool:
+        """POLICY_PATH, whole, by rename; False and said when not written."""
+        old_umask = os.umask(CONFIG_UMASK)
+        tmp = POLICY_PATH + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                f.writelines(f"{l}\n" for l in lines)
+            os.replace(tmp, POLICY_PATH)
+            return True
+        except OSError as e:
+            self.err_prose("policy-options: its source was not written",
+                           f"{POLICY_PATH}: {e.strerror}",
+                           "FRR applies the policy; 'show running-config' "
+                           "will not show it until this is written")
+            return False
+        finally:
+            os.umask(old_umask)
 
     def write_static_descriptions(self, descriptions) -> bool:
         """
@@ -8636,6 +8784,9 @@ class Shell:
             # What an operator can still do is fix the statement, which turns
             # the finding off. What they cannot be made to do is fix it before
             # they are allowed to change anything else.
+            # The operator's route-maps only: what the policy compiler writes
+            # is correct by construction, and its `permit 65535` with no
+            # `match` is the Junos default on purpose (#458).
             rm_already = {stmt for sev, stmt, _
                           in route_map_findings(running.routing)
                           if sev == "error"}
@@ -8662,10 +8813,14 @@ class Shell:
             # carries the reference would come up with nothing on it at all -
             # which is a worse outcome than the fault being refused, and the
             # same trap the stale `tap<n>` stanza in Shell.load() exists for.
+            # WHAT FRR IS HANDED, policy and all (#458): a neighbor's
+            # `import <policy>` names a route-map the compiler writes, which
+            # is in frr_lines() and never in the routing an operator typed.
             already = {stmt for sev, stmt, _
-                       in route_map_reference_findings(running.routing)
+                       in route_map_reference_findings(frr_lines(running))
                        if sev == "error"}
-            for sev, stmt, why in route_map_reference_findings(target.routing):
+            for sev, stmt, why in route_map_reference_findings(
+                    frr_lines(target)):
                 if sev == "error" and stmt not in already:
                     self.say_finding("error", stmt, why)
                     ok = False
@@ -9111,7 +9266,8 @@ class Shell:
             # commit, CGNAT half included (#137).
             if target.routing or running.routing:
                 if self.frr.available():
-                    rc, out = self.frr.reload(target.routing, check_only=True)
+                    rc, out = self.frr.reload(frr_lines(target),
+                                              check_only=True)
                     if rc:
                         print(f"routing validation failed: {out}")
                         self.say_frr_refused(target.routing)
@@ -9622,7 +9778,7 @@ class Shell:
 
         if d["routing_changed"]:
             if self.frr.available():
-                rc, out = self.frr.reload(target.routing)
+                rc, out = self.frr.reload(frr_lines(target))
                 if rc:
                     print(out)
                     self.err("routing reload failed")
@@ -9644,6 +9800,12 @@ class Shell:
         # description is applied rather than reported as having nothing to do.
         if d.get("route_desc_changed"):
             self.write_static_descriptions(target.static_descriptions)
+        # The policy's source, after FRR took what it compiled to (#458), on
+        # its own delta key: it was first written only when a static route's
+        # description changed, and lab/policy.sh found every policy gone
+        # from the running configuration the moment it was committed.
+        if d.get("policy_changed"):
+            self.write_policy(target.policy)
         return True
 
     def relay_pool_warnings(self, pools):
@@ -10343,7 +10505,7 @@ class Shell:
                  and frr_writes_instead(a) is None]
         if not added:
             return []
-        rc, out = self.frr.reload(self.candidate.routing, check_only=True)
+        rc, out = self.frr.reload(frr_lines(self.candidate), check_only=True)
         if rc:
             return []
         left = set(self.frr.outstanding(out))
@@ -11820,6 +11982,86 @@ class Shell:
     NAT_LEVEL_WORDS = ("commit", "rollback", "show", "top", "up", "exit",
                        "quit", "end", "start") + tuple(PROBE_TOOLS)
 
+    def stage_policy(self, line):
+        """
+        One `policy-options ...` line into the candidate, or its `no` out
+        (#458). A `no` takes the line and everything under it: `no term 10`
+        is the whole term. A `then` replaces the term's `then`, and a
+        community or an as-path replaces the one of that name - the last
+        word said is the one that holds, as everywhere in this VTY.
+        """
+        pol = self.candidate.policy
+        if line.startswith("no "):
+            gone = line[3:]
+            before = len(pol)
+            pol[:] = [l for l in pol if l != gone
+                      and not l.startswith(gone + " ")]
+            if len(pol) == before:
+                # The statement last and on a row of its own: it is as long
+                # as the operator made it.
+                self.err_prose("policy-options has no such statement; "
+                               "nothing removed",
+                               gone[len(POLICY_HIERARCHY) + 1:])
+            return True
+        _, bad = policy_mod.parse([line])
+        if bad:
+            self.err(bad[0][1])
+            return True
+        w = line.split()
+        if w[1] in ("community", "as-path"):
+            pol[:] = [l for l in pol if l.split()[:3] != w[:3]]
+        elif "then" in w[5:6]:
+            pol[:] = [l for l in pol if l.split()[:6] != w[:6]]
+        if line not in pol:
+            pol.append(line)
+        return True
+
+    def policy_rewrite(self, line):
+        """
+        `policy-options` and the levels under it (#458), and what is typed in
+        them as the model's flat line: under `policy-statement P` / `term
+        10`, `from prefix-list C` is `policy-options policy-statement P term
+        10 from prefix-list C`, and `no <that>` takes it out.
+
+        Entering a named level stages its opening line too, so a prefix list
+        or a term an operator has just made exists - and `show this` shows it
+        - before anything is typed in it. Returns the line to go on with, or
+        "" when it was handled here. A line in another hierarchy is not this
+        function's.
+        """
+        w = line.split()
+        if not w:
+            return ""
+        top = POLICY_HIERARCHY
+        if self.nat_ctx and self.nat_ctx[0] != top:
+            return line
+        if not self.nat_ctx:
+            if line.strip() == top:
+                self.nat_ctx = [top]
+                return ""
+            return line
+        if w[0] in self.NAT_LEVEL_WORDS:
+            if w[0] in ("exit", "quit"):
+                self.nat_ctx.pop()
+                return ""
+            if w[0] == "end":
+                self.nat_ctx = []
+                return ""
+            return line
+        neg = w[0] == "no"
+        body = w[1:] if neg else w
+        path = " ".join(self.nat_ctx[1:])
+        depth = len(self.nat_ctx)
+        opens = ((depth == 1 and len(body) == 2
+                  and body[0] in ("prefix-list", "policy-statement"))
+                 or (depth == 2 and self.nat_ctx[1].startswith(
+                     "policy-statement ") and len(body) == 2
+                     and body[0] == "term"))
+        flat = " ".join([top] + ([path] if path else []) + body)
+        if opens and not neg:
+            self.nat_ctx.append(" ".join(body))
+        return ("no " if neg else "") + flat
+
     def system_rewrite(self, line):
         """
         `system` and `dataplane` as the levels they are (#457), and what is
@@ -11888,7 +12130,7 @@ class Shell:
         w = line.split()
         if not w:
             return ""
-        if self.nat_ctx and self.nat_ctx[0] == SYSTEM_HIERARCHY:
+        if self.nat_ctx and self.nat_ctx[0] != NAT_HIERARCHY:
             return line
         if not self.nat_ctx:
             if line.strip() == NAT_HIERARCHY:
@@ -11950,6 +12192,9 @@ class Shell:
         if self.frr_ctx and self.frr_ctx[-1] != STATIC_BLOCK:
             return line
         if not self.frr_ctx:
+            line = self.policy_rewrite(line)
+            if not line:
+                return ""
             line = self.system_rewrite(line)
             if not line:
                 return ""
@@ -12263,6 +12508,10 @@ class Shell:
                 return True
             self.candidate.cgnat_memory_gb = int(w[2])
             return True
+        # The routing policy (#458), staged as the model's flat lines.
+        if line.startswith(POLICY_HIERARCHY + " ") \
+                or line.startswith(f"no {POLICY_HIERARCHY} "):
+            return self.stage_policy(line)
         if line.startswith("cgnat "):
             # Only the words this VTY actually has, and CGNAT_CONFIG is where
             # they are written down - the same table `?` offers from, so a
@@ -12683,6 +12932,32 @@ class Shell:
         # is stored as a top-level `ip route`. Left in the path, FRR refused
         # the BLOCK, and every static route typed there was refused with it:
         # lab/vty.sh went red on seven checks the first time this ran.
+        # THE POLICY COMPILER'S NAMESPACE (#458). Every FRR object a
+        # policy-statement compiles to starts with PO-, and one typed by hand
+        # under that name would be one the compiler rewrites or deletes at
+        # the next commit.
+        if compiled_object(line):
+            self.err_prose("the PO- names belong to policy-options; nothing "
+                           "staged",
+                           "write the policy under 'policy-options', or give "
+                           "this object a name of its own")
+            return True
+        # `neighbor <peer> import|export <policy>` inside BGP: the policy
+        # applied, as the route-map it compiles to (#458). Refused here when
+        # no policy-statement has that name, rather than at commit.
+        _w = line.split()
+        if len(_w) == 4 and _w[0] == "neighbor" and _w[2] in ("import",
+                                                               "export") \
+                and any(b.startswith("router bgp") for b in self.frr_ctx):
+            _pol, _ = policy_mod.parse(self.candidate.policy)
+            if _w[3] not in _pol.statements:
+                # One value, and last: the policy's name is the one thing
+                # the operator has to go and fix.
+                self.err(f"no policy-statement named {_w[3]}")
+                return True
+            line = (f"neighbor {_w[1]} route-map "
+                    f"{policy_mod.map_name(_w[3], _w[2])} "
+                    f"{'in' if _w[2] == 'import' else 'out'}")
         verdict, frr_said = self.frr.dryrun(
             [b for b in self.frr_ctx if b != STATIC_BLOCK], line)
         if verdict == Frr.DRYRUN_REFUSED:
@@ -17115,7 +17390,9 @@ class Shell:
         level's (#446). An FRR block is never inside those, so it wins.
         """
         if self.mode == "config" and self.nat_ctx and not self.frr_ctx:
-            return self.nat_ctx[-1]
+            # A level with a name - `policy-statement P`, `term 10` - is read
+            # from the tree of its first word (#458).
+            return self.nat_ctx[-1].split()[0]
         return self.mode
 
     def statement_grammar(self):

@@ -4126,6 +4126,60 @@ a
   this half, a `set` that applied to everything would pass every test that only
   checked the routes it was supposed to affect.
 
+## Routing policy: `policy-options` (#458)
+
+The maintainer chose Junos's shape (2026-09-25). Named prefix lists,
+communities and AS-path expressions, and `policy-statement`s made of ordered
+`term`s, live under `policy-options`. A policy is applied per BGP neighbor or
+peer group, inside the address family, as `neighbor X import <policy>` or
+`export <policy>`.
+
+- **`from`** conditions: `prefix-list`, `route-filter <net>
+  exact|orlonger|longer|upto /n`, `community`, `as-path`. Conditions of the
+  same kind are ORed; different kinds are ANDed.
+- **`set`** actions: `local-preference`, `community add|set|delete`,
+  `as-path-prepend`.
+- **`then`**: `accept` and `reject` end the evaluation. `next term`, or no
+  `then`, applies the sets and goes on.
+- **The default, decided with the maintainer, is Junos's.** A route no term
+  decided is accepted, by a last clause at 65535.
+
+**Compiled, not interpreted.** `src/prismash/policy.py` is a pure compiler
+from the flat model lines to FRR:
+- one route-map per use, `PO-<policy>-IN|OUT`, with clause seq term x 10;
+- a term that matches prefixes of both families is split into one clause per
+  family, because FRR ANDs `match ip` with `match ipv6` in a single clause;
+- the prefix conditions of a term are one generated prefix-list per family.
+
+Its output for a realistic policy was fed to `vtysh -C -f` in the product's
+FRR image. It returned 0, and the same file with one bad line appended
+returned 2, naming it.
+
+**The source lives beside the configuration.** FRR hands back only the
+compiled text, so `running_config()` strips every `PO-` object from FRR's
+running configuration and reads the policy from `/etc/prisma-routing/policy-options`.
+That file is written by rename after FRR took the compiled text. `frr_lines()`
+is the one place the compiled text and the routing are joined, and a reload,
+a check and a commit check all go through it. The `PO-` namespace is the
+compiler's, so a route-map or list typed by hand with that name is refused at
+the prompt.
+
+**Measured in `lab/policy.sh`**, on two sessions to one peer with a third AS
+behind it:
+- `then reject` removed the other AS's prefix from that session;
+- the default kept everything else;
+- `set local-preference 200` made the second link best, and the VPP FIB
+  forwarded through it alone;
+- the export's `as-path-prepend 65000 65000` and `community add` reached the
+  peer, beside the other session's plain `65000`.
+
+MODE=off, which commits without the `import`/`export` lines, turns 6 checks
+red.
+
+Not yet: `from protocol`/`tag`/`metric`, `set metric`/`next-hop`, OSPF and
+IS-IS `export`, `show policy` with FRR's counters, and `test policy`. These
+are the next steps on #458.
+
 ## A route-map referenced and not defined
 
 ```

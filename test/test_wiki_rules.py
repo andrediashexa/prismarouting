@@ -158,6 +158,39 @@ check(doc_paths.repo_paths(_BAD) == ["src/prismash/prismash.py"],
       f"{doc_paths.repo_paths(_BAD)!r}")
 print("  each of the three readers sees the page that breaks it")
 
+
+# --- no table inside a notice ----------------------------------------------
+#
+# Measured on the wiki itself (2026-09-26): a `:::warning` block holding a
+# table was published and came back from the next pull with the WHOLE block
+# gone - the warning sentence and the table both, and the publish said
+# "published". An operator sizing a box would have read a page with no warning
+# on it. A table goes after the block, never inside it.
+def tables_in_notices(text):
+    """Line numbers of table rows that sit inside a ::: notice block."""
+    out, inside = [], False
+    for n, line in enumerate(text.splitlines(), 1):
+        s = line.strip()
+        if s.startswith(":::"):
+            # `:::warning` opens a block and a bare `:::` closes it.
+            inside = s != ":::"
+            continue
+        if inside and s.startswith("|"):
+            out.append(n)
+    return out
+
+
+print("\n=== no table inside a notice, which the wiki drops whole ===")
+_bad_notice = [(rel, tables_in_notices(text)) for rel, text in PAGES
+               if tables_in_notices(text)]
+check(not _bad_notice,
+      f"a table inside a ::: block, which the wiki drops together with the "
+      f"block: {_bad_notice}")
+check(tables_in_notices(":::warning\nx\n\n| a | b |\n|---|---|\n:::\n")
+      == [4, 5] and tables_in_notices(":::info\nx\n:::\n| a |\n") == [],
+      "the reader sees a table inside a notice, and not one after it")
+print(f"  {len(PAGES)} page(s), no table inside a notice")
+
 print()
 if fail:
     print(f"{fail} FAILURES")

@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Routing policy, Junos-style: `policy-options`, applied to BGP as `import` and `export`** ([#458](https://github.com/andrediashexa/hexarouting/issues/458)).
+  Named prefix lists, communities and AS-path expressions, and
+  `policy-statement`s of ordered terms: `from` prefix-list, route-filter,
+  community or as-path; `set` local-preference, community or
+  as-path-prepend; `then` accept, reject or next term. A policy is applied
+  per neighbor with `neighbor X import|export <policy>` inside the BGP address
+  family.
+
+  The box compiles each applied policy to FRR route-maps and lists in its own
+  `PO-` namespace, and keeps the source beside the configuration. A route no
+  term decided is accepted, as in Junos, which the maintainer chose. Measured
+  on two sessions to one peer: a reject took the other AS's prefix off one
+  session, `local-preference` moved the dataplane onto the second link, and
+  the export's prepend and community reached the peer. With the policies not
+  applied, six checks go red.
+
+  Next on #458: OSPF and IS-IS export, more match conditions and actions,
+  `show policy` and `test policy`.
+
 ### Fixed
 
 ## 0.131.5 - the RAM a box forwards with
