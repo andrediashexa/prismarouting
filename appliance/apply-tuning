@@ -27,6 +27,7 @@ LIVEDIR=$ROOT/run/live
 : "${PRISMA_MAIN_THREAD:=}"
 : "${PRISMA_CONTROL_PLANE_MEMORY_GB:=}"
 : "${PRISMA_BUFFERS_PER_NUMA:=}"
+: "${PRISMA_CGNAT_WORKERS:=}"
 
 # tune.env is a file an operator edits by hand, and every value in it used to
 # be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
@@ -242,6 +243,17 @@ case "$PRISMA_BUFFERS_PER_NUMA" in
     echo "  worker." >&2
     say_using "16384 packet buffers per worker" ;;
   *) set -- "$@" --buffers-per-numa "$PRISMA_BUFFERS_PER_NUMA" ;;
+esac
+# RX AND CGNAT WORKERS (#466): how many workers translate; the rest take
+# packets off the cards and hand them over. Refused the same way.
+case "$PRISMA_CGNAT_WORKERS" in
+  "") ;;
+  0|*[!0-9]*)
+    say_refused PRISMA_CGNAT_WORKERS "$PRISMA_CGNAT_WORKERS"
+    echo "  It is a number of workers, 1 or more - or empty, which has every" >&2
+    echo "  worker both receive and translate." >&2
+    say_using "every worker receiving and translating" ;;
+  *) set -- "$@" --cgnat-workers "$PRISMA_CGNAT_WORKERS" ;;
 esac
 # The decision goes to the journal. Diagnosing a box whose profile did not
 # match its hardware meant guessing across whole build cycles, because the one

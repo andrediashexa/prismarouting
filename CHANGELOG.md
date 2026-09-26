@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Added
 
+* **RX workers and CGNAT workers can be split: `system cpu cgnat-workers <n>`**
+  ([#466](https://github.com/andrediashexa/hexarouting/issues/466), fourth
+  part). The maintainer wanted to be able to benchmark it.
+  - **The split:** the last `n` workers are the only ones that own
+    subscribers and translate. The others take packets off the cards and
+    hand each one to the owner. The plugin reads `bpa { cgnat-workers <ids>
+    }` from startup.conf, and the tuner writes it, with the cards' RX queues
+    placed on the receiving workers only.
+  - **The default:** every worker does both, as before.
+  - **Reading it:** `show bpa workers` and `show system cpu` say which worker
+    does what.
+  - **Measured in `lab/cgnat-workers.sh`:** worker 0 receiving and 1-2
+    translating, with every packet in on 0. Nothing was translated on 0, all
+    24 subscribers got sessions, and the dynamic pool was cut into two
+    slices. With no stanza, three checks go red.
+
 ### Fixed
 
 ## 0.133.2 - memory by role

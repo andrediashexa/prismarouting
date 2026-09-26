@@ -103,6 +103,7 @@ carried, applied to the other two.
 | `PRISMA_MAIN_THREAD` | `shared` or `dedicated`, or empty for shared | empty | shared |
 | `PRISMA_CONTROL_PLANE_MEMORY_GB` | whole GB, 1 or more, or empty for a quarter of the RAM | empty | a quarter of the RAM, at least 2 |
 | `PRISMA_BUFFERS_PER_NUMA` | digits, or empty for 16384 per worker | empty | 16384 per worker |
+| `PRISMA_CGNAT_WORKERS` | digits, 1 or more, or empty for every worker | empty | every worker receives and translates |
 
 **A refusal says what the box does accept**, with what each value would do, not
 only that this one was wrong: it is read on a serial console by somebody who
@@ -234,6 +235,24 @@ future knob follows.** A parameter that costs power or costs a diagnostic
 belongs in `LOW_LATENCY_CMDLINE`, never in the unconditional line — see
 *Boot tuning still on the table* below, where every candidate is classified
 that way before it is measured, let alone shipped.
+
+**RX and CGNAT workers** (#466, fourth part). By default every worker polls
+the cards and translates. `PRISMA_CGNAT_WORKERS=<n>` makes the last `n`
+workers the only ones that own subscribers: the tuner writes
+`bpa { cgnat-workers <ids> }` into startup.conf and gives each card's `dev`
+stanza `workers <ids>` for the rest, with as many RX queues as there are
+receivers. The plugin reads the stanza before any pool exists
+(`bpa_config()`, `bpa_set_owners()`): `n_workers` becomes the translating
+count, `owner_wid[]` maps a BPA worker to a VPP worker id, and `thread_w[]`
+maps a thread back, `~0` for one that only receives. The handoff node, which
+already sent every packet to the worker owning its subscriber, now reaches
+the owner through that table, and it is put on the feature arc on any box
+with workers, not only when every worker translates. `show bpa workers`
+says which is which. Measured in `lab/cgnat-workers.sh`: three workers, 0
+receiving and 1-2 translating, every packet injected on worker 0 - thread 1
+translated nothing, threads 2 and 3 translated everything, all 24
+subscribers got sessions, and the dynamic pool was cut into two slices. The
+off run, with no stanza, reddens three checks.
 
 **Memory by role** (#466, third part). The RAM splits in two: the hugepage
 pool is the dataplane's (the CGNAT's heap, the packet buffers, slack), and

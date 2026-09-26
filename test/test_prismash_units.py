@@ -2057,7 +2057,8 @@ try:
           f"read back from tune.env: nothing set, and the CGNAT memory that "
           f"was written and never read back until now: {sh.candidate.cpu} "
           f"{sh.candidate.cgnat_memory_gb}")
-    for _l in ("system", "cpu", "control-plane 2", "main-thread dedicated"):
+    for _l in ("system", "cpu", "control-plane 2", "main-thread dedicated",
+               "cgnat-workers 2", "no cgnat-workers"):
         driven(lambda: sh.do_config(_l))
     check(sh.candidate.cpu == {"control-plane": "2",
                                "main-thread": "dedicated"},
@@ -2069,8 +2070,10 @@ try:
     for _bad, _why in (("control-plane 0", "expected: control-plane <1-1024>"),
                        ("main-thread alone",
                         "expected: main-thread <shared|dedicated>"),
-                       ("turbo on", "there is 'control-plane' and "
-                                    "'main-thread'"),
+                       ("turbo on", "there is 'control-plane', "
+                                    "'main-thread' and 'cgnat-workers'"),
+                       ("cgnat-workers 0", "expected: cgnat-workers "
+                                           "<1-1024>"),
                        ("no turbo", "no control-plane, or no main-thread")):
         rv, text = driven(lambda: sh.do_config(_bad))
         check(_why in text and sh.candidate.cpu["control-plane"] == "2",
@@ -2135,6 +2138,14 @@ try:
           f"no cgroup to read is said as not held: {text!r}")
     prismash.Shell.CPU_FENCE = _saved_fe
     rv, text = driven(lambda: sh.show_system_cpu())
+    check("CGNAT workers         all, each also receiving" in text
+          and "translating workers   all of them" in text,
+          f"no split, said as such: {text!r}")
+    with open(_sc, "a") as _f:
+        _f.write("bpa {\n  cgnat-workers 1-2\n}\n")
+    rv, text = driven(lambda: sh.show_system_cpu())
+    check("translating workers   1-2" in text,
+          f"a split, as the plugin's stanza names it: {text!r}")
     check("control-plane cores   1" in text and "VPP main thread       shared"
           in text and "core 0" in text and "VPP workers           1-3" in text
           and "isolated from Linux   1-3" in text,

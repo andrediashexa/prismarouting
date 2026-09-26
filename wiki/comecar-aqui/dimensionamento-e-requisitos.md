@@ -199,22 +199,29 @@ prisma# [edit system / cpu] commit
 | `control-plane <n>` | quantos núcleos físicos ficam com o sistema, o roteamento, o SSH, a VTY e os containers | `1`    |
 | `main-thread shared` | a thread principal do dataplane divide o primeiro núcleo do plano de controle | sim    |
 | `main-thread dedicated` | a thread principal ganha um núcleo só dela, isolado como o de um worker; custa um worker | não    |
-| `no control-plane`, `no main-thread` | volta ao padrão |        |
+| `cgnat-workers <n>` | quantos workers traduzem; os outros só recebem da placa e entregam ao worker dono do assinante | todos fazem as duas coisas |
+| `no control-plane`, `no main-thread`, `no cgnat-workers` | volta ao padrão |        |
 
 **Por que dar um núcleo à thread principal:** uma vez por segundo ela para os workers para expirar sessões, e o encaminhamento espera enquanto ela não roda. Dividindo núcleo com o roteamento, ela espera o roteamento - numa tabela BGP cheia convergindo, isso aparece. Num núcleo só dela, não espera ninguém.
 
+**Workers de RX e workers de CGNAT.** Por padrão, todo worker recebe pacotes da placa e também traduz. Com `cgnat-workers <n>`, os últimos `n` workers ficam só com a tradução, e os outros só recebem e entregam cada pacote ao worker dono daquele assinante. Isso custa uma entrega entre workers por pacote; se compensa depende do tráfego e da máquina, e é exatamente o que um benchmark mede comparando os dois jeitos. Medido num laboratório com três workers e o 0 só recebendo: todo pacote entrou pelo worker 0, a tradução aconteceu só nos workers 1 e 2, e o pool dinâmico ficou dividido entre esses dois.
+
+Pedir tantos workers de CGNAT quanto a caixa tem não separa nada: pelo menos um precisa receber, e a caixa diz isso no relatório de boot.
+
 **O worker vem primeiro.** Numa caixa pequena demais para o que foi pedido, a caixa mantém pelo menos um worker, abre mão primeiro do núcleo dedicado e depois de núcleos do plano de controle, e diz isso no relatório de boot com uma linha `WARNING`.
 
-A mudança vai para `tune.env` (`PRISMA_CONTROL_PLANE_CORES` e `PRISMA_MAIN_THREAD`) e **vale no boot seguinte**, como tudo o que é isolamento de núcleo - e com a mesma regra da seção anterior: tirar núcleos do plano de controle isola núcleos que não estavam isolados, e isso passa por um boot em modo conservador antes do plano completo. `show system cpu` mostra lado a lado o que está configurado e o que este boot está rodando:
+A mudança vai para `tune.env` (`PRISMA_CONTROL_PLANE_CORES`, `PRISMA_MAIN_THREAD` e `PRISMA_CGNAT_WORKERS`) e **vale no boot seguinte**, como tudo o que é isolamento de núcleo - e com a mesma regra da seção anterior: tirar núcleos do plano de controle isola núcleos que não estavam isolados, e isso passa por um boot em modo conservador antes do plano completo. `show system cpu` mostra lado a lado o que está configurado e o que este boot está rodando:
 
 ```
 prisma> show system cpu
 configured, in effect from the next reboot:
   control-plane cores   2
   VPP main thread       dedicated
+  CGNAT workers         all, each also receiving
 this boot:
   VPP main thread       core 0
   VPP workers           1-3
+  translating workers   all of them
   isolated from Linux   1-3
   control plane held to 0
 ```
@@ -270,6 +277,7 @@ this boot:
 | `PRISMA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio      | sem limite      |
 | `PRISMA_CONTROL_PLANE_CORES` | só dígitos, 1 ou mais, ou vazio | vazio (um núcleo) | um núcleo       |
 | `PRISMA_MAIN_THREAD` | `shared` ou `dedicated`, ou vazio | vazio (`shared`) | `shared`        |
+| `PRISMA_CGNAT_WORKERS` | só dígitos, 1 ou mais, ou vazio | vazio (todos) | todos fazem as duas coisas |
 | `PRISMA_CONTROL_PLANE_MEMORY_GB` | GB inteiros, 1 ou mais, ou vazio | vazio (um quarto da RAM) | um quarto da RAM |
 | `PRISMA_BUFFERS_PER_NUMA` | só dígitos, ou vazio | vazio (16384 por worker) | 16384 por worker |
 

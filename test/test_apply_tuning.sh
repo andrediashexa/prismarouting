@@ -403,6 +403,24 @@ case "$(argv)" in
 esac
 
 echo
+echo "=== PRISMA_CGNAT_WORKERS (#466) ==="
+mkbox
+run PRISMA_CGNAT_WORKERS=2
+case "$(argv)" in
+  *"--cgnat-workers 2"*) ok "the split reaches the tuner: $(argv)" ;;
+  *) bad "PRISMA_CGNAT_WORKERS=2 did not reach the tuner: $(argv)" ;;
+esac
+mkbox
+run PRISMA_CGNAT_WORKERS=0
+said "REFUSED PRISMA_CGNAT_WORKERS, in tune.env" \
+  && said "every" && ok "no worker translating is refused by name" \
+  || bad "PRISMA_CGNAT_WORKERS=0 was not refused. Output: $OUT"
+case "$(argv)" in
+  *--cgnat-workers*) bad "a refused split was passed on: $(argv)" ;;
+  *) ok "  and nothing is passed: every worker does both" ;;
+esac
+
+echo
 echo "=== PRISMA_CONTROL_PLANE_CORES and PRISMA_MAIN_THREAD (#466) ==="
 mkbox
 run PRISMA_CONTROL_PLANE_CORES=2 PRISMA_MAIN_THREAD=dedicated
