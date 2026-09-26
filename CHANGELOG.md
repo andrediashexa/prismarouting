@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.133.3 - RX and CGNAT workers
+
+### Added
+
 * **RX workers and CGNAT workers can be split: `system cpu cgnat-workers <n>`**
   ([#466](https://github.com/andrediashexa/hexarouting/issues/466), fourth
   part). The maintainer wanted to be able to benchmark it.
@@ -92,8 +98,6 @@ version has a chance of seeing it.
     translating, with every packet in on 0. Nothing was translated on 0, all
     24 subscribers got sessions, and the dynamic pool was cut into two
     slices. With no stanza, three checks go red.
-
-### Fixed
 
 ## 0.133.2 - memory by role
 
