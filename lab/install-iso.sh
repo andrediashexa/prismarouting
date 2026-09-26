@@ -1669,6 +1669,15 @@ drive_console() {
   send 'echo "HX""LAB mgmt-unit=$(systemctl is-enabled networking 2>&1) $(systemctl is-active networking 2>&1)"'
   wait_for "HXLAB mgmt-unit=" 30 \
     "systemd to say what it did with the management network" || return 1
+  # And whether the card's driver is in the initrd (#468). 0.132.0's left
+  # every NIC driver out, so the cards appeared only after networking.service
+  # and the tuner had run - a race this lab's guest won and a Proxmox guest
+  # lost, booting with no management address and no card in VPP. Asked of
+  # the initrd rather than of the boot, because a race that passes here is
+  # the whole problem. The module is named for the driver the card is on.
+  send 'D=$(basename "$(readlink /sys/class/net/$M/device/driver)"); echo "HX""LAB nic-initrd=$D $(lsinitramfs /boot/initrd.img-$(uname -r) 2>/dev/null | grep -c "/$D\.ko")"'
+  wait_for "HXLAB nic-initrd=" 60 \
+    "the box to say whether its card's driver is in the initrd" || return 1
   # ------------- can the box reach anything, ASKED OF THE VTY (#395)
   #
   # THE STATEMENT AN OPERATOR TYPES, on the box the medium installed, against
@@ -2657,6 +2666,18 @@ if [ "$up" = 1 ]; then
         echo "  [FAIL] networking.service is '${MGMT_UNIT:-<unread>}' on the"
         echo "         installed box, so whatever is in interfaces.d was not"
         echo "         applied by anything"
+        fail=1 ;;
+    esac
+  fi
+  if [ "$MGMT_ASKED" != 0 ]; then
+    NIC_INITRD=$(sed -n 's/^HXLAB nic-initrd=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+    case "$NIC_INITRD" in
+      ?*" "[1-9]*)
+        echo "  [ ok ] the card's driver is in the initrd: ${NIC_INITRD% *}" ;;
+      *)
+        echo "  [FAIL] the card's driver is not in the installed box's initrd"
+        echo "         ('${NIC_INITRD:-<unread>}'), so the card appears after the"
+        echo "         network and the tuner have run (#468)"
         fail=1 ;;
     esac
   fi
