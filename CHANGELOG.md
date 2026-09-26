@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`linux-name` is gone from the configuration** ([#461](https://github.com/andrediashexa/hexarouting/issues/461)).
+  The maintainer called it useless, and it was: the box already paired every
+  claimed card and loopback into Linux under its own name, and wrote
+  `linux-name ens19` under `interface ens19` to say so. The line is no longer
+  written when the name is the interface's own. Every interface with a block
+  now gets its Linux end automatically, as long as the dataplane has it and
+  Linux does not hold the name for something else. That includes a
+  sub-interface, a card added to the running box, and a host interface, as
+  well as a card and a loopback. `linux-name` stays, and is shown, only when it
+  names something else, such as a VPP name with a `/` that Linux cannot take.
+
+  A saved file with the old same-name lines is read unchanged, and the next
+  `save` writes it without them. Measured in `lab/lcp.sh`: an interface given
+  only a description came up in Linux as `host-veth2`, and the configuration
+  carries no `linux-name` for it.
+
 ### Fixed
 
 ## 0.131.0 - the containers restart when asked
