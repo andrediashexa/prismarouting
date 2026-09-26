@@ -1,0 +1,20 @@
+[Unit]
+Description=Prisma Routing - the host's doors: what the VTY asks the host to do
+Documentation=file:///usr/share/doc/prisma-routing/appliance.md
+# The daemon that runs the host operations the VTY asks for (#448, phase B):
+# accounts, sshd, snmpd. A closed list of commands, each argument checked, and
+# only for a caller whose uid the kernel says is 0 - src/prismash/doors.py
+# holds the list and the rule. Before the VTY can be logged into, so the first
+# commit of a session already goes through it; a VTY that finds no daemon
+# runs the command itself, as it always has.
+After=local-fs.target
+Before=getty.target ssh.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/lib/prisma-routing/doors.py --serve
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

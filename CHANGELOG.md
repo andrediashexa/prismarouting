@@ -77,6 +77,17 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The host's doors: the VTY asks the host to change accounts, sshd and snmpd** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase B).
+  `prisma-routing-doors.service` is a root daemon on
+  `/run/prisma-routing/doors.sock`. It runs a closed list of commands, with
+  every argument checked, and runs them only for a caller the kernel says is
+  root, which is the rule the box already had. The VTY sends accounts, their
+  groups and passwords, sshd's check and reload, and snmpd's start and stop
+  there instead of running them itself. This is what lets the VTY move into a
+  container in phase C. Each request is a journal line (command, uid, exit
+  status), never with the password hash. Measured in `lab/doors.sh`: the
+  accounts were made by the daemon, and an unprivileged caller was refused.
+
 ### Fixed
 
 ## 0.134.0 - the cards are there when the box boots

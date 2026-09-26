@@ -58,6 +58,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     VRRP_PRIORITY_DEFAULT,
                     VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
                     vrrp_statement, vrrp_remove, vrrp_pair_findings)
+import doors
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
@@ -6426,8 +6427,10 @@ def pci_address_of(device_link):
 
 class Shell:
     def __init__(self):
-        self.sys = System()
-        self.snmp = SnmpDaemon()
+        # Through the host's doors (#448, phase B), which run the command
+        # itself when no daemon listens.
+        self.sys = System(runner=doors.runner())
+        self.snmp = SnmpDaemon(runner=doors.runner())
         self.dp = Vpp()
         self.api = vppapi.Vat2()
         self.frr = Frr()

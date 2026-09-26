@@ -2979,6 +2979,46 @@ arriving late, threw away the next line typed.
 If the broker is missing or not executable, `prismash-login` runs `prismash`
 as it always did, and `start shell` opens a shell as the VTY's child.
 
+### The host's doors: what the VTY asks the host to do
+
+The second step (#448, phase B). What the VTY does to the host — creating,
+changing and removing accounts, their groups and passwords, checking and
+reloading sshd, starting and stopping snmpd — it now **asks** of
+`prisma-routing-doors.service`, a root daemon on
+`/run/prisma-routing/doors.sock`, instead of running the command itself. From
+inside a container it could not run them, and a container that could would
+hold the host's root.
+
+A door is not a way to run a command. `src/prismash/doors.py` accepts a closed
+list of commands, and checks every argument against what the VTY actually puts
+there. An account name can never be read as an option or a path, and `root`
+is refused where the VTY never sends it. The shell is only the VTY's login
+shell, and the groups are only the ones the VTY manages. `chpasswd` takes one
+`name:hash` line. Anything else is refused, whoever asks. `test/test_doors.py`
+reads every command `system.py` runs off its source and requires each to be a
+door, so a new one fails there and not on a box.
+
+**Who may use a door has not changed.** The daemon reads the caller's uid from
+the socket (`SO_PEERCRED`), which the caller cannot forge, and runs a door
+only for uid 0 — the same rule the box had when the VTY ran the commands
+itself, where only root's were permitted and #212 declined granting more.
+This step changes where the command runs, not who may run it.
+
+Every request is one line in the journal (`journalctl -u
+prisma-routing-doors`): the command, the caller's uid and the exit status.
+The input is never logged, because a password hash travels there. With no
+daemon listening, the VTY runs the command itself, so a box keeps working
+while the daemon restarts.
+
+Measured in `lab/doors.sh`, with the daemon running as root:
+- three accounts, a role, a password and a removal were made by the daemon,
+  as its log shows, and reached `id` and the shadow file;
+- the log carried no hash;
+- an unprivileged account asking the same socket for `useradd` was refused,
+  and no account was made.
+
+With no daemon, the three checks that say the daemon did it go red.
+
 `install.sh` does **not** change any login shell unless `PRISMA_VTY_LOGIN=1` is
 set. On an existing Debian the machine may have other jobs, and silently
 replacing root's shell is the kind of surprise an operator discovers at the

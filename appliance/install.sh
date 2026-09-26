@@ -392,7 +392,8 @@ for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selft
          prisma-routing-installer.service prisma-routing-confirm.service \
          prisma-routing-confirm.timer prisma-routing-containers.service \
          prisma-routing-card-watch.service prisma-routing-card-watch.timer \
-         prisma-routing-backplane.service prisma-routing-hot-card@.service; do
+         prisma-routing-backplane.service prisma-routing-hot-card@.service \
+         prisma-routing-doors.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
@@ -707,7 +708,11 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   udevadm control --reload >/dev/null 2>&1 || true
   systemctl enable prisma-routing-tune.service prisma-routing.service \
     prisma-routing-selftest.service prisma-routing-installer.service \
-    prisma-routing-confirm.timer prisma-routing-backplane.service
+    prisma-routing-confirm.timer prisma-routing-backplane.service \
+    prisma-routing-doors.service
+  # The doors (#448) run the code this install just put down: restarted, not
+  # only started, or an upgrade leaves the old daemon answering.
+  systemctl restart prisma-routing-doors.service >/dev/null 2>&1 || true
   if [ "$CONTAINER_DEFAULT" = 1 ]; then
     systemctl enable prisma-routing-containers.service \
       prisma-routing-card-watch.timer
@@ -733,7 +738,7 @@ else
   install -d -m 0755 "$DESTDIR/etc/systemd/system/multi-user.target.wants"
   for u in prisma-routing-tune.service prisma-routing.service \
            prisma-routing-selftest.service prisma-routing-installer.service \
-           prisma-routing-backplane.service; do
+           prisma-routing-backplane.service prisma-routing-doors.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done
