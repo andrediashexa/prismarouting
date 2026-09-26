@@ -13762,6 +13762,13 @@ class Shell:
     #: Where the kernel says which CPUs booted isolated (#466).
     CPU_ISOLATED = os.environ.get("PRISMA_CPU_ISOLATED",
                                   "/sys/devices/system/cpu/isolated")
+    #: The CPUs system.slice may run on (#466): the control-plane fence as
+    #: the kernel applies it, not as apply-tuning asked for it.
+    CPU_ONLINE = os.environ.get("PRISMA_CPU_ONLINE",
+                                "/sys/devices/system/cpu/online")
+    CPU_FENCE = os.environ.get(
+        "PRISMA_CPU_FENCE",
+        "/sys/fs/cgroup/system.slice/cpuset.cpus.effective")
 
     def show_system_cpu(self):
         """
@@ -13797,6 +13804,22 @@ class Shell:
         print(f"  VPP main thread       core {main_core or '(not named)'}")
         print(f"  VPP workers           {workers or '(none)'}")
         print(f"  isolated from Linux   {isolated or '(none)'}")
+        try:
+            with open(self.CPU_FENCE) as f:
+                fence = f.read().strip()
+        except OSError:
+            fence = ""
+        # Every CPU the box has is no fence at all, and is said as such -
+        # "held to 0-3" on a 4-CPU box would read as a fence that is not
+        # there.
+        try:
+            with open(self.CPU_ONLINE) as f:
+                online = f.read().strip()
+        except OSError:
+            online = ""
+        if fence == online:
+            fence = ""
+        print(f"  control plane held to {fence or '(not held)'}")
 
     def show_cgnat_memory(self):
         """

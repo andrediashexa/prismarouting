@@ -228,6 +228,37 @@ report=$(prisma-routing-tune "$@" 2>&1) || { printf '%s\n' "$report" >&2; exit 1
 printf '%s\n' "$report" | grep -E "^# |WARNING" >&2
 printf 'kernel cmdline hugepages: %s\n' \
   "$(tr ' ' '\n' < "$PROCCMDLINE" | grep '^hugepages=' || echo '(none)')" >&2
+# THE CONTROL PLANE HELD OFF THE ISOLATED CPUS (#466), by cgroup and not
+# only by inheritance. isolcpus keeps the scheduler from PLACING anything on a
+# worker's CPU, but a process may still ask for one and get it: measured on a
+# 4-CPU guest with 1-3 isolated, zebra, bgpd, sshd and dockerd were allowed
+# 0-3, and a shell asking for CPU 3 was given it. AllowedCPUs on the three
+# units the control plane runs in makes that a fence.
+#
+# From the kernel's isolation on THIS boot, every boot, and --runtime: a
+# fence left from a boot whose isolation has since changed would hold the
+# control plane to the wrong CPUs.
+#
+# ONLY WITH THE DATAPLANE OUT OF system.slice, which compose.yaml and the
+# vpp.service drop-in both arrange. A fence on system.slice with VPP still
+# inside it would hold VPP's workers to the control plane's CPUs.
+fence=$(prisma-routing-tune --fence --sysfs-root "${ROOT:-/}" 2>/dev/null) \
+  || fence=""
+if [ -n "$fence" ]; then
+  if grep -q 'cgroup_parent: prisma-dataplane.slice' \
+       "$ROOT/etc/prisma-routing/compose.yaml" 2>/dev/null \
+     && [ -f "$ROOT/etc/systemd/system/vpp.service.d/prisma-routing-slice.conf" ]
+  then
+    for u in system.slice user.slice init.scope; do
+      systemctl set-property --runtime "$u" "AllowedCPUs=$fence" \
+        || echo "control plane: $u could not be held to CPUs $fence" >&2
+    done
+    echo "control plane held to CPUs $fence" >&2
+  else
+    echo "control plane NOT held to CPUs $fence: the dataplane is not in" >&2
+    echo "prisma-dataplane.slice, and a fence would hold it too" >&2
+  fi
+fi
 # THE NIC ITSELF, once the tuner has said which one. Naming a device in
 # startup.conf is not the same as the dataplane having it: DPDK cannot take a
 # device through ixgbe, i40e or bnxt_en, and nothing in this product ever bound

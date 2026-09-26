@@ -176,9 +176,7 @@ O modo conservador do segundo caso não é um defeito: o equipamento não pode f
 
 
 :::warning
-**Não existe limite de CPU configurado para o plano de controle, e isso também é deliberado: o limite já existe, e é o próprio isolamento.** Medido numa caixa instalada de dois núcleos com o núcleo 1 isolado: o processo `init` roda só no núcleo 0, e o processo de roteamento, que é filho dele, herda essa mesma permissão. O kernel confina tudo o que não é o dataplane aos núcleos que sobraram, sem que ninguém precise configurar nada. Limitar o roteamento por cima disso não libera nada para o encaminhamento, porque o roteamento já não chega nos núcleos de encaminhamento; o que um limite desses faria é atrasar a convergência BGP e a recarga de configuração sem devolver nada em troca.
-
-**Herdado não é o mesmo que imposto.** Na mesma caixa, um processo que pede explicitamente para rodar no núcleo isolado **consegue**. Quem escreve numa sessão de shell que quer um núcleo de encaminhamento pediu aquilo de propósito, e nada que o produto instala faz isso sozinho, mas vale saber que a proteção é por herança e não por cerca.
+**O plano de controle fica preso aos núcleos que não são do dataplane.** A cada boot, a caixa prende o sistema, o roteamento, o SSH, a VTY e os containers de controle a todos os núcleos que o kernel não isolou, e o dataplane roda num grupo à parte, com os workers nos núcleos dele. Antes isso era só herança: medido numa caixa de 4 núcleos com 1 a 3 isolados, o roteamento e o SSH podiam rodar em qualquer um dos quatro, e um shell que pedisse o núcleo 3 conseguia. Agora o mesmo pedido é recusado, e `show system cpu` mostra a quais núcleos o plano de controle está preso.
 
 Quem decide quanto de CPU o plano de controle tem é a divisão dos núcleos por papel, logo abaixo, e isso é uma decisão de dimensionamento, não um limite de processo.
 
@@ -218,6 +216,7 @@ this boot:
   VPP main thread       core 0
   VPP workers           1-3
   isolated from Linux   1-3
+  control plane held to 0
 ```
 
 ## O que o arquivo de ajuste aceita
