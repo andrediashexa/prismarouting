@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.131.5 - the RAM a box forwards with
+
+### Fixed
+
 * **The documented minimum RAM is the RAM a box forwards with: 6 GB, 8 advised** ([#452](https://github.com/andrediashexa/hexarouting/issues/452)).
   The documents said 4 GB. Measured on 0.130.0 in a KVM guest, with two
   boots each so the tuner's hugepages took effect:
