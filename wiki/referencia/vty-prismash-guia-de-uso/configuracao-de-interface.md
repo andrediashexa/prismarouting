@@ -110,6 +110,38 @@ configure
 
 `no interface loop0` desfaz o caminho inteiro — endereço, par e interface. Uma **porta física** continua sendo recusada: não é algo que uma configuração possa remover, e aceitar as palavras prometeria o que o `commit` não entrega.
 
+## Bundles LACP (802.3ad)
+
+Duas ou mais portas viram uma interface só, `ae<n>`, como no Junos. O bundle é criado quando é nomeado, igual a um loopback, e cada porta entra com `member`:
+
+```
+configure
+ interface ae0
+  member ens19
+  member ens20
+  lacp rate fast
+  ipv4 address 10.9.0.1/24
+  exit
+ commit
+```
+
+| Comando | O que faz | Padrão |
+|---------|-----------|--------|
+| `member <porta>` | uma porta no bundle; pode repetir | |
+| `lacp mode active\|passive` | quem começa a negociação | `active` |
+| `lacp rate fast\|slow` | LACP a cada segundo ou a cada 30 | `slow` |
+| `load-balance l2\|l23\|l34` | como os fluxos se espalham pelos membros | `l34` |
+| `no member <porta>` | tira a porta do bundle | |
+| `no interface ae0` | desfaz o bundle; as portas voltam a ser portas | |
+
+Endereços, MTU, descrição, OSPF, BGP e o lado do CGNAT vão no `ae0`, nunca nos membros. O `commit` recusa um membro que a caixa não tem, uma porta em dois bundles e um membro com configuração própria.
+
+Mudar `lacp mode`, `lacp rate` ou `load-balance` refaz o bundle: o balanceamento é fixado na criação, e o modo e o ritmo na entrada de cada membro. Por isso a mudança derruba o bundle por um instante, e é melhor fazê-la numa janela.
+
+`show lacp` mostra o estado de cada membro. Um membro que está no bundle aparece com `MUX-state: COLLECTING_DISTRIBUTING`.
+
+Medido num laboratório contra um bond 802.3ad do Linux: os dois membros negociaram e ficaram agregados dos dois lados, o tráfego atravessou o bundle e continuou atravessando com um membro cortado.
+
 ## Sub-interfaces e VLAN
 
 **Como se cria uma, do começo ao fim.** Basta digitar um nome que a caixa ainda não tem, no formato `<pai>.<tag>`: é isso que cria a sub-interface. O `?` diz isso na linha abaixo da lista de interfaces — ele oferece as que existem, e a nota embaixo diz quais nomes criam uma nova.

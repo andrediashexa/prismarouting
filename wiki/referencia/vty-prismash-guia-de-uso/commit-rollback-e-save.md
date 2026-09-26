@@ -277,6 +277,18 @@ A recusa mostra as duas linhas em conflito, o `mode` e o `block-stride`, porque 
 
 Um statement nomeia uma interface que não existe aqui. A primeira forma vem de uma linha de roteamento ou de CGNAT que aponta para ela; a segunda, de entrar num bloco `interface` que a caixa não tem. `show interface` lista os nomes que ela tem, e é dali que o nome deve sair - inventar um é como o problema começa.
 
+### `a bundle member this box does not have`, `a port in two bundles` e `a bundle member with config of its own`
+
+As três recusas de um bundle LACP (`interface ae<n>`), cada uma com o nome da porta no fim:
+
+```
+error: a bundle member this box does not have: ens29
+error: a port in two bundles: ens19
+error: a bundle member with config of its own: ens19
+```
+
+A primeira é um `member` com uma porta que o dataplane não tem, quase sempre um erro de digitação. A segunda é a mesma porta em dois bundles: uma porta só pode pertencer a um. A terceira é um membro com endereço ou lado de CGNAT próprio. Um membro deixa de encaminhar sozinho, então essa configuração vai no `ae<n>`, não na porta. Tire a configuração da porta e ponha no bundle.
+
 ### `this next hop is on no connected network: <próximo salto>`
 
 Uma rota estática cujo próximo salto não está em nenhuma rede conectada desta caixa. Ela seria aceita e nunca encaminharia nada, porque não há interface por onde alcançar aquele endereço. Confira o endereço, ou configure a interface que deveria carregá-lo.

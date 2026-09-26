@@ -1027,6 +1027,32 @@ defect surfaced immediately.
 interface stanzas the VTY stages itself, and the check path and the apply path
 share it so they cannot drift.
 
+## LACP bundles (#455)
+
+`interface ae<n>` is a bundle, created by being named like a loopback, with
+`member <port>`, `lacp mode active|passive`, `lacp rate fast|slow` and
+`load-balance l2|l23|l34` (defaults active, slow, l34) in its block. The model
+is `Config.bundles`, and `config.bundle_statement()` is its one reader for
+the file and the prompt. On the dataplane it is a bond in LACP mode
+(`bond_create2`), at the instance the name carries, **renamed to `ae<n>`**
+(`sw_interface_set_interface_name`) so the configuration, `show interface`
+and the linux_cp pair FRR routes over all say one name - VPP's own
+`BondEthernet<n>` would need a translation for one kind of interface
+everywhere else. Members join with `bond_add_member`, carrying the mode
+(`is_passive`) and the rate (`is_long_timeout`), which is why a change to
+either rebuilds the bundle, and so does the hash, fixed at creation. A new
+bond starts down and is brought up in the same commit. It is read back with
+`sw_bond_interface_dump` and `sw_member_interface_dump`; a bond with any other
+name is not this configuration's and is left alone. `commit check` refuses a
+member the box does not have, a port in two bundles, and a member with
+configuration of its own. `show lacp` is the dataplane's `show lacp details`.
+
+Measured in `lab/lacp.sh`, configured through the VTY against a Linux
+802.3ad bond in a peer namespace: both members reach collecting-distributing
+on both ends, traffic crosses, and still crosses with one member cut; the
+running configuration reads the bundle back. The off run puts the address on
+one port with no bundle, and five checks go red.
+
 ## Loopbacks, and the pair that makes an interface visible to FRR
 
 ### Nothing created a linux_cp pair

@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Added
 
+* **LACP: `interface ae<n>`, a bundle of ports as one interface (802.3ad)**
+  ([#455](https://github.com/andrediashexa/hexarouting/issues/455)).
+  - **Configuring it:** `member <port>`, `lacp mode active|passive`,
+    `lacp rate fast|slow` and `load-balance l2|l23|l34` in the block.
+    Addresses, routing and the CGNAT side go on `ae0`.
+  - **In the dataplane:** a bond in LACP mode, renamed to `ae<n>`, so every
+    part of the box says one name. It is read back from the dataplane.
+  - **Refused at `commit check`:** a member the box does not have, a port in
+    two bundles, and a member with configuration of its own.
+  - **Reading it:** `show lacp` gives each member's state.
+  - **Measured against a Linux 802.3ad bond:** both members collecting and
+    distributing, and traffic across the bundle with and without one member
+    cut.
+
 ### Fixed
 
 ## 0.133.3 - RX and CGNAT workers

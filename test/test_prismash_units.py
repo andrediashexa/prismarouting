@@ -6602,5 +6602,84 @@ finally:
     prismash.ATTACHED = _saved
 ok("the module and the VTY's use of it")
 
+print("\n=== LACP bundles: the model, the dataplane calls, the readback (#455) ===")
+check(_config._is_bundle("ae0") and _config._is_bundle("ae63")
+      and not _config._is_bundle("ae64") and not _config._is_bundle("ae")
+      and not _config._is_bundle("aex") and not _config._is_bundle("eth0"),
+      "_is_bundle: ae<n>, below the ceiling, and nothing else")
+_b = _config.new_bundle()
+check(_b == {"members": [], "lacp": "active", "rate": "slow", "hash": "l34"},
+      f"new_bundle: no members and the defaults: {_b}")
+for _w, _why in ((["member", "ens19"], ""), (["member", "ens19"], ""),
+                 (["member", "ens20"], ""), (["lacp", "rate", "fast"], ""),
+                 (["load-balance", "l2"], ""),
+                 (["lacp", "mode", "sideways"], "expected: lacp mode"),
+                 (["no", "member", "ens20"], ""),
+                 (["no", "load-balance"], ""), (["description", "x"], "")):
+    check(_config.bundle_statement(_b, _w).startswith(_why) if _why
+          else _config.bundle_statement(_b, _w) == "",
+          f"bundle_statement {_w}: {_why!r}")
+check(_b == {"members": ["ens19"], "lacp": "active", "rate": "fast",
+             "hash": "l34"},
+      f"a member once, a no taking it back, a no restoring the default: {_b}")
+
+
+class _BondApi(RecApi):
+    """RecApi with the interfaces a bundle needs, by name."""
+
+    def __init__(self, have, **k):
+        super().__init__(**k)
+        self.have = have
+
+    def interface_index(self, name):
+        return self.have.get(name)
+
+
+_api = _BondApi({"ae0": 11, "ens19": 1, "ens20": 2},
+                fields={"bond_create2": {"sw_if_index": 11}})
+_sh = shell(api=_api)
+rv, text = driven(lambda: _sh.create_bundle(
+    "ae0", {"members": ["ens19", "ens20"], "lacp": "passive",
+            "rate": "fast", "hash": "l23"}))
+_msgs = [m for m, _ in _api.calls]
+check(rv is True and _msgs[:2] == ["bond_create2",
+                                   "sw_interface_set_interface_name"]
+      and _msgs.count("bond_add_member") == 2,
+      f"create_bundle: the bond, its name, then each member: {_msgs}")
+_create = dict(_api.calls)["bond_create2"]
+_add = [a for m, a in _api.calls if m == "bond_add_member"][0]
+check(_create["mode"] == "BOND_API_MODE_LACP"
+      and _create["lb"] == "BOND_API_LB_ALGO_L23" and _create["id"] == 0
+      and _add == {"sw_if_index": 1, "bond_sw_if_index": 11,
+                   "is_passive": True, "is_long_timeout": False},
+      f"LACP mode, the hash, the instance, and each member's mode and rate: "
+      f"{_create} {_add}")
+check(dict(_api.calls)["sw_interface_set_interface_name"]
+      == {"sw_if_index": 11, "name": "ae0"}, "renamed to ae0")
+rv, text = driven(lambda: _sh.detach_member("ens20"))
+check(rv is True and _api.calls[-1] == ("bond_detach_member",
+                                        {"sw_if_index": 2}),
+      "detach_member: the port out")
+check(_sh.detach_member("ens99") is True, "a port not there is already out")
+rv, text = driven(lambda: _sh.delete_bundle("ae0"))
+check(rv is True and _api.calls[-1] == ("bond_delete", {"sw_if_index": 11}),
+      "delete_bundle")
+check(_sh.delete_bundle("ae9") is True, "a bundle not there is gone already")
+_api = _BondApi({}, rows={
+    "sw_bond_interface_dump": [
+        {"sw_if_index": 11, "interface_name": "ae0",
+         "lb": "BOND_API_LB_ALGO_L2"},
+        {"sw_if_index": 12, "interface_name": "BondEthernet5",
+         "lb": "BOND_API_LB_ALGO_L34"}],
+    "sw_member_interface_dump": [
+        {"interface_name": "ens19", "is_passive": False,
+         "is_long_timeout": False}]})
+_got = shell(api=_api).device_bundles()
+check(_got == {"ae0": {"members": ["ens19"], "lacp": "active",
+                       "rate": "fast", "hash": "l2"}},
+      f"device_bundles: ae0 read back, a bond of another name left alone: "
+      f"{_got}")
+ok("the model, the five calls, and the readback")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
