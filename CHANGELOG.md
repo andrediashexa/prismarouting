@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.131.0 - the containers restart when asked
+
+### Fixed
+
 * **`systemctl restart prisma-routing-containers` works on a container box** ([#459](https://github.com/andrediashexa/hexarouting/issues/459)).
   systemd refused it on every one, with "Transaction contains conflicting jobs
   'restart' and 'stop' for prisma-routing.service". The containers unit
