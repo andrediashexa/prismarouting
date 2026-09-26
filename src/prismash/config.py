@@ -2255,6 +2255,16 @@ class Config:
         # could not turn it off and the running configuration did not admit
         # it was on.
         self.linux_names: dict[str, str] = {}
+        # Interfaces whose block holds nothing a dictionary above carries
+        # (#461): since the same-name pair is not written, `interface ens19`
+        # with nothing under it is what a file says for a card that is only
+        # paired. Kept, so the block survives a save and the pair a commit.
+        self.declared: set[str] = set()
+        # Which of linux_names the box decided on its own, best-effort
+        # (#461); never rendered. On the Config and not the Shell, because a
+        # commit applies the same target twice - a check, then the change -
+        # and the first pass has already written the name the second reads.
+        self.soft_pairs: set[str] = set()
         # Loopbacks this configuration says should exist. A loopback is
         # CREATED by naming it, the way a sub-interface is, because there is
         # nothing else to create it from - and an ISP router needs one for a
@@ -2545,7 +2555,7 @@ class Config:
                 | set(self.admin_down) | set(self.addresses) | set(self.vlans)
                 | set(self.vrfs) | set(self.macs) | set(self.linux_names)
                 | set(self.loopbacks) | set(self.ra_enabled)
-                | set(self.vrrp))
+                | set(self.vrrp) | self.declared)
 
     def connected_prefixes(self) -> dict:
         """
@@ -2683,6 +2693,7 @@ class Config:
                 del d[name]
         self.admin_down -= taps
         self.ra_enabled -= taps
+        self.declared -= taps
 
     @classmethod
     def parse(cls, text: str, dataplane: bool = False) -> "Config":
@@ -2927,6 +2938,7 @@ class Config:
                 cfg.macs.pop(gone, None)
                 cfg.vrfs.pop(gone, None)
                 cfg.ra_enabled.discard(gone)
+                cfg.declared.discard(gone)
                 cfg.vrrp.pop(gone, None)
             elif s.startswith("interface "):
                 iface = s.split()[1]
@@ -3137,10 +3149,15 @@ class Config:
         # without this a card whose only statement was its pair would drop
         # out of the file at the next save and lose the pair at the commit
         # after.
+        #
+        # DECLARED, NOT PAIRED, and that difference was measured: a pair
+        # invented here is one a commit insists on, and lab/bypass.sh's pg-1
+        # - an interface VPP will not pair - then failed every commit. The
+        # block is kept; whether it gets a pair is Shell.pair_cards()'s to
+        # decide, where the box can be asked.
         for iface in headers:
-            if iface not in cfg.interface_names() \
-                    and not linux_ifname_error(iface):
-                cfg.linux_names[iface] = iface
+            if iface not in cfg.interface_names():
+                cfg.declared.add(iface)
         return cfg
 
     @staticmethod

@@ -7466,6 +7466,27 @@ class Shell:
             return False
         return True
 
+    def try_default_pair(self, ifname, host_name):
+        """
+        A pair the box decided on its own (#461), tried and not insisted on:
+        True when it was made, False - said as a note, not an error - when
+        the dataplane would not pair this kind of interface.
+        """
+        idx = self.api.interface_index(ifname)
+        r = None
+        if idx is not None:
+            r = self.api_call("lcp_itf_pair_add_del",
+                              {"is_add": True, "sw_if_index": idx,
+                               "host_if_name": host_name,
+                               "host_if_type": "LCP_API_ITF_HOST_TAP",
+                               "netns": ""})
+        if r is not None and r.state == vppapi.OK:
+            return True
+        print_prose(f"note: {ifname} has no Linux end: the dataplane would "
+                    f"not pair it, so routing does not see it; the rest of "
+                    f"the commit is applied")
+        return False
+
     def set_lcp_pair(self, ifname, host_name, is_add=True):
         """
         Pair an interface into the kernel, so FRR can see it.
@@ -7788,6 +7809,14 @@ class Shell:
         # would fail in the dataplane with a bare retval instead. A
         # sub-interface and a loopback are created by the same commit, so they
         # count before they exist.
+        #
+        # AND ON A BEST-EFFORT FOOTING. Not every interface VPP holds can be
+        # paired: lab/bypass.sh configures the packet generator's pg0, VPP
+        # answers "Call failed" to a pair for it, and the commit that asked
+        # for nothing of the kind failed and rolled back. A pair the box
+        # decided on its own that the dataplane refuses is said and left out;
+        # a pair the operator asked for with `linux-name` still fails the
+        # commit, as it always has.
         paired = running.linux_names if running is not None else {}
         present = self.dataplane_names() | set(target.vlans) \
             | set(target.loopbacks)
@@ -7798,6 +7827,7 @@ class Shell:
                 continue
             if not self.linux_holds(name) or paired.get(name) == name:
                 target.linux_names[name] = name
+                target.soft_pairs.add(name)
 
     def defaulted_cards(self) -> set:
         """
@@ -9332,6 +9362,10 @@ class Shell:
             if had and had != host and not self.set_lcp_pair(ifname, "",
                                                              False):
                 return False
+            if ifname in target.soft_pairs:
+                if not self.try_default_pair(ifname, host):
+                    target.linux_names.pop(ifname, None)
+                continue
             if not self.set_lcp_pair(ifname, host, True):
                 return False
 
@@ -12173,6 +12207,7 @@ class Shell:
             self.candidate.macs.pop(gone, None)
             self.candidate.vrfs.pop(gone, None)
             self.candidate.ra_enabled.discard(gone)
+            self.candidate.declared.discard(gone)
             return True
 
         if line.startswith("no cgnat interface "):

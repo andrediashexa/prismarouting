@@ -2103,10 +2103,10 @@ check(" linux-name vppwan0" in _t,
 check("interface ens19\n exit" in _t,
       "an interface whose only statement was its pair keeps its block")
 _back = config.Config.parse(_t)
-check(_back.linux_names.get("ens19") == "ens19"
+check("ens19" in _back.declared and "ens19" in _back.interface_names()
       and _back.linux_names.get("host-veth-vpp") == "vppwan0",
-      f"and reading it back gives the empty block its pair again: "
-      f"{_back.linux_names}")
+      f"and reading it back keeps the block, declared, for the box to pair: "
+      f"{_back.declared} {_back.linux_names}")
 check(config.Config.parse(_back.text()).text() == _t, "and the text is stable")
 print("  written only when it says something")
 

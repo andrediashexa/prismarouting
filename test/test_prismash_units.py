@@ -1260,6 +1260,24 @@ try:
           "that names it")
 finally:
     prismash.Shell.SYS_NET = _saved_net
+# try_default_pair(): a pair the box decided on its own is tried and not
+# insisted on (#461) - measured in lab/bypass.sh, where VPP will not pair the
+# packet generator's pg0 and the commit used to fail over it.
+class _PairApi:
+    def __init__(self, state):
+        self.state = state
+    def interface_index(self, name):
+        return 7
+    def call(self, message, args):
+        return vppapi.Reply(self.state)
+sh = shell(api=_PairApi(vppapi.OK))
+check(sh.try_default_pair("ens19.100", "ens19.100") is True,
+      "a pair the dataplane makes is made")
+sh = shell(api=_PairApi(vppapi.REFUSED))
+rv, text = driven(lambda: sh.try_default_pair("pg0", "pg0"))
+check(rv is False and "note: pg0 has no Linux end" in text
+      and "error" not in text,
+      f"one it will not make is a note, not an error: {rv} {text!r}")
 ok("written into the configuration, at apply, for cards with a block")
 
 # ------------------------------------------------- the CGNAT globals
