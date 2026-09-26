@@ -2299,6 +2299,56 @@ def _is_loopback(name: str) -> bool:
             and is_number(name[4:]))
 
 
+#: LACP bundles (#455): `interface ae<n>`, Junos's name for an aggregated
+#: Ethernet. The dataplane's bond is renamed to it, so the configuration,
+#: `show interface` and the Linux end all say ae0.
+BUNDLE_DEFAULTS = {"lacp": "active", "rate": "slow", "hash": "l34"}
+BUNDLE_CHOICES = {"lacp": ("active", "passive"), "rate": ("fast", "slow"),
+                  "hash": ("l2", "l23", "l34")}
+BUNDLE_MAX = 64
+
+
+def _is_bundle(name: str) -> bool:
+    """Is `name` an LACP bundle, `ae<n>`? Matched for _is_loopback's reason."""
+    return (name.startswith("ae") and len(name) > 2 and is_number(name[2:])
+            and int(name[2:]) < BUNDLE_MAX)
+
+
+def new_bundle() -> dict:
+    """A bundle with no members yet and the defaults."""
+    return {"members": [], **BUNDLE_DEFAULTS}
+
+
+def bundle_statement(bundle: dict, w) -> str:
+    """
+    One statement of an `interface ae<n>` block into `bundle` (#455); why it
+    cannot be taken, or "". The same reader for a file and for the prompt.
+    """
+    neg = w[:1] == ["no"]
+    if neg:
+        w = w[1:]
+    if w[:1] == ["member"] and len(w) == 2:
+        if neg:
+            if w[1] in bundle["members"]:
+                bundle["members"].remove(w[1])
+        elif w[1] not in bundle["members"]:
+            bundle["members"].append(w[1])
+        return ""
+    for key, word in (("lacp", ["lacp", "mode"]), ("rate", ["lacp", "rate"]),
+                      ("hash", ["load-balance"])):
+        if w[:len(word)] == word:
+            if neg:
+                bundle[key] = BUNDLE_DEFAULTS[key]
+                return ""
+            val = w[len(word):]
+            if len(val) != 1 or val[0] not in BUNDLE_CHOICES[key]:
+                return (f"expected: {' '.join(word)} "
+                        f"<{'|'.join(BUNDLE_CHOICES[key])}>")
+            bundle[key] = val[0]
+            return ""
+    return ""   # not a bundle statement: the caller reads it
+
+
 def _is_lcp_tap(name: str) -> bool:
     """
     Is this the LINUX end of a linux_cp pair, as VPP names it?
@@ -2412,6 +2462,9 @@ class Config:
         # nothing else to create it from - and an ISP router needs one for a
         # router-id and an update-source that do not disappear with a port.
         self.loopbacks: set = set()
+        # LACP bundles (#455), {ae<n>: {"members": [...], "lacp", "rate",
+        # "hash"}}. Created by being named, like a loopback.
+        self.bundles: dict = {}
         # Virtual routers on an interface: name -> {vrid -> vr}, where a vr
         # is {"addresses": [...], "priority": int, "track": {ifname: dec}}.
         #
@@ -2553,6 +2606,16 @@ class Config:
         # it, or one an operator chose - is still a statement, and shown.
         if self.linux_names.get(ifname, ifname) != ifname:
             out.append(f" linux-name {self.linux_names[ifname]}")
+        # A bundle's members and its LACP settings (#455), first after the
+        # MAC: what the interface IS before what is configured on it. A
+        # setting at its default is not written, as everywhere here.
+        if ifname in self.bundles:
+            b = self.bundles[ifname]
+            out += [f" member {m}" for m in b["members"]]
+            for key, word in (("lacp", "lacp mode"), ("rate", "lacp rate"),
+                              ("hash", "load-balance")):
+                if b[key] != BUNDLE_DEFAULTS[key]:
+                    out.append(f" {word} {b[key]}")
         if ifname in self.macs:
             out.append(f" mac-address {self.macs[ifname]}")
         if ifname in self.ra_enabled:
@@ -2714,7 +2777,8 @@ class Config:
         return (set(self.mtus) | set(self.urpf) | set(self.descriptions)
                 | set(self.admin_down) | set(self.addresses) | set(self.vlans)
                 | set(self.vrfs) | set(self.macs) | set(self.linux_names)
-                | set(self.loopbacks) | set(self.ra_enabled)
+                | set(self.loopbacks) | set(self.bundles)
+                | set(self.ra_enabled)
                 | set(self.vrrp) | set(self.interfaces) | self.declared)
 
     def connected_prefixes(self) -> dict:
@@ -3117,6 +3181,7 @@ class Config:
                 cfg.interfaces.pop(gone, None)
                 cfg.linux_names.pop(gone, None)
                 cfg.loopbacks.discard(gone)
+                cfg.bundles.pop(gone, None)
                 cfg.macs.pop(gone, None)
                 cfg.vrfs.pop(gone, None)
                 cfg.ra_enabled.discard(gone)
@@ -3132,10 +3197,25 @@ class Config:
                 # thing is called.
                 if _is_loopback(iface):
                     cfg.loopbacks.add(iface)
+                if _is_bundle(iface):
+                    cfg.bundles.setdefault(iface, new_bundle())
             elif iface is not None and line.startswith(" "):
                 w = s.split()
+                _bw = w[1:] if w[:1] == ["no"] else w
                 if s == "exit":
                     iface = None
+                elif _bw[:1] and _bw[0] in ("member", "lacp", "load-balance"):
+                    # A bundle's own statements (#455); on any other
+                    # interface they are refused rather than dropped.
+                    if not _is_bundle(iface):
+                        cfg.unknown.append(
+                            (lineno, s, "only an ae<n> bundle takes members, "
+                                        "lacp and load-balance"))
+                    else:
+                        why = bundle_statement(
+                            cfg.bundles.setdefault(iface, new_bundle()), w)
+                        if why:
+                            cfg.unknown.append((lineno, s, why))
                 elif w[0] == "mtu" and len(w) > 1 and is_number(w[1]):
                     # BOUNDED HERE TOO, unlike a pool's numbers, and the
                     # difference is which reader this is. A pool's are read
@@ -3806,6 +3886,26 @@ class Config:
         # it would leave an interface the configuration no longer mentions.
         loopback_add = sorted(other.loopbacks - self.loopbacks)
         loopback_del = sorted(self.loopbacks - other.loopbacks)
+        # A bundle is created and destroyed too (#455). One whose mode, rate
+        # or hash changed is rebuilt: the hash is fixed at creation and the
+        # mode and rate at each member's joining, so a rebuild is the change,
+        # and it is listed as one so the commit can say it drops the bundle.
+        bundle_add = {k: v for k, v in other.bundles.items()
+                      if k not in self.bundles
+                      or {x: self.bundles[k][x] for x in BUNDLE_DEFAULTS}
+                      != {x: v[x] for x in BUNDLE_DEFAULTS}}
+        bundle_del = sorted(k for k in self.bundles
+                            if k not in other.bundles or k in bundle_add)
+        member_add = {k: [m for m in v["members"]
+                          if m not in self.bundles[k]["members"]]
+                      for k, v in other.bundles.items()
+                      if k in self.bundles and k not in bundle_add}
+        member_add = {k: v for k, v in member_add.items() if v}
+        member_del = {k: [m for m in self.bundles[k]["members"]
+                          if m not in v["members"]]
+                      for k, v in other.bundles.items()
+                      if k in self.bundles and k not in bundle_add}
+        member_del = {k: v for k, v in member_del.items() if v}
         lcp_set = {k: v for k, v in other.linux_names.items()
                    if self.linux_names.get(k) != v}
         lcp_del = [k for k in self.linux_names if k not in other.linux_names]
@@ -3896,6 +3996,10 @@ class Config:
             "vrf_set": vrf_set,
             "loopback_add": loopback_add,
             "loopback_del": loopback_del,
+            "bundle_add": bundle_add,
+            "bundle_del": bundle_del,
+            "member_add": member_add,
+            "member_del": member_del,
             "lcp_set": lcp_set,
             "lcp_del": lcp_del,
             "subif_add": subif_add,

@@ -435,12 +435,35 @@ _refused = [
     ("delete sub-interface", "delete_subif",
      lambda sh: sh.delete_subif("pg0.10"),
      f"error: could not delete pg0.10: {REASON}"),
+    # An LACP bundle's five dataplane steps (#455).
+    ("create bundle", "bond_create2",
+     lambda sh: sh.create_bundle("ae0", config.new_bundle()),
+     f"error: could not create ae0: {REASON}"),
+    ("name bundle", "sw_interface_set_interface_name",
+     lambda sh: sh.create_bundle("ae0", config.new_bundle()),
+     f"error: could not name ae0: {REASON}"),
+    ("add member", "bond_add_member",
+     lambda sh: sh.add_member("ae0", "pg0", config.new_bundle()),
+     f"error: could not add pg0 to its bundle: {REASON}"),
+    ("detach member", "bond_detach_member",
+     lambda sh: sh.detach_member("pg0"),
+     f"error: could not detach pg0: {REASON}"),
+    ("delete bundle", "bond_delete",
+     lambda sh: sh.delete_bundle("ae0"),
+     f"error: could not delete ae0: {REASON}"),
 ]
 for label, message, verb, line in _refused:
-    api = Api(have={"pg0": 1, "loop3": 7, "pg0.10": 9}, refuse={message})
+    api = Api(have={"pg0": 1, "loop3": 7, "pg0.10": 9, "ae0": 11},
+              refuse={message})
     rv, text = driven(verb, shell(api))
     says(label, text, line, rv)
 print(f"  {len(_refused)} verbs, each naming the dataplane's own refusal")
+
+print("\n=== a bundle member the dataplane does not have (#455) ===")
+_rv, _text = driven(lambda: shell(Api(have={"ae0": 11})).add_member(
+    "ae0", "pg9", config.new_bundle()))
+says("member", _text, "error: no interface named pg9", _rv)
+print("  pg9 refused as a member, by name")
 
 print("\n=== a sub-interface whose parent is not on this box ===")
 # Distinct from the sentence above and not a duplicate of it: the name the
@@ -1429,7 +1452,7 @@ says("cgnat attachment", _text,
 
 _rv, _text = driven(cfg_shell().do_config, "no interface eth9")
 says("removing a physical port", _text,
-     "error: eth9: only a sub-interface or a loopback can be removed",
+     "error: eth9: only a sub-interface, a loopback or a bundle can be removed",
      _rv, expect=True)
 print("  an attachment with no direction and a port a configuration cannot "
       "remove")
@@ -2068,8 +2091,9 @@ WIDEST["an interface name"] = (len("TenGigabitEthernet0/0/0") + 1
 #: vocabulary and not a list of sites: it is six words for the whole file, and
 #: a site that starts carrying an interface name under one of them is bounded
 #: on the next run with nothing added here.
+#: `member` is a bundle's port (#455): in prismash.py it names nothing else.
 IFNAMES = ("ifname", "iface", "parent", "sub", "host_name", "src",
-           "tracked")
+           "tracked", "member")
 
 #: Every collection of strings the product declares at module level, which is
 #: where its closed sets live - URPF_MODES, the role names, the daemons, the

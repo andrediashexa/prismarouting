@@ -48,6 +48,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
                     is_static_route, static_route, static_route_key,
                     _address_family_error, _is_loopback, _is_lcp_tap,
+                    _is_bundle, new_bundle, bundle_statement,
                     prefix_error, prefix_why, address_error,
                     text_error, text_why,
                     mac_error, mac_normal,
@@ -869,9 +870,9 @@ ARG_INTERFACE_NEW = "<interface>, or a name that creates one"
 HINT_NOTES = {
     ARG_INTERFACE_NEW:
         "a name this box has not got is how one is made: <parent>.<tag> "
-        "creates a VLAN sub-interface - its parent has to exist - and "
-        "loop<n> creates a loopback. Anything else is refused at the commit, "
-        "naming what the box has.",
+        "creates a VLAN sub-interface - its parent has to exist - "
+        "loop<n> creates a loopback, and ae<n> an LACP bundle. Anything else "
+        "is refused at the commit, naming what the box has.",
 }
 #: The card as LINUX names it, which is a different question from
 #: ARG_INTERFACE and has to be: before the dataplane has been given a card it
@@ -1001,6 +1002,8 @@ SHOW = {
     "hardware": ("the box's physical NICs as Linux has them, and which one "
                  "carries the default route", None),
     "version": ("Prisma Routing, VPP and FRR versions", None),
+    "lacp": ("LACP bundles: each member and whether it is in the bundle",
+             None),
     "policy": ("routing policies: each one, its terms, and where it is "
                "applied", "[<policy>]"),
     "system": ("this machine", {
@@ -1297,6 +1300,18 @@ INTERFACE_BLOCK = {
     "linux-name": ("another name for FRR and 'ip' to see this interface by; "
                    "without one it is its own", "<name>"),
     "mac-address": ("the MAC this interface answers to", "<xx:xx:xx:xx:xx:xx>"),
+    # An LACP bundle's own statements (#455), taken on `interface ae<n>`.
+    "member": ("a port in this LACP bundle; may repeat", ARG_INTERFACE),
+    "lacp": ("this LACP bundle's LACP", {
+        "mode": ("who starts the negotiation", {
+            "active": ("this box sends LACP, the default", None),
+            "passive": ("this box only answers", None)}),
+        "rate": ("how often LACP is sent", {
+            "fast": ("every second", None),
+            "slow": ("every 30 seconds, the default", None)})}),
+    "load-balance": ("how flows are spread over the members", {
+        "l2": ("by MAC", None), "l23": ("by MAC and IP", None),
+        "l34": ("by IP and port, the default", None)}),
     "cgnat": ("this interface's side of the CGNAT", {
         "inside": ("subscribers arrive here", None),
         "outside": ("translated traffic leaves here", None)}),
@@ -1365,6 +1380,9 @@ INTERFACE_BLOCK = {
 # changes nothing yet - it is here so that one added later cannot be shadowed
 # by a shorter entry above it and silently stop being intercepted.
 INTERFACE_DATAPLANE = (
+    ("member",),
+    ("lacp",),
+    ("load-balance",),
     ("cgnat",),
     ("ipv6", "nd", "suppress-ra"),
     ("ipv4", "address"),
@@ -1405,6 +1423,13 @@ INTERFACE_BLOCK["no"] = ("remove a statement from this interface",
                          {k: v for k, v in INTERFACE_BLOCK.items()
                           if k not in ("exit",)
                           and k not in INTERFACE_NO_REFUSED})
+#: An interface that is not a bundle: the same block without a bundle's own
+#: statements (#455), which are refused there.
+BUNDLE_ONLY = ("member", "lacp", "load-balance")
+PORT_BLOCK = {k: v for k, v in INTERFACE_BLOCK.items() if k not in BUNDLE_ONLY}
+PORT_BLOCK["no"] = (INTERFACE_BLOCK["no"][0],
+                    {k: v for k, v in INTERFACE_BLOCK["no"][1].items()
+                     if k not in BUNDLE_ONLY})
 
 
 def dataplane_statement(words):
@@ -2075,6 +2100,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
                "loopback_add", "loopback_del", "lcp_set", "lcp_del",
+               "bundle_add", "bundle_del", "member_add", "member_del",
                "mac_set", "ra_on", "ra_off")
 
 
@@ -3014,7 +3040,10 @@ def block_grammar(block, words):
     if block.strip() == STATIC_BLOCK:
         return STATIC_BLOCK_GRAMMAR
     if block.startswith("interface "):
-        return INTERFACE_BLOCK
+        # A bundle's own statements only in a bundle (#455).
+        if len(block.split()) > 1 and _is_bundle(block.split()[1]):
+            return INTERFACE_BLOCK
+        return PORT_BLOCK
     if block.strip() == "rpki":
         return RPKI_BLOCK
     if block.split()[:2] == ["router", "isis"]:
@@ -6670,6 +6699,7 @@ class Shell:
         cfg.macs = self.device_macs()
         cfg.linux_names = self.device_linux_names()
         cfg.loopbacks = self.device_loopbacks()
+        cfg.bundles = self.device_bundles()
         cfg.admin_down = self.device_admin_down()
         cfg.ra_enabled = self.device_ra_enabled()
         cfg.vrrp = self.device_vrrp()
@@ -7731,6 +7761,113 @@ class Shell:
             return False
         return True
 
+    #: The bond's load-balance as bond.api spells it, and back (#455).
+    BOND_LB = {"l2": "BOND_API_LB_ALGO_L2", "l23": "BOND_API_LB_ALGO_L23",
+               "l34": "BOND_API_LB_ALGO_L34"}
+
+    def create_bundle(self, ifname, bundle):
+        """
+        An LACP bundle (#455): a bond in LACP mode at the instance its name
+        carries, renamed to that name, brought up, and its members added.
+
+        RENAMED to ae<n>, and that is what makes it one interface everywhere:
+        VPP calls it BondEthernet<n>, and every other part of this product -
+        the configuration, `show interface`, the linux_cp pair FRR routes over
+        - would then need a translation for one kind of interface. Measured
+        in lab/lacp.sh against a Linux 802.3ad bond: both members reach
+        collecting-distributing, and traffic crosses with one member cut.
+        """
+        r = self.api_call("bond_create2",
+                          {"mode": "BOND_API_MODE_LACP",
+                           "lb": self.BOND_LB[bundle["hash"]],
+                           "numa_only": False, "enable_gso": False,
+                           "use_custom_mac": False,
+                           "mac_address": "00:00:00:00:00:00",
+                           "id": int(ifname[2:])})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"could not create {ifname}: {r.reason}")
+            return False
+        idx = r.fields.get("sw_if_index")
+        r = self.api_call("sw_interface_set_interface_name",
+                          {"sw_if_index": idx, "name": ifname})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"could not name {ifname}: {r.reason}")
+            return False
+        for m in bundle["members"]:
+            if not self.add_member(ifname, m, bundle):
+                return False
+        return True
+
+    def add_member(self, ifname, member, bundle):
+        """One port into a bundle, with the bundle's LACP mode and rate."""
+        bidx = self.api.interface_index(ifname)
+        midx = self.api.interface_index(member)
+        if bidx is None or midx is None:
+            self.err(f"no interface named {member}")
+            return False
+        if not self.set_admin(member, True):
+            return False
+        r = self.api_call("bond_add_member",
+                          {"sw_if_index": midx, "bond_sw_if_index": bidx,
+                           "is_passive": bundle["lacp"] == "passive",
+                           "is_long_timeout": bundle["rate"] == "slow"})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"could not add {member} to its bundle: "
+                               f"{r.reason}")
+            return False
+        return True
+
+    def detach_member(self, member):
+        """A port out of its bundle. Already out is the outcome asked for."""
+        midx = self.api.interface_index(member)
+        if midx is None:
+            return True
+        r = self.api_call("bond_detach_member", {"sw_if_index": midx})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"could not detach {member}: {r.reason}")
+            return False
+        return True
+
+    def delete_bundle(self, ifname):
+        """Remove a bundle; its members go back to being ports."""
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            return True
+        r = self.api_call("bond_delete", {"sw_if_index": idx})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"could not delete {ifname}: {r.reason}")
+            return False
+        return True
+
+    def device_bundles(self) -> dict:
+        """
+        The bundles the dataplane has, read back (#455): every bond renamed
+        to ae<n>, its members, and its settings. A bond with another name is
+        not this configuration's and is left alone. The mode and rate are
+        read off the first member, since they are set per member; a bundle
+        with none has the defaults.
+        """
+        r = self.api.dump("sw_bond_interface_dump", {"sw_if_index": 0xFFFFFFFF})
+        if r.state != vppapi.OK:
+            return {}
+        lb_back = {v: k for k, v in self.BOND_LB.items()}
+        out = {}
+        for row in r.fields.get("rows", []):
+            name = row.get("interface_name", "")
+            if not _is_bundle(name):
+                continue
+            b = new_bundle()
+            b["hash"] = lb_back.get(row.get("lb"), b["hash"])
+            m = self.api.dump("sw_member_interface_dump",
+                              {"sw_if_index": row.get("sw_if_index")})
+            rows = m.fields.get("rows", []) if m.state == vppapi.OK else []
+            b["members"] = [x.get("interface_name") for x in rows]
+            if rows:
+                b["lacp"] = "passive" if rows[0].get("is_passive") else "active"
+                b["rate"] = "slow" if rows[0].get("is_long_timeout") else "fast"
+            out[name] = b
+        return out
+
     def delete_loopback(self, ifname):
         """Remove a loopback. Already gone is the outcome asked for."""
         idx = self.api.interface_index(ifname)
@@ -8531,6 +8668,28 @@ class Shell:
                 # the commit that would have brought it into existence - which
                 # is the same trap the sub-interface line above exists for.
                 have |= set(target.loopbacks)
+                # And a bundle the configuration creates (#455), for the
+                # same reason.
+                have |= set(target.bundles)
+                # AND WHAT A BUNDLE'S MEMBERS MUST BE (#455), asked here so
+                # `commit check` refuses what the commit would fail on, with
+                # the box half changed: a port the box has, in one bundle
+                # only, and carrying nothing of its own - an address or a
+                # CGNAT side on a member is configuration on a port that no
+                # longer forwards on its own.
+                _seen = {}
+                for _b in sorted(target.bundles):
+                    for _m in target.bundles[_b]["members"]:
+                        if _m not in have and _m not in pairs:
+                            self.err(f"a bundle member this box does not have: {_m}")
+                            ok = False
+                        elif _m in _seen:
+                            self.err(f"a port in two bundles: {_m}")
+                            ok = False
+                        elif target.addresses.get(_m) or _m in target.interfaces:
+                            self.err(f"a bundle member with config of its own: {_m}")
+                            ok = False
+                        _seen.setdefault(_m, _b)
                 # And the LINUX side of a linux_cp pair the configuration
                 # creates, which is the third name in the same sentence and was
                 # the one still missing. `pairs` above is read from `show lcp`,
@@ -9632,6 +9791,30 @@ class Shell:
         for ifname in d["loopback_add"]:
             if not self.create_loopback(ifname):
                 return False
+        # Bundles (#455): a rebuilt one is deleted first, since its old self
+        # holds the name and the members; then each new one is created with
+        # its members, and a kept one gains and loses members in place.
+        for ifname in d.get("bundle_del", []):
+            if ifname in d.get("bundle_add", {}) \
+                    and not self.delete_bundle(ifname):
+                return False
+        for ifname, bundle in d.get("bundle_add", {}).items():
+            if not self.create_bundle(ifname, bundle):
+                return False
+            # A new bond starts down, like a new sub-interface, and nothing
+            # else in this commit would bring it up: an address on a bundle
+            # nobody raised answered no ARP, measured in lab/lacp.sh.
+            if ifname not in target.admin_down \
+                    and not self.set_admin(ifname, True):
+                return False
+        for ifname, members in d.get("member_del", {}).items():
+            for m in members:
+                if not self.detach_member(m):
+                    return False
+        for ifname, members in d.get("member_add", {}).items():
+            for m in members:
+                if not self.add_member(ifname, m, target.bundles[ifname]):
+                    return False
         for ifname, tag in d["subif_add"].items():
             if not self.create_subif(ifname, tag):
                 return False
@@ -9893,6 +10076,10 @@ class Shell:
                 return False
         for ifname in d["loopback_del"]:
             if not self.delete_loopback(ifname):
+                return False
+        for ifname in d.get("bundle_del", []):
+            if ifname not in d.get("bundle_add", {}) \
+                    and not self.delete_bundle(ifname):
                 return False
 
         for ifname in d["mtu_del"]:
@@ -12606,15 +12793,17 @@ class Shell:
         # deliver.
         if line.startswith("no interface "):
             gone = w[2] if len(w) > 2 else ""
-            if "." not in gone and not _is_loopback(gone):
+            if "." not in gone and not _is_loopback(gone) \
+                    and not _is_bundle(gone):
                 self.err_prose(
-                    f"{gone or '<name>'}: only a sub-interface or a loopback "
-                    f"can be removed",
+                    f"{gone or '<name>'}: only a sub-interface, a loopback or "
+                    f"a bundle can be removed",
                     "a physical port is not created by this configuration, so "
                     "there is nothing here to remove")
                 return True
             self.candidate.vlans.pop(gone, None)
             self.candidate.loopbacks.discard(gone)
+            self.candidate.bundles.pop(gone, None)
             self.candidate.linux_names.pop(gone, None)
             self.candidate.addresses.pop(gone, None)
             self.candidate.mtus.pop(gone, None)
@@ -12773,6 +12962,24 @@ class Shell:
             return True
         if iface and neg and dp == "mtu":
             self.candidate.mtus.pop(iface, None)
+            return True
+
+        # A bundle's members and LACP settings (#455): the model's own
+        # reader, config.bundle_statement(), so the prompt and a saved file
+        # cannot take different things.
+        if iface and dp in ("member", "lacp", "load-balance"):
+            if not _is_bundle(iface):
+                self.err("only an ae<n> bundle takes members, lacp and "
+                         "load-balance")
+                return True
+            if dp == "member" and not neg and len(w) == 2 \
+                    and (_is_bundle(w[1]) or w[1] == iface):
+                self.err("a bundle's member is a port, not a bundle")
+                return True
+            why = bundle_statement(
+                self.candidate.bundles.setdefault(iface, new_bundle()), w)
+            if why:
+                self.err(why)
             return True
 
         if iface and not neg and dp == "mac-address":
@@ -13167,6 +13374,10 @@ class Shell:
             # typed inside it are about an interface that does not exist yet.
             if line.startswith("interface ") and _is_loopback(line.split()[1]):
                 self.candidate.loopbacks.add(line.split()[1])
+            # A bundle is created by being named too (#455).
+            if line.startswith("interface ") and _is_bundle(line.split()[1]):
+                self.candidate.bundles.setdefault(line.split()[1],
+                                                  new_bundle())
             # What NESTS is FRR's grammar, not this VTY's stack discipline.
             # `address-family` nests in the `router` above it, and a second
             # one replaces the first; every other block is a top-level context
@@ -14111,6 +14322,12 @@ class Shell:
             return
         if line == "show system cpu":
             self.show_system_cpu()
+            return
+        # The bundles' LACP state (#455), in the dataplane's own words: each
+        # member's actor and partner state and its mux state, which is what
+        # says a member is collecting and distributing.
+        if line == "show lacp":
+            self.vpp("show lacp details")
             return
         if line.split()[:2] == ["show", "policy"]:
             self.show_policy(line.split()[2:])
@@ -17916,7 +18133,11 @@ class Shell:
         if not self.frr_ctx:
             return TREE[self.grammar_mode()]
         if self.frr_ctx[-1].startswith("interface "):
-            return INTERFACE_BLOCK
+            # A bundle's own statements only in a bundle (#455): on a port
+            # they are refused, so `?` there does not offer them.
+            if _is_bundle(self.frr_ctx[-1].split()[1]):
+                return INTERFACE_BLOCK
+            return PORT_BLOCK
         return None
 
     def spell_out(self, line):

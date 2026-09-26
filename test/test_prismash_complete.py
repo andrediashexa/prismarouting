@@ -7793,5 +7793,49 @@ check(sh2.mode == "config" and sh2.user is None,
       "a commit that left no candidate at all kept the user block open")
 print("  found again by name, or left and said")
 
+
+print("\n=== a bundle's members, asked at commit check (#455) ===")
+# Each refused before the commit would fail part-way through: a port the box
+# does not have, one port in two bundles, and a member carrying config of its
+# own. The control: two real ports in one bundle pass.
+for _lines, _want in (
+        (["interface ae0", "member eth9", "exit"],
+         "a bundle member this box does not have: eth9"),
+        (["interface ae0", "member host-veth-vpp", "exit",
+          "interface ae1", "member host-veth-vpp", "exit"],
+         "a port in two bundles: host-veth-vpp"),
+        (["interface host-veth-vpp", "ipv4 address 10.9.9.1/24", "exit",
+          "interface ae0", "member host-veth-vpp", "exit"],
+         "a bundle member with config of its own: host-veth-vpp")):
+    sh = shell_with_frr()
+    sh.feed("configure")
+    for _l in _lines:
+        sh.feed(_l)
+    _t = commit_check(sh)
+    check(_want in _t, f"{_lines} should be refused with {_want!r}: {_t!r}")
+sh = shell_with_frr()
+sh.feed("configure")
+for _l in ("interface ae0", "member host-veth-vpp",
+           "member TenGigabitEthernet0/8/0", "exit"):
+    sh.feed(_l)
+_t = commit_check(sh)
+check("bundle member" not in _t and "two bundles" not in _t,
+      f"two real ports in one bundle pass: {_t!r}")
+print("  a missing port, a port twice, a member with config: refused")
+
+# And at the prompt, before any commit: a bundle as a member, and a setting
+# bundle_statement() does not know.
+for _l, _want in (("member ae1", "a bundle's member is a port, not a bundle"),
+                  ("lacp mode sideways", "lacp mode")):
+    sh = shell_with_frr()
+    sh.feed("configure")
+    sh.feed("interface ae0")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.feed(_l)
+    check("error:" in out.getvalue() and _want in out.getvalue(),
+          f"{_l!r} is refused at the prompt: {out.getvalue().strip()!r}")
+print("  a bundle as a member, and an unknown lacp mode: refused at the prompt")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
