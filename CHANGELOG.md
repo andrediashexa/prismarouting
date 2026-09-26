@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.130.0 - dataplane lives under system
+
+### Added
+
 * **`dataplane` lives under `system`** ([#457](https://github.com/andrediashexa/hexarouting/issues/457)).
   Asked for by the maintainer: which card the box hands to the dataplane is a
   fact about the machine. It is typed as `system` > `dataplane` >
@@ -89,8 +95,6 @@ version has a chance of seeing it.
   replays its file at boot where nobody can be told anything; the next `save`
   writes the block. `show hardware` and the other screens that told the
   operator what to type now say the new words.
-
-### Fixed
 
 ## 0.129.0 - the CGNAT gets the memory you give it
 
