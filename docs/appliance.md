@@ -2985,9 +2985,11 @@ The second step (#448, phase B). What the VTY does to the host — creating,
 changing and removing accounts, their groups and passwords, checking and
 reloading sshd, starting and stopping snmpd, and writing the files behind
 them (`/etc/resolv.conf`, the sshd drop-in, each account's `authorized_keys`,
-`snmpd.conf` and net-snmp's v3 store), and setting the Linux end of a
-dataplane interface up or down, its MTU and its description — it now
-**asks** of
+`snmpd.conf` and net-snmp's v3 store), setting the Linux end of a
+dataplane interface up or down, its MTU and its description, putting the
+management default route back after a card changed hands, restarting the
+tuner after `system cpu` or `system memory`, and `system reboot` and
+`system shutdown` — it now **asks** of
 `prisma-routing-doors.service`, a root daemon on
 `/run/prisma-routing/doors.sock`, instead of running the command itself. From
 inside a container it could not run them, and a container that could would
@@ -3004,8 +3006,12 @@ daemon, not the caller, decides its mode and whether it is replaced by rename;
 through a symbolic link — a `.ssh` an account had made a link was followed by
 the old code, as root, and the `chmod 0700` landed on its target. Anything
 else is refused, whoever asks. `test/test_doors.py`
-reads every command `system.py` runs off its source and requires each to be a
-door, so a new one fails there and not on a box.
+reads every command `system.py` runs, and every one `prismash.py` sends
+through `self.sys._run` or `host_run`, off the source and requires each to be
+a door, so a new one fails there and not on a box. Reading `system.py` alone
+was the first cut, and it missed `system reboot`: a box with the daemon would
+have refused root its own reboot. That was caught before any release carried
+it.
 
 **Who may use a door has not changed.** The daemon reads the caller's uid from
 the socket (`SO_PEERCRED`), which the caller cannot forge, and runs a door

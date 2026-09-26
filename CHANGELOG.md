@@ -79,7 +79,10 @@ version has a chance of seeing it.
 
 * **The Linux end of a dataplane interface is set through the host's doors** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase B).
   Up or down, its MTU and its description (`ip link set dev <pair> ...`),
-  and the MTU read-back behind the OSPF MTU-mismatch finding. The Linux end
+  and the MTU read-back behind the OSPF MTU-mismatch finding. So are
+  `system reboot`, `system shutdown`, the tuner's restart after `system cpu`
+  and `system memory`, and the management default route put back after a
+  card changed hands (the gateway checked as an address). The Linux end
   lives in the host's network namespace, and from a container the same
   `ip link` would act on the container's own interfaces and report success.
   The netdev is checked (at most 15 characters, never an option), the MTU is

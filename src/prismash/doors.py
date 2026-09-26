@@ -31,6 +31,7 @@ upgraded before its daemon started is a box that still works.
 """
 
 import errno
+import ipaddress
 import json
 import os
 import re
@@ -77,6 +78,14 @@ FIXED = {
     ("systemctl", "disable", "--now", "snmpd"): "stop snmpd",
     ("systemctl", "enable", "snmpd"): "enable snmpd",
     ("systemctl", "restart", "snmpd"): "restart snmpd",
+    # `system reboot` and `system shutdown` (Shell.ask_systemd), and the
+    # tuner the `system cpu` / `system memory` changes restart. Missed by the
+    # first cut, whose suite read system.py only: a box with the daemon would
+    # have refused root its own reboot. test_doors.py now reads prismash.py's
+    # `self.sys._run` too.
+    ("systemctl", "reboot"): "restart the box",
+    ("systemctl", "poweroff"): "shut the box down",
+    ("systemctl", "restart", "prisma-routing-tune"): "recompute the tuning",
 }
 
 #: The longest a door may take. The VTY's own default is 30 seconds.
@@ -133,7 +142,20 @@ def verb_of(argv, stdin=None):
     if n == 6 and argv[:5] == ("ip", "-o", "link", "show", "dev") \
             and NETDEV.match(argv[5]):
         return "read a Linux interface"
+    if n == 8 and argv[:5] == ("ip", "route", "replace", "default", "via") \
+            and _address(argv[5]) and argv[6] == "dev" \
+            and NETDEV.match(argv[7]):
+        return "put the management default route back"
     return None
+
+
+def _address(text):
+    """True when `text` is an IPv4 or IPv6 address and nothing else."""
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        return False
 
 
 #: The files a door writes, and HOW: each (operation, path) the daemon takes,

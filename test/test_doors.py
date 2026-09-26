@@ -65,11 +65,19 @@ def slot(e):
         return ["68", "1500", "9000"]
     if isinstance(e, ast.BoolOp) and ast.unparse(e) == "text or ''":
         return ["uplink to the transit", ""]
-    return None
+    u = ast.unparse(e)
+    return {"verb": ["reboot", "poweroff"],
+            "self.TUNE_UNIT": ["prisma-routing-tune"],
+            "gw": ["192.0.2.1", "2001:db8::1"],
+            "mgmt['name']": ["ens18"]}.get(u)
 
 
+# In prismash.py, `self.sys._run` and `self.snmp._run` are the doors as well:
+# the first cut read system.py only and missed `system reboot`, which a box
+# with the daemon would have refused root.
 sites = []
-for src, attr in (("system.py", "_run"), ("prismash.py", "host_run")):
+for src, attr in (("system.py", "_run"), ("prismash.py", "host_run"),
+                  ("prismash.py", "_run")):
     tree = ast.parse(open(os.path.join(SRC, src)).read())
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
@@ -88,8 +96,8 @@ for src, attr in (("system.py", "_run"), ("prismash.py", "host_run")):
             sites.append((f"{src}:{node.lineno}", choices, stdin))
 check(len([x for x in sites if x[0].startswith("system")]) >= 12,
       "at least 12 command sites read off system.py")
-check(len([x for x in sites if x[0].startswith("prismash")]) >= 4,
-      "and the 4 ip-link sites off prismash.py")
+check(len([x for x in sites if x[0].startswith("prismash")]) >= 10,
+      "and the 10 sites off prismash.py: ip-link, systemctl, the route")
 for where, choices, stdin in sites:
     if choices is None:
         check(False, f"{where}: an argument this suite does not know")
@@ -124,7 +132,13 @@ for argv, stdin, why in (
         (["ip", "link", "set", "dev", "ens19", "alias", "a\nb"], None, "an alias with a newline"),
         (["ip", "link", "set", "dev", "ens19", "alias", "x" * 256], None, "an alias of 256"),
         (["ip", "link", "set", "dev", "ens19", "netns", "1"], None, "another ip-link verb"),
-        (["ip", "link", "del", "ens19"], None, "a deletion")):
+        (["ip", "link", "del", "ens19"], None, "a deletion"),
+        (["ip", "route", "replace", "default", "via", "gw", "dev", "ens18"],
+         None, "a gateway that is not an address"),
+        (["ip", "route", "replace", "10.0.0.0/8", "via", "192.0.2.1", "dev",
+          "ens18"], None, "a route that is not the default"),
+        (["systemctl", "restart", "sshd"], None, "a unit restart it never asks"),
+        (["systemctl", "reboot", "--force"], None, "a reboot that skips the drain")):
     check(doors.verb_of(argv, stdin) is None, f"refused: {why}")
 check(doors.verb_of(["useradd", "-m", "-s", LOGIN_SHELL, "a" * 32]) is not None,
       "and 32 characters is an account, useradd(8)'s limit")
