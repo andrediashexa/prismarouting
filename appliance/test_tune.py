@@ -2983,6 +2983,26 @@ with tempfile.TemporaryDirectory() as root:
           and "(a quarter of the RAM, at least 2)"
           in tune.render_report(_d, None),
           "unset: a quarter of 64 GB, and 16384 buffers per worker")
+    # RX AND CGNAT WORKERS (#466): of the three workers here, the last two
+    # translate and the first receives; the card polls only the receiver,
+    # with as many RX queues as there are receivers, and the plugin is told
+    # which translate.
+    _s = tune.plan(topo, "eth0", 200000, cgnat_workers=2)
+    check(_s["rx_wids"] == [0] and _s["cgnat_wids"] == [1, 2]
+          and _s["cpu_notes"] == [], f"one receives, two translate: "
+          f"{_s['rx_wids']} {_s['cgnat_wids']}")
+    _v = tune.render_vpp(_s)
+    check("num-rx-queues 1\n" in _v and "    workers 0\n" in _v
+          and "bpa {\n  cgnat-workers 1-2\n}" in _v,
+          f"the card polls the receiver only, and the plugin is told: {_v}")
+    _s = tune.plan(topo, "eth0", 200000, cgnat_workers=3)
+    check(_s["rx_wids"] == [] and "at least one has to receive"
+          in _s["cpu_notes"][0] and "cgnat-workers" not in
+          tune.render_vpp(_s), f"every worker asked for is no split, and "
+          f"said: {_s['cpu_notes']}")
+    check("cgnat-workers" not in tune.render_vpp(tune.plan(topo, "eth0",
+                                                          200000)),
+          "unasked, no split and no bpa stanza")
     # The default is the layout every box has had.
     _r = tune.plan(topo, "eth0", 200000)
     check(_r["main_cpus"] == [] and _r["os_cpus"] == [0]

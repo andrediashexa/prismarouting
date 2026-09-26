@@ -798,7 +798,8 @@ def write_management_path(handover, path=None):
 def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
          config_path=None, vpp_base=None, mgmt_conf=None, cgnat_memory_gb=None,
          control_plane_cores=None, main_thread="shared",
-         control_plane_memory_gb=None, buffers_per_numa=None):
+         control_plane_memory_gb=None, buffers_per_numa=None,
+         cgnat_workers=None):
     # The card this box is reached on, read for one reason: so the way back
     # can be computed off it below, before the bind takes it. It used to be
     # read to REFUSE that card when it was named (#123), and to let it
@@ -1007,6 +1008,23 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         worker_cores = worker_cores[:max_workers]
 
     workers = [lead for lead, _ in worker_cores]
+
+    # RX AND CGNAT WORKERS (#466): the last `cgnat_workers` of them own
+    # subscribers and translate, the rest take packets off the cards and hand
+    # them over. VPP worker ids, which are positions in `workers`. Only a
+    # real split is written: every worker, or none left to receive, is no
+    # split at all, and said.
+    rx_wids, cgnat_wids = [], []
+    if cgnat_workers:
+        if 0 < cgnat_workers < len(workers):
+            rx_wids = list(range(len(workers) - cgnat_workers))
+            cgnat_wids = list(range(len(workers) - cgnat_workers,
+                                    len(workers)))
+        else:
+            cpu_notes.append(f"{cgnat_workers} CGNAT worker(s) asked for "
+                             f"and {len(workers)} worker(s) on this box: "
+                             f"at least one has to receive, so every worker "
+                             f"does both")
     # The dedicated main thread is isolated with the workers: kept off the
     # scheduler is the whole of what "dedicated" buys.
     isolated = sorted(main_cpus
@@ -1154,6 +1172,10 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "control_plane_memory_gb": control_plane_memory_gb,
         "control_plane_keeps_gb": for_os,
         "buffers_per_numa": buffers_per_numa,
+        # The split (#466): VPP worker ids that receive and hand over, and
+        # the ones that translate. Both empty is every worker doing both.
+        "rx_wids": rx_wids,
+        "cgnat_wids": cgnat_wids,
         "workers": workers,
         "isolated": isolated,
         "hugepages_gb": hugepages_gb,
@@ -1519,6 +1541,10 @@ def render_vpp(p):
     # an operator has to be told - the same reason the hugepage cap above
     # announces itself instead of just applying.
     want_q = max(1, len(p["workers"]))
+    # With a split, only the receiving workers poll the cards (#466), so
+    # there are as many RX queues as there are of them.
+    rx_wids = p.get("rx_wids") or []
+    want_rx = len(rx_wids) if rx_wids else want_q
     # PER CARD, and not one number for the box. The queue count is read off
     # each card (#330), and a box with a virtio card beside a 10G one has two
     # different answers - asking the virtio card for the 10G card's count is
@@ -1597,9 +1623,10 @@ def render_vpp(p):
         stanzas = "".join(
             f"  dev {c['pci']} {{\n"
             f"    name {c['name']}\n"
-            f"    num-rx-queues {_queues(c)}\n"
+            f"    num-rx-queues {min(_queues(c), want_rx)}\n"
             f"    num-tx-queues {_queues(c)}\n"
-            "  }\n" for c in devs)
+            + (f"    workers {fmt_list(rx_wids)}\n" if rx_wids else "")
+            + "  }\n" for c in devs)
         # `dev default` sets defaults for the devices named above; it does NOT
         # widen the allowlist, which is what the paragraph below is about. The
         # SMALLEST count across the claimed cards, because a default larger
@@ -1709,6 +1736,8 @@ def render_vpp(p):
         "}\n"
         + ("\n" + ethernet if ethernet else "")
         + ("\n" + statseg if statseg else "")
+        + (f"\nbpa {{\n  cgnat-workers {fmt_list(p['cgnat_wids'])}\n}}\n"
+           if p.get("cgnat_wids") else "")
     )
 
 
@@ -2632,6 +2661,10 @@ def main():
     ap.add_argument("--buffers-per-numa", type=int,
                     help="packet buffers per NUMA node; empty is 16384 per "
                          "worker (#466)")
+    ap.add_argument("--cgnat-workers", type=int,
+                    help="how many workers translate; the rest only receive "
+                         "and hand over (#466). Empty: every worker does "
+                         "both")
     ap.add_argument("--main-thread", choices=("shared", "dedicated"),
                     default="shared",
                     help="whether VPP's main thread shares the control "
@@ -2693,7 +2726,8 @@ def main():
              control_plane_cores=a.control_plane_cores,
              main_thread=a.main_thread,
              control_plane_memory_gb=a.control_plane_memory_gb,
-             buffers_per_numa=a.buffers_per_numa)
+             buffers_per_numa=a.buffers_per_numa,
+             cgnat_workers=a.cgnat_workers)
 
     if a.would_claim:
         return would_claim(p, a.would_claim)

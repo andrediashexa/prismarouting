@@ -2610,7 +2610,10 @@ TREE["cpu"] = {
         "shared": ("on the control plane's first core, the default", None),
         "dedicated": ("a core of its own, isolated like a worker's; costs "
                       "one worker", None)}),
+    "cgnat-workers": ("how many workers translate; the rest take packets off "
+                      "the cards and hand them over", "<1-1024>"),
     "no": ("go back to the default", {
+        "cgnat-workers": ("every worker receives and translates", None),
         "control-plane": ("one control-plane core", None),
         "main-thread": ("the main thread shares the control plane's core",
                         None)}),
@@ -13847,7 +13850,10 @@ class Shell:
         print("configured, in effect from the next reboot:")
         print(f"  control-plane cores   {cp}")
         print(f"  VPP main thread       {main}")
-        main_core = workers = ""
+        cw = self.read_tune_key("PRISMA_CGNAT_WORKERS")
+        print(f"  CGNAT workers         "
+              f"{cw if cw else 'all, each also receiving'}")
+        main_core = workers = cgnat_wids = ""
         try:
             with open(self.STARTUP_CONF) as f:
                 for raw in f:
@@ -13856,6 +13862,8 @@ class Shell:
                         main_core = w[1]
                     elif w[:1] == ["corelist-workers"] and len(w) > 1:
                         workers = w[1]
+                    elif w[:1] == ["cgnat-workers"] and len(w) > 1:
+                        cgnat_wids = w[1]
         except OSError:
             pass
         try:
@@ -13866,6 +13874,10 @@ class Shell:
         print("this boot:")
         print(f"  VPP main thread       core {main_core or '(not named)'}")
         print(f"  VPP workers           {workers or '(none)'}")
+        # VPP worker ids, as the plugin's stanza names them; the rest of the
+        # workers only receive.
+        print(f"  translating workers   "
+              f"{cgnat_wids if cgnat_wids else 'all of them'}")
         print(f"  isolated from Linux   {isolated or '(none)'}")
         try:
             with open(self.CPU_FENCE) as f:
@@ -15705,8 +15717,11 @@ class Shell:
             if not ok:
                 return False, why
         rc, out = self.sys._run(["systemctl", "restart", self.TUNE_UNIT])
-        print(f"cpu: control plane {cpu.get('control-plane', '1')} core(s), "
-              f"VPP main thread {cpu.get('main-thread', 'shared')}")
+        # One figure a row, and last on it.
+        print(f"cpu: control-plane cores {cpu.get('control-plane', '1')}")
+        print(f"cpu: VPP main thread {cpu.get('main-thread', 'shared')}")
+        print(f"cpu: CGNAT workers "
+              f"{cpu.get('cgnat-workers', 'all, each also receiving')}")
         print_prose("in effect from the next reboot: the cores are isolated "
                     "on the kernel command line, and until then each keeps "
                     "the role it booted with. 'show system cpu' says both")
