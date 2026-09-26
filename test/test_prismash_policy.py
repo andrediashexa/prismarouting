@@ -154,5 +154,28 @@ check(policy.compile_policy(pol, "UP-IN", "import")[-2:]
       "one policy on its own ends in its default")
 ok("the text FRR's dry run accepted")
 
+print("\n=== nest and unnest: the block a file carries, and back ===")
+block = policy.nest(EXAMPLE)
+check(block[0] == "policy-options" and block[-1] == " exit"
+      and " prefix-list CUSTOMERS" in block and "  2001:db8::/32" in block
+      and "  term 20" in block and "   then reject" in block,
+      f"the nested block, as an operator types it: {block}")
+back, bad = policy.unnest(list(enumerate(block, 1)))
+_p2, _e2 = policy.parse([l for _, l in back])
+_uses = {("UP-OUT", "export"), ("UP-IN", "import")}
+check(bad == [] and _e2 == []
+      and policy.compile_all(_p2, _uses) == policy.compile_all(pol, _uses),
+      "read back, it compiles to exactly the same FRR text")
+check(policy.nest([l for _, l in back]) == block, "and writes the same block")
+check(policy.nest([]) == [], "no policy, no block")
+_, bad = policy.unnest(list(enumerate(
+    ["policy-options", " policy-statement P", "  from prefix-list X",
+     "  exit", " exit"], 1)))
+check(bad and "terms, 'term <name>'" in bad[0][2],
+      f"a statement outside a term is said: {bad}")
+_out, _ = policy.unnest(list(enumerate(["ssh port 22"], 1)))
+check(_out == [(1, "ssh port 22")], "and a line outside the block passes")
+ok("one shape, written and read")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

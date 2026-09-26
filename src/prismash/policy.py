@@ -134,6 +134,17 @@ def _parse_one(pol, w):
     """One statement into `pol`; why it could not be, or None."""
     if not w:
         return "not a policy-options statement"
+    # A block opened with nothing in it yet: the level an operator enters.
+    if w[0] == "prefix-list" and len(w) == 2:
+        why = name_error("prefix-list", w[1])
+        if not why:
+            pol.prefix_lists.setdefault(w[1], [])
+        return why
+    if w[0] == "policy-statement" and len(w) == 2:
+        why = name_error("policy-statement", w[1])
+        if not why:
+            pol.statements.setdefault(w[1], {})
+        return why
     if w[0] == "prefix-list" and len(w) == 3:
         why = name_error("prefix-list", w[1]) or network_error(w[2])
         if why:
@@ -264,6 +275,86 @@ def findings(pol):
                     out.append((pname, f"policy-statement {pname} term "
                                        f"{term.name}: no community {args[1]}"))
     return out
+
+
+def nest(flat):
+    """
+    The model's flat `policy-options ...` lines as the block a file carries
+    and an operator types, in the order the lines came. The inverse of
+    unnest(); the one writer of the block.
+    """
+    pls, others, stmts = {}, [], {}
+    for line in flat:
+        w = line.split()[1:]
+        if w[:1] == ["prefix-list"] and len(w) >= 2:
+            pls.setdefault(w[1], [])
+            if len(w) == 3:
+                pls[w[1]].append(w[2])
+        elif w[:1] == ["policy-statement"] and len(w) >= 2:
+            terms = stmts.setdefault(w[1], {})
+            if len(w) >= 4 and w[2] == "term":
+                terms.setdefault(w[3], [])
+                if len(w) > 4:
+                    terms[w[3]].append(" ".join(w[4:]))
+        elif w:
+            others.append(" ".join(w))
+    if not (pls or others or stmts):
+        return []
+    out = ["policy-options"]
+    for name, nets in pls.items():
+        out += [f" prefix-list {name}"] + [f"  {n}" for n in nets] + ["  exit"]
+    out += [f" {o}" for o in others]
+    for name, terms in stmts.items():
+        out.append(f" policy-statement {name}")
+        for term, body in terms.items():
+            out += ([f"  term {term}"] + [f"   {b}" for b in body]
+                    + ["   exit"])
+        out.append("  exit")
+    return out + [" exit"]
+
+
+def unnest(numbered):
+    """
+    The `policy-options` block of a file as the model's flat lines: (the
+    numbered lines with the block rewritten, [(lineno, statement, why)]).
+    Lines outside the block pass through untouched.
+    """
+    out, bad = [], []
+    depth, where = 0, []
+    for n, raw in numbered:
+        s = raw.strip()
+        if depth == 0:
+            if s == "policy-options":
+                depth, where = 1, []
+            else:
+                out.append((n, raw))
+            continue
+        if not s or s.startswith("!"):
+            continue
+        if s in ("exit", "quit", "end"):
+            depth -= 1
+            where = where[:max(0, depth - 1)]
+            continue
+        if depth == 1:
+            w = s.split()
+            if w[0] in ("prefix-list", "policy-statement") and len(w) == 2:
+                out.append((n, f"policy-options {s}"))
+                depth, where = 2, [s]
+            else:
+                out.append((n, f"policy-options {s}"))
+        elif depth == 2 and where[0].startswith("prefix-list "):
+            out.append((n, f"policy-options {where[0]} {s}"))
+        elif depth == 2:
+            w = s.split()
+            if w[0] == "term" and len(w) == 2:
+                out.append((n, f"policy-options {where[0]} {s}"))
+                depth, where = 3, [where[0], s]
+            else:
+                bad.append((n, s, "under a policy-statement there are "
+                                  "terms, 'term <name>'"))
+        else:
+            out.append((n, f"policy-options {where[0]} {where[1]} {s}"))
+    return out, bad
 
 
 def map_name(policy, direction):
