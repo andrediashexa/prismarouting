@@ -15729,8 +15729,10 @@ class Shell:
                 return False, why
         rc, out = self.sys._run(["systemctl", "restart", self.TUNE_UNIT])
         cp = memory.get("control-plane")
-        print(f"memory: control plane keeps "
-              f"{cp + ' GB' if cp else 'a quarter of the RAM'}, buffers "
+        # One figure a row, and last on it.
+        print(f"memory: the control plane keeps "
+              f"{cp + ' GB' if cp else 'a quarter of the RAM'}")
+        print(f"memory: packet buffers per NUMA node "
               f"{memory.get('buffers', '16384 per worker')}")
         print_prose("in effect from the next reboot: the hugepages are "
                     "reserved on the kernel command line. 'show system "
