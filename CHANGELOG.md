@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.131.8 - cores by role
+
+### Added
+
 * **The cores by role are set from the VTY: `system` > `cpu`**
   ([#466](https://github.com/andrediashexa/hexarouting/issues/466), first
   part). The maintainer asked to pin cores for the control plane and for the
