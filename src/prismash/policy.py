@@ -603,3 +603,68 @@ def compile_all(pol, uses):
             seen.add(line)
         unique.append(line)
     return unique
+
+
+def _filter_matches(route, network, kind, upto):
+    """Whether `route` (an ip_network) matches one route-filter."""
+    net = ipaddress.ip_network(network)
+    if route.version != net.version or not route.subnet_of(net):
+        return False
+    if kind == "exact":
+        return route.prefixlen == net.prefixlen
+    if kind == "orlonger":
+        return True
+    if kind == "longer":
+        return route.prefixlen > net.prefixlen
+    return route.prefixlen <= upto
+
+
+def evaluate(pol, policy, prefix, direction="import"):
+    """
+    What `policy` does with a route to `prefix`, term by term (#458 step 3):
+    [(term name or None for the default, verdict, why)], ending at the first
+    term that decides.
+
+    From the prefix alone, which is what the policy text can be asked about
+    without a route in hand. A condition the prefix does not answer - a
+    community, an AS path, a protocol, a tag, a metric - is not guessed:
+    the term is reported as deciding only if the route carries it, and the
+    walk goes on as if it did not, so the operator sees both outcomes.
+    Prefix lists match exactly, as FRR's `permit <network>` does; route
+    filters as their kind says.
+    """
+    route = ipaddress.ip_network(prefix, strict=False)
+    out = []
+    for term in pol.statements.get(policy, {}).values():
+        prefix_conds = bool(term.prefix_lists or term.filters)
+        hit = False
+        for n in term.prefix_lists:
+            for net in pol.prefix_lists.get(n, []):
+                if ipaddress.ip_network(net) == route:
+                    hit = True
+        for net, kind, upto in term.filters:
+            if _filter_matches(route, net, kind, upto):
+                hit = True
+        if prefix_conds and not hit:
+            out.append((term.name, "no match", "the prefix is in none of "
+                        "its lists or filters"))
+            continue
+        unknown = [c for c, v in (("community", term.communities),
+                                  ("as-path", term.as_paths),
+                                  ("protocol", term.protocols),
+                                  ("tag", term.tags),
+                                  ("metric", term.metrics)) if v]
+        action = term.then or "next term"
+        sets = ", ".join(f"set {w} {' '.join(a)}" for w, a in term.sets)
+        what = action + (f" ({sets})" if sets else "")
+        if unknown:
+            out.append((term.name, f"if the route's {' and '.join(unknown)} "
+                        f"match: {what}", "the prefix alone does not say"))
+            continue
+        out.append((term.name, what, "matches" if prefix_conds
+                    else "has no prefix condition, so every route matches"))
+        if action in ("accept", "reject"):
+            return out
+    default = "accept" if direction in DIRECTIONS else "reject"
+    out.append((None, default, "no term decided: the default for this use"))
+    return out

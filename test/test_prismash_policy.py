@@ -257,5 +257,45 @@ check(sum(1 for l in _twice if l.startswith("ip prefix-list")) == 1,
       f"a list two maps share is handed to FRR once: {_twice}")
 ok("protocol, tag, metric; per-protocol maps; the IGP default; findings")
 
+print("\n=== step 3: evaluate, the policy asked about a prefix (#458) ===")
+_E = [f"{P} prefix-list C 203.0.113.0/24",
+      f"{P} policy-statement UP term 10 from prefix-list C",
+      f"{P} policy-statement UP term 10 set local-preference 200",
+      f"{P} policy-statement UP term 10 then accept",
+      f"{P} policy-statement UP term 20 from route-filter 198.51.100.0/22 "
+      f"upto /24",
+      f"{P} policy-statement UP term 20 then reject",
+      f"{P} community K members 1:1",
+      f"{P} policy-statement UP term 30 from community K",
+      f"{P} policy-statement UP term 30 then reject"]
+_pe, _ = policy.parse(_E)
+_r = policy.evaluate(_pe, "UP", "203.0.113.0/24")
+check(_r == [("10", "accept (set local-preference 200)", "matches")],
+      f"a prefix a list holds is decided by the first term: {_r}")
+_r = policy.evaluate(_pe, "UP", "198.51.100.0/23")
+check([t for t, _, _ in _r] == ["10", "20"] and _r[-1][1] == "reject",
+      f"a route-filter upto /24 takes a /23 inside it: {_r}")
+_r = policy.evaluate(_pe, "UP", "198.51.100.0/25")
+check(_r[1][1] == "no match"
+      and _r[2] == ("30", "if the route's community match: reject",
+                    "the prefix alone does not say")
+      and _r[-1] == (None, "accept",
+                     "no term decided: the default for this use"),
+      f"longer than upto is no match; a community is not guessed, and the "
+      f"walk goes on to BGP's default: {_r}")
+check(policy.evaluate(_pe, "UP", "10.0.0.0/8", "ospf:static")[-1][1]
+      == "reject", "into an IGP the default rejects")
+check(policy._filter_matches(policy.ipaddress.ip_network("10.1.0.0/16"),
+                             "10.0.0.0/8", "longer", None)
+      and not policy._filter_matches(policy.ipaddress.ip_network("10.0.0.0/8"),
+                                     "10.0.0.0/8", "longer", None)
+      and policy._filter_matches(policy.ipaddress.ip_network("10.0.0.0/8"),
+                                 "10.0.0.0/8", "exact", None)
+      and not policy._filter_matches(
+          policy.ipaddress.ip_network("2001:db8::/32"), "10.0.0.0/8",
+          "orlonger", None),
+      "_filter_matches: longer, exact, and another family")
+ok("decided, not matched, not guessed, and each default")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
