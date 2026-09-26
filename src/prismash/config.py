@@ -89,6 +89,29 @@ SYSTEM_HIERARCHY = "system"
 #: The routing policy's hierarchy (#458), Junos-style.
 POLICY_HIERARCHY = "policy-options"
 DATAPLANE_LEVEL = "dataplane"
+#: The cores by role (#466): `system` > `cpu`, beside `dataplane`.
+CPU_LEVEL = "cpu"
+#: The statements `cpu` takes, and the tune.env key each is written to. The
+#: order is the order the block is written in.
+CPU_KEYS = {"control-plane": "PRISMA_CONTROL_PLANE_CORES",
+            "main-thread": "PRISMA_MAIN_THREAD"}
+#: A bound on a typo, not on a machine: the tuner gives what the node has and
+#: says so.
+CPU_CORES_MAX = 1024
+
+
+def cpu_error(key, value):
+    """Why `cpu <key> <value>` cannot be taken, or None."""
+    if key == "control-plane":
+        if not is_number(value) or not 1 <= int(value) <= CPU_CORES_MAX:
+            return (f"expected: control-plane <1-{CPU_CORES_MAX}>, a number "
+                    f"of physical cores")
+        return None
+    if key == "main-thread":
+        if value not in ("shared", "dedicated"):
+            return "expected: main-thread <shared|dedicated>"
+        return None
+    return "under 'cpu' there is 'control-plane' and 'main-thread'"
 #: The most memory `cgnat memory` takes, in GB (#454): a bound on a typo, not
 #: on a machine. The tuner caps what is asked at what the box's RAM can give,
 #: and says so.
@@ -205,16 +228,25 @@ def denest_nat(numbered):
     return out, bad
 
 
-def nest_system(dataplane_if) -> list[str]:
+def nest_system(dataplane_if, cpu=None) -> list[str]:
     """
-    The `system` > `dataplane` block a file carries for the card (#457), or
-    nothing when no card was named. The one writer of the block: the box
-    saves, shows and reads back one shape.
+    The `system` block a file carries (#457): `dataplane` for the card, and
+    `cpu` for the cores by role (#466), each only when it says something -
+    and nothing at all when neither does. The one writer of the block: the
+    box saves, shows and reads back one shape.
     """
-    if not dataplane_if:
+    body = []
+    if dataplane_if:
+        body += [f" {DATAPLANE_LEVEL}", f"  interface {dataplane_if}",
+                 "  exit"]
+    cpu = cpu or {}
+    if cpu:
+        body.append(f" {CPU_LEVEL}")
+        body += [f"  {k} {cpu[k]}" for k in CPU_KEYS if k in cpu]
+        body.append("  exit")
+    if not body:
         return []
-    return [SYSTEM_HIERARCHY, f" {DATAPLANE_LEVEL}",
-            f"  interface {dataplane_if}", "  exit", " exit"]
+    return [SYSTEM_HIERARCHY] + body + [" exit"]
 
 
 def denest_system(numbered):
@@ -231,7 +263,8 @@ def denest_system(numbered):
     prompt refuses the old spelling - where there is somebody to be told.
     """
     out, bad = [], []
-    depth = 0          # 0 top, 1 in system, 2 in dataplane
+    depth = 0          # 0 top, 1 in system, 2 in dataplane or cpu
+    level = DATAPLANE_LEVEL
     routing = False
     for n, raw in numbered:
         s = raw.strip()
@@ -248,20 +281,21 @@ def denest_system(numbered):
             else:
                 out.append((n, raw))
         elif depth == 1:
-            if s == DATAPLANE_LEVEL:
+            if s in (DATAPLANE_LEVEL, CPU_LEVEL):
                 depth = 2
+                level = s
             elif s in ("exit", "quit", "end"):
                 depth = 0
             else:
                 bad.append((n, s, "under 'system' there is 'dataplane' and "
-                                  "nothing else"))
+                                  "'cpu'"))
         else:
             if s in ("exit", "quit", "end"):
                 depth = 1
             elif s.startswith("no "):
-                out.append((n, f"no {DATAPLANE_LEVEL} {s[3:]}"))
+                out.append((n, f"no {level} {s[3:]}"))
             else:
-                out.append((n, f"{DATAPLANE_LEVEL} {s}"))
+                out.append((n, f"{level} {s}"))
     return out, bad
 
 
@@ -2406,6 +2440,10 @@ class Config:
         # policy.py. FRR hands back only the compiled text, so the source is
         # kept here and, on the box, in a file beside the configuration.
         self.policy: list[str] = []
+        # The cores by role (#466), {statement: value} as typed under
+        # `system` > `cpu`. A box setting like the two above: written to
+        # tune.env, in effect from the next boot.
+        self.cpu: dict[str, str] = {}
         # Lines this VTY once held and no longer does, dropped from the file
         # on purpose rather than refused with it: (lineno, text, why). One
         # statement is in here today, `dataplane management`, which #303
@@ -2549,7 +2587,7 @@ class Config:
         # carries no statement, the same way an interface nobody shut down
         # carries no `shutdown`: recording an absence would put a line on every
         # box and make the file describe a decision nobody took.
-        out += nest_system(self.dataplane_if)
+        out += nest_system(self.dataplane_if, self.cpu)
         out += policy_mod.nest(self.policy)
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
@@ -2922,6 +2960,22 @@ class Config:
                 continue
             if s == "no dataplane interface":
                 cfg.dataplane_if = ""
+                continue
+            if s.split()[:1] == [CPU_LEVEL] or s.split()[:2] == ["no",
+                                                               CPU_LEVEL]:
+                w = s.split()
+                if w[0] == "no":
+                    if len(w) == 3 and w[2] in CPU_KEYS:
+                        cfg.cpu.pop(w[2], None)
+                    else:
+                        cfg.unknown.append((lineno, s, cpu_error("", "")))
+                    continue
+                why = (cpu_error(w[1], w[2]) if len(w) == 3
+                       else cpu_error(w[1] if len(w) > 1 else "", ""))
+                if why:
+                    cfg.unknown.append((lineno, s, why))
+                else:
+                    cfg.cpu[w[1]] = w[2]
                 continue
             if s.startswith("dataplane management"):
                 # DROPPED, NOT REFUSED (#385). This VTY wrote this line on a
@@ -3771,6 +3825,7 @@ class Config:
             # take it back.
             "dataplane_if_changed": self.dataplane_if != other.dataplane_if,
             "policy_changed": self.policy != other.policy,
+            "cpu_changed": self.cpu != other.cpu,
             "cgnat_memory_changed":
                 self.cgnat_memory_gb != other.cgnat_memory_gb,
             "snmp_changed": snmp_changed,

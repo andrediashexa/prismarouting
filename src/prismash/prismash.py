@@ -39,6 +39,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, CGNAT_LEVEL, one_line_cgnat,
                     SYSTEM_HIERARCHY, DATAPLANE_LEVEL, POLICY_HIERARCHY, nest_system,
+                    CPU_LEVEL, CPU_KEYS, cpu_error,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
@@ -968,6 +969,8 @@ SHOW = {
     "hardware": ("the box's physical NICs as Linux has them, and which one "
                  "carries the default route", None),
     "version": ("Prisma Routing, VPP and FRR versions", None),
+    "system": ("this machine", {
+        "cpu": ("which cores do what: configured, and in effect", None)}),
     "logging": ("system log (FRR)", None),
 }
 
@@ -2534,7 +2537,25 @@ TREE["nat"] = {
 # and nothing from the level above.
 TREE["system"] = {
     "dataplane": ("the card the dataplane is given", None),
+    "cpu": ("which cores do what: the control plane's, VPP's main thread's",
+            None),
     "exit": ("leave 'system'", None),
+    **_EVERY_LEVEL,
+}
+# THE CORES BY ROLE (#466), a level of its own under `system`. Both settings
+# go to tune.env and take effect at the next boot, as `dataplane` does.
+TREE["cpu"] = {
+    "control-plane": ("physical cores for the OS, FRR, sshd and the VTY; "
+                      "1 is the default", "<1-1024>"),
+    "main-thread": ("whether VPP's main thread has a core of its own", {
+        "shared": ("on the control plane's first core, the default", None),
+        "dedicated": ("a core of its own, isolated like a worker's; costs "
+                      "one worker", None)}),
+    "no": ("go back to the default", {
+        "control-plane": ("one control-plane core", None),
+        "main-thread": ("the main thread shares the control plane's core",
+                        None)}),
+    "exit": ("leave 'cpu'", None),
     **_EVERY_LEVEL,
 }
 TREE["dataplane"] = {
@@ -6591,6 +6612,21 @@ class Shell:
         # ONLY way to set this until now, so a box configured the old way shows
         # its card in `show running-config` without anybody re-typing it.
         cfg.dataplane_if = self.read_dataplane_if()
+        # The two tune.env settings the VTY writes, read back from there for
+        # the same reason: the file the tuner reads is the only place that
+        # knows. The CGNAT memory was written and never read back (#454), so
+        # `show running-config` lost `memory <GB>` at the first commit after
+        # it and `save` wrote the file without it (#466).
+        _gb = self.read_tune_key("PRISMA_CGNAT_MEMORY_GB")
+        cfg.cgnat_memory_gb = (int(_gb) if is_number(_gb)
+                               and 1 <= int(_gb) <= CGNAT_MEMORY_MAX_GB
+                               else 0)
+        cfg.cpu = {}
+        for _k, _key in CPU_KEYS.items():
+            _v = self.read_tune_key(_key)
+            if _v and cpu_error(_k, _v) is None \
+                    and not (_k == "main-thread" and _v == "shared"):
+                cfg.cpu[_k] = _v
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         # What the policy compiler emitted is not the operator's routing: it
@@ -9437,6 +9473,11 @@ class Shell:
                 self.err(f"dataplane interface: {msg}")
                 return False
             self.say_dataplane_if_pending(target.dataplane_if, msg)
+        if d.get("cpu_changed"):
+            ok, msg = self.apply_cpu(target.cpu)
+            if not ok:
+                self.err(f"cpu: {msg}")
+                return False
         if d["cgnat_memory_changed"]:
             ok, msg = self.apply_cgnat_memory(target.cgnat_memory_gb)
             if not ok:
@@ -12116,16 +12157,18 @@ class Shell:
                 return ""
             return line
         if self.nat_ctx == [SYSTEM_HIERARCHY]:
-            if line.strip() == DATAPLANE_LEVEL:
-                self.nat_ctx.append(DATAPLANE_LEVEL)
+            if line.strip() in (DATAPLANE_LEVEL, CPU_LEVEL):
+                self.nat_ctx.append(line.strip())
             else:
                 self.err_prose("under 'system' there is 'dataplane' and "
-                               "nothing else yet",
-                               "'dataplane' enters it; 'exit' leaves 'system'")
+                               "'cpu'",
+                               "each enters its level; 'exit' leaves "
+                               "'system'")
             return ""
+        level = self.nat_ctx[-1]
         if w[0] == "no":
-            return f"no {DATAPLANE_LEVEL} " + " ".join(w[1:])
-        return f"{DATAPLANE_LEVEL} " + line.strip()
+            return f"no {level} " + " ".join(w[1:])
+        return f"{level} " + line.strip()
 
     def nat_rewrite(self, line):
         """
@@ -12513,6 +12556,24 @@ class Shell:
         # out of tune.env, the way `no dataplane interface` does.
         if line == f"no {CGNAT_LEVEL} memory":
             self.candidate.cgnat_memory_gb = 0
+            return True
+        # The cores by role (#466), as the model holds them: `cpu <key>
+        # <value>`, which system_rewrite made of what was typed under
+        # `system` > `cpu`. Checked here, where the operator is, by the rule
+        # a saved file is read with.
+        if w[:1] == [CPU_LEVEL] or w[:2] == ["no", CPU_LEVEL]:
+            if w[0] == "no":
+                if len(w) != 3 or w[2] not in CPU_KEYS:
+                    self.err("cpu: no control-plane, or no main-thread")
+                else:
+                    self.candidate.cpu.pop(w[2], None)
+                return True
+            why = cpu_error(w[1] if len(w) > 1 else "",
+                            w[2] if len(w) == 3 else "")
+            if why:
+                self.err(f"cpu: {why}")
+            else:
+                self.candidate.cpu[w[1]] = w[2]
             return True
         if w[:2] == [CGNAT_LEVEL, "memory"]:
             if len(w) != 3 or not is_number(w[2]) \
@@ -13631,6 +13692,45 @@ class Shell:
 
     # ---------------------------------------------------------- show
 
+    #: Where the kernel says which CPUs booted isolated (#466).
+    CPU_ISOLATED = os.environ.get("PRISMA_CPU_ISOLATED",
+                                  "/sys/devices/system/cpu/isolated")
+
+    def show_system_cpu(self):
+        """
+        Which cores do what (#466): what is configured - tune.env, in effect
+        from the next boot - beside what this boot runs, read off the
+        dataplane's startup.conf and the kernel. Two columns of the same
+        facts, because the gap between them is a reboot nobody has done yet
+        and the operator benchmarking a layout has to know which one is
+        being measured.
+        """
+        cp = self.read_tune_key("PRISMA_CONTROL_PLANE_CORES") or "1"
+        main = self.read_tune_key("PRISMA_MAIN_THREAD") or "shared"
+        print("configured, in effect from the next reboot:")
+        print(f"  control-plane cores   {cp}")
+        print(f"  VPP main thread       {main}")
+        main_core = workers = ""
+        try:
+            with open(self.STARTUP_CONF) as f:
+                for raw in f:
+                    w = raw.split()
+                    if w[:1] == ["main-core"] and len(w) > 1:
+                        main_core = w[1]
+                    elif w[:1] == ["corelist-workers"] and len(w) > 1:
+                        workers = w[1]
+        except OSError:
+            pass
+        try:
+            with open(self.CPU_ISOLATED) as f:
+                isolated = f.read().strip()
+        except OSError:
+            isolated = ""
+        print("this boot:")
+        print(f"  VPP main thread       core {main_core or '(not named)'}")
+        print(f"  VPP workers           {workers or '(none)'}")
+        print(f"  isolated from Linux   {isolated or '(none)'}")
+
     def show_cgnat_memory(self):
         """
         `show cgnat memory` (#454): the memory the CGNAT has now, what it
@@ -13697,6 +13797,9 @@ class Shell:
             return
         if line == "show cgnat memory":
             self.show_cgnat_memory()
+            return
+        if line == "show system cpu":
+            self.show_system_cpu()
             return
         # Before the forwarding below, which would otherwise hand `ha` to a
         # dataplane that has no such command.
@@ -13814,9 +13917,14 @@ class Shell:
         # Standing in `system` or `dataplane`: that level's block (#457).
         if self.nat_ctx and self.nat_ctx[0] == SYSTEM_HIERARCHY \
                 and not self.frr_ctx:
-            block = nest_system(cfg.dataplane_if)
-            if self.nat_ctx[-1] == DATAPLANE_LEVEL:
-                block = [b[2:] for b in block[2:-2]]
+            block = nest_system(cfg.dataplane_if, cfg.cpu)
+            if self.nat_ctx[-1] in (DATAPLANE_LEVEL, CPU_LEVEL):
+                # That level's own lines, from the whole block.
+                _lvl = self.nat_ctx[-1]
+                _sub = (nest_system(cfg.dataplane_if, None)
+                        if _lvl == DATAPLANE_LEVEL
+                        else nest_system(None, cfg.cpu))
+                block = [b[2:] for b in _sub[2:-2]]
             print("\n".join(block) if block else
                   "nothing is configured here yet")
             return
@@ -15278,6 +15386,28 @@ class Shell:
         if rc != 0:
             return True, ("stored, but the tuner did not run: "
                           + out.strip()[:120])
+        return True, ""
+
+    def apply_cpu(self, cpu):
+        """
+        The cores by role (#466): stored in tune.env, the tuner run, and what
+        is still outstanding said - the apply_cgnat_memory() shape, for the
+        same reason. isolcpus is on the kernel command line, so the cores
+        keep the roles they booted with until the box boots again.
+        """
+        for k, key in CPU_KEYS.items():
+            ok, why = self.write_tune_key(key, cpu.get(k, ""))
+            if not ok:
+                return False, why
+        rc, out = self.sys._run(["systemctl", "restart", self.TUNE_UNIT])
+        print(f"cpu: control plane {cpu.get('control-plane', '1')} core(s), "
+              f"VPP main thread {cpu.get('main-thread', 'shared')}")
+        print_prose("in effect from the next reboot: the cores are isolated "
+                    "on the kernel command line, and until then each keeps "
+                    "the role it booted with. 'show system cpu' says both")
+        if rc not in (0, 127):
+            print_prose("the tuner did not run, so the boot configuration is "
+                        "not recomputed yet: " + " ".join(out.split())[:120])
         return True, ""
 
     def apply_cgnat_memory(self, gb):

@@ -338,6 +338,45 @@ case "$(argv)" in
 esac
 
 echo
+echo "=== PRISMA_CONTROL_PLANE_CORES and PRISMA_MAIN_THREAD (#466) ==="
+mkbox
+run PRISMA_CONTROL_PLANE_CORES=2 PRISMA_MAIN_THREAD=dedicated
+case "$(argv)" in
+  *"--control-plane-cores 2"*"--main-thread dedicated"*)
+    ok "both reach the tuner: $(argv)" ;;
+  *) bad "the cores by role did not reach the tuner: $(argv)" ;;
+esac
+for _v in 0 two; do
+  mkbox
+  run PRISMA_CONTROL_PLANE_CORES=$_v
+  said "REFUSED PRISMA_CONTROL_PLANE_CORES, in tune.env" \
+    && said "empty, which" \
+    && ok "PRISMA_CONTROL_PLANE_CORES=$_v refused by name, with what it takes" \
+    || bad "PRISMA_CONTROL_PLANE_CORES=$_v was not refused. Output: $OUT"
+  case "$(argv)" in
+    *--control-plane-cores*) bad "a refused count was passed on: $(argv)" ;;
+    *) ok "  and nothing is passed: one core, as before" ;;
+  esac
+done
+mkbox
+run PRISMA_MAIN_THREAD=alone
+said "REFUSED PRISMA_MAIN_THREAD, in tune.env" \
+  && said "It is shared or dedicated" \
+  && ok "a main thread that is neither is refused by name" \
+  || bad "PRISMA_MAIN_THREAD=alone was not refused. Output: $OUT"
+case "$(argv)" in
+  *--main-thread*) bad "a refused value was passed on: $(argv)" ;;
+  *) ok "  and the main thread stays shared" ;;
+esac
+mkbox
+run PRISMA_MAIN_THREAD=shared PRISMA_CONTROL_PLANE_CORES=
+case "$(argv)" in
+  *--main-thread*|*--control-plane-cores*)
+    bad "the shipped values passed something: $(argv)" ;;
+  *) ok "shared and empty pass nothing, which is every box before this" ;;
+esac
+
+echo
 echo "=== every line a refusal prints fits an 80-column serial console ==="
 # This comes out of the journal onto the console of a racked box. A reason
 # that wraps mid-value cannot be grepped for or typed back.
