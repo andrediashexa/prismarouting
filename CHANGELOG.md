@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The documents called deterministic NAT BPA** ([#463](https://github.com/andrediashexa/hexarouting/issues/463)).
+  The maintainer's correction, which is also the industry's usage: BPA is bulk
+  port allocation, meaning blocks allocated on demand in steps and logged,
+  which is `mode dynamic`. Deterministic CGNAT is the mapping by formula,
+  whose subscriber is found without a log, and it is not a kind of BPA. The
+  wiki, the README and `docs/` said both were "modes of BPA", and
+  `docs/wiki-audit.md` had enshrined that reading as the correct one. Every
+  page now says it the maintainer's way. The concepts page is
+  *Determinístico e BPA — conceitos e mapeamento*. The plugin's name and the
+  `show bpa` commands stay, as identifiers.
+
 ## 0.131.3 - the CGNAT side is on the interface
 
 ### Added

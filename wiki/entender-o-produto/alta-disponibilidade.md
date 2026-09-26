@@ -16,7 +16,7 @@ Num CGNAT convencional o mapeamento assinante → (IP público, porta) é result
 
 ```mermaid
 flowchart TB
-    subgraph D["BPA determinístico"]
+    subgraph D["CGNAT determinístico"]
         C1["configuração do pool"] --> M1["fórmula"]
         M1 --> R1["assinante → bloco"]
         C2["mesma configuração<br/>no standby"] --> M1
@@ -27,7 +27,7 @@ flowchart TB
     end
 ```
 
-| Depois do failover | NAT convencional | BPA determinístico |
+| Depois do failover | NAT convencional | CGNAT determinístico |
 |--------------------|------------------|--------------------|
 | IP público do assinante | muda             | **não muda**       |
 | Bloco de portas    | muda             | **não muda**       |
@@ -35,7 +35,7 @@ flowchart TB
 | Conexões novas     | precisam de alocação nova | funcionam de imediato |
 | Estado a sincronizar para o acima | a tabela inteira | **nenhum**         |
 
-A linha que importa: conexões em curso caem nos dois casos, mas sob BPA elas se restabelecem **no mesmo endereço público**. Para o assinante, a diferença entre "caiu e voltou" e "caiu, voltou e agora meu IP é outro" é grande — a segunda quebra tudo que dependia do endereço.
+A linha que importa: conexões em curso caem nos dois casos, mas no determinístico elas se restabelecem **no mesmo endereço público**. Para o assinante, a diferença entre "caiu e voltou" e "caiu, voltou e agora meu IP é outro" é grande — a segunda quebra tudo que dependia do endereço.
 
 Isso não é HA. É o piso de onde a HA parte, e ele já é mais alto que o usual.
 
@@ -215,6 +215,6 @@ O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatór
 
 # Ver também
 
-* [BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que a fórmula dispensa sincronismo
+* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que a fórmula dispensa sincronismo
 * [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — o outro lugar onde configuração idêntica importa
 * [Prisma Routing — visão geral](/doc/prisma-routing-visao-geral-cNtWoccoy5) — o estado de cada componente

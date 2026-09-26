@@ -53,31 +53,38 @@ what is drafted and still unpublished.
 The maintainer named it: **the purpose of the project, and deterministic CGNAT
 versus BPA**.
 
-The distinction the repository makes, and the one to check every page against:
+**The distinction, in the maintainer's own words of 2026-09-26** ([#463](https://github.com/andrediashexa/hexarouting/issues/463)):
 
-* **BPA** (*Bloco de Portas Alocadas*) is the **technique** — a contiguous
-  block of ports per subscriber, instead of a record per flow.
-* **Deterministic** and **dynamic** are the two **modes within BPA**:
-  * *deterministic* — the public address and port block are **computed** from
-    the pool definition. There is no allocation event, so there is nothing to
-    export; the proof offered to an authority is *the algorithm plus the
-    configuration in force at that instant*, which is why the configuration
-    trail exists.
-  * *dynamic* — the block is allocated on demand, with one IPFIX record per
-    block (RFC 8158), not per flow.
+* **Deterministic** CGNAT is the one whose mapping is a **formula**: the public
+  address and port block are computed from the pool definition, so a
+  subscriber is found **without a log**. The proof offered to an authority is
+  *the algorithm plus the configuration in force at that instant*, which is
+  why the configuration trail exists. `mode deterministic`.
+* **BPA** is **Bulk Port Allocation**: blocks of ports are **allocated
+  dynamically**, handed to a subscriber on demand in configured steps, and
+  every allocation is logged (one IPFIX record per block, RFC 8158, not per
+  flow). `mode dynamic`.
 
-They are **not alternatives to BPA and not alternatives to each other at the
-same level**. A page that presents "BPA" and "CGNAT determinístico" as two
-choices has the shape of the error.
+Both give a subscriber a contiguous block instead of a record per flow; the
+umbrella for the two is *CGNAT by port block*, not BPA.
+
+**This section said the opposite until #463**, and it is kept here as the
+error this audit itself made. It read "BPA (*Bloco de Portas Alocadas*) is the
+technique; deterministic and dynamic are the two modes within BPA", and told
+the reader that a page presenting BPA and deterministic CGNAT as two choices
+"has the shape of the error". The maintainer had named deterministic versus BPA
+as the thing to get right, and this audit decided which way round it went
+without asking him. Every page it then passed as "appearing correct" carried
+the inverted reading. The plugin's name, `bpa`, and its `show bpa` commands
+stay: they are identifiers used by every box and script, and changing them
+would buy nothing but breakage.
 
 *Authoritative:* [architecture.md](architecture.md),
 [logging.md](logging.md), `ref/bpa_model.py`.
 
-Note that the two pages most likely to carry it - *Prisma Routing — visão geral*
-and *BPA — conceitos e mapeamento* — were read during the mirror import and
-**appeared correct**: both present deterministic and dynamic as modes of BPA.
-So either the error is elsewhere, or it is subtler than those two openings. Do
-not assume it has been found because those two read well.
+The two pages that carried it most visibly - *Prisma Routing — visão geral* and
+what is now *Determinístico e BPA — conceitos e mapeamento* - were rewritten
+with #463.
 
 ### Found and corrected, 2026-09-09
 

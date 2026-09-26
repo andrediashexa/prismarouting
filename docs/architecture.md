@@ -63,7 +63,7 @@ checked against it on every build.
 | # | Decision | Choice | Rationale |
 |---|----------|--------|-----------|
 | D1 | Dataplane base | In-tree-style VPP plugin | Inherits FIB, ARP/ND, fragmentation, ICMP, tracing, API and BGP via `linux_cp` |
-| D2 | BPA modes | Deterministic **and** dynamic, per pool | Deterministic gives zero logging; dynamic saves IPv4 |
+| D2 | Mapping modes | Deterministic **and** dynamic (BPA), per pool | Deterministic gives zero logging; dynamic saves IPv4 |
 | D3 | Default mapping policy | `interleaved` | Smaller blast radius when a public IP is blacklisted |
 | D4 | Worker sharding | VPP handoff, keyed on subscriber index | Guarantees both directions land on the same worker |
 | D5 | Pool addressing | Sets of non-contiguous prefixes | Real provider IPv4 is fragmented; a single aligned prefix would rule out most deployments |
@@ -140,7 +140,7 @@ deterministic mapping matters beyond logging: without it the return path could
 not find its owner without consulting a structure shared across workers, and
 the lock this design avoids would come back through the side door.
 
-## Dynamic mode (PBA)
+## Dynamic mode (BPA, bulk port allocation)
 
 Blocks are allocated on first flow and returned after a hold-down period.
 

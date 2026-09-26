@@ -13,7 +13,7 @@ wiki, and the same applies to the repository that mirrors it.
 
 The maintainer's words: it is **not the base of truth**, it is still being
 built, and it **contains errors about the purpose of the project** — including
-about deterministic CGNAT and its relationship to BPA.
+about deterministic CGNAT and how it differs from BPA (bulk port allocation, the dynamic mode).
 
 So this directory is a mirror of a draft. Reading a page here tells you what
 the wiki currently says, not what is true. When a page and `docs/` disagree,

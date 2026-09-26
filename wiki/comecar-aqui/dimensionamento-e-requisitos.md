@@ -399,9 +399,9 @@ Premissas explícitas, para ordem de grandeza e não para precisão: 200 mil ass
 
 | Cenário | Registros/dia | Volume bruto/dia | Um ano |
 |---------|--------------:|-----------------:|-------:|
-| BPA dinâmico (alocação + liberação) | \~2 milhões   | \~80 MB          | dezenas de GB |
+| BPA (alocação + liberação) | \~2 milhões   | \~80 MB          | dezenas de GB |
 | NAT por fluxo (referência) | \~40 milhões  | \~1,6 GB         | dezenas de TB |
-| BPA determinístico | 0             | 0                | 0      |
+| Determinístico | 0             | 0                | 0      |
 
 ## Os registros têm sistema de arquivos próprio
 
@@ -419,7 +419,7 @@ Em instalação não assistida, `prisma-routing.log-gb=` responde essa pergunta 
 
 O volume é montado com `nofail`: uma máquina que não dá boot porque o volume de registros sumiu é uma máquina em que ninguém consegue entrar para descobrir o porquê. Por isso o self-test de boot **reporta onde os registros estão** — sem isso, uma caixa cujo volume não montou sobe caladinha gravando na raiz.
 
-Essa tabela é o argumento comercial do BPA em uma linha: guardar um ano de registros passa de dezenas de terabytes para dezenas de gigabytes — ou para nada. É um argumento sobre o disco do **coletor**, não sobre o desta caixa.
+Essa tabela é o argumento comercial do CGNAT por bloco em uma linha: guardar um ano de registros passa de dezenas de terabytes para dezenas de gigabytes — ou para nada. É um argumento sobre o disco do **coletor**, não sobre o desta caixa.
 
 # Como conferir
 

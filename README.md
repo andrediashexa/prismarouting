@@ -9,8 +9,9 @@
 
 ## TL;DR
 
-Software router with built-in CGNAT using **BPA** (*Bloco de Portas Alocadas* —
-allocated port blocks). VPP/DPDK dataplane, FRR control plane, IPFIX logging
+Software router with built-in CGNAT by **port block**: deterministic (the block
+is a formula, and no log is needed) or **BPA** (*bulk port allocation*, blocks
+allocated on demand in steps, and logged). VPP/DPDK dataplane, FRR control plane, IPFIX logging
 per RFC 8158, single VTY. Targets 100 Gbps+ and 200k+ subscribers, shipped as
 an installable Debian appliance. Called HexaRouting until 0.76.1; the rename
 was a clean break, so the paths, the units and the `prismash` command carry
@@ -42,7 +43,7 @@ make release-gate      # build the installation medium from a tag and boot it
 | | |
 |---|---|
 | **What** | An IPv4 software router whose CGNAT allocates a contiguous **port block** per subscriber instead of logging every flow. |
-| **Why** | Brazilian regulation (Marco Civil, Law 12.965/2014) requires one year of connection records to be kept. Per-flow NAT logging produces terabytes of them; BPA reduces this to one record per block — or to **zero** in deterministic mode, where the proof is the algorithm and the dated configuration instead. The box **exports** the records and keeps none: whoever retains them for the year is the collector. |
+| **Why** | Brazilian regulation (Marco Civil, Law 12.965/2014) requires one year of connection records to be kept. Per-flow NAT logging produces terabytes of them; a port block reduces this to one record per block under BPA — or to **zero** in deterministic mode, where the proof is the algorithm and the dated configuration instead. The box **exports** the records and keeps none: whoever retains them for the year is the collector. |
 | **Who** | ISPs deploying CGNAT. The product is installed per provider, not multi-tenant. |
 | **When** | Deployed when public IPv4 runs out and subscribers must share addresses. |
 | **Where** | On the provider's border, between the subscriber network (RFC 6598) and the upstream. |

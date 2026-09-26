@@ -217,8 +217,9 @@ stood twenty-eight pages ahead of what an operator could open.
 
 The wiki is a **draft**: still being written, and still being corrected against
 this repository page by page. The conceptual error it was known for — the
-purpose of the project, and how deterministic mode relates to BPA — was found
-and corrected; [wiki-audit.md](wiki-audit.md) section 2 records what it was, so
+purpose of the project, and how deterministic mode relates to BPA — was found,
+and then found again the other way round with #463: BPA is the dynamic mode,
+and deterministic CGNAT is not BPA; [wiki-audit.md](wiki-audit.md) section 2 records what it was, so
 that nobody hunts it again. It is not a source — never answer a question about
 the product from it.
 
@@ -316,7 +317,7 @@ Not what it contains — what question it is the answer to.
   same mistake in miniature.
   [#28](https://github.com/andrediashexa/hexarouting/issues/28) is the harness
   that would settle it, and it needs real NICs.
-* **Per-flow logging.** Refused. It is the thing BPA exists to avoid.
+* **Per-flow logging.** Refused. It is the thing a port block exists to avoid.
 * **NPTv6, and DPI beyond what an ALG must rewrite.** Out of scope by decision;
   [roadmap.md](roadmap.md) section 4.
 * **A graceful pool migration.** Deliberately not offered: it would mean two
