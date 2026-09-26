@@ -552,8 +552,9 @@ pool count. The list is kept in that comment and not copied here, because it is
 a property of that function and a second copy of it is a second thing to keep
 true.
 
-**Why no `AllowedCPUs=` or `CPUAffinity=` for the control plane: the bound is
-already applied, by the kernel, and it is inherited rather than enforced.**
+**The control plane was bounded by inheritance, and since #466 it is fenced.**
+What follows is the measurement that first decided against a fence, kept because
+it is also the measurement that reversed that decision.
 This was the one worth measuring, because the number would not have been
 invented - it is the complement of the `isolcpus` list the tuner itself wrote
 on the same run. `lab/install-iso.sh` takes the reading on the installed box
@@ -591,15 +592,32 @@ lab rather than argued about: the next run that comes back `0-1` will also say
 who started that `bgpd` and what pid 1's mask was at the time, which is the
 pair of numbers that would settle it.
 
-So: **not shipped**, and the reason is the size of the residue rather than a
-claim that there is none. A cpuset would add a second per-box generated
-artefact whose failure mode is a control plane stranded on cores that do not
-exist, on the box class where the control plane already has one core. What it
-would buy is confinement against a process that re-affinitises itself - which
-nothing this product ships does, and which an operator in `start shell` typing
-`taskset` has asked for on purpose. If the `0-1` reading reproduces with a
-parent that explains it, that trade changes, and the measurement that would
-change it is already being taken on every run of this lab.
+So it was first **not shipped**: the bound existed by inheritance, and a
+cpuset would add a per-box artefact whose failure mode is a control plane
+stranded on cores that do not exist. Two things changed that, both measured
+(#466):
+
+- **The inheritance stopped holding.** Since the control plane moved into
+  containers, FRR is started by dockerd's children and not by pid 1: on a
+  4-CPU guest with 1-3 isolated, zebra, bgpd, sshd and dockerd were allowed
+  **0-3**, and a shell asking for CPU 3 got it. That is the `0-1` reading
+  above, explained.
+- **The stranding risk has an answer.** The fence is computed at every boot
+  from the kernel's own isolation (`prisma-routing-tune --fence`: online CPUs
+  minus `/sys/devices/system/cpu/isolated`) and set `--runtime`, so it can
+  never name a CPU this boot does not have or describe a boot that is gone.
+
+What ships: `apply-tuning` sets `AllowedCPUs=` on `system.slice`,
+`user.slice` and `init.scope` to that set, and the dataplane leaves
+`system.slice` first - compose puts VPP's container in
+`prisma-dataplane.slice` (`cgroup_parent`), and a `vpp.service` drop-in does
+the same for the unit path. Without that move the fence would hold VPP's
+workers to the control plane's CPUs, so `apply-tuning` refuses to set it when
+either is missing, and says so. Measured on an installed box upgraded to it:
+the three units held to `0`, zebra, bgpd, sshd and dockerd allowed `0`, the
+VPP container in `prisma.slice/prisma-dataplane.slice` with its workers on
+1, 2 and 3, `taskset -c 3` refused, `systemctl is-system-running` answering
+`running`, and `show system cpu` reading `control plane held to 0`.
 
 ## The statistics segment, and what the tuner sizes it from
 

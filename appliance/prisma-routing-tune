@@ -177,6 +177,37 @@ def isolated_now(root):
         root, "sys/devices/system/cpu/isolated"), ""))
 
 
+#: The units the control plane runs in, fenced off the isolated CPUs at boot
+#: (#466): the services, the logins, and PID 1 itself. The dataplane is NOT
+#: in any of them - compose puts VPP's container in DATAPLANE_SLICE and a
+#: drop-in does the same for vpp.service - which is what makes the fence safe.
+CONTROL_PLANE_UNITS = ("system.slice", "user.slice", "init.scope")
+DATAPLANE_SLICE = "prisma-dataplane.slice"
+
+
+def control_plane_fence(root):
+    """
+    The CPUs the control plane is held to on THIS boot: every online CPU
+    the kernel is not isolating, or "" when it isolates none.
+
+    From the kernel, not from the plan: isolcpus takes effect at the next
+    boot, and a fence computed from a plan this boot has not applied would
+    hold the control plane off CPUs nothing else is using, or onto one the
+    dataplane is.
+
+    Measured on a 4-CPU guest with 1-3 isolated (#466): zebra, bgpd, sshd
+    and dockerd were allowed 0-3 before - kept off the workers only by
+    inheritance, and a shell asking for CPU 3 got it - and 0 after, with the
+    VPP container in its own slice keeping its workers on 1, 2 and 3.
+    """
+    iso = set(isolated_now(root))
+    if not iso:
+        return ""
+    online = parse_list(read(os.path.join(
+        root, "sys/devices/system/cpu/online"), ""))
+    return fmt_list(sorted(set(online) - iso))
+
+
 def is_pci_addr(name):
     """
     Is `name` a PCI address as sysfs spells it: 0000:3b:00.0
@@ -2605,6 +2636,10 @@ def main():
                     help="say whether this box would claim that card for the "
                          "dataplane now, by the same rule as at boot, and exit "
                          "0 if it would and 1 if not (#453)")
+    ap.add_argument("--fence", action="store_true",
+                    help="print the CPUs the control plane is held to on "
+                         "this boot, or nothing when none are isolated "
+                         "(#466)")
     ap.add_argument("--report-effective", action="store_true",
                     help="report the tuning in effect on this box, rather "
                          "than computing the tuning to request")
@@ -2616,6 +2651,9 @@ def main():
     # IRQ ban that either took or did not.
     if a.report_effective:
         print(render_effective(effective_tuning(a.sysfs_root)))
+        return 0
+    if a.fence:
+        print(control_plane_fence(a.sysfs_root))
         return 0
 
     topo = Topology(a.sysfs_root)

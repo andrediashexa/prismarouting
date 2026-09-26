@@ -3356,6 +3356,16 @@ check(tune.would_claim(_p, "veth9") == 1, "and anything else is status 1")
 _p["no_way_back"] = "eth3"
 _p["host_cards"].append("eth3")
 check(tune.would_claim(_p, "eth3") == 1, "the card the box is reached on is 1")
+# control_plane_fence (#466): online minus isolated, from the kernel.
+with tempfile.TemporaryDirectory() as _fr:
+    w(f"{_fr}/sys/devices/system/cpu/online", "0-7")
+    w(f"{_fr}/sys/devices/system/cpu/isolated", "2-5")
+    check(tune.control_plane_fence(_fr) == "0-1,6-7",
+          f"the fence is every online CPU not isolated: "
+          f"{tune.control_plane_fence(_fr)!r}")
+    w(f"{_fr}/sys/devices/system/cpu/isolated", "")
+    check(tune.control_plane_fence(_fr) == "",
+          "a boot that isolates nothing fences nothing")
 print("  [ ok ] every function in the tuner, called on its own")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

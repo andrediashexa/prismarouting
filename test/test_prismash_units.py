@@ -2112,6 +2112,28 @@ try:
         _f.write("cpu {\n  main-core 0\n  corelist-workers 1-3\n}\n")
     prismash.Shell.CPU_ISOLATED = _iso
     prismash.Shell.STARTUP_CONF = _sc
+    _fe = os.path.join(_root, "tune-cpu", "fence")
+    with open(_fe, "w") as _f:
+        _f.write("0\n")
+    _saved_fe = prismash.Shell.CPU_FENCE
+    prismash.Shell.CPU_FENCE = _fe
+    rv, text = driven(lambda: sh.show_system_cpu())
+    check("control plane held to 0" in text,
+          f"the fence, as the kernel applies it: {text!r}")
+    _on = os.path.join(_root, "tune-cpu", "online")
+    with open(_on, "w") as _f:
+        _f.write("0\n")
+    _saved_on = prismash.Shell.CPU_ONLINE
+    prismash.Shell.CPU_ONLINE = _on
+    rv, text = driven(lambda: sh.show_system_cpu())
+    check("control plane held to (not held)" in text,
+          f"a fence that is every CPU is no fence: {text!r}")
+    prismash.Shell.CPU_ONLINE = _saved_on
+    prismash.Shell.CPU_FENCE = os.path.join(_root, "no-such-fence")
+    rv, text = driven(lambda: sh.show_system_cpu())
+    check("control plane held to (not held)" in text,
+          f"no cgroup to read is said as not held: {text!r}")
+    prismash.Shell.CPU_FENCE = _saved_fe
     rv, text = driven(lambda: sh.show_system_cpu())
     check("control-plane cores   1" in text and "VPP main thread       shared"
           in text and "core 0" in text and "VPP workers           1-3" in text

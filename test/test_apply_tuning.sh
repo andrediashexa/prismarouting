@@ -57,6 +57,11 @@ STUB=$WORK/bin
 mkdir -p "$STUB"
 cat > "$STUB/prisma-routing-tune" <<'EOF'
 #!/bin/sh
+# The fence (#466) is a question of its own, answered from the fake box.
+if [ "${1:-}" = "--fence" ]; then
+  printf '%s\n' "${STUB_FENCE:-}"
+  exit 0
+fi
 echo "tune" >> "$REC/order"
 echo "$*" > "$REC/argv"
 [ "${STUB_TUNE_RC:-0}" = 0 ] || { echo "the tuner failed for its own reasons" >&2
@@ -92,6 +97,8 @@ cat > "$STUB/systemctl" <<'EOF'
 case "$*" in
   *"is-active"*"vpp.service"*)
     [ "$(cat "$REC/vpp_active" 2>/dev/null || echo no)" = yes ] ;;
+  *"set-property"*) echo "$*" >> "$REC/fenced"
+                    exit "${STUB_SETPROP_RC:-0}" ;;
   *) : ;;
 esac
 EOF
@@ -336,6 +343,43 @@ case "$(argv)" in
   *--max-workers*) bad "an empty cap invented one: $(argv)" ;;
   *) ok "an empty cap passes nothing, which is the shipped behaviour" ;;
 esac
+
+echo
+echo "=== the control plane held off the isolated CPUs (#466) ==="
+mkbox
+mkdir -p "$R/etc/systemd/system/vpp.service.d"
+echo "  cgroup_parent: prisma-dataplane.slice" > "$R/etc/prisma-routing/compose.yaml"
+: > "$R/etc/systemd/system/vpp.service.d/prisma-routing-slice.conf"
+run STUB_FENCE=0,6-7
+grep -q "set-property --runtime system.slice AllowedCPUs=0,6-7" "$REC/fenced" \
+  && grep -q "set-property --runtime user.slice AllowedCPUs=0,6-7" "$REC/fenced" \
+  && grep -q "set-property --runtime init.scope AllowedCPUs=0,6-7" "$REC/fenced" \
+  && ok "system.slice, user.slice and init.scope are held to the fence" \
+  || bad "the fence was not applied: $(cat "$REC/fenced" 2>/dev/null)"
+said "control plane held to CPUs 0,6-7" && ok "  and it is said" \
+  || bad "the fence was applied without a word: $OUT"
+
+mkbox
+: > "$R/etc/prisma-routing/compose.yaml"
+run STUB_FENCE=0
+[ ! -s "$REC/fenced" ] && ok "a dataplane still in system.slice is not fenced with it" \
+  || bad "the fence was set with VPP still in system.slice: $(cat "$REC/fenced")"
+said "control plane NOT held to CPUs 0" && ok "  and why is said" \
+  || bad "the skipped fence was silent: $OUT"
+
+mkbox
+mkdir -p "$R/etc/systemd/system/vpp.service.d"
+echo "  cgroup_parent: prisma-dataplane.slice" > "$R/etc/prisma-routing/compose.yaml"
+: > "$R/etc/systemd/system/vpp.service.d/prisma-routing-slice.conf"
+run STUB_FENCE=0 STUB_SETPROP_RC=1
+said "control plane: init.scope could not be held to CPUs 0" \
+  && ok "a unit systemd will not fence is named, and the boot goes on" \
+  || bad "a refused fence was silent: $OUT"
+
+mkbox
+run STUB_FENCE=
+[ ! -s "$REC/fenced" ] && ok "a boot that isolates nothing fences nothing" \
+  || bad "a fence was set with nothing isolated: $(cat "$REC/fenced")"
 
 echo
 echo "=== PRISMA_CONTROL_PLANE_CORES and PRISMA_MAIN_THREAD (#466) ==="

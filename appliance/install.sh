@@ -392,6 +392,10 @@ install -D -m 0644 "$REPO/appliance/systemd/vpp-api-access.conf" \
 # exactly the moment the box must not be choosable again.
 install -D -m 0644 "$REPO/appliance/systemd/vpp-oom-protect.conf" \
   "$DESTDIR/etc/systemd/system/vpp.service.d/prisma-routing-oom-protect.conf"
+# The dataplane out of system.slice, which the control-plane fence holds
+# (#466). The container path does the same in compose.yaml.
+install -D -m 0644 "$REPO/appliance/systemd/vpp-slice.conf" \
+  "$DESTDIR/etc/systemd/system/vpp.service.d/prisma-routing-slice.conf"
 # And the third, for the same reason again: the retention log has to be closed
 # by the dataplane that is stopping, on every stop, including the restart after
 # an upgrade that no unit of ours is ordered around.

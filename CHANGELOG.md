@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The control plane is held off the dataplane's CPUs by cgroup, not only by
+  inheritance** ([#466](https://github.com/andrediashexa/hexarouting/issues/466),
+  second part). Measured on a 4-CPU guest with 1-3 isolated: since FRR moved
+  into containers, zebra, bgpd, sshd and dockerd were allowed on all four
+  CPUs, and a shell asking for CPU 3 got it.
+  - **The fence:** at every boot, `apply-tuning` holds `system.slice`,
+    `user.slice` and `init.scope` to the CPUs the kernel did not isolate on
+    that boot.
+  - **The dataplane moves first:** it leaves `system.slice` for
+    `prisma-dataplane.slice`, through `cgroup_parent` in compose and a
+    `vpp.service` drop-in, so its workers keep their CPUs. Without that move
+    the fence is not set, and the box says why.
+  - **Reading it:** `show system cpu` says what the control plane is held to.
+  - **Measured on an installed box upgraded to it:** everything of the
+    control plane on CPU 0, the VPP workers on 1-3, `taskset -c 3` refused,
+    and no unit failed.
+
 ### Fixed
 
 ## 0.132.1 - policy exported into OSPF and IS-IS
