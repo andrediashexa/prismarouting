@@ -164,8 +164,8 @@ O bloco é de 256 portas, e é esse o degrau. `initial-allocation 512` faz o ass
 O `commit` recusa três coisas, porque em nenhuma delas o número faria o que diz:
 
 * **portas que não fecham um número inteiro de blocos** (`initial-allocation 300` com `block-size 256`);
-* **mais do que o `max-blocks` permite** (`initial-allocation 4096` com 10 blocos de 256);
-* **um pool `mode deterministic`**, em que o primeiro bloco do assinante é o da fórmula.
+* **mais do que o** `**max-blocks**` **permite** (`initial-allocation 4096` com 10 blocos de 256);
+* **um pool** `**mode deterministic**`, em que o primeiro bloco do assinante é o da fórmula.
 
 Cada bloco da primeira alocação vira um registro próprio no log de blocos, exatamente como se tivesse sido entregue um de cada vez. Mudar `initial-allocation` vale para os **próximos** assinantes novos e não mexe em quem já tem blocos, por isso é aplicado no lugar, sem derrubar sessão.
 
