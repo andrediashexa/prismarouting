@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.131.6 - routing policy, Junos-style
+
+### Added
+
 * **Routing policy, Junos-style: `policy-options`, applied to BGP as `import` and `export`** ([#458](https://github.com/andrediashexa/hexarouting/issues/458)).
   Named prefix lists, communities and AS-path expressions, and
   `policy-statement`s of ordered terms: `from` prefix-list, route-filter,
@@ -95,8 +101,6 @@ version has a chance of seeing it.
 
   Next on #458: OSPF and IS-IS export, more match conditions and actions,
   `show policy` and `test policy`.
-
-### Fixed
 
 ## 0.131.5 - the RAM a box forwards with
 
