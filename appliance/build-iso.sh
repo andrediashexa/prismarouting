@@ -126,7 +126,7 @@ mkdir -p "$ROOT" "$WORK/iso/live" "$WORK/iso/boot/grub"
 # reports success, so this is asserted on the box and not only decided here.
 say "debootstrap $SUITE"
 debootstrap --arch=amd64 --variant=minbase \
-  --include=systemd-sysv,linux-image-amd64,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,iproute2,ifupdown,isc-dhcp-client,openssh-server,snmpd,python3,less,vim-tiny \
+  --include=systemd-sysv,linux-image-amd64,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,zstd,iproute2,ifupdown,isc-dhcp-client,openssh-server,snmpd,python3,less,vim-tiny \
   "$SUITE" "$ROOT" "$MIRROR"
 
 say "VPP and FRR repositories"
@@ -387,9 +387,23 @@ rm -f "$ROOT"/etc/ssh/ssh_host_*_key "$ROOT"/etc/ssh/ssh_host_*_key.pub
 say "no credentials in the image"
 sh "$REPO/appliance/no-credentials-in-image" "$ROOT" || exit 1
 
+# THE INITRAMFS, trimmed and compressed as asked (#450). The hook drops the
+# driver classes no root on this box sits behind; zstd is installed because
+# initramfs.conf has always said COMPRESS=zstd and mkinitramfs, with no zstd
+# to run, fell back to gzip without a word - 0.126.0's initrd was gzip. The
+# hook stays in the image, so an installed box keeps it across kernel
+# updates.
+say "initramfs"
+KVER=$(basename "$(ls -d "$ROOT"/lib/modules/* | head -1)")
+install -D -m 0755 "$REPO/appliance/initramfs/prisma-trim" \
+  "$ROOT/etc/initramfs-tools/hooks/prisma-trim"
+chroot "$ROOT" update-initramfs -u -k "$KVER" >/dev/null
+# The first bytes name the compression; `file` is not in the build image.
+_magic=$(od -An -tx1 -N4 "$ROOT/boot/initrd.img-$KVER" | tr -d ' ')
+say "  $(du -h "$ROOT/boot/initrd.img-$KVER" | cut -f1) initrd, magic $_magic (28b52ffd is zstd, 1f8b is gzip)"
+
 say "squashfs"
 chroot "$ROOT" /bin/sh -c "apt-get clean; rm -rf /var/lib/apt/lists/*"
-KVER=$(basename "$(ls -d "$ROOT"/lib/modules/* | head -1)")
 cp "$ROOT/boot/vmlinuz-$KVER"  "$WORK/iso/live/vmlinuz"
 cp "$ROOT/boot/initrd.img-$KVER" "$WORK/iso/live/initrd"
 # /boot is KEPT in the squashfs, though the live boot does not need it: the

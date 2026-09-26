@@ -306,6 +306,11 @@ install -D -m 0755 "$REPO/appliance/load-the-images" "$DESTDIR/usr/lib/prisma-ro
 # The containers' backplane, 128.0.0.0/8 in VRF prisma-bp (#447), brought up
 # by prisma-routing-backplane.service before them.
 install -D -m 0755 "$REPO/appliance/prisma-backplane" "$DESTDIR/usr/lib/prisma-routing/prisma-backplane"
+# The initramfs hook that leaves out what no root on this box sits behind
+# (#450). The medium builds its initrd with it; on an upgraded box it takes
+# effect at the next kernel update, which is when the initrd is rebuilt.
+install -D -m 0755 "$REPO/appliance/initramfs/prisma-trim" \
+  "$DESTDIR/etc/initramfs-tools/hooks/prisma-trim"
 # A card added to the running box, attached through AF_XDP (#453): the script,
 # and the udev rule that starts prisma-routing-hot-card@<card>.service for it.
 # The template needs no enabling; udev's SYSTEMD_WANTS starts it.

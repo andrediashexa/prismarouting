@@ -79,6 +79,28 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The initramfs is zstd, as it always said, and carries no NIC driver**
+  ([#450](https://github.com/andrediashexa/hexarouting/issues/450)).
+  `initramfs.conf` has asked for zstd since the first medium, but zstd was not
+  installed, and mkinitramfs fell back to gzip without a word. 0.126.0's initrd
+  was a 42 MB gzip that sat on the first boot screen for as long as it took to
+  read and unpack. The medium now installs zstd, and a hook,
+  `/etc/initramfs-tools/hooks/prisma-trim`, drops the driver classes that no
+  root on this box sits behind: network, GPU, InfiniBand, media, sound,
+  staging, and the network and cluster filesystems. Storage, USB, input, virtio
+  and the filesystems the box boots from stay; `test/test_initramfs_trim.sh`
+  holds that list. The hook is installed on an upgraded box too, and takes
+  effect at its next kernel update.
+
+  Measured against 0.131.0's medium:
+  - **Size:** the initrd went from 43.2 MB of gzip (155 MB unpacked) to
+    19.1 MB of zstd (76 MB unpacked), and the whole ISO from 542 MB to 473 MB.
+  - **Unpacking:** 1.1 s against 0.15 s on the build host. It takes longer
+    on a small guest's CPU.
+  - **Loading:** GRUB reads 24 MB less off the medium before the kernel
+    starts. Over a BMC's virtual CD, at a few MB/s, that is the frozen first
+    line the maintainer reported.
+
 ## 0.131.8 - cores by role
 
 ### Added
