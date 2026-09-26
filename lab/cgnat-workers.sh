@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 3
+# OFF-RED-AT-LEAST: 4
 # RX workers and CGNAT workers (#466): `bpa { cgnat-workers <list> }` in
 # startup.conf makes only those workers own subscribers and translate; the
 # others take packets in and hand them over.
@@ -22,11 +22,16 @@ mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing /var/log/prisma-routing
 cd /src
 use_binary_api
 
-CONF=$(LAB_WORKERS=3 startup_conf test)
+CONF=$(LAB_WORKER_COUNT=3 startup_conf test workers)
 cp "$CONF" /tmp/startup-split.conf
 [ "$MODE" = off ] || printf '\nbpa {\n  cgnat-workers 1-2\n}\n' >> /tmp/startup-split.conf
 vpp -c /tmp/startup-split.conf > /tmp/vpp.log 2>&1 &
 wait_vpp /tmp/vpp.log || exit 1
+# From the box, not from the request: the split below is measured against
+# three workers, and a dataplane that came up with another count would make
+# every check a statement about a box this lab did not build.
+[ "$(box_workers)" = 3 ] || {
+  echo "the dataplane came up with $(box_workers) worker(s), not 3"; exit 1; }
 
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl create packet-generator interface pg1 >/dev/null
@@ -77,6 +82,8 @@ echo "  sessions: ${SESS:-0}   slices of pool din: ${SLICES:-0}"
 echo; echo "=========== VERDICT ==========="
 expect_in "the dataplane took the split from startup.conf" \
   "2 of 3 worker(s) translate" "$WORKERS"
+expect_in "  and says worker 0 only receives" \
+  "worker 0 (thread 1): receives and hands over" "$WORKERS"
 expect "worker 0, which receives, translated nothing" \
   test "${T1:-0}" = 0
 expect "  and the translating workers did the translating" \

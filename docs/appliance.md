@@ -248,7 +248,9 @@ maps a thread back, `~0` for one that only receives. The handoff node, which
 already sent every packet to the worker owning its subscriber, now reaches
 the owner through that table, and it is put on the feature arc on any box
 with workers, not only when every worker translates. `show bpa workers`
-says which is which. Measured in `lab/cgnat-workers.sh`: three workers, 0
+says which is which - `worker 0 (thread 1): receives and hands over`
+beside the ones that translate - and on a box with no workers at all it says
+`no workers: the main thread translates`. Measured in `lab/cgnat-workers.sh`: three workers, 0
 receiving and 1-2 translating, every packet injected on worker 0 - thread 1
 translated nothing, threads 2 and 3 translated everything, all 24
 subscribers got sessions, and the dynamic pool was cut into two slices. The
