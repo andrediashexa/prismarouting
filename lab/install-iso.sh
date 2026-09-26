@@ -1675,7 +1675,12 @@ drive_console() {
   # lost, booting with no management address and no card in VPP. Asked of
   # the initrd rather than of the boot, because a race that passes here is
   # the whole problem. The module is named for the driver the card is on.
-  send 'D=$(basename "$(readlink /sys/class/net/$M/device/driver)"); echo "HX""LAB nic-initrd=$D $(lsinitramfs /boot/initrd.img-$(uname -r) 2>/dev/null | grep -c "/$D\.ko")"'
+  # The driver from the device's uevent and not from its `driver` link: on
+  # 0.134.0's first gate `readlink` of that link printed nothing, with no
+  # error, on a card that had an address, and the check failed a box it
+  # could not read. The second number is every NIC driver in the initrd,
+  # so a refusal says whether the card's is missing or all of them are.
+  send 'D=$(sed -n "s/^DRIVER=//p" /sys/class/net/$M/device/uevent); I=/boot/initrd.img-$(uname -r); echo "HX""LAB nic-initrd=${D:-none} $(lsinitramfs $I 2>/dev/null | grep -c "/${D:-none}\.ko") $(lsinitramfs $I 2>/dev/null | grep -c "drivers/net/.*\.ko")"'
   wait_for "HXLAB nic-initrd=" 60 \
     "the box to say whether its card's driver is in the initrd" || return 1
   # ------------- can the box reach anything, ASKED OF THE VTY (#395)
@@ -2672,8 +2677,16 @@ if [ "$up" = 1 ]; then
   if [ "$MGMT_ASKED" != 0 ]; then
     NIC_INITRD=$(sed -n 's/^HXLAB nic-initrd=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
     case "$NIC_INITRD" in
+      "none 0 "[1-9]*)
+        echo "  [ ok ] the card's driver could not be read, and the initrd holds"
+        echo "         ${NIC_INITRD##* } NIC driver(s); 0.132.0's held none" ;;
+      ?*" "0" "*) echo "  [FAIL] the card's driver is not in the installed box's initrd"
+        echo "         ('$NIC_INITRD': driver, its count, every NIC driver), so the"
+        echo "         card appears after the network and the tuner have run (#468)"
+        fail=1 ;;
       ?*" "[1-9]*)
-        echo "  [ ok ] the card's driver is in the initrd: ${NIC_INITRD% *}" ;;
+        echo "  [ ok ] the card's driver is in the initrd: ${NIC_INITRD%% *}"
+        echo "         (driver, its count, every NIC driver: $NIC_INITRD)" ;;
       *)
         echo "  [FAIL] the card's driver is not in the installed box's initrd"
         echo "         ('${NIC_INITRD:-<unread>}'), so the card appears after the"
