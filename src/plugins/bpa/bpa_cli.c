@@ -487,6 +487,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   u32 tv = 0;
 
   u32 maxb = 0, initb = 0, stride = 0, reserve = 0;
+  u32 pfx_base, pfx_count;
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
   u32 *bys_b = 0, *bys_c = 0, *byd_b = 0, *byd_c = 0;
   bpa_pool_t cfg = { 0 };
@@ -517,28 +518,28 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       else if (unformat (line_input, "inside %U/%d", unformat_ip4_address,
 			 &addr, &len))
 	{
-	  if (len > 32)
+	  if (bpa_prefix_range (clib_net_to_host_u32 (addr.as_u32), len,
+				&pfx_base, &pfx_count))
 	    {
 	      error = clib_error_return (0, "inside prefix length %u invalid",
 					 len);
 	      goto done;
 	    }
-	  vec_add1 (in_c, 1u << (32 - len));
-	  vec_add1 (in_b, clib_net_to_host_u32 (addr.as_u32)
-			    & ~(vec_elt (in_c, vec_len (in_c) - 1) - 1));
+	  vec_add1 (in_c, pfx_count);
+	  vec_add1 (in_b, pfx_base);
 	}
       else if (unformat (line_input, "outside %U/%d", unformat_ip4_address,
 			 &addr, &len))
 	{
-	  if (len > 32)
+	  if (bpa_prefix_range (clib_net_to_host_u32 (addr.as_u32), len,
+				&pfx_base, &pfx_count))
 	    {
 	      error = clib_error_return (0, "outside prefix length %u invalid",
 					 len);
 	      goto done;
 	    }
-	  vec_add1 (out_c, 1u << (32 - len));
-	  vec_add1 (out_b, clib_net_to_host_u32 (addr.as_u32)
-			     & ~(vec_elt (out_c, vec_len (out_c) - 1) - 1));
+	  vec_add1 (out_c, pfx_count);
+	  vec_add1 (out_b, pfx_base);
 	}
       else if (unformat (line_input, "block %u", &block))
 	;
@@ -609,28 +610,28 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       else if (unformat (line_input, "bypass destination %U/%d",
 			 unformat_ip4_address, &addr, &len))
 	{
-	  if (len > 32)
+	  if (bpa_prefix_range (clib_net_to_host_u32 (addr.as_u32), len,
+				&pfx_base, &pfx_count))
 	    {
 	      error = clib_error_return (
 		0, "bypass destination prefix length %u invalid", len);
 	      goto done;
 	    }
-	  vec_add1 (byd_c, 1u << (32 - len));
-	  vec_add1 (byd_b, clib_net_to_host_u32 (addr.as_u32)
-			     & ~(vec_elt (byd_c, vec_len (byd_c) - 1) - 1));
+	  vec_add1 (byd_c, pfx_count);
+	  vec_add1 (byd_b, pfx_base);
 	}
       else if (unformat (line_input, "bypass source %U/%d",
 			 unformat_ip4_address, &addr, &len))
 	{
-	  if (len > 32)
+	  if (bpa_prefix_range (clib_net_to_host_u32 (addr.as_u32), len,
+				&pfx_base, &pfx_count))
 	    {
 	      error = clib_error_return (
 		0, "bypass source prefix length %u invalid", len);
 	      goto done;
 	    }
-	  vec_add1 (bys_c, 1u << (32 - len));
-	  vec_add1 (bys_b, clib_net_to_host_u32 (addr.as_u32)
-			     & ~(vec_elt (bys_c, vec_len (bys_c) - 1) - 1));
+	  vec_add1 (bys_c, pfx_count);
+	  vec_add1 (bys_b, pfx_base);
 	}
       else if (unformat (line_input, "vrf %u", &vrf))
 	cfg.vrf_id = vrf;
@@ -1856,7 +1857,7 @@ bpa_bypass_command_fn (vlib_main_t *vm, unformat_input_t *input,
   clib_error_t *error = 0;
   ip4_address_t addr;
   u32 *bases = 0, *counts = 0;
-  u32 len = 0;
+  u32 len = 0, pfx_base, pfx_count;
   u8 *name = 0;
   int is_dst = -1;
 
@@ -1885,14 +1886,14 @@ bpa_bypass_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	continue;
       if (unformat (line_input, "%U/%d", unformat_ip4_address, &addr, &len))
 	{
-	  if (len > 32)
+	  if (bpa_prefix_range (clib_net_to_host_u32 (addr.as_u32), len,
+				&pfx_base, &pfx_count))
 	    {
 	      error = clib_error_return (0, "prefix length %u invalid", len);
 	      goto done;
 	    }
-	  vec_add1 (counts, 1u << (32 - len));
-	  vec_add1 (bases, clib_net_to_host_u32 (addr.as_u32)
-			     & ~(vec_elt (counts, vec_len (counts) - 1) - 1));
+	  vec_add1 (counts, pfx_count);
+	  vec_add1 (bases, pfx_base);
 	  continue;
 	}
       error = clib_error_return (0, "unknown input '%U'",

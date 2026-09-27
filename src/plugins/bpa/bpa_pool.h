@@ -748,6 +748,28 @@ bpa_pool_guaranteed (const bpa_pool_t *p, u32 n_workers)
   return worst == ~0u ? bpa_pool_usable (p) : worst;
 }
 
+/*
+ * `<addr>/<len>` as the range a pool or a bypass holds: its first address,
+ * host order, and how many. 0 when it is one, -1 when it cannot be.
+ *
+ * THE ONE PLACE THIS IS WORKED OUT (#473). It was `1u << (32 - len)` written
+ * out seven times across bpa_cli.c and bpa_api.c, and at len 0 that is a
+ * shift by the width of the type - undefined, and 1 on x86: `bypass
+ * destination 0.0.0.0/0` bypassed the single address 0.0.0.0, in silence. A
+ * /0 is refused rather than represented: a range's count is a u32 and holds
+ * at most 2^31 here, and every address is neither a pool nor a bypass - a box
+ * meant to translate nothing has no `cgnat inside`.
+ */
+static_always_inline int
+bpa_prefix_range (u32 addr, u32 len, u32 *base, u32 *count)
+{
+  if (len == 0 || len > 32)
+    return -1;
+  *count = len == 32 ? 1 : 1u << (32 - len);
+  *base = addr & ~(*count - 1);
+  return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* address set lookups                                                */
 

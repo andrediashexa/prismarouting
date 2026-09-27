@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A /0 prefix in a pool or a bypass became a single address** ([#473](https://github.com/andrediashexa/hexarouting/issues/473)).
+  Found reviewing the plugin's unit-test excuses (#472). The plugin turned
+  `<addr>/<len>` into a range as `1u << (32 - len)` in seven places, and at
+  `/0` that shift is undefined (1 on x86). The VTY let `/0` through, so
+  `bypass destination 0.0.0.0/0` bypassed the single address 0.0.0.0, with
+  nothing said. One `bpa_prefix_range()` in `bpa_pool.h` now replaces the
+  seven copies, refuses `/0` and is unit-tested in `test/test_bpa_pool.c`.
+  The VTY refuses `/0` where it is typed: every address is no pool and no
+  bypass, and a box meant to translate nothing has no `cgnat inside`.
+  `test_prismash_config.py` had listed `0.0.0.0/0` as a good prefix, pinning
+  the defect as ordinary.
+
 ## 0.138.1 - where this stands, at 0.138.0
 
 ### Added

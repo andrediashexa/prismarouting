@@ -2333,5 +2333,34 @@ main (void)
     printf ("  a stride that misses workers, and a reserve that does\n");
   }
 
+  /* bpa_prefix_range (#473): the one place a prefix becomes a range. The
+   * seven copies it replaced computed 1u << 32 at /0 - undefined, 1 on x86 -
+   * so a /0 bypass quietly became the single address 0.0.0.0. */
+  {
+    u32 base = 7, count = 7;
+
+    CHECK (bpa_prefix_range (0, 0, &base, &count) == -1
+	   && base == 7 && count == 7,
+	   "a /0 was taken (base %u count %u): every address is not a range",
+	   base, count);
+    CHECK (bpa_prefix_range (0x0a000001, 33, &base, &count) == -1,
+	   "a /33 was taken");
+    CHECK (bpa_prefix_range (0x0a000001, 32, &base, &count) == 0
+	   && base == 0x0a000001 && count == 1,
+	   "a /32 is its own address, once: base %08x count %u", base, count);
+    CHECK (bpa_prefix_range (0x64400105, 24, &base, &count) == 0
+	   && base == 0x64400100 && count == 256,
+	   "100.64.1.5/24 is 100.64.1.0 + 256: base %08x count %u", base, count);
+    CHECK (bpa_prefix_range (0xc8000011, 27, &base, &count) == 0
+	   && base == 0xc8000000 && count == 32,
+	   "200.0.0.17/27 is 200.0.0.0 + 32: base %08x count %u", base, count);
+    CHECK (bpa_prefix_range (0xffffffff, 1, &base, &count) == 0
+	   && base == 0x80000000 && count == 0x80000000u,
+	   "a /1 is half the space, from its own half: base %08x count %u",
+	   base, count);
+    printf ("  a prefix is a range, and a /0 is refused rather than one "
+	    "address\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

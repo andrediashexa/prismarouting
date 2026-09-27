@@ -1524,7 +1524,10 @@ print("\n=== config.prefix_error: an IPv4 network the dataplane can hold ===")
 # Mutation shown red: strict=True softened to strict=False, which is the
 # dataplane's masking done silently here - the operator types 100.64.0.5/10,
 # `save` writes 100.64.0.0/10, and the file is not the file.
-for good in ("10.0.0.0/8", "100.64.0.0/10", "203.0.113.0/24", "0.0.0.0/0",
+# 0.0.0.0/0 WAS IN THIS LIST until #473: it asserted a prefix the dataplane
+# took as the single address 0.0.0.0 (1u << 32 is undefined), which is a
+# suite pinning the defect as ordinary. It is a refusal now, below.
+for good in ("10.0.0.0/8", "100.64.0.0/10", "203.0.113.0/24", "128.0.0.0/1",
              "192.0.2.1/32"):
     check(config.prefix_error("inside", good) is None, f"{good} is a prefix")
 _BAD_PREFIX = [
@@ -1537,6 +1540,8 @@ _BAD_PREFIX = [
     ("100.64.0.5/10", "host bits are set", "host bits, which the dataplane "
      "would mask in silence"),
     ("", "expected a prefix", "nothing at all"),
+    ("0.0.0.0/0", "a /0 is every address", "a /0, which the dataplane took "
+     "as one address before #473"),
 ]
 for value, needle, why in _BAD_PREFIX:
     r = config.prefix_error("inside", value)
