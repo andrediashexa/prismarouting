@@ -219,3 +219,48 @@ services:
       - /etc/frr:/etc/frr
       - /var/run/frr:/var/run/frr
     restart: unless-stopped
+
+  # THE MANAGEMENT PLANE (#448, phase C): the container the VTY runs in.
+  #
+  # NO NETWORK OF DOCKER'S. A docker network would put routes in the main
+  # table and rules in iptables, which is the leak #447's VRF exists to
+  # prevent. The container starts with none, and prisma-backplane attach
+  # gives it one veth on bp0, 128.0.0.2/8, in prisma-bp. From there it
+  # reaches the host (128.0.0.1) and nothing outside: the VRF's table ends
+  # in an unreachable default. What it needs of the host it asks through the
+  # doors (/run/prisma-routing/doors.sock).
+  #
+  # WHAT IT SHARES, each for one reason:
+  #   ipc: host             vat2 talks to VPP over /dev/shm/global_vm
+  #   /run/vpp              the dataplane's CLI socket, for vppctl
+  #   /var/run/frr, /etc/frr  vtysh and frr-reload.py, and the file FRR saves
+  #   /etc/prisma-routing   the configuration, its revisions and the confirm store
+  #   /run/prisma-routing   the doors' socket
+  #   /run/user             a session's broker socket, under the login's own
+  #                         runtime directory (#448's broker)
+  #   /var/log/prisma-routing  the audit trail and the records
+  #   /etc/passwd, group, shadow, read-only: the running configuration reads
+  #                         the accounts off them; every change goes through a door
+  #   /usr/share/prisma-routing, read-only: the VERSION stamp `show version`
+  #                         reads, which the image does not carry
+  mgmt:
+    image: prisma-mgmt:${PRISMA_VERSION:-latest}
+    network_mode: none
+    ipc: host
+    init: true
+    depends_on:
+      - vpp
+      - frr
+    volumes:
+      - /run/vpp:/run/vpp
+      - /var/run/frr:/var/run/frr
+      - /etc/frr:/etc/frr
+      - /etc/prisma-routing:/etc/prisma-routing
+      - /run/prisma-routing:/run/prisma-routing
+      - /run/user:/run/user
+      - /var/log/prisma-routing:/var/log/prisma-routing
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+      - /etc/shadow:/etc/shadow:ro
+      - /usr/share/prisma-routing:/usr/share/prisma-routing:ro
+    restart: unless-stopped

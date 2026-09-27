@@ -274,7 +274,8 @@ class DoorFiles:
 
 
 def run_locally(argv, stdin=None, timeout=30):
-    """The command run here, as the VTY ran it before the doors."""
+    """The command run here, as the VTY ran it before the doors. A timeout
+    of None is no limit: a VTY session lasts as long as the operator."""
     try:
         p = subprocess.run(list(argv), capture_output=True, text=True,
                            input=stdin, timeout=timeout)
@@ -342,6 +343,8 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None):
         r = json.loads(request)
         if isinstance(r, dict) and "file" in r:
             return answer_file(r, uid, allowed_uids, files)
+        if isinstance(r, dict) and "session" in r:
+            return answer_session(r, uid, execute)
         argv, stdin = r["argv"], r.get("stdin")
         timeout = r.get("timeout", 30)
     except (ValueError, KeyError, TypeError):
@@ -368,6 +371,11 @@ def say(request, uid, reply):
         argv = r.get("argv")
         if "file" in r and argv is None:
             argv = [str(r.get("file")), str(r.get("path"))]
+        if "session" in r and argv is None:
+            # Never the command's text: `-c` can carry a password hash.
+            kind = [k for k in ("attach", "command")
+                    if isinstance(r["session"], dict) and k in r["session"]]
+            argv = ["session"] + kind
     except (ValueError, AttributeError):
         argv = None
     words = " ".join(argv) if isinstance(argv, list) and \
@@ -389,6 +397,106 @@ def answer_file(r, uid, allowed_uids=(0,), files=None):
     except OSError as e:
         return {"rc": 1, "out": f"{verb[1]}: {e.strerror or e}"}
     return {"rc": 0, "out": ""}
+
+
+#: The container the VTY runs in (#448, phase C), as docker-compose 1.29 names
+#: it on the box.
+MGMT_CONTAINER = "prisma-routing_mgmt_1"
+
+#: A broker's socket, as prisma-vty-broker makes it under the login's runtime
+#: directory. The uid in the path must be the caller's own.
+SESSION_SOCKET = re.compile(r"^/run/user/(\d+)/prisma-vty-[A-Za-z0-9_]+/vty\.sock$")
+
+#: Where a login with no runtime directory of its own puts it: a sticky
+#: directory (tmpfiles.d, 1733) the management plane shares. The path names
+#: no uid, so the owner of the socket AND of the directory it is in must be
+#: the caller - which mkdtemp in a sticky directory guarantees and nobody
+#: else can arrange.
+VTY_RUN_DIR = "/run/prisma-routing/vty"
+
+#: A command a session runs with -c (`ssh box 'show version'`): one line.
+SESSION_COMMAND_MAX = 4096
+
+
+def session_argv(req, uid, pw=None, groups=None):
+    """
+    The `docker exec` a session door runs, or (None, why).
+
+    NOT A DOOR THAT GRANTS ANYTHING. It is the door every login takes into
+    the management plane, so it runs for every uid - and what it runs is the
+    VTY as THAT uid: `-u <uid>:<gid>` and `--group-add` each group the account
+    has on the host, read off the host's own files and not from the request.
+    The VTY decides the role from those groups, as it does on the host, and
+    whatever it then asks of the host's other doors is decided by the same
+    uid, which the kernel reports. A read-only account in the container is
+    exactly a read-only account on the host.
+    """
+    s = req.get("session")
+    if not isinstance(s, dict):
+        return None, "not a session"
+    if pw is None:
+        import pwd
+        try:
+            pw = pwd.getpwuid(uid)
+        except KeyError:
+            return None, f"uid {uid} has no account on the host"
+    if groups is None:
+        groups = os.getgrouplist(pw.pw_name, pw.pw_gid)
+    if "attach" in s:
+        path = s["attach"]
+        import stat
+        m = SESSION_SOCKET.match(path) if isinstance(path, str) else None
+        shared = isinstance(path, str) and re.match(
+            "^" + re.escape(VTY_RUN_DIR) + r"/prisma-vty-[A-Za-z0-9_]+/vty\.sock$",
+            path)
+        if not shared and (not m or int(m.group(1)) != uid):
+            return None, "a session's socket is under the caller's own /run/user"
+        try:
+            st = os.lstat(path)
+            dst = os.lstat(os.path.dirname(path))
+        except OSError:
+            return None, "no such socket"
+        if not stat.S_ISSOCK(st.st_mode) or st.st_uid != uid:
+            return None, "not the caller's own socket"
+        if not stat.S_ISDIR(dst.st_mode) or dst.st_uid != uid:
+            return None, "not the caller's own directory"
+        vty = ["prismash", "--attach", path]
+    elif "command" in s:
+        cmd = s["command"]
+        if not isinstance(cmd, str) or "\n" in cmd or "\0" in cmd \
+                or len(cmd) > SESSION_COMMAND_MAX:
+            return None, "a session's command is one line"
+        vty = ["prismash", "-c", cmd]
+    else:
+        return None, "a session attaches a terminal or runs a command"
+    argv = ["docker", "exec", "-u", f"{uid}:{pw.pw_gid}"]
+    for g in sorted(set(groups) - {pw.pw_gid}):
+        argv += ["--group-add", str(g)]
+    argv += ["-e", f"HOME={pw.pw_dir}", "-e", f"USER={pw.pw_name}",
+             "-e", f"LOGNAME={pw.pw_name}", MGMT_CONTAINER] + vty
+    return argv, ""
+
+
+def mgmt_running(execute=run_locally):
+    """Is the management plane's container running? Asked of docker."""
+    rc, out = execute(["docker", "inspect", "-f", "{{.State.Running}}",
+                       MGMT_CONTAINER], None, 10)
+    return rc == 0 and out.strip() == "true"
+
+
+def answer_session(r, uid, execute=run_locally):
+    """
+    answer(), for a session door: the VTY run in the management plane as the
+    caller, and its exit status. 125 means there is no management plane to
+    run it in, which the client takes as "run it here", as before phase C.
+    """
+    argv, why = session_argv(r, uid)
+    if argv is None:
+        return {"rc": 126, "out": f"the host's door: {why}"}
+    if not mgmt_running(execute):
+        return {"rc": 125, "out": "the management plane is not running"}
+    rc, out = execute(argv, None, None)
+    return {"rc": rc, "out": out if "command" in r["session"] else ""}
 
 
 def serve(path=SOCKET, allowed_uids=(0,), execute=run_locally, ready=None):

@@ -234,10 +234,20 @@ flowchart LR
 | Serviço | Função |
 |---------|--------|
 | `prisma-routing-tune` | tuning de boot (isolcpus, hugepages); roda em **todo** boot, sem sentinela |
-| `prisma-routing-containers` | sobe o dataplane e o roteamento como containers |
+| `prisma-routing-containers` | sobe o dataplane, o roteamento e o plano de gerência (a VTY) como containers |
+| `prisma-routing-doors` | executa no host o que a VTY pede (contas, sshd, SNMP, reboot); só para root, cada pedido vira uma linha no journal |
 | `prisma-routing-card-watch.timer` | percebe um dataplane que o Docker desistiu de reiniciar e devolve a placa ao kernel |
 | `prisma-routing.service` | aplica a configuração salva (`prismash --load`) |
 | `prisma-routing-selftest` | verifica e reporta no console |
+
+**O container de gerência** (`prisma-routing_mgmt_1`) é onde a VTY vai morar. Ele já sobe, fica só na rede interna 128.0.0.2, sem saída para fora, e a VTY dentro dele fala com o dataplane e com o roteamento. **O login ainda cai na VTY do host**: a VTY lê fatos do host (as placas, as rotas, se a caixa está na mídia de instalação), e dentro do container ela leria os do container. Enquanto essas leituras não passarem pelo host, a sessão no container fica desligada. Para experimentar numa caixa de teste: `touch /etc/prisma-routing/vty-in-container`.
+
+```
+docker ps --format "{{.Names}} {{.Status}}"
+prisma-routing_mgmt_1 Up 3 minutes
+prisma-routing_frr_1 Up 3 minutes
+prisma-routing_vpp_1 Up 3 minutes
+```
 
 Antes de o compose ver o arquivo, a unit faz três coisas, e cada uma existe porque uma caixa que pulou aquela etapa subiu errada:
 

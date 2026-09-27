@@ -287,6 +287,17 @@ chmod 0755 "$DESTDIR/usr/lib/prisma-routing/prismash.py"
 # decided and run on the host.
 install -D -m 0755 "$REPO/appliance/prisma-vty-broker" \
     "$DESTDIR/usr/lib/prisma-routing/prisma-vty-broker"
+# The directory a session's socket goes in when the login has no runtime
+# directory of its own (#448, phase C), made at every boot.
+install -D -m 0644 "$REPO/appliance/tmpfiles/prisma-routing.conf" \
+    "$DESTDIR/usr/lib/tmpfiles.d/prisma-routing.conf"
+if [ -z "$DESTDIR" ] && command -v systemd-tmpfiles >/dev/null 2>&1; then
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/prisma-routing.conf >/dev/null 2>&1 || true
+fi
+# And what the broker runs (#448, phase C): the VTY in the management plane,
+# or here when there is none.
+install -D -m 0755 "$REPO/appliance/prisma-vty-session" \
+    "$DESTDIR/usr/lib/prisma-routing/prisma-vty-session"
 install -D -m 0755 "$REPO/appliance/prismash-launcher" "$DESTDIR/usr/bin/prismash"
 install -D -m 0755 "$REPO/appliance/prisma-routing-tune" "$DESTDIR/usr/bin/prisma-routing-tune"
 install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/prisma-routing/wait-for-vpp"

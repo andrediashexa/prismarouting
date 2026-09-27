@@ -432,5 +432,101 @@ check(doors._address("192.0.2.1") and doors._address("2001:db8::1")
       and not doors._address("-x"),
       "_address: an address and nothing else, not a prefix, not a word")
 
+
+print("\n=== the session door: the VTY in the management plane, as the caller ===")
+import pwd as _pwd  # noqa: E402
+import collections  # noqa: E402
+pwd_like = collections.namedtuple("pw", "pw_uid pw_gid pw_dir pw_name")
+_me = _pwd.getpwuid(os.getuid())
+# A real socket where the broker makes one, under this login's own
+# /run/user, so the path matches the product's pattern and the checks read
+# the file itself. Skipped, and said, where there is no runtime directory.
+_rt = f"/run/user/{os.getuid()}"
+_ls = None
+if os.path.isdir(_rt):
+    _sockdir = tempfile.mkdtemp(prefix="prisma-vty-", dir=_rt)
+    _sock = os.path.join(_sockdir, "vty.sock")
+    _ls = socket.socket(socket.AF_UNIX)
+    _ls.bind(_sock)
+    argv, why = doors.session_argv({"session": {"attach": _sock}}, os.getuid(),
+                                   pw=_me, groups=[_me.pw_gid, 4242])
+    check(argv is not None and argv[-3:] == ["prismash", "--attach", _sock],
+          f"the caller's own socket, under its own /run/user, is attached: {why}")
+    _f = os.path.join(_sockdir, "not-a-socket")
+    open(_f, "w").close()
+    os.rename(_f, _sockdir + "/vty.sock.file")
+    argv, why = doors.session_argv(
+        {"session": {"attach": _sockdir + "/vty.sock.file"}}, os.getuid(),
+        pw=_me, groups=[_me.pw_gid])
+    check(argv is None, f"a path that does not end in vty.sock is refused: {why}")
+else:
+    print(f"  (no {_rt} here: the accepted-socket case is not run)")
+# The shared sticky directory, for a login with no runtime directory of its
+# own (0.137.0's first gate: a console login had none, and every session fell
+# back to the host). A scratch directory stands in for /run/prisma-routing/vty.
+_shared = tempfile.mkdtemp()
+os.chmod(_shared, 0o1733)
+_real_dir = doors.VTY_RUN_DIR
+doors.VTY_RUN_DIR = _shared
+try:
+    _sd = tempfile.mkdtemp(prefix="prisma-vty-", dir=_shared)
+    _ss = os.path.join(_sd, "vty.sock")
+    _l2 = socket.socket(socket.AF_UNIX)
+    _l2.bind(_ss)
+    argv, why = doors.session_argv({"session": {"attach": _ss}}, os.getuid(),
+                                   pw=_me, groups=[_me.pw_gid])
+    check(argv is not None and argv[-1] == _ss,
+          f"a socket in the shared directory, in the caller's own directory, is attached: {why}")
+    argv, why = doors.session_argv({"session": {"attach": _ss}}, os.getuid() + 1,
+                                   pw=_me, groups=[_me.pw_gid])
+    check(argv is None, f"and refused to any other uid: {why}")
+    _l2.close()
+finally:
+    doors.VTY_RUN_DIR = _real_dir
+argv, why = doors.session_argv(
+    {"session": {"attach": f"/run/user/{os.getuid() + 1}/prisma-vty-x/vty.sock"}},
+    os.getuid(), pw=_me, groups=[_me.pw_gid])
+check(argv is None and "caller's own" in why,
+      f"a socket under ANOTHER uid's /run/user is refused: {why}")
+argv, why = doors.session_argv({"session": {"attach": "/tmp/prisma-vty-x/vty.sock"}},
+                               os.getuid(), pw=_me, groups=[_me.pw_gid])
+check(argv is None, f"a socket outside /run/user is refused: {why}")
+argv, why = doors.session_argv({"session": {"command": "show version\nshow ip route"}},
+                               os.getuid(), pw=_me, groups=[_me.pw_gid])
+check(argv is None and "one line" in why, f"a command of two lines is refused: {why}")
+argv, why = doors.session_argv({"session": {"command": "show version"}}, 1234,
+                               pw=pwd_like(1234, 1234, "/home/ops", "ops"),
+                               groups=[1234, 998, 999])
+check(argv[:4] == ["docker", "exec", "-u", "1234:1234"]
+      and argv[4:8] == ["--group-add", "998", "--group-add", "999"]
+      and argv[-4:] == [doors.MGMT_CONTAINER, "prismash", "-c", "show version"],
+      f"the VTY runs as the caller, with the caller's host groups: {argv}")
+_asked = []
+
+
+def _fake(argv, stdin, timeout):
+    _asked.append(argv)
+    if argv[:2] == ["docker", "inspect"]:
+        return 0, "false\n"
+    return 0, ""
+
+
+got = doors.answer_session({"session": {"command": "show version"}}, os.getuid(),
+                           execute=_fake)
+check(got["rc"] == 125 and len(_asked) == 1,
+      f"no management plane running is 125, and nothing is exec'd: {got}")
+check(doors.mgmt_running(lambda a, s, t: (0, "true\n")) is True
+      and doors.mgmt_running(lambda a, s, t: (1, "")) is False,
+      "mgmt_running: docker's answer, and a docker that fails is not running")
+_o = io.StringIO()
+with contextlib.redirect_stdout(_o):
+    doors.say(json.dumps({"session": {"command": "user x password $6$SECRET"}}),
+              1000, {"rc": 0})
+check("session command" in _o.getvalue() and "SECRET" not in _o.getvalue(),
+      f"a session is logged by its kind, never its text: {_o.getvalue()!r}")
+if _ls is not None:
+    _ls.close()
+    __import__("shutil").rmtree(_sockdir, ignore_errors=True)
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

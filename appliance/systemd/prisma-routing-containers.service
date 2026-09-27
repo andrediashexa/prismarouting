@@ -87,6 +87,9 @@ ExecStart=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml -f /run/pr
 # binary API stayed root-only.
 Environment=PRISMA_API_WAIT=240
 ExecStartPost=/usr/lib/prisma-routing/share-the-api-segment
+# The management plane on the backplane (#448, phase C): the container has no
+# network until this gives it 128.0.0.2 on bp0, in prisma-bp.
+ExecStartPost=/usr/lib/prisma-routing/prisma-backplane attach prisma-routing_mgmt_1
 # `down` and not `stop`: the containers are recreated from the compose file
 # on every start, so leaving them around buys nothing and a stopped container
 # holding /run/vpp is a dataplane the next start cannot bind.
