@@ -2720,10 +2720,15 @@ if [ "$up" = 1 ]; then
          fail=1 ;;
     esac
     MGMT_SESSION=$(sed -n 's/^HXLAB mgmt-session=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+    # THE LOGIN STAYS ON THE HOST until the VTY's reads of the host go
+    # through the doors (prismash-login: vty-in-container is off by default).
+    # So none may run there: one that did would be reading the container's
+    # /sys and /proc as though they were the box's.
     case "$MGMT_SESSION" in
-      [1-9]*) echo "  [ ok ] and the login's VTY runs in it: $MGMT_SESSION session(s)" ;;
-      *) echo "  [FAIL] no VTY session runs in the management plane ('${MGMT_SESSION:-<unread>}'):"
-         echo "         the login fell back to the VTY on the host"
+      0) echo "  [ ok ] and no login's VTY runs in it yet: it reads the host's facts" ;;
+      *) echo "  [FAIL] a login's VTY runs in the management plane ('${MGMT_SESSION:-<unread>}')"
+         echo "         with vty-in-container off: it would read the container's /sys"
+         echo "         and /proc as the box's"
          echo "         $(sed -n 's/^HXLAB mgmt-why=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')"
          fail=1 ;;
     esac

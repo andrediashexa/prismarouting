@@ -54,8 +54,19 @@ PRISMASH=${PRISMA_PRISMASH:-/usr/bin/prismash}
 # the host's doors to run it in the container as this login, and runs
 # prismash here itself when there is no management plane. Where it is not
 # installed, prismash as before.
-VTY=${PRISMA_VTY_SESSION:-/usr/lib/prisma-routing/prisma-vty-session}
-[ -x "$VTY" ] || VTY=$PRISMASH
+#
+# BEHIND A SWITCH, OFF BY DEFAULT. 0.137.0's gate: the VTY in the container
+# reads the host's facts - the live medium, the NICs in /sys, the routes in
+# /proc - from paths that are the container's own there, and on the live
+# medium told the operator to reboot a box where nothing survives one. Until
+# those reads go through the doors too, a login stays on the host's VTY, and
+# /etc/prisma-routing/vty-in-container turns the container on for a box
+# somebody is testing it on.
+VTY=$PRISMASH
+if [ -e "${PRISMA_VTY_SWITCH:-/etc/prisma-routing/vty-in-container}" ]; then
+  VTY=${PRISMA_VTY_SESSION:-/usr/lib/prisma-routing/prisma-vty-session}
+  [ -x "$VTY" ] || VTY=$PRISMASH
+fi
 
 # A login shell is invoked with "-c <command>" for scp, rsync, git and any
 # non-interactive ssh. An administrator's reach a real shell, or file copies to

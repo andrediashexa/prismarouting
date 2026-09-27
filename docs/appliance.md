@@ -3077,7 +3077,16 @@ needs of the host it asks through the doors above.
 - `/usr/share/prisma-routing`, for the version stamp;
 - `/etc/passwd`, `group` and `shadow`, read-only.
 
-**A login lands there as itself.** `prismash-login` hands the broker
+**Not yet by default.** The VTY reads the host's facts directly - the live
+medium's squashfs, the NICs in `/sys`, the routes in `/proc`, `tune.env` -
+and in the container those paths are the container's own. Measured on
+0.137.0's first gate: on the live medium the VTY in the container told the
+operator to reboot a box where nothing survives one. So `prismash-login`
+keeps the host's VTY unless `/etc/prisma-routing/vty-in-container` exists,
+and the gate asserts that no login's VTY runs in the container. The reads
+become doors next; the switch then comes on.
+
+**With the switch on, a login lands there as itself.** `prismash-login` hands the broker
 `prisma-vty-session`, which asks the doors for a session: `docker exec -u
 <uid>:<gid> --group-add <the account's groups on the host>`, the command
 fixed to `prismash --attach <socket>` or `prismash -c <command>`. The uid is

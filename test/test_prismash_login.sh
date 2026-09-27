@@ -238,6 +238,28 @@ case "$out" in
   *) bad "the broker's failure did not reach the fallback: $out" ;;
 esac
 
+echo "=== the VTY in the management plane only behind its switch (#448) ==="
+# Off by default: 0.137.0's gate found the VTY in the container reading the
+# container's /sys and /proc as the box's. The broker is told what to run,
+# and that is what is asserted.
+printf '#!/bin/sh\necho session "$@"\n' > "$d/bin/session"; chmod +x "$d/bin/session"
+rm -f "$d/broker-args"
+PRISMA_VTY_BROKER="$d/bin/broker" PRISMA_PRISMASH="$d/bin/clean-prismash" \
+  PRISMA_VTY_SESSION="$d/bin/session" PRISMA_VTY_SWITCH="$d/no-switch" \
+  PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" >/dev/null 2>&1
+case "$(cat "$d/broker-args" 2>/dev/null)" in
+  *clean-prismash*) ok "no switch: the broker runs the VTY on the host" ;;
+  *) bad "no switch, and the broker ran: $(cat "$d/broker-args" 2>/dev/null)" ;;
+esac
+touch "$d/switch"; rm -f "$d/broker-args"
+PRISMA_VTY_BROKER="$d/bin/broker" PRISMA_PRISMASH="$d/bin/clean-prismash" \
+  PRISMA_VTY_SESSION="$d/bin/session" PRISMA_VTY_SWITCH="$d/switch" \
+  PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" >/dev/null 2>&1
+case "$(cat "$d/broker-args" 2>/dev/null)" in
+  *bin/session*) ok "the switch on: the broker runs the session client" ;;
+  *) bad "the switch on, and the broker ran: $(cat "$d/broker-args" 2>/dev/null)" ;;
+esac
+
 rm -rf "$d"
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
