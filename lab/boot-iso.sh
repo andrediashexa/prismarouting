@@ -78,7 +78,7 @@ mkfifo /tmp/boot-in || { echo "cannot create the console pipe"; exit 1; }
   # Held open to the end: a writer that closes hands qemu an end of file on
   # the serial console, and the box then has no console for the rest of the
   # run.
-  printf 'show interface\n'
+  printf 'show interface | no-more\n'
   sleep "${BOOT_SECS:-420}"
 ) > /tmp/boot-in &
 BOOT_WRITER=$!

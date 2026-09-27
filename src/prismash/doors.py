@@ -407,6 +407,13 @@ MGMT_CONTAINER = "prisma-routing_mgmt_1"
 #: directory. The uid in the path must be the caller's own.
 SESSION_SOCKET = re.compile(r"^/run/user/(\d+)/prisma-vty-[A-Za-z0-9_]+/vty\.sock$")
 
+#: Where a login with no runtime directory of its own puts it: a sticky
+#: directory (tmpfiles.d, 1733) the management plane shares. The path names
+#: no uid, so the owner of the socket AND of the directory it is in must be
+#: the caller - which mkdtemp in a sticky directory guarantees and nobody
+#: else can arrange.
+VTY_RUN_DIR = "/run/prisma-routing/vty"
+
 #: A command a session runs with -c (`ssh box 'show version'`): one line.
 SESSION_COMMAND_MAX = 4096
 
@@ -437,16 +444,22 @@ def session_argv(req, uid, pw=None, groups=None):
         groups = os.getgrouplist(pw.pw_name, pw.pw_gid)
     if "attach" in s:
         path = s["attach"]
+        import stat
         m = SESSION_SOCKET.match(path) if isinstance(path, str) else None
-        if not m or int(m.group(1)) != uid:
+        shared = isinstance(path, str) and re.match(
+            "^" + re.escape(VTY_RUN_DIR) + r"/prisma-vty-[A-Za-z0-9_]+/vty\.sock$",
+            path)
+        if not shared and (not m or int(m.group(1)) != uid):
             return None, "a session's socket is under the caller's own /run/user"
         try:
             st = os.lstat(path)
+            dst = os.lstat(os.path.dirname(path))
         except OSError:
             return None, "no such socket"
-        import stat
         if not stat.S_ISSOCK(st.st_mode) or st.st_uid != uid:
             return None, "not the caller's own socket"
+        if not stat.S_ISDIR(dst.st_mode) or dst.st_uid != uid:
+            return None, "not the caller's own directory"
         vty = ["prismash", "--attach", path]
     elif "command" in s:
         cmd = s["command"]

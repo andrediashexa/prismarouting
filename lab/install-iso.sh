@@ -1697,6 +1697,11 @@ drive_console() {
   # still open under `start shell`, as a `docker exec` the doors ran (#448).
   send 'echo "HX""LAB mgmt-session=$(ps -eo args | grep -c "[p]risma-routing_mgmt_1 prismash --attach")"'
   wait_for "HXLAB mgmt-session=" 30 "the host to say whether a session runs in the management plane" || return 1
+  # And why, if it does not: where the broker could put its socket, and what
+  # the doors said to each session (0.137.0's first gate fell back with
+  # neither known).
+  send 'echo "HX""LAB mgmt-why=xdg:${XDG_RUNTIME_DIR:-none} vtydir:$(stat -c %a /run/prisma-routing/vty 2>&1) doors:$(journalctl -b -u prisma-routing-doors --no-pager 2>/dev/null | grep -o "session [a-z]* -> [0-9]*" | sort | uniq -c | tr "\n" " ")"'
+  wait_for "HXLAB mgmt-why=" 30 "the host to say where a session socket goes" || return 1
   send 'D=$(sed -n "s/^DRIVER=//p" /sys/class/net/$M/device/uevent); I=/boot/initrd.img-$(uname -r); echo "HX""LAB nic-initrd=${D:-none} $(lsinitramfs $I 2>/dev/null | grep -c "/${D:-none}\.ko") $(lsinitramfs $I 2>/dev/null | grep -c "drivers/net/.*\.ko")"'
   wait_for "HXLAB nic-initrd=" 60 \
     "the box to say whether its card's driver is in the initrd" || return 1
@@ -2003,7 +2008,7 @@ drive_console() {
   # broken VTY. Reading needs the dataplane socket and FRR's, both group-owned
   # - so this is where the memberships every account gets, role or none, are
   # proved on an installed box.
-  send "show running-config"
+  send "show running-config | no-more"
   # Rewound between the two, deliberately. They are two halves of ONE answer
   # and they arrive in an order this driver must not depend on: waiting for
   # whichever the VTY happens to print first would step the reader past the
@@ -2719,6 +2724,7 @@ if [ "$up" = 1 ]; then
       [1-9]*) echo "  [ ok ] and the login's VTY runs in it: $MGMT_SESSION session(s)" ;;
       *) echo "  [FAIL] no VTY session runs in the management plane ('${MGMT_SESSION:-<unread>}'):"
          echo "         the login fell back to the VTY on the host"
+         echo "         $(sed -n 's/^HXLAB mgmt-why=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')"
          fail=1 ;;
     esac
     NIC_INITRD=$(sed -n 's/^HXLAB nic-initrd=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
@@ -4499,7 +4505,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     # they would see. Nothing is armed by this commit since #378, and nothing
     # is written down beside the card since #385: what the box does with the
     # card is decided at the next start, and PHASE 5 reads it there.
-    send "show interface"
+    send "show interface | no-more"
     wait_for "prisma> " 120 "the dataplane to list its interfaces" \
       || fail=1
     # ------------- and the same card in the words an operator types (#393)
@@ -4547,7 +4553,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     # ` shutdown` only when it is down, and never `no shutdown` - so the
     # reading is the ABSENCE of that row, which the `shutdown` committed
     # above had put there.
-    send "show this"
+    send "show this | no-more"
     wait_for "[edit interface" 60 "the block to print itself back" || fail=1
     tail -c "+$_ab_pos" "$CONSOLE_LOG" | tr -d '\r' \
       | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' > /tmp/ab-block.txt
@@ -4559,7 +4565,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     wait_for "prisma> " 120 "the VTY to leave configuration mode" \
       || fail=1
     _ab_show=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
-    send "show interface"
+    send "show interface | no-more"
     wait_for "prisma> " 120 \
       "the VTY to list its interfaces after 'no shut'" || fail=1
     tail -c "+$_ab_show" "$CONSOLE_LOG" | tr -d '\r' \

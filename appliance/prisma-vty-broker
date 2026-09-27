@@ -124,13 +124,23 @@ def serve(conn):
                 return
 
 
+#: The sticky directory for a login with no runtime directory of its own.
+VTY_RUN_DIR = os.environ.get("PRISMA_VTY_RUN_DIR", "/run/prisma-routing/vty")
+
+
 def main(argv):
     if not argv:
         print("usage: prisma-vty-broker <the VTY's command ...>", file=sys.stderr)
         return 2
+    # WHERE THE MANAGEMENT PLANE CAN SEE IT (#448, phase C): the login's own
+    # runtime directory when it has one, else the sticky directory the box
+    # makes for exactly this (tmpfiles.d, 1733). Measured on 0.137.0's first
+    # gate: a console login had no XDG_RUNTIME_DIR - the medium carries no
+    # libpam-systemd - so the socket went to /tmp, which the container does
+    # not share, and every session fell back to the VTY on the host.
     base = os.environ.get("XDG_RUNTIME_DIR")
     if not base or not os.path.isdir(base):
-        base = None
+        base = VTY_RUN_DIR if os.path.isdir(VTY_RUN_DIR) else None
     workdir = tempfile.mkdtemp(prefix="prisma-vty-", dir=base)
     path = os.path.join(workdir, "vty.sock")
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

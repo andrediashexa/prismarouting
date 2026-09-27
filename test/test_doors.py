@@ -461,6 +461,28 @@ if os.path.isdir(_rt):
     check(argv is None, f"a path that does not end in vty.sock is refused: {why}")
 else:
     print(f"  (no {_rt} here: the accepted-socket case is not run)")
+# The shared sticky directory, for a login with no runtime directory of its
+# own (0.137.0's first gate: a console login had none, and every session fell
+# back to the host). A scratch directory stands in for /run/prisma-routing/vty.
+_shared = tempfile.mkdtemp()
+os.chmod(_shared, 0o1733)
+_real_dir = doors.VTY_RUN_DIR
+doors.VTY_RUN_DIR = _shared
+try:
+    _sd = tempfile.mkdtemp(prefix="prisma-vty-", dir=_shared)
+    _ss = os.path.join(_sd, "vty.sock")
+    _l2 = socket.socket(socket.AF_UNIX)
+    _l2.bind(_ss)
+    argv, why = doors.session_argv({"session": {"attach": _ss}}, os.getuid(),
+                                   pw=_me, groups=[_me.pw_gid])
+    check(argv is not None and argv[-1] == _ss,
+          f"a socket in the shared directory, in the caller's own directory, is attached: {why}")
+    argv, why = doors.session_argv({"session": {"attach": _ss}}, os.getuid() + 1,
+                                   pw=_me, groups=[_me.pw_gid])
+    check(argv is None, f"and refused to any other uid: {why}")
+    _l2.close()
+finally:
+    doors.VTY_RUN_DIR = _real_dir
 argv, why = doors.session_argv(
     {"session": {"attach": f"/run/user/{os.getuid() + 1}/prisma-vty-x/vty.sock"}},
     os.getuid(), pw=_me, groups=[_me.pw_gid])
