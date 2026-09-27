@@ -133,6 +133,41 @@ o, _, _ = sh._options("", False)
 check("mtu" in o, f"'mtu' must be offered inside an interface block: {sorted(o)}")
 print(f"  interface block offers: {sorted(k for k in o if k in ('mtu', 'exit'))}")
 
+print("\n=== an interface block with nothing in it for FRR is not a change (#477) ===")
+# Entering an interface for its description opened the block in the
+# candidate's routing text, and `exit` closed it. FRR keeps no empty stanza,
+# so the running configuration read back after a commit never had it and the
+# candidate always did: every `exit` said "uncommitted changes were
+# discarded" after a commit that had applied everything (the #475 bench,
+# 0.138.2). The other two halves are the rule's edges: a block holding an FRR
+# statement keeps its header and its exit, and an empty `router ospf` is a
+# statement, not nothing.
+def _typed(*lines):
+    _s = prismash.Shell()
+    _s.mode = "config"
+    _s.candidate = _config.Config()
+    with contextlib.redirect_stdout(io.StringIO()):
+        for _l in lines:
+            _s.feed(_l)
+    return _s.candidate
+
+
+_c = _typed("interface ens19", "description assinantes", "exit")
+check(_c.routing == [],
+      f"an interface block with nothing for FRR stayed in the routing text: "
+      f"{_c.routing!r}")
+check(_c.descriptions.get("ens19") == "assinantes",
+      "and the description it was entered for was lost with it")
+_c = _typed("interface ens19", "ip ospf area 0", "exit")
+check(_c.routing == ["interface ens19", "ip ospf area 0", "exit"],
+      f"an interface block with an FRR statement lost its header or its exit: "
+      f"{_c.routing!r}")
+_c = _typed("router ospf", "exit")
+check(_c.routing == ["router ospf", "exit"],
+      f"an empty router block is a statement and was dropped: {_c.routing!r}")
+print("  an empty interface block leaves nothing; one with OSPF in it, and an "
+      "empty router, stay")
+
 print("\n=== the parser rejects an out-of-range mtu, not the device ===")
 # Refusing it here means the operator is told at the point of typing, instead
 # of at commit time after the candidate is already built.

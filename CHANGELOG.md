@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Every `exit` after a commit said "uncommitted changes were discarded".**
+  Entering `interface <name>` - for its address, its description, its CGNAT
+  side - opened the block in the candidate's routing text too, and `exit`
+  closed it even with nothing for FRR typed inside. FRR keeps no empty
+  interface stanza, so the running configuration read back after the commit
+  never had it and the candidate always did: `show configuration compare`
+  showed a change nobody made, and the warning that protects uncommitted work
+  was printed after every commit that had applied everything. An interface
+  block with nothing in it for FRR is now taken back out on `exit`. Found on
+  the #475 bench.
+
 ## 0.138.4 - a whole-configuration load reaches FRR when it drops a sub-interface
 
 ### Added
