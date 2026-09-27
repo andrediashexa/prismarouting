@@ -7989,6 +7989,14 @@ class Shell:
         link layer to carry it.
         """
         idx = self.api.interface_index(ifname)
+        if idx is None and not is_add:
+            # Already gone, and with it its pair: the outcome asked for is the
+            # outcome there is, as delete_subif() says. A whole-file load that
+            # dropped a sub-interface failed here, on a pair the dataplane had
+            # removed with its parent's, and the refusal ended the commit
+            # before FRR was reloaded - the file's routes never arrived
+            # (lab/vty.sh, #474).
+            return True
         if idx is None:
             self.err(f"interface {ifname}: the dataplane does not have it")
             return False
