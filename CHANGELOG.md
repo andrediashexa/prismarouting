@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.137.0 - the management plane has a container of its own
+
+### Added
+
 * **The management plane has a container of its own** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase C, first part).
   `prisma-routing_mgmt_1` runs `prisma-mgmt`, the image the VTY is going to
   live in. It is built on the dataplane's own image, so `vppctl`, `vat2` and
@@ -112,8 +118,6 @@ version has a chance of seeing it.
   before, so a box whose container is down is still reachable. Sessions are
   journal lines by their kind (`session attach`, `session command`), never
   by a command's text, which can carry a password hash.
-
-### Fixed
 
 ## 0.136.2 - a show longer than the screen stops at --More--
 
