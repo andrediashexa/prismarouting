@@ -122,5 +122,90 @@ check(said.strip() == "HERE -c show version",
       f"here(): the process becomes prismash, with the same arguments: {said!r}")
 check(mod.main(["bad"]) == 2, "main(): a usage error is 2")
 
+
+print("\n=== the broker runs a statement on the host only when it is one of three ===")
+bl = importlib.machinery.SourceFileLoader(
+    "broker", os.path.join(REPO, "appliance", "prisma-vty-broker"))
+bspec = importlib.util.spec_from_loader("broker", bl)
+bmod = importlib.util.module_from_spec(bspec)
+bl.exec_module(bmod)
+
+
+def statement_ok(broker, words):
+    return broker.host_statement_ok(words)
+
+
+for words, want, why in (
+        (["install"], True, "install"),
+        (["system", "upgrade"], True, "an upgrade"),
+        (["system", "upgrade", "0.137.1"], True, "an upgrade to a version"),
+        (["system", "dataplane", "restart"], True, "the dataplane's restart"),
+        (["install", "now"], False, "install with words after it"),
+        (["system", "reboot"], False, "a reboot, which is the container's own door"),
+        (["system", "dataplane", "restart", "x"], False, "a restart with more"),
+        (["start", "shell"], False, "a shell, which has its own verb"),
+        (["system", "upgrade", "a\nb"], False, "a word with a newline"),
+        ("install", False, "not a list")):
+    check(statement_ok(bmod, words) is want, f"{'run' if want else 'refused'}: {why}")
+
+print("\n=== vtyattach.request_hostrun, against a broker's answer ===")
+import socket  # noqa: E402
+import vtyattach  # noqa: E402
+import threading as _th  # noqa: E402
+for reply, want in ((b"HOSTDONE 3\n", ("done", 3)), (b"HOSTREFUSED\n", ("refused", None))):
+    a, b = socket.socketpair()
+    ch = vtyattach.Channel(a)
+    asked = []
+
+    def broker_side(sock=b, reply=reply):
+        line = sock.recv(4096)
+        asked.append(line)
+        sock.sendall(reply)
+    t = _th.Thread(target=broker_side)
+    t.start()
+    got = ch.request_hostrun(["system", "upgrade"])
+    t.join(5)
+    check(got == want and asked == [b'HOSTRUN ["system", "upgrade"]\n'],
+          f"request_hostrun: {reply.strip().decode()} is {got}, asked {asked}")
+    a.close(); b.close()
+
+print("\n=== Shell.on_the_host: only from the management plane ===")
+sys.path.insert(0, os.path.join(REPO, "src", "prismash"))
+import prismash  # noqa: E402
+
+
+class FakeAttached:
+    def __init__(self):
+        self.asked = []
+
+    def request_hostrun(self, words):
+        self.asked.append(words)
+        return "done", 0
+
+
+sh = prismash.Shell.__new__(prismash.Shell)
+fa = FakeAttached()
+prismash.ATTACHED = fa
+check(sh.on_the_host(["install"]) is False and fa.asked == [],
+      "on the host (no PRISMA_IN_MGMT): False, and the statement runs here")
+os.environ["PRISMA_IN_MGMT"] = "1"
+try:
+    check(sh.on_the_host(["system", "upgrade"]) is True
+          and fa.asked == [["system", "upgrade"]],
+          "in the management plane: handed to the host's VTY through the broker")
+    import contextlib  # noqa: E402
+    import io  # noqa: E402
+    for answer, words in (("refused", "would not run"), ("gone", "is gone")):
+        fa.request_hostrun = lambda w, a=answer: (a, None)
+        sh.failed = 0
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            sh.on_the_host(["install"])
+        check(words in buf.getvalue(),
+              f"the host answering '{answer}' is said: {buf.getvalue().strip()!r}")
+finally:
+    del os.environ["PRISMA_IN_MGMT"]
+    prismash.ATTACHED = None
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

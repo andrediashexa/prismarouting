@@ -4024,3 +4024,68 @@ class Config:
             "route_desc_changed": (self.static_descriptions
                                    != other.static_descriptions),
         }
+
+# ------------------------------------------------------------------ probes
+# ping, traceroute and mtr (#395). Here and not in prismash.py because the
+# host's doors check the same things when the VTY runs in the management
+# plane (#448): one owner for what a probe may be given.
+
+#: The most probes, or hops, one statement may ask for.
+PROBE_COUNT_MAX = 100
+# The wall clock each probe gets, whatever it was asked for. A tool that hangs
+# - a DNS server that never answers, an mtr against a host that black-holes
+# every cycle - must not take the VTY with it.
+PROBE_DEADLINE = 300
+
+
+def probe_host_ok(host):
+    """
+    Is `host` something this VTY will hand to a reachability tool (#395)?
+
+    An address of either family, or a hostname in the letters RFC 1123 allows:
+    labels of letters, digits and hyphens, none of them empty, none longer
+    than 63, and 253 characters in all. Nothing else - and in particular
+    nothing carrying a space, a slash, a quote or a shell's punctuation.
+
+    THE VALIDATION IS NOT WHAT KEEPS A SHELL OUT. There is no shell in the
+    path at all: the argument vector goes to execve as it is built. This is
+    the second wall, and it is here for the operator rather than for the
+    attacker - a typo reaching `ping` becomes that tool's own error message
+    about a name it could not resolve, where a refusal at the prompt says
+    which word this box could not read.
+    """
+    if not host or len(host) > 253:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    # A trailing dot is a fully qualified name and resolvers take it.
+    name = host[:-1] if host.endswith(".") else host
+    if not name:
+        return False
+    for label in name.split("."):
+        if not label or len(label) > 63:
+            return False
+        if label.startswith("-") or label.endswith("-"):
+            return False
+        for ch in label:
+            if not (ch.isascii() and (ch.isalnum() or ch == "-")):
+                return False
+    return True
+
+
+def probe_source_ok(addr):
+    """
+    Is `addr` an address a probe may be sent FROM?
+
+    An address and not a prefix, and not a hostname either: this is what goes
+    into the packet's source field, and a name that resolves to two addresses
+    would leave the operator reading a reply about whichever one was picked.
+    """
+    try:
+        ipaddress.ip_address(addr)
+        return True
+    except ValueError:
+        return False

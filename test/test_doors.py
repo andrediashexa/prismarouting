@@ -528,5 +528,115 @@ if _ls is not None:
     _ls.close()
     __import__("shutil").rmtree(_sockdir, ignore_errors=True)
 
+
+print("\n=== the probe door: ping, traceroute and mtr, as prismash builds them ===")
+for argv, want, why in (
+        (["/usr/bin/ping", "-c", "5", "-n", "192.0.2.1"], True, "ping"),
+        (["/usr/bin/ping", "-c", "5", "-n", "-I", "10.0.0.1", "example.net"], True,
+         "ping from a source, to a name"),
+        (["/usr/bin/traceroute", "-q", "1", "-m", "30", "-n", "192.0.2.1"], True,
+         "traceroute"),
+        (["/usr/bin/mtr", "--report", "--report-cycles", "10", "-n", "-a",
+          "10.0.0.1", "192.0.2.1"], True, "mtr from a source"),
+        (["/usr/bin/ping", "-f", "192.0.2.1"], False, "a flood"),
+        (["/usr/bin/ping", "-c", "101", "-n", "192.0.2.1"], False,
+         "a count above PROBE_COUNT_MAX"),
+        (["/usr/bin/ping", "-c", "5", "-n", "192.0.2.1 -f"], False,
+         "a host with a space"),
+        (["/usr/bin/ping", "-c", "5", "-n", "-s", "10.0.0.1", "192.0.2.1"], False,
+         "another tool's source flag"),
+        (["/bin/sh", "-c", "5"], False, "a shell"),
+        (["/usr/bin/ping", "-c", "5", "-n"], False, "no host")):
+    check(doors.probe_ok(argv) is want,
+          f"{'taken' if want else 'refused'}: {why}")
+
+import subprocess as _sp  # noqa: E402
+
+
+def _fake_popen(argv, **kw):
+    return _sp.Popen(["sh", "-c", "echo row1; sleep 0.2; echo row2; exit 3"], **kw)
+
+
+a, b = socket.socketpair()
+rc = doors.stream_probe(b, ["/usr/bin/ping", "-c", "1", "-n", "x"], popen=_fake_popen)
+b.close()
+got = b""
+while True:
+    c = a.recv(4096)
+    if not c:
+        break
+    got += c
+a.close()
+msgs = [json.loads(l) for l in got.decode().splitlines()]
+check(rc == 3 and msgs[-1] == {"rc": 3}
+      and "".join(m.get("out", "") for m in msgs[:-1]) == "row1\nrow2\n",
+      f"stream_probe: the rows as they come, then the exit status: {msgs}")
+a, b = socket.socketpair()
+rc = doors.stream_probe(b, ["x"], popen=lambda argv, **kw: _sp.Popen(
+    ["sleep", "5"], **kw), deadline=0.3)
+check(rc == 124, f"stream_probe: past the deadline, the probe is killed (124): {rc}")
+a.close(); b.close()
+
+_real_stream = doors.stream_probe
+doors.stream_probe = lambda conn, argv: _real_stream(conn, argv, popen=_fake_popen)
+try:
+    ppath = os.path.join(d, "run", "probe.sock")
+    ready3 = threading.Event()
+    threading.Thread(target=doors.serve, daemon=True,
+                     kwargs={"path": ppath, "ready": ready3}).start()
+    ready3.wait(5)
+    sink = io.StringIO()
+    rc, refused = doors.probe(["/usr/bin/ping", "-c", "1", "-n", "192.0.2.1"],
+                              path=ppath, out=sink)
+    check((rc, refused, sink.getvalue()) == (3, "", "row1\nrow2\n"),
+          f"probe(): the rows written as they arrive, and the status: "
+          f"{(rc, refused, sink.getvalue())}")
+    rc, refused = doors.probe(["/bin/sh", "-c", "id"], path=ppath, out=io.StringIO())
+    check(rc == 126 and "not a probe" in refused,
+          f"probe(): a refusal comes back as words: {refused}")
+finally:
+    doors.stream_probe = _real_stream
+
+print("\n=== Shell.run_probe, from the management plane ===")
+_seen = []
+_real_probe = doors.probe
+doors.probe = lambda argv: (_seen.append(argv) or (0, ""))
+os.environ["PRISMA_IN_MGMT"] = "1"
+try:
+    prismash.Shell.__new__(prismash.Shell).run_probe(
+        "ping", ["/usr/bin/ping", "-c", "1", "-n", "192.0.2.1"])
+finally:
+    del os.environ["PRISMA_IN_MGMT"]
+    doors.probe = _real_probe
+check(_seen == [["/usr/bin/ping", "-c", "1", "-n", "192.0.2.1"]],
+      f"the probe went to the host's door, not to a local program: {_seen}")
+
+
+print("\n=== the query doors: questions any account may ask of the host ===")
+_q = []
+for argv in [list(k) for k in doors.QUERIES]:
+    r = doors.answer(json.dumps({"argv": argv}), 1000,
+                     execute=lambda a, st, t: (_q.append(a) or (0, "answer")))
+    check(r == {"rc": 0, "out": "answer"}, f"uid 1000 may ask: {' '.join(argv)}")
+r = doors.answer(json.dumps({"argv": ["systemctl", "is-active", "--quiet",
+                                      "ssh.service"]}), 1000,
+                 execute=lambda a, st, t: (0, ""))
+check(r["rc"] == 126, f"a question about another unit is not one: {r}")
+
+_ask = []
+_real_runner = doors.runner
+doors.runner = lambda path=doors.SOCKET: (
+    lambda argv, stdin=None, timeout=30: (_ask.append(argv) or (0, "vfio-pci\n")))
+os.environ["PRISMA_IN_MGMT"] = "1"
+try:
+    unit = prismash.dataplane_unit()
+    drv = prismash.Shell.__new__(prismash.Shell).which_dpdk_driver()
+finally:
+    del os.environ["PRISMA_IN_MGMT"]
+    doors.runner = _real_runner
+check(unit == prismash.DATAPLANE_UNIT_CONTAINERS and drv == "vfio-pci"
+      and all(tuple(a) in doors.QUERIES for a in _ask) and len(_ask) == 2,
+      f"from the management plane both are asked of the host's doors: {_ask}")
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

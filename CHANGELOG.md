@@ -77,6 +77,38 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The VTY runs in the management plane by default** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase C).
+  0.137.0 shipped it behind a switch. The pieces below are what turn it on:
+  the host's facts read under `/host`, the probes and the host's questions
+  through doors, and `install`, `system upgrade` and `system dataplane
+  restart` run by the broker with the host's own VTY, on the terminal, as
+  the login. `/etc/prisma-routing/vty-on-host` puts a box's logins back on
+  the host's VTY. The gate asserts that the login's VTY runs in the
+  container, and that it answers `show hardware`, `show interface` and
+  `show system cpu` as the host's does.
+* **The management plane reads the host's facts, not its own** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase C).
+  The VTY reads the box's NICs, PCI bus, CPUs, control-plane cgroup,
+  routes, live medium, `startup.conf` and management stanza straight off
+  the filesystem. In the management plane's container those paths are the
+  container's own. The container now mounts the host's `/sys`, `/proc`,
+  `/run/live`, `/etc/vpp`, `/etc/network` and `/usr/sbin` read-only under
+  `/host`, and points each of the VTY's path seams at them. The routes are
+  the host init's, `/host/proc/1/net/route`. `/` and `/run` are not mounted,
+  because `/run/docker.sock` is a socket a read-only bind does not stop
+  anybody connecting to. `test/test_mgmt_reads_host.py` holds every such
+  read in `prismash.py` to its line in `compose.yaml`. Measured on a
+  development host: `show hardware` in the container read `ens18`, its PCI
+  address and the default route exactly as on the host; without `/host` it
+  said "no PCI NIC is visible to Linux on this box". The gate compares
+  `show hardware`, `show interface` and `show system cpu` between the two
+  VTYs on the installed box.
+  `ping`, `traceroute` and `mtr` from the container go out through the host:
+  a door runs exactly the shapes `probe_argv()` builds (fixed program, flags
+  in order, count 1-100, a source address, a host `probe_host_ok()` takes)
+  and streams the output row by row. Ctrl-C closes the connection and the
+  host kills the probe. Measured: a VTY in a container with no network at all
+  pinged the gateway through the door, 3 of 3.
+
 ### Fixed
 
 ## 0.137.0 - the management plane has a container of its own

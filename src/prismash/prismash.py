@@ -31,7 +31,8 @@ import tempfile
 import textwrap
 import time
 
-from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
+from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
+                    PROBE_DEADLINE, Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
                     MTU_MIN, MTU_MAX, MTU_RANGE,
                     IFACE_VRF_MAX, IFACE_VRF_RANGE,
@@ -201,11 +202,6 @@ PROBE_TOOLS = {
 # judgement about how many packets are useful; it is the point past which a
 # probe stops being a question and becomes a session.
 PROBE_COUNT_DEFAULT = 5
-PROBE_COUNT_MAX = 100
-# The wall clock each probe gets, whatever it was asked for. A tool that hangs
-# - a DNS server that never answers, an mtr against a host that black-holes
-# every cycle - must not take the VTY with it.
-PROBE_DEADLINE = 300
 
 # Which FRR daemon serves each "router" statement. Written as data rather than
 # guessed from the keyword, because the two only look alike: "router ospf" is
@@ -265,12 +261,16 @@ def dataplane_unit():
     neither - answers vpp.service, which is what every box ran before 0.117.0
     and what a source install still runs.
     """
+    argv = ["systemctl", "is-active", "--quiet",
+            f"{DATAPLANE_UNIT_CONTAINERS}.service"]
+    # From the management plane, the host's systemd, through its door (#448).
+    if os.environ.get("PRISMA_IN_MGMT"):
+        rc, _ = doors.runner()(argv)
+        return DATAPLANE_UNIT_CONTAINERS if rc == 0 else DATAPLANE_UNIT_VPP
     try:
         return (DATAPLANE_UNIT_CONTAINERS
                 if subprocess.run(
-                    ["systemctl", "is-active", "--quiet",
-                     f"{DATAPLANE_UNIT_CONTAINERS}.service"],
-                    stdout=subprocess.DEVNULL,
+                    argv, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, check=False).returncode == 0
                 else DATAPLANE_UNIT_VPP)
     except OSError:
@@ -2742,59 +2742,6 @@ if running_from_live_medium():
         "install Prisma Routing onto a disk on this machine", None)
 
 
-def probe_host_ok(host):
-    """
-    Is `host` something this VTY will hand to a reachability tool (#395)?
-
-    An address of either family, or a hostname in the letters RFC 1123 allows:
-    labels of letters, digits and hyphens, none of them empty, none longer
-    than 63, and 253 characters in all. Nothing else - and in particular
-    nothing carrying a space, a slash, a quote or a shell's punctuation.
-
-    THE VALIDATION IS NOT WHAT KEEPS A SHELL OUT. There is no shell in the
-    path at all: the argument vector goes to execve as it is built. This is
-    the second wall, and it is here for the operator rather than for the
-    attacker - a typo reaching `ping` becomes that tool's own error message
-    about a name it could not resolve, where a refusal at the prompt says
-    which word this box could not read.
-    """
-    if not host or len(host) > 253:
-        return False
-    try:
-        ipaddress.ip_address(host)
-        return True
-    except ValueError:
-        pass
-    # A trailing dot is a fully qualified name and resolvers take it.
-    name = host[:-1] if host.endswith(".") else host
-    if not name:
-        return False
-    for label in name.split("."):
-        if not label or len(label) > 63:
-            return False
-        if label.startswith("-") or label.endswith("-"):
-            return False
-        for ch in label:
-            if not (ch.isascii() and (ch.isalnum() or ch == "-")):
-                return False
-    return True
-
-
-def probe_source_ok(addr):
-    """
-    Is `addr` an address a probe may be sent FROM?
-
-    An address and not a prefix, and not a hostname either: this is what goes
-    into the packet's source field, and a name that resolves to two addresses
-    would leave the operator reading a reply about whichever one was picked.
-    """
-    try:
-        ipaddress.ip_address(addr)
-        return True
-    except ValueError:
-        return False
-
-
 def probe_count_ok(word):
     """
     `word` as a probe count, or None.
@@ -3501,12 +3448,18 @@ def ssh_host_keys_handed_to_this_box(origin=None):
     on the box where it means something - the argument `unchecked_note` and
     `show_plugin_build` both make for the same decision.
     """
-    try:
-        r = subprocess.run([origin or SSH_HOST_KEY_ORIGIN],
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                           universal_newlines=True)
-    except OSError:
-        return [], []
+    if os.environ.get("PRISMA_IN_MGMT") and not origin:
+        # The host's keys, asked of the host (#448).
+        rc, out = doors.runner()([SSH_HOST_KEY_ORIGIN])
+        r = subprocess.CompletedProcess([], rc, stdout=out)
+    else:
+        try:
+            r = subprocess.run([origin or SSH_HOST_KEY_ORIGIN],
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL,
+                               universal_newlines=True)
+        except OSError:
+            return [], []
     if r.returncode != 0:
         return [], []
     handed, fixes = [], []
@@ -8250,7 +8203,7 @@ class Shell:
 
     #: Where Linux lists its interfaces; a name held there by something that is
     #: not this box's own pair is not taken (#461). A seam for the suites.
-    SYS_NET = "/sys/class/net"
+    SYS_NET = os.environ.get("PRISMA_SYS_CLASS_NET", "/sys/class/net")
 
     def dataplane_names(self) -> set:
         """
@@ -11750,6 +11703,23 @@ class Shell:
             return
         print("back in the Prisma Routing VTY")
 
+    def on_the_host(self, words):
+        """
+        True when `words` was run by the host's own VTY, through the broker
+        (#448, phase C): from the management plane, a statement that acts on
+        the host with the terminal - the installer, an upgrade, the
+        dataplane's restart - is the host's to run. False everywhere else, and
+        the caller runs it here as it always has.
+        """
+        if not (os.environ.get("PRISMA_IN_MGMT") and ATTACHED):
+            return False
+        how, _ = ATTACHED.request_hostrun(words)
+        if how == "refused":
+            self.err("the host would not run this statement")
+        elif how == "gone":
+            self.err("the host's end of this session is gone")
+        return True
+
     def do_install(self):
         """
         Hand the console to the installer.
@@ -11763,6 +11733,8 @@ class Shell:
         Spawned as a child, like the shell escape, so that an installer the
         operator abandons returns to the VTY rather than logging them out.
         """
+        if self.on_the_host(["install"]):
+            return
         if not running_from_live_medium():
             # Verdict, then the consequence. The one sentence reached the
             # console at 88 columns on a console of 79 and `err` folds nothing
@@ -11849,7 +11821,10 @@ class Shell:
                            "a name: a name with two addresses would answer "
                            "about whichever one was picked")
             return
-        if not os.path.exists(path):
+        # Through the host's door the tool is the host's, and the host says
+        # so itself if it lacks one (#448): the container carries none.
+        if not os.environ.get("PRISMA_IN_MGMT") \
+                and not os.path.exists(path):
             # A statement whose tool is absent is a promise the box does not
             # keep, and the refusal names the package rather than the path:
             # the operator's next move is to install it, and on this appliance
@@ -11878,6 +11853,26 @@ class Shell:
         who has seen enough interrupts it - which must return to the prompt
         rather than end the session, the way it does inside `start shell`.
         """
+        # FROM THE MANAGEMENT PLANE, THROUGH THE HOST'S DOOR (#448): the
+        # container's network ends at the backplane, so a probe run in it
+        # reaches nothing. compose.yaml sets this there and nowhere else.
+        if os.environ.get("PRISMA_IN_MGMT"):
+            try:
+                rc, refused = doors.probe(argv)
+            except KeyboardInterrupt:
+                print()
+                return
+            except (OSError, ValueError) as e:
+                self.err_prose(f"{tool}: the host did not run it",
+                               f"the host's door did not answer: {e}")
+                return
+            if refused:
+                self.err_prose(f"{tool}: the host did not run it", refused)
+            elif rc == 124:
+                self.err_prose(f"{tool}: stopped after {PROBE_DEADLINE}s",
+                               "the tool had not finished, so this box "
+                               "stopped it")
+            return
         try:
             subprocess.run(argv, timeout=PROBE_DEADLINE, check=False)
         except subprocess.TimeoutExpired:
@@ -12026,10 +12021,12 @@ class Shell:
                 self.err_prose("the box could not be shut down", *said)
             return
         if rest[:1] == ["upgrade"]:
-            self.system_upgrade(rest[1:])
+            if not self.on_the_host(["system"] + rest):
+                self.system_upgrade(rest[1:])
             return
         if rest == ["dataplane", "restart"]:
-            self.system_dataplane_restart()
+            if not self.on_the_host(["system"] + rest):
+                self.system_dataplane_restart()
             return
         self.err("usage: system reboot | shutdown | upgrade | dataplane "
                  "restart")
@@ -15568,11 +15565,18 @@ class Shell:
         worse than no sentence.
         """
         try:
-            p = subprocess.run([self.BIND_NIC, "--which-driver"],
-                               capture_output=True, text=True, timeout=10)
-            out = (p.stdout or "").strip()
-            if p.returncode == 0 and out:
-                return out
+            if os.environ.get("PRISMA_IN_MGMT"):
+                # The host's binder, asked of the host (#448).
+                rc, out = doors.runner()([self.BIND_NIC, "--which-driver"])
+                out = out.strip()
+                if rc == 0 and out:
+                    return out
+            else:
+                p = subprocess.run([self.BIND_NIC, "--which-driver"],
+                                   capture_output=True, text=True, timeout=10)
+                out = (p.stdout or "").strip()
+                if p.returncode == 0 and out:
+                    return out
         except (OSError, subprocess.SubprocessError):
             pass
         return ("a driver DPDK can use, chosen at boot from whether this box "

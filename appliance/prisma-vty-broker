@@ -29,6 +29,7 @@ Exit status: the VTY's own. prismash-login decides what an unexpected exit
 means (#442), exactly as it did when it ran the VTY itself.
 """
 import grp
+import json
 import os
 import select
 import signal
@@ -63,9 +64,36 @@ def host_shell():
     shell = os.environ.get("PRISMA_SHELL") or "/bin/bash"
     if not os.path.exists(shell):
         shell = "/bin/sh"
-    saved = termios.tcgetattr(0)
     print(f"entering {shell} on the host; type 'exit' to return to the VTY",
           flush=True)
+    return host_run([shell, "-i"], {"PRISMA_HOST_SHELL": "1"})
+
+
+#: The statements a VTY in the management plane hands to the host's own VTY
+#: (#448, phase C): they act on the host with the terminal - the installer,
+#: an upgrade (which downloads, and the container has no network past the
+#: backplane), the dataplane's restart - and the host's prismash decides the
+#: role for each, as it always did, as this login.
+HOST_STATEMENTS = (["install"], ["system", "upgrade"],
+                   ["system", "dataplane", "restart"])
+HOST_PRISMASH = os.environ.get("PRISMA_HOST_PRISMASH", "/usr/bin/prismash")
+
+
+def host_statement_ok(words):
+    """True when `words` is a statement this broker runs on the host."""
+    if not isinstance(words, list) or not all(isinstance(w, str) for w in words):
+        return False
+    if any("\n" in w or "\0" in w for w in words):
+        return False
+    return any(words[:len(h)] == h and (h != ["install"] or len(words) == 1)
+               and (h != ["system", "dataplane", "restart"] or len(words) == 3)
+               for h in HOST_STATEMENTS)
+
+
+# not a unit: it forks onto the controlling terminal, as host_shell() does
+def host_run(argv, env=None):
+    """`argv` on this host, on this terminal, in the foreground. Its status."""
+    saved = termios.tcgetattr(0)
     pid = os.fork()
     if pid == 0:
         os.setpgid(0, 0)
@@ -73,8 +101,8 @@ def host_shell():
         for s in (signal.SIGINT, signal.SIGQUIT, signal.SIGTSTP,
                   signal.SIGTTOU, signal.SIGWINCH):
             signal.signal(s, signal.SIG_DFL)
-        os.environ["PRISMA_HOST_SHELL"] = "1"
-        os.execv(shell, [shell, "-i"])
+        os.environ.update(env or {})
+        os.execv(argv[0], argv)
     try:
         os.setpgid(pid, pid)
     except OSError:
@@ -109,9 +137,19 @@ def serve(conn):
         buf += data
         while b"\n" in buf:
             line, buf = buf.split(b"\n", 1)
-            if line != b"SHELL":
+            if line.startswith(b"HOSTRUN "):
+                try:
+                    words = json.loads(line[len(b"HOSTRUN "):].decode())
+                except ValueError:
+                    words = None
+                if host_statement_ok(words):
+                    reply = ("HOSTDONE %d\n" % host_run(
+                        [HOST_PRISMASH, "-c", " ".join(words)])).encode()
+                else:
+                    reply = b"HOSTREFUSED\n"
+            elif line != b"SHELL":
                 continue
-            if not may_have_shell():
+            elif not may_have_shell():
                 reply = b"SHELLDENIED\n"
             else:
                 reply = f"SHELLDONE {host_shell()}\n".encode()
