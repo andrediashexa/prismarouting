@@ -144,24 +144,40 @@ check(prismash.Shell.paging is False,
       "and it is off unless repl() turns it on at a terminal")
 
 print("\n=== read_key and terminal_rows, on a real pty ===")
-master, slave = pty.openpty()
-real_in = sys.stdin
-sys.stdin = os.fdopen(slave, "r")
+# In a child with a terminal of its own (pty.fork, as a login has), the key
+# typed by the parent, and everything read with a deadline. The first cut
+# shared a pty with this process and hung - once on its own echo, and again
+# under test_prismash_refusals, which runs every suite a second time.
+import select  # noqa: E402
+import time  # noqa: E402
+pid, fd = pty.fork()
+if pid == 0:
+    try:
+        k = prismash.read_key()
+        os.write(1, f"KEY[{k}]\n".encode())
+    finally:
+        os._exit(0)
+got = b""
+deadline = time.time() + 10
+typed = False
+while time.time() < deadline and b"KEY[" not in got:
+    if not typed:
+        time.sleep(0.3)
+        os.write(fd, b"q")
+        typed = True
+    r, _, _ = select.select([fd], [], [], 0.5)
+    if r:
+        try:
+            got += os.read(fd, 1024)
+        except OSError:
+            break
 try:
-    # Echo off before the key is typed: echoed, the "q" sits in the pty's
-    # output queue, nothing here reads the master, and read_key's TCSADRAIN
-    # restore waits for it forever (measured: the suite hung whenever its
-    # output went to a pipe). A real terminal reads its own echo.
-    import termios
-    _a = termios.tcgetattr(slave)
-    _a[3] &= ~termios.ECHO
-    termios.tcsetattr(slave, termios.TCSANOW, _a)
-    os.write(master, b"q")
-    check(prismash.read_key() == "q", "read_key: one key, no enter needed")
-finally:
-    sys.stdin.close()
-    sys.stdin = real_in
-    os.close(master)
+    os.kill(pid, 9)
+except OSError:
+    pass
+os.waitpid(pid, 0)
+os.close(fd)
+check(b"KEY[q]" in got, f"read_key: one key, no enter needed: {got!r}")
 check(isinstance(prismash.terminal_rows(), int) and prismash.terminal_rows() > 0,
       f"terminal_rows: a height, 24 when there is no terminal: "
       f"{prismash.terminal_rows()}")
