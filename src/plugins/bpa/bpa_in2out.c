@@ -177,7 +177,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_new = 0, n_forwarded = 0, n_mss = 0;
-  u32 n_bypass_src = 0, n_bypass_dst = 0;
+  u32 n_bypass_src = 0, n_bypass_dst = 0, n_to_us = 0;
   u32 n_hairpin = 0;
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_seq_adj = 0;
   u32 n_rtsp = 0, n_sip = 0;
@@ -215,6 +215,16 @@ VLIB_NODE_FN (bpa_in2out_node)
       dst_host = clib_net_to_host_u32 (ip->dst_address.as_u32);
 
       proto = bpa_proto_of (ip->protocol);
+
+      /* To the box itself: not translated, whatever the protocol (#470). */
+      if (PREDICT_FALSE (bpa_to_us (fib_index, &ip->dst_address)))
+	{
+	  n_to_us++;
+	  bypassed = 1;
+	  bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
+	  goto trace;
+	}
+
       if (PREDICT_FALSE (proto < 0))
 	{
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_UNSUPPORTED];
@@ -904,6 +914,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_BYPASS_SRC, n_bypass_src);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_BYPASS_DST, n_bypass_dst);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_TO_US, n_to_us);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_MSS_CLAMPED, n_mss);
   vlib_node_increment_counter (vm, node->node_index,

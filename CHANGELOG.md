@@ -79,6 +79,25 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A subscriber could not reach the box itself through the CGNAT** ([#470](https://github.com/andrediashexa/hexarouting/issues/470)).
+  Reported on a 0.135.0 box: a VM behind `cgnat inside` could not reach the
+  box, and could once `cgnat inside` was removed. `vppctl trace` showed the
+  CGNAT translating traffic addressed to the box's own addresses. It opened
+  a session, rewrote the source into the pool, and handed the packet to
+  ip4-local, which dropped it ("ip4 source lookup miss") because the pool is
+  a blackhole. Pings to the gateway and to the uplink address failed, and so
+  did ssh or DNS to the box. `bpa-in2out` now asks the FIB before anything
+  else, and a destination that is one of the box's own addresses (a receive
+  DPO) passes untranslated, counted as "packets to this box itself, left
+  untranslated". The check comes before the session table, because a
+  session is keyed on the inside endpoint alone and would otherwise catch
+  the packet. Measured in the new `lab/to-us.sh`, with the pool blackholed
+  as the box had it: before the fix, the gateway and the uplink address lost
+  3 of 3 while the internet answered; after it, both answer and the internet
+  is still translated. Without the blackhole the defect hides: the
+  translated ping went out the upstream, came back to the pool and was
+  answered.
+
 ## 0.136.0 - the kernel is Prisma Routing's
 
 ### Added
