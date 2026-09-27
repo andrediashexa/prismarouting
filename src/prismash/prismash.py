@@ -12766,7 +12766,20 @@ class Shell:
                 # `router static` is the exception: FRR has no such block,
                 # nothing opened one, and a stray `exit` would close whatever
                 # really is open.
-                if self.frr_ctx[-1] != STATIC_BLOCK:
+                # AN INTERFACE BLOCK NOTHING WAS TYPED INTO FOR FRR is taken
+                # back out instead of closed. Entering `interface ens19` to set
+                # its address or its description opens the block here too,
+                # and FRR does not keep an interface stanza with nothing in
+                # it - so after a commit the running configuration, read back
+                # from FRR, never had it, the candidate always did, and every
+                # `exit` said "uncommitted changes were discarded" about a
+                # commit that had applied everything (#475's bench, #477).
+                # Only an interface: an empty `router ospf` is a statement.
+                if (self.frr_ctx[-1].startswith("interface ")
+                        and self.candidate.routing
+                        and self.candidate.routing[-1] == self.frr_ctx[-1]):
+                    self.candidate.routing.pop()
+                elif self.frr_ctx[-1] != STATIC_BLOCK:
                     self.candidate.routing.append("exit")
                 self.frr_ctx.pop()
                 return True
