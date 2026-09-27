@@ -4175,10 +4175,15 @@ def read_key():
 def terminal_rows():
     """The terminal's height now: read at each command, so a resized window
     (the broker relays SIGWINCH) pages at its new size."""
+    # 24 WHEN THE TERMINAL DOES NOT SAY, as `more` assumes. A fresh pty and a
+    # serial console report 0 rows until somebody sets them; taken at its
+    # word that paged every two lines, and test_prismash_ctrl_c's session sat
+    # at --More-- waiting for a key its script never sends.
     try:
-        return os.get_terminal_size(sys.stdout.fileno()).lines
+        rows = os.get_terminal_size(sys.stdout.fileno()).lines
     except (OSError, ValueError):
-        return 24
+        rows = 0
+    return rows if rows > 0 else 24
 
 
 def interface_aliases(name, pairs):
