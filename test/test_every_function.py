@@ -237,13 +237,21 @@ MARKER = "not a unit:"
 # means are five functions in the same file, all driven by
 # test/test_bpa_identity.c.
 #
-# The six that are left are bpa_cli.c's, and they stay counted ON PURPOSE.
-# That file's own header says its arithmetic waits for a harness built
-# against the real VPP rather than an excuse, and one of them - bpa_top_cmp -
-# was paid that way this morning. Excusing the rest would be taking back the
-# argument the file makes about itself.
+# The six that were left were bpa_cli.c's, counted on purpose: that file's
+# header said its arithmetic waited for a harness rather than an excuse.
 
-UNTESTED_AT_MOST = {"python": 0, "c": 6, "shell": 0}
+# 2026-09-27, twelfth: 6 to 0, and headers counted (#472). Counting .h files
+# found 69 more - the session keys, the timeouts, the TCP state machine, the
+# worker ownership, the L4 id and the destination rewrite, the ALG's rules -
+# none of which any unit test named, because they were static inline in
+# headers only VPP compiles. The pure part of each moved to a header the
+# plain-cc harness compiles (bpa_keys.h, bpa_subblock.h, bpa_workers.h,
+# bpa_l4_wire.h) or to one it already did, and is driven by name; what
+# stayed behind is a wrapper over VPP's own tables and says which. bpa_cli.c's
+# six were paid the same way. Zero is the ceiling from here: a new function
+# is tested or says why it cannot be.
+
+UNTESTED_AT_MOST = {"python": 0, "c": 0, "shell": 0}
 MEASURED_ON = "2026-09-20"
 
 # A parse that came back nearly empty would make every count below small and

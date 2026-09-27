@@ -77,7 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Every CGNAT function has a unit test, or says at its definition why it
+  cannot have one - headers included.** The checker did not read `.h` files,
+  and 69 functions in them had no test: the session keys, the timeouts, the
+  TCP state machine, which worker owns a subscriber, the L4 id every packet is
+  keyed on, the destination rewrite and its checksums, and the ALG's rules.
+  Their pure part now compiles with the plain-cc harness and is driven by
+  name (`test_bpa_keys`, `test_bpa_subblock`, `test_bpa_workers`,
+  `test_bpa_l4`, and new cases in eight existing suites); what stays in VPP
+  is a wrapper that names the lab carrying it. The ceiling of untested C
+  functions is 0.
+
 ### Fixed
+
+* **Hanging up an ESP or PPTP tunnel could delete another subscriber's
+  binding.** A teardown kept the shared binding only if its private address
+  matched, not its VRF. Two subscribers with the same private address in two
+  VRFs, behind one public address and talking to one peer: the first to hang
+  up removed the other's, and ICMP errors about the survivor's tunnel stopped
+  reaching it. Both fields are compared now.
 
 ## 0.138.2 - a /0 prefix is refused, not taken as one address
 

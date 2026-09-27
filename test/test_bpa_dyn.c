@@ -905,6 +905,23 @@ main (void)
     bpa_split (&p4, blk, &pub_idx, &blk_idx);
     want_lo = p4.port_min + blk_idx * p4.block_size;
 
+    /* #472: what "show bpa subscriber" prints as the held block. */
+    {
+      bpa_block_t held;
+      bpa_pool_t det = p4;
+
+      memset (&held, 0, sizeof (held));
+      CHECK (bpa_dyn_held (d, &p4, 0, 0, 1, &held) == 1
+	       && held.port_lo == want_lo && held.sub_idx == 0,
+	     "bpa_dyn_held: subscriber 0's block printed as ports from %u, "
+	     "not %u", held.port_lo, want_lo);
+      CHECK (bpa_dyn_held (d, &p4, 2, 0, 1, &held) == 0,
+	     "bpa_dyn_held: a subscriber that never arrived holds a block");
+      det.mode = BPA_MODE_DETERMINISTIC;
+      CHECK (bpa_dyn_held (d, &det, 0, 0, 1, &held) == 0,
+	     "bpa_dyn_held: a deterministic pool reported an allocator's block");
+    }
+
     allocs_before = d->n_allocations;
     free_before = vec_len (d->free_list);
     memset (&again, 0, sizeof (again));

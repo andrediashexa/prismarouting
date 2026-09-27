@@ -861,6 +861,52 @@ bpa_pool_claims_outside (const bpa_pool_t *p, u32 addr)
   return bpa_set_index_of (&p->outside, addr, &idx) == 0;
 }
 
+/*
+ * One "forward" clause's range checks - the ones unformat cannot make, for
+ * the CLI and the API alike. Everything else a forward can be refused for -
+ * the subscriber, the block, a collision with another forward - needs the
+ * pool's derived values and is checked by bpa_pool_validate() once the whole
+ * definition has been read. 0 and the entry, or -1 for a port of 0 or past
+ * 65535.
+ */
+static_always_inline int
+bpa_static_make (u8 proto, u32 port_pub, u32 ip_priv, u32 port_priv,
+		 bpa_static_t *sf)
+{
+  if (port_pub == 0 || port_pub > 65535 || port_priv == 0
+      || port_priv > 65535)
+    return -1;
+  memset (sf, 0, sizeof (*sf));
+  sf->proto = proto;
+  sf->ip_priv = ip_priv;
+  sf->port_pub = (u16) port_pub;
+  sf->port_priv = (u16) port_priv;
+  return 0;
+}
+
+/*
+ * One pool claiming an inside address, offered in pool order to a command
+ * that has no packet and so no VRF: which pool is the address's?
+ *
+ * The first claimant, unless a later one holds the subscriber's live state -
+ * where two tenants share an inside prefix, the first claimant is not
+ * necessarily the pool the traffic was translated by, and keying on it
+ * reported "no live state" over live sessions (#74). Returns 1 when this
+ * claimant settles it (it is live); the caller stops there.
+ */
+static_always_inline int
+bpa_claimant_take (int *found, u32 idx, u32 si, int is_live,
+		   u32 *pool_index, u32 *sub_idx)
+{
+  if (!*found || is_live)
+    {
+      *pool_index = idx;
+      *sub_idx = si;
+      *found = 1;
+    }
+  return is_live;
+}
+
 /* Is `addr` inside [lo, hi]? The out2in pre-filter's cheap first question;
  * an empty window is lo = 1, hi = 0, and answers no to everything. */
 static_always_inline int

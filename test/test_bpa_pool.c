@@ -2520,5 +2520,43 @@ main (void)
 	    "keeps its public addresses and takes nobody new\n");
   }
 
+  /* #472: a forward clause's ranges, and which pool an address belongs to
+   * for a command that has no packet (#74). */
+  printf ("\n=== a forward's ports; the pool an idle or live address is in ===\n");
+  {
+    bpa_static_t sf;
+    int found;
+    u32 pi = 99, si = 99;
+
+    CHECK (bpa_static_make (BPA_PROTO_TCP, 8080, 0x64400005u, 80, &sf) == 0
+	     && sf.proto == BPA_PROTO_TCP && sf.ip_priv == 0x64400005u
+	     && sf.port_pub == 8080 && sf.port_priv == 80 && sf.ip_pub == 0,
+	   "bpa_static_make: a forward came out other than it was written");
+    CHECK (bpa_static_make (BPA_PROTO_UDP, 0, 1, 80, &sf) == -1
+	     && bpa_static_make (BPA_PROTO_UDP, 65536, 1, 80, &sf) == -1
+	     && bpa_static_make (BPA_PROTO_UDP, 80, 1, 0, &sf) == -1
+	     && bpa_static_make (BPA_PROTO_UDP, 80, 1, 65536, &sf) == -1,
+	   "bpa_static_make: a port of 0 or past 65535 was taken - as a u16 "
+	   "65536 is port 0");
+    CHECK (bpa_static_make (BPA_PROTO_UDP, 65535, 1, 1, &sf) == 0,
+	   "bpa_static_make: the ends of the port range were refused");
+
+    found = 0;
+    CHECK (bpa_claimant_take (&found, 0, 5, 0, &pi, &si) == 0
+	     && found && pi == 0 && si == 5,
+	   "an idle first claimant was not the answer so far");
+    CHECK (bpa_claimant_take (&found, 3, 7, 1, &pi, &si) == 1 && pi == 3
+	     && si == 7,
+	   "a later claimant holding the live state did not win (#74)");
+    found = 0;
+    bpa_claimant_take (&found, 0, 5, 0, &pi, &si);
+    bpa_claimant_take (&found, 3, 7, 0, &pi, &si);
+    CHECK (pi == 0 && si == 5,
+	   "of two idle claimants the second answered, not the first");
+    found = 0;
+    CHECK (bpa_claimant_take (&found, 1, 2, 1, &pi, &si) == 1 && pi == 1,
+	   "a live first claimant did not settle it");
+  }
+
   return bpa_test_verdict (checks, failures);
 }
