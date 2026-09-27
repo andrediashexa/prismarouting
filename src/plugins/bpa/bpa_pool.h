@@ -815,6 +815,60 @@ bpa_set_index_of (const bpa_addr_set_t *s, u32 addr, u32 *idx)
   return -1;
 }
 
+/*
+ * Does this pool claim `addr` as a subscriber, from a packet in VRF `fib`?
+ * (#472: the rule bpa_pool_by_inside() walks the pools with.) A pool bound
+ * to a VRF claims only its VRF's packets, so two tenants may share an inside
+ * prefix; ~0 on either side is "no VRF stated" and matches any. A deleted
+ * pool - draining - claims nobody new.
+ */
+static_always_inline int
+bpa_pool_claims_inside (const bpa_pool_t *p, u32 addr, u32 fib, u32 *sub_idx)
+{
+  /*
+   * A pool bound to a VRF answers only for that one, which is what lets
+   * two pools serve the same inside prefix for two tenants.
+   *
+   * ~0 means "every VRF" on the POOL - what a configuration written
+   * before this existed means - and "any VRF" in the QUERY, which is what
+   * a show command asks, having no packet and therefore no VRF. Both,
+   * because neither a pool nor a question should have to lie about which
+   * it means: without the second, a show command would report that a
+   * VRF-bound pool's subscriber belongs to no pool at all.
+   */
+  if (fib != ~0u && p->fib_index != ~0u && p->fib_index != fib)
+    return 0;
+  /*
+   * A pool being drained by bpa_pool_del() is already gone as far as new
+   * traffic is concerned. Skipped here so the packet is counted as "no
+   * pool" - which is the truth - rather than travelling on to be refused
+   * by the session bind and counted as a full port block, which is the
+   * counter an operator chases when a customer complains.
+   */
+  if (PREDICT_FALSE (p->deleted))
+    return 0;
+  return bpa_set_index_of (&p->inside, addr, sub_idx) == 0;
+}
+
+/*
+ * Does this pool own public address `addr`? A deleted pool still does:
+ * its sessions drain, and their replies must still find them.
+ */
+static_always_inline int
+bpa_pool_claims_outside (const bpa_pool_t *p, u32 addr)
+{
+  u32 idx;
+  return bpa_set_index_of (&p->outside, addr, &idx) == 0;
+}
+
+/* Is `addr` inside [lo, hi]? The out2in pre-filter's cheap first question;
+ * an empty window is lo = 1, hi = 0, and answers no to everything. */
+static_always_inline int
+bpa_in_window (u32 lo, u32 hi, u32 addr)
+{
+  return addr >= lo && addr <= hi;
+}
+
 /* Address at dense index `idx`, or -1 when out of range. */
 static_always_inline int
 bpa_set_addr_of (const bpa_addr_set_t *s, u32 idx, u32 *addr)

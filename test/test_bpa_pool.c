@@ -2480,5 +2480,45 @@ main (void)
 	    "counts included\n");
   }
 
+  printf ("\n=== which pool claims an address (#472) ===\n");
+  {
+    bpa_pool_t p;
+    u32 ib = 0x64400000u, ic = 256, ob = 0xc8000000u, oc = 32, sub;
+
+    memset (&p, 0, sizeof (p));
+    CHECK (bpa_addr_set_build (&p.inside, &ib, &ic, 1) == 0
+	   && bpa_addr_set_build (&p.outside, &ob, &oc, 1) == 0,
+	   "the sets did not build");
+    p.fib_index = ~0u;
+    CHECK (bpa_pool_claims_inside (&p, 0x64400005u, 3, &sub) && sub == 5,
+	   "a pool with no VRF did not claim a packet from VRF 3");
+    CHECK (!bpa_pool_claims_inside (&p, 0x64400105u, 3, &sub),
+	   "a pool claimed an address outside its inside set");
+    p.fib_index = 2;
+    CHECK (!bpa_pool_claims_inside (&p, 0x64400005u, 3, &sub),
+	   "a pool bound to VRF 2 claimed a packet from VRF 3: two tenants "
+	   "sharing a prefix would share subscribers");
+    CHECK (bpa_pool_claims_inside (&p, 0x64400005u, 2, &sub),
+	   "a pool bound to VRF 2 did not claim its own VRF's packet");
+    CHECK (bpa_pool_claims_inside (&p, 0x64400005u, ~0u, &sub),
+	   "a question with no VRF (a show command) did not find a VRF-bound "
+	   "pool's subscriber");
+    p.deleted = 1;
+    CHECK (!bpa_pool_claims_inside (&p, 0x64400005u, 2, &sub),
+	   "a draining pool claimed a new subscriber");
+    CHECK (bpa_pool_claims_outside (&p, 0xc8000011u),
+	   "a draining pool let go of its public address before its sessions "
+	   "drained");
+    CHECK (!bpa_pool_claims_outside (&p, 0xc8000020u),
+	   "a pool claimed a public address past its range");
+    CHECK (bpa_in_window (0xc8000000u, 0xc800001fu, 0xc8000010u)
+	   && !bpa_in_window (0xc8000000u, 0xc800001fu, 0xc8000020u),
+	   "the outside window did not bound its range");
+    CHECK (!bpa_in_window (1, 0, 0) && !bpa_in_window (1, 0, 1),
+	   "an empty window (lo 1, hi 0) answered yes");
+    printf ("  a pool claims its own VRF's subscribers, a draining pool "
+	    "keeps its public addresses and takes nobody new\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

@@ -22,7 +22,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_top \
       $(BUILD)/test_bpa_rate \
       $(BUILD)/test_bpa_keys \
-      $(BUILD)/test_bpa_subblock
+      $(BUILD)/test_bpa_subblock \
+      $(BUILD)/test_bpa_workers
 	@sh tools/run-tests.sh
 
 vectors:
@@ -69,6 +70,13 @@ $(BUILD)/test_bpa_subblock: test/test_bpa_subblock.c \
                    src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_subblock.c
+
+# Which worker owns a subscriber and which thread that is (#466, #472).
+$(BUILD)/test_bpa_workers: test/test_bpa_workers.c \
+                   src/plugins/bpa/bpa_workers.h src/plugins/bpa/bpa_pool.c \
+                   src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_workers.c
 
 $(BUILD)/test_bpa_top: test/test_bpa_top.c \
                    src/plugins/bpa/bpa_top.h test/bpa_shim.h

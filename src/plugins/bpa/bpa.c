@@ -2397,21 +2397,18 @@ VLIB_INIT_FUNCTION (bpa_init);
  * startup.conf, before any pool exists - a pool's dynamic slices are sharded
  * by this count, so it is never changed under one.
  */
-/* not a unit: it reads VPP's thread layout (vlib_get_worker_thread_index)
- * and resets bpa_main's worker tables; lab/cgnat-workers.sh starts a
+/* not a unit: it resets bpa_main's worker tables from VPP's worker count;
+ * the table is bpa_thread_table() in bpa_workers.h, which
+ * test/test_bpa_workers.c holds (#472), and lab/cgnat-workers.sh starts a
  * dataplane with a split and sends traffic through it. */
 void
 bpa_set_owners (bpa_main_t *bm, u32 *wids)
 {
-  u32 k;
-
   vec_free (bm->owner_wid);
   bm->owner_wid = wids;
   bm->n_workers = vec_len (wids);
   vec_free (bm->thread_w);
-  vec_validate_init_empty (bm->thread_w, vlib_num_workers (), ~0);
-  for (k = 0; k < vec_len (wids); k++)
-    bm->thread_w[vlib_get_worker_thread_index (wids[k])] = k;
+  bm->thread_w = bpa_thread_table (wids, vlib_num_workers ());
   bpa_divisor_init (&bm->workers, bm->n_workers ? bm->n_workers : 1);
 }
 
