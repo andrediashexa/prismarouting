@@ -5,6 +5,7 @@
 #   prisma-backplane up       build it (idempotent: a second run changes nothing)
 #   prisma-backplane down     take it away
 #   prisma-backplane check    say what is there, and exit 1 if it leaks
+#   prisma-backplane attach <container>   put the management plane on it
 #
 # WHY 128.0.0.0/8, AND WHY NOT IN THE MAIN TABLE. The maintainer chose the
 # prefix Juniper uses between its routing engine and its line cards (2026-09-24).
@@ -68,6 +69,41 @@ down() {
 # What is there, and whether it leaks. A leak is any route for 128/8, or
 # anything inside it, in the MAIN table through the bridge - the one state
 # that makes real 128.x addresses unreachable.
+# THE MANAGEMENT PLANE ON THE BACKPLANE (#448, phase C). The container
+# starts with no network (compose.yaml, network_mode: none); this gives it one
+# veth on the bridge, 128.0.0.2/8, and a default via the host that the VRF's
+# unreachable default ends. Idempotent: run again on a container that already
+# has its address, it changes nothing - which is what an ExecStartPost that
+# runs on every start of the containers needs.
+MGMT_ADDR=128.0.0.2/8
+attach() {
+  name=${1:?usage: prisma-backplane attach <container>}
+  pid=$(docker inspect -f '{{.State.Pid}}' "$name" 2>/dev/null) || pid=
+  if [ -z "$pid" ] || [ "$pid" = 0 ]; then
+    say "attach: $name is not running"
+    return 1
+  fi
+  if nsenter -t "$pid" -n $IP -o addr show 2>/dev/null | grep -q " ${MGMT_ADDR%/*}/"; then
+    say "attach: $name already has ${MGMT_ADDR%/*}"
+    return 0
+  fi
+  # The host end is named for the container's pid, so a container that
+  # restarted gets a fresh pair and the stale end goes with its netns.
+  host_end=bpm$pid
+  $IP link del "$host_end" 2>/dev/null || true
+  $IP link add "$host_end" type veth peer name bpm${pid}c
+  $IP link set "$host_end" master "$BRIDGE"
+  $IP link set "$host_end" up
+  $IP link set bpm${pid}c netns "$pid"
+  nsenter -t "$pid" -n sh -c "
+    $IP link set lo up
+    $IP link set bpm${pid}c name eth0
+    $IP addr add $MGMT_ADDR dev eth0
+    $IP link set eth0 up
+    $IP route add default via ${HOST_ADDR%/*}"
+  say "attach: $name is ${MGMT_ADDR%/*} on $BRIDGE"
+}
+
 check() {
   rc=0
   if ! $IP link show "$VRF" >/dev/null 2>&1; then
@@ -99,5 +135,6 @@ case "${1:-}" in
   up) up ;;
   down) down ;;
   check) check ;;
-  *) echo "usage: prisma-backplane up|down|check" >&2; exit 2 ;;
+  attach) shift; attach "$@" ;;
+  *) echo "usage: prisma-backplane up|down|check|attach <container>" >&2; exit 2 ;;
 esac

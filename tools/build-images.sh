@@ -71,6 +71,10 @@ cp "$PLUGIN_SO" "$CTX/vpp_plugins/"
 cp "$REPO/appliance/vpp-entrypoint" "$CTX/appliance/"
 cp "$REPO/appliance/frr-entrypoint" "$CTX/appliance/"
 cp "$REPO/appliance/systemd/vpp-stop-drain.conf" "$CTX/appliance/systemd/"
+# And the management plane's (#448, phase C): the VTY and its launcher.
+mkdir -p "$CTX/src/prismash"
+cp "$REPO"/src/prismash/*.py "$CTX/src/prismash/"
+cp "$REPO/appliance/prismash-launcher" "$CTX/appliance/"
 
 echo "==> dataplane image, VPP $VPP_VERSION with this tree's plugin"
 docker build -q -f "$REPO/build/Dockerfile.vpp" \
@@ -82,6 +86,12 @@ docker build -q -f "$REPO/build/Dockerfile.frr" \
   --build-arg "FRR_VERSION=$FRR_VERSION" \
   -t "prisma-frr:$VERSION" "$CTX" > /dev/null
 
+echo "==> management-plane image, the VTY on the dataplane's own clients"
+docker build -q -f "$REPO/build/Dockerfile.mgmt" \
+  --build-arg "BASE=prisma-vpp:$VERSION" \
+  --build-arg "FRR_VERSION=$FRR_VERSION" \
+  -t "prisma-mgmt:$VERSION" "$CTX" > /dev/null
+
 # BYTES, and the megabyte is left to the one place that prints it. A size()
 # that formatted its own answer would give docs/appliance.md's measured table
 # a second opinion about what a megabyte is.
@@ -90,6 +100,7 @@ size() {
 }
 printf '    prisma-vpp:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-vpp:$VERSION") / 1048576 ))"
 printf '    prisma-frr:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-frr:$VERSION") / 1048576 ))"
+printf '    prisma-mgmt:%s %s MB\n' "$VERSION" "$(( $(size "prisma-mgmt:$VERSION") / 1048576 ))"
 
 if [ "$TARGET" = check ]; then
   # WHAT THE IMAGE HOLDS, asked of the image rather than of the Dockerfile.
@@ -556,6 +567,7 @@ if [ "$TARGET" = save ]; then
   # ONE save for the two images: they share the debian:12 base, and saving
   # them separately writes it twice. Measured: 84 MB for the dataplane alone
   # and 118 MB for both, not 84 + 90.
-  docker save "prisma-vpp:$VERSION" "prisma-frr:$VERSION" | gzip -1 > "$OUT"
+  docker save "prisma-vpp:$VERSION" "prisma-frr:$VERSION" "prisma-mgmt:$VERSION" \
+    | gzip -1 > "$OUT"
   printf '    %s  %s MB\n' "$OUT" "$(( $(wc -c < "$OUT") / 1048576 ))"
 fi

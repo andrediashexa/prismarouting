@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The management plane has a container of its own** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase C, first part).
+  `prisma-routing_mgmt_1` runs `prisma-mgmt`, the image the VTY is going to
+  live in. It is built on the dataplane's own image, so `vppctl`, `vat2` and
+  this tree's plugin API are the same build as the VPP they talk to, and it
+  adds FRR's clients (`vtysh`, `frr-reload.py`) at the pinned version and
+  prismash. It has no docker network: `prisma-backplane attach` gives it one
+  veth on `bp0`, 128.0.0.2 in the `prisma-bp` VRF, which reaches the host and
+  nothing beyond it (#447). It shares `ipc: host` for `vat2`, the dataplane's
+  and FRR's sockets, the configuration directory and the doors' socket. The
+  accounts are read-only, and every change goes through the host's doors
+  (0.135.0). The login still lands in the VTY on the host; sessions move into
+  the container in the next part.
+
 ### Fixed
 
 ## 0.136.2 - a show longer than the screen stops at --More--

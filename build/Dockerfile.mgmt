@@ -1,0 +1,33 @@
+# The management plane (#448, phase C): the container the VTY runs in.
+#
+# FROM THE DATAPLANE'S OWN IMAGE, so vppctl, vat2 and the API definitions
+# (this tree's plugin's included) are the same build as the VPP they talk to:
+# a VTY speaking a newer or older binary API than the dataplane is the defect
+# #293 spent a release on. On top of it, FRR's clients at the pinned version -
+# vtysh and frr-reload.py, never the daemons - and prismash itself.
+#
+# NOTHING HERE RUNS A DAEMON. The container idles (`sleep infinity`) and a
+# session is a `docker exec` the login's broker starts, as the login's own
+# uid, so the host's doors see who is asking (doors.py: uid 0 only, as the
+# box has always had it).
+ARG BASE
+FROM ${BASE}
+ARG FRR_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && curl -s https://deb.frrouting.org/frr/keys.gpg \
+         -o /usr/share/keyrings/frrouting.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr bookworm frr-stable" \
+       > /etc/apt/sources.list.d/frr.list \
+    && apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        python3 iproute2 less \
+        frr=${FRR_VERSION} frr-pythontools=${FRR_VERSION} \
+    && apt-get purge -y curl gnupg && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+COPY src/prismash/ /usr/lib/prisma-routing/
+COPY appliance/prismash-launcher /usr/bin/prismash
+RUN chmod 0755 /usr/bin/prismash /usr/lib/prisma-routing/prismash.py
+# The VPP image's entrypoint starts VPP; this one must never.
+ENTRYPOINT ["sleep", "infinity"]
