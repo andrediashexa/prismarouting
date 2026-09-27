@@ -1855,7 +1855,7 @@ _sh.mode = "operational"
 _rv, _text = driven(_sh.feed, "show hardware | sideways rubbish")
 says("unknown filter", _text,
      "error: 'sideways' is not a filter; this box has: count, exclude, first, "
-     "include, last, match, section", _rv, expect=True)
+     "include, last, match, no-more, section", _rv, expect=True)
 print("  a filter nobody has refuses the answer rather than reshaping it")
 
 

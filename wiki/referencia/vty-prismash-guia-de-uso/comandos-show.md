@@ -531,10 +531,27 @@ show logging | exclude bgpd | last 20
 | `count` | quantas linhas, em vez das linhas |
 | `first <n>` | as primeiras n linhas |
 | `last <n>` | as últimas n linhas |
+| `no-more` | tudo de uma vez, sem parar no `--More--` |
 
 O argumento pode ter espaços: `include mode deterministic` procura essas duas palavras juntas. Um par de aspas **em volta do argumento inteiro** é retirado antes da busca — `section "interface Gi"` procura `interface Gi` —, porque é assim que um pipe se escreve em qualquer shell e ninguém digitaria diferente. Uma aspa no meio do texto continua sendo um caractere procurado.
 
 Um filtro que a caixa não conhece é **recusado**, com a lista do que existe — não ignorado. Ignorar responderia a pergunta que ninguém fez, sem nada na tela dizendo que foi isso que aconteceu. `first` e `last` sem número, ou com algo que não é número, também são recusados (`needs a number, not 'x'`).
+
+## Saída maior que a tela: `--More--`
+
+Numa sessão interativa, um `show` cuja saída passa da altura da tela para no `--More--`, como um `| more` implícito:
+
+| Tecla | O que faz |
+|-------|-----------|
+| espaço (ou qualquer outra tecla) | a próxima tela |
+| Enter | a próxima linha |
+| `q` ou Ctrl-C | para aqui; o resto não é mostrado e a sessão continua |
+
+`| no-more` desliga a paginação para um comando: `show running-config | no-more`. Os filtros continuam valendo e a paginação vale para o que sobra deles, então `show running-config | include interface` só para se o resultado filtrado não couber.
+
+**Não pagina**: `prismash -c`, `ssh <conta>@<caixa> "<comando>"` e qualquer saída que não vai para um terminal. Um script nunca fica esperando uma tecla.
+
+O paginador é da própria VTY, e não o `more` ou o `less` do sistema. Os dois têm um atalho para abrir um shell (`!comando`), e entregar a saída a um deles daria shell a uma conta somente-leitura, que é justamente o que a caixa não dá.
 
 `section` serve à forma desta configuração: um bloco é uma linha na coluna 0 mais tudo que está indentado embaixo dela. É como se pede a configuração de uma interface, ou de um pool, sem ler a caixa inteira.
 
