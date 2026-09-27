@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.136.1 - a subscriber reaches the box itself
+
+### Fixed
+
 * **A subscriber could not reach the box itself through the CGNAT** ([#470](https://github.com/andrediashexa/hexarouting/issues/470)).
   Reported on a 0.135.0 box: a VM behind `cgnat inside` could not reach the
   box, and could once `cgnat inside` was removed. `vppctl trace` showed the
