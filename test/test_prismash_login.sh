@@ -238,26 +238,25 @@ case "$out" in
   *) bad "the broker's failure did not reach the fallback: $out" ;;
 esac
 
-echo "=== the VTY in the management plane only behind its switch (#448) ==="
-# Off by default: 0.137.0's gate found the VTY in the container reading the
-# container's /sys and /proc as the box's. The broker is told what to run,
-# and that is what is asserted.
+echo "=== the VTY in the management plane, unless vty-on-host (#448) ==="
+# On by default since 0.138.0; vty-on-host puts the host's VTY back. The broker
+# is told what to run, and that is what is asserted.
 printf '#!/bin/sh\necho session "$@"\n' > "$d/bin/session"; chmod +x "$d/bin/session"
 rm -f "$d/broker-args"
 PRISMA_VTY_BROKER="$d/bin/broker" PRISMA_PRISMASH="$d/bin/clean-prismash" \
-  PRISMA_VTY_SESSION="$d/bin/session" PRISMA_VTY_SWITCH="$d/no-switch" \
+  PRISMA_VTY_SESSION="$d/bin/session" PRISMA_VTY_ON_HOST="$d/no-such-file" \
   PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" >/dev/null 2>&1
 case "$(cat "$d/broker-args" 2>/dev/null)" in
-  *clean-prismash*) ok "no switch: the broker runs the VTY on the host" ;;
-  *) bad "no switch, and the broker ran: $(cat "$d/broker-args" 2>/dev/null)" ;;
+  *bin/session*) ok "by default the broker runs the session client" ;;
+  *) bad "by default, the broker ran: $(cat "$d/broker-args" 2>/dev/null)" ;;
 esac
-touch "$d/switch"; rm -f "$d/broker-args"
+touch "$d/on-host"; rm -f "$d/broker-args"
 PRISMA_VTY_BROKER="$d/bin/broker" PRISMA_PRISMASH="$d/bin/clean-prismash" \
-  PRISMA_VTY_SESSION="$d/bin/session" PRISMA_VTY_SWITCH="$d/switch" \
+  PRISMA_VTY_SESSION="$d/bin/session" PRISMA_VTY_ON_HOST="$d/on-host" \
   PRISMA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" >/dev/null 2>&1
 case "$(cat "$d/broker-args" 2>/dev/null)" in
-  *bin/session*) ok "the switch on: the broker runs the session client" ;;
-  *) bad "the switch on, and the broker ran: $(cat "$d/broker-args" 2>/dev/null)" ;;
+  *clean-prismash*) ok "vty-on-host: the broker runs the VTY on the host" ;;
+  *) bad "vty-on-host, and the broker ran: $(cat "$d/broker-args" 2>/dev/null)" ;;
 esac
 
 rm -rf "$d"

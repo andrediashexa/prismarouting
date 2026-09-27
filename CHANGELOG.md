@@ -77,6 +77,15 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The VTY runs in the management plane by default** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase C).
+  0.137.0 shipped it behind a switch. The pieces below are what turn it on:
+  the host's facts read under `/host`, the probes and the host's questions
+  through doors, and `install`, `system upgrade` and `system dataplane
+  restart` run by the broker with the host's own VTY, on the terminal, as
+  the login. `/etc/prisma-routing/vty-on-host` puts a box's logins back on
+  the host's VTY. The gate asserts that the login's VTY runs in the
+  container, and that it answers `show hardware`, `show interface` and
+  `show system cpu` as the host's does.
 * **The management plane reads the host's facts, not its own** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase C).
   The VTY reads the box's NICs, PCI bus, CPUs, control-plane cgroup,
   routes, live medium, `startup.conf` and management stanza straight off

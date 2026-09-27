@@ -263,6 +263,9 @@ services:
       - /etc/group:/etc/group:ro
       - /etc/shadow:/etc/shadow:ro
       - /usr/share/prisma-routing:/usr/share/prisma-routing:ro
+      # The box's timezone, which the installer asked for: the VTY prints
+      # times with localtime(), and the image's own is UTC.
+      - /etc/localtime:/etc/localtime:ro
       # THE HOST'S FACTS, READ-ONLY UNDER /host (#448): the NICs, the PCI
       # bus, the CPUs and the control plane's cgroup in /sys, the routes of
       # the host's own network namespace in /proc/1/net, the live medium,
