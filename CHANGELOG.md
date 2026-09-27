@@ -87,8 +87,21 @@ version has a chance of seeing it.
   nothing beyond it (#447). It shares `ipc: host` for `vat2`, the dataplane's
   and FRR's sockets, the configuration directory and the doors' socket. The
   accounts are read-only, and every change goes through the host's doors
-  (0.135.0). The login still lands in the VTY on the host; sessions move into
-  the container in the next part.
+  (0.135.0).
+
+  **And the login's VTY runs in it.** `prismash-login` hands the broker
+  `prisma-vty-session`, which asks the host's doors for a session. The
+  daemon runs `docker exec -u <uid>:<gid> --group-add <the account's host
+  groups> prisma-routing_mgmt_1 prismash`, with the broker socket under that
+  login's own `/run/user`. So each operator is in the container as their own
+  uid, the role is read from the same groups, and the doors they reach from
+  there are decided by the same uid. A read-only account in the container is
+  exactly a read-only account on the host. `ssh box '<command>'` goes the
+  same way, as `-c`. With no daemon, no container running, or no `/run/user`
+  for the login, the VTY runs on the host as before, so a box whose
+  container is down is still reachable. Sessions are journal lines by their
+  kind (`session attach`, `session command`), never by a command's text,
+  which can carry a password hash.
 
 ### Fixed
 

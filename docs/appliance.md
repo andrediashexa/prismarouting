@@ -3052,6 +3052,45 @@ the target. On an installed box it would mean physical or IPMI access equals
 full access with no password, which is the operator's decision rather than our
 default.
 
+### The management plane: the VTY in a container of its own
+
+The third step (#448, phase C). An installed box runs a third container,
+`prisma-routing_mgmt_1`, from the `prisma-mgmt` image. The image is built on
+the dataplane's own image, so `vppctl`, `vat2` and this tree's plugin API
+are the same build as the VPP they talk to. It adds FRR's clients at the
+pinned version and prismash. The container runs no daemon.
+
+**Its network is the backplane and nothing else.** It has no docker network,
+which would put routes in the main table and rules in iptables.
+`prisma-backplane attach` gives it one veth on `bp0`, 128.0.0.2/8 in the
+`prisma-bp` VRF, whose table ends in an unreachable default (#447). What it
+needs of the host it asks through the doors above.
+
+**What it shares, each for one reason:**
+- `ipc: host`, because `vat2` talks to VPP over `/dev/shm/global_vm`;
+- `/run/vpp`, the CLI socket;
+- `/var/run/frr` and `/etc/frr`, for `vtysh` and `frr-reload.py`;
+- `/etc/prisma-routing`, the configuration and its revisions;
+- `/run/prisma-routing`, the doors' socket;
+- `/run/user`, where each login's broker socket is;
+- `/var/log/prisma-routing`;
+- `/usr/share/prisma-routing`, for the version stamp;
+- `/etc/passwd`, `group` and `shadow`, read-only.
+
+**A login lands there as itself.** `prismash-login` hands the broker
+`prisma-vty-session`, which asks the doors for a session: `docker exec -u
+<uid>:<gid> --group-add <the account's groups on the host>`, the command
+fixed to `prismash --attach <socket>` or `prismash -c <command>`. The uid is
+the one the kernel reports for the caller, and the socket must be the
+caller's own, under its own `/run/user`. So the role the VTY reads, and the
+uid every later door sees, are the login's, and a read-only account in the
+container can do exactly what it could on the host. `start shell` is still
+the broker's, on the host.
+
+**When there is no management plane, the VTY runs on the host**, as before
+phase C: no daemon, the container not running, or a login with no runtime
+directory. A box whose container is down is still reachable.
+
 ## The containers, which are what the box runs
 
 Since **0.117.0** an installed box runs the dataplane and the control plane

@@ -1693,6 +1693,10 @@ drive_console() {
   wait_for "HXLAB mgmt-bp=" 60 "the management plane to say its backplane address" || return 1
   send 'echo "HX""LAB mgmt-vty=$(docker exec prisma-routing_mgmt_1 prismash -c "show version" 2>&1 | tr -d "\r" | grep -c "not responding") $(docker exec prisma-routing_mgmt_1 prismash -c "show version" 2>&1 | tr -d "\r" | head -1)"'
   wait_for "HXLAB mgmt-vty=" 90 "the VTY in the management plane to answer" || return 1
+  # And the VTY this very shell was started from runs in it: the session is
+  # still open under `start shell`, as a `docker exec` the doors ran (#448).
+  send 'echo "HX""LAB mgmt-session=$(ps -eo args | grep -c "[p]risma-routing_mgmt_1 prismash --attach")"'
+  wait_for "HXLAB mgmt-session=" 30 "the host to say whether a session runs in the management plane" || return 1
   send 'D=$(sed -n "s/^DRIVER=//p" /sys/class/net/$M/device/uevent); I=/boot/initrd.img-$(uname -r); echo "HX""LAB nic-initrd=${D:-none} $(lsinitramfs $I 2>/dev/null | grep -c "/${D:-none}\.ko") $(lsinitramfs $I 2>/dev/null | grep -c "drivers/net/.*\.ko")"'
   wait_for "HXLAB nic-initrd=" 60 \
     "the box to say whether its card's driver is in the initrd" || return 1
@@ -2708,6 +2712,13 @@ if [ "$up" = 1 ]; then
       "0 Prisma Routing "*) echo "  [ ok ] and the VTY in it reaches the dataplane: ${MGMT_VTY#0 }" ;;
       *) echo "  [FAIL] the VTY in the management plane did not reach the dataplane:"
          echo "         '${MGMT_VTY:-<nothing>}' (count of 'not responding', then its first line)"
+         fail=1 ;;
+    esac
+    MGMT_SESSION=$(sed -n 's/^HXLAB mgmt-session=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+    case "$MGMT_SESSION" in
+      [1-9]*) echo "  [ ok ] and the login's VTY runs in it: $MGMT_SESSION session(s)" ;;
+      *) echo "  [FAIL] no VTY session runs in the management plane ('${MGMT_SESSION:-<unread>}'):"
+         echo "         the login fell back to the VTY on the host"
          fail=1 ;;
     esac
     NIC_INITRD=$(sed -n 's/^HXLAB nic-initrd=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
