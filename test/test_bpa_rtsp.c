@@ -438,5 +438,16 @@ main (void)
 	 "bpa_rtsp_is_ws: space and tab, not a line ending");
   printf ("  case-blind names, and the whitespace between tokens\n");
 
+  printf ("\n=== the reply's pair is this subscriber's, and a pair ===\n");
+  CHECK (bpa_rtsp_pair_is_ours (7, 7, 5000, 7, 5001),
+	 "bpa_rtsp_pair_is_ours: the subscriber's own pair was refused");
+  CHECK (!bpa_rtsp_pair_is_ours (7, 8, 5000, 7, 5001)
+	   && !bpa_rtsp_pair_is_ours (7, 7, 5000, 8, 5001),
+	 "bpa_rtsp_pair_is_ours: a port of another subscriber's was taken");
+  CHECK (!bpa_rtsp_pair_is_ours (7, 7, 5000, 7, 5002)
+	   && !bpa_rtsp_pair_is_ours (7, 7, 65535, 7, 0),
+	 "bpa_rtsp_pair_is_ours: two ports that are not consecutive were "
+	 "taken as a pair");
+
   return bpa_test_verdict (checks, failures);
 }

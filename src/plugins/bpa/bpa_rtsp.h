@@ -269,4 +269,16 @@ bpa_rtsp_format_pair (u8 *out, u16 lo, u16 hi)
   return n;
 }
 
+/*
+ * Are the two media mappings found for a reply's client_port still this
+ * control connection's pair? Both must belong to its subscriber, and they
+ * must still be consecutive on the private side: restoring one port of a
+ * pair, or guessing the other, is worse than not rewriting at all.
+ */
+static_always_inline int
+bpa_rtsp_pair_is_ours (u32 sub, u32 sub0, u16 port0, u32 sub1, u16 port1)
+{
+  return sub0 == sub && sub1 == sub && (u32) port1 == (u32) port0 + 1;
+}
+
 #endif /* __included_bpa_rtsp_h__ */

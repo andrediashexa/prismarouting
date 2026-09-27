@@ -31,11 +31,13 @@
 #include <vnet/ip/ip4_packet.h>
 #include <vnet/tcp/tcp_packet.h>
 #include <vnet/udp/udp_packet.h>
+#include <vnet/ip/icmp46_packet.h>
 
 #include "bpa.h"
 #include "bpa_seq.h"
 #include "bpa_rtsp.h"
 #include "bpa_sip.h"
+#include "bpa_l4_wire.h"
 
 typedef enum
 {
@@ -47,36 +49,6 @@ typedef enum
   BPA_ALG_NO_PORTS, /* no consecutive media port pair available */
 } bpa_alg_result_t;
 
-/*
- * The TCP payload of a packet that is entirely inside this buffer.
- *
- * Returns -1 for a packet with no payload, a header that does not fit, or a
- * length the buffer does not actually hold. Every one of those means "do not
- * touch it", which is the safe answer for all three.
- */
-static_always_inline int
-bpa_tcp_payload (vlib_buffer_t *b, ip4_header_t *ip, tcp_header_t *tcp,
-		 u8 **pl, u32 *pl_len)
-{
-  u8 *end = (u8 *) vlib_buffer_get_current (b) + b->current_length;
-  u32 ip_hlen = ip4_header_bytes (ip);
-  u32 tcp_hlen = tcp_header_bytes (tcp);
-  u32 ip_len = clib_net_to_host_u16 (ip->length);
-  u8 *p;
-
-  if (PREDICT_FALSE (tcp_hlen < sizeof (tcp_header_t)))
-    return -1;
-  if (PREDICT_FALSE (ip_len <= ip_hlen + tcp_hlen))
-    return -1;
-
-  p = (u8 *) tcp + tcp_hlen;
-  *pl = p;
-  *pl_len = ip_len - ip_hlen - tcp_hlen;
-
-  if (PREDICT_FALSE (p + *pl_len > end))
-    return -1;
-  return 0;
-}
 
 /*
  * Replaces payload[off .. off+old_len) with `new`, and repairs everything the
@@ -92,6 +64,9 @@ bpa_tcp_payload (vlib_buffer_t *b, ip4_header_t *ip, tcp_header_t *tcp,
  * MUST run before bpa_tcp_seq_adjust, because the correction point it records
  * is in the sender's own coordinates.
  */
+/* not a unit: the room check is VPP's buffer size and the TCP checksum is
+ * VPP's own over the buffer; the rule it keeps is bpa_seq_note(), held by
+ * test/test_bpa_ftp.c, and lab/rtsp.sh reads the spliced packet (#472) */
 static_always_inline int
 bpa_alg_splice (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 		tcp_header_t *tcp, u8 *pl, u32 pl_len, u32 off, u32 old_len,
@@ -118,22 +93,7 @@ bpa_alg_splice (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 	(u16) ((i32) clib_net_to_host_u16 (ip->length) + d));
       ip->checksum = ip4_header_checksum (ip);
 
-      /*
-       * Everything sent after this segment is displaced; this segment, and
-       * any retransmission of it, is not - which is why the correction point
-       * is this segment's own sequence number and the comparison is strict.
-       *
-       * Unless this IS that retransmission, arriving with the same rewrite
-       * already accounted for. Pushing a second correction for it would
-       * double the offset, and the connection would stall a few segments
-       * later looking like something else entirely.
-       */
-      if (adj->correction_pos != seq || adj->off_after - adj->off_before != d)
-	{
-	  adj->off_before = adj->off_after;
-	  adj->off_after += d;
-	  adj->correction_pos = seq;
-	}
+      bpa_seq_note (adj, seq, d);
     }
 
   tcp->checksum = 0;
@@ -151,6 +111,9 @@ bpa_alg_splice (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
  * and the video never arrives - the black frame from an IP camera that works
  * on the LAN.
  */
+/* not a unit: reserves in VPP's session pool and bihash; its parts are
+ * bpa_tcp_payload(), bpa_rtsp_client_port() and bpa_rtsp_format_pair(),
+ * each held by name, and lab/rtsp.sh carries a SETUP through it (#472) */
 static_always_inline bpa_alg_result_t
 bpa_rtsp_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 		 tcp_header_t *tcp, bpa_per_thread_t *pt, const bpa_pool_t *p,
@@ -223,6 +186,9 @@ bpa_rtsp_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
  * if either of them is missing the packet is left alone. Restoring one port of
  * a pair, or guessing the other, is worse than not rewriting at all.
  */
+/* not a unit: looks the pair up in VPP's bihash; the rule it applies is
+ * bpa_rtsp_pair_is_ours(), held by test/test_bpa_rtsp.c, and lab/rtsp.sh
+ * carries the 200 back through it (#472) */
 static_always_inline bpa_alg_result_t
 bpa_rtsp_out2in (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 		 tcp_header_t *tcp, bpa_per_thread_t *pt, bpa_session_t *s)
@@ -261,10 +227,8 @@ bpa_rtsp_out2in (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
   m0 = pool_elt_at_index (pt->sessions, v0.value);
   m1 = pool_elt_at_index (pt->sessions, v1.value);
 
-  /* They must belong to the subscriber this control connection belongs to,
-   * and they must still be a pair on the private side. */
-  if (m0->sub_idx != s->sub_idx || m1->sub_idx != s->sub_idx
-      || m1->port_priv != m0->port_priv + 1)
+  if (!bpa_rtsp_pair_is_ours (s->sub_idx, m0->sub_idx, m0->port_priv,
+			      m1->sub_idx, m1->port_priv))
     return BPA_ALG_UNPARSED;
 
   n = bpa_rtsp_format_pair (txt, m0->port_priv, m1->port_priv);
@@ -275,40 +239,6 @@ bpa_rtsp_out2in (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
   return BPA_ALG_DONE;
 }
 
-/*
- * The UDP payload of a datagram that is entirely inside this buffer.
- *
- * Returns -1 for anything this box must not reach into: a datagram with no
- * payload, a UDP length that disagrees with the IP length, or a length the
- * buffer does not actually hold. A UDP header carries its OWN length as well
- * as the IP header's, and the two disagreeing is either a truncated capture or
- * a crafted packet - the SIP parser is reachable from the internet on a port
- * that is scanned continuously, so the bound comes from the smaller of the two
- * and both are checked before a single payload byte is read.
- */
-static_always_inline int
-bpa_alg_udp_payload (vlib_buffer_t *b, ip4_header_t *ip, udp_header_t *udp,
-		     u8 **pl, u32 *pl_len)
-{
-  u8 *end = (u8 *) vlib_buffer_get_current (b) + b->current_length;
-  u32 ip_hlen = ip4_header_bytes (ip);
-  u32 ip_len = clib_net_to_host_u16 (ip->length);
-  u32 udp_len = clib_net_to_host_u16 (udp->length);
-  u8 *p;
-
-  if (PREDICT_FALSE (udp_len <= sizeof (udp_header_t)))
-    return -1;
-  if (PREDICT_FALSE (ip_len != ip_hlen + udp_len))
-    return -1;
-
-  p = (u8 *) udp + sizeof (udp_header_t);
-  *pl = p;
-  *pl_len = udp_len - (u32) sizeof (udp_header_t);
-
-  if (PREDICT_FALSE (p + *pl_len > end))
-    return -1;
-  return 0;
-}
 
 /*
  * Repairs everything a UDP payload rewrite invalidated: the buffer, the IP
@@ -326,6 +256,9 @@ bpa_alg_udp_payload (vlib_buffer_t *b, ip4_header_t *ip, udp_header_t *udp,
  * checksum here", so a correctly computed zero would tell the receiver not to
  * check the very thing that was just made correct.
  */
+/* not a unit: the checksum is VPP's own over the buffer; the rule it adds
+ * is bpa_udp_csum_on_wire(), held by test/test_bpa_l4.c, and lab/sip.sh
+ * checks the datagram that leaves (#472) */
 static_always_inline void
 bpa_alg_udp_relength (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 		      udp_header_t *udp, i32 d)
@@ -341,9 +274,8 @@ bpa_alg_udp_relength (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
     }
 
   udp->checksum = 0;
-  udp->checksum = ip4_tcp_udp_compute_checksum (vm, b, ip);
-  if (udp->checksum == 0)
-    udp->checksum = 0xffff;
+  udp->checksum =
+    bpa_udp_csum_on_wire (ip4_tcp_udp_compute_checksum (vm, b, ip));
 }
 
 /*
@@ -376,6 +308,10 @@ bpa_alg_udp_relength (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
  * only the subscriber's own private address is ever rewritten settles that on
  * its own - see the head of bpa_sip.h.
  */
+/* not a unit: reserves in VPP's session pool and bihash; its parts are
+ * bpa_sip_parse(), bpa_sip_growth(), the edit list and the formatters,
+ * each held by test/test_bpa_sip.c, and lab/sip.sh carries an INVITE
+ * through it (#472) */
 static_always_inline bpa_alg_result_t
 bpa_sip_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 		udp_header_t *udp, bpa_per_thread_t *pt, const bpa_pool_t *p,
@@ -386,7 +322,7 @@ bpa_sip_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
   bpa_sip_edit_t ed[BPA_SIP_MAX_ITEMS];
   u8 txt[BPA_SIP_TXT_MAX];
   u8 *pl;
-  u32 pl_len, n_ed = 0, i, want = 0, clen_at = ~0u;
+  u32 pl_len, n_ed = 0, i, want, clen_at;
   i32 body_d = 0, d;
   /*
    * Every field of the session is read ONCE, here, and the pointer is not used
@@ -428,31 +364,7 @@ bpa_sip_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
    * and a phone retrying every few seconds turns that into exhaustion of its
    * own subscriber's block - the lesson bpa_rtsp_in2out records.
    */
-  for (i = 0; i < m.n_items; i++)
-    {
-      const bpa_sip_item_t *it = &m.items[i];
-      u32 widest = 0;
-
-      switch (it->kind)
-	{
-	case BPA_SIP_VIA:
-	case BPA_SIP_CONTACT:
-	  widest = it->addr == ip_priv ? BPA_SIP_TXT_MAX : 0;
-	  break;
-	case BPA_SIP_CONN:
-	  widest = it->addr == ip_priv ? 15 : 0; /* "255.255.255.255" */
-	  break;
-	case BPA_SIP_MEDIA:
-	  widest = it->addr == ip_priv ? 5 : 0; /* "65535" */
-	  break;
-	case BPA_SIP_CLEN:
-	  clen_at = i;
-	  widest = 5;
-	  break;
-	}
-      if (widest > it->len)
-	want += widest - it->len;
-    }
+  want = bpa_sip_growth (&m, ip_priv, &clen_at);
 
   if (want == 0)
     return BPA_ALG_NOOP;
@@ -591,6 +503,9 @@ bpa_sip_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
  *                           this, and it is written down as not done rather
  *                           than guessed at.
  */
+/* not a unit: rewrites a VPP buffer; the rule it applies is
+ * bpa_sip_our_via(), held by test/test_bpa_sip.c, and lab/sip.sh carries
+ * the response back through it (#472) */
 static_always_inline bpa_alg_result_t
 bpa_sip_out2in (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 		udp_header_t *udp, bpa_session_t *s)
@@ -620,14 +535,10 @@ bpa_sip_out2in (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
   if (!m.is_response)
     return BPA_ALG_NOOP;
 
-  for (i = 0; i < m.n_items; i++)
+  i = bpa_sip_our_via (&m, s->ip_pub, s->port_pub);
+  if (i != ~0u)
     {
       const bpa_sip_item_t *it = &m.items[i];
-
-      if (it->kind != BPA_SIP_VIA)
-	continue;
-      if (it->addr != s->ip_pub || it->port != s->port_pub)
-	break;
 
       if ((i32) b->current_data + (i32) b->current_length
 	    + (i32) BPA_SIP_TXT_MAX
@@ -637,7 +548,6 @@ bpa_sip_out2in (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
       n = bpa_sip_fmt_addr_port (txt, s->ip_priv, s->port_priv);
       if (bpa_sip_edit_add (ed, &n_ed, it->off, it->len, txt, n))
 	return BPA_ALG_NO_ROOM;
-      break;
     }
 
   if (n_ed == 0)

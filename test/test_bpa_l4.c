@@ -319,5 +319,66 @@ main (void)
 	   "a rewrite to the same address changed the IP checksum");
   }
 
+  printf ("\n=== the payload an ALG may reach into ===\n");
+  {
+    static vlib_buffer_t b;
+    ip4_header_t *bip = (ip4_header_t *) b.data;
+    tcp_header_t *tcp = (tcp_header_t *) (b.data + 20);
+    udp_header_t *udp = (udp_header_t *) (b.data + 20);
+    u8 *pl = 0;
+    u32 pl_len = 0;
+
+    memset (&b, 0, sizeof (b));
+    bip->ip_version_and_header_length = 0x45;
+    bip->length = clib_host_to_net_u16 (20 + 20 + 30);
+    tcp->data_offset_and_reserved = 0x50;
+    b.current_length = 70;
+    CHECK (bpa_tcp_payload (&b, bip, tcp, &pl, &pl_len) == 0
+	     && pl == b.data + 40 && pl_len == 30,
+	   "bpa_tcp_payload: %u bytes at +%d, not 30 at +40", pl_len,
+	   (int) (pl - b.data));
+    tcp->data_offset_and_reserved = 0x80; /* 12 bytes of options */
+    CHECK (bpa_tcp_payload (&b, bip, tcp, &pl, &pl_len) == 0
+	     && pl == b.data + 52 && pl_len == 18,
+	   "bpa_tcp_payload: the options were read as payload");
+    b.current_length = 69;
+    CHECK (bpa_tcp_payload (&b, bip, tcp, &pl, &pl_len) == -1,
+	   "bpa_tcp_payload: a length the buffer does not hold was trusted");
+    b.current_length = 70;
+    tcp->data_offset_and_reserved = 0x40;
+    CHECK (bpa_tcp_payload (&b, bip, tcp, &pl, &pl_len) == -1,
+	   "bpa_tcp_payload: a TCP header under 20 bytes was accepted");
+    tcp->data_offset_and_reserved = 0x50;
+    bip->length = clib_host_to_net_u16 (40);
+    CHECK (bpa_tcp_payload (&b, bip, tcp, &pl, &pl_len) == -1,
+	   "bpa_tcp_payload: a bare ACK was given a payload");
+
+    memset (&b, 0, sizeof (b));
+    bip->ip_version_and_header_length = 0x45;
+    bip->length = clib_host_to_net_u16 (20 + 8 + 100);
+    udp->length = clib_host_to_net_u16 (8 + 100);
+    b.current_length = 128;
+    CHECK (bpa_alg_udp_payload (&b, bip, udp, &pl, &pl_len) == 0
+	     && pl == b.data + 28 && pl_len == 100,
+	   "bpa_alg_udp_payload: %u bytes, not 100", pl_len);
+    udp->length = clib_host_to_net_u16 (8 + 200);
+    CHECK (bpa_alg_udp_payload (&b, bip, udp, &pl, &pl_len) == -1,
+	   "bpa_alg_udp_payload: a UDP length beyond the IP length was read "
+	   "- the SIP parser is reachable from the internet");
+    udp->length = clib_host_to_net_u16 (8 + 100);
+    b.current_length = 127;
+    CHECK (bpa_alg_udp_payload (&b, bip, udp, &pl, &pl_len) == -1,
+	   "bpa_alg_udp_payload: a datagram past the buffer was read");
+    b.current_length = 128;
+    udp->length = clib_host_to_net_u16 (8);
+    bip->length = clib_host_to_net_u16 (28);
+    CHECK (bpa_alg_udp_payload (&b, bip, udp, &pl, &pl_len) == -1,
+	   "bpa_alg_udp_payload: an empty datagram was given a payload");
+
+    CHECK (bpa_udp_csum_on_wire (0) == 0xffff
+	     && bpa_udp_csum_on_wire (0x1234) == 0x1234,
+	   "bpa_udp_csum_on_wire: a computed zero went out as 'no checksum'");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

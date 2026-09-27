@@ -192,4 +192,81 @@ bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
   ip->dst_address.as_u32 = clib_host_to_net_u32 (new_addr);
 }
 
+/*
+ * The TCP payload of a packet that is entirely inside this buffer.
+ *
+ * Returns -1 for a packet with no payload, a header that does not fit, or a
+ * length the buffer does not actually hold. Every one of those means "do not
+ * touch it", which is the safe answer for all three.
+ */
+static_always_inline int
+bpa_tcp_payload (vlib_buffer_t *b, ip4_header_t *ip, tcp_header_t *tcp,
+		 u8 **pl, u32 *pl_len)
+{
+  u8 *end = (u8 *) vlib_buffer_get_current (b) + b->current_length;
+  u32 ip_hlen = ip4_header_bytes (ip);
+  u32 tcp_hlen = tcp_header_bytes (tcp);
+  u32 ip_len = clib_net_to_host_u16 (ip->length);
+  u8 *p;
+
+  if (PREDICT_FALSE (tcp_hlen < sizeof (tcp_header_t)))
+    return -1;
+  if (PREDICT_FALSE (ip_len <= ip_hlen + tcp_hlen))
+    return -1;
+
+  p = (u8 *) tcp + tcp_hlen;
+  *pl = p;
+  *pl_len = ip_len - ip_hlen - tcp_hlen;
+
+  if (PREDICT_FALSE (p + *pl_len > end))
+    return -1;
+  return 0;
+}
+
+/*
+ * The UDP payload of a datagram that is entirely inside this buffer.
+ *
+ * Returns -1 for anything this box must not reach into: a datagram with no
+ * payload, a UDP length that disagrees with the IP length, or a length the
+ * buffer does not actually hold. A UDP header carries its OWN length as well
+ * as the IP header's, and the two disagreeing is either a truncated capture or
+ * a crafted packet - the SIP parser is reachable from the internet on a port
+ * that is scanned continuously, so the bound comes from the smaller of the two
+ * and both are checked before a single payload byte is read.
+ */
+static_always_inline int
+bpa_alg_udp_payload (vlib_buffer_t *b, ip4_header_t *ip, udp_header_t *udp,
+		     u8 **pl, u32 *pl_len)
+{
+  u8 *end = (u8 *) vlib_buffer_get_current (b) + b->current_length;
+  u32 ip_hlen = ip4_header_bytes (ip);
+  u32 ip_len = clib_net_to_host_u16 (ip->length);
+  u32 udp_len = clib_net_to_host_u16 (udp->length);
+  u8 *p;
+
+  if (PREDICT_FALSE (udp_len <= sizeof (udp_header_t)))
+    return -1;
+  if (PREDICT_FALSE (ip_len != ip_hlen + udp_len))
+    return -1;
+
+  p = (u8 *) udp + sizeof (udp_header_t);
+  *pl = p;
+  *pl_len = udp_len - (u32) sizeof (udp_header_t);
+
+  if (PREDICT_FALSE (p + *pl_len > end))
+    return -1;
+  return 0;
+}
+
+/*
+ * A UDP checksum as it goes on the wire: an all-zero result is sent as 0xffff
+ * (RFC 768), because zero on the wire means "no checksum here" and would tell
+ * the receiver not to check the very thing that was just made correct.
+ */
+static_always_inline u16
+bpa_udp_csum_on_wire (u16 csum)
+{
+  return csum ? csum : 0xffff;
+}
+
 #endif /* __included_bpa_l4_wire_h__ */

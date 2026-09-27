@@ -80,6 +80,30 @@ bpa_seq_delta_at (const bpa_seq_adj_t *a, u32 seq)
 {
   return ((i32) (seq - a->correction_pos) > 0) ? a->off_after : a->off_before;
 }
+
+/*
+ * Records that the segment starting at `seq` was rewritten `d` bytes longer
+ * (or shorter), in the sender's own coordinates.
+ *
+ * Everything sent after this segment is displaced; this segment, and
+ * any retransmission of it, is not - which is why the correction point
+ * is this segment's own sequence number and the comparison is strict.
+ *
+ * Unless this IS that retransmission, arriving with the same rewrite
+ * already accounted for. Pushing a second correction for it would
+ * double the offset, and the connection would stall a few segments
+ * later looking like something else entirely.
+ */
+static_always_inline void
+bpa_seq_note (bpa_seq_adj_t *adj, u32 seq, i32 d)
+{
+  if (adj->correction_pos != seq || adj->off_after - adj->off_before != d)
+    {
+      adj->off_before = adj->off_after;
+      adj->off_after += d;
+      adj->correction_pos = seq;
+    }
+}
 /*
  * Moves a TCP header's sequence and acknowledgement numbers onto the rewritten
  * stream, fixing the checksum as it goes.

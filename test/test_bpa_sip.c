@@ -1175,5 +1175,47 @@ main (void)
     printf ("  each piece of the parser holds its own contract\n");
   }
 
+  /* #472: the two rules the translation nodes apply to a parsed message. */
+  printf ("\n=== what a rewrite could grow by; whose Via comes back ===\n");
+  {
+    bpa_sip_msg_t m;
+    u32 clen_at, want;
+
+    memset (&m, 0, sizeof (m));
+    bpa_sip_add (&m, BPA_SIP_VIA, 10, 18, PRIV, 5060);	   /* ours */
+    bpa_sip_add (&m, BPA_SIP_CONTACT, 40, 18, 0x0a000009u, 5060); /* not */
+    bpa_sip_add (&m, BPA_SIP_CLEN, 80, 3, 0, 0);
+    bpa_sip_add (&m, BPA_SIP_CONN, 120, 10, PRIV, 0);
+    bpa_sip_add (&m, BPA_SIP_MEDIA, 150, 4, PRIV, 8000);
+    want = bpa_sip_growth (&m, PRIV, &clen_at);
+    CHECK (want == (BPA_SIP_TXT_MAX - 18) + (5 - 3) + (15 - 10) + (5 - 4),
+	   "bpa_sip_growth: %u bytes, not the widest each of ours can become",
+	   want);
+    CHECK (clen_at == 2, "bpa_sip_growth: Content-Length is item %u", clen_at);
+    CHECK (bpa_sip_growth (&m, 0x0a0000ffu, &clen_at) == 2,
+	   "bpa_sip_growth: another subscriber's items were counted");
+    memset (&m, 0, sizeof (m));
+    bpa_sip_add (&m, BPA_SIP_VIA, 10, 21, PRIV, 5060);
+    CHECK (bpa_sip_growth (&m, PRIV, &clen_at) == 0 && clen_at == ~0u,
+	   "bpa_sip_growth: a Via already at the widest grows, or a missing "
+	   "Content-Length was found");
+
+    memset (&m, 0, sizeof (m));
+    m.is_response = 1;
+    bpa_sip_add (&m, BPA_SIP_VIA, 10, 18, PUB, 1024);
+    bpa_sip_add (&m, BPA_SIP_VIA, 40, 18, PUB, 2048);
+    CHECK (bpa_sip_our_via (&m, PUB, 1024) == 0,
+	   "bpa_sip_our_via: the topmost Via this box wrote was not found - "
+	   "the phone drops every response");
+    CHECK (bpa_sip_our_via (&m, PUB, 2048) == ~0u,
+	   "bpa_sip_our_via: a Via below the topmost was put back");
+    CHECK (bpa_sip_our_via (&m, PUB, 1025) == ~0u,
+	   "bpa_sip_our_via: another session's port on our address was taken");
+    m.is_response = 0;
+    CHECK (bpa_sip_our_via (&m, PUB, 1024) == ~0u,
+	   "bpa_sip_our_via: a request's Via was rewritten");
+    printf ("  growth counted before a port is taken; only our Via back\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }
