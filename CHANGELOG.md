@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.138.2 - a /0 prefix is refused, not taken as one address
+
+### Fixed
+
 * **A /0 prefix in a pool or a bypass became a single address** ([#473](https://github.com/andrediashexa/hexarouting/issues/473)).
   Found reviewing the plugin's unit-test excuses (#472). The plugin turned
   `<addr>/<len>` into a range as `1u << (32 - len)` in seven places, and at
