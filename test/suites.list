@@ -13,6 +13,7 @@
 .build/test_bpa_static
 .build/test_bpa_top
 .build/test_bpa_rate
+.build/test_bpa_keys
 .build/test_bpa_ports
 .build/test_bpa_rtsp
 .build/test_bpa_mss

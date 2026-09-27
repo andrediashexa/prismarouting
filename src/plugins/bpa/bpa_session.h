@@ -20,6 +20,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa_pool.h"
+#include "bpa_keys.h"
 #include "bpa_rate.h"
 #include "bpa_ports.h"
 #include "bpa_dyn.h"
@@ -41,13 +42,7 @@
  * In a 512-port block that exhausts the subscriber quickly, and the complaint
  * arrives as "the internet stopped" with nothing obvious in the dataplane.
  */
-typedef enum
-{
-  BPA_TCP_INIT = 0, /* handshake in progress */
-  BPA_TCP_ESTAB,    /* ACK seen after the handshake */
-  BPA_TCP_CLOSING,  /* FIN seen in either direction */
-  BPA_TCP_CLOSED,   /* RST: expires on the next sweep */
-} bpa_tcp_state_t;
+/* bpa_tcp_state_t moved to bpa_keys.h (#472). */
 
 /*
  * bpa_proto_t moved to bpa_pool.h, which every build of this plugin includes
@@ -275,22 +270,6 @@ typedef struct
   f64 until;
 } bpa_quarantine_t;
 
-/*
- * Key for the per-subscriber record.
- *
- * BOTH halves, and the second one is not decoration. sub_idx is an index
- * within ONE pool's inside set, so it is unique per pool and not globally:
- * keyed on sub_idx alone, subscriber 5 of pool A and subscriber 5 of pool B
- * hashed to the same entry and shared one set of port bitmaps and one list of
- * blocks. A subscriber of pool B was then translated onto pool A's public
- * address and logged against pool A's block - a wrong answer to a court
- * order, produced with full confidence (issue #57).
- */
-static_always_inline uword
-bpa_sub_key (u32 pool_index, u32 sub_idx)
-{
-  return ((uword) pool_index << 32) | (uword) sub_idx;
-}
 
 /*
  * Bounded. If churn outruns the drain, ports are released early and counted
@@ -338,126 +317,16 @@ typedef struct
   u8 initialised;
 } bpa_per_thread_t;
 
-/*
- * The two session keys, and they are not the same key.
- *
- * They were the same function while the second word was unused, which made it
- * easy to forget that the private side and the public side identify different
- * things. They are separate now because only one of them needs the VRF:
- *
- *   IN  (private address, private port, protocol, VRF)
- *   OUT (public address, public port, protocol)
- *
- * The private side needs the VRF because two tenants may use the same private
- * address, and without it one subscriber is translated onto the other's
- * mapping - silently, which is the failure this product exists to prevent.
- *
- * The public side does not, because a public address belongs to exactly one
- * pool: two pools sharing one would make the return path ambiguous, and that
- * is refused when the pool is created.
- *
- * The VRF is the packet's FIB index, which is available before the pool is
- * known - and it has to be, because the session lookup happens first. That is
- * the whole reason this qualifier is the packet's and not the pool's.
- */
-static_always_inline void
-bpa_key_in (clib_bihash_kv_16_8_t *kv, u32 addr, u16 port, u8 proto, u32 fib)
-{
-  kv->key[0] = (u64) addr | ((u64) port << 32) | ((u64) proto << 48);
-  kv->key[1] = fib;
-}
 
-static_always_inline void
-bpa_key_out (clib_bihash_kv_16_8_t *kv, u32 addr, u16 port, u8 proto)
-{
-  kv->key[0] = (u64) addr | ((u64) port << 32) | ((u64) proto << 48);
-  kv->key[1] = 0;
-}
 
-/*
- * A GRE mapping needs two keys that are not each other's mirror, so it gets
- * its own key builder.
- *
- * Inbound is ordinary: the packet carries the Call ID this box handed out, so
- * (public address, that Call ID) finds it, and bpa_key() above already builds
- * that - the Call ID comes out of the subscriber's port block like a port, so
- * the arithmetic pre-check and the worker handoff work on it unchanged.
- *
- * Outbound is not: the packet carries the Call ID the SERVER assigned, which
- * this box did not choose and cannot make unique. Two servers picking the
- * same value for the same subscriber is entirely possible - a subscriber
- * with two PPTP tunnels up is an ordinary home worker - so the remote address
- * goes into the second key word to separate them.
- *
- * `role` separates the two entries the ALG keeps in the same table: the data
- * key, found by the server's Call ID, and the lookup key the ALG itself uses,
- * found by the subscriber's own Call ID. Without it a subscriber whose own
- * Call ID happened to equal the server's would overwrite one with the other.
- *
- * The second key word was reserved for a VRF id. GRE spends it. When VRF
- * lands (issue #26) this key needs a wider hash or a packed encoding, and
- * that is written down here rather than discovered then.
- */
-#define BPA_GRE_KEY_DATA 0 /* keyed by the server's Call ID  */
-#define BPA_GRE_KEY_ALG	 1 /* keyed by the subscriber's own */
 
-static_always_inline void
-bpa_key_gre (clib_bihash_kv_16_8_t *kv, u32 addr, u16 call_id, u32 remote,
-	     u8 role, u32 fib)
-{
-  kv->key[0] = (u64) addr | ((u64) call_id << 32)
-	       | ((u64) BPA_PROTO_GRE << 48) | ((u64) role << 56);
-  /* Packed, not chosen between: the remote address is what separates two
-   * servers that picked the same Call ID, and the VRF is what separates two
-   * tenants that use the same private address. Both are needed and both fit,
-   * the remote in the low half and the FIB index in the high one. */
-  kv->key[1] = (u64) remote | ((u64) fib << 32);
-}
 
+/* not a unit: it reads a bpa_session_t, VPP's struct; the rule is
+ * bpa_timeout_for() in bpa_keys.h, which test/test_bpa_keys.c holds (#472) */
 static_always_inline u32
 bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
 {
-  /* An announced media port nothing has used yet. Checked first because it
-   * overrides the protocol's own lifetime for exactly as long as the mapping
-   * is a prediction rather than a flow. */
-  if (PREDICT_FALSE (s->is_expect))
-    return t->alg_expect;
-
-  switch (s->proto)
-    {
-    case BPA_PROTO_UDP:
-      return t->udp;
-    case BPA_PROTO_ICMP:
-      return t->icmp;
-    case BPA_PROTO_GRE:
-    /*
-     * ESP shares the tunnel timeout with GRE deliberately, rather than get a
-     * knob of its own. Both are portless tunnels and both are judged live by
-     * the same signal - PPP sends LCP echoes, IPsec sends DPD, each on the
-     * order of tens of seconds - so half an hour of silence means the same
-     * thing for both. A second timeout nobody would ever set differently is a
-     * second thing to keep in step, and this plugin has already learned what
-     * that costs.
-     */
-    case BPA_PROTO_ESP:
-      return t->gre;
-    default:
-      break;
-    }
-
-  switch (s->tcp_state)
-    {
-    case BPA_TCP_CLOSED:
-      return 0; /* RST: no reason to hold the port */
-    case BPA_TCP_ESTAB:
-      return t->tcp_estab;
-    case BPA_TCP_INIT:
-      /* SYN sent, never established. A scan produces one of these per probe
-       * and they must not be held for the transitory timeout. */
-      return t->tcp_syn;
-    default:
-      return t->tcp_trans;
-    }
+  return bpa_timeout_for (s->proto, s->tcp_state, s->is_expect, t);
 }
 
 /*
@@ -465,22 +334,12 @@ bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
  * either side ends it, and a FIN from either side already takes the session
  * off the long timeout.
  */
+/* not a unit: it writes a bpa_session_t, VPP's struct; the rule is
+ * bpa_tcp_next() in bpa_keys.h, which test/test_bpa_keys.c holds (#472) */
 static_always_inline void
 bpa_tcp_track (bpa_session_t *s, u8 flags)
 {
-  if (PREDICT_FALSE (flags & TCP_FLAG_RST))
-    {
-      s->tcp_state = BPA_TCP_CLOSED;
-      return;
-    }
-  if (PREDICT_FALSE (flags & TCP_FLAG_FIN))
-    {
-      if (s->tcp_state != BPA_TCP_CLOSED)
-	s->tcp_state = BPA_TCP_CLOSING;
-      return;
-    }
-  if ((flags & TCP_FLAG_ACK) && s->tcp_state == BPA_TCP_INIT)
-    s->tcp_state = BPA_TCP_ESTAB;
+  s->tcp_state = bpa_tcp_next (s->tcp_state, flags);
 }
 
 /* Modest defaults: the size is a virtual reservation, and the OOM killer

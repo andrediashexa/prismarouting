@@ -20,7 +20,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_radius \
       $(BUILD)/test_bpa_static \
       $(BUILD)/test_bpa_top \
-      $(BUILD)/test_bpa_rate
+      $(BUILD)/test_bpa_rate \
+      $(BUILD)/test_bpa_keys
 	@sh tools/run-tests.sh
 
 vectors:
@@ -53,6 +54,14 @@ $(BUILD)/test_bpa_static: test/test_bpa_static.c \
 # arithmetic in that file is deliberately not excused because it is waiting
 # for a harness; this is the harness, and the arithmetic needs nothing but
 # two rows.
+# The session table's keys and a session's two rules (#472): bpa_keys.h,
+# which compiles here as well as with VPP.
+$(BUILD)/test_bpa_keys: test/test_bpa_keys.c \
+                   src/plugins/bpa/bpa_keys.h src/plugins/bpa/bpa_pool.h \
+                   test/bpa_shim.h test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_keys.c
+
 $(BUILD)/test_bpa_top: test/test_bpa_top.c \
                    src/plugins/bpa/bpa_top.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
