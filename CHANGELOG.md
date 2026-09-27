@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.136.2 - a show longer than the screen stops at --More--
+
+### Added
+
 * **A show longer than the screen stops at `--More--`** ([#469](https://github.com/andrediashexa/hexarouting/issues/469)).
   Asked for by the maintainer. In an interactive session every `show` pages
   like an implicit `| more`: space shows the next screen, enter the next
@@ -89,8 +95,6 @@ version has a chance of seeing it.
   it is denied. `test/test_pager.py` covers it, and its first cut caught the
   pager asking `--More--` after the last line of an output exactly a screen
   long.
-
-### Fixed
 
 ## 0.136.1 - a subscriber reaches the box itself
 
