@@ -240,7 +240,7 @@ flowchart LR
 | `prisma-routing.service` | aplica a configuração salva (`prismash --load`) |
 | `prisma-routing-selftest` | verifica e reporta no console |
 
-**A VTY roda no container de gerência** (`prisma-routing_mgmt_1`, desde o #448). O login cai nela com o próprio usuário e os próprios grupos, então o papel de cada conta é o mesmo de antes. O `start shell` continua abrindo no host. O container só enxerga a rede interna 128.0.0.2, sem saída para fora. Se ele não estiver no ar, a VTY roda no host como antes, e ninguém fica trancado para fora.
+**A VTY roda no container de gerência** (`prisma-routing_mgmt_1`). O login cai nela com o próprio usuário e os próprios grupos, então o papel de cada conta é o mesmo de antes. O `start shell` continua abrindo no host. O container só enxerga a rede interna 128.0.0.2, sem saída para fora. Se ele não estiver no ar, a VTY roda no host como antes, e ninguém fica trancado para fora.
 
 ```
 docker ps --format "{{.Names}} {{.Status}}"
