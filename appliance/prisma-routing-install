@@ -436,6 +436,46 @@ NET_SYS=${PRISMA_NET_SYS:-/sys/class/net}
 # neighbouring line is exactly the failure this whole section exists to end.
 MGMT_CONF=/etc/network/interfaces.d/prisma-routing
 
+# THE NAME A CARD HAS, AND THE NAME THE INSTALLED BOX WILL CALL IT (#476).
+#
+# On the live medium prisma-hot-card gives the dataplane every card Linux is
+# not using, and renames it on the way: `xdp-<name>`, or `x<last 14>` for a
+# name too long for that (kernel_name() in appliance/prisma-hot-card). On a
+# live boot with no DHCP server that is EVERY card, because none of them has
+# an address to be spared for. The installed box boots with the predictable
+# names and spares the card named in its management stanza - so the name
+# written there, typed by an operator, and offered in the menu has to be the
+# predictable one, while the sysfs entry to read is the renamed one.
+#
+# Measured on a Proxmox guest for #475: `prisma-routing.mgmt-interface=ens18`
+# was refused with "this machine has no card called 'ens18'" beside a list
+# offering xdp-ens18 - a name the installed box never has.
+card_name() {  # <sysfs netdev name> -> the name the installed box uses
+  case "$1" in
+    xdp-?*) printf '%s\n' "${1#xdp-}" ;;
+    *)
+      # The long form keeps only the tail, so the predictable name comes
+      # from udev, which named the card before it was renamed.
+      _cn=""
+      case "$1" in
+        x??????????????)
+          _cn=$(${PRISMA_UDEVADM:-udevadm} info -q property -p "$NET_SYS/$1" \
+                  2>/dev/null | sed -n 's/^ID_NET_NAME=//p' | head -n 1) ;;
+      esac
+      printf '%s\n' "${_cn:-$1}" ;;
+  esac
+}
+
+card_path() {  # <name an operator typed> -> its sysfs entry, or nothing
+  for _cp in "$1" "xdp-$1" "x$(printf '%s' "$1" | tail -c 14)"; do
+    if [ -e "$NET_SYS/$_cp" ]; then
+      printf '%s\n' "$NET_SYS/$_cp"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # The cards this box could be managed on, one per line:
 #   "<name> <operstate> <driver> <addresses or none>"
 #
@@ -454,7 +494,7 @@ nic_table() {
     _drv=$(basename "$(readlink -f "$_d/device/driver" 2>/dev/null)" 2>/dev/null)
     case "$_drv" in ""|.|/) _drv=unknown ;; esac
     _a=$(ip -o -4 addr show dev "$_n" 2>/dev/null | awk '{printf "%s ", $4}')
-    printf '%s %s %s %s\n' "$_n" "$_st" "$_drv" "${_a:-none}"
+    printf '%s %s %s %s\n' "$(card_name "$_n")" "$_st" "$_drv" "${_a:-none}"
   done
 }
 
@@ -474,9 +514,9 @@ nic_table() {
 # unattended path says it out loud, and the self-test names it at every boot
 # afterwards.
 default_route_nic() {
-  ip -o -4 route list default 2>/dev/null \
-    | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }' \
-    | head -1
+  _drn=$(ip -o -4 route list default 2>/dev/null \
+    | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+  [ -n "$_drn" ] && card_name "$_drn"
 }
 
 ipv4_ok() {  # <a.b.c.d>; true when it is four octets and each one fits
@@ -582,7 +622,7 @@ choose_interface() {   # <default>; the chosen name on stdout
         printf '%s\n' "$_def"
         return 0 ;;
       *)
-        if [ -e "$NET_SYS/$_a" ]; then
+        if card_path "$_a" >/dev/null; then
           printf '%s\n' "$_a"
           return 0
         fi
@@ -859,7 +899,7 @@ verify_installed() {   # <mounted root>; non-zero if the disk is not usable
             "$_r/etc/network/interfaces" 2>/dev/null; then
       _vbad "network: /etc/network/interfaces does not read interfaces.d, so
          the stanza for $_mif was written where nothing looks"
-    elif [ ! -e "$NET_SYS/$_mif" ]; then
+    elif ! card_path "$_mif" >/dev/null; then
       # This machine is the one being installed, so the card it has now is the
       # card the installed box has. A name that is not here is a name that
       # will not be there either.
@@ -1246,7 +1286,11 @@ fi
 # after. The ANSWER is written much further down, next to the hostname, which
 # is the other thing that makes a disk into a particular box.
 MGMT_DEFAULT_IF=$(default_route_nic)
-[ -n "$MGMT_DEFAULT_IF" ] || MGMT_DEFAULT_IF=$(nic_table | head -1 | cut -d' ' -f1)
+# awk and not head: head stops reading after the first line, and nic_table's
+# printf for every card after it failed writing into the closed pipe - the two
+# "printf: I/O error" lines a three-card box printed above its questions (#476).
+[ -n "$MGMT_DEFAULT_IF" ] \
+  || MGMT_DEFAULT_IF=$(nic_table | awk 'NR == 1 { print $1 }')
 MGMT_NICS=$(nic_table | wc -l | tr -d ' ')
 
 # "none" from either answer means the same thing, because an operator setting
@@ -1311,7 +1355,7 @@ if [ "$MGMT_IF" = none ]; then
   MGMT_GW=""
   MGMT_DNS=""
 else
-  [ -e "$NET_SYS/$MGMT_IF" ] || { echo "Cards on this machine:" >&2
+  card_path "$MGMT_IF" >/dev/null || { echo "Cards on this machine:" >&2
     nic_table | sed 's/^/  /' >&2
     die "this machine has no card called '$MGMT_IF'"; }
   if [ -z "$MGMT_ADDR" ]; then
