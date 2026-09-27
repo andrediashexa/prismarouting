@@ -539,7 +539,7 @@ Um filtro que a caixa não conhece é **recusado**, com a lista do que existe �
 
 ## Saída maior que a tela: `--More--`
 
-Numa sessão interativa, um `show` cuja saída passa da altura da tela **para no `--More--`**, como um `| more` implícito:
+Numa sessão interativa, um `show` cuja saída passa da altura da tela para no `--More--`, como um `| more` implícito:
 
 | Tecla | O que faz |
 |-------|-----------|
