@@ -23,6 +23,7 @@
 .build/test_bpa_icmp
 .build/test_bpa_sip
 .build/test_bpa_rewrite
+.build/test_bpa_l4
 .build/test_bpa_auto_mss
 .build/test_bpa_dyn
 .build/test_bpa_pptp

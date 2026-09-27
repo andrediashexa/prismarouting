@@ -9,7 +9,7 @@ BUILD  := .build
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
-      $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite \
+      $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite $(BUILD)/test_bpa_l4 \
       $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn \
       $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
       $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog \
@@ -148,6 +148,15 @@ $(BUILD)/test_bpa_rewrite: test/test_bpa_rewrite.c \
                            src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rewrite.c
+
+# The L4 id a packet is keyed on and the destination rewrite's checksums,
+# checked the way a receiver checks them (#472).
+$(BUILD)/test_bpa_l4: test/test_bpa_l4.c src/plugins/bpa/bpa_l4_wire.h \
+                      src/plugins/bpa/bpa_gre.h \
+                      test/bpa_shim.h test/bpa_tcp_shim.h \
+                      src/plugins/bpa/bpa_seq.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_l4.c
 
 # The "tcp-mss auto" minimum: which MTU the clamp is derived from as interfaces
 # join and leave. Standalone because the bookkeeping is INCREMENTAL (#287) and

@@ -537,5 +537,45 @@ main (void)
 	   "refused too");
   }
 
+
+  printf ("\nbpa_icmp_is_error: which types quote a datagram\n");
+  {
+    u32 ty, errors = 0;
+
+    for (ty = 0; ty < 256; ty++)
+      if (bpa_icmp_is_error (ty))
+	errors++;
+    CHECK (errors == 5, "%u ICMP types read as errors, not the five", errors);
+    CHECK (bpa_icmp_is_error (ICMP4_destination_unreachable)
+	     && bpa_icmp_is_error (ICMP4_time_exceeded)
+	     && bpa_icmp_is_error (ICMP4_parameter_problem)
+	     && bpa_icmp_is_error (ICMP4_source_quench)
+	     && bpa_icmp_is_error (ICMP4_redirect),
+	   "an error type is not read as one - its quoted datagram goes "
+	   "untranslated, and PMTUD with it");
+    CHECK (!bpa_icmp_is_error (ICMP4_echo_request)
+	     && !bpa_icmp_is_error (ICMP4_echo_reply),
+	   "an echo is read as an error, so its payload is parsed as a quote");
+  }
+
+  printf ("\nbpa_gre_is_enhanced / bpa_gre_call_id: PPTP's header\n");
+  {
+    /* K set, version 1, protocol 0x880b, length 0, Call ID 0x1234 */
+    u8 g[8] = { 0x20, 0x01, 0x88, 0x0b, 0x00, 0x00, 0x12, 0x34 };
+
+    CHECK (bpa_gre_is_enhanced (g), "PPTP's own header was not recognised");
+    CHECK (bpa_gre_call_id (g) == 0x1234,
+	   "the Call ID read as 0x%04x, not 0x1234", bpa_gre_call_id (g));
+    g[0] = 0x00;
+    CHECK (!bpa_gre_is_enhanced (g), "a GRE header without K was taken");
+    g[0] = 0x20; g[1] = 0x00;
+    CHECK (!bpa_gre_is_enhanced (g), "GRE version 0 was taken as PPTP's");
+    g[1] = 0x01; g[3] = 0x00; /* 0x8800 */
+    CHECK (!bpa_gre_is_enhanced (g), "a payload other than PPP was taken");
+    g[3] = 0x0b; g[0] = 0x30; /* K and S: a sequence number follows */
+    CHECK (bpa_gre_is_enhanced (g) && bpa_gre_call_id (g) == 0x1234,
+	   "a header with a sequence number lost its Call ID");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

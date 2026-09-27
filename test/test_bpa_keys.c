@@ -24,6 +24,10 @@
 #include <string.h>
 #include "bpa_shim.h"
 #include "bpa_vec_shim.h"
+/* The one byte-order helper bpa_esp_spi() needs. bpa_tcp_shim.h has it, and
+ * a copy of bpa_proto_t that collides with bpa_pool.h's. Little-endian, like
+ * every host this runs on. */
+#define clib_net_to_host_u32(x) __builtin_bswap32 (x)
 #include "../src/plugins/bpa/bpa_keys.h"
 
 static int failures = 0;
