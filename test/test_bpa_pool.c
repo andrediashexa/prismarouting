@@ -2610,5 +2610,59 @@ main (void)
 	   "with no pool the window let an address in (%u-%u)", lo, hi);
   }
 
+  /* #472: a candidate pool's forwards, all of them, in order. */
+  printf ("\n=== a pool's forwards: each against the ones before it, "
+	  "completed ===\n");
+  {
+    bpa_pool_t p;
+    bpa_static_t in[3];
+    bpa_block_t blk0, blk1;
+    u32 in_b[1] = { 0x64400000 }, in_c[1] = { 64 };
+    u32 out_b[1] = { 0xcb007100 }, out_c[1] = { 2 };
+
+    memset (&p, 0, sizeof (p));
+    p.name = (u8 *) "fwds";
+    p.port_min = 1024; p.port_max = 65535;
+    p.block_size = 512; p.mode = BPA_MODE_DETERMINISTIC;
+    bpa_addr_set_build (&p.inside, in_b, in_c, 1);
+    bpa_addr_set_build (&p.outside, out_b, out_c, 1);
+    CHECK (bpa_pool_init (&p) == 0, "the pool under test did not init");
+    memset (&blk0, 0, sizeof (blk0));
+    memset (&blk1, 0, sizeof (blk1));
+    bpa_forward (&p, in_b[0], &blk0);
+    bpa_forward (&p, in_b[0] + 1, &blk1);
+
+    memset (in, 0, sizeof (in));
+    in[0].ip_priv = in_b[0]; in[0].port_priv = 80;
+    in[0].port_pub = blk0.port_lo + 1; in[0].proto = BPA_PROTO_TCP;
+    in[1].ip_priv = in_b[0] + 1; in[1].port_priv = 443;
+    in[1].port_pub = blk1.port_lo + 2; in[1].proto = BPA_PROTO_TCP;
+    CHECK (bpa_statics_complete (&p, in, 2) == ~0u,
+	   "two forwards in their own subscribers' blocks were refused");
+    CHECK (in[0].ip_pub == blk0.ip_pub && in[1].ip_pub == blk1.ip_pub
+	     && in[0].port_off == 1 && in[1].port_off == 2,
+	   "the forwards were judged and not completed - a forward with a "
+	   "zero public address reserves nothing and translates nothing");
+
+    /* The third takes the first one's public socket: refused, by index,
+     * and left as it was given. */
+    in[2] = in[0];
+    in[2].ip_pub = 0;
+    in[2].port_priv = 8080;
+    CHECK (bpa_statics_complete (&p, in, 3) == 2,
+	   "a second forward on one public socket was not refused");
+    CHECK (in[2].ip_pub == 0, "the refused forward was completed anyway");
+    in[2].proto = BPA_PROTO_UDP;
+    CHECK (bpa_statics_complete (&p, in, 3) == ~0u,
+	   "the same public port for UDP was refused as a TCP clash");
+
+    /* The first one fails on its own: nothing before it, index 0. */
+    in[0].port_pub = blk0.port_hi + 1; /* the next block, somebody else's */
+    CHECK (bpa_statics_complete (&p, in, 3) == 0,
+	   "a forward into another subscriber's block was let in");
+    CHECK (bpa_statics_complete (&p, in, 0) == ~0u,
+	   "a pool with no forwards was refused");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

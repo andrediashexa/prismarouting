@@ -1699,6 +1699,39 @@ bpa_static_check (const bpa_pool_t *p, const bpa_static_t *sf,
 }
 
 /*
+ * A candidate pool's forwards, each judged against the pool and against the
+ * ones before it, and each COMPLETED in place: bpa_static_check() derives
+ * ip_pub and port_off, and nothing else does. Validating a copy and keeping
+ * the original once left every forward given on a "bpa pool" line with a
+ * zero public address, which reserves nothing and translates nothing - a
+ * forward the configuration shows and the dataplane does not have.
+ *
+ * Returns ~0 when all of them hold, or the index of the first that does not,
+ * left as it was given; those before it are completed. The caller words the
+ * refusal for that one.
+ */
+static_always_inline u32
+bpa_statics_complete (const bpa_pool_t *p, bpa_static_t *in, u32 n)
+{
+  u32 i;
+
+  for (i = 0; i < n; i++)
+    {
+      bpa_static_t checked;
+      bpa_block_t blk;
+      const bpa_static_t *o = 0;
+
+      memset (&checked, 0, sizeof (checked));
+      memset (&blk, 0, sizeof (blk));
+      if (bpa_static_check (p, &in[i], &blk, &checked) != BPA_STATIC_OK
+	  || bpa_static_clash (in, i, &checked, &o) != BPA_STATIC_CLASH_NONE)
+	return i;
+      in[i] = checked;
+    }
+  return ~0u;
+}
+
+/*
  * IS THE STRIDE THIS OPERATOR TYPED REACHABLE AT `nw` WORKERS, and if not,
  * the nearest one that is.
  *

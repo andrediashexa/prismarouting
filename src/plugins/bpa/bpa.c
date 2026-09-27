@@ -201,12 +201,13 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
  * and must not reach here.
  */
 static clib_error_t *
-bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
+bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *prior,
+		     u32 n_prior, const bpa_static_t *sf)
 {
   const bpa_static_t *o = 0;
   ip4_address_t a, pub;
 
-  switch (bpa_static_clash (p->statics, vec_len (p->statics), sf, &o))
+  switch (bpa_static_clash (prior, n_prior, sf, &o))
     {
     case BPA_STATIC_CLASH_PUB:
       a.as_u32 = clib_host_to_net_u32 (o->ip_priv);
@@ -232,44 +233,25 @@ bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
  * by the block sizing and address sets the operator is about to commit, not by
  * the ones currently running.
  */
-/* not a unit: it walks a VPP vector of forwards, building a
- * second one as it goes so each is checked against the ones before it -
- * vec_add1 and the pool's own `statics` pointer, neither of which exists
- * outside VPP. WHAT it checks with is tested: bpa_static_check() for whether
- * a forward can be made and bpa_static_clash() for whether two can both
- * hold, both in bpa_pool.h and driven by test/test_bpa_pool.c and
- * test/test_bpa_static.c. */
+/* not a unit: it words the refusal bpa_statics_complete() found, through
+ * bpa_static_validate() and bpa_static_conflict(), which need VPP's format()
+ * and a clib_error_t. Which forward fails, and that each is judged against
+ * the ones before it and written back completed, is bpa_statics_complete()
+ * in bpa_pool.h, driven by test/test_bpa_pool.c. */
 static clib_error_t *
 bpa_statics_validate (bpa_pool_t *p, bpa_static_t *in)
 {
-  bpa_static_t *seen = 0;
-  clib_error_t *e = 0;
-  u32 i;
+  u32 bad = bpa_statics_complete (p, in, vec_len (in));
+  bpa_static_t sf;
+  clib_error_t *e;
 
-  vec_foreach_index (i, in)
-    {
-      bpa_static_t sf = in[i];
-
-      p->statics = seen;
-      e = bpa_static_validate (p, &sf);
-      if (!e)
-	e = bpa_static_conflict (p, &sf);
-      if (e)
-	break;
-      /*
-       * Written back, because bpa_static_validate() COMPLETES a forward as
-       * well as checking it: ip_pub and port_off are derived here and nowhere
-       * else. Validating a copy and storing the original left every forward
-       * given on a "bpa pool" line with a zero public address, which reserves
-       * nothing and translates nothing - a forward the configuration shows
-       * and the dataplane does not have.
-       */
-      in[i] = sf;
-      vec_add1 (seen, sf);
-    }
-
-  p->statics = 0;
-  vec_free (seen);
+  if (bad == ~0u)
+    return 0;
+  /* The same two questions again, for the one that failed, to say why. */
+  sf = in[bad];
+  e = bpa_static_validate (p, &sf);
+  if (!e)
+    e = bpa_static_conflict (p, in, bad, &sf);
   return e;
 }
 
@@ -660,7 +642,7 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
   if (e)
     return e;
 
-  e = bpa_static_conflict (p, sf);
+  e = bpa_static_conflict (p, p->statics, vec_len (p->statics), sf);
   if (e)
     return e;
 
