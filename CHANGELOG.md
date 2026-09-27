@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.138.4 - a whole-configuration load reaches FRR when it drops a sub-interface
+
+### Added
+
 * **The record of [#472](https://github.com/andrediashexa/hexarouting/issues/472),
   which 0.138.3 carried without naming it.** Its two entries under 0.138.3 -
   every CGNAT function held by a unit test, headers included, and the ESP/PPTP
