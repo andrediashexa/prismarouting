@@ -31,7 +31,8 @@ import tempfile
 import textwrap
 import time
 
-from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
+from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
+                    PROBE_DEADLINE, Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
                     MTU_MIN, MTU_MAX, MTU_RANGE,
                     IFACE_VRF_MAX, IFACE_VRF_RANGE,
@@ -201,11 +202,6 @@ PROBE_TOOLS = {
 # judgement about how many packets are useful; it is the point past which a
 # probe stops being a question and becomes a session.
 PROBE_COUNT_DEFAULT = 5
-PROBE_COUNT_MAX = 100
-# The wall clock each probe gets, whatever it was asked for. A tool that hangs
-# - a DNS server that never answers, an mtr against a host that black-holes
-# every cycle - must not take the VTY with it.
-PROBE_DEADLINE = 300
 
 # Which FRR daemon serves each "router" statement. Written as data rather than
 # guessed from the keyword, because the two only look alike: "router ospf" is
@@ -2740,59 +2736,6 @@ TREE["user"]["no"] = ("remove a statement from this account",
 if running_from_live_medium():
     TREE["operational"]["install"] = (
         "install Prisma Routing onto a disk on this machine", None)
-
-
-def probe_host_ok(host):
-    """
-    Is `host` something this VTY will hand to a reachability tool (#395)?
-
-    An address of either family, or a hostname in the letters RFC 1123 allows:
-    labels of letters, digits and hyphens, none of them empty, none longer
-    than 63, and 253 characters in all. Nothing else - and in particular
-    nothing carrying a space, a slash, a quote or a shell's punctuation.
-
-    THE VALIDATION IS NOT WHAT KEEPS A SHELL OUT. There is no shell in the
-    path at all: the argument vector goes to execve as it is built. This is
-    the second wall, and it is here for the operator rather than for the
-    attacker - a typo reaching `ping` becomes that tool's own error message
-    about a name it could not resolve, where a refusal at the prompt says
-    which word this box could not read.
-    """
-    if not host or len(host) > 253:
-        return False
-    try:
-        ipaddress.ip_address(host)
-        return True
-    except ValueError:
-        pass
-    # A trailing dot is a fully qualified name and resolvers take it.
-    name = host[:-1] if host.endswith(".") else host
-    if not name:
-        return False
-    for label in name.split("."):
-        if not label or len(label) > 63:
-            return False
-        if label.startswith("-") or label.endswith("-"):
-            return False
-        for ch in label:
-            if not (ch.isascii() and (ch.isalnum() or ch == "-")):
-                return False
-    return True
-
-
-def probe_source_ok(addr):
-    """
-    Is `addr` an address a probe may be sent FROM?
-
-    An address and not a prefix, and not a hostname either: this is what goes
-    into the packet's source field, and a name that resolves to two addresses
-    would leave the operator reading a reply about whichever one was picked.
-    """
-    try:
-        ipaddress.ip_address(addr)
-        return True
-    except ValueError:
-        return False
 
 
 def probe_count_ok(word):
@@ -11849,7 +11792,10 @@ class Shell:
                            "a name: a name with two addresses would answer "
                            "about whichever one was picked")
             return
-        if not os.path.exists(path):
+        # Through the host's door the tool is the host's, and the host says
+        # so itself if it lacks one (#448): the container carries none.
+        if not os.environ.get("PRISMA_PROBES_THROUGH_DOORS") \
+                and not os.path.exists(path):
             # A statement whose tool is absent is a promise the box does not
             # keep, and the refusal names the package rather than the path:
             # the operator's next move is to install it, and on this appliance
@@ -11878,6 +11824,26 @@ class Shell:
         who has seen enough interrupts it - which must return to the prompt
         rather than end the session, the way it does inside `start shell`.
         """
+        # FROM THE MANAGEMENT PLANE, THROUGH THE HOST'S DOOR (#448): the
+        # container's network ends at the backplane, so a probe run in it
+        # reaches nothing. compose.yaml sets this there and nowhere else.
+        if os.environ.get("PRISMA_PROBES_THROUGH_DOORS"):
+            try:
+                rc, refused = doors.probe(argv)
+            except KeyboardInterrupt:
+                print()
+                return
+            except (OSError, ValueError) as e:
+                self.err_prose(f"{tool}: the host did not run it",
+                               f"the host's door did not answer: {e}")
+                return
+            if refused:
+                self.err_prose(f"{tool}: the host did not run it", refused)
+            elif rc == 124:
+                self.err_prose(f"{tool}: stopped after {PROBE_DEADLINE}s",
+                               "the tool had not finished, so this box "
+                               "stopped it")
+            return
         try:
             subprocess.run(argv, timeout=PROBE_DEADLINE, check=False)
         except subprocess.TimeoutExpired:

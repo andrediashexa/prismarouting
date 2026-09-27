@@ -294,4 +294,7 @@ services:
       - PRISMA_MGMT_CONF=/host/etc/network/interfaces.d/prisma-routing
       - PRISMA_SYS_CLASS_NET=/host/sys/class/net
       - PRISMA_PROC_NET_ROUTE=/host/proc/1/net/route
+      # And the probes go out through the host (#448): the container's own
+      # network ends at the backplane.
+      - PRISMA_PROBES_THROUGH_DOORS=1
     restart: unless-stopped

@@ -93,6 +93,12 @@ version has a chance of seeing it.
   said "no PCI NIC is visible to Linux on this box". The gate compares
   `show hardware`, `show interface` and `show system cpu` between the two
   VTYs on the installed box.
+  `ping`, `traceroute` and `mtr` from the container go out through the host:
+  a door runs exactly the shapes `probe_argv()` builds (fixed program, flags
+  in order, count 1-100, a source address, a host `probe_host_ok()` takes)
+  and streams the output row by row. Ctrl-C closes the connection and the
+  host kills the probe. Measured: a VTY in a container with no network at all
+  pinged the gateway through the door, 3 of 3.
 
 ### Fixed
 

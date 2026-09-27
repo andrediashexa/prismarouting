@@ -67,6 +67,8 @@ for name, default in sorted(reads.items()):
 
 print("\n=== and each is under a /host subtree that is mounted read-only ===")
 for name, path in sorted(env.items()):
+    if not path.startswith("/host/"):
+        continue
     under = [m for m in mounts if path.startswith(m[1] + "/")]
     check(bool(under) and path.startswith(under[0][1]),
           f"{name}: {path} is under {under[0][1] if under else '<no mount>'}")

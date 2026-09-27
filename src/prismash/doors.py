@@ -43,7 +43,8 @@ import threading
 
 from system import (LOGIN_SHELL, MANAGED_GROUPS, LocalFiles, RESOLV_CONF,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, is_number)
-from config import LINUX_IFNAME_MAX
+from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
+                    probe_host_ok, probe_source_ok)
 
 SOCKET = "/run/prisma-routing/doors.sock"
 
@@ -524,12 +525,135 @@ def serve(path=SOCKET, allowed_uids=(0,), execute=run_locally, ready=None):
                          daemon=True).start()
 
 
+#: The probes a door runs (#448, phase C), as prismash.probe_argv() builds
+#: them and nothing else: the program at its fixed path on the host, the
+#: flags in their order, a count in range, an optional source address, and
+#: a host prismash would take. From the management plane these are the only
+#: way out - its network ends at the backplane.
+PROBE_SHAPES = {
+    "/usr/bin/ping": (["-c", "N", "-n"], "-I"),
+    "/usr/bin/traceroute": (["-q", "1", "-m", "N", "-n"], "-s"),
+    "/usr/bin/mtr": (["--report", "--report-cycles", "N", "-n"], "-a"),
+}
+
+
+def probe_ok(argv):
+    """True when `argv` is a probe prismash.probe_argv() would build."""
+    if not isinstance(argv, list) or not argv \
+            or not all(isinstance(a, str) for a in argv):
+        return False
+    shape = PROBE_SHAPES.get(argv[0])
+    if shape is None:
+        return False
+    fixed, src_flag = shape
+    rest = argv[1:]
+    if len(rest) < len(fixed) + 1:
+        return False
+    for want, got in zip(fixed, rest):
+        if want == "N":
+            if not is_number(got) or not 1 <= int(got) <= PROBE_COUNT_MAX:
+                return False
+        elif want != got:
+            return False
+    tail = rest[len(fixed):]
+    if len(tail) == 3 and tail[0] == src_flag and probe_source_ok(tail[1]):
+        tail = tail[2:]
+    return len(tail) == 1 and probe_host_ok(tail[0])
+
+
+def stream_probe(conn, argv, popen=subprocess.Popen, deadline=None):
+    """
+    Run a probe and send its output down `conn` as it comes, one JSON line
+    per chunk ({"out": ...}), then {"rc": ...}. A probe's value is arriving
+    row by row, which is why this door streams and the others do not.
+
+    A caller that goes away - Ctrl-C at the VTY closes the socket - stops
+    the probe: the write fails and the process is killed. So does the
+    deadline, the one prismash gives a probe run here.
+    """
+    import time
+    deadline = PROBE_DEADLINE if deadline is None else deadline
+    p = popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    start = time.time()
+    rc = None
+    try:
+        while True:
+            if time.time() - start > deadline:
+                p.kill()
+                rc = 124
+                break
+            r, _, _ = __import__("select").select([p.stdout], [], [], 0.5)
+            if r:
+                chunk = os.read(p.stdout.fileno(), 4096)
+                if not chunk:
+                    rc = p.wait()
+                    break
+                conn.sendall(json.dumps(
+                    {"out": chunk.decode(errors="replace")}).encode() + b"\n")
+            elif p.poll() is not None:
+                continue
+        conn.sendall(json.dumps({"rc": rc}).encode() + b"\n")
+    except OSError:
+        p.kill()
+        rc = 130
+    finally:
+        if p.poll() is None:
+            p.kill()
+        p.wait()
+    return rc
+
+
+def probe(argv, path=SOCKET, out=None):
+    """
+    A probe through the host's door, its output written to `out` as it
+    arrives. (rc, refusal): refusal is the door's words when it would not
+    run the probe, else "". Ctrl-C closes the connection, which is what
+    stops the probe on the host.
+    """
+    out = out or sys.stdout
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(path)
+        s.sendall(json.dumps({"probe": list(argv)}).encode() + b"\n")
+        buf = b""
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                return 125, "the host's door went away"
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                m = json.loads(line)
+                if "out" in m and "rc" not in m:
+                    out.write(m["out"])
+                    out.flush()
+                elif "rc" in m:
+                    return m["rc"], m.get("out", "") if m["rc"] == 126 else ""
+    finally:
+        s.close()
+
+
 def handle(conn, allowed_uids=(0,), execute=run_locally):
     """One connection: read the request, answer it, close. Never raises."""
     with conn:
         try:
             uid = peer_uid(conn)
             request = _read_line(conn)
+            try:
+                r = json.loads(request)
+            except ValueError:
+                r = None
+            # A probe streams its answer, so it is answered here and not by
+            # answer(). Any account may probe, as any account may at the VTY.
+            if isinstance(r, dict) and "probe" in r:
+                if probe_ok(r["probe"]):
+                    rc = stream_probe(conn, r["probe"])
+                    say(json.dumps({"argv": r["probe"]}), uid, {"rc": rc})
+                else:
+                    conn.sendall(json.dumps(
+                        {"rc": 126, "out": "the host's door: not a probe the "
+                                           "VTY runs"}).encode() + b"\n")
+                return
             reply = answer(request, uid, allowed_uids, execute)
             conn.sendall(json.dumps(reply).encode() + b"\n")
             say(request, uid, reply)
