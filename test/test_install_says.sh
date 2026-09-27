@@ -813,6 +813,62 @@ measured is the branch every other run in this file already takes" \
   || ok "and not the offline line, which is the other arm"
 
 echo
+echo "=== a live box whose initramfs hook changed rebuilds its initrd (#468) ==="
+#
+# The same shape as the box above, for the same reason: the branch runs only
+# with DESTDIR empty, which is the machine itself, so it is taken out by its
+# own lines and run in a mount namespace whose /etc is this suite's. Missed
+# by 0.134.0, whose gate does not run `make test`: the two sentences below
+# were printed by no box, and this suite said so on master after the release.
+TRIM=$WORK/trim.sh
+sed -n '/^_trim="\$DESTDIR\/etc\/initramfs-tools\/hooks\/prisma-trim"$/,/^fi$/p' \
+  "$REPO/appliance/install.sh" > "$TRIM"
+if grep -q "rebuilding the initrd" "$TRIM"; then
+  ok "the initrd-rebuilding branch is $(wc -l < "$TRIM") lines of install.sh"
+else
+  bad "the branch that rebuilds the initrd could not be found in \
+appliance/install.sh, so the checks below are running on nothing"
+fi
+{ echo 'DESTDIR=""'; echo "REPO='$REPO'"; echo 'say() { echo "==> $*"; }'
+  cat "$TRIM"; } > "$WORK/drive-trim.sh"
+TSTUB=$WORK/tbin
+mkdir -p "$TSTUB"
+printf '#!/bin/sh\necho ran >> "$UIR_LOG"\nexit "${UIR_RC:-0}"\n' \
+  > "$TSTUB/update-initramfs"
+chmod +x "$TSTUB/update-initramfs"
+trim_box() {  # <hook already there: old|same|none> <update-initramfs rc> <out>
+  mkdir -p "$WORK/fake-etc-$1-$2/initramfs-tools/hooks"
+  case "$1" in
+    old) echo "# 0.132.0's hook" > "$WORK/fake-etc-$1-$2/initramfs-tools/hooks/prisma-trim" ;;
+    same) cp "$REPO/appliance/initramfs/prisma-trim" \
+            "$WORK/fake-etc-$1-$2/initramfs-tools/hooks/prisma-trim" ;;
+  esac
+  : > "$WORK/uir-$1-$2.log"
+  PATH="$TSTUB:$PATH" UIR_RC=$2 UIR_LOG="$WORK/uir-$1-$2.log" \
+    unshare -rm sh -c 'mount --bind "$1" /etc || exit 97; exec sh "$2"' \
+    sh "$WORK/fake-etc-$1-$2" "$WORK/drive-trim.sh" > "$3" 2>&1
+}
+if unshare -rm true 2>/dev/null; then
+  trim_box old 0 "$WORK/trim-old.out"
+  say_capture "$INSTALL" "$WORK/trim-old.out" "trim-changed"
+  said "$(cat "$WORK/trim-old.out")" "the initramfs hook changed: rebuilding the initrd" \
+    && [ -s "$WORK/uir-old-0.log" ] \
+    && ok "a box holding 0.132.0's hook is told, and update-initramfs runs" \
+    || bad "a changed hook did not rebuild the initrd: $(cat "$WORK/trim-old.out")"
+  trim_box old 1 "$WORK/trim-fail.out"
+  say_capture "$INSTALL" "$WORK/trim-fail.out" "trim-failed"
+  said "$(cat "$WORK/trim-fail.out")" "update-initramfs failed; the hook applies at the next kernel update" \
+    && ok "and a failed rebuild is said, not hidden" \
+    || bad "a failed update-initramfs went unsaid: $(cat "$WORK/trim-fail.out")"
+  trim_box same 0 "$WORK/trim-same.out"
+  [ ! -s "$WORK/uir-same-0.log" ] && ! said "$(cat "$WORK/trim-same.out")" "rebuilding" \
+    && ok "an unchanged hook rebuilds nothing, and says nothing" \
+    || bad "an unchanged hook rebuilt the initrd: $(cat "$WORK/trim-same.out")"
+else
+  bad "no user namespace here, so the initrd branch of install.sh was not run"
+fi
+
+echo
 echo "=== a tree that carries the container images (#427) ==="
 # What an upgrade artifact is since 0.125.0, and what the ISO's chroot is: the
 # images at the top of the tree. On a root of its own, so every run above and

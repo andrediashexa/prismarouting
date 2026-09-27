@@ -58,6 +58,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     VRRP_PRIORITY_DEFAULT,
                     VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
                     vrrp_statement, vrrp_remove, vrrp_pair_findings)
+import doors
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
@@ -6426,8 +6427,10 @@ def pci_address_of(device_link):
 
 class Shell:
     def __init__(self):
-        self.sys = System()
-        self.snmp = SnmpDaemon()
+        # Through the host's doors (#448, phase B), which run the command
+        # itself when no daemon listens.
+        self.sys = System(runner=doors.runner(), files=doors.DoorFiles())
+        self.snmp = SnmpDaemon(runner=doors.runner(), files=doors.DoorFiles())
         self.dp = Vpp()
         self.api = vppapi.Vat2()
         self.frr = Frr()
@@ -7601,9 +7604,19 @@ class Shell:
             host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname,
                                     self.dataplane_names())
             if host:
-                subprocess.run(["ip", "link", "set", "dev", host,
-                                "up" if up else "down"], capture_output=True)
+                self.host_run(["ip", "link", "set", "dev", host,
+                               "up" if up else "down"])
         return True
+
+    def host_run(self, argv):
+        """
+        A command on the host, through its doors (#448, phase B): the Linux
+        end of a dataplane interface is in the host's network namespace, and
+        from a container the same `ip link` would act on the container's own
+        interfaces and report success. (rc, output); run here when no daemon
+        listens.
+        """
+        return doors.runner()(argv)
 
     def set_mac(self, ifname, mac):
         """The MAC on the dataplane interface. The TAP keeps its own."""
@@ -8456,8 +8469,8 @@ class Shell:
             host = routes.linux_end(routes.lcp_pairs(lcp_out), ifname,
                                     self.dataplane_names())
             if host:
-                subprocess.run(["ip", "link", "set", "dev", host,
-                                "alias", text or ""], capture_output=True)
+                self.host_run(["ip", "link", "set", "dev", host,
+                               "alias", text or ""])
         return True
 
     def set_urpf(self, ifname, mode):
@@ -10239,11 +10252,10 @@ class Shell:
             host = routes.linux_end(pairs, ifname)
             if not host:
                 continue
-            r = subprocess.run(["ip", "-o", "link", "show", "dev", host],
-                               capture_output=True, text=True)
-            if r.returncode != 0:
+            rc, out = self.host_run(["ip", "-o", "link", "show", "dev", host])
+            if rc != 0:
                 continue
-            w = r.stdout.split()
+            w = out.split()
             try:
                 there = int(w[w.index("mtu") + 1])
             except (ValueError, IndexError):
@@ -10280,8 +10292,7 @@ class Shell:
         host = routes.linux_end(routes.lcp_pairs(out), ifname,
                                 self.dataplane_names())
         if host:
-            subprocess.run(["ip", "link", "set", "dev", host, "mtu", str(mtu)],
-                           capture_output=True)
+            self.host_run(["ip", "link", "set", "dev", host, "mtu", str(mtu)])
 
     # The VTY's name for a timeout, and the API field that carries it. The two
     # spellings differ - `tcp-transitory` against `tcp_transitory` - and a map

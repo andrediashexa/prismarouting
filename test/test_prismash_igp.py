@@ -386,8 +386,13 @@ def shell(frr_answers, vpp_answers=None, routing=(), caps=None,
     def fake_ip(argv, **kw):
         dev = argv[-1] if isinstance(argv, (list, tuple)) else ""
         if dev != "vppwan0":
-            return type("R", (), {"returncode": 1, "stdout": ""})()
-        return type("R", (), {"returncode": 0, "stdout": host_mtu})()
+            return type("R", (), {"returncode": 1, "stdout": "",
+                                  "stderr": ""})()
+        # With stderr, as a CompletedProcess always has: since #448's doors
+        # the call goes through doors.run_locally, which reads both streams,
+        # and a stub without it made the MTU finding silently not happen.
+        return type("R", (), {"returncode": 0, "stdout": host_mtu,
+                              "stderr": ""})()
     prismash.subprocess.run = fake_ip
     return sh
 

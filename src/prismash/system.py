@@ -16,6 +16,7 @@ believes it wrote is a VTY that cannot notice being wrong.
 
 from __future__ import annotations
 
+import errno
 import ipaddress
 import os
 import shutil
@@ -470,13 +471,82 @@ def dns_error(value):
     return None
 
 
+class LocalFiles:
+    """
+    Every file the VTY writes on the host, written here (#448, phase B).
+
+    The seam the host's doors replace: doors.DoorFiles has the same methods
+    and sends each to the daemon, which accepts only the paths below it. Each
+    method raises OSError on failure, as the open() it replaced did, so the
+    callers' handling is unchanged. The modes are the ones the callers set
+    before the seam existed, and decided here rather than by the caller, so a
+    door cannot be asked for another.
+    """
+
+    def write(self, path, text, mode=None, atomic=False):
+        """`path` made to hold `text`: by rename when `atomic`, else in
+        place; its directory made first; `mode` set when given."""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        target = path + ".prisma-new" if atomic else path
+        with open(target, "w") as f:
+            f.write(text)
+        if mode is not None:
+            os.chmod(target, mode)
+        if atomic:
+            os.replace(target, path)
+
+    def append(self, path, text, mode=None):
+        """`text` added to the end of `path`."""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a") as f:
+            f.write(text)
+        if mode is not None:
+            os.chmod(path, mode)
+
+    def unlink(self, path):
+        """`path` removed."""
+        os.unlink(path)
+
+    def copy(self, src, dst):
+        """`src` kept as `dst`, times and mode with it."""
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
+
+    def mkdir(self, path):
+        """`path` and its parents, if absent."""
+        os.makedirs(path, exist_ok=True)
+
+    def write_keys(self, home, text):
+        """
+        `home`/.ssh/authorized_keys made to hold `text`, 0600 in a 0700 .ssh.
+
+        REFUSED THROUGH A LINK. Written as root into a directory the account
+        owns: a `.ssh` or an `authorized_keys` the account had made a symlink
+        would have been followed, and the chmod 0700 landed on whatever it
+        pointed at. Found reading this for the doors; the old path did it.
+        """
+        d = os.path.join(home, ".ssh")
+        path = os.path.join(d, "authorized_keys")
+        for p in (d, path):
+            if os.path.islink(p):
+                raise OSError(errno.ELOOP, f"{p} is a symbolic link")
+        os.makedirs(d, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                     | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.chmod(path, 0o600)
+        os.chmod(d, 0o700)
+
+
 class System:
     def __init__(self, runner=None, root="", dropin=SSHD_DROPIN,
-                 shell=LOGIN_SHELL):
+                 shell=LOGIN_SHELL, files=None):
         self.root = root
         self.dropin = root + dropin
         self.shell = shell
         self._run = runner or self._subprocess
+        self.files = files or LocalFiles()
 
     @staticmethod
     def _subprocess(argv, stdin=None, timeout=30):
@@ -543,15 +613,14 @@ class System:
             if servers:
                 if not owned and os.path.exists(path) \
                         and not os.path.exists(before):
-                    os.makedirs(os.path.dirname(before), exist_ok=True)
-                    shutil.copy2(path, before)
+                    self.files.copy(path, before)
                 body = [DNS_OWNED] + [f"nameserver {a}" for a in servers]
                 self._replace(path, "\n".join(body) + "\n")
             elif owned:
                 if os.path.exists(before):
                     with open(before) as f:
                         self._replace(path, f.read())
-                    os.unlink(before)
+                    self.files.unlink(before)
                 else:
                     self._replace(path, "")
         except OSError as e:
@@ -567,15 +636,10 @@ class System:
         except OSError:
             return False
 
-    @staticmethod
-    def _replace(path, text):
+    def _replace(self, path, text):
         """Write `path` whole, by rename, mode 0644 - resolv.conf is read by
         every account on the box, and a lookup must never see half of it."""
-        tmp = path + ".prisma-new"
-        with open(tmp, "w") as f:
-            f.write(text)
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, path)
+        self.files.write(path, text, mode=0o644, atomic=True)
 
     def read_ssh(self) -> dict:
         s = dict(SSH_DEFAULTS)
@@ -729,26 +793,23 @@ class System:
         except OSError:
             pass
 
-        os.makedirs(os.path.dirname(self.dropin), exist_ok=True)
-        with open(self.dropin, "w") as f:
-            f.write("\n".join(body))
+        self.files.write(self.dropin, "\n".join(body))
 
         # sshd -t refuses to run at all without its privilege separation
         # directory, which systemd normally creates. Without this, a perfectly
         # valid change is reported as "sshd refused the configuration" and
         # rolled back for a reason that has nothing to do with the change.
         try:
-            os.makedirs(self.root + "/run/sshd", exist_ok=True)
+            self.files.mkdir(self.root + "/run/sshd")
         except OSError:
             pass
 
         rc, out = self._run(["sshd", "-t"])
         if rc not in (0, 127):
             if previous is None:
-                os.unlink(self.dropin)
+                self.files.unlink(self.dropin)
             else:
-                with open(self.dropin, "w") as f:
-                    f.write(previous)
+                self.files.write(self.dropin, previous)
             # Failing closed on purpose. Refusing a valid change costs an
             # operator a retry; accepting an invalid one costs them the box.
             return False, ("sshd refused the configuration, so nothing was "
@@ -851,14 +912,8 @@ class System:
 
     def _write_keys(self, name, keys):
         home = f"{self.root}/root" if name == "root" else f"{self.root}/home/{name}"
-        d = os.path.join(home, ".ssh")
         try:
-            os.makedirs(d, exist_ok=True)
-            path = os.path.join(d, "authorized_keys")
-            with open(path, "w") as f:
-                f.write("".join(k + "\n" for k in keys))
-            os.chmod(path, 0o600)
-            os.chmod(d, 0o700)
+            self.files.write_keys(home, "".join(k + "\n" for k in keys))
         except OSError as e:
             return False, f"authorized_keys for {name}: {e}"
         return True, ""
@@ -1010,11 +1065,12 @@ class SnmpDaemon:
     """
 
     def __init__(self, runner=None, root="", conf=SNMPD_CONF,
-                 agent=SNMP_AGENT):
+                 agent=SNMP_AGENT, files=None):
         self.root = root
         self.conf = root + conf
         self.agent = agent
         self._run = runner or System._subprocess
+        self.files = files or LocalFiles()
 
     def read(self):
         """(settings, communities, users) as the file on disk describes them."""
@@ -1066,7 +1122,7 @@ class SnmpDaemon:
         if settings.get("enabled", "no") != "yes":
             self._run(["systemctl", "disable", "--now", "snmpd"])
             try:
-                os.unlink(self.conf)
+                self.files.unlink(self.conf)
             except OSError:
                 pass
             return True, ""
@@ -1083,10 +1139,9 @@ class SnmpDaemon:
         except OSError:
             pass
 
-        os.makedirs(os.path.dirname(self.conf), exist_ok=True)
-        with open(self.conf, "w") as f:
-            f.write(_snmpd_body(settings, communities, users, self.agent))
-        os.chmod(self.conf, 0o600)
+        self.files.write(self.conf,
+                         _snmpd_body(settings, communities, users, self.agent),
+                         mode=0o600)
 
         # v3 users are created in net-snmp's own persistent store, which it
         # rewrites on first use. Written only when absent, or every restart
@@ -1111,12 +1166,11 @@ class SnmpDaemon:
         if rc != 0:
             if previous is None:
                 try:
-                    os.unlink(self.conf)
+                    self.files.unlink(self.conf)
                 except OSError:
                     pass
             else:
-                with open(self.conf, "w") as f:
-                    f.write(previous)
+                self.files.write(self.conf, previous, mode=0o600)
             self._run(["systemctl", "restart", "snmpd"])
             return False, ("snmpd did not come up with that configuration, so "
                            "the previous one was put back")
@@ -1125,7 +1179,6 @@ class SnmpDaemon:
     def _create_v3_users(self, users):
         path = self.root + "/var/lib/snmp/snmpd.conf"
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
             existing = ""
             if os.path.exists(path):
                 with open(path) as f:
@@ -1145,8 +1198,6 @@ class SnmpDaemon:
                     line += f" {p[0].upper()} \"{p[1]}\""
                 add.append(line)
             if add:
-                with open(path, "a") as f:
-                    f.write("\n".join(add) + "\n")
-                os.chmod(path, 0o600)
+                self.files.append(path, "\n".join(add) + "\n", mode=0o600)
         except OSError:
             pass

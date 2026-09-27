@@ -77,6 +77,34 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The Linux end of a dataplane interface is set through the host's doors** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase B).
+  Up or down, its MTU and its description (`ip link set dev <pair> ...`),
+  and the MTU read-back behind the OSPF MTU-mismatch finding. So are
+  `system reboot`, `system shutdown`, the tuner's restart after `system cpu`
+  and `system memory`, and the management default route put back after a
+  card changed hands (the gateway checked as an address). The Linux end
+  lives in the host's network namespace, and from a container the same
+  `ip link` would act on the container's own interfaces and report success.
+  The netdev is checked (at most 15 characters, never an option), the MTU is
+  68-65535, and the description is one line. Measured in `lab/doors.sh`: a
+  description and an MTU of 1400 reached `host-dv0`, set by the daemon.
+
+* **The host's doors: the VTY asks the host to change accounts, sshd and snmpd** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase B).
+  `prisma-routing-doors.service` is a root daemon on
+  `/run/prisma-routing/doors.sock`. It runs a closed list of commands, with
+  every argument checked, and runs them only for a caller the kernel says is
+  root, which is the rule the box already had. The VTY sends accounts, their
+  groups and passwords, sshd's check and reload, and snmpd's start and stop
+  there instead of running them itself. The files behind them go there too
+  (`resolv.conf`, the sshd drop-in, `authorized_keys`, `snmpd.conf`), to a
+  fixed set of paths with the mode decided by the daemon. `authorized_keys` is
+  no longer written through a symbolic link: the old code followed a `.ssh`
+  link as root and its `chmod 0700` landed on the target. This is what lets the VTY move into a
+  container in phase C. Each request is a journal line (command, uid, exit
+  status), never with the password hash or a file's contents. Measured in
+  `lab/doors.sh`: the accounts, the resolver, the key and the SNMP community
+  were made by the daemon, and an unprivileged caller was refused.
+
 ### Fixed
 
 ## 0.134.0 - the cards are there when the box boots
