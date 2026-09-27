@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.138.3 - every CGNAT function has a unit test, headers included
+
+### Added
+
 * **Every CGNAT function has a unit test, or says at its definition why it
   cannot have one - headers included.** The checker did not read `.h` files,
   and 69 functions in them had no test: the session keys, the timeouts, the
