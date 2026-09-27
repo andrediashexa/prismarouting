@@ -193,6 +193,16 @@ try:
     check(sh.on_the_host(["system", "upgrade"]) is True
           and fa.asked == [["system", "upgrade"]],
           "in the management plane: handed to the host's VTY through the broker")
+    import contextlib  # noqa: E402
+    import io  # noqa: E402
+    for answer, words in (("refused", "would not run"), ("gone", "is gone")):
+        fa.request_hostrun = lambda w, a=answer: (a, None)
+        sh.failed = 0
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            sh.on_the_host(["install"])
+        check(words in buf.getvalue(),
+              f"the host answering '{answer}' is said: {buf.getvalue().strip()!r}")
 finally:
     del os.environ["PRISMA_IN_MGMT"]
     prismash.ATTACHED = None
