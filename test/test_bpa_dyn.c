@@ -905,6 +905,23 @@ main (void)
     bpa_split (&p4, blk, &pub_idx, &blk_idx);
     want_lo = p4.port_min + blk_idx * p4.block_size;
 
+    /* #472: what "show bpa subscriber" prints as the held block. */
+    {
+      bpa_block_t held;
+      bpa_pool_t det = p4;
+
+      memset (&held, 0, sizeof (held));
+      CHECK (bpa_dyn_held (d, &p4, 0, 0, 1, &held) == 1
+	       && held.port_lo == want_lo && held.sub_idx == 0,
+	     "bpa_dyn_held: subscriber 0's block printed as ports from %u, "
+	     "not %u", held.port_lo, want_lo);
+      CHECK (bpa_dyn_held (d, &p4, 2, 0, 1, &held) == 0,
+	     "bpa_dyn_held: a subscriber that never arrived holds a block");
+      det.mode = BPA_MODE_DETERMINISTIC;
+      CHECK (bpa_dyn_held (d, &det, 0, 0, 1, &held) == 0,
+	     "bpa_dyn_held: a deterministic pool reported an allocator's block");
+    }
+
     allocs_before = d->n_allocations;
     free_before = vec_len (d->free_list);
     memset (&again, 0, sizeof (again));
@@ -2129,6 +2146,46 @@ main (void)
        and be handed to two subscribers. */
     CHECK (bpa_dyn_borrow (&borrower, lent[0]) != 0,
 	   "the same block was borrowed twice");
+
+    /* bpa_dyn_block_at (#472): a local slot is local * n + worker, the
+     * borrowed slot is the LENDER's pool-wide index - multiplication there
+     * would be a block somebody else translates out of - and a slot past
+     * the borrowed ones is no block at all. */
+    CHECK (bpa_dyn_block_at (&borrower, 3, 1, 2) == 3 * 2 + 1,
+	   "local slot 3 of worker 1 of 2 is block %u, not 7",
+	   bpa_dyn_block_at (&borrower, 3, 1, 2));
+    CHECK (bpa_dyn_block_at (&borrower, borrower.n_local, 1, 2) == lent[0],
+	   "the borrowed slot is block %u, not the lender's %u",
+	   bpa_dyn_block_at (&borrower, borrower.n_local, 1, 2), lent[0]);
+    CHECK (bpa_dyn_block_at (&borrower, borrower.n_local + 1, 1, 2)
+	     == BPA_NO_BLOCK,
+	   "a slot past the borrowed one answered a block");
+    {
+      /* bpa_dyn_addr (#472): a slice that is not the reserve answers what
+       * bpa_dyn_block_addr answers - the one place the two allocators
+       * differ is the reserve, below. */
+      bpa_block_t a1 = { 0 }, a2 = { 0 };
+      CHECK (bpa_dyn_addr (&lender, &p64, 6, &a1) == 0,
+	     "bpa_dyn_addr refused an ordinary block");
+      bpa_dyn_block_addr (&p64, 6, &a2);
+      CHECK (a1.pub_idx == a2.pub_idx && a1.port_lo == a2.port_lo
+	       && a1.port_hi == a2.port_hi,
+	     "bpa_dyn_addr and bpa_dyn_block_addr disagree about block 6");
+    }
+    {
+      /* bpa_dyn_is_pinned (#472): configuration holds a block, traffic
+       * does not make it pinned, and a block past the slice is not. */
+      u32 held_by;
+      int fresh;
+      CHECK (bpa_dyn_pin (&lender, 4, 2, 2, 1.0, &held_by, &fresh) == 0,
+	     "pinning block 4 for subscriber 2 was refused");
+      CHECK (bpa_dyn_is_pinned (&lender, 4, 2) == 1,
+	     "a pinned block does not read as pinned");
+      CHECK (bpa_dyn_is_pinned (&lender, 6, 2) == 0,
+	     "a block nobody pinned reads as pinned");
+      CHECK (bpa_dyn_is_pinned (&lender, lender.n_local * 2 + 2, 2) == 0,
+	     "a block past the slice reads as pinned");
+    }
 
     /*
      * THE ALLOCATOR REACHES IT, and the address is the LENDER's block. The

@@ -12,6 +12,7 @@
 
 #include "bpa_identity.h"
 #include "bpa_pool.h"
+#include "bpa_workers.h"
 #include "bpa_ports.h"
 #include "bpa_session.h"
 #include "bpa_auto_mss.h"
@@ -484,6 +485,9 @@ format_function_t format_bpa_alg;
  * linear scan is cheaper than a lookup structure. If a deployment ever grows
  * many pools this becomes an mtrie.
  */
+/* not a unit: it walks VPP's pool of pools; the rule for one pool is
+ * bpa_pool_claims_inside() in bpa_pool.h, held by test/test_bpa_pool.c
+ * (#472) */
 static_always_inline int
 bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 fib, u32 *pool_index,
 		    u32 *sub_idx)
@@ -492,29 +496,7 @@ bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 fib, u32 *pool_index,
 
   pool_foreach (p, bm->pools)
     {
-      /*
-       * A pool bound to a VRF answers only for that one, which is what lets
-       * two pools serve the same inside prefix for two tenants.
-       *
-       * ~0 means "every VRF" on the POOL - what a configuration written
-       * before this existed means - and "any VRF" in the QUERY, which is what
-       * a show command asks, having no packet and therefore no VRF. Both,
-       * because neither a pool nor a question should have to lie about which
-       * it means: without the second, a show command would report that a
-       * VRF-bound pool's subscriber belongs to no pool at all.
-       */
-      if (fib != ~0u && p->fib_index != ~0u && p->fib_index != fib)
-	continue;
-      /*
-       * A pool being drained by bpa_pool_del() is already gone as far as new
-       * traffic is concerned. Skipped here so the packet is counted as "no
-       * pool" - which is the truth - rather than travelling on to be refused
-       * by the session bind and counted as a full port block, which is the
-       * counter an operator chases when a customer complains.
-       */
-      if (PREDICT_FALSE (p->deleted))
-	continue;
-      if (bpa_set_index_of (&p->inside, addr, sub_idx) == 0)
+      if (bpa_pool_claims_inside (p, addr, fib, sub_idx))
 	{
 	  *pool_index = p - bm->pools;
 	  return 0;
@@ -531,21 +513,25 @@ bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 fib, u32 *pool_index,
  * bpa_pool_by_outside(), so a hairpin cannot be missed - only a non-hairpin
  * can be dismissed early, which is the whole point.
  */
+/* not a unit: it reads bpa_main_t, VPP's; the rule is bpa_in_window() in
+ * bpa_pool.h, held by test/test_bpa_pool.c (#472) */
 static_always_inline int
 bpa_maybe_outside (const bpa_main_t *bm, u32 addr)
 {
-  return addr >= bm->outside_lo && addr <= bm->outside_hi;
+  return bpa_in_window (bm->outside_lo, bm->outside_hi, addr);
 }
 
+/* not a unit: it walks VPP's pool of pools; the rule for one pool is
+ * bpa_pool_claims_outside() in bpa_pool.h, held by test/test_bpa_pool.c
+ * (#472) */
 static_always_inline int
 bpa_pool_by_outside (bpa_main_t *bm, u32 addr, u32 *pool_index)
 {
   bpa_pool_t *p;
-  u32 idx;
 
   pool_foreach (p, bm->pools)
     {
-      if (bpa_set_index_of (&p->outside, addr, &idx) == 0)
+      if (bpa_pool_claims_outside (p, addr))
 	{
 	  *pool_index = p - bm->pools;
 	  return 0;
@@ -558,20 +544,12 @@ bpa_pool_by_outside (bpa_main_t *bm, u32 addr, u32 *pool_index)
  * This worker's identity for block sharding. With no workers configured
  * everything runs on thread 0 and behaves as a single slice.
  */
+/* not a unit: it reads bpa_main_t, VPP's; the rule is bpa_thread_worker()
+ * in bpa_workers.h, which test/test_bpa_workers.c holds (#472) */
 static_always_inline void
 bpa_worker_id (const bpa_main_t *bm, u32 thread_index, u32 *w, u32 *nw)
 {
-  if (PREDICT_TRUE (bm->n_workers != 0))
-    {
-      *nw = bm->n_workers;
-      *w = thread_index < vec_len (bm->thread_w) ? bm->thread_w[thread_index]
-						   : ~0;
-    }
-  else
-    {
-      *nw = 1;
-      *w = 0;
-    }
+  bpa_thread_worker (bm->n_workers, bm->thread_w, thread_index, w, nw);
 }
 
 /*
@@ -582,13 +560,13 @@ bpa_worker_id (const bpa_main_t *bm, u32 thread_index, u32 *w, u32 *nw)
  * worker, and a pin applied to the wrong one is a block held where no packet
  * of that subscriber will ever look.
  */
+/* not a unit: it reads bpa_main_t, VPP's; the rule is bpa_owner_thread()
+ * in bpa_workers.h, which test/test_bpa_workers.c holds (#472) */
 static_always_inline u32
 bpa_sub_thread (const bpa_main_t *bm, u32 sub_idx)
 {
-  if (bm->n_workers == 0)
-    return 0;
-  return vlib_get_worker_thread_index (
-    bm->owner_wid[bpa_owner_worker (&bm->workers, sub_idx)]);
+  return bpa_owner_thread (bm->n_workers, bm->owner_wid, &bm->workers,
+			   sub_idx);
 }
 
 /* IP protocol number -> bpa_proto_t, or -1 when we do not translate it. */
@@ -653,6 +631,9 @@ bpa_proto_of (u8 ip_proto)
  * the box from a port that already has a session outside would hit it and be
  * translated all the same.
  */
+/* not a unit: the answer is VPP's FIB - a forwarding lookup and the DPO
+ * it lands on - which no stand-in has; lab/to-us.sh sends a subscriber's
+ * ping to the box itself through the CGNAT and reads it answered (#470) */
 static_always_inline int
 bpa_to_us (u32 fib_index, const ip4_address_t *dst)
 {
@@ -661,6 +642,8 @@ bpa_to_us (u32 fib_index, const ip4_address_t *dst)
   return load_balance_get_bucket_i (lb, 0)->dpoi_type == DPO_RECEIVE;
 }
 
+/* not a unit: the next node is VPP's feature arc (vnet_feature_next_u16)
+ * or its lookup node; every datapath lab takes one branch or the other */
 static_always_inline void
 bpa_next_after (u16 *next, vlib_buffer_t *b, u16 lookup)
 {

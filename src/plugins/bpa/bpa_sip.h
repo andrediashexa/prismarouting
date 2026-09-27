@@ -969,4 +969,73 @@ bpa_sip_apply (u8 *pl, u32 pl_len, const bpa_sip_edit_t *e, u32 n)
   return (i32) cur - (i32) pl_len;
 }
 
+/*
+ * What rewriting this message could grow it by, worked out BEFORE a single
+ * port is reserved. A reservation made and then abandoned because the rewrite
+ * did not fit holds two ports of a 512-port block for the expectation
+ * timeout, and a phone retrying every few seconds turns that into exhaustion
+ * of its own subscriber's block - the lesson bpa_rtsp_in2out records.
+ *
+ * Only the items naming the subscriber's own private address are rewritten,
+ * each to at most its kind's widest text; Content-Length always may be, since
+ * any body edit moves it. `*clen_at` is its item, or ~0 when there is none.
+ */
+static_always_inline u32
+bpa_sip_growth (const bpa_sip_msg_t *m, u32 ip_priv, u32 *clen_at)
+{
+  u32 i, want = 0;
+
+  *clen_at = ~0u;
+  for (i = 0; i < m->n_items; i++)
+    {
+      const bpa_sip_item_t *it = &m->items[i];
+      u32 widest = 0;
+
+      switch (it->kind)
+	{
+	case BPA_SIP_VIA:
+	case BPA_SIP_CONTACT:
+	  widest = it->addr == ip_priv ? BPA_SIP_TXT_MAX : 0;
+	  break;
+	case BPA_SIP_CONN:
+	  widest = it->addr == ip_priv ? 15 : 0; /* "255.255.255.255" */
+	  break;
+	case BPA_SIP_MEDIA:
+	  widest = it->addr == ip_priv ? 5 : 0; /* "65535" */
+	  break;
+	case BPA_SIP_CLEN:
+	  *clen_at = i;
+	  widest = 5;
+	  break;
+	}
+      if (widest > it->len)
+	want += widest - it->len;
+    }
+  return want;
+}
+
+/*
+ * The item of a response's TOPMOST Via, when it names exactly the public
+ * address and port this box wrote there; ~0 otherwise - a request, a topmost
+ * Via that is somebody else's, or none. Only the topmost: RFC 3261 s18.1.2
+ * has the client check that one, and a Via further down belongs to a proxy.
+ */
+static_always_inline u32
+bpa_sip_our_via (const bpa_sip_msg_t *m, u32 ip_pub, u16 port_pub)
+{
+  u32 i;
+
+  if (!m->is_response)
+    return ~0u;
+  for (i = 0; i < m->n_items; i++)
+    {
+      const bpa_sip_item_t *it = &m->items[i];
+
+      if (it->kind != BPA_SIP_VIA)
+	continue;
+      return it->addr == ip_pub && it->port == port_pub ? i : ~0u;
+    }
+  return ~0u;
+}
+
 #endif /* __included_bpa_sip_h__ */

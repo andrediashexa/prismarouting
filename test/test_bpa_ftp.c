@@ -385,6 +385,38 @@ text_cases (void)
   }
 }
 
+/* ------------------------------------------------ recording a correction */
+
+/* bpa_seq_note (#472): the rewrite of one segment, recorded once - also
+ * when that segment is retransmitted and rewritten again. */
+static void
+seq_note_cases (void)
+{
+  bpa_seq_adj_t a;
+
+  printf ("--- bpa_seq_note: one rewrite, one correction ---\n");
+  memset (&a, 0, sizeof (a));
+  bpa_seq_note (&a, 1000, 8);
+  CHECK (a.correction_pos == 1000 && a.off_before == 0 && a.off_after == 8,
+	 "the first rewrite recorded (%u, %d, %d)", a.correction_pos,
+	 a.off_before, a.off_after);
+  bpa_seq_note (&a, 1000, 8);
+  CHECK (a.off_after == 8 && a.off_before == 0,
+	 "the retransmission of the rewritten segment doubled the offset to "
+	 "%d - the connection stalls a few segments later", a.off_after);
+  bpa_seq_note (&a, 1500, 4);
+  CHECK (a.correction_pos == 1500 && a.off_before == 8 && a.off_after == 12,
+	 "a second rewrite did not stack on the first: (%u, %d, %d)",
+	 a.correction_pos, a.off_before, a.off_after);
+  CHECK (bpa_seq_delta_at (&a, 1500) == 8 && bpa_seq_delta_at (&a, 1600) == 12,
+	 "the second rewrite's segment and the one after it read the wrong "
+	 "deltas");
+  bpa_seq_note (&a, 1500, -3);
+  CHECK (a.off_after == 9 && a.off_before == 12,
+	 "the same segment rewritten by another amount was taken as the "
+	 "retransmission: (%d, %d)", a.off_before, a.off_after);
+}
+
 int
 main (void)
 {
@@ -393,6 +425,7 @@ main (void)
   printf ("=== FTP ALG sequence arithmetic ===\n\n");
 
   seq_boundary_cases ();
+  seq_note_cases ();
   printf ("\n");
   is_control_cases ();
   text_cases ();

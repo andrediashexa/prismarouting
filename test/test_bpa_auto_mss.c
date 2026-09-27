@@ -469,5 +469,38 @@ main (void)
   CHECK (BPA_MSS_OVERHEAD == 40,
 	 "an IPv4 and a TCP header without options are 40 bytes");
 
+  /* #472: the rescan by name, as the oracle the incremental path must agree
+   * with. After every one of a long run of attaches, detaches and MTU
+   * changes, a copy rebuilt from the slots by bpa_auto_mss_rescan() must hold
+   * the same minimum, the same count at it and the same count on. */
+  printf ("\n--- bpa_auto_mss_rescan: the incremental state is the "
+	  "rescan's ---\n");
+  {
+    static u32 slots[64];
+    static const u32 mtus[] = { 0, 1500, 1492, 9000, 1480, 1500, 576 };
+    bpa_auto_mss_t t, again;
+    u32 step, seed = 12345, bad = 0;
+
+    memset (slots, 0, sizeof (slots));
+    bpa_auto_mss_init (&t, slots, 64);
+    for (step = 0; step < 20000; step++)
+      {
+	seed = seed * 1103515245u + 12345u;
+	bpa_auto_mss_set (&t, (seed >> 8) % 64, mtus[(seed >> 20) % 7]);
+	again = t;
+	bpa_auto_mss_rescan (&again);
+	if (again.min != t.min || again.n_at_min != t.n_at_min
+	    || again.n_on != t.n_on)
+	  bad++;
+      }
+    CHECK (bad == 0, "%u of 20000 steps left the incremental minimum apart "
+	   "from a rescan's", bad);
+    memset (slots, 0, sizeof (slots));
+    again = t;
+    bpa_auto_mss_rescan (&again);
+    CHECK (again.n_on == 0 && again.min == ~0u && again.n_at_min == 0,
+	   "a rescan of empty slots found a minimum of %u", again.min);
+  }
+
   return bpa_test_verdict (checks, failures);
 }

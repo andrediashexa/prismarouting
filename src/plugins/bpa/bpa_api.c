@@ -21,7 +21,7 @@
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
 {
@@ -174,7 +174,7 @@ done:
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
 {
@@ -221,7 +221,7 @@ vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_bypass_set_t_handler (vl_api_bpa_bypass_set_t *mp)
 {
@@ -275,7 +275,7 @@ done:
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_global_set_t_handler (vl_api_bpa_global_set_t *mp)
 {
@@ -339,7 +339,7 @@ vl_api_bpa_global_set_t_handler (vl_api_bpa_global_set_t *mp)
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_logging_set_t_handler (vl_api_bpa_logging_set_t *mp)
 {
@@ -414,7 +414,7 @@ reply:
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_identity_set_t_handler (vl_api_bpa_identity_set_t *mp)
 {
@@ -445,7 +445,7 @@ vl_api_bpa_identity_set_t_handler (vl_api_bpa_identity_set_t *mp)
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_identity_source_set_t_handler (vl_api_bpa_identity_source_set_t *mp)
 {
@@ -483,7 +483,7 @@ reply:
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_identity_radius_set_t_handler (vl_api_bpa_identity_radius_set_t *mp)
 {
@@ -522,7 +522,7 @@ vl_api_bpa_identity_radius_set_t_handler (vl_api_bpa_identity_radius_set_t *mp)
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_logging_syslog_set_t_handler (vl_api_bpa_logging_syslog_set_t *mp)
 {
@@ -580,7 +580,7 @@ reply:
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
 {
@@ -611,7 +611,7 @@ vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
 {
@@ -653,7 +653,7 @@ vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_interface_add_del_feature_t_handler (
   vl_api_bpa_interface_add_del_feature_t *mp)
@@ -738,7 +738,7 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.
  * What the VTY sends through it is driven on a box by lab/vty.sh, and the
- * widths of the message fields are read by test/test_api_widths.py. */
+ * widths of the message fields are read by test/test_prismash_config.py. */
 static void
 vl_api_bpa_pool_dump_t_handler (vl_api_bpa_pool_dump_t *mp)
 {
@@ -758,8 +758,8 @@ vl_api_bpa_pool_dump_t_handler (vl_api_bpa_pool_dump_t *mp)
 #include <bpa/bpa.api.c>
 
 /* not a unit: it registers this plugin's messages with VPP's API at
- * plugin load, through the api_helper macros. test/test_api_widths.py reads
- * the .api file those messages are generated from. */
+ * plugin load, through the api_helper macros. test/test_prismash_config.py
+ * reads the .api file those messages are generated from. */
 static clib_error_t *
 bpa_api_hookup (vlib_main_t *vm)
 {

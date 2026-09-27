@@ -72,65 +72,10 @@
  */
 #define BPA_ESP_HDR_BYTES 8
 
-static_always_inline u32
-bpa_esp_spi (const void *p)
-{
-  return clib_net_to_host_u32 (((const u32 *) p)[0]);
-}
 
-/*
- * The private side of an ESP binding: one entry per (subscriber, peer).
- *
- * Per peer and not per subscriber, because a subscriber with two tunnels is
- * an ordinary home worker and one entry for both would have to be torn down
- * when either of them ended. The same packing as bpa_key_gre(): the peer
- * address in the low half of the second word, the VRF in the high one.
- */
-static_always_inline void
-bpa_key_esp (clib_bihash_kv_16_8_t *kv, u32 priv, u32 remote, u32 fib)
-{
-  kv->key[0] = (u64) priv | ((u64) BPA_PROTO_ESP << 48);
-  kv->key[1] = (u64) remote | ((u64) fib << 32);
-}
 
-/*
- * The public side, which is the shared table's key. No VRF: a public address
- * belongs to exactly one pool, which is the same reason bpa_key_out() has
- * none.
- */
-static_always_inline void
-bpa_key_esp_pub (clib_bihash_kv_16_8_t *kv, u32 pub, u32 remote)
-{
-  kv->key[0] = (u64) pub | ((u64) BPA_PROTO_ESP << 48);
-  kv->key[1] = remote;
-}
 
-/*
- * The binding's value, which is everything the inbound path needs and nothing
- * more: whom to give the packet to, and which VRF to give it back into.
- *
- * Named for the TABLE and not for ESP, because PPTP GRE puts the same two
- * fields in the same table for the same reason (#203), and a value helper
- * called bpa_esp_value() holding a GRE binding is how the next reader is
- * misled about what the table contains.
- *
- * Packed into the bihash's own 64-bit value rather than pointing at a record.
- * A record would be a pool that the datapath allocates from on several workers
- * at once, and pool_get() is not that; two u32 fields fit exactly, so there is
- * nothing to allocate and nothing to race on.
- */
-static_always_inline u64
-bpa_shared_value (u32 ip_priv, u32 fib)
-{
-  return (u64) ip_priv | ((u64) fib << 32);
-}
 
-static_always_inline void
-bpa_shared_unpack (u64 v, u32 *ip_priv, u32 *fib)
-{
-  *ip_priv = (u32) v;
-  *fib = (u32) (v >> 32);
-}
 
 /*
  * Finds the subscriber an inbound ESP packet belongs to.
@@ -139,6 +84,9 @@ bpa_shared_unpack (u64 v, u32 *ip_priv, u32 *fib)
  * tunnel to that peer - which is the ordinary case for unsolicited ESP and
  * for the second subscriber of an ambiguous pair.
  */
+/* not a unit: a search of VPP's shared bihash; the key and the value are
+ * bpa_key_esp_pub() and bpa_shared_unpack() in bpa_keys.h, held by
+ * test/test_bpa_keys.c, and lab/esp.sh carries a tunnel through it (#472) */
 static_always_inline int
 bpa_esp_lookup (u32 pub, u32 remote, u32 *ip_priv, u32 *fib)
 {

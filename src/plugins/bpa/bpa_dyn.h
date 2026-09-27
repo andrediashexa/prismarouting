@@ -633,4 +633,25 @@ bpa_dyn_block_of (bpa_dyn_t *d, u32 sub_idx, u32 worker, u32 n_workers,
   return *block_idx == BPA_NO_BLOCK ? -1 : 0;
 }
 
+
+/*
+ * The block the allocator is holding for this subscriber right now, as
+ * `show bpa subscriber` prints it: 1 and the block, or 0 when it holds none.
+ * Only a dynamic pool holds one; in deterministic mode the block is the
+ * formula's, printed whether or not the subscriber has ever sent a packet.
+ */
+static_always_inline int
+bpa_dyn_held (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx, u32 worker,
+	      u32 n_workers, bpa_block_t *blk)
+{
+  u32 block_idx;
+
+  if (p->mode != BPA_MODE_DYNAMIC
+      || bpa_dyn_block_of (d, sub_idx, worker, n_workers, &block_idx))
+    return 0;
+  bpa_dyn_block_addr (p, block_idx, blk);
+  blk->sub_idx = sub_idx;
+  return 1;
+}
+
 #endif /* __included_bpa_dyn_h__ */

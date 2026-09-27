@@ -2362,5 +2362,307 @@ main (void)
 	    "address\n");
   }
 
+  /* ------------------------------------------------------------------
+   * #472: the bpa_pool.h helpers no test named, until the checker counted
+   * headers. Each is asserted on what the CGNAT depends on it for.
+   * ------------------------------------------------------------------ */
+  printf ("\n=== timeouts: a pool's own over the global, zero inherits ===\n");
+  {
+    bpa_timeouts_t pool, global, r;
+    u32 breaches;
+
+    memset (&pool, 0, sizeof (pool));
+    memset (&global, 0, sizeof (global));
+    global.udp = 300; global.icmp = 60; global.tcp_trans = 240;
+    global.tcp_estab = 7440; global.tcp_syn = 6; global.gre = 7440;
+    global.port_holddown = 0; global.alg_expect = 30;
+    pool.udp = 600; pool.tcp_estab = 86400;
+    r = bpa_timeouts_resolve (&pool, &global);
+    CHECK (r.udp == 600 && r.tcp_estab == 86400,
+	   "a pool's own timeout did not win: udp %u estab %u", r.udp,
+	   r.tcp_estab);
+    CHECK (r.icmp == 60 && r.tcp_trans == 240 && r.tcp_syn == 6
+	   && r.gre == 7440 && r.alg_expect == 30,
+	   "a pool's zero did not inherit the global");
+    CHECK (bpa_timeouts_check (&global, 0, 0) == 0,
+	   "the defaults were reported below their RFC floors");
+    pool.udp = 30;	/* below RFC 4787 REQ-5's 120 */
+    pool.icmp = 0;	/* zero inherits: never a breach */
+    pool.tcp_estab = 600; /* below RFC 5382's 7440 */
+    breaches = bpa_timeouts_check (&pool, 0, 0);
+    CHECK (breaches == 2, "udp 30 and tcp-established 600 are two breaches, "
+	   "not %u", breaches);
+    printf ("  a pool's own timeout wins, zero inherits, and a floor breach "
+	    "is counted\n");
+  }
+
+  printf ("\n=== bypass: source or destination, and nothing else ===\n");
+  {
+    bpa_pool_t p;
+    u32 sb = 0x0a000000u, sc = 256, db = 0xc6336400u, dc = 256;
+
+    memset (&p, 0, sizeof (p));
+    CHECK (bpa_is_bypassed (&p, 0x0a000001u, 0xc6336401u) == 0,
+	   "a pool with no bypass bypassed a packet");
+    CHECK (bpa_addr_set_build (&p.bypass_src, &sb, &sc, 1) == 0
+	   && bpa_addr_set_build (&p.bypass_dst, &db, &dc, 1) == 0,
+	   "the bypass sets did not build");
+    CHECK (bpa_is_bypassed (&p, 0x0a000001u, 0x08080808u) == 1,
+	   "a bypassed source was translated");
+    CHECK (bpa_is_bypassed (&p, 0x64400001u, 0xc6336405u) == 1,
+	   "a bypassed destination was translated");
+    CHECK (bpa_is_bypassed (&p, 0x64400001u, 0x08080808u) == 0,
+	   "a packet neither side names was bypassed");
+    CHECK (bpa_alg_on (0x5, 0x4) == 1 && bpa_alg_on (0x5, 0x2) == 0,
+	   "bpa_alg_on did not read its bit");
+    printf ("  a source or a destination bypass leaves a packet "
+	    "untranslated, and only those\n");
+  }
+
+  printf ("\n=== the reserve: every index a distinct block past the "
+	  "mapped ones ===\n");
+  {
+    static const bpa_policy_t pol[2] = { BPA_POLICY_INTERLEAVED,
+					 BPA_POLICY_BLOCKED };
+    u32 k;
+
+    for (k = 0; k < 2; k++)
+      {
+	bpa_pool_t p;
+	static u8 seen[8][16];
+	u32 res, pub, blk, dup = 0, out = 0;
+
+	memset (&p, 0, sizeof (p));
+	memset (seen, 0, sizeof (seen));
+	p.policy = pol[k];
+	p.outside.count = 8;
+	p.blocks_mapped = 10;
+	p.block_reserve = 3;
+	p.reserve_count = p.outside.count * p.block_reserve;
+	for (res = 0; res < p.reserve_count; res++)
+	  {
+	    bpa_reserve_split (&p, res, &pub, &blk);
+	    if (pub >= p.outside.count || blk < p.blocks_mapped
+		|| blk >= p.blocks_mapped + p.block_reserve)
+	      {
+		out++;
+		continue;
+	      }
+	    if (seen[pub][blk - p.blocks_mapped]++)
+	      dup++;
+	  }
+	CHECK (out == 0 && dup == 0,
+	       "policy %u: %u reserve index(es) out of range, %u landing on a "
+	       "block another already has", k, out, dup);
+      }
+    CHECK (bpa_reserve_worker (7, 3) == 1 && bpa_reserve_worker (6, 3) == 0,
+	   "bpa_reserve_worker is not res_idx modulo the workers");
+    printf ("  every reserve index is its own block, past the mapped ones, "
+	    "under both policies\n");
+  }
+
+  printf ("\n=== the owning worker is sub %% n, for any n ===\n");
+  {
+    u32 n, sub, wrong = 0;
+
+    for (n = 1; n <= 13; n++)
+      {
+	bpa_divisor_t dv;
+
+	bpa_divisor_init (&dv, n);
+	for (sub = 0; sub < 70000; sub += 7)
+	  if (bpa_owner_worker (&dv, sub) != sub % n)
+	    wrong++;
+      }
+    CHECK (wrong == 0, "%u subscriber(s) routed to a worker other than "
+	   "sub %% n", wrong);
+    printf ("  the owning worker is sub %% n for 1 to 13 workers, the odd "
+	    "counts included\n");
+  }
+
+  printf ("\n=== which pool claims an address (#472) ===\n");
+  {
+    bpa_pool_t p;
+    u32 ib = 0x64400000u, ic = 256, ob = 0xc8000000u, oc = 32, sub;
+
+    memset (&p, 0, sizeof (p));
+    CHECK (bpa_addr_set_build (&p.inside, &ib, &ic, 1) == 0
+	   && bpa_addr_set_build (&p.outside, &ob, &oc, 1) == 0,
+	   "the sets did not build");
+    p.fib_index = ~0u;
+    CHECK (bpa_pool_claims_inside (&p, 0x64400005u, 3, &sub) && sub == 5,
+	   "a pool with no VRF did not claim a packet from VRF 3");
+    CHECK (!bpa_pool_claims_inside (&p, 0x64400105u, 3, &sub),
+	   "a pool claimed an address outside its inside set");
+    p.fib_index = 2;
+    CHECK (!bpa_pool_claims_inside (&p, 0x64400005u, 3, &sub),
+	   "a pool bound to VRF 2 claimed a packet from VRF 3: two tenants "
+	   "sharing a prefix would share subscribers");
+    CHECK (bpa_pool_claims_inside (&p, 0x64400005u, 2, &sub),
+	   "a pool bound to VRF 2 did not claim its own VRF's packet");
+    CHECK (bpa_pool_claims_inside (&p, 0x64400005u, ~0u, &sub),
+	   "a question with no VRF (a show command) did not find a VRF-bound "
+	   "pool's subscriber");
+    p.deleted = 1;
+    CHECK (!bpa_pool_claims_inside (&p, 0x64400005u, 2, &sub),
+	   "a draining pool claimed a new subscriber");
+    CHECK (bpa_pool_claims_outside (&p, 0xc8000011u),
+	   "a draining pool let go of its public address before its sessions "
+	   "drained");
+    CHECK (!bpa_pool_claims_outside (&p, 0xc8000020u),
+	   "a pool claimed a public address past its range");
+    CHECK (bpa_in_window (0xc8000000u, 0xc800001fu, 0xc8000010u)
+	   && !bpa_in_window (0xc8000000u, 0xc800001fu, 0xc8000020u),
+	   "the outside window did not bound its range");
+    CHECK (!bpa_in_window (1, 0, 0) && !bpa_in_window (1, 0, 1),
+	   "an empty window (lo 1, hi 0) answered yes");
+    printf ("  a pool claims its own VRF's subscribers, a draining pool "
+	    "keeps its public addresses and takes nobody new\n");
+  }
+
+  /* #472: a forward clause's ranges, and which pool an address belongs to
+   * for a command that has no packet (#74). */
+  printf ("\n=== a forward's ports; the pool an idle or live address is "
+	  "in ===\n");
+  {
+    bpa_static_t sf;
+    int found;
+    u32 pi = 99, si = 99;
+
+    CHECK (bpa_static_make (BPA_PROTO_TCP, 8080, 0x64400005u, 80, &sf) == 0
+	     && sf.proto == BPA_PROTO_TCP && sf.ip_priv == 0x64400005u
+	     && sf.port_pub == 8080 && sf.port_priv == 80 && sf.ip_pub == 0,
+	   "bpa_static_make: a forward came out other than it was written");
+    CHECK (bpa_static_make (BPA_PROTO_UDP, 0, 1, 80, &sf) == -1
+	     && bpa_static_make (BPA_PROTO_UDP, 65536, 1, 80, &sf) == -1
+	     && bpa_static_make (BPA_PROTO_UDP, 80, 1, 0, &sf) == -1
+	     && bpa_static_make (BPA_PROTO_UDP, 80, 1, 65536, &sf) == -1,
+	   "bpa_static_make: a port of 0 or past 65535 was taken - as a u16 "
+	   "65536 is port 0");
+    CHECK (bpa_static_make (BPA_PROTO_UDP, 65535, 1, 1, &sf) == 0,
+	   "bpa_static_make: the ends of the port range were refused");
+
+    found = 0;
+    CHECK (bpa_claimant_take (&found, 0, 5, 0, &pi, &si) == 0
+	     && found && pi == 0 && si == 5,
+	   "an idle first claimant was not the answer so far");
+    CHECK (bpa_claimant_take (&found, 3, 7, 1, &pi, &si) == 1 && pi == 3
+	     && si == 7,
+	   "a later claimant holding the live state did not win (#74)");
+    found = 0;
+    bpa_claimant_take (&found, 0, 5, 0, &pi, &si);
+    bpa_claimant_take (&found, 3, 7, 0, &pi, &si);
+    CHECK (pi == 0 && si == 5,
+	   "of two idle claimants the second answered, not the first");
+    found = 0;
+    CHECK (bpa_claimant_take (&found, 1, 2, 1, &pi, &si) == 1 && pi == 1,
+	   "a live first claimant did not settle it");
+  }
+
+  /* #472: two pools' collision, and the out2in window over every pool. */
+  printf ("\n=== two pools collide; the outside window ===\n");
+  {
+    static bpa_pool_t a, b;
+    u32 addr = 0, lo = ~0u, hi = 0;
+    int outside = -1;
+
+    memset (&a, 0, sizeof (a));
+    memset (&b, 0, sizeof (b));
+    a.inside.ranges[0].base = 0x64400000u; a.inside.ranges[0].count = 1024;
+    a.outside.ranges[0].base = 0xc8000010u; a.outside.ranges[0].count = 4;
+    b.inside.ranges[0].base = 0x64400200u; b.inside.ranges[0].count = 256;
+    b.outside.ranges[0].base = 0xc8000020u; b.outside.ranges[0].count = 4;
+    a.inside.n_ranges = a.outside.n_ranges = 1;
+    b.inside.n_ranges = b.outside.n_ranges = 1;
+
+    a.fib_index = 1; b.fib_index = 1;
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 1 && !outside
+	     && addr == 0x64400200u,
+	   "two pools serving one inside range in one VRF were let in");
+    b.fib_index = 2;
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 0,
+	   "one inside range in two VRFs was refused - the VRF is what "
+	   "tells them apart");
+    b.fib_index = ~0u;
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 1 && !outside,
+	   "a pool serving every VRF did not collide with one serving VRF 1");
+    b.fib_index = 2;
+    b.outside.ranges[0].base = 0xc8000012u;
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 1 && outside
+	     && addr == 0xc8000012u,
+	   "a public address shared across two VRFs was let in - out2in "
+	   "keys on the public address alone");
+    b.outside.ranges[0].base = 0xc8000014u; /* right after a's last */
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 0,
+	   "adjacent public ranges were taken as overlapping");
+
+    bpa_window_widen (&a.outside, &lo, &hi);
+    bpa_window_widen (&b.outside, &lo, &hi);
+    bpa_window_close (&lo, &hi);
+    CHECK (lo == 0xc8000010u && hi == 0xc8000017u,
+	   "the window over two pools is %08x-%08x", lo, hi);
+    CHECK (bpa_in_window (lo, hi, 0xc8000017u)
+	     && !bpa_in_window (lo, hi, 0xc8000018u),
+	   "the window does not end at the last public address");
+    lo = ~0u; hi = 0;
+    bpa_window_close (&lo, &hi);
+    CHECK (!bpa_in_window (lo, hi, 0) && !bpa_in_window (lo, hi, 1),
+	   "with no pool the window let an address in (%u-%u)", lo, hi);
+  }
+
+  /* #472: a candidate pool's forwards, all of them, in order. */
+  printf ("\n=== a pool's forwards: each against the ones before it, "
+	  "completed ===\n");
+  {
+    bpa_pool_t p;
+    bpa_static_t in[3];
+    bpa_block_t blk0, blk1;
+    u32 in_b[1] = { 0x64400000 }, in_c[1] = { 64 };
+    u32 out_b[1] = { 0xcb007100 }, out_c[1] = { 2 };
+
+    memset (&p, 0, sizeof (p));
+    p.name = (u8 *) "fwds";
+    p.port_min = 1024; p.port_max = 65535;
+    p.block_size = 512; p.mode = BPA_MODE_DETERMINISTIC;
+    bpa_addr_set_build (&p.inside, in_b, in_c, 1);
+    bpa_addr_set_build (&p.outside, out_b, out_c, 1);
+    CHECK (bpa_pool_init (&p) == 0, "the pool under test did not init");
+    memset (&blk0, 0, sizeof (blk0));
+    memset (&blk1, 0, sizeof (blk1));
+    bpa_forward (&p, in_b[0], &blk0);
+    bpa_forward (&p, in_b[0] + 1, &blk1);
+
+    memset (in, 0, sizeof (in));
+    in[0].ip_priv = in_b[0]; in[0].port_priv = 80;
+    in[0].port_pub = blk0.port_lo + 1; in[0].proto = BPA_PROTO_TCP;
+    in[1].ip_priv = in_b[0] + 1; in[1].port_priv = 443;
+    in[1].port_pub = blk1.port_lo + 2; in[1].proto = BPA_PROTO_TCP;
+    CHECK (bpa_statics_complete (&p, in, 2) == ~0u,
+	   "two forwards in their own subscribers' blocks were refused");
+    CHECK (in[0].ip_pub == blk0.ip_pub && in[1].ip_pub == blk1.ip_pub
+	     && in[0].port_off == 1 && in[1].port_off == 2,
+	   "the forwards were judged and not completed - a forward with a "
+	   "zero public address reserves nothing and translates nothing");
+
+    /* The third takes the first one's public socket: refused, by index,
+     * and left as it was given. */
+    in[2] = in[0];
+    in[2].ip_pub = 0;
+    in[2].port_priv = 8080;
+    CHECK (bpa_statics_complete (&p, in, 3) == 2,
+	   "a second forward on one public socket was not refused");
+    CHECK (in[2].ip_pub == 0, "the refused forward was completed anyway");
+    in[2].proto = BPA_PROTO_UDP;
+    CHECK (bpa_statics_complete (&p, in, 3) == ~0u,
+	   "the same public port for UDP was refused as a TCP clash");
+
+    /* The first one fails on its own: nothing before it, index 0. */
+    in[0].port_pub = blk0.port_hi + 1; /* the next block, somebody else's */
+    CHECK (bpa_statics_complete (&p, in, 3) == 0,
+	   "a forward into another subscriber's block was let in");
+    CHECK (bpa_statics_complete (&p, in, 0) == ~0u,
+	   "a pool with no forwards was refused");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

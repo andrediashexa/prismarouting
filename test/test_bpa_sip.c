@@ -1084,5 +1084,139 @@ main (void)
 	   BPA_SIP_MAX_ITEMS);
   }
 
+  /* ------------------------------------------------------------------
+   * #472: the parser's pieces, called by name. Every one was reached only
+   * through bpa_sip_parse(), so a piece that misread its input and was
+   * rescued by another would pass; each is held to its own contract here.
+   * ------------------------------------------------------------------ */
+  printf ("\n=== the parser's pieces, one at a time ===\n");
+  {
+    const u8 *via = (const u8 *) "SIP/2.0/UDP 10.0.0.5:5060;branch=z9hG4bK1";
+    const u8 *con = (const u8 *) "<sip:alice@10.0.0.5:5062>;expires=60";
+    const u8 *star = (const u8 *) "*";
+    const u8 *sdp = (const u8 *) "v=0\r\nc=IN IP4 10.0.0.5\r\n"
+				 "m=audio 49170 RTP/AVP 0\r\n";
+    const u8 *name = (const u8 *) "10.0.0.1.example.com";
+    bpa_sip_msg_t m;
+    u32 addr, v;
+    u16 port;
+
+    CHECK (bpa_sip_ci ((const u8 *) "cOnTaCt", "contact", 7)
+	     && !bpa_sip_ci ((const u8 *) "contacx", "contact", 7),
+	   "bpa_sip_ci: header names are compared case-blind, and only so");
+    CHECK (bpa_sip_is_ws (' ') && bpa_sip_is_ws ('\t')
+	     && !bpa_sip_is_ws ('\r'),
+	   "bpa_sip_is_ws: space and tab, and not CR");
+    CHECK (bpa_sip_is_digit ('0') && bpa_sip_is_digit ('9')
+	     && !bpa_sip_is_digit ('a') && !bpa_sip_is_digit ('/'),
+	   "bpa_sip_is_digit: the ten digits and nothing else");
+
+    CHECK (bpa_sip_ip4 ((const u8 *) "10.0.0.5:5060", 13, &addr) == 8
+	     && addr == 0x0a000005u,
+	   "bpa_sip_ip4: 10.0.0.5 followed by a port is 8 bytes, 10.0.0.5");
+    CHECK (bpa_sip_ip4 (name, (u32) strlen ((const char *) name), &addr) == 0,
+	   "bpa_sip_ip4: a host NAME whose first labels look numeric was read "
+	   "as an address, and would be rewritten out of the middle of a domain");
+    CHECK (bpa_sip_num ((const u8 *) "5060;", 5, 65535, &v) == 4 && v == 5060,
+	   "bpa_sip_num: 5060 is four bytes");
+    CHECK (bpa_sip_num ((const u8 *) "70000", 5, 65535, &v) == 0,
+	   "bpa_sip_num: a value past its bound was taken");
+    CHECK (bpa_sip_num ((const u8 *) ";", 1, 65535, &v) == 0,
+	   "bpa_sip_num: no digits was a number");
+    CHECK (bpa_sip_eol ((const u8 *) "ab\r\ncd", 6, 0) == 2,
+	   "bpa_sip_eol: the CR of the CRLF");
+    CHECK (bpa_sip_eol ((const u8 *) "ab\ncd", 5, 0) == ~0u,
+	   "bpa_sip_eol: a bare LF was a line ending; the offsets after it "
+	   "would be one byte off");
+
+    CHECK (bpa_sip_hostport (via, 12, (u32) strlen ((const char *) via), &addr,
+			     &port) == 13
+	     && addr == 0x0a000005u && port == 5060,
+	   "bpa_sip_hostport: 10.0.0.5:5060 is 13 bytes, the address and 5060");
+
+    memset (&m, 0, sizeof (m));
+    CHECK (bpa_sip_via (via, 0, (u32) strlen ((const char *) via), &m) == 0
+	     && m.n_items == 1 && m.items[0].kind == BPA_SIP_VIA
+	     && m.items[0].addr == 0x0a000005u && m.items[0].port == 5060
+	     && m.items[0].off == 12 && m.items[0].len == 13,
+	   "bpa_sip_via: the sent-by span is bytes 12-24, 10.0.0.5:5060");
+
+    memset (&m, 0, sizeof (m));
+    CHECK (bpa_sip_contact (con, 0, (u32) strlen ((const char *) con), &m) == 0
+	     && m.n_items == 1 && m.items[0].kind == BPA_SIP_CONTACT
+	     && m.items[0].addr == 0x0a000005u && m.items[0].port == 5062,
+	   "bpa_sip_contact: the URI's host and port");
+    memset (&m, 0, sizeof (m));
+    CHECK (bpa_sip_contact (star, 0, 1, &m) == 0 && m.n_items == 0,
+	   "bpa_sip_contact: a REGISTER's '*' names no place, and recorded one");
+
+    memset (&m, 0, sizeof (m));
+    CHECK (bpa_sip_sdp (sdp, 0, (u32) strlen ((const char *) sdp), &m) == 0,
+	   "bpa_sip_sdp refused a plain offer");
+    {
+      u32 k, conn = 0, media = 0;
+      for (k = 0; k < m.n_items; k++)
+	{
+	  if (m.items[k].kind == BPA_SIP_CONN && m.items[k].addr == 0x0a000005u)
+	    conn++;
+	  if (m.items[k].kind == BPA_SIP_MEDIA && m.items[k].port == 49170)
+	    media++;
+	}
+      CHECK (conn == 1 && media == 1,
+	     "bpa_sip_sdp: the c= and the m= came out as %u and %u items", conn,
+	     media);
+    }
+
+    memset (&m, 0, sizeof (m));
+    for (v = 0; v < BPA_SIP_MAX_ITEMS; v++)
+      bpa_sip_add (&m, BPA_SIP_VIA, v, 1, 0, 0);
+    CHECK (bpa_sip_add (&m, BPA_SIP_VIA, 99, 1, 0, 0) != 0
+	     && m.n_items == BPA_SIP_MAX_ITEMS,
+	   "bpa_sip_add: an item past BPA_SIP_MAX_ITEMS was taken");
+    printf ("  each piece of the parser holds its own contract\n");
+  }
+
+  /* #472: the two rules the translation nodes apply to a parsed message. */
+  printf ("\n=== what a rewrite could grow by; whose Via comes back ===\n");
+  {
+    bpa_sip_msg_t m;
+    u32 clen_at, want;
+
+    memset (&m, 0, sizeof (m));
+    bpa_sip_add (&m, BPA_SIP_VIA, 10, 18, PRIV, 5060);	   /* ours */
+    bpa_sip_add (&m, BPA_SIP_CONTACT, 40, 18, 0x0a000009u, 5060); /* not */
+    bpa_sip_add (&m, BPA_SIP_CLEN, 80, 3, 0, 0);
+    bpa_sip_add (&m, BPA_SIP_CONN, 120, 10, PRIV, 0);
+    bpa_sip_add (&m, BPA_SIP_MEDIA, 150, 4, PRIV, 8000);
+    want = bpa_sip_growth (&m, PRIV, &clen_at);
+    CHECK (want == (BPA_SIP_TXT_MAX - 18) + (5 - 3) + (15 - 10) + (5 - 4),
+	   "bpa_sip_growth: %u bytes, not the widest each of ours can become",
+	   want);
+    CHECK (clen_at == 2, "bpa_sip_growth: Content-Length is item %u", clen_at);
+    CHECK (bpa_sip_growth (&m, 0x0a0000ffu, &clen_at) == 2,
+	   "bpa_sip_growth: another subscriber's items were counted");
+    memset (&m, 0, sizeof (m));
+    bpa_sip_add (&m, BPA_SIP_VIA, 10, 21, PRIV, 5060);
+    CHECK (bpa_sip_growth (&m, PRIV, &clen_at) == 0 && clen_at == ~0u,
+	   "bpa_sip_growth: a Via already at the widest grows, or a missing "
+	   "Content-Length was found");
+
+    memset (&m, 0, sizeof (m));
+    m.is_response = 1;
+    bpa_sip_add (&m, BPA_SIP_VIA, 10, 18, PUB, 1024);
+    bpa_sip_add (&m, BPA_SIP_VIA, 40, 18, PUB, 2048);
+    CHECK (bpa_sip_our_via (&m, PUB, 1024) == 0,
+	   "bpa_sip_our_via: the topmost Via this box wrote was not found - "
+	   "the phone drops every response");
+    CHECK (bpa_sip_our_via (&m, PUB, 2048) == ~0u,
+	   "bpa_sip_our_via: a Via below the topmost was put back");
+    CHECK (bpa_sip_our_via (&m, PUB, 1025) == ~0u,
+	   "bpa_sip_our_via: another session's port on our address was taken");
+    m.is_response = 0;
+    CHECK (bpa_sip_our_via (&m, PUB, 1024) == ~0u,
+	   "bpa_sip_our_via: a request's Via was rewritten");
+    printf ("  growth counted before a port is taken; only our Via back\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

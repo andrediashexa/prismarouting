@@ -201,12 +201,13 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
  * and must not reach here.
  */
 static clib_error_t *
-bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
+bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *prior,
+		     u32 n_prior, const bpa_static_t *sf)
 {
   const bpa_static_t *o = 0;
   ip4_address_t a, pub;
 
-  switch (bpa_static_clash (p->statics, vec_len (p->statics), sf, &o))
+  switch (bpa_static_clash (prior, n_prior, sf, &o))
     {
     case BPA_STATIC_CLASH_PUB:
       a.as_u32 = clib_host_to_net_u32 (o->ip_priv);
@@ -232,44 +233,25 @@ bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
  * by the block sizing and address sets the operator is about to commit, not by
  * the ones currently running.
  */
-/* not a unit: it walks a VPP vector of forwards, building a
- * second one as it goes so each is checked against the ones before it -
- * vec_add1 and the pool's own `statics` pointer, neither of which exists
- * outside VPP. WHAT it checks with is tested: bpa_static_check() for whether
- * a forward can be made and bpa_static_clash() for whether two can both
- * hold, both in bpa_pool.h and driven by test/test_bpa_pool.c and
- * test/test_bpa_static.c. */
+/* not a unit: it words the refusal bpa_statics_complete() found, through
+ * bpa_static_validate() and bpa_static_conflict(), which need VPP's format()
+ * and a clib_error_t. Which forward fails, and that each is judged against
+ * the ones before it and written back completed, is bpa_statics_complete()
+ * in bpa_pool.h, driven by test/test_bpa_pool.c. */
 static clib_error_t *
 bpa_statics_validate (bpa_pool_t *p, bpa_static_t *in)
 {
-  bpa_static_t *seen = 0;
-  clib_error_t *e = 0;
-  u32 i;
+  u32 bad = bpa_statics_complete (p, in, vec_len (in));
+  bpa_static_t sf;
+  clib_error_t *e;
 
-  vec_foreach_index (i, in)
-    {
-      bpa_static_t sf = in[i];
-
-      p->statics = seen;
-      e = bpa_static_validate (p, &sf);
-      if (!e)
-	e = bpa_static_conflict (p, &sf);
-      if (e)
-	break;
-      /*
-       * Written back, because bpa_static_validate() COMPLETES a forward as
-       * well as checking it: ip_pub and port_off are derived here and nowhere
-       * else. Validating a copy and storing the original left every forward
-       * given on a "bpa pool" line with a zero public address, which reserves
-       * nothing and translates nothing - a forward the configuration shows
-       * and the dataplane does not have.
-       */
-      in[i] = sf;
-      vec_add1 (seen, sf);
-    }
-
-  p->statics = 0;
-  vec_free (seen);
+  if (bad == ~0u)
+    return 0;
+  /* The same two questions again, for the one that failed, to say why. */
+  sf = in[bad];
+  e = bpa_static_validate (p, &sf);
+  if (!e)
+    e = bpa_static_conflict (p, in, bad, &sf);
   return e;
 }
 
@@ -660,7 +642,7 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
   if (e)
     return e;
 
-  e = bpa_static_conflict (p, sf);
+  e = bpa_static_conflict (p, p->statics, vec_len (p->statics), sf);
   if (e)
     return e;
 
@@ -701,67 +683,46 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
  * are bound to the same one.
  */
 /* not a unit: it walks bpa_main's pool of pools with pool_foreach and
- * formats a clib_error_t. The overlap ARITHMETIC it asks per pair is
- * bpa_ranges_overlap() in bpa_pool.h, which test/test_bpa_pool.c drives over
- * the cases this loop hands it (#424); what is left here is the walk and the
- * sentence, and lab/two-pools.sh produces both on a box. */
+ * formats a clib_error_t. Whether two pools collide - which side, and when
+ * the VRFs keep them apart - is bpa_pools_collide() in bpa_pool.h, which
+ * test/test_bpa_pool.c drives (#424, #472); what is left here is the walk
+ * and the sentence, and lab/two-pools.sh produces both on a box. */
 static clib_error_t *
 bpa_check_pool_overlap (const bpa_pool_t *cfg)
 {
   bpa_main_t *bm = &bpa_main;
   bpa_pool_t *p;
-  u32 i, j;
 
   pool_foreach (p, bm->pools)
     {
       int same_name = vec_len (p->name) == vec_len (cfg->name)
 		      && !memcmp (p->name, cfg->name, vec_len (cfg->name));
+      ip4_address_t a;
+      u32 addr;
+      int outside;
 
       /* A pool being replaced does not overlap itself. */
-      if (same_name)
+      if (same_name || !bpa_pools_collide (cfg, p, &addr, &outside))
 	continue;
 
-      /* Public addresses are compared whatever the VRFs are: out2in keys on
-       * the public address alone, so two pools sharing one are two answers to
-       * the same question. */
-      for (i = 0; i < cfg->outside.n_ranges; i++)
-	for (j = 0; j < p->outside.n_ranges; j++)
-	  if (bpa_ranges_overlap (&cfg->outside.ranges[i],
-				  &p->outside.ranges[j]))
-	    {
-	      ip4_address_t a;
-
-	      a.as_u32 = clib_host_to_net_u32 (cfg->outside.ranges[i].base);
-	      return clib_error_return (
-		0,
-		"public address %U is already in pool '%v'. Two pools cannot "
-		"share one: the return path finds a pool by public address "
-		"and would have two answers",
-		format_ip4_address, &a, p->name);
-	    }
-
-      if (p->fib_index != ~0u && cfg->fib_index != ~0u
-	  && p->fib_index != cfg->fib_index)
-	continue;
-
-      for (i = 0; i < cfg->inside.n_ranges; i++)
-	for (j = 0; j < p->inside.n_ranges; j++)
-	  if (bpa_ranges_overlap (&cfg->inside.ranges[i], &p->inside.ranges[j]))
-	    {
-	      ip4_address_t a;
-
-	      a.as_u32 = clib_host_to_net_u32 (cfg->inside.ranges[i].base);
-	      return clib_error_return (
-		0,
-		"inside address %U is already served by pool '%v'%s. The "
-		"first pool that claims an address answers for it, so the "
-		"second would translate nothing and say nothing - bind them "
-		"to different VRFs, or give them different ranges",
-		format_ip4_address, &a, p->name,
-		(p->fib_index == ~0u || cfg->fib_index == ~0u)
-		  ? " (one of them serves every VRF)"
-		  : " in the same VRF");
-	    }
+      a.as_u32 = clib_host_to_net_u32 (addr);
+      if (outside)
+	return clib_error_return (
+	  0,
+	  "public address %U is already in pool '%v'. Two pools cannot "
+	  "share one: the return path finds a pool by public address "
+	  "and would have two answers",
+	  format_ip4_address, &a, p->name);
+      return clib_error_return (
+	0,
+	"inside address %U is already served by pool '%v'%s. The "
+	"first pool that claims an address answers for it, so the "
+	"second would translate nothing and say nothing - bind them "
+	"to different VRFs, or give them different ranges",
+	format_ip4_address, &a, p->name,
+	(p->fib_index == ~0u || cfg->fib_index == ~0u)
+	  ? " (one of them serves every VRF)"
+	  : " in the same VRF");
     }
   return 0;
 }
@@ -822,38 +783,20 @@ bpa_pool_validate (bpa_pool_t *cfg)
  * pools. Empty when there are no pools, which makes the filter reject
  * everything - correct, because with no pool there is nothing to hairpin to.
  */
-/* not a unit: it walks bpa_main's pools to find the lowest
- * and highest public address any of them holds. The window it writes is
- * what the out2in path checks a packet against before looking anything up,
- * and lab/datapath.sh drives that path. */
+/* not a unit: it walks bpa_main's pools; the window's arithmetic is
+ * bpa_window_widen() and bpa_window_close() in bpa_pool.h, driven by
+ * test/test_bpa_pool.c. The out2in path checks a packet against it before
+ * looking anything up, and lab/datapath.sh drives that path. */
 void
 bpa_outside_window_update (void)
 {
   bpa_main_t *bm = &bpa_main;
   u32 lo = ~0u, hi = 0;
   bpa_pool_t *p;
-  u32 i;
 
   pool_foreach (p, bm->pools)
-    {
-      for (i = 0; i < p->outside.n_ranges; i++)
-	{
-	  u32 base = p->outside.ranges[i].base;
-	  u32 last = base + p->outside.ranges[i].count - 1;
-
-	  if (base < lo)
-	    lo = base;
-	  if (last > hi)
-	    hi = last;
-	}
-    }
-
-  if (lo == ~0u)
-    {
-      bm->outside_lo = 1;   /* an empty window: lo > hi rejects everything */
-      bm->outside_hi = 0;
-      return;
-    }
+    bpa_window_widen (&p->outside, &lo, &hi);
+  bpa_window_close (&lo, &hi);
   bm->outside_lo = lo;
   bm->outside_hi = hi;
 }
@@ -2397,21 +2340,18 @@ VLIB_INIT_FUNCTION (bpa_init);
  * startup.conf, before any pool exists - a pool's dynamic slices are sharded
  * by this count, so it is never changed under one.
  */
-/* not a unit: it reads VPP's thread layout (vlib_get_worker_thread_index)
- * and resets bpa_main's worker tables; lab/cgnat-workers.sh starts a
+/* not a unit: it resets bpa_main's worker tables from VPP's worker count;
+ * the table is bpa_thread_table() in bpa_workers.h, which
+ * test/test_bpa_workers.c holds (#472), and lab/cgnat-workers.sh starts a
  * dataplane with a split and sends traffic through it. */
 void
 bpa_set_owners (bpa_main_t *bm, u32 *wids)
 {
-  u32 k;
-
   vec_free (bm->owner_wid);
   bm->owner_wid = wids;
   bm->n_workers = vec_len (wids);
   vec_free (bm->thread_w);
-  vec_validate_init_empty (bm->thread_w, vlib_num_workers (), ~0);
-  for (k = 0; k < vec_len (wids); k++)
-    bm->thread_w[vlib_get_worker_thread_index (wids[k])] = k;
+  bm->thread_w = bpa_thread_table (wids, vlib_num_workers ());
   bpa_divisor_init (&bm->workers, bm->n_workers ? bm->n_workers : 1);
 }
 

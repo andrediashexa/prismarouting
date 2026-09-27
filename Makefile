@@ -9,7 +9,7 @@ BUILD  := .build
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
-      $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite \
+      $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite $(BUILD)/test_bpa_l4 \
       $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn \
       $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
       $(BUILD)/test_bpa_audit $(BUILD)/test_bpa_log_syslog \
@@ -20,7 +20,10 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_radius \
       $(BUILD)/test_bpa_static \
       $(BUILD)/test_bpa_top \
-      $(BUILD)/test_bpa_rate
+      $(BUILD)/test_bpa_rate \
+      $(BUILD)/test_bpa_keys \
+      $(BUILD)/test_bpa_subblock \
+      $(BUILD)/test_bpa_workers
 	@sh tools/run-tests.sh
 
 vectors:
@@ -53,6 +56,28 @@ $(BUILD)/test_bpa_static: test/test_bpa_static.c \
 # arithmetic in that file is deliberately not excused because it is waiting
 # for a harness; this is the harness, and the arithmetic needs nothing but
 # two rows.
+# The session table's keys and a session's two rules (#472): bpa_keys.h,
+# which compiles here as well as with VPP.
+$(BUILD)/test_bpa_keys: test/test_bpa_keys.c \
+                   src/plugins/bpa/bpa_keys.h src/plugins/bpa/bpa_pool.h \
+                   test/bpa_shim.h test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_keys.c
+
+# A subscriber's blocks (#472): bpa_subblock.h.
+$(BUILD)/test_bpa_subblock: test/test_bpa_subblock.c \
+                   src/plugins/bpa/bpa_subblock.h src/plugins/bpa/bpa_ports.h \
+                   src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_subblock.c
+
+# Which worker owns a subscriber and which thread that is (#466, #472).
+$(BUILD)/test_bpa_workers: test/test_bpa_workers.c \
+                   src/plugins/bpa/bpa_workers.h src/plugins/bpa/bpa_pool.c \
+                   src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_workers.c
+
 $(BUILD)/test_bpa_top: test/test_bpa_top.c \
                    src/plugins/bpa/bpa_top.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
@@ -123,6 +148,15 @@ $(BUILD)/test_bpa_rewrite: test/test_bpa_rewrite.c \
                            src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rewrite.c
+
+# The L4 id a packet is keyed on and the destination rewrite's checksums,
+# checked the way a receiver checks them (#472).
+$(BUILD)/test_bpa_l4: test/test_bpa_l4.c src/plugins/bpa/bpa_l4_wire.h \
+                      src/plugins/bpa/bpa_gre.h \
+                      test/bpa_shim.h test/bpa_tcp_shim.h \
+                      src/plugins/bpa/bpa_seq.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_l4.c
 
 # The "tcp-mss auto" minimum: which MTU the clamp is derived from as interfaces
 # join and leave. Standalone because the bookkeeping is INCREMENTAL (#287) and

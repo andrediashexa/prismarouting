@@ -815,6 +815,180 @@ bpa_set_index_of (const bpa_addr_set_t *s, u32 addr, u32 *idx)
   return -1;
 }
 
+/*
+ * Does this pool claim `addr` as a subscriber, from a packet in VRF `fib`?
+ * (#472: the rule bpa_pool_by_inside() walks the pools with.) A pool bound
+ * to a VRF claims only its VRF's packets, so two tenants may share an inside
+ * prefix; ~0 on either side is "no VRF stated" and matches any. A deleted
+ * pool - draining - claims nobody new.
+ */
+static_always_inline int
+bpa_pool_claims_inside (const bpa_pool_t *p, u32 addr, u32 fib, u32 *sub_idx)
+{
+  /*
+   * A pool bound to a VRF answers only for that one, which is what lets
+   * two pools serve the same inside prefix for two tenants.
+   *
+   * ~0 means "every VRF" on the POOL - what a configuration written
+   * before this existed means - and "any VRF" in the QUERY, which is what
+   * a show command asks, having no packet and therefore no VRF. Both,
+   * because neither a pool nor a question should have to lie about which
+   * it means: without the second, a show command would report that a
+   * VRF-bound pool's subscriber belongs to no pool at all.
+   */
+  if (fib != ~0u && p->fib_index != ~0u && p->fib_index != fib)
+    return 0;
+  /*
+   * A pool being drained by bpa_pool_del() is already gone as far as new
+   * traffic is concerned. Skipped here so the packet is counted as "no
+   * pool" - which is the truth - rather than travelling on to be refused
+   * by the session bind and counted as a full port block, which is the
+   * counter an operator chases when a customer complains.
+   */
+  if (PREDICT_FALSE (p->deleted))
+    return 0;
+  return bpa_set_index_of (&p->inside, addr, sub_idx) == 0;
+}
+
+/*
+ * Does this pool own public address `addr`? A deleted pool still does:
+ * its sessions drain, and their replies must still find them.
+ */
+static_always_inline int
+bpa_pool_claims_outside (const bpa_pool_t *p, u32 addr)
+{
+  u32 idx;
+  return bpa_set_index_of (&p->outside, addr, &idx) == 0;
+}
+
+/*
+ * One "forward" clause's range checks - the ones unformat cannot make, for
+ * the CLI and the API alike. Everything else a forward can be refused for -
+ * the subscriber, the block, a collision with another forward - needs the
+ * pool's derived values and is checked by bpa_pool_validate() once the whole
+ * definition has been read. 0 and the entry, or -1 for a port of 0 or past
+ * 65535.
+ */
+static_always_inline int
+bpa_static_make (u8 proto, u32 port_pub, u32 ip_priv, u32 port_priv,
+		 bpa_static_t *sf)
+{
+  if (port_pub == 0 || port_pub > 65535 || port_priv == 0
+      || port_priv > 65535)
+    return -1;
+  memset (sf, 0, sizeof (*sf));
+  sf->proto = proto;
+  sf->ip_priv = ip_priv;
+  sf->port_pub = (u16) port_pub;
+  sf->port_priv = (u16) port_priv;
+  return 0;
+}
+
+/*
+ * One pool claiming an inside address, offered in pool order to a command
+ * that has no packet and so no VRF: which pool is the address's?
+ *
+ * The first claimant, unless a later one holds the subscriber's live state -
+ * where two tenants share an inside prefix, the first claimant is not
+ * necessarily the pool the traffic was translated by, and keying on it
+ * reported "no live state" over live sessions (#74). Returns 1 when this
+ * claimant settles it (it is live); the caller stops there.
+ */
+static_always_inline int
+bpa_claimant_take (int *found, u32 idx, u32 si, int is_live,
+		   u32 *pool_index, u32 *sub_idx)
+{
+  if (!*found || is_live)
+    {
+      *pool_index = idx;
+      *sub_idx = si;
+      *found = 1;
+    }
+  return is_live;
+}
+
+/*
+ * Would pool `cfg` collide with the existing pool `p`? 0 when not; otherwise
+ * 1 with `*addr` the first of cfg's addresses at fault and `*outside` saying
+ * which side. The caller words the refusal.
+ *
+ * Public addresses are compared whatever the VRFs are: out2in keys on the
+ * public address alone, so two pools sharing one are two answers to the same
+ * question. Inside addresses only within one VRF - or where either pool
+ * serves every VRF (~0): the first pool that claims an address answers for
+ * it, so the second would translate nothing and say nothing.
+ */
+static_always_inline int
+bpa_pools_collide (const bpa_pool_t *cfg, const bpa_pool_t *p, u32 *addr,
+		   int *outside)
+{
+  u32 i, j;
+
+  for (i = 0; i < cfg->outside.n_ranges; i++)
+    for (j = 0; j < p->outside.n_ranges; j++)
+      if (bpa_ranges_overlap (&cfg->outside.ranges[i], &p->outside.ranges[j]))
+	{
+	  *addr = cfg->outside.ranges[i].base;
+	  *outside = 1;
+	  return 1;
+	}
+
+  if (p->fib_index != ~0u && cfg->fib_index != ~0u
+      && p->fib_index != cfg->fib_index)
+    return 0;
+
+  for (i = 0; i < cfg->inside.n_ranges; i++)
+    for (j = 0; j < p->inside.n_ranges; j++)
+      if (bpa_ranges_overlap (&cfg->inside.ranges[i], &p->inside.ranges[j]))
+	{
+	  *addr = cfg->inside.ranges[i].base;
+	  *outside = 0;
+	  return 1;
+	}
+  return 0;
+}
+
+/*
+ * The out2in pre-filter's window: widened by each pool's public ranges in
+ * turn, from lo = ~0, hi = 0. A window nothing widened is closed to lo = 1,
+ * hi = 0 by bpa_window_close(), which bpa_in_window() answers no to for
+ * every address - 0.0.0.0 included, which lo = hi = 0 would have let in.
+ */
+static_always_inline void
+bpa_window_widen (const bpa_addr_set_t *set, u32 *lo, u32 *hi)
+{
+  u32 i;
+
+  for (i = 0; i < set->n_ranges; i++)
+    {
+      u32 base = set->ranges[i].base;
+      u32 last = base + set->ranges[i].count - 1;
+
+      if (base < *lo)
+	*lo = base;
+      if (last > *hi)
+	*hi = last;
+    }
+}
+
+static_always_inline void
+bpa_window_close (u32 *lo, u32 *hi)
+{
+  if (*lo == ~0u)
+    {
+      *lo = 1;
+      *hi = 0;
+    }
+}
+
+/* Is `addr` inside [lo, hi]? The out2in pre-filter's cheap first question;
+ * an empty window is lo = 1, hi = 0, and answers no to everything. */
+static_always_inline int
+bpa_in_window (u32 lo, u32 hi, u32 addr)
+{
+  return addr >= lo && addr <= hi;
+}
+
 /* Address at dense index `idx`, or -1 when out of range. */
 static_always_inline int
 bpa_set_addr_of (const bpa_addr_set_t *s, u32 idx, u32 *addr)
@@ -1522,6 +1696,39 @@ bpa_static_check (const bpa_pool_t *p, const bpa_static_t *sf,
   out->ip_pub = blk->ip_pub;
   out->port_off = (u16) (sf->port_pub - blk->port_lo);
   return BPA_STATIC_OK;
+}
+
+/*
+ * A candidate pool's forwards, each judged against the pool and against the
+ * ones before it, and each COMPLETED in place: bpa_static_check() derives
+ * ip_pub and port_off, and nothing else does. Validating a copy and keeping
+ * the original once left every forward given on a "bpa pool" line with a
+ * zero public address, which reserves nothing and translates nothing - a
+ * forward the configuration shows and the dataplane does not have.
+ *
+ * Returns ~0 when all of them hold, or the index of the first that does not,
+ * left as it was given; those before it are completed. The caller words the
+ * refusal for that one.
+ */
+static_always_inline u32
+bpa_statics_complete (const bpa_pool_t *p, bpa_static_t *in, u32 n)
+{
+  u32 i;
+
+  for (i = 0; i < n; i++)
+    {
+      bpa_static_t checked;
+      bpa_block_t blk;
+      const bpa_static_t *o = 0;
+
+      memset (&checked, 0, sizeof (checked));
+      memset (&blk, 0, sizeof (blk));
+      if (bpa_static_check (p, &in[i], &blk, &checked) != BPA_STATIC_OK
+	  || bpa_static_clash (in, i, &checked, &o) != BPA_STATIC_CLASH_NONE)
+	return i;
+      in[i] = checked;
+    }
+  return ~0u;
 }
 
 /*

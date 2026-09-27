@@ -26,8 +26,13 @@
  *
  * `bpa_top_cmp` was in that list and is not any more: it needed nothing but
  * two rows, so it moved to bpa_top.h and test/test_bpa_top.c drives it. That
- * is the shape the rest of this list is waiting for - a harness where one is
- * possible, an excuse only where it is not.
+ * is the shape the rest of this list was waiting for - a harness where one is
+ * possible, an excuse only where it is not - and #472 paid the rest of it the
+ * same way: the arithmetic of a forward clause (bpa_static_make), of which
+ * pool an address answers for (bpa_claimant_take) and of the block a
+ * subscriber holds (bpa_dyn_held) moved to bpa_pool.h and bpa_dyn.h, where
+ * the plain-cc suites drive it, and what stayed here is the walk over VPP's
+ * own tables, excused as such.
  *
  * The marker on each one says which of the three classes it is and points
  * here, rather than repeating this paragraph forty-one times: an excuse
@@ -140,6 +145,8 @@ format_bpa_addr (u8 *s, va_list *args)
  * looked for the plain name alone would report a correctly attached box as
  * having nothing.
  */
+/* not a unit: walks VPP's interfaces and asks its feature arcs;
+ * lab/vty-pool.sh reads each of the three answers in "show bpa pool" */
 static void
 bpa_attachments (int *inside, int *outside)
 {
@@ -448,28 +455,17 @@ format_bpa_pool (u8 *s, va_list *args)
   return s;
 }
 
-/*
- * One "forward" clause of a pool definition.
- *
- * Only the range checks unformat cannot make. Everything else a forward can be
- * refused for - the subscriber, the block, a collision with another forward -
- * needs the pool's derived values and is checked by bpa_pool_validate() once
- * the whole definition has been read.
- */
+/* not a unit: bpa_static_make() - held by test/test_bpa_pool.c - wrapped in
+ * a clib_error_t for the CLI (#472) */
 static clib_error_t *
 bpa_static_clause (bpa_pool_t *cfg, u8 proto, u32 port_pub,
 		   const ip4_address_t *priv, u32 port_priv)
 {
-  bpa_static_t sf = { 0 };
+  bpa_static_t sf;
 
-  if (port_pub == 0 || port_pub > 65535 || port_priv == 0
-      || port_priv > 65535)
+  if (bpa_static_make (proto, port_pub, clib_net_to_host_u32 (priv->as_u32),
+		       port_priv, &sf))
     return clib_error_return (0, "forward: port out of range");
-
-  sf.proto = proto;
-  sf.ip_priv = clib_net_to_host_u32 (priv->as_u32);
-  sf.port_pub = (u16) port_pub;
-  sf.port_priv = (u16) port_priv;
   vec_add1 (cfg->statics, sf);
   return 0;
 }
@@ -1180,6 +1176,9 @@ VLIB_CLI_COMMAND (bpa_show_session_command, static) = {
  * is worse than no "show".
  */
 
+/* not a unit: a lookup in VPP's per-thread hash and pool of subscriber
+ * records, keyed by bpa_sub_key() (test/test_bpa_keys.c); lab/two-pools.sh
+ * reads "show bpa subscriber" through it (#472) */
 static bpa_sub_t *
 bpa_sub_find (bpa_main_t *bm, u32 pool_index, u32 sub_idx,
 	      bpa_per_thread_t **pt_out)
@@ -1201,32 +1200,23 @@ bpa_sub_find (bpa_main_t *bm, u32 pool_index, u32 sub_idx,
   return pool_elt_at_index (pt->subs, q[0]);
 }
 
-/*
- * The block the allocator is holding for this subscriber right now, if any.
- * Zero in deterministic mode: there the block is the formula's, printed
- * whether or not the subscriber has ever sent a packet.
- */
+/* not a unit: finds the subscriber's thread in VPP's per-thread state and
+ * asks bpa_dyn_held(), which test/test_bpa_dyn.c holds (#472) */
 static int
 bpa_sub_block_held (bpa_main_t *bm, const bpa_pool_t *p, u32 pool_index,
 		    u32 sub_idx, bpa_block_t *blk)
 {
-  u32 ti = bpa_sub_thread (bm, sub_idx), w, nw, block_idx;
+  u32 ti = bpa_sub_thread (bm, sub_idx), w, nw;
   bpa_per_thread_t *pt;
 
-  if (p->mode != BPA_MODE_DYNAMIC || ti >= vec_len (bm->per_thread))
+  if (ti >= vec_len (bm->per_thread))
     return 0;
   pt = vec_elt_at_index (bm->per_thread, ti);
   if (pool_index >= vec_len (pt->dyn))
     return 0;
-
   bpa_worker_id (bm, ti, &w, &nw);
-  if (bpa_dyn_block_of (vec_elt_at_index (pt->dyn, pool_index), sub_idx, w, nw,
-			&block_idx))
-    return 0;
-
-  bpa_dyn_block_addr (p, block_idx, blk);
-  blk->sub_idx = sub_idx;
-  return 1;
+  return bpa_dyn_held (vec_elt_at_index (pt->dyn, pool_index), p, sub_idx, w,
+		       nw, blk);
 }
 
 /*
@@ -1237,6 +1227,8 @@ bpa_sub_block_held (bpa_main_t *bm, const bpa_pool_t *p, u32 pool_index,
  * the one whose index IS that index - a forward is pinned to the block the
  * pool's arithmetic gives the subscriber, and nothing else can be pinned.
  */
+/* not a unit: finds the subscriber's thread in VPP's per-thread state and
+ * asks bpa_dyn_is_pinned(), which test/test_bpa_dyn.c holds (#472) */
 static int
 bpa_sub_block_pinned (bpa_main_t *bm, const bpa_pool_t *p, u32 pool_index,
 		      u32 sub_idx)
@@ -1271,6 +1263,8 @@ bpa_sub_block_pinned (bpa_main_t *bm, const bpa_pool_t *p, u32 pool_index,
  * claimant answers as before - which tenant an idle address belongs to is a
  * question only the operator can settle, and that is issue #81.
  */
+/* not a unit: walks VPP's pool of pools; the rule it applies is
+ * bpa_claimant_take(), held by test/test_bpa_pool.c (#472) */
 static int
 bpa_subscriber_pool (bpa_main_t *bm, u32 host, u32 *pool_index, u32 *sub_idx)
 {
@@ -1288,19 +1282,11 @@ bpa_subscriber_pool (bpa_main_t *bm, u32 host, u32 *pool_index, u32 *sub_idx)
 	continue;
 
       idx = p - bm->pools;
-      if (!found)
-	{
-	  *pool_index = idx;
-	  *sub_idx = si;
-	  found = 1;
-	}
-      if (bpa_sub_find (bm, idx, si, 0)
-	  || bpa_sub_block_held (bm, p, idx, si, &blk))
-	{
-	  *pool_index = idx;
-	  *sub_idx = si;
-	  return 0;
-	}
+      if (bpa_claimant_take (&found, idx, si,
+			     bpa_sub_find (bm, idx, si, 0)
+			       || bpa_sub_block_held (bm, p, idx, si, &blk),
+			     pool_index, sub_idx))
+	return 0;
     }
 
   return found ? 0 : -1;
