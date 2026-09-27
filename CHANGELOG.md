@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.138.0 - the VTY runs in the management plane
+
+### Added
+
 * **The VTY runs in the management plane by default** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase C).
   0.137.0 shipped it behind a switch. The pieces below are what turn it on:
   the host's facts read under `/host`, the probes and the host's questions
@@ -108,8 +114,6 @@ version has a chance of seeing it.
   and streams the output row by row. Ctrl-C closes the connection and the
   host kills the probe. Measured: a VTY in a container with no network at all
   pinged the gateway through the door, 3 of 3.
-
-### Fixed
 
 ## 0.137.0 - the management plane has a container of its own
 
