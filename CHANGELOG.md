@@ -96,8 +96,9 @@ version has a chance of seeing it.
   stays on the host's VTY unless `/etc/prisma-routing/vty-in-container`
   exists, until those reads go through the doors too. With the switch on,
   `prismash-login` hands the broker `prisma-vty-session`, which asks the
-  host's doors for a session. The daemon runs `docker exec -u <uid>:<gid> --group-add <the account's host
-  groups> prisma-routing_mgmt_1 prismash`, with the broker socket under that
+  host's doors for a session. The daemon runs `docker exec -u <uid>:<gid>
+  --group-add <the account's host groups> prisma-routing_mgmt_1 prismash`,
+  with the broker socket under that
   login's own `/run/user`. So each operator is in the container as their own
   uid, the role is read from the same groups, and the doors they reach from
   there are decided by the same uid. A read-only account in the container is
