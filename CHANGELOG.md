@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Loading a whole configuration that dropped a sub-interface stopped before
+  the routes.** `--load`, and the boot that replays the saved file, unpaired
+  the sub-interface from the kernel after the dataplane had already removed
+  that pair with its parent's; the unpairing refused ("the dataplane does not
+  have it") and ended the commit before FRR was reloaded, so the file's
+  `router static` never arrived while its CGNAT pools did. Unpairing an
+  interface that is gone is now the outcome asked for, as deleting one
+  already was. `lab/vty.sh` had been red on it since before 0.138, and also
+  read the interface block's `cgnat` - its own statement since the
+  interface-side CGNAT change - as a leak from the level above; it checks
+  words now, not their position on the line.
+
 ## 0.138.3 - every CGNAT function has a unit test, headers included
 
 ### Added

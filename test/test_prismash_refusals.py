@@ -387,6 +387,15 @@ for label, verb in _absent:
          f"have it", rv)
 print(f"  {len(_absent)} verbs, each refusing a name the dataplane has not got")
 
+# Except one, and it is not a refusal: UNPAIRING an interface that is gone is
+# the outcome asked for. A load that dropped a sub-interface met its pair
+# already removed with its parent's, refused, and ended the commit before FRR
+# took the file's routes (#474).
+rv, text = driven(lambda sh: sh.set_lcp_pair(MISSING, "", False),
+                  shell(Api(have={"pg0": 1})))
+check(rv is True and "error" not in text,
+      f"unpairing an interface that is gone refused the commit: {text!r}")
+
 print("\n=== and the same verbs when the dataplane answers and says no ===")
 # THE OTHER HALF, and the half that decides whether the operator is told an
 # upgrade is why: these go through `err_dataplane`, which the plain refusals

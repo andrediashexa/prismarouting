@@ -818,8 +818,13 @@ has_word() { printf ' %s ' "$2" | grep -q " $1 "; }
 # report "not found" as a pass and be the very thing it was written to refuse.
 lacks_word() { ! has_word "$1" "$2"; }
 echo "  the interface block offers: ${COMP_IN_BLOCK:-<nothing>}"
-expect_in "inside an interface, '?' offers its own statements" \
-  "IN_BLOCK: description " "$COMP"
+# By word, not by where a word sits on the line: "IN_BLOCK: description "
+# stopped matching the day `cgnat` - an interface statement since #465 -
+# sorted in front of it, which read as a missing statement (#474).
+expect "inside an interface, '?' offers its own statements" \
+  has_word description "$COMP_IN_BLOCK"
+expect "  including the interface's side of the CGNAT (#465)" \
+  has_word cgnat "$COMP_IN_BLOCK"
 # "urpf" appears exactly once in this blob, on IN_BLOCK's own line, so unlike
 # "mtu" below it this one does fail when the block stops offering it. Left as
 # it was: an assertion rewritten without being shown to fail first is one
@@ -827,8 +832,13 @@ expect_in "inside an interface, '?' offers its own statements" \
 expect_in "and the rest of the block with them" "urpf" "$COMP"
 expect "including the ones that were always there" \
   has_word mtu "$COMP_IN_BLOCK"
-expect_not_in "and nothing from the level above leaks in" \
-  "IN_BLOCK: cgnat" "$COMP"
+# The level above's own words. `cgnat` was the one this asked about until
+# #465 made it the interface's too; `nat` and `router` enter blocks that are
+# only ever the top level's (#474).
+expect "and nothing from the level above leaks in" \
+  lacks_word nat "$COMP_IN_BLOCK"
+expect "  not the routing block either" \
+  lacks_word router "$COMP_IN_BLOCK"
 
 # --- BGP: the block that used to offer nothing (#142) ---
 #
