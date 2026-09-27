@@ -263,4 +263,35 @@ services:
       - /etc/group:/etc/group:ro
       - /etc/shadow:/etc/shadow:ro
       - /usr/share/prisma-routing:/usr/share/prisma-routing:ro
+      # THE HOST'S FACTS, READ-ONLY UNDER /host (#448): the NICs, the PCI
+      # bus, the CPUs and the control plane's cgroup in /sys, the routes of
+      # the host's own network namespace in /proc/1/net, the live medium,
+      # the dataplane's startup.conf, the management card's stanza, the
+      # installer's presence. Read at the container's own paths they are the
+      # container's - measured on 0.137.0's first gate, where the VTY in here
+      # told the live medium's operator to reboot. The subtrees and not /:
+      # / would bring /run, and /run/docker.sock is a socket a read-only
+      # bind does not stop anybody connecting to.
+      - /sys:/host/sys:ro
+      - /proc:/host/proc:ro
+      - /run/live:/host/run/live:ro
+      - /etc/vpp:/host/etc/vpp:ro
+      - /etc/network:/host/etc/network:ro
+      - /usr/sbin:/host/usr/sbin:ro
+    # Every host path the VTY reads, pointed at /host. test/test_mgmt_reads_host.py
+    # holds this list to the reads in prismash.py.
+    environment:
+      - PRISMA_LIVE_SQUASHFS=/host/run/live/medium/live/filesystem.squashfs
+      - PRISMA_INSTALLER=/host/usr/sbin/prisma-routing-install
+      - PRISMA_CPU_ISOLATED=/host/sys/devices/system/cpu/isolated
+      - PRISMA_CPU_ONLINE=/host/sys/devices/system/cpu/online
+      - PRISMA_CPU_FENCE=/host/sys/fs/cgroup/system.slice/cpuset.cpus.effective
+      - PRISMA_CP_MEMORY_NOW=/host/sys/fs/cgroup/system.slice/memory.current
+      - PRISMA_MEMINFO=/host/proc/meminfo
+      - PRISMA_STARTUP_CONF=/host/etc/vpp/startup.conf
+      - PRISMA_PCI_DEVICES=/host/sys/bus/pci/devices
+      - PRISMA_PCI_DRIVERS=/host/sys/bus/pci/drivers
+      - PRISMA_MGMT_CONF=/host/etc/network/interfaces.d/prisma-routing
+      - PRISMA_SYS_CLASS_NET=/host/sys/class/net
+      - PRISMA_PROC_NET_ROUTE=/host/proc/1/net/route
     restart: unless-stopped

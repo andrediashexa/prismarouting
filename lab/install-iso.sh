@@ -1693,6 +1693,13 @@ drive_console() {
   wait_for "HXLAB mgmt-bp=" 60 "the management plane to say its backplane address" || return 1
   send 'echo "HX""LAB mgmt-vty=$(docker exec prisma-routing_mgmt_1 prismash -c "show version" 2>&1 | tr -d "\r" | grep -c "not responding") $(docker exec prisma-routing_mgmt_1 prismash -c "show version" 2>&1 | tr -d "\r" | head -1)"'
   wait_for "HXLAB mgmt-vty=" 90 "the VTY in the management plane to answer" || return 1
+  # AND IT SEES THE BOX, NOT ITSELF (#448): the same statements asked of the
+  # VTY on the host and of the one in the container answer the same, byte
+  # for byte. show hardware reads the PCI bus, the NICs and the routes;
+  # show system cpu the CPUs and the control plane's cgroup - every one a
+  # read the container makes under /host.
+  send 'for c in "show hardware" "show interface" "show system cpu"; do h=$(prismash -c "$c | no-more" 2>&1 | md5sum | cut -c1-8); m=$(docker exec prisma-routing_mgmt_1 prismash -c "$c | no-more" 2>&1 | md5sum | cut -c1-8); printf "%s:%s " "$h" "$m"; done > /tmp/mgmt-same; echo "HX""LAB mgmt-same=$(cat /tmp/mgmt-same)"'
+  wait_for "HXLAB mgmt-same=" 120 "the two VTYs to answer the same statements" || return 1
   # And the VTY this very shell was started from runs in it: the session is
   # still open under `start shell`, as a `docker exec` the doors ran (#448).
   send 'echo "HX""LAB mgmt-session=$(ps -eo args | grep -c "[p]risma-routing_mgmt_1 prismash --attach")"'
@@ -2707,6 +2714,20 @@ if [ "$up" = 1 ]; then
     MGMT_CT=$(sed -n 's/^HXLAB mgmt-ct=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
     MGMT_BP=$(sed -n 's/^HXLAB mgmt-bp=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
     MGMT_VTY=$(sed -n 's/^HXLAB mgmt-vty=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+    MGMT_SAME=$(sed -n 's/^HXLAB mgmt-same=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+    _same=1; _pairs=0
+    for _p in $MGMT_SAME; do
+      _pairs=$((_pairs + 1))
+      [ "${_p%%:*}" = "${_p#*:}" ] || _same=0
+    done
+    if [ "$_pairs" = 3 ] && [ "$_same" = 1 ]; then
+      echo "  [ ok ] the VTY in it sees the box: show hardware, show interface and"
+      echo "         show system cpu answer the same there as on the host"
+    else
+      echo "  [FAIL] the VTY in the management plane does not see the box as the host"
+      echo "         does (host:container, per statement): '${MGMT_SAME:-<unread>}'"
+      fail=1
+    fi
     [ "$MGMT_CT" = running ] \
       && echo "  [ ok ] the management plane runs (#448)" \
       || { echo "  [FAIL] the management plane is '${MGMT_CT:-<unread>}', not running"; fail=1; }

@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The management plane reads the host's facts, not its own** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase C).
+  The VTY reads the box's NICs, PCI bus, CPUs, control-plane cgroup,
+  routes, live medium, `startup.conf` and management stanza straight off
+  the filesystem. In the management plane's container those paths are the
+  container's own. The container now mounts the host's `/sys`, `/proc`,
+  `/run/live`, `/etc/vpp`, `/etc/network` and `/usr/sbin` read-only under
+  `/host`, and points each of the VTY's path seams at them. The routes are
+  the host init's, `/host/proc/1/net/route`. `/` and `/run` are not mounted,
+  because `/run/docker.sock` is a socket a read-only bind does not stop
+  anybody connecting to. `test/test_mgmt_reads_host.py` holds every such
+  read in `prismash.py` to its line in `compose.yaml`. Measured on a
+  development host: `show hardware` in the container read `ens18`, its PCI
+  address and the default route exactly as on the host; without `/host` it
+  said "no PCI NIC is visible to Linux on this box". The gate compares
+  `show hardware`, `show interface` and `show system cpu` between the two
+  VTYs on the installed box.
+
 ### Fixed
 
 ## 0.137.0 - the management plane has a container of its own

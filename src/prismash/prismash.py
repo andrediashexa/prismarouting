@@ -8250,7 +8250,7 @@ class Shell:
 
     #: Where Linux lists its interfaces; a name held there by something that is
     #: not this box's own pair is not taken (#461). A seam for the suites.
-    SYS_NET = "/sys/class/net"
+    SYS_NET = os.environ.get("PRISMA_SYS_CLASS_NET", "/sys/class/net")
 
     def dataplane_names(self) -> set:
         """
