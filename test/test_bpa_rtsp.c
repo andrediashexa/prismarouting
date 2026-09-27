@@ -434,7 +434,8 @@ main (void)
   CHECK (bpa_rtsp_ci ((const u8 *) "TRANSPORT", "transport", 9)
 	   && !bpa_rtsp_ci ((const u8 *) "transpore", "transport", 9),
 	 "bpa_rtsp_ci: a header name compared case-blind, and only so");
-  CHECK (bpa_rtsp_is_ws (' ') && bpa_rtsp_is_ws ('\t') && !bpa_rtsp_is_ws ('\n'),
+  CHECK (bpa_rtsp_is_ws (' ') && bpa_rtsp_is_ws ('\t')
+	   && !bpa_rtsp_is_ws ('\n'),
 	 "bpa_rtsp_is_ws: space and tab, not a line ending");
   printf ("  case-blind names, and the whitespace between tokens\n");
 

@@ -309,4 +309,30 @@ bpa_tcp_next (u8 state, u8 flags)
   return state;
 }
 
+/*
+ * Has a session outlived its timeout? Strictly: one heard exactly `timeout`
+ * seconds ago is still alive, and a closed one (timeout 0) goes on the first
+ * sweep after the moment it was last heard.
+ */
+static_always_inline int
+bpa_is_expired (f64 now, f64 last_heard, u32 timeout)
+{
+  return now - last_heard > (f64) timeout;
+}
+
+/*
+ * Is the pair an ALG already mapped for these two private ports still one it
+ * may announce again? Both on the public address it is announcing, the high
+ * port right above the low one, and the low one EVEN - RFC 3550 s11 puts
+ * RTCP at RTP's port + 1, and a pair starting odd is not one a peer reads as
+ * a pair. Half of a pair is worse than none, so anything else is refused.
+ */
+static_always_inline int
+bpa_pair_is_announceable (u32 want_pub, u32 pub0, u16 port0, u32 pub1,
+			  u16 port1)
+{
+  return pub0 == want_pub && pub1 == want_pub
+	 && (u32) port1 == (u32) port0 + 1 && !(port0 & 1);
+}
+
 #endif /* __included_bpa_keys_h__ */

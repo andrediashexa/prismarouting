@@ -473,7 +473,8 @@ main (void)
    * with. After every one of a long run of attaches, detaches and MTU
    * changes, a copy rebuilt from the slots by bpa_auto_mss_rescan() must hold
    * the same minimum, the same count at it and the same count on. */
-  printf ("\n--- bpa_auto_mss_rescan: the incremental state is the rescan's ---\n");
+  printf ("\n--- bpa_auto_mss_rescan: the incremental state is the "
+	  "rescan's ---\n");
   {
     static u32 slots[64];
     static const u32 mtus[] = { 0, 1500, 1492, 9000, 1480, 1500, 576 };

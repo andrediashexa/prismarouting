@@ -1104,7 +1104,8 @@ main (void)
     CHECK (bpa_sip_ci ((const u8 *) "cOnTaCt", "contact", 7)
 	     && !bpa_sip_ci ((const u8 *) "contacx", "contact", 7),
 	   "bpa_sip_ci: header names are compared case-blind, and only so");
-    CHECK (bpa_sip_is_ws (' ') && bpa_sip_is_ws ('\t') && !bpa_sip_is_ws ('\r'),
+    CHECK (bpa_sip_is_ws (' ') && bpa_sip_is_ws ('\t')
+	     && !bpa_sip_is_ws ('\r'),
 	   "bpa_sip_is_ws: space and tab, and not CR");
     CHECK (bpa_sip_is_digit ('0') && bpa_sip_is_digit ('9')
 	     && !bpa_sip_is_digit ('a') && !bpa_sip_is_digit ('/'),

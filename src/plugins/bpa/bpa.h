@@ -486,7 +486,8 @@ format_function_t format_bpa_alg;
  * many pools this becomes an mtrie.
  */
 /* not a unit: it walks VPP's pool of pools; the rule for one pool is
- * bpa_pool_claims_inside() in bpa_pool.h, held by test/test_bpa_pool.c (#472) */
+ * bpa_pool_claims_inside() in bpa_pool.h, held by test/test_bpa_pool.c
+ * (#472) */
 static_always_inline int
 bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 fib, u32 *pool_index,
 		    u32 *sub_idx)
@@ -521,7 +522,8 @@ bpa_maybe_outside (const bpa_main_t *bm, u32 addr)
 }
 
 /* not a unit: it walks VPP's pool of pools; the rule for one pool is
- * bpa_pool_claims_outside() in bpa_pool.h, held by test/test_bpa_pool.c (#472) */
+ * bpa_pool_claims_outside() in bpa_pool.h, held by test/test_bpa_pool.c
+ * (#472) */
 static_always_inline int
 bpa_pool_by_outside (bpa_main_t *bm, u32 addr, u32 *pool_index)
 {

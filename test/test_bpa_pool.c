@@ -2522,7 +2522,8 @@ main (void)
 
   /* #472: a forward clause's ranges, and which pool an address belongs to
    * for a command that has no packet (#74). */
-  printf ("\n=== a forward's ports; the pool an idle or live address is in ===\n");
+  printf ("\n=== a forward's ports; the pool an idle or live address is "
+	  "in ===\n");
   {
     bpa_static_t sf;
     int found;

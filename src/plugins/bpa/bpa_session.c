@@ -286,7 +286,9 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
  */
 /* not a unit: it reserves the SECOND port an ALG needs - RTP
  * beside RTCP - in the subscriber's own block, through the port map and the
- * bihash. lab/rtsp.sh and lab/sip.sh drive the ALGs that ask for it. */
+ * bihash. Whether an existing pair may be announced again is
+ * bpa_pair_is_announceable(), the pair itself bpa_portmap_alloc_pair(), each
+ * driven by name; lab/rtsp.sh and lab/sip.sh drive the ALGs that ask. */
 int
 bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 		      u32 pool_index, u32 sub_idx, u32 want_ip_pub,
@@ -329,8 +331,8 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 	return -1; /* half a pair: not something to announce */
       m1 = pool_elt_at_index (pt->sessions, value.value);
 
-      if (m0->ip_pub != want_ip_pub || m1->ip_pub != want_ip_pub
-	  || m1->port_pub != m0->port_pub + 1 || (m0->port_pub & 1))
+      if (!bpa_pair_is_announceable (want_ip_pub, m0->ip_pub, m0->port_pub,
+				     m1->ip_pub, m1->port_pub))
 	return -1;
 
       m0->last_heard = now;
@@ -436,8 +438,9 @@ bpa_sub_rate_take (bpa_sub_t *sub, u32 rate, f64 now)
 /* not a unit: the whole creation path: a port out of the map, a
  * record in the bihash, a counter on the worker, and the refusals that stop
  * each of those. lab/datapath.sh, lab/limits.sh and lab/soak.sh drive it,
- * and the decisions it consults - the port map, the bucket, the block
- * arithmetic - are driven by their own harnesses. */
+ * and the decisions it consults - the port choice (bpa_subblocks_alloc),
+ * the fill alarm (bpa_alarm_step), the bucket, the block arithmetic - are
+ * driven by their own harnesses. */
 bpa_session_t *
 bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 		    const bpa_block_t *b, u16 port_priv, u8 proto, u32 fib,
@@ -447,7 +450,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   bpa_sub_t *sub;
   bpa_subblock_t *sb = 0;
   u32 blk_idx;
-  int off = -1, preferred;
+  int off;
 
   *why = BPA_CREATE_OK;
   /* Before anything is taken - the subscriber record, a port - so a refusal
@@ -484,21 +487,11 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
       return 0;
     }
 
-  /*
-   * Try the blocks the subscriber already holds, oldest first. Port
-   * preservation only applies to the block whose range contains the original
-   * port, which is normally the first.
-   */
-  for (blk_idx = 0; blk_idx < vec_len (sub->blocks); blk_idx++)
-    {
-      sb = vec_elt_at_index (sub->blocks, blk_idx);
-      preferred = -1;
-      if (port_priv >= sb->blk.port_lo && port_priv <= sb->blk.port_hi)
-	preferred = port_priv - sb->blk.port_lo;
-      off = bpa_portmap_alloc (&sb->map, preferred);
-      if (off >= 0)
-	break;
-    }
+  /* The blocks the subscriber already holds, oldest first, keeping the
+   * original port where its block allows (bpa_subblocks_alloc). */
+  off = bpa_subblocks_alloc (sub->blocks, port_priv, &blk_idx);
+  if (off >= 0)
+    sb = vec_elt_at_index (sub->blocks, blk_idx);
 
   /*
    * Every block full. The caller decides whether an extension is possible -
@@ -533,11 +526,10 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
       bpa_sub_usage (sub, &used, &total);
       pct = total ? (used * 100) / total : 0;
 
-      if (!sub->alarmed && pct >= p->util_alarm)
+      if (bpa_alarm_step (&sub->alarmed, pct, p->util_alarm))
 	{
 	  ip4_address_t a;
 
-	  sub->alarmed = 1;
 	  a.as_u32 = clib_host_to_net_u32 (b->ip_pub);
 	  vlib_log_warn (bpa_main.log_class,
 			 "subscriber %u of pool %v is %u%% through its "
@@ -547,11 +539,6 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 			 b->sub_idx, p->name, pct, total, format_ip4_address,
 			 &a, p->util_alarm);
 	}
-      /* Ten points of hysteresis, so a subscriber sitting on the threshold
-       * does not produce a line every time a port is freed and taken. */
-      else if (sub->alarmed
-	       && pct + 10 < p->util_alarm)
-	sub->alarmed = 0;
     }
 
   s = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx, (u16) off,
@@ -1349,10 +1336,11 @@ bpa_pool_drain (bpa_per_thread_t *pt, u32 pool_index, u32 *cursor,
  * Budgeted expiry walk. Called from the process node so a large table
  * never stalls a worker: it resumes where it stopped.
  */
-/* not a unit: the worker's own expiry walk, driven by VPP's clock and
- * its input node - a process node that exists nowhere else. lab/soak.sh
- * runs long enough for it to matter and lab/datapath.sh reads a session
- * that expired. */
+/* not a unit: the worker's own expiry walk over VPP's session pool, under
+ * the barrier its process node holds. When a session has expired is
+ * bpa_is_expired() over bpa_timeout_for(), both driven by
+ * test/test_bpa_keys.c; lab/soak.sh runs long enough for the walk to matter
+ * and lab/datapath.sh reads a session that expired. */
 u32
 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
 		 u32 budget)
@@ -1386,7 +1374,8 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
 	      bpa_pool_t *sp = pool_elt_at_index (bm->pools, s->pool_index);
 	      et = bpa_timeouts_resolve (&sp->timeouts, t);
 	    }
-	  if (now - s->last_heard > (f64) bpa_session_timeout (s, &et))
+	  if (bpa_is_expired (now, s->last_heard,
+			      bpa_session_timeout (s, &et)))
 	    {
 	      bpa_session_free (pt, s, now);
 	      freed++;

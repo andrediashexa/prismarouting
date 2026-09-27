@@ -47,6 +47,8 @@ static unsigned checks = 0;
     }                                                                         \
   while (0)
 
+#define PUBA 0xc8000001u
+
 static int
 same (const clib_bihash_kv_16_8_t *a, const clib_bihash_kv_16_8_t *b)
 {
@@ -138,7 +140,8 @@ main (void)
     CHECK (ip == 0x64400005u && fib == 0xfffffffeu,
 	   "the shared value came back as %08x in VRF %u", ip, fib);
     bpa_shared_unpack (bpa_shared_value (0xffffffffu, 0), &ip, &fib);
-    CHECK (ip == 0xffffffffu && fib == 0, "a full address leaked into the VRF");
+    CHECK (ip == 0xffffffffu && fib == 0,
+	   "a full address leaked into the VRF");
     CHECK (bpa_shared_is (bpa_shared_value (0x0a000005u, 1), 0x0a000005u, 1),
 	   "a subscriber does not recognise its own binding");
     CHECK (!bpa_shared_is (bpa_shared_value (0x0a000005u, 2), 0x0a000005u, 1),
@@ -159,6 +162,28 @@ main (void)
   CHECK (same (&a, &b), "the public GRE key is not packed as bpa_key_gre()");
   bpa_key_esp_pub (&b, 0xc8000001u, 0x08080808u);
   CHECK (!same (&a, &b), "a GRE binding and an ESP binding share a key");
+
+  printf ("\n=== when a session has expired ===\n");
+  CHECK (!bpa_is_expired (1300.0, 1000.0, 300),
+	 "a session heard exactly its timeout ago was expired");
+  CHECK (bpa_is_expired (1300.5, 1000.0, 300),
+	 "a session past its timeout was kept");
+  CHECK (!bpa_is_expired (1000.0, 1000.0, 0)
+	   && bpa_is_expired (1000.1, 1000.0, 0),
+	 "a reset connection (timeout 0) did not go on the next sweep");
+
+  printf ("\n=== an ALG's existing pair, announced again ===\n");
+  CHECK (bpa_pair_is_announceable (PUBA, PUBA, 5000, PUBA, 5001),
+	 "a retransmitted SETUP was refused its own pair");
+  CHECK (!bpa_pair_is_announceable (PUBA, PUBA, 5001, PUBA, 5002),
+	 "a pair starting on an odd port was announced - RTCP is RTP + 1");
+  CHECK (!bpa_pair_is_announceable (PUBA, PUBA, 5000, PUBA, 5002),
+	 "two ports that are not consecutive were announced as a pair");
+  CHECK (!bpa_pair_is_announceable (PUBA, PUBA, 5000, PUBA + 1, 5001)
+	   && !bpa_pair_is_announceable (PUBA + 1, PUBA, 5000, PUBA, 5001),
+	 "a pair on another public address was announced");
+  CHECK (!bpa_pair_is_announceable (PUBA, PUBA, 65534, PUBA, 0),
+	 "65534 and 0 were taken as consecutive");
 
   printf ("\n=== how long a session lives ===\n");
   {
