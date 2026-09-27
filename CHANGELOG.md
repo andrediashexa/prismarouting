@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.138.5 - leaving configuration no longer warns about a commit that applied everything
+
+### Fixed
+
 * **Every `exit` after a commit said "uncommitted changes were discarded".** ([#477](https://github.com/andrediashexa/hexarouting/issues/477))
   Entering `interface <name>` - for its address, its description, its CGNAT
   side - opened the block in the candidate's routing text too, and `exit`
