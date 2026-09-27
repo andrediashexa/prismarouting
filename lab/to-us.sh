@@ -14,8 +14,7 @@
 # still reached translated, which is the control that the CGNAT is on; and
 # the node says how many packets it left alone as the box's own.
 #
-# No off mode: the fix is not a switch. Measured red once against the tree
-# before it (see #470): both pings lost, and the counter absent.
+# NO-OFF-RUN: the fix is not a switch in the product, and one added only for this lab to flip would be a way to break the box; the control is the run against the tree before it (#470): with the pool blackholed, the gateway and the uplink lost 3 of 3 while the internet answered, and the counter was 0
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
