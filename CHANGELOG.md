@@ -97,11 +97,15 @@ version has a chance of seeing it.
   uid, the role is read from the same groups, and the doors they reach from
   there are decided by the same uid. A read-only account in the container is
   exactly a read-only account on the host. `ssh box '<command>'` goes the
-  same way, as `-c`. With no daemon, no container running, or no `/run/user`
-  for the login, the VTY runs on the host as before, so a box whose
-  container is down is still reachable. Sessions are journal lines by their
-  kind (`session attach`, `session command`), never by a command's text,
-  which can carry a password hash.
+  same way, as `-c`.
+  A login with no runtime directory of its own (the medium carries no
+  `libpam-systemd`, so a console login has none) puts the socket in
+  `/run/prisma-routing/vty`, a sticky directory made at boot, and the door
+  takes it there only when the socket and its directory are the caller's
+  own. With no daemon or no container running, the VTY runs on the host as
+  before, so a box whose container is down is still reachable. Sessions are
+  journal lines by their kind (`session attach`, `session command`), never
+  by a command's text, which can carry a password hash.
 
 ### Fixed
 
