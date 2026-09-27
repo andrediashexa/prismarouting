@@ -23,6 +23,7 @@
   _ (NO_POOL, 1, "no pool for source address") \
   _ (BYPASS_SRC, 0, "packets from a bypassed source, left untranslated") \
   _ (BYPASS_DST, 0, "packets to a bypassed destination, left untranslated") \
+  _ (TO_US, 0, "packets to this box itself, left untranslated") \
   _ (UNSUPPORTED, 1, "unsupported protocol") \
   _ (OVER_CAPACITY, 1, "subscriber beyond pool capacity") \
   _ (BLOCK_EXHAUSTED, 1, "port block exhausted") \

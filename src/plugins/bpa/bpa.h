@@ -7,6 +7,8 @@
 #include <vnet/vnet.h>
 #include <vnet/ip/ip.h>
 #include <vnet/feature/feature.h>
+#include <vnet/fib/ip4_fib.h>
+#include <vnet/dpo/load_balance.h>
 
 #include "bpa_identity.h"
 #include "bpa_pool.h"
@@ -634,6 +636,31 @@ bpa_proto_of (u8 ip_proto)
  * product enables nothing there, and the alternative on offer today is a
  * dropped packet.
  */
+/*
+ * Is this destination one of the box's own addresses, in this VRF? (#470)
+ *
+ * Measured on a 0.135.0 box: a subscriber's echo reply to the box's own
+ * ping (100.64.0.2 -> 100.64.0.1, the inside interface) was translated -
+ * "BPA in2out 100.64.0.2:23789 -> 200.0.0.2:1027 (new session)" - and then
+ * dropped by ip4-local, "ip4 source lookup miss", because the pool is a
+ * blackhole. So every flow from a subscriber to the box died: a ping to the
+ * gateway, to the uplink address, ssh or DNS to the box, each spending a
+ * session of the subscriber's block on the way.
+ *
+ * The FIB's own answer, read the way ip4-lookup reads it: a receive DPO is
+ * an address of this box. Asked BEFORE the session table and not only when
+ * it misses: a session is keyed on the inside endpoint alone, so a packet to
+ * the box from a port that already has a session outside would hit it and be
+ * translated all the same.
+ */
+static_always_inline int
+bpa_to_us (u32 fib_index, const ip4_address_t *dst)
+{
+  const load_balance_t *lb =
+    load_balance_get (ip4_fib_forwarding_lookup (fib_index, dst));
+  return load_balance_get_bucket_i (lb, 0)->dpoi_type == DPO_RECEIVE;
+}
+
 static_always_inline void
 bpa_next_after (u16 *next, vlib_buffer_t *b, u16 lookup)
 {
