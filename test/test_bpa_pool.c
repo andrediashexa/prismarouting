@@ -2362,5 +2362,123 @@ main (void)
 	    "address\n");
   }
 
+  /* ------------------------------------------------------------------
+   * #472: the bpa_pool.h helpers no test named, until the checker counted
+   * headers. Each is asserted on what the CGNAT depends on it for.
+   * ------------------------------------------------------------------ */
+  printf ("\n=== timeouts: a pool's own over the global, zero inherits ===\n");
+  {
+    bpa_timeouts_t pool, global, r;
+    u32 breaches;
+
+    memset (&pool, 0, sizeof (pool));
+    memset (&global, 0, sizeof (global));
+    global.udp = 300; global.icmp = 60; global.tcp_trans = 240;
+    global.tcp_estab = 7440; global.tcp_syn = 6; global.gre = 7440;
+    global.port_holddown = 0; global.alg_expect = 30;
+    pool.udp = 600; pool.tcp_estab = 86400;
+    r = bpa_timeouts_resolve (&pool, &global);
+    CHECK (r.udp == 600 && r.tcp_estab == 86400,
+	   "a pool's own timeout did not win: udp %u estab %u", r.udp,
+	   r.tcp_estab);
+    CHECK (r.icmp == 60 && r.tcp_trans == 240 && r.tcp_syn == 6
+	   && r.gre == 7440 && r.alg_expect == 30,
+	   "a pool's zero did not inherit the global");
+    CHECK (bpa_timeouts_check (&global, 0, 0) == 0,
+	   "the defaults were reported below their RFC floors");
+    pool.udp = 30;	/* below RFC 4787 REQ-5's 120 */
+    pool.icmp = 0;	/* zero inherits: never a breach */
+    pool.tcp_estab = 600; /* below RFC 5382's 7440 */
+    breaches = bpa_timeouts_check (&pool, 0, 0);
+    CHECK (breaches == 2, "udp 30 and tcp-established 600 are two breaches, "
+	   "not %u", breaches);
+    printf ("  a pool's own timeout wins, zero inherits, and a floor breach "
+	    "is counted\n");
+  }
+
+  printf ("\n=== bypass: source or destination, and nothing else ===\n");
+  {
+    bpa_pool_t p;
+    u32 sb = 0x0a000000u, sc = 256, db = 0xc6336400u, dc = 256;
+
+    memset (&p, 0, sizeof (p));
+    CHECK (bpa_is_bypassed (&p, 0x0a000001u, 0xc6336401u) == 0,
+	   "a pool with no bypass bypassed a packet");
+    CHECK (bpa_addr_set_build (&p.bypass_src, &sb, &sc, 1) == 0
+	   && bpa_addr_set_build (&p.bypass_dst, &db, &dc, 1) == 0,
+	   "the bypass sets did not build");
+    CHECK (bpa_is_bypassed (&p, 0x0a000001u, 0x08080808u) == 1,
+	   "a bypassed source was translated");
+    CHECK (bpa_is_bypassed (&p, 0x64400001u, 0xc6336405u) == 1,
+	   "a bypassed destination was translated");
+    CHECK (bpa_is_bypassed (&p, 0x64400001u, 0x08080808u) == 0,
+	   "a packet neither side names was bypassed");
+    CHECK (bpa_alg_on (0x5, 0x4) == 1 && bpa_alg_on (0x5, 0x2) == 0,
+	   "bpa_alg_on did not read its bit");
+    printf ("  a source or a destination bypass leaves a packet "
+	    "untranslated, and only those\n");
+  }
+
+  printf ("\n=== the reserve: every index a distinct block past the "
+	  "mapped ones ===\n");
+  {
+    static const bpa_policy_t pol[2] = { BPA_POLICY_INTERLEAVED,
+					 BPA_POLICY_BLOCKED };
+    u32 k;
+
+    for (k = 0; k < 2; k++)
+      {
+	bpa_pool_t p;
+	static u8 seen[8][16];
+	u32 res, pub, blk, dup = 0, out = 0;
+
+	memset (&p, 0, sizeof (p));
+	memset (seen, 0, sizeof (seen));
+	p.policy = pol[k];
+	p.outside.count = 8;
+	p.blocks_mapped = 10;
+	p.block_reserve = 3;
+	p.reserve_count = p.outside.count * p.block_reserve;
+	for (res = 0; res < p.reserve_count; res++)
+	  {
+	    bpa_reserve_split (&p, res, &pub, &blk);
+	    if (pub >= p.outside.count || blk < p.blocks_mapped
+		|| blk >= p.blocks_mapped + p.block_reserve)
+	      {
+		out++;
+		continue;
+	      }
+	    if (seen[pub][blk - p.blocks_mapped]++)
+	      dup++;
+	  }
+	CHECK (out == 0 && dup == 0,
+	       "policy %u: %u reserve index(es) out of range, %u landing on a "
+	       "block another already has", k, out, dup);
+      }
+    CHECK (bpa_reserve_worker (7, 3) == 1 && bpa_reserve_worker (6, 3) == 0,
+	   "bpa_reserve_worker is not res_idx modulo the workers");
+    printf ("  every reserve index is its own block, past the mapped ones, "
+	    "under both policies\n");
+  }
+
+  printf ("\n=== the owning worker is sub %% n, for any n ===\n");
+  {
+    u32 n, sub, wrong = 0;
+
+    for (n = 1; n <= 13; n++)
+      {
+	bpa_divisor_t dv;
+
+	bpa_divisor_init (&dv, n);
+	for (sub = 0; sub < 70000; sub += 7)
+	  if (bpa_owner_worker (&dv, sub) != sub % n)
+	    wrong++;
+      }
+    CHECK (wrong == 0, "%u subscriber(s) routed to a worker other than "
+	   "sub %% n", wrong);
+    printf ("  the owning worker is sub %% n for 1 to 13 workers, the odd "
+	    "counts included\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

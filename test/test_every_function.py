@@ -490,9 +490,16 @@ C_NAME = re.compile(r"^([a-z_][a-z_0-9]*) \(")
 
 
 def c_files():
+    """
+    The plugin's .c files AND its headers (#472). The headers hold the
+    static_always_inline half of the CGNAT - the session keys, the timeouts'
+    resolution, the subscriber-to-worker routing, the dynamic allocator's
+    lookups - and until #472 this read .c alone, so none of them was counted
+    and none had to be tested. A review found most of them had no test at all.
+    """
     d = os.path.join(REPO, "src", "plugins", "bpa")
     return sorted(os.path.join(d, f) for f in os.listdir(d)
-                  if f.endswith(".c"))
+                  if f.endswith((".c", ".h")))
 
 
 def c_is_comment(line):

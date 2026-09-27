@@ -2130,6 +2130,46 @@ main (void)
     CHECK (bpa_dyn_borrow (&borrower, lent[0]) != 0,
 	   "the same block was borrowed twice");
 
+    /* bpa_dyn_block_at (#472): a local slot is local * n + worker, the
+     * borrowed slot is the LENDER's pool-wide index - multiplication there
+     * would be a block somebody else translates out of - and a slot past
+     * the borrowed ones is no block at all. */
+    CHECK (bpa_dyn_block_at (&borrower, 3, 1, 2) == 3 * 2 + 1,
+	   "local slot 3 of worker 1 of 2 is block %u, not 7",
+	   bpa_dyn_block_at (&borrower, 3, 1, 2));
+    CHECK (bpa_dyn_block_at (&borrower, borrower.n_local, 1, 2) == lent[0],
+	   "the borrowed slot is block %u, not the lender's %u",
+	   bpa_dyn_block_at (&borrower, borrower.n_local, 1, 2), lent[0]);
+    CHECK (bpa_dyn_block_at (&borrower, borrower.n_local + 1, 1, 2)
+	     == BPA_NO_BLOCK,
+	   "a slot past the borrowed one answered a block");
+    {
+      /* bpa_dyn_addr (#472): a slice that is not the reserve answers what
+       * bpa_dyn_block_addr answers - the one place the two allocators
+       * differ is the reserve, below. */
+      bpa_block_t a1 = { 0 }, a2 = { 0 };
+      CHECK (bpa_dyn_addr (&lender, &p64, 6, &a1) == 0,
+	     "bpa_dyn_addr refused an ordinary block");
+      bpa_dyn_block_addr (&p64, 6, &a2);
+      CHECK (a1.pub_idx == a2.pub_idx && a1.port_lo == a2.port_lo
+	       && a1.port_hi == a2.port_hi,
+	     "bpa_dyn_addr and bpa_dyn_block_addr disagree about block 6");
+    }
+    {
+      /* bpa_dyn_is_pinned (#472): configuration holds a block, traffic
+       * does not make it pinned, and a block past the slice is not. */
+      u32 held_by;
+      int fresh;
+      CHECK (bpa_dyn_pin (&lender, 4, 2, 2, 1.0, &held_by, &fresh) == 0,
+	     "pinning block 4 for subscriber 2 was refused");
+      CHECK (bpa_dyn_is_pinned (&lender, 4, 2) == 1,
+	     "a pinned block does not read as pinned");
+      CHECK (bpa_dyn_is_pinned (&lender, 6, 2) == 0,
+	     "a block nobody pinned reads as pinned");
+      CHECK (bpa_dyn_is_pinned (&lender, lender.n_local * 2 + 2, 2) == 0,
+	     "a block past the slice reads as pinned");
+    }
+
     /*
      * THE ALLOCATOR REACHES IT, and the address is the LENDER's block. The
      * borrowed block was pushed last, so it is on top of this slice's stack
