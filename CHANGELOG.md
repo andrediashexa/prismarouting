@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.135.0 - the host's doors
+
+### Added
+
 * **The Linux end of a dataplane interface is set through the host's doors** ([#448](https://github.com/andrediashexa/hexarouting/issues/448), phase B).
   Up or down, its MTU and its description (`ip link set dev <pair> ...`),
   and the MTU read-back behind the OSPF MTU-mismatch finding. So are
@@ -104,8 +110,6 @@ version has a chance of seeing it.
   status), never with the password hash or a file's contents. Measured in
   `lab/doors.sh`: the accounts, the resolver, the key and the SNMP community
   were made by the daemon, and an unprivileged caller was refused.
-
-### Fixed
 
 ## 0.134.0 - the cards are there when the box boots
 
