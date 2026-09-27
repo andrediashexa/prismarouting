@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A show longer than the screen stops at `--More--`** ([#469](https://github.com/andrediashexa/hexarouting/issues/469)).
+  Asked for by the maintainer. In an interactive session every `show` pages
+  like an implicit `| more`: space shows the next screen, enter the next
+  line, and `q` or Ctrl-C stops the output and not the session. `| no-more`
+  turns it off for one command. `prismash -c`, `ssh box '<command>'` and
+  output that is not a terminal never page. The pager is the VTY's own and
+  counts lines as they are written, so `show interface utilization`, which
+  prints as it samples, is shown as it goes. It is never `more` or `less`:
+  both have a shell escape, which would hand a read-only account the shell
+  it is denied. `test/test_pager.py` covers it, and its first cut caught the
+  pager asking `--More--` after the last line of an output exactly a screen
+  long.
+
 ### Fixed
 
 ## 0.136.1 - a subscriber reaches the box itself

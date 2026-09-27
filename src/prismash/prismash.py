@@ -4002,6 +4002,8 @@ PIPE_FILTERS = {
     "section": ("keep the block a matching line opens, to the next line that "
                 "starts at column 0", "<text>"),
     "count": ("how many lines, instead of the lines", None),
+    # #469: every show pages at --More-- on a terminal; this is the way out.
+    "no-more": ("all of it at once, without stopping at --More--", None),
     "first": ("the first n lines", "<n>"),
     "last": ("the last n lines", "<n>"),
 }
@@ -4070,6 +4072,8 @@ def apply_pipe(text, stages):
             lines = kept
         elif verb == "count":
             lines = [str(len(lines))]
+        elif verb == "no-more":
+            pass    # read by Shell.feed(), which then does not page
         elif verb in ("first", "last"):
             try:
                 n = int(arg)
@@ -4079,6 +4083,102 @@ def apply_pipe(text, stages):
                 return None, f"'{verb}' needs a number that is not negative"
             lines = lines[:n] if verb == "first" else (lines[-n:] if n else [])
     return lines, None
+
+
+class PagerQuit(BaseException):
+    """`q` at --More--: the rest of this command's output is not wanted.
+    A BaseException, so a handler's `except Exception` cannot swallow it and
+    go on printing to an operator who asked it to stop."""
+
+
+class Pager:
+    """
+    Standard output, stopping at --More-- each time the screen fills (#469).
+
+    A WRAPPER AND NOT A BUFFER. The lines are counted as they are written, so
+    a command that prints as it goes - `show interface utilization` samples
+    for seconds - is shown as it goes, and stops when the screen is full,
+    rather than making the operator wait for all of it in silence.
+
+    THE VTY'S OWN, NEVER `more` OR `less`. Both have a shell escape (`!`), and
+    handing either the output would give a read-only account the shell this
+    product withholds from it on purpose - the argument that keeps
+    `| include` from being grep (PIPE_FILTERS).
+
+    At --More--: space, the next screen; enter, the next line; q, the end.
+    Any other key is the next screen, which is what an operator leaning on a
+    key expects.
+    """
+
+    PROMPT = "--More-- (space: next page, enter: next line, q: stop)"
+
+    def __init__(self, out, rows, read_key):
+        self.out = out
+        self.rows = max(rows, 3)
+        self.read_key = read_key
+        self.left = self.rows - 1
+        self.stopped = False
+        self.at_line_start = True
+
+    def write(self, text):
+        if self.stopped:
+            return len(text)
+        for piece in text.splitlines(keepends=True):
+            # Asked BEFORE the line that does not fit, never after the last
+            # one that does: a show exactly a screen long ends without a
+            # --More-- that has nothing behind it (the suite's first cut
+            # caught the pager asking after line 23 of 23 on 24 rows).
+            if self.left <= 0 and self.at_line_start:
+                self.more()
+            self.out.write(piece)
+            self.at_line_start = piece.endswith("\n")
+            if self.at_line_start:
+                self.left -= 1
+        return len(text)
+
+    def more(self):
+        """The --More-- prompt, and what the key pressed at it means."""
+        self.out.write(self.PROMPT)
+        self.out.flush()
+        try:
+            key = self.read_key()
+        except KeyboardInterrupt:
+            key = "q"
+        self.out.write("\r" + " " * len(self.PROMPT) + "\r")
+        if key in ("q", "Q"):
+            self.stopped = True
+            self.out.flush()
+            raise PagerQuit()
+        self.left = 1 if key in ("\r", "\n") else self.rows - 1
+
+    def flush(self):
+        self.out.flush()
+
+    def __getattr__(self, name):
+        # fileno(), isatty(), encoding: whatever the terminal answers.
+        return getattr(self.out, name)
+
+
+def read_key():
+    """One key off the terminal, without waiting for enter."""
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        return sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def terminal_rows():
+    """The terminal's height now: read at each command, so a resized window
+    (the broker relays SIGWINCH) pages at its new size."""
+    try:
+        return os.get_terminal_size(sys.stdout.fileno()).lines
+    except (OSError, ValueError):
+        return 24
 
 
 def interface_aliases(name, pairs):
@@ -6426,6 +6526,10 @@ def pci_address_of(device_link):
 
 
 class Shell:
+    #: Whether a `show` stops at --More-- (#469). On only in repl(), on a
+    #: terminal; everything else - `-c`, the labs, the suites - never pages.
+    paging = False
+
     def __init__(self):
         # Through the host's doors (#448, phase B), which run the command
         # itself when no daemon listens.
@@ -18095,19 +18199,33 @@ class Shell:
         # a character in a regular expression or a description - an AS-path
         # list is full of them - and treating it as a filter would silently
         # cut a policy in half (#191).
-        if line.split()[:1] == ["show"] and "|" in line:
-            command, stages = split_pipe(line)
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                result = handler(command)
-            lines, why = apply_pipe(out.getvalue(), stages)
-            if why:
-                self.err(why)
-            else:
-                for l in lines:
-                    print(l)
-            return result
-        return handler(line)
+        is_show = line.split()[:1] == ["show"]
+        stages = split_pipe(line)[1] if is_show and "|" in line else []
+        # EVERY SHOW PAGES on a terminal (#469), unless `| no-more` says not
+        # to. Only in an interactive session: `prismash -c`, `ssh box
+        # '<command>'` and the labs never page, because nobody is there to
+        # press a key.
+        pager = None
+        if is_show and self.paging and "no-more" not in \
+                [st.split()[0] for st in stages if st.split()]:
+            pager = Pager(sys.stdout, terminal_rows(), read_key)
+        try:
+            with contextlib.redirect_stdout(pager or sys.stdout):
+                if is_show and stages:
+                    command = split_pipe(line)[0]
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        result = handler(command)
+                    lines, why = apply_pipe(out.getvalue(), stages)
+                    if why:
+                        self.err(why)
+                    else:
+                        for l in lines:
+                            print(l)
+                    return result
+                return handler(line)
+        except PagerQuit:
+            return True
 
     def grammar_mode(self):
         """
@@ -18591,6 +18709,9 @@ class Shell:
         # lab, and a banner prepended to parsed output breaks them - the
         # version line already had to learn this, which is why the guard was
         # here before the banner was.
+        # Paging needs a person at a terminal on both ends: keys read from
+        # one, screens written to the other.
+        self.paging = sys.stdin.isatty() and sys.stdout.isatty()
         if sys.stdin.isatty():
             print(BANNER)
             print(f"Prisma Routing VTY {prisma_routing_version()}")

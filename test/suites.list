@@ -4,7 +4,6 @@
 # The list lives here rather than in the Makefile because tools/run-tests.sh
 # has to be able to say "suite 11 of 22", and because a test can then drive
 # the runner against a list of its own (test/test_run_tests.sh does).
-#
 # Every suite must end by printing one of the three verdict lines the runner
 # reads: "ALL TESTS PASSED", "<n> FAILURES", or "<n> NOT MEASURED". A suite
 # that exits without one has not been read, it has been interrupted, and the
@@ -132,3 +131,4 @@ sh test/test_publish_release.sh
 python3 test/test_prismash_ctrl_c.py
 python3 test/test_doors.py
 sh test/test_kernel_current.sh
+python3 test/test_pager.py
