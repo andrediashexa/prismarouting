@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.136.0 - the kernel is Prisma Routing's
+
+### Added
+
 * **The kernel is Prisma Routing's** ([#449](https://github.com/andrediashexa/hexarouting/issues/449)).
   It is Debian's own `linux` source at the version in `appliance/kernel.env`,
   with Debian's patches and configuration, built by `tools/build-kernel.sh`.
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   already replaced. It found the pin five security releases behind the day it
   was written (6.1.176-1 against 6.1.187-1), so the medium ships 6.1.187-1.
   A build takes about 900 s on 16 CPUs and is cached by version.
-
-### Fixed
 
 ## 0.135.0 - the host's doors
 
