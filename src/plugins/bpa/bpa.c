@@ -701,67 +701,46 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
  * are bound to the same one.
  */
 /* not a unit: it walks bpa_main's pool of pools with pool_foreach and
- * formats a clib_error_t. The overlap ARITHMETIC it asks per pair is
- * bpa_ranges_overlap() in bpa_pool.h, which test/test_bpa_pool.c drives over
- * the cases this loop hands it (#424); what is left here is the walk and the
- * sentence, and lab/two-pools.sh produces both on a box. */
+ * formats a clib_error_t. Whether two pools collide - which side, and when
+ * the VRFs keep them apart - is bpa_pools_collide() in bpa_pool.h, which
+ * test/test_bpa_pool.c drives (#424, #472); what is left here is the walk
+ * and the sentence, and lab/two-pools.sh produces both on a box. */
 static clib_error_t *
 bpa_check_pool_overlap (const bpa_pool_t *cfg)
 {
   bpa_main_t *bm = &bpa_main;
   bpa_pool_t *p;
-  u32 i, j;
 
   pool_foreach (p, bm->pools)
     {
       int same_name = vec_len (p->name) == vec_len (cfg->name)
 		      && !memcmp (p->name, cfg->name, vec_len (cfg->name));
+      ip4_address_t a;
+      u32 addr;
+      int outside;
 
       /* A pool being replaced does not overlap itself. */
-      if (same_name)
+      if (same_name || !bpa_pools_collide (cfg, p, &addr, &outside))
 	continue;
 
-      /* Public addresses are compared whatever the VRFs are: out2in keys on
-       * the public address alone, so two pools sharing one are two answers to
-       * the same question. */
-      for (i = 0; i < cfg->outside.n_ranges; i++)
-	for (j = 0; j < p->outside.n_ranges; j++)
-	  if (bpa_ranges_overlap (&cfg->outside.ranges[i],
-				  &p->outside.ranges[j]))
-	    {
-	      ip4_address_t a;
-
-	      a.as_u32 = clib_host_to_net_u32 (cfg->outside.ranges[i].base);
-	      return clib_error_return (
-		0,
-		"public address %U is already in pool '%v'. Two pools cannot "
-		"share one: the return path finds a pool by public address "
-		"and would have two answers",
-		format_ip4_address, &a, p->name);
-	    }
-
-      if (p->fib_index != ~0u && cfg->fib_index != ~0u
-	  && p->fib_index != cfg->fib_index)
-	continue;
-
-      for (i = 0; i < cfg->inside.n_ranges; i++)
-	for (j = 0; j < p->inside.n_ranges; j++)
-	  if (bpa_ranges_overlap (&cfg->inside.ranges[i], &p->inside.ranges[j]))
-	    {
-	      ip4_address_t a;
-
-	      a.as_u32 = clib_host_to_net_u32 (cfg->inside.ranges[i].base);
-	      return clib_error_return (
-		0,
-		"inside address %U is already served by pool '%v'%s. The "
-		"first pool that claims an address answers for it, so the "
-		"second would translate nothing and say nothing - bind them "
-		"to different VRFs, or give them different ranges",
-		format_ip4_address, &a, p->name,
-		(p->fib_index == ~0u || cfg->fib_index == ~0u)
-		  ? " (one of them serves every VRF)"
-		  : " in the same VRF");
-	    }
+      a.as_u32 = clib_host_to_net_u32 (addr);
+      if (outside)
+	return clib_error_return (
+	  0,
+	  "public address %U is already in pool '%v'. Two pools cannot "
+	  "share one: the return path finds a pool by public address "
+	  "and would have two answers",
+	  format_ip4_address, &a, p->name);
+      return clib_error_return (
+	0,
+	"inside address %U is already served by pool '%v'%s. The "
+	"first pool that claims an address answers for it, so the "
+	"second would translate nothing and say nothing - bind them "
+	"to different VRFs, or give them different ranges",
+	format_ip4_address, &a, p->name,
+	(p->fib_index == ~0u || cfg->fib_index == ~0u)
+	  ? " (one of them serves every VRF)"
+	  : " in the same VRF");
     }
   return 0;
 }
@@ -822,38 +801,20 @@ bpa_pool_validate (bpa_pool_t *cfg)
  * pools. Empty when there are no pools, which makes the filter reject
  * everything - correct, because with no pool there is nothing to hairpin to.
  */
-/* not a unit: it walks bpa_main's pools to find the lowest
- * and highest public address any of them holds. The window it writes is
- * what the out2in path checks a packet against before looking anything up,
- * and lab/datapath.sh drives that path. */
+/* not a unit: it walks bpa_main's pools; the window's arithmetic is
+ * bpa_window_widen() and bpa_window_close() in bpa_pool.h, driven by
+ * test/test_bpa_pool.c. The out2in path checks a packet against it before
+ * looking anything up, and lab/datapath.sh drives that path. */
 void
 bpa_outside_window_update (void)
 {
   bpa_main_t *bm = &bpa_main;
   u32 lo = ~0u, hi = 0;
   bpa_pool_t *p;
-  u32 i;
 
   pool_foreach (p, bm->pools)
-    {
-      for (i = 0; i < p->outside.n_ranges; i++)
-	{
-	  u32 base = p->outside.ranges[i].base;
-	  u32 last = base + p->outside.ranges[i].count - 1;
-
-	  if (base < lo)
-	    lo = base;
-	  if (last > hi)
-	    hi = last;
-	}
-    }
-
-  if (lo == ~0u)
-    {
-      bm->outside_lo = 1;   /* an empty window: lo > hi rejects everything */
-      bm->outside_hi = 0;
-      return;
-    }
+    bpa_window_widen (&p->outside, &lo, &hi);
+  bpa_window_close (&lo, &hi);
   bm->outside_lo = lo;
   bm->outside_hi = hi;
 }

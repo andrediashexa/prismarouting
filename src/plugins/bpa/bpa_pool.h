@@ -907,6 +907,80 @@ bpa_claimant_take (int *found, u32 idx, u32 si, int is_live,
   return is_live;
 }
 
+/*
+ * Would pool `cfg` collide with the existing pool `p`? 0 when not; otherwise
+ * 1 with `*addr` the first of cfg's addresses at fault and `*outside` saying
+ * which side. The caller words the refusal.
+ *
+ * Public addresses are compared whatever the VRFs are: out2in keys on the
+ * public address alone, so two pools sharing one are two answers to the same
+ * question. Inside addresses only within one VRF - or where either pool
+ * serves every VRF (~0): the first pool that claims an address answers for
+ * it, so the second would translate nothing and say nothing.
+ */
+static_always_inline int
+bpa_pools_collide (const bpa_pool_t *cfg, const bpa_pool_t *p, u32 *addr,
+		   int *outside)
+{
+  u32 i, j;
+
+  for (i = 0; i < cfg->outside.n_ranges; i++)
+    for (j = 0; j < p->outside.n_ranges; j++)
+      if (bpa_ranges_overlap (&cfg->outside.ranges[i], &p->outside.ranges[j]))
+	{
+	  *addr = cfg->outside.ranges[i].base;
+	  *outside = 1;
+	  return 1;
+	}
+
+  if (p->fib_index != ~0u && cfg->fib_index != ~0u
+      && p->fib_index != cfg->fib_index)
+    return 0;
+
+  for (i = 0; i < cfg->inside.n_ranges; i++)
+    for (j = 0; j < p->inside.n_ranges; j++)
+      if (bpa_ranges_overlap (&cfg->inside.ranges[i], &p->inside.ranges[j]))
+	{
+	  *addr = cfg->inside.ranges[i].base;
+	  *outside = 0;
+	  return 1;
+	}
+  return 0;
+}
+
+/*
+ * The out2in pre-filter's window: widened by each pool's public ranges in
+ * turn, from lo = ~0, hi = 0. A window nothing widened is closed to lo = 1,
+ * hi = 0 by bpa_window_close(), which bpa_in_window() answers no to for
+ * every address - 0.0.0.0 included, which lo = hi = 0 would have let in.
+ */
+static_always_inline void
+bpa_window_widen (const bpa_addr_set_t *set, u32 *lo, u32 *hi)
+{
+  u32 i;
+
+  for (i = 0; i < set->n_ranges; i++)
+    {
+      u32 base = set->ranges[i].base;
+      u32 last = base + set->ranges[i].count - 1;
+
+      if (base < *lo)
+	*lo = base;
+      if (last > *hi)
+	*hi = last;
+    }
+}
+
+static_always_inline void
+bpa_window_close (u32 *lo, u32 *hi)
+{
+  if (*lo == ~0u)
+    {
+      *lo = 1;
+      *hi = 0;
+    }
+}
+
 /* Is `addr` inside [lo, hi]? The out2in pre-filter's cheap first question;
  * an empty window is lo = 1, hi = 0, and answers no to everything. */
 static_always_inline int

@@ -2559,5 +2559,56 @@ main (void)
 	   "a live first claimant did not settle it");
   }
 
+  /* #472: two pools' collision, and the out2in window over every pool. */
+  printf ("\n=== two pools collide; the outside window ===\n");
+  {
+    static bpa_pool_t a, b;
+    u32 addr = 0, lo = ~0u, hi = 0;
+    int outside = -1;
+
+    memset (&a, 0, sizeof (a));
+    memset (&b, 0, sizeof (b));
+    a.inside.ranges[0].base = 0x64400000u; a.inside.ranges[0].count = 1024;
+    a.outside.ranges[0].base = 0xc8000010u; a.outside.ranges[0].count = 4;
+    b.inside.ranges[0].base = 0x64400200u; b.inside.ranges[0].count = 256;
+    b.outside.ranges[0].base = 0xc8000020u; b.outside.ranges[0].count = 4;
+    a.inside.n_ranges = a.outside.n_ranges = 1;
+    b.inside.n_ranges = b.outside.n_ranges = 1;
+
+    a.fib_index = 1; b.fib_index = 1;
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 1 && !outside
+	     && addr == 0x64400200u,
+	   "two pools serving one inside range in one VRF were let in");
+    b.fib_index = 2;
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 0,
+	   "one inside range in two VRFs was refused - the VRF is what "
+	   "tells them apart");
+    b.fib_index = ~0u;
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 1 && !outside,
+	   "a pool serving every VRF did not collide with one serving VRF 1");
+    b.fib_index = 2;
+    b.outside.ranges[0].base = 0xc8000012u;
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 1 && outside
+	     && addr == 0xc8000012u,
+	   "a public address shared across two VRFs was let in - out2in "
+	   "keys on the public address alone");
+    b.outside.ranges[0].base = 0xc8000014u; /* right after a's last */
+    CHECK (bpa_pools_collide (&b, &a, &addr, &outside) == 0,
+	   "adjacent public ranges were taken as overlapping");
+
+    bpa_window_widen (&a.outside, &lo, &hi);
+    bpa_window_widen (&b.outside, &lo, &hi);
+    bpa_window_close (&lo, &hi);
+    CHECK (lo == 0xc8000010u && hi == 0xc8000017u,
+	   "the window over two pools is %08x-%08x", lo, hi);
+    CHECK (bpa_in_window (lo, hi, 0xc8000017u)
+	     && !bpa_in_window (lo, hi, 0xc8000018u),
+	   "the window does not end at the last public address");
+    lo = ~0u; hi = 0;
+    bpa_window_close (&lo, &hi);
+    CHECK (!bpa_in_window (lo, hi, 0) && !bpa_in_window (lo, hi, 1),
+	   "with no pool the window let an address in (%u-%u)", lo, hi);
+  }
+
   return bpa_test_verdict (checks, failures);
 }
