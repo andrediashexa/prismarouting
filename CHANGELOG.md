@@ -77,6 +77,17 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`docs/handoff.md` is brought up to 0.138.0** ([#471](https://github.com/andrediashexa/hexarouting/issues/471)).
+  It had stopped at 0.125.1, and two of its decisions had since been
+  reversed: the kernel is Prisma Routing's (#449), and the management plane
+  is a container with the VTY in it (#448). It now carries the releases since
+  then, what is waiting on a decision (#210's rebalancer), what is blocked
+  and on what, and what was learnt reaching 0.138.0. A minor's gate does not
+  run `make test`, and a suite that dies is `NO VERDICT` and not `FAIL`.
+  `kernel.env` has to follow Debian's security releases. A new host read or
+  host command in the VTY needs its `compose.yaml` line or its door. And
+  never mount `/` or `/run` into the management plane.
+
 ### Fixed
 
 ## 0.138.0 - the VTY runs in the management plane
