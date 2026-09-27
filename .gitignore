@@ -35,6 +35,8 @@ prisma-routing*-upgrade.tar.gz
 # next to the ISO, in reach of `git add -A`, and unlike the ISO nothing on
 # the push side would refuse it.
 prisma-routing-images.tar.gz
+# And the kernel `make kernel` puts there (#449).
+prisma-kernel.deb
 boot-console.log
 install-console.log
 

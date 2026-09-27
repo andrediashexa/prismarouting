@@ -2,7 +2,7 @@
 CFLAGS ?= -O2 -Wall -Wextra -Werror -DBPA_STANDALONE
 BUILD  := .build
 
-.PHONY: test test-appliance test-iso test-install test-mirror iso \
+.PHONY: kernel test test-appliance test-iso test-install test-mirror iso \
         upgrade-artifact release-gate \
         hw-up hw-lab hw-vpp hw-down \
         model vectors clean
@@ -368,7 +368,16 @@ ISO_RUN = sg docker -c "docker run --rm --privileged --device=/dev/kvm \
 images:
 	sh tools/build-images.sh save
 
-iso: images
+# THE KERNEL, the same way and for the same reason as the images (#449): built
+# on this host, in a container of its own, cached by Debian source version
+# under /var/cache/prisma/kernel, and put at the top of the tree for
+# build-iso.sh to install. A medium built without it would carry no kernel
+# at all, so build-iso.sh refuses rather than falls back.
+kernel:
+	sh tools/build-kernel.sh
+	. appliance/kernel.env; cp /var/cache/prisma/kernel/$$KERNEL_DEB_VERSION/linux-image-*-prisma_*.deb prisma-kernel.deb
+
+iso: images kernel
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq $(ISO_DEPS) >/dev/null 2>&1; \
 	    sh /src/appliance/build-iso.sh)
