@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.138.1 - where this stands, at 0.138.0
+
+### Added
+
 * **`docs/handoff.md` is brought up to 0.138.0** ([#471](https://github.com/andrediashexa/hexarouting/issues/471)).
   It had stopped at 0.125.1, and two of its decisions had since been
   reversed: the kernel is Prisma Routing's (#449), and the management plane
@@ -87,8 +93,6 @@ version has a chance of seeing it.
   `kernel.env` has to follow Debian's security releases. A new host read or
   host command in the VTY needs its `compose.yaml` line or its door. And
   never mount `/` or `/run` into the management plane.
-
-### Fixed
 
 ## 0.138.0 - the VTY runs in the management plane
 
