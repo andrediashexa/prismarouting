@@ -601,15 +601,42 @@ print("\n=== Shell.run_probe, from the management plane ===")
 _seen = []
 _real_probe = doors.probe
 doors.probe = lambda argv: (_seen.append(argv) or (0, ""))
-os.environ["PRISMA_PROBES_THROUGH_DOORS"] = "1"
+os.environ["PRISMA_IN_MGMT"] = "1"
 try:
     prismash.Shell.__new__(prismash.Shell).run_probe(
         "ping", ["/usr/bin/ping", "-c", "1", "-n", "192.0.2.1"])
 finally:
-    del os.environ["PRISMA_PROBES_THROUGH_DOORS"]
+    del os.environ["PRISMA_IN_MGMT"]
     doors.probe = _real_probe
 check(_seen == [["/usr/bin/ping", "-c", "1", "-n", "192.0.2.1"]],
       f"the probe went to the host's door, not to a local program: {_seen}")
+
+
+print("\n=== the query doors: questions any account may ask of the host ===")
+_q = []
+for argv in [list(k) for k in doors.QUERIES]:
+    r = doors.answer(json.dumps({"argv": argv}), 1000,
+                     execute=lambda a, st, t: (_q.append(a) or (0, "answer")))
+    check(r == {"rc": 0, "out": "answer"}, f"uid 1000 may ask: {' '.join(argv)}")
+r = doors.answer(json.dumps({"argv": ["systemctl", "is-active", "--quiet",
+                                      "ssh.service"]}), 1000,
+                 execute=lambda a, st, t: (0, ""))
+check(r["rc"] == 126, f"a question about another unit is not one: {r}")
+
+_ask = []
+_real_runner = doors.runner
+doors.runner = lambda path=doors.SOCKET: (
+    lambda argv, stdin=None, timeout=30: (_ask.append(argv) or (0, "vfio-pci\n")))
+os.environ["PRISMA_IN_MGMT"] = "1"
+try:
+    unit = prismash.dataplane_unit()
+    drv = prismash.Shell.__new__(prismash.Shell).which_dpdk_driver()
+finally:
+    del os.environ["PRISMA_IN_MGMT"]
+    doors.runner = _real_runner
+check(unit == prismash.DATAPLANE_UNIT_CONTAINERS and drv == "vfio-pci"
+      and all(tuple(a) in doors.QUERIES for a in _ask) and len(_ask) == 2,
+      f"from the management plane both are asked of the host's doors: {_ask}")
 
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

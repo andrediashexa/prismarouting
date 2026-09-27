@@ -96,6 +96,31 @@ class Channel:
         return "gone", None
 
 
+    def request_hostrun(self, words):
+        """
+        Ask the host to run one statement with its own VTY, on this terminal
+        (#448, phase C): the installer, an upgrade, the dataplane's restart.
+        ("done", status), ("refused", None) or ("gone", None).
+        """
+        import json
+        if self.gone:
+            return "gone", None
+        try:
+            self.sock.sendall(b"HOSTRUN " + json.dumps(list(words)).encode()
+                              + b"\n")
+        except OSError:
+            return "gone", None
+        answer = self.replies.get()
+        if answer.startswith("HOSTDONE"):
+            try:
+                return "done", int(answer.split()[1])
+            except (IndexError, ValueError):
+                return "done", 0
+        if answer == "HOSTREFUSED":
+            return "refused", None
+        return "gone", None
+
+
 def attach(path):
     """
     Connect to the broker at `path`, take the terminal it hands over, and

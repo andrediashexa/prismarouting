@@ -89,6 +89,20 @@ FIXED = {
     ("systemctl", "restart", "prisma-routing-tune"): "recompute the tuning",
 }
 
+#: What any account may ask of the host from the management plane (#448):
+#: questions, not changes - which unit runs the dataplane, where this box's
+#: ssh host keys came from, which driver DPDK would get. The VTY on the host
+#: asked them of the host itself, whatever the account; from the container
+#: the answers would be the container's, or nothing.
+QUERIES = {
+    ("systemctl", "is-active", "--quiet", "prisma-routing-containers.service"):
+        "ask which unit runs the dataplane",
+    ("/usr/lib/prisma-routing/ssh-host-key-origin",):
+        "ask where the ssh host keys came from",
+    ("/usr/lib/prisma-routing/bind-dataplane-nic", "--which-driver"):
+        "ask which driver DPDK would get",
+}
+
 #: The longest a door may take. The VTY's own default is 30 seconds.
 MAX_TIMEOUT = 120
 
@@ -350,6 +364,11 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None):
         timeout = r.get("timeout", 30)
     except (ValueError, KeyError, TypeError):
         return {"rc": 126, "out": "the host's door: not a request"}
+    if stdin is None and isinstance(argv, list) and tuple(argv) in QUERIES:
+        if not isinstance(timeout, (int, float)) or timeout <= 0:
+            timeout = 30
+        rc, out = execute(argv, None, min(timeout, MAX_TIMEOUT))
+        return {"rc": rc, "out": out}
     verb = verb_of(argv, stdin)
     if verb is None:
         return {"rc": 126, "out": "the host's door: not an operation the "

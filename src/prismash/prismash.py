@@ -261,12 +261,16 @@ def dataplane_unit():
     neither - answers vpp.service, which is what every box ran before 0.117.0
     and what a source install still runs.
     """
+    argv = ["systemctl", "is-active", "--quiet",
+            f"{DATAPLANE_UNIT_CONTAINERS}.service"]
+    # From the management plane, the host's systemd, through its door (#448).
+    if os.environ.get("PRISMA_IN_MGMT"):
+        rc, _ = doors.runner()(argv)
+        return DATAPLANE_UNIT_CONTAINERS if rc == 0 else DATAPLANE_UNIT_VPP
     try:
         return (DATAPLANE_UNIT_CONTAINERS
                 if subprocess.run(
-                    ["systemctl", "is-active", "--quiet",
-                     f"{DATAPLANE_UNIT_CONTAINERS}.service"],
-                    stdout=subprocess.DEVNULL,
+                    argv, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, check=False).returncode == 0
                 else DATAPLANE_UNIT_VPP)
     except OSError:
@@ -3444,12 +3448,18 @@ def ssh_host_keys_handed_to_this_box(origin=None):
     on the box where it means something - the argument `unchecked_note` and
     `show_plugin_build` both make for the same decision.
     """
-    try:
-        r = subprocess.run([origin or SSH_HOST_KEY_ORIGIN],
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                           universal_newlines=True)
-    except OSError:
-        return [], []
+    if os.environ.get("PRISMA_IN_MGMT") and not origin:
+        # The host's keys, asked of the host (#448).
+        rc, out = doors.runner()([SSH_HOST_KEY_ORIGIN])
+        r = subprocess.CompletedProcess([], rc, stdout=out)
+    else:
+        try:
+            r = subprocess.run([origin or SSH_HOST_KEY_ORIGIN],
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL,
+                               universal_newlines=True)
+        except OSError:
+            return [], []
     if r.returncode != 0:
         return [], []
     handed, fixes = [], []
@@ -11693,6 +11703,23 @@ class Shell:
             return
         print("back in the Prisma Routing VTY")
 
+    def on_the_host(self, words):
+        """
+        True when `words` was run by the host's own VTY, through the broker
+        (#448, phase C): from the management plane, a statement that acts on
+        the host with the terminal - the installer, an upgrade, the
+        dataplane's restart - is the host's to run. False everywhere else, and
+        the caller runs it here as it always has.
+        """
+        if not (os.environ.get("PRISMA_IN_MGMT") and ATTACHED):
+            return False
+        how, _ = ATTACHED.request_hostrun(words)
+        if how == "refused":
+            self.err("the host would not run this statement")
+        elif how == "gone":
+            self.err("the host's end of this session is gone")
+        return True
+
     def do_install(self):
         """
         Hand the console to the installer.
@@ -11706,6 +11733,8 @@ class Shell:
         Spawned as a child, like the shell escape, so that an installer the
         operator abandons returns to the VTY rather than logging them out.
         """
+        if self.on_the_host(["install"]):
+            return
         if not running_from_live_medium():
             # Verdict, then the consequence. The one sentence reached the
             # console at 88 columns on a console of 79 and `err` folds nothing
@@ -11794,7 +11823,7 @@ class Shell:
             return
         # Through the host's door the tool is the host's, and the host says
         # so itself if it lacks one (#448): the container carries none.
-        if not os.environ.get("PRISMA_PROBES_THROUGH_DOORS") \
+        if not os.environ.get("PRISMA_IN_MGMT") \
                 and not os.path.exists(path):
             # A statement whose tool is absent is a promise the box does not
             # keep, and the refusal names the package rather than the path:
@@ -11827,7 +11856,7 @@ class Shell:
         # FROM THE MANAGEMENT PLANE, THROUGH THE HOST'S DOOR (#448): the
         # container's network ends at the backplane, so a probe run in it
         # reaches nothing. compose.yaml sets this there and nowhere else.
-        if os.environ.get("PRISMA_PROBES_THROUGH_DOORS"):
+        if os.environ.get("PRISMA_IN_MGMT"):
             try:
                 rc, refused = doors.probe(argv)
             except KeyboardInterrupt:
@@ -11992,10 +12021,12 @@ class Shell:
                 self.err_prose("the box could not be shut down", *said)
             return
         if rest[:1] == ["upgrade"]:
-            self.system_upgrade(rest[1:])
+            if not self.on_the_host(["system"] + rest):
+                self.system_upgrade(rest[1:])
             return
         if rest == ["dataplane", "restart"]:
-            self.system_dataplane_restart()
+            if not self.on_the_host(["system"] + rest):
+                self.system_dataplane_restart()
             return
         self.err("usage: system reboot | shutdown | upgrade | dataplane "
                  "restart")
@@ -15534,11 +15565,18 @@ class Shell:
         worse than no sentence.
         """
         try:
-            p = subprocess.run([self.BIND_NIC, "--which-driver"],
-                               capture_output=True, text=True, timeout=10)
-            out = (p.stdout or "").strip()
-            if p.returncode == 0 and out:
-                return out
+            if os.environ.get("PRISMA_IN_MGMT"):
+                # The host's binder, asked of the host (#448).
+                rc, out = doors.runner()([self.BIND_NIC, "--which-driver"])
+                out = out.strip()
+                if rc == 0 and out:
+                    return out
+            else:
+                p = subprocess.run([self.BIND_NIC, "--which-driver"],
+                                   capture_output=True, text=True, timeout=10)
+                out = (p.stdout or "").strip()
+                if p.returncode == 0 and out:
+                    return out
         except (OSError, subprocess.SubprocessError):
             pass
         return ("a driver DPDK can use, chosen at boot from whether this box "
