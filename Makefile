@@ -21,7 +21,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_static \
       $(BUILD)/test_bpa_top \
       $(BUILD)/test_bpa_rate \
-      $(BUILD)/test_bpa_keys
+      $(BUILD)/test_bpa_keys \
+      $(BUILD)/test_bpa_subblock
 	@sh tools/run-tests.sh
 
 vectors:
@@ -61,6 +62,13 @@ $(BUILD)/test_bpa_keys: test/test_bpa_keys.c \
                    test/bpa_shim.h test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_keys.c
+
+# A subscriber's blocks (#472): bpa_subblock.h.
+$(BUILD)/test_bpa_subblock: test/test_bpa_subblock.c \
+                   src/plugins/bpa/bpa_subblock.h src/plugins/bpa/bpa_ports.h \
+                   src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_subblock.c
 
 $(BUILD)/test_bpa_top: test/test_bpa_top.c \
                    src/plugins/bpa/bpa_top.h test/bpa_shim.h

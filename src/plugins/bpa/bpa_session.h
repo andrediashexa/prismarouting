@@ -21,6 +21,7 @@
 
 #include "bpa_pool.h"
 #include "bpa_keys.h"
+#include "bpa_subblock.h"
 #include "bpa_rate.h"
 #include "bpa_ports.h"
 #include "bpa_dyn.h"
@@ -178,20 +179,7 @@ typedef struct
   u8 is_static;
 } bpa_session_t;
 
-/*
- * One port block held by a subscriber, with its bitmap.
- *
- * A subscriber usually holds exactly one. It gets a second when the first
- * fills, the per-subscriber cap allows it, and the pool has a block to give:
- * off the free list in dynamic mode, out of the reserve in deterministic mode.
- * A deterministic pool with NO reserve has none to give, because the formula
- * already assigns every mapped block to somebody (issue #39).
- */
-typedef struct
-{
-  bpa_block_t blk;   /* public address and port range */
-  bpa_portmap_t map;
-} bpa_subblock_t;
+/* bpa_subblock_t moved to bpa_subblock.h (#472). */
 
 /*
  * Per-subscriber port state.
@@ -405,6 +393,10 @@ typedef enum
 #define BPA_HEAP_HASH_BYTES 256
 #define BPA_HEAP_MARGIN (32ULL << 20)
 
+/* not a unit: it asks VPP's heap whether the session pool's next growth
+ * fits - pool_free_elts, vec_max_len and clib_mem_alloc against the real
+ * allocator - which no stand-in answers truthfully; lab/heap-full.sh fills a
+ * box's heap and reads the refusal (#460) */
 static_always_inline int
 bpa_session_room (bpa_per_thread_t *pt)
 {
@@ -462,23 +454,13 @@ bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 /* Extended blocks: how many a subscriber holds, and attaching one more. */
 u32 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx);
 
-/*
- * How full a subscriber's blocks are, across all of them.
- *
- * Summed from the port bitmaps, which the allocator maintains anyway, so
- * nothing new is counted per packet and the session table is never walked.
- */
+/* not a unit: it reads a bpa_sub_t, VPP's struct; the sum is
+ * bpa_subblocks_usage() in bpa_subblock.h, which test/test_bpa_subblock.c
+ * holds (#472) */
 static_always_inline void
 bpa_sub_usage (const bpa_sub_t *sub, u32 *used, u32 *total)
 {
-  const bpa_subblock_t *sb;
-
-  *used = *total = 0;
-  vec_foreach (sb, sub->blocks)
-    {
-      *total += sb->map.n_ports;
-      *used += sb->map.n_ports - sb->map.n_free;
-    }
+  bpa_subblocks_usage (sub->blocks, used, total);
 }
 void bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 		     u32 sub_idx, const bpa_block_t *b);
