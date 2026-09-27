@@ -80,7 +80,8 @@ version has a chance of seeing it.
 ### Fixed
 
 * **An install from the ISO on a network with no DHCP could not name its
-  management card.** On the live medium the dataplane takes every card Linux
+  management card.** ([#476](https://github.com/andrediashexa/hexarouting/issues/476))
+  On the live medium the dataplane takes every card Linux
   is not using and renames it `xdp-<name>`; with no DHCP lease that is every
   card. The installer knew nothing of the rename, so
   `prisma-routing.mgmt-interface=ens18` was refused ("this machine has no
