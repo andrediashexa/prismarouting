@@ -129,6 +129,8 @@ for argv, stdin, why in (
         (["ip", "link", "set", "dev", "../x", "up"], None, "a path for a netdev"),
         (["ip", "link", "set", "dev", "ens19", "mtu", "67"], None, "MTU 67"),
         (["ip", "link", "set", "dev", "ens19", "mtu", "1e3"], None, "MTU not a number"),
+        (["ip", "link", "set", "dev", "ens19", "mtu", "\u0661\u0665\u0660\u0660"], None,
+         "MTU in digits int() takes and is_number() does not"),
         (["ip", "link", "set", "dev", "ens19", "alias", "a\nb"], None, "an alias with a newline"),
         (["ip", "link", "set", "dev", "ens19", "alias", "x" * 256], None, "an alias of 256"),
         (["ip", "link", "set", "dev", "ens19", "netns", "1"], None, "another ip-link verb"),
@@ -423,6 +425,12 @@ import prismash  # noqa: E402
 got = prismash.Shell.__new__(prismash.Shell).host_run(["sh", "-c", "echo here"])
 check(got == (0, "here\n"),
       f"with no daemon listening, the command runs here, as before: {got}")
+
+
+check(doors._address("192.0.2.1") and doors._address("2001:db8::1")
+      and not doors._address("192.0.2.0/24") and not doors._address("gw")
+      and not doors._address("-x"),
+      "_address: an address and nothing else, not a prefix, not a word")
 
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

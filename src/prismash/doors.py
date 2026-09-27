@@ -42,7 +42,7 @@ import sys
 import threading
 
 from system import (LOGIN_SHELL, MANAGED_GROUPS, LocalFiles, RESOLV_CONF,
-                    RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF)
+                    RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, is_number)
 from config import LINUX_IFNAME_MAX
 
 SOCKET = "/run/prisma-routing/doors.sock"
@@ -132,7 +132,7 @@ def verb_of(argv, stdin=None):
         return "set a Linux interface up or down"
     if n == 7 and argv[:4] == ("ip", "link", "set", "dev") \
             and NETDEV.match(argv[4]) and argv[5] == "mtu" \
-            and argv[6].isdigit() and 68 <= int(argv[6]) <= 65535:
+            and is_number(argv[6]) and 68 <= int(argv[6]) <= 65535:
         return "set a Linux interface's MTU"
     if n == 7 and argv[:4] == ("ip", "link", "set", "dev") \
             and NETDEV.match(argv[4]) and argv[5] == "alias" \
