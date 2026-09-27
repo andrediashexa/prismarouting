@@ -67,14 +67,13 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
 	  rv = VNET_API_ERROR_INVALID_ADDRESS_FAMILY;
 	  goto done;
 	}
-      if (ip_prefix_len (&p) > 32)
+      /* One place works a prefix out, and it refuses /0 (#473). */
+      if (bpa_prefix_range (clib_net_to_host_u32 (ip_prefix_v4 (&p).as_u32),
+			    ip_prefix_len (&p), &base, &count))
 	{
 	  rv = VNET_API_ERROR_INVALID_VALUE;
 	  goto done;
 	}
-
-      count = 1u << (32 - ip_prefix_len (&p));
-      base = clib_net_to_host_u32 (ip_prefix_v4 (&p).as_u32) & ~(count - 1);
 
       if (i < mp->n_inside)
 	{
@@ -240,18 +239,18 @@ vl_api_bpa_bypass_set_t_handler (vl_api_bpa_bypass_set_t *mp)
   for (i = 0; i < mp->n_prefixes; i++)
     {
       ip_prefix_t p;
-      u32 count;
+      u32 count, base;
 
       ip_prefix_decode2 (&mp->prefixes[i], &p);
-      if (ip_prefix_version (&p) != AF_IP4 || ip_prefix_len (&p) > 32)
+      if (ip_prefix_version (&p) != AF_IP4
+	  || bpa_prefix_range (clib_net_to_host_u32 (ip_prefix_v4 (&p).as_u32),
+			       ip_prefix_len (&p), &base, &count))
 	{
 	  rv = VNET_API_ERROR_INVALID_VALUE;
 	  goto done;
 	}
-      count = 1u << (32 - ip_prefix_len (&p));
       vec_add1 (counts, count);
-      vec_add1 (bases,
-		clib_net_to_host_u32 (ip_prefix_v4 (&p).as_u32) & ~(count - 1));
+      vec_add1 (bases, base);
     }
 
   e = bpa_bypass_set (name, mp->is_destination, bases, counts,

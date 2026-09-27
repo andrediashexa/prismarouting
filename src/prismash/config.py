@@ -1860,7 +1860,7 @@ def prefix_error(what: str, value: str):
     except ipaddress.AddressValueError:
         return (f"{what} '{value}': not an IPv4 prefix", "")
     except ipaddress.NetmaskValueError:
-        return (f"{what} '{value}': not a prefix length", "a length is 0 to 32")
+        return (f"{what} '{value}': not a prefix length", "a length is 1 to 32")
     except ValueError:
         # strict=True refuses exactly one thing the two above do not: host
         # bits. Naming the network the operator meant is the whole value of
@@ -1871,6 +1871,14 @@ def prefix_error(what: str, value: str):
             return (f"{what} '{value}': not an IPv4 prefix", "")
         return (f"{what} '{value}': host bits are set",
                 f"the prefix this names is {meant}")
+    # A /0 IS EVERY ADDRESS (#473). The dataplane cannot hold one - a range's
+    # count is a u32, and 1u << 32 is undefined: before #473 a /0 bypass
+    # reached it as the single address 0.0.0.0 - and every address is no
+    # pool and no bypass either.
+    if ipaddress.IPv4Network(value).prefixlen == 0:
+        return (f"{what} '{value}': a /0 is every address",
+                "a range here holds at most half the space, and a box meant "
+                "to translate nothing has no 'cgnat inside'")
     return None
 
 
