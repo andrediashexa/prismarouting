@@ -126,8 +126,25 @@ mkdir -p "$ROOT" "$WORK/iso/live" "$WORK/iso/boot/grub"
 # reports success, so this is asserted on the box and not only decided here.
 say "debootstrap $SUITE"
 debootstrap --arch=amd64 --variant=minbase \
-  --include=systemd-sysv,linux-image-amd64,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,zstd,iproute2,ifupdown,isc-dhcp-client,openssh-server,snmpd,python3,less,vim-tiny \
+  --include=systemd-sysv,initramfs-tools,kmod,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,zstd,iproute2,ifupdown,isc-dhcp-client,openssh-server,snmpd,python3,less,vim-tiny \
   "$SUITE" "$ROOT" "$MIRROR"
+
+# THE KERNEL IS PRISMA ROUTING'S (#449): Debian's source at the version in
+# appliance/kernel.env, Debian's configuration, renamed -prisma and with the
+# module classes no router uses left out (tools/build-kernel.sh says which,
+# and refuses a build missing any NIC, storage, virtio, vfio, uio, RDMA or
+# hypervisor module Debian ships). linux-image-amd64 is not installed, so apt
+# on the box never brings Debian's back beside it. `make iso` builds or takes
+# it from the cache and puts it at the top of the tree; with none there the
+# medium would boot nothing, so this stops.
+say "the kernel"
+[ -f "$REPO/prisma-kernel.deb" ] || {
+  echo "error: no prisma-kernel.deb at the top of the tree; 'make kernel' builds it" >&2
+  exit 1; }
+cp "$REPO/prisma-kernel.deb" "$ROOT/tmp/prisma-kernel.deb"
+chroot "$ROOT" dpkg -i /tmp/prisma-kernel.deb >/dev/null
+rm -f "$ROOT/tmp/prisma-kernel.deb"
+say "  $(ls "$ROOT"/boot/vmlinuz-* | sed 's|.*/vmlinuz-||')"
 
 say "VPP and FRR repositories"
 chroot "$ROOT" /bin/sh -c "

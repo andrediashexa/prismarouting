@@ -14,12 +14,17 @@ SIGILL - and the boot self-test says so on the console before the operator
 has to guess.
 
 Two standing answers about the kernel live here as well, so that neither is
-re-derived every six months: a **custom-built kernel MUST NOT be introduced**
-without a defect proven to be the distribution kernel's and unfixable by
-configuration, because the appliance would stop receiving security updates; and
-the boot tuning **not** yet applied is listed as hypotheses with costs, to be
-measured by [#28](https://github.com/andrediashexa/hexarouting/issues/28) one
-knob at a time rather than switched on and declared an improvement.
+re-derived every six months. The first: **the kernel is Prisma Routing's**,
+which is Debian's source rebuilt, renamed and with the module classes a router
+has no use for left out. This is the maintainer's decision of 2026-09-24
+([#449](https://github.com/andrediashexa/hexarouting/issues/449)), which
+reversed the earlier refusal with its cost stated and accepted. Debian's
+security updates reach a box only when this repository rebuilds them, and the
+release gate refuses a medium whose kernel Debian has already replaced. The
+second: the boot tuning **not** yet applied is listed as hypotheses with
+costs, to be measured by
+[#28](https://github.com/andrediashexa/hexarouting/issues/28) one knob at a
+time rather than switched on and declared an improvement.
 
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY** and
 > **RECOMMENDED** in this document are to be interpreted as described in
@@ -2597,11 +2602,10 @@ rewrite the menu until the next kernel package.
 `test/test_prisma_identity.sh` runs it against a copy of debian:12's own files
 and checks each row above, and that a second run changes nothing.
 
-**What still says Debian: `uname`.** The kernel's release and version strings
-(`6.1.0-52-amd64`, `#1 SMP PREEMPT_DYNAMIC Debian 6.1.180-1`) are compiled
-into the image. Changing them means building the kernel, which the next section
-refuses for a reason that has nothing to do with names: a custom kernel ends
-the security updates Debian ships. The hostname in `uname -n` is the box's own.
+**`uname` says Prisma Routing** since #449: the release is `<upstream>-prisma`
+(`6.1.187-prisma`), because the kernel is built here. The next section says
+what that cost and how the cost is carried. The hostname in `uname -n` is the
+box's own.
 
 ## The kernel question: upgrade it, or build our own?
 
@@ -2613,7 +2617,7 @@ re-derived by whoever is asked next:
 | Question | Answer | Where |
 |---|---|---|
 | Should the appliance move to a **newer distribution kernel**? | **Not yet, and not for throughput** — it is an evidential answer, and [#28](https://github.com/andrediashexa/hexarouting/issues/28) can change it | below |
-| Should this project **build its own kernel**? | **No**, and that answer does not expire with a benchmark | *And building our own?* below |
+| Should this project **build its own kernel**? | **Yes, since #449**: Debian's source rebuilt, by the maintainer's decision, with the security-update cost carried by the release gate | *And building our own?* below |
 
 ### Is a newer kernel worth it?
 
@@ -2671,19 +2675,56 @@ argument for
 performance one. That upgrade is currently blocked upstream; the issue records
 why, with evidence.
 
-### And building our own? No, and for a reason that does not expire
+### And building our own? Yes, since #449, and what it costs
 
-The question above is *not yet*. This one is **no**, and it is a different
-answer resting on a different kind of argument, which is why it gets its own
-section instead of a line in the one above.
+**Decided by the maintainer on 2026-09-24
+([#449](https://github.com/andrediashexa/hexarouting/issues/449))**, reversing
+the answer this section gave before: `uname` says Prisma Routing, and modules
+that have no use on this box are removed. The earlier analysis is kept below
+unchanged, because it is the statement of the cost that was accepted, and
+because none of its technical arguments was wrong — the decision was made for
+identity and module surface, not for throughput.
 
-> A custom-built kernel **MUST NOT** be introduced unless a measured,
-> reproducible defect is shown to be **caused by the distribution kernel** and
-> to be **unfixable by configuration**. That bar is high on purpose.
+**What is built.** `tools/build-kernel.sh` takes **Debian's own `linux`
+source package** at the version in `appliance/kernel.env`, with Debian's
+patches, and **Debian's own configuration** for that build. It changes two
+things. The name becomes `LOCALVERSION=-prisma`. And the module classes a
+router has no use for are left out: sound, Wi-Fi, Bluetooth, NFC, media/V4L/DVB,
+joysticks, tablets, touchscreens, amateur radio, CAN, 802.15.4, cellular modems,
+FireWire, industrial sensors (IIO), AMD and NVIDIA discrete GPUs, and staging.
+It is not a different kernel.
 
-The analysis is recorded and not just the verdict, because a verdict alone gets
-re-litigated. Every argument normally made for a rebuild, and what happens to
-it here:
+**What is never cut, and what refuses a build that did.** Every NIC, storage,
+virtio, vfio, uio, InfiniBand/RDMA and hypervisor driver stays. The box
+installs on hardware nobody here has seen, and 0.132.0 showed what one missing
+NIC driver costs ([#468](https://github.com/andrediashexa/hexarouting/issues/468)).
+The build compares its modules against Debian's, directory by directory, and
+refuses itself if any module Debian ships under those directories is missing.
+The only exception is the cut classes' own.
+
+| Measured | Debian | Prisma Routing |
+|---|---|---|
+| modules, 6.1.176-1 (the first build) | 4022 | 2722 |
+| size of the modules, 6.1.176-1 | 390 MB | 209 MB |
+| modules, 6.1.187-1 (what the medium ships) | 4023 | 2722 |
+| build time, 16 CPUs, cached afterwards | — | 901 s and 906 s |
+
+**How the security updates arrive now.** Not by apt: `linux-image-amd64` is not
+installed, so apt never brings Debian's kernel back beside this one. A Debian
+kernel security release reaches a box when `appliance/kernel.env` moves to
+it, `make kernel` rebuilds it (cached by version under
+`/var/cache/prisma/kernel`), and a release ships it. The failure mode of that
+is silence, so it is not left to memory: `tools/kernel-current.sh` asks
+Debian's archive for its current kernel, and **the release gate refuses a
+medium whose kernel Debian has already replaced**. Measured the day it was
+written: `kernel.env` said 6.1.176-1 and Debian was at 6.1.187-1, five
+security releases behind. That was found only because the developer host
+happened to run a newer one. A box receives the new kernel with the medium it
+is installed from; an upgrade artifact does not carry a kernel.
+
+The analysis as it stood before the decision, which is the cost that was
+accepted. Every argument normally made for a rebuild, and what happens to it
+here:
 
 | Argument usually made | Why it does not apply to this product |
 |---|---|
@@ -2704,56 +2745,18 @@ that did not happen. `make release-gate` would also have to build a kernel on
 every release, which turns the one procedure that has ever caught a release
 mistake into a much longer and much more fragile one.
 
-**"Inherits them by doing nothing" is a mechanism, and it is the one a rebuild
-removes.** It is named here rather than assumed, because it is the load-bearing
-half of the cost above. The medium installs a *metapackage*, not a version, so
-the kernel is whatever Debian's stable kernel is on the day the ISO is built,
-and whatever `apt` moves it to afterwards. From `appliance/build-iso.sh`:
-
-```
-debootstrap --arch=amd64 --variant=minbase \
-  --include=systemd-sysv,linux-image-amd64,live-boot,...
-```
-
-`linux-image-amd64` carries no version and no pin, which is precisely what lets
-a security update arrive without anyone here deciding anything. Two readings
-show the kernel moving with nobody in this repository choosing it:
-
-| Reading | Where | Result |
-|---|---|---|
-| the kernel a built medium actually booted | `Linux version`, in the boot lab's console log | `6.1.0-50-amd64`, `Debian 6.1.176-1 (2026-07-02)` |
-| the kernel this tree develops against today | `uname -r`, `uname -v` | `6.1.0-52-amd64`, `Debian 6.1.180-1 (2026-08-03)` |
-
-Two ABI revisions, a month apart, and no commit in this repository selected
-either one. That is the whole of the kernel security maintenance this project
-performs today, and a custom build replaces it with a person who has to
-remember. The bar at the top of this section is high because that is what sits
-on the other side of it.
-
-`test/test_kernel_tuning.py` asserts that the medium still installs an unpinned
-Debian metapackage and that this section still names it, so a pin or a private
-`linux-image` cannot arrive quietly and leave the argument above describing a
-box that no longer exists.
-
-**That is why this answer is not the same shape as the one above.** The
-performance arguments are all answerable by measurement, and a measurement can
-arrive tomorrow; the maintenance cost is structural and arrives with the first
-build. So a proposal that returns carrying a benchmark has still not addressed
-this section. What would address it is the bar quoted at the top: a defect, in
-the distribution kernel, that configuration cannot fix.
-
-If that day comes, the cheaper answers **MUST** be exhausted first, in this
-order, because each of them keeps the security updates:
-
-1. A kernel parameter or a sysctl — see *Boot tuning still on the table*.
-2. A newer **Debian** kernel: backports today, Debian 13's 6.12 LTS with
-   [#36](https://github.com/andrediashexa/hexarouting/issues/36).
-3. A DPDK or VPP change, since the datapath is userspace and that is where a
-   datapath defect most likely lives.
-
-Only when all three have failed against a reproducible defect is a rebuild on
-the table, and then it is a decision about who carries the CVE tracking, not a
-decision about throughput.
+**"Inherits them by doing nothing" was a mechanism, and it is the one the
+rebuild removed.** Before #449 the medium installed a *metapackage*,
+`linux-image-amd64`, with no version and no pin. Two readings showed the kernel
+moving with nobody in this repository choosing it: the medium booted
+`6.1.0-50-amd64` (Debian 6.1.176-1), while the development host ran
+`6.1.0-52-amd64` (6.1.180-1) a month later. That was the whole of the kernel
+security maintenance this project performed. What replaced it is the procedure
+above, and `test/test_kernel_tuning.py` holds its three parts together:
+- the medium installs `prisma-kernel.deb` and never `linux-image-amd64`;
+- the gate asks `tools/kernel-current.sh`;
+- this section names `appliance/kernel.env`, `tools/build-kernel.sh` and
+  `tools/kernel-current.sh`.
 
 ## Boot tuning still on the table
 

@@ -476,49 +476,52 @@ if not overlap:
 # --------------------------------------------------------------------------
 # The kernel the medium installs.
 #
-# The refusal to build a custom kernel rests on exactly one mechanism: the
-# appliance inherits Debian's kernel security updates because it installs an
-# unpinned metapackage and chooses no version. Nothing asserted that, so the
-# argument in docs/appliance.md was resting on a line of build-iso.sh that
-# anybody could change for an unrelated reason - freezing a version to
-# reproduce a bug is the obvious one, and it arrives looking like a debugging
-# convenience rather than like the decision that section refuses.
+# Until #449 this block held the medium to Debian's unpinned metapackage,
+# because docs/appliance.md refused a custom kernel on the grounds that the
+# appliance inherited Debian's security updates by doing nothing. The
+# maintainer reversed that on 2026-09-24 with the cost stated and accepted,
+# and the mechanism is now this repository's own: appliance/kernel.env names
+# Debian's source version, tools/build-kernel.sh rebuilds it, and
+# tools/kernel-current.sh - asked by the release gate - refuses a medium
+# whose kernel Debian has already replaced. So what is held here is that the
+# three stay wired together, and that Debian's kernel cannot return beside
+# ours by a line of build-iso.sh.
 # --------------------------------------------------------------------------
 print("\n=== the kernel the medium installs ===")
 
-REFUSAL_H = ("### And building our own? No, and for a reason that does "
-             "not expire")
+DECISION_H = "### And building our own? Yes, since #449, and what it costs"
 KERNEL_PKG = "linux-image-amd64"
 ISO_TEXT = read_required(os.path.join(APPLIANCE, "build-iso.sh"))
+GATE_TEXT = read_required(os.path.join(APPLIANCE, "..", "tools",
+                                       "release-gate.sh"))
 
-if check(re.search(r"--include=\S*\b" + re.escape(KERNEL_PKG) + r"\b",
-                   ISO_TEXT),
-         f"appliance/build-iso.sh does not install `{KERNEL_PKG}` in its "
-         f"debootstrap --include list. docs/appliance.md refuses a custom "
-         f"kernel on the grounds that the appliance inherits Debian's "
-         f"security updates by doing nothing, and that is only true while "
-         f"the medium installs Debian's own kernel metapackage"):
-    ok(f"the medium installs `{KERNEL_PKG}`, from debootstrap --include")
+if check(not re.search(r"--include=\S*\b" + re.escape(KERNEL_PKG) + r"\b",
+                       ISO_TEXT),
+         f"appliance/build-iso.sh installs `{KERNEL_PKG}` again. Debian's "
+         f"kernel would sit beside Prisma Routing's, apt would keep moving "
+         f"it, and GRUB would boot whichever sorts last"):
+    ok(f"the medium does not install `{KERNEL_PKG}`")
 
-# A pin is the same loss as a private build, arriving quietly: the box stops
-# following Debian's kernel and somebody has to notice the next CVE by hand.
-pinned = sorted({m.group(0) for m in re.finditer(
-    r"linux-image[\w.+-]*=[\w.:+~-]+|linux-image-\d[\w.+-]*", ISO_TEXT)})
-if check(not pinned,
-         f"appliance/build-iso.sh pins a kernel version: {pinned}. An "
-         f"unpinned metapackage is what makes the security update arrive "
-         f"without a decision, so a pin takes on the maintenance cost "
-         f"docs/appliance.md refuses a custom kernel over, without the "
-         f"argument that section demands"):
-    ok("and pins no version, so the security update needs no decision here")
+if check("prisma-kernel.deb" in ISO_TEXT and "dpkg -i" in ISO_TEXT,
+         "appliance/build-iso.sh does not install prisma-kernel.deb, so the "
+         "medium would carry no kernel at all"):
+    ok("it installs prisma-kernel.deb, which `make kernel` puts there")
 
-if check(KERNEL_PKG in section(REFUSAL_H),
-         f"docs/appliance.md's custom-kernel refusal does not name "
-         f"`{KERNEL_PKG}`. Its central cost is that the appliance would stop "
-         f"inheriting Debian's kernel updates, and the mechanism it would "
-         f"stop inheriting them through is then written down nowhere near "
-         f"the argument that depends on it"):
-    ok(f"and the refusal in docs/appliance.md names `{KERNEL_PKG}` as why")
+if check("kernel-current.sh" in GATE_TEXT,
+         "tools/release-gate.sh does not ask tools/kernel-current.sh. That "
+         "question is the whole of what replaced apt bringing Debian's "
+         "security updates: without it a medium ships a kernel Debian has "
+         "already replaced, and nothing says so"):
+    ok("the release gate asks whether the kernel is Debian's current one")
+
+_decision = section(DECISION_H)
+for needle in ("appliance/kernel.env", "tools/kernel-current.sh",
+               "tools/build-kernel.sh"):
+    if check(needle in _decision,
+             f"docs/appliance.md's kernel decision does not name `{needle}`, "
+             f"so the procedure that replaced apt's security updates is "
+             f"written down nowhere near the decision that depends on it"):
+        ok(f"and the decision in docs/appliance.md names `{needle}`")
 
 
 if fail == 0:

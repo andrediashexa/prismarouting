@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The kernel is Prisma Routing's** ([#449](https://github.com/andrediashexa/hexarouting/issues/449)).
+  It is Debian's own `linux` source at the version in `appliance/kernel.env`,
+  with Debian's patches and configuration, built by `tools/build-kernel.sh`.
+  Two things change: `uname -r` says `-prisma`, and the module classes a router
+  has no use for are left out. Those are sound, Wi-Fi, Bluetooth, NFC, media,
+  joysticks, tablets, touchscreens, amateur radio, CAN, 802.15.4, cellular
+  modems, FireWire, industrial sensors, AMD/NVIDIA discrete GPUs and staging:
+  4022 modules and 390 MB become 2722 and 209 MB. Every NIC, storage, virtio,
+  vfio, uio, RDMA and hypervisor driver stays, and the build refuses itself if
+  any module Debian ships under those directories is missing. The medium no
+  longer installs `linux-image-amd64`, so Debian's security updates arrive
+  when this repository rebuilds them. `tools/kernel-current.sh` asks Debian's
+  archive, and the release gate refuses a medium whose kernel Debian has
+  already replaced. It found the pin five security releases behind the day it
+  was written (6.1.176-1 against 6.1.187-1), so the medium ships 6.1.187-1.
+  A build takes about 900 s on 16 CPUs and is cached by version.
+
 ### Fixed
 
 ## 0.135.0 - the host's doors

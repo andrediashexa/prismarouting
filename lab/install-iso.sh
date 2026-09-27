@@ -1680,6 +1680,9 @@ drive_console() {
   # error, on a card that had an address, and the check failed a box it
   # could not read. The second number is every NIC driver in the initrd,
   # so a refusal says whether the card's is missing or all of them are.
+  # The kernel the installed box booted (#449): Prisma Routing's, by name.
+  send 'echo "HX""LAB uname=$(uname -r)"'
+  wait_for "HXLAB uname=" 30 "the box to say which kernel it booted" || return 1
   send 'D=$(sed -n "s/^DRIVER=//p" /sys/class/net/$M/device/uevent); I=/boot/initrd.img-$(uname -r); echo "HX""LAB nic-initrd=${D:-none} $(lsinitramfs $I 2>/dev/null | grep -c "/${D:-none}\.ko") $(lsinitramfs $I 2>/dev/null | grep -c "drivers/net/.*\.ko")"'
   wait_for "HXLAB nic-initrd=" 60 \
     "the box to say whether its card's driver is in the initrd" || return 1
@@ -2675,6 +2678,13 @@ if [ "$up" = 1 ]; then
     esac
   fi
   if [ "$MGMT_ASKED" != 0 ]; then
+    UNAME=$(sed -n 's/^HXLAB uname=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+    case "$UNAME" in
+      *-prisma) echo "  [ ok ] the installed box booted Prisma Routing's kernel: $UNAME" ;;
+      *) echo "  [FAIL] the installed box booted '${UNAME:-<unread>}', not a -prisma"
+         echo "         kernel (#449)"
+         fail=1 ;;
+    esac
     NIC_INITRD=$(sed -n 's/^HXLAB nic-initrd=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
     case "$NIC_INITRD" in
       "none 0 "[1-9]*)

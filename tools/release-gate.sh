@@ -536,6 +536,24 @@ else
   step "the roadmap and the tracker agree"
 fi
 
+# THE KERNEL, IF THIS RELEASE CARRIES ONE (#449). A medium ships Prisma
+# Routing's kernel, which is Debian's source at appliance/kernel.env's version:
+# a Debian security update reaches no box until that line moves.
+# tools/kernel-current.sh asks Debian's archive, and a kernel Debian has
+# already replaced is a refusal here, before an hour is spent building a
+# medium around it. Not asked is said, never read as a pass.
+if [ "$KIND" = medium ]; then
+  kc_out=$(sh "$WORK/tools/kernel-current.sh" 2>&1) && kc_rc=0 || kc_rc=$?
+  case "$kc_rc" in
+    0) step "the kernel is Debian's current one" ;;
+    2) step "the kernel was NOT checked against Debian's archive:"
+       printf '%s\n' "$kc_out" | sed 's/^/    /' ;;
+    *) echo "error: the medium's kernel is behind Debian's." >&2
+       printf '%s\n' "$kc_out" | sed 's/^/       /' >&2
+       docs_bad=$((docs_bad + 1)) ;;
+  esac
+fi
+
 # tools/changelog-state.sh asks the other half of the same question, of the
 # other document: an issue closed as COMPLETED that CHANGELOG.md names nowhere
 # is work that shipped with no record a reader can find. CONTRIBUTING.md
