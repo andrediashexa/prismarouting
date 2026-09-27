@@ -44,40 +44,6 @@ typedef enum
   BPA_PPTP_MALFORMED,	/* truncated, or not PPTP at all */
 } bpa_pptp_result_t;
 
-/*
- * The shared binding for a PPTP call, keyed the way an ICMP error about an
- * OUTBOUND GRE packet can be keyed and no other way.
- *
- * An outbound GRE packet carries the Call ID the SERVER assigned. Nothing per
- * worker is keyed on that together with our public address - in2out is keyed
- * on the subscriber's PRIVATE address, out2in on the Call ID this box handed
- * out - so the question "whose tunnel is this error about" has no answer in
- * any per-worker table.
- *
- * (public address, server's Call ID, server address) answers it, and answers
- * it WITHOUT the ambiguity ESP's (public address, peer address) carries: a
- * server hands out one Call ID per call from its own table, so two
- * subscribers sharing a public address and talking to the same server have
- * different Call IDs. That is the server's own requirement rather than this
- * box's assumption - RFC 2637 section 2.1 makes the Call ID unique within the
- * control connection - and a server that broke it would already be unable to
- * tell its own two calls apart.
- *
- * The server address is in the key anyway, so two servers that independently
- * chose the same Call ID for two subscribers on one public address are still
- * separated.
- */
-static_always_inline void
-bpa_key_gre_pub (clib_bihash_kv_16_8_t *kv, u32 pub, u16 call_id, u32 remote)
-{
-  /* The same packing as bpa_key_gre(), so the two are read the same way. The
-   * role byte is left zero: nothing else in this table uses the top byte, and
-   * the protocol byte already separates a GRE binding from an ESP one. No
-   * VRF, for bpa_key_out()'s reason - a public address belongs to exactly one
-   * pool. */
-  kv->key[0] = (u64) pub | ((u64) call_id << 32) | ((u64) BPA_PROTO_GRE << 48);
-  kv->key[1] = remote;
-}
 
 /*
  * Finds the subscriber an ICMP error about an outbound GRE packet is about.
@@ -86,6 +52,9 @@ bpa_key_gre_pub (clib_bihash_kv_16_8_t *kv, u32 pub, u16 call_id, u32 remote)
  * has that Call ID with that server - which is the ordinary case for an error
  * about a call that has already gone away, and for unsolicited rubbish.
  */
+/* not a unit: a search of VPP's shared bihash; the key, the value and the
+ * owner check are bpa_keys.h's, held by test/test_bpa_keys.c, and
+ * lab/pptp.sh carries a call through it (#472) */
 static_always_inline int
 bpa_gre_lookup (u32 pub, u16 call_id, u32 remote, u32 *ip_priv, u32 *fib)
 {
@@ -111,15 +80,17 @@ bpa_gre_lookup (u32 pub, u16 call_id, u32 remote, u32 *ip_priv, u32 *fib)
  * torn down - but "narrower" is not "impossible", and the check costs one
  * lookup on call teardown.
  */
+/* not a unit: a delete from VPP's shared bihash, for the reason above;
+ * held as bpa_gre_lookup() is */
 static_always_inline void
-bpa_gre_unbind (u32 pub, u16 call_id, u32 remote, u32 ip_priv)
+bpa_gre_unbind (u32 pub, u16 call_id, u32 remote, u32 ip_priv, u32 fib)
 {
   bpa_main_t *bm = &bpa_main;
   clib_bihash_kv_16_8_t kv, value;
 
   bpa_key_gre_pub (&kv, pub, call_id, remote);
   if (clib_bihash_search_16_8 (&bm->shared, &kv, &value) == 0
-      && (u32) value.value == ip_priv)
+      && bpa_shared_is (value.value, ip_priv, fib))
     clib_bihash_add_del_16_8 (&bm->shared, &kv, 0);
 }
 

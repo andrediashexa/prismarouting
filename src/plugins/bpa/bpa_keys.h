@@ -141,6 +141,117 @@ bpa_key_gre (clib_bihash_kv_16_8_t *kv, u32 addr, u16 call_id, u32 remote,
   kv->key[1] = (u64) remote | ((u64) fib << 32);
 }
 
+/* An ESP packet's SPI: its first four bytes, in network order. */
+static_always_inline u32
+bpa_esp_spi (const void *p)
+{
+  return clib_net_to_host_u32 (((const u32 *) p)[0]);
+}
+
+/*
+ * The private side of an ESP binding: one entry per (subscriber, peer).
+ *
+ * Per peer and not per subscriber, because a subscriber with two tunnels is
+ * an ordinary home worker and one entry for both would have to be torn down
+ * when either of them ended. The same packing as bpa_key_gre(): the peer
+ * address in the low half of the second word, the VRF in the high one.
+ */
+static_always_inline void
+bpa_key_esp (clib_bihash_kv_16_8_t *kv, u32 priv, u32 remote, u32 fib)
+{
+  kv->key[0] = (u64) priv | ((u64) BPA_PROTO_ESP << 48);
+  kv->key[1] = (u64) remote | ((u64) fib << 32);
+}
+
+/*
+ * The public side, which is the shared table's key. No VRF: a public address
+ * belongs to exactly one pool, which is the same reason bpa_key_out() has
+ * none.
+ */
+static_always_inline void
+bpa_key_esp_pub (clib_bihash_kv_16_8_t *kv, u32 pub, u32 remote)
+{
+  kv->key[0] = (u64) pub | ((u64) BPA_PROTO_ESP << 48);
+  kv->key[1] = remote;
+}
+
+/*
+ * The binding's value, which is everything the inbound path needs and nothing
+ * more: whom to give the packet to, and which VRF to give it back into.
+ *
+ * Named for the TABLE and not for ESP, because PPTP GRE puts the same two
+ * fields in the same table for the same reason (#203), and a value helper
+ * called bpa_esp_value() holding a GRE binding is how the next reader is
+ * misled about what the table contains.
+ *
+ * Packed into the bihash's own 64-bit value rather than pointing at a record.
+ * A record would be a pool that the datapath allocates from on several workers
+ * at once, and pool_get() is not that; two u32 fields fit exactly, so there is
+ * nothing to allocate and nothing to race on.
+ */
+static_always_inline u64
+bpa_shared_value (u32 ip_priv, u32 fib)
+{
+  return (u64) ip_priv | ((u64) fib << 32);
+}
+
+static_always_inline void
+bpa_shared_unpack (u64 v, u32 *ip_priv, u32 *fib)
+{
+  *ip_priv = (u32) v;
+  *fib = (u32) (v >> 32);
+}
+
+/*
+ * Is this shared binding still the one this subscriber made? A teardown asks
+ * before deleting, because another worker can have replaced it between the
+ * two halves, and deleting a neighbour's binding black-holes a working
+ * tunnel. BOTH fields: the check read the private address alone, so of two
+ * subscribers with one private address in two VRFs, behind one public
+ * address and talking to one peer, the first to hang up deleted the other's
+ * binding (#472).
+ */
+static_always_inline int
+bpa_shared_is (u64 v, u32 ip_priv, u32 fib)
+{
+  return v == bpa_shared_value (ip_priv, fib);
+}
+
+/*
+ * The shared binding for a PPTP call, keyed the way an ICMP error about an
+ * OUTBOUND GRE packet can be keyed and no other way.
+ *
+ * An outbound GRE packet carries the Call ID the SERVER assigned. Nothing per
+ * worker is keyed on that together with our public address - in2out is keyed
+ * on the subscriber's PRIVATE address, out2in on the Call ID this box handed
+ * out - so the question "whose tunnel is this error about" has no answer in
+ * any per-worker table.
+ *
+ * (public address, server's Call ID, server address) answers it, and answers
+ * it WITHOUT the ambiguity ESP's (public address, peer address) carries: a
+ * server hands out one Call ID per call from its own table, so two
+ * subscribers sharing a public address and talking to the same server have
+ * different Call IDs. That is the server's own requirement rather than this
+ * box's assumption - RFC 2637 section 2.1 makes the Call ID unique within the
+ * control connection - and a server that broke it would already be unable to
+ * tell its own two calls apart.
+ *
+ * The server address is in the key anyway, so two servers that independently
+ * chose the same Call ID for two subscribers on one public address are still
+ * separated.
+ */
+static_always_inline void
+bpa_key_gre_pub (clib_bihash_kv_16_8_t *kv, u32 pub, u16 call_id, u32 remote)
+{
+  /* The same packing as bpa_key_gre(), so the two are read the same way. The
+   * role byte is left zero: nothing else in this table uses the top byte, and
+   * the protocol byte already separates a GRE binding from an ESP one. No
+   * VRF, for bpa_key_out()'s reason - a public address belongs to exactly one
+   * pool. */
+  kv->key[0] = (u64) pub | ((u64) call_id << 32) | ((u64) BPA_PROTO_GRE << 48);
+  kv->key[1] = remote;
+}
+
 /*
  * How long a session lives in silence, from what it is and the timeouts in
  * force. An ALG's expectation lives by its own timeout whatever it carries;

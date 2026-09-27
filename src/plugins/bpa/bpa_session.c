@@ -821,7 +821,8 @@ bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
       bpa_key_gre (&kv, s->ip_priv, s->peer_call_id, s->remote,
 		   BPA_GRE_KEY_DATA, s->fib_index);
       clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
-      bpa_gre_unbind (s->ip_pub, s->peer_call_id, s->remote, s->ip_priv);
+      bpa_gre_unbind (s->ip_pub, s->peer_call_id, s->remote, s->ip_priv,
+			  s->fib_index);
     }
 
   s->peer_call_id = peer_call_id;
@@ -978,7 +979,8 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 	  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
 	  /* Both halves go together, and the shared one is written only when
 	   * the call established - so it exists exactly when this key does. */
-	  bpa_gre_unbind (s->ip_pub, s->peer_call_id, s->remote, s->ip_priv);
+	  bpa_gre_unbind (s->ip_pub, s->peer_call_id, s->remote, s->ip_priv,
+			  s->fib_index);
 	}
     }
   else if (PREDICT_FALSE (s->proto == BPA_PROTO_ESP))
@@ -996,7 +998,7 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
        */
       bpa_key_esp_pub (&kv, s->ip_pub, s->remote);
       if (clib_bihash_search_16_8 (&bm->shared, &kv, &value) == 0
-	  && (u32) value.value == s->ip_priv)
+	  && bpa_shared_is (value.value, s->ip_priv, s->fib_index))
 	clib_bihash_add_del_16_8 (&bm->shared, &kv, 0);
     }
   else

@@ -28,6 +28,12 @@ typedef float f32;
 
 #define PREDICT_TRUE(x)	     __builtin_expect (!!(x), 1)
 #define PREDICT_FALSE(x)     __builtin_expect (!!(x), 0)
+/* Network order to the host's, as vppinfra's byte_order.h gives it. */
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define clib_net_to_host_u32(x) __builtin_bswap32 (x)
+#else
+#define clib_net_to_host_u32(x) (x)
+#endif
 #define static_always_inline static inline __attribute__ ((__always_inline__))
 
 typedef char clib_error_t;

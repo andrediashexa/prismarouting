@@ -11,7 +11,9 @@
  *     key share a mapping, which is one translated onto the other;
  *   * the VRF separates two tenants' identical private addresses, the pool
  *     separates two pools' identical subscriber indices (#57);
- *   * GRE's remote and VRF are both in the second word, apart;
+ *   * GRE's remote and VRF are both in the second word, apart; so are ESP's;
+ *   * the shared table's keys (ESP, PPTP) have no VRF, and its value
+ *     round-trips the subscriber and the VRF;
  *   * the timeout a session gets, per protocol and TCP state;
  *   * the TCP state machine, every transition.
  *
@@ -102,6 +104,57 @@ main (void)
   CHECK (a.key[0] == b.key[0],
 	 "the GRE data key's first word is not the ordinary key's, so the "
 	 "worker handoff would read it differently");
+
+  printf ("\n=== ESP: the SPI, the private and the public binding ===\n");
+  {
+    static const u8 hdr[8] = { 0x12, 0x34, 0x56, 0x78, 0, 0, 0, 1 };
+    u32 ip, fib;
+
+    CHECK (bpa_esp_spi (hdr) == 0x12345678u,
+	   "the SPI read as 0x%08x, not in network order", bpa_esp_spi (hdr));
+    bpa_key_esp (&a, 0x64400005u, 0x08080808u, 0);
+    bpa_key_esp (&b, 0x64400005u, 0x01010101u, 0);
+    CHECK (!same (&a, &b), "one subscriber's two peers are one binding");
+    bpa_key_esp (&b, 0x64400005u, 0x08080808u, 4);
+    CHECK (!same (&a, &b), "one ESP binding in two VRFs is one key");
+    bpa_key_esp (&a, 0, 0xffffffffu, 0);
+    bpa_key_esp (&b, 0, 0, 0xffffffffu);
+    CHECK ((a.key[1] & b.key[1]) == 0, "the ESP peer and the VRF overlap");
+    bpa_key_esp (&a, 0x64400005u, 0x08080808u, 0);
+    bpa_key_in (&b, 0x64400005u, 0, BPA_PROTO_ESP, 0);
+    CHECK (a.key[0] == b.key[0],
+	   "the ESP key's first word is not the ordinary key's shape");
+    bpa_key_esp_pub (&a, 0xc8000001u, 0x08080808u);
+    CHECK (a.key[1] == 0x08080808u,
+	   "the public ESP key carries more than the peer (a VRF?)");
+    bpa_key_esp_pub (&b, 0xc8000001u, 0x01010101u);
+    CHECK (!same (&a, &b), "two peers of one public address are one key");
+
+    bpa_shared_unpack (bpa_shared_value (0x64400005u, 0xfffffffeu), &ip, &fib);
+    CHECK (ip == 0x64400005u && fib == 0xfffffffeu,
+	   "the shared value came back as %08x in VRF %u", ip, fib);
+    bpa_shared_unpack (bpa_shared_value (0xffffffffu, 0), &ip, &fib);
+    CHECK (ip == 0xffffffffu && fib == 0, "a full address leaked into the VRF");
+    CHECK (bpa_shared_is (bpa_shared_value (0x0a000005u, 1), 0x0a000005u, 1),
+	   "a subscriber does not recognise its own binding");
+    CHECK (!bpa_shared_is (bpa_shared_value (0x0a000005u, 2), 0x0a000005u, 1),
+	   "one private address in VRF 1 owns the binding VRF 2 made - its "
+	   "teardown deletes a working tunnel");
+    CHECK (!bpa_shared_is (bpa_shared_value (0x0a000006u, 1), 0x0a000005u, 1),
+	   "a neighbour's binding reads as this subscriber's");
+  }
+
+  printf ("\n=== PPTP's public GRE key: the server's Call ID, no VRF ===\n");
+  bpa_key_gre_pub (&a, 0xc8000001u, 77, 0x08080808u);
+  bpa_key_gre_pub (&b, 0xc8000001u, 78, 0x08080808u);
+  CHECK (!same (&a, &b), "two Call IDs to one server are one binding");
+  bpa_key_gre_pub (&b, 0xc8000001u, 77, 0x01010101u);
+  CHECK (!same (&a, &b), "two servers choosing one Call ID are one binding");
+  CHECK (a.key[1] == 0x08080808u, "the public GRE key carries a VRF");
+  bpa_key_gre (&b, 0xc8000001u, 77, 0x08080808u, BPA_GRE_KEY_DATA, 0);
+  CHECK (same (&a, &b), "the public GRE key is not packed as bpa_key_gre()");
+  bpa_key_esp_pub (&b, 0xc8000001u, 0x08080808u);
+  CHECK (!same (&a, &b), "a GRE binding and an ESP binding share a key");
 
   printf ("\n=== how long a session lives ===\n");
   {
