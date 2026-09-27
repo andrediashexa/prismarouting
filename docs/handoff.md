@@ -1,6 +1,6 @@
 # Where this stands, for whoever picks it up next
 
-Written 2026-09-24, at 0.125.1, so the next session starts with the state
+Written 2026-09-27, at 0.138.0, so the next session starts with the state
 rather than reconstructing it. **This file is a handoff, not a plan** —
 `docs/roadmap.md` is the plan, and where the two disagree the roadmap is
 right. `CLAUDE.md` is how this repository is worked on; read that first.
@@ -19,106 +19,146 @@ none of them is waiting for somebody to start it:
 The next piece of work will therefore come from the maintainer: a decision on
 one of the issues below, or, as it usually has, something seen on a box.
 
-## Released since the last handoff (0.110.0)
+## Released since the last handoff (0.125.1)
 
 The CHANGELOG has each one. By theme:
 
 | | | |
 |---|---|---|
-| 0.110.1 - 0.112.7 | readback validators, the release clock, the X.Y.Z reader, a block that moves between workers | #418 #419 #408 #409 #210 #423 - #425 |
-| 0.113.0 - 0.118.1 | the dataplane and control plane as containers, carried in the medium, and the default that follows the images | #396 #426 #427 |
-| 0.117.3 - 0.123.4 | every C function in the plugin has a unit or says why not, and every CLI message is held by a lab | #390 |
-| 0.119.0 - 0.122.0 | the box a customer has - a real card, its registers, and the release that installs and boots it | #428 #429 |
-| 0.122.1 - 0.122.5 | the kernel's remaining tuning, and three screens that said less than they knew | #163 #430 |
-| 0.122.6 - 0.124.0 | asked for by the maintainer or found on a box, below | |
+| 0.125.2 - 0.130.0 | the CGNAT under `nat`, a backplane of its own (128.0.0.0/8 in VRF `prisma-bp`), the login broker, cards added to a running box, the CGNAT's memory, the dataplane under `system` | #446 #447 #448 #453 #454 |
+| 0.131.0 - 0.131.8 | the maintainer's box, one request at a time: the Linux end named for its interface, commit from inside a pool, the CGNAT side on the interface, BPA as the dynamic allocation, the RAM floor, Junos-style routing policy, a first allocation larger than the step, cores by role | #461 #462 #463 #464 #452 #458 #465 #466 |
+| 0.132.0 - 0.133.4 | a smaller initrd, policy into OSPF and IS-IS, the control plane fenced off the dataplane's CPUs, `show`/`test policy`, memory by role, RX and CGNAT workers, LACP bundles | #450 #458 #466 #455 |
+| 0.134.0 | the NIC drivers back in the initramfs: 0.132.0 booted with its cards missing | #468 |
+| 0.135.0 | the host's doors: what the VTY does to the host, asked of a root daemon | #448 |
+| 0.136.0 | the kernel is Prisma Routing's: Debian's 6.1.187-1, renamed and trimmed | #449 |
+| 0.136.1 | a subscriber reaches the box itself through the CGNAT | #470 |
+| 0.136.2 | a `show` longer than the screen stops at `--More--` | #469 |
+| 0.137.0 - 0.138.0 | the management plane's container, and the VTY in it by default | #448 |
 
-The last run, in the order they were released:
+0.132.0, 0.133.0, 0.134.0, 0.135.0, 0.136.0, 0.137.0 and 0.138.0 went through
+the full gate; the rest are patches.
 
-| | | |
-|---|---|---|
-| 0.122.6 | a statement FRR does not accept is refused where it is typed | #431 |
-| 0.122.7 | the login banner spells the product name | #433 |
-| 0.122.8 | a public directory to download each release from | #439 |
-| 0.122.9 | Ctrl-C at the prompt no longer ends the ssh session | #441 |
-| 0.122.10 | static routes as `<prefix> next-hop <address>`, with description, tag and distance | #436 |
-| 0.123.0 | DNS resolvers from the VTY, which a DHCP lease no longer undoes | #437 |
-| 0.123.1 | `lab/vty-ssh.sh` asserts today's box | #434 |
-| 0.123.2 | `show bpa translation` names the right subscriber with workers | #432 |
-| 0.123.3 | a loss at dataplane shutdown is said | #435 |
-| 0.123.4 | every message the plugin's CLI prints is held by a lab | #390 |
-| 0.123.5 | **security**: a shell for administrators only | #442 |
-| 0.123.6 | `system upgrade` from the VTY | #440 |
-| 0.124.0 | the installed system calls itself Prisma Routing | #438 |
-| 0.124.1 | the wiki walks an operator through configuring the CGNAT | #443 |
-| 0.124.2 | the gate boots and installs on both guests at once: 29 minutes off a minor | #409 |
-| 0.124.3 | a dynamic pool nothing exports is warned | #444 |
-| 0.124.4 | an applied route no longer says "No changes found" | #445 |
-| 0.125.0 | the upgrade artifact carries the container images | #427 |
+## Decided on 2026-09-24 and after
 
-Of these, 0.123.0, 0.124.0 and 0.125.0 went through the full gate; the rest
-are patches. 0.125.0 was the first through the parallel one.
+* **#449, the kernel**: the maintainer reversed the earlier recommendation,
+  with the cost stated and accepted. The medium ships Debian's source rebuilt
+  as `-prisma`, and a Debian kernel security release reaches a box only when
+  `appliance/kernel.env` moves (see below).
+* **#448, the VTY in a container**: done. The login's VTY runs in
+  `prisma-routing_mgmt_1` as the login's own uid; `/etc/prisma-routing/vty-on-host`
+  puts a box back on the host's VTY.
+* **#469, `--More--`**: every interactive `show` pages, by the maintainer's
+  request. `| no-more` turns it off.
+* **#396** and **#399** are answered for now: the dataplane, the control plane
+  and the management plane are containers; whether the agent and telemetry
+  get their own, and active/active, are the maintainer's.
 
-## Decided on 2026-09-24
+## Waiting on a decision
 
-* **#438, `uname`**: the maintainer asked for a recommendation, and it was to
-  keep Debian's kernel. Only `uname -v` still says Debian, and a kernel of our
-  own ends the security updates. If that is overruled, it is a new issue.
-* **#427**: the artifact carries the images (0.125.0).
-* **#409**: re-aimed at the boots and closed (0.124.2). The versioned rootfs
-  is not built, because what it could save is 7.6% of a release.
-* **#337**: not to be done. Only the maintainer tests boxes for now, so there
-  is nobody to disclose to.
-* **#396** and **#399** are answered for now: containers are delivered to
-  phase 2, and active/active is deferred by decision (2026-09-19).
+* **#210**: the block rebalancer is delivered and off (`bpa rebalance
+  enable`). Every setting that serves the refused subscriber also lends a
+  block the lender's next subscriber wants; which one an ISP wants depends on
+  real subscribers retrying, which a box with traffic measures in an
+  afternoon.
 
 ## Blocked
 
-* **#28, #29** - throughput and symmetric RSS on a NIC DPDK drives natively.
-* **#172**, its last part - giving VPP's main thread a core of its own needs a
-  barrier measurement on real hardware; a virtio VM measures the hypervisor.
-* **#163** - what remains needs the same hardware.
-* **#36** - Debian 13: fd.io still publishes no trixie suite (re-tested
-  2026-09-24: 404).
+* **#28, #29, #467** - throughput, symmetric RSS and the core-layout benchmark
+  need a NIC DPDK drives natively; a virtio VM measures the hypervisor.
+* **#163** - its first part is superseded by #449; what remains, the boot
+  tuning, needs the same hardware.
+* **#36** - Debian 13: fd.io still publishes no trixie suite.
 
 ## Deferred by their own issues
 
-**#32** PCP, **#80** pool selection by ACL (a sub-issue of **#26**, which adds
-VRF), and **#170**
-BNG, which says why it is a second product rather than a feature.
+**#32** PCP, **#80** pool selection by ACL (a sub-issue of **#26**, whose VRF
+half is delivered), and **#170** BNG, which says why it is a second product
+rather than a feature.
 
 ## What is worth knowing before touching anything
 
+### Releases
+
+* **A minor's gate does not run `make test`.** Only a patch's does, and
+  0.134.0 shipped with `test_install_says` red because the run that would have
+  shown it was stopped on the belief that the gate would. Run `make test` to
+  the end before tagging a minor, every time.
+* **A suite that dies is `NO VERDICT`, not `FAIL`.** A filter for `FAIL` alone
+  missed `test_prismash_igp` dying on a stub. Read the summary line
+  (`N suites: N passed ...`), or all three words.
+* **A patch release installs nothing, so a change a console session sees
+  escapes it.** 0.136.2's pager stopped two labs at `--More--`, found only by
+  the next minor's gate. The labs now type `| no-more`; a script driving a
+  console session has to as well.
 * **A branch cut before a release files its CHANGELOG entry inside that
-  release when it is merged**, cleanly and with no conflict: git anchors it on
-  the `### Fixed` it still sees. `test/test_changelog_landing.py` and the gate
-  refuse it, and the gate refused 0.123.2's first cut for exactly that. Rebase
-  a branch onto `master` before merging it, and check where the entry landed.
-* **A union merge of `docs/roadmap.md` keeps both versions of a row**: the
-  open one and the delivered one. `tools/roadmap-state.sh` reads the issue a
-  row names, not the word next to it, so it passes. `test/test_doc_copies.py`
-  catches a duplicated sentence, and it refused 0.124.4's first cut for
-  exactly that. Rebase a branch onto `master` before merging it, every time.
-* **`appliance/install.sh` is medium-only to the gate**, so any change to it
-  is a minor release with the full gate, whatever the change is. 0.122.11 was
-  refused as a patch for that and re-cut as 0.123.0. The full gate needs about
-  32 GB of RAM.
+  release when it is merged**, and **a union merge of `docs/roadmap.md` keeps
+  both versions of a row.** Rebase onto `master` before merging, every time,
+  and check where the entry landed.
+* **An issue opened while a release is in its gate fails that gate** unless
+  `docs/roadmap.md` on the release's branch names it. 0.136.0's first gate was
+  refused for #469 and #470, opened an hour earlier.
+* **`appliance/install.sh`, `appliance/build-iso.sh`, `build/Dockerfile.dev`
+  and `CMakeLists.txt` are medium-only to the gate**, so a change to any of
+  them is a minor with the full gate. The full gate needs about 32 GB of RAM.
 * **Every release goes to the public directory as well** -
-  `tools/publish-release.sh`, with the target in `~/.releases-target`. The
-  GitHub release page is private, and the wiki and `system upgrade` both send
-  operators to the directory.
+  `tools/publish-release.sh`, with the target in `~/.releases-target`.
+
+### The kernel
+
+* **`appliance/kernel.env` has to follow Debian's security releases.** The
+  gate asks `tools/kernel-current.sh` and refuses a medium whose kernel Debian
+  has replaced. Moving it is: the new source version and its ABI name in
+  `kernel.env`, then `make kernel` (about 900 s on 16 CPUs, cached by version
+  under `/var/cache/prisma/kernel`), then a minor. `tools/build-kernel.sh`
+  refuses a build missing any NIC, storage, virtio, vfio, uio, RDMA or
+  hypervisor module Debian ships, and one carrying key material.
+* **The upgrade artifact carries no kernel.** A box gets a new one from the
+  medium it is installed from.
+
+### The VTY in the management plane
+
+* **A new read of the host in `prismash.py` needs its line in
+  `compose.yaml`**: an `os.environ.get("PRISMA_*", "<host path>")` seam, and
+  the mgmt service's environment pointing it under `/host`.
+  `test/test_mgmt_reads_host.py` refuses one without it. Read at its own path
+  in the container, it is the container's - 0.137.0's first gate had the VTY
+  tell the live medium's operator to reboot.
+* **A new command the VTY runs on the host needs a door.**
+  `test/test_doors.py` reads every `self._run` in `system.py` and every
+  `self.sys._run` and `host_run` in `prismash.py` off the source. The first
+  cut read `system.py` only and missed `system reboot`: a box with the daemon
+  would have refused root its own reboot.
+* **What acts on the host with the terminal goes through the broker**
+  (`HOSTRUN`: `install`, `system upgrade`, `system dataplane restart`); what
+  needs the host's network goes through the probe door, which streams.
+* **Never mount `/` or `/run` into the container**: `/run/docker.sock` is a
+  socket a read-only bind does not stop anybody connecting to.
+
+### The wiki
+
+* **A page cites no issue number** (`test_wiki_rules`): the reasoning goes on
+  the page in its own words.
+* **Outline rewrites bold around a code span** into asterisks inside the
+  code. Leave code spans out of bold.
+* **`WIKI_PULL_DISCARD=1` overwrites every page not yet published.** Publish
+  first, then pull, then commit the pull.
+
+### The machine
+
+* **Do not edit a shell script that is running.** `sh` reads it as it goes; a
+  build lost its tail to exactly that, and two kernel builds were lost to a
+  quote nested three deep. A long container job is a file of its own.
+* **`pkill -f` with a pattern your own command line contains kills your own
+  shell.** Find the pid first.
 * **A mutation that does not compile runs a stale binary green.** Watch the
   build say it built before believing a green run of a C mutation.
-* **The Discord announcement needs `~/.discord-webhook`** on the machine that
-  commits. It was not on the machine this session ran on, so none of its
-  commits was announced - the hook says so on every commit, and does not fail
-  it.
+* **The Discord announcement needs `~/.discord-webhook`**; it was absent this
+  session too, and the hook said so on every commit without failing it.
 * **A lab screen needs two lab-only traps disarmed** before traffic goes
-  through: the container's own veth answers ARP for the gateway (VPP drops
-  the frames as `l3 mac mismatch`), and docker's default route (distance 0)
-  outranks a static default, so the dataplane's default is `drop`. #443's
-  capture met both.
+  through: the container's own veth answers ARP for the gateway, and docker's
+  default route outranks a static default. A lab of the CGNAT's reach to the
+  box itself also needs the pool blackholed, as every box has it, or a
+  translated reply finds its way back through the upstream and hides the
+  defect (#470).
 * **The labs are where the interesting failures are found**, and a lab that
-  asserts what the box does wrong is worse than none. Both were true again
-  this session: `lab/dynamic.sh` was blamed for a red that was the screen's
-  defect (#432), and `lab/vty-ssh.sh` had asserted a refusal sshd no longer
-  gets to make for thirteen minors (#434).
+  asserts what the box does wrong is worse than none.
