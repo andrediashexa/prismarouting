@@ -287,6 +287,10 @@ chmod 0755 "$DESTDIR/usr/lib/prisma-routing/prismash.py"
 # decided and run on the host.
 install -D -m 0755 "$REPO/appliance/prisma-vty-broker" \
     "$DESTDIR/usr/lib/prisma-routing/prisma-vty-broker"
+# And what the broker runs (#448, phase C): the VTY in the management plane,
+# or here when there is none.
+install -D -m 0755 "$REPO/appliance/prisma-vty-session" \
+    "$DESTDIR/usr/lib/prisma-routing/prisma-vty-session"
 install -D -m 0755 "$REPO/appliance/prismash-launcher" "$DESTDIR/usr/bin/prismash"
 install -D -m 0755 "$REPO/appliance/prisma-routing-tune" "$DESTDIR/usr/bin/prisma-routing-tune"
 install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/prisma-routing/wait-for-vpp"

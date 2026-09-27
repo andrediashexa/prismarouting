@@ -50,6 +50,12 @@ no_shell() {
 # login shell straight at prismash - had never been executed anywhere. It is set
 # by nothing on a real box.
 PRISMASH=${PRISMA_PRISMASH:-/usr/bin/prismash}
+# THE VTY IN THE MANAGEMENT PLANE (#448, phase C): prisma-vty-session asks
+# the host's doors to run it in the container as this login, and runs
+# prismash here itself when there is no management plane. Where it is not
+# installed, prismash as before.
+VTY=${PRISMA_VTY_SESSION:-/usr/lib/prisma-routing/prisma-vty-session}
+[ -x "$VTY" ] || VTY=$PRISMASH
 
 # A login shell is invoked with "-c <command>" for scp, rsync, git and any
 # non-interactive ssh. An administrator's reach a real shell, or file copies to
@@ -60,7 +66,7 @@ PRISMASH=${PRISMA_PRISMASH:-/usr/bin/prismash}
 if [ "$#" -gt 0 ]; then
   may_have_shell && exec "$SHELL_FALLBACK" "$@"
   if [ "$1" = -c ] && [ "$#" -eq 2 ] && [ -x "$PRISMASH" ]; then
-    exec "$PRISMASH" -c "$2"
+    exec "$VTY" -c "$2"
   fi
   no_shell "a command over ssh is run by the VTY: ssh <account>@<box> \"<VTY command>\"" 1
 fi
@@ -85,7 +91,7 @@ fi
 # fallback below reads exactly what it read before.
 BROKER=${PRISMA_VTY_BROKER:-/usr/lib/prisma-routing/prisma-vty-broker}
 if [ -x "$BROKER" ]; then
-  "$BROKER" "$PRISMASH"
+  "$BROKER" "$VTY"
 else
   "$PRISMASH"
 fi

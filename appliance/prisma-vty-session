@@ -1,0 +1,80 @@
+#!/usr/bin/python3
+"""
+The VTY, in the management plane when there is one (#448, phase C).
+
+    prisma-vty-session --attach <broker socket>     an interactive session
+    prisma-vty-session -c "<VTY command>"           ssh box '<command>'
+
+What prismash-login runs in place of prismash. It asks the host's doors for
+a session: the daemon runs the VTY in the management plane's container as
+this login's own uid and groups (doors.session_argv), and answers with its
+exit status - so the broker and prismash-login read exactly what they read
+when the VTY ran here.
+
+AND WHEN THERE IS NO MANAGEMENT PLANE, THE VTY RUNS HERE, as it did before
+phase C: no daemon, no container running, or a broker socket outside
+/run/user (a login with no runtime directory). A box whose container is down
+is a box an operator still has to be able to reach, and the VTY on the host
+is the one that has always worked.
+"""
+import json
+import os
+import socket
+import sys
+
+SOCKET = os.environ.get("PRISMA_DOORS", "/run/prisma-routing/doors.sock")
+PRISMASH = os.environ.get("PRISMA_PRISMASH", "/usr/bin/prismash")
+
+
+def here(args):
+    """The VTY on the host, as before phase C. Does not return."""
+    os.execv(PRISMASH, [PRISMASH] + args)
+
+
+def ask(session):
+    """(rc, out) from the doors, or None when there is nobody to ask."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(SOCKET)
+    except OSError:
+        s.close()
+        return None
+    try:
+        s.sendall(json.dumps({"session": session}).encode() + b"\n")
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        r = json.loads(buf.decode())
+        return int(r["rc"]), str(r.get("out", ""))
+    except (OSError, ValueError, KeyError):
+        return None
+    finally:
+        s.close()
+
+
+def main(argv):
+    if len(argv) == 2 and argv[0] == "--attach":
+        session = {"attach": argv[1]}
+    elif len(argv) == 2 and argv[0] == "-c":
+        session = {"command": argv[1]}
+    else:
+        print('usage: prisma-vty-session --attach <socket> | -c "<command>"',
+              file=sys.stderr)
+        return 2
+    got = ask(session)
+    # 125: no management plane running; 126: a door refused (a socket outside
+    # /run/user, most often). Both are "run it here".
+    if got is None or got[0] in (125, 126):
+        here(argv)
+    rc, out = got
+    if out:
+        sys.stdout.write(out)
+        sys.stdout.flush()
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
