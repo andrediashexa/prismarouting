@@ -4,11 +4,31 @@ As regras que evitam incidente, a ordem em que a máquina sobe, e por onde come�
 
 # Regras que evitam incidente
 
-## A interface de gerência não vai para o VPP — havendo outra placa
+## Qual placa o dataplane toma, e qual fica com o Linux
 
-O DPDK tira a NIC do Linux. Numa caixa que tem outra placa, entregar ao VPP a porta pela qual você administra a máquina a deixa **inalcançável** — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece como `interface` dentro de `nat` > `cgnat`. A própria caixa recusa essa entrega, no prompt, e diz qual é a outra placa.
+O DPDK tira a NIC do Linux: a placa que o dataplane toma deixa de existir para o sistema, e o que chegava à caixa por ela passa a chegar pelo par que o dataplane mantém do lado do Linux.
 
-**A exceção é a caixa que tem uma placa só**, que é como a maioria conhece este produto. Ali não existe outra placa para nomear, a recusa mandaria fazer uma coisa impossível, e a entrega é permitida: o endereço de gerência vai junto com a placa, para o par que o dataplane mantém do lado do Linux, com o mesmo MAC. O que torna isso seguro está descrito na regra seguinte — a entrega é sempre um `commit confirmed`, com trinta minutos, que ninguém confirmando desfaz sozinho. O passo a passo está em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+Sem ninguém configurar nada, a caixa toma **todas** as placas de rede que tem, menos **uma reservada ao Linux** — a da rede de gerência que foi informada na instalação; quem respondeu `none` ali, que é o padrão do instalador, não reservou nenhuma. A reserva nunca fica com a última placa: numa caixa de uma placa só, essa placa vai para o dataplane, e o endereço de gerência vai junto com ela para o par do lado do Linux, com o mesmo MAC e o mesmo gateway. `show hardware` diz quais placas a caixa tomou, qual carrega a rota padrão, e por quê.
+
+O caminho de volta — endereço, MAC e gateway — é lido **da própria placa, no boot que a toma**, antes de ela sair do Linux. Uma placa cujo caminho de volta não pode ser lido **não é tomada**. E se o dataplane não consegue subir, a caixa devolve as placas ao driver do kernel sozinha.
+
+Para escolher a placa à mão — numa máquina com várias placas, em que só uma carrega assinantes —, diga qual em `system` > `dataplane`:
+
+```
+configure
+system
+dataplane
+interface enp2s0
+commit
+```
+
+A placa nomeada é tomada **qualquer que seja a rota que ela carrega**, e passa a ser a única. Não há mais recusa no prompt por ser a placa por onde você está conectado: a caixa nova é configurada no console, e é ali que essa decisão é tomada. `no interface`, no mesmo lugar, devolve a escolha à caixa — a regra automática acima.
+
+
+:::warning
+**O** `**commit**` **guarda a escolha e não reinicia o dataplane.** A placa troca de dono no próximo boot, ou com `system dataplane restart` — os dois derrubam o encaminhamento por alguns segundos e jogam fora o bloco de portas de todos os assinantes. O próprio `commit` diz se a placa escolhida é a que carrega a sua sessão. Escolha a janela.
+
+:::
 
 ## Mudança remota vai com rede de segurança
 
@@ -20,7 +40,7 @@ Aplica agora e desfaz sozinho em 5 minutos se você não confirmar. Se a mudanç
 
 O prazo é do **equipamento**, não da sessão: sair da VTY, perder o SSH, fechar o console ou reiniciar a máquina não cancela o desfazer. Só `commit` cancela. E três mudanças viram `commit confirmed 10` mesmo sem você pedir — qualquer coisa em `ssh`, qualquer coisa em `user`, e um `commit cutoff` —, porque são as que podem cortar a sessão em que você está digitando.
 
-Eram quatro: entregar ao dataplane a placa por onde a caixa é alcançada virava `commit confirmed 30`. Não é mais — a caixa reivindica a própria placa ao iniciar, e não há mais janela nenhuma para confirmar essa entrega. **Procedimento que mande reiniciar, entrar de novo e digitar** `**commit**` **para manter a placa não vale mais**, e o `commit` extra não faz nada.
+Entregar ao dataplane a placa por onde a caixa é alcançada **não** está entre elas: a caixa lê o caminho de volta da placa no boot que a toma, e não há janela nenhuma para confirmar essa entrega. **Procedimento que mande reiniciar, entrar de novo e digitar** `**commit**` **para manter a placa não vale mais**, e o `commit` extra não faz nada.
 
 ## `commit` não é `save`
 
@@ -38,7 +58,7 @@ O `commit check` informa o re-mapeamento: a conta exata e dois assinantes de exe
 
 ## Recuperar uma caixa que ficou inalcançável
 
-Se o dataplane tomou a placa de gerência, a caixa saiu da rede no instante em que o VPP subiu. Pelo console, aponte-a para a placa dos assinantes — ou para nenhuma, até decidir:
+Se o dataplane tomou a placa por onde a caixa era administrada e o caminho de volta não funcionou, a caixa saiu da rede no instante em que o dataplane subiu. Pelo console, aponte o dataplane para a placa dos assinantes, e só para ela:
 
 ```
 prisma> configure
@@ -50,11 +70,11 @@ prisma# [edit] exit
 prisma> save
 ```
 
-`no interface`, em `system` > `dataplane`, é a versão sem escolher: a caixa passa a não pegar placa nenhuma, que é o estado seguro e alcançável por rede. **Depois reinicie.**
+Com uma placa nomeada, todas as outras ficam com o Linux. **Depois reinicie** — ou use `system dataplane restart`, que devolve todas as placas ao kernel, refaz a escolha e sobe o dataplane de novo.
 
 
 :::warning
-Reiniciar não é zelo: o DPDK amarrou a placa a um driver de espaço de usuário, e parar o VPP **não a devolve ao kernel de forma confiável**. É também por isso que o `commit` não reinicia o dataplane sozinho — quem escolhe a janela é você.
+Reiniciar não é zelo: o `commit` só guarda a escolha, porque trocar a placa de dono derruba o encaminhamento e o bloco de portas de todos os assinantes. Quem escolhe a janela é você — e até lá a placa continua com quem estava.
 
 :::
 
@@ -62,7 +82,7 @@ Uma caixa sem interface de dataplane parece uma caixa funcionando — ela respon
 
 ## O autoteste diz que a placa foi entregue e nada carrega o endereço
 
-Numa caixa de uma placa só, entregar essa placa ao dataplane é permitido - e no momento em que você confirma a entrega a caixa anota, ao lado do nome da placa, o caminho de gerência que ela vai precisar de volta: o endereço, a máscara e o MAC. No boot seguinte o dataplane toma a porta e esse endereço volta para o par `linux_cp` da interface. É por esse par que a caixa passa a ser alcançada.
+Quando o dataplane toma a placa por onde a caixa é alcançada - numa caixa de uma placa só, é o que acontece sem ninguém pedir -, a caixa lê dessa placa, no mesmo boot e antes de tirá-la do Linux, o caminho de gerência que vai precisar de volta: o endereço com a máscara, o MAC e o gateway. Esse endereço volta para o par `linux_cp` da interface, e a rota padrão para o Linux atrás dele. É por esse par que a caixa passa a ser alcançada.
 
 Se o par não existir, não há para onde o endereço voltar. A caixa sobe encaminhando e **sem ninguém conseguir chegar nela** - só pelo console, no lugar onde ela está. O autoteste diz isso no console, em todo boot, e diz como falha e não como aviso:
 
@@ -72,7 +92,7 @@ Se o par não existir, não há para onde o endereço voltar. A caixa sobe encam
         linux_cp pair is where the address the box answers on goes back.
         Without one it comes up forwarding and unreachable from anywhere but
         its console.
-        the way back it computed on this boot: ens18 10.95.200.198/24
+        the way back it computed on this boot: ens18 192.0.2.10/24
         52:54:00:00:00:01
         without a pair: ens18
         give each one an 'interface' block in prismash, and commit:
@@ -236,18 +256,18 @@ flowchart LR
 | `prisma-routing-tune` | tuning de boot (isolcpus, hugepages); roda em **todo** boot, sem sentinela |
 | `prisma-routing-containers` | sobe o dataplane, o roteamento e o plano de gerência (a VTY) como containers |
 | `prisma-routing-doors` | executa no host o que a VTY pede (contas, sshd, SNMP, reboot); só para root, cada pedido vira uma linha no journal |
-| `prisma-routing-card-watch.timer` | percebe um dataplane que o Docker desistiu de reiniciar e devolve a placa ao kernel |
+| `prisma-routing-card-watch.timer` | percebe um dataplane que o Docker desistiu de reiniciar, anota o motivo e devolve a placa ao kernel |
+| `prisma-routing-backplane` | a rede interna própria dos containers, numa VRF separada, que não vaza para a tabela principal |
 | `prisma-routing.service` | aplica a configuração salva (`prismash --load`) |
 | `prisma-routing-selftest` | verifica e reporta no console |
 
-**A VTY roda no container de gerência** (`prisma-routing_mgmt_1`). O login cai nela com o próprio usuário e os próprios grupos, então o papel de cada conta é o mesmo de antes. O container só enxerga a rede interna 128.0.0.2, sem saída para fora, e lê do host, só leitura, o que a VTY precisa saber da caixa: as placas, as rotas, os núcleos, se a caixa está na mídia de instalação. O que age no host passa pelo host: `ping`, `traceroute` e `mtr` saem pela rede do host; `install`, `system upgrade` e `system dataplane restart` rodam na VTY do host, no mesmo terminal; `start shell` abre no host. Se o container não estiver no ar, a VTY roda no host, e ninguém fica trancado para fora. Para voltar a VTY para o host numa caixa: `touch /etc/prisma-routing/vty-on-host`.
+**A VTY roda no container de gerência** (`prisma-routing_mgmt_1`). O login cai nela com o próprio usuário e os próprios grupos, então o papel de cada conta é o mesmo de antes. O container só tem uma rede interna própria, que alcança o host e nada além dele, e lê do host, só leitura, o que a VTY precisa saber da caixa: as placas, as rotas, os núcleos, se a caixa está na mídia de instalação. O que age no host passa pelo host: `ping`, `traceroute` e `mtr` saem pela rede do host; `install`, `system upgrade` e `system dataplane restart` rodam na VTY do host, no mesmo terminal; `start shell` abre um shell no host, e só para `root` e para contas com o papel `administrator` - qualquer outra conta recebe a recusa, e um comando que ela passe pelo `ssh` é executado pela VTY, com o papel dela, e não por um shell. Se o container não estiver no ar, a VTY roda no host, e ninguém fica trancado para fora. Para voltar a VTY para o host numa caixa: `touch /etc/prisma-routing/vty-on-host`.
 
 ```
 docker ps --format "{{.Names}} {{.Status}}"
-prisma-routing_mgmt_1 Up 3 minutes
-prisma-routing_frr_1 Up 3 minutes
-prisma-routing_vpp_1 Up 3 minutes
 ```
+
+Numa caixa saudável, a lista traz os três containers — `prisma-routing_vpp_1` (o dataplane), `prisma-routing_frr_1` (o roteamento) e `prisma-routing_mgmt_1` (a VTY) — todos `Up`.
 
 Antes de o compose ver o arquivo, a unit faz três coisas, e cada uma existe porque uma caixa que pulou aquela etapa subiu errada:
 
@@ -255,6 +275,12 @@ Antes de o compose ver o arquivo, a unit faz três coisas, e cada uma existe por
 1. **carrega as imagens** que a mídia trouxe (`/usr/lib/prisma-routing/images.tar.gz`) e escreve a tag encontrada onde o compose a lê — sem isso a caixa pediria uma imagem a um registry, e um appliance não tem rota para nenhum;
 2. **escreve o nó de device da placa** que este boot vinculou, porque qual nó é depende do driver que a caixa conseguiu usar;
 3. depois de subir, **entrega o segmento da API binária ao grupo** `vpp`, que é o que permite uma conta de operador configurar a caixa.
+
+### Quando o dataplane desistiu
+
+O dataplane em container tenta subir cinco vezes. Depois disso o Docker desiste, e a cada 30 segundos o vigia confere: achando o dataplane parado, ele **anota por quê** — o estado do container, o código de saída e as últimas oitenta linhas que o dataplane escreveu — em `/var/log/prisma-routing/why-the-dataplane-stopped`, e só então devolve a placa ao kernel, uma vez por boot.
+
+Esse arquivo é a primeira coisa a ler numa caixa que subiu sem encaminhar. Reiniciar a caixa apaga o log do container, e o arquivo fica justamente porque reiniciar é a primeira coisa que qualquer um faz. Quando ele existe, a VTY e o autoteste apontam para ele em vez de mandar consultar o log do container, que naquela caixa está vazio.
 
 Duas decisões que valem entender:
 
@@ -435,6 +461,14 @@ flowchart TD
 | "a porta caiu ou alguém deu shutdown?" | `show interface terse` |
 | "para que serve essa porta?" | `show interface description` |
 | "o enlace está cheio?" | `show interface utilization <nome>` |
+| "cabe mais sessão na memória do CGNAT?" | `show cgnat memory` |
+| "quais ALGs estão valendo?" | `show cgnat alg` |
+| "a trilha de configuração foi adulterada?" | `show cgnat history verify` |
+| "quais placas a caixa tem, e qual ela tomou?" | `show hardware` |
+| "quais núcleos fazem o quê?" | `show system cpu` |
+| "como a memória está dividida?" | `show system memory` |
+| "o agregado LACP está inteiro?" | `show lacp` |
+| "a caixa alcança esse destino?" | `ping`, `traceroute` ou `mtr` |
 
 ## Sintomas conhecidos
 
@@ -449,6 +483,9 @@ flowchart TD
 | Autoteste diz `the records mirror is DEGRADED` | um dos dois discos de registros morreu; a caixa funciona, a guarda está por um fio |
 | Tudo caiu ao mesmo tempo, sem alarme | mudança de mapeamento aplicada com `commit remap` |
 | `show bgp` (ou `ospf`, ou `isis`) não responde | `show version` nomeia os daemons parados; um parado recebe configuração e não chega a lugar nenhum |
+| A caixa subiu, roteia e não encaminha; `show interface` sem as placas | o dataplane desistiu de subir: leia `/var/log/prisma-routing/why-the-dataplane-stopped` |
+| Sessões novas recusadas com a caixa de pé | `show cgnat memory`: a memória do CGNAT encheu, e a caixa recusa em vez de cair. `memory` em `nat` > `cgnat` dá mais, a partir do próximo boot |
+| Assinante não alcança a própria caixa (gateway, DNS, SSH) | versões anteriores à 0.136.1 traduziam o tráfego para os endereços da caixa; atualize |
 
 ## Duas armadilhas de diagnóstico
 
@@ -461,7 +498,7 @@ flowchart TD
 Não reporte como falha — são decisões registradas:
 
 * **Sincronismo de sessão no failover** — recusado por custo. O par ativo/standby existe e preserva endereço público e bloco de portas; conexões em curso caem, como em qualquer NAT.
-* **Números de throughput** — nada foi medido em hardware. Qualquer figura de desempenho é não verificada.
+* **Números de throughput** — bits por segundo não foram medidos em placa que o DPDK controle nativamente. O que **foi** medido é quanto um pacote custa aos nós de tradução, em ciclos de CPU. Qualquer figura em bit/s é não verificada.
 * **Log por fluxo** — recusado por projeto.
 * **Migração graciosa de pool** — daria dois mapeamentos para um assinante, e a aritmética reversa não saberia distingui-los, abrindo mão exatamente da propriedade que o modo determinístico existe para fornecer.
 * **MIB empresarial SNMP** — inativa até alguém registrar um Private Enterprise Number na IANA e configurá-lo.
@@ -469,4 +506,5 @@ Não reporte como falha — são decisões registradas:
 # Ver também
 
 * [Comandos show](/doc/comandos-show-YlNji1X5W4) — a referência de cada comando de diagnóstico
+* [Monitoramento e SNMP](/doc/monitoramento-e-snmp-YGn85RpUAb) — os mesmos números na NMS
 * [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — a correção, depois do diagnóstico

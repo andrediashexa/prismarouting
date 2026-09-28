@@ -1,6 +1,6 @@
 # Alta disponibilidade
 
-O que acontece hoje quando esta caixa cai, o que o modo determinístico já resolve de graça, e o que ainda falta para um failover de verdade. Para quem está desenhando redundância.
+O que acontece quando esta caixa cai, como montar o par ativo/standby, o que a troca preserva e o que ela derruba. Para quem está desenhando redundância.
 
 
 :::info
@@ -39,6 +39,8 @@ A linha que importa: conexões em curso caem nos dois casos, mas no determiníst
 
 Isso não é HA. É o piso de onde a HA parte, e ele já é mais alto que o usual.
 
+**Isso vale para pools determinísticos.** Um pool BPA (`mode dynamic`) aloca blocos sob demanda, e a caixa que assume não sabe o que a outra alocou: nele, a troca se comporta como a coluna do NAT convencional — o assinante volta com outro bloco, e possivelmente outro endereço público.
+
 # O que ainda falta
 
 Preservar conexões em curso exige sincronizar a tabela de sessões, porque o caminho de volta precisa da **porta privada** — e nenhuma fórmula produz isso.
@@ -51,7 +53,7 @@ Preservar conexões em curso exige sincronizar a tabela de sessões, porque o ca
 
 O sincronismo de sessão é o único que preserva conexões e o mais caro: numa caixa de 200 mil assinantes com centenas de sessões cada, replicar toda criação e remoção é um fluxo de plano de controle comparável ao próprio log.
 
-O **modo dinâmico** acrescenta um requisito: a alocação de blocos teria de ser coordenada, ou as duas caixas alocariam blocos diferentes ao mesmo assinante.
+O **modo dinâmico (BPA)** acrescenta um requisito: a alocação de blocos teria de ser coordenada, ou as duas caixas alocariam blocos diferentes ao mesmo assinante. Nada disso existe hoje.
 
 # Como montar o par
 
@@ -62,12 +64,14 @@ Em cada caixa, um roteador virtual por lado, com o mesmo `vrid` dos dois lados e
 ```
 interface ens18
  ipv4 address 100.64.3.252/22
+ cgnat inside
  vrrp 1 address 100.64.3.254
  vrrp 1 priority 200
  vrrp 1 track ens19 decrement 150
  exit
 interface ens19
  ipv4 address 200.150.0.11/24
+ cgnat outside
  vrrp 2 address 200.150.0.254
  vrrp 2 priority 200
  vrrp 2 track ens18 decrement 150
@@ -86,6 +90,12 @@ Na outra caixa, os endereços dela e prioridade menor (100, por exemplo). Os ass
 
 O intervalo de anúncio não é configurável: é o padrão de um segundo da RFC, o que põe uma troca em torno de três segundos e meio. Ele precisa ser igual nas duas caixas, e um ajuste por caixa é um jeito por caixa de errar.
 
+**A prioridade da configuração decide, e a preempção está ligada.** Uma caixa que volta retoma o serviço: o par termina onde a configuração diz, não onde a última falha o deixou.
+
+**Mudar um roteador virtual é uma troca, não um ajuste.** Um roteador virtual não se edita no lugar: qualquer campo alterado num roteador que já existe faz a caixa parar de anunciar enquanto ele é refeito, a parceira assume o endereço e a preempção o devolve — duas eleições, a poucos segundos uma da outra, e as conexões em curso caem nas duas. O `commit` diz isso antes de aplicar. Criar um roteador novo não custa nada, porque não há endereço a perder.
+
+**O** `**commit check**` **recusa o que o** `**commit**` **não conseguiria aplicar**: um roteador virtual sem endereço, e um `track` ou um `vrrp` numa interface que o dataplane não tem.
+
 # O que a verificação de aceitação mede
 
 A verificação de aceitação foi escrita **antes** da implementação, para que ela fosse julgada contra o requisito e não o contrário. Todas as 22 conferências dela passam:
@@ -93,7 +103,7 @@ A verificação de aceitação foi escrita **antes** da implementação, para qu
 | O que foi medido | Resultado |
 |------------------|-----------|
 | O tráfego traduzido do assinante através do endereço de serviço, antes de qualquer falha | Funciona, e o lado de fora vê o endereço e o bloco que a fórmula dá |
-| **Uplink arrancado**, com a caixa viva e segurando o endereço do assinante | Sobrevive: o `track` derruba a prioridade e a parceira assume, no mesmo endereço público e num porta do mesmo bloco |
+| **Uplink arrancado**, com a caixa viva e segurando o endereço do assinante | Sobrevive: o `track` derruba a prioridade e a parceira assume, no mesmo endereço público e numa porta do mesmo bloco |
 | **Dataplane parado** do jeito que o próprio serviço para | Sobrevive, em torno de quatro segundos |
 | **Dataplane morto** com SIGKILL | Sobrevive, em torno de três segundos |
 | Uma conexão TCP em curso na troca | **Cai**, e uma nova do mesmo assinante pega o mesmo endereço e o mesmo bloco |
@@ -104,7 +114,7 @@ O que **não** foi medido aqui: se a placa de rede real avisa que o cabo saiu. A
 
 
 :::warning
-O item 2 não pode ser pulado. No modo determinístico, duas caixas com configuração diferente falham **em silêncio**: o failover começa a mapear assinantes para blocos errados sem erro visível, e os logs das duas caixas parecem perfeitamente saudáveis. Igualdade de configuração é requisito, não conveniência.
+A igualdade de configuração não pode ser pulada. No modo determinístico, duas caixas com configuração diferente falham **em silêncio**: o failover começa a mapear assinantes para blocos errados sem erro visível, e os logs das duas caixas parecem perfeitamente saudáveis. Igualdade de configuração é requisito, não conveniência.
 
 :::
 
@@ -112,7 +122,7 @@ O item 2 não pode ser pulado. No modo determinístico, duas caixas com configur
 
 A pergunta é uma só: uma troca de caixa deixaria cada assinante no mesmo endereço público e no mesmo bloco de portas? `show cgnat ha` responde isso e nada além disso.
 
-Para que a caixa possa comparar, ela precisa ter a configuração da outra. **O VRRP não carrega configuração nenhuma** — a RFC anuncia uma prioridade e um endereço, e nada mais —, então a configuração da parceira chega como arquivo: salve a configuração da outra caixa e copie o arquivo para `/etc/prisma-routing/peer.conf` desta.
+Para que a caixa possa comparar, ela precisa ter a configuração da outra. **O VRRP não carrega configuração nenhuma** — a RFC anuncia uma prioridade e um endereço, e nada mais —, então a configuração da parceira chega como arquivo: rode `save` na outra caixa e copie o arquivo que ele grava, `/etc/prisma-routing/prisma-routing.conf`, para `/etc/prisma-routing/peer.conf` desta.
 
 **Numa caixa que faz par, o** `**commit**` **recusa uma mudança que divergiria.** Com `vrrp` em alguma interface e um `peer.conf` legível, uma candidata que mapearia assinantes de forma diferente da parceira é recusada pelo nome do pool, e `commit diverge` é a palavra de quem sabe o que está fazendo — porque duas caixas não se commitam no mesmo instante, e toda ampliação correta diverge o par entre o primeiro commit e o segundo. A página *commit, rollback e save* descreve a recusa inteira.
 
@@ -149,6 +159,10 @@ prisma> show cgnat ha
     mapping fingerprint  9e7394fc505d2eff
     pools                residencial
     copied               2026-09-12 09:14:31
+
+  the pair
+    every virtual router this box carries has one on the peer with the same id,
+    the same address and a different priority
 
 warning: pool 'residencial' does not map subscribers the same way on the two
     boxes, so a failover moves them to other public addresses and port
@@ -208,13 +222,19 @@ O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatór
 # Operando o par
 
 * Mantenha a configuração das duas caixas idêntica e versionada, e **copie o** `**peer.conf**` **de novo sempre que alterar a parceira** — a recusa do `commit` só enxerga o que o arquivo diz, e o arquivo tem idade.
-* Confira com `show cgnat ha` depois de toda alteração: ele diz o papel de cada roteador virtual, o MAC virtual, a prioridade que a caixa está **anunciando** — que não é a configurada quando algo rastreado está fora — e se as duas mapeiam igual.
+* Confira com `show cgnat ha` depois de toda alteração: ele diz o papel de cada roteador virtual, o MAC virtual, a prioridade que a caixa está **anunciando** — que não é a configurada quando algo rastreado está fora — e se as duas mapeiam igual. Uma caixa anunciando menos do que foi configurada tem um cabo fora, não um problema de VRRP.
+* Olhando uma porta só, `show interface <nome>` diz se aquela porta está segurando o endereço de serviço ou esperando.
+* No boot, o self-test do console diz se os roteadores virtuais do arquivo salvo estão de fato no dataplane, e quantos estão segurando endereço e quantos estão de reserva. Um `vrrp` que o dataplane recusou não aparece em `show running-config`, e sem essa linha a parceira ficaria sozinha sem ninguém saber.
+* Para tirar a caixa que está com o serviço para manutenção, siga a receita *Fazer manutenção numa caixa que faz par*: baixar a prioridade, conferir nas duas caixas, trabalhar, restaurar.
 * Trate uma troca como uma janela: os assinantes voltam nos mesmos endereços, mas as conexões em curso caem.
 * Monitore o endereço **próprio** de cada caixa, não o virtual.
-* Se você opera modo dinâmico, lembre que o bloco **não** é reproduzível por fórmula: ali o failover muda de fato o bloco do assinante.
+* Se você opera BPA (modo dinâmico), lembre que o bloco **não** é reproduzível por fórmula: ali o failover muda de fato o bloco do assinante.
 
 # Ver também
 
+* [Montar um par ativo/standby](/doc/montar-um-par-ativostandby-CkNb7AvtnG) — os passos, na ordem, com o que conferir em cada um
 * [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que a fórmula dispensa sincronismo
 * [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — o outro lugar onde configuração idêntica importa
+* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — *Fazer manutenção numa caixa que faz par*
+* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — a recusa `commit diverge` por inteiro
 * [Prisma Routing — visão geral](/doc/prisma-routing-visao-geral-cNtWoccoy5) — o estado de cada componente

@@ -25,8 +25,15 @@ flowchart TD
 O comando é explícito nessa diferença de propósito: as duas fontes não valem a mesma coisa, e confundir uma com a outra é o tipo de erro que só aparece no tribunal.
 
 ```
-show cgnat history      qual configuração estava em vigor, e quem a colocou lá
+show cgnat history          qual configuração estava em vigor, e quem a colocou lá
+show cgnat history verify   confere a cadeia de hash da trilha e aponta a primeira entrada que não bate
 ```
+
+
+:::info
+**Pool determinístico com** `**reserve**`**: a porta pode não ser da fórmula.** Os blocos da reserva são entregues sob demanda, a assinantes que encheram o próprio bloco, e a fórmula não responde por eles — `show cgnat translation` não os atribui a ninguém. Quem responde por uma porta da reserva são os registros `natEvent 16` e `natEvent 17` que foram para o coletor, como num pool dinâmico.
+
+:::
 
 # Um assinante está sem internet
 
@@ -47,6 +54,21 @@ flowchart TD
 ```
 
 Cheque também se o prefixo dele não caiu numa lista de `bypass source` — nesse caso ele sai sem tradução e não aparece consumindo bloco.
+
+# Testar se a caixa alcança um destino
+
+Sem sair da VTY, e com qualquer conta — inclusive a somente leitura, porque não muda nada:
+
+```
+ping 198.51.100.1
+ping 198.51.100.1 count 20 source 203.0.113.1
+traceroute 198.51.100.1
+mtr 198.51.100.1 count 10
+```
+
+`count` é quantos pacotes o `ping` manda (5 por padrão, até 100), quantos saltos o `traceroute` percorre no máximo, e quantos ciclos o `mtr` faz. `source` é o endereço de origem — sempre um endereço, nunca um nome. Os endereços saem sem resolução reversa, para não depender de um DNS que pode ser justamente o que está quebrado, e o `mtr` sai como relatório, legível num console serial.
+
+Todos param sozinhos: pelo `count`, ou em 300 segundos no pior caso. Ctrl-C devolve o prompt antes disso. O teste sai pela pilha de rede do Linux da caixa, isto é, pelas rotas do roteamento — é a pergunta *"a caixa chega lá?"*, e não *"o assinante chega lá?"*.
 
 # Abrir uma porta de entrada para um cliente
 
@@ -162,25 +184,26 @@ configure
 
 Aplicado no lugar. `port-holddown` merece atenção: é quanto tempo uma porta liberada espera antes de ser reusada. Curto demais faz o registro de quem usava a porta se sobrepor ao do próximo dono.
 
-# Ligar um ALG
+# Desligar ou religar um ALG
 
-FTP, RTSP e PPTP carregam endereço dentro do payload. Sem o ALG, a conexão de controle sobe e a de dados nunca completa.
+FTP, RTSP, PPTP, SIP sobre UDP e a passagem de IPsec (ESP) vêm **ligados** em todo pool. O que se faz no dia a dia é o contrário: desligar um que atrapalha um cliente específico — em geral o SIP, quando o provedor de VoIP pede — ou religar um que alguém desligou.
 
 ```
 configure
  nat
   cgnat
    pool residencial
-    alg ftp on
-    alg pptp on
+    alg sip off
     exit
    exit
   exit
  commit
 ```
 
+`alg sip on` religa; `no alg sip` apaga a escolha e volta ao padrão, que é ligado. Aplicado no lugar, sem derrubar sessão. Confira o que o dataplane está aplicando, pool a pool:
+
 ```
-show cgnat pool
+show cgnat alg
 ```
 
 # Deixar um destino sem tradução
@@ -226,13 +249,26 @@ Numa caixa com vinte pools e política de BGP, `show running-config` é várias 
 ```
 show running-config | section interface         o bloco de cada interface
 show running-config | include mode dynamic      só as linhas com esse texto
+show running-config | exclude description       tudo, menos as linhas com esse texto
 show running-config | include timeout | count   quantas linhas casam
+show cgnat top | first 10                       as dez primeiras linhas
 show logging | last 40                          o fim do log
 ```
 
-`section` mantém a linha que casa e tudo que está indentado embaixo dela — é como se pede um bloco inteiro sem ler a caixa toda. O texto procurado pode ter espaços, e um par de aspas em volta dele inteiro é retirado antes da busca (`section "interface Gi"` procura `interface Gi`).
+| Filtro | O que faz |
+|--------|-----------|
+| `include <texto>` (ou `match`) | mantém as linhas que contêm o texto |
+| `exclude <texto>` | tira as linhas que contêm o texto |
+| `section <texto>` | mantém a linha que casa e tudo que está indentado embaixo dela |
+| `count` | o número de linhas, em vez das linhas |
+| `first <n>`, `last <n>` | as primeiras ou as últimas `n` linhas |
+| `no-more` | tudo de uma vez, sem parar em `--More--` |
+
+Os filtros se encadeiam, da esquerda para a direita. O texto procurado pode ter espaços, e um par de aspas em volta dele inteiro é retirado antes da busca (`section "interface Gi"` procura `interface Gi`). Um filtro que não existe é recusado com a lista dos que existem — nunca ignorado.
 
 O filtro roda sobre o que o comando já imprimiu, **depois** das ocultações: `show running-config | include password` mostra `<set, not shown>`, a mesma linha que apareceria sem filtro. Nenhum filtro alcança o valor por trás dela.
+
+**Numa sessão interativa, todo** `**show**` **maior que a tela para em** `**--More--**`**.** Espaço mostra a próxima tela, Enter a próxima linha, e `q` ou Ctrl-C encerra a saída — não a sessão. `| no-more` desliga isso para um comando. `prismash -c`, um comando passado pelo `ssh` e uma saída que não vai para um terminal nunca param. O paginador é o da própria VTY, e não `more` nem `less`, que deixariam abrir um shell a partir dele.
 
 # Desfazer uma mudança
 

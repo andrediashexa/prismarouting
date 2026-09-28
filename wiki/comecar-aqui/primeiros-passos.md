@@ -32,7 +32,7 @@ Conta rápida para o determinístico: `assinantes × block-size ÷ 64512` = quan
 
 ## 1. Instalar
 
-Dê boot pela ISO e digite `install`. Ele pergunta disco, hostname, fuso e senha de root **antes** de escrever qualquer byte, e o disco de boot nunca aparece na lista de alvos.
+Dê boot pela ISO e digite `install`. Ele pergunta disco, hostname, fuso, tamanho do volume de log, rede de gerência e senha de root **antes** de escrever qualquer byte, e o disco de boot nunca aparece na lista de alvos. Os detalhes, e a instalação não assistida, estão em [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5).
 
 ## 2. Entrar
 
@@ -42,7 +42,15 @@ Console ou SSH caem direto na VTY:
 prisma>
 ```
 
-Precisa de um shell? `start shell`, e `exit` volta.
+Três coisas que valem desde o primeiro comando:
+
+| O quê | Como funciona |
+|-------|---------------|
+| Saída longa | todo `show` maior que a tela para em `--More--`: espaço mostra a próxima tela, Enter a próxima linha, `q` ou Ctrl-C param a saída e não a sessão. `\| no-more` no fim do comando mostra tudo de uma vez |
+| Ctrl-C | apaga a linha que está sendo digitada, ou interrompe o comando em curso, e volta ao prompt. Não encerra a sessão. Durante `commit`, `rollback` e o carregamento de uma configuração ele é ignorado |
+| Shell | `start shell` abre um shell no sistema, e `exit` volta para a VTY. Só para `root` e contas `prisma-admin` — ver [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) |
+
+A VTY roda num container próprio, o plano de gerência, com a sua conta e o seu papel. Isso não muda nada do que você digita; está explicado na página de acesso.
 
 
 :::info
@@ -89,7 +97,7 @@ Numa caixa com várias e uma reservada na instalação:
 Reserved for Linux:
 ```
 
-seguido do nome da placa e da frase que diz que ela é a rede de gerência com que a caixa foi instalada. O autoteste de boot diz a mesma coisa no console, para quem está olhando a tela e não digitou nada ainda.
+seguido do nome da placa e da frase que diz que ela é a rede de gerência com que a caixa foi instalada. O nome é sempre o que o Linux deu à placa (`ens19`, `enp2s0`): a caixa mantém esse nome para as placas que o dataplane reivindica, e é com ele que elas aparecem em `show interface` e no prompt `[edit interface ens19]`. O autoteste de boot diz a mesma coisa no console, para quem está olhando a tela e não digitou nada ainda.
 
 Uma caixa que comesse uma placa em silêncio seria pior do que uma que pergunta; e uma que poupasse uma em silêncio deixaria o operador sem explicação para uma placa ausente. Por isso as duas metades são ditas.
 
@@ -189,6 +197,8 @@ error: the card this box is reached on was handed over and nothing took it
     'show hardware' says what the dataplane holds; 'no dataplane interface'
     gives the card back at the next start
 ```
+
+A tela ainda escreve `no dataplane interface`; hoje isso se digita como `no interface` dentro de `system` > `dataplane`.
 
 :::
 
@@ -305,17 +315,11 @@ show cgnat drops     o que não passou, e por quê
 
 ## E o roteamento?
 
-É do FRR, pela mesma VTY:
-
-```
-configure
- router bgp 65000
-  ... sintaxe do FRR daqui em diante ...
-```
+É configurado na mesma VTY, na mesma sessão e com o mesmo `commit`: rotas estáticas em `router static`, BGP em `router bgp`, e política de roteamento em `policy-options`. O mínimo para o CGNAT funcionar — a rota default e o anúncio do pool — está em [Configurar o CGNAT passo a passo](/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7); o BGP completo, em [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ).
 
 
 :::warning
-**Cuidado com MTU.** O TAP do `linux_cp` vem com 9000. Uma interface que herda esse valor sem o outro lado concordar deixa a adjacência OSPF travada em Exchange. Ajuste com `mtu` dentro do bloco `interface`.
+**Cuidado com MTU.** Numa placa que aceita 9000, a interface e o par dela no Linux começam em 9000. Um vizinho em 1500 deixa a adjacência OSPF travada em Exchange, sem mensagem de erro. Ajuste com `mtu` dentro do bloco `interface`. Numa placa que não chega a 9000 — toda máquina virtual — a caixa já começa a interface no máximo da placa.
 
 :::
 

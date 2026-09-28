@@ -9,6 +9,7 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 | RAM     | **6 GB** (8 GB recomendado) | com menos, a caixa sobe e não encaminha: medido com 4 GB, o dataplane fica sem placa nenhuma |
 | CPU     | **SSE4.2** | o binário do VPP assume SSE4.2 e usa AVX quando existe |
 | Placas de rede | **1**  | uma basta, e a caixa entrega essa mesma placa ao dataplane levando o endereço de gerência junto; duas é o formato de uma appliance no rack |
+| Disco   | **raiz de 8 GB, mais o volume de log** | o instalador nunca deixa a raiz com menos de 8 GB; o volume de log tem 30 GB por padrão e pode ser menor (seção *Volume de log*) |
 
 
 :::warning
@@ -38,12 +39,17 @@ Até a versão 0.128 uma VM de 6 GB não subia o VPP; desde a 0.129 ela sobe.
 
 **Uma placa já serve, e é assim que a maioria das pessoas conhece este produto:** uma máquina virtual com uma placa virtual. O dataplane fica com a porta e o endereço de gerência vai junto, para a interface que o dataplane mantém emparelhada com ela do lado do Linux. A caixa deixa de ser alcançada *ao lado* do dataplane e passa a ser alcançada *através* dele, com o mesmo MAC, então nada do outro lado do cabo precisa reaprender.
 
-**Duas placas é o formato de uma appliance no rack**, e a diferença não é desempenho: é o que acontece quando alguém erra. Com duas, a gerência não está no caminho do dataplane, e a caixa **recusa** a entrega da placa que carrega a rota default, dizendo qual é a outra. Com uma só não existe essa recusa a fazer - a placa que ela protegeria é a única que a caixa tem - então a entrega acontece, e o que a torna segura é outra coisa: ela é sempre um `commit confirmed`, com trinta minutos de janela, e uma caixa que ninguém confirmou põe a configuração anterior de volta **e se reinicia sozinha**. É seguro de tentar; continua sendo uma janela em que alguém precisa entrar.
+**Duas placas é o formato de uma appliance no rack**, e a diferença não é desempenho: é onde fica a gerência. A caixa reivindica todas as placas menos a que foi respondida como rede de gerência na instalação, e nunca a última. Com duas e uma gerência respondida, a gerência fica **ao lado** do dataplane: reiniciar o dataplane não derruba a sua sessão. Com uma só, a gerência passa **através** do dataplane, e reiniciá-lo — ou reiniciar a caixa — derruba a sessão junto; a caixa volta a ser alcançável quando o dataplane sobe, sem ninguém digitar nada no console.
 
 | Placas | O que a caixa faz | O que você paga |
 |--------|-------------------|-----------------|
-| 1      | entrega a placa ao dataplane e leva o endereço de gerência para o par | a entrega é uma janela de trinta minutos que alguém precisa confirmar |
-| 2 ou mais | a placa de gerência é recusada para o dataplane, com o nome da outra na recusa | nada            |
+| 1      | entrega a placa ao dataplane e leva o endereço de gerência para o par | reiniciar o dataplane derruba a sessão de gerência até ele voltar |
+| 2 ou mais, com gerência respondida na instalação | fica com todas menos a de gerência | nada            |
+| 2 ou mais, com gerência `none` | fica com todas; o endereço de gerência, se houver, vai para o par da placa que o carregava | o mesmo da caixa de uma placa |
+
+## Placa acrescentada com a caixa ligada
+
+Uma placa posta na máquina com a caixa rodando — numa máquina virtual, uma placa acrescentada pelo hipervisor — encaminha **na hora**, sem reiniciar nada, se a regra do boot a reivindicaria. Ela entra com o nome que o Linux deu a ela, configura-se na VTY como qualquer outra, e `show interface` avisa que ela está num modo provisório. `system dataplane restart`, na janela que você escolher, passa essa placa para o modo definitivo: custa as sessões de todos os assinantes e alguns segundos sem encaminhar, e a tela diz isso antes de agir.
 
 ## A placa precisa ser um dispositivo PCI
 
@@ -53,27 +59,29 @@ O dataplane pega a porta pelo endereço PCI dela. Uma interface que **não** tem
 
 O ajuste de boot pergunta **à placa** quantas filas ela tem e qual é a MTU máxima dela, em vez de deduzir do processador. Antes ele pedia uma fila por worker, e numa placa virtual, que tem **uma** fila, isso fazia o dispositivo ser recusado: a caixa subia dona de uma placa que não conseguia iniciar. O número de filas é corrigido a partir da placa.
 
-A MTU é **dita e não corrigida**, e a diferença importa: o VPP não tem nenhuma opção de MTU na configuração do dataplane, portanto não há nada para escrever ali. Ele pede 9000, a placa recusa, e isso fica registado no log — o dispositivo sobe na mesma. O relatório diz qual é o máximo da sua placa para que essa linha no log tenha explicação.
+A MTU também é lida e **corrigida**. O dataplane começa toda interface em 9000, e uma placa que não aceita isso — toda placa virtual — recusa o dispositivo: a porta fica em erro e não encaminha nada. Por isso, quando alguma placa reivindicada tem máximo abaixo de 9000, a caixa faz as interfaces começarem no **menor máximo** entre as placas que ela reivindica. O valor vale para todas: numa caixa com uma placa de 1500 ao lado de uma de 9000, a de 9000 também começa em 1500, e `mtu <n>` no bloco da interface sobe aquela porta depois.
 
-O relatório de boot diz o que ele encontrou. Numa máquina de oito núcleos com placa virtual:
+O relatório de boot diz o que ele encontrou, uma linha por placa. Numa máquina de oito núcleos com uma placa virtual `ens18`:
 
 ```
-# NIC queues: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
-# NIC max MTU: 1500, below VPP's default of 9000. VPP has no MTU setting in its dpdk stanza, so it will ask for 9000, be refused by the card and log it
+# NIC queues, ens18: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
+# NIC max MTU, ens18: 1500, below VPP's default of 9000
 ```
+
+seguidas de um parágrafo que começa com `# interfaces start at: 1500` e diz por que aquele valor vale para todas as placas.
 
 **O limite é dito, não aplicado em silêncio.** Uma fila com sete workers significa um worker recebendo pacotes, e isso é uma fração da capacidade que aquele processador teria — é informação de dimensionamento, e esconder o corte trocaria uma caixa que não sobe por uma caixa lenta sem explicação.
 
 Placa com filas de sobra recebe uma linha curta, e placa com MTU de 9000 ou mais **não** ganha linha de MTU nenhuma — fica exatamente como estava:
 
 ```
-# NIC queues: 8, enough for 7 worker(s)
+# NIC queues, ens18: 8, enough for 7 worker(s)
 ```
 
 E quando a caixa não consegue ler as filas da placa, ela **diz isso**, porque é exatamente esse o estado em que o defeito morava:
 
 ```
-# NIC queues: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device: 'show hardware' says what the box can see.
+# NIC queues, ens18: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device.
 ```
 
 Nesse caso ela volta a pedir uma fila por worker, que é o número que falhava. Uma caixa prestes a recusar a própria placa não pode ter a mesma cara de uma caixa saudável.
@@ -85,7 +93,8 @@ Uma caixa **sem** placa de dataplane não fala em fila nenhuma: contagem de fila
 Havendo IOMMU no firmware, a placa vai para o `vfio-pci`, que passa o dispositivo pela IOMMU - um defeito no dataplane não consegue escrever em memória que o dispositivo nunca recebeu. Sem IOMMU o `vfio-pci` carrega e recusa todo dispositivo, então a caixa usa `uio_pci_generic`, que **não tem essa proteção**, e **diz na tela** que está usando:
 
 ```
-bind: no IOMMU groups on this box, so vfio-pci cannot take a device; using uio_pci_generic, which has no IOMMU protection
+bind: no IOMMU groups on this box, so vfio-pci cannot take a device.
+      Using uio_pci_generic, which has no IOMMU protection.
 ```
 
 A escolha é feita onde dá para explicá-la, e não descoberta como um bind que falha sem motivo aparente. Ligue a IOMMU no firmware (`VT-d` na Intel, `AMD-Vi` na AMD) se a máquina tiver: é uma opção de firmware, não um ajuste do produto.
@@ -123,6 +132,12 @@ E numa caixa sem IOMMU:
 
 Por um tempo as duas caixas recebiam a mesma frase — *"numa caixa com IOMMU a causa costuma ser* `*intel_iommu=on*` *faltando na linha de comando"* —, e ela era falsa nas duas, em direções opostas. Na caixa com IOMMU, o parâmetro **já estava** lá, e o operador era mandado conferir uma linha de comando que estava certa, na única mensagem que ele recebe quando a appliance sobe sem encaminhar. Na caixa sem IOMMU a frase falava de outra máquina, e o parâmetro que ela cita não teria ajudado: aquele driver não usa IOMMU nenhuma.
 
+# O kernel, e o hardware que ele reconhece
+
+O kernel da caixa é o do Prisma Routing: o mesmo código e a mesma configuração do kernel do Debian, recompilados, e `uname -r` termina em `-prisma`. Ficam **fora** as classes de módulo que um roteador não usa: som, Wi-Fi, Bluetooth, NFC, captura de vídeo, joystick, tela sensível ao toque, rádio amador, CAN, 802.15.4, modem celular, FireWire, sensores industriais, placas de vídeo AMD e NVIDIA dedicadas e os drivers experimentais (*staging*).
+
+**Toda placa de rede, todo controlador de disco e todo driver de virtualização,** `**vfio**` **e** `**uio**` **continuam.** Uma máquina cujo hardware de rede e de disco o Debian 12 reconhece é reconhecida aqui. Um kernel novo, inclusive uma correção de segurança dele, chega **na mídia de instalação** de uma versão nova, não pelo `apt` e não pelo pacote de atualização: o pacote troca os arquivos do produto e não traz kernel. Numa caixa já em serviço, isso significa reinstalar a partir da mídia, com o que [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) diz sobre o que a reinstalação apaga.
+
 # Se a caixa vai receber a tabela BGP completa
 
 6 GB é o piso de uma caixa que **não** carrega tabela cheia. Recebendo uma tabela IPv4 completa de um trânsito, o roteamento sozinho passa a ocupar cerca de **1,4 GB** de RAM. Medido com uma sessão e um milhão de prefixos: o `bgpd` ficou com \~840 MB e o `zebra` com \~550 MB, contra 37 MB somados numa caixa que só recebe rota padrão. Cada trânsito adicional com tabela cheia soma de novo, e IPv6 soma por cima.
@@ -133,7 +148,7 @@ Por um tempo as duas caixas recebiam a mesma frase — *"numa caixa com IOMMU a 
 | Uma tabela IPv4 cheia | \~1,4 GB                 | 16 GB                       |
 | Dois trânsitos com tabela cheia, mais IPv6 | mais que isso            | 32 GB                       |
 
-O dataplane reserva a maior parte da RAM em hugepages e deixa `máx(2, RAM/4)` GB para todo o resto. Numa caixa de 6 GB isso são 2 GB, e uma tabela cheia sozinha já ocupa quase tudo — por isso 8 GB já é apertado e 16 GB é o número sensato.
+O dataplane reserva a maior parte da RAM em hugepages e, sem ajuste, deixa `máx(2, RAM/4)` GB para todo o resto; `system memory control-plane <GB>` muda esse número (seção *Memória por papel*). Numa caixa de 6 GB isso são 2 GB, e uma tabela cheia sozinha já ocupa quase tudo — por isso 8 GB já é apertado e 16 GB é o número sensato.
 
 
 :::info
@@ -275,6 +290,7 @@ this boot:
 | `PRISMA_SUBSCRIBERS` | só dígitos | `200000`   | `200000`        |
 | `PRISMA_LOW_LATENCY` | `1` ou `0`, mais nada | `1`        | `1`             |
 | `PRISMA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio      | sem limite      |
+| `PRISMA_CGNAT_MEMORY_GB` | GB inteiros, ou vazio para a estimativa por `PRISMA_SUBSCRIBERS` | vazio      | a estimativa    |
 | `PRISMA_CONTROL_PLANE_CORES` | só dígitos, 1 ou mais, ou vazio | vazio (um núcleo) | um núcleo       |
 | `PRISMA_MAIN_THREAD` | `shared` ou `dedicated`, ou vazio | vazio (`shared`) | `shared`        |
 | `PRISMA_CGNAT_WORKERS` | só dígitos, 1 ou mais, ou vazio | vazio (todos) | todos fazem as duas coisas |

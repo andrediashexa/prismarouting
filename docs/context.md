@@ -325,10 +325,15 @@ Not what it contains — what question it is the answer to.
   apart — giving up the property deterministic mode exists to provide.
 * **An IANA enterprise number.** The SNMP enterprise MIB stays dark until a
   maintainer registers one and sets `snmp enterprise-number`.
-* **A custom-built kernel.** Refused with the analysis, in
-  [appliance.md](appliance.md) — the appliance would stop receiving Debian's
-  kernel security updates, and nothing on the packet path is the kernel's
-  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
+* **A kernel of the appliance's own design.** The kernel IS Prisma Routing's
+  since 0.136.0 ([#449](https://github.com/andrediashexa/hexarouting/issues/449)):
+  Debian's source at Debian's security version, Debian's configuration, the
+  module classes no router uses left out. What stays absent is a kernel that
+  departs from Debian's source or tuning - the analysis in
+  [appliance.md](appliance.md) and
+  [#163](https://github.com/andrediashexa/hexarouting/issues/163) - because
+  the gate refuses a medium whose kernel Debian has replaced, and that only
+  holds while the source is Debian's. The upgrade artifact carries no kernel.
 * **The boot-tuning knobs that are listed and not applied.**
   `nmi_watchdog=0`, `skew_tick=1`, `tsc=reliable`, the writeback workqueue mask
   and the rest are recorded in [appliance.md](appliance.md) as hypotheses with

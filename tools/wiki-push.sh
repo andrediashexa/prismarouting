@@ -32,9 +32,10 @@
 # and the same applies to the repository that mirrors it.
 set -eu
 
-# THE HOST IS INFRASTRUCTURE and did not move with the product name
-# (#202): this is the machine the wiki runs on, and renaming it here
-# gave curl a host that does not resolve.
+# THE HOST. It did not move with the product name in #202, when the new name
+# did not resolve and renaming it here gave curl nothing to reach. Since #479
+# prismarouting.com.br does resolve, through the same Cloudflare proxy to the
+# same origin, and the API answers the token on it; the old name answers too.
 URL=${WIKI_URL:-https://prismarouting.com.br}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 STAMP="$REPO/wiki/.pulled"

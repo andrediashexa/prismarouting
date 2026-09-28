@@ -20,11 +20,13 @@ A resposta traz uma linha de recusas:
 sessions 4   refusals: ports 0, session cap 6, rate cap 0
 ```
 
+Acima dessa linha vêm os blocos que ele segura, cada um com o endereço público, a faixa de portas e quantas estão em uso — um bloco de extensão vem marcado como tal. E cada contador de recusa que não está em zero ganha, embaixo, uma linha dizendo o que ele quer dizer.
+
 São **três contadores separados, e cada um leva a uma ação diferente**:
 
 | Contador | O que significa | O que fazer |
 |----------|-----------------|-------------|
-| `ports`  | o bloco do assinante está cheio | venda mais portas, ou eleve `max-blocks` |
+| `ports`  | o bloco do assinante está cheio | venda mais portas, ou eleve `max-blocks` (num pool determinístico, isso exige `reserve`) |
 | `session cap` | ele está no limite configurado | o limite está funcionando, ou está baixo demais para esse cliente |
 | `rate cap` | ele abre sessões mais rápido do que o permitido | normalmente é infecção, não é cliente |
 
@@ -93,6 +95,8 @@ customer had already started losing traffic.
 
 Essa última frase é o motivo de o alarme existir. O `natEvent 12` que abre esta página é correto e chega tarde: ele reporta a exaustão, que é dizer que reporta o instante em que o cliente **começou a perder tráfego** — quando a ligação para o suporte já está na fila. O alarme reporta o caminho até lá.
 
+O limiar vai de 1 a 100, por pool, e `no utilisation-alarm` desliga o alarme de novo. A linha sai no log do dataplane, com nível de aviso. É ajuste **aplicado no lugar**: ligar, mudar ou desligar não derruba ninguém.
+
 E ele fala **uma vez por travessia**, não uma vez por alocação. Depois da linha, o assinante pode continuar enchendo que nada mais é dito.
 
 
@@ -105,7 +109,10 @@ O alarme é avaliado **onde uma porta é tomada**, e em nenhum outro lugar — u
 
 # Blocos estendidos
 
-Com `max-blocks` acima de 1, um assinante cujos blocos estão todos cheios ganha **outro**.
+Com `max-blocks` acima de 1 (o máximo é 255), um assinante cujos blocos estão todos cheios ganha **outro**. De onde sai esse bloco depende do modo do pool:
+
+* num pool **dinâmico** (BPA), de uma lista de blocos livres — entregar o segundo é a mesma operação que entregar o primeiro;
+* num pool **determinístico**, só de uma **reserva** separada para isso com `reserve`. Sem reserva, não existe bloco sobrando, e o assinante que enche é descartado como antes.
 
 ```
 configure
@@ -122,27 +129,56 @@ configure
 ```mermaid
 flowchart TD
     A["blocos do assinante<br/>todos cheios"] --> B{"modo do pool?"}
-    B -->|dinâmico| C{"blocos < max-blocks?"}
-    B -->|determinístico| D["descarta, natEvent 12<br/>não existe bloco sobrando"]
-    C -->|sim| E{"há bloco livre no pool?"}
+    B -->|dinâmico| C{"blocos &lt; max-blocks?"}
+    B -->|determinístico| R{"reserve configurado?"}
+    R -->|não| D["descarta, natEvent 12<br/>não existe bloco sobrando"]
+    R -->|sim| C
+    C -->|sim| E{"há bloco livre no pool<br/>ou na reserva?"}
     C -->|não| F["descarta: o teto é o teto"]
     E -->|sim| G["estende, registra natEvent 16"]
     E -->|não| H["descarta, natEvent 12"]
 ```
 
-
-:::warning
-**Blocos estendidos só existem em modo dinâmico.** Num pool determinístico a capacidade é `endereços × blocos por endereço` e a fórmula atribui **todos** os blocos a alguém. Um bloco entregue como extensão é um bloco que a fórmula dá a outra pessoa — e entregá-lo quebraria o mapeamento dela sem erro em lugar nenhum, que é exatamente a falha que o modo determinístico existe para evitar.
-
-:::
-
 O teto importa tanto quanto a extensão: sem ele, um host infectado consome o pool de que todos os outros assinantes precisam, e o operador troca uma reclamação de cliente por uma parada.
 
 Toda extensão é registrada como `natEvent 16` e sua liberação como `natEvent 17`. Uma extensão não é derivável de nada — nem da fórmula, nem do primeiro bloco — então um bloco que o log não registra não pode ser atribuído a ninguém.
 
+## A reserva de um pool determinístico
+
+Num pool determinístico a fórmula atribui **todos** os blocos a alguém. Um bloco entregue como extensão sem reserva seria um bloco que a fórmula dá a outra pessoa — e entregá-lo quebraria o mapeamento dela sem erro em lugar nenhum. `reserve <n>` resolve isso tirando `n` blocos de **cada** endereço público da fórmula e guardando-os para extensões:
+
+```
+configure
+ nat
+  cgnat
+   pool residencial
+    reserve 1
+    max-blocks 2
+    exit
+   exit
+  exit
+ commit remap
+```
+
+`show cgnat pool` mostra a conta: quantos blocos por endereço a fórmula ainda usa e quantos ficaram guardados.
+
+
+:::warning
+**Ligar ou mudar a reserva é mudança de capacidade.** A fórmula passa a ter menos blocos por endereço, o pool é reconstruído, e todas as sessões dele caem. Por isso o `commit` comum recusa, e é preciso pedir pelo nome com `commit remap`. Quantos assinantes perdem o bloco ou mudam de lugar depende da política do pool: rode `commit check` antes, que ele diz a conta exata. Faça numa janela.
+
+:::
+
+
+:::info
+**O bloco da reserva não sai da fórmula, então precisa ir para o log.** Num pool determinístico com reserva, cada bloco de extensão é exportado como `natEvent 16` e liberado como `natEvent 17`, exatamente como num pool dinâmico — é a única coisa que um pool determinístico registra por assinante. Um pool com reserva e sem exportação configurada recebe um aviso no `commit check` e no `commit`: sem o registro, ninguém consegue dizer de quem era uma porta daquela reserva.
+
+:::
+
+Uma reserva menor que o número de workers do dataplane é aceita, com aviso: os workers que ficaram sem bloco reservado não conseguem estender os assinantes deles. E a reserva esgotada é contada à parte em `show cgnat blocks`, separada do assinante que bateu no `max-blocks` — uma pede reserva maior, a outra teto maior.
+
 # Começar pequeno e crescer só quem precisa
 
-`block-size` e `max-blocks` juntos já são uma **faixa de portas por assinante**, e é assim que um pool atende um medidor inteligente e uma casa pesada ao mesmo tempo:
+`block-size` e `max-blocks` juntos já são uma **faixa de portas por assinante**, e é assim que um pool dinâmico atende um medidor inteligente e uma casa pesada ao mesmo tempo:
 
 ```
 configure
@@ -164,6 +200,8 @@ O medidor fica com **64 portas** e nunca pede o segundo bloco. A casa pesada che
 ```
   per sub      64-512 ports (1-8 blocks, grown one at a time as each fills)
 ```
+
+Se todo assinante novo precisa de mais do que um bloco logo de início, `initial-allocation <portas>` entrega de uma vez uma primeira alocação maior, e o crescimento segue um bloco de cada vez a partir dela. "Primeiro 512, depois de 256 em 256" é `block-size 256`, `max-blocks 10` e `initial-allocation 512`. O valor precisa ser um número inteiro de blocos e não pode passar de `max-blocks`; vale só em pool dinâmico, é aplicado no lugar e muda o que o **próximo** assinante novo recebe, sem mexer em quem já tem bloco. Cada bloco dessa primeira alocação é um `natEvent 16` próprio. `show cgnat pool` passa a mostrar a faixa a partir dela.
 
 O preço do bloco pequeno é **volume de registro**: cada bloco entregue vira um registro próprio no log. A casa que chega a oito blocos gera oito registros onde um bloco grande geraria um. Escolha o menor bloco que ainda deixe a maioria dos assinantes dentro de **um**, e use `max-blocks` para a minoria.
 
@@ -205,6 +243,8 @@ configure
 
 **Colado** deixa o assinante com uma faixa contínua de portas, e é a opção de quem atende ofício e investigação: um intervalo em vez de vários. **Afastado** espalha o assinante pela faixa do próprio endereço público, e é a opção de quem não quer que observar um intervalo de fora diga muito sobre um cliente.
 
+`block-stride` vale só em pool **dinâmico**, e é recusado num determinístico: a extensão ali sai da reserva, que tem a própria regra de posição, e a distância nunca seria lida.
+
 Trocar a distância é aplicado **no lugar**: ninguém cai, e nenhum bloco já entregue se move - vale do próximo bloco em diante.
 
 O ajuste nunca custa tráfego a um cliente: se o bloco apontado já estiver com outro assinante, a caixa entrega outro qualquer. `show cgnat blocks` conta os dois casos, e é onde se confere se a distância está valendo:
@@ -237,6 +277,8 @@ configure
 | `max-sessions` | um assinante segurando mais mapeamentos do que foi vendido a ele |
 | `max-session-rate` | uma varredura — que fica abaixo de qualquer teto de simultâneas enquanto consome o bloco na velocidade em que os temporizadores liberam |
 
+`max-sessions` conta sessões simultâneas de um assinante; `max-session-rate` conta sessões novas por segundo. Os dois são aplicados **no lugar**, sem derrubar ninguém, e `no max-sessions` ou `no max-session-rate` volta a ilimitado. O teste acontece antes de uma porta ser tirada do bloco, então um pacote recusado por limite não consome porta nenhuma.
+
 A taxa é um **balde de fichas**, não uma janela de um segundo. Uma janela deixa um scanner gastar o orçamento de duas janelas em cima da virada, que é exatamente a rajada que o limite existe para impedir. O balde guarda o valor de um segundo, então a rajada permitida é um número que você acordou, não um artefato de quando o relógio virou.
 
 ## O que os limites não recusam
@@ -262,6 +304,7 @@ As três recusas em zero e o assinante longe do total do bloco: o problema não 
 
 # Ver também
 
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) - `max-blocks`, `block-stride`, `max-sessions` e `max-session-rate`
+* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) - `max-blocks`, `reserve`, `initial-allocation`, `block-stride`, `max-sessions` e `max-session-rate`
+* [Monitoramento e SNMP](/doc/monitoramento-e-snmp-YGn85RpUAb) — os assinantes perto do limite e as recusas, vistos pela NMS
 * [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — escolher `block-size` para que isso seja raro
 * [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — quando o pool inteiro, e não um assinante, está no limite

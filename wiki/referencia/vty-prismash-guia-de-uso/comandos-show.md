@@ -1,6 +1,8 @@
 # Comandos show
 
-Os comandos `show` funcionam nos modos operacional **e** de configuração.
+O que cada `show` do `prismash` responde, como filtrar a saída e como ler as telas que mais importam numa investigação. Para quem opera a caixa e precisa saber qual comando responde a pergunta que tem na mão.
+
+Os comandos `show` funcionam nos modos operacional **e** de configuração, em qualquer nível.
 
 ## `show cgnat`
 
@@ -16,12 +18,17 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 | `show cgnat session` |           | sessões ativas por thread |
 | `show cgnat memory` |           | a memória do CGNAT: quanto o heap tem, quanto está em uso, quantas sessões ainda cabem e o valor dado |
 | `show cgnat blocks` |           | blocos alocados em modo dinâmico, e quantos um encaminhamento de porta prende |
-| `show cgnat logging` |           | estado da exportação IPFIX |
+| `show cgnat logging` |           | estado da exportação dos eventos de bloco: UDP, TCP e syslog |
+| `show cgnat identity` |           | quantas identidades de assinante a caixa tem e quando as leu — nunca uma identidade em si |
 | `show cgnat history` |           | trilha datada de configuração |
+| `show cgnat history verify` |           | confere o encadeamento de hashes da trilha e nomeia a primeira entrada que não bate |
+| `show cgnat alg` |           | quais ALGs o dataplane tem ligados, por pool |
+| `show cgnat forward` | `[<pool>]` | os encaminhamentos de porta que o dataplane tem |
+| `show cgnat ha` | `[peer <arquivo>]` | se esta caixa e o par mapeiam os assinantes do mesmo jeito; sem `peer`, compara com a cópia da configuração do par guardada na caixa |
 
 `show cgnat translation` é o comando que responde uma ordem judicial: dado um IP público, uma porta e um instante, quem era o assinante.
 
-`show cgnat history` é o outro lado disso no modo determinístico — qual configuração estava em vigor naquela data, e quem a colocou lá.
+`show cgnat history` é o outro lado disso no modo determinístico — qual configuração estava em vigor naquela data, e quem a colocou lá. `show cgnat history verify` é o que prova que essa trilha não foi alterada depois: é a conferência a rodar antes de entregar uma resposta, e antes de apagar o disco de uma caixa.
 
 ### `show cgnat alg` e `show cgnat forward`: o que o dataplane tem, não o que o arquivo diz
 
@@ -186,15 +193,6 @@ O que vale saber para ler o gráfico:
 `show interface` responde pelo **dataplane**. Numa caixa recém-instalada o dataplane não recebeu placa nenhuma, então essa tela vem vazia — justamente no momento em que é preciso ver quais placas existem para escolher uma. `show hardware` responde a outra pergunta: **quais placas físicas o Linux enxerga nesta caixa**, com o que basta para decidir.
 
 ```
-prisma> show hardware
-  the dataplane has no interface to forward on: no interface was named, so VPP
-  was given no NIC.
-  Name it here: 'configure', 'system', 'dataplane', then
-  'interface <name>' and 'commit'. A name this box has not got is
-  refused, and the refusal says which ones it has.
-  'show hardware' is where the names come from: it lists this box's cards as
-  Linux has them, and marks the one carrying the default route.
-
   Interface     PCI            Driver           Link           Speed
   eno1          0000:03:00.0   ixgbe            up             1000Mb/s
     3c:ec:ef:1a:2b:3c  ixgbe, a kernel driver
@@ -205,12 +203,9 @@ prisma> show hardware
     b4:96:91:0d:1e:2f  ixgbe, a kernel driver
       DPDK cannot take the card through it as it is; when this card is given to
       the dataplane the box moves it to vfio-pci
-
-  2 NIC(s) on this box, as Linux has them
-  'eno1' carries the default route: it is how this box is reached, and giving
-  it to the dataplane would take the box off the network. It is refused as a
-  dataplane interface for that reason.
 ```
+
+Acima da lista vem uma linha sobre o que o dataplane já tem; abaixo dela, a contagem de placas e **o que a caixa vai fazer com cada uma** — as duas partes estão descritas mais abaixo.
 
 | Coluna | O que é |
 |--------|---------|
@@ -228,26 +223,36 @@ Essa última linha importa mais do que parece. Toda caixa recém-instalada está
 
 ### A marca `*** carries the DEFAULT ROUTE ***`
 
-É a metade mais importante da tela. A placa que carrega a rota padrão é por onde esta caixa é alcançada: entregá-la ao dataplane não degrada a caixa, **tira a caixa da rede** — sem SSH, sem ping, nada além de um console até onde alguém precisa caminhar.
+É a metade mais importante da tela. A placa que carrega a rota padrão é por onde esta caixa é alcançada, e é a pergunta a fazer antes de decidir qualquer coisa sobre placas.
 
-Numa caixa que tem outra placa, ela **recusa** essa por esse motivo. A recusa acontece depois da escolha, o que é tarde demais para ensinar alguma coisa; a marca aparece antes, para que a escolha não seja essa.
-
-Numa caixa que tem **só essa** placa, a marca não é uma recusa: é um aviso do que a entrega envolve. Ali a placa pode ir para o dataplane, e o endereço de gerência vai junto, para a interface que o dataplane mantém emparelhada com a porta. A própria tela diz o que digitar e o que isso custa:
+A caixa não espera que alguém nomeie a placa do dataplane: ela reivindica **todas as placas que tem, menos uma reservada para o Linux** — a da rede de gerência gravada na instalação — **e nunca a última**. Embaixo da lista a tela diz isso sobre esta caixa, com os nomes, e diz o que acontece com a placa da rota padrão se o dataplane ficar com ela:
 
 ```
-  1 NIC(s) on this box, as Linux has them
-  This box has one NIC, 'ens18', and it carries the default route, so giving it
-  to the dataplane is also giving away the path this box is reached on.
-  It can still be done, and the address goes with it: name it with 'configure',
-  'system', 'dataplane', 'interface ens18', 'commit', and the box keeps that
-  address on the
-  linux_cp pair the dataplane holds for the card.
-  The commit is a confirmed one whether or not you ask: restart the box, log
-  back in and type 'commit' to keep it, and if nobody does the box puts the
-  card back on its own.
+  2 NIC(s) on this box, as Linux has them
+  The dataplane claims 1 of them. It claims every card this box has except one
+  reserved for Linux, and never the last one.
+  Reserved for Linux:
+    eno1
+  It is the management network this box was installed with.
+  'interface <name>' under 'system', 'dataplane' claims that card alone
+  instead.
+  'eno1' carries the default route: it is how this box is reached. If the
+  dataplane takes it, named or claimed, its address moves onto the linux_cp
+  pair the dataplane keeps for it, and this box is then reached through the
+  dataplane rather than beside it.
 ```
 
-O passo a passo dessa entrega está em [Primeiros passos](../../comecar-aqui/primeiros-passos.md).
+`interface <placa>` em `system` > `dataplane` é uma **escolha explícita**: a caixa passa a reivindicar aquela placa e nenhuma outra, e a tela diz isso no lugar da regra. `no interface`, no mesmo nível, devolve a escolha à caixa.
+
+Quando a rota padrão está numa placa que **não** é a reservada na instalação, a tela avisa que a caixa vai reivindicá-la no próximo início do dataplane — é aqui que se descobre que a reserva não foi feita.
+
+Numa caixa que tem **só essa** placa, ela vai para o dataplane de qualquer jeito, porque a reserva nunca fica com a última, e o endereço de gerência vai junto para o par que o dataplane mantém: a caixa passa a ser alcançada **através** do dataplane. A placa mantém o MAC, então nada do lado de fora precisa aprender um endereço novo. A tela diz isso e fecha com:
+
+```
+  Nothing is armed and nothing has to be confirmed.
+```
+
+Não há `commit confirmed` nem reinício a confirmar nessa entrega. O passo a passo está em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
 
 Numa caixa sem rota padrão nenhuma, a tela diz isso em vez de simplesmente não marcar nada:
 
@@ -259,12 +264,13 @@ Numa caixa sem rota padrão nenhuma, a tela diz isso em vez de simplesmente não
 E quando a rota padrão está numa coisa que esta lista não comporta — uma ponte, um *bond*, uma VLAN, uma placa sem endereço PCI —, a caixa **nomeia** essa coisa, em vez de deixar a ausência da marca falar:
 
 ```
-  1 NIC(s) on this box, as Linux has them
   none of these carries the default route. It is on 'br0', which is not a PCI
   NIC, and that is still the path this box is reached over.
 ```
 
 Uma lista sem marca nenhuma seria lida como *"nenhuma destas é o caminho de gerência"*, e é exatamente essa leitura que custa a caixa.
+
+Uma placa que o Linux enxerga e o dataplane **ainda não** tem — uma placa instalada com a caixa ligada, por exemplo — é nomeada embaixo da lista: a caixa diz que o dataplane não a tem ainda e que `system reboot` resolve, dizendo antes o que o reinício custa.
 
 ### O veredito do driver, e o que a caixa faz com ele
 
@@ -309,14 +315,7 @@ prisma> show hardware
 
 Quando o dataplane não tem interface nenhuma, a linha é o **mesmo diagnóstico** que o `show interface` e o autoteste de boot dão, lido das mesmas fontes: dois diagnósticos do mesmo fato que discordam entre si são piores que um.
 
-E uma caixa onde o Linux não enxerga placa PCI nenhuma recebe uma frase, não uma tabela vazia:
-
-```
-  no PCI NIC is visible to Linux on this box: either the dataplane already owns
-  every one of them, or none of them resolves to a PCI address, which is what a
-  virtio guest looks like. DPDK cannot be given a device that has no PCI
-  address, so there is nothing here to choose from.
-```
+E uma caixa onde o Linux não enxerga placa PCI nenhuma recebe uma frase, não uma tabela vazia. A frase separa os três casos, que têm a mesma cara numa tabela: o dataplane já tem todas as placas (a linha de cima diz quais), o dataplane não pôde ser consultado (e aí `systemctl status vpp` diz qual dos dois é), ou não há placa nenhuma em lugar nenhum. Uma placa virtio numa máquina virtual tem endereço PCI e serve: se ela não aparece aqui, também não está no Linux.
 
 *"Não há nada a mostrar"* e *"não há nada errado"* têm a mesma aparência numa tela, e esta tela é lida numa caixa que não encaminha nada.
 
@@ -340,7 +339,7 @@ Mostra a **candidata**, não a configuração em vigor: quem está no meio de um
 
 Repare que `policy` e `mode` aparecem sem você ter digitado. Não é a tela acrescentando nada: são os três campos que todo pool tem por construção — `block-size`, `policy` e `mode` —, e um pool sem eles não existe. Se a tela os omitisse quando estão no valor padrão, ela deixaria de dizer o que o pool está fazendo enquanto o pool continua fazendo. É a mesma razão pela qual `no policy` é recusado.
 
-Dentro de um pool, o bloco sai como se digita ali: `pool residential` e os campos. Em `cgnat`, `show this` mostra o que o nível tem; em `nat`, o bloco inteiro. `show configuration` e `show running-config`, que mostram a caixa inteira, trazem o CGNAT como o bloco `nat` > `cgnat` — pools, interfaces e ajustes globais juntos, na ordem em que se digita — e as rotas estáticas num bloco `router static`. É também como o `save` grava, então copiar a tela para um arquivo e carregá-lo de volta funciona.
+Dentro de um pool, o bloco sai como se digita ali: `pool residential` e os campos. Em `cgnat`, `show this` mostra o que o nível tem; em `nat`, o bloco inteiro; em `system` e nos níveis abaixo dele, o que aquele nível tem. `show configuration` e `show running-config`, que mostram a caixa inteira, trazem o CGNAT como o bloco `nat` > `cgnat` — pools e ajustes globais, na ordem em que se digita —, o lado de CGNAT de cada interface (`cgnat inside` ou `cgnat outside`) dentro do bloco da própria interface, e as rotas estáticas num bloco `router static`. É também como o `save` grava, então copiar a tela para um arquivo e carregá-lo de volta funciona.
 
 O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface ens19]` — para que a próxima declaração não caia no bloco errado.
 
@@ -497,20 +496,30 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 
 | Comando | Mostra |
 |---------|--------|
-| `show configuration` | a configuração candidata |
-| `show configuration compare` | diferenças da candidata contra a configuração em vigor |
-| `show running-config` | a configuração em efeito, CGNAT e roteamento |
-| `show rollback` | revisões commitadas disponíveis |
+| `show configuration` | a configuração candidata; no modo operacional, onde não há candidata, a que está em vigor |
+| `show configuration compare` | diferenças da candidata contra a configuração em vigor, ou `no differences` |
+| `show running-config` (ou `show run`) | a configuração em efeito, CGNAT e roteamento |
+| `show this` | a configuração do nível em que você está (acima) |
+| `show rollback` | revisões commitadas disponíveis, com data e comentário |
+| `show interface [<nome>]` (ou `show interfaces`) | as interfaces do dataplane; com o nome, uma interface em detalhe, com os contadores |
+| `show interface terse`, `description`, `utilization` | as três leituras de interface descritas acima |
 | `show hardware` | as placas de rede físicas da caixa, com endereço PCI, driver, enlace e **qual delas carrega a rota padrão** |
+| `show lacp` | os bundles LACP: cada membro e se ele está no bundle |
+| `show system cpu` | quais núcleos fazem o quê: o configurado e o que está em vigor |
+| `show system memory` | a RAM por papel: o configurado e o que está em vigor |
 | `show version` | versões do Prisma Routing, do VPP e do FRR, **qual build o dataplane carregado é** e **quais daemons de roteamento estão rodando** |
-| `show ip ...` | informação de IP (repassado ao FRR) |
+| `show route [verbose] [<prefixo>]` | a tabela que encaminha (acima) |
 | `show bgp summary` | uma linha por sessão BGP, com o que chegou à tabela que encaminha |
+| `show bgp neighbor <vizinho>` | uma sessão em detalhe; com `received-routes`, o que o vizinho mandou antes da política de entrada |
 | `show bgp ...` | o restante do BGP (repassado ao FRR) |
-| `show isis ...` | informação de IS-IS (FRR) |
+| `show ospf neighbor`, `show ospf interface` | as adjacências OSPF e o que cada interface acredita (acima); `show ip ospf ...` chega ao mesmo lugar |
+| `show isis adjacency`, `show isis interface` | o mesmo para o IS-IS |
+| `show policy [<política>]` | as políticas de roteamento, os terms de cada uma e onde estão aplicadas |
+| `show ip ...` | informação de IP (repassado ao FRR) |
 | `show ip interface` | interfaces como o FRR as enxerga |
 | `show logging` | log do sistema (FRR) |
 
-Os `show` de roteamento são repassados ao `vtysh` do FRR, então a sintaxe completa do FRR vale depois da primeira palavra.
+O que não é respondido pela própria caixa é repassado ao `vtysh` do FRR, então a sintaxe completa do FRR vale depois da primeira palavra.
 
 ## Filtrando a saída com `|`
 
@@ -539,7 +548,7 @@ Um filtro que a caixa não conhece é **recusado**, com a lista do que existe �
 
 ## Saída maior que a tela: `--More--`
 
-Numa sessão interativa, um `show` cuja saída passa da altura da tela para no `--More--`, como um `| more` implícito:
+Numa sessão interativa, um `show` cuja saída passa da altura da tela para no `--More--`, com a linha `--More-- (space: next page, enter: next line, q: stop)`. A paginação é automática: não existe um filtro `| more` para pedi-la, e digitá-lo é recusado como qualquer filtro que a caixa não conhece.
 
 | Tecla | O que faz |
 |-------|-----------|

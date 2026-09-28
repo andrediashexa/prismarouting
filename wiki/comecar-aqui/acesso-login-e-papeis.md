@@ -1,12 +1,16 @@
 # Acesso, login e papéis
 
+Onde uma conta cai quando entra na caixa, por console ou SSH, e o que cada papel pode mudar. Para quem vai criar as contas de operador e precisa saber o que cada uma alcança.
+
 ```mermaid
 flowchart TD
     L["login por console ou SSH"] --> H{"prismash iniciou?"}
     H -->|sim| V["VTY prisma&gt;"]
-    H -->|não| F["shell, COM o motivo impresso"]
-    V -->|"start shell"| S["shell filho — exit volta"]
-    B["boot com prismash=off"] --> F2["shell direto, sem VTY"]
+    H -->|não| A{"root ou prisma-admin?"}
+    A -->|sim| F["shell, COM o motivo impresso"]
+    A -->|não| E["motivo impresso, sessão encerrada"]
+    V -->|"start shell<br/>só administrador"| S["shell no sistema — exit volta"]
+    B["boot com prismash=off"] --> F2["shell direto, sem VTY<br/>só administrador"]
 ```
 
 ## Onde você cai ao entrar
@@ -14,10 +18,10 @@ flowchart TD
 | Situação | O que acontece |
 |----------|----------------|
 | Login por console ou SSH | Cai no `prismash` |
-| `start shell` dentro da VTY | Abre um shell como filho; `exit` volta para a VTY |
-| `scp`, `rsync`, `git` por SSH | Chegam a um shell real — shell de login invocado com `-c` passa direto |
-| `prismash` falha ao iniciar | Cai num shell **com o motivo impresso** |
-| Boot com `prismash=off` | Pula a VTY inteiramente; a ISO oferece isso como entrada de menu |
+| `start shell` dentro da VTY | Só `root` e `prisma-admin`: abre um shell no sistema; `exit` volta para a VTY |
+| `ssh <conta>@<caixa> "<comando>"`, `scp`, `rsync` | `root` e `prisma-admin` chegam a um shell real. **Qualquer outra conta** tem o comando executado pela VTY, como um `prismash -c`, com o papel dela; `scp` e `rsync` não funcionam para ela |
+| `prismash` falha ao iniciar | `root` e `prisma-admin` caem num shell **com o motivo impresso**. Qualquer outra conta vê o motivo e a sessão termina |
+| Boot com `prismash=off` | Pula a VTY inteiramente, para `root` e `prisma-admin`; a ISO oferece isso como entrada de menu |
 
 Na **ISO** o console tem autologin — a conta root está travada, não há o que autenticar. Na máquina **instalada** não há autologin e a senha é a definida durante a instalação.
 
@@ -40,11 +44,28 @@ error: start shell: permission denied for a cgnat-operator account
 
 Esconder nunca foi a fronteira; a verificação de capacidade é. E um comando que o administrador não consegue encontrar é um comando que ele vai pedir a alguém — por isso ele é oferecido em vez de escondido.
 
-O shell abre como processo **filho** da VTY: sair dele volta para a VTY, não encerra a sessão.
+Quem abre o shell é o **sistema da caixa**, não a VTY: a VTY confere o papel e pede; o sistema confere de novo, pelos grupos da conta, e é a resposta dele que vale. Se o sistema recusar, a VTY diz `start shell: the host refused a shell for this account`. Sair do shell volta para a VTY, com a configuração candidata intacta.
+
+O limite vale para tudo que dá um shell, não só para `start shell`. Toda conta da VTY participa dos grupos que abrem o dataplane e o roteamento, então um shell para uma conta que não é administradora seria tudo o que o papel dela nega.
 
 ### Por que existe saída de emergência
 
-Apontar o shell de login para uma aplicação cria risco de travamento total: um `prismash` que falhasse ao iniciar deixaria ninguém capaz de alcançar a máquina, nem por console nem por SSH. Por isso há **duas saídas independentes**, e a segunda (`prismash=off` no boot) não depende do `prismash` funcionar.
+Apontar o shell de login para uma aplicação cria risco de travamento total: um `prismash` que falhasse ao iniciar deixaria ninguém capaz de alcançar a máquina, nem por console nem por SSH. Por isso há **duas saídas independentes**, e a segunda (`prismash=off` no boot) não depende do `prismash` funcionar. As duas são de administrador.
+
+### A VTY roda no plano de gerência
+
+A caixa instalada roda três containers: o dataplane, o roteamento e o **plano de gerência**, onde a VTY roda. Um login cai ali **como ele mesmo** — com o mesmo usuário e os mesmos grupos que tem no sistema —, então o papel que a VTY lê é o da conta, e uma conta somente leitura dentro do container pode exatamente o que poderia fora dele. O que a VTY faz no sistema — criar contas, mexer no SSH, no SNMP e nos resolvedores DNS, ajustar o lado Linux de uma interface, reiniciar a caixa — ela pede ao sistema, que confere quem está pedindo pelo próprio kernel e só executa para `root`. É a mesma regra de quando a VTY executava esses comandos ela mesma: mudou onde o comando roda, não quem pode.
+
+Para o operador nada muda no que se digita. Duas consequências práticas:
+
+* **Se o container de gerência não estiver rodando, a VTY roda direto no sistema**, como antes. Uma caixa com esse container parado continua alcançável.
+* `install`, `system upgrade` e `system dataplane restart` são executados pelo sistema, com a VTY dele, no mesmo terminal. Você não precisa fazer nada diferente.
+
+
+:::info
+Para fazer os logins voltarem a usar a VTY do sistema em vez da do container, crie o arquivo `/etc/prisma-routing/vty-on-host`. É uma saída para diagnóstico, não uma configuração do dia a dia.
+
+:::
 
 
 :::info
@@ -64,7 +85,7 @@ Duas capacidades, mapeadas em **grupos do sistema** — não num banco de contas
 
 `root` tem as duas, porque root fala com o socket do dataplane diretamente e fingir o contrário seria teatro.
 
-Uma coisa que `prisma-admin` **não** faz hoje: reiniciar ou desligar a caixa. `system reboot` e `system shutdown` são oferecidos a quem tem o papel, mas quem decide o reinício é o systemd, e a appliance não instala regra nenhuma que conceda isso a uma conta que não é root — uma conta `prisma-admin` lê o aviso do que custa e recebe a recusa do próprio systemd, nas palavras dele. Hoje, quem reinicia a caixa pela VTY é `root`.
+Uma coisa que `prisma-admin` **não** faz hoje: reiniciar ou desligar a caixa, nem aplicar uma versão nova. `system reboot`, `system shutdown` e `system upgrade` são oferecidos a quem tem o papel, mas a caixa só executa o reinício para `root`, e a appliance não instala nada que conceda isso a outra conta — uma conta `prisma-admin` lê o aviso do que custa e recebe a recusa. Hoje, quem reinicia e atualiza a caixa pela VTY é `root`.
 
 As capacidades são lidas da participação em grupos **no momento em que a VTY inicia**, e nunca de algo que o programa guarde: a resposta precisa ser a que o sistema daria, senão desprovisionar uma conta aqui não a desprovisiona de fato.
 
@@ -83,7 +104,16 @@ Numa caixa recém-instalada ainda não existe conta de operador nenhuma, e ele d
        create one with 'user <name>' and give it a role
 ```
 
-Depois que você cria a conta e dá um papel a ela, o mesmo auto-teste passa a **nomear** a conta que alcança o dataplane:
+A conta se cria na própria VTY, com o papel `administrator` ou `cgnat-operator` (sem papel, ela é somente leitura):
+
+```
+prisma> configure
+prisma# [edit] user <nome>
+prisma# [edit user <nome>] role administrator
+prisma# [edit user <nome>] commit
+```
+
+O resto — senha, chave SSH, remover a conta — está em [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m). Depois que você cria a conta e dá um papel a ela, o mesmo auto-teste passa a **nomear** a conta que alcança o dataplane:
 
 ```
 [ ok ] the binary API works for netadm, an account that really has the group
@@ -116,8 +146,10 @@ Mídias anteriores à **0.37.0** não instalavam o componente que atende essa ch
 
 | Tipo de mudança | Capacidade exigida |
 |-----------------|--------------------|
-| Pools, interfaces CGNAT, timeouts, limites, bypass, forwards | `prisma-cgnat`     |
-| Roteamento, SSH, contas de usuário, SNMP, MTU, uRPF | `prisma-admin`     |
+| Pools, `cgnat inside`/`cgnat outside` nas interfaces, timeouts, limites, bypass, forwards, logging | `prisma-cgnat`     |
+| Todo o resto: roteamento, endereços e demais ajustes de interface, SSH, contas, SNMP, DNS, `system` (placas, núcleos, memória) e a memória do CGNAT (`nat` > `cgnat` > `memory`), que é um ajuste da máquina | `prisma-admin`     |
+| `start shell`, `install`, `system reboot`, `system shutdown`, `system upgrade`, `system dataplane restart` | `prisma-admin` (reinício e atualização: na prática, `root`) |
+| `show`, `ping`, `traceroute`, `mtr` | qualquer conta, inclusive somente leitura |
 
 ## Invocando o prismash
 
@@ -130,7 +162,7 @@ prismash --load [arquivo]      # aplica um arquivo de configuração salvo
 
 `--load` sem argumento usa `/etc/prisma-routing/prisma-routing.conf`. É o que roda no boot, pela `prisma-routing.service`.
 
-O código de saída é **1** se qualquer comando falhou, **0** caso contrário - o que permite usar `prismash -c` em script sem depender de casar padrões de texto na saída.
+O código de saída é **1** se qualquer comando falhou, **0** caso contrário - o que permite usar `prismash -c` em script sem depender de casar padrões de texto na saída. `prismash -c`, `ssh <caixa> "<comando>"` e uma saída que não vai para um terminal nunca param em `--More--`: a paginação só existe numa sessão interativa.
 
 ### Um comando recusado recusa o `commit` do mesmo lote
 

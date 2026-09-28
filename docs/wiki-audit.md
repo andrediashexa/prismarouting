@@ -189,6 +189,44 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 ## 5. Already corrected, so it is not redone
 
+### 2026-09-27, against 0.138.5 - every page, and the pages that were missing
+
+The first pass over the WHOLE wiki since v0.76.1, about 160 releases later
+([#480](https://github.com/andrediashexa/hexarouting/issues/480)). Six
+reviewers took one category each and checked every claim against `docs/`,
+`README.md` and the code - the VTY's grammar tables, its refusal and screen
+strings, the plugin, the appliance scripts - and never against another page.
+The five document checks pass on the result.
+
+What was wrong, by kind, so the next pass knows where pages go stale:
+
+* **Behaviour that was removed and kept being described.** The card
+  handover's refusals and its 30-minute confirmed commit (gone since
+  0.76.0/0.77.0), `no interface` meaning "claim no card", the MTU "reported,
+  not corrected", `systemctl` where the VTY now has `system dataplane
+  restart`, HA listed as not implemented.
+* **Screens the code no longer prints.** `show hardware`, a `show version`
+  in a mismatch state, a `show route` with fixed columns, a `docker ps`
+  nobody's code produces.
+* **Claims that were true of one mode and written for all.** "No allocation
+  log" and "no extended blocks" for deterministic pools, which have a
+  `reserve`; a pool's mapping called arithmetic when BPA allocates.
+* **Grammar that grew and the reference did not.** Whole blocks
+  (`system`, `policy-options`, the IGPs, RPKI), `commit` at every level, the
+  pager and its filters.
+
+Six pages were added for what shipped with no page: a pair, active/standby;
+the box that came up and does not forward; a virtual machine; what runs on
+the box (containers, backplane, the host's doors, the kernel); where the
+records go; routing policy.
+
+The pass also found product defects, filed rather than documented around:
+a reserve port answered "nothing was ever translated here" by the
+translation screen (#483); a policy term naming a missing prefix-list
+compiling to "match everything" (#484); `commit` arguments swallowing each
+other (#481); a refusal naming a command the prompt refuses (#482). The
+pages say what the box does today and are to be corrected with each fix.
+
 ### 2026-09-16, against v0.76.1 - the product's name
 
 **Renamed to Prisma Routing on the 17 pages that carried the old name or the

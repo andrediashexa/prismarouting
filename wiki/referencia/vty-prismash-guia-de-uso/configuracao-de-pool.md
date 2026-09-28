@@ -1,6 +1,10 @@
 # Configuração de pool
 
-Entra-se em `nat`, depois em `cgnat`, e ali `pool <nome>`. O prompt vira `prisma# [edit nat / cgnat / pool residencial] ` — ele nomeia o pool e os níveis em que ele está. `exit` volta para `cgnat`; `top` vai direto ao topo. A página [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) explica os níveis.
+Cada campo que um pool de CGNAT aceita, com o argumento, a faixa, o padrão e se a mudança derruba sessões. Para quem está criando um pool ou mexendo num que carrega assinantes.
+
+Entra-se em `nat`, depois em `cgnat`, e ali `pool <nome>` — o nome tem até 63 caracteres. O prompt vira `prisma# [edit nat / cgnat / pool residencial] ` — ele nomeia o pool e os níveis em que ele está. `exit` volta para `cgnat`; `top` vai direto ao topo. A página [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) explica os níveis. `commit` funciona de dentro do pool, e depois dele você continua no pool.
+
+Mudar um pool exige a capacidade de CGNAT: uma conta `cgnat-operator` ou de administrador.
 
 
 :::info
@@ -30,8 +34,8 @@ Alguns campos **reconstroem o pool**, e todas as sessões nele morrem no instant
 ```mermaid
 flowchart TD
     C{"Que campo você vai mudar?"}
-    C -->|"inside · outside · block-size<br/>ports · policy · mode · vrf · reserve"| R["Muda o MAPEAMENTO<br/>→ pool reconstruído<br/>→ TODAS as sessões caem<br/>→ exige commit remap"]
-    C -->|"timeouts · max-* · bypass<br/>alg · forward · tcp-mss · filter"| I["Aplicado NO LUGAR<br/>→ pool segue carregando tráfego<br/>→ ninguém cai"]
+    C -->|"inside · outside · block-size<br/>ports · policy · mode<br/>vrf · outside-vrf · reserve"| R["Muda o MAPEAMENTO<br/>→ pool reconstruído<br/>→ TODAS as sessões caem<br/>→ exige commit remap"]
+    C -->|"timeouts · max-* · bypass · alg<br/>forward · tcp-mss · filter<br/>block-stride · initial-allocation<br/>utilisation-alarm"| I["Aplicado NO LUGAR<br/>→ pool segue carregando tráfego<br/>→ ninguém cai"]
 ```
 
 A regra por trás: os da esquerda mudam o **mapeamento** — qual endereço público e qual bloco de portas cada assinante recebe. Mudou o mapeamento, toda sessão existente virou inválida.
@@ -40,7 +44,7 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 
 
 :::warning
-**Cuidado com** `**inside**` **e** `**outside**` O mapeamento é **aritmético, não uma tabela**. O endereço público e o bloco de portas de um assinante são *calculados* a partir da definição do pool. Não existe registro de alocação para consultar — e isso significa que **mudar a definição muda a função**. Acrescentar um prefixo público move **todos** os assinantes naquele instante e encerra todas as sessões do pool. Nada é corrompido e respostas passadas continuam resolvíveis, mas todos os clientes caem de uma vez e a máquina não reporta nada de anormal — porque nada de anormal aconteceu. Por isso o `commit` **recusa** uma mudança dessas até que ela seja pedida pelo nome, com `commit remap`.
+**Cuidado com** `**inside**` **e** `**outside**`**.** Mudar qualquer um dos dois reconstrói o pool e encerra todas as sessões dele, nos dois modos. Num pool `mode deterministic` o custo é maior: o mapeamento é **aritmético, não uma tabela** — o endereço público e o bloco de portas de um assinante são *calculados* a partir da definição do pool —, então **mudar a definição muda a função**. Acrescentar um prefixo público move **todos** os assinantes naquele instante. Nada é corrompido, respostas passadas continuam resolvíveis pela configuração que estava em vigor, mas todos os clientes caem de uma vez e a máquina não reporta nada de anormal — porque nada de anormal aconteceu. Por isso o `commit` **recusa** uma mudança que remapeia assinantes até que ela seja pedida pelo nome, com `commit remap`.
 
 :::
 
@@ -48,17 +52,19 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 
 | Comando | Argumento | O que define |
 |---------|-----------|--------------|
-| `inside <prefixo>` | `<A.B.C.D/M>` | prefixo interno; pode repetir |
+| `inside <prefixo>` | `<A.B.C.D/M>` | prefixo interno; pode repetir. Obrigatório: o `commit` recusa um pool sem `inside` ou sem `outside` |
 | `outside <prefixo>` | `<A.B.C.D/M>` | prefixo público; pode repetir |
-| `block-size <n>` | `<64-32768>` | portas por bloco, potência de dois |
-| `ports <min> <max>` | `<1-65535> <1-65535>` | faixa de portas utilizável |
-| `policy interleaved` |           | vizinhos em endereços públicos distintos |
+| `block-size <n>` | `<64-32768>` | portas por bloco, potência de dois; padrão `512`. Um número que não é potência de dois é recusado com as duas potências mais próximas |
+| `ports <min> <max>` | `<1-65535> <1-65535>` | faixa de portas utilizável; ausente, vale a faixa do próprio equipamento |
+| `policy interleaved` |           | vizinhos em endereços públicos distintos; é o padrão |
 | `policy blocked` |           | vizinhos no mesmo endereço público |
-| `mode deterministic` |           | por fórmula, sem log de alocação |
-| `mode dynamic` |           | sob demanda, com log de alocação |
+| `mode deterministic` |           | por fórmula, sem log de alocação: o assinante se acha pela configuração em vigor. É o padrão. Só o bloco entregue da reserva é registrado |
+| `mode dynamic` |           | BPA: blocos alocados sob demanda, cada alocação registrada. Sem exportação de logging configurada, `commit check` e `commit` avisam — nesse modo o registro é a única prova de quem usou uma porta |
 | `vrf <n>` | `<0-4294967295>` | a VRF cujos assinantes este pool atende; ausente = todas |
 | `outside-vrf <n>` | `<0-4294967295>` | a VRF por onde o tráfego traduzido sai; ausente = deixa onde estava |
 | `reserve <n>` | `<0-65535>` | blocos de **cada** endereço público guardados fora da fórmula, para dar a quem encher o seu; `0` = nenhum |
+
+**Os prefixos.** `inside`, `outside` e `bypass` são IPv4. Um prefixo com bits de host (`100.64.0.1/10`) é recusado dizendo qual rede ele nomeia (`100.64.0.0/10`), e um `/0` é recusado: todo endereço não é pool nem bypass.
 
 `**policy interleaved**` **vs** `**blocked**` — `interleaved` espalha vizinhos por endereços públicos distintos, o que dilui o impacto de um bloqueio de reputação em um IP. `blocked` mantém vizinhos no mesmo endereço público.
 
@@ -285,11 +291,11 @@ Corresponde ao REQ-8 da RFC 4787.
 # MSS clamping
 
 ```
-tcp-mss <bytes>
+tcp-mss <536-9000>
 tcp-mss auto
 ```
 
-Rebaixa o MSS dos handshakes para que os segmentos caibam no caminho. `auto` deriva o valor das MTUs das interfaces de CGNAT.
+Rebaixa o MSS dos handshakes para que os segmentos caibam no caminho. `auto` deriva o valor das MTUs das interfaces com `cgnat inside` ou `cgnat outside`; enquanto nenhuma interface estiver no CGNAT, ele não tem de onde derivar e não rebaixa nada. Abaixo de 536 (o MSS que todo host IPv4 aceita) o valor não serve para nada, e acima de 9000 não descreve caminho nenhum: os dois são recusados. `no tcp-mss` desliga.
 
 Vale notar o modo de falha que isso corrige: sem clamp, o par descarta o segmento e a conexão trava — silenciosamente, com um contador afirmando que tudo foi aplicado.
 
