@@ -11,6 +11,7 @@
 #include <vnet/dpo/load_balance.h>
 
 #include "bpa_identity.h"
+#include "bpa_local.h"
 #include "bpa_pool.h"
 #include "bpa_workers.h"
 #include "bpa_ports.h"
@@ -125,6 +126,11 @@ typedef struct
    */
   u32 *owner_wid;
   u32 *thread_w;
+
+  /* The box's own interface addresses, as bpa_local.h's set: the filter
+   * bpa_to_us() asks before the FIB (#489). Rebuilt on the main thread,
+   * under the barrier, whenever an interface gains or loses one. */
+  u32 *local_addrs;
 
   /*
    * WHO IS HOLDING A BLOCK THAT WAS LENT (#210), keyed by pool and block.
@@ -637,8 +643,13 @@ bpa_proto_of (u8 ip_proto)
 static_always_inline int
 bpa_to_us (u32 fib_index, const ip4_address_t *dst)
 {
-  const load_balance_t *lb =
-    load_balance_get (ip4_fib_forwarding_lookup (fib_index, dst));
+  const load_balance_t *lb;
+
+  /* Not one of the box's addresses in any VRF: not for the box, and the FIB
+   * is not asked (#489, bpa_local.h). */
+  if (PREDICT_TRUE (!bpa_local_has (bpa_main.local_addrs, dst->as_u32)))
+    return 0;
+  lb = load_balance_get (ip4_fib_forwarding_lookup (fib_index, dst));
   return load_balance_get_bucket_i (lb, 0)->dpoi_type == DPO_RECEIVE;
 }
 

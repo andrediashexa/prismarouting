@@ -2277,6 +2277,64 @@ bpa_ip4_address_change (ip4_main_t *im, uword opaque, u32 sw_if_index,
     }
 }
 
+/*
+ * The set bpa_to_us() asks before the FIB (#489, bpa_local.h), rebuilt from
+ * every IPv4 interface address the box has. `skip_*` names the one being
+ * removed, for a callback that runs while it is still in the pool; `add` the
+ * one being added, for one that runs before it is. A duplicate or an absent
+ * skip is harmless: the set is a filter, and the FIB still answers.
+ *
+ * Swapped under the barrier, because a worker may be reading the old vector
+ * in the middle of a probe; freed only once none can be.
+ */
+/* not a unit: it walks VPP's interface-address pool and takes the worker
+ * barrier, which only a running dataplane has; the set it builds is
+ * bpa_local_build(), which test/test_bpa_local.c holds. */
+static void
+bpa_local_rebuild (u32 skip_sw_if_index, u32 skip_addr, u32 add)
+{
+  bpa_main_t *bm = &bpa_main;
+  ip_lookup_main_t *lm = &ip4_main.lookup_main;
+  ip_interface_address_t *ia;
+  u32 *addrs = 0, *slots, *old, skipped = 0;
+
+  pool_foreach (ia, lm->if_address_pool)
+    {
+      ip4_address_t *a = ip_interface_address_get_address (lm, ia);
+
+      if (!skipped && ia->sw_if_index == skip_sw_if_index
+	  && a->as_u32 == skip_addr)
+	{
+	  skipped = 1;
+	  continue;
+	}
+      vec_add1 (addrs, a->as_u32);
+    }
+  if (add)
+    vec_add1 (addrs, add);
+  slots = bpa_local_build (addrs);
+  vec_free (addrs);
+
+  vlib_worker_thread_barrier_sync (vlib_get_main ());
+  old = bm->local_addrs;
+  bm->local_addrs = slots;
+  vlib_worker_thread_barrier_release (vlib_get_main ());
+  vec_free (old);
+}
+
+/* not a unit: VPP's interface-address callback, which only passes its
+ * arguments to bpa_local_rebuild(). */
+static void
+bpa_local_address_change (ip4_main_t *im, uword opaque, u32 sw_if_index,
+			  ip4_address_t *address, u32 address_length,
+			  u32 if_address_index, u32 is_del)
+{
+  if (is_del)
+    bpa_local_rebuild (sw_if_index, address->as_u32, 0);
+  else
+    bpa_local_rebuild (~0, 0, address->as_u32);
+}
+
 /* not a unit: the plugin's init, called once by VPP with the graph up. */
 static clib_error_t *
 bpa_init (vlib_main_t *vm)
@@ -2293,6 +2351,12 @@ bpa_init (vlib_main_t *vm)
 
   bm->vlib_main = vm;
   bm->vnet_main = vnet_get_main ();
+  {
+    ip4_add_del_interface_address_callback_t cb = {
+      .function = bpa_local_address_change,
+    };
+    vec_add1 (ip4_main.add_del_interface_address_callbacks, cb);
+  }
   bm->pool_by_name = hash_create_vec (0, sizeof (u8), sizeof (uword));
   bm->log_class = vlib_log_register_class ("bpa", 0);
   bm->audit_path = format (0, "/var/log/prisma-routing/config-history.log%c", 0);

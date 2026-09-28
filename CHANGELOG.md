@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Every packet paid a FIB lookup to learn it was not for the box.**
+  ([#489](https://github.com/andrediashexa/hexarouting/issues/489))
+  0.136.1 (#470) asked the FIB, before the session table, whether each
+  packet was addressed to the box itself. It is the right authority and the
+  answer is "no" for nearly every packet a CGNAT carries. The box's own
+  interface addresses are now kept as a small set, rebuilt when an interface
+  gains or loses one, and the FIB is asked only when the destination is in
+  it. Measured with lab/throughput.sh on the development machine, six
+  interleaved rounds at 64 bytes: `bpa-in2out` median 498 clocks/packet
+  before, 437 after, against 440 with no check at all - 12% of the node, and
+  the same share of the packets a core carries. A subscriber still reaches
+  the box itself untranslated (lab/to-us.sh).
+
 ## 0.140.1 - where this stands, at 0.140.0
 
 ### Added
