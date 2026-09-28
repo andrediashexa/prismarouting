@@ -162,12 +162,16 @@ configure
 
 `show cgnat pool` mostra a conta: quantos blocos por endereço a fórmula ainda usa e quantos ficaram guardados.
 
+
 :::warning
 **Ligar ou mudar a reserva é mudança de capacidade.** A fórmula passa a ter menos blocos por endereço, o pool é reconstruído, e todas as sessões dele caem. Por isso o `commit` comum recusa, e é preciso pedir pelo nome com `commit remap`. Quantos assinantes perdem o bloco ou mudam de lugar depende da política do pool: rode `commit check` antes, que ele diz a conta exata. Faça numa janela.
+
 :::
+
 
 :::info
 **O bloco da reserva não sai da fórmula, então precisa ir para o log.** Num pool determinístico com reserva, cada bloco de extensão é exportado como `natEvent 16` e liberado como `natEvent 17`, exatamente como num pool dinâmico — é a única coisa que um pool determinístico registra por assinante. Um pool com reserva e sem exportação configurada recebe um aviso no `commit check` e no `commit`: sem o registro, ninguém consegue dizer de quem era uma porta daquela reserva.
+
 :::
 
 Uma reserva menor que o número de workers do dataplane é aceita, com aviso: os workers que ficaram sem bloco reservado não conseguem estender os assinantes deles. E a reserva esgotada é contada à parte em `show cgnat blocks`, separada do assinante que bateu no `max-blocks` — uma pede reserva maior, a outra teto maior.

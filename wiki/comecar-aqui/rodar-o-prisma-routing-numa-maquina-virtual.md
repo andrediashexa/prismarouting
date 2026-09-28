@@ -6,7 +6,7 @@ O que uma máquina virtual precisa ter para a caixa encaminhar, e o que muda nel
 
 | Recurso | O que pedir | O que acontece se faltar |
 |---------|-------------|--------------------------|
-| RAM | **6 GB no mínimo, 8 GB recomendado** | com 4 GB a caixa sobe no perfil conservador, sem hugepages, e o dataplane não recebe placa nenhuma: `show interface` só mostra `local0` e nada é encaminhado |
+| RAM     | **6 GB no mínimo, 8 GB recomendado** | com 4 GB a caixa sobe no perfil conservador, sem hugepages, e o dataplane não recebe placa nenhuma: `show interface` só mostra `local0` e nada é encaminhado |
 | Instruções do processador | **SSE4.2** (AVX2 é aproveitado quando existe) | sem SSE4.2 o dataplane morre na partida, em laço; o autoteste de boot confere o processador **antes** de olhar para o dataplane e diz o que falta |
 | Páginas de 1 GB (`pdpe1gb`) | desejável, não obrigatório | a caixa cai para páginas de 2 MB sozinha; veja *Modelo de processador sem páginas de 1 GB* abaixo |
 
@@ -14,12 +14,14 @@ Medido numa VM com 8 núcleos, depois do segundo boot, que é o que aplica o aju
 
 | RAM da VM | O que a caixa faz |
 |-----------|-------------------|
-| 4 GB | sobe, não encaminha |
-| 6 GB | encaminha, com 1 GB de heap: cabem umas 2,7 milhões de sessões |
-| 8 GB | encaminha, com 2 GB de heap |
+| 4 GB      | sobe, não encaminha |
+| 6 GB      | encaminha, com 1 GB de heap: cabem umas 2,7 milhões de sessões |
+| 8 GB      | encaminha, com 2 GB de heap |
+
 
 :::warning
 **O primeiro boot ainda não é o boot definitivo.** Hugepages e isolamento de núcleos vêm da linha de comando do kernel, então só valem a partir do boot seguinte. Uma VM avaliada no primeiro boot está no perfil conservador e não diz nada sobre o que a caixa faz.
+
 :::
 
 O modelo de processador conta. O modelo genérico `qemu64` do QEMU não tem SSE4.2: dê à VM o processador do hospedeiro, ou um modelo que tenha SSE4.2.
@@ -48,11 +50,11 @@ Não há nada a configurar: desde a versão 0.120 uma VM sem páginas de 1 GB so
 
 A maioria das VMs não tem IOMMU virtual. A caixa percebe isso no boot e liga a placa ao dataplane pelo driver `uio_pci_generic` em vez de `vfio-pci`.
 
-| | Com IOMMU | Sem IOMMU |
-|---|---|---|
+|     | Com IOMMU | Sem IOMMU |
+|-----|-----------|-----------|
 | driver usado | `vfio-pci` | `uio_pci_generic` |
 | o que você ganha ou perde | a placa só alcança a memória que recebeu, então um defeito no dataplane não escreve fora dela | encaminha igual, sem essa proteção |
-| onde conferir | `show hardware` diz, por placa ainda não entregue, para qual driver a caixa vai movê-la | o mesmo |
+| onde conferir | `show hardware` diz, por placa ainda não entregue, para qual driver a caixa vai movê-la | o mesmo   |
 
 ## Placa acrescentada com a VM ligada
 
@@ -68,8 +70,10 @@ Uma placa posta na VM pelo hipervisor com a caixa rodando encaminha **na hora**,
 
 O AF_XDP custa velocidade, não correção: a placa é lida pelo driver do kernel. Numa placa virtio de uma fila só, o próprio kernel avisa que o envio fica num modo mais lento.
 
+
 :::warning
 `system dataplane restart` para o encaminhamento até o dataplane voltar e **descarta o bloco de portas e as sessões de todos os assinantes**. O dataplane volta com a configuração **salva**: o que foi aplicado com `commit` e não foi salvo não volta. A tela diz o custo antes de agir. Medido numa VM: 18 segundos sem encaminhar.
+
 :::
 
 ## A MTU que a placa virtual carrega
@@ -90,16 +94,18 @@ Para carregar quadros maiores que 1500 numa VM, a MTU tem de ser aumentada prime
 A caixa pergunta à placa quantas filas ela tem, e só esse número de workers recebe pacotes dela. Uma placa virtual com **uma** fila numa VM de oito núcleos faz um worker receber tudo — o relatório de boot diz isso numa linha por placa, com o limite, em vez de deixar a caixa lenta sem explicação.
 
 | Filas na placa virtual | Workers que recebem pacotes |
-|------------------------|------------------------------|
-| 1 | 1, qualquer que seja o número de núcleos |
-| igual ou maior que o número de workers | todos |
+|------------------------|-----------------------------|
+| 1                      | 1, qualquer que seja o número de núcleos |
+| igual ou maior que o número de workers | todos                       |
 
 Para aproveitar os núcleos da VM, ligue no hipervisor várias filas na placa virtual (a opção costuma se chamar *multiqueue*) com um número igual ao de workers. A caixa relê as filas a cada boot.
 
 # Desligar a VM
 
+
 :::warning
 **Na versão atual a caixa ignora o botão de desligar da VM.** O *Shutdown* do hipervisor envia o botão de energia (ACPI), e a caixa não reage a ele. Um desligamento forçado depois disso é o mesmo que tirar o cabo de força: os blocos que o dataplane está segurando não são fechados no log de retenção.
+
 :::
 
 Desligue ou reinicie pela VTY, que diz o custo antes de agir e fecha os blocos no caminho:

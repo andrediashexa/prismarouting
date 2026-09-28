@@ -29,8 +29,10 @@ show cgnat history          qual configuração estava em vigor, e quem a coloco
 show cgnat history verify   confere a cadeia de hash da trilha e aponta a primeira entrada que não bate
 ```
 
+
 :::info
-**Pool determinístico com `reserve`: a porta pode não ser da fórmula.** Os blocos da reserva são entregues sob demanda, a assinantes que encheram o próprio bloco, e a fórmula não responde por eles — `show cgnat translation` não os atribui a ninguém. Quem responde por uma porta da reserva são os registros `natEvent 16` e `natEvent 17` que foram para o coletor, como num pool dinâmico.
+**Pool determinístico com** `**reserve**`**: a porta pode não ser da fórmula.** Os blocos da reserva são entregues sob demanda, a assinantes que encheram o próprio bloco, e a fórmula não responde por eles — `show cgnat translation` não os atribui a ninguém. Quem responde por uma porta da reserva são os registros `natEvent 16` e `natEvent 17` que foram para o coletor, como num pool dinâmico.
+
 :::
 
 # Um assinante está sem internet
@@ -266,7 +268,7 @@ Os filtros se encadeiam, da esquerda para a direita. O texto procurado pode ter 
 
 O filtro roda sobre o que o comando já imprimiu, **depois** das ocultações: `show running-config | include password` mostra `<set, not shown>`, a mesma linha que apareceria sem filtro. Nenhum filtro alcança o valor por trás dela.
 
-**Numa sessão interativa, todo `show` maior que a tela para em `--More--`.** Espaço mostra a próxima tela, Enter a próxima linha, e `q` ou Ctrl-C encerra a saída — não a sessão. `| no-more` desliga isso para um comando. `prismash -c`, um comando passado pelo `ssh` e uma saída que não vai para um terminal nunca param. O paginador é o da própria VTY, e não `more` nem `less`, que deixariam abrir um shell a partir dele.
+**Numa sessão interativa, todo** `**show**` **maior que a tela para em** `**--More--**`**.** Espaço mostra a próxima tela, Enter a próxima linha, e `q` ou Ctrl-C encerra a saída — não a sessão. `| no-more` desliga isso para um comando. `prismash -c`, um comando passado pelo `ssh` e uma saída que não vai para um terminal nunca param. O paginador é o da própria VTY, e não `more` nem `less`, que deixariam abrir um shell a partir dele.
 
 # Desfazer uma mudança
 

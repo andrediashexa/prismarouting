@@ -31,7 +31,7 @@ Três coisas a saber dele:
 
 * **Só o papel de administrador pode rodá-lo**, como `system reboot`.
 * **Ctrl-C não interrompe** enquanto o `upgrade` roda: uma caixa atualizada pela metade é pior que uma atualização lenta.
-* **Se o `upgrade` para no meio**, a VTY diz com que status ele saiu e em que diretório o pacote ficou guardado, para quem for ler o que aconteceu.
+* **Se o** `**upgrade**` **para no meio**, a VTY diz com que status ele saiu e em que diretório o pacote ficou guardado, para quem for ler o que aconteceu.
 
 No fim ele diz `upgraded to <versão>` e lembra do `save`. Vale o que vale para o caminho manual: `save` antes de reiniciar, e o dataplane continua o antigo até você escolher a hora do passo 4.
 

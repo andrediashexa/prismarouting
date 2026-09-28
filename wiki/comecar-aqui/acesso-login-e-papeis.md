@@ -61,6 +61,7 @@ Para o operador nada muda no que se digita. Duas consequências práticas:
 * **Se o container de gerência não estiver rodando, a VTY roda direto no sistema**, como antes. Uma caixa com esse container parado continua alcançável.
 * `install`, `system upgrade` e `system dataplane restart` são executados pelo sistema, com a VTY dele, no mesmo terminal. Você não precisa fazer nada diferente.
 
+
 :::info
 Para fazer os logins voltarem a usar a VTY do sistema em vez da do container, crie o arquivo `/etc/prisma-routing/vty-on-host`. É uma saída para diagnóstico, não uma configuração do dia a dia.
 

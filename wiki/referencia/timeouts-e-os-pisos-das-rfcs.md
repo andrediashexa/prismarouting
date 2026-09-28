@@ -12,9 +12,9 @@ O que ela também faz é cortar conexões que estão **ociosas, não terminadas*
 
 | Timeout | Piso | Referência | Padrão | O que quebra abaixo dele |
 |---------|-----:|------------|-------:|--------------------------|
-| `udp`   | 120 s | RFC 4787 REQ-5 | 300 s | um mapeamento fechando enquanto a aplicação ainda acredita que ele existe |
-| `icmp`  | 60 s | RFC 5508 REQ-2 | 60 s | uma resposta de eco chegando depois que o mapeamento fechou — lê-se como perda de pacote em todo teste de caminho |
-| `tcp-transitory` | 240 s | RFC 5382 REQ-5 | 240 s | uma conexão meio-fechada descartada antes de o par terminar de fechá-la |
+| `udp`   | 120 s | RFC 4787 REQ-5 | 300 s  | um mapeamento fechando enquanto a aplicação ainda acredita que ele existe |
+| `icmp`  | 60 s | RFC 5508 REQ-2 | 60 s   | uma resposta de eco chegando depois que o mapeamento fechou — lê-se como perda de pacote em todo teste de caminho |
+| `tcp-transitory` | 240 s | RFC 5382 REQ-5 | 240 s  | uma conexão meio-fechada descartada antes de o par terminar de fechá-la |
 | `tcp-established` | 7440 s | RFC 5382 REQ-5 | 7440 s | uma conexão ociosa mas viva, cortada |
 
 Os padrões já estão no piso ou acima dele: uma caixa que ninguém ajustou não dispara aviso nenhum.
@@ -95,10 +95,10 @@ configure
 
 | Timeout só de pool | Padrão | O que expira |
 |--------------------|-------:|--------------|
-| `tcp-syn`          | 20 s | TCP meio-aberto, antes do handshake completar |
+| `tcp-syn`          | 20 s   | TCP meio-aberto, antes do handshake completar |
 | `gre`              | 1800 s | o mapeamento GRE de uma chamada PPTP, ocioso |
-| `port-holddown`    | 4 s | quanto tempo uma porta liberada espera antes de ser reusada |
-| `alg-expect`       | 60 s | quanto tempo uma porta de mídia anunciada por um ALG espera pelo primeiro pacote |
+| `port-holddown`    | 4 s    | quanto tempo uma porta liberada espera antes de ser reusada |
+| `alg-expect`       | 60 s   | quanto tempo uma porta de mídia anunciada por um ALG espera pelo primeiro pacote |
 
 O `port-holddown` existe para que um segmento atrasado da conexão que acabou não caia na conexão nova que pegou a mesma porta — o que o assinante vê como um reset que ninguém consegue reproduzir. A porta volta para o bloco do **mesmo** assinante, então isso não mexe em quem responde por ela.
 

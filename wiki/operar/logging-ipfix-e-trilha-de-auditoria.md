@@ -9,6 +9,7 @@ flowchart TD
     M -->|dynamic| B["os registros IPFIX ou syslog<br/>no coletor respondem"]
 ```
 
+
 :::info
 **A caixa não guarda os registros de conexão: ela os exporta, e quem guarda o ano de guarda é o seu coletor.** O volume de log da caixa tem só duas coisas: a trilha de configuração e o transbordo do exportador, os registros que um coletor fora do ar ainda não recebeu. O tamanho dele diz quanto tempo a caixa aguenta exportando para um coletor inalcançável, não quanto histórico ela tem.
 
@@ -22,7 +23,7 @@ Não existem eventos de alocação por assinante, então não há o que exportar
 
 Isso só se sustenta enquanto se souber **qual** configuração estava em vigor. É para isso que existe a **trilha de configuração**.
 
-**Uma exceção: a `reserve`.** Um pool determinístico com `reserve` guarda blocos fora da fórmula para entregar a quem enche o próprio bloco. Esses são justamente os blocos que a fórmula **não** produz, então cada um sai como `natEvent 16` ao ser entregue e `natEvent 17` ao voltar, igual a um bloco dinâmico — e um pool assim precisa de exportação ligada como um pool dinâmico.
+**Uma exceção: a** `**reserve**`**.** Um pool determinístico com `reserve` guarda blocos fora da fórmula para entregar a quem enche o próprio bloco. Esses são justamente os blocos que a fórmula **não** produz, então cada um sai como `natEvent 16` ao ser entregue e `natEvent 17` ao voltar, igual a um bloco dinâmico — e um pool assim precisa de exportação ligada como um pool dinâmico.
 
 ## A trilha de configuração
 
@@ -47,6 +48,7 @@ Cada entrada nomeia quem fez a mudança num destes formatos:
 
 Uma entrada que não puder ser atribuída a alguém **diz isso**, com a palavra `unattributed`. Omitir o campo seria indistinguível de uma entrada em que ninguém foi responsável — e um pedido sem nome e sem uid é registrado como não atribuído, nunca creditado ao root.
 
+
 :::info
 **O que a atribuição é, e o que não é.** É o registro de qual operador fez o quê entre as pessoas que já têm acesso à caixa — que é o que uma trilha de auditoria é. Não é prova contra quem tem acesso: o cliente declara a própria identidade, e quem alcança a API já pode reconfigurar a caixa.
 
@@ -67,6 +69,7 @@ Três transportes, que podem ficar ligados ao mesmo tempo:
 | IPFIX sobre UDP | pelo próprio dataplane: o coletor tem de ser alcançável pelas rotas do encaminhamento | telemetria. Perde registro sob congestionamento, sem aviso |
 | IPFIX sobre TCP | pelo Linux da caixa, com transbordo em disco se o coletor cair | **guarda legal**. Carrega a identidade do assinante, como o syslog; o UDP não |
 | syslog (RFC 5424 sobre TCP) | pelo Linux, com o mesmo transbordo | o coletor que só lê syslog, que é a maioria |
+
 
 :::warning
 **Um pool dinâmico sem nenhuma exportação é um pool que não consegue responder a um ofício.** Em modo dinâmico o registro exportado é a única prova de quem segurava uma porta pública. `commit check` e `commit` avisam, nomeando o pool, quando um pool dinâmico — ou determinístico com `reserve` — vai ficar numa caixa em que nada exporta: nem UDP ligado com coletor, nem coletor TCP, nem syslog. É aviso e não recusa, porque um pool montado antes do coletor existir é uma configuração correta; mas não o deixe carregando assinantes assim.

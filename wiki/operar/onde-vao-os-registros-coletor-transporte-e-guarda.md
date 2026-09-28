@@ -12,6 +12,7 @@ Esse registro precisa existir em algum lugar por um ano, precisa sobreviver a um
 
 # A ideia: a caixa exporta, o coletor guarda
 
+
 :::info
 **A caixa não guarda registros de conexão.** Ela os exporta à medida que acontecem, e quem guarda o ano que a lei pede é o seu coletor. No volume de log da caixa ficam só a trilha de configuração e o transbordo do exportador, os registros que um coletor fora do ar ainda não recebeu.
 
@@ -53,6 +54,7 @@ flowchart TD
     U -->|sim| B["some logging udp + logging enable<br/>ao transporte escolhido"]
     U -->|não| F["pronto"]
 ```
+
 
 :::warning
 **Guarda legal apenas por UDP é uma guarda com buracos.** Um datagrama perdido é um registro perdido, sem nada na caixa ou no coletor que o denuncie, e perder um `natEvent 17` (a liberação) faz a consulta natural apontar para o assinante errado. Use TCP ou syslog para a guarda; o UDP, se quiser, ao lado.
@@ -108,11 +110,12 @@ A conta, a partir da estimativa de cerca de 80 MB por dia para 200 mil assinante
 
 | Assinantes em modo dinâmico | Transbordo por dia, aproximado | O que 30 GB aguentam |
 |-----------------------------|-------------------------------:|----------------------|
-| 50 mil | 20 MB | anos |
-| 200 mil | 80 MB | mais de um ano |
-| 1 milhão | 400 MB | cerca de dois meses e meio |
+| 50 mil                      | 20 MB                          | anos                 |
+| 200 mil                     | 80 MB                          | mais de um ano       |
+| 1 milhão                    | 400 MB                         | cerca de dois meses e meio |
 
 É uma estimativa de ordem de grandeza, com um bloco renegociado umas cinco vezes por dia por assinante ativo; a sua rotatividade de blocos muda o número. Uma linha syslog é texto e ocupa várias vezes o que ocupa um registro IPFIX: se exporta por syslog, dimensione com folga maior. Em modo determinístico sem `reserve` quase nada é exportado, e o volume serve praticamente só à trilha.
+
 
 :::warning
 **Um volume cheio com o coletor fora do ar é perda de registro.** O transbordo passa a ser descartado (contado, mas descartado), e esses registros não chegam nunca ao coletor. Monitore o coletor, não só a caixa: o volume foi dimensionado para cobrir uma queda, não para substituir o coletor.
@@ -132,7 +135,7 @@ A tela tem três partes. O que ler em cada uma:
 | Linha | O que responde |
 |-------|----------------|
 | `state` | se a exportação por UDP está ligada |
-| `exporter` | para onde vai o UDP. `none: nothing is sent over UDP` quer dizer que nada sai por UDP, **mesmo com `state enabled`** |
+| `exporter` | para onde vai o UDP. `none: nothing is sent over UDP` quer dizer que nada sai por UDP, **mesmo com** `**state enabled**` |
 | `boot marker` | o template do marcador, quantos foram enviados e o instante de início desta encarnação do dataplane |
 | `TCP transport` e `syslog transport` | cada uma com o coletor e o estado da conexão: `connected`, `connecting` ou `disconnected`; um transporte desligado aparece como `disabled` |
 | `enterprise` | no syslog: o número de empresa, a facility e a severity em uso |
@@ -140,9 +143,9 @@ A tela tem três partes. O que ler em cada uma:
 
 O que procurar:
 
-* **`disconnected` por mais que alguns segundos**: o coletor está fora do ar ou inalcançável pelas rotas do Linux. Os bytes em disco na linha `spill` sobem enquanto isso durar.
-* **Descartados na linha `spill` acima de zero**: houve registro perdido. Confira o espaço do volume de log e o coletor.
-* **Bytes em disco e reenviados iguais, com a conexão `connected`**: o coletor voltou e recebeu tudo o que ficou para trás.
+* `**disconnected**` **por mais que alguns segundos**: o coletor está fora do ar ou inalcançável pelas rotas do Linux. Os bytes em disco na linha `spill` sobem enquanto isso durar.
+* **Descartados na linha** `**spill**` **acima de zero**: houve registro perdido. Confira o espaço do volume de log e o coletor.
+* **Bytes em disco e reenviados iguais, com a conexão** `**connected**`: o coletor voltou e recebeu tudo o que ficou para trás.
 
 Para a exportação por UDP, o autoteste de boot compara o que a configuração pede com o que o dataplane tem e falha quando os dois não batem. E `commit check` avisa, nomeando o pool, quando um pool dinâmico (ou determinístico com `reserve`) fica numa caixa em que nada exporta.
 

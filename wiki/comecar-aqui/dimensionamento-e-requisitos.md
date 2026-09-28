@@ -9,7 +9,7 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 | RAM     | **6 GB** (8 GB recomendado) | com menos, a caixa sobe e não encaminha: medido com 4 GB, o dataplane fica sem placa nenhuma |
 | CPU     | **SSE4.2** | o binário do VPP assume SSE4.2 e usa AVX quando existe |
 | Placas de rede | **1**  | uma basta, e a caixa entrega essa mesma placa ao dataplane levando o endereço de gerência junto; duas é o formato de uma appliance no rack |
-| Disco | **raiz de 8 GB, mais o volume de log** | o instalador nunca deixa a raiz com menos de 8 GB; o volume de log tem 30 GB por padrão e pode ser menor (seção *Volume de log*) |
+| Disco   | **raiz de 8 GB, mais o volume de log** | o instalador nunca deixa a raiz com menos de 8 GB; o volume de log tem 30 GB por padrão e pode ser menor (seção *Volume de log*) |
 
 
 :::warning
@@ -136,7 +136,7 @@ Por um tempo as duas caixas recebiam a mesma frase — *"numa caixa com IOMMU a 
 
 O kernel da caixa é o do Prisma Routing: o mesmo código e a mesma configuração do kernel do Debian, recompilados, e `uname -r` termina em `-prisma`. Ficam **fora** as classes de módulo que um roteador não usa: som, Wi-Fi, Bluetooth, NFC, captura de vídeo, joystick, tela sensível ao toque, rádio amador, CAN, 802.15.4, modem celular, FireWire, sensores industriais, placas de vídeo AMD e NVIDIA dedicadas e os drivers experimentais (*staging*).
 
-**Toda placa de rede, todo controlador de disco e todo driver de virtualização, `vfio` e `uio` continuam.** Uma máquina cujo hardware de rede e de disco o Debian 12 reconhece é reconhecida aqui. Um kernel novo, inclusive uma correção de segurança dele, chega **na mídia de instalação** de uma versão nova, não pelo `apt` e não pelo pacote de atualização: o pacote troca os arquivos do produto e não traz kernel. Numa caixa já em serviço, isso significa reinstalar a partir da mídia, com o que [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) diz sobre o que a reinstalação apaga.
+**Toda placa de rede, todo controlador de disco e todo driver de virtualização,** `**vfio**` **e** `**uio**` **continuam.** Uma máquina cujo hardware de rede e de disco o Debian 12 reconhece é reconhecida aqui. Um kernel novo, inclusive uma correção de segurança dele, chega **na mídia de instalação** de uma versão nova, não pelo `apt` e não pelo pacote de atualização: o pacote troca os arquivos do produto e não traz kernel. Numa caixa já em serviço, isso significa reinstalar a partir da mídia, com o que [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) diz sobre o que a reinstalação apaga.
 
 # Se a caixa vai receber a tabela BGP completa
 

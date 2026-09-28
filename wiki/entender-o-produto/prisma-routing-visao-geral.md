@@ -47,6 +47,7 @@ flowchart LR
 
 Toda mudança no dataplane vai pela sua API binária, um processo por chamada — não por conexão persistente, e não pela linha de comando de texto do dataplane, que sai com código zero mesmo quando falha.
 
+
 :::info
 Se o contêiner de gerência não estiver de pé, o login cai na VTY do próprio sistema base, como antes. Uma caixa com esse contêiner parado continua acessível.
 
@@ -72,6 +73,7 @@ O mínimo é **6 GB de RAM** (8 recomendados) e uma CPU com **SSE4.2**. Abaixo d
 | **Throughput** | **Bits por segundo NÃO medidos** — isso exige uma placa que o DPDK dirija nativamente. O custo de cada pacote em ciclos de CPU nos nós de tradução é medido |
 
 O projeto permanece em `0.x.x` até ser declarado pronto para produção. Mudanças incompatíveis são permitidas e vêm anunciadas.
+
 
 :::info
 **Números medidos em máquina virtual não são capacidade.** Com placa virtio, o que se mede é o hipervisor, não a caixa. Nenhum número de vazão é afirmado até ser medido em placa real.

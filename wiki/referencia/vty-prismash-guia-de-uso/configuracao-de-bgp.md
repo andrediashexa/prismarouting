@@ -258,7 +258,7 @@ Dentro de uma cláusula de route-map:
 | `match rpki` | `valid`, `invalid` ou `notfound` | pelo estado da validação de origem (seção RPKI, abaixo) |
 | `match as-path` | `<lista>` | pelo AS-path |
 | `match community` e `match large-community` | `<lista>` | pelas communities |
-| `match metric` | `<0-4294967295>` | pelo MED |
+| `match metric` | `<0-4294967295>` | pelo MED  |
 | `match peer` | `<vizinho>` | pelo vizinho que mandou a rota |
 | `set local-preference` | `<0-4294967295>` | qual caminho esta caixa prefere; maior ganha |
 | `set metric` | `<valor>`, `+`/`-` valor, `rtt`, `+rtt`, `-rtt`, `igp` ou `aigp` | o MED enviado, substituído ou ajustado |
@@ -267,8 +267,8 @@ Dentro de uma cláusula de route-map:
 | `set as-path prepend` e `set as-path exclude` | `<asn> [<asn> ...]` | alonga o caminho, ou tira ASs dele |
 | `set weight` | `<0-4294967295>` | a preferência local desta caixa, nunca anunciada |
 | `set origin` | `igp`, `egp` ou `incomplete` | o atributo de origem |
-| `call` | `<route-map>` | roda outra route-map antes de decidir |
-| `on-match next` ou `on-match goto <seq>` | | o que fazer quando a cláusula casa |
+| `call`  | `<route-map>` | roda outra route-map antes de decidir |
+| `on-match next` ou `on-match goto <seq>` |           | o que fazer quando a cláusula casa |
 | `description` | `<texto>` | para que serve a cláusula |
 
 O que não está nessas tabelas também chega ao roteamento, marcado com `<- not checked`. Os detalhes — a ordem das cláusulas, o que é recusado, a faixa `ge`/`le`, as expressões de AS-path — estão em [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).

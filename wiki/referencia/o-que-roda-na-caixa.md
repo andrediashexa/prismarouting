@@ -18,8 +18,8 @@ Desde a versão 0.117 uma caixa instalada roda o dataplane e o roteamento como c
 
 ## Dataplane
 
-| | |
-|---|---|
+|     |     |
+|-----|-----|
 | O que guarda | o VPP, o DPDK e o CGNAT: as placas pegas, os pools, as sessões e os blocos de portas de cada assinante |
 | Rede | a do próprio sistema: as placas do dataplane são espelhadas no Linux com o mesmo nome, e o roteamento precisa vê-las |
 | O que divide com o sistema | as hugepages, a configuração do dataplane (só leitura), o socket da sua linha de comando e o diretório de logs `/var/log/prisma-routing` |
@@ -29,8 +29,8 @@ Desde a versão 0.117 uma caixa instalada roda o dataplane e o roteamento como c
 
 ## Roteamento (FRR)
 
-| | |
-|---|---|
+|     |     |
+|-----|-----|
 | O que guarda | os daemons do FRR: BGP, OSPF, IS-IS, rotas estáticas |
 | Rede | a do próprio sistema, pelo mesmo motivo: o FRR roteia pelas interfaces que o dataplane espelha no Linux |
 | O que divide com o sistema | `/etc/frr`, a configuração de roteamento, e o diretório dos sockets do FRR |
@@ -38,8 +38,8 @@ Desde a versão 0.117 uma caixa instalada roda o dataplane e o roteamento como c
 
 ## Plano de gerência (a VTY)
 
-| | |
-|---|---|
+|     |     |
+|-----|-----|
 | O que guarda | a VTY `prismash` e os clientes que ela usa para falar com o dataplane e com o FRR. Não roda nenhum daemon |
 | Rede | **nenhuma**, além de uma única ligação ao backplane (abaixo), em 128.0.0.2. Não alcança a internet nem a rede de gerência |
 | O que divide com o sistema | a configuração da caixa e as suas revisões (`/etc/prisma-routing`), os sockets do dataplane e do FRR, `/var/log/prisma-routing`, e as contas do sistema, **só para leitura** |
@@ -52,11 +52,11 @@ Desde a versão 0.117 uma caixa instalada roda o dataplane e o roteamento como c
 
 Os containers que precisam de rede própria falam com o sistema por uma rede interna, o **backplane**, em 128.0.0.0/8 — o mesmo prefixo que a Juniper usa entre o motor de roteamento e as placas de linha.
 
-| | |
-|---|---|
+|     |     |
+|-----|-----|
 | Onde fica | na VRF `prisma-bp` (tabela 128), **nunca** na tabela principal |
-| O sistema | 128.0.0.1/8 |
-| O plano de gerência | 128.0.0.2 |
+| O sistema | 128\.0.0.1/8 |
+| O plano de gerência | 128\.0.0.2 |
 | A tabela 128 termina em | uma rota padrão inalcançável |
 
 **Por que numa VRF.** 128.0.0.0/8 é espaço público de verdade. Na tabela principal, a própria caixa perderia os servidores reais nesse prefixo: medido, um servidor em 128.66.0.10 deixou de responder à caixa. Numa VRF, a caixa e os assinantes continuam alcançando esses endereços normalmente.
@@ -76,14 +76,14 @@ Quando não está, a linha é um `[FAIL]` que nomeia o vazamento: uma rota pela 
 De dentro de um container a VTY não pode — e não deve poder — mexer no sistema. O que ela precisa fazer ali ela **pede** a um serviço do sistema, `prisma-routing-doors`, que executa uma lista fechada de ações e confere cada argumento.
 
 | O que a VTY pede | Comando da VTY que leva a isso |
-|------------------|------------------------------------|
+|------------------|--------------------------------|
 | criar, alterar e remover contas, seus papéis e senhas | `user <nome>`, `role`, `password` |
 | chaves SSH de uma conta; conferir e recarregar o SSH | `ssh-key` dentro de `user`; `ssh ...` |
 | ligar e desligar o SNMP, e os arquivos dele | `snmp ...`, `snmp-user <nome>` |
-| resolvedores DNS | `dns server <endereço>` |
+| resolvedores DNS | `dns server <endereço>`        |
 | o lado Linux de uma interface do dataplane: ligar, desligar, MTU, descrição | `interface`, `shutdown`, `mtu`, `description` |
-| devolver a rota padrão de gerência depois que uma placa trocou de dono | acontece sozinho |
-| gravar o ajuste de boot depois de mudar `cpu` ou `memory` dentro de `system` | `commit` |
+| devolver a rota padrão de gerência depois que uma placa trocou de dono | acontece sozinho               |
+| gravar o ajuste de boot depois de mudar `cpu` ou `memory` dentro de `system` | `commit`                       |
 | reiniciar e desligar a caixa | `system reboot`, `system shutdown` |
 
 | Regra | O que isso garante |
@@ -101,8 +101,8 @@ journalctl -u prisma-routing-doors
 
 # `start shell`
 
-| | |
-|---|---|
+|     |     |
+|-----|-----|
 | Onde cai | **no sistema**, nunca dentro de um container. Quem abre o shell é o processo que segura o seu terminal, não a VTY |
 | Quem pode | `root` e contas do grupo `prisma-admin`. A VTY confere o papel, e o sistema confere de novo pelos próprios grupos antes de abrir; qualquer outra conta é recusada pelo nome do papel |
 | Como volta | `exit` no shell volta para a VTY, com a configuração candidata intacta |
@@ -113,7 +113,7 @@ Uma caixa cujo container de gerência caiu **continua acessível**: o login cai 
 
 | Situação | Onde o login cai |
 |----------|------------------|
-| normal | na VTY do container de gerência, como a própria conta |
+| normal   | na VTY do container de gerência, como a própria conta |
 | container de gerência parado, ou serviço de portas fora do ar | na VTY do sistema |
 | o arquivo `/etc/prisma-routing/vty-on-host` existe | na VTY do sistema, sempre |
 
@@ -136,16 +136,18 @@ systemctl enable --now vpp.service frr.service
 
 Uma caixa de volta às unidades continua respondendo pela placa que o dataplane segura, a configuração salva continua sendo aplicada no boot, e o autoteste deixa de falar em container.
 
+
 :::warning
 Os dois comandos param o dataplane: o encaminhamento para e o bloco de portas e as sessões de todos os assinantes são descartados. Faça numa janela.
+
 :::
 
 # O kernel
 
 O kernel da caixa é **o do Debian, recompilado pelo Prisma Routing**: o mesmo código-fonte, com os patches e a configuração do Debian. Muda o nome e saem os módulos que um roteador não usa.
 
-| | |
-|---|---|
+|     |     |
+|-----|-----|
 | Base | o pacote-fonte `linux` do Debian 12 (6.1.187 na versão atual) |
 | Como aparece | `uname -r` termina em `-prisma` |
 | O que fica de fora | som, Wi-Fi, Bluetooth, NFC, captura de vídeo e TV, joysticks, mesas digitalizadoras, telas de toque, radioamador, CAN, 802.15.4, modems celulares, FireWire, sensores industriais, placas de vídeo dedicadas AMD e NVIDIA, e os drivers em estágio experimental |
@@ -159,8 +161,10 @@ uname -r
 
 A resposta é a versão do kernel seguida de `-prisma`, por exemplo `6.1.187-prisma`.
 
+
 :::info
 **Um kernel novo só chega com uma instalação nova.** O pacote de atualização (`system upgrade`) não traz kernel: a caixa atualizada continua com o kernel da mídia de onde foi instalada. As correções de segurança do kernel do Debian chegam quando uma mídia nova as traz, e a própria liberação de uma versão é recusada se o kernel dela já foi substituído pelo Debian. O `apt` não traz o kernel do Debian de volta ao lado deste.
+
 :::
 
 # Ver também

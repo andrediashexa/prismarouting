@@ -42,7 +42,7 @@ flowchart LR
 | Usuário SNMP | `prisma# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`, `up` ou `top` |
 | Rotas estáticas | `prisma# [edit router static] ` | `router static` | `exit`, `up` ou `top` |
 | Bloco do FRR | `prisma# [edit router bgp 65000] ` | `router bgp <AS>`, `router ospf`, `router ospf6`, `router isis <nome>`, `route-map ...`, `rpki` | `exit`, `up` ou `top` |
-| Sistema | `prisma# [edit system] ` | `system` | `exit`, `up` ou `top` |
+| Sistema | `prisma# [edit system] ` | `system`    | `exit`, `up` ou `top` |
 | Placa, núcleos e memória | `prisma# [edit system / dataplane] ` | `dataplane`, `cpu` ou `memory`, dentro de `system` | `exit` volta para `system` |
 | Política de roteamento | `prisma# [edit policy-options] ` | `policy-options` | `exit`, `up` ou `top` |
 
@@ -52,7 +52,7 @@ Blocos aninhados aparecem com o mais interno por último, separados por `/`, par
 
 **Ctrl-C nunca encerra a sessão.** No prompt, ele descarta a linha que estava sendo digitada e mostra um prompt novo. Durante um comando, ele interrompe o comando e devolve o prompt. A exceção é enquanto um `commit`, um `rollback` ou uma carga de configuração está sendo aplicado: ali o Ctrl-C é ignorado. A tela mostra `^C`, e o commit termina e diz o que fez, porque uma configuração aplicada pela metade é pior do que uma demorada. Para sair, `exit` ou Ctrl-D.
 
-**`commit` vale em qualquer nível**, inclusive dentro de um pool, de uma conta e de um usuário SNMP. Depois dele você continua no mesmo bloco; se a candidata aplicada não tem mais aquele bloco, a caixa leva você de volta a `[edit]` e diz isso.
+`**commit**` **vale em qualquer nível**, inclusive dentro de um pool, de uma conta e de um usuário SNMP. Depois dele você continua no mesmo bloco; se a candidata aplicada não tem mais aquele bloco, a caixa leva você de volta a `[edit]` e diz isso.
 
 ## Onde eu estou, e o que já digitei aqui
 
@@ -149,7 +149,7 @@ A caixa não escolhe por você. `ipv address 10.0.0.1/24` também é recusada: s
 
 * **Nomes que são seus**, e não da caixa: o nome de uma interface, de um pool, de uma conta. `show interface Te` procura uma interface chamada `Te`; não vira `show interface terse`.
 * **As declarações do FRR** dentro de um bloco de roteamento (`router bgp`, `route-map`, `router ospf`). Ali vale a sintaxe do FRR inteira, e esta VTY modela só uma parte dela — abreviar contra um modelo parcial trocaria uma declaração que o roteamento ia executar por outra. Dentro de `interface`, ao contrário, a abreviação vale: `no shut` é `no shutdown`, e `bandwidth`, `link-detect` e as demais palavras do FRR seguem intactas para ele.
-* **As declarações dentro de um pool, de uma conta (`user`) e de um usuário SNMP (`snmp-user`).** Nesses três blocos a palavra vai inteira.
+* **As declarações dentro de um pool, de uma conta (**`**user**`**) e de um usuário SNMP (**`**snmp-user**`**).** Nesses três blocos a palavra vai inteira.
 * **Um arquivo de configuração** editado à mão. O arquivo é lido a cada boot, sem ninguém olhando, e uma abreviação lá é recusada com a lista do que a interface entende. Grave sempre a palavra inteira — é o que o `save` faz.
 
 ## O ciclo de trabalho
@@ -232,7 +232,7 @@ Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e
 | `interface <nome>` | entra na configuração de uma interface, ou cria uma sub-interface, um loopback ou um bundle LACP |
 | `router static` | entra no bloco das rotas estáticas |
 | `router bgp <AS>` / `router ospf [vrf <nome>]` / `router ospf6` / `router isis <nome>` | protocolos de roteamento (FRR) |
-| `rpki` | validação de origem: os caches que esta caixa consulta |
+| `rpki`  | validação de origem: os caches que esta caixa consulta |
 | `policy-options` | política de roteamento no formato do Junos: listas de prefixos, comunidades, AS-path e `policy-statement` |
 | `ip prefix-list <nome> ...` / `ipv6 prefix-list <nome> ...` | uma lista de prefixos, na sintaxe do FRR, para casar em route-map |
 | `bgp as-path access-list` / `bgp community-list` / `bgp large-community-list` | as listas que uma route-map consulta |

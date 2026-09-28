@@ -38,10 +38,10 @@ Mudar uma interface exige a capacidade de **administrador**. A exceção é o la
 | `vrrp`  | `<1-255> priority <1-254>` | quem fica com o endereço quando as duas estão boas; maior ganha |
 | `vrrp`  | `<1-255> track <interface> decrement <1-254>` | quanto a prioridade cai quando aquela outra porta cai |
 | `no vrrp` | `<1-255>` | tira o roteador virtual inteiro desta interface |
-| `member`, `lacp`, `load-balance` | | só num bundle `ae<n>`; ver *Bundles LACP* abaixo |
-| `ip ospf ...`, `ipv6 ospf6 ...` | | OSPF e OSPFv3 nesta interface; ver *OSPF e IS-IS na interface* abaixo |
+| `member`, `lacp`, `load-balance` |           | só num bundle `ae<n>`; ver *Bundles LACP* abaixo |
+| `ip ospf ...`, `ipv6 ospf6 ...` |           | OSPF e OSPFv3 nesta interface; ver *OSPF e IS-IS na interface* abaixo |
 | `ip router isis`, `ipv6 router isis` | `<instância>` | IS-IS nesta interface, para IPv4 e para IPv6 |
-| `isis ...` | | ajustes do IS-IS nesta interface |
+| `isis ...` |           | ajustes do IS-IS nesta interface |
 | `exit`  |           | sai da interface |
 
 ## Endereços
@@ -344,7 +344,7 @@ interface ens19
 
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
-| `ip ospf area` | `<área>` | roda OSPF nesta interface, nesta área |
+| `ip ospf area` | `<área>`  | roda OSPF nesta interface, nesta área |
 | `ip ospf cost` | `<1-65535>` | o custo desta interface |
 | `ip ospf network` | `point-to-point\|broadcast` | `point-to-point` dispensa a eleição de DR, que é o que um enlace de trânsito quer; `broadcast` é o padrão em Ethernet |
 | `ip ospf hello-interval` | `<1-65535>` | segundos entre hellos |
@@ -353,20 +353,20 @@ interface ens19
 | `ip ospf authentication` | `message-digest\|null` | MD5, ou nenhuma, sobrepondo a da área |
 | `ip ospf authentication-key` | `<chave>` | a chave em texto; nunca é mostrada de volta |
 | `ip ospf message-digest-key` | `<1-255> md5 <chave>` | uma chave MD5; nunca é mostrada de volta |
-| `ip ospf passive` | | roda OSPF aqui e não manda hello |
-| `ip ospf bfd` | | acompanha a adjacência com BFD |
-| `ip ospf mtu-ignore` | | não compara MTU na troca de base — a saída quando os dois lados discordam e não podem ser igualados |
+| `ip ospf passive` |           | roda OSPF aqui e não manda hello |
+| `ip ospf bfd` |           | acompanha a adjacência com BFD |
+| `ip ospf mtu-ignore` |           | não compara MTU na troca de base — a saída quando os dois lados discordam e não podem ser igualados |
 
 ### OSPFv3 (`ipv6 ospf6 ...`)
 
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
-| `ipv6 ospf6 area` | `<área>` | roda OSPFv3 nesta interface, nesta área — é a **única** forma de pôr uma interface no OSPFv3 |
+| `ipv6 ospf6 area` | `<área>`  | roda OSPFv3 nesta interface, nesta área — é a **única** forma de pôr uma interface no OSPFv3 |
 | `ipv6 ospf6 cost` | `<1-65535>` | o custo desta interface |
 | `ipv6 ospf6 network` | `point-to-point\|broadcast` | como no OSPF |
-| `ipv6 ospf6 passive` | | roda OSPFv3 aqui e não manda hello |
-| `ipv6 ospf6 bfd` | | acompanha a adjacência com BFD |
-| `ipv6 ospf6 mtu-ignore` | | não compara MTU |
+| `ipv6 ospf6 passive` |           | roda OSPFv3 aqui e não manda hello |
+| `ipv6 ospf6 bfd` |           | acompanha a adjacência com BFD |
+| `ipv6 ospf6 mtu-ignore` |           | não compara MTU |
 
 `ipv6 ospf6 hello-interval`, `dead-interval` e `priority` também são aceitos, na grafia do FRR, mas o `?` não os oferece: digitados no valor padrão, o FRR não os guarda.
 
@@ -377,13 +377,13 @@ interface ens19
 | `ip router isis` | `<instância>` | roda IS-IS para IPv4 nesta interface |
 | `ipv6 router isis` | `<instância>` | roda IS-IS para IPv6 nesta interface, na topologia que a instância tiver |
 | `isis circuit-type` | `level-1\|level-2-only\|level-1-2` | de quais níveis esta interface participa |
-| `isis network point-to-point` | | sem eleição de DIS nem pseudo-nó; configurado de um lado só, a adjacência não sobe |
+| `isis network point-to-point` |           | sem eleição de DIS nem pseudo-nó; configurado de um lado só, a adjacência não sobe |
 | `isis metric` | `<0-16777215> [level-1\|level-2]` | a métrica desta interface; acima de 63 exige `metric-style wide` na instância |
-| `isis passive` | | anuncia a interface e não manda hello |
+| `isis passive` |           | anuncia a interface e não manda hello |
 | `isis hello-interval` | `<1-600>` | segundos entre hellos |
 | `isis hello-multiplier` | `<2-100>` | quantos hellos perdidos até o vizinho cair |
 | `isis password` | `clear\|md5 <senha>` | autenticação desta interface; nunca é mostrada de volta |
-| `isis bfd` | | acompanha a adjacência com BFD |
+| `isis bfd` |           | acompanha a adjacência com BFD |
 
 As chaves e senhas aparecem como `<set, not shown>` em `show this`, `show configuration` e `show running-config`. A configuração salva e as revisões de rollback guardam o valor de verdade, ou um rollback não conseguiria restaurá-lo.
 

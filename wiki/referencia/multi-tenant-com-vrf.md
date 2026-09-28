@@ -51,6 +51,7 @@ configure
 | `vrf <n>` | a VRF cujos assinantes este pool atende |
 | `outside-vrf <n>` | a VRF por onde o tráfego traduzido sai, quando difere da do assinante |
 
+
 :::info
 **A VRF precisa existir antes do pool que a nomeia.** O dataplane recusa um pool com `vrf` ou `outside-vrf` de uma tabela que ele ainda não tem. Uma VRF passa a existir quando uma interface é colocada nela — por isso a interface vem primeiro, num `commit` próprio.
 
@@ -110,10 +111,12 @@ show cgnat translation 200.150.0.32 1024
 
 Como endereços públicos nunca são compartilhados entre pools, cada resposta sai do pool certo.
 
+
 :::info
 `show cgnat subscriber <endereço>` recebe só o endereço interno, sem VRF. Com o mesmo endereço em duas VRFs, ele responde por **um** dos pools, não pelos dois — não use essa tela para conferir a separação.
 
 :::
+
 
 :::success
 Dois pools listados, cada um com a sua VRF, e as consultas pelo endereço público de cada pool chegando ao assinante do cliente certo: os clientes estão separados de verdade.

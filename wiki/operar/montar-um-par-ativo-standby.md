@@ -2,6 +2,7 @@
 
 Como pôr duas caixas Prisma Routing sustentando o mesmo endereço de serviço, uma ativa e outra de reserva, e como provar que a troca funciona antes de precisar dela. Para quem já tem as duas caixas instaladas e encaminhando; o porquê de cada escolha está em [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic).
 
+
 :::info
 **O par preserva endereço, não conexão.** Não existe sincronismo de sessão: as conexões em curso caem na troca, como em qualquer NAT. Num pool **determinístico** o assinante volta no **mesmo endereço público e no mesmo bloco de portas**, porque o bloco é uma fórmula da configuração. Num pool **BPA** (alocação dinâmica) a caixa que assume não sabe que blocos a outra tinha entregue: o assinante recebe **um bloco novo**, alocado e registrado pela caixa que assumiu.
 
@@ -58,16 +59,17 @@ configure
 O que cada linha muda:
 
 | Linha | Faixa | O que faz por você |
-|---|---|---|
+|-------|-------|--------------------|
 | `vrrp <id> address <A.B.C.D>` | id de 1 a 255 | o endereço que os assinantes (ou o upstream) usam como gateway; responde ARP com o MAC virtual `00:00:5e:00:01:<id>`, que muda de caixa junto com ele |
 | `vrrp <id> priority <n>` | 1 a 254, padrão 100 | quem fica com o serviço: vence a maior |
 | `vrrp <id> track <interface> decrement <n>` | 1 a 254 | se a interface acompanhada cai, a caixa anuncia a prioridade menos `n`. Com 200 e `decrement 150`, a caixa A cai para 50 e perde para os 100 da B |
 
-**Sem `track`, o par sobrevive a uma caixa morta e não a uma caixa surda.** Uma caixa que perdeu o upstream e continua viva seguiria com o endereço de dentro, recebendo os assinantes e sem ter para onde mandá-los.
+**Sem** `**track**`**, o par sobrevive a uma caixa morta e não a uma caixa surda.** Uma caixa que perdeu o upstream e continua viva seguiria com o endereço de dentro, recebendo os assinantes e sem ter para onde mandá-los.
 
 **Prioridades iguais nas duas caixas funcionam, mas quem decide é o endereçamento**, não você: a RFC desempata pelo maior endereço. Use prioridades diferentes.
 
 O intervalo de anúncio não é configurável: é o padrão da RFC, um segundo, e precisa ser igual nas duas caixas. A tomada leva por volta de três segundos e meio.
+
 
 :::info
 **O endereço virtual não responde ping.** A caixa não liga o modo *accept*, e a RFC 5798 manda não responder ICMP nesse caso. O encaminhamento **através** dele funciona normalmente. A sua monitoração deve pingar o endereço próprio de cada caixa, que é o que diz se ela está viva.
@@ -95,6 +97,7 @@ error: interface ens18: vrrp 1: no interface ens20
 ```
 
 E `vrrp` numa interface que a caixa não tem é recusado com as mesmas palavras de qualquer outra linha numa interface inexistente. Corrija e rode `commit`.
+
 
 :::warning
 **Mudar um roteador virtual que já existe custa duas eleições.** O roteador não é editado no lugar: a caixa o apaga e o recria. Se ele está com o endereço de serviço, a parceira assume durante a reconstrução e o `preempt` devolve em seguida. A caixa avisa antes de aplicar:
@@ -124,6 +127,7 @@ Para que uma caixa confira a outra, ela precisa ter a configuração dela. O VRR
 ```
 scp prisma-admin@<caixa-a>:/etc/prisma-routing/prisma-routing.conf /etc/prisma-routing/peer.conf
 ```
+
 
 :::warning
 **O arquivo carrega os hashes de senha e as chaves públicas das contas da outra caixa.** Não deixe `peer.conf` legível por todos, nem copie esse arquivo para fora das duas caixas.
@@ -173,7 +177,7 @@ e com os pools iguais:
 Os avisos que podem aparecer no lugar disso:
 
 | Aviso | O que significa | O que fazer |
-|---|---|---|
+|-------|-----------------|-------------|
 | a mesma prioridade nas duas caixas | quem fica com o serviço é decidido pelo endereçamento | mude a prioridade de uma delas |
 | um roteador virtual que só uma caixa tem | não há reserva para aquele endereço | declare o mesmo id e endereço na outra |
 | um pool que não mapeia da mesma forma | a troca muda endereço e bloco dos assinantes daquele pool | iguale o pool nas duas caixas e copie o `peer.conf` de novo |
@@ -221,6 +225,7 @@ error: this change maps subscribers differently from the peer
 
 A recusa termina com `if that is what you mean, type: commit diverge`. Como as duas caixas não recebem o `commit` no mesmo instante, toda ampliação correta passa por esse momento. O procedimento:
 
+
 1. Na primeira caixa, faça a mudança e confirme com `commit diverge`.
 2. Na segunda, faça a mesma mudança. Com o `peer.conf` antigo, ela também pode recusar; use `commit diverge` de novo.
 3. `save` nas duas e copie os dois arquivos de novo (passo 4).
@@ -238,8 +243,10 @@ A recusa não vê a outra caixa mudar depois da cópia — só enxerga o arquivo
 
 Faça isto numa janela, antes de precisar do par:
 
+
 1. Nas duas caixas, `show cgnat ha`: A em `master, holding the address`, B em `backup`, o par casado e os pools iguais.
 2. Anote o endereço público e o bloco de um assinante de teste na caixa A:
+
    ```
    show cgnat subscriber <ip do assinante>
    ```
@@ -249,6 +256,7 @@ Faça isto numa janela, antes de precisar do par:
    * **desligue a caixa A**: prova a perda da caixa inteira.
 4. Na caixa B, `show cgnat ha` deve mostrar `master, holding the address`, e o assinante deve voltar a navegar em alguns segundos. Confira `show cgnat subscriber` na B: num pool determinístico, o mesmo endereço público e o mesmo bloco; num pool BPA, um bloco novo.
 5. Desfaça a falha. Com o `preempt`, a caixa A retoma o serviço; confira de novo nas duas.
+
 
 :::info
 Detectar o cabo fora depende de a placa informar a queda de link ao dataplane. Confira na sua placa: com o cabo fora, `show cgnat ha` na caixa A deve mostrar a prioridade anunciada menor que a configurada.
@@ -262,6 +270,7 @@ Nas duas caixas:
 ```
 show cgnat ha
 ```
+
 
 :::success
 Uma caixa com `master, holding the address` e a outra com `backup` em cada roteador virtual; na seção do par, `every virtual router this box carries has one on the peer with the same id, the same address and a different priority`; no fim, `the two boxes map every subscriber to the same public address and the same port block`; e a data em `copied` posterior à última mudança da outra caixa. No console do boot, a linha `[ ok ] every virtual router the saved configuration names is on the dataplane`.

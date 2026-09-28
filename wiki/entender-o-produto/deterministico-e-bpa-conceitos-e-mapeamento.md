@@ -19,9 +19,10 @@ O módulo do dataplane que faz as duas coisas se chama `bpa`, e esse nome aparec
 | Log de alocação | **nenhum** — exceto os blocos da `reserve`, registrados um a um | um registro IPFIX por bloco alocado e por bloco liberado |
 | Endereços públicos necessários | todos os assinantes precisam caber  | sobreassinatura possível |
 | Prova para autoridade | algoritmo + configuração vigente (trilha), mais os registros dos blocos da reserva | os registros IPFIX |
-| Bloco extra para quem enche o seu | só com `reserve` configurada | sim, até `max-blocks` |
+| Bloco extra para quem enche o seu | só com `reserve` configurada        | sim, até `max-blocks` |
 
 200 mil assinantes em determinístico com blocos de 512 portas exigem um `/21` público. Em BPA com sobreassinatura, bem menos.
+
 
 :::info
 **Um pool BPA sem exportação é um pool que ninguém consegue responder.** Em BPA o registro exportado é a única prova de quem estava atrás de uma porta pública. O `commit check` e o `commit` avisam, nomeando o pool, quando um pool dinâmico — ou um determinístico com `reserve` — não tem coletor configurado. É aviso e não recusa, porque um pool montado antes do coletor existir é uma configuração correta.
@@ -66,6 +67,7 @@ Esses blocos são exatamente os que o algoritmo **não** produz, então a config
 
 # A consequência que mais derruba rede
 
+
 :::warning
 **O mapeamento determinístico é aritmético, não uma tabela.** Não existe registro de alocação para consultar — e isso significa que **mudar a definição do pool muda a função**.
 
@@ -95,6 +97,7 @@ Alocar blocos seria estado compartilhado entre workers. Em vez disso, os blocos 
 A consequência prática: **a sobreassinatura é medida por worker, não no pool inteiro.** Uma fatia pode esgotar enquanto outra ainda tem blocos livres, e um assinante pode ser recusado com blocos sobrando ao lado.
 
 Por isso o `show cgnat pool` mostra, abaixo da capacidade, o número que o pool **garante** para qualquer conjunto de assinantes, quando esse número é menor que a capacidade. **É contra esse piso que se dimensiona um pool BPA.** A perda é nula quando os endereços internos são entregues em sequência a partir do início da faixa — um pool DHCP enchendo de baixo para cima — e é grande em pools pequenos com muitos workers.
+
 
 :::info
 Existe um mecanismo que empresta um bloco livre de um worker para outro, no ciclo de um segundo em que a caixa já expira blocos ociosos. Ele funciona, mas **vem desligado**: em laboratório, toda regulagem que serve o assinante recusado também empresta um bloco que o próximo assinante do próprio worker queria. Até isso ser medido com tráfego real, dimensione pelo piso.

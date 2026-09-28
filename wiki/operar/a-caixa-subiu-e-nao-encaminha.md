@@ -9,7 +9,7 @@ Uma caixa sem interface de dataplane parece uma caixa funcionando. Por isso a pr
 A cada boot a caixa imprime no console (serial, IPMI ou a tela da máquina virtual) um bloco que começa com `=============== Prisma Routing: boot self-test ==============`. Cada linha é `[ ok ]`, `[warn]`, `[FAIL]` ou `[info]`, e as falhas trazem o motivo nas linhas de baixo. As que respondem "por que não encaminha":
 
 | O console diz | O que significa | O que fazer |
-|---|---|---|
+|---------------|-----------------|-------------|
 | `[warn] running in FIRST BOOT mode: no pinning and no hugepages.` | primeiro boot depois da instalação: o ajuste de CPU e de memória só vale a partir do próximo boot, e até lá o dataplane sobe conservador, sem DPDK | reinicie a caixa. É o esperado, não um defeito |
 | `[info] DPDK is off until hugepages exist; no NIC can be claimed yet` | o mesmo caso, visto pelo lado da placa | o mesmo: reinicie |
 | `[warn] no dataplane interface: this box has no PCI network card for the` … | a caixa não tem placa que o dataplane possa tomar | veja o passo 3; uma placa virtio numa máquina virtual conta, uma placa que o Linux não vê não conta |
@@ -25,6 +25,7 @@ A cada boot a caixa imprime no console (serial, IPMI ou a tela da máquina virtu
 
 Numa caixa que encaminha, a linha da placa é `[ ok ]` e diz qual placa o dataplane tomou e por quê — `claimed by this box with nobody asked` quando a caixa escolheu sozinha, ou o nome configurado quando alguém nomeou uma.
 
+
 :::info
 **A caixa toma todas as placas PCI que tem, menos uma reservada ao Linux, e nunca a última.** A reservada é a da rede de gerência informada na instalação. Numa caixa de uma placa só, ela toma essa placa e o endereço de gerência vai junto para o lado Linux da porta.
 
@@ -39,7 +40,7 @@ show interface
 Se o dataplane não tem nenhuma porta além da interna dele, a tela começa por `the dataplane has no interface to forward on:` seguido do motivo, lido dos mesmos arquivos que o self-test lê:
 
 | Motivo | O que fazer |
-|---|---|
+|--------|-------------|
 | `DPDK is off until hugepages exist, so no NIC can be claimed yet.` | primeiro boot: reinicie |
 | `the dataplane is off on the installation medium, and a reboot does not change that: nothing here survives one.` | você está na mídia de instalação: `install` põe o Prisma Routing num disco |
 | `no interface was named, so VPP was given no NIC.` | nomeie a placa (passo 6) |
@@ -66,13 +67,14 @@ O dataplane roda num container. Se ele não consegue subir, o container é reini
 
 **Um vigia de placa cuida disso.** A cada 30 segundos ele verifica se o container do dataplane parou de vez; se parou, ele:
 
+
 1. grava o motivo em `/var/log/prisma-routing/why-the-dataplane-stopped` — o estado do container, o código de saída e as últimas 80 linhas que o dataplane escreveu;
 2. devolve **todas** as placas tomadas ao driver do kernel;
 3. sobe as interfaces do Linux de novo, para a caixa voltar a ser alcançável.
 
 Ele faz isso uma vez por boot e não reinicia nada. Na prática, a caixa volta a ter a placa no Linux uns dois minutos depois do boot, sem dataplane.
 
-**O arquivo fica em `/var/log`, e não em `/run`, porque o próximo passo de todo mundo é reiniciar**, e o reinício apaga o log do container. Leia antes de mexer em qualquer coisa. Com o dataplane parado, `show version` aponta para ele:
+**O arquivo fica em** `**/var/log**`**, e não em** `**/run**`**, porque o próximo passo de todo mundo é reiniciar**, e o reinício apaga o log do container. Leia antes de mexer em qualquer coisa. Com o dataplane parado, `show version` aponta para ele:
 
 ```
 show version
@@ -104,7 +106,7 @@ As últimas linhas são as que dizem o motivo. As mais comuns estão no passo 5.
 **Uma placa entregue e não tomada.** O self-test diz `[FAIL] the dataplane has no interface, and one is named`, e a linha seguinte diz a situação:
 
 | A linha seguinte diz | O que significa |
-|---|---|
+|----------------------|-----------------|
 | que ela está num driver que o DPDK usa | a entrega foi feita; o motivo está no journal do dataplane |
 | que ela está num driver do kernel | o DPDK não consegue tomar a placa por ele |
 | que nenhum driver está preso a ela | a placa ficou sem dono |
@@ -142,6 +144,7 @@ system reboot
 
 `system dataplane restart` devolve todas as placas ao Linux, recalcula o ajuste, toma as placas de novo e sobe o dataplane com a configuração **salva**. Uma placa que o vigia tinha devolvido é tomada de novo aqui ou no próximo boot. As duas formas pedem uma conta de administrador.
 
+
 :::warning
 **Reiniciar o dataplane derruba o encaminhamento até ele voltar, e todo assinante perde o bloco de portas e as sessões abertas;** os blocos são alocados de novo conforme o tráfego volta. E o dataplane volta com a configuração **salva**: rode `save` antes, ou o que foi aplicado com `commit` e não salvo não volta.
 
@@ -153,6 +156,7 @@ system reboot
 show interface
 show hardware
 ```
+
 
 :::success
 `show interface` lista a placa com o estado `up`, e não a frase `the dataplane has no interface to forward on`; `show hardware` diz que o dataplane tem a placa. No boot seguinte, o self-test mostra `[ ok ]` na linha da placa, `[ ok ] every tuning rule this box can read back is in effect` e nenhum `[FAIL]`.

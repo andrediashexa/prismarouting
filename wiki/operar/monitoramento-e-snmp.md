@@ -24,9 +24,9 @@ save
 
 | Linha | O que faz por você | Se ficar de fora |
 |-------|--------------------|------------------|
-| `snmp enabled yes` | liga o agente | o agente fica desligado, que é o padrão |
+| `snmp enabled yes` | liga o agente      | o agente fica desligado, que é o padrão |
 | `snmp listen-address` | o endereço em que o agente atende | o agente escuta só em `127.0.0.1`, e nenhuma NMS de fora o alcança |
-| `snmp port` | a porta UDP | `161` |
+| `snmp port` | a porta UDP        | `161`            |
 | `snmp enterprise-number` | liga a metade dos números de operação (ver abaixo) | essa metade fica escura |
 | `snmp community` | uma comunidade SNMPv2c, somente leitura | só o v3 consulta |
 | `snmp-user` | um usuário SNMPv3, com `auth <sha\|md5>` e `priv <aes\|des>` | só o v2c consulta |
@@ -47,8 +47,10 @@ Configuração pertence à VTY, onde é validada, commitada e reversível. Um SE
 
 Se o dataplane não está respondendo, o agente serve **nada** em vez dos valores que viu por último.
 
+
 :::info
 Um sistema de monitoramento que continua reportando os números de ontem durante uma pane **esconde** a pane; um que reporta uma lacuna a mostra. Por isso a verificação de vida roda a **cada** consulta, antes de o cache ser consultado. Os números em si ficam em cache por dez segundos: consultar mais rápido que isso devolve o mesmo valor.
+
 :::
 
 # O que é servido
@@ -58,13 +60,13 @@ Um sistema de monitoramento que continua reportando os números de ontem durante
 `natDefTimeouts` em `.1.3.6.1.2.1.123.1.1` — seis objetos que mapeiam exatamente nos timeouts deste equipamento, então uma NMS existente os lê sem template customizado.
 
 | OID sob `.1.3.6.1.2.1.123.1.1` | Objeto da RFC 4008 | Timeout desta caixa |
-|--------------------------------|--------------------|---------------------|
-| `.1.0` | `natBindDefIdleTimeout` | `port-holddown` |
-| `.2.0` | `natUdpDefIdleTimeout` | `udp` |
-| `.3.0` | `natIcmpDefIdleTimeout` | `icmp` |
-| `.4.0` | `natOtherDefIdleTimeout` | `gre` |
-| `.5.0` | `natTcpDefIdleTimeout` | `tcp-established` |
-| `.6.0` | `natTcpDefNegTimeout` | `tcp-transitory` |
+|------------------------------|--------------------|---------------------|
+| `.1.0`                       | `natBindDefIdleTimeout` | `port-holddown`     |
+| `.2.0`                       | `natUdpDefIdleTimeout` | `udp`               |
+| `.3.0`                       | `natIcmpDefIdleTimeout` | `icmp`              |
+| `.4.0`                       | `natOtherDefIdleTimeout` | `gre`               |
+| `.5.0`                       | `natTcpDefIdleTimeout` | `tcp-established`   |
+| `.6.0`                       | `natTcpDefNegTimeout` | `tcp-transitory`    |
 
 O resto da RFC 4008 é por interface ou por *binding*: este equipamento não rastreia nenhuma dessas formas, e por *binding* significaria percorrer a tabela de sessões, coisa que nenhum `show` daqui tem permissão de fazer.
 
@@ -81,12 +83,16 @@ Esses **não têm OID padrão**. Vivem sob o Private Enterprise Number da sua pr
 | `.5.0`                       | vezes que um assinante teve porta recusada |
 | `.6.0`                       | pacotes que o CGNAT não deixou passar |
 
+
 :::warning
 **Até** `**snmp enterprise-number**` **ser configurado, essa metade fica escura.** Não há padrão e não pode haver: um OID sob o PEN de outra organização é uma mentira sobre a quem o objeto pertence, e colide no dia em que aquela organização usar a mesma subárvore. O registro na IANA é gratuito, leva de dias a semanas, e o pedido nomeia a empresa — então é do responsável pela organização, não algo que o software possa fazer sozinho.
+
 :::
+
 
 :::info
 **Os seis objetos da subárvore do PEN chegam com o tipo Counter, e só um deles se comporta como contador.** `.1.0` a `.4.0` são fotografias do momento, que sobem e descem. `.5.0` soma as recusas dos assinantes que seguram bloco **agora**: quando um assinante solta o último bloco, as recusas dele saem da soma, e o número desce. `.6.0` soma os descartes desde que o dataplane subiu, e zera quando ele reinicia. Configure a NMS para guardar o valor lido, e não a diferença por segundo — senão uma descida vira um pico falso de "estouro de contador".
+
 :::
 
 ## O que não é servido
@@ -94,8 +100,10 @@ Esses **não têm OID padrão**. Vivem sob o Private Enterprise Number da sua pr
 * **Os contadores de interface (IF-MIB) das portas do dataplane.** O kernel não enxerga essas placas — elas pertencem ao dataplane —, então o agente não tem o que reportar sobre elas. O tráfego por porta se lê pela VTY, com `show interface utilization`.
 * **Nada por assinante nem por sessão.** Isso significaria percorrer a tabela de sessões a cada consulta.
 
+
 :::info
 O SNMPv3 é configurado e o usuário é criado com acesso somente leitura, mas uma consulta autenticada por v3 **não** é verificada de ponta a ponta pelos testes do produto. Confira a sua com o `snmpget` do fim desta página antes de depender dela.
+
 :::
 
 # O que vale colocar em gráfico
@@ -134,8 +142,10 @@ snmpget -v2c -c <comunidade> <endereço> .1.3.6.1.2.1.123.1.1.1.0
 snmpget -v3 -l authPriv -u nms -a SHA -A <passphrase> -x AES -X <passphrase> <endereço> .1.3.6.1.2.1.123.1.1.1.0
 ```
 
+
 :::success
 O agente respondendo os timeouts da RFC 4008 confirma que ele está de pé. Se o PEN estiver configurado, os seis contadores acima também respondem — e aí o CGNAT está visível de onde alguém olha.
+
 :::
 
 Se o agente responde nada, verifique primeiro se o `listen-address` é um endereço que a NMS alcança, e depois se o dataplane está vivo (`show version`): com o dataplane parado, silêncio é resposta proposital, não falha do SNMP.

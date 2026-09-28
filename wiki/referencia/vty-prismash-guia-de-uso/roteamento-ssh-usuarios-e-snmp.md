@@ -35,7 +35,7 @@ Se você digitar só o `router ospf6` e esperar que ele encontre as interfaces s
 |---------|-----------|-----------|
 | `ospf router-id` | `<A.B.C.D>` | o identificador desta caixa no OSPF |
 | `network` | `<A.B.C.D/M> area <área>` | roda OSPF nas interfaces que esse prefixo cobre |
-| `area` | `<área> ...` | ajustes de uma área, na sintaxe do FRR |
+| `area`  | `<área> ...` | ajustes de uma área, na sintaxe do FRR |
 | `passive-interface` | `<interface>` | roda OSPF na interface sem mandar hello — o que toda porta voltada a assinante deve ser. O FRR guarda isso como `ip ospf passive` no bloco da interface |
 | `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <nome>]` | anuncia `0.0.0.0/0` |
 | `export` | `<política>` | exporta para o OSPF o que uma política de `policy-options` aceitar; o que nenhum termo aceita **não** é exportado |
@@ -52,7 +52,7 @@ Se você digitar só o `router ospf6` e esperar que ele encontre as interfaces s
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
 | `ospf6 router-id` | `<A.B.C.D>` | o identificador desta caixa no OSPFv3; tem forma de endereço IPv4 e não é um endereço |
-| `area` | `<área> ...` | ajustes de uma área |
+| `area`  | `<área> ...` | ajustes de uma área |
 | `redistribute connected\|static\|bgp\|isis` | `[route-map <nome>]` | injeta rotas de outra origem |
 | `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <nome>]` | anuncia `::/0` |
 | `auto-cost reference-bandwidth` | `<1-4294967>` | como no OSPF |
@@ -67,17 +67,17 @@ Não há `network` nem `export` no OSPFv3: a interface entra pela linha `ipv6 os
 
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
-| `net` | `<49.xxxx.xxxx.xxxx.xxxx.00>` | o endereço NSAP desta caixa; sem ele a instância não sobe |
+| `net`   | `<49.xxxx.xxxx.xxxx.xxxx.00>` | o endereço NSAP desta caixa; sem ele a instância não sobe |
 | `is-type` | `level-1\|level-2-only\|level-1-2` | de quais níveis a caixa participa; o núcleo de um provedor costuma rodar `level-2-only` |
 | `metric-style` | `wide\|narrow\|transition` | `narrow` para em 63 e não expressa uma topologia de 10G para cima; `transition` manda os dois durante uma migração |
-| `topology ipv6-unicast` | | um SPF separado para IPv6 (RFC 5120) |
+| `topology ipv6-unicast` |           | um SPF separado para IPv6 (RFC 5120) |
 | `set-overload-bit` | `[on-startup <0-86400>]` | diz a todos para não transitarem por esta caixa; ver a drenagem abaixo |
 | `export` | `<política>` | exporta para o IS-IS o que uma política aceitar; o que nenhum termo aceita não é exportado |
 | `redistribute ipv4\|ipv6` | `<origem> level-1\|level-2 [metric <n>] [route-map <nome>]` | injeta rotas de outra origem |
 | `default-information originate` | `ipv4\|ipv6 level-1\|level-2 [always] [route-map <nome>]` | anuncia uma rota default |
 | `domain-password` | `clear\|md5 <senha>` | autenticação de nível 2; nunca é mostrada de volta |
 | `area-password` | `clear\|md5 <senha>` | autenticação de nível 1; nunca é mostrada de volta |
-| `log-adjacency-changes` | | registra cada mudança de adjacência |
+| `log-adjacency-changes` |           | registra cada mudança de adjacência |
 | `lsp-mtu` | `<128-4352>` | o maior LSP que a caixa gera; maior que a menor MTU das interfaces, eles não saem |
 | `lsp-gen-interval` | `<1-120>` | segundos entre regenerações de LSP |
 | `spf-interval` | `<1-120>` | segundos entre execuções do SPF |
@@ -303,14 +303,14 @@ configure
 
 | Ajuste | Padrão |
 |--------|--------|
-| `ssh port` | `22` |
+| `ssh port` | `22`   |
 | `ssh listen-address` | `0.0.0.0` |
 | `ssh permit-root-login` | `prohibit-password` |
-| `ssh password-authentication` | `yes` |
+| `ssh password-authentication` | `yes`  |
 
 `listen-address` tem de ser um endereço: qualquer outra coisa é recusada no prompt, porque o SSH recusaria o próprio arquivo e não subiria — numa caixa cujo outro caminho é um cabo serial.
 
-**O `commit` recusa uma configuração em que ninguém mais consegue entrar por SSH**, ou em que ninguém que entra consegue mudar nada — tirar o papel do último administrador, por exemplo. O console não conta: pode não estar ao alcance de quem está configurando.
+**O** `**commit**` **recusa uma configuração em que ninguém mais consegue entrar por SSH**, ou em que ninguém que entra consegue mudar nada — tirar o papel do último administrador, por exemplo. O console não conta: pode não estar ao alcance de quem está configurando.
 
 # DNS
 
@@ -404,9 +404,9 @@ configure
 
 | Comando | O que define | Padrão |
 |---------|--------------|--------|
-| `snmp enabled` | roda o agente ou não | `no` |
+| `snmp enabled` | roda o agente ou não | `no`   |
 | `snmp listen-address` | endereço de escuta | `127.0.0.1` |
-| `snmp port` | porta UDP    | `161` |
+| `snmp port` | porta UDP    | `161`  |
 | `snmp enterprise-number` | o Private Enterprise Number IANA da sua organização | nenhum |
 | `snmp community` | uma comunidade SNMPv2c, somente leitura | nenhuma |
 

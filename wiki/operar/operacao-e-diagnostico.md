@@ -24,8 +24,10 @@ commit
 
 A placa nomeada é tomada **qualquer que seja a rota que ela carrega**, e passa a ser a única. Não há mais recusa no prompt por ser a placa por onde você está conectado: a caixa nova é configurada no console, e é ali que essa decisão é tomada. `no interface`, no mesmo lugar, devolve a escolha à caixa — a regra automática acima.
 
+
 :::warning
-**O `commit` guarda a escolha e não reinicia o dataplane.** A placa troca de dono no próximo boot, ou com `system dataplane restart` — os dois derrubam o encaminhamento por alguns segundos e jogam fora o bloco de portas de todos os assinantes. O próprio `commit` diz se a placa escolhida é a que carrega a sua sessão. Escolha a janela.
+**O** `**commit**` **guarda a escolha e não reinicia o dataplane.** A placa troca de dono no próximo boot, ou com `system dataplane restart` — os dois derrubam o encaminhamento por alguns segundos e jogam fora o bloco de portas de todos os assinantes. O próprio `commit` diz se a placa escolhida é a que carrega a sua sessão. Escolha a janela.
+
 :::
 
 ## Mudança remota vai com rede de segurança
@@ -70,8 +72,10 @@ prisma> save
 
 Com uma placa nomeada, todas as outras ficam com o Linux. **Depois reinicie** — ou use `system dataplane restart`, que devolve todas as placas ao kernel, refaz a escolha e sobe o dataplane de novo.
 
+
 :::warning
 Reiniciar não é zelo: o `commit` só guarda a escolha, porque trocar a placa de dono derruba o encaminhamento e o bloco de portas de todos os assinantes. Quem escolhe a janela é você — e até lá a placa continua com quem estava.
+
 :::
 
 Uma caixa sem interface de dataplane parece uma caixa funcionando — ela responde, loga e aceita configuração, só não encaminha. Por isso o self-test diz que ela não tem interface de dataplane e diz o que digitar para dar uma a ela.

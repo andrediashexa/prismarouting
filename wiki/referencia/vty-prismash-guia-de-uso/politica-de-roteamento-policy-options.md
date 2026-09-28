@@ -11,9 +11,9 @@ A política é escrita uma vez, com nome, no formato do Junos, e aplicada em qua
 | Nível | Como se entra | Prompt | O que se digita ali |
 |-------|---------------|--------|---------------------|
 | `policy-options` | `policy-options` em `[edit]` | `prisma# [edit policy-options]` | listas, communities, as-paths e políticas |
-| lista de prefixos | `prefix-list <nome>` | `prisma# [edit policy-options / prefix-list <nome>]` | uma rede por linha |
-| política | `policy-statement <nome>` | `prisma# [edit policy-options / policy-statement <nome>]` | os terms |
-| term | `term <nome>` dentro da política | `prisma# [edit ...ptions / policy-statement <nome> / term <nome>]` | `from`, `set` e `then` |
+| lista de prefixos | `prefix-list <nome>` | `prisma# [edit policy-options / prefix-list <nome>]` | uma rede por linha  |
+| política | `policy-statement <nome>` | `prisma# [edit policy-options / policy-statement <nome>]` | os terms            |
+| term  | `term <nome>` dentro da política | `prisma# [edit ...ptions / policy-statement <nome> / term <nome>]` | `from`, `set` e `then` |
 
 Um prompt maior que 44 caracteres guarda o **fim**, que é onde a próxima linha vai cair; por isso o do term começa com `...`. Entrar num nível com nome já cria o que ele nomeia: uma lista ou um term recém-criado existe antes de ter qualquer coisa dentro.
 
@@ -55,11 +55,11 @@ policy-options
 
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
-| `prefix-list` | `<nome>` | cria ou edita uma lista de redes e entra nela |
+| `prefix-list` | `<nome>`  | cria ou edita uma lista de redes e entra nela |
 | `community` | `<nome> members <asn:valor>...` | um conjunto nomeado de communities. Cada membro é `ASN:valor`, os dois de 0 a 65535. Digitar o mesmo nome de novo **substitui** o conjunto |
 | `as-path` | `<nome> <expressão>` | uma expressão regular de AS-path com nome. Aspas em volta são tiradas. Digitar o mesmo nome de novo substitui a expressão |
-| `policy-statement` | `<nome>` | cria ou edita uma política e entra nela |
-| `no` | `<declaração>` | remove uma lista, uma community, um as-path ou uma política, com tudo o que ela tem dentro |
+| `policy-statement` | `<nome>`  | cria ou edita uma política e entra nela |
+| `no`    | `<declaração>` | remove uma lista, uma community, um as-path ou uma política, com tudo o que ela tem dentro |
 
 Um nome, de lista, community, as-path, política ou term, tem letras, números, `.`, `_` e `-`, começa por letra ou número e tem até 32 caracteres.
 
@@ -70,7 +70,8 @@ Na expressão de AS-path, `_` é a regra do roteamento: qualquer fronteira (come
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
 | `<rede>` | endereço/tamanho | põe a rede na lista. IPv4 e IPv6 podem ficar na mesma lista. Os bits de host têm de ser zero: `10.0.0.1/8` é recusado |
-| `no` | `<rede>` | tira a rede da lista |
+| `no`    | `<rede>`  | tira a rede da lista |
+
 
 :::info
 **Uma rede numa lista casa só com ela mesma**, com aquele tamanho exato. `203.0.113.0/24` na lista não casa `203.0.113.128/25`. Para casar também os mais específicos, use `from route-filter` no term, logo abaixo.
@@ -81,8 +82,8 @@ Na expressão de AS-path, `_` é a regra do roteamento: qualquer fronteira (come
 
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
-| `term` | `<nome>` | cria ou edita um term e entra nele. Os terms são avaliados **na ordem em que foram criados**, não pela ordem do nome |
-| `no` | `term <nome>` | remove o term inteiro |
+| `term`  | `<nome>`  | cria ou edita um term e entra nele. Os terms são avaliados **na ordem em que foram criados**, não pela ordem do nome |
+| `no`    | `term <nome>` | remove o term inteiro |
 
 # O term: `from`, `set` e `then`
 
@@ -92,13 +93,13 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 
 | Condição | Argumento | Casa quando |
 |----------|-----------|-------------|
-| `from prefix-list` | `<nome>` | o prefixo da rota está na lista, exatamente |
+| `from prefix-list` | `<nome>`  | o prefixo da rota está na lista, exatamente |
 | `from route-filter` | `<rede> exact` | o prefixo é aquela rede, com aquele tamanho |
 | `from route-filter` | `<rede> orlonger` | o prefixo é aquela rede ou um mais específico dentro dela |
 | `from route-filter` | `<rede> longer` | o prefixo é um mais específico dentro dela, sem a própria |
 | `from route-filter` | `<rede> upto /<n>` | o prefixo está dentro dela, do tamanho dela até `/n`. `n` fica entre o tamanho da rede e 32 (ou 128) |
-| `from community` | `<nome>` | a rota carrega a community do conjunto nomeado |
-| `from as-path` | `<nome>` | o AS-path da rota casa a expressão nomeada |
+| `from community` | `<nome>`  | a rota carrega a community do conjunto nomeado |
+| `from as-path` | `<nome>`  | o AS-path da rota casa a expressão nomeada |
 | `from protocol` | `bgp`, `ospf`, `isis`, `static`, `direct` ou `kernel` | a rota veio desse protocolo. `direct` são as redes das próprias interfaces |
 | `from tag` | `<0-4294967295>` | a rota carrega essa tag |
 | `from metric` | `<0-4294967295>` | a rota tem essa métrica |
@@ -107,7 +108,7 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 
 `from tag` e `from metric` valem por um valor só: um segundo, no mesmo term, fica no lugar do primeiro.
 
-**Um term sem `from` casa com qualquer rota.** É assim que se escreve o "todo o resto" no fim de uma política.
+**Um term sem** `**from**` **casa com qualquer rota.** É assim que se escreve o "todo o resto" no fim de uma política.
 
 ## `set`: o que muda na rota
 
@@ -152,9 +153,9 @@ O `no` leva a declaração inteira, como foi digitada: `no from prefix-list CLIE
 O padrão depende de onde a política é usada, como no Junos:
 
 | Onde a política é aplicada | Rota que nenhum term aceitou nem rejeitou |
-|----------------------------|--------------------------------------------|
-| `import` ou `export` num vizinho BGP | **aceita** |
-| `export` para OSPF ou IS-IS | **não exportada** |
+|----------------------------|-------------------------------------------|
+| `import` ou `export` num vizinho BGP | **aceita**                                |
+| `export` para OSPF ou IS-IS | **não exportada**                         |
 
 Para rejeitar o resto no BGP, termine a política com um term sem `from` e com `then reject`. Para exportar o resto para um IGP, termine com um term sem `from` e com `then accept`.
 
@@ -269,8 +270,9 @@ Uma rota de OSPF ou de IS-IS não tem community, AS-path, preferência local nem
 
 O que conta como só de BGP: `from community`, `from as-path`, `set local-preference`, `set community`, `set as-path-prepend` e `set next-hop`. A recusa existe porque ignorar a condição em silêncio exportaria justamente o que o term foi escrito para segurar. Se a mesma lógica serve aos dois, escreva duas políticas: uma para o vizinho BGP, outra para o IGP.
 
+
 :::warning
-**Crie as listas antes de citá-las num term, e confira com `show policy <política>` e `test policy` antes do `commit`.** O term aceita o nome de uma `prefix-list`, `community` ou `as-path` sem conferir se ela existe. Uma política aplicada num vizinho decide o que a sessão carrega: um term que não faz o que você pensava derruba ou vaza prefixos na sessão inteira.
+**Crie as listas antes de citá-las num term, e confira com** `**show policy <política>**` **e** `**test policy**` **antes do** `**commit**`**.** O term aceita o nome de uma `prefix-list`, `community` ou `as-path` sem conferir se ela existe. Uma política aplicada num vizinho decide o que a sessão carrega: um term que não faz o que você pensava derruba ou vaza prefixos na sessão inteira.
 
 :::
 

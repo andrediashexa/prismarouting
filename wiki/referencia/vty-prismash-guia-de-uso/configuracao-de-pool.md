@@ -45,6 +45,7 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 
 :::warning
 **Cuidado com** `**inside**` **e** `**outside**`**.** Mudar qualquer um dos dois reconstrói o pool e encerra todas as sessões dele, nos dois modos. Num pool `mode deterministic` o custo é maior: o mapeamento é **aritmético, não uma tabela** — o endereço público e o bloco de portas de um assinante são *calculados* a partir da definição do pool —, então **mudar a definição muda a função**. Acrescentar um prefixo público move **todos** os assinantes naquele instante. Nada é corrompido, respostas passadas continuam resolvíveis pela configuração que estava em vigor, mas todos os clientes caem de uma vez e a máquina não reporta nada de anormal — porque nada de anormal aconteceu. Por isso o `commit` **recusa** uma mudança que remapeia assinantes até que ela seja pedida pelo nome, com `commit remap`.
+
 :::
 
 # Campos de mapeamento

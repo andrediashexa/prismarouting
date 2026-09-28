@@ -340,6 +340,7 @@ yes      = yes
 | `#` só começa comentário no **início** da linha | uma senha pode conter `#`, e cortá-la ali instalaria uma caixa com um pedaço da senha |
 | A senha nunca é impressa, nem num erro | uma linha que não foi entendida é citada pelo número, não pelo conteúdo |
 
+
 :::warning
 **O arquivo é uma credencial.** Ele tira a senha de `/proc/cmdline` e a põe na mídia: quem lê a mídia lê a senha, e a instalação diz isso no console. Nenhuma ISO publicada traz arquivo de respostas; escreva o seu na mídia que você usa e guarde essa mídia como guardaria a senha. O arquivo não é copiado para a caixa instalada.
 

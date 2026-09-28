@@ -18,6 +18,7 @@ O mapeamento é `índice do assinante → (endereço público, bloco de portas)`
 | mudar `vrf` ou `outside-vrf` | **nenhum assinante se move**, e mesmo assim toda sessão do pool termina: a aritmética não muda, então o `commit` não pede `commit remap`, mas o pool é reconstruído |
 | timeouts, ALGs, `filter`, `max-blocks`, `initial-allocation`, `block-stride`, `tcp-mss`, limites por assinante, `utilisation-alarm`, forwards, bypass | **nada** — são ajustes aplicados no lugar, num pool carregando tráfego |
 
+
 :::info
 **Em pool dinâmico não existe a recusa desta página.** A contagem de quem se move só faz sentido onde o bloco é uma fórmula. Num pool `mode dynamic`, mudar prefixo, tamanho de bloco, faixa de portas, política, VRF ou modo reconstrói o pool do mesmo jeito — toda sessão dele termina no instante do `commit` —, mas o `commit` passa sem pedir `commit remap` e sem imprimir conta nenhuma. Os blocos que o pool segurava são liberados com um `natEvent 17` cada, carimbado no instante da mudança, então o log continua fechado. Trate a mudança como a parada que ela é: janela, aviso, e depois `show cgnat blocks` para ver os blocos voltando a ser alocados.
 
@@ -136,6 +137,7 @@ O custo é fatiar o espaço de endereços com antecedência e carregar dois pool
 Em pool dinâmico o mesmo caminho vale, pelo mesmo motivo: o pool novo tem os próprios blocos e o existente não é reconstruído.
 
 Caixas multi-cliente têm uma terceira opção: amarrar pools a **VRFs**, para que uma mesma faixa interna seja servida por dois pools sem sobreposição. Isso resolve tenancy, não capacidade — dois pools na mesma VRF continuam não podendo reivindicar a mesma faixa.
+
 
 :::info
 **Numa caixa que forma par com outra** (um endereço de serviço em `vrrp`), qualquer mudança de mapeamento feita numa só delas deixa as duas mapeando os assinantes de forma diferente, e o `commit` recusa também por isso até ouvir `commit diverge`. É o esperado: as duas caixas não recebem o `commit` no mesmo instante. Faça a mesma mudança na outra logo em seguida e confira com `show cgnat ha`; o procedimento está em [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic).

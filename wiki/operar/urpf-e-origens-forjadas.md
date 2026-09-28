@@ -77,8 +77,10 @@ O autoteste de boot confere a mesma coisa a cada boot: quando a configuração s
 
 Se a configuração pede e o dataplane não tem, o autoteste acusa como falha — uma proteção que simplesmente não está lá não tem contador nenhum que a denuncie.
 
+
 :::success
 Com `urpf strict` na interface interna, `show interface` confirmando o modo e o tráfego legítimo passando normalmente (`show cgnat top` com os assinantes de sempre): você fechou a porta para origem forjada vinda de fora do espaço de assinantes, sem derrubar quem estava certo.
+
 :::
 
 # Ver também

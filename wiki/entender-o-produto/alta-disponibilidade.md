@@ -94,7 +94,7 @@ O intervalo de anúncio não é configurável: é o padrão de um segundo da RFC
 
 **Mudar um roteador virtual é uma troca, não um ajuste.** Um roteador virtual não se edita no lugar: qualquer campo alterado num roteador que já existe faz a caixa parar de anunciar enquanto ele é refeito, a parceira assume o endereço e a preempção o devolve — duas eleições, a poucos segundos uma da outra, e as conexões em curso caem nas duas. O `commit` diz isso antes de aplicar. Criar um roteador novo não custa nada, porque não há endereço a perder.
 
-**O `commit check` recusa o que o `commit` não conseguiria aplicar**: um roteador virtual sem endereço, e um `track` ou um `vrrp` numa interface que o dataplane não tem.
+**O** `**commit check**` **recusa o que o** `**commit**` **não conseguiria aplicar**: um roteador virtual sem endereço, e um `track` ou um `vrrp` numa interface que o dataplane não tem.
 
 # O que a verificação de aceitação mede
 
