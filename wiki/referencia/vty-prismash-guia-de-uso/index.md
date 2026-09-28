@@ -266,7 +266,8 @@ Os blocos que têm muitas declarações estão documentados à parte, cada um co
 | `interface <nome>` — endereços, VLAN, VRF, MTU, MAC, lado do CGNAT, VRRP, OSPF e IS-IS na interface, loopbacks, bundles | [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) |
 | `pool <nome>`, dentro de `nat` > `cgnat` | [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) |
 | o nível `cgnat` — logging, timeouts globais, memória | [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) |
-| `router bgp`, `policy-options`, `rpki` | [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) |
+| `router bgp`, `rpki` | [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) |
+| `policy-options` — listas, `policy-statement` e termos, aplicados no BGP e na exportação de OSPF e IS-IS | [Política de roteamento (policy-options)](/doc/politica-de-roteamento-policy-options-DULDDxEALE) |
 | `router static`, OSPF, IS-IS, route-maps, `ssh`, `user`, `snmp`, `dns` | [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) |
 
 ## Um nome de interface que não existe é recusado
