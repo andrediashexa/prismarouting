@@ -56,6 +56,7 @@ python3 test/test_attach_cost.py
 python3 test/test_routes.py
 sh test/test_boot_wait.sh
 sh test/test_version_stamp.sh
+sh test/test_plugin_optimised.sh
 python3 test/test_plugin_version.py
 python3 test/test_collector.py
 sh test/test_wiki_roundtrip.sh

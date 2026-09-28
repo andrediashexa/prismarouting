@@ -47,7 +47,7 @@
 # translated flow surviving the takeover with the same public address is #9,
 # in lab/ha-failover.sh, which is red until the pair exists. This is the
 # mechanism under it.
-# OFF-RED-AT-LEAST: 21
+# OFF-RED-AT-LEAST: 23
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh

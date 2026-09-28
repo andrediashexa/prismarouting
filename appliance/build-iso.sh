@@ -80,6 +80,9 @@ else
   echo "bpa_plugin.so not found; run tools/build.sh plugin first" >&2
   exit 1
 fi
+# Optimised, or not shipped (#490): every release to 0.140.2 carried the
+# plugin at -O0, 3.6x the clocks a packet, and nothing said so.
+sh "$REPO/tools/plugin-optimised.sh" "$PLUGIN_SO" >&2 || exit 1
 
 # The vat2 plugin, resolved the same way and refused just as hard.
 #

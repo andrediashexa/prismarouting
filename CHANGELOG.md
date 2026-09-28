@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The CGNAT plugin shipped compiled without optimisation, in every
+  release.** ([#490](https://github.com/andrediashexa/hexarouting/issues/490))
+  `CMakeLists.txt` never set `CMAKE_BUILD_TYPE`, and with it empty CMake
+  passes no `-O`: the plugin was built at `-O0`, every local spilled to the
+  stack. Measured with 20 M 64-byte packets through one CGNAT session, same
+  code, same machine: `bpa-in2out` 408 clocks a packet at `-O0` and 114 at
+  `-O2`; the whole VPP path 708 cycles a packet and 358 - about twice the
+  traffic a core carries. The build defaults to `RelWithDebInfo` (`-O2 -g`),
+  and `appliance/build-iso.sh` and `appliance/build-upgrade.sh` refuse a
+  plugin whose debug info does not show an optimisation level
+  (`tools/plugin-optimised.sh`, `test/test_plugin_optimised.sh`). The whole
+  lab suite passes at `-O2`.
+
+* **An empty DHCP lease file took the dataplane down.**
+  `cgnat identity dhcp-leases <path>` naming a file with no lease in it -
+  what dhcpd writes before its first one - set the length of a null vector
+  and the dataplane died of SIGSEGV. Found because the first `-O2` build
+  warned about it; `lab/identity-empty.sh` is red on 0.140.2 and green
+  here.
+
 ## 0.140.5 - a collector for the retention log, and a page that asks it who held an address
 
 ### Added
