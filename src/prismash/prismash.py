@@ -2650,9 +2650,12 @@ TREE["cpu"] = {
 TREE["dataplane"] = {
     "interface": ("the card carrying subscriber traffic, by the name Linux "
                   "gives it", ARG_HOST_NIC),
-    "no": ("stop handing a card to the dataplane", {
-        "interface": ("the box claims no card at the next start of the "
-                      "dataplane", None)}),
+    # Not "claims no card": an empty setting is the automatic rule - every
+    # card but the one kept for Linux - which is what the tuner does with it
+    # (#482).
+    "no": ("stop naming one card; the box chooses again", {
+        "interface": ("at the next start of the dataplane the box claims "
+                      "every card but the one kept for Linux", None)}),
     "exit": ("leave 'dataplane'", None),
     **_EVERY_LEVEL,
 }
@@ -15362,8 +15365,8 @@ class Shell:
         if named:
             return [f"'system', 'dataplane', 'interface' names '{named}', so the dataplane "
                     f"claims that card and no other.",
-                    "Remove it with 'no dataplane interface' to let the box "
-                    "choose again."]
+                    "Remove it with 'no interface' under 'system' > "
+                    "'dataplane' to let the box choose again."]
         if not nics:
             return ["There is no card here for the dataplane to claim."]
         reserve = self.reserved_for_linux()

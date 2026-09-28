@@ -776,6 +776,22 @@ with tempfile.TemporaryDirectory() as tmp:
     check("no management network" in said,
           f"and does not say why nothing is reserved: {said!r}")
 
+print("\n=== a named card: the way back is a command the prompt takes (#482) ===")
+# The note told the operator to type 'no dataplane interface', which the prompt
+# has refused since the statement moved under 'system' > 'dataplane'. The
+# command it names has to be one the box accepts, at the level it names.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp)
+    drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
+    said = " ".join(sh.claim_note(sh.host_nics()))
+    check("'no interface' under 'system' > 'dataplane'" in said
+          and "'no dataplane interface'" not in said,
+          f"the note does not name the command that removes the card: {said!r}")
+    back = drive(sh, ["exit", "exit", "exit", "configure", "system",
+                      "dataplane", "no interface", "commit"])
+    check("commit complete" in back and sh.read_dataplane_if() == "",
+          f"the command the note names did not remove the card: {back!r}")
+
 print("\n=== a card the installer recorded is reserved, and named ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, reserve="enp1s0")
