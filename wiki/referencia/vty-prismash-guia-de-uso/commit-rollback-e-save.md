@@ -27,14 +27,15 @@ flowchart LR
 
 `commit` funciona em qualquer nível do modo de configuração — dentro de `nat`, de `cgnat`, de um pool, de uma conta, de um bloco de roteamento — e depois dele você continua no nível em que estava. No modo operacional ele é recusado: entre com `configure` antes.
 
-**Como as palavras se combinam.** `remap`, `cutoff` e `diverge` combinam entre si, em qualquer ordem, e vêm **antes** de `confirmed` ou de `comment`: `commit remap comment "ampliação do pool residencial"` e `commit cutoff remap confirmed 5` funcionam. Já `confirmed` e `comment` **não** se combinam — a caixa lê a primeira das duas e o resto da linha vai com ela:
+**Como as palavras se combinam.** `remap`, `cutoff` e `diverge` combinam entre si, em qualquer ordem, e vêm **antes** de `confirmed` ou de `comment`: `commit remap comment "ampliação do pool residencial"` e `commit cutoff remap confirmed 5` funcionam. Cada uma reconhece só a consequência que nomeia — `diverge` não deixa passar um corte que pedia `cutoff`. `confirmed` e `comment` vão juntos, nessa ordem:
 
 | Digitado | O que a caixa faz |
 |----------|-------------------|
-| `commit confirmed 5 comment "teste"` | janela de 5 minutos; o comentário é ignorado |
-| `commit comment teste confirmed 5` | grava o comentário `teste confirmed 5` e **não abre janela nenhuma** |
+| `commit confirmed 5 comment "teste"` | janela de 5 minutos, e o comentário `teste` gravado com a revisão |
+| `commit comment teste confirmed 5` | recusa: `'confirmed' comes first` — nada é aplicado |
+| `commit comment "teste confirmed 5"` | grava o comentário `teste confirmed 5`, sem janela: entre aspas é texto |
 
-A segunda linha é a que custa: quem esperava um desfazer automático não tem nenhum. Quando precisar das duas coisas, use `confirmed` e registre o motivo no chamado de mudança.
+A recusa da segunda linha existe porque quem digita aquilo espera um desfazer automático; antes ela gravava tudo como comentário e não abria janela nenhuma.
 
 `commit check` vem sozinho: é uma pergunta, não aplica nada, e o que vier depois de `check` não muda a resposta.
 
