@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The syslog stream was cut mid-message once 12576 bytes had gone out.**
+  ([#492](https://github.com/andrediashexa/hexarouting/issues/492))
+  The TCP exporter drops from its buffer the messages a collector has taken,
+  and found each one's length by reading an IPFIX header whatever the wire
+  was. A syslog line begins "211 <134>1", which reads as 12576, so on an idle
+  box about half an hour of boot markers in, it cut the buffer mid-message,
+  and after any reconnection - and in the spill file - the stream began in
+  the middle of a line. An RFC 6587 collector misreads every record after
+  that. Measured on the #475 bench: a restarted collector's first bytes were
+  `34Z" observedAt=...`. The length is now read by the stream's own framing
+  (`bpa_frame.h`, `test/test_bpa_frame.c`), and `lab/syslog-reconnect.sh`
+  restarts the collector after 12576 bytes and requires every frame whole.
+
 ## 0.140.2 - a packet no longer pays a FIB lookup to learn it is not for the box
 
 ### Fixed

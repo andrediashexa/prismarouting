@@ -17,6 +17,7 @@
 .build/test_bpa_subblock
 .build/test_bpa_workers
 .build/test_bpa_local
+.build/test_bpa_frame
 .build/test_bpa_ports
 .build/test_bpa_rtsp
 .build/test_bpa_mss
