@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`commit` lost what it was told.**
+  ([#481](https://github.com/andrediashexa/hexarouting/issues/481))
+  `commit diverge` also acknowledged `cutoff`, so a word about a pair's drift
+  let through a change that costs the session typing it. `commit confirmed 5
+  comment <text>` armed the window and dropped the comment. And `commit
+  comment <text> confirmed 5` took the rest of the line as the comment and
+  armed no window at all, while the operator believed one was armed. Now each
+  word acknowledges only itself; `confirmed [<minutes>] comment <text>` takes
+  both; and a comment followed by `confirmed` is refused, saying the order -
+  a comment that really holds the word goes in quotes.
+
 ## 0.138.9 - a policy term naming a missing list is refused, not compiled to everything
 
 ### Fixed

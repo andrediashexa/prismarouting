@@ -1120,7 +1120,13 @@ _sh.running_config = lambda: config.Config()
 _sh.candidate = config.Config()
 _sh.candidate.descriptions["pg0"] = "uplink"
 _rv, _text = driven(_sh.do_commit, ["confirmed", "soon"])
-says("confirmed window", _text, "error: usage: commit confirmed <minutes>")
+says("confirmed window", _text,
+     "error: usage: commit confirmed <minutes> [comment <text>]")
+# And a window followed by anything but `comment`: taken as a comment it would
+# be a note nobody meant, so it is refused with the same usage (#481).
+_rv, _text = driven(_sh.do_commit, ["confirmed", "5", "later"])
+says("confirmed then a stray word", _text,
+     "error: usage: commit confirmed <minutes> [comment <text>]")
 
 # And the two that are about where the operator is standing rather than about
 # the configuration: `commit` with nothing built, and `commit` typed before

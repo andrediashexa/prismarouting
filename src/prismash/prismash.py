@@ -11117,9 +11117,13 @@ class Shell:
         # acknowledged one has not been told about the other.
         remap_ok = cutoff_ok = diverge_ok = False
         while args and args[0] in ("remap", "cutoff", "diverge"):
+            # One word, one acknowledgement. `diverge` fell into the `else`
+            # that meant `cutoff`, so acknowledging a pair's drift also
+            # acknowledged losing this session - the one consequence the
+            # paragraph above says must be named on its own (#481).
             if args[0] == "diverge":
                 diverge_ok = True
-            if args[0] == "remap":
+            elif args[0] == "remap":
                 remap_ok = True
             else:
                 cutoff_ok = True
@@ -11213,11 +11217,38 @@ class Shell:
         # is protecting goes away.
         touches_access = (d0["ssh_changed"] or d0["users_changed"]
                           or (cutoff_ok and self.cutoff))
+        # `confirmed [<minutes>]` then `comment <text>`, which runs to the end
+        # of the line. Both were accepted and one was lost (#481): after
+        # `confirmed 5` the comment was dropped without a word, and after
+        # `comment` the rest of the line - `confirmed 5` included - became
+        # the comment, and NO window was armed while the operator believed
+        # one was. The first now takes both; the second is refused, because
+        # guessing whether "confirmed 5" is part of the text is how the
+        # operator ends up without the protection they typed.
+        if args and args[0] == "comment":
+            text = " ".join(args[1:])
+            quoted = len(text) >= 2 and text[0] == '"' and text[-1] == '"'
+            if "confirmed" in args[1:] and not quoted:
+                self.err("commit comment ... confirmed: 'confirmed' comes "
+                         "first")
+                print_prose("type 'commit confirmed <minutes> comment "
+                            "<text>'; a comment that holds the word goes in "
+                            "quotes")
+                return
         if args and args[0] == "confirmed":
+            rest = args[1:]
             try:
-                confirm_min = int(args[1]) if len(args) > 1 else 10
-            except (IndexError, ValueError):
-                self.err("usage: commit confirmed <minutes>")
+                confirm_min = (int(rest[0]) if rest and rest[0] != "comment"
+                               else 10)
+            except ValueError:
+                self.err("usage: commit confirmed <minutes> [comment <text>]")
+                return
+            if rest and rest[0] != "comment":
+                rest = rest[1:]
+            if rest and rest[0] == "comment":
+                comment = " ".join(rest[1:]).strip('"')
+            elif rest:
+                self.err("usage: commit confirmed <minutes> [comment <text>]")
                 return
             # BOUNDED, because the two ends fail in opposite directions and
             # both were reachable (#312). `?` and the operator documentation

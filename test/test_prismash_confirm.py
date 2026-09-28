@@ -452,6 +452,27 @@ print()
 # The verdict in the spelling tools/run-tests.sh reads. This suite used to
 # sign off with a sentence of its own, which meant a run killed before the end
 # and a run that finished were the same thing to anything reading the output.
+
+print("\n=== confirmed and comment, together and in the wrong order (#481) ===")
+# `commit confirmed 1 comment x` dropped the comment; `commit comment x
+# confirmed 1` took "x confirmed 1" as the comment and armed NO window while
+# the operator believed one was armed. The first takes both now; the second
+# is refused, and changes nothing.
+b = box()
+said = b.commit(AFTER, ["confirmed", "1", "comment", "trocando", "a", "senha"])
+check("user bob" in b.running and b.pending() is not None,
+      f"'confirmed 1 comment ...' did not apply and arm a window: {said!r}")
+b = box()
+said = b.commit(AFTER, ["comment", "trocando", "confirmed", "1"])
+check("user bob" not in b.running and b.pending() is None
+      and "'confirmed' comes first" in said,
+      f"'comment ... confirmed 1' was not refused: {said!r}")
+b = box()
+said = b.commit(AFTER, ["comment", '"foi', "confirmed", 'hoje"'])
+check("user bob" in b.running and "'confirmed' comes first" not in said,
+      f"a quoted comment holding the word was refused: {said!r}")
+
+
 if fail:
     print(f"{fail} FAILURES")
     sys.exit(1)
