@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.138.9 - a policy term naming a missing list is refused, not compiled to everything
+
+### Fixed
+
 * **A policy term naming a prefix-list that does not exist matched every
   route.** ([#484](https://github.com/andrediashexa/hexarouting/issues/484))
   The compiler turned such a term into a route-map clause with no `match`,
