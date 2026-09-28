@@ -6,7 +6,7 @@
 # WHY THIS EXISTS. This repository is private, so a GitHub release is a page
 # no operator can open, and the wiki told them to download the upgrade
 # package "from the release page". The public copy is
-# https://hexarouting.hexanetworks.com.br/releases/<version>/, served read-only
+# https://prismarouting.com.br/releases/<version>/, served read-only
 # from the wiki's host, with `latest` pointing at the newest version. This
 # puts one release there, and it is step 7 of the release procedure in
 # CLAUDE.md, because a directory nobody updates stops being true at the next
@@ -30,7 +30,7 @@ set -eu
 
 TAG=${1:-}
 SRC=${2:-/tmp/prisma-release}
-URL=${RELEASES_URL:-https://hexarouting.hexanetworks.com.br/releases}
+URL=${RELEASES_URL:-https://prismarouting.com.br/releases}
 case "$TAG" in
   v[0-9]*.[0-9]*.[0-9]*) ;;
   *) echo "usage: sh tools/publish-release.sh vX.Y.Z [directory]" >&2; exit 2 ;;

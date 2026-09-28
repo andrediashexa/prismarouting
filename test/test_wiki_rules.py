@@ -2,7 +2,7 @@
 """
 The rules the PUBLIC wiki is written under, with something that reads them.
 
-`wiki/` is a mirror of <https://hexarouting.hexanetworks.com.br>. It is on the
+`wiki/` is a mirror of <https://prismarouting.com.br>. It is on the
 open internet and it is written for somebody operating a box - a customer, a
 partner, an integrator. `PADRAO-DOCUMENTACAO.md` section 0 says what may not
 appear on such a page and gives the reason for each: an issue number and a

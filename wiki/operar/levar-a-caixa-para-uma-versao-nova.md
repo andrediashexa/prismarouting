@@ -71,11 +71,11 @@ Guarde a saída inteira no chamado de mudança. Ela é o que diz de onde a caixa
 
 ## 2. Baixe o pacote da versão nova
 
-Cada versão fica em uma pasta própria em <https://hexarouting.hexanetworks.com.br/releases/>, com o pacote e o `sha256` dele lado a lado. `latest` aponta sempre para a mais nova. Na própria caixa, trocando `<versão>` pelo número:
+Cada versão fica em uma pasta própria em <https://prismarouting.com.br/releases/>, com o pacote e o `sha256` dele lado a lado. `latest` aponta sempre para a mais nova. Na própria caixa, trocando `<versão>` pelo número:
 
 ```
-curl -fO https://hexarouting.hexanetworks.com.br/releases/<versão>/prisma-routing-<versão>-upgrade.tar.gz
-curl -fO https://hexarouting.hexanetworks.com.br/releases/<versão>/prisma-routing-<versão>-upgrade.tar.gz.sha256
+curl -fO https://prismarouting.com.br/releases/<versão>/prisma-routing-<versão>-upgrade.tar.gz
+curl -fO https://prismarouting.com.br/releases/<versão>/prisma-routing-<versão>-upgrade.tar.gz.sha256
 sha256sum -c prisma-routing-<versão>-upgrade.tar.gz.sha256
 ```
 

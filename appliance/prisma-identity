@@ -43,7 +43,7 @@ ROOT=${ROOT%/}
 VER=${2:-$(cat "$ROOT/usr/share/prisma-routing/VERSION" 2>/dev/null || true)}
 VER=${VER%% *}
 NAME="Prisma Routing"
-URL=https://hexarouting.hexanetworks.com.br
+URL=https://prismarouting.com.br
 
 say() { echo "  identity: $*"; }
 

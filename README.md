@@ -101,7 +101,7 @@ tools/                 build and lab helpers
 |---|---|
 | [docs/context.md](docs/context.md) | **Start here.** The invariants, a map of what question each part answers, and a reading order per task. |
 | `docs/`, `README.md`, `TESTING.md` | **Authoritative about the product.** What it does and why. |
-| <https://hexarouting.hexanetworks.com.br> | The wiki: how somebody *uses* it. A usage layer, and currently a **draft** — see below. |
+| <https://prismarouting.com.br> | The wiki: how somebody *uses* it. A usage layer, and currently a **draft** — see below. |
 
 The wiki is public and still being written. It is **not** a source: where a page
 disagrees with `docs/`, the page is a defect. `wiki/` here is a read-only mirror

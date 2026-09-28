@@ -583,7 +583,7 @@ def prisma_routing_version():
 # publishes to. A box behind a mirror points this elsewhere; nothing on a box
 # sets it otherwise.
 RELEASES_URL = os.environ.get("PRISMA_RELEASES_URL",
-                              "https://hexarouting.hexanetworks.com.br/releases")
+                              "https://prismarouting.com.br/releases")
 #: Where a downloaded release is unpacked: /var/tmp, which survives the
 #: session that asked and is not /tmp's tmpfs on a box short of memory.
 UPGRADE_WORK = os.environ.get("PRISMA_UPGRADE_WORK", "/var/tmp")
