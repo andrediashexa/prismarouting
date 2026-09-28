@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Records written while the collector restarted were lost, and counted
+  as sent.** ([#493](https://github.com/andrediashexa/hexarouting/issues/493))
+  A collector that exits sends a FIN; the exporter sent regardless, the
+  kernel accepted the bytes and the peer's RST discarded them, and only the
+  send after that failed and reconnected. Measured with
+  `lab/syslog-reconnect.sh`: 50 allocations written after the collector
+  exited, every counter saying delivered, none received. The exporter now
+  asks the socket whether its peer has closed before every send
+  (`bpa_sock.h`, `test/test_bpa_sock.c`), and a closed peer is a
+  disconnection: the buffer goes out whole on the next connection. All 50
+  arrive. A collector host that vanishes without a FIN is still invisible to
+  the sender, and `docs/logging.md` says so.
+
 ## 0.140.3 - the syslog stream stays on message boundaries after a reconnection
 
 ### Fixed

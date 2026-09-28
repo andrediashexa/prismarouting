@@ -796,8 +796,24 @@ But TCP does not give end-to-end delivery guarantees - bytes accepted by the soc
 be lost if the connection dies immediately after. In the test, two records
 emitted at the moment of the outage fell in that window.
 
-A real guarantee would require application-level acknowledgement, which IPFIX
-over TCP does not provide. TCP is much better than UDP — no silent loss under
+**Part of that window was the exporter's, and is closed
+([#493](https://github.com/andrediashexa/hexarouting/issues/493)).** A
+collector that exits sends a FIN, and the exporter used to send regardless:
+the kernel accepts the first send after a FIN and the peer's RST discards it,
+so everything written between the collector's close and the exporter's next
+failed send was lost and counted as sent. Measured with
+`lab/syslog-reconnect.sh`: 50 allocations written after the collector exited,
+153 lines "written", 0 spilled, 0 dropped - and the collector that replaced it
+received none of them. The exporter now asks the socket whether its peer has
+closed before every send, and a closed peer is a disconnection: the buffer is
+kept and goes out whole, behind a new template, on the next connection. In
+the same lab all 50 arrive.
+
+What remains is the part no sender can see: a collector **host** that
+vanishes without a FIN - power lost, cable pulled - leaves a connection that
+looks open until TCP's own retransmissions give up, and whatever was sent into
+it in that time is lost. A real guarantee would require application-level
+acknowledgement, which IPFIX over TCP does not provide. TCP is much better than UDP — no silent loss under
 congestion, and a collector outage no longer costs records — but it is not
 absolute. `show bpa logging` exposes the counters so the difference is visible
 rather than assumed.

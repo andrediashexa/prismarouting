@@ -132,4 +132,9 @@ expect "collector B received the stream after A went away (${B_LINES:-0} lines)"
   test "${B_LINES:-0}" -gt 0
 expect "  and every frame it was given was whole: nothing began mid-message" \
   test "${B_BAD:-1}" -eq 0
+# #493: the allocations written after A closed reach B, instead of going into
+# a connection whose peer had closed and being counted as sent.
+B_ALLOC=$(awk '$1=="BLOCK-ALLOC"{print $2}' /tmp/b.txt)
+expect "the 50 allocations written after A closed reached B (${B_ALLOC:-0})" \
+  test "${B_ALLOC:-0}" -ge 50
 verdict
