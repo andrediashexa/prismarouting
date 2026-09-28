@@ -5145,8 +5145,34 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     CT_LINKS=$(live_field ct-links)
     CT_THREADS=$(live_field ct-threads)
     CT_DPLOG=$(live_field ct-dplog)
+    send 'echo "HX""LAB ct-pb=$(systemctl is-active prisma-routing-power-button.service)"'
+    wait_for "HXLAB ct-pb=" 30 "the box to say whether the power button is watched" || fail=1
+    CT_PB=$(live_field ct-pb)
     send "sync"
-    send "systemctl poweroff"
+    # THE POWER BUTTON, AND NOT A TYPED POWEROFF (#478). A hypervisor's
+    # Shutdown is an ACPI power-button press, and this box ignored it: no
+    # logind on a minbase medium, so the key went nowhere and the machine ran
+    # until the host's timeout killed it. -nographic puts qemu's monitor on
+    # this same console behind Ctrl-A c, so the press is sent exactly as a
+    # hypervisor sends it, and the box has to stop BY ITSELF - with
+    # -no-reboot, a poweroff is qemu exiting.
+    printf '\001c' >&3
+    sleep 1
+    printf 'system_powerdown\n' >&3
+    _pb=0
+    while kill -0 "$QEMU_PID" 2>/dev/null && [ "$_pb" -lt 120 ]; do
+      sleep 1
+      _pb=$((_pb + 1))
+    done
+    if kill -0 "$QEMU_PID" 2>/dev/null; then
+      echo "  [FAIL] the power button did not shut the box down in 120 s"
+      echo "         (prisma-routing-power-button.service: ${CT_PB:-<no answer>})"
+      fail=1
+      printf '\001c' >&3
+      send "systemctl poweroff"
+    else
+      echo "  [ ok ] the power button shut the box down by itself, in ${_pb} s"
+    fi
   else
     echo "  [FAIL] the box booted on the containers did not reach a login"
     fail=1
