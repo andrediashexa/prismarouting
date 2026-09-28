@@ -251,12 +251,13 @@ harnesses = sorted(glob.glob(os.path.join(TEST, "test_bpa_*.c")))
 # forwards was given (v, n) and a harness with it, and 22 since the order
 # `show bpa top` reads its rows in got one, 23 with the creation-rate
 # bucket, and 27 since #472 gave the session keys, a subscriber's blocks,
-# the worker ownership and the L4 id theirs. The number is written down so that a glob that stops
+# the worker ownership and the L4 id theirs, and 28 since #489 gave the
+# box's own addresses one. The number is written down so that a glob that stops
 # matching goes red instead of quietly reading fewer files than the
 # repository has - which is what this line is for, and why it moves with the
 # harnesses rather than being loosened to a floor.
-check(len(harnesses) == 27,
-      f"{len(harnesses)} C harnesses found, not the 27 this repository has - "
+check(len(harnesses) == 28,
+      f"{len(harnesses)} C harnesses found, not the 28 this repository has - "
       f"the glob is probably wrong and this suite is reading too little")
 
 n_checks = 0
