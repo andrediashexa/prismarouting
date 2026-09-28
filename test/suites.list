@@ -57,6 +57,7 @@ python3 test/test_routes.py
 sh test/test_boot_wait.sh
 sh test/test_version_stamp.sh
 python3 test/test_plugin_version.py
+python3 test/test_collector.py
 sh test/test_wiki_roundtrip.sh
 python3 test/test_wiki_rules.py
 python3 test/test_wiki_screens.py

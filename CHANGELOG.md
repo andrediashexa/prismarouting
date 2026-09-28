@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A collector for the retention log, and a page that asks it who held an
+  address.** ([#491](https://github.com/andrediashexa/hexarouting/issues/491))
+  `lab/collector/`: IPFIX on udp/4739 (RFC 8158 NAT events and the boot
+  marker, decoded by the box's own templates), syslog on tcp/601 (RFC 6587
+  octet counting), one SQLite file, and a page on http/8080 that answers
+  which subscriber held public X, port Y, at T - held, released before T,
+  or ended by a restart, as `docs/logging.md` defines them - with a view per
+  subscriber and the latest events. It runs on `prisma-logs`, beside the
+  #475 bench, and `install.sh` puts it on any Debian host. nfdump and
+  rsyslog were tried first: nfdump has no RFC 8158 port-range elements, and
+  both lost the syslog stream at the #492 cut, which this reader skips past
+  and counts. Lab infrastructure, in no medium; its functions are held by
+  `test/test_collector.py`, on templates captured from the bench.
+
 ### Fixed
 
 ## 0.140.4 - records written while the collector restarts reach the next one
