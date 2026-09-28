@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.138.11 - on a virtio guest each packet is translated on the worker that received it
+
+### Fixed
+
 * **On a virtio guest every packet was handed to another worker.**
   ([#487](https://github.com/andrediashexa/hexarouting/issues/487))
   VPP polls RX queue q on the thread after the one that transmits on TX
