@@ -37,6 +37,7 @@
 #include "bpa.h"
 #endif
 #include "bpa_log.h"
+#include "bpa_frame.h"
 #include "bpa_identity.h"
 #include <string.h>
 
@@ -497,17 +498,22 @@ bpa_tcp_replay_spill (bpa_log_stream_t *s)
 static void
 bpa_tcp_drop_sent (bpa_log_stream_t *s)
 {
-  while (s->head_sent >= 4)
+  while (s->head_sent)
     {
-      u16 mlen;
+      /* By the stream's own framing (#492): this read the IPFIX length on
+       * the syslog wire too, and cut the stream 12576 bytes in, mid-message.
+       * A front it cannot read is left as it is: guessing at where the next
+       * message starts would corrupt the stream for good. */
+#ifdef BPA_FRAME_OFF
+      /* lab/syslog-reconnect.sh's off mode builds the plugin this way, to
+       * show the cut this exists for. No box is built with it. */
+      u32 mlen = bpa_frame_len (0, s->outbuf, vec_len (s->outbuf));
+#else
+      u32 mlen = bpa_frame_len (s->wire == BPA_WIRE_SYSLOG, s->outbuf,
+				vec_len (s->outbuf));
+#endif
 
-      clib_memcpy_fast (&mlen, s->outbuf + 2, 2);
-      mlen = clib_net_to_host_u16 (mlen);
-      /* Defensive: every message in here was written by this file, so a
-       * length below the header size is not reachable. If it ever were,
-       * guessing at where the next message starts would corrupt the stream
-       * for good, where stopping leaves it as it is. */
-      if (mlen < 16 || s->head_sent < mlen)
+      if (!mlen || s->head_sent < mlen)
 	break;
       vec_delete (s->outbuf, mlen, 0);
       s->head_sent -= mlen;

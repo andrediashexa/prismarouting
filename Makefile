@@ -24,7 +24,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_keys \
       $(BUILD)/test_bpa_subblock \
       $(BUILD)/test_bpa_workers \
-      $(BUILD)/test_bpa_local
+      $(BUILD)/test_bpa_local \
+      $(BUILD)/test_bpa_frame
 	@sh tools/run-tests.sh
 
 vectors:
@@ -84,6 +85,12 @@ $(BUILD)/test_bpa_local: test/test_bpa_local.c \
                    src/plugins/bpa/bpa_local.h test/bpa_shim.h test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_local.c
+
+# The length of the message at the front of an exporter's buffer (#492).
+$(BUILD)/test_bpa_frame: test/test_bpa_frame.c \
+                   src/plugins/bpa/bpa_frame.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_frame.c
 
 $(BUILD)/test_bpa_top: test/test_bpa_top.c \
                    src/plugins/bpa/bpa_top.h test/bpa_shim.h
@@ -240,6 +247,7 @@ $(BUILD)/test_bpa_pptp: test/test_bpa_pptp.c src/plugins/bpa/bpa_pptp.c \
 # copies of the same function in one program.
 $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
                            src/plugins/bpa/bpa_log_tcp.c \
+                           src/plugins/bpa/bpa_frame.h \
                            src/plugins/bpa/bpa_log_syslog.c \
                            src/plugins/bpa/bpa_identity.c \
                            src/plugins/bpa/bpa_log.h \

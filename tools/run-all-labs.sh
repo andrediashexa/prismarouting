@@ -326,7 +326,8 @@ OFF_MODES="audit:off backplane:off policy:off policy-igp:off heap-full:off hot-c
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
-           utilisation:off vrf:off vrrp:off ha-failover:off"
+           utilisation:off vrf:off vrrp:off ha-failover:off
+           syslog-reconnect:off"
 
 # What a lab is given for its off run, or nothing when it has none.
 #
