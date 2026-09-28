@@ -102,9 +102,10 @@ Para aproveitar os núcleos da VM, ligue no hipervisor várias filas na placa vi
 
 # Desligar a VM
 
+O *Shutdown* do hipervisor envia o botão de energia (ACPI), e a caixa desliga limpa: fecha os blocos no log de retenção e para os serviços antes de desligar. Medido num Proxmox: 41 segundos, dentro do tempo que o hipervisor espera antes de forçar.
 
 :::warning
-**Na versão atual a caixa ignora o botão de desligar da VM.** O *Shutdown* do hipervisor envia o botão de energia (ACPI), e a caixa não reage a ele. Um desligamento forçado depois disso é o mesmo que tirar o cabo de força: os blocos que o dataplane está segurando não são fechados no log de retenção.
+**Até a versão 0.139.0 a caixa ignorava esse botão.** Numa caixa nessa versão ou anterior, o *Shutdown* do hipervisor não faz nada e o desligamento forçado que vem depois é o mesmo que tirar o cabo de força: os blocos que o dataplane está segurando não são fechados no log de retenção. Atualize a caixa, ou desligue pela VTY.
 
 :::
 
