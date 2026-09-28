@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.140.0 - a hypervisor's Shutdown stops the box cleanly
+
+### Fixed
+
 * **The box ignored its power button, and so a hypervisor's Shutdown.**
   ([#478](https://github.com/andrediashexa/hexarouting/issues/478))
   On systemd it is logind that turns the ACPI power key into a shutdown, and
