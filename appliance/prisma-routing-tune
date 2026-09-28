@@ -1523,8 +1523,8 @@ def render_vpp(p):
         # tuned like any other plan, until the boot the command line moves.
         i = p["interim"]
         return ("# BETWEEN TWO PLANS. This boot runs "
-                f"{len(i['workers'])} worker(s) on the CPUs the kernel "
-                f"isolated already ({fmt_list(i['isolated'])});\n"
+                f"{len(i['workers'])} worker(s) on {fmt_list(i['isolated'])}, "
+                f"isolated now;\n"
                 f"# the next boot isolates {fmt_list(p['isolated'])} and "
                 f"runs {len(p['workers'])}.\n"
                 + render_vpp(i))
