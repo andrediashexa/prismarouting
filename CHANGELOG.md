@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.140.3 - the syslog stream stays on message boundaries after a reconnection
+
+### Fixed
+
 * **The syslog stream was cut mid-message once 12576 bytes had gone out.**
   ([#492](https://github.com/andrediashexa/hexarouting/issues/492))
   The TCP exporter drops from its buffer the messages a collector has taken,
