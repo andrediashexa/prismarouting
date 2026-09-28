@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.138.10 - commit takes what it is told: confirmed and comment together, each word for itself
+
+### Fixed
+
 * **`commit` lost what it was told.**
   ([#481](https://github.com/andrediashexa/hexarouting/issues/481))
   `commit diverge` also acknowledged `cutoff`, so a word about a pair's drift
