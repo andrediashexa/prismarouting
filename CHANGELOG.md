@@ -87,6 +87,9 @@ version has a chance of seeing it.
   level, and a test types what it names. The help text of that `no
   interface` said the box then claims no card; an empty setting is the
   automatic rule, every card but the one kept for Linux, and the help says so.
+  The console error of a box whose card was handed over and taken by nothing
+  named the same refused command as its way back; it names the one that
+  exists too.
 
 ## 0.138.11 - on a virtio guest each packet is translated on the worker that received it
 

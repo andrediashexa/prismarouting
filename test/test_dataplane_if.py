@@ -1708,6 +1708,12 @@ with tempfile.TemporaryDirectory() as tmp:
         check(fact in said, f"the refusal does not name {fact}: {said!r}")
     _wide = [l for l in said.splitlines() if len(l) > CONSOLE_COLUMNS]
     check(not _wide, f"the refusal does not fit the console: {_wide!r}")
+    # The way back it names is one the prompt takes (#482): 'no dataplane
+    # interface' has been refused since the statement moved under system.
+    _flat = " ".join(said.split())
+    check("'no interface' under 'system' > 'dataplane'" in _flat
+          and "no dataplane interface" not in _flat,
+          f"the refusal names a command the prompt refuses: {said!r}")
     # Not indexed blind: a run where the box said nothing is the failure this
     # case exists for, and a progress line that raises there loses every
     # reading after it.

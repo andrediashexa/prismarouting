@@ -8125,8 +8125,8 @@ class Shell:
             print_prose("this box has no address and cannot be reached over "
                         "the network until that is repaired from here")
             print_prose("'show hardware' says what the dataplane holds; 'no "
-                        "dataplane interface' gives the card back at the next "
-                        "start")
+                        "interface' under 'system' > 'dataplane' gives the "
+                        "card back at the next start")
             # The path on a row of its own: it is what the operator goes and
             # reads, and a path that wraps is one they cannot copy (#276).
             print_prose("the card is named in this file:")
