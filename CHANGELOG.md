@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.139.0 - an install from the ISO names its management card as the installed box will
+
+### Fixed
+
 * **An install from the ISO on a network with no DHCP could not name its
   management card.** ([#476](https://github.com/andrediashexa/hexarouting/issues/476))
   On the live medium the dataplane takes every card Linux
