@@ -77,6 +77,15 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The public name is `prismarouting.com.br`.**
+  ([#479](https://github.com/andrediashexa/hexarouting/issues/479))
+  The wiki and the releases directory answer on it, and everything that
+  names them - `system upgrade`'s download source, the box's os-release URL,
+  the wiki's own pages, and the defaults of `tools/wiki-push.sh`,
+  `tools/wiki-pull.sh` and `tools/publish-release.sh` - names it now.
+  `hexarouting.hexanetworks.com.br` keeps answering, and has to: every box
+  already installed fetches its upgrades from it until it is upgraded.
+
 ### Fixed
 
 ## 0.138.5 - leaving configuration no longer warns about a commit that applied everything

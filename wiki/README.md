@@ -1,6 +1,6 @@
 # The wiki, mirrored
 
-A read-only copy of <https://hexarouting.hexanetworks.com.br>, so the pages can
+A read-only copy of <https://prismarouting.com.br>, so the pages can
 be read, searched and diffed from inside the repository.
 
 Snapshot taken 2026-09-27T13:47Z, 33 pages.

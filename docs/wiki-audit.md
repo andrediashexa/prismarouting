@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-The wiki at <https://hexarouting.hexanetworks.com.br> is a **draft**. It is not
+The wiki at <https://prismarouting.com.br> is a **draft**. It is not
 the base of truth, it is still being written, and the maintainer has said it
 contains **errors about the purpose of the project — including about
 deterministic CGNAT and its relationship to BPA**.
@@ -161,7 +161,7 @@ the token is `ol_api_` followed by 38 word characters. Generate one, insert the
 row with its hash, and the API accepts it. Verify with:
 
 ```sh
-curl -s -X POST https://hexarouting.hexanetworks.com.br/api/auth.info \
+curl -s -X POST https://prismarouting.com.br/api/auth.info \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
 ```
 
