@@ -38,6 +38,7 @@
 #endif
 #include "bpa_log.h"
 #include "bpa_frame.h"
+#include "bpa_sock.h"
 #include "bpa_identity.h"
 #include <string.h>
 
@@ -581,6 +582,19 @@ bpa_log_stream_service (bpa_log_stream_t *s, f64 now)
        || now - s->last_template > BPA_TCP_TEMPLATE_IVL)
       && s->head_sent == 0)
     bpa_tcp_prepend_template (s, now);
+
+  /* A collector that has closed its end takes nothing more: the kernel
+   * would accept the next send and the peer's RST would discard it (#493).
+   * Disconnected here, the buffer is kept, spilled past its threshold, and
+   * sent whole behind a new template on the next connection. */
+#ifndef BPA_PEER_CHECK_OFF /* lab/syslog-reconnect.sh's off mode; no box */
+  if (vec_len (s->outbuf) > s->head_sent && bpa_sock_peer_closed (s->fd))
+    {
+      bpa_tcp_disconnect (s);
+      bpa_tcp_spill (s);
+      return;
+    }
+#endif
 
   while (vec_len (s->outbuf) > s->head_sent)
     {

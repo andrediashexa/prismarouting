@@ -25,7 +25,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_subblock \
       $(BUILD)/test_bpa_workers \
       $(BUILD)/test_bpa_local \
-      $(BUILD)/test_bpa_frame
+      $(BUILD)/test_bpa_frame \
+      $(BUILD)/test_bpa_sock
 	@sh tools/run-tests.sh
 
 vectors:
@@ -91,6 +92,12 @@ $(BUILD)/test_bpa_frame: test/test_bpa_frame.c \
                    src/plugins/bpa/bpa_frame.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_frame.c
+
+# Whether the exporter sees its collector close (#493).
+$(BUILD)/test_bpa_sock: test/test_bpa_sock.c \
+                   src/plugins/bpa/bpa_sock.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_sock.c
 
 $(BUILD)/test_bpa_top: test/test_bpa_top.c \
                    src/plugins/bpa/bpa_top.h test/bpa_shim.h
@@ -248,6 +255,7 @@ $(BUILD)/test_bpa_pptp: test/test_bpa_pptp.c src/plugins/bpa/bpa_pptp.c \
 $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
                            src/plugins/bpa/bpa_log_tcp.c \
                            src/plugins/bpa/bpa_frame.h \
+                           src/plugins/bpa/bpa_sock.h \
                            src/plugins/bpa/bpa_log_syslog.c \
                            src/plugins/bpa/bpa_identity.c \
                            src/plugins/bpa/bpa_log.h \

@@ -1,11 +1,12 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 1
+# OFF-RED-AT-LEAST: 2
 # The syslog stream survives its collector going away, on a message boundary
 # (#492).
 #
 #   sh tools/lab.sh syslog-reconnect       -> LAB PASSED
 #   sh tools/lab.sh syslog-reconnect off   -> LAB FAILED (built with
-#                                            BPA_FRAME_OFF, the cut back)
+#                                            BPA_FRAME_OFF and
+#                                            BPA_PEER_CHECK_OFF: both back)
 #
 # The exporter drops from the front of its buffer the messages a collector
 # has already taken, and found each one's length by reading bytes 2-3 as an
@@ -31,7 +32,7 @@ MODE=${1:-on}
 mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing
 if [ "$MODE" = off ]; then
   mkdir -p /tmp/build-off && cd /tmp/build-off \
-    && cmake -G Ninja -DCMAKE_C_FLAGS=-DBPA_FRAME_OFF /src >/dev/null && ninja >/dev/null
+    && cmake -G Ninja -DCMAKE_C_FLAGS='-DBPA_FRAME_OFF -DBPA_PEER_CHECK_OFF' /src >/dev/null && ninja >/dev/null
 else
   (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
     mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
@@ -132,4 +133,9 @@ expect "collector B received the stream after A went away (${B_LINES:-0} lines)"
   test "${B_LINES:-0}" -gt 0
 expect "  and every frame it was given was whole: nothing began mid-message" \
   test "${B_BAD:-1}" -eq 0
+# #493: the allocations written after A closed reach B, instead of going into
+# a connection whose peer had closed and being counted as sent.
+B_ALLOC=$(awk '$1=="BLOCK-ALLOC"{print $2}' /tmp/b.txt)
+expect "the 50 allocations written after A closed reached B (${B_ALLOC:-0})" \
+  test "${B_ALLOC:-0}" -ge 50
 verdict
