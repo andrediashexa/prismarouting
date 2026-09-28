@@ -79,6 +79,21 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show cgnat translation` denied a port of a deterministic pool's reserve
+  that had been translated.**
+  ([#483](https://github.com/andrediashexa/hexarouting/issues/483))
+  It is the screen a court order or an abuse report is answered with, and for
+  a reserve port it said "nothing was ever translated here": the formula
+  names nobody for those ports, and the screen took that for "nobody". A
+  reserve block belongs to whichever subscriber the allocator gave it, and the
+  allocation log is the authority for when. The screen now answers a reserve
+  port as the reserve it is - who holds the block now, if anybody, marked
+  DETERMINISTIC RESERVE, and that a past instant is the log's - and keeps
+  "nothing was ever translated" for a port that is in no block at all.
+  `bpa_translation_source()` in the plugin decides which, and is unit-tested
+  over the reference vectors; `lab/detreserve.sh` asks the screen about the
+  reserve port it has just used.
+
 ## 0.138.7 - the wiki says what the box does at 0.138
 
 ### Added

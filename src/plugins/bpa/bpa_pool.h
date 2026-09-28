@@ -1618,6 +1618,38 @@ bpa_reverse_sub (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *sub_idx)
 }
 
 /*
+ * Where the answer to "who was behind this public address and port" comes
+ * from - the question a court order or an abuse report asks.
+ *
+ * A port the formula maps is answered by the formula (deterministic) or by the
+ * allocator (dynamic). A port in a deterministic pool's RESERVE is refused by
+ * bpa_reverse_sub() - the formula names nobody for it - but it is not
+ * "nothing": it belongs to whichever subscriber was handed that reserve block,
+ * and the allocation log is the authority for when. `show cgnat translation`
+ * answered those ports "nothing was ever translated here", a false negative
+ * given with confidence on the one question this product exists to answer
+ * (#483). `*idx` is the block index, or the reserve index for RESERVE.
+ */
+typedef enum
+{
+  BPA_XLT_NONE = 0, /* in no block: nothing was ever translated here */
+  BPA_XLT_FORMULA,  /* deterministic: the formula answers, for any instant */
+  BPA_XLT_RESERVE,  /* a deterministic pool's reserve: the allocator, now */
+  BPA_XLT_DYNAMIC,  /* dynamic: the allocator answers, for now only */
+} bpa_xlt_source_t;
+
+static_always_inline bpa_xlt_source_t
+bpa_translation_source (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *idx)
+{
+  if (bpa_reverse_sub (p, ip_pub, port, idx) == 0)
+    return p->mode == BPA_MODE_DETERMINISTIC ? BPA_XLT_FORMULA
+					     : BPA_XLT_DYNAMIC;
+  if (bpa_reserve_index_of (p, ip_pub, port, idx) == 0)
+    return BPA_XLT_RESERVE;
+  return BPA_XLT_NONE;
+}
+
+/*
  * outside -> inside. Arithmetic plus two binary searches over small arrays,
  * with no session lookup at all. This is why the deterministic mode needs
  * no allocation logging for its mapped blocks and why the return path shards

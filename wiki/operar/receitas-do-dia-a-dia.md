@@ -21,6 +21,7 @@ flowchart TD
 
 * `**FORMULA**` **+** `**past or present**` — a resposta veio da aritmética, que é estável. Ela responde por um instante passado **desde que você comprove qual configuração estava em vigor**. Junte a saída de `show cgnat history` referente à data.
 * `**DYNAMIC**` **+** `**NOW ONLY**` — o bloco foi alocado sob demanda. Essa resposta descreve o presente e **não** é evidência sobre o passado. O que responde pelo passado são os registros IPFIX que foram para o coletor.
+* `**DETERMINISTIC RESERVE**` **+** `**NOW ONLY**` — a porta é de um bloco da reserva de um pool determinístico, que a fórmula não atribui a ninguém. A caixa diz quem segura esse bloco agora, se alguém segura; pelo passado respondem os registros que foram para o coletor, como no dinâmico.
 
 O comando é explícito nessa diferença de propósito: as duas fontes não valem a mesma coisa, e confundir uma com a outra é o tipo de erro que só aparece no tribunal.
 
@@ -31,7 +32,7 @@ show cgnat history verify   confere a cadeia de hash da trilha e aponta a primei
 
 
 :::info
-**Pool determinístico com** `**reserve**`**: a porta pode não ser da fórmula.** Os blocos da reserva são entregues sob demanda, a assinantes que encheram o próprio bloco, e a fórmula não responde por eles — `show cgnat translation` não os atribui a ninguém. Quem responde por uma porta da reserva são os registros `natEvent 16` e `natEvent 17` que foram para o coletor, como num pool dinâmico.
+**Pool determinístico com** `**reserve**`**: a porta pode não ser da fórmula.** Os blocos da reserva são entregues sob demanda, a assinantes que encheram o próprio bloco, e a fórmula não responde por eles. O `show cgnat translation` marca essas portas como `DETERMINISTIC RESERVE` e diz quem segura o bloco agora; quem responde por um instante passado são os registros `natEvent 16` e `natEvent 17` que foram para o coletor, como num pool dinâmico.
 
 :::
 
