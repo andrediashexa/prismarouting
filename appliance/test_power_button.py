@@ -110,7 +110,7 @@ def run(devices_text, events):
                 f.write(data)
         marker = os.path.join(d, "shutdown")
         env = dict(os.environ, PRISMA_INPUT_DEVICES=dev, PRISMA_INPUT_DIR=d,
-                   PRISMA_POWEROFF=f"touch {marker}")
+                   PRISMA_POWEROFF=f"touch {marker}", PRISMA_BUTTON_GRACE="1")
         r = subprocess.run([sys.executable, os.path.join(HERE,
                             "prisma-power-button")], env=env,
                            capture_output=True, text=True, timeout=10)
@@ -127,6 +127,39 @@ rc, out, shut = run("I: Bus=0011\nN: Name=\"AT keyboard\"\nH: Handlers=event0\n"
 check(rc == 0 and not shut and "no power-button" in out,
       f"a machine with no button was not a quiet exit 0: rc {rc}, {out!r}")
 print("  a press runs the shutdown and says so; no button exits 0, once")
+
+print("\n=== a button that arrives after the service is still watched ===")
+# The 0.140.0 gate: the unit started 0.4 s before the kernel registered the
+# button, read an empty list, and exited as a machine with none.
+_answers = ["", "", DEVICES]
+_slept = []
+_nodes = pb.wait_for_buttons(lambda: _answers.pop(0) if len(_answers) > 1
+                             else _answers[0],
+                             lambda n: True, _slept.append, 60, 0.5)
+check(_nodes == ["event4", "event5"] and len(_slept) == 2,
+      f"a button registered after the first read was not waited for: "
+      f"{_nodes!r} after {len(_slept)} wait(s)")
+# Registered, and its node not made yet by udev: waited for as well.
+_made = {"event4": [False, True]}
+_nodes = pb.wait_for_buttons(lambda: DEVICES,
+                             lambda n: _made.get(n, [False]).pop(0)
+                             if len(_made.get(n, [False])) > 1
+                             else _made.get(n, [False])[0],
+                             lambda s: None, 60, 0.5)
+check(_nodes == ["event4"],
+      f"a node udev had not made yet was not waited for: {_nodes!r}")
+# None, ever: given up after the grace, and not before.
+_slept = []
+_nodes = pb.wait_for_buttons(lambda: "", lambda n: True, _slept.append, 3, 1)
+check(_nodes == [] and len(_slept) == 3,
+      f"no button was given up on after {len(_slept)} wait(s), not 3")
+# An unreadable list is waited through like an empty one.
+def _unreadable():
+    raise OSError(2, "No such file or directory")
+check(pb.wait_for_buttons(_unreadable, lambda n: True, lambda s: None, 1, 1)
+      == [], "an unreadable device list was not treated as no button")
+print("  a late button and a late node are waited for; none is given up on "
+      "after the grace")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
