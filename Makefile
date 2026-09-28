@@ -247,6 +247,7 @@ $(BUILD)/test_bpa_pptp: test/test_bpa_pptp.c src/plugins/bpa/bpa_pptp.c \
 # copies of the same function in one program.
 $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
                            src/plugins/bpa/bpa_log_tcp.c \
+                           src/plugins/bpa/bpa_frame.h \
                            src/plugins/bpa/bpa_log_syslog.c \
                            src/plugins/bpa/bpa_identity.c \
                            src/plugins/bpa/bpa_log.h \

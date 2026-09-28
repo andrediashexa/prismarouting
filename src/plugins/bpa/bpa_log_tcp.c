@@ -35,9 +35,9 @@
  */
 #ifndef BPA_STANDALONE
 #include "bpa.h"
-#include "bpa_frame.h"
 #endif
 #include "bpa_log.h"
+#include "bpa_frame.h"
 #include "bpa_identity.h"
 #include <string.h>
 
