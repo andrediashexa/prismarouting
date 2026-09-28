@@ -1462,6 +1462,7 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
   clib_error_t *error = 0;
   ip4_address_t addr, priv;
   u32 pool_index, block_idx, sub_idx, port = 0, ip_priv = 0;
+  bpa_xlt_source_t src;
   bpa_pool_t *p;
 
   if (!unformat_user (input, unformat_line_input, line_input))
@@ -1489,7 +1490,8 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
       }
     p = pool_elt_at_index (bm->pools, pool_index);
 
-    if (bpa_reverse_sub (p, host, (u16) port, &block_idx))
+    src = bpa_translation_source (p, host, (u16) port, &block_idx);
+    if (src == BPA_XLT_NONE)
       {
 	vlib_cli_output (vm, "%U:%u belongs to pool %v but to no block: the "
 			     "port is outside the pool's usable range, so "
@@ -1498,7 +1500,7 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	goto done;
       }
 
-    if (p->mode == BPA_MODE_DETERMINISTIC)
+    if (src == BPA_XLT_FORMULA)
       {
 	if (bpa_set_addr_of (&p->inside, block_idx, &ip_priv))
 	  {
@@ -1518,8 +1520,10 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	goto done;
       }
 
-    /* Dynamic: the answer is about now, and saying otherwise would be a
-     * wrong answer to a court order given with full confidence. */
+    /* Dynamic, or a deterministic pool's RESERVE: the answer is about now,
+     * and saying otherwise would be a wrong answer to a court order given
+     * with full confidence. The reserve is held by the same allocator in an
+     * index space of its own, so the same question finds its holder. */
     {
       u32 ti = 0, w, nw, found = 0;
 
@@ -1545,17 +1549,23 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	{
 	  vlib_cli_output (vm, "%U:%u  ->  nobody, right now", format_ip4_address,
 			   &addr, port);
-	  vlib_cli_output (vm, "  pool %v, block %u, DYNAMIC: no subscriber "
+	  vlib_cli_output (vm, "  pool %v, %s %u, %s: no subscriber "
 			       "holds this block at the moment", p->name,
-			   block_idx);
+			   src == BPA_XLT_RESERVE ? "reserve block" : "block",
+			   block_idx,
+			   src == BPA_XLT_RESERVE ? "DETERMINISTIC RESERVE"
+						  : "DYNAMIC");
 	}
       else
 	{
 	  priv.as_u32 = clib_host_to_net_u32 (ip_priv);
 	  vlib_cli_output (vm, "%U:%u  ->  %U", format_ip4_address, &addr,
 			   port, format_ip4_address, &priv);
-	  vlib_cli_output (vm, "  pool %v, block %u, DYNAMIC", p->name,
-			   block_idx);
+	  vlib_cli_output (vm, "  pool %v, %s %u, %s", p->name,
+			   src == BPA_XLT_RESERVE ? "reserve block" : "block",
+			   block_idx,
+			   src == BPA_XLT_RESERVE ? "DETERMINISTIC RESERVE"
+						  : "DYNAMIC");
 	}
       vlib_cli_output (
 	vm, "  this answers for NOW ONLY. The block belonged to somebody else "

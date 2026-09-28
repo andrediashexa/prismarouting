@@ -813,6 +813,15 @@ main (void)
 		 && got == v->res,
 	       "'%s': %u:%u did not resolve to reserve index %u",
 	       (char *) p->name, v->ip_pub, v->port_hi, v->res);
+	/* And what `show cgnat translation` answers for it (#483): the
+	 * reserve, found by the allocator - not "nothing was ever translated
+	 * here", which is what an authority was told about these ports. */
+	CHECK (bpa_translation_source (p, v->ip_pub, v->port_lo, &got)
+		   == BPA_XLT_RESERVE
+		 && got == v->res,
+	       "'%s': %u:%u is a reserve port and the translation screen "
+	       "would not read it as one", (char *) p->name, v->ip_pub,
+	       v->port_lo);
 	CHECK (bpa_reverse_sub (p, v->ip_pub, v->port_lo, &got) != 0,
 	       "'%s': %u:%u is a reserve port and bpa_reverse_sub() named "
 	       "subscriber %u for it",
@@ -2662,6 +2671,48 @@ main (void)
 	   "a forward into another subscriber's block was let in");
     CHECK (bpa_statics_complete (&p, in, 0) == ~0u,
 	   "a pool with no forwards was refused");
+  }
+
+  /* #483: the other three answers of bpa_translation_source(). */
+  printf ("\n=== where a translation answer comes from ===\n");
+  {
+    u32 k, formula = 0, dynamic = 0, none = 0, idx = 0;
+
+    for (k = 0; k < BPA_VEC_N_POOLS; k++)
+      {
+	bpa_pool_t *p = &pools[k];
+	u32 pub = p->outside.ranges[0].base;
+	u32 sub = 0;
+	bpa_xlt_source_t src = bpa_translation_source (p, pub, p->port_min,
+						       &idx);
+
+	if (bpa_reverse_sub (p, pub, p->port_min, &sub) == 0)
+	  {
+	    CHECK (src == (p->mode == BPA_MODE_DETERMINISTIC ? BPA_XLT_FORMULA
+							    : BPA_XLT_DYNAMIC)
+		     && idx == sub,
+		   "'%s': the first port of the first address read as source "
+		   "%d, block %u", (char *) p->name, src, idx);
+	    if (src == BPA_XLT_FORMULA)
+	      formula++;
+	    else
+	      dynamic++;
+	  }
+	if (p->port_min > 1)
+	  {
+	    CHECK (bpa_translation_source (p, pub, (u16) (p->port_min - 1),
+					   &idx) == BPA_XLT_NONE,
+		   "'%s': a port below the pool's range was given a source",
+		   (char *) p->name);
+	    none++;
+	  }
+      }
+    CHECK (formula > 0 && none > 0,
+	   "the vectors held no deterministic pool, or none with a port below "
+	   "its range: %u formula, %u dynamic, %u below", formula, dynamic,
+	   none);
+    printf ("  %u formula, %u dynamic and %u out-of-range answers read right\n",
+	    formula, dynamic, none);
   }
 
   return bpa_test_verdict (checks, failures);

@@ -294,6 +294,12 @@ B2_IP=$(blocks_of "$SUB" | sed -n 2p | cut -d' ' -f1)
 B2_LO=$(blocks_of "$SUB" | sed -n 2p | cut -d' ' -f2)
 B2_HI=$(blocks_of "$SUB" | sed -n 2p | cut -d' ' -f3)
 echo "  blocks held: $NBLK   second block: ${B2_IP:--} ${B2_LO:--}-${B2_HI:--}"
+# The question a court order asks, about a port of that reserve block (#483).
+# The formula names nobody for a reserve port, and this screen used to say
+# "nothing was ever translated here" - about a port that just was.
+TRANS_RES=$(vppctl show bpa translation "${B2_IP:-0.0.0.0}" "${B2_LO:-0}" 2>&1 | tr -d '\r')
+echo "  show bpa translation ${B2_IP:--} ${B2_LO:--}:"
+printf '%s\n' "$TRANS_RES" | sed 's/^/    /'
 
 echo
 echo "=========== the reply comes back on the reserve block ==========="
@@ -714,6 +720,12 @@ expect "and it is the block the model holds out of the formula" \
 # address, so a peer still sees one host.
 expect "on the subscriber's own public address, so it is still one host" \
   test -n "${B1_IP:-}" -a "${B1_IP:-x}" = "${B2_IP:-y}"
+# 2b. And the translation screen answers for that port with its holder, as
+#     the reserve it is, rather than "nothing was ever translated here".
+expect "the translation screen names the reserve port's holder" \
+  test -n "$(printf '%s\n' "$TRANS_RES" | grep -F -e "->  $S1")"
+expect "  and says the answer is the reserve's, not the formula's" \
+  test -n "$(printf '%s\n' "$TRANS_RES" | grep -F "DETERMINISTIC RESERVE")"
 # 3. The return path. Without the allocator lookup the arithmetic refuses
 #    this port and the reply is counted as out of every block.
 expect "a reply addressed to the reserve block was translated back" \
