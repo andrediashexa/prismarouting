@@ -410,6 +410,33 @@ def recent(db, limit=50, subscriber=None, public=None, kinds=None):
     return [dict(zip(COLUMNS, r)) for r in db.execute(q, args).fetchall()]
 
 
+def boots(db):
+    """
+    One row per boot a box announced, newest first: the exporter, when it
+    booted (init_ms), when the collector first heard of it, when last, and
+    how many markers repeated it. The box sends a marker every 30 seconds on
+    each transport so a collector learns of a restart within half a minute
+    even over UDP; what a person wants to see is the restarts, not the
+    repetitions, and the repetitions stay stored for who_held().
+    """
+    rows = db.execute(
+        "SELECT exporter, init_ms, MIN(ts_ms), MAX(ts_ms), COUNT(*) FROM "
+        "events WHERE kind = 'BOOT-MARKER' AND init_ms IS NOT NULL "
+        "GROUP BY exporter, init_ms ORDER BY init_ms DESC").fetchall()
+    return [dict(zip(("exporter", "init_ms", "first_ms", "last_ms", "markers"),
+                     r)) for r in rows]
+
+
+def boot_rows(rows):
+    """The boots table, escaped."""
+    head = ("<tr><th>box</th><th>up since</th><th>first announced</th>"
+            "<th>last announced</th><th>markers</th></tr>")
+    body = "".join("<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in (
+        r["exporter"], fmt_ms(r["init_ms"]), fmt_ms(r["first_ms"]),
+        fmt_ms(r["last_ms"]), r["markers"])) + "</tr>" for r in rows)
+    return "<table>" + head + body + "</table>"
+
+
 # --- the page -----------------------------------------------------------------
 
 def fmt_ms(ms, tz=LOCAL_TZ):
@@ -513,7 +540,12 @@ def render(db, path, query):
             recent(db, 200, subscriber=get("ip")))
     else:
         fill["refresh"] = "<meta http-equiv=refresh content=10>"
-        body = "<h3>Latest events</h3>" + event_rows(recent(db, 60))
+        body = ("<h3>Latest events</h3>" + event_rows(recent(
+            db, 60, kinds=("BLOCK-ALLOC", "BLOCK-RELEASE", "PORTS-EXHAUSTED",
+                           "STREAM-SKIPPED")))
+                + "<h3>Boots seen</h3><p>A box repeats its boot marker every "
+                "30 s on each transport; a new row here is a restart.</p>"
+                + boot_rows(boots(db)))
     return PAGE.format(body=body, **fill)
 
 

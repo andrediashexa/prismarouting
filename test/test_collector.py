@@ -232,7 +232,18 @@ check("Cannot read" in pc.render(db, "/who", "public=bad&port=x"),
       "a question it cannot read was not said to be one")
 check("Events for 100.64.0.12" in pc.render(db, "/subscriber", "ip=100.64.0.12"),
       "the subscriber page")
-check("refresh" in pc.render(db, "/", ""), "the latest-events page")
+for k in range(3):   # the same boot, repeated every 30 s
+    pc.store_event(db, {"ts_ms": T0 + 330000 + 30000 * k, "kind": "BOOT-MARKER",
+                        "init_ms": T0 + 250000, "exporter": BOX, "via": "syslog"})
+b = pc.boots(db)
+check(len(b) == 1 and b[0]["markers"] == 4 and b[0]["init_ms"] == T0 + 250000
+      and b[0]["first_ms"] == T0 + 300000,
+      f"four markers of one boot are not one row of four: {b}")
+check("4" in pc.boot_rows(b), "the boots table does not count the markers")
+front = pc.render(db, "/", "")
+check("refresh" in front and "Boots seen" in front, "the latest-events page")
+check(front.split("Boots seen")[0].count("BOOT-MARKER") == 0,
+      "the latest events still list every repeated boot marker")
 print("  local time, escaping, the answer, and the three pages")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
