@@ -3407,5 +3407,63 @@ with tempfile.TemporaryDirectory() as _fr:
           "a boot that isolates nothing fences nothing")
 print("  [ ok ] every function in the tuner, called on its own")
 
+print("\n=== a boot between two plans forwards on what is isolated now (#486) ===")
+# The #475 bench, as a fixture: an eight-CPU box that ran three workers on
+# 1-3 and was told to run all it can. The kernel has the pages and 1-3 only.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=5, isolated="1-3", ram_gb=64,
+          tx_queues=8)
+    ip_stub(maxmtu=1500)
+    topo = tune.Topology(root)
+    p = tune.plan(topo, "eth0", 200000)
+    check(not p["tuned_now"] and p["workers"] == [1, 2, 3, 4, 5, 6, 7],
+          f"the whole plan is seven workers and not tuned yet: "
+          f"{p['workers']} {p['tuned_now']}")
+    check(p["interim"] and p["interim"]["workers"] == [1, 2, 3]
+          and p["interim"]["tuned_now"],
+          f"the boot between did not plan the three isolated workers: "
+          f"{p['interim'] and p['interim']['workers']}")
+    v = tune.render_vpp(p)
+    check("FIRST BOOT MODE" not in v and "BETWEEN TWO PLANS" in v
+          and "corelist-workers 1-3" in v and "dpdk {" in v,
+          f"the boot between is not a tuned startup.conf on 1-3: {v[:400]!r}")
+    check("isolcpus=1-7" in tune.render_grub(p),
+          "the command line is not the whole plan's, so the next boot "
+          "would not move")
+    r = tune.render_report(p, None)
+    check("BETWEEN TWO PLANS, 3 worker(s)" in r,
+          f"the report does not say this boot is between two plans: "
+          f"{[l for l in r.splitlines() if 'state' in l]!r}")
+    print("  3 of 7 workers on 1-3 for this boot, and 1-7 on the kernel line")
+
+    # The first worker core not isolated: nothing to run on, conservative.
+    w(f"{root}/sys/devices/system/cpu/isolated", "2-3")
+    p = tune.plan(topo, "eth0", 200000)
+    check(p["interim"] is None and "FIRST BOOT MODE" in tune.render_vpp(p),
+          "a boot whose first worker core is not isolated was not "
+          "conservative")
+    # No isolation at all: conservative, as it always was.
+    w(f"{root}/sys/devices/system/cpu/isolated", "")
+    p = tune.plan(topo, "eth0", 200000)
+    check(p["interim"] is None and "FIRST BOOT MODE" in tune.render_vpp(p),
+          "a boot with nothing isolated was not conservative")
+    print("  nothing isolated, or not the first worker: the conservative "
+          "profile, as before")
+
+# interim_workers on its own.
+_wc = [(1, [1, 9]), (2, [2, 10]), (3, [3, 11])]
+check(tune.interim_workers(_wc, [], [1, 2, 9, 10]) == 2,
+      "two whole cores isolated did not give two workers")
+check(tune.interim_workers(_wc, [], [1, 2, 9]) == 1,
+      "a core whose sibling is not isolated was taken")
+check(tune.interim_workers(_wc, [], [1, 2, 3, 9, 10, 11]) == 0,
+      "every core isolated is the tuned plan, not an interim one")
+check(tune.interim_workers(_wc, [5], [1, 9]) == 0,
+      "a dedicated main thread on a CPU not isolated was run on anyway")
+check(tune.interim_workers(_wc, [], []) == 0,
+      "nothing isolated gave workers")
+print("  [ ok ] interim_workers: whole cores from the first, main included")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -799,7 +799,7 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
          config_path=None, vpp_base=None, mgmt_conf=None, cgnat_memory_gb=None,
          control_plane_cores=None, main_thread="shared",
          control_plane_memory_gb=None, buffers_per_numa=None,
-         cgnat_workers=None):
+         cgnat_workers=None, _interim=False):
     # The card this box is reached on, read for one reason: so the way back
     # can be computed off it below, before the bind takes it. It used to be
     # read to REFUSE that card when it was named (#123), and to let it
@@ -1116,7 +1116,7 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     operator_sized = operator_statseg(vpp_base) if vpp_base else False
     statseg_mb = statseg_mb_for(n_ifaces) if n_ifaces else None
 
-    return {
+    result = {
         "total_gb": total_gb,
         "hugepages_wanted": want_gb,
         "hugepages_capped": capped,
@@ -1197,6 +1197,57 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "statseg_operator": operator_sized,
         "vpp_base": vpp_base,
     }
+
+    # THE BOOT BETWEEN TWO PLANS (#486). A change that isolates more CPUs
+    # than the kernel isolated at this boot left `tuned_now` false, and a
+    # false `tuned_now` was the conservative profile: DPDK off, nothing
+    # forwarded, for one whole boot. Measured on the #475 bench: 3 workers ->
+    # 7 on an 8-vCPU guest, 5 x 1G pages reserved and CPUs 1-3 isolated, and
+    # that boot came up with no interface and no pool. The conservative
+    # profile exists for a kernel with NO pages or NO isolation, and this one
+    # had both - just not all of it. So the workers already isolated are
+    # planned on their own, with every other setting the operator gave, and
+    # that plan is what this boot runs; the command line is still the whole
+    # plan's, so the next boot moves to it.
+    interim = None
+    if (not tuned_now and hugepages_gb >= 1 and reserved >= 1
+            and not _interim):
+        fits = interim_workers(worker_cores, main_cpus, isolated_active)
+        if fits:
+            sub = plan(topo, ifname, subscribers, max_workers=fits,
+                       low_latency=low_latency, config_path=config_path,
+                       vpp_base=vpp_base, mgmt_conf=mgmt_conf,
+                       cgnat_memory_gb=cgnat_memory_gb,
+                       control_plane_cores=control_plane_cores,
+                       main_thread=main_thread,
+                       control_plane_memory_gb=control_plane_memory_gb,
+                       buffers_per_numa=buffers_per_numa,
+                       cgnat_workers=cgnat_workers, _interim=True)
+            # Only a plan that is tuned by the same test as any other: a
+            # half-measure that asks for what the kernel has not got is the
+            # restart loop the conservative profile was written to avoid.
+            if sub["tuned_now"]:
+                interim = sub
+    result["interim"] = interim
+    return result
+
+
+def interim_workers(worker_cores, main_cpus, isolated_active):
+    """How many of the plan's worker cores, from the first, the kernel has
+    already isolated whole - siblings included, and the dedicated main
+    thread's CPUs with them (#486). 0 when the first does not fit, or when
+    all of them do (then the plan is tuned and needs no interim), or when the
+    main thread's own core is not isolated yet: a worker is taken only as
+    the plan would take it, never on a CPU the scheduler still owns."""
+    active = set(isolated_active)
+    if not active or not set(main_cpus) <= active:
+        return 0
+    n = 0
+    for _, sibs in worker_cores:
+        if not set(sibs) <= active:
+            break
+        n += 1
+    return n if n < len(worker_cores) else 0
 
 
 # A core in C6 takes tens of microseconds to come back. The poll-mode worker
@@ -1467,6 +1518,16 @@ def render_ethernet(p):
 
 
 def render_vpp(p):
+    if not p["tuned_now"] and p.get("interim"):
+        # Between two plans (#486): the workers the kernel isolated already,
+        # tuned like any other plan, until the boot the command line moves.
+        i = p["interim"]
+        return ("# BETWEEN TWO PLANS. This boot runs "
+                f"{len(i['workers'])} worker(s) on the CPUs the kernel "
+                f"isolated already ({fmt_list(i['isolated'])});\n"
+                f"# the next boot isolates {fmt_list(p['isolated'])} and "
+                f"runs {len(p['workers'])}.\n"
+                + render_vpp(i))
     statseg = render_statseg(p)
     ethernet = render_ethernet(p)
     if not p["tuned_now"]:
@@ -2079,7 +2140,14 @@ def render_report(p, vpp_base):
                        "Linux: a handover with no way back is a box nobody "
                        "can reach")
     out.append(f"# low latency (C-states off, THP off): {'yes' if p['low_latency'] else 'no'}")
-    out.append(f"# state: {'kernel tuned, full configuration' if p['tuned_now'] else 'FIRST BOOT, conservative configuration until reboot'}")
+    if p["tuned_now"]:
+        _state = "kernel tuned, full configuration"
+    elif p.get("interim"):
+        _state = (f"BETWEEN TWO PLANS, {len(p['interim']['workers'])} "
+                  f"worker(s) on the CPUs isolated now until reboot")
+    else:
+        _state = "FIRST BOOT, conservative configuration until reboot"
+    out.append(f"# state: {_state}")
     return "\n".join(out)
 
 
