@@ -576,6 +576,13 @@ for args in (("cutoff", "remap"), ("remap", "cutoff"),
           f"'commit {' '.join(args)}' applies it too:\n{got}")
 check("confirmed" in out,
       f"and arms a rollback, because the session may not survive it:\n{out}")
+# `diverge` is not `cutoff` (#481). It fell into the branch that set the
+# cutoff acknowledgement, so a word about a pair's drift let through the
+# change that costs this session.
+box = Box(cfg_text(RUN))
+out, sh = box.commit(WITHDRAW, args=("diverge",))
+check(box.applied == [] and "commit cutoff" in out,
+      f"'commit diverge' applied a withdrawal that needs 'cutoff':\n{out}")
 
 # And an ordinary commit on the same box, with the same session address, is
 # not gated at all.
