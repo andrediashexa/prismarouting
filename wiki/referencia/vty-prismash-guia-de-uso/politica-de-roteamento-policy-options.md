@@ -248,7 +248,7 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 
 | Você digitou | A caixa diz |
 |--------------|-------------|
-| um nome com caractere fora do permitido ou com mais de 32 | `a name is letters, digits, '.', '_' and '-', at most 32 characters` |
+| um nome com caractere fora do permitido ou com mais de 32 | `prefix-list '<nome>': not a name` (ou o tipo que for), e embaixo `a name is letters, digits, '.', '_' and '-', at most 32 characters`; o prompt continua no nível em que estava |
 | `10.0.0.1/8` numa lista ou num `route-filter` | `'10.0.0.1/8' is not a network (address/length, host bits zero)` |
 | `community C members 70000:1` | `'70000:1' is not a community: ASN:value, each 0-65535` |
 | uma expressão de as-path que não compila | `the expression does not compile`, com o motivo |
@@ -263,6 +263,7 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 | `no` de algo que não existe | `policy-options has no such statement; nothing removed`, com a declaração |
 | `neighbor ... import` ou `export` de uma política que não existe, ou `export` num IGP | `no policy-statement named <nome>` |
 | uma `route-map` ou lista com nome começado por `PO-` | `the PO- names belong to policy-options; nothing staged` |
+| no `commit`, um term que cita uma `prefix-list`, `community` ou `as-path` que não existe | `policy-statement <política> term <term>: no prefix-list <lista>` (ou `community`, `as-path`); nada é aplicado |
 
 ## O que só existe no BGP, exportado para um IGP
 
@@ -272,7 +273,7 @@ O que conta como só de BGP: `from community`, `from as-path`, `set local-prefer
 
 
 :::warning
-**Crie as listas antes de citá-las num term, e confira com** `**show policy <política>**` **e** `**test policy**` **antes do** `**commit**`**.** O term aceita o nome de uma `prefix-list`, `community` ou `as-path` sem conferir se ela existe. Uma política aplicada num vizinho decide o que a sessão carrega: um term que não faz o que você pensava derruba ou vaza prefixos na sessão inteira.
+**Confira com** `**show policy <política>**` **e** `**test policy**` **antes do** `**commit**`**.** Uma política aplicada num vizinho decide o que a sessão carrega: um term que não faz o que você pensava derruba ou vaza prefixos na sessão inteira. O term pode ser digitado antes da lista que ele cita, mas o `commit` recusa um term que cita uma lista que não existe. Uma `prefix-list` que existe e está **vazia** não casa rota nenhuma: o term que depende só dela não pega nada. E lembre que, num vizinho BGP, o que nenhum term decide é **aceito**; para anunciar só o que as listas dizem, termine a política com um term que rejeita o resto.
 
 :::
 
