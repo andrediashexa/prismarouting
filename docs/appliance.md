@@ -393,7 +393,9 @@ takes VPP and the rest of the boot with it.
 Measured while booting the ISO with 2 GB: `Out of memory: Killed process (vpp)`,
 with VPP holding only **19 MB resident**. It was not the glutton; it was the
 chosen victim. Installed to disk the requirement drops, since there is no RAM
-overlay, but 4 GB remains the sensible floor for a dataplane.
+overlay - but the floor for FORWARDING is the table above, 6 GB, on disk as on
+the medium: the 4 GB row is the conservative profile handing the dataplane no
+card, and that does not depend on where the root lives.
 
 Session tables are shaped with `bpa session-table buckets <n> memory <MB>`,
 defaulting to 16k buckets. The **memory figure sizes nothing**: VPP builds the
@@ -1323,8 +1325,11 @@ decides ([#453](https://github.com/andrediashexa/hexarouting/issues/453)).
 - **`system dataplane restart`** says what it costs, including anything
   committed and not saved, because the saved file is what is replayed. Then
   `prisma-hot-card restart-dataplane`, in this order:
-  1. **stops** the containers. A `restart` of that unit is refused by systemd
-     on every container box (#459).
+  1. **stops** the containers, and step 5 starts them - a stop and a start
+     rather than a `restart`, because the cards are given back in between.
+     (`systemctl restart` of that unit was refused by systemd on every
+     container box until 0.131.0, #459; it works now, and is not what this
+     needs.)
   2. gives **every** claimed card back to its kernel driver with
      `give-the-card-back restart`. The tuner sees only cards Linux holds:
      measured, a restart that skipped this came back claiming the hot card

@@ -77,6 +77,16 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The wiki says what the box does at 0.138.**
+  ([#480](https://github.com/andrediashexa/hexarouting/issues/480))
+  Every one of the 33 pages was checked claim by claim against the product
+  for the first time since v0.76.1, and six pages were added for what shipped
+  with none: a pair, active/standby; a box that came up and does not forward;
+  a virtual machine; what runs on the box; where the records go; routing
+  policy. The public collection is called Prisma Routing and carries the
+  logo. `docs/appliance.md` and `docs/context.md` lose three statements the
+  pass found stale.
+
 ### Fixed
 
 ## 0.138.6 - the public name is prismarouting.com.br

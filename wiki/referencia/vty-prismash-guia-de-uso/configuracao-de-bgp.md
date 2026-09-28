@@ -208,7 +208,7 @@ result: reject, by term 20
 
 O teste parte só do prefixo. Uma condição que o prefixo sozinho não responde - community, as-path, protocolo, tag, métrica - não é adivinhada: o term aparece como "decide, se a rota tiver aquilo", e o teste segue como se não tivesse, para você ver os dois caminhos. Quando nenhum term decide, a resposta diz os dois padrões: aceito num vizinho BGP, não exportado para OSPF ou IS-IS.
 
-Em modo de configuração os dois comandos olham a candidata, ou seja, o que você está escrevendo e ainda não aplicou.
+Em modo de configuração, `show policy` olha a candidata, ou seja, o que você está escrevendo e ainda não aplicou. O `test policy` existe só no modo operacional e testa a política em vigor: para testar uma mudança, faça o `commit` e teste em seguida, ou leia a candidata com `show policy`.
 
 ## Exportando para OSPF e IS-IS
 
