@@ -587,12 +587,14 @@ bpa_log_stream_service (bpa_log_stream_t *s, f64 now)
    * would accept the next send and the peer's RST would discard it (#493).
    * Disconnected here, the buffer is kept, spilled past its threshold, and
    * sent whole behind a new template on the next connection. */
+#ifndef BPA_PEER_CHECK_OFF /* lab/syslog-reconnect.sh's off mode; no box */
   if (vec_len (s->outbuf) > s->head_sent && bpa_sock_peer_closed (s->fd))
     {
       bpa_tcp_disconnect (s);
       bpa_tcp_spill (s);
       return;
     }
+#endif
 
   while (vec_len (s->outbuf) > s->head_sent)
     {
