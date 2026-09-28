@@ -1,0 +1,19 @@
+# The power button, and a hypervisor's Shutdown, which is the same ACPI event
+# (#478). This box has no logind - the medium is debootstrap minbase, with no
+# dbus - so nothing else turns the key into a shutdown; measured on a Proxmox
+# guest, where `qm shutdown` timed out and the VM kept running.
+[Unit]
+Description=Prisma Routing - shut down when the power button is pressed
+Documentation=file:/usr/share/doc/prisma-routing/appliance.md
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/prisma-routing/prisma-power-button
+# A machine with no button exits 0 and stays down; a crash comes back.
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

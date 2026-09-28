@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The box ignored its power button, and so a hypervisor's Shutdown.**
+  ([#478](https://github.com/andrediashexa/hexarouting/issues/478))
+  On systemd it is logind that turns the ACPI power key into a shutdown, and
+  this box has none: the medium is a debootstrap minbase with no dbus. The
+  key reached the kernel and went nowhere, so Proxmox's Shutdown timed out
+  after 120 s and a host going down for maintenance would have killed the box
+  mid-write. `prisma-routing-power-button.service` watches the kernel's
+  "Power Button" input device and shuts the box down on a press; it is a
+  product file, not a package, so an upgraded box gets it as well as a new
+  install. Measured on the #475 bench: the same Shutdown now stops the box
+  cleanly in 41 s.
+
 ## 0.139.0 - an install from the ISO names its management card as the installed box will
 
 ### Fixed
@@ -95,6 +107,8 @@ version has a chance of seeing it.
   the name the installed box uses. The two `printf: I/O error` lines above
   the questions are gone too: the first card was read with `head`, which
   closed the pipe on the others. Found installing the #475 bench on Proxmox.
+
+
 
 ## 0.138.13 - the boot after a tuning change forwards on the workers already isolated
 
