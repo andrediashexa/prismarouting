@@ -2650,9 +2650,12 @@ TREE["cpu"] = {
 TREE["dataplane"] = {
     "interface": ("the card carrying subscriber traffic, by the name Linux "
                   "gives it", ARG_HOST_NIC),
-    "no": ("stop handing a card to the dataplane", {
-        "interface": ("the box claims no card at the next start of the "
-                      "dataplane", None)}),
+    # Not "claims no card": an empty setting is the automatic rule - every
+    # card but the one kept for Linux - which is what the tuner does with it
+    # (#482).
+    "no": ("stop naming one card; the box chooses again", {
+        "interface": ("at the next start of the dataplane the box claims "
+                      "every card but the one kept for Linux", None)}),
     "exit": ("leave 'dataplane'", None),
     **_EVERY_LEVEL,
 }
@@ -8122,8 +8125,8 @@ class Shell:
             print_prose("this box has no address and cannot be reached over "
                         "the network until that is repaired from here")
             print_prose("'show hardware' says what the dataplane holds; 'no "
-                        "dataplane interface' gives the card back at the next "
-                        "start")
+                        "interface' under 'system' > 'dataplane' gives the "
+                        "card back at the next start")
             # The path on a row of its own: it is what the operator goes and
             # reads, and a path that wraps is one they cannot copy (#276).
             print_prose("the card is named in this file:")
@@ -15362,8 +15365,8 @@ class Shell:
         if named:
             return [f"'system', 'dataplane', 'interface' names '{named}', so the dataplane "
                     f"claims that card and no other.",
-                    "Remove it with 'no dataplane interface' to let the box "
-                    "choose again."]
+                    "Remove it with 'no interface' under 'system' > "
+                    "'dataplane' to let the box choose again."]
         if not nics:
             return ["There is no card here for the dataplane to claim."]
         reserve = self.reserved_for_linux()

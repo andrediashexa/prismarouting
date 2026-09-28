@@ -776,6 +776,22 @@ with tempfile.TemporaryDirectory() as tmp:
     check("no management network" in said,
           f"and does not say why nothing is reserved: {said!r}")
 
+print("\n=== a named card: the way back is a command the prompt takes (#482) ===")
+# The note told the operator to type 'no dataplane interface', which the prompt
+# has refused since the statement moved under 'system' > 'dataplane'. The
+# command it names has to be one the box accepts, at the level it names.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp)
+    drive(sh, ["configure", "system", "dataplane", "interface enp2s0", "commit"])
+    said = " ".join(sh.claim_note(sh.host_nics()))
+    check("'no interface' under 'system' > 'dataplane'" in said
+          and "'no dataplane interface'" not in said,
+          f"the note does not name the command that removes the card: {said!r}")
+    back = drive(sh, ["exit", "exit", "exit", "configure", "system",
+                      "dataplane", "no interface", "commit"])
+    check("commit complete" in back and sh.read_dataplane_if() == "",
+          f"the command the note names did not remove the card: {back!r}")
+
 print("\n=== a card the installer recorded is reserved, and named ===")
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp, reserve="enp1s0")
@@ -1692,6 +1708,12 @@ with tempfile.TemporaryDirectory() as tmp:
         check(fact in said, f"the refusal does not name {fact}: {said!r}")
     _wide = [l for l in said.splitlines() if len(l) > CONSOLE_COLUMNS]
     check(not _wide, f"the refusal does not fit the console: {_wide!r}")
+    # The way back it names is one the prompt takes (#482): 'no dataplane
+    # interface' has been refused since the statement moved under system.
+    _flat = " ".join(said.split())
+    check("'no interface' under 'system' > 'dataplane'" in _flat
+          and "no dataplane interface" not in _flat,
+          f"the refusal names a command the prompt refuses: {said!r}")
     # Not indexed blind: a run where the box said nothing is the failure this
     # case exists for, and a progress line that raises there loses every
     # reading after it.

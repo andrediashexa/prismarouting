@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The VTY told the operator to type a command it refuses.**
+  ([#482](https://github.com/andrediashexa/hexarouting/issues/482))
+  With a card named for the dataplane, the note said "Remove it with 'no
+  dataplane interface'", which the prompt has refused since the statement
+  moved under `system` > `dataplane`; it now names `no interface` at that
+  level, and a test types what it names. The help text of that `no
+  interface` said the box then claims no card; an empty setting is the
+  automatic rule, every card but the one kept for Linux, and the help says so.
+  The console error of a box whose card was handed over and taken by nothing
+  named the same refused command as its way back; it names the one that
+  exists too.
+
 ## 0.138.11 - on a virtio guest each packet is translated on the worker that received it
 
 ### Fixed

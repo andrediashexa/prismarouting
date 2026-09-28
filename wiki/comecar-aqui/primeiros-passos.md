@@ -194,11 +194,9 @@ Se a caixa subir com a placa entregue e **nada** do outro lado tiver ficado com 
 error: the card this box is reached on was handed over and nothing took it
     this box has no address and cannot be reached over the network until that
     is repaired from here
-    'show hardware' says what the dataplane holds; 'no dataplane interface'
-    gives the card back at the next start
+    'show hardware' says what the dataplane holds; 'no interface' under
+    'system' > 'dataplane' gives the card back at the next start
 ```
-
-A tela ainda escreve `no dataplane interface`; hoje isso se digita como `no interface` dentro de `system` > `dataplane`.
 
 :::
 
