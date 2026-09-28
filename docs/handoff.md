@@ -1,6 +1,6 @@
 # Where this stands, for whoever picks it up next
 
-Written 2026-09-27, at 0.138.0, so the next session starts with the state
+Written 2026-09-28, at 0.140.0, so the next session starts with the state
 rather than reconstructing it. **This file is a handoff, not a plan** —
 `docs/roadmap.md` is the plan, and where the two disagree the roadmap is
 right. `CLAUDE.md` is how this repository is worked on; read that first.
@@ -8,35 +8,47 @@ right. `CLAUDE.md` is how this repository is worked on; read that first.
 ## The short version
 
 **Nothing is on a branch waiting.** Every issue that was work somebody could
-start has been released and closed. What is open is one of three things, and
+start has been released and closed. What is open is one of four things, and
 none of them is waiting for somebody to start it:
 
 * **a decision the maintainer has not taken**, with the evidence already on
-  the issue;
+  the issue - #485 (NAT64) is the new one;
+* **a bench that needs the maintainer's say-so** to go further - #475;
 * **blocked**, on hardware this project does not have or on an upstream;
 * **deferred by its own issue** until there is demand for it.
 
-The next piece of work will therefore come from the maintainer: a decision on
-one of the issues below, or, as it usually has, something seen on a box.
-
-## Released since the last handoff (0.125.1)
+## Released since the last handoff (0.138.0)
 
 The CHANGELOG has each one. By theme:
 
 | | | |
 |---|---|---|
-| 0.125.2 - 0.130.0 | the CGNAT under `nat`, a backplane of its own (128.0.0.0/8 in VRF `prisma-bp`), the login broker, cards added to a running box, the CGNAT's memory, the dataplane under `system` | #446 #447 #448 #453 #454 |
-| 0.131.0 - 0.131.8 | the maintainer's box, one request at a time: the Linux end named for its interface, commit from inside a pool, the CGNAT side on the interface, BPA as the dynamic allocation, the RAM floor, Junos-style routing policy, a first allocation larger than the step, cores by role | #461 #462 #463 #464 #452 #458 #465 #466 |
-| 0.132.0 - 0.133.4 | a smaller initrd, policy into OSPF and IS-IS, the control plane fenced off the dataplane's CPUs, `show`/`test policy`, memory by role, RX and CGNAT workers, LACP bundles | #450 #458 #466 #455 |
-| 0.134.0 | the NIC drivers back in the initramfs: 0.132.0 booted with its cards missing | #468 |
-| 0.135.0 | the host's doors: what the VTY does to the host, asked of a root daemon | #448 |
-| 0.136.0 | the kernel is Prisma Routing's: Debian's 6.1.187-1, renamed and trimmed | #449 |
-| 0.136.1 | a subscriber reaches the box itself through the CGNAT | #470 |
-| 0.136.2 | a `show` longer than the screen stops at `--More--` | #469 |
-| 0.137.0 - 0.138.0 | the management plane's container, and the VTY in it by default | #448 |
+| 0.138.2 - 0.138.5 | a /0 prefix refused; a unit test for every CGNAT function; a whole-configuration load that drops a sub-interface reaches FRR; `exit` after a commit no longer warns about discarded changes | #473 #472 #474 #477 |
+| 0.138.6 - 0.138.7 | the public name is prismarouting.com.br; the wiki read claim by claim against the product at 0.138, six pages added, renamed Prisma Routing with its logo | #479 #480 |
+| 0.138.8 - 0.138.10 | the translation screen answers a reserve port; a policy term naming a missing list is refused instead of matching every route; `commit`'s words each acknowledge only themselves, and `confirmed` and `comment` go together | #483 #484 #481 |
+| 0.138.11 | on a virtio guest each packet is translated on the worker that received it | #487 |
+| 0.138.12 | the VTY names the command that gives a dataplane card back | #482 |
+| 0.138.13 | the boot after a tuning change forwards on the workers already isolated | #486 |
+| 0.139.0 | the installer names cards as the installed box will | #476 |
+| 0.140.0 | a hypervisor's Shutdown stops the box cleanly | #478 |
 
-0.132.0, 0.133.0, 0.134.0, 0.135.0, 0.136.0, 0.137.0 and 0.138.0 went through
-the full gate; the rest are patches.
+0.139.0 and 0.140.0 went through the full gate; the rest are patches.
+
+## The bench (#475)
+
+Three VMs on the maintainer's Proxmox (`fix-dl360-g8`), VMIDs 200240-200242,
+on two bridges of their own (vmbr9, vmbr10) with no uplink. **Nothing else on
+that host is ours to touch.** 200240 runs the subscribers, 200241 is the box
+(installed from the ISO, upgraded with `system upgrade`, at 0.139.0), 200242
+is the internet (iperf3, IPFIX and syslog collectors). The credentials are in
+the maintainer's hands and in files outside this repository, never here.
+
+What it measured, all on the issue: BPA holds under real TCP; the ceiling is
+about 6.7 Gbit/s at 1500 bytes and **it is the host**, not the box - the
+workers find a packet in 7% of their polls and the guests show about 20%
+steal. To measure further the guests need pinned CPUs or a passed-through NIC,
+and that is the maintainer's host to decide about. Found on the way and
+shipped: #486, #487.
 
 ## Decided on 2026-09-24 and after
 
@@ -55,6 +67,10 @@ the full gate; the rest are patches.
 
 ## Waiting on a decision
 
+* **#485**: stateful NAT64, asked for by a contributor as CGNAT with an IPv6
+  inside - the same pool shared by port and the same court-order obligation.
+  It takes NAT64 back out of #31's "not planned", so the scope is the
+  maintainer's call; nothing is started.
 * **#210**: the block rebalancer is delivered and off (`bpa rebalance
   enable`). Every setting that serves the refused subscriber also lends a
   block the lender's next subscriber wants; which one an ISP wants depends on
@@ -102,6 +118,10 @@ rather than a feature.
   them is a minor with the full gate. The full gate needs about 32 GB of RAM.
 * **Every release goes to the public directory as well** -
   `tools/publish-release.sh`, with the target in `~/.releases-target`.
+* **A release title passed through `sh -c` loses its apostrophe** to the
+  quoting, and the title is what the CHANGELOG heading and the published
+  release are checked against. 0.140.0's first cut was stopped for exactly
+  that; write the call into a script file and run the file.
 
 ### The kernel
 
@@ -162,3 +182,12 @@ rather than a feature.
   defect (#470).
 * **The labs are where the interesting failures are found**, and a lab that
   asserts what the box does wrong is worse than none.
+* **A service that reads a device at boot has to wait for it.** The power
+  button's first cut started 0.4 s before the kernel registered the button,
+  read nothing, and exited as a machine with no button; the bench did not
+  show it because the service had been started there by hand (#478). A fix
+  proven by starting something by hand is proven for the hand.
+* **On a KVM guest the host's tap steers a flow to the queue the guest last
+  transmitted it on.** That, not RSS, decides which worker receives on a
+  virtio card, which is why #487 placed RX queues by TX queue. On a physical
+  card RSS decides, and #29 is still the work there.
