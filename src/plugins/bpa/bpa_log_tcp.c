@@ -504,8 +504,14 @@ bpa_tcp_drop_sent (bpa_log_stream_t *s)
        * the syslog wire too, and cut the stream 12576 bytes in, mid-message.
        * A front it cannot read is left as it is: guessing at where the next
        * message starts would corrupt the stream for good. */
+#ifdef BPA_FRAME_OFF
+      /* lab/syslog-reconnect.sh's off mode builds the plugin this way, to
+       * show the cut this exists for. No box is built with it. */
+      u32 mlen = bpa_frame_len (0, s->outbuf, vec_len (s->outbuf));
+#else
       u32 mlen = bpa_frame_len (s->wire == BPA_WIRE_SYSLOG, s->outbuf,
 				vec_len (s->outbuf));
+#endif
 
       if (!mlen || s->head_sent < mlen)
 	break;
