@@ -2297,6 +2297,40 @@ check(sh.system_rewrite("exit") == "" and sh.nat_ctx == ["system"],
       "exit leaves one level")
 ok("system > dataplane, read and written in one shape")
 
+print("\n=== a policy naming a list that does not exist is refused (#484) ===")
+# The compiler turned such a term into a clause with no match - every route -
+# and policy.findings(), which says so, was never asked by the commit.
+_bad = ["policy-options policy-statement EXPORT term t1 from prefix-list NAO-EXISTE",
+        "policy-options policy-statement EXPORT term t1 then accept"]
+_run0, _tgt = Config(), Config()
+_tgt.policy = list(_bad)
+sh = shell()
+sh.running_config = lambda: _run0
+rv, text = driven(lambda: sh.apply(_tgt, check_only=True))
+check(rv is False
+      and "error: policy-statement EXPORT term t1: no prefix-list NAO-EXISTE"
+      in text,
+      f"a term naming a missing prefix-list was not refused: {rv!r} {text!r}")
+# The guard every such refusal here carries: a saved file that ALREADY holds
+# the fault still loads at boot, and is told rather than refused.
+_run1 = Config()
+_run1.policy = list(_bad)
+sh = shell()
+sh.running_config = lambda: _run1
+rv, text = driven(lambda: sh.apply(_tgt, check_only=True))
+check("error: policy-statement EXPORT term t1" not in text
+      and "no prefix-list NAO-EXISTE" in text,
+      f"a fault the running configuration already carried was refused: {text!r}")
+# And a name the VTY refuses does not become the level the next lines go in.
+sh = shell()
+sh.candidate = Config()
+sh.mode = "config"
+rv, text = driven(lambda: [sh.feed(l) for l in ("policy-options",
+                                                 "prefix-list nome#ruim")])
+check(sh.nat_ctx == ["policy-options"] and "a name is letters" in text,
+      f"a refused name was entered as a level: {sh.nat_ctx} {text!r}")
+ok("a missing list refused at commit, a carried one told, a bad name not entered")
+
 print("\n=== routing policy in the VTY (#458) ===")
 check(prismash.compiled_object("route-map PO-P-IN permit 10")
       and prismash.compiled_object(" ip prefix-list PO-X seq 5 permit 10.0.0.0/8")

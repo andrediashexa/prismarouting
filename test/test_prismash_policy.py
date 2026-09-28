@@ -297,5 +297,35 @@ check(policy._filter_matches(policy.ipaddress.ip_network("10.1.0.0/16"),
       "_filter_matches: longer, exact, and another family")
 ok("decided, not matched, not guessed, and each default")
 
+print("\n=== a term whose prefix lists match nothing matches nothing (#484) ===")
+# One mistyped list name compiled to a clause with no `match`, which FRR
+# reads as "every route": on a BGP export, the whole table announced. And
+# evaluate() - `test policy` - said "no match" for the same term.
+_leak = policy.parse([
+    "policy-options policy-statement EXPORT term t1 from prefix-list NAO-EXISTE",
+    "policy-options policy-statement EXPORT term t1 then accept"])[0]
+_out = policy.compile_policy(_leak, "EXPORT", "export")
+check(not any(l.startswith("route-map PO-EXPORT-OUT permit 10") for l in _out),
+      f"a term naming a missing prefix-list compiled to a clause: {_out}")
+_empty = policy.parse([
+    "policy-options prefix-list VAZIA",
+    "policy-options policy-statement EXPORT term t1 from prefix-list VAZIA",
+    "policy-options policy-statement EXPORT term t1 then accept"])[0]
+_out = policy.compile_policy(_empty, "EXPORT", "export")
+check(not any(l.startswith("route-map PO-EXPORT-OUT permit 10") for l in _out),
+      f"a term naming an EMPTY prefix-list compiled to a clause: {_out}")
+_good = policy.parse([
+    "policy-options prefix-list MINHAS 203.0.113.0/24",
+    "policy-options policy-statement EXPORT term t1 from prefix-list MINHAS",
+    "policy-options policy-statement EXPORT term t1 then accept"])[0]
+_out = policy.compile_policy(_good, "EXPORT", "export")
+check("route-map PO-EXPORT-OUT permit 10" in _out
+      and " match ip address prefix-list PO-EXPORT-Tt1-4" in _out,
+      f"a term whose list has prefixes lost its clause or its match: {_out}")
+check([w for _, w in policy.findings(_leak)]
+      == ["policy-statement EXPORT term t1: no prefix-list NAO-EXISTE"],
+      f"findings() does not name the missing list: {policy.findings(_leak)}")
+ok("a missing or empty list matches nothing; a list with prefixes still does")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

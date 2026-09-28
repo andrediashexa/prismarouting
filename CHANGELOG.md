@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A policy term naming a prefix-list that does not exist matched every
+  route.** ([#484](https://github.com/andrediashexa/hexarouting/issues/484))
+  The compiler turned such a term into a route-map clause with no `match`,
+  which FRR reads as "every route", while `test policy` said the term matched
+  nothing. A typo in a list name on a BGP export was the whole table
+  announced, and nothing refused it: the check that names the missing list
+  existed and the commit never asked it. Now the commit refuses a term naming
+  a prefix-list, community or AS-path list that does not exist, when the
+  change is what brings it (a saved file that already carries one still
+  loads, and is told); a term whose lists hold no prefix matches nothing
+  instead of everything; and a name the VTY refuses no longer becomes the
+  level the next lines are typed in.
+
 ## 0.138.8 - the translation screen answers a reserve port instead of denying it
 
 ### Fixed
