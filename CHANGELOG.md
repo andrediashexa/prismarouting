@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **An install from the ISO on a network with no DHCP could not name its
+  management card.** ([#476](https://github.com/andrediashexa/hexarouting/issues/476))
+  On the live medium the dataplane takes every card Linux
+  is not using and renames it `xdp-<name>`; with no DHCP lease that is every
+  card. The installer knew nothing of the rename, so
+  `prisma-routing.mgmt-interface=ens18` was refused ("this machine has no
+  card called 'ens18'") beside a list offering `xdp-ens18` - a name the
+  installed box never has, which picking from the menu would have written
+  into its management stanza. Cards are now listed, accepted and recorded by
+  the name the installed box uses. The two `printf: I/O error` lines above
+  the questions are gone too: the first card was read with `head`, which
+  closed the pipe on the others. Found installing the #475 bench on Proxmox.
+
 ## 0.138.13 - the boot after a tuning change forwards on the workers already isolated
 
 ### Fixed

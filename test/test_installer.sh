@@ -808,6 +808,55 @@ case "$LAST_OUT" in
 $LAST_OUT" ;;
 esac
 
+# THE LIVE MEDIUM'S NAMES (#476). On a live boot with no DHCP server every card
+# is the dataplane's, and prisma-hot-card has renamed it xdp-<name>. The name
+# an operator knows and the installed box will have is still <name>: typed, it
+# has to be accepted; offered in the menu or the refusal, it has to be that
+# name and not xdp-<name>, which the installed box never has.
+livesys=$(mktemp -d)
+mkdir -p "$livesys/xdp-ens18/device" "$livesys/xdp-ens19/device" \
+         "$livesys/xdp-ens20/device" "$livesys/lo"
+for c in 18 19 20; do echo up > "$livesys/xdp-ens$c/operstate"; done
+# shellcheck disable=SC2086
+run 0 "a card the live medium renamed is accepted by the name it will have" \
+    $NOK PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$livesys" \
+    PRISMA_MGMT_INTERFACE=ens18 PRISMA_MGMT_ADDRESS=10.95.210.241/24 \
+    PRISMA_MGMT_GATEWAY=10.95.210.1
+case "$LAST_OUT" in
+  *"management     ens18, 10.95.210.241/24 via 10.95.210.1"*)
+    ok "and the summary names ens18, not xdp-ens18" ;;
+  *) bad "the renamed card was not taken as ens18:
+$LAST_OUT" ;;
+esac
+# shellcheck disable=SC2086
+run 1 "a card that is not there is still refused, live names or not" $NOK \
+    PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$livesys" \
+    PRISMA_MGMT_INTERFACE=ens21 PRISMA_MGMT_ADDRESS=dhcp
+case "$LAST_OUT" in
+  *xdp-ens*) bad "the refusal offered a live medium's name the installed box
+will not have:
+$LAST_OUT" ;;
+  *"ens18 up"*) ok "and the cards it lists are the names the box will have" ;;
+  *) bad "the refusal did not list the cards:
+$LAST_OUT" ;;
+esac
+# With no default route and no card named, the first card is the default -
+# read to the end of the list, not cut off after one line: that cut made
+# every card after the first a "printf: I/O error" on the console.
+# shellcheck disable=SC2086
+run 0 "with three renamed cards and no route, the menu is asked, quietly" \
+    $NOK PRISMA_ROOT_PASSWORD=s3cr3t PRISMA_NET_SYS="$livesys"
+case "$LAST_OUT" in
+  *"I/O error"*) bad "nic_table still writes into a closed pipe:
+$LAST_OUT" ;;
+  *xdp-ens*) bad "the menu offered a live medium's name:
+$LAST_OUT" ;;
+  *"a) ens18"*"<- this medium is reaching the network on this one"*)
+    ok "the menu offers ens18 first, marked as the default card, and nothing complained" ;;
+  *) bad "the menu did not offer ens18 as the first card:
+$LAST_OUT" ;;
+esac
+
 # The answer that means "this box is reached at its console". It has to be
 # possible, or an operator with an out-of-band management path is forced to
 # write an address the box does not need - and it has to be DISTINGUISHABLE
