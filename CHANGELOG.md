@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.140.2 - a packet no longer pays a FIB lookup to learn it is not for the box
+
+### Fixed
+
 * **Every packet paid a FIB lookup to learn it was not for the box.**
   ([#489](https://github.com/andrediashexa/hexarouting/issues/489))
   0.136.1 (#470) asked the FIB, before the session table, whether each
