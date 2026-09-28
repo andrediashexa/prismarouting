@@ -5,6 +5,8 @@
 #include <vpp/app/version.h>
 #include <vnet/ip/ip_interface.h>
 #include <vnet/ip/reass/ip4_sv_reass.h>
+#include <vnet/interface/rx_queue_funcs.h>
+#include <vnet/interface/tx_queue_funcs.h>
 
 #include <bpa/bpa_version.h>
 
@@ -943,6 +945,60 @@ bpa_auto_mss_update (void)
  * recompute (#183). Whatever the next caller is - a startup file, a
  * netconf agent - it gets the whole thing by calling this.
  */
+/*
+ * Each RX queue of the card under `sw_if_index` polled by the thread that
+ * transmits on the TX queue with the same number (#487). bpa_rx_thread_for()
+ * says why and holds the choice; this is only the walk over VPP's tables.
+ *
+ * At attach, because that is when the card starts carrying subscribers, and
+ * once is enough: measured on the #475 bench, the placement survives the
+ * card going down and up and an MTU change. A card with no queues - a tap, a
+ * loopback - has nothing to walk.
+ */
+/* not a unit: it reads and moves VPP's queue
+ * placement, which only a running dataplane has; bpa_rx_thread_for() is the
+ * choice, held by test/test_bpa_workers.c, and the #475 bench measured the
+ * handoff it removes. */
+static void
+bpa_rx_align (u32 sw_if_index)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hw = vnet_get_sup_hw_interface (vnm, sw_if_index);
+  u32 *tx_threads = 0, *qi, *ti, moved = 0;
+
+  if (!hw || vlib_num_workers () == 0)
+    return;
+  vec_foreach (qi, hw->rx_queue_indices)
+    {
+      vnet_hw_if_rx_queue_t *rxq = vnet_hw_if_get_rx_queue (vnm, qi[0]);
+      u32 thread;
+
+      if (!rxq)
+	continue;
+      vec_reset_length (tx_threads);
+      vec_foreach (ti, hw->tx_queue_indices)
+	{
+	  vnet_hw_if_tx_queue_t *txq = vnet_hw_if_get_tx_queue (vnm, ti[0]);
+	  uword t;
+
+	  if (!txq || txq->queue_id != rxq->queue_id)
+	    continue;
+	  clib_bitmap_foreach (t, txq->threads)
+	    vec_add1 (tx_threads, (u32) t);
+	}
+      thread = bpa_rx_thread_for (tx_threads, vec_len (tx_threads),
+				  rxq->thread_index);
+      if (thread != ~0u && thread != rxq->thread_index)
+	{
+	  vnet_hw_if_set_rx_queue_thread_index (vnm, qi[0], thread);
+	  moved++;
+	}
+    }
+  vec_free (tx_threads);
+  if (moved)
+    vnet_hw_if_update_runtime_data (vnm, hw->hw_if_index);
+}
+
 /* not a unit: it enables or disables this
  * plugin's nodes on an interface through vnet_feature_enable_disable(),
  * which is VPP's graph. test/test_feature_order.py holds the order those
@@ -976,6 +1032,9 @@ bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
    * interface the CGNAT no longer touches with nothing left to turn it off.
    */
   ip4_sv_reass_enable_disable_with_refcnt (sw_if_index, enable);
+
+  if (enable)
+    bpa_rx_align (sw_if_index);
 
   /* The set of interfaces the CGNAT runs on has just changed, and that set is
    * what "tcp-mss auto" is the minimum over. Left alone, the clamp keeps

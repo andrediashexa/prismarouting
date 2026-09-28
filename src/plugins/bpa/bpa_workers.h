@@ -72,4 +72,35 @@ bpa_owner_thread (u32 n_workers, const u32 *owner_wid,
   return bpa_thread_of_wid (owner_wid[bpa_owner_worker (workers, sub_idx)]);
 }
 
+/*
+ * The thread that should poll RX queue q, given the threads that transmit on
+ * TX queue q (`tx_threads`, `n` of them) and the thread polling it now (#487).
+ *
+ * A Linux tap with several queues - vhost-net, what every KVM host gives a
+ * virtio card - delivers a flow on the queue the guest last transmitted it
+ * on. VPP's default puts RX queue q on thread q + 1 and TX queue q on thread
+ * q, so the owning worker's own transmissions steered every packet of its
+ * flows to the next thread: measured on the #475 bench, 1.5 M of 1.5 M
+ * packets per worker handed off, and bpa-in2out at 1679 clocks/packet where
+ * the aligned placement gave 1273. The thread polling now is kept when it
+ * already transmits on q; the main thread is never chosen, because it does
+ * not poll. ~0 when no worker transmits on q: leave the queue where it is.
+ */
+static_always_inline u32
+bpa_rx_thread_for (const u32 *tx_threads, u32 n, u32 current)
+{
+  u32 i, best = ~0u;
+
+  for (i = 0; i < n; i++)
+    {
+      if (tx_threads[i] == 0)
+	continue;
+      if (tx_threads[i] == current)
+	return current;
+      if (tx_threads[i] < best)
+	best = tx_threads[i];
+    }
+  return best;
+}
+
 #endif /* __included_bpa_workers_h__ */
