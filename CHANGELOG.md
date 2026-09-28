@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.138.8 - the translation screen answers a reserve port instead of denying it
+
+### Fixed
+
 * **`show cgnat translation` denied a port of a deterministic pool's reserve
   that had been translated.**
   ([#483](https://github.com/andrediashexa/hexarouting/issues/483))
