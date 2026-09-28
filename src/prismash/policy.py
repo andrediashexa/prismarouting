@@ -499,6 +499,15 @@ def compile_policy(pol, policy, direction):
             if entry:
                 per_family[_family(net)].append(entry)
         families = [f for f in ("ip", "ipv6") if per_family[f]]
+        # A TERM THAT ASKED FOR PREFIXES AND GOT NONE MATCHES NOTHING (#484).
+        # Its lists are missing or empty, so no route is in them - and the
+        # clause below, with no `match`, would match EVERY route. On a BGP
+        # export that is the whole table announced, from one mistyped list
+        # name; and `evaluate()` - `test policy` - said "no match" for the
+        # same term, so the operator's own test contradicted FRR. The term is
+        # left out: it matches nothing, as both of them now say.
+        if (term.prefix_lists or term.filters) and not families:
+            continue
         for fam in families:
             name = f"{base}-{'4' if fam == 'ip' else '6'}"
             for seq, entry in enumerate(per_family[fam], start=1):

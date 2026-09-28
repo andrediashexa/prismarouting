@@ -9183,6 +9183,26 @@ class Shell:
                 else:
                     self.say_finding("warning", stmt, why)
 
+            # A POLICY TERM NAMING A LIST THAT DOES NOT EXIST (#484). The
+            # compiler leaves such a term out - it matches nothing - but the
+            # operator wrote it to match something, and a typo in a list
+            # name is not a change to apply in silence. policy.findings()
+            # said so from the day it was written, and nothing asked it.
+            # Refused only when THIS change brings it, the guard the
+            # route-map refusal above uses, so a saved file that already
+            # carries one still loads at boot.
+            pol_had = {why for _, why in policy_mod.findings(
+                policy_mod.parse(running.policy)[0])}
+            for _pname, why in policy_mod.findings(
+                    policy_mod.parse(target.policy)[0]):
+                if " has no term" in why:
+                    continue
+                if why in pol_had:
+                    self.say_finding("warning", why.split(":")[0], why)
+                else:
+                    self.say_finding("error", why.split(":")[0], why)
+                    ok = False
+
             # An eBGP neighbour with no maximum-prefix (#145). A warning and
             # never a refusal: running a session without a limit is a real
             # design and the operator's call, which is what the issue asking
@@ -12452,7 +12472,13 @@ class Shell:
             return True
         _, bad = policy_mod.parse([line])
         if bad:
-            self.err(bad[0][1])
+            # The verdict, then the rule on a row of its own: whole, the name
+            # refusal reached 98 columns (#484, driven for the first time).
+            head, sep, why = bad[0][1].partition(": a name is ")
+            if sep:
+                self.err_prose(f"{head}: not a name", "a name is " + why)
+            else:
+                self.err(bad[0][1])
             return True
         w = line.split()
         if w[1] in ("community", "as-path"):
@@ -12505,7 +12531,11 @@ class Shell:
                      "policy-statement ") and len(body) == 2
                      and body[0] == "term"))
         flat = " ".join([top] + ([path] if path else []) + body)
-        if opens and not neg:
+        # A LEVEL IS ENTERED ONLY UNDER A NAME IT CAN HAVE (#484). The line
+        # below is refused for the name by the statement's own check, and the
+        # prompt used to move into the level anyway - so what was typed next
+        # went under a name that would never be accepted.
+        if opens and not neg and not policy_mod.name_error(body[0], body[1]):
             self.nat_ctx.append(" ".join(body))
         return ("no " if neg else "") + flat
 
