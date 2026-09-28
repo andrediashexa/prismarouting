@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.140.1 - where this stands, at 0.140.0
+
+### Added
+
 * **`docs/handoff.md` and the roadmap are brought up to 0.140.0** ([#488](https://github.com/andrediashexa/hexarouting/issues/488)).
   The roadmap still called open the eleven issues released on 2026-09-28;
   each row now names the release that delivered it. The handoff carries the
@@ -86,8 +92,6 @@ version has a chance of seeing it.
   its apostrophe through `sh -c`, a service reading a device at boot has to
   wait for it, and on a KVM guest the host's tap, not RSS, decides which
   worker receives.
-
-### Fixed
 
 ## 0.140.0 - a hypervisor's Shutdown stops the box cleanly
 
