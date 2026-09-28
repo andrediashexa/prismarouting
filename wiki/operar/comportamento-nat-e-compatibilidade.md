@@ -14,6 +14,17 @@ São três propriedades, e as três estão presentes:
 
 Isso não é promessa: cada uma é verificada **em cima do pacote**, e a terceira entregando um pacote vindo de um host com quem o assinante nunca falou.
 
+# Um assinante, um endereço público
+
+Uma quarta propriedade, o **pareamento de endereço** (RFC 4787 REQ-2, que a RFC 6888 torna o padrão exigido de um CGN): todo o tráfego de um assinante sai pelo **mesmo** endereço público. Um assinante que manda de um endereço e recebe em outro quebra as aplicações que conferem de onde veio a resposta, porque elas enxergam dois pares diferentes onde há um só.
+
+| Onde | Como fica |
+|------|-----------|
+| pool determinístico sem `reserve` | sempre pareado: o assinante tem um bloco só, e a fórmula o põe num endereço só |
+| pool dinâmico, ou determinístico com `reserve` | **preferência**, não regra. Quando o assinante enche o bloco e ganha outro (até `max-blocks`), ou recebe vários de uma vez com `initial-allocation`, a caixa procura primeiro um bloco livre no endereço público que ele já usa. Se não há, pega um em outro endereço em vez de recusar — recusar custaria tráfego ao cliente |
+
+Por ser preferência, a caixa mostra a taxa do **seu** pool em vez de prometer uma. Em `show cgnat blocks`, todo pool em que um assinante pode ganhar mais de um bloco traz uma linha começando por `RFC 4787 REQ-2 paired:`, com quantas extensões caíram no endereço do próprio assinante contra o total. Uma taxa longe de todas é um pool apertado de endereços públicos, não um defeito: é o número a levar para a conversa sobre capacidade.
+
 # Hairpinning: o sintoma que ninguém atribui ao CGNAT
 
 Dois assinantes atrás do mesmo CGNAT se alcançando pelo endereço público.
@@ -62,6 +73,8 @@ configure
 ```
 
 É ajuste **aplicado no lugar**: não derruba sessão.
+
+Um [encaminhamento de porta](/doc/encaminhamento-de-porta-epIZfdmzU3) fica **fora** dessa filtragem. `address-dependent` pergunta "o assinante falou com você antes?", e num forward a resposta é não por definição; se ele entrasse no filtro, a porta aberta funcionaria só para quem o assinante respondeu por último.
 
 
 :::info
@@ -113,12 +126,14 @@ A sessão lembra **um** endereço remoto, atualizado a cada pacote de saída. Um
 ```
 show cgnat subscriber <ip-interno>
 show cgnat drops
+show cgnat blocks
 ```
 
-Se uma aplicação de entrada não funciona, `show cgnat drops` separa o motivo — pacote sem sessão na porta é contado à parte de um hairpin que deu certo.
+Se uma aplicação de entrada não funciona, `show cgnat drops` separa o motivo — pacote sem sessão na porta é contado à parte de um hairpin que deu certo. Se a queixa é de uma aplicação que estranha o endereço de origem, a linha `RFC 4787 REQ-2 paired:` de `show cgnat blocks` diz quanto do pool está pareado.
 
 # Ver também
 
 * [Protocolos e ALGs](/doc/protocolos-e-algs-vZjaCcHaN7) — quando o problema não é filtragem, é o protocolo carregar endereço no payload
+* [Quando o bloco de um assinante enche](/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) — os blocos estendidos, de onde vem a taxa de pareamento
 * [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — `filter` e os demais campos aplicados no lugar
 * [Timeouts e os pisos das RFCs](/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf) — a outra causa comum de "desconecta sozinho"

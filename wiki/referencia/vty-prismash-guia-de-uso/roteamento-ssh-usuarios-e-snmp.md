@@ -1,18 +1,18 @@
 # Roteamento, SSH, usuários e SNMP
 
-Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças exigem a capacidade de **administrador** (`prisma-admin` ou root).
+Tudo que não é CGNAT: rotas estáticas, OSPF e IS-IS, política de roteamento, a placa do dataplane, DNS, SSH, contas e SNMP — cada declaração com o argumento e o efeito. Todas essas mudanças exigem a capacidade de **administrador** (`prisma-admin` ou root).
 
 # Roteamento (FRR)
 
 ```
 router static
 router bgp <AS>
-router ospf
+router ospf [vrf <nome>]
 router ospf6
 router isis <nome>
 ```
 
-Tudo que roteia fica debaixo de `router`: os protocolos, e também as rotas que ninguém aprende — as estáticas. Os protocolos são do FRR, alcançado pelo TAP do `linux_cp`; depois de entrar no protocolo, a sintaxe é a do FRR.
+Tudo que roteia fica debaixo de `router`: os protocolos, e também as rotas que ninguém aprende — as estáticas. Os protocolos são do FRR. Dentro de cada bloco, `?` e TAB oferecem as declarações que esta VTY modela (as tabelas abaixo); o resto da sintaxe do FRR também é aceito, e cada linha é conferida pelo próprio FRR na hora em que é digitada — uma linha que ele não aceita é recusada no prompt, com a resposta dele, e nada é guardado. O BGP tem página própria: [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ).
 
 `router ospf` e `router ospf6` são **instâncias separadas**, não duas metades da mesma coisa: a primeira carrega IPv4, a segunda carrega IPv6, e uma caixa pode rodar as duas ao mesmo tempo. Elas também não ligam a interface do mesmo jeito. O OSPFv2 aceita `network <prefixo> area <área>` dentro do bloco; o OSPFv3 não tem `network` nenhum - quem coloca a interface na área é `ipv6 ospf6 area <área>` dentro do bloco `interface`:
 
@@ -21,13 +21,71 @@ configure
  router ospf6
   ospf6 router-id 10.0.0.1
   exit
- interface TenGig0/8/0
+ interface ens18
   ipv6 ospf6 area 0
   exit
  commit
 ```
 
 Se você digitar só o `router ospf6` e esperar que ele encontre as interfaces sozinho, a configuração é aceita e nenhuma adjacência sobe: falta a linha na interface.
+
+## O que o bloco `router ospf` oferece
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `ospf router-id` | `<A.B.C.D>` | o identificador desta caixa no OSPF |
+| `network` | `<A.B.C.D/M> area <área>` | roda OSPF nas interfaces que esse prefixo cobre |
+| `area` | `<área> ...` | ajustes de uma área, na sintaxe do FRR |
+| `passive-interface` | `<interface>` | roda OSPF na interface sem mandar hello — o que toda porta voltada a assinante deve ser. O FRR guarda isso como `ip ospf passive` no bloco da interface |
+| `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <nome>]` | anuncia `0.0.0.0/0` |
+| `export` | `<política>` | exporta para o OSPF o que uma política de `policy-options` aceitar; o que nenhum termo aceita **não** é exportado |
+| `redistribute connected\|static\|bgp\|isis` | `[metric <n>] [metric-type 1\|2] [route-map <nome>]` | injeta rotas de outra origem. `bgp` numa caixa de borda é uma tabela inteira dentro do IGP: dê a ele uma route-map |
+| `auto-cost reference-bandwidth` | `<1-4294967>` | em Mbit/s. Sem isso, todo enlace de 100 Mbit/s para cima custa 1, e numa caixa de 10G não há escolha de caminho |
+| `maximum-paths` | `<1-256>` | quantos caminhos de mesmo custo instalar |
+| `log-adjacency-changes` | `[detail]` | registra cada mudança de adjacência |
+| `timers throttle spf` | `<atraso> <espera-inicial> <espera-máxima>` | em milissegundos |
+| `distance` | `<1-255>` | distância administrativa |
+| `neighbor` | `<A.B.C.D> [poll-interval <n>] [priority <n>]` | um vizinho numa rede não-broadcast |
+
+## O que o bloco `router ospf6` oferece
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `ospf6 router-id` | `<A.B.C.D>` | o identificador desta caixa no OSPFv3; tem forma de endereço IPv4 e não é um endereço |
+| `area` | `<área> ...` | ajustes de uma área |
+| `redistribute connected\|static\|bgp\|isis` | `[route-map <nome>]` | injeta rotas de outra origem |
+| `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <nome>]` | anuncia `::/0` |
+| `auto-cost reference-bandwidth` | `<1-4294967>` | como no OSPF |
+| `maximum-paths` | `<1-256>` | quantos caminhos de mesmo custo instalar |
+| `log-adjacency-changes` | `[detail]` | registra cada mudança de adjacência |
+| `timers throttle spf` | `<atraso> <espera-inicial> <espera-máxima>` | em milissegundos |
+| `distance` | `<1-255>` | distância administrativa |
+
+Não há `network` nem `export` no OSPFv3: a interface entra pela linha `ipv6 ospf6 area` no bloco dela.
+
+## O que o bloco `router isis <nome>` oferece
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `net` | `<49.xxxx.xxxx.xxxx.xxxx.00>` | o endereço NSAP desta caixa; sem ele a instância não sobe |
+| `is-type` | `level-1\|level-2-only\|level-1-2` | de quais níveis a caixa participa; o núcleo de um provedor costuma rodar `level-2-only` |
+| `metric-style` | `wide\|narrow\|transition` | `narrow` para em 63 e não expressa uma topologia de 10G para cima; `transition` manda os dois durante uma migração |
+| `topology ipv6-unicast` | | um SPF separado para IPv6 (RFC 5120) |
+| `set-overload-bit` | `[on-startup <0-86400>]` | diz a todos para não transitarem por esta caixa; ver a drenagem abaixo |
+| `export` | `<política>` | exporta para o IS-IS o que uma política aceitar; o que nenhum termo aceita não é exportado |
+| `redistribute ipv4\|ipv6` | `<origem> level-1\|level-2 [metric <n>] [route-map <nome>]` | injeta rotas de outra origem |
+| `default-information originate` | `ipv4\|ipv6 level-1\|level-2 [always] [route-map <nome>]` | anuncia uma rota default |
+| `domain-password` | `clear\|md5 <senha>` | autenticação de nível 2; nunca é mostrada de volta |
+| `area-password` | `clear\|md5 <senha>` | autenticação de nível 1; nunca é mostrada de volta |
+| `log-adjacency-changes` | | registra cada mudança de adjacência |
+| `lsp-mtu` | `<128-4352>` | o maior LSP que a caixa gera; maior que a menor MTU das interfaces, eles não saem |
+| `lsp-gen-interval` | `<1-120>` | segundos entre regenerações de LSP |
+| `spf-interval` | `<1-120>` | segundos entre execuções do SPF |
+| `max-lsp-lifetime` | `<350-65535>` | segundos que um LSP vale |
+
+As declarações de OSPF e IS-IS que vão **na interface** (`ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`) estão em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+
+`export <política>` recusa uma política que dependa do que só uma rota BGP carrega — comunidade, AS-path, local-preference, prepend, próximo salto —, em vez de ignorá-lo em silêncio. As políticas são escritas em `policy-options`, descrito em [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ); `test policy <política> <prefixo>` diz o que ela faz com uma rota antes de ser aplicada.
 
 ## Rotas estáticas: o bloco `router static`
 
@@ -97,13 +155,15 @@ flowchart LR
 
 ```
 prisma> show route
-  Destination          Next hop          Interface    Kind
-  0.0.0.0/0            200.150.0.1       ens19        forward
-  203.0.113.0/24       200.150.0.1       ens19        forward
-  200.150.0.0/24       connected         ens19        connected
+  Destination    Next hop    Interface Kind
+  0.0.0.0/0      200.150.0.1 ens19     forward
+  200.150.0.0/24 -           ens19     connected
+  203.0.113.0/24 200.150.0.1 ens19     forward
 
   3 entries carrying traffic
 ```
+
+As colunas têm a largura do que a caixa tem de fato. Quando uma rota não cabe no console — um prefixo IPv6 longo, por exemplo —, cada rota vira um pequeno bloco, com `via:`, `on:` e `kind:` em linhas próprias, em vez de uma tabela que o terminal quebraria no meio.
 
 
 :::warning
@@ -195,31 +255,34 @@ Na prática, endereços de pool normalmente **não** são endereços de interfac
 
 # Interfaces
 
-```
-configure
- interface <nome>
-  mtu <576-9216>
-  urpf strict|loose|off
-  exit
-```
-
-| Comando | Efeito |
-|---------|--------|
-| `linux-name` | **outro** nome para o roteamento e o `ip` enxergarem esta interface; sem ele, é o nome dela mesma |
-| `mtu`   | ajusta a MTU **na interface do dataplane e no TAP dela** — as duas juntas |
-| `urpf strict` | a origem precisa rotear de volta por esta interface |
-| `urpf loose` | a origem precisa ter rota em algum lugar |
-| `urpf off` | sem checagem (padrão) |
-
-uRPF numa interface interna é o que impede uma origem forjada de ser traduzida.
+As declarações de interface que importam para o roteamento — `mtu`, que muda a interface do dataplane **e** o TAP dela juntos, `urpf strict|loose|off`, e as linhas de OSPF e IS-IS na porta — estão com o resto do bloco em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ). uRPF numa interface interna é o que impede uma origem forjada de ser traduzida.
 
 
 :::info
-**Toda interface com um bloco** `**interface**` **existe para o roteamento com o próprio nome.** Não há linha a escrever: o par que o roteamento enxerga é criado sozinho. Uma porta que "está configurada e não fala com ninguém" é outro assunto; o self-test do boot diz quais portas ficaram sem par, se alguma ficou.
+**Toda interface com um bloco** `**interface**` **existe para o roteamento com o próprio nome.** Não há linha a escrever: o par que o roteamento enxerga é criado sozinho. `linux-name` só serve para dar **outro** nome. Uma porta que "está configurada e não fala com ninguém" é outro assunto; o self-test do boot diz quais portas ficaram sem par, se alguma ficou.
 
 :::
 
-O bloco de interface inteiro — endereços, VLAN, VRF, MAC, descrição, loopbacks — está em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+# Sistema: a placa entregue ao dataplane
+
+```
+configure
+ system
+  dataplane
+   interface enp2s0
+   exit
+  exit
+ commit
+```
+
+| Comando | Onde | O que faz |
+|---------|------|-----------|
+| `interface <placa>` | `system` > `dataplane` | entrega esta placa, pelo nome que o **Linux** dá a ela, ao dataplane no próximo início dele; um nome que o Linux não tem é recusado com a lista dos que ele tem |
+| `no interface` | `system` > `dataplane` | a caixa deixa de pegar placa no próximo início do dataplane |
+| `control-plane`, `main-thread`, `cgnat-workers` | `system` > `cpu` | os núcleos por papel |
+| `control-plane`, `buffers` | `system` > `memory` | a memória por papel |
+
+As três valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
 
 # SSH
 
@@ -237,6 +300,17 @@ configure
 | `no`                       | de jeito nenhum |
 | `prohibit-password`        | só chave    |
 | `forced-commands-only`     | só comandos forçados |
+
+| Ajuste | Padrão |
+|--------|--------|
+| `ssh port` | `22` |
+| `ssh listen-address` | `0.0.0.0` |
+| `ssh permit-root-login` | `prohibit-password` |
+| `ssh password-authentication` | `yes` |
+
+`listen-address` tem de ser um endereço: qualquer outra coisa é recusada no prompt, porque o SSH recusaria o próprio arquivo e não subiria — numa caixa cujo outro caminho é um cabo serial.
+
+**O `commit` recusa uma configuração em que ninguém mais consegue entrar por SSH**, ou em que ninguém que entra consegue mudar nada — tirar o papel do último administrador, por exemplo. O console não conta: pode não estar ao alcance de quem está configurando.
 
 # DNS
 
@@ -267,7 +341,18 @@ configure
   no ssh-key <chave>
   no password
   exit
+ no user <nome>
 ```
+
+| Comando | O que faz |
+|---------|-----------|
+| `role administrator\|cgnat-operator` | o que a conta pode mudar; sem papel, somente leitura |
+| `ssh-key <tipo> <chave> [comentário]` | uma chave pública autorizada, como aparece no `authorized_keys`; pode repetir |
+| `password <hash>` | um hash crypt; texto claro é recusado |
+| `no ssh-key <chave>` | tira uma chave; o começo dela basta |
+| `no user <nome>` | remove a conta; `root` não pode ser removido — restrinja-o com `ssh permit-root-login` |
+
+O hash aparece como `password <set, not shown>` em `show this` e `show configuration`.
 
 `**password**` **recebe um hash crypt, nunca uma senha em texto claro.** Gere com:
 
@@ -317,13 +402,17 @@ configure
  snmp community <string>
 ```
 
-| Comando | O que define |
-|---------|--------------|
-| `snmp enabled` | roda o agente ou não |
-| `snmp listen-address` | endereço de escuta |
-| `snmp port` | porta UDP    |
-| `snmp enterprise-number` | o Private Enterprise Number IANA da sua organização |
-| `snmp community` | uma comunidade SNMPv2c, somente leitura |
+| Comando | O que define | Padrão |
+|---------|--------------|--------|
+| `snmp enabled` | roda o agente ou não | `no` |
+| `snmp listen-address` | endereço de escuta | `127.0.0.1` |
+| `snmp port` | porta UDP    | `161` |
+| `snmp enterprise-number` | o Private Enterprise Number IANA da sua organização | nenhum |
+| `snmp community` | uma comunidade SNMPv2c, somente leitura | nenhuma |
+
+Com o padrão `127.0.0.1`, o agente só responde de dentro da caixa: para o NMS alcançá-lo, `listen-address` precisa ser um endereço que ele alcança.
+
+**Ligar o agente sem comunidade e sem usuário v3 é recusado**: seria um agente que ninguém consegue consultar. A comunidade e as senhas dos usuários v3 aparecem como `<set, not shown>` em `show configuration`.
 
 
 :::info
@@ -340,6 +429,8 @@ configure
   priv <aes|des> <passphrase>
   exit
 ```
+
+O agente só atende um usuário v3 com autenticação **e** privacidade: configure os dois, `auth` e `priv`.
 
 ## Política de roteamento: o que a VTY confere
 
@@ -584,4 +675,7 @@ Ele **não recusa** o commit — anunciar de outro equipamento é um desenho leg
 # Ver também
 
 * [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — o que cada grupo pode mudar
+* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — OSPF e IS-IS na porta, MTU, uRPF
+* [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, `policy-options` e RPKI
+* [Monitoramento e SNMP](/doc/monitoramento-e-snmp-YGn85RpUAb) — o que o agente SNMP responde
 * [VTY prismash — guia de uso](/doc/vty-prismash-guia-de-uso-h6sDAK8Dsh) — os modos e a árvore de comandos

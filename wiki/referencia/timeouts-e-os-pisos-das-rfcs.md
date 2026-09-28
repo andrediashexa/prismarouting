@@ -10,12 +10,14 @@ O que ela também faz é cortar conexões que estão **ociosas, não terminadas*
 
 # Os pisos
 
-| Timeout | Piso | Referência | O que quebra abaixo dele |
-|---------|-----:|------------|--------------------------|
-| `udp`   | 120 s | RFC 4787 REQ-5 | um mapeamento fechando enquanto a aplicação ainda acredita que ele existe |
-| `icmp`  | 60 s | RFC 5508 REQ-2 | uma resposta de eco chegando depois que o mapeamento fechou — lê-se como perda de pacote em todo teste de caminho |
-| `tcp-transitory` | 240 s | RFC 5382 REQ-5 | uma conexão meio-fechada descartada antes de o par terminar de fechá-la |
-| `tcp-established` | 7440 s | RFC 5382 REQ-5 | uma conexão ociosa mas viva, cortada |
+| Timeout | Piso | Referência | Padrão | O que quebra abaixo dele |
+|---------|-----:|------------|-------:|--------------------------|
+| `udp`   | 120 s | RFC 4787 REQ-5 | 300 s | um mapeamento fechando enquanto a aplicação ainda acredita que ele existe |
+| `icmp`  | 60 s | RFC 5508 REQ-2 | 60 s | uma resposta de eco chegando depois que o mapeamento fechou — lê-se como perda de pacote em todo teste de caminho |
+| `tcp-transitory` | 240 s | RFC 5382 REQ-5 | 240 s | uma conexão meio-fechada descartada antes de o par terminar de fechá-la |
+| `tcp-established` | 7440 s | RFC 5382 REQ-5 | 7440 s | uma conexão ociosa mas viva, cortada |
+
+Os padrões já estão no piso ou acima dele: uma caixa que ninguém ajustou não dispara aviso nenhum.
 
 
 :::info
@@ -58,7 +60,7 @@ O rastreamento vale **nos dois sentidos**: o reset ou o fechamento contam venha 
 
 # Configurando
 
-Global:
+Global, no nível `nat` > `cgnat` — só os quatro timeouts com piso:
 
 ```
 configure
@@ -73,7 +75,7 @@ configure
  commit
 ```
 
-Por pool — sobrescreve o global; ausente, herda:
+Por pool — sobrescreve o global; ausente, herda. Um pool aceita os quatro acima e mais quatro que só existem nele:
 
 ```
 configure
@@ -83,7 +85,7 @@ configure
     timeout udp 300
     timeout tcp-syn 60
     timeout gre 3600
-    timeout port-holddown 120
+    timeout port-holddown 8
     timeout alg-expect 30
     exit
    exit
@@ -91,28 +93,40 @@ configure
  commit
 ```
 
-| Timeout só de pool | O que expira |
-|--------------------|--------------|
-| `tcp-syn`          | TCP meio-aberto, antes do handshake completar |
-| `gre`              | o mapeamento GRE de uma chamada PPTP |
-| `port-holddown`    | quanto tempo uma porta liberada espera antes de ser reusada |
-| `alg-expect`       | quanto tempo uma porta de mídia anunciada por um ALG espera |
+| Timeout só de pool | Padrão | O que expira |
+|--------------------|-------:|--------------|
+| `tcp-syn`          | 20 s | TCP meio-aberto, antes do handshake completar |
+| `gre`              | 1800 s | o mapeamento GRE de uma chamada PPTP, ocioso |
+| `port-holddown`    | 4 s | quanto tempo uma porta liberada espera antes de ser reusada |
+| `alg-expect`       | 60 s | quanto tempo uma porta de mídia anunciada por um ALG espera pelo primeiro pacote |
 
+O `port-holddown` existe para que um segmento atrasado da conexão que acabou não caia na conexão nova que pegou a mesma porta — o que o assinante vê como um reset que ninguém consegue reproduzir. A porta volta para o bloco do **mesmo** assinante, então isso não mexe em quem responde por ela.
 
-:::warning
-`port-holddown` não é um detalhe de desempenho, é de prova. Reusar uma porta imediatamente faz o registro de quem a usava se sobrepor ao do próximo dono — e a resposta a uma ordem judicial passa a apontar duas pessoas para o mesmo par endereço/porta num intervalo curto.
+## Retenção de bloco, em BPA
 
-:::
+Num pool BPA (`mode dynamic`), um bloco que ficou ocioso não volta para o pool na hora: fica reservado ao assinante por `block-holddown` segundos, global, no nível `nat` > `cgnat`. O padrão é 120 s.
+
+```
+configure
+ nat
+  cgnat
+   block-holddown 120
+   exit
+  exit
+ commit
+```
+
+É a principal alavanca do volume de log: cada liberação e cada nova alocação são um registro IPFIX, e com uma retenção curta demais um assinante que pausa entre dois pacotes libera e realoca o bloco o tempo todo — dois registros a mais no coletor a cada pausa. O valor mínimo aceito é 1 s. Num pool determinístico, vale só para os blocos da `reserve`: o bloco que a fórmula dá a cada assinante nunca é liberado.
 
 Todos são ajustes **aplicados no lugar**: não derrubam sessão.
 
 # Como conferir
 
 ```
-show cgnat pool
+show this
 ```
 
-E o `commit` avisa: **todo valor abaixo do piso** é marcado no momento em que a mudança é aplicada, global e por pool com as sobrescritas já resolvidas, para que o estado fique visível a quem não sabia que devia perguntar.
+Dentro de `nat` > `cgnat`, ou dentro do pool, `show this` mostra os timeouts configurados naquele nível. E o `commit` avisa: **todo valor abaixo do piso** é marcado no momento em que a mudança é aplicada, global e por pool com as sobrescritas já resolvidas, para que o estado fique visível a quem não sabia que devia perguntar.
 
 
 :::success

@@ -1,6 +1,6 @@
 # Configuração de interface
 
-Tudo o que se configura dentro de uma interface: o par que o roteamento enxerga, endereços, VLAN, VRF, MTU, estado administrativo e o filtro de origem. Para quem está subindo um enlace, terminando assinantes em VLAN ou investigando uma porta que não passa tráfego.
+Tudo o que se configura dentro de uma interface: endereços, VLAN, VRF, MTU, MAC, estado administrativo, filtro de origem, o lado do CGNAT, VRRP, OSPF e IS-IS na porta, loopbacks e bundles LACP. Para quem está subindo um enlace, terminando assinantes em VLAN ou investigando uma porta que não passa tráfego.
 
 Entra-se numa interface a partir do modo de configuração, e sai-se com `exit`:
 
@@ -12,29 +12,36 @@ prisma# [edit interface ens18]
 
 O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali dentro e nada além disso.
 
+Mudar uma interface exige a capacidade de **administrador**. A exceção é o lado do CGNAT (`cgnat inside|outside`), que uma conta `cgnat-operator` também pode mudar.
+
 ## O que uma interface entende
 
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
-| `description` | `<texto>` | para que a interface serve; aparece em `show interface description` |
+| `description` | `<texto>` | para que a interface serve, até 63 caracteres; aparece em `show interface description` |
 | `shutdown` |           | derruba a interface administrativamente |
 | `no shutdown` |           | traz de volta |
 | `ipv4 address` | `<prefixo>` | endereço IPv4; pode repetir |
 | `ipv6 address` | `<prefixo>` | endereço IPv6; pode repetir |
 | `no ipv4 address` | `<prefixo>` | remove **um** endereço, sem tocar nos outros |
 | `mtu`   | `<576-9216>` | MTU, na interface e no par Linux dela |
-| `linux-name` | `<nome>`  | o nome pelo qual o roteamento e o `ip` enxergam esta interface; uma placa já entra com o próprio nome, e **um loopback sem ele o roteamento não enxerga de jeito nenhum** |
+| `linux-name` | `<nome>`  | **outro** nome pelo qual o roteamento e o `ip` enxergam esta interface; sem ele, toda interface já entra no Linux com o próprio nome |
 | `vrf`   | `<1-4294967295>` | tabela de roteamento onde os endereços vivem; `0` tira a interface de uma |
 | `vlan`  | `<1-4094> [inner <1-4094>]` | tag da sub-interface |
 | `mac-address` | `<xx:xx:xx:xx:xx:xx>` | o MAC ao qual a interface responde |
 | `cgnat` | `inside\|outside` | o lado desta interface no CGNAT: `inside` é por onde os assinantes chegam, `outside` por onde o tráfego traduzido sai |
 | `no cgnat` |           | tira a interface do CGNAT |
 | `no ipv6 nd suppress-ra` |           | anuncia esta caixa como roteador nesta porta (por padrão não anuncia) |
+| `ipv6 nd suppress-ra` |           | volta ao padrão: não anuncia |
 | `urpf`  | `strict\|loose\|off` | descarta pacotes cuja origem não volta por aqui |
-| `vrrp`  | `<1-255> address <A.B.C.D>` | um endereço de serviço que esta caixa disputa com o par (RFC 5798) |
+| `vrrp`  | `<1-255> address <A.B.C.D>` | um endereço de serviço que esta caixa disputa com o par (RFC 5798); IPv4, sem máscara; pode repetir |
 | `vrrp`  | `<1-255> priority <1-254>` | quem fica com o endereço quando as duas estão boas; maior ganha |
 | `vrrp`  | `<1-255> track <interface> decrement <1-254>` | quanto a prioridade cai quando aquela outra porta cai |
 | `no vrrp` | `<1-255>` | tira o roteador virtual inteiro desta interface |
+| `member`, `lacp`, `load-balance` | | só num bundle `ae<n>`; ver *Bundles LACP* abaixo |
+| `ip ospf ...`, `ipv6 ospf6 ...` | | OSPF e OSPFv3 nesta interface; ver *OSPF e IS-IS na interface* abaixo |
+| `ip router isis`, `ipv6 router isis` | `<instância>` | IS-IS nesta interface, para IPv4 e para IPv6 |
+| `isis ...` | | ajustes do IS-IS nesta interface |
 | `exit`  |           | sai da interface |
 
 ## Endereços
@@ -99,12 +106,13 @@ Um endereço numa porta física some junto com a porta. Um `router-id` de BGP, d
 ```
 configure
  interface loop0
-  linux-name loop0
   ipv4 address 10.99.0.1/32
   description router-id, que uma porta não leva junto
   exit
  commit
 ```
+
+O loopback entra no Linux e no roteamento com o próprio nome, `loop0`, sem linha nenhuma a mais — como qualquer outra interface.
 
 `loop<n>` é a grafia do próprio dataplane, e o número que você escrever é o número que ele recebe: `loop3` produz `loop3`, e não o próximo livre. Assim a configuração e o `show interface` não podem discordar sobre como a coisa se chama.
 
@@ -156,7 +164,7 @@ prisma# [edit] commit
 commit complete
 ```
 
-Depois disso a sub-interface existe no dataplane, carrega a tag, e ganha o próprio par `linux_cp` — o `lcp-auto-subint` cria um para cada sub-interface de uma placa já pareada — então o Linux e o roteamento a enxergam com o endereço:
+Depois disso a sub-interface existe no dataplane, carrega a tag, e ganha o próprio par no Linux com o mesmo nome, como toda interface que tem um bloco — então o Linux e o roteamento a enxergam com o endereço:
 
 ```
 prisma> show interface
@@ -173,7 +181,7 @@ warning: interface ens19.100: left shut down
     and ens19 is shut down; 'no shutdown' on ens19 brings both up
 ```
 
-Um `no shutdown` no pai sobe os dois. Até a versão 0.107.0 isso era uma falha de `commit` com a mensagem `unspecified error` - e, como falhar não muda o que a configuração pede, **todo** `commit` seguinte falhava igual, mesmo os que não tinham nada a ver com aquela interface.
+Um `no shutdown` no pai sobe os dois. É um aviso e não uma recusa: o `commit` aplica o resto normalmente.
 
 **O pai precisa existir.** `interface ens99.100` numa caixa sem `ens99` é recusado no `commit`, nomeando o pai:
 
@@ -290,6 +298,8 @@ interface ens18
 
 `**track**` **é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: ela segura o endereço do gateway e não alcança nada. Com `track`, a prioridade dela cai pelo decremento e o par assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da do outro — 200 com decremento 150 vira 50, contra os 100 do par.
 
+**O que é recusado na hora em que você digita:** um endereço IPv6 (o roteador virtual é só IPv4), um endereço com máscara (`100.64.3.254/22` — o endereço virtual é um dos endereços da sub-rede da interface, não uma sub-rede), prioridade 255, e uma interface rastreando a si mesma: uma porta que caiu já parou de anunciar, e o que vale rastrear é o **outro** lado.
+
 **Cada lado quer o seu.** Um endereço que se move no lado do assinante e nada no lado do uplink é um failover que o tráfego de volta não acompanha: configure um roteador virtual em cada lado, com `vrid` diferente.
 
 ### O que o endereço virtual não faz
@@ -315,13 +325,77 @@ prisma> show cgnat ha
 
 Quando alguma porta rastreada está fora, a linha da prioridade diz as duas coisas — o que está sendo anunciado e o que foi configurado — porque uma caixa anunciando menos do que foi configurado é uma caixa com um cabo fora, e não um problema de VRRP.
 
+## OSPF e IS-IS na interface
+
+Os protocolos de roteamento entram na porta por declarações dentro do próprio bloco `interface`, que é onde o FRR as guarda. Estas vão para o roteamento palavra por palavra; as da tabela do começo da página são aplicadas pela caixa no dataplane.
+
+```
+interface ens19
+ ip ospf area 0
+ ip ospf network point-to-point
+ ip ospf cost 10
+ ip router isis CORE
+ isis network point-to-point
+ isis metric 100
+ exit
+```
+
+### OSPF (`ip ospf ...`)
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `ip ospf area` | `<área>` | roda OSPF nesta interface, nesta área |
+| `ip ospf cost` | `<1-65535>` | o custo desta interface |
+| `ip ospf network` | `point-to-point\|broadcast` | `point-to-point` dispensa a eleição de DR, que é o que um enlace de trânsito quer; `broadcast` é o padrão em Ethernet |
+| `ip ospf hello-interval` | `<1-65535>` | segundos entre hellos |
+| `ip ospf dead-interval` | `<1-65535>` | segundos até o vizinho ser dado como caído |
+| `ip ospf priority` | `<0-255>` | a prioridade desta caixa na eleição de DR |
+| `ip ospf authentication` | `message-digest\|null` | MD5, ou nenhuma, sobrepondo a da área |
+| `ip ospf authentication-key` | `<chave>` | a chave em texto; nunca é mostrada de volta |
+| `ip ospf message-digest-key` | `<1-255> md5 <chave>` | uma chave MD5; nunca é mostrada de volta |
+| `ip ospf passive` | | roda OSPF aqui e não manda hello |
+| `ip ospf bfd` | | acompanha a adjacência com BFD |
+| `ip ospf mtu-ignore` | | não compara MTU na troca de base — a saída quando os dois lados discordam e não podem ser igualados |
+
+### OSPFv3 (`ipv6 ospf6 ...`)
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `ipv6 ospf6 area` | `<área>` | roda OSPFv3 nesta interface, nesta área — é a **única** forma de pôr uma interface no OSPFv3 |
+| `ipv6 ospf6 cost` | `<1-65535>` | o custo desta interface |
+| `ipv6 ospf6 network` | `point-to-point\|broadcast` | como no OSPF |
+| `ipv6 ospf6 passive` | | roda OSPFv3 aqui e não manda hello |
+| `ipv6 ospf6 bfd` | | acompanha a adjacência com BFD |
+| `ipv6 ospf6 mtu-ignore` | | não compara MTU |
+
+`ipv6 ospf6 hello-interval`, `dead-interval` e `priority` também são aceitos, na grafia do FRR, mas o `?` não os oferece: digitados no valor padrão, o FRR não os guarda.
+
+### IS-IS
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `ip router isis` | `<instância>` | roda IS-IS para IPv4 nesta interface |
+| `ipv6 router isis` | `<instância>` | roda IS-IS para IPv6 nesta interface, na topologia que a instância tiver |
+| `isis circuit-type` | `level-1\|level-2-only\|level-1-2` | de quais níveis esta interface participa |
+| `isis network point-to-point` | | sem eleição de DIS nem pseudo-nó; configurado de um lado só, a adjacência não sobe |
+| `isis metric` | `<0-16777215> [level-1\|level-2]` | a métrica desta interface; acima de 63 exige `metric-style wide` na instância |
+| `isis passive` | | anuncia a interface e não manda hello |
+| `isis hello-interval` | `<1-600>` | segundos entre hellos |
+| `isis hello-multiplier` | `<2-100>` | quantos hellos perdidos até o vizinho cair |
+| `isis password` | `clear\|md5 <senha>` | autenticação desta interface; nunca é mostrada de volta |
+| `isis bfd` | | acompanha a adjacência com BFD |
+
+As chaves e senhas aparecem como `<set, not shown>` em `show this`, `show configuration` e `show running-config`. A configuração salva e as revisões de rollback guardam o valor de verdade, ou um rollback não conseguiria restaurá-lo.
+
+O bloco do protocolo (`router ospf`, `router ospf6`, `router isis`) está em [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
+
 ## Removendo um ajuste: `no`
 
 `no ?` dentro da interface lista o que pode ser tirado, e depois da palavra o argumento continua sendo oferecido - `no urpf ?` mostra `strict`, `loose` e `off`.
 
 Tirar um ajuste **não é o mesmo que ajustá-lo para o padrão**: a configuração deixa de dizer aquilo, e a interface fica com o que a caixa já tinha. `mac-address aa:bb:cc:dd:ee:ff` seguido de `no mac-address` devolve a interface ao MAC dela, que é o que se quer de quem digitou e voltou atrás.
 
-A interface carrega dois tipos de linha: as desta caixa - `mtu`, `urpf`, `vlan`, `vrf`, `mac-address`, `linux-name`, endereços - e as dos protocolos de roteamento - `ip ospf ...`, `isis ...`. `no` funciona nos dois, e em cada caso vai para quem é dono do ajuste.
+A interface carrega dois tipos de linha: as desta caixa - `description`, `shutdown`, `mtu`, `urpf`, `vlan`, `vrf`, `mac-address`, `linux-name`, endereços, `ipv6 nd suppress-ra`, `cgnat`, `vrrp`, `member`, `lacp`, `load-balance` - e as dos protocolos de roteamento - `ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`. `no` funciona nos dois, e em cada caso vai para quem é dono do ajuste.
 
 ### `no vlan` não existe, e a caixa diz o que fazer no lugar
 
@@ -352,7 +426,7 @@ prisma> show interface ens18
     state       up
     mtu         9000
     addresses   200.150.0.1/24
-    linux       vppwan0
+    linux       tap4096 vppwan0
     vrf         0 (default)
     mac         02:fe:c1:ed:07:aa
     urpf        off
@@ -387,7 +461,7 @@ prisma> configure
 prisma# [edit] system
 prisma# [edit system] dataplane
 prisma# [edit system / dataplane] interface enp2s0
-prisma# [edit] commit
+prisma# [edit system / dataplane] commit
 ```
 
 A diferença é prática. Numa caixa que ainda não recebeu placa nenhuma o dataplane não tem interface alguma, então não há `interface <nome>` para entrar — e `show interface` está vazio justamente na hora em que você precisa escolher. Por isso o nome aqui é o que o **Linux** dá à placa, e quem lista os candidatos é o próprio `?`.
@@ -397,7 +471,11 @@ A diferença é prática. Numa caixa que ainda não recebeu placa nenhuma o data
 | `interface`, em `system` > `dataplane` | `<placa>` | entrega esta placa ao dataplane no próximo início dele |
 | `no interface`, no mesmo nível |           | a caixa deixa de pegar placa: estado seguro, alcançável por rede |
 
-O `commit` guarda a escolha, recalcula o ajuste de boot e **não reinicia o dataplane** — a entrega derruba todas as sessões da caixa, inclusive a sua, então a janela é sua. A placa que carrega a rota default é recusada na hora em que você digita, e um nome que a caixa não tem também, com a lista dos que ela tem. Os dois casos, com o que a caixa imprime, estão em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+O `commit` guarda a escolha, recalcula o ajuste de boot e **não reinicia o dataplane** — a entrega derruba todas as sessões da caixa, inclusive a sua, então a janela é sua. Um nome que o Linux não tem é recusado na hora em que você digita, com a lista das placas que ele tem; o caso, com o que a caixa imprime, está em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+
+A placa que carrega a rota default **não** é recusada: uma caixa nova é configurada no console, e é o ajuste de boot que, no boot que entrega a placa, lê o caminho de volta por ela e recusa a placa se não conseguir lê-lo.
+
+`system dataplane restart`, no modo operacional, é outra coisa: reinicia o dataplane que já existe, sem trocar de placa.
 
 ## Placa adicionada com a caixa rodando
 
@@ -410,7 +488,7 @@ Em vez disso ela **anexa a placa ao dataplane em funcionamento pelo AF_XDP**, qu
 * confere se a regra do boot pegaria essa placa. A placa reservada para gerência, o `PRISMA_DATAPLANE_IF` e a placa que tem endereço ou a rota default continuam sendo do Linux, exatamente como no boot;
 * anexa a placa com o **mesmo nome** que o Linux deu a ela (`ens20`, por exemplo) e com o MAC dela mesma.
 
-**O que você faz** é configurar a placa como qualquer outra: `interface ens20`, `linux-name ens20`, o endereço e `no shutdown`. O `show interface` avisa, embaixo da contagem, que ela está no AF_XDP e o que a leva para o DPDK.
+**O que você faz** é configurar a placa como qualquer outra: `interface ens20`, o endereço e `no shutdown`. Ela entra no Linux e no roteamento com o próprio nome, como as outras. O `show interface` avisa, embaixo da contagem, que ela está no AF_XDP e o que a leva para o DPDK.
 
 **Passar a placa para o DPDK** é uma decisão sua, na janela que você escolher:
 
@@ -436,5 +514,8 @@ prisma> system dataplane restart
 
 # Ver também
 
-* [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) — anexar CGNAT a uma interface
+* [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o nível `cgnat`, e o que o lado de cada interface significa
+* [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — os blocos `router ospf`, `router ospf6` e `router isis`
+* [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) — o par de caixas e o que o VRRP preserva
+* [uRPF e origens forjadas](/doc/urpf-e-origens-forjadas-1Mb4LB6Dhf) — quando usar `strict` e quando `loose`
 * [Multi-tenant com VRF](/doc/multi-tenant-com-vrf-3PDsWxfy6D) — quando cada cliente tem a própria tabela

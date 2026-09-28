@@ -135,7 +135,7 @@ prisma# [edit nat / cgnat / pool residencial] tcp-mss auto
 prisma# [edit nat / cgnat / pool residencial] exit
 ```
 
-O `exit` do pool volta para `cgnat`, que é onde o próximo passo continua. O prompt mostra sempre em que nível você está.
+O `exit` do pool volta para `cgnat`, que é onde o próximo passo continua. O prompt mostra sempre em que nível você está, `top` volta direto para `[edit]`, e `commit` funciona de dentro do pool também, se você quiser aplicar antes de sair dele.
 
 | Linha | O que decide |
 |-------|--------------|
@@ -307,7 +307,7 @@ prisma# [edit nat / cgnat] logging enable
 prisma# [edit nat / cgnat] commit
 ```
 
-`src` é obrigatório, e `enable` sem destino é recusado. Para não perder registro quando o coletor cai, existe também o transporte TCP (`logging tcp <ip-do-coletor>`, também dentro de `cgnat`). [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) explica a diferença.
+`src` é obrigatório, e `enable` sem destino é recusado. Para não perder registro quando o coletor cai, existe também o transporte TCP (`logging tcp <ip-do-coletor>`, também dentro de `cgnat`), e para um coletor que só entende syslog, `logging syslog <ip-do-coletor> enterprise <n>`. [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) explica a diferença entre os três.
 
 Se você esquecer, o `commit check` e o `commit` avisam, com o nome do pool e os dois jeitos de exportar. É um aviso, não uma recusa, porque um pool montado antes de o coletor existir é uma configuração válida.
 
@@ -356,6 +356,8 @@ subscriber 100.64.0.5   pool residencial, index 5, worker thread 0
 ```
 
 `3 of 512 in use` são as conexões dele naquele momento. `refusals` em zero quer dizer que nada dele foi recusado por falta de porta.
+
+O tráfego do assinante para a **própria caixa** — o `ping` para o gateway `100.64.0.1`, um `ssh` ou uma consulta DNS a ela — não é traduzido nem abre sessão: ele chega à caixa com o endereço do assinante, e `show cgnat drops` o conta em `everything else it counted`, na linha `packets to this box itself, left untranslated`: não é perda.
 
 **Quem está mais perto de encher o bloco**, e **o que não passou**:
 

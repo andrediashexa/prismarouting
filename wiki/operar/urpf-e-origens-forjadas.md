@@ -26,11 +26,13 @@ configure
  commit
 ```
 
+A verificação vai na interface **interna**, a que tem `cgnat inside` no bloco dela. `urpf off`, ou `no urpf`, desliga de novo. A mudança é aplicada na hora, sem derrubar sessão, e vai para o arquivo com o próximo `save`.
+
 | Modo | Aceita | Onde usar |
 |------|--------|-----------|
 | `strict` | a rota da origem aponta para a interface por onde o pacote chegou | a interface interna de um CGNAT |
 | `loose` | a origem tem rota em algum lugar | topologias assimétricas, onde `strict` derrubaria tráfego que está correto |
-| ausente (padrão) | qualquer coisa |           |
+| `off`, ou ausente (padrão) | qualquer coisa | onde o caminho de retorno não é conhecido |
 
 
 :::info
@@ -38,9 +40,9 @@ configure
 
 :::
 
-A verificação roda **antes** do `bpa-in2out`, então um pacote recusado nunca chega ao tradutor: nenhuma porta é tirada do bloco que ele mirava, e nenhuma sessão existe para ser atribuída a ninguém.
+A verificação roda **antes** da tradução, então um pacote recusado nunca chega ao CGNAT: nenhuma porta é tirada do bloco que ele mirava, e nenhuma sessão existe para ser atribuída a ninguém.
 
-Os descartes dele são contados em `ip4-rx-urpf-strict`, contador **diferente** de `bpa-in2out: no pool for source address`. Um é ataque ou erro de configuração; o outro é um endereço que esta caixa simplesmente não traduz.
+Por isso o descarte do uRPF **não aparece** em `show cgnat drops`: aquela tela conta só o que o próprio CGNAT recusou, e o pacote barrado aqui nunca chegou a ele. Os dois são coisas diferentes — um é ataque ou erro de configuração; o outro, `no pool for source address`, é um endereço que esta caixa simplesmente não traduz. O descarte do uRPF entra no contador de descartes da própria interface, em `show interface <nome>`.
 
 # Onde a proteção para
 
@@ -62,19 +64,25 @@ Esse limite é **verificado**, não apenas descrito: a verificação envia o end
 # Como conferir
 
 ```
-show cgnat drops
+show interface ens19
 ```
 
-Descartes de uRPF aparecem separados dos descartes por falta de pool, justamente porque significam coisas diferentes.
+A tela da interface traz uma linha `urpf` com o modo que o **dataplane** está aplicando — `strict`, `loose` ou `off` —, lido da caixa e não do arquivo, e os contadores da porta, onde entram os descartes.
 
+O autoteste de boot confere a mesma coisa a cada boot: quando a configuração salva liga o uRPF em alguma interface, ele diz se o dataplane de fato o tem ligado. Com tudo certo, a linha é:
+
+```
+  [ ok ] uRPF is on in the dataplane, as the saved configuration asks
+```
+
+Se a configuração pede e o dataplane não tem, o autoteste acusa como falha — uma proteção que simplesmente não está lá não tem contador nenhum que a denuncie.
 
 :::success
-Com `urpf strict` na interface interna e o tráfego legítimo passando normalmente: você fechou a porta para origem forjada vinda de fora do espaço de assinantes, sem derrubar quem estava certo.
-
+Com `urpf strict` na interface interna, `show interface` confirmando o modo e o tráfego legítimo passando normalmente (`show cgnat top` com os assinantes de sempre): você fechou a porta para origem forjada vinda de fora do espaço de assinantes, sem derrubar quem estava certo.
 :::
 
 # Ver também
 
-* [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — o bloco `interface` onde `urpf` é configurado
+* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — o bloco `interface` onde `urpf` é configurado
 * [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — o registro que isto protege
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — separar descarte de uRPF de descarte por falta de pool
+* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — por onde começar quando um assinante some

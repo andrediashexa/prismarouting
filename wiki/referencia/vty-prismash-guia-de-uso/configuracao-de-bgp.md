@@ -30,14 +30,30 @@ router bgp 65000
 
 `activate` é o que faz a sessão **carregar** aquela família. Uma sessão que sobe e não carrega nada é uma sessão Established e muda.
 
+# O que o bloco `router bgp` entende
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `bgp router-id` | `<A.B.C.D>` | o identificador desta caixa no BGP |
+| `bgp log-neighbor-changes` |           | registra toda mudança de estado de sessão |
+| `bgp graceful-shutdown` |           | escoa o tráfego antes de uma manutenção (RFC 8326; seção própria abaixo) |
+| `bgp default ipv4-unicast` |           | ativa IPv4 unicast em todo vizinho sem precisar de `activate` |
+| `bgp bestpath as-path multipath-relax` |           | trata como iguais caminhos de mesmo comprimento vindos de AS diferentes |
+| `neighbor <vizinho> ...` |           | uma sessão; a tabela seguinte |
+| `address-family ipv4 unicast` ou `ipv6 unicast` |           | entra na família de endereço; sai-se com `exit-address-family` ou `exit` |
+| `network` | `<prefixo>` | um prefixo que esta caixa origina; só é anunciado se estiver na tabela de rotas |
+| `redistribute` | `connected`, `static`, `ospf` ou `isis` | injeta no BGP rotas de outra origem |
+
+No nível de `address-family` valem `neighbor` (a lista por família, abaixo), `network`, `redistribute` e as saídas `exit-address-family` e `exit`.
+
 # O que um vizinho entende
 
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
-| `remote-as` | `<1-4294967295>` | o AS do outro lado; é isto que cria a sessão |
+| `remote-as` | `<1-4294967295>`, `internal` ou `external` | o AS do outro lado; é isto que cria a sessão. `internal` é o seu próprio AS, `external` qualquer outro |
 | `description` | `<texto>` | para que serve a sessão, para quem ler depois |
 | `password` | `<texto>` | senha MD5 da sessão; nunca é impressa de volta |
-| `update-source` | `<interface>` | de onde a sessão sai |
+| `update-source` | `<endereço>` ou `<interface>` | de onde a sessão sai |
 | `ebgp-multihop` | `<1-255>` | saltos até um vizinho que não está numa rede conectada |
 | `timers` | `<keepalive> <hold>` | temporizadores da sessão |
 | `maximum-prefix` | `<n> [<pct>] [restart <min>]` | derruba a sessão acima desse número de prefixos |
@@ -123,6 +139,22 @@ prisma# [edit policy-options / policy-statement DO-TRANSITO / term sem-outro-as]
 prisma# [edit policy-options / policy-statement DO-TRANSITO / term sem-outro-as] then reject
 ```
 
+O que cada nível de `policy-options` aceita:
+
+| Nível | Comando | O que faz |
+|-------|---------|-----------|
+| `policy-options` | `prefix-list <nome>` | cria ou edita uma lista de redes e entra nela; dentro, uma rede por linha (`<rede>/<tamanho>`, sem bits de host) e `no <rede>` para tirar |
+| `policy-options` | `community <nome> members <asn:valor>...` | um conjunto nomeado de communities; digitar de novo o mesmo nome substitui |
+| `policy-options` | `as-path <nome> <expressão>` | uma expressão regular de AS-path com nome |
+| `policy-options` | `policy-statement <nome>` | cria ou edita uma política e entra nela |
+| `policy-options` | `no <declaração>` | remove uma lista, uma community, um as-path ou uma política |
+| `policy-statement` | `term <nome>` | cria ou edita um term e entra nele |
+| `policy-statement` | `no term <nome>` | remove o term inteiro |
+| `term` | `from ...`, `set ...`, `then ...` | as três partes, na tabela abaixo |
+| `term` | `no <declaração>` | remove um `from`, um `set` ou o `then` |
+
+Um nome — de lista, community, as-path ou política — tem letras, números, `.`, `_` e `-`, até 32 caracteres. Um `then` novo substitui o anterior do mesmo term: vale a última palavra dita.
+
 Cada `term` é avaliado na ordem em que foi digitado, e tem três partes:
 
 | Parte | O que diz |
@@ -204,6 +236,42 @@ prisma# [edit router ospf] export PARA-O-OSPF
 **O que só existe numa rota BGP é recusado numa exportação para OSPF ou IS-IS:** `from community`, `from as-path`, `set local-preference`, `set community`, `set as-path-prepend` e `set next-hop`. Um mapa que ignorasse em silêncio a condição de um term exportaria justamente o que aquele term foi escrito para segurar.
 
 Medido num laboratório com uma adjacência OSPF e duas rotas estáticas: a política que aceitava só uma delas, com `set metric 77`, fez o vizinho receber aquela rota com custo 77, e só ela. Com `redistribute static` no lugar da política, as duas chegaram, com o custo padrão.
+
+## Route-maps e listas, a forma do próprio roteamento
+
+`policy-options` é o jeito recomendado, mas não o único: as route-maps e as listas do roteamento continuam aceitas, e são o que um vizinho usa em `neighbor <vizinho> route-map <nome> in|out` e `neighbor <vizinho> prefix-list <nome> in|out`. O que o `prismash` confere delas, digitado no topo do modo de configuração:
+
+| Comando | O que cria |
+|---------|------------|
+| `ip prefix-list <nome> ...` e `ipv6 prefix-list <nome> ...` | uma lista de prefixos, com `permit`/`deny` e faixa `ge`/`le` |
+| `bgp as-path access-list <nome> ...` | uma lista de expressões de AS-path |
+| `bgp community-list <nome> ...` e `bgp large-community-list <nome> ...` | uma lista de communities ou de large communities |
+| `route-map <nome> permit\|deny <seq>` | uma cláusula de route-map; entra nela |
+
+Dentro de uma cláusula de route-map:
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `match ip address prefix-list` | `<lista>` | rotas IPv4 cujo prefixo está na lista |
+| `match ip next-hop prefix-list` | `<lista>` | rotas IPv4 cujo próximo salto está na lista |
+| `match ipv6 address prefix-list` | `<lista>` | rotas IPv6 cujo prefixo está na lista |
+| `match rpki` | `valid`, `invalid` ou `notfound` | pelo estado da validação de origem (seção RPKI, abaixo) |
+| `match as-path` | `<lista>` | pelo AS-path |
+| `match community` e `match large-community` | `<lista>` | pelas communities |
+| `match metric` | `<0-4294967295>` | pelo MED |
+| `match peer` | `<vizinho>` | pelo vizinho que mandou a rota |
+| `set local-preference` | `<0-4294967295>` | qual caminho esta caixa prefere; maior ganha |
+| `set metric` | `<valor>`, `+`/`-` valor, `rtt`, `+rtt`, `-rtt`, `igp` ou `aigp` | o MED enviado, substituído ou ajustado |
+| `set community` e `set large-community` | `<AS:NN> [additive]` | as communities levadas; `additive` mantém as que já estavam |
+| `set next-hop` | `<A.B.C.D>` | o próximo salto anunciado |
+| `set as-path prepend` e `set as-path exclude` | `<asn> [<asn> ...]` | alonga o caminho, ou tira ASs dele |
+| `set weight` | `<0-4294967295>` | a preferência local desta caixa, nunca anunciada |
+| `set origin` | `igp`, `egp` ou `incomplete` | o atributo de origem |
+| `call` | `<route-map>` | roda outra route-map antes de decidir |
+| `on-match next` ou `on-match goto <seq>` | | o que fazer quando a cláusula casa |
+| `description` | `<texto>` | para que serve a cláusula |
+
+O que não está nessas tabelas também chega ao roteamento, marcado com `<- not checked`. Os detalhes — a ordem das cláusulas, o que é recusado, a faixa `ge`/`le`, as expressões de AS-path — estão em [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
 
 # O que é recusado antes de chegar ao roteamento
 
@@ -304,6 +372,17 @@ configure
 ```
 
 A primeira cláusula descarta o que o validador reprova; a segunda deixa passar todo o resto. Sem a segunda, a route-map nega tudo no fim — que é o comportamento normal de uma política, e aqui filtraria a sessão inteira em vez de filtrar só o inválido.
+
+## O que o bloco `rpki` entende
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `rpki cache tcp` | `<host> <porta> [source <A.B.C.D>] preference <1-255>` | um validador, por RTR sobre TCP |
+| `rpki cache ssh` | `<host> <porta> <usuário> <chave-privada> [known-hosts] [source <A.B.C.D>] preference <1-255>` | um validador, por RTR sobre SSH |
+| `rpki polling_period` | `<1-86400>` | segundos entre as atualizações |
+| `rpki expire_interval` | `<600-172800>` | segundos até descartar o que o validador mandou |
+| `rpki retry_interval` | `<1-7200>` | segundos até tentar de novo um validador perdido |
+| `rpki reset` |           | descarta o que os validadores mandaram e pergunta de novo |
 
 ## A palavra do transporte não é opcional
 

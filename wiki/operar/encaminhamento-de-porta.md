@@ -26,6 +26,8 @@ show cgnat forward
 
 É ajuste **aplicado no lugar**: não derruba sessão de ninguém.
 
+Vale também num pool com `filter address-dependent`: a porta encaminhada fica fora dessa filtragem, porque quem chega por ela nunca foi contatado antes pelo assinante — é esse o propósito do forward.
+
 # O endereço público não é escolha sua
 
 Você informa a **porta** pública e nunca o **endereço**: o endereço é o do próprio assinante, aquele que o mapeamento já atribui a ele.
@@ -34,7 +36,7 @@ Dois motivos, e os dois são propriedades que o resto do equipamento já garante
 
 | Motivo | O que quebraria se fosse diferente |
 |--------|------------------------------------|
-| **Pareamento de endereço** (RFC 4787 REQ-2) | um assinante que recebe tráfego num endereço e envia de outro não está pareado, e aplicações que conferem de onde veio a resposta enxergariam dois pares diferentes. Vale dizer até onde a caixa garante isso: sempre, em modo determinístico. Em modo dinâmico, quando o assinante enche o bloco dele e ganha outro, a caixa **procura um bloco livre no endereço público dele** antes de pegar qualquer um - preferência, não regra, porque recusar a extensão custaria tráfego ao cliente em vez de custar um endereço. `show cgnat blocks` mostra a conta do seu próprio pool. O encaminhamento continua recusado em qualquer endereço que não seja o primeiro do assinante, que é o lado conservador disso |
+| **Pareamento de endereço** (RFC 4787 REQ-2) | um assinante que recebe tráfego num endereço e envia de outro não está pareado, e aplicações que conferem de onde veio a resposta enxergariam dois pares diferentes. Vale dizer até onde a caixa garante isso: sempre, num pool determinístico sem `reserve`, onde cada assinante tem um bloco só. Em pool dinâmico, e no bloco extra que sai de uma `reserve`, quando o assinante enche o bloco dele e ganha outro a caixa **procura um bloco livre no endereço público dele** antes de pegar qualquer um - preferência, não regra, porque recusar a extensão custaria tráfego ao cliente em vez de custar um endereço. A linha `RFC 4787 REQ-2 paired:` de `show cgnat blocks` mostra a conta do seu próprio pool. O encaminhamento continua recusado em qualquer endereço que não seja o primeiro do assinante, que é o lado conservador disso |
 | **A aritmética reversa** | é ela que recupera o assinante a partir de (endereço público, porta) sem consulta a tabela. Um forward em outro endereço seria um mapeamento que a fórmula não produz, e todo leitor da trilha calcularia a resposta errada exatamente para aquelas portas |
 
 Por isso a porta pública **precisa cair dentro do bloco** que o pool atribui àquele assinante. Um forward fora do bloco é recusado, nomeando o assinante cujo bloco ele teria tomado:
@@ -133,7 +135,9 @@ O bloco volta preso, e você não precisa fazer nada para isso. Qual bloco está
 
 ## No log
 
-Prender um bloco é registrado como **alocação** e soltá-lo como **liberação**, exatamente como qualquer outro bloco (RFC 8158). Em modo dinâmico o log é o único registro de quem segurou um bloco, e um bloco segurado por um ano sem registro é um mapeamento que ninguém consegue atribuir a um assinante depois — o que aqui é obrigação legal, não capricho.
+Prender um bloco é registrado como **alocação** e soltá-lo como **liberação**, exatamente como qualquer outro bloco (RFC 8158). O evento é do bloco, não do forward: um segundo forward dentro de um bloco já preso não gera outro registro, e a liberação só sai quando o último forward do bloco é removido **e** o bloco volta de fato ao pool. Se o assinante ainda tem sessões nele, o bloco vira um bloco dinâmico comum e sai depois, pela ociosidade, com a liberação dele. Em modo dinâmico o log é o único registro de quem segurou um bloco, e um bloco segurado por um ano sem registro é um mapeamento que ninguém consegue atribuir a um assinante depois — o que aqui é obrigação legal, não capricho.
+
+Não há um registro separado para o "prender": a trilha de configuração já anota cada `forward` acrescentado ou removido, com o operador que o fez, e o bloco preso é deduzido dele.
 
 Uma configuração é aplicada com os pools primeiro e a exportação depois, que é a ordem de todo boot. Por isso, quando a exportação é ligada, o equipamento reanuncia como alocação todos os blocos que estão presos naquele instante — senão a caixa recém-reiniciada seguraria cada um deles sem registro nenhum.
 

@@ -22,10 +22,21 @@ flowchart LR
 | `commit remap` |           | aplica uma mudança que move assinantes existentes para novos endereços públicos e blocos |
 | `commit cutoff` |           | aplica uma mudança que deixa de anunciar o prefixo por onde esta sessão chegou |
 | `commit diverge` |           | aplica uma mudança que mapeia assinantes de forma diferente do par com quem esta caixa divide um endereço de serviço |
-| `commit confirmed <1-60>` | minutos   | aplica, e desfaz sozinho a menos que seja confirmado |
-| `commit comment "<texto>"` |           | registra uma nota junto com este commit |
+| `commit confirmed [<1-60>]` | minutos; sem número, 10 | aplica, e desfaz sozinho a menos que seja confirmado |
+| `commit comment <texto>` | texto livre; aspas em volta são retiradas | registra uma nota junto com este commit, que `show rollback` mostra ao lado da revisão |
 
-`remap`, `cutoff`, `diverge`, `confirmed` e `comment` combinam entre si, em qualquer ordem: uma mudança com duas consequências a reconhecer não custa a chance de registrar por quê.
+`commit` funciona em qualquer nível do modo de configuração — dentro de `nat`, de `cgnat`, de um pool, de uma conta, de um bloco de roteamento — e depois dele você continua no nível em que estava. No modo operacional ele é recusado: entre com `configure` antes.
+
+**Como as palavras se combinam.** `remap`, `cutoff` e `diverge` combinam entre si, em qualquer ordem, e vêm **antes** de `confirmed` ou de `comment`: `commit remap comment "ampliação do pool residencial"` e `commit cutoff remap confirmed 5` funcionam. Já `confirmed` e `comment` **não** se combinam — a caixa lê a primeira das duas e o resto da linha vai com ela:
+
+| Digitado | O que a caixa faz |
+|----------|-------------------|
+| `commit confirmed 5 comment "teste"` | janela de 5 minutos; o comentário é ignorado |
+| `commit comment teste confirmed 5` | grava o comentário `teste confirmed 5` e **não abre janela nenhuma** |
+
+A segunda linha é a que custa: quem esperava um desfazer automático não tem nenhum. Quando precisar das duas coisas, use `confirmed` e registre o motivo no chamado de mudança.
+
+`commit check` vem sozinho: é uma pergunta, não aplica nada, e o que vier depois de `check` não muda a resposta.
 
 ### `commit check` antes de qualquer coisa
 
@@ -147,6 +158,16 @@ prisma# [edit] commit confirmed 5
 
 Aplica agora, e desfaz automaticamente em 5 minutos a menos que você confirme. É o que permite mexer em roteamento numa máquina remota: se a mudança cortar seu próprio acesso, a máquina se recupera sozinha.
 
+Sem número, a janela é de 10 minutos. O prazo vai de 1 a 60; fora disso o commit é recusado e nada é aplicado:
+
+```
+error: commit confirmed 0: expected 1-60 minutes
+    the window has to outlast a reconnection and end while somebody is still at
+    the console
+```
+
+Zero é recusado de propósito: seria uma janela que nunca se arma, sob um `commit complete` que parece ter dado certo.
+
 A caixa responde dizendo onde o desfazer está armado:
 
 ```
@@ -160,12 +181,14 @@ rollback at 2026-02-11T14:32:07Z, in 5 minute(s)
 
 #### Confirmar
 
-Qualquer `commit` confirma a janela aberta:
+Qualquer `commit` confirma a janela aberta — o `commit` sem mais nada, e também o que já traz a próxima mudança:
 
 ```
 prisma# [edit] commit
 confirmed: the box will not roll this change back
 ```
+
+A exceção é outro `commit confirmed`: ele não confirma a janela anterior, abre uma nova, com o prazo novo.
 
 Enquanto a janela estiver aberta, quem entrar na VTY é avisado logo no banner:
 
@@ -225,7 +248,7 @@ Recusar é a coisa mais forte que este equipamento faz: ele conhece o estado da 
 
 Nas recusas desta seção **nada é aplicado** - a candidata fica como está e você continua na sessão. Todas elas são decididas antes de a caixa tocar em qualquer coisa.
 
-Há **uma** recusa que não funciona assim, e ela está mais abaixo: a de leitura de volta do roteamento. Essa é descoberta depois que o roteamento já recebeu a configuração, e nela o resto do commit está aplicado. Antes de sair de uma recusa acreditando que a caixa está intocada, leia a mensagem: ela diz qual das duas você tem na tela.
+Há **duas** mensagens que não funcionam assim, e elas estão mais abaixo: a de leitura de volta do roteamento e a do roteamento que não mudou nada. As duas são descobertas depois que o roteamento já recebeu a configuração, e nelas o resto do commit está aplicado. Antes de sair de um erro acreditando que a caixa está intocada, leia a mensagem: ela diz qual dos casos você tem na tela.
 
 As mensagens aparecem em inglês, porque é o que a caixa imprime. Elas estão aqui para você achar a sua.
 
@@ -319,6 +342,17 @@ As sentenças recusadas aparecem uma por linha, com o bloco a que pertencem. As 
 
 A última frase é o que fazer em seguida. As duas configurações divergiram, e há um comando para ler cada uma: `show configuration` mostra a desta caixa.
 
+### `the routing half of this commit reached FRR and changed nothing`
+
+A irmã da anterior, e também descoberta **depois** de aplicar: o CGNAT e a configuração da própria caixa estão em efeito, e nenhuma das sentenças novas de roteamento pegou. A caixa lista até cinco delas e diz as duas causas prováveis:
+
+```
+error: the routing half of this commit reached FRR and changed nothing
+    all 2 new statement(s) are still outstanding
+```
+
+A causa comum é um daemon de roteamento parado — `show version` diz quais estão de pé. A outra é inofensiva: sentenças que repetem o valor padrão do próprio roteamento, que ele não guarda. Nos dois casos a caixa não escreve `commit complete`, porque essa é a frase sobre a qual se constrói todo diagnóstico seguinte.
+
 ### E as duas que não são recusa, e sim pedido explícito
 
 `commit remap` e `commit cutoff` existem porque re-mapear assinantes e retirar o prefixo que carrega a sua sessão são as duas piores coisas que se faz aqui sem querer. Estão descritas acima, e a diferença é que essas mudanças **podem** ser feitas: elas só não podem ser feitas por acidente.
@@ -333,15 +367,24 @@ rollback <0-19>
 
 Carrega uma revisão commitada na candidata. **Ela não é aplicada** — vira a sua candidata, que você revisa e aplica com `commit`, como qualquer outra edição.
 
-* `rollback 0` é a última configuração commitada.
-* São mantidas as **20 revisões** mais recentes, em `/etc/prisma-routing/rollback/`.
-* `show rollback` lista as disponíveis.
+| Comando | O que faz |
+|---------|-----------|
+| `rollback 0`, ou `rollback` sem número | descarta o que você editou e volta a candidata ao que está em vigor agora (`candidate reset to the running configuration`) |
+| `rollback 1` | a revisão do commit anterior ao último — é a volta de um commit que deu errado |
+| `rollback <2-19>` | revisões mais antigas, uma por commit |
+| `show rollback` | as revisões guardadas: número, data e hora do commit em UTC, quantos commits atrás, e o `comment` quando houve um |
 
-Funciona nos modos operacional e de configuração.
+Depois de carregar uma revisão a caixa responde `load complete (revision <n>)` e sugere o próximo passo: `show configuration compare` para revisar, `commit` para aplicar. Um número que não tem revisão é recusado com `revision <n> does not exist`.
+
+São mantidas as **20 revisões** mais recentes, em `/etc/prisma-routing/rollback/`; cada `commit` que aplica alguma coisa grava uma e empurra as outras uma posição para trás.
+
+Funciona no modo operacional — e ali ele já **entra no modo de configuração**, com a revisão como candidata — e em qualquer nível do modo de configuração, menos dentro de um pool, de uma conta (`user`) ou de um usuário SNMP (`snmp-user`): nesses três, dê `exit` antes.
 
 ## `save` — o segundo passo que as pessoas esquecem
 
-`commit` faz a configuração passar a valer. `save` grava em `/etc/prisma-routing/prisma-routing.conf` para que ela sobreviva ao reboot.
+`commit` faz a configuração passar a valer. `save` grava em `/etc/prisma-routing/prisma-routing.conf` para que ela sobreviva ao reboot, e responde `configuration saved to /etc/prisma-routing/prisma-routing.conf`.
+
+`save` é um comando do **modo operacional**. Ele grava a configuração **em vigor**, não a candidata, e por isso não existe dentro do modo de configuração: saia com `exit` (de qualquer nível, `top` e depois `exit`) e digite `save` no prompt `prisma>`.
 
 **São coisas diferentes e nenhuma implica a outra.** Uma configuração commitada e não salva desaparece no próximo boot. Uma configuração salva mas com a candidata ainda modificada não é o que está valendo.
 
@@ -370,7 +413,19 @@ show configuration compare    só o que muda em relação ao que está valendo
 commit check                  valida sem tocar no equipamento
 ```
 
-Quem seria re-mapeado sai do `commit` comum, na recusa que pede `commit remap`.
+`show configuration compare` responde `no differences` quando a candidata é igual ao que está valendo — é o jeito de saber, antes de sair, se há alguma coisa por aplicar.
+
+Quem seria re-mapeado sai do `commit check` e, com os mesmos números, da recusa do `commit` comum que pede `commit remap`.
+
+## Sair sem aplicar
+
+`exit` no topo do modo de configuração volta ao modo operacional e **descarta** a candidata. Se ela tinha alguma coisa que não foi aplicada, a caixa avisa na saída — e o que foi descartado não volta:
+
+```
+warning: uncommitted changes were discarded (use 'commit' to apply them)
+```
+
+Depois de um `commit` que aplicou tudo, esse aviso não aparece.
 
 ## No boot
 

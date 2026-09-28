@@ -2,14 +2,21 @@
 
 A ISO é um **meio de instalação**, não uma appliance para uso direto. Ela dá boot sem credencial nenhuma, roda o produto para inspeção, e oferece um comando que a transforma em uma máquina com dono.
 
-A ISO fica em <https://prismarouting.com.br/releases/>, na pasta da versão, com o `sha256` ao lado. Confira antes de gravar: `sha256sum -c prisma-routing-<versão>.iso.sha256` tem que responder `OK`. Nem toda versão traz ISO. As que só trazem o pacote de atualização são correções que se aplicam por cima de uma caixa já instalada. Para uma máquina nova, use a ISO mais recente da pasta e depois aplique o pacote mais novo, como explica [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X).
+A ISO fica em <https://prismarouting.com.br/releases/>, na pasta da versão, com o `sha256` ao lado. Confira antes de gravar: `sha256sum -c prisma-routing-<versão>.iso.sha256` tem que responder `OK`. Nem toda versão traz ISO. As que só trazem o pacote de atualização são correções que se aplicam por cima de uma caixa já instalada. Para uma máquina nova, use a ISO mais recente da pasta e, depois de instalada, leve a caixa para a versão mais nova pela própria VTY:
+
+```
+prisma> system upgrade
+prisma> system upgrade <versão>
+```
+
+Sem versão, ele só diz qual versão a caixa roda e qual é a mais nova publicada. Com versão, baixa o pacote do diretório público, recusa o pacote se ele não bater com o `sha256` e aplica. O resto, inclusive o `save` antes do próximo reboot, está em [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X).
 
 ```mermaid
 flowchart TD
     A["boot pela ISO"] --> B["VTY do meio de instalação"]
     B --> C["digitar <code>install</code>"]
     C --> D["escolher o disco<br/><i>menu por letras, maior primeiro<br/>o disco de boot nunca aparece</i>"]
-    D --> E["hostname · fuso<br/>rede de gerência · senha de root"]
+    D --> E["hostname · fuso · volume de log<br/>espelho · rede de gerência · senha de root"]
     E --> F{"confirmar com a palavra<br/><code>yes</code>"}
     F -->|"Enter ou y não valem"| F
     F -->|yes| G["escreve no disco"]
@@ -24,10 +31,11 @@ Nenhum byte é escrito antes de **todas** as respostas estarem coletadas e váli
 
 ## Instalando
 
-Dê boot pela ISO. O console cai direto na VTY:
+Dê boot pela ISO. O console cai direto na VTY, logo abaixo do nome do produto:
 
 ```
-Prisma Routing VTY 0.25.0
+Prisma Routing VTY <versão>
+'?' for help, TAB to complete, 'configure' to edit, 'exit' to leave.
 
 This is the installation medium: nothing here survives a reboot.
 Type 'install' to install Prisma Routing onto a disk.
@@ -66,9 +74,7 @@ Enter vazio não é resposta. `y` também não. **Um disco não pode ser destru�
 
 ## Rede de gerência
 
-**Uma appliance que não pode ser alcançada depois de reiniciar não é uma appliance.** Até a 0.72.0 o instalador não escrevia nada em `/etc/network`: a placa subia `DOWN`, sem endereço, e a caixa só existia pelo console. O que o operador digitava lá não sobrevivia ao próximo boot.
-
-O instalador pergunta, junto com as outras perguntas e antes de qualquer escrita, **em qual placa** a caixa é gerenciada e **como ela é endereçada**:
+**Uma appliance que não pode ser alcançada depois de reiniciar não é uma appliance.** O instalador pergunta, junto com as outras perguntas e antes de qualquer escrita, **em qual placa** a caixa é gerenciada e **como ela é endereçada**:
 
 ```
   A NEW BOX IS CONFIGURED AT ITS CONSOLE, and that is the default
@@ -78,14 +84,14 @@ O instalador pergunta, junto com as outras perguntas e antes de qualquer escrita
   is then the one card the dataplane will not claim.
 
 Network cards on this machine:
-  a) ens18      up     virtio_net   10.95.200.196/24   <- this medium is reaching the network on this one
+  a) ens18      up     virtio_net   192.0.2.10/24   <- this medium is reaching the network on this one
   b) ens19      down   virtio_net   none
   none) no management network   (this box is reached at its console)   <- default
 
 Which card is this box managed on (letter, or a name) [none]:
 ```
 
-A lista mostra **o que cada placa é** - se está no ar, qual driver a move, qual endereço ela está carregando neste minuto - porque `ens18` e `ens19` não dizem a ninguém qual cabo está em qual. A placa pela qual a própria mídia está alcançando a rede agora é apontada na lista, porque é a que o operador quer quando quer uma: ela não é mais o padrão.
+A lista usa o nome que o Linux dá à placa (`ens18`, `enp2s0`), que é também o nome com que ela aparece na VTY depois: a caixa instalada mantém o nome do Linux para cada placa, inclusive as que o dataplane reivindica. A lista mostra **o que cada placa é** - se está no ar, qual driver a move, qual endereço ela está carregando neste minuto - porque `ens18` e `ens19` não dizem a ninguém qual cabo está em qual. A placa pela qual a própria mídia está alcançando a rede agora é apontada na lista, porque é a que o operador quer quando quer uma: ela não é mais o padrão.
 
 
 :::info
@@ -123,7 +129,7 @@ A caixa não se perde: o endereço passa para o par que o dataplane mantém para
 no management network was asked for, and this box is on one anyway
 ```
 
-Para guardar uma placa para o Linux depois, escreva a estrofe que o instalador teria escrito:
+Para guardar uma placa para o Linux depois, escreva a estrofe que o instalador teria escrito — num shell de administrador (`start shell`) — e reinicie a caixa:
 
 ```
 F=/etc/network/interfaces.d/prisma-routing
@@ -131,7 +137,7 @@ echo "auto ens19" >> $F
 echo "iface ens19 inet dhcp" >> $F
 ```
 
-Endereço estático leva `inet static` e uma linha `address`.
+Endereço estático leva `inet static` e uma linha `address`. O outro caminho, sem shell, é nomear na VTY a placa dos assinantes em `system` > `dataplane` > `interface <placa>`: o dataplane passa a reivindicar só ela, e as demais ficam com o Linux. Ver [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
 
 :::
 
@@ -183,6 +189,8 @@ Mídia nova não carrega chave nenhuma, e nesse caso a instalação não diz nad
 | Disco alvo | não é dispositivo de bloco, ou é o meio de onde o sistema deu boot |
 | Hostname | contém caracteres que um hostname não pode ter |
 | Fuso horário | não existe essa zona em `/usr/share/zoneinfo` |
+| Gigabytes do volume de log | não é número inteiro, é menor que 1 GB, ou deixaria o sistema com menos de 8 GB |
+| Disco do espelho | é o disco alvo, a mídia de boot, uma partição, ou é pequeno demais para o volume de log |
 | Placa de gerência | esta máquina não tem placa com esse nome |
 | Endereço de gerência | não é `dhcp`, não é `none` e não é endereço com prefixo entre 1 e 32 |
 | Gateway  | não é endereço, não está na sub-rede do endereço, ou veio junto com `dhcp` |
@@ -294,11 +302,12 @@ Para laboratório, teste de boot e PXE, as respostas vêm da linha de comando do
 | `prisma-routing.mgmt-address=<a>` | `dhcp`, `a.b.c.d/nn`, ou `none` |
 | `prisma-routing.mgmt-gateway=<ip>` | só com endereço estático |
 | `prisma-routing.mgmt-dns=<ip>[,<ip>]` | só com endereço estático |
+| `prisma-routing.answers[=<arquivo>]` | lê as respostas de um arquivo (seção seguinte) |
 | `prisma-routing.yes` | pula as confirmações e depois **desliga a máquina** |
 
 
 :::warning
-**Atenção com** `**prisma-routing.password**`**\*\*\*\*:** a linha de comando do kernel fica legível para todos em `/proc/cmdline` durante toda a vida do sistema que deu boot. Ela não sobrevive para a máquina instalada, mas qualquer um logado no meio durante a instalação consegue lê-la. Para instalação presencial, deixe de fora e responda no prompt.
+**Atenção com** `prisma-routing.password`**:** a linha de comando do kernel fica legível para todos em `/proc/cmdline` durante toda a vida do sistema que deu boot. Ela não sobrevive para a máquina instalada, mas qualquer um logado no meio durante a instalação consegue lê-la. Para instalação presencial, deixe de fora e responda no prompt. Para instalação não assistida, use o arquivo de respostas.
 
 :::
 
@@ -306,7 +315,35 @@ Com `prisma-routing.yes`, a rede de gerência é `none` e o instalador diz isso:
 
 Com `prisma-routing.yes` e sem `prisma-routing.log-gb`, o instalador toma o padrão **e diz que tomou**. Uma instalação não assistida não tem console de onde responder, e uma pergunta que ninguém pode responder é uma instalação pendurada.
 
-O desligamento ao final não é conveniência: sem ele a máquina fica num prompt de login até o harness matá-la, e a mensagem de conclusão sai truncada.
+O desligamento ao final não é conveniência: sem ele a máquina fica num prompt de login até alguém desligá-la, e a mensagem de conclusão sai truncada.
+
+### Respostas num arquivo
+
+É o caminho recomendado para instalação não assistida: as mesmas respostas, a senha entre elas, lidas de um arquivo em vez de publicadas para todo processo da mídia.
+
+```
+disk     = /dev/sda
+hostname = cgnat01
+timezone = America/Sao_Paulo
+log-gb   = 30
+password = <a senha de root desta caixa>
+yes      = yes
+```
+
+`prisma-routing.answers` sem valor lê `prisma-routing.answers` na raiz da mídia; com valor, o caminho dado. As chaves são `disk`, `hostname`, `timezone`, `log-gb`, `mirror`, `password`, `mgmt-interface`, `mgmt-address`, `mgmt-gateway`, `mgmt-dns` e `yes`, com o mesmo significado dos parâmetros acima.
+
+| Regra | Por quê |
+|-------|---------|
+| Chave desconhecida é **recusada**, não ignorada | um `password` digitado errado seria uma instalação parada numa pergunta sem console para responder |
+| Arquivo que não existe é recusado | cair nas perguntas é o mesmo travamento por outro caminho |
+| Resposta dada na linha de comando **vence** o arquivo | a linha é digitada para este boot; o arquivo viaja com a mídia para toda instalação |
+| `#` só começa comentário no **início** da linha | uma senha pode conter `#`, e cortá-la ali instalaria uma caixa com um pedaço da senha |
+| A senha nunca é impressa, nem num erro | uma linha que não foi entendida é citada pelo número, não pelo conteúdo |
+
+:::warning
+**O arquivo é uma credencial.** Ele tira a senha de `/proc/cmdline` e a põe na mídia: quem lê a mídia lê a senha, e a instalação diz isso no console. Nenhuma ISO publicada traz arquivo de respostas; escreva o seu na mídia que você usa e guarde essa mídia como guardaria a senha. O arquivo não é copiado para a caixa instalada.
+
+:::
 
 # Como conferir
 
@@ -314,29 +351,21 @@ Depois do primeiro boot sem a mídia:
 
 * o console mostra o relatório do self-test, **sem nenhuma linha** `**[FAIL]**`;
 * entre elas, `binary API registered, so pools can be configured` — sem ela a caixa roteia e responde, e nenhum pool pode ser criado;
-* uma linha `managed on <placa>` com o endereço embaixo dela - é por ali que você chega na caixa sem voltar ao console;
-* `show version` responde com a versão do Prisma Routing, do VPP e do FRR;
+* se você respondeu uma placa de gerência, uma linha `managed on <placa>` com o endereço embaixo dela - é por ali que você chega na caixa sem voltar ao console; se respondeu `none`, a linha `[info] no management network was asked for at install time`;
+* `the dataplane runs in a container on this box` e `backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table` — a caixa instalada roda o dataplane, o roteamento e o plano de gerência (onde fica a VTY) em containers, ligados por uma rede interna em `128.0.0.0/8` que fica numa tabela de rotas própria: os endereços reais em `128.x` continuam alcançáveis, pela caixa e pelos assinantes;
+* `show version` responde com a versão do Prisma Routing, do dataplane e do roteamento;
 * você consegue entrar com a senha definida durante a instalação.
 
-
-:::warning
-**Não instale com as mídias 0.34.0, 0.35.0 ou 0.36.0.** Duas falhas na mídia, uma escondida atrás da outra:
-
-* a imagem não levava um componente necessário para configurar CGNAT, então a caixa bootava, roteava, respondia e dizia *pronto* — e **nenhum pool podia ser criado**;
-* e o serviço que aplica a configuração falhava no primeiro boot de toda instalação, porque o arquivo de configuração padrão — só comentários — era lido como uma mudança que removia o acesso SSH.
-
-Corrigidas na **0.37.0**. Uma caixa já instalada com uma dessas mídias precisa ser reinstalada: o componente que falta não está no disco.
-
-A partir da 0.37.0, a mídia de cada versão é instalada em disco e bootada com a mídia removida antes de ser publicada. Bootar a imagem live prova que a mídia dá boot; não prova que ela produz uma appliance que funciona.
-
-:::
+A mídia de cada versão é instalada em disco e bootada sem a mídia antes de ser publicada: bootar a imagem live prova que ela dá boot, não que ela produz uma appliance que funciona.
 
 
 :::success
-Self-test **sem** `**[FAIL]**` e `show version` respondendo: a instalação está válida. "Pronto" sozinho não bastava — uma caixa dizia pronto e não configurava CGNAT. O próximo passo é [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+Self-test **sem** `**[FAIL]**` e `show version` respondendo: a instalação está válida. "Pronto" sozinho não basta: é a linha da API binária que diz que um pool pode ser criado. O próximo passo é [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
 
 :::
 
 # Ver também
 
 * [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — onde você cai ao entrar, e quem pode o quê
+* [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — a máquina e o disco antes de instalar
+* [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — depois de instalada

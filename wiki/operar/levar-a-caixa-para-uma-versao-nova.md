@@ -9,38 +9,12 @@ Como colocar uma versão nova do Prisma Routing numa caixa que já está em prod
 | Quando | Sempre que o pacote aceitar a caixa | Quando o pacote recusa, ou quando a máquina é nova |
 | O disco | Intocado                | **Apagado**               |
 | Configuração, contas, comunidades SNMP | Ficam                   | Somem                     |
-| Registros de conexão e trilha de configuração | Ficam                   | Somem                     |
+| Trilha de configuração e transbordo do exportador | Ficam                   | Somem                     |
 | Parada | Só o reinício do dataplane, e no horário que você escolher | A janela inteira, com boot pela mídia |
+| Publicado para | Toda versão, a partir da 0.79.0 | Só a última versão completa (as que mudam o primeiro ou o segundo número) |
 | Tamanho do download | Cerca de 120 MB, com as imagens dos contêineres | Centenas de megabytes     |
 
 **O pacote é o caminho normal.** A reinstalação existe para a máquina nova e para o caso em que a versão nova muda a plataforma por baixo do produto. Você não precisa adivinhar qual é: o pacote confere isso sozinho e **recusa antes de escrever qualquer coisa**, dizendo o que a caixa tem e o que a versão nova precisa.
-
-# Antes de subir para a 0.76.0: as placas mudam de dono
-
-A partir da 0.76.0 o dataplane **reivindica as placas sozinho**. A regra é: ele fica com todas as placas PCI da caixa, exceto uma reservada para o Linux — que é a rede de gerência gravada na instalação —, e nunca a última. Numa instalação nova isso é o que faz a caixa encaminhar sem ninguém dizer nada.
-
-Numa caixa **já em serviço**, isso muda de dono no próximo boot. Leia a sua linha antes de atualizar:
-
-| Se a sua caixa | O que muda no próximo boot |
-|----------------|----------------------------|
-| tem **uma** placa | o dataplane fica com ela. Endereço, MAC e gateway passam para o par `linux_cp`, e a caixa passa a ser alcançada *através* do dataplane. Nada a fazer |
-| tem **várias** e você guardou uma para o Linux só não nomeando ela | **o dataplane vai pegar essa placa.** Só é poupada a que está gravada como rede de gerência da instalação. Uma placa que você usava para VLAN de gerência, caminho de backup ou storage é reivindicada |
-| já nomeia uma placa com `dataplane interface` (hoje `interface`, em `system` > `dataplane`) | não muda, e agora é **exclusivo**: a caixa pega aquela e nenhuma outra. É assim que se guardam placas para o Linux |
-| mistura placa de MTU 1500 com uma que aceita jumbo | toda interface começa no **menor** máximo entre as placas reivindicadas, porque o dataplane usa um valor só para todas. `mtu <n>` dentro de `interface` levanta uma porta depois |
-| foi instalada nomeando uma placa que ela não tem mais | nada fica reservado, então **todas** são reivindicadas |
-| foi instalada respondendo `none` à pergunta da rede de gerência | **nada pode ficar reservado**, porque a reserva É essa resposta: todas as placas são reivindicadas, inclusive a que você administra. A caixa não se perde — o endereço passa para o par do dataplane — mas o caminho muda, e o autoteste passa a avisar em todo boot |
-
-
-:::warning
-O caso do meio é o que morde. Uma caixa com várias placas em que você simplesmente nunca nomeou a de gerência perde essa placa para o dataplane no primeiro boot depois da atualização — e, se não for a que carrega a rota default gravada na instalação, ela não volta sozinha.
-
-Antes de reiniciar, resolva com uma linha: nomeie a placa dos assinantes com `interface <nome>`, em `system` > `dataplane`, e dê `commit`. A partir daí a caixa reivindica só aquela, e todas as outras ficam com o Linux.
-
-:::
-
-`show hardware` diz quais placas foram reivindicadas, qual foi poupada e por quê; o autoteste de boot diz o mesmo no console. Uma placa cujo endereço, MAC e gateway a caixa não consiga ler inteiros **não** é reivindicada — ela prefere manter a placa a entregar uma porta que não saberia devolver.
-
-E um passo que deixou de existir: **naquela caixa de uma placa só, entregar a placa não arma mais um** `**commit confirmed**` **de trinta minutos.** Se o seu procedimento manda reiniciar, entrar de novo e digitar `commit` para manter a placa, apague esse passo — não há janela para confirmar, e o `commit` extra não faz nada.
 
 # O pacote de atualização
 
@@ -51,7 +25,15 @@ prisma> system upgrade
 prisma> system upgrade <versão>
 ```
 
-Sem versão, ele diz qual versão a caixa roda e qual é a mais nova publicada, e não muda nada. Com a versão, ele baixa o pacote, confere o `sha256` antes de abrir qualquer coisa, e roda o mesmo `upgrade` dos passos abaixo, mostrando tudo o que ele diz. Uma versão igual ou mais antiga que a da caixa é recusada: voltar de versão é o caminho manual. Depois dele, vale o que vale para o caminho manual: `save` antes de reiniciar.
+Sem versão, ele diz qual versão a caixa roda e qual é a mais nova publicada, e não muda nada. Com a versão, ele baixa o pacote e o `sha256` do diretório público de versões (o mesmo do passo 2), recusa o pacote antes de abrir qualquer coisa se a soma não bater, e roda o mesmo `upgrade` dos passos abaixo, mostrando tudo o que ele diz. Uma versão igual ou mais antiga que a da caixa é recusada: voltar de versão é o caminho manual.
+
+Três coisas a saber dele:
+
+* **Só o papel de administrador pode rodá-lo**, como `system reboot`.
+* **Ctrl-C não interrompe** enquanto o `upgrade` roda: uma caixa atualizada pela metade é pior que uma atualização lenta.
+* **Se o `upgrade` para no meio**, a VTY diz com que status ele saiu e em que diretório o pacote ficou guardado, para quem for ler o que aconteceu.
+
+No fim ele diz `upgraded to <versão>` e lembra do `save`. Vale o que vale para o caminho manual: `save` antes de reiniciar, e o dataplane continua o antigo até você escolher a hora do passo 4.
 
 Os passos abaixo são o mesmo processo à mão, para uma caixa que não alcança a internet.
 
@@ -71,7 +53,7 @@ Guarde a saída inteira no chamado de mudança. Ela é o que diz de onde a caixa
 
 ## 2. Baixe o pacote da versão nova
 
-Cada versão fica em uma pasta própria em <https://prismarouting.com.br/releases/>, com o pacote e o `sha256` dele lado a lado. `latest` aponta sempre para a mais nova. Na própria caixa, trocando `<versão>` pelo número:
+Cada versão fica em uma pasta própria em <https://prismarouting.com.br/releases/>, com o pacote e o `sha256` dele lado a lado. `latest` aponta sempre para a mais nova. A mídia de instalação só está lá para a última versão completa: uma versão que muda só o terceiro número publica apenas o pacote de atualização. Na própria caixa, trocando `<versão>` pelo número:
 
 ```
 curl -fO https://prismarouting.com.br/releases/<versão>/prisma-routing-<versão>-upgrade.tar.gz
@@ -116,28 +98,28 @@ O pacote confere a plataforma da caixa, troca os arquivos do produto e diz, arqu
 
 Este é o passo que custa alguma coisa, e é seu.
 
-O pacote troca o dataplane **em disco** e não reinicia nada. Até o próximo reinício do VPP, a caixa continua traduzindo com o dataplane antigo, que já estava carregado na memória.
+O pacote troca o dataplane **em disco** e não reinicia nada. Até o próximo reinício do dataplane, a caixa continua traduzindo com o dataplane antigo, que já estava carregado na memória.
 
-Quem conta essa história é a linha `plugin` do `show version`, e **não** a linha `dataplane`:
+Quem conta essa história é a linha `plugin` do `show version`, e **não** a linha `dataplane`. A tela tem, nesta ordem: a versão do Prisma Routing instalado, na primeira linha; `dataplane:`, a versão do próprio VPP; `plugin:`, a build com que o dataplane foi carregado; `routing:`, a do FRR; e `daemons:`, os daemons de roteamento que estão rodando.
 
-```
-prisma> show version
-Prisma Routing 0.74.2
-  dataplane: vpp v24.10-release built by root on box at 2026-01-01
-  plugin:    0.40.0
-  routing:   FRRouting 10.7.1 (prisma-routing).
-  daemons:   running  bgpd mgmtd ospfd staticd zebra
-```
-
-A linha `dataplane` é a versão do próprio VPP e não se mexe numa troca de versão do Prisma Routing. A que fica para trás é `plugin`: é a build com que o dataplane foi carregado no último boot. Compare-a com o número da **primeira** linha - e quando as duas discordam a caixa diz isso em voz alta, com um parágrafo embaixo da linha `plugin` explicando que só um reinício do dataplane as iguala. Quando concordam ela não diz nada, que é o estado normal.
+A linha `dataplane` é a do VPP e não se mexe numa troca de versão do Prisma Routing. A que fica para trás é `plugin`: é a build com que o dataplane foi carregado no último boot. Compare-a com o número da **primeira** linha - e quando as duas discordam a caixa diz isso em voz alta, com um parágrafo embaixo da linha `plugin` explicando que só um reinício do dataplane as iguala. Quando concordam ela não diz nada, que é o estado normal.
 
 A linha `plugin` responde de quatro jeitos, e três deles não são divergência: que a build é tal, que o dataplane não está respondendo, que o dataplane respondeu e não informa build nenhuma, ou que não há com o que comparar.
 
+Quando for a hora, o reinício é pela própria VTY:
+
+```
+prisma> save
+prisma> system dataplane restart
+```
+
+Ele diz o que custa antes de agir e então age, sem perguntar. Roda de novo o ajuste de tuning, sobe o dataplane nas imagens e no plugin da versão nova, e reaplica a configuração **salva** quando ele volta — por isso o `save` antes. Quando termina, `show interface` diz quando a caixa voltou a encaminhar. O fim do próprio `upgrade` lista as mesmas opções, com o custo de cada uma.
+
 
 :::warning
-**Reiniciar o VPP derruba todas as sessões e todos os blocos de portas.** Cada assinante atrás da caixa volta a ser traduzido do zero. É rápido, mas não é de graça, e é por isso que o pacote não faz isso por conta própria.
+**Reiniciar o dataplane derruba todas as sessões e todos os blocos de portas.** Cada assinante atrás da caixa volta a ser traduzido do zero. É rápido, mas não é de graça, e é por isso que o pacote não faz isso por conta própria.
 
-Um reboot da caixa faz a mesma coisa e leva junto qualquer mudança de tuning.
+Um reboot da caixa faz a mesma coisa. Nos dois casos a parada é ordenada: antes de sair, o dataplane fecha no log cada bloco que segurava.
 
 :::
 
@@ -214,12 +196,13 @@ Anote o **UUID**, não o `/dev/sdb1`: nomes de disco mudam de boot para boot, e 
 **3. Na caixa nova, monte o volume antigo no caminho novo.** A caixa nova já criou `/var/log/prisma-routing` no disco do sistema; monte o volume antigo por cima:
 
 ```
-# prisma> start shell
+prisma> start shell
 # mkdir -p /var/log/prisma-routing
 # mount UUID=<o uuid anotado> /var/log/prisma-routing
 # ls /var/log/prisma-routing
-allocations.log  ...
 ```
+
+O `ls` tem que mostrar os arquivos do volume antigo: `config-history.log`, que é a trilha de configuração, e, se o exportador ficou devendo registros a um coletor, os arquivos de transbordo dele.
 
 **4. Deixe isso gravado, ou o próximo boot volta sem os registros:**
 
@@ -241,7 +224,6 @@ Os arquivos de registro em si não mudam de formato: o que estava escrito contin
 | As senhas das contas e as comunidades SNMP | **Não**, e não dá para copiá-las da tela: a caixa as mascara ao imprimir a configuração |
 | As revisões de rollback | **Não**                   |
 | A trilha de configuração e o spill do exportador | **Não**                   |
-| A trilha de configuração | **Não**                   |
 | O que já foi exportado para um coletor IPFIX | **Sim** - está fora da caixa, e a reinstalação não o alcança |
 | O que já foi copiado para um syslog remoto | **Sim**, pelo mesmo motivo |
 
@@ -319,7 +301,7 @@ As contas e suas senhas, e as comunidades SNMP. Nada disso veio na cópia do pas
 
 **Depois do pacote de atualização:**
 
-* `show version` traz a versão nova na primeira linha, a do Prisma Routing instalado. A linha `plugin` só acompanha depois que o VPP for reiniciado, e até lá ela fica na build antiga de propósito.
+* `show version` traz a versão nova na primeira linha, a do Prisma Routing instalado. A linha `plugin` só acompanha depois que o dataplane for reiniciado (`system dataplane restart` ou um reboot), e até lá ela fica na build antiga de propósito.
 * Depois do reinício do dataplane a linha `plugin` passa a bater com a primeira, e o parágrafo de divergência some.
 * A configuração continua lá: `show running-config` traz de volta o que já estava em vigor, sem ninguém digitar nada.
 * Um assinante real navega, e `show cgnat subscriber` com o IP dele responde com o endereço público e a faixa de portas.
