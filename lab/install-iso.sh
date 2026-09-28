@@ -4497,6 +4497,15 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       || fail=1
     send "no shutdown"
     wait_for "[edit interface" 60 "the VTY to take 'no shutdown'" || fail=1
+    # A CHANGE THIS COMMIT HAS TO APPLY. The card is up already - the box
+    # brought it up at boot - so `no shutdown` alone is a statement in force
+    # and the commit has nothing to do. This check passed on that for months
+    # only because entering the block left an empty FRR stanza in the
+    # candidate, which made every commit look like a change: the defect #477
+    # removed. With it gone the box answered, rightly, "no changes to
+    # commit", and 0.139.0's first gate read that as a failure.
+    send "description handover-$$"
+    wait_for "[edit interface" 60 "the VTY to take the description" || fail=1
     send "exit"
     wait_for "[edit]" 60 "the VTY to close the interface block" || fail=1
     # THREE ANSWERS, not two, and classified from the box's words rather
@@ -4518,6 +4527,8 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       HO_COMMIT=failed
     elif grep -qF "did not pass validation" /tmp/ho-commit.txt; then
       HO_COMMIT=refused
+    elif grep -qF "no changes to commit" /tmp/ho-commit.txt; then
+      HO_COMMIT=nochange
     else
       HO_COMMIT=unread
     fi
@@ -4825,6 +4836,11 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       echo "         anything was applied. The box said:"
       grep -E "^error:" /tmp/ho-commit.txt 2>/dev/null | head -5 \
         | sed 's/^/         | /'
+      fail=1 ;;
+    nochange)
+      echo "  [FAIL] the commit of 'interface $HO_CARD' had nothing to apply,"
+      echo "         although a description was typed: the candidate did not"
+      echo "         take it, so nothing here was exercised"
       fail=1 ;;
     *)
       echo "  [FAIL] the commit of 'interface $HO_CARD' neither completed"
