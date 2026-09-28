@@ -12472,7 +12472,13 @@ class Shell:
             return True
         _, bad = policy_mod.parse([line])
         if bad:
-            self.err(bad[0][1])
+            # The verdict, then the rule on a row of its own: whole, the name
+            # refusal reached 98 columns (#484, driven for the first time).
+            head, sep, why = bad[0][1].partition(": a name is ")
+            if sep:
+                self.err_prose(f"{head}: not a name", "a name is " + why)
+            else:
+                self.err(bad[0][1])
             return True
         w = line.split()
         if w[1] in ("community", "as-path"):

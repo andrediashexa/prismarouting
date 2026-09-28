@@ -2327,7 +2327,7 @@ sh.candidate = Config()
 sh.mode = "config"
 rv, text = driven(lambda: [sh.feed(l) for l in ("policy-options",
                                                  "prefix-list nome#ruim")])
-check(sh.nat_ctx == ["policy-options"] and "a name is letters" in text,
+check(sh.nat_ctx == ["policy-options"] and "not a name" in text,
       f"a refused name was entered as a level: {sh.nat_ctx} {text!r}")
 ok("a missing list refused at commit, a carried one told, a bad name not entered")
 
