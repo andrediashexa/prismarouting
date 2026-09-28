@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.138.12 - the VTY names the command that gives a dataplane card back
+
+### Fixed
+
 * **The VTY told the operator to type a command it refuses.**
   ([#482](https://github.com/andrediashexa/hexarouting/issues/482))
   With a card named for the dataplane, the note said "Remove it with 'no
