@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""
+prisma-power-button - shut the box down when its power button is pressed.
+
+A hypervisor's Shutdown - Proxmox's, libvirt's, a cluster evacuating a node, a
+UPS-driven host shutdown - is an ACPI power-button press, and so is the button
+on the front of a server. On systemd it is logind that turns that key into a
+shutdown, and this box has no logind: the medium is a debootstrap minbase
+with no dbus, which logind needs. So the key reached the kernel and went
+nowhere. Measured on the #475 bench: `qm shutdown` timed out after 120 s and
+the VM kept running, while every other guest on the host stopped (#478).
+
+Why this and not acpid or logind: an upgrade artifact carries product files
+and installs no packages (appliance/upgrade says so, and refuses to), so a
+package would reach newly installed boxes only. This is a product file, so an
+upgraded box gets it too. It uses nothing but the standard library: the
+kernel already exposes the button as an input device (CONFIG_ACPI_BUTTON,
+"Power Button" in /proc/bus/input/devices), and reading KEY_POWER from it is
+the whole job.
+
+A box with no power-button device - a machine without ACPI, a container -
+says so once and exits 0: there is nothing to wait for, and a unit that
+restarts forever on that would be a failure that is not one.
+
+BUT "NO DEVICE YET" IS NOT "NO DEVICE". The unit starts with multi-user, and
+the kernel registers the button when udev loads its module: on the 0.140.0
+gate's guest the service started at 14.2 s of boot and "input: Power Button"
+arrived at 14.6 s, so the first cut read an empty list, exited 0 as a
+machine with no button, and the gate's press two boots later found the unit
+inactive. The device list is read again until a button and its node are
+there, for GRACE seconds, before the box is taken to have none.
+"""
+
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+DEVICES = os.environ.get("PRISMA_INPUT_DEVICES", "/proc/bus/input/devices")
+INPUT_DIR = os.environ.get("PRISMA_INPUT_DIR", "/dev/input")
+POWEROFF = os.environ.get("PRISMA_POWEROFF", "systemctl poweroff").split()
+GRACE = float(os.environ.get("PRISMA_BUTTON_GRACE", "60"))
+STEP = 0.5
+
+# struct input_event on a 64-bit kernel: a timeval (two longs), then type,
+# code and value.
+EVENT = struct.Struct("llHHi")
+EV_KEY = 1
+KEY_POWER = 116
+
+
+def say(msg):
+    print(f"prisma-power-button: {msg}", flush=True)
+
+
+def power_buttons(text):
+    """
+    The event nodes of every input device named "Power Button", from the text
+    of /proc/bus/input/devices. A device is a block of lines separated by a
+    blank one; its name is on `N: Name="..."` and its nodes on
+    `H: Handlers=... eventN ...`. ACPI registers two on most machines (the
+    fixed-feature button and the LNXPWRBN one) and either may be the one a
+    hypervisor presses, so every one is returned.
+    """
+    found = []
+    for block in text.split("\n\n"):
+        name, handlers = "", []
+        for line in block.splitlines():
+            if line.startswith("N: Name="):
+                name = line[len("N: Name="):].strip().strip('"')
+            elif line.startswith("H: Handlers="):
+                handlers = line[len("H: Handlers="):].split()
+        if name == "Power Button":
+            found += [h for h in handlers if h.startswith("event")]
+    return found
+
+
+def is_press(data):
+    """True when this input_event is the power key going down."""
+    if len(data) != EVENT.size:
+        return False
+    _, _, etype, code, value = EVENT.unpack(data)
+    return etype == EV_KEY and code == KEY_POWER and value == 1
+
+
+def wait_for_buttons(read, exists, sleep, grace, step):
+    """
+    The power-button nodes once the kernel has registered them and udev has
+    made their files, or [] when `grace` seconds pass with none. `read`
+    returns the device list's text (or raises OSError), `exists` says whether
+    a node's file is there, `sleep` waits; all three are passed in so the
+    wait is a function of what they answer rather than of the clock.
+    """
+    waited = 0.0
+    while True:
+        try:
+            nodes = [n for n in power_buttons(read()) if exists(n)]
+        except OSError:
+            nodes = []
+        if nodes or waited >= grace:
+            return nodes
+        sleep(step)
+        waited += step
+
+
+def main():
+    def read():
+        with open(DEVICES) as f:
+            return f.read()
+    nodes = wait_for_buttons(
+        read, lambda n: os.path.exists(os.path.join(INPUT_DIR, n)),
+        time.sleep, GRACE, STEP)
+    if not nodes:
+        say(f"this machine has no power-button input device after "
+            f"{GRACE:g} s; nothing to watch")
+        return 0
+    fds = []
+    for n in nodes:
+        try:
+            fds.append(os.open(os.path.join(INPUT_DIR, n), os.O_RDONLY))
+        except OSError as e:
+            say(f"cannot open {n} ({e.strerror})")
+    if not fds:
+        return 1
+    say("watching " + " ".join(nodes))
+    while True:
+        ready, _, _ = select.select(fds, [], [])
+        for fd in ready:
+            data = os.read(fd, EVENT.size)
+            if not data:
+                # The device went away (unplugged, or a node that ends). Kept
+                # in the set it would be ready for ever and spin this loop.
+                fds.remove(fd)
+                os.close(fd)
+                if not fds:
+                    say("every power-button device went away")
+                    return 1
+                continue
+            if is_press(data):
+                say("power button pressed: shutting down")
+                subprocess.run(POWEROFF, check=False)
+                return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

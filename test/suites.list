@@ -38,6 +38,7 @@
 .build/test_bpa_radius
 python3 appliance/test_tune.py
 python3 appliance/test_snmp_agent.py
+python3 appliance/test_power_button.py
 python3 test/test_prismash_complete.py
 python3 test/test_cgnat_on_interface.py
 python3 test/test_prismash_config.py
