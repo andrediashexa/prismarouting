@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.138.13 - the boot after a tuning change forwards on the workers already isolated
+
+### Fixed
+
 * **A tuning change that adds workers forwarded nothing for one boot.**
   ([#486](https://github.com/andrediashexa/hexarouting/issues/486))
   The boot after such a change had the hugepages and SOME CPUs isolated -
