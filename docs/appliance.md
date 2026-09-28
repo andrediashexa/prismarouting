@@ -49,7 +49,9 @@ flowchart TB
     A["/sys topology<br/>NIC NUMA affinity"] --> B["prisma-routing-tune"]
     C["reserved hugepages<br/>isolated CPUs"] --> B
     B --> D{"kernel already tuned?"}
-    D -->|no| E["conservative startup.conf<br/>no pinning, 4k pages, DPDK off"]
+    D -->|no| H{"pages, and the first<br/>worker cores isolated?"}
+    H -->|no| E["conservative startup.conf<br/>no pinning, 4k pages, DPDK off"]
+    H -->|yes| I["interim startup.conf<br/>the plan on the CPUs isolated now"]
     D -->|yes| F["full startup.conf<br/>pinning + hugepages + DPDK"]
     B --> G["grub.d cmdline<br/>for the NEXT boot"]
 ```
@@ -328,6 +330,14 @@ entered a restart loop — which would break every first start after installatio
 * Half-configured also counts as untuned: hugepages reserved without
   `isolcpus` still yields the conservative file, because pinning workers
   without isolation makes VPP compete with the system.
+* **Some isolation is not no isolation** ([#486](https://github.com/andrediashexa/hexarouting/issues/486)).
+  When the pages are reserved and the plan's first worker cores - siblings
+  and a dedicated main thread included - are isolated already, only not all
+  of them, the file is the plan for those workers alone, tuned by the same
+  test as any other, and the report and the self-test say `BETWEEN TWO
+  PLANS`. It is the boot after a change that adds workers: before this it
+  was the conservative file, and a box that had been forwarding on three
+  workers forwarded on none for a whole boot (measured on the #475 bench).
 * The GRUB line **MUST** still request the full tuning for the next boot.
 
 ## The VPP startup file has no include directive

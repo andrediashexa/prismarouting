@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A tuning change that adds workers forwarded nothing for one boot.**
+  ([#486](https://github.com/andrediashexa/hexarouting/issues/486))
+  The boot after such a change had the hugepages and SOME CPUs isolated -
+  the old plan's - and the tuner read anything short of the whole new plan
+  as an untuned kernel: the conservative profile, DPDK off, no interface and
+  no pool. Measured on the Proxmox bench of #475, three workers to seven on
+  an eight-vCPU guest. That boot now runs the plan for the worker cores the
+  kernel has already isolated whole, tuned by the same test as any other,
+  while the command line asks for the new plan; the report and the boot
+  self-test say `BETWEEN TWO PLANS` and what the next boot does. A kernel
+  with no pages, or not even the first worker core isolated, still gets the
+  conservative profile.
+
 ## 0.138.12 - the VTY names the command that gives a dataplane card back
 
 ### Fixed

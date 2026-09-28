@@ -11,6 +11,7 @@ A cada boot a caixa imprime no console (serial, IPMI ou a tela da máquina virtu
 | O console diz | O que significa | O que fazer |
 |---------------|-----------------|-------------|
 | `[warn] running in FIRST BOOT mode: no pinning and no hugepages.` | primeiro boot depois da instalação: o ajuste de CPU e de memória só vale a partir do próximo boot, e até lá o dataplane sobe conservador, sem DPDK | reinicie a caixa. É o esperado, não um defeito |
+| `[warn] running between two tuning plans until the next reboot:` | uma mudança de ajuste pediu mais workers do que o kernel isolou neste boot. A caixa encaminha com os workers que já estão isolados, e as duas linhas de baixo dizem quantos agora e quantos depois | reinicie quando puder para passar ao plano novo. Até lá ela encaminha, com menos núcleos |
 | `[info] DPDK is off until hugepages exist; no NIC can be claimed yet` | o mesmo caso, visto pelo lado da placa | o mesmo: reinicie |
 | `[warn] no dataplane interface: this box has no PCI network card for the` … | a caixa não tem placa que o dataplane possa tomar | veja o passo 3; uma placa virtio numa máquina virtual conta, uma placa que o Linux não vê não conta |
 | `[warn] no dataplane interface: this box has <n> card(s) and claimed` … | a caixa tem placas e não tomou nenhuma: a única candidata era a placa pela qual ela é alcançada, e não deu para ler dela endereço, MAC e gateway para devolver ao Linux | veja o passo 3 e nomeie a placa (passo 6) |
