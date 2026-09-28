@@ -120,6 +120,32 @@ main (void)
     printf ("  a box with no workers is one slice on the main thread\n");
   }
 
+  printf ("\n=== RX queue q goes to the thread that transmits on TX queue q "
+	  "(#487) ===\n");
+  {
+    /* The #475 bench: 7 workers, TX queue q on thread q, queue 0 shared by
+     * main and thread 7; VPP had RX queue q on thread q + 1. */
+    static const u32 q0[] = { 0, 7 }, q3[] = { 3 }, main_only[] = { 0 };
+    static const u32 shared[] = { 2, 5 };
+
+    CHECK (bpa_rx_thread_for (q3, 1, 4) == 3,
+	   "RX queue 3 stayed on thread 4, one past its transmitter");
+    CHECK (bpa_rx_thread_for (q0, 2, 1) == 7,
+	   "RX queue 0 went to thread %u, not the worker sharing TX queue 0",
+	   bpa_rx_thread_for (q0, 2, 1));
+    CHECK (bpa_rx_thread_for (main_only, 1, 1) == ~0u,
+	   "a queue only main transmits on was moved to main, which never "
+	   "polls");
+    CHECK (bpa_rx_thread_for (q3, 0, 4) == ~0u,
+	   "a queue nobody transmits on was moved");
+    CHECK (bpa_rx_thread_for (shared, 2, 5) == 5,
+	   "a queue already on one of its transmitters was moved");
+    CHECK (bpa_rx_thread_for (shared, 2, 1) == 2,
+	   "a shared TX queue did not pick its lowest transmitter");
+    printf ("  each RX queue lands on a worker that transmits on its TX "
+	    "twin, and main is never chosen\n");
+  }
+
   printf ("\n%u checks, %d failures\n", checks, failures);
   printf (failures ? "%d FAILURES\n" : "ALL TESTS PASSED\n", failures);
   return failures ? 1 : 0;

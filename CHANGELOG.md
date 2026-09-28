@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **On a virtio guest every packet was handed to another worker.**
+  ([#487](https://github.com/andrediashexa/hexarouting/issues/487))
+  VPP polls RX queue q on the thread after the one that transmits on TX
+  queue q, and a host's multi-queue tap delivers a flow on the queue the
+  guest last transmitted it on - so the owning worker's own traffic steered
+  every packet of its subscribers to the next thread, and the handoff moved
+  all of them across cores. Measured on the Proxmox bench of #475 with 7
+  workers and 16 subscribers: 1.5 M of 1.5 M packets per worker handed off.
+  Attaching the CGNAT to an interface now places each of the card's RX
+  queues on the thread that transmits on the TX queue with the same number:
+  45 handed off of 11.5 M, and `bpa-in2out` from 1679 to 1235 clocks per
+  packet. Throughput on that bench is unchanged at about 6.6 Gbit/s, which
+  is the host's virtio TX ring and not the workers; a guest whose workers
+  are the limit gets the difference. A physical card hashes RX on its own,
+  so the placement changes nothing there.
+
 ## 0.138.10 - commit takes what it is told: confirmed and comment together, each word for itself
 
 ### Fixed
