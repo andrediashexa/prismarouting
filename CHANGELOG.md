@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.140.4 - records written while the collector restarts reach the next one
+
+### Fixed
+
 * **Records written while the collector restarted were lost, and counted
   as sent.** ([#493](https://github.com/andrediashexa/hexarouting/issues/493))
   A collector that exits sends a FIN; the exporter sent regardless, the
