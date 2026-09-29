@@ -145,16 +145,16 @@ Nos mesmos OIDs de sempre, então uma NMS já configurada continua funcionando:
 
 | OID sob `.1.3.6.1.4.1.<PEN>.1` | Objeto | Significado |
 |------------------------------|--------|-------------|
-| `.1.0` | `prSubscribers` | assinantes segurando um bloco agora |
-| `.2.0` | `prPortsInUse` | portas alocadas somando todos eles |
-| `.3.0` | `prPortsHeld` | portas contidas nos blocos atualmente segurados |
-| `.4.0` | `prSubscribersNearFull` | assinantes em 90% ou mais do bloco |
-| `.5.0` | `prPortRefusals` | portas recusadas desde que o dataplane subiu |
-| `.6.0` | `prPacketsDropped` | pacotes que o CGNAT não deixou passar desde que subiu |
+| `.1.0`                       | `prSubscribers` | assinantes segurando um bloco agora |
+| `.2.0`                       | `prPortsInUse` | portas alocadas somando todos eles |
+| `.3.0`                       | `prPortsHeld` | portas contidas nos blocos atualmente segurados |
+| `.4.0`                       | `prSubscribersNearFull` | assinantes em 90% ou mais do bloco |
+| `.5.0`                       | `prPortRefusals` | portas recusadas desde que o dataplane subiu |
+| `.6.0`                       | `prPacketsDropped` | pacotes que o CGNAT não deixou passar desde que subiu |
 
 
 :::info
-**A partir da versão 0.143.0, `.1.0` a `.4.0` chegam como Gauge, e `.5.0` e `.6.0` como Counter** — antes os seis chegavam como Counter, e uma NMS que calcula taxa desenhava cada descida como um pico falso de "estouro de contador". Se a sua NMS guardou esses itens como contador, troque para medidor (gauge). E `.5.0` agora é um contador de verdade: soma todas as recusas desde que o dataplane subiu, e não só as dos assinantes que ainda seguram bloco.
+**A partir da versão 0.143.0,** `**.1.0**` **a** `**.4.0**` **chegam como Gauge, e** `**.5.0**` **e** `**.6.0**` **como Counter** — antes os seis chegavam como Counter, e uma NMS que calcula taxa desenhava cada descida como um pico falso de "estouro de contador". Se a sua NMS guardou esses itens como contador, troque para medidor (gauge). E `.5.0` agora é um contador de verdade: soma todas as recusas desde que o dataplane subiu, e não só as dos assinantes que ainda seguram bloco.
 
 :::
 
