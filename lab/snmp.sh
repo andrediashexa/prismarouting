@@ -45,6 +45,13 @@ mkdir -p /usr/share/prisma-routing
 vc show plugins | awk '/bpa_plugin.so/ { print $3; exit }' \
   > /usr/share/prisma-routing/VERSION
 
+# #505's features on this dataplane: a VRRP router started on pg0, and an
+# LACP bundle with no member yet - a bundle at zero of zero is a state the
+# table has to be able to say.
+vppctl vrrp vr add pg0 vr_id 7 priority 150 interval 100 100.64.3.1 >/dev/null
+vppctl vrrp proto start pg0 vr_id 7 >/dev/null
+vppctl create bond mode lacp >/dev/null
+
 echo "=========== 1. turn SNMP on from the VTY ==========="
 $HX -c "configure" \
     -c "snmp enabled yes" -c "snmp listen-address 127.0.0.1" \
@@ -157,6 +164,16 @@ SESSIONS=$($PM PRISMA-ROUTING-MIB::prSessions.0 2>&1)
 BUILD=$($PM PRISMA-ROUTING-MIB::prSystemDataplaneBuild.0 2>&1)
 CURRENT=$($PM PRISMA-ROUTING-MIB::prSystemDataplaneCurrent.0 2>&1)
 TCPON=$($PM PRISMA-ROUTING-MIB::prLogTransportEnabled.1 2>&1)
+FIT=$($PM PRISMA-ROUTING-MIB::prSessionsFit.0 2>&1)
+WSESS=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB -Ovq 127.0.0.1 \
+        PRISMA-ROUTING-MIB::prWorkerSessions 2>&1)
+VRIF=$($PM PRISMA-ROUTING-MIB::prVrrpInterface.1 2>&1)
+VRST=$($PM PRISMA-ROUTING-MIB::prVrrpState.1 2>&1)
+VRPRI=$($PM PRISMA-ROUTING-MIB::prVrrpPriority.1 2>&1)
+BNAME=$($PM PRISMA-ROUTING-MIB::prBundleName.1 2>&1)
+BMEM=$($PM PRISMA-ROUTING-MIB::prBundleMembers.1 2>&1)
+IDENT=$($PM PRISMA-ROUTING-MIB::prIdentityEntries.0 2>&1)
+DP_FIT=$($HX -c "show cgnat memory" 2>&1 | awk '/sessions that fit/ { gsub(",", "", $NF); print $NF }')
 WALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB 127.0.0.1 \
        PRISMA-ROUTING-MIB::prismaRouting 2>&1)
 DP_CAP=$(vc show bpa pool | awk '$1 == "capacity" { print $2; exit }')
@@ -166,6 +183,8 @@ echo "  ... $(printf '%s\n' "$WALK" | grep -c .) rows in all"
 echo "  pool 1: $POOLNAME, $POOLMODE, capacity $POOLCAP (the dataplane says ${DP_CAP:-nothing})"
 echo "  subscribers $POOLSUBS, sessions $POOLSESS, ports $POOLPORTS; prSessions $SESSIONS"
 echo "  dataplane build $BUILD, current $CURRENT; TCP transport enabled $TCPON"
+echo "  sessions that fit $FIT (show cgnat memory says ${DP_FIT:-nothing}); per worker $(printf '%s' "$WSESS" | tr '\n' ' ')"
+echo "  VRRP 1: $VRIF, $VRST, priority $VRPRI; bundle 1: $BNAME with $BMEM member(s); identity entries $IDENT"
 
 echo
 echo "=========== 3. a SET must be refused ==========="
@@ -238,6 +257,17 @@ expect "the running dataplane's build is named ($BUILD)" \
   sh -c "case \"$BUILD\" in ''|'\"\"'|*No\ Such*) exit 1;; *) exit 0;; esac"
 expect "and it is the release installed" test "$CURRENT" = "true"
 expect "the TCP transport reads off, as configured" test "$TCPON" = "false"
+# Within a percent of the VTY's figure: the heap moves between two reads.
+expect "the sessions that fit agree with show cgnat memory ($FIT, ${DP_FIT:-unread})" \
+  sh -c "[ -n \"$DP_FIT\" ] && [ \$(( ($FIT - $DP_FIT) * 100 / $DP_FIT )) -ge -1 ] && [ \$(( ($FIT - $DP_FIT) * 100 / $DP_FIT )) -le 1 ]"
+expect "the worker table carries the three sessions" \
+  sh -c "printf '%s\\n' \"$WSESS\" | awk '{s += \$1} END {exit !(s == 3)}'"
+expect "the VRRP router is read on its interface, by name ($VRIF)" test "$VRIF" = "pg0"
+expect "master, alone on the link ($VRST)" test "$VRST" = "master"
+expect "advertising the priority configured ($VRPRI)" test "$VRPRI" = "150"
+expect "the bundle is in the table ($BNAME), at zero members" \
+  test "$BNAME/$BMEM" = "BondEthernet0/0"
+expect "and a box with no identity table says zero entries" test "$IDENT" = "0"
 expect "and the ports it holds" test "$PORTS" = "3"
 # Refused at the daemon (noAccess, from the read-only community and view) or
 # by the agent (notWritable). Either is a refusal; asserting one spelling

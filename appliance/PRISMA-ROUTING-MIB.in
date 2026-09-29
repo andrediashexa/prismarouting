@@ -27,13 +27,17 @@ IMPORTS
         FROM SNMPv2-CONF;
 
 prismaRouting MODULE-IDENTITY
-    LAST-UPDATED "202609290000Z"
+    LAST-UPDATED "202609291200Z"
     ORGANIZATION "Prisma Routing"
     CONTACT-INFO "https://prismarouting.com.br"
     DESCRIPTION
         "Prisma Routing's CGNAT, the transports of its connection records,
         and the build the box runs. Read-only: every object is
         read-only, and the agent refuses every SET."
+    REVISION "202609291200Z"
+    DESCRIPTION
+        "The workers, the session capacity, HA, the LACP bundles and the
+        identity sources (#505)."
     REVISION "202609290000Z"
     DESCRIPTION "First version (#504)."
     ::= { enterprises @PEN@ }
@@ -336,6 +340,73 @@ prSessions OBJECT-TYPE
     DESCRIPTION "Translation sessions open now, over every pool."
     ::= { prCgnat 3 }
 
+prSessionsFit OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Sessions that still fit in the CGNAT's memory: the dataplane's free
+        heap at the ~300 bytes a session measured takes, as `show cgnat
+        memory` computes it. At zero, new sessions are refused for want of
+        memory while the ones open go on."
+    ::= { prCgnat 4 }
+
+prWorkerTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrWorkerEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "What each thread of the dataplane translates. A dynamic pool's
+        blocks are shared out per worker, so a worker whose share runs out
+        refuses subscribers with blocks free on another: an imbalance here is
+        the early sign."
+    ::= { prCgnat 5 }
+
+prWorkerEntry OBJECT-TYPE
+    SYNTAX      PrWorkerEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One thread."
+    INDEX       { prWorkerIndex }
+    ::= { prWorkerTable 1 }
+
+PrWorkerEntry ::= SEQUENCE {
+    prWorkerIndex        Unsigned32,
+    prWorkerSubscribers  Gauge32,
+    prWorkerSessions     Gauge32,
+    prWorkerPortsInUse   Gauge32
+}
+
+prWorkerIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..4294967295)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The thread's index plus one: 1 is the main thread, which translates
+        only on a box with no workers."
+    ::= { prWorkerEntry 1 }
+
+prWorkerSubscribers OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Subscribers this thread holds, over every pool."
+    ::= { prWorkerEntry 2 }
+
+prWorkerSessions OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Sessions open on this thread."
+    ::= { prWorkerEntry 3 }
+
+prWorkerPortsInUse OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Ports allocated on this thread."
+    ::= { prWorkerEntry 4 }
+
 --
 -- The connection records: IPFIX over UDP, and the TCP and syslog streams.
 -- A transport that stops is the compliance log stopping.
@@ -498,6 +569,197 @@ prSystemDataplaneCurrent OBJECT-TYPE
     ::= { prSystem 3 }
 
 --
+-- High availability: the VRRP virtual routers the dataplane runs.
+--
+
+prHa OBJECT IDENTIFIER ::= { prObjects 13 }
+
+prVrrpTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrVrrpEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "One row per virtual router. A change of prVrrpState is a takeover,
+        and a takeover the NMS cannot see is a failover nobody notices."
+    ::= { prHa 1 }
+
+prVrrpEntry OBJECT-TYPE
+    SYNTAX      PrVrrpEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One virtual router."
+    INDEX       { prVrrpIndex }
+    ::= { prVrrpTable 1 }
+
+PrVrrpEntry ::= SEQUENCE {
+    prVrrpIndex      Unsigned32,
+    prVrrpInterface  DisplayString,
+    prVrrpId         Unsigned32,
+    prVrrpPriority   Unsigned32,
+    prVrrpState      INTEGER,
+    prVrrpAddresses  DisplayString
+}
+
+prVrrpIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..4294967295)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "The row's position, by interface and then by VR ID."
+    ::= { prVrrpEntry 1 }
+
+prVrrpInterface OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The interface the virtual router backs up."
+    ::= { prVrrpEntry 2 }
+
+prVrrpId OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..255)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The VR ID."
+    ::= { prVrrpEntry 3 }
+
+prVrrpPriority OBJECT-TYPE
+    SYNTAX      Unsigned32 (0..255)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The priority advertised now, which tracking lowers while a tracked
+        interface is down."
+    ::= { prVrrpEntry 4 }
+
+prVrrpState OBJECT-TYPE
+    SYNTAX      INTEGER { init(1), backup(2), master(3), interfaceDown(4) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "master holds the virtual addresses; backup watches."
+    ::= { prVrrpEntry 5 }
+
+prVrrpAddresses OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The virtual addresses, separated by spaces."
+    ::= { prVrrpEntry 6 }
+
+--
+-- LACP bundles.
+--
+
+prLacp OBJECT IDENTIFIER ::= { prObjects 14 }
+
+prBundleTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrBundleEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "One row per bundle. A bundle running on one of its two legs is up in
+        IF-MIB and at half its capacity: prBundleActiveMembers below
+        prBundleMembers is the alarm."
+    ::= { prLacp 1 }
+
+prBundleEntry OBJECT-TYPE
+    SYNTAX      PrBundleEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One bundle."
+    INDEX       { prBundleIndex }
+    ::= { prBundleTable 1 }
+
+PrBundleEntry ::= SEQUENCE {
+    prBundleIndex          Unsigned32,
+    prBundleName           DisplayString,
+    prBundleMode           DisplayString,
+    prBundleMembers        Gauge32,
+    prBundleActiveMembers  Gauge32
+}
+
+prBundleIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..4294967295)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "The row's position, by the bundle's name."
+    ::= { prBundleEntry 1 }
+
+prBundleName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The bundle's interface."
+    ::= { prBundleEntry 2 }
+
+prBundleMode OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "lacp, or the static mode the bundle runs."
+    ::= { prBundleEntry 3 }
+
+prBundleMembers OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Members configured."
+    ::= { prBundleEntry 4 }
+
+prBundleActiveMembers OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Members carrying traffic: collecting and distributing."
+    ::= { prBundleEntry 5 }
+
+--
+-- The identity sources: who each subscriber address was, for the records.
+--
+
+prIdentity OBJECT IDENTIFIER ::= { prObjects 15 }
+
+prIdentityEntries OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Subscribers the identity table names. Zero on a box that logs
+        identities is records that say 'unknown'."
+    ::= { prIdentity 1 }
+
+prIdentityReadAt OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "When the table was last read, as the dataplane prints it; empty
+        when there is no table."
+    ::= { prIdentity 2 }
+
+prRadiusReceived OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "RADIUS accounting packets received."
+    ::= { prIdentity 3 }
+
+prRadiusApplied OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "RADIUS accounting packets applied to the table."
+    ::= { prIdentity 4 }
+
+prRadiusRefused OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "RADIUS accounting packets refused: a bad authenticator or a
+        malformed packet. A bad authenticator is usually a shared secret that
+        differs between the BNG and the box."
+    ::= { prIdentity 5 }
+
+--
 -- Conformance.
 --
 
@@ -518,7 +780,8 @@ prCgnatGroup OBJECT-GROUP
               prPoolSubscribers, prPoolBlocksHeld, prPoolUtilisation,
               prPoolSessions, prPoolPortsInUse, prPoolSubscribersNearFull,
               prPoolRefusals, prDropNode, prDropReason, prDropPackets,
-              prSessions }
+              prSessions, prSessionsFit, prWorkerSubscribers,
+              prWorkerSessions, prWorkerPortsInUse }
     STATUS      current
     DESCRIPTION "The CGNAT's pools, drops and sessions."
     ::= { prGroups 2 }
@@ -540,12 +803,34 @@ prSystemGroup OBJECT-GROUP
     DESCRIPTION "The release and the running dataplane's build."
     ::= { prGroups 4 }
 
+prHaGroup OBJECT-GROUP
+    OBJECTS { prVrrpInterface, prVrrpId, prVrrpPriority, prVrrpState,
+              prVrrpAddresses }
+    STATUS      current
+    DESCRIPTION "The VRRP virtual routers."
+    ::= { prGroups 5 }
+
+prLacpGroup OBJECT-GROUP
+    OBJECTS { prBundleName, prBundleMode, prBundleMembers,
+              prBundleActiveMembers }
+    STATUS      current
+    DESCRIPTION "The LACP bundles."
+    ::= { prGroups 6 }
+
+prIdentityGroup OBJECT-GROUP
+    OBJECTS { prIdentityEntries, prIdentityReadAt, prRadiusReceived,
+              prRadiusApplied, prRadiusRefused }
+    STATUS      current
+    DESCRIPTION "The identity sources."
+    ::= { prGroups 7 }
+
 prCompliance MODULE-COMPLIANCE
     STATUS      current
     DESCRIPTION "What every Prisma Routing box serves."
     MODULE
         MANDATORY-GROUPS { prTotalsGroup, prCgnatGroup, prLoggingGroup,
-                           prSystemGroup }
+                           prSystemGroup, prHaGroup, prLacpGroup,
+                           prIdentityGroup }
     ::= { prCompliances 1 }
 
 END

@@ -53,6 +53,10 @@ case "$*" in
   "show version") echo "vpp v26.06-release" ;;
   "bpa timeouts") cat "$D/timeouts" ;;
   "show plugins") cat "$D/plugins" ;;
+  "show memory main-heap") cat "$D/heap" ;;
+  "show vrrp vr") cat "$D/vrrp" ;;
+  "show bond") cat "$D/bond" ;;
+  "show bpa identity") cat "$D/identity" ;;
   "show bpa drops") cat "$D/drops" ;;
   "bpa nosuch") echo "bpa: unknown input 'nosuch'" ;;
   "show bpa nosuch") echo "show bpa: unknown input 'nosuch'" ;;
@@ -70,6 +74,8 @@ w(f"{BOX}/timeouts", "udp 300  icmp 60  tcp-syn 6  tcp-transitory 240  "
 # used to print: 900, 1000 (97%) and 10 of 1024 ports, five refusals.
 STATS = """[0]: p1 /bpa/pool/names
 [1]:  /bpa/pool/names
+[1]: loop0 /if/names
+[2]: pg0 /if/names
 [0 @ 0]: 1 packets /bpa/pool/subscribers
 [0 @ 1]: 2 packets /bpa/pool/subscribers
 [1 @ 0]: 0 packets /bpa/pool/subscribers
@@ -108,6 +114,29 @@ w(f"{BOX}/plugins", " Plugin path is: /usr/lib/x86_64-linux-gnu/vpp_plugins\n"
                     "     Plugin                  Version            Description\n"
                     "  1. bpa_plugin.so           0.142.1 (4ccb50d)  Bulk port allocation CGNAT\n")
 w(f"{BOX}/VERSION", "0.142.1\n")
+# #505's screens, as a lab printed them (vppctl's CR+LF kept, as it arrives).
+w(f"{BOX}/heap", "  base 0x7f19, size 512m, locked, unmap-on-destroy, name 'main heap'\n"
+                 "    total: 512.00M, used: 237.20M, free: 274.80M, trimmable: 273.33M\n")
+VRRP = ("[0] sw_if_index 1 VR ID 10 IPv4\r\n"
+        "   state Master flags: preempt yes accept no unicast no\r\n"
+        "   priority: configured 120 adjusted 110\r\n"
+        "   timers: adv interval 100 master adv 100 skew 53 master down 353\r\n"
+        "   virtual MAC 00:00:5e:00:01:0a\r\n"
+        "   addresses 10.9.0.1 \r\n"
+        "   peer addresses \r\n"
+        "   tracked interfaces \r\n"
+        "[1] sw_if_index 2 VR ID 20 IPv4\r\n"
+        "   state Initialize flags: preempt yes accept no unicast no\r\n"
+        "   priority: configured 90 adjusted 90\r\n"
+        "   addresses 10.8.0.1 10.8.0.3 \r\n"
+        "   peer addresses \r\n")
+w(f"{BOX}/vrrp", VRRP)
+w(f"{BOX}/bond", "  interface name   sw_if_index  mode          load balance  active members members\n"
+                 "  BondEthernet0    3            lacp          l34           1              2\n")
+w(f"{BOX}/identity", "identity table: 3 entry(s), read 2026/09/28 20:51:47:267\n"
+                     "radius accounting: listening on port 1813\n"
+                     "  packets    8 received, 6 applied, 6 answered\n"
+                     "  refused    2 bad authenticator, 0 malformed\n")
 os.environ["PRISMA_VERSION_FILE"] = f"{BOX}/VERSION"
 ONE_SUB = STATS.replace("[0 @ 1]: 2 packets /bpa/pool/subscribers",
                         "[0 @ 1]: 0 packets /bpa/pool/subscribers")
@@ -396,6 +425,53 @@ for _k, (_name, _syn) in _want.items():
 check("@PEN@" in MIB and MIB.count("@PEN@") == 1,
       "the MIB's root is not the one placeholder the box fills in")
 print(f"  [ ok ] {len(_want)} objects in the MIB, each served with its type")
+
+print("\n=== the second part: workers, capacity, HA, LACP, identity (#505) ===")
+sys.path.insert(0, os.path.join(os.path.dirname(AGENT), "..", "src", "prismash"))
+import prismash as _pm
+check(agent.SESSION_BYTES == _pm.SESSION_BYTES,
+      f"the agent sizes a session at {agent.SESSION_BYTES} bytes and "
+      f"show cgnat memory at {_pm.SESSION_BYTES}: the two would disagree "
+      f"about what fits")
+check(agent.heap_free(open(f"{BOX}/heap").read()) == int(274.80 * (1 << 20))
+      and agent.heap_free("nothing") is None,
+      "the free heap is read off 'free: 274.80M'")
+_th = agent.parse_stats_threads(STATS, "/bpa/pool/")
+check(_th["subscribers"][0] == {0: 1, 1: 2},
+      f"per thread, pool 0's subscribers are 1 and 2: {_th.get('subscribers')}")
+check(agent.worker_rows(_th)[:2] == [(0, 1, 900, 900), (1, 2, 1010, 1010)],
+      f"the workers: {agent.worker_rows(_th)}")
+check(agent.parse_vrrp(VRRP, {1: "loop0", 2: "pg0"})
+      == [("loop0", 10, 110, 3, "10.9.0.1"),
+          ("pg0", 20, 90, 1, "10.8.0.1 10.8.0.3")],
+      f"the two virtual routers, by name, the ADVERTISED priority (110, "
+      f"tracking lowered it) and master/init: "
+      f"{agent.parse_vrrp(VRRP, {1: 'loop0', 2: 'pg0'})}")
+check(agent.parse_vrrp(VRRP)[0][0] == "sw_if_index 1",
+      "an interface with no name is named by its index, not dropped")
+check(agent.parse_bond(open(f"{BOX}/bond").read())
+      == [("BondEthernet0", "lacp", 2, 1)],
+      "a bundle on one of its two legs")
+_id = agent.parse_identity(open(f"{BOX}/identity").read())
+check(_id == {"entries": 3, "read": "2026/09/28 20:51:47:267",
+              "received": 8, "applied": 6, "refused": 2},
+      f"the identity table and RADIUS: {_id}")
+check(agent.parse_identity("no identity table: every record says 'unknown'")
+      ["entries"] == 0, "no table is zero entries")
+_mr = {o: (t, v) for o, t, v in agent.more_rows(P, {
+    "fit": 960495, "workers": [(0, 1, 900, 900), (2, 5, 7, 8)],
+    "vrrp": [("loop0", 10, 110, 3, "10.9.0.1")],
+    "bonds": [("BondEthernet0", "lacp", 2, 1)], "identity": _id})}
+check(_mr.get(f"{P}.10.4.0") == ("gauge", 960495)
+      and _mr.get(f"{P}.10.5.1.3.3") == ("gauge", 7),
+      "the capacity, and thread 2's sessions at row 3")
+check(_mr.get(f"{P}.13.1.1.5.1") == ("integer", 3)
+      and _mr.get(f"{P}.14.1.1.5.1") == ("gauge", 1)
+      and _mr.get(f"{P}.15.5.0") == ("counter64", 2),
+      "a master, one active member, two RADIUS refusals")
+check(agent.more_rows(P, {}) == [],
+      "nothing read is nothing served, not a row of zeros")
+print("  [ ok ] the parsers read the screens a lab printed")
 
 print("\n=== the wire: reply, none, and the key an OID sorts by ===")
 _out = io.StringIO()
