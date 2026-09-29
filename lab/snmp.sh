@@ -96,6 +96,7 @@ DISKS=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.2021.9.1.2 2>&1)
 IFDESCR=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.2.2.1.2 2>&1)
 PG0=$(snmpwalk -v2c -c hexro -On 127.0.0.1 1.3.6.1.2.1.2.2.1.2 2>&1 | awk '/"pg0"/{n=split($1, o, "."); print o[n]; exit}')
 PG0IN=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.31.1.1.1.6.${PG0:-0} 2>&1)
+PG0UC=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.31.1.1.1.7.${PG0:-0} 2>&1)
 PG0OPER=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.2.2.1.8.${PG0:-0} 2>&1)
 printf '%s\n' "$IFDESCR" | sed 's/^/  ifDescr: /'
 echo "  pg0 is ifIndex ${PG0:-none}: ifHCInOctets $PG0IN, ifOperStatus $PG0OPER"
@@ -168,6 +169,9 @@ expect_in "IF-MIB lists the dataplane's card" "pg0" "$IFDESCR"
 expect_not_in "and not Linux's loopback, which net-snmp's own table would" '"lo"' "$IFDESCR"
 expect "its 64-bit input counter moved with the traffic sent ($PG0IN)" \
   sh -c "case \"$PG0IN\" in ''|*[!0-9]*) exit 1;; 0) exit 1;; *) exit 0;; esac"
+# pg, like virtio and ixgbe (#501), fills no per-type counter.
+expect "and so did its unicast packets, which pg does not count by type ($PG0UC)" \
+  sh -c "case \"$PG0UC\" in ''|*[!0-9]*) exit 1;; 0) exit 1;; *) exit 0;; esac"
 expect "and it reads up ($PG0OPER)" sh -c "case \"$PG0OPER\" in up*|1*) exit 0;; *) exit 1;; esac"
 expect_in "sysDescr names the product" "Prisma Routing" "$DESCR"
 expect "sysUpTime answers" sh -c "case \"$UPTIME\" in *No\ Such*|*Timeout*|'') exit 1;; *) exit 0;; esac"
