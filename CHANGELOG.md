@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A physical card on `uio_pci_generic` never reached the dataplane.**
+  ([#494](https://github.com/andrediashexa/hexarouting/issues/494))
+  On a box with no IOMMU the card is bound to `uio_pci_generic`, and there
+  the EAL writes the card's PCI config space through `/sys` - which the
+  dataplane's container sees read-only, behind Docker's default AppArmor
+  profile. The card was refused ("Read-only file system", then "cannot be
+  used") and the dataplane came up without it. Only a virtio card ever
+  worked, because DPDK reaches its I/O-port registers another way. Found on
+  an Intel X520 passed through to a VM with no vIOMMU. On the uio path the
+  compose override now binds each claimed card's own sysfs directory
+  writable and lifts AppArmor for the dataplane; a box on `vfio-pci` keeps
+  both. Proven by a boot on the lab Proxmox with an emulated e1000e.
+
 ## 0.141.0 - the CGNAT plugin is built optimised: half the cycles a packet
 
 ### Fixed

@@ -761,6 +761,9 @@ printf '%s
 [ -z "$(cat "$R/sys/bus/pci/drivers/vfio-pci/bind" 2>/dev/null)" ] \
   && ok "and it bound nothing on the way" \
   || bad "the mode wrote to a driver's bind file"
+printf '%s\n' "$OUT" | grep -qE "volumes:|apparmor" \
+  && bad "a box on vfio lost its AppArmor profile or /sys: $OUT" \
+  || ok "and a box on vfio keeps /sys read-only and its AppArmor profile"
 rm -rf "$R"
 
 # The same box with the card in no group: vfio-pci cannot be what it is on.
@@ -810,6 +813,18 @@ printf '%s
 ' "$OUT" | grep -q "/dev/vfio" \
   && bad "a box with no IOMMU was promised a /dev/vfio node: $OUT" \
   || ok "and no /dev/vfio node it has not got"
+# AND THE CARD'S OWN SYSFS DIRECTORY, WRITABLE, WITH APPARMOR LIFTED (#494):
+# on uio the EAL writes the card's PCI config, and without both an X520 and
+# an e1000e were refused by a dataplane that came up without them. The path
+# is the host's, with this suite's root taken off it.
+printf '%s\n' "$OUT" | grep -q "source: /sys/bus/pci/devices/0000:3b:00.0$" \
+  && printf '%s\n' "$OUT" | grep -q "target: /sys/bus/pci/devices/0000:3b:00.0$" \
+  && printf '%s\n' "$OUT" | grep -q "apparmor:unconfined" \
+  && ok "and the card's own sysfs directory, writable, with AppArmor lifted" \
+  || bad "the uio box can not write its card's config: $OUT"
+printf '%s\n' "$OUT" | grep -q "$R" \
+  && bad "the fragment names this suite's root, not the host's path: $OUT" \
+  || ok "and the path is the host's, not this suite's root"
 rm -rf "$R"
 
 # The same box before the bind: the node does not exist yet, and this mode
