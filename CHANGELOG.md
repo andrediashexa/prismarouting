@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.141.5 - the dataplane's cards are in IF-MIB, with their traffic counters
+
+### Added
+
 * **The dataplane's cards are in IF-MIB, with their traffic counters.**
   ([#498](https://github.com/andrediashexa/hexarouting/issues/498))
   An NMS walking the box's `ifTable` read net-snmp's own, which is Linux's -
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   registers - one registration on `.1.3.6.1.2.1.2` lost to its `ifTable`, and
   `lab/snmp.sh`, which now walks the table and checks the counter moved,
   read `lo` and `eth0`.
-
-### Fixed
 
 ## 0.141.4 - on an installed box the SNMP agent answers the CGNAT's objects
 
