@@ -963,6 +963,29 @@ def validate_snmp(settings: dict):
     return None
 
 
+#: How a notification destination wants to be told (#507): a trap, sent and
+#: forgotten, or an inform, which the receiver acknowledges and the agent
+#: resends until it does. A choice per destination, so that nobody had to
+#: make it for everybody.
+TRAP_KINDS = ("trap", "inform")
+#: The user snmpd queries ITSELF as, for the monitors behind the
+#: notifications. Not an operator's account: read() leaves it out, or it
+#: would come back as one in the running configuration.
+SNMP_INTERNAL_USER = "prismaInternal"
+
+
+def validate_trap_host(address, community, kind="trap"):
+    """Why `snmp trap-host` is refused, or None."""
+    why = address_error("snmp trap-host", str(address))
+    if why:
+        return why
+    if not community:
+        return "snmp trap-host: a community is needed, for the receiver"
+    if kind not in TRAP_KINDS:
+        return f"snmp trap-host: '{kind}' is not trap or inform"
+    return None
+
+
 class SnmpUser:
     """A v3 user. v2c communities are the other kind and carry no protocols."""
 
@@ -1020,6 +1043,13 @@ def snmp_redact(lines):
         if s.startswith("snmp community "):
             out.append(" snmp community <set, not shown>"
                        if l.startswith(" ") else "snmp community <set, not shown>")
+        elif s.startswith("snmp trap-host ") and " community " in s:
+            # The receiver's community is as much a password as the agent's
+            # own (#507): the address stays, the string does not.
+            w = s.split()
+            at = w.index("community")
+            kept = w[:at + 1] + ["<set, not shown>"] + w[at + 2:]
+            out.append(l[:len(l) - len(l.lstrip())] + " ".join(kept))
         elif s.startswith(("auth ", "priv ")) and l.startswith(" "):
             out.append(f" {s.split()[0]} {s.split()[1]} <set, not shown>"
                        if len(s.split()) > 2 else l)
@@ -1078,7 +1108,48 @@ def _release():
         return ""
 
 
-def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None):
+def _sink(address):
+    """snmpd's transport for a notification destination: udp6 in brackets."""
+    return f"udp6:[{address}]:162" if ":" in address else address
+
+
+def _unsink(word):
+    """The address a trap2sink/informsink transport names (see _sink)."""
+    if word.startswith("udp6:[") and "]" in word:
+        return word[len("udp6:["):word.index("]")]
+    return word
+
+
+def snmp_monitors(pen):
+    """
+    DISMAN-EVENT-MIB `monitor` lines on PRISMA-ROUTING-MIB (#507): snmpd
+    polls its own objects and sends mteTriggerFired, named, when a test
+    holds. `-D` compares the change since the last poll, which is what makes
+    "a VRRP router changed state" a test at all; `-o` adds the row's name to
+    the notification, so the NMS is told WHICH router, pool or stream.
+    `-I` on the two scalars: without it snmpd takes the OID as a subtree to
+    walk, finds nothing under `.5.0`, and the monitor never fires - measured,
+    eight refusals counted and no notification, where every table column's
+    monitor fired.
+    """
+    b = f".1.3.6.1.4.1.{pen}.1"
+    return [
+        f"monitor -r 30 -D -o {b}.13.1.1.2 -o {b}.13.1.1.3 -o {b}.13.1.1.5 "
+        f"vrrpStateChange {b}.13.1.1.5 != 0",
+        f"monitor -r 60 -o {b}.10.1.1.2 -o {b}.10.1.1.12 "
+        f"poolNearlyFull {b}.10.1.1.12 >= 90",
+        f"monitor -r 60 -I -D portsRefused {b}.5.0 > 0",
+        f"monitor -r 30 -D -o {b}.11.10.1.2 -o {b}.11.10.1.4 "
+        f"recordsTransportChange {b}.11.10.1.4 != 0",
+        f"monitor -r 60 -D -o {b}.11.10.1.2 recordsLost {b}.11.10.1.8 > 0",
+        f"monitor -r 30 -D -o {b}.14.1.1.2 -o {b}.14.1.1.5 "
+        f"bundleMembersChange {b}.14.1.1.5 != 0",
+        f"monitor -r 60 -I dataplaneNotCurrent {b}.12.3.0 == 2",
+    ]
+
+
+def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
+                trap_hosts=()):
     """The snmpd.conf this VTY owns. Every line is generated; none is copied."""
     pen = settings.get("enterprise-number", "")
     rel = _release() if release is None else release
@@ -1118,6 +1189,24 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None):
         # The number on the agent's own command line (#499): it runs as
         # Debian-snmp and cannot read this 0600 file to find it.
         out.append(f"pass_persist .1.3.6.1.4.1.{pen} {agent} --enterprise {pen}")
+    if trap_hosts:
+        # NOTIFICATIONS (#507). snmpd polls its own objects to decide what to
+        # send - as the user named below, read-only on the same view - and
+        # sends to each destination the way it asked: a trap, or an inform
+        # that is resent until acknowledged.
+        out.append(f"iquerySecName {SNMP_INTERNAL_USER}")
+        out.append(f"rouser {SNMP_INTERNAL_USER} noauth -V hexa")
+        for a, c, kind in trap_hosts:
+            out.append(f"{'informsink' if kind == 'inform' else 'trap2sink'} "
+                       f"{_sink(a)} {c}")
+        # linkUp/linkDown from ifOperStatus, which is the agent's IF-MIB: the
+        # dataplane's cards (measured, a card taken down arrived as linkDown).
+        out.append("linkUpDownNotifications yes")
+        # net-snmp's own: the disks (the retention log's among them), memory,
+        # load.
+        out.append("defaultMonitors yes")
+        if pen:
+            out += snmp_monitors(pen)
     out.append("")
     return "\n".join(out)
 
@@ -1142,14 +1231,17 @@ class SnmpDaemon:
         self.files = files or LocalFiles()
 
     def read(self):
-        """(settings, communities, users) as the file on disk describes them."""
+        """
+        (settings, communities, users, trap_hosts) as the file on disk
+        describes them.
+        """
         settings = dict(SNMP_DEFAULTS)
-        communities, users = [], {}
+        communities, users, traps = [], {}, []
         try:
             with open(self.conf) as f:
                 text = f.read()
         except OSError:
-            return settings, communities, users
+            return settings, communities, users, traps
         settings["enabled"] = "yes"
         for line in text.splitlines():
             w = line.split()
@@ -1164,7 +1256,11 @@ class SnmpDaemon:
             elif w[0] == "rocommunity" and len(w) > 1:
                 communities.append(w[1])
             elif w[0] == "rouser" and len(w) > 1:
-                users.setdefault(w[1], SnmpUser(w[1]))
+                if w[1] != SNMP_INTERNAL_USER:
+                    users.setdefault(w[1], SnmpUser(w[1]))
+            elif w[0] in ("trap2sink", "informsink") and len(w) > 2:
+                traps.append((_unsink(w[1]), w[2],
+                              "inform" if w[0] == "informsink" else "trap"))
             elif w[0] == "pass_persist" and len(w) > 1:
                 # From the agent's own registration, not from a view line:
                 # the view carries UCD-SNMP-MIB's .1.3.6.1.4.1.2021 too, and
@@ -1185,9 +1281,9 @@ class SnmpDaemon:
             rc, _ = self._run(["systemctl", "is-active", "--quiet", "snmpd"])
             if rc not in (0, 127):
                 settings["enabled"] = "no"
-        return settings, communities, users
+        return settings, communities, users, traps
 
-    def apply(self, settings, communities, users):
+    def apply(self, settings, communities, users, trap_hosts=()):
         why = validate_snmp(settings)
         if why:
             return False, why
@@ -1212,7 +1308,8 @@ class SnmpDaemon:
             pass
 
         self.files.write(self.conf,
-                         _snmpd_body(settings, communities, users, self.agent),
+                         _snmpd_body(settings, communities, users, self.agent,
+                                     trap_hosts=trap_hosts),
                          mode=0o600)
 
         # THE AGENT HAS TO REACH THE DATAPLANE (#499). snmpd runs as

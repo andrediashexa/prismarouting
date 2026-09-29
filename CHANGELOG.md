@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **SNMP notifications: the box tells the NMS when something changes.**
+  ([#507](https://github.com/andrediashexa/hexarouting/issues/507))
+  `snmp trap-host <address> community <string> [inform]`, each destination
+  choosing a trap or an inform - which answered the one decision the SNMP
+  plan left open. Sent: linkUp and linkDown for the dataplane's cards (net-
+  snmp polling the agent's IF-MIB), bgpBackwardTransition and bgpEstablished
+  from bgpd over AgentX, net-snmp's default monitors, and DISMAN-EVENT-MIB
+  monitors on PRISMA-ROUTING-MIB for a VRRP router changing state, a pool at
+  90%, ports refused, a records transport connecting or dropping, records
+  lost, a bundle's active members changing and the dataplane left older than
+  the release. `lab/snmp-traps.sh` receives each with snmptrapd from a box
+  configured through the VTY, and `lab/routing.sh` the BGP pair from a
+  session shut and brought back. Measured on the way: a scalar monitor needs
+  `-I`, or snmpd walks under `.5.0`, finds nothing, and eight refusals sent
+  no notification; and snmpd's internal user is not an account - asked from
+  outside it answers "Unknown user name".
+
 ### Fixed
 
 ## 0.143.2 - the compare screen shows no secret, and an SNMP setting can be taken out

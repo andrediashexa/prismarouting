@@ -1122,6 +1122,52 @@ check(_dhclient(system.DNS_OWNED) == "",
 check(_dhclient("# from dhclient") == "DHCP-WROTE",
       "and when it does not, DHCP writes the file as it always did")
 
+print("\n=== notifications: destinations, monitors, read back (#507) ===")
+check(system.validate_trap_host("10.0.0.9", "c") is None
+      and system.validate_trap_host("2001:db8::9", "c", "inform") is None,
+      "an IPv4 and an IPv6 destination")
+check("not an IP address" in (system.validate_trap_host("nms", "c") or "")
+      and "community" in (system.validate_trap_host("10.0.0.9", "") or "")
+      and "trap or inform" in (system.validate_trap_host("10.0.0.9", "c",
+                                                          "email") or ""),
+      "a name, no community, and a kind that is neither")
+check(system._sink("10.0.0.9") == "10.0.0.9"
+      and system._sink("2001:db8::9") == "udp6:[2001:db8::9]:162"
+      and system._unsink("udp6:[2001:db8::9]:162") == "2001:db8::9"
+      and system._unsink("10.0.0.9") == "10.0.0.9",
+      "IPv6 goes to snmpd in brackets, and comes back without them")
+_m = system.snmp_monitors("70000")
+check(len(_m) == 7 and all(l.startswith("monitor ") for l in _m)
+      and any("vrrpStateChange .1.3.6.1.4.1.70000.1.13.1.1.5 != 0" in l
+              and " -D " in l for l in _m)
+      and any("dataplaneNotCurrent .1.3.6.1.4.1.70000.1.12.3.0 == 2" in l
+              for l in _m),
+      f"the monitors, on the operator's number: {_m}")
+_st = {"enabled": "yes", "listen-address": "127.0.0.1", "port": "161",
+       "enterprise-number": "70000"}
+_body = system._snmpd_body(_st, ["c1"], {}, agent="/x/agent", release="0.1",
+                           trap_hosts=[("10.0.0.9", "t1", "trap"),
+                                       ("2001:db8::9", "t2", "inform")])
+check("trap2sink 10.0.0.9 t1" in _body
+      and "informsink udp6:[2001:db8::9]:162 t2" in _body
+      and "linkUpDownNotifications yes" in _body
+      and "iquerySecName prismaInternal" in _body
+      and "vrrpStateChange" in _body,
+      f"a trap and an inform destination, and what is sent to them: {_body}")
+_quiet = system._snmpd_body(_st, ["c1"], {}, agent="/x/agent", release="0.1")
+check("linkUpDown" not in _quiet and "monitor" not in _quiet
+      and "iquerySecName" not in _quiet,
+      "no destination, no notification machinery")
+_root = tempfile.mkdtemp()
+os.makedirs(_root + "/etc/snmp")
+with open(_root + "/etc/snmp/snmpd.conf", "w") as _f:
+    _f.write(_body)
+_rd = system.SnmpDaemon(root=_root, runner=lambda *a, **k: (0, "")).read()
+check(_rd[3] == [("10.0.0.9", "t1", "trap"), ("2001:db8::9", "t2", "inform")]
+      and "prismaInternal" not in _rd[2],
+      f"read back: the destinations, and the internal user is nobody's: {_rd}")
+print("  [ ok ] destinations, monitors and read-back")
+
 if fail:
     print(f"{fail} FAILURES")
     sys.exit(1)

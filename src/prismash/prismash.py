@@ -63,7 +63,8 @@ import doors
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
-                    snmp_redact, SNMP_DEFAULTS, SNMP_FIELDS, validate_snmp, validate_ssh, validate_role,
+                    snmp_redact, SNMP_DEFAULTS, SNMP_FIELDS, validate_snmp,
+                    validate_trap_host, validate_ssh, validate_role,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT,
                     ROLE_ADMIN, ROLE_CGNAT)
 import routes
@@ -2545,6 +2546,7 @@ TREE = {
                 "enterprise-number": ("none: the product's own objects are "
                                       "not served", None),
                 "community": ("remove one community", ARG_WORD),
+                "trap-host": ("stop sending notifications there", "<address>"),
             }),
             "dns": ("stop asking a resolver", {
                 "server": ("the last one removed gives /etc/resolv.conf back "
@@ -2608,6 +2610,8 @@ TREE = {
             "enterprise-number": ("your organisation's IANA Private "
                                   "Enterprise Number", "<1-4294967295>"),
             "community": ("an SNMPv2c community, read-only", ARG_WORD),
+            "trap-host": ("where to send notifications: '<address> community "
+                          "<string> [inform]'", "<address>"),
         }),
         "snmp-user": ("an SNMPv3 user", ARG_SNMP_USER),
         "commit": ("apply the candidate configuration", COMMIT),
@@ -6854,7 +6858,8 @@ class Shell:
                     _held[_k] = _v
             setattr(cfg, _lvl, _held)
         cfg.users = self.sys.read_users()
-        cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
+        (cfg.snmp, cfg.snmp_communities, cfg.snmp_users,
+         cfg.snmp_trap_hosts) = self.snmp.read()
         # What the policy compiler emitted is not the operator's routing: it
         # is taken out, and the policy it came from is read back from its own
         # file (#458).
@@ -9895,7 +9900,8 @@ class Shell:
                 return False
         if d["snmp_changed"]:
             ok, msg = self.snmp.apply(target.snmp, target.snmp_communities,
-                                      target.snmp_users)
+                                      target.snmp_users,
+                                      target.snmp_trap_hosts)
             if not ok:
                 self.err(f"snmp: {msg}")
                 return False
@@ -12962,6 +12968,28 @@ class Shell:
         # refused as its unknown command - so an enterprise number set by
         # mistake could be changed and never taken out. Found on the X520 box
         # removing a temporary one; it was restored with `rollback 1`.
+        # A NOTIFICATION DESTINATION (#507): `snmp trap-host <address>
+        # community <string> [inform]`, one per address - the same address
+        # typed again replaces its line.
+        if w[:2] == ["snmp", "trap-host"]:
+            kind = "inform" if w[-1:] == ["inform"] else "trap"
+            if len(w) not in (5, 6) or w[3] != "community" or (
+                    len(w) == 6 and w[5] != "inform"):
+                self.err("usage: snmp trap-host <address> community <string> "
+                         "[inform]")
+                return True
+            why = validate_trap_host(w[2], w[4], kind)
+            if why:
+                self.err(why)
+                return True
+            self.candidate.snmp_trap_hosts = [
+                t for t in self.candidate.snmp_trap_hosts if t[0] != w[2]
+            ] + [(w[2], w[4], kind)]
+            return True
+        if w[:3] == ["no", "snmp", "trap-host"] and len(w) == 4:
+            self.candidate.snmp_trap_hosts = [
+                t for t in self.candidate.snmp_trap_hosts if t[0] != w[3]]
+            return True
         if w[:2] == ["no", "snmp"] and len(w) == 3 and w[2] in SNMP_FIELDS:
             self.candidate.snmp[w[2]] = SNMP_DEFAULTS[w[2]]
             return True
