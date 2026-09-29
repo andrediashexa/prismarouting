@@ -185,8 +185,330 @@ class Values:
 VALUES = Values()
 
 
+# --- the interface table: IF-MIB for the dataplane's cards (#498) -----------
+#
+# net-snmp's own IF-MIB reads Linux, and Linux does not have the cards the
+# dataplane holds: an NMS saw the linux_cp taps, whose counters are the
+# control plane's traffic, and not a byte of what the box forwards. This agent
+# is registered on ifNumber, ifTable and ifXTable above net-snmp's module and
+# serves every card the box has: VPP's, and the physical ones Linux still
+# holds (a management card kept for Linux).
+#
+# The counters come from VPP's statistics segment through vpp_get_stats, which
+# reads shared memory and costs the dataplane nothing; one line per interface
+# PER THREAD, so they are summed here. What the segment does not carry -
+# admin and link state, MTU, speed, MAC - comes from the dataplane's own
+# screens, cached with the rest.
+
+VPP_GET_STATS = "/usr/bin/vpp_get_stats"
+STATS_SOCKET = os.environ.get("PRISMA_STATS_SOCKET", "/run/vpp/stats.sock")
+SYS_CLASS_NET = os.environ.get("PRISMA_SYS_CLASS_NET", "/sys/class/net")
+IFINDEX_FILE = os.environ.get("PRISMA_SNMP_IFINDEX", "/var/lib/snmp/prisma-ifindex")
+IF_STATS = ["rx", "tx", "rx-unicast", "rx-multicast", "rx-broadcast",
+            "tx-unicast", "tx-multicast", "tx-broadcast", "drops", "rx-miss",
+            "rx-no-buf", "rx-error", "tx-error"]
+IF_MIB = "1.3.6.1.2.1.2"
+IFX_TABLE = "1.3.6.1.2.1.31.1.1.1"
+
+
+def parse_stats_dump(text):
+    """
+    vpp_get_stats' dump into (names, counters): names {index: name} from
+    /if/names, and counters {stat: {index: [packets, bytes]}} summed over
+    every thread's row. A simple counter has no bytes, and carries 0.
+    """
+    names, counters = {}, {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("[") or "]: " not in line:
+            continue
+        head, rest = line[1:].split("]: ", 1)
+        stat = rest.rsplit(" ", 1)[-1]
+        if not stat.startswith("/if/"):
+            continue
+        stat = stat[4:]
+        idx = head.split(" @ ")[0]
+        if not idx.isdigit():
+            continue
+        if stat == "names":
+            names[int(idx)] = rest.rsplit(" ", 1)[0]
+            continue
+        f = rest.replace(",", "").split()
+        try:
+            pk = int(f[0])
+            by = int(f[2]) if len(f) > 3 and f[3] == "bytes" else 0
+        except (ValueError, IndexError):
+            continue
+        c = counters.setdefault(stat, {}).setdefault(int(idx), [0, 0])
+        c[0] += pk
+        c[1] += by
+    return names, counters
+
+
+def parse_show_interface(text):
+    """`show interface` into {name: {"admin": "up"|"down", "mtu": int}}."""
+    out = {}
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) >= 4 and not line[:1].isspace() and f[1].isdigit() \
+                and f[2] in ("up", "down"):
+            try:
+                mtu = int(f[3].split("/")[0])
+            except ValueError:
+                mtu = 0
+            out[f[0]] = {"admin": f[2], "mtu": mtu}
+    return out
+
+
+def speed_bps(text):
+    """'10 Gbps', '1.000000 Gbps', '100 Mbps' as bits a second; 0 unknown."""
+    f = text.split()
+    if len(f) < 2:
+        return 0
+    unit = {"gbps": 10 ** 9, "mbps": 10 ** 6, "kbps": 10 ** 3}.get(f[1].lower())
+    try:
+        return int(float(f[0]) * unit) if unit else 0
+    except ValueError:
+        return 0
+
+
+def parse_show_hardware(text):
+    """
+    `show hardware-interfaces` into {name: {"link", "speed", "mac"}}: the
+    link column of each card's first line, "Link speed:" and "Ethernet
+    address" in the lines under it.
+    """
+    out, cur = {}, None
+    for line in text.splitlines():
+        f = line.split()
+        if not f:
+            continue
+        if not line[:1].isspace() and len(f) >= 3 and f[1].isdigit():
+            cur = out.setdefault(f[0], {"link": f[2], "speed": 0, "mac": ""})
+        elif cur is not None and line.strip().startswith("Link speed:"):
+            cur["speed"] = speed_bps(line.split(":", 1)[1])
+        elif cur is not None and line.strip().startswith("Ethernet address"):
+            cur["mac"] = f[-1]
+    return out
+
+
+def _read(path):
+    try:
+        with open(path) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def linux_cards(root=SYS_CLASS_NET, skip=()):
+    """
+    The physical cards Linux holds - a netdev with a device behind it - that
+    the dataplane has not got, as interface records. The linux_cp taps have
+    no device and are not here: their traffic is the control plane's, and a
+    card the dataplane holds is already a row.
+    """
+    out = []
+    try:
+        entries = sorted(os.listdir(root))
+    except OSError:
+        return out
+    for name in entries:
+        d = os.path.join(root, name)
+        if name in skip or not os.path.exists(os.path.join(d, "device")):
+            continue
+        st = lambda k: int(_read(os.path.join(d, "statistics", k)) or 0)
+        sp = _read(os.path.join(d, "speed"))
+        out.append({
+            "name": name, "alias": _read(os.path.join(d, "ifalias")),
+            "admin": "up" if int(_read(os.path.join(d, "flags")) or "0", 16) & 1
+                     else "down",
+            "oper": "up" if _read(os.path.join(d, "operstate")) == "up" else "down",
+            "mtu": int(_read(os.path.join(d, "mtu")) or 0),
+            "speed": int(sp) * 10 ** 6 if sp.lstrip("-").isdigit()
+                     and int(sp) > 0 else 0,
+            "mac": _read(os.path.join(d, "address")),
+            "in_octets": st("rx_bytes"), "out_octets": st("tx_bytes"),
+            "in_ucast": st("rx_packets") - st("multicast"),
+            "out_ucast": st("tx_packets"),
+            "in_mcast": st("multicast"), "in_bcast": 0,
+            "out_mcast": 0, "out_bcast": 0,
+            "in_discards": st("rx_dropped"), "out_discards": st("tx_dropped"),
+            "in_errors": st("rx_errors"), "out_errors": st("tx_errors")})
+    return out
+
+
+def vpp_cards(names, counters, attrs, hw, aliases):
+    """
+    The dataplane's interfaces as records, from the parsed statistics, the
+    parsed `show interface` and `show hardware-interfaces`, and the Linux
+    ends' aliases (the VTY's description is written there). local0 and the
+    linux_cp taps are left out: the first carries nothing, the second is the
+    inside of a pair whose outside is already a row.
+    """
+    # not a unit: a closure inside vpp_cards, measured on the records it
+    # builds in appliance/test_snmp_agent.py.
+    def c(stat, idx, part):
+        return counters.get(stat, {}).get(idx, [0, 0])[part]
+    out = []
+    for idx in sorted(names):
+        name = names[idx]
+        if name == "local0" or name.startswith("tap"):
+            continue
+        parent = name.split(".")[0]
+        h = hw.get(name) or hw.get(parent) or {}
+        a = attrs.get(name, {})
+        admin = a.get("admin", "down")
+        out.append({
+            "name": name, "alias": aliases.get(name, ""),
+            "admin": admin,
+            "oper": "up" if admin == "up" and h.get("link") == "up" else "down",
+            "mtu": a.get("mtu", 0), "speed": h.get("speed", 0),
+            "mac": h.get("mac", ""),
+            "in_octets": c("rx", idx, 1), "out_octets": c("tx", idx, 1),
+            "in_ucast": c("rx-unicast", idx, 0), "out_ucast": c("tx-unicast", idx, 0),
+            "in_mcast": c("rx-multicast", idx, 0), "in_bcast": c("rx-broadcast", idx, 0),
+            "out_mcast": c("tx-multicast", idx, 0), "out_bcast": c("tx-broadcast", idx, 0),
+            "in_discards": c("drops", idx, 0) + c("rx-miss", idx, 0)
+                           + c("rx-no-buf", idx, 0),
+            "out_discards": 0,
+            "in_errors": c("rx-error", idx, 0), "out_errors": c("tx-error", idx, 0)})
+    return out
+
+
+def if_indexes(names, path=IFINDEX_FILE):
+    """
+    {name: ifIndex}, stable for as long as the file lives: a name keeps the
+    index it was first given, and a new name takes the next free one. An NMS
+    keeps a year of graphs per ifIndex, and a reboot, a card added or a card
+    handed over that renumbered them would draw one card's traffic under
+    another's name without an error anywhere.
+    """
+    known = {}
+    for line in _read(path).splitlines():
+        f = line.split()
+        if len(f) == 2 and f[1].isdigit():
+            known[f[0]] = int(f[1])
+    nxt = max(known.values(), default=0) + 1
+    changed = False
+    for n in names:
+        if n not in known:
+            known[n] = nxt
+            nxt += 1
+            changed = True
+    if changed:
+        try:
+            tmp = path + ".new"
+            with open(tmp, "w") as fh:
+                fh.write("".join(f"{n} {i}\n" for n, i in sorted(
+                    known.items(), key=lambda kv: kv[1])))
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return {n: known[n] for n in names}
+
+
+def if_type(name):
+    """ifType: a bundle, a VLAN sub-interface, or an Ethernet card."""
+    if name.startswith("BondEthernet"):
+        return 161                      # ieee8023adLag
+    if "." in name:
+        return 135                      # l2vlan
+    return 6                            # ethernetCsmacd
+
+
+def mac_octets(mac):
+    """'bc:24:11:92:67:ab' as pass_persist's octet form, '' for none."""
+    parts = mac.split(":")
+    if len(parts) != 6:
+        return ""
+    return " ".join(p.upper() for p in parts)
+
+
+def if_rows(cards, indexes):
+    """The ifNumber, ifTable and ifXTable rows for these interface records."""
+    rows = [(f"{IF_MIB}.1.0", "integer", len(cards))]
+    m32 = 2 ** 32
+    for r in cards:
+        i = indexes[r["name"]]
+        t = f"{IF_MIB}.2.1"
+        st = {"up": 1, "down": 2}
+        rows += [
+            (f"{t}.1.{i}", "integer", i),
+            (f"{t}.2.{i}", "string", r["name"]),
+            (f"{t}.3.{i}", "integer", if_type(r["name"])),
+            (f"{t}.4.{i}", "integer", r["mtu"]),
+            (f"{t}.5.{i}", "gauge", min(r["speed"], m32 - 1)),
+            (f"{t}.6.{i}", "octet", mac_octets(r["mac"])),
+            (f"{t}.7.{i}", "integer", st[r["admin"]]),
+            (f"{t}.8.{i}", "integer", st[r["oper"]]),
+            (f"{t}.10.{i}", "counter", r["in_octets"] % m32),
+            (f"{t}.11.{i}", "counter", r["in_ucast"] % m32),
+            (f"{t}.13.{i}", "counter", r["in_discards"] % m32),
+            (f"{t}.14.{i}", "counter", r["in_errors"] % m32),
+            (f"{t}.16.{i}", "counter", r["out_octets"] % m32),
+            (f"{t}.17.{i}", "counter", r["out_ucast"] % m32),
+            (f"{t}.19.{i}", "counter", r["out_discards"] % m32),
+            (f"{t}.20.{i}", "counter", r["out_errors"] % m32)]
+        x = IFX_TABLE
+        rows += [
+            (f"{x}.1.{i}", "string", r["name"]),
+            (f"{x}.2.{i}", "counter", r["in_mcast"] % m32),
+            (f"{x}.3.{i}", "counter", r["in_bcast"] % m32),
+            (f"{x}.4.{i}", "counter", r["out_mcast"] % m32),
+            (f"{x}.5.{i}", "counter", r["out_bcast"] % m32),
+            (f"{x}.6.{i}", "counter64", r["in_octets"]),
+            (f"{x}.7.{i}", "counter64", r["in_ucast"]),
+            (f"{x}.8.{i}", "counter64", r["in_mcast"]),
+            (f"{x}.9.{i}", "counter64", r["in_bcast"]),
+            (f"{x}.10.{i}", "counter64", r["out_octets"]),
+            (f"{x}.11.{i}", "counter64", r["out_ucast"]),
+            (f"{x}.12.{i}", "counter64", r["out_mcast"]),
+            (f"{x}.13.{i}", "counter64", r["out_bcast"]),
+            (f"{x}.15.{i}", "gauge", r["speed"] // 10 ** 6),
+            (f"{x}.18.{i}", "string", r["alias"])]
+    return rows
+
+
+class Interfaces:
+    """The interface rows, read at most once every CACHE_SECONDS."""
+
+    def __init__(self):
+        self.at = 0.0
+        self.rows = []
+
+    # not a unit: runs vpp_get_stats and vppctl against a live dataplane;
+    # what it builds is vpp_cards/linux_cards/if_rows, each held by
+    # appliance/test_snmp_agent.py, and lab/snmp.sh walks the result.
+    def refresh(self):
+        if self.rows and time.time() - self.at < CACHE_SECONDS:
+            return self.rows
+        try:
+            p = subprocess.run([VPP_GET_STATS, "socket-name", STATS_SOCKET, "dump"]
+                               + [f"^/if/{s}$" for s in ["names"] + IF_STATS],
+                               capture_output=True, text=True, timeout=5)
+            stats = p.stdout if p.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            stats = ""
+        names, counters = parse_stats_dump(stats)
+        attrs = parse_show_interface(vppctl("show interface") or "")
+        hw = parse_show_hardware(vppctl("show hardware-interfaces") or "")
+        aliases = {n: _read(os.path.join(SYS_CLASS_NET, n, "ifalias"))
+                   for n in names.values()}
+        cards = vpp_cards(names, counters, attrs, hw, aliases)
+        cards += linux_cards(skip={r["name"] for r in cards})
+        self.rows = if_rows(cards, if_indexes([r["name"] for r in cards]))
+        self.at = time.time()
+        return self.rows
+
+
+INTERFACES = Interfaces()
+
+
 def oid_table():
     """Every OID this agent serves, in lexicographic order."""
+    if "--interfaces" in sys.argv[1:]:
+        return sorted(INTERFACES.refresh(),
+                      key=lambda r: [int(x) for x in r[0].split(".")])
     d = VALUES.refresh()
     if not d:
         return []                       # dataplane silent: serve nothing

@@ -1035,6 +1035,8 @@ def snmp_redact(lines):
 # cost this product nothing to answer. The dataplane's interfaces are not
 # here: net-snmp's IF-MIB reads Linux, which does not have them (#496, 1b).
 SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
+             ".1.3.6.1.2.1.2",          # IF-MIB: ifNumber, ifTable (#498)
+             ".1.3.6.1.2.1.31",         # IF-MIB: ifXTable, 64-bit counters
              ".1.3.6.1.2.1.25",         # HOST-RESOURCES-MIB: CPU, storage, processes
              ".1.3.6.1.4.1.2021",       # UCD-SNMP-MIB: load, memory, disks
              ".1.3.6.1.2.1.123"]        # NAT-MIB, the timeouts the agent serves
@@ -1080,6 +1082,14 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None):
         out.append(f"rocommunity {c} default -V hexa")
     for name in sorted(users):
         out.append(f"rouser {name} priv -V hexa")
+    # THE INTERFACE TABLE IS THE AGENT'S, not net-snmp's (#498): net-snmp's
+    # IF-MIB reads Linux, which does not have the dataplane's cards. -p 10 puts
+    # these registrations above its module (priority 127) - but only on the
+    # very OIDs it registers: one pass_persist on .1.3.6.1.2.1.2 lost to its
+    # more specific ifTable, and lab/snmp.sh walked lo and eth0.
+    out.append(f"pass_persist -p 10 .1.3.6.1.2.1.2.1 {agent} --interfaces")
+    out.append(f"pass_persist -p 10 .1.3.6.1.2.1.2.2 {agent} --interfaces")
+    out.append(f"pass_persist -p 10 .1.3.6.1.2.1.31.1.1 {agent} --interfaces")
     out.append(f"pass_persist .1.3.6.1.2.1.123 {agent}")
     if pen:
         # The number on the agent's own command line (#499): it runs as

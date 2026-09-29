@@ -741,6 +741,8 @@ body = system._snmpd_body(
 check(body.splitlines()[1:] == [
     "agentAddress udp:10.0.0.1:1161",
     "view hexa included .1.3.6.1.2.1.1",
+    "view hexa included .1.3.6.1.2.1.2",
+    "view hexa included .1.3.6.1.2.1.31",
     "view hexa included .1.3.6.1.2.1.25",
     "view hexa included .1.3.6.1.4.1.2021",
     "view hexa included .1.3.6.1.2.1.123",
@@ -752,6 +754,9 @@ check(body.splitlines()[1:] == [
     "rocommunity ops default -V hexa",
     "rouser amy priv -V hexa",
     "rouser zed priv -V hexa",
+    "pass_persist -p 10 .1.3.6.1.2.1.2.1 /x/agent --interfaces",
+    "pass_persist -p 10 .1.3.6.1.2.1.2.2 /x/agent --interfaces",
+    "pass_persist -p 10 .1.3.6.1.2.1.31.1.1 /x/agent --interfaces",
     "pass_persist .1.3.6.1.2.1.123 /x/agent",
     "pass_persist .1.3.6.1.4.1.70000 /x/agent --enterprise 70000"],
     f"address, both views, every community, users sorted, both agents: "
