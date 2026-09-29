@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.141.7 - IF-MIB counts unicast packets where the driver does not count by type
+
+### Fixed
+
 * **IF-MIB's unicast packet counters read 0 on a card carrying traffic.**
   ([#501](https://github.com/andrediashexa/hexarouting/issues/501))
   Found verifying 0.141.5 on the X520 box: VPP fills `rx-unicast`,
