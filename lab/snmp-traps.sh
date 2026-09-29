@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 6
+# OFF-RED-AT-LEAST: 7
 # SNMP notifications (#507): the box telling the NMS, rather than waiting to
 # be asked.
 #
@@ -76,6 +76,17 @@ sleep 10
 echo
 echo "=========== 2. the events ==========="
 vppctl vrrp proto start pg0 vr_id 7 >/dev/null
+# A TCP collector that takes the records and then goes away (#509): the
+# transport connecting and dropping are two changes of prLogTransportConnected.
+python3 -c "
+import socket
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', 4740)); s.listen(1)
+c, _ = s.accept()
+while c.recv(65536): pass
+" > /dev/null 2>&1 &
+COLLECTOR=$!
+vppctl bpa logging tcp 127.0.0.1 port 4740 >/dev/null
 vppctl packet-generator new "name subs limit 114 rate 1000 node ip4-input \
   interface pg0 size 60-60 data { UDP: 100.64.0.1 - 100.64.0.114 -> 8.8.8.8 \
   UDP: 40000 -> 53 incrementing 1 }" >/dev/null
@@ -90,7 +101,10 @@ echo "  the refused subscriber: $(vppctl show bpa top 200 | grep '100.64.0.120 '
 echo "9.9.9" > /usr/share/prisma-routing/VERSION
 echo "  prPortRefusals now: $(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.99999.1.5.0 2>&1)"
 echo "  $(vpp_get_stats socket-name /run/vpp/stats.sock dump '^/bpa/pool/refused$' | tr '\n' ' ')"
-sleep 70
+echo "  TCP transport: $(vppctl show bpa logging | tr -d '\r' | grep -iA2 '^TCP' | tr '\n' ' ')"
+sleep 40
+kill "$COLLECTOR" 2>/dev/null
+sleep 30
 vppctl set interface state pg0 down
 sleep 70
 TRAPS=$(cat /tmp/traps.log 2>/dev/null)
@@ -116,6 +130,8 @@ expect_in "a pool at 90% arrives as poolNearlyFull" "poolNearlyFull" "$NAMES"
 expect_in "a subscriber refused ports arrives as portsRefused" "portsRefused" "$NAMES"
 expect_in "a dataplane older than the release arrives as dataplaneNotCurrent" \
   "dataplaneNotCurrent" "$NAMES"
+expect_in "a records transport connecting and dropping arrives as recordsTransportChange" \
+  "recordsTransportChange" "$NAMES"
 expect "and nobody reads the box as the internal user" \
   sh -c "case \"$INSIDE\" in *Prisma*) exit 1;; *) exit 0;; esac"
 verdict

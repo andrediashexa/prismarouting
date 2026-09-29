@@ -228,6 +228,7 @@ Cada destino recebe **trap**, a não ser que diga `inform` — o inform é confi
 |--------|-------|
 | uma porta do dataplane cai ou volta | `linkDown`, `linkUp` |
 | uma sessão BGP cai ou é estabelecida | `bgpBackwardTransition`, `bgpEstablished` |
+| um vizinho OSPF muda de estado | `ospfNbrStateChange` |
 | um roteador VRRP muda de estado | `vrrpStateChange`, com a interface, o VR ID e o estado |
 | um pool chega a 90% dos blocos | `poolNearlyFull`, com o nome do pool |
 | portas são recusadas | `portsRefused` |

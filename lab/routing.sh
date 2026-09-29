@@ -517,6 +517,16 @@ echo "  BGP4-MIB notifications received: $(printf '%s' "$BGPTRAPS" | tr '\n' ' '
 expect_in "a BGP session going down arrives as bgpBackwardTransition" \
   ".1.3.6.1.2.1.15.0.2" "$BGPTRAPS"
 expect_in "and coming back as bgpEstablished" ".1.3.6.1.2.1.15.0.1" "$BGPTRAPS"
+# And OSPF's (#509): the process restarted, the neighbour down and back to
+# Full, and ospfd's ospfNbrStateChange (.1.3.6.1.2.1.14.16.2.2) forwarded.
+vtysh -c "clear ip ospf process" >/dev/null 2>&1
+_n=0
+until grep -q "OID: .1.3.6.1.2.1.14.16.2.2" /tmp/traps.log 2>/dev/null \
+      || [ "$_n" -ge 90 ]; do sleep 1; _n=$((_n + 1)); done
+OSPFTRAPS=$(grep -c "OID: .1.3.6.1.2.1.14.16.2.2" /tmp/traps.log 2>/dev/null)
+echo "  ospfNbrStateChange notifications received: ${OSPFTRAPS:-0}"
+expect "an OSPF neighbour changing state arrives as ospfNbrStateChange" \
+  test "${OSPFTRAPS:-0}" -ge 1
 SNMPOFF=$($HX -c "configure" -c "snmp enabled no" -c "commit" 2>&1)
 printf '%s\n' "$SNMPOFF" | sed 's/^/  /'
 expect_in "turning SNMP off says what the daemons keep until FRR restarts" \

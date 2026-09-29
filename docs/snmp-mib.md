@@ -181,6 +181,7 @@ sending there.
 |---|---|---|
 | a dataplane card goes down or comes up | `linkDown`, `linkUp` (IF-MIB) | net-snmp, polling the agent's `ifOperStatus` |
 | a BGP session drops or is established | `bgpBackwardTransition`, `bgpEstablished` (BGP4-MIB) | bgpd, over AgentX |
+| an OSPF neighbour changes state | `ospfNbrStateChange` (OSPF-MIB) | ospfd, over AgentX |
 | a VRRP router changes state | `mteTriggerFired` named `vrrpStateChange`, with the interface, VR ID and state | a monitor on `prVrrpState` |
 | a pool reaches 90% of its blocks | `poolNearlyFull`, with the pool's name and utilisation | a monitor on `prPoolUtilisation` |
 | ports are refused | `portsRefused` | a monitor on `prPortRefusals` |
@@ -192,9 +193,11 @@ sending there.
 
 The monitors are polled every 30 or 60 seconds, so a notification follows the
 event by up to a minute. They go under the enterprise number in effect, like
-the objects they watch. `lab/snmp-traps.sh` receives every monitored one with snmptrapd,
-and `lab/routing.sh` the two BGP ones; OSPF's neighbour notifications are sent
-by ospfd by the same path and have not been verified end to end.
+the objects they watch. `lab/snmp-traps.sh` receives the monitored ones with
+snmptrapd - `recordsTransportChange` from a TCP collector connecting and going
+away (#509) - and `lab/routing.sh` the BGP pair and `ospfNbrStateChange`. Not
+received in a lab: `recordsLost`, which needs the spill file to fail, and
+`bundleMembersChange`, which needs a bundle with a partner.
 
 Two things measured on the way, both in the monitors' definitions: a monitor
 fires when its test **becomes** true - one already true when snmpd starts is
