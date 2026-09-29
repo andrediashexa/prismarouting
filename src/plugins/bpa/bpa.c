@@ -11,6 +11,7 @@
 #include <bpa/bpa_version.h>
 
 #include "bpa.h"
+#include "bpa_stats.h"
 #include "bpa_radius.h"
 #include "bpa_mss.h"
 
@@ -1600,6 +1601,8 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
     for (i = 0; i < vec_len (bm->per_thread); i++)
       vec_validate (vec_elt_at_index (bm->per_thread, i)->n_bypassed,
 		    p - bm->pools);
+    /* Its row in the statistics segment, for the same reason (#504). */
+    bpa_stats_pool_add (p - bm->pools, p->name);
   }
   bpa_outside_window_update ();
 
@@ -1704,6 +1707,7 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
    * measure a pool whose derived values are all still zero.
    */
   bpa_stride_warn (0, p);
+  bpa_stats_pool_describe (p - bm->pools, p);
 
   bpa_audit ("add", p, 0);
 
@@ -1991,6 +1995,7 @@ bpa_pool_del (u8 *name)
    * never borrowed anything.
    */
   bpa_lent_clear_pool (bm, pool_index);
+  bpa_stats_pool_del (pool_index);
   vec_free (p->name);
   vec_free (p->statics);
   pool_put (bm->pools, p);
@@ -2452,6 +2457,7 @@ bpa_init (vlib_main_t *vm)
 	return e;
     }
 
+  bpa_stats_init ();
   return 0;
 }
 

@@ -5,6 +5,17 @@
 #include "bpa_pptp.h"
 #include "bpa_rewrite.h"
 #include "bpa_log.h"
+#include "bpa_stats.h"
+
+/*
+ * A change to the statistics segment's pool counters (#504), charged to the
+ * thread that OWNS `pt` rather than the one running: sessions expire on the
+ * main thread under the barrier, and VPP asserts a simple counter never goes
+ * below zero in its own slot.
+ */
+#define BPA_STAT(which, pt, pool, n)                                          \
+  bpa_stats_add (&bpa_stats_main.which, (pt) - bpa_main.per_thread, (pool),  \
+		 (n))
 
 /*
  * Per-worker table sizing. Sessions are sharded by subscriber, so each
@@ -97,6 +108,8 @@ bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   pool_get_zero (pt->subs, sub);
   bpa_sub_add_block (sub, p, b);
   hash_set (pt->sub_by_idx, key, sub - pt->subs);
+  BPA_STAT (subscribers, pt, pool_index, 1);
+  BPA_STAT (blocks, pt, pool_index, 1);
   return sub;
 }
 
@@ -113,6 +126,8 @@ bpa_sub_put (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
   if (sub->n_sessions)
     return;
 
+  BPA_STAT (subscribers, pt, pool_index, -1);
+  BPA_STAT (blocks, pt, pool_index, -(i64) vec_len (sub->blocks));
   vec_foreach (sb, sub->blocks)
     clib_mem_free (sb->map.bits);
   vec_free (sub->blocks);
@@ -155,6 +170,7 @@ bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   if (!q)
     return;
   bpa_sub_add_block (pool_elt_at_index (pt->subs, q[0]), p, b);
+  BPA_STAT (blocks, pt, pool_index, 1);
 }
 
 /*
@@ -193,6 +209,7 @@ bpa_sub_adopt_block (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
       return;
 
   bpa_sub_add_block (sub, p, b);
+  BPA_STAT (blocks, pt, pool_index, 1);
 }
 
 /*
@@ -256,6 +273,7 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
     }
 
   sub->n_sessions++;
+  BPA_STAT (sessions, pt, pool_index, 1);
 
   bpa_key_in (&kv, s->ip_priv, s->port_priv, proto, s->fib_index);
   kv.value = s - pt->sessions;
@@ -504,6 +522,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
        * "show bpa subscriber" reports, and it is the difference between "the
        * customer is at their limit" and "the customer is idle". */
       sub->n_refused++;
+      BPA_STAT (refused, pt, pool_index, 1);
       *why = BPA_CREATE_NO_PORT;
       bpa_sub_put (pt, pool_index, b->sub_idx, sub);
       return 0;
@@ -640,6 +659,7 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
     }
 
   sub->n_sessions++;
+  BPA_STAT (sessions, pt, pool_index, 1);
 
   /* Inbound: the server will send GRE carrying the Call ID we just handed
    * out, and it came from the block, so the pre-check and the handoff find
@@ -756,6 +776,7 @@ bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
   s->last_heard = now;
 
   sub->n_sessions++;
+  BPA_STAT (sessions, pt, pool_index, 1);
 
   bpa_key_esp (&kv, ip_priv, remote, fib);
   kv.value = s - pt->sessions;
@@ -1023,7 +1044,10 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 	bpa_port_release (pt, s->pool_index, s->sub_idx, s->blk_idx,
 			  s->port_off, now);
       if (sub->n_sessions)
-	sub->n_sessions--;
+	{
+	  sub->n_sessions--;
+	  BPA_STAT (sessions, pt, s->pool_index, -1);
+	}
 
       /*
        * Last session gone: a block that was ALLOCATED enters hold-down
@@ -1441,6 +1465,10 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 
       vlib_process_wait_for_event_or_clock (vm, BPA_EXPIRE_INTERVAL);
       vlib_process_get_events (vm, 0);
+
+      /* The logging transports' counters, into the statistics segment
+       * (#504): a handful of assignments, on the thread that writes them. */
+      bpa_stats_publish ();
 
       if (vec_len (bm->per_thread) == 0)
 	continue;
