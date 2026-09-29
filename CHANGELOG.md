@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.143.3 - SNMP notifications: the box tells the NMS when something changes
+
+### Added
+
 * **SNMP notifications: the box tells the NMS when something changes.**
   ([#507](https://github.com/andrediashexa/hexarouting/issues/507))
   `snmp trap-host <address> community <string> [inform]`, each destination
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   `-I`, or snmpd walks under `.5.0`, finds nothing, and eight refusals sent
   no notification; and snmpd's internal user is not an account - asked from
   outside it answers "Unknown user name".
-
-### Fixed
 
 ## 0.143.2 - the compare screen shows no secret, and an SNMP setting can be taken out
 
