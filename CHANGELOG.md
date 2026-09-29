@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **BGP, OSPF and IS-IS over SNMP, from the daemons that run them.**
+  ([#502](https://github.com/andrediashexa/hexarouting/issues/502))
+  The third phase of the SNMP plan (#496), and the first that needed no
+  decision: standard MIBs only. frr-snmp is in the FRR image, zebra, bgpd,
+  ospfd, ospf6d and isisd load it, and the box's snmpd is their AgentX master
+  on a unix socket only group `frr` can reach. The view admits BGP4-MIB,
+  OSPF-MIB, OSPFV3-MIB and ISIS-MIB. `lab/routing.sh` reads, through the
+  box's snmpd, the BGP session established (6) with both AS numbers, the OSPF
+  neighbour full (8) and the IS-IS adjacency up (3) - the same sessions its
+  vtysh checks assert. Measured on the way, and why `agentx` follows
+  `snmp enabled` instead of being always on: FRR refuses `no agentx`, and
+  with `agentx` and no snmpd each daemon logs a warning every 15 s. So the
+  commit turns it on, the VTY's reload carries it (frr-reload would send the
+  refused `no agentx` and fail every routing commit), the read-back leaves it
+  out of the operator's routing, and the FRR container's start takes it out
+  of `frr.conf` once SNMP is off - which the commit that turns SNMP off says.
+  An image change, so a Y release.
+
 ### Fixed
 
 ## 0.141.7 - IF-MIB counts unicast packets where the driver does not count by type

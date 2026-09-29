@@ -85,6 +85,27 @@ Entram todas as portas do dataplane, incluindo as sub-interfaces, e as placas f�
 
 O `ifIndex` de cada porta é guardado pelo nome, então uma porta **mantém a mesma linha** quando o dataplane reinicia — a NMS não mistura o histórico de uma porta com o de outra.
 
+## O roteamento: BGP, OSPF e IS-IS
+
+A partir da versão 0.142.0, as sessões de roteamento aparecem nas MIBs padrão, servidas pelos próprios daemons que as rodam — o que a NMS lê é o estado do daemon, não uma cópia dele:
+
+| MIB | OID | O que traz |
+|-----|-----|------------|
+| BGP4-MIB | `.1.3.6.1.2.1.15` | cada vizinho: estado da sessão, AS remoto, updates, último erro |
+| OSPF-MIB | `.1.3.6.1.2.1.14` | vizinhos e seus estados, interfaces, tamanho da LSDB |
+| OSPFV3-MIB | `.1.3.6.1.2.1.191` | o mesmo, para o OSPFv3 |
+| ISIS-MIB | `.1.3.6.1.2.1.138` | adjacências e circuitos |
+
+O que vale alertar: `bgpPeerState` (`.1.3.6.1.2.1.15.3.1.2.<endereço do vizinho>`) diferente de 6 (*established*), `ospfNbrState` diferente de 8 (*full*) e `isisISAdjState` diferente de 3 (*up*). Esses três foram conferidos pelos testes do produto numa sessão real; o OSPFv3 é servido pelo mesmo caminho, mas não foi conferido de ponta a ponta.
+
+Nada precisa ser configurado além do `snmp enabled yes`: o commit liga o vínculo dos daemons de roteamento com o agente.
+
+
+:::info
+**Ao desligar o SNMP**, os daemons de roteamento continuam procurando o agente até a próxima vez que o FRR reiniciar — o FRR não permite desfazer esse vínculo com ele rodando — e o `commit` avisa isso. Nesse intervalo o log do FRR registra uma tentativa de conexão a cada 15 segundos por daemon. Na próxima inicialização do FRR (um reboot, por exemplo) o vínculo sai.
+
+:::
+
 ## Timeouts, pela RFC 4008
 
 `natDefTimeouts` em `.1.3.6.1.2.1.123.1.1` — seis objetos que mapeiam exatamente nos timeouts deste equipamento, então uma NMS existente os lê sem template customizado.

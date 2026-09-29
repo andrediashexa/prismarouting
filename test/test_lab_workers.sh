@@ -339,5 +339,20 @@ got=$(PATH="$UB/bin:$PATH"; _rpki_module)
 even when both are there" \
   || bad "_rpki_module with both layouts present gave '$got'"
 
+# _snmp_opt (#502): " -M snmp" when frr-snmp is installed, nothing when not.
+# Judged by what ls prints, because ls FAILS whenever one of the two layouts
+# is missing - which is always - and the first version, which used its
+# status, never loaded the module in any lab.
+got=$(PATH="$UB/bin:$PATH"; _snmp_opt)
+[ "$got" = "" ] \
+  && ok "_snmp_opt is nothing on a box with no SNMP module, so no daemon is \
+told to load one it cannot find" \
+  || bad "_snmp_opt on a box with no module gave '$got'"
+: > "$UB/fs/usr/lib/x86_64-linux-gnu/frr/modules/bgpd_snmp.so"
+got=$(PATH="$UB/bin:$PATH"; _snmp_opt)
+[ "$got" = " -M snmp" ] \
+  && ok "and ' -M snmp' with the module in only one of the two layouts" \
+  || bad "_snmp_opt with the module under the multiarch layout gave '$got'"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

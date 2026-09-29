@@ -6719,5 +6719,81 @@ check(_got == {"ae0": {"members": ["ens19"], "lacp": "active",
       f"{_got}")
 ok("the model, the five calls, and the readback")
 
+# ------------------------------------------------ agentx follows snmp (#502)
+print("\n=== agentx: the box's, carried, and following snmp enabled (#502) ===")
+_RUN_AX = (0, "Building configuration...\nfrr version 10.7.1\nagentx\n"
+              "router bgp 65001\n bgp router-id 10.9.9.9\nexit\nend\n")
+_RUN_NO = (0, "router bgp 65001\nexit\n")
+_f = RecFrr(shows={"show running-config": _RUN_AX})
+check(_f.agentx_on(), "running daemons with `agentx` read as on")
+check(not RecFrr(shows={"show running-config": _RUN_NO}).agentx_on(),
+      "and without it as off")
+check(not RecFrr().agentx_on(), "and an FRR that does not answer as off")
+check("agentx" not in _f.running() and "router bgp 65001" in _f.running(),
+      f"read back as routing it is dropped, and the rest kept: {_f.running()}")
+
+
+class AxFrr(RecFrr):
+    """RecFrr whose apply_lines is recorded and answered."""
+
+    def __init__(self, rc=0, **k):
+        super().__init__(**k)
+        self.applied = []
+        self.rc = rc
+
+    def apply_lines(self, lines):
+        # As vtysh does: status 0 either way, and only daemons with the module
+        # (rc 0 here) end up with it running.
+        self.applied.append(list(lines))
+        if self.rc == 0 and "agentx" in lines:
+            self.shows["show running-config"] = _RUN_AX
+        return 0, ""
+
+
+_f = AxFrr(shows={"show running-config": _RUN_NO})
+_, _out = driven(shell(frr=_f).agentx_follows_snmp, True)
+check(_f.applied == [["agentx"]] and not _out,
+      f"SNMP enabled turns agentx on, quietly: {_f.applied} {_out!r}")
+_f = AxFrr(shows={"show running-config": _RUN_AX})
+driven(shell(frr=_f).agentx_follows_snmp, True)
+check(_f.applied == [], f"and not twice: {_f.applied}")
+_f = AxFrr(rc=1, shows={"show running-config": _RUN_NO})
+_, _out = driven(shell(frr=_f).agentx_follows_snmp, True)
+check("no SNMP module" in _out,
+      f"daemons without the module say BGP is not served: {_out!r}")
+_f = AxFrr(shows={"show running-config": _RUN_AX})
+_, _out = driven(shell(frr=_f).agentx_follows_snmp, False)
+check(_f.applied == [] and "keep looking for snmpd" in _out
+      and "next starts" in _out,
+      f"disabled: nothing is sent, and what remains is said: {_out!r}")
+_f = AxFrr(up=False)
+_, _out = driven(shell(frr=_f).agentx_follows_snmp, True)
+check(_f.applied == [] and not _out, "no FRR, nothing asked and nothing said")
+_f = AxFrr(shows={"show running-config": _RUN_NO})
+with contextlib.redirect_stdout(io.StringIO()):
+    shell(frr=_f).agentx_follows_snmp(False)
+check(_f.applied == [], "disabled on daemons that never had it: nothing sent")
+
+# The reload carries it: frr-reload would send `no agentx`, which FRR refuses.
+_stub = os.path.join(_root, "frr-reload-stub.py")
+_seen = os.path.join(_root, "frr-reload-seen")
+with open(_stub, "w") as _h:
+    _h.write("import shutil, sys\n"
+             f"shutil.copy(sys.argv[-1], {_seen!r})\n")
+_was = prismash.FRR_RELOAD
+prismash.FRR_RELOAD = _stub
+try:
+    for _shows, _want in ((_RUN_AX, True), (_RUN_NO, False)):
+        _f = RecFrr(shows={"show running-config": _shows})
+        _f.reload(["router bgp 65001", "exit"], check_only=True)
+        with open(_seen) as _h:
+            _lines = _h.read().splitlines()
+        check(("agentx" in _lines) == _want and "router bgp 65001" in _lines,
+              f"reload hands frr-reload agentx exactly when it is running "
+              f"({_want}): {_lines}")
+finally:
+    prismash.FRR_RELOAD = _was
+ok("agentx: read, dropped, carried, and following snmp enabled")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

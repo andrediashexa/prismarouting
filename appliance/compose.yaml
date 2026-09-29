@@ -218,6 +218,11 @@ services:
     volumes:
       - /etc/frr:/etc/frr
       - /var/run/frr:/var/run/frr
+      # SNMP from the routing daemons (#502): the AgentX socket snmpd listens
+      # on, and snmpd.conf read-only - the entrypoint puts `agentx` in
+      # frr.conf exactly while that file exists, which is while SNMP is on.
+      - /var/agentx:/var/agentx
+      - /etc/snmp:/etc/snmp:ro
     restart: unless-stopped
 
   # THE MANAGEMENT PLANE (#448, phase C): the container the VTY runs in.

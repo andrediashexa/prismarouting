@@ -35,6 +35,7 @@ RUN curl -s https://deb.frrouting.org/frr/keys.gpg -o /usr/share/keyrings/frrout
     && apt-get update -qq \
     && apt-get install -y --no-install-recommends \
         frr=${FRR_VERSION} frr-pythontools=${FRR_VERSION} \
+        frr-snmp=${FRR_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
 # python3-ply: o vppapigen precisa dele para compilar o .api do plugin.

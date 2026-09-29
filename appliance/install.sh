@@ -663,6 +663,33 @@ else
 fi
 grep -E "^bgpd_options=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
 
+# SNMP FROM THE DAEMONS THAT HOLD THE STATE (#502). frr-snmp, in the FRR
+# image, is an AgentX module each daemon loads: bgpd serves BGP4-MIB, ospfd
+# OSPF-MIB, ospf6d OSPFV3-MIB, isisd ISIS-MIB, zebra the interfaces it knows.
+# Loaded always and harmless while nothing says `agentx`: measured, a daemon
+# with the module and no `agentx` line opens no socket and logs nothing.
+# `agentx` itself follows `snmp enabled` (appliance/frr-entrypoint), because
+# one daemon with it and no snmpd listening logs a warning every 15 s.
+say "SNMP module"
+for d in zebra bgpd ospfd ospf6d isisd; do
+  if grep -q "^${d}_options=.*-M snmp" "$DESTDIR/etc/frr/daemons" 2>/dev/null; then
+    :
+  elif grep -q "^${d}_options=" "$DESTDIR/etc/frr/daemons" 2>/dev/null; then
+    sed -i "s/^\(${d}_options=\"[^\"]*\)\"/\1 -M snmp\"/" \
+      "$DESTDIR/etc/frr/daemons"
+  else
+    echo "${d}_options=\"  -A 127.0.0.1 -M snmp\"" >> "$DESTDIR/etc/frr/daemons"
+  fi
+done
+grep -E "^(zebra|bgpd|ospfd|ospf6d|isisd)_options=" "$DESTDIR/etc/frr/daemons" \
+  | sed 's/^/  /'
+# Where snmpd, the AgentX master, and FRR's daemons meet: a unix socket in a
+# directory group frr can enter and nobody else can (src/prismash/system.py's
+# agentXPerms). Made here because compose would otherwise create it root-only
+# when it bind-mounts it into FRR's container.
+install -d -m 0750 "$DESTDIR/var/agentx"
+chgrp frr "$DESTDIR/var/agentx" 2>/dev/null || true
+
 say "documentation"
 for d in architecture routing logging; do
   install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/prisma-routing/$d.md"
