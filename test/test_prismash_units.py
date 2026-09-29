@@ -4596,6 +4596,47 @@ ok("a list whose length is not this VTY's to predict")
 
 # ------------------------------------------------ candidate and revisions
 
+print("\n=== show configuration compare shows no secret (#506) ===")
+# Found on the X520 box: the rollback that took out an enterprise number
+# printed the box's community in clear on its context line.
+_run = Config.parse("snmp enabled yes\nsnmp community oldsecret\n"
+                    "snmp enterprise-number 99999\n")
+_cand = Config.parse("snmp enabled yes\nsnmp community newsecret\n")
+sh = shell(running=_run)
+sh.candidate = _cand
+with spoken() as o:
+    sh.show_compare()
+_d = o.getvalue()
+check("oldsecret" not in _d and "newsecret" not in _d,
+      f"a community reached the compare screen: {_d!r}")
+check("-snmp community <set, not shown>" in _d
+      and "+snmp community <set, not shown>" in _d
+      and "-snmp enterprise-number 99999" in _d,
+      f"the change is still shown, a line each side, without the value: {_d!r}")
+check(prismash.compare_redact(["--- running", "+++ candidate", "@@ -1 +1 @@",
+                      " neighbor 10.0.0.2 password s3cr3t", ""])
+      == ["--- running", "+++ candidate", "@@ -1 +1 @@",
+          " neighbor 10.0.0.2 password <set, not shown>", ""],
+      "a BGP key on a context line is blanked, and the headers are left alone")
+print("  [ ok ] a changed secret is a - and a + line, and neither says it")
+
+print("\n=== no snmp <setting>: back to the default (#506) ===")
+sh = shell(running=_run)
+sh.candidate = Config.parse(_run.text())
+for _stmt in ("no snmp enterprise-number", "no snmp port",
+              "no snmp listen-address", "no snmp enabled"):
+    with spoken() as o:
+        sh.do_config(_stmt)
+    check("error" not in o.getvalue(),
+          f"{_stmt!r} was refused: {o.getvalue()!r}")
+check(sh.candidate.snmp.get("enterprise-number") == ""
+      and "enterprise-number" not in sh.candidate.text(),
+      f"the number is still set: {sh.candidate.snmp}")
+check(sh.candidate.snmp.get("enabled") == "no"
+      and sh.candidate.snmp.get("port") == "161",
+      f"not back to the defaults: {sh.candidate.snmp}")
+print("  [ ok ] the number taken out, and the rest put back")
+
 print("\n=== Shell.show_compare: running against candidate ===")
 # Mutation shown red: `self.candidate.compare(self.running_config())`.
 sh = shell(running=Config())
