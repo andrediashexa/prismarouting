@@ -471,6 +471,11 @@ else
 fi
 install -d -m 0755 "$DESTDIR/usr/share/prisma-routing"
 printf '%s\n' "$stamp" > "$DESTDIR/usr/share/prisma-routing/VERSION"
+# PRISMA-ROUTING-MIB (#504), with its root left for `show snmp mib` to fill in
+# from the box's enterprise number: beside the stamp, in the directory the
+# management plane's container is given read-only.
+install -m 0644 "$REPO/appliance/PRISMA-ROUTING-MIB.in" \
+  "$DESTDIR/usr/share/prisma-routing/PRISMA-ROUTING-MIB.in"
 chmod 0644 "$DESTDIR/usr/share/prisma-routing/VERSION"
 
 # What the operating system says it is (#438): os-release, the login banners,

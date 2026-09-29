@@ -52,7 +52,7 @@ D="{BOX}"
 case "$*" in
   "show version") echo "vpp v26.06-release" ;;
   "bpa timeouts") cat "$D/timeouts" ;;
-  "show bpa top 100000") cat "$D/top" ;;
+  "show plugins") cat "$D/plugins" ;;
   "show bpa drops") cat "$D/drops" ;;
   "bpa nosuch") echo "bpa: unknown input 'nosuch'" ;;
   "show bpa nosuch") echo "show bpa: unknown input 'nosuch'" ;;
@@ -64,11 +64,53 @@ os.chmod(f"{BOX}/vppctl", 0o755)
 w(f"{BOX}/timeouts", "udp 300  icmp 60  tcp-syn 6  tcp-transitory 240  "
                      "tcp-established 7440  gre 300  port-holddown 120  "
                      "alg-expect 30\n")
-w(f"{BOX}/top", "subscriber       pool   used/total   pct  blocks  refusals\n"
-                "100.64.0.1       p1     900/1024     87%  1       0\n"
-                "100.64.0.2       p1     1000/1024    97%  1       5\n"
-                "100.64.0.3       p1     10/1024      0%   1       0\n"
-                "a line that is not a subscriber row\n")
+# THE STATISTICS SEGMENT (#504), as vpp_get_stats prints it: pool 0 spread
+# over two threads, which the agent sums, and pool 1 deleted - an empty name,
+# which is a row nobody may be shown. The same three subscribers the screen
+# used to print: 900, 1000 (97%) and 10 of 1024 ports, five refusals.
+STATS = """[0]: p1 /bpa/pool/names
+[1]:  /bpa/pool/names
+[0 @ 0]: 1 packets /bpa/pool/subscribers
+[0 @ 1]: 2 packets /bpa/pool/subscribers
+[1 @ 0]: 0 packets /bpa/pool/subscribers
+[0 @ 0]: 1 packets /bpa/pool/blocks
+[0 @ 1]: 2 packets /bpa/pool/blocks
+[0 @ 0]: 900 packets /bpa/pool/sessions
+[0 @ 1]: 1010 packets /bpa/pool/sessions
+[0 @ 0]: 900 packets /bpa/pool/ports
+[0 @ 1]: 1010 packets /bpa/pool/ports
+[0 @ 1]: 1 packets /bpa/pool/near-full
+[0 @ 0]: 5 packets /bpa/pool/refused
+[0 @ 0]: 2 packets /bpa/pool/mode
+[0 @ 0]: 1024 packets /bpa/pool/block-size
+[0 @ 0]: 1024 packets /bpa/pool/inside
+[0 @ 0]: 4 packets /bpa/pool/outside
+[0 @ 0]: 12 packets /bpa/pool/blocks-total
+[0 @ 0]: 12 packets /bpa/pool/capacity
+[0 @ 0]: 6 packets /bpa/pool/guaranteed
+1.00 /bpa/log/ipfix/enabled
+12345.00 /bpa/log/ipfix/records
+0.00 /bpa/log/ipfix/dropped
+1.00 /bpa/log/tcp/enabled
+0.00 /bpa/log/tcp/connected
+7.00 /bpa/log/tcp/dropped
+3.00 /bpa/log/tcp/connects
+0.00 /bpa/log/syslog/enabled
+"""
+w(f"{BOX}/stats", STATS)
+w(f"{BOX}/vpp_get_stats", f"""#!/bin/sh
+[ -e "{BOX}/down" ] && exit 1
+cat "{BOX}/stats"
+""")
+os.chmod(f"{BOX}/vpp_get_stats", 0o755)
+os.environ["PRISMA_VPP_GET_STATS"] = f"{BOX}/vpp_get_stats"
+w(f"{BOX}/plugins", " Plugin path is: /usr/lib/x86_64-linux-gnu/vpp_plugins\n"
+                    "     Plugin                  Version            Description\n"
+                    "  1. bpa_plugin.so           0.142.1 (4ccb50d)  Bulk port allocation CGNAT\n")
+w(f"{BOX}/VERSION", "0.142.1\n")
+os.environ["PRISMA_VERSION_FILE"] = f"{BOX}/VERSION"
+ONE_SUB = STATS.replace("[0 @ 1]: 2 packets /bpa/pool/subscribers",
+                        "[0 @ 1]: 0 packets /bpa/pool/subscribers")
 w(f"{BOX}/drops", "bpa drops\n"
                   "  packets that did not get through\n"
                   "  40 no free port\n"
@@ -184,8 +226,13 @@ check(d.get("udp") == 300 and d.get("tcp-established") == 7440
 check(d.get("subscribers") == 3 and d.get("portsUsed") == 1910
       and d.get("portsTotal") == 3072 and d.get("subscribersAtLimit") == 1
       and d.get("portRefusals") == 5,
-      f"three subscribers, 1910 of 3072 ports, one at 97% and five refusals "
-      f"were read as {d}")
+      f"three subscribers over two threads, 1910 of 3072 ports, one at 97% "
+      f"and five refusals were read as {d}")
+check(list(d["cgnat"]["pools"]) == [0],
+      f"a deleted pool - an empty name - was kept: {d['cgnat']['pools']}")
+check(d.get("release") == "0.142.1" and d.get("build") == "0.142.1 (4ccb50d)",
+      f"the release and the plugin's build read as {d.get('release')!r} "
+      f"and {d.get('build')!r}")
 check(d.get("packetsDropped") == 42,
       f"40 and 2 packets did not get through, and 9999 were counted under "
       f"everything else; the agent says {d.get('packetsDropped')}")
@@ -193,7 +240,7 @@ check(v.at > 0 and v.data is d,
       "a refresh did not record when it read, so the cache never holds")
 # THE CACHE: within CACHE_SECONDS the dataplane is not asked again for the
 # numbers, so the file changes and the answer does not.
-w(f"{BOX}/top", "100.64.0.9       p1     1/1024       0%   1       0\n")
+w(f"{BOX}/stats", ONE_SUB)
 check(v.refresh().get("subscribers") == 3,
       f"the numbers were re-read inside the cache window: "
       f"{v.refresh().get('subscribers')} subscriber(s) where the cached "
@@ -213,11 +260,11 @@ check(v.refresh().get("subscribers") == 1,
 # And the cache expires: with no window at all, every refresh reads.
 _cache = agent.CACHE_SECONDS
 agent.CACHE_SECONDS = 0
-w(f"{BOX}/top", "")
+w(f"{BOX}/stats", "")
 check(v.refresh().get("subscribers") == 0,
       "past the cache window the numbers were still the old ones")
 agent.CACHE_SECONDS = _cache
-w(f"{BOX}/top", "100.64.0.9       p1     1/1024       0%   1       0\n")
+w(f"{BOX}/stats", ONE_SUB)
 print("  [ ok ] parsed once, cached inside the window, dropped on an outage")
 
 print("\n=== the OID table: standard objects, and the enterprise half ===")
@@ -236,10 +283,11 @@ check(not any(o.startswith("1.3.6.1.4.1.") for o in _oids),
 agent.ENTERPRISE = "99999"
 rows = agent.oid_table()
 _oids = [r[0] for r in rows]
-check(("1.3.6.1.4.1.99999.1.1.0", "counter", 1) in rows
+check(("1.3.6.1.4.1.99999.1.1.0", "gauge", 1) in rows
       and ("1.3.6.1.4.1.99999.1.6.0", "counter", 42) in rows,
-      f"subscribers and packetsDropped are not under the PEN as counters: "
-      f"{rows}")
+      f"subscribers is not under the PEN as a gauge and packetsDropped as a "
+      f"counter: {rows}")
+print("  [ ok ] the six totals, typed as PRISMA-ROUTING-MIB declares them")
 check(_oids == sorted(_oids, key=agent.as_key),
       f"the table is not in OID order, which GETNEXT walks: {_oids}")
 w(f"{BOX}/down", "")
@@ -249,6 +297,105 @@ check(agent.oid_table() == [],
       f"{agent.oid_table()}, and the gap is the point")
 os.remove(f"{BOX}/down")
 print("  [ ok ] the six timeouts, the six counters, sorted, or nothing")
+
+print("\n=== PRISMA-ROUTING-MIB: the rows, and the file they are defined in ===")
+_st = agent.cgnat_state(STATS, agent.parse_drops(open(f"{BOX}/drops").read()))
+_rows = {o: (t, v) for o, t, v in agent.product_rows("1.3.6.1.4.1.99999.1",
+                                                    _st, "0.142.1",
+                                                    "0.142.1 (4ccb50d)")}
+P = "1.3.6.1.4.1.99999.1"
+check(_rows.get(f"{P}.10.1.1.2.1") == ("string", "p1")
+      and _rows.get(f"{P}.10.1.1.3.1") == ("integer", 2)
+      and _rows.get(f"{P}.10.1.1.9.1") == ("gauge", 6),
+      f"pool 0 is row 1, named p1, dynamic, guaranteeing 6: "
+      f"{[(o, r) for o, r in _rows.items() if '.10.1.1.' in o][:9]}")
+check(_rows.get(f"{P}.10.1.1.12.1") == ("gauge", 25),
+      f"3 blocks held of 12 is 25% utilisation, read as "
+      f"{_rows.get(f'{P}.10.1.1.12.1')}")
+check(not any(o.endswith(".2") and ".10.1.1." in o for o in _rows),
+      "the deleted pool has a row")
+check(_rows.get(f"{P}.10.1.1.16.1") == ("counter64", 5),
+      f"the refusals are a Counter64: {_rows.get(f'{P}.10.1.1.16.1')}")
+check(_rows.get(f"{P}.10.2.1.3.1") == ("string", "no free port")
+      and _rows.get(f"{P}.10.2.1.4.2") == ("counter64", 2),
+      f"the drop table's rows: "
+      f"{[(o, r) for o, r in _rows.items() if '.10.2.1.' in o]}")
+check(_rows.get(f"{P}.10.3.0") == ("gauge", 1910),
+      f"1910 sessions in all: {_rows.get(f'{P}.10.3.0')}")
+check(_rows.get(f"{P}.11.1.0") == ("integer", 1)
+      and _rows.get(f"{P}.11.2.0") == ("counter64", 12345),
+      "IPFIX enabled (true is 1) with 12345 records")
+check(_rows.get(f"{P}.11.10.1.3.1") == ("integer", 1)
+      and _rows.get(f"{P}.11.10.1.4.1") == ("integer", 2)
+      and _rows.get(f"{P}.11.10.1.8.1") == ("counter64", 7),
+      "the TCP stream enabled, NOT connected (false is 2), 7 dropped: the "
+      "state an operator alarms on")
+check(_rows.get(f"{P}.11.10.1.3.2") == ("integer", 2)
+      and _rows.get(f"{P}.11.10.1.2.2") == ("string", "syslog"),
+      "syslog, off")
+check(_rows.get(f"{P}.12.3.0") == ("integer", 1),
+      "the dataplane's build 0.142.1 matches release 0.142.1")
+_old = {o: (t, v) for o, t, v in agent.product_rows(P, _st, "0.142.1",
+                                                   "0.141.1 (5ccdce1)")}
+check(_old.get(f"{P}.12.3.0") == ("integer", 2),
+      "an upgraded box still forwarding with 0.141.1 read as current")
+check(agent.plugin_build("no plugin here") == "",
+      "a dataplane with no bpa_plugin.so row gave a build")
+check(agent.parse_stats_gauges("1.00 /bpa/log/tcp/enabled\nnoise\n",
+                               "/bpa/log/") == {"tcp/enabled": 1},
+      "a gauge is '<value> <path>'")
+_ah = agent.cgnat_totals({"pools": {}, "drops": [], "log": {}})
+check(_ah["subscribers"] == 0 and _ah["packetsDropped"] == 0,
+      f"a box with no pool has totals of zero: {_ah}")
+check(agent.stats_dump("^/bpa/") == open(f"{BOX}/stats").read(),
+      "stats_dump did not hand back what vpp_get_stats printed")
+
+# THE FILE AND THE AGENT AGREE. Every OID served under the enterprise has an
+# object in PRISMA-ROUTING-MIB with the type served, and every object the MIB
+# declares readable is served: the MIB an NMS loads is the MIB it polls.
+MIB = open(os.path.join(os.path.dirname(AGENT), "PRISMA-ROUTING-MIB.in")).read()
+import re as _re
+_parent = {"prismaRouting": ""}
+_defs = {}
+for _m in _re.finditer(r"^(\w+)\s+(?:OBJECT-TYPE|OBJECT IDENTIFIER|OBJECT-GROUP"
+                       r"|MODULE-COMPLIANCE)\b(.*?)::=\s*\{\s*(\w+)\s+(\d+)\s*\}",
+                       MIB, _re.S | _re.M):
+    _defs[_m.group(1)] = (_m.group(3), int(_m.group(4)), _m.group(2))
+def _oid(name):
+    if name == "prismaRouting":
+        return []
+    par, n, _b = _defs[name]
+    return _oid(par) + [n]
+_want = {}
+for _name, (_par, _n, _body) in _defs.items():
+    if "MAX-ACCESS  read-only" not in _body:
+        continue
+    _syn = _re.search(r"SYNTAX\s+(\w+)", _body).group(1)
+    _want[".".join(map(str, _oid(_name)))] = (_name, _syn)
+_SYN = {"Gauge32": "gauge", "Counter32": "counter", "Counter64": "counter64",
+        "DisplayString": "string", "INTEGER": "integer",
+        "TruthValue": "integer", "Unsigned32": "gauge"}
+agent.VALUES.data = {}
+agent.VALUES.at = 0.0
+w(f"{BOX}/stats", STATS)
+_served = {}
+for _o, _t, _v in agent.oid_table():
+    if _o.startswith("1.3.6.1.4.1.99999."):
+        _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
+_objs = {}
+for _o, _t in _served.items():
+    _k = ".".join(_o.split(".")[:-1])
+    check(_k in _want, f"{_o} is served and PRISMA-ROUTING-MIB has no object "
+                       f"at {_k}")
+    if _k in _want:
+        check(_SYN[_want[_k][1]] == _t,
+              f"{_want[_k][0]} is {_want[_k][1]} in the MIB and served as {_t}")
+        _objs[_k] = _t
+for _k, (_name, _syn) in _want.items():
+    check(_k in _objs, f"{_name} ({_k}) is in the MIB and not served")
+check("@PEN@" in MIB and MIB.count("@PEN@") == 1,
+      "the MIB's root is not the one placeholder the box fills in")
+print(f"  [ ok ] {len(_want)} objects in the MIB, each served with its type")
 
 print("\n=== the wire: reply, none, and the key an OID sorts by ===")
 _out = io.StringIO()

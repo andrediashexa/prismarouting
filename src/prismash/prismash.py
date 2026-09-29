@@ -170,6 +170,10 @@ VRRP_STATE_SAYS = {
 }
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
+#: PRISMA-ROUTING-MIB with its root left as @PEN@, which appliance/install.sh
+#: puts beside the version stamp (#504).
+SNMP_MIB_TEMPLATE = os.environ.get(
+    "PRISMA_SNMP_MIB", "/usr/share/prisma-routing/PRISMA-ROUTING-MIB.in")
 
 # The three reachability tools, each with the package that carries it (#395).
 #
@@ -1003,6 +1007,9 @@ SHOW = {
     "hardware": ("the box's physical NICs as Linux has them, and which one "
                  "carries the default route", None),
     "version": ("Prisma Routing, VPP and FRR versions", None),
+    "snmp": ("the SNMP agent", {
+        "mib": ("PRISMA-ROUTING-MIB, rooted at this box's enterprise number, "
+                "to load into the NMS", None)}),
     "lacp": ("LACP bundles: each member and whether it is in the bundle",
              None),
     "policy": ("routing policies: each one, its terms, and where it is "
@@ -14436,6 +14443,30 @@ class Shell:
     CP_MEMORY_NOW = os.environ.get(
         "PRISMA_CP_MEMORY_NOW", "/sys/fs/cgroup/system.slice/memory.current")
 
+    def show_snmp_mib(self):
+        """
+        PRISMA-ROUTING-MIB with its root filled in (#504): the operator's
+        enterprise number, from the running configuration, which is the one
+        the agent serves under. Printed rather than shipped as a finished
+        file because the number is the operator's until the product has its
+        own, and a file naming another number is a MIB for objects this box
+        does not serve.
+        """
+        pen = self.running_config().snmp.get("enterprise-number", "")
+        if not pen:
+            self.err("no enterprise number is set, and the MIB is rooted at it")
+            print_prose("'snmp enterprise-number <number>' and a commit, "
+                        "then this prints the file for the NMS")
+            return
+        try:
+            with open(SNMP_MIB_TEMPLATE) as f:
+                text = f.read()
+        except OSError:
+            self.err("PRISMA-ROUTING-MIB is not on this box")
+            print_prose(f"it is installed as {SNMP_MIB_TEMPLATE}")
+            return
+        sys.stdout.write(text.replace("@PEN@", pen))
+
     def show_system_memory(self):
         """
         The RAM by role (#466): what is configured - tune.env, in effect from
@@ -14577,6 +14608,9 @@ class Shell:
             return
         if line == "show system memory":
             self.show_system_memory()
+            return
+        if line == "show snmp mib":
+            self.show_snmp_mib()
             return
         # Before the forwarding below, which would otherwise hand `ha` to a
         # dataplane that has no such command.

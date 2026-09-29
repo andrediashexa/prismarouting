@@ -38,6 +38,13 @@ for pp in 40000 40001 40002; do
   vppctl packet-generator delete t >/dev/null 2>&1
 done
 
+# Before snmpd starts, since the agent caches what it reads (#504). The build the dataplane reports, as the installed release: this tree has no
+# stamp of its own, and a box that was rebooted since its upgrade has them
+# equal - which is the state prSystemDataplaneCurrent is true in.
+mkdir -p /usr/share/prisma-routing
+vc show plugins | awk '/bpa_plugin.so/ { print $3; exit }' \
+  > /usr/share/prisma-routing/VERSION
+
 echo "=========== 1. turn SNMP on from the VTY ==========="
 $HX -c "configure" \
     -c "snmp enabled yes" -c "snmp listen-address 127.0.0.1" \
@@ -128,6 +135,39 @@ echo "  subscribers           = $SUBS"
 echo "  portsUsed             = $PORTS"
 
 echo
+echo "=========== 2b. PRISMA-ROUTING-MIB, loaded as an NMS loads it (#504) ==="
+# The file the box prints, with its number filled in, checked by libsmi at
+# its strictest and then LOADED: every row below is read by name, so an OID
+# the agent serves and the MIB does not define would come back as a number.
+# The SNMPv2 modules it imports are IETF's, which Debian ships only in
+# non-free; test/mibs carries the three.
+mkdir -p /tmp/mibs
+cp /src/test/mibs/*.txt /tmp/mibs/
+PRISMA_SNMP_MIB=/src/appliance/PRISMA-ROUTING-MIB.in $HX -c "show snmp mib" \
+  > /tmp/mibs/PRISMA-ROUTING-MIB.txt 2>&1
+SMILINT=$(SMIPATH=/tmp/mibs smilint -l 6 -s /tmp/mibs/PRISMA-ROUTING-MIB.txt 2>&1)
+PM="snmpget -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB -Ov -Oq 127.0.0.1"
+POOLNAME=$($PM PRISMA-ROUTING-MIB::prPoolName.1 2>&1)
+POOLMODE=$($PM PRISMA-ROUTING-MIB::prPoolMode.1 2>&1)
+POOLCAP=$($PM PRISMA-ROUTING-MIB::prPoolCapacity.1 2>&1)
+POOLSUBS=$($PM PRISMA-ROUTING-MIB::prPoolSubscribers.1 2>&1)
+POOLSESS=$($PM PRISMA-ROUTING-MIB::prPoolSessions.1 2>&1)
+POOLPORTS=$($PM PRISMA-ROUTING-MIB::prPoolPortsInUse.1 2>&1)
+SESSIONS=$($PM PRISMA-ROUTING-MIB::prSessions.0 2>&1)
+BUILD=$($PM PRISMA-ROUTING-MIB::prSystemDataplaneBuild.0 2>&1)
+CURRENT=$($PM PRISMA-ROUTING-MIB::prSystemDataplaneCurrent.0 2>&1)
+TCPON=$($PM PRISMA-ROUTING-MIB::prLogTransportEnabled.1 2>&1)
+WALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB 127.0.0.1 \
+       PRISMA-ROUTING-MIB::prismaRouting 2>&1)
+DP_CAP=$(vc show bpa pool | awk '$1 == "capacity" { print $2; exit }')
+echo "  smilint: ${SMILINT:-(nothing to say)}"
+printf '%s\n' "$WALK" | sed -n '1,12p' | sed 's/^/  /'
+echo "  ... $(printf '%s\n' "$WALK" | grep -c .) rows in all"
+echo "  pool 1: $POOLNAME, $POOLMODE, capacity $POOLCAP (the dataplane says ${DP_CAP:-nothing})"
+echo "  subscribers $POOLSUBS, sessions $POOLSESS, ports $POOLPORTS; prSessions $SESSIONS"
+echo "  dataplane build $BUILD, current $CURRENT; TCP transport enabled $TCPON"
+
+echo
 echo "=========== 3. a SET must be refused ==========="
 SETOUT=$(snmpset -v2c -c hexro 127.0.0.1 1.3.6.1.2.1.123.1.1.2.0 u 5 2>&1)
 printf '%s\n' "$SETOUT" | sed 's/^/  /'
@@ -183,6 +223,21 @@ expect "and it is the value the dataplane actually holds, not a constant" \
   test "$UDPT" = "${DP_UDPT:-unread}"
 expect "and the ICMP one" test "$ICMPT" = "90"
 expect "the enterprise subtree reports the subscriber" test "$SUBS" = "1"
+expect "PRISMA-ROUTING-MIB passes smilint at its strictest, saying nothing" \
+  test -z "$SMILINT"
+expect_not_in "and every row it walks resolves to a name in it" \
+  "iso.3.6.1.4.1" "$WALK"
+expect "the pool table names the pool ($POOLNAME)" test "$POOLNAME" = "nb"
+expect "and its mode ($POOLMODE)" test "$POOLMODE" = "deterministic"
+expect "and its capacity, as the dataplane states it ($POOLCAP)" \
+  test "$POOLCAP" = "${DP_CAP:-unread}"
+expect "one subscriber, three sessions, three ports in the pool" \
+  test "$POOLSUBS/$POOLSESS/$POOLPORTS" = "1/3/3"
+expect "and three sessions on the box" test "$SESSIONS" = "3"
+expect "the running dataplane's build is named ($BUILD)" \
+  sh -c "case \"$BUILD\" in ''|'\"\"'|*No\ Such*) exit 1;; *) exit 0;; esac"
+expect "and it is the release installed" test "$CURRENT" = "true"
+expect "the TCP transport reads off, as configured" test "$TCPON" = "false"
 expect "and the ports it holds" test "$PORTS" = "3"
 # Refused at the daemon (noAccess, from the read-only community and view) or
 # by the agent (notWritable). Either is a refusal; asserting one spelling

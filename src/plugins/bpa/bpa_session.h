@@ -201,6 +201,14 @@ typedef struct
    * definition, the one allocating fastest.
    */
   u8 alarmed;
+  /*
+   * What the statistics segment was last told about this subscriber (#504):
+   * whether it was at 90% of its ports or more, and how many it used. Kept so
+   * the pool's totals move by the difference when the usage changes, and so
+   * a subscriber that goes takes exactly what it added.
+   */
+  u8 near_full;
+  u32 ports_seen;
 
   /*
    * Token bucket for the creation rate, in sessions per second.

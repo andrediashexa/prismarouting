@@ -23,6 +23,7 @@ add_vpp_plugin(bpa
   bpa_pptp.c
   bpa_cli.c
   bpa_ra.c
+  bpa_stats.c
 
   API_FILES
   bpa.api

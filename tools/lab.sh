@@ -109,7 +109,7 @@ Acquire::https::Timeout \"20\";
 Acquire::Retries \"2\";
 APTCONF
          apt-get update -qq >/dev/null 2>&1
-         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk squashfs-tools mdadm openssh-client openssh-server snmpd snmp iptables tcpdump isc-dhcp-client >/dev/null 2>&1
+         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk squashfs-tools mdadm openssh-client openssh-server snmpd snmp smitools iptables tcpdump isc-dhcp-client >/dev/null 2>&1
          # At the version of the frr already installed, never the newest: frr-snmp
          # depends on frr at its own version, and apt would upgrade FRR under the lab (#502).
          dpkg -s frr-snmp >/dev/null 2>&1 || apt-get install -y -qq --no-install-recommends frr-snmp=\$(dpkg-query -W -f='\${Version}' frr) >/dev/null 2>&1

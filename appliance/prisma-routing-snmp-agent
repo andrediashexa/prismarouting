@@ -19,6 +19,7 @@ first hides the outage, the second shows it as a gap.
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -86,13 +87,18 @@ def _enterprise():
 
 ENTERPRISE = _enterprise()
 
+# The box's totals at the OIDs they have had since this agent was written,
+# with the types PRISMA-ROUTING-MIB declares (#504): the four that go down as
+# well as up are gauges. They were all served as Counter32, and an NMS told a
+# gauge is a counter draws a falling value as a wrap - the spike the wiki had
+# to warn about.
 _ENTERPRISE_OBJECTS = [
-    (1, "subscribers", "the subscribers holding a block right now"),
-    (2, "portsUsed", "ports allocated across all subscribers"),
-    (3, "portsTotal", "ports in the blocks currently held"),
-    (4, "subscribersAtLimit", "subscribers at 90% of their blocks or more"),
-    (5, "portRefusals", "times a subscriber was refused a port"),
-    (6, "packetsDropped", "packets the CGNAT did not pass"),
+    (1, "subscribers", "gauge", "the subscribers holding a block right now"),
+    (2, "portsUsed", "gauge", "ports allocated across all subscribers"),
+    (3, "portsTotal", "gauge", "ports in the blocks currently held"),
+    (4, "subscribersAtLimit", "gauge", "subscribers at 90% of their blocks or more"),
+    (5, "portRefusals", "counter", "times a subscriber was refused a port"),
+    (6, "packetsDropped", "counter", "packets the CGNAT did not pass"),
 ]
 
 
@@ -143,46 +149,188 @@ class Values:
                         "alg-expect") and w[i + 1].isdigit():
                 d[w[i]] = int(w[i + 1])
 
-        subs = used = total = at_limit = refusals = 0
-        for line in (vppctl("show bpa top 100000") or "").splitlines():
-            f = line.split()
-            # "<ip> <pool> <used>/<total> <pct>% <blocks> <refusals>"
-            if len(f) < 6 or "/" not in f[2] or not f[3].endswith("%"):
-                continue
-            try:
-                u, tt = f[2].split("/")
-                pct = int(f[3].rstrip("%"))
-                subs += 1
-                used += int(u)
-                total += int(tt)
-                refusals += int(f[5])
-                if pct >= 90:
-                    at_limit += 1
-            except ValueError:
-                continue
-        d.update({"subscribers": subs, "portsUsed": used, "portsTotal": total,
-                  "subscribersAtLimit": at_limit, "portRefusals": refusals})
-
-        dropped = 0
-        counting = False
-        for line in (vppctl("show bpa drops") or "").splitlines():
-            if "did not get through" in line:
-                counting = True
-                continue
-            if "everything else" in line or not line.startswith("  "):
-                counting = False
-                continue
-            f = line.split()
-            if counting and f and f[0].isdigit():
-                dropped += int(f[0])
-        d["packetsDropped"] = dropped
-
+        # THE CGNAT'S NUMBERS, FROM THE STATISTICS SEGMENT (#504). They were
+        # parsed out of `show bpa top 100000`, a walk of every subscriber in
+        # every worker's table on each refresh - a million entries on a box
+        # sized for a million subscribers, every ten seconds, to answer six
+        # numbers. The dataplane keeps them where they change now.
+        stats = stats_dump("^/bpa/")
+        drops = parse_drops(vppctl("show bpa drops") or "")
+        d["cgnat"] = cgnat_state(stats, drops)
+        d.update(cgnat_totals(d["cgnat"]))
+        d["release"] = _read(VERSION_FILE).split()[0] if _read(VERSION_FILE) else ""
+        d["build"] = plugin_build(vppctl("show plugins") or "")
         self.data = d
         self.at = time.time()
         return d
 
 
 VALUES = Values()
+
+
+# --- PRISMA-ROUTING-MIB: the CGNAT, its records, the box (#504) --------------
+#
+# appliance/PRISMA-ROUTING-MIB.in is the definition; test_snmp_agent.py holds
+# every OID and type served here against it, so the two cannot drift.
+
+VERSION_FILE = os.environ.get("PRISMA_VERSION_FILE",
+                              "/usr/share/prisma-routing/VERSION")
+POOL_STATS = ["subscribers", "blocks", "sessions", "refused", "ports",
+              "near-full", "mode", "block-size", "inside", "outside",
+              "blocks-total", "capacity", "guaranteed"]
+TRANSPORTS = [(1, "tcp"), (2, "syslog")]
+
+
+# not a unit: runs vpp_get_stats against the live dataplane; what it returns
+# is parsed by parse_stats_dump and parse_stats_gauges, which are
+def stats_dump(pattern):
+    try:
+        p = subprocess.run([VPP_GET_STATS, "socket-name", STATS_SOCKET, "dump",
+                            pattern], capture_output=True, text=True, timeout=5)
+        return p.stdout if p.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def parse_stats_gauges(text, prefix):
+    """
+    {name: value} for the scalar gauges under `prefix`, which vpp_get_stats
+    prints as "<value> <path>" with two decimals.
+    """
+    out = {}
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) == 2 and f[1].startswith(prefix):
+            try:
+                out[f[1][len(prefix):]] = int(float(f[0]))
+            except ValueError:
+                continue
+    return out
+
+
+def parse_drops(text):
+    """
+    [(node, reason, packets)] from `show bpa drops`: the rows under "did not
+    get through", and not those under "everything else it counted" - a packet
+    translated is counted by the same node and is not a drop.
+    """
+    out, node, counting = [], "", False
+    for line in text.splitlines():
+        if line and not line.startswith(" "):
+            node, counting = line.strip(), False
+            continue
+        if "did not get through" in line:
+            counting = True
+            continue
+        if "everything else" in line or "nothing dropped" in line:
+            counting = False
+            continue
+        f = line.split(None, 1)
+        if counting and len(f) == 2 and f[0].isdigit():
+            out.append((node, f[1].strip(), int(f[0])))
+    return out
+
+
+PLUGIN_ROW = re.compile(r"\bbpa_plugin\.so\s{2,}(\S.*?)\s{2,}\S", re.M)
+
+
+def plugin_build(text):
+    """
+    The build the running dataplane's plugin reports in `show plugins`, or ''.
+    The same row and pattern `show version` reads (prismash's Dataplane).
+    """
+    m = PLUGIN_ROW.search(text)
+    return m.group(1).strip() if m else ""
+
+
+def cgnat_state(stats, drops):
+    """
+    {"pools": {index: {field: value}}, "drops": [...], "log": {...}} from a
+    dump of /bpa/ and the drop rows. A pool whose name is empty was deleted:
+    its index is waiting for the next pool and it has no row.
+    """
+    names, counters = parse_stats_dump(stats, "/bpa/pool/")
+    pools = {}
+    for idx, name in names.items():
+        if not name:
+            continue
+        pools[idx] = {"name": name}
+        for f in POOL_STATS:
+            pools[idx][f] = counters.get(f, {}).get(idx, [0, 0])[0]
+    return {"pools": pools, "drops": drops,
+            "log": parse_stats_gauges(stats, "/bpa/log/")}
+
+
+def cgnat_totals(state):
+    """The six totals the enterprise subtree has always served."""
+    pools = state["pools"].values()
+    return {
+        "subscribers": sum(p["subscribers"] for p in pools),
+        "portsUsed": sum(p["ports"] for p in pools),
+        "portsTotal": sum(p["blocks"] * p["block-size"] for p in pools),
+        "subscribersAtLimit": sum(p["near-full"] for p in pools),
+        "portRefusals": sum(p["refused"] for p in pools),
+        "packetsDropped": sum(n for _node, _reason, n in state["drops"]),
+    }
+
+
+def product_rows(base, state, release, build):
+    """
+    PRISMA-ROUTING-MIB's rows under `base` (the enterprise's .1), beyond the
+    six totals: the pool table, the drops, the sessions, the transports and
+    the box.
+    """
+    out = []
+    pools = state["pools"]
+    cols = [(2, "string", "name"), (3, "integer", "mode"),
+            (4, "gauge", "block-size"), (5, "gauge", "inside"),
+            (6, "gauge", "outside"), (7, "gauge", "blocks-total"),
+            (8, "gauge", "capacity"), (9, "gauge", "guaranteed"),
+            (10, "gauge", "subscribers"), (11, "gauge", "blocks"),
+            (12, "gauge", None), (13, "gauge", "sessions"),
+            (14, "gauge", "ports"), (15, "gauge", "near-full"),
+            (16, "counter64", "refused")]
+    for col, typ, f in cols:
+        for idx in sorted(pools):
+            p = pools[idx]
+            if f is None:           # utilisation, in percent
+                v = (p["blocks"] * 100 // p["blocks-total"]
+                     if p["blocks-total"] else 0)
+            else:
+                v = p[f]
+            out.append((f"{base}.10.1.1.{col}.{idx + 1}", typ, v))
+    drops = sorted(state["drops"], key=lambda r: (r[0], r[1]))
+    for col, typ, i in ((2, "string", 0), (3, "string", 1),
+                        (4, "counter64", 2)):
+        for n, r in enumerate(drops, 1):
+            out.append((f"{base}.10.2.1.{col}.{n}", typ, r[i]))
+    out.append((f"{base}.10.3.0", "gauge",
+                sum(p["sessions"] for p in pools.values())))
+    log = state["log"]
+    truth = {True: 1, False: 2}
+    out.append((f"{base}.11.1.0", "integer",
+                truth[bool(log.get("ipfix/enabled"))]))
+    out.append((f"{base}.11.2.0", "counter64", log.get("ipfix/records", 0)))
+    out.append((f"{base}.11.3.0", "counter64", log.get("ipfix/dropped", 0)))
+    tcols = [(2, "string", None), (3, "integer", "enabled"),
+             (4, "integer", "connected"), (5, "counter64", "records"),
+             (6, "counter64", "sent"), (7, "counter64", "spilled"),
+             (8, "counter64", "dropped"), (9, "counter", "connects")]
+    for col, typ, f in tcols:
+        for i, name in TRANSPORTS:
+            if f is None:
+                v = name
+            elif typ == "integer":
+                v = truth[bool(log.get(f"{name}/{f}"))]
+            else:
+                v = log.get(f"{name}/{f}", 0) % (2 ** 32 if typ == "counter"
+                                                 else 2 ** 64)
+            out.append((f"{base}.11.10.1.{col}.{i}", typ, v))
+    out.append((f"{base}.12.1.0", "string", release))
+    out.append((f"{base}.12.2.0", "string", build))
+    out.append((f"{base}.12.3.0", "integer",
+                truth[bool(release) and build.split()[:1] == [release]]))
+    return out
 
 
 # --- the interface table: IF-MIB for the dataplane's cards (#498) -----------
@@ -200,7 +348,7 @@ VALUES = Values()
 # admin and link state, MTU, speed, MAC - comes from the dataplane's own
 # screens, cached with the rest.
 
-VPP_GET_STATS = "/usr/bin/vpp_get_stats"
+VPP_GET_STATS = os.environ.get("PRISMA_VPP_GET_STATS", "/usr/bin/vpp_get_stats")
 STATS_SOCKET = os.environ.get("PRISMA_STATS_SOCKET", "/run/vpp/stats.sock")
 SYS_CLASS_NET = os.environ.get("PRISMA_SYS_CLASS_NET", "/sys/class/net")
 IFINDEX_FILE = os.environ.get("PRISMA_SNMP_IFINDEX", "/var/lib/snmp/prisma-ifindex")
@@ -211,11 +359,12 @@ IF_MIB = "1.3.6.1.2.1.2"
 IFX_TABLE = "1.3.6.1.2.1.31.1.1.1"
 
 
-def parse_stats_dump(text):
+def parse_stats_dump(text, prefix="/if/"):
     """
     vpp_get_stats' dump into (names, counters): names {index: name} from
-    /if/names, and counters {stat: {index: [packets, bytes]}} summed over
+    <prefix>names, and counters {stat: {index: [packets, bytes]}} summed over
     every thread's row. A simple counter has no bytes, and carries 0.
+    `prefix` is /if/ for the interfaces and /bpa/pool/ for the CGNAT's pools.
     """
     names, counters = {}, {}
     for line in text.splitlines():
@@ -224,14 +373,16 @@ def parse_stats_dump(text):
             continue
         head, rest = line[1:].split("]: ", 1)
         stat = rest.rsplit(" ", 1)[-1]
-        if not stat.startswith("/if/"):
+        if not stat.startswith(prefix):
             continue
-        stat = stat[4:]
+        stat = stat[len(prefix):]
         idx = head.split(" @ ")[0]
         if not idx.isdigit():
             continue
         if stat == "names":
-            names[int(idx)] = rest.rsplit(" ", 1)[0]
+            # A name can be empty - a deleted pool - and then the dump has
+            # two spaces and no word between the index and the path.
+            names[int(idx)] = rest.rsplit(" ", 1)[0].strip() if " " in rest else ""
             continue
         f = rest.replace(",", "").split()
         try:
@@ -529,9 +680,11 @@ def oid_table():
             out.append((f"{NAT_DEF_TIMEOUTS}.{n}.0", "gauge", d[key]))
     if ENTERPRISE.isdigit():
         base = f"1.3.6.1.4.1.{ENTERPRISE}.1"
-        for n, key, _desc in _ENTERPRISE_OBJECTS:
+        for n, key, typ, _desc in _ENTERPRISE_OBJECTS:
             if key in d:
-                out.append((f"{base}.{n}.0", "counter", d[key]))
+                out.append((f"{base}.{n}.0", typ,
+                            d[key] % 2 ** 32 if typ == "counter" else d[key]))
+        out += product_rows(base, d["cgnat"], d["release"], d["build"])
     return sorted(out, key=lambda r: [int(x) for x in r[0].split(".")])
 
 

@@ -123,34 +123,72 @@ Nada precisa ser configurado além do `snmp enabled yes`: o commit liga o víncu
 
 O resto da RFC 4008 é por interface ou por *binding*: este equipamento não rastreia nenhuma dessas formas, e por *binding* significaria percorrer a tabela de sessões, coisa que nenhum `show` daqui tem permissão de fazer.
 
-## Os números que o operador realmente acompanha
+## A MIB do Prisma: o CGNAT, os registros de conexão e a caixa
 
-Esses **não têm OID padrão**. Vivem sob o Private Enterprise Number da sua própria organização:
+O que **não tem OID padrão** — os pools do CGNAT, os descartes, o transporte dos registros de conexão, a versão que o dataplane está rodando — está na **PRISMA-ROUTING-MIB**, a MIB do próprio produto. Ela fica sob o Private Enterprise Number configurado em `snmp enterprise-number`, e a partir da versão 0.143.0 a própria caixa entrega o arquivo pronto, com o número já preenchido:
 
-| OID sob `.1.3.6.1.4.1.<PEN>.1` | Significado |
-|------------------------------|-------------|
-| `.1.0`                       | assinantes segurando um bloco agora |
-| `.2.0`                       | portas alocadas somando todos eles |
-| `.3.0`                       | portas contidas nos blocos atualmente segurados |
-| `.4.0`                       | assinantes em 90% ou mais do bloco |
-| `.5.0`                       | vezes que um assinante teve porta recusada |
-| `.6.0`                       | pacotes que o CGNAT não deixou passar |
+```
+show snmp mib
+```
+
+Salve a saída como `PRISMA-ROUTING-MIB.txt` e carregue na NMS: a partir daí, em vez de números, a NMS mostra os nomes — `prPoolUtilisation`, `prLogTransportConnected` e assim por diante. Sem `snmp enterprise-number` configurado, o comando recusa e diz o que falta, porque não há MIB a entregar para uma subárvore que a caixa não serve.
 
 
 :::warning
-**Até** `**snmp enterprise-number**` **ser configurado, essa metade fica escura.** Não há padrão e não pode haver: um OID sob o PEN de outra organização é uma mentira sobre a quem o objeto pertence, e colide no dia em que aquela organização usar a mesma subárvore. O registro na IANA é gratuito, leva de dias a semanas, e o pedido nomeia a empresa — então é do responsável pela organização, não algo que o software possa fazer sozinho.
+**Até** `**snmp enterprise-number**` **ser configurado, essa metade fica escura.** Não há padrão e não pode haver: um OID sob o PEN de outra organização é uma mentira sobre a quem o objeto pertence, e colide no dia em que aquela organização usar a mesma subárvore. O registro na IANA é gratuito, leva de dias a semanas, e o pedido nomeia a empresa — então é do responsável pela organização, não algo que o software possa fazer sozinho. Quando o produto tiver o número dele, esse passa a ser o padrão e nada abaixo dele muda de lugar.
 
 :::
+
+### Os totais da caixa
+
+Nos mesmos OIDs de sempre, então uma NMS já configurada continua funcionando:
+
+| OID sob `.1.3.6.1.4.1.<PEN>.1` | Objeto | Significado |
+|------------------------------|--------|-------------|
+| `.1.0`                       | `prSubscribers` | assinantes segurando um bloco agora |
+| `.2.0`                       | `prPortsInUse` | portas alocadas somando todos eles |
+| `.3.0`                       | `prPortsHeld` | portas contidas nos blocos atualmente segurados |
+| `.4.0`                       | `prSubscribersNearFull` | assinantes em 90% ou mais do bloco |
+| `.5.0`                       | `prPortRefusals` | portas recusadas desde que o dataplane subiu |
+| `.6.0`                       | `prPacketsDropped` | pacotes que o CGNAT não deixou passar desde que subiu |
 
 
 :::info
-**Os seis objetos da subárvore do PEN chegam com o tipo Counter, e só um deles se comporta como contador.** `.1.0` a `.4.0` são fotografias do momento, que sobem e descem. `.5.0` soma as recusas dos assinantes que seguram bloco **agora**: quando um assinante solta o último bloco, as recusas dele saem da soma, e o número desce. `.6.0` soma os descartes desde que o dataplane subiu, e zera quando ele reinicia. Configure a NMS para guardar o valor lido, e não a diferença por segundo — senão uma descida vira um pico falso de "estouro de contador".
+**A partir da versão 0.143.0,** `**.1.0**` **a** `**.4.0**` **chegam como Gauge, e** `**.5.0**` **e** `**.6.0**` **como Counter** — antes os seis chegavam como Counter, e uma NMS que calcula taxa desenhava cada descida como um pico falso de "estouro de contador". Se a sua NMS guardou esses itens como contador, troque para medidor (gauge). E `.5.0` agora é um contador de verdade: soma todas as recusas desde que o dataplane subiu, e não só as dos assinantes que ainda seguram bloco.
 
 :::
+
+### Os pools
+
+Uma linha por pool, em `prPoolTable` (`.10.1.1.<coluna>.<pool>`):
+
+| Objeto | O que traz |
+|--------|------------|
+| `prPoolName`, `prPoolMode` | o nome e o modo: determinístico ou dinâmico |
+| `prPoolBlockSize`, `prPoolInsideAddresses`, `prPoolOutsideAddresses` | o tamanho do bloco e quantos endereços de assinante e públicos o pool tem |
+| `prPoolBlocksTotal`, `prPoolCapacity`, `prPoolGuaranteed` | quantos blocos o pool entrega, quantos assinantes ele comporta no teto e quantos ele **garante** em qualquer worker — é por este que se dimensiona |
+| `prPoolSubscribers`, `prPoolBlocksHeld`, `prPoolUtilisation` | quantos assinantes e blocos estão em uso agora, e a porcentagem de blocos entregues |
+| `prPoolSessions`, `prPoolPortsInUse`, `prPoolSubscribersNearFull` | sessões abertas, portas alocadas e assinantes em 90% ou mais |
+| `prPoolRefusals` | portas recusadas desde que o pool foi criado |
+
+Os descartes ficam em `prDropTable` (`.10.2`), uma linha por motivo, com o nó e o motivo nas mesmas palavras de `show cgnat drops`; o total de sessões da caixa, em `prSessions` (`.10.3.0`).
+
+### Os registros de conexão e a caixa
+
+| Objeto | O que traz |
+|--------|------------|
+| `prLogIpfixEnabled`, `prLogIpfixRecords`, `prLogIpfixDropped` | o IPFIX por UDP: ligado, registros emitidos, e eventos sem coletor para onde ir |
+| `prLogTransportTable` (`.11.10`) | os fluxos confiáveis — IPFIX por TCP (1) e syslog (2): ligado, **conectado**, registros, enviados, derramados no arquivo de spill, **perdidos**, e quantas vezes reconectou |
+| `prSystemRelease`, `prSystemDataplaneBuild` | a versão instalada e a do dataplane que está rodando |
+| `prSystemDataplaneCurrent` | se as duas são a mesma. **Falso depois de uma atualização, até o próximo reboot**: a caixa segue encaminhando com a versão antiga, e um `commit` que precisa da nova é recusado |
+
+Os números do CGNAT são mantidos pelo próprio dataplane no momento em que mudam, e o agente lê tudo de uma vez: consultar a caixa não custa uma varredura dos assinantes, por maior que ela seja.
 
 ## O que não é servido
 
 * **Nada por assinante nem por sessão.** Isso significaria percorrer a tabela de sessões a cada consulta.
+* **Ainda não, e é a próxima etapa:** o estado do VRRP e se o par concorda com esta caixa, os membros de cada bundle LACP, as fontes de identidade (RADIUS e DHCP), a divisão por worker, quantas sessões ainda cabem na memória, os forwards e o resultado do self-test. Até lá, a VTY mostra cada um: `show cgnat ha`, `show lacp`, `show cgnat identity`, `show cgnat memory`.
+* **Traps e informs.** A caixa responde a consultas, mas ainda não avisa sozinha quando algo muda.
 
 
 :::info
@@ -162,10 +200,14 @@ O SNMPv3 é configurado e o usuário é criado com acesso somente leitura, mas u
 
 | Métrica | Por que |
 |---------|---------|
-| assinantes em 90% do bloco (`.4.0`) | é o alarme adiantado; quando chega em 100% o cliente já ligou |
-| porta recusada (`.5.0`) | qualquer valor diferente de zero é assinante sem conseguir abrir conexão |
-| portas alocadas ÷ portas seguradas (`.2.0` / `.3.0`) | a taxa de ocupação real dos blocos entregues |
-| pacotes não passados (`.6.0`) | subida súbita costuma ser mudança de configuração ou rota |
+| assinantes em 90% do bloco (`prSubscribersNearFull`) | é o alarme adiantado; quando chega em 100% o cliente já ligou |
+| porta recusada (`prPortRefusals`) | qualquer subida é assinante sem conseguir abrir conexão |
+| ocupação do pool (`prPoolUtilisation`) acima de 80% | o pool está ficando sem blocos para entregar |
+| assinantes do pool (`prPoolSubscribers`) perto de `prPoolGuaranteed` | o pool está perto do que consegue garantir |
+| transporte ligado e **não conectado** (`prLogTransportConnected`) | os registros de conexão estão indo para o arquivo de spill |
+| registros perdidos (`prLogTransportDropped`, `prLogIpfixDropped`) subindo | é um buraco no log de retenção |
+| `prSystemDataplaneCurrent` falso | uma atualização esperando reboot |
+| pacotes não passados (`prPacketsDropped`) | subida súbita costuma ser mudança de configuração ou rota; `prDropTable` diz o motivo |
 
 O mesmo se vê pela VTY, sem NMS:
 
