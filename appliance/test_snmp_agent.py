@@ -336,6 +336,13 @@ check(e["in_octets"] == 2016741112 and e["in_ucast"] == 1332000
       and e["in_discards"] == 7 and e["out_octets"] == 900
       and e["oper"] == "up" and e["alias"] == "uplink",
       f"ens19's record: {e}")
+# A DRIVER THAT COUNTS NO TYPE (#501): ens19's tx and ens19.100's rx have no
+# per-type counter, as virtio and ixgbe left them on the X520 box, and their
+# unicast is the total rather than a flat 0; ens19's rx, where the driver
+# filled rx-unicast, keeps its own number.
+check(e["out_ucast"] == 9 and cards[1]["in_ucast"] == 7,
+      f"a direction with no per-type counter is unicast by its total: "
+      f"out {e['out_ucast']}, sub-interface in {cards[1]['in_ucast']}")
 check(cards[1]["oper"] == "down" and cards[1]["speed"] == 10 ** 10,
       f"a sub-interface admin down is oper down, on its card's speed: {cards[1]}")
 

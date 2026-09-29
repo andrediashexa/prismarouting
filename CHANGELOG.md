@@ -79,6 +79,15 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **IF-MIB's unicast packet counters read 0 on a card carrying traffic.**
+  ([#501](https://github.com/andrediashexa/hexarouting/issues/501))
+  Found verifying 0.141.5 on the X520 box: VPP fills `rx-unicast`,
+  `-multicast` and `-broadcast` only on some drivers, and virtio and ixgbe
+  left all three at 0 while `/if/rx` counted 356,644 packets - so
+  `ifInUcastPkts` and `ifHCInUcastPkts` were a flat line. A direction whose
+  driver fills none of the three now takes its unicast from the total; one
+  that fills them keeps its own. `lab/snmp.sh` checks pg0's unicast moved.
+
 ## 0.141.6 - a configuration with many interfaces reads in linear time
 
 ### Fixed

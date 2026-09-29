@@ -349,6 +349,17 @@ def vpp_cards(names, counters, attrs, hw, aliases):
     # builds in appliance/test_snmp_agent.py.
     def c(stat, idx, part):
         return counters.get(stat, {}).get(idx, [0, 0])[part]
+
+    # not a unit: a closure inside vpp_cards, like c above.
+    def ucast(way, idx):
+        # Only some drivers fill the per-type counters. On the X520 box
+        # (#501) virtio and ixgbe left rx-unicast, -multicast and -broadcast
+        # at 0 while /if/rx counted 356,644 packets, and ifInUcastPkts read a
+        # flat 0. A direction with none of the three filled is all unicast as
+        # far as anything can say.
+        by_type = [c(f"{way}-{t}", idx, 0)
+                   for t in ("unicast", "multicast", "broadcast")]
+        return by_type[0] if any(by_type) else c(way, idx, 0)
     out = []
     for idx in sorted(names):
         name = names[idx]
@@ -365,7 +376,7 @@ def vpp_cards(names, counters, attrs, hw, aliases):
             "mtu": a.get("mtu", 0), "speed": h.get("speed", 0),
             "mac": h.get("mac", ""),
             "in_octets": c("rx", idx, 1), "out_octets": c("tx", idx, 1),
-            "in_ucast": c("rx-unicast", idx, 0), "out_ucast": c("tx-unicast", idx, 0),
+            "in_ucast": ucast("rx", idx), "out_ucast": ucast("tx", idx),
             "in_mcast": c("rx-multicast", idx, 0), "in_bcast": c("rx-broadcast", idx, 0),
             "out_mcast": c("tx-multicast", idx, 0), "out_bcast": c("tx-broadcast", idx, 0),
             "in_discards": c("drops", idx, 0) + c("rx-miss", idx, 0)
