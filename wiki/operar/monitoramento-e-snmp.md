@@ -27,11 +27,11 @@ save
 | `snmp enabled yes` | liga o agente      | o agente fica desligado, que é o padrão |
 | `snmp listen-address` | o endereço em que o agente atende | o agente escuta só em `127.0.0.1`, e nenhuma NMS de fora o alcança |
 | `snmp port` | a porta UDP        | `161`            |
-| `snmp enterprise-number` | liga a metade dos números de operação (ver abaixo) | essa metade fica escura |
+| `snmp enterprise-number` | o número sob o qual a MIB do Prisma é servida (ver abaixo) | vale o número do produto |
 | `snmp community` | uma comunidade SNMPv2c, somente leitura | só o v3 consulta |
 | `snmp-user` | um usuário SNMPv3, com `auth <sha\|md5>` e `priv <aes\|des>` | só o v2c consulta |
 
-Qualquer uma dessas linhas volta ao padrão com `no` na frente — `no snmp enterprise-number` tira o número, `no snmp listen-address` volta para `127.0.0.1` (a partir da versão 0.143.2).
+Qualquer uma dessas linhas volta ao padrão com `no` na frente — `no snmp enterprise-number` volta para o número do produto, `no snmp listen-address` volta para `127.0.0.1` (a partir da versão 0.143.2).
 
 O `commit` recusa um agente ligado sem nenhuma comunidade e sem nenhum usuário v3: seria um agente que ninguém consegue consultar. E o agente é conferido pelo **efeito**: o arquivo é escrito, o serviço reinicia, e se ele não subir com a configuração nova a caixa devolve a anterior e diz isso no `commit`.
 
@@ -127,17 +127,17 @@ O resto da RFC 4008 é por interface ou por *binding*: este equipamento não ras
 
 ## A MIB do Prisma: o CGNAT, os registros de conexão e a caixa
 
-O que **não tem OID padrão** — os pools do CGNAT, os descartes, o transporte dos registros de conexão, a versão que o dataplane está rodando — está na **PRISMA-ROUTING-MIB**, a MIB do próprio produto. Ela fica sob o Private Enterprise Number configurado em `snmp enterprise-number`, e a partir da versão 0.143.0 a própria caixa entrega o arquivo pronto, com o número já preenchido:
+O que **não tem OID padrão** — os pools do CGNAT, os descartes, o transporte dos registros de conexão, a versão que o dataplane está rodando — está na **PRISMA-ROUTING-MIB**, a MIB do próprio produto. A partir da versão 0.143.4 ela é servida sem nenhuma configuração além de ligar o SNMP, e a própria caixa entrega o arquivo pronto, com o número já preenchido:
 
 ```
 show snmp mib
 ```
 
-Salve a saída como `PRISMA-ROUTING-MIB.txt` e carregue na NMS: a partir daí, em vez de números, a NMS mostra os nomes — `prPoolUtilisation`, `prLogTransportConnected` e assim por diante. Sem `snmp enterprise-number` configurado, o comando recusa e diz o que falta, porque não há MIB a entregar para uma subárvore que a caixa não serve.
+Salve a saída como `PRISMA-ROUTING-MIB.txt` e carregue na NMS: a partir daí, em vez de números, a NMS mostra os nomes — `prPoolUtilisation`, `prLogTransportConnected` e assim por diante.
 
 
 :::warning
-**Até** `**snmp enterprise-number**` **ser configurado, essa metade fica escura.** Não há padrão e não pode haver: um OID sob o PEN de outra organização é uma mentira sobre a quem o objeto pertence, e colide no dia em que aquela organização usar a mesma subárvore. O registro na IANA é gratuito, leva de dias a semanas, e o pedido nomeia a empresa — então é do responsável pela organização, não algo que o software possa fazer sozinho. Quando o produto tiver o número dele, esse passa a ser o padrão e nada abaixo dele muda de lugar.
+**O número é provisório: 32473.** O Prisma pediu o número dele à IANA, e enquanto ele não chega a MIB fica sob o 32473, que a IANA reserva para uso em documentação e exemplos (RFC 5612) — não é de ninguém, então não se confunde com equipamento de outro fabricante na NMS. Quando o número do produto chegar, a caixa passa a usá-lo depois da atualização, sem nada a configurar, e nada abaixo dele muda de lugar: basta carregar de novo na NMS o arquivo que `show snmp mib` imprimir. Quem preferir pode usar o número da própria organização com `snmp enterprise-number <número>`; `no snmp enterprise-number` volta para o do produto.
 
 :::
 
@@ -237,7 +237,7 @@ Cada destino recebe **trap**, a não ser que diga `inform` — o inform é confi
 | uma atualização deixou o dataplane antigo rodando | `dataplaneNotCurrent` |
 | disco, memória ou carga passam do limite | os avisos padrão do net-snmp |
 
-Os avisos com nome (`vrrpStateChange` e os demais) chegam como `mteTriggerFired` da DISMAN-EVENT-MIB, com o nome no campo `mteHotTrigger`, e dependem de `snmp enterprise-number`. A caixa confere cada condição a cada 30 ou 60 segundos, então o aviso chega até um minuto depois do evento.
+Os avisos com nome (`vrrpStateChange` e os demais) chegam como `mteTriggerFired` da DISMAN-EVENT-MIB, com o nome no campo `mteHotTrigger`, e ficam sob o mesmo número da MIB. A caixa confere cada condição a cada 30 ou 60 segundos, então o aviso chega até um minuto depois do evento.
 
 # O que vale colocar em gráfico
 
@@ -285,7 +285,7 @@ snmpget -v3 -l authPriv -u nms -a SHA -A <passphrase> -x AES -X <passphrase> <en
 
 
 :::success
-O agente respondendo os timeouts da RFC 4008 confirma que ele está de pé. Se o PEN estiver configurado, os seis contadores acima também respondem — e aí o CGNAT está visível de onde alguém olha.
+O agente respondendo os timeouts da RFC 4008 confirma que ele está de pé; os contadores da MIB do Prisma, sob `.1.3.6.1.4.1.32473.1`, mostram o CGNAT de onde alguém olha.
 
 :::
 

@@ -2714,6 +2714,11 @@ class Config:
             out += self.users[name].lines()
         for k in SNMP_FIELDS:
             v = self.snmp.get(k, SNMP_DEFAULTS[k])
+            # The product's number is not written (#508): a saved file that
+            # named it would pin the provisional one on every box the day the
+            # product's own replaces it.
+            if k == "enterprise-number" and v == SNMP_DEFAULTS[k]:
+                continue
             if v != "":
                 out.append(f"snmp {k} {v}")
         for c in self.snmp_communities:

@@ -77,6 +77,21 @@ version has a chance of seeing it.
 
 ### Added
 
+* **PRISMA-ROUTING-MIB served by default, under 32473 until the product's own
+  number arrives.**
+  ([#508](https://github.com/andrediashexa/hexarouting/issues/508))
+  The product's MIB and the named notifications waited on
+  `snmp enterprise-number`, and a box with SNMP on and nothing else served
+  none of it. The product's own IANA number was applied for on 2026-09-29;
+  until it arrives the default is 32473, IANA's number for documentation use
+  (RFC 5612), which is nobody's - the 666 first proposed is Oki Electric
+  Industry's in the registry. The default is not written into a saved
+  configuration, so replacing it in the code moves every box that did not
+  name its own; an operator's number still overrides it, and
+  `no snmp enterprise-number` goes back to it. A box whose `snmpd.conf`
+  serves no enterprise subtree reads as serving none, so its next load
+  writes it.
+
 ### Fixed
 
 ## 0.143.3 - SNMP notifications: the box tells the NMS when something changes
