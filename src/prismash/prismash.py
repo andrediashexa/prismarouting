@@ -63,7 +63,7 @@ import doors
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
-                    snmp_redact, validate_snmp, validate_ssh, validate_role,
+                    snmp_redact, SNMP_DEFAULTS, SNMP_FIELDS, validate_snmp, validate_ssh, validate_role,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT,
                     ROLE_ADMIN, ROLE_CGNAT)
 import routes
@@ -424,6 +424,30 @@ def frr_lines(cfg):
     pol, _ = policy_mod.parse(cfg.policy)
     return policy_mod.compile_all(pol, policy_uses(cfg.routing)) \
         + list(cfg.routing)
+
+
+def compare_redact(diff):
+    """
+    A unified diff of two configurations with every secret blanked, as
+    `show running-config` blanks them (#506).
+
+    PER LINE OF THE DIFF, AFTER IT IS COMPUTED, and not by diffing two
+    redacted texts: two different communities redact to the same line, so a
+    changed secret would read as "no differences" - a change the operator
+    reviews before committing and cannot see. Redacted here, the change stays
+    a `-` line and a `+` line, and neither carries the value. The three
+    functions work a line at a time, with no block around it, which is what
+    makes a diff line something they can be handed.
+    """
+    out = []
+    for line in diff:
+        if (not line or line.startswith(("---", "+++", "@@"))
+                or line[0] not in "-+ "):
+            out.append(line)
+            continue
+        body = identity_redact(snmp_redact(redact([line[1:]])))[0]
+        out.append(line[0] + body)
+    return out
 
 
 def dataplane_restart_advice():
@@ -2514,6 +2538,14 @@ TREE = {
         # where `?` is walked from while the operator stands in one.
         "nat": ("address translation: enter it, then 'cgnat'", None),
         "no": ("remove configuration", {
+            "snmp": ("put an SNMP setting back to its default", {
+                "enabled": ("the agent off, which is the default", None),
+                "listen-address": ("back to 127.0.0.1", None),
+                "port": ("back to 161", None),
+                "enterprise-number": ("none: the product's own objects are "
+                                      "not served", None),
+                "community": ("remove one community", ARG_WORD),
+            }),
             "dns": ("stop asking a resolver", {
                 "server": ("the last one removed gives /etc/resolv.conf back "
                            "to DHCP or the installer's answer",
@@ -12925,6 +12957,14 @@ class Shell:
             if w[2] not in self.candidate.snmp_communities:
                 self.candidate.snmp_communities.append(w[2])
             return True
+        # A SETTING BACK TO ITS DEFAULT (#506). Only `no snmp community`
+        # existed, and every other `no snmp` fell through to FRR and was
+        # refused as its unknown command - so an enterprise number set by
+        # mistake could be changed and never taken out. Found on the X520 box
+        # removing a temporary one; it was restored with `rollback 1`.
+        if w[:2] == ["no", "snmp"] and len(w) == 3 and w[2] in SNMP_FIELDS:
+            self.candidate.snmp[w[2]] = SNMP_DEFAULTS[w[2]]
+            return True
         if w[:3] == ["no", "snmp", "community"] and len(w) > 3:
             self.candidate.snmp_communities = [
                 c for c in self.candidate.snmp_communities if c != w[3]]
@@ -17804,7 +17844,8 @@ class Shell:
             print("no candidate configuration")
             return
         d = self.running_config().compare(self.candidate)
-        print(d if d else "no differences")
+        print("\n".join(compare_redact(d.splitlines())) if d
+              else "no differences")
 
     def show_rollback(self):
         revs = self.rb.list()

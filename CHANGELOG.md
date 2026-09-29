@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show configuration compare` printed the SNMP community, and every other
+  secret, in clear.**
+  ([#506](https://github.com/andrediashexa/hexarouting/issues/506))
+  `show running-config` blanks password hashes, BGP and IGP keys, SNMP
+  communities and v3 passphrases and the RADIUS secret; the compare screen -
+  the one an operator is told to read before each commit - printed the raw
+  diff, and on the X520 box it showed the community on a context line. Each
+  line of the diff is now blanked after it is computed, with the same
+  functions: diffing two blanked texts instead would have made a changed
+  secret read as "no differences". A changed secret shows as a `-` and a `+`
+  line, neither carrying it. Found on the same box: **`no snmp
+  enterprise-number` was refused**, as were `no snmp port` and `no snmp
+  listen-address` - only `no snmp community` existed, and the rest reached
+  FRR as its unknown command, so a number set by mistake could be changed and
+  never removed. `no snmp <setting>` puts it back to its default.
+
 ## 0.143.1 - the workers, session capacity, VRRP, LACP and identity sources, over SNMP
 
 ### Added

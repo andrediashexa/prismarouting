@@ -31,6 +31,8 @@ save
 | `snmp community` | uma comunidade SNMPv2c, somente leitura | só o v3 consulta |
 | `snmp-user` | um usuário SNMPv3, com `auth <sha\|md5>` e `priv <aes\|des>` | só o v2c consulta |
 
+Qualquer uma dessas linhas volta ao padrão com `no` na frente — `no snmp enterprise-number` tira o número, `no snmp listen-address` volta para `127.0.0.1` (a partir da versão 0.143.2).
+
 O `commit` recusa um agente ligado sem nenhuma comunidade e sem nenhum usuário v3: seria um agente que ninguém consegue consultar. E o agente é conferido pelo **efeito**: o arquivo é escrito, o serviço reinicia, e se ele não subir com a configuração nova a caixa devolve a anterior e diz isso no `commit`.
 
 O usuário v3 é criado com acesso somente leitura e exige autenticação **e** privacidade: configure as duas linhas, `auth` e `priv`. O `commit` também funciona dentro do bloco `snmp-user`, sem precisar sair dele.
