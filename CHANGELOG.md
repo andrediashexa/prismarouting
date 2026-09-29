@@ -77,6 +77,15 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A plan for monitoring everything the box does over SNMP.**
+  ([#496](https://github.com/andrediashexa/hexarouting/issues/496))
+  `docs/snmp-plan.md`: what the box answers today - the generated view
+  admits only NAT-MIB's timeouts and the operator's subtree, the dataplane's
+  cards are outside IF-MIB, and FRR ships without its SNMP modules - and,
+  function by function, the MIB and objects that should carry it, where each
+  value is read, the notifications, the security and performance rules, the
+  tests, six phases, and the decisions that are the maintainer's.
+
 ### Fixed
 
 ## 0.141.1 - a physical card on uio reaches the dataplane
