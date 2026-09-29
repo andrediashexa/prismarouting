@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A configuration with many interfaces took minutes to read.**
+  ([#500](https://github.com/andrediashexa/hexarouting/issues/500))
+  Reading the saved file checked each interface header against the union of
+  fourteen interface maps, rebuilt for every header - quadratic in the
+  interfaces. 5,000 took 8 s; `appliance/test_tune.py`'s 20,000 kept the
+  tuner at 100% CPU for 2 min 44 s, and the tuner runs at boot, as the same
+  parse runs at load and at each commit. The union is taken once: 0.45 s on
+  the same file. The test counts the calls rather than timing them, and
+  fails on the old code with 201 calls for 200 interfaces.
+
 ## 0.141.5 - the dataplane's cards are in IF-MIB, with their traffic counters
 
 ### Added

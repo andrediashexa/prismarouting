@@ -3443,9 +3443,12 @@ class Config:
         # - an interface VPP will not pair - then failed every commit. The
         # block is kept; whether it gets a pair is Shell.pair_cards()'s to
         # decide, where the box can be asked.
-        for iface in headers:
-            if iface not in cfg.interface_names():
-                cfg.declared.add(iface)
+        #
+        # The union is taken ONCE. Rebuilt per header it made a parse
+        # quadratic in the interfaces: 5,000 took 8 s and appliance/
+        # test_tune.py's 20,000 took 2 min 44 s, in the tuner at boot.
+        named = cfg.interface_names()
+        cfg.declared.update(i for i in headers if i not in named)
         return cfg
 
     @staticmethod
