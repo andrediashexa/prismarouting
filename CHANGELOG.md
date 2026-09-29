@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.143.4 - PRISMA-ROUTING-MIB served by default, under 32473 until the product's own number arrives
+
+### Added
+
 * **PRISMA-ROUTING-MIB served by default, under 32473 until the product's own
   number arrives.**
   ([#508](https://github.com/andrediashexa/hexarouting/issues/508))
@@ -91,8 +97,6 @@ version has a chance of seeing it.
   `no snmp enterprise-number` goes back to it. A box whose `snmpd.conf`
   serves no enterprise subtree reads as serving none, so its next load
   writes it.
-
-### Fixed
 
 ## 0.143.3 - SNMP notifications: the box tells the NMS when something changes
 
