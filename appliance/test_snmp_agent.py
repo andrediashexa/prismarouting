@@ -274,5 +274,132 @@ check(agent.as_key("1.3.10") > agent.as_key("1.3.9"),
       "the key compares as text, so GETNEXT walks .10 before .9")
 print("  [ ok ] three lines, NONE, and integer order")
 
+print("\n=== the interface table: the dataplane's cards in IF-MIB (#498) ===")
+# vpp_get_stats' dump as the #475 bench printed it: one row per interface PER
+# THREAD, combined counters with bytes, simple ones without.
+DUMP = """[0]: local0 /if/names
+[1]: ens19 /if/names
+[2]: ens19.100 /if/names
+[3]: tap4096 /if/names
+[0 @ 0]: 0 packets, 0 bytes /if/rx
+[1 @ 0]: 5 packets, 500 bytes /if/rx
+[1 @ 1]: 1332093 packets, 2016740412 bytes /if/rx
+[1 @ 2]: 2 packets, 200 bytes /if/rx
+[2 @ 1]: 7 packets, 700 bytes /if/rx
+[1 @ 1]: 1332000 packets, 2016000000 bytes /if/rx-unicast
+[1 @ 0]: 2 packets /if/drops
+[1 @ 1]: 1 packets /if/drops
+[1 @ 3]: 4 packets /if/rx-miss
+[1 @ 1]: 9 packets, 900 bytes /if/tx
+"""
+names, counters = agent.parse_stats_dump(DUMP)
+check(names == {0: "local0", 1: "ens19", 2: "ens19.100", 3: "tap4096"},
+      f"/if/names read as {names}")
+check(counters["rx"][1] == [1332100, 2016741112],
+      f"ens19's rx summed over three threads: {counters['rx'][1]}")
+check(counters["drops"][1] == [3, 0], f"a simple counter summed: {counters['drops'][1]}")
+
+SHOW_IF = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+ens19                             1      up          1500/0/0/0     rx packets              10082056
+                                                                    rx bytes             15263850705
+ens19.100                         2     down         1500/0/0/0
+local0                            0     down          0/0/0/0
+"""
+attrs = agent.parse_show_interface(SHOW_IF)
+check(attrs.get("ens19") == {"admin": "up", "mtu": 1500}
+      and attrs.get("ens19.100") == {"admin": "down", "mtu": 1500},
+      f"show interface read as {attrs}")
+SHOW_HW = """              Name                Idx   Link  Hardware
+ens19                              1     up   ens19
+  Link speed: 10 Gbps
+  Ethernet address bc:24:11:92:67:ab
+    carrier up full duplex max-frame-size 1522
+ens20                              2    down  ens20
+  Link speed: 1.000000 Gbps
+  Ethernet address bc:24:11:99:56:c2
+tap4096                            3     up   tap4096
+  Link speed: unknown
+"""
+hw = agent.parse_show_hardware(SHOW_HW)
+check(hw["ens19"] == {"link": "up", "speed": 10 ** 10, "mac": "bc:24:11:92:67:ab"},
+      f"ens19's hardware read as {hw['ens19']}")
+check(hw["ens20"]["speed"] == 10 ** 9 and hw["ens20"]["link"] == "down",
+      f"the e1000e's '1.000000 Gbps' and a link down: {hw['ens20']}")
+check(agent.speed_bps(" unknown") == 0 and agent.speed_bps("100 Mbps") == 10 ** 8,
+      "unknown is 0 and Mbps is scaled")
+
+cards = agent.vpp_cards(names, counters, attrs, hw, {"ens19": "uplink"})
+check([r["name"] for r in cards] == ["ens19", "ens19.100"],
+      f"local0 and the linux_cp tap are left out: {[r['name'] for r in cards]}")
+e = cards[0]
+check(e["in_octets"] == 2016741112 and e["in_ucast"] == 1332000
+      and e["in_discards"] == 7 and e["out_octets"] == 900
+      and e["oper"] == "up" and e["alias"] == "uplink",
+      f"ens19's record: {e}")
+check(cards[1]["oper"] == "down" and cards[1]["speed"] == 10 ** 10,
+      f"a sub-interface admin down is oper down, on its card's speed: {cards[1]}")
+
+# The Linux side: a physical card the dataplane has not got, and a tap that
+# is only the inside of a pair.
+net = tempfile.mkdtemp()
+for n, dev in (("ens18", True), ("ens19", False)):
+    d = os.path.join(net, n)
+    os.makedirs(os.path.join(d, "statistics"))
+    if dev:
+        os.makedirs(os.path.join(d, "device"))
+    for k, v in (("operstate", "up"), ("mtu", "1500"), ("speed", "1000"),
+                 ("address", "52:54:00:00:00:01"), ("flags", "0x1003"),
+                 ("ifalias", "management")):
+        w(os.path.join(d, k), v + "\n")
+    for k, v in (("rx_bytes", 1000), ("tx_bytes", 2000), ("rx_packets", 10),
+                 ("tx_packets", 20), ("multicast", 3), ("rx_dropped", 1),
+                 ("tx_dropped", 0), ("rx_errors", 0), ("tx_errors", 2)):
+        w(os.path.join(d, "statistics", k), f"{v}\n")
+lc = agent.linux_cards(net, skip=set())
+check([r["name"] for r in lc] == ["ens18"],
+      f"only the physical card Linux holds: {[r['name'] for r in lc]}")
+check(lc[0]["in_octets"] == 1000 and lc[0]["in_ucast"] == 7
+      and lc[0]["speed"] == 10 ** 9 and lc[0]["admin"] == "up"
+      and lc[0]["alias"] == "management",
+      f"the Linux card's record: {lc[0]}")
+check(agent.linux_cards(net, skip={"ens18"}) == [],
+      "a card the dataplane has is not served twice")
+
+# The ifIndex a name keeps, across a reboot that orders the names otherwise
+# and a card that appears between them.
+idx_file = os.path.join(BOX, "ifindex")
+first = agent.if_indexes(["ens19", "ens20"], idx_file)
+again = agent.if_indexes(["ens20", "ens18", "ens19"], idx_file)
+check(first == {"ens19": 1, "ens20": 2}
+      and again == {"ens20": 2, "ens18": 3, "ens19": 1},
+      f"indexes kept across a reorder and a new card: {first} then {again}")
+
+check(agent.if_type("ens19") == 6 and agent.if_type("ens19.100") == 135
+      and agent.if_type("BondEthernet0") == 161, "ifType by name")
+check(agent.mac_octets("bc:24:11:92:67:ab") == "BC 24 11 92 67 AB"
+      and agent.mac_octets("") == "", "a MAC as pass_persist's octets")
+
+rows = dict((o, (t, v)) for o, t, v in agent.if_rows(cards, {"ens19": 1, "ens19.100": 2}))
+check(rows["1.3.6.1.2.1.2.1.0"] == ("integer", 2), "ifNumber counts the rows")
+check(rows["1.3.6.1.2.1.2.2.1.2.1"] == ("string", "ens19")
+      and rows["1.3.6.1.2.1.2.2.1.8.1"] == ("integer", 1)
+      and rows["1.3.6.1.2.1.2.2.1.8.2"] == ("integer", 2),
+      "ifDescr and the oper status")
+check(rows["1.3.6.1.2.1.2.2.1.10.1"] == ("counter", 2016741112 % 2 ** 32)
+      and rows["1.3.6.1.2.1.31.1.1.1.6.1"] == ("counter64", 2016741112),
+      "the 32-bit counter wraps and the 64-bit one does not")
+check(rows["1.3.6.1.2.1.2.2.1.5.1"] == ("gauge", 2 ** 32 - 1)
+      and rows["1.3.6.1.2.1.31.1.1.1.15.1"] == ("gauge", 10000),
+      "ifSpeed saturates at 10G and ifHighSpeed says 10000 Mbit/s")
+check(rows["1.3.6.1.2.1.31.1.1.1.18.1"] == ("string", "uplink"),
+      "ifAlias is the description")
+check(agent._read(os.path.join(net, "ens18", "mtu")) == "1500"
+      and agent._read(os.path.join(net, "nowhere")) == "",
+      "a sysfs file read and stripped; a missing one is empty, not a crash")
+_it = agent.Interfaces()
+check(_it.rows == [] and _it.at == 0.0,
+      "an interface cache starts empty, so the first poll reads the dataplane")
+print("  every card, summed over threads, with a stable index and 64-bit counters")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

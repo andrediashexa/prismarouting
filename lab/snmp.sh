@@ -58,6 +58,9 @@ pkill snmpd 2>/dev/null; sleep 0.5
 # bench. Here VPP leaves them root:root, and Debian-snmp could not connect to
 # them whatever group it was in - which would test nothing about the box.
 chgrp vpp /run/vpp/cli.sock /run/vpp/api.sock /run/vpp/stats.sock 2>/dev/null
+# Debian's package owns /var/lib/snmp as Debian-snmp; the agent keeps its
+# ifIndex file there (#498).
+chown Debian-snmp:Debian-snmp /var/lib/snmp
 # AS THE BOX RUNS IT (#499): Debian's unit starts snmpd as Debian-snmp, and
 # the agent it spawns is that user too. Run as root here, the lab read the
 # dataplane through sockets the box's snmpd could not open, and passed.
@@ -72,6 +75,8 @@ printf 'get\n1.3.6.1.2.1.123.1.1.2.0\n' | runuser -u Debian-snmp -- /usr/lib/pri
 echo "  --- what the agent itself serves, run by hand ---"
 printf 'getnext\n1.3.6.1.4.1\n' | /usr/lib/prisma-routing/snmp-agent | sed 's/^/    /'
 printf 'get\n1.3.6.1.4.1.99999.1.1.0\n' | /usr/lib/prisma-routing/snmp-agent | sed 's/^/    /'
+echo "  --- the interfaces, as Debian-snmp ---"
+printf 'getnext\n1.3.6.1.2.1.2\ngetnext\n1.3.6.1.2.1.2.2.1.2\n' | su -s /bin/sh Debian-snmp -c '/usr/lib/prisma-routing/snmp-agent --interfaces' 2>&1 | sed 's/^/    /'
 
 echo
 echo "=========== 2. poll it ==========="
@@ -86,6 +91,14 @@ UPTIME=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.1.3.0 2>&1)
 CPUS=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.25.3.2.1.2 2>&1 | grep -c "25.3.1.3$")
 MEMTOTAL=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.2021.4.5.0 2>&1)
 DISKS=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.2021.9.1.2 2>&1)
+# THE DATAPLANE'S CARDS IN IF-MIB (#498): the agent's registrations above
+# net-snmp's own module, so the rows are VPP's interfaces and not Linux's.
+IFDESCR=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.2.2.1.2 2>&1)
+PG0=$(snmpwalk -v2c -c hexro -On 127.0.0.1 1.3.6.1.2.1.2.2.1.2 2>&1 | awk '/"pg0"/{n=split($1, o, "."); print o[n]; exit}')
+PG0IN=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.31.1.1.1.6.${PG0:-0} 2>&1)
+PG0OPER=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.2.2.1.8.${PG0:-0} 2>&1)
+printf '%s\n' "$IFDESCR" | sed 's/^/  ifDescr: /'
+echo "  pg0 is ifIndex ${PG0:-none}: ifHCInOctets $PG0IN, ifOperStatus $PG0OPER"
 echo "  sysDescr:  $DESCR"
 echo "  sysUpTime: $UPTIME"
 echo "  processors in hrDeviceTable: $CPUS"
@@ -151,6 +164,11 @@ expect_not_in "and NO writable community" "rwcommunity" "$CONF"
 # pins the value this lab asked for; the second pins it to what the DATAPLANE
 # answers, and an agent serving a constant is indistinguishable from an agent
 # reading the box until somebody asks the box.
+expect_in "IF-MIB lists the dataplane's card" "pg0" "$IFDESCR"
+expect_not_in "and not Linux's loopback, which net-snmp's own table would" '"lo"' "$IFDESCR"
+expect "its 64-bit input counter moved with the traffic sent ($PG0IN)" \
+  sh -c "case \"$PG0IN\" in ''|*[!0-9]*) exit 1;; 0) exit 1;; *) exit 0;; esac"
+expect "and it reads up ($PG0OPER)" sh -c "case \"$PG0OPER\" in up*|1*) exit 0;; *) exit 1;; esac"
 expect_in "sysDescr names the product" "Prisma Routing" "$DESCR"
 expect "sysUpTime answers" sh -c "case \"$UPTIME\" in *No\ Such*|*Timeout*|'') exit 1;; *) exit 0;; esac"
 expect "HOST-RESOURCES lists the processors ($CPUS)" test "${CPUS:-0}" -ge 1

@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The dataplane's cards are in IF-MIB, with their traffic counters.**
+  ([#498](https://github.com/andrediashexa/hexarouting/issues/498))
+  An NMS walking the box's `ifTable` read net-snmp's own, which is Linux's -
+  `lo` and the management card - and never the ports carrying subscribers:
+  those belong to VPP. The CGNAT agent now serves `ifNumber`, `ifTable` and
+  `ifXTable` from VPP's stats segment: every dataplane card (not `local0`,
+  not the taps), each with its name, the VTY's description as `ifAlias`, its
+  MAC, MTU, speed as `show hardware-interfaces` reports it, admin and oper
+  status, and the 64-bit octet and packet counters summed over the worker
+  threads - plus the physical cards Linux still owns, from `/sys/class/net`.
+  An `ifIndex` is kept per name in `/var/lib/snmp/prisma-ifindex`, so a card
+  keeps its row when the dataplane restarts and renumbers. Found on the way:
+  `pass_persist -p 10` beats net-snmp's module only on the OIDs that module
+  registers - one registration on `.1.3.6.1.2.1.2` lost to its `ifTable`, and
+  `lab/snmp.sh`, which now walks the table and checks the counter moved,
+  read `lo` and `eth0`.
+
 ### Fixed
 
 ## 0.141.4 - on an installed box the SNMP agent answers the CGNAT's objects

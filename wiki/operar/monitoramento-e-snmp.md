@@ -69,6 +69,22 @@ A tabela de discos já vem com dois limites: a raiz, que avisa com menos de 10% 
 
 Um núcleo de worker aparece com carga de 100% sempre: ele não dorme, fica consultando a placa. A carga real do dataplane não é essa — ela entra numa próxima etapa do SNMP.
 
+## As portas do dataplane, pela IF-MIB
+
+A partir da versão 0.141.5, a `ifTable` e a `ifXTable` da caixa são as portas **do dataplane** — as que carregam os assinantes —, e não as que o Linux enxerga. Antes, a NMS que percorria a IF-MIB via só `lo` e a placa de gerência.
+
+| Objeto | O que traz |
+|--------|------------|
+| `ifName`, `ifDescr` | o nome da porta, o mesmo da VTY |
+| `ifAlias` | a `description` configurada na VTY |
+| `ifHighSpeed`, `ifSpeed` | a velocidade do enlace, como `show hardware-interfaces` informa |
+| `ifAdminStatus`, `ifOperStatus` | ligada na configuração, e com enlace |
+| `ifHCInOctets`, `ifHCOutOctets` e os de pacotes | os contadores de 64 bits, somando todas as threads do dataplane |
+
+Entram todas as portas do dataplane, incluindo as sub-interfaces, e as placas físicas que continuam com o Linux, como a de gerência. Ficam de fora as internas: `local0` e as `tap` que ligam o dataplane ao roteamento.
+
+O `ifIndex` de cada porta é guardado pelo nome, então uma porta **mantém a mesma linha** quando o dataplane reinicia — a NMS não mistura o histórico de uma porta com o de outra.
+
 ## Timeouts, pela RFC 4008
 
 `natDefTimeouts` em `.1.3.6.1.2.1.123.1.1` — seis objetos que mapeiam exatamente nos timeouts deste equipamento, então uma NMS existente os lê sem template customizado.
@@ -111,7 +127,6 @@ Esses **não têm OID padrão**. Vivem sob o Private Enterprise Number da sua pr
 
 ## O que não é servido
 
-* **Os contadores de interface (IF-MIB) das portas do dataplane.** O kernel não enxerga essas placas — elas pertencem ao dataplane —, então o agente não tem o que reportar sobre elas. O tráfego por porta se lê pela VTY, com `show interface utilization`.
 * **Nada por assinante nem por sessão.** Isso significaria percorrer a tabela de sessões a cada consulta.
 
 
