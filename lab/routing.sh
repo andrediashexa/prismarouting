@@ -454,8 +454,14 @@ expect "IS-IS adjacency is up" \
 # the wrong peer or a stale state would disagree with them.
 echo "=========== the routing protocols over SNMP (#502) ==========="
 install -d -m 0750 /var/agentx; chgrp frr /var/agentx
+# And a notification destination (#507), for the BGP session's own
+# notifications further down.
+apt-get install -y -qq snmptrapd >/dev/null 2>&1
+echo "disableAuthorization yes" > /etc/snmp/snmptrapd.conf
+snmptrapd -f -Lf /tmp/traps.log -On udp:127.0.0.1:162 &
 SNMPON=$($HX -c "configure" -c "snmp enabled yes" \
              -c "snmp listen-address 127.0.0.1" -c "snmp community hexro" \
+             -c "snmp trap-host 127.0.0.1 community tr4pc" \
              -c "commit" 2>&1)
 printf '%s\n' "$SNMPON" | sed 's/^/  /'
 snmpd -Lo -f -C -u Debian-snmp -g Debian-snmp -c /etc/snmp/snmpd.conf \
@@ -495,6 +501,22 @@ AXCOMMIT=$($HX -c "configure" -c "router bgp 65000" \
                -c "commit" 2>&1)
 expect_in "a routing commit still goes through with agentx running" \
   "commit complete" "$AXCOMMIT"
+# THE SESSION'S OWN NOTIFICATIONS (#507): bgpd sends BGP4-MIB's
+# bgpBackwardTransition and bgpEstablished over AgentX, and snmpd forwards
+# them to the destination. The session is shut and brought back.
+vtysh -c "configure terminal" -c "router bgp 65000" \
+      -c "neighbor 10.0.0.2 shutdown" >/dev/null 2>&1
+sleep 5
+vtysh -c "configure terminal" -c "router bgp 65000" \
+      -c "no neighbor 10.0.0.2 shutdown" >/dev/null 2>&1
+_n=0
+until grep -q "OID: .1.3.6.1.2.1.15.0.1" /tmp/traps.log 2>/dev/null \
+      || [ "$_n" -ge 60 ]; do sleep 1; _n=$((_n + 1)); done
+BGPTRAPS=$(grep -oE "OID: \.1\.3\.6\.1\.2\.1\.15\.0\.[0-9]" /tmp/traps.log 2>/dev/null | sort | uniq -c)
+echo "  BGP4-MIB notifications received: $(printf '%s' "$BGPTRAPS" | tr '\n' ' ')"
+expect_in "a BGP session going down arrives as bgpBackwardTransition" \
+  ".1.3.6.1.2.1.15.0.2" "$BGPTRAPS"
+expect_in "and coming back as bgpEstablished" ".1.3.6.1.2.1.15.0.1" "$BGPTRAPS"
 SNMPOFF=$($HX -c "configure" -c "snmp enabled no" -c "commit" 2>&1)
 printf '%s\n' "$SNMPOFF" | sed 's/^/  /'
 expect_in "turning SNMP off says what the daemons keep until FRR restarts" \

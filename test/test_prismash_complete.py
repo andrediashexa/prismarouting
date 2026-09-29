@@ -3438,7 +3438,7 @@ def box_193():
                             "show": lambda s, c: (1, "")})()
     sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [],
                             "read_users": lambda s: {}})()
-    sh.snmp = type("N", (), {"read": lambda s: ({}, [], {})})()
+    sh.snmp = type("N", (), {"read": lambda s: ({}, [], {}, [])})()
     sh.feed("configure")
     return sh
 
@@ -3995,7 +3995,7 @@ def box_211(reachable, cfg_text):
     sh.frr = type("F", (prismash.Frr,), {"available": lambda s: False, "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
     sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [], "read_users": lambda s: {}})()
-    sh.snmp = type("N", (), {"read": lambda s: ({}, [], {})})()
+    sh.snmp = type("N", (), {"read": lambda s: ({}, [], {}, [])})()
     return sh
 
 

@@ -8,7 +8,7 @@ AgentX and the FIB's size (#502, #503), and PRISMA-ROUTING-MIB for the CGNAT,
 its logging transports and the running build (#504) - rooted, until the
 product has its own number, at the operator's, which `show snmp mib` fills
 in. `docs/snmp-mib.md` is the reference for what is served. Next: HA, LACP,
-identity sources and workers (#505); notifications wait on decision 4 below.
+identity sources and workers (#505), and notifications (#507) - decision 4 below was answered by letting each destination choose, a trap unless it says inform.
 
 The maintainer asked (2026-09-29) for the box to be monitorable over SNMP in
 **every function it has**, planned in full before anything is built. This is

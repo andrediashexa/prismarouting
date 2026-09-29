@@ -23,7 +23,8 @@ from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
                     address_error,
                     is_number,
                     validate_role,
-                    SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp)
+                    SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp,
+                    validate_trap_host)
 
 CGNAT_PREFIXES = ("cgnat ", "no cgnat ")
 
@@ -2513,6 +2514,8 @@ class Config:
         self.snmp: dict = dict(SNMP_DEFAULTS)
         self.snmp_communities: list = []
         self.snmp_users: dict = {}
+        # (address, community, kind) per notification destination (#507)
+        self.snmp_trap_hosts: list = []
         # The card the DATAPLANE forwards on, by the name LINUX gives it.
         #
         # Not one of the interfaces above, and the difference is the whole
@@ -2715,6 +2718,9 @@ class Config:
                 out.append(f"snmp {k} {v}")
         for c in self.snmp_communities:
             out.append(f"snmp community {c}")
+        for a, c, kind in self.snmp_trap_hosts:
+            out.append(f"snmp trap-host {a} community {c}"
+                       + (" inform" if kind == "inform" else ""))
         for name in sorted(self.snmp_users):
             out += self.snmp_users[name].lines()
         out.append(ROUTING_HEADER)
@@ -3027,6 +3033,18 @@ class Config:
                         (lineno, s, "an snmp user understands 'auth <proto> "
                                     "<passphrase>' and 'priv <proto> "
                                     "<passphrase>'"))
+                continue
+            if s.startswith("snmp trap-host "):
+                w = s.split()
+                kind = "inform" if w[-1:] == ["inform"] else "trap"
+                ok = len(w) in (5, 6) and w[3] == "community"
+                why = (validate_trap_host(w[2], w[4], kind) if ok
+                       else "expected: snmp trap-host <address> community "
+                            "<string> [inform]")
+                if why:
+                    cfg.unknown.append((lineno, s, why))
+                elif w[2] not in [t[0] for t in cfg.snmp_trap_hosts]:
+                    cfg.snmp_trap_hosts.append((w[2], w[4], kind))
                 continue
             if s.startswith("snmp community "):
                 w = s.split()
@@ -3967,6 +3985,7 @@ class Config:
         ssh_changed = self.ssh != other.ssh
         snmp_changed = (self.snmp != other.snmp
                         or self.snmp_communities != other.snmp_communities
+                        or self.snmp_trap_hosts != other.snmp_trap_hosts
                         or sorted(self.snmp_users) != sorted(other.snmp_users)
                         or any(self.snmp_users[k] != other.snmp_users[k]
                                for k in self.snmp_users

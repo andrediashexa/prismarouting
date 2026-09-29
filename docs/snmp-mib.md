@@ -155,6 +155,53 @@ prints it; `prRadiusReceived`, `prRadiusApplied` and `prRadiusRefused`
 from a BNG. A refusal is a bad authenticator or a malformed packet, and the
 first is usually a shared secret that differs between the two.
 
+## Notifications (#507)
+
+The box tells the NMS when something changes, rather than waiting for the
+next poll, to every destination configured:
+
+```
+configure
+ snmp trap-host 10.0.0.9 community <string>
+ snmp trap-host 10.0.0.10 community <string> inform
+ commit
+ exit
+```
+
+A destination gets **traps** unless it says `inform`: an inform is
+acknowledged by the receiver and resent until it is. The community is blanked
+on every screen, as the agent's own is. `no snmp trap-host <address>` stops
+sending there.
+
+| When | Notification | From |
+|---|---|---|
+| a dataplane card goes down or comes up | `linkDown`, `linkUp` (IF-MIB) | net-snmp, polling the agent's `ifOperStatus` |
+| a BGP session drops or is established | `bgpBackwardTransition`, `bgpEstablished` (BGP4-MIB) | bgpd, over AgentX |
+| a VRRP router changes state | `mteTriggerFired` named `vrrpStateChange`, with the interface, VR ID and state | a monitor on `prVrrpState` |
+| a pool reaches 90% of its blocks | `poolNearlyFull`, with the pool's name and utilisation | a monitor on `prPoolUtilisation` |
+| ports are refused | `portsRefused` | a monitor on `prPortRefusals` |
+| a records transport connects or drops | `recordsTransportChange`, with the stream | a monitor on `prLogTransportConnected` |
+| records are lost | `recordsLost`, with the stream | a monitor on `prLogTransportDropped` |
+| a bundle's active members change | `bundleMembersChange`, with the bundle | a monitor on `prBundleActiveMembers` |
+| an upgrade leaves the old dataplane forwarding | `dataplaneNotCurrent` | a monitor on `prSystemDataplaneCurrent` |
+| a disk, memory or load threshold | net-snmp's default monitors (`dskErrorFlag` and the rest) | net-snmp |
+
+The monitors are polled every 30 or 60 seconds, so a notification follows the
+event by up to a minute. They go under the enterprise number, like the objects
+they watch, so without one only linkUp/linkDown, BGP and the default monitors
+are sent. `lab/snmp-traps.sh` receives every monitored one with snmptrapd,
+and `lab/routing.sh` the two BGP ones; OSPF's neighbour notifications are sent
+by ospfd by the same path and have not been verified end to end.
+
+Two things measured on the way, both in the monitors' definitions: a monitor
+fires when its test **becomes** true - one already true when snmpd starts is
+evaluated before the agent answers and never fires, which is not the box's
+case, since the stale-dataplane state begins at an upgrade with snmpd up - and
+a scalar needs `-I`, or snmpd walks under `.5.0`, finds nothing and the
+monitor never fires. snmpd queries itself as an internal user with no
+password, and it is not an account: asked from outside, it answers
+"Unknown user name".
+
 ## What is worth an alarm
 
 | Condition | Why |
@@ -204,4 +251,4 @@ last one seen.
 | identity sources: entries, last read, RADIUS | PRISMA-ROUTING-MIB | served (#505) |
 | HA: whether the peer agrees on the mapping | `show cgnat ha` | not over SNMP: the check reads the peer's configuration off the box's own files, which the agent does not |
 | static forwards, the self-test | `show cgnat forward`, the console at boot | not over SNMP |
-| notifications | - | waiting on the informs-or-traps decision (docs/snmp-plan.md) |
+| notifications | traps or informs, per destination | served (#507) |

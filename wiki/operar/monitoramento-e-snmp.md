@@ -203,13 +203,41 @@ Os números do CGNAT são mantidos pelo próprio dataplane no momento em que mud
 
 * **Nada por assinante nem por sessão.** Isso significaria percorrer a tabela de sessões a cada consulta.
 * **Se o par de HA concorda com esta caixa** sobre o mapeamento, os forwards e o resultado do self-test: a VTY mostra, em `show cgnat ha` e `show cgnat forward`, e o self-test fala no console a cada boot.
-* **Traps e informs.** A caixa responde a consultas, mas ainda não avisa sozinha quando algo muda.
 
 
 :::info
 O SNMPv3 é configurado e o usuário é criado com acesso somente leitura, mas uma consulta autenticada por v3 **não** é verificada de ponta a ponta pelos testes do produto. Confira a sua com o `snmpget` do fim desta página antes de depender dela.
 
 :::
+
+# Avisos: a caixa conta quando algo muda
+
+A partir da versão 0.143.3, a caixa não espera a próxima consulta: ela **avisa** a NMS quando algo muda, para cada destino configurado:
+
+```
+configure
+ snmp trap-host 10.0.0.9 community <comunidade>
+ snmp trap-host 10.0.0.10 community <comunidade> inform
+ commit
+ exit
+```
+
+Cada destino recebe **trap**, a não ser que diga `inform` — o inform é confirmado pelo receptor e reenviado até ser. A comunidade do destino é tratada como senha: `show running-config` mostra `<set, not shown>`. `no snmp trap-host <endereço>` para de enviar para ele.
+
+| Quando | Aviso |
+|--------|-------|
+| uma porta do dataplane cai ou volta | `linkDown`, `linkUp` |
+| uma sessão BGP cai ou é estabelecida | `bgpBackwardTransition`, `bgpEstablished` |
+| um roteador VRRP muda de estado | `vrrpStateChange`, com a interface, o VR ID e o estado |
+| um pool chega a 90% dos blocos | `poolNearlyFull`, com o nome do pool |
+| portas são recusadas | `portsRefused` |
+| um transporte de registros conecta ou cai | `recordsTransportChange` |
+| registros de conexão são perdidos | `recordsLost` |
+| os membros ativos de um bundle mudam | `bundleMembersChange` |
+| uma atualização deixou o dataplane antigo rodando | `dataplaneNotCurrent` |
+| disco, memória ou carga passam do limite | os avisos padrão do net-snmp |
+
+Os avisos com nome (`vrrpStateChange` e os demais) chegam como `mteTriggerFired` da DISMAN-EVENT-MIB, com o nome no campo `mteHotTrigger`, e dependem de `snmp enterprise-number`. A caixa confere cada condição a cada 30 ou 60 segundos, então o aviso chega até um minuto depois do evento.
 
 # O que vale colocar em gráfico
 

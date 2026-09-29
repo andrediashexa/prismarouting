@@ -4620,6 +4620,28 @@ check(prismash.compare_redact(["--- running", "+++ candidate", "@@ -1 +1 @@",
       "a BGP key on a context line is blanked, and the headers are left alone")
 print("  [ ok ] a changed secret is a - and a + line, and neither says it")
 
+print("\n=== snmp trap-host: a destination, refused when it is not one (#507) ===")
+sh = shell(running=Config())
+sh.candidate = Config()
+for _bad, _says in (("snmp trap-host 10.0.0.9", "usage: snmp trap-host"),
+                    ("snmp trap-host 10.0.0.9 community c email", "usage"),
+                    ("snmp trap-host nms community c", "not an IP address")):
+    with spoken() as o:
+        sh.do_config(_bad)
+    check(_says in o.getvalue(), f"{_bad!r} said {o.getvalue()!r}")
+with spoken() as o:
+    sh.do_config("snmp trap-host 10.0.0.9 community c1")
+    sh.do_config("snmp trap-host 10.0.0.9 community c2 inform")
+    sh.do_config("snmp trap-host 10.0.0.8 community c3")
+check(sh.candidate.snmp_trap_hosts == [("10.0.0.9", "c2", "inform"),
+                                       ("10.0.0.8", "c3", "trap")],
+      f"the same address replaces its line: {sh.candidate.snmp_trap_hosts}")
+with spoken() as o:
+    sh.do_config("no snmp trap-host 10.0.0.9")
+check(sh.candidate.snmp_trap_hosts == [("10.0.0.8", "c3", "trap")],
+      f"and is taken out: {sh.candidate.snmp_trap_hosts}")
+print("  [ ok ] set, replaced, removed, and refused with the reason")
+
 print("\n=== no snmp <setting>: back to the default (#506) ===")
 sh = shell(running=_run)
 sh.candidate = Config.parse(_run.text())
