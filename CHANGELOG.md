@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.141.2 - a plan for monitoring everything the box does over SNMP
+
+### Added
+
 * **A plan for monitoring everything the box does over SNMP.**
   ([#496](https://github.com/andrediashexa/hexarouting/issues/496))
   `docs/snmp-plan.md`: what the box answers today - the generated view
@@ -85,8 +91,6 @@ version has a chance of seeing it.
   function by function, the MIB and objects that should carry it, where each
   value is read, the notifications, the security and performance rules, the
   tests, six phases, and the decisions that are the maintainer's.
-
-### Fixed
 
 ## 0.141.1 - a physical card on uio reaches the dataplane
 
