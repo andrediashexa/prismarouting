@@ -2119,6 +2119,27 @@ check("ens19" in _back.declared and "ens19" in _back.interface_names()
 check(config.Config.parse(_back.text()).text() == _t, "and the text is stable")
 print("  written only when it says something")
 
+# A LARGE FILE PARSES IN LINEAR TIME: the check for bare headers took the
+# union of every interface map once per header, so the tuner spent 2 min 44 s
+# at boot on a 20,000-interface file. Counted rather than timed, which a slow
+# builder cannot turn red.
+_calls = []
+_orig = config.Config.interface_names
+config.Config.interface_names = lambda self: _calls.append(1) or _orig(self)
+try:
+    _big = config.Config.parse("".join(
+        f"interface Ten0/0/0.{i}\n vlan {i + 1}\n exit\n" for i in range(200))
+        + "interface ens20\n exit\n")
+finally:
+    config.Config.interface_names = _orig
+check(len(_calls) <= 2,
+      f"parsing 200 interfaces took the union of every interface map "
+      f"{len(_calls)} times; once per header is quadratic")
+check("ens20" in _big.declared and "Ten0/0/0.7" not in _big.declared,
+      f"and a bare header is still declared, and a configured one not: "
+      f"{sorted(_big.declared)}")
+print("  a large file parses in linear time")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
