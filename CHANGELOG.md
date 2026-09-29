@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The workers, the session capacity, VRRP, LACP bundles and identity
+  sources, over SNMP.**
+  ([#505](https://github.com/andrediashexa/hexarouting/issues/505))
+  The features #504's analysis found an NMS could not see, in
+  PRISMA-ROUTING-MIB: the sessions that still fit in the CGNAT's memory (the
+  figure `show cgnat memory` prints, and the same ~300 bytes a session - the
+  test holds the two equal), each dataplane thread's subscribers, sessions
+  and ports, each VRRP router's interface, VR ID, advertised priority and
+  state, each LACP bundle's members against members carrying traffic, and
+  the identity table's size and the RADIUS accounting behind it. Each from
+  one command the VTY's own screens run; none walks the subscribers.
+  `lab/snmp.sh` reads a VRRP router master at 150, a bundle at zero members
+  and 960,390 sessions that fit - what `show cgnat memory` says - by name,
+  through the MIB. Not over SNMP, and said so: whether the HA peer agrees on
+  the mapping, the forwards and the self-test.
+
 ### Fixed
 
 ## 0.143.0 - PRISMA-ROUTING-MIB: the CGNAT, its records and the box, over SNMP
