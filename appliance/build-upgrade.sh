@@ -77,9 +77,6 @@ else
   echo "bpa_plugin.so not found; run tools/build.sh plugin first" >&2
   exit 1
 fi
-# Optimised, or not shipped (#490): every release to 0.140.2 carried the
-# plugin at -O0, 3.6x the clocks a packet, and nothing said so.
-sh "$REPO/tools/plugin-optimised.sh" "$SO" >&2 || exit 1
 if [ -f "$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so" ]; then
   VSO="$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
 elif [ -f /vat2_plugins/bpa_test_plugin_bpa_plugin.so ]; then
@@ -90,6 +87,10 @@ else
   echo "configured on the box this artifact would upgrade (#119)." >&2
   exit 1
 fi
+
+# Optimised, or not shipped (#490): every release to 0.140.2 carried the
+# plugin at -O0, 3.6x the clocks a packet, and nothing said so.
+sh "$REPO/tools/plugin-optimised.sh" "$SO" >&2 || exit 1
 
 # THE PLATFORM PINS, READ OUT OF build-iso.sh rather than restated here.
 #
