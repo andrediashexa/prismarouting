@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.143.5 - OSPF's neighbour notification and a records transport's, received in a lab
+
+### Added
+
 * **OSPF's neighbour notification and a records transport's, received in a
   lab.** ([#509](https://github.com/andrediashexa/hexarouting/issues/509))
   0.143.3 sent them and had seen neither arrive. `lab/routing.sh` restarts the
@@ -86,8 +92,6 @@ version has a chance of seeing it.
   the stream's name. Nothing in the product changed: both worked as shipped.
   Still not received in a lab, and the reference says so: `recordsLost` and
   `bundleMembersChange`.
-
-### Fixed
 
 ## 0.143.4 - PRISMA-ROUTING-MIB served by default, under 32473 until the product's own number arrives
 
