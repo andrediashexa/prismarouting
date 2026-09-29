@@ -105,6 +105,16 @@ the node and the reason, so a reason seen for the first time can move the rows
 after it: key on the reason, not on the number. `prSessions` (`.1.10.3.0`,
 Gauge32) is the sessions open on the whole box.
 
+### Capacity and the workers - `.1.10.4`, `.1.10.5` (#505)
+
+`prSessionsFit` (`.1.10.4.0`, Gauge32) is the sessions that still fit in the
+CGNAT's memory: the dataplane's free heap at the ~300 bytes a session takes,
+the figure `show cgnat memory` prints. At zero, new sessions are refused while
+the ones open go on. `prWorkerTable` (`.1.10.5.1.<column>.<thread + 1>`) gives
+each dataplane thread's subscribers (2), sessions (3) and ports (4). A dynamic
+pool's blocks are shared out per worker, so a worker far ahead of the others
+is the early sign of subscribers refused with blocks free elsewhere.
+
 ### The connection records - `.1.11`
 
 `prLogIpfixEnabled` (`.1.11.1.0`, TruthValue), `prLogIpfixRecords` (`.1.11.2.0`)
@@ -122,6 +132,29 @@ they are the same. It is false after an upgrade until the next reboot, which
 is a box forwarding with the old build and refusing any commit that needs the
 new one.
 
+### High availability - `.1.13` (#505)
+
+`prVrrpTable` (`.1.13.1.1.<column>.<n>`) has one row per VRRP virtual router,
+by interface and then VR ID: the interface (2), the VR ID (3), the priority
+advertised now (4) - lower than configured while a tracked interface is down -
+the state (5: init(1), backup(2), master(3), interfaceDown(4)) and the
+virtual addresses (6).
+
+### LACP bundles - `.1.14` (#505)
+
+`prBundleTable` (`.1.14.1.1.<column>.<n>`): the bundle's interface (2), its
+mode (3), the members configured (4) and the members carrying traffic (5).
+A bundle on one of its two legs is up in IF-MIB and at half its capacity.
+
+### Identity sources - `.1.15` (#505)
+
+`prIdentityEntries` (`.1.15.1.0`) is the subscribers the identity table names
+and `prIdentityReadAt` (`.1.15.2.0`) when it was last read, as the dataplane
+prints it; `prRadiusReceived`, `prRadiusApplied` and `prRadiusRefused`
+(`.1.15.3.0` to `.1.15.5.0`, Counter64) the RADIUS accounting the box takes
+from a BNG. A refusal is a bad authenticator or a malformed packet, and the
+first is usually a shared secret that differs between the two.
+
 ## What is worth an alarm
 
 | Condition | Why |
@@ -136,6 +169,10 @@ new one.
 | `bgpPeerState` not 6, `ospfNbrState` not 8, `ospfv3NbrState` not 8, `isisISAdjState` not 3 | a routing session down |
 | `dskErrorFlag` 1 on `/var/log/prisma-routing` | the retention log's filesystem filling |
 | `inetCidrRouteNumber` falling sharply | a session dropped and took its routes |
+| `prSessionsFit` near zero | new sessions are about to be refused for want of memory |
+| `prVrrpState` changing | a takeover |
+| `prBundleActiveMembers` below `prBundleMembers` | a bundle running on fewer legs than it has |
+| `prIdentityEntries` zero on a box that logs identities, or `prRadiusRefused` rising | records naming nobody, or a BNG the box will not listen to |
 
 ## Where the values come from, and what reading them costs
 
@@ -161,8 +198,10 @@ last one seen.
 | CGNAT timeouts | NAT-MIB | served |
 | the connection records' transports | PRISMA-ROUTING-MIB | served |
 | the release and the running dataplane's build | PRISMA-ROUTING-MIB | served |
-| HA: VRRP state, the peer agreeing | - | #505 |
-| LACP bundles: members in the bundle | - | #505 |
-| identity sources: entries, last update | - | #505 |
-| workers, session capacity, forwards, the self-test | - | #505 |
+| session capacity, the workers | PRISMA-ROUTING-MIB | served (#505) |
+| HA: each VRRP router's state and priority | PRISMA-ROUTING-MIB | served (#505) |
+| LACP bundles: members in the bundle | PRISMA-ROUTING-MIB | served (#505) |
+| identity sources: entries, last read, RADIUS | PRISMA-ROUTING-MIB | served (#505) |
+| HA: whether the peer agrees on the mapping | `show cgnat ha` | not over SNMP: the check reads the peer's configuration off the box's own files, which the agent does not |
+| static forwards, the self-test | `show cgnat forward`, the console at boot | not over SNMP |
 | notifications | - | waiting on the informs-or-traps decision (docs/snmp-plan.md) |

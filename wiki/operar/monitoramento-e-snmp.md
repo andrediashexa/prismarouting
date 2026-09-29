@@ -182,12 +182,25 @@ Os descartes ficam em `prDropTable` (`.10.2`), uma linha por motivo, com o nó e
 | `prSystemRelease`, `prSystemDataplaneBuild` | a versão instalada e a do dataplane que está rodando |
 | `prSystemDataplaneCurrent` | se as duas são a mesma. **Falso depois de uma atualização, até o próximo reboot**: a caixa segue encaminhando com a versão antiga, e um `commit` que precisa da nova é recusado |
 
+### Capacidade, workers, HA, LACP e identidade
+
+A partir da versão 0.143.1:
+
+| Objeto | O que traz |
+|--------|------------|
+| `prSessionsFit` | quantas sessões ainda cabem na memória do CGNAT — o mesmo número de `show cgnat memory`. Em zero, sessões novas são recusadas |
+| `prWorkerTable` | assinantes, sessões e portas de cada thread do dataplane: um worker muito à frente dos outros é o aviso de assinante recusado com bloco sobrando em outro worker |
+| `prVrrpTable` | cada roteador VRRP: interface, VR ID, a prioridade anunciada agora e o estado — `master`, `backup`, `init`. Mudança de estado é uma troca de papel |
+| `prBundleTable` | cada bundle LACP: quantos membros configurados e quantos **carregando tráfego** |
+| `prIdentityEntries`, `prIdentityReadAt` | quantos assinantes a tabela de identidade nomeia, e quando ela foi lida |
+| `prRadiusReceived`, `prRadiusApplied`, `prRadiusRefused` | o accounting RADIUS vindo do BNG. Recusa costuma ser segredo diferente entre o BNG e a caixa |
+
 Os números do CGNAT são mantidos pelo próprio dataplane no momento em que mudam, e o agente lê tudo de uma vez: consultar a caixa não custa uma varredura dos assinantes, por maior que ela seja.
 
 ## O que não é servido
 
 * **Nada por assinante nem por sessão.** Isso significaria percorrer a tabela de sessões a cada consulta.
-* **Ainda não, e é a próxima etapa:** o estado do VRRP e se o par concorda com esta caixa, os membros de cada bundle LACP, as fontes de identidade (RADIUS e DHCP), a divisão por worker, quantas sessões ainda cabem na memória, os forwards e o resultado do self-test. Até lá, a VTY mostra cada um: `show cgnat ha`, `show lacp`, `show cgnat identity`, `show cgnat memory`.
+* **Se o par de HA concorda com esta caixa** sobre o mapeamento, os forwards e o resultado do self-test: a VTY mostra, em `show cgnat ha` e `show cgnat forward`, e o self-test fala no console a cada boot.
 * **Traps e informs.** A caixa responde a consultas, mas ainda não avisa sozinha quando algo muda.
 
 
@@ -207,6 +220,10 @@ O SNMPv3 é configurado e o usuário é criado com acesso somente leitura, mas u
 | transporte ligado e **não conectado** (`prLogTransportConnected`) | os registros de conexão estão indo para o arquivo de spill |
 | registros perdidos (`prLogTransportDropped`, `prLogIpfixDropped`) subindo | é um buraco no log de retenção |
 | `prSystemDataplaneCurrent` falso | uma atualização esperando reboot |
+| `prSessionsFit` perto de zero | sessões novas vão ser recusadas por falta de memória |
+| `prVrrpState` mudando | houve troca de papel no HA |
+| `prBundleActiveMembers` menor que `prBundleMembers` | o bundle está rodando com menos pernas do que tem |
+| `prRadiusRefused` subindo | o BNG está mandando accounting que a caixa não aceita |
 | pacotes não passados (`prPacketsDropped`) | subida súbita costuma ser mudança de configuração ou rota; `prDropTable` diz o motivo |
 
 O mesmo se vê pela VTY, sem NMS:
