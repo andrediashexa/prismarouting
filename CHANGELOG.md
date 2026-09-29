@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.141.6 - a configuration with many interfaces reads in linear time
+
+### Fixed
+
 * **A configuration with many interfaces took minutes to read.**
   ([#500](https://github.com/andrediashexa/hexarouting/issues/500))
   Reading the saved file checked each interface header against the union of
