@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.141.4 - on an installed box the SNMP agent answers the CGNAT's objects
+
+### Fixed
+
 * **On an installed box the SNMP agent answered no CGNAT object at all.**
   ([#499](https://github.com/andrediashexa/hexarouting/issues/499))
   snmpd runs as `Debian-snmp`, and so does the agent it spawns. That user
