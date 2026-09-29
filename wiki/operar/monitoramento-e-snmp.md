@@ -96,7 +96,9 @@ A partir da versão 0.142.0, as sessões de roteamento aparecem nas MIBs padrão
 | OSPFV3-MIB | `.1.3.6.1.2.1.191` | o mesmo, para o OSPFv3 |
 | ISIS-MIB | `.1.3.6.1.2.1.138` | adjacências e circuitos |
 
-O que vale alertar: `bgpPeerState` (`.1.3.6.1.2.1.15.3.1.2.<endereço do vizinho>`) diferente de 6 (*established*), `ospfNbrState` diferente de 8 (*full*) e `isisISAdjState` diferente de 3 (*up*). Esses três foram conferidos pelos testes do produto numa sessão real; o OSPFv3 é servido pelo mesmo caminho, mas não foi conferido de ponta a ponta.
+O que vale alertar: `bgpPeerState` (`.1.3.6.1.2.1.15.3.1.2.<endereço do vizinho>`) diferente de 6 (*established*), `ospfNbrState` diferente de 8 (*full*) e `isisISAdjState` diferente de 3 (*up*). O mesmo vale para o OSPFv3: `ospfv3NbrState` (`.1.3.6.1.2.1.191.1.9.1.8`) diferente de 8. Os quatro foram conferidos pelos testes do produto numa sessão real (o do OSPFv3 a partir da versão 0.142.1).
+
+A partir da versão 0.142.1, o tamanho da tabela de rotas também responde: `inetCidrRouteNumber` (`.1.3.6.1.2.1.4.24.6.0`) conta as rotas IPv4 e IPv6, e `ipCidrRouteNumber` (`.1.3.6.1.2.1.4.24.3.0`) só as IPv4. A tabela em si fica de fora de propósito: com a tabela completa da internet são perto de um milhão de linhas, e uma NMS que a percorresse pesaria na caixa a cada consulta. Uma queda brusca nesse número é uma sessão que caiu levando as rotas junto.
 
 Nada precisa ser configurado além do `snmp enabled yes`: o commit liga o vínculo dos daemons de roteamento com o agente.
 
