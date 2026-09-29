@@ -21,9 +21,14 @@ RUN apt-get update -qq \
         frr=${FRR_VERSION} \
         frr-pythontools=${FRR_VERSION} \
         frr-rpki-rtrlib=${FRR_VERSION} \
+        frr-snmp=${FRR_VERSION} \
     && apt-get purge -y curl gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
+# frr-snmp is the AgentX module each daemon loads with -M snmp (#502): BGP4-MIB,
+# OSPF-MIB, OSPFV3-MIB and ISIS-MIB, served by the daemon that holds the state
+# rather than by a copy of it. Same repository and version as frr, like RPKI.
+#
 # PID 1, and not frrinit.sh itself: that script starts watchfrr and RETURNS,
 # so the container's PID 1 exited and the control plane was gone while the
 # container still read as running (#426). appliance/frr-entrypoint starts FRR

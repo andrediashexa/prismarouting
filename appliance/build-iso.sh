@@ -174,7 +174,7 @@ chroot "$ROOT" /bin/sh -c "
     vpp=$VPP_VERSION vpp-plugin-core=$VPP_VERSION vpp-plugin-dpdk=$VPP_VERSION \
     libvppinfra=$VPP_VERSION \
     frr=$FRR_VERSION frr-pythontools=$FRR_VERSION \
-    frr-rpki-rtrlib=$FRR_VERSION \
+    frr-rpki-rtrlib=$FRR_VERSION frr-snmp=$FRR_VERSION \
     docker.io docker-compose apparmor
   apt-get clean
 "

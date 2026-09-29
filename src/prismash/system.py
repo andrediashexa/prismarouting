@@ -1039,7 +1039,17 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              ".1.3.6.1.2.1.31",         # IF-MIB: ifXTable, 64-bit counters
              ".1.3.6.1.2.1.25",         # HOST-RESOURCES-MIB: CPU, storage, processes
              ".1.3.6.1.4.1.2021",       # UCD-SNMP-MIB: load, memory, disks
-             ".1.3.6.1.2.1.123"]        # NAT-MIB, the timeouts the agent serves
+             ".1.3.6.1.2.1.123",        # NAT-MIB, the timeouts the agent serves
+             # The routing protocols, which FRR's daemons serve themselves
+             # over AgentX (#502).
+             ".1.3.6.1.2.1.15",         # BGP4-MIB: bgpd's peers and their state
+             ".1.3.6.1.2.1.14",         # OSPF-MIB: ospfd
+             ".1.3.6.1.2.1.191",        # OSPFV3-MIB: ospf6d
+             ".1.3.6.1.2.1.138"]        # ISIS-MIB: isisd
+#: Where snmpd listens for FRR's daemons (#502). A unix socket and not TCP 705,
+#: which any local account could register a subtree on; the directory is the
+#: box's frr group's, and FRR's container is given it (appliance/compose.yaml).
+AGENTX_SOCKET = "/var/agentx/master"
 # The filesystems whose filling an NMS alarms on (UCD's dskTable), with the
 # free space below which dskErrorFlag is raised. The retention log's is the
 # one that matters: a full disk there is the compliance log stopping, a year
@@ -1069,6 +1079,12 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None):
            "agentAddress udp:%s:%s" % (
                settings.get("listen-address", SNMP_DEFAULTS["listen-address"]),
                settings.get("port", SNMP_DEFAULTS["port"]))]
+    # THE AGENTX MASTER, for FRR's daemons (#502). Measured on the dev image
+    # with snmpd running as Debian-snmp: the socket is made before the daemon
+    # drops to that user, owned as agentXPerms says, and bgpd and ospfd
+    # registered on it and answered BGP4-MIB and OSPF-MIB through it.
+    out += ["master agentx", f"agentXSocket {AGENTX_SOCKET}",
+            "agentXPerms 0660 0750 frr frr"]
     out += [f"view hexa included {oid}" for oid in SNMP_VIEW]
     if pen:
         out.append(f"view hexa included .1.3.6.1.4.1.{pen}")

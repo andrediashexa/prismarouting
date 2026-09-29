@@ -45,9 +45,22 @@ _rpki_module() {
      2>/dev/null | head -1
 }
 
+# " -M snmp" when frr-snmp is installed, or nothing (#502): the product loads
+# it on zebra, bgpd, ospfd, ospf6d and isisd (appliance/install.sh), and a lab
+# that did not would be a control plane the box does not run. Asked for only
+# when it is there, for the reason -M rpki is: a daemon told to load a module
+# it cannot find refuses to start.
+_snmp_opt() {
+  # By what ls prints and not by its status: ls fails when either layout is
+  # missing, and one always is - the first version of this never loaded it.
+  [ -n "$(ls /usr/lib/*/frr/modules/bgpd_snmp.so \
+            /usr/lib/frr/modules/bgpd_snmp.so 2>/dev/null | head -1)" ] \
+    && printf ' -M snmp'
+}
+
 # not a unit: starts zebra, mgmtd and staticd by their absolute paths under /usr/lib/frr and writes /etc/frr, so no PATH stub reaches it; every FRR lab drives it in a container
 start_frr() {
-  /usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf 2>/dev/null
+  /usr/lib/frr/zebra -d -A 127.0.0.1$(_snmp_opt) -f /etc/frr/zebra.conf 2>/dev/null
   /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
   /usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
   for _d in "$@"; do
@@ -65,9 +78,9 @@ start_frr() {
     # were simply off. Hardcoding the multiarch triplet would break the same
     # way on arm64.
     if [ "$_d" = bgpd ] && [ -n "$(_rpki_module)" ]; then
-      /usr/lib/frr/bgpd -d -A 127.0.0.1 -M rpki -f /etc/frr/bgpd.conf 2>/dev/null
+      /usr/lib/frr/bgpd -d -A 127.0.0.1 -M rpki$(_snmp_opt) -f /etc/frr/bgpd.conf 2>/dev/null
     else
-      "/usr/lib/frr/$_d" -d -A 127.0.0.1 -f "/etc/frr/$_d.conf" 2>/dev/null
+      "/usr/lib/frr/$_d" -d -A 127.0.0.1$(_snmp_opt) -f "/etc/frr/$_d.conf" 2>/dev/null
     fi
   done
   # mgmtd's front-end socket is what vtysh connects to for these statements,

@@ -26,6 +26,9 @@ FRRINIT=${FRRINIT:-/usr/lib/frr/frrinit.sh}
 # nothing sets them.
 ETCFRR=${PRISMA_FRR_ETC:-/etc/frr}
 RUNFRR=${PRISMA_FRR_RUN:-/var/run/frr}
+# The box's snmpd.conf, read-only in this container (#502): the VTY writes it
+# while SNMP is enabled and deletes it when SNMP is disabled.
+SNMPCONF=${PRISMA_SNMPD_CONF:-/etc/snmp/snmpd.conf}
 stopping=0
 
 on_term() {
@@ -92,6 +95,36 @@ align_ids() {
   return 0
 }
 align_ids
+
+# AGENTX FOLLOWS SNMP, AND IS DECIDED HERE, AT START (#502). `agentx` is what
+# makes a daemon with frr-snmp register its MIB with snmpd - and two things
+# measured on FRR 10.7.1 put the decision in this file rather than in a
+# commit:
+#
+#   * `no agentx` is refused: "SNMP AgentX support cannot be disabled once
+#     enabled". A running daemon keeps it until it restarts.
+#   * with `agentx` and no snmpd listening, every daemon logs "Failed to
+#     connect to the agentx master agent" every 15 s: five daemons, 1,200
+#     lines an hour, on a box that never asked for SNMP.
+#
+# So the line is in frr.conf exactly when snmpd.conf is: the VTY turns it on
+# in the running daemons when SNMP is enabled (it can), and what turns it off
+# is the next start, here. Written in place so frr.conf keeps its owner and
+# mode, which #186 made group-writable on purpose.
+sync_agentx() {
+  f=$ETCFRR/frr.conf
+  [ -f "$f" ] || return 0
+  if [ -f "$SNMPCONF" ] && grep -q "^master agentx" "$SNMPCONF" 2>/dev/null
+  then
+    grep -qx "agentx" "$f" && return 0
+    { echo "agentx"; cat "$f"; } > "$f.agentx" && cat "$f.agentx" > "$f"
+  else
+    grep -qx "agentx" "$f" || return 0
+    grep -vx "agentx" "$f" > "$f.agentx"; cat "$f.agentx" > "$f"
+  fi
+  rm -f "$f.agentx"
+}
+sync_agentx
 
 "$FRRINIT" start 2>&1 | sed 's/^/frr-entrypoint: /'
 

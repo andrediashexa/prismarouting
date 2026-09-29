@@ -162,5 +162,46 @@ grep -q "nothing is supervising" "$B/out" \
   || bad "it exited silently: $(cat "$B/out")"
 rm -rf "$B"
 
+echo
+echo "=== agentx is in frr.conf exactly while SNMP is enabled (#502) ==="
+# A daemon cannot drop agentx once it has it, and with it and no snmpd every
+# daemon logs a warning every 15 s: so the start decides, from the one file
+# that exists only while SNMP is enabled.
+agentx_run() { # <box>
+  ( PATH="$1/bin:$PATH" FRRINIT="$1/bin/frrinit.sh" PRISMA_FRR_ETC="$1/etc/frr" \
+    PRISMA_FRR_RUN="$1/run/frr" PRISMA_SNMPD_CONF="$1/snmpd.conf" \
+    sh "$ENTRY" >/dev/null 2>&1 )
+}
+B=$(mkbox 1234 5678)
+printf 'router bgp 65001\nexit\n' > "$B/etc/frr/frr.conf"
+chmod 0660 "$B/etc/frr/frr.conf"
+printf 'master agentx\nagentXSocket /var/agentx/master\n' > "$B/snmpd.conf"
+agentx_run "$B"
+[ "$(head -1 "$B/etc/frr/frr.conf")" = "agentx" ] \
+  && ok "SNMP enabled: agentx is put first in frr.conf" \
+  || bad "SNMP enabled and no agentx in frr.conf: $(cat "$B/etc/frr/frr.conf")"
+grep -q "router bgp 65001" "$B/etc/frr/frr.conf" \
+  && ok "and the routing is still there" \
+  || bad "the routing was lost: $(cat "$B/etc/frr/frr.conf")"
+[ "$(stat -c %a "$B/etc/frr/frr.conf")" = 660 ] \
+  && ok "and the file keeps the mode #186 gave it" \
+  || bad "frr.conf's mode changed to $(stat -c %a "$B/etc/frr/frr.conf")"
+agentx_run "$B"
+[ "$(grep -cx agentx "$B/etc/frr/frr.conf")" = 1 ] \
+  && ok "a second start does not add it twice" \
+  || bad "agentx appears $(grep -cx agentx "$B/etc/frr/frr.conf") times"
+rm -f "$B/snmpd.conf"
+agentx_run "$B"
+grep -qx agentx "$B/etc/frr/frr.conf" \
+  && bad "SNMP disabled and agentx still in frr.conf: every daemon would warn every 15 s" \
+  || ok "SNMP disabled: agentx is taken out at the next start"
+grep -q "router bgp 65001" "$B/etc/frr/frr.conf" \
+  && ok "and the routing is still there" \
+  || bad "the routing was lost: $(cat "$B/etc/frr/frr.conf")"
+ls "$B/etc/frr" | grep -q "\.agentx" \
+  && bad "a scratch file was left in /etc/frr" \
+  || ok "and no scratch file is left behind"
+rm -rf "$B"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

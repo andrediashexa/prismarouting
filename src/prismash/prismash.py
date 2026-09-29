@@ -5850,8 +5850,17 @@ class Frr:
             return []
         skip = ("Building configuration", "Current configuration",
                 "frr version", "frr defaults", "end")
+        # `agentx` is the box's and not the operator's (#502): it follows
+        # `snmp enabled`, and read back as routing it would be saved into the
+        # routing an operator typed and shown as if they had.
         return [l.rstrip() for l in out.splitlines()
-                if l.strip() and not l.startswith(skip)]
+                if l.strip() and not l.startswith(skip)
+                and l.strip() != "agentx"]
+
+    def agentx_on(self):
+        """Do the running daemons have `agentx`? (#502)"""
+        rc, out = self.show("show running-config")
+        return rc == 0 and "agentx" in (l.strip() for l in out.splitlines())
 
     def apply_lines(self, lines):
         args = ["-c", "configure terminal"]
@@ -5911,6 +5920,13 @@ class Frr:
             # A CGNAT-only box is a legitimate deployment. Refusing every
             # commit because no routing daemon is running would be wrong.
             return 1, "FRR is not responding"
+        # CARRIED, because it cannot be taken away (#502). frr-reload removes
+        # what the running daemons have and `lines` does not, and `no agentx`
+        # is refused - measured on FRR 10.7.1, "SNMP AgentX support cannot be
+        # disabled once enabled" - so every reload on a box with SNMP on
+        # would fail. It goes when FRR next starts (appliance/frr-entrypoint).
+        if "agentx" not in lines and self.agentx_on():
+            lines = ["agentx"] + list(lines)
         # A directory of our own, per run, and every path frr-reload writes to
         # pointed into it - because with --reload it writes to two places that
         # belong to FRR and not to the account applying the change (#186):
@@ -9846,6 +9862,7 @@ class Shell:
                 return False
             if msg:
                 print(f"snmp: {msg}")
+            self.agentx_follows_snmp(target.snmp.get("enabled") == "yes")
         if d["users_changed"]:
             ok, msgs = self.sys.apply_users(target.users, running.users)
             for m in msgs:
@@ -10418,6 +10435,30 @@ class Shell:
                 "session_memory_mb": 0}
         args.update(kw)
         return self.api_call("bpa_global_set", args)
+
+    def agentx_follows_snmp(self, enabled):
+        """
+        The routing daemons' side of `snmp enabled` (#502): `agentx` in the
+        running daemons, so bgpd, ospfd, ospf6d and isisd register their MIBs
+        with snmpd. Turned on here, at the commit. It cannot be turned off
+        (FRR refuses `no agentx`), so disabling says what remains until FRR
+        next starts, where appliance/frr-entrypoint takes it out.
+        """
+        if not self.frr.available():
+            return
+        on = self.frr.agentx_on()
+        if enabled and not on:
+            # Judged by the effect and not by vtysh's status: measured, vtysh
+            # exits 0 having been told `agentx` by daemons with no module.
+            self.frr.apply_lines(["agentx"])
+            if not self.frr.agentx_on():
+                print("note: the routing daemons have no SNMP module")
+                print_prose("BGP, OSPF and IS-IS are not served over SNMP; "
+                            "the rest is")
+        elif not enabled and on:
+            print("note: the routing daemons keep looking for snmpd")
+            print_prose("FRR cannot drop the link while it runs; it goes when "
+                        "FRR next starts")
 
     def apply_global(self, line):
         w = line.split()

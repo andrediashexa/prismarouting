@@ -446,6 +446,61 @@ expect "IS-IS adjacency is up" \
   sh -c "vtysh -c 'show isis neighbor' 2>/dev/null | tr -d '\r' \
          | awk 'NR>1 && \$0 ~ /Up|UP/ {found=1} END {exit !found}'"
 
+# --- the routing protocols over SNMP (#502) ---
+# What an NMS reads of the sessions just asserted, through the box's own
+# snmpd: bgpd and ospfd register their MIBs with it over AgentX, and the value
+# polled is the daemon's own state rather than a copy of it. The oracle is the
+# same adjacency the checks above read with vtysh, so a MIB that answered with
+# the wrong peer or a stale state would disagree with them.
+echo "=========== the routing protocols over SNMP (#502) ==========="
+install -d -m 0750 /var/agentx; chgrp frr /var/agentx
+SNMPON=$($HX -c "configure" -c "snmp enabled yes" \
+             -c "snmp listen-address 127.0.0.1" -c "snmp community hexro" \
+             -c "commit" 2>&1)
+printf '%s\n' "$SNMPON" | sed 's/^/  /'
+snmpd -Lo -f -C -u Debian-snmp -g Debian-snmp -c /etc/snmp/snmpd.conf \
+  > /tmp/snmpd.log 2>&1 &
+# A subagent that lost its master reconnects at its next ping, 15 s apart.
+_n=0; BGPST=""
+until [ "$BGPST" = "6" ] || [ "$_n" -ge 40 ]; do
+  sleep 1; _n=$((_n + 1))
+  BGPST=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.15.3.1.2.10.0.0.2 2>&1)
+done
+LOCALAS=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.15.2.0 2>&1)
+PEERAS=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.15.3.1.9.10.0.0.2 2>&1)
+OSPFNBR=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.14.10.1.6 2>&1)
+echo "  bgpLocalAs $LOCALAS; peer 10.0.0.2: bgpPeerState $BGPST, remote AS $PEERAS"
+echo "  ospfNbrState: $(printf '%s' "$OSPFNBR" | tr '\n' ' ')"
+# isisISAdjState, ISIS-MIB's adjacency table: up is 3.
+ISISADJ=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.138.1.6.1.1.2 2>&1)
+echo "  isisISAdjState: $(printf '%s' "$ISISADJ" | tr '\n' ' ')"
+AXRUN=$(vtysh -c "show running-config" 2>/dev/null | grep -x agentx)
+AXVTY=$($HX -c "show running-config" 2>&1 | grep -x agentx)
+expect_in "snmpd.conf makes it the AgentX master" "master agentx" \
+  "$(cat /etc/snmp/snmpd.conf 2>/dev/null)"
+expect "the commit turned agentx on in the running daemons" test -n "$AXRUN"
+expect "and it is not shown as routing the operator typed" test -z "$AXVTY"
+expect "BGP4-MIB reads the session established (6), as vtysh does ($BGPST)" \
+  test "$BGPST" = "6"
+expect "the local AS is the one configured ($LOCALAS)" test "$LOCALAS" = "65000"
+expect "and the peer's is the upstream's ($PEERAS)" test "$PEERAS" = "65001"
+expect "OSPF-MIB reads the neighbour full (8)" \
+  sh -c "printf '%s\n' \"$OSPFNBR\" | grep -qx 8"
+expect "ISIS-MIB reads the adjacency up (3)" \
+  sh -c "printf '%s\\n' \"$ISISADJ\" | grep -qE '^(3|up)'"
+# A routing commit with agentx running: frr-reload would send `no agentx`,
+# which FRR refuses, unless the reload carries it.
+AXCOMMIT=$($HX -c "configure" -c "router bgp 65000" \
+               -c "neighbor 10.0.0.2 description upstream-snmp" -c "exit" \
+               -c "commit" 2>&1)
+expect_in "a routing commit still goes through with agentx running" \
+  "commit complete" "$AXCOMMIT"
+SNMPOFF=$($HX -c "configure" -c "snmp enabled no" -c "commit" 2>&1)
+printf '%s\n' "$SNMPOFF" | sed 's/^/  /'
+expect_in "turning SNMP off says what the daemons keep until FRR restarts" \
+  "keep looking for snmpd" "$SNMPOFF"
+pkill -x snmpd 2>/dev/null
+
 # --- MTU committed through the VTY reaches BOTH sides ---
 # The lab sets 1500 by hand at the top, which is what makes OSPF come up here.
 # This proves the operator can now do the same through the configuration, and
