@@ -88,6 +88,10 @@ else
   exit 1
 fi
 
+# Optimised, or not shipped (#490): every release to 0.140.2 carried the
+# plugin at -O0, 3.6x the clocks a packet, and nothing said so.
+sh "$REPO/tools/plugin-optimised.sh" "$SO" >&2 || exit 1
+
 # THE PLATFORM PINS, READ OUT OF build-iso.sh rather than restated here.
 #
 # They are the versions of VPP and FRR the medium installs, so they are the

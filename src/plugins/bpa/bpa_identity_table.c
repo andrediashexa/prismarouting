@@ -293,7 +293,19 @@ bpa_identity_load_kind (const char *path, bpa_identity_kind_t kind)
      * question and is refused, which is the paragraph below. Two grammars,
      * two meanings for the same shape, and this is where they part.
      */
+    /* Not on an empty file (#490): an empty vector is a null pointer, and
+     * VPP's vec_set_len writes the length through it - ASSERT (v) is gone
+     * in a release build. Measured on 0.140.2: `cgnat identity dhcp-leases`
+     * naming an empty file, which is what dhcpd writes before its first
+     * lease, took the dataplane down with SIGSEGV. The compiler said so the
+     * first time the plugin was built at -O2 (-Wstringop-overflow). */
+#ifdef BPA_IDENTITY_EMPTY_OFF
+    /* lab/identity-empty.sh's off mode builds the plugin this way, to show
+     * the crash this guard exists for. No box is built with it. */
     if (kind == BPA_IDENTITY_DHCP_LEASES)
+#else
+    if (kind == BPA_IDENTITY_DHCP_LEASES && fresh)
+#endif
       vec_set_len (fresh,
 		   bpa_identity_collapse_leases (fresh, vec_len (fresh)));
     if (kind == BPA_IDENTITY_MAP

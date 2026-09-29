@@ -62,7 +62,13 @@ fresh_tree() {
   # Sized like the real ones, so the artifact this suite weighs is the weight
   # of the thing an operator downloads. bpa_plugin.so measured 1085448 bytes
   # and the vat2 plugin 50160 on the appliance #295 was written from.
-  head -c 1085448 /dev/zero > "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
+  # A real shared object at -O2 -g, padded to that size: build-upgrade.sh
+  # refuses a plugin whose debug info shows no optimisation (#490), and a
+  # file of zeros cannot say how it was built.
+  echo 'int bpa_stand_in (int x) { return x + 1; }' > "$WORK/stand-in.c"
+  cc -shared -fPIC -O2 -g -o "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so" \
+    "$WORK/stand-in.c"
+  truncate -s 1085448 "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
   head -c 50160  /dev/zero > "$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
   # The container images, where tools/build-images.sh saves them (#427). A
   # stand-in of 1 MB rather than the real 118: what is asked here is that the

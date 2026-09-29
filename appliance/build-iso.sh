@@ -105,6 +105,10 @@ else
   exit 1
 fi
 
+# Optimised, or not shipped (#490): every release to 0.140.2 carried the
+# plugin at -O0, 3.6x the clocks a packet, and nothing said so.
+sh "$REPO/tools/plugin-optimised.sh" "$PLUGIN_SO" >&2 || exit 1
+
 ROOT=$WORK/chroot
 rm -rf "$WORK"
 mkdir -p "$ROOT" "$WORK/iso/live" "$WORK/iso/boot/grub"
