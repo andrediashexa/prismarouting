@@ -773,13 +773,16 @@ check(body.splitlines()[1:] == [
 check(body.endswith("\n") and "rw" not in body,
       "ends in a newline and grants nothing writable")
 body = system._snmpd_body({}, ["public"], {}, release="")
+# With no number named, the product's (#508): its subtree, and UCD's own.
 check("agentAddress udp:127.0.0.1:161" in body
-      and "pass_persist .1.3.6.1.4.1." not in body
       and [l for l in body.splitlines() if ".1.3.6.1.4.1." in l]
-      == ["view hexa included .1.3.6.1.4.1.2021"]
+      == ["view hexa included .1.3.6.1.4.1.2021",
+          "view hexa included .1.3.6.1.4.1.32473",
+          f"pass_persist .1.3.6.1.4.1.32473 {system.SNMP_AGENT} "
+          f"--enterprise 32473"]
       and "sysdescr Prisma Routing\n" in body
       and f"pass_persist .1.3.6.1.2.1.123 {system.SNMP_AGENT}" in body,
-      f"defaults: loopback 161, no operator subtree, UCD's own, a sysDescr "
+      f"defaults: loopback 161, the product's subtree, UCD's own, a sysDescr "
       f"with no release it cannot read, the shipped agent: {body.splitlines()}")
 # THE VIEW NOW CARRIES AN ENTERPRISE OID THAT IS NOT THE OPERATOR'S (#497):
 # UCD-SNMP-MIB's 2021. read() took the operator's number from the first view
@@ -800,8 +803,8 @@ with _tf.TemporaryDirectory() as _d:
         _f.write(system._snmpd_body({}, ["p"], {}, release="x"))
     _settings = system.SnmpDaemon(runner=lambda a, stdin=None, timeout=30: (1, ""),
                                   root="", conf=_conf).read()[0]
-    check(_settings.get("enterprise-number", "") == "",
-          f"and no number where the operator set none: {_settings}")
+    check(_settings.get("enterprise-number", "") == "32473",
+          f"and the product's where the operator set none (#508): {_settings}")
 print("  the view answers the box's identity, CPU, memory and disks")
 print("--- _release: the release sysDescr names")
 _old = system.SNMP_VERSION_FILE
@@ -1192,6 +1195,11 @@ _rd = system.SnmpDaemon(root=_root, runner=lambda *a, **k: (0, "")).read()
 check(_rd[0]["enterprise-number"] == "",
       f"an snmpd.conf from before serves no subtree and reads as none, so the "
       f"next load has a change to write: {_rd[0]}")
+_b = system._snmpd_body(dict(_cfg.snmp, **{"enterprise-number": ""}), ["c"],
+                        {}, agent="/x/agent", release="0.1")
+check("pass_persist .1.3.6.1.4.1.32473 /x/agent --enterprise 32473" in _b,
+      "a candidate copied from a file with no number - Debian's, or one from "
+      "before #508 - still writes the product's")
 print("  [ ok ] 32473 by default, unwritten, and an old file read as it is")
 
 if fail:
