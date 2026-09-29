@@ -55,3 +55,4 @@ vpp-core*
 *.never
 .coverage-gcov/
 .coverage-run.log
+/.lab-retention/

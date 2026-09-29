@@ -736,11 +736,18 @@ body = system._snmpd_body(
     {"listen-address": "10.0.0.1", "port": "1161",
      "enterprise-number": "70000"},
     ["public", "ops"], {"zed": system.SnmpUser("zed"),
-                        "amy": system.SnmpUser("amy")}, agent="/x/agent")
+                        "amy": system.SnmpUser("amy")}, agent="/x/agent",
+    release="0.141.2")
 check(body.splitlines()[1:] == [
     "agentAddress udp:10.0.0.1:1161",
+    "view hexa included .1.3.6.1.2.1.1",
+    "view hexa included .1.3.6.1.2.1.25",
+    "view hexa included .1.3.6.1.4.1.2021",
     "view hexa included .1.3.6.1.2.1.123",
     "view hexa included .1.3.6.1.4.1.70000",
+    "sysdescr Prisma Routing 0.141.2",
+    "disk / 10%",
+    "disk /var/log/prisma-routing 15%",
     "rocommunity public default -V hexa",
     "rocommunity ops default -V hexa",
     "rouser amy priv -V hexa",
@@ -751,12 +758,46 @@ check(body.splitlines()[1:] == [
     f"{body.splitlines()}")
 check(body.endswith("\n") and "rw" not in body,
       "ends in a newline and grants nothing writable")
-body = system._snmpd_body({}, ["public"], {})
+body = system._snmpd_body({}, ["public"], {}, release="")
 check("agentAddress udp:127.0.0.1:161" in body
-      and ".1.3.6.1.4.1." not in body
+      and "pass_persist .1.3.6.1.4.1." not in body
+      and [l for l in body.splitlines() if ".1.3.6.1.4.1." in l]
+      == ["view hexa included .1.3.6.1.4.1.2021"]
+      and "sysdescr Prisma Routing\n" in body
       and f"pass_persist .1.3.6.1.2.1.123 {system.SNMP_AGENT}" in body,
-      f"defaults: loopback 161, no enterprise subtree, the shipped agent: "
-      f"{body.splitlines()}")
+      f"defaults: loopback 161, no operator subtree, UCD's own, a sysDescr "
+      f"with no release it cannot read, the shipped agent: {body.splitlines()}")
+# THE VIEW NOW CARRIES AN ENTERPRISE OID THAT IS NOT THE OPERATOR'S (#497):
+# UCD-SNMP-MIB's 2021. read() took the operator's number from the first view
+# line under .1.3.6.1.4.1, which would now answer 2021; it reads the agent's
+# registration instead.
+import tempfile as _tf
+with _tf.TemporaryDirectory() as _d:
+    _conf = os.path.join(_d, "snmpd.conf")
+    with open(_conf, "w") as _f:
+        _f.write(system._snmpd_body({"enterprise-number": "70000"}, ["p"], {},
+                                    release="x"))
+    _sn = system.SnmpDaemon(runner=lambda a, stdin=None, timeout=30: (1, ""),
+                            root="", conf=_conf)
+    _settings = _sn.read()[0]
+    check(_settings.get("enterprise-number") == "70000",
+          f"read back the operator's number, not UCD's: {_settings}")
+    with open(_conf, "w") as _f:
+        _f.write(system._snmpd_body({}, ["p"], {}, release="x"))
+    _settings = system.SnmpDaemon(runner=lambda a, stdin=None, timeout=30: (1, ""),
+                                  root="", conf=_conf).read()[0]
+    check(_settings.get("enterprise-number", "") == "",
+          f"and no number where the operator set none: {_settings}")
+print("  the view answers the box's identity, CPU, memory and disks")
+print("--- _release: the release sysDescr names")
+_old = system.SNMP_VERSION_FILE
+with _tf.TemporaryDirectory() as _d:
+    system.SNMP_VERSION_FILE = os.path.join(_d, "VERSION")
+    check(system._release() == "", "no VERSION file is no release, not a crash")
+    with open(system.SNMP_VERSION_FILE, "w") as _f:
+        _f.write("0.141.2\n")
+    check(system._release() == "0.141.2", "the release read from VERSION")
+system.SNMP_VERSION_FILE = _old
 
 print("--- User.__eq__: two accounts are equal by what they would write")
 a = account("alice", keys=["k1"], password="$6$h", role=system.ROLE_ADMIN)

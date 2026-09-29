@@ -112,19 +112,25 @@ check(agent.ENTERPRISE == "",
       f"about who the object belongs to")
 check(agent._enterprise() == "",
       "with no snmpd.conf the PEN was not empty")
-# "view hexa included <oid>": the OID is the FOURTH field, and reading the
-# third gave "included", so the enterprise half was dark on every box while
-# every standard object answered.
+# FROM THE AGENT'S OWN REGISTRATION (#497), on the file the VTY generates:
+# the view carries UCD-SNMP-MIB's .1.3.6.1.4.1.2021 before the operator's
+# subtree, and a view-line read answered 2021 - the CGNAT served under
+# net-snmp's number, measured in lab/snmp.sh.
 w(f"{BOX}/snmpd.conf", "rocommunity public\n"
+                       "view hexa included .1.3.6.1.2.1.1\n"
+                       "view hexa included .1.3.6.1.4.1.2021\n"
                        "view hexa included .1.3.6.1.2.1.123\n"
-                       "view hexa included .1.3.6.1.4.1.99999\n")
+                       "view hexa included .1.3.6.1.4.1.99999\n"
+                       "pass_persist .1.3.6.1.2.1.123 /x/agent\n"
+                       "pass_persist .1.3.6.1.4.1.99999 /x/agent\n")
 check(agent._enterprise() == "99999",
-      f"'view hexa included .1.3.6.1.4.1.99999' read as "
+      f"with UCD's 2021 in the view the PEN read as "
       f"{agent._enterprise()!r}, and it is 99999")
-w(f"{BOX}/snmpd.conf", "view hexa included .1.3.6.1.2.1.123\n"
-                       "com2sec ro default .1.3.6.1.4.1.5\n")
+w(f"{BOX}/snmpd.conf", "view hexa included .1.3.6.1.4.1.2021\n"
+                       "view hexa included .1.3.6.1.2.1.123\n"
+                       "pass_persist .1.3.6.1.2.1.123 /x/agent\n")
 check(agent._enterprise() == "",
-      f"a conf whose only enterprise OID is not on a view line gave "
+      f"a conf with no enterprise registration gave "
       f"{agent._enterprise()!r}")
 os.environ["PRISMA_SNMP_ENTERPRISE"] = " 4242 "
 check(agent._enterprise() == "4242",
