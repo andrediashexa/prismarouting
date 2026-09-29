@@ -4,12 +4,12 @@ PRISMA-ROUTING-MIB DEFINITIONS ::= BEGIN
 -- The MIB of Prisma Routing's own objects: the CGNAT, the retention log's
 -- transports and the release the box runs (#504).
 --
--- ROOTED AT THE OPERATOR'S ENTERPRISE NUMBER until the product has its own.
--- The number below is `snmp enterprise-number` on the box that printed this
--- file (`show snmp mib`); a file printed by another box, or kept from before
--- the number changed, names a subtree that box does not serve. When the
--- product's IANA number is registered it becomes the default, and nothing
--- under it moves.
+-- ROOTED AT THE NUMBER THE BOX THAT PRINTED IT SERVES (`show snmp mib`):
+-- the product's own, provisionally 32473 - IANA's number for documentation
+-- use (RFC 5612) until the product's registration arrives - or the one the
+-- operator named with `snmp enterprise-number`. A file printed by another box,
+-- or kept from before the number changed, names a subtree that box does not
+-- serve. Nothing under the root moves when the number does.
 --
 -- What the box also serves, from standard MIBs, and is not repeated here:
 -- IF-MIB (the dataplane's cards, 64-bit counters), BGP4-MIB, OSPF-MIB,

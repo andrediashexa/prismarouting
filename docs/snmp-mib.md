@@ -7,29 +7,33 @@ alarm. `docs/snmp-plan.md` is the plan this implements; the wiki page
 
 ## Getting the MIB into the NMS
 
-The box's own objects are defined in **PRISMA-ROUTING-MIB**. It is rooted at
-the enterprise number configured on the box, so the box prints it with that
-number filled in:
+The box's own objects are defined in **PRISMA-ROUTING-MIB**, served with SNMP
+on and nothing else configured, and the box prints the file with its root
+filled in:
 
 ```
-configure
- snmp enterprise-number 65535
- commit
- exit
 show snmp mib
 ```
 
-Save what `show snmp mib` prints as `PRISMA-ROUTING-MIB.txt` and load it in the
-NMS beside the standard modules it imports (SNMPv2-SMI, SNMPv2-TC,
-SNMPv2-CONF), which every NMS already has. Until an enterprise number is set
-the box's own objects are not served at all, and `show snmp mib` says so rather
-than print a MIB for a subtree nobody answers.
+Save it as `PRISMA-ROUTING-MIB.txt` and load it in the NMS beside the standard
+modules it imports (SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF), which every NMS
+already has.
 
-**Why the operator's number.** An object under somebody else's enterprise
-number is a claim about who the object belongs to, and it collides the day
-that organisation uses the subtree. When the product has its own IANA number
-it becomes the default and nothing under it moves: the objects below are
-numbered from the root, not from the number.
+**The root is the product's number, provisionally 32473** (#508). The
+product's own IANA Private Enterprise Number was applied for on 2026-09-29;
+until it arrives the MIB is served under IANA's "Example Enterprise Number for
+Documentation Use" (RFC 5612), which belongs to nobody. The number first
+proposed, 666, belongs to Oki Electric Industry: an object in another
+organisation's subtree is read by an NMS with that organisation's MIBs loaded
+as that organisation's device's. When the product's number arrives it
+replaces 32473 in one place, and every box moves with it - the default is not
+written into a saved configuration, so no box pins the old one. The objects
+are numbered from the root, so nothing under it moves either; an NMS reloads
+the file `show snmp mib` then prints.
+
+An operator may still name a number of its own with
+`snmp enterprise-number <number>`, and `no snmp enterprise-number` goes back
+to the product's.
 
 ## The standard MIBs
 
@@ -187,9 +191,8 @@ sending there.
 | a disk, memory or load threshold | net-snmp's default monitors (`dskErrorFlag` and the rest) | net-snmp |
 
 The monitors are polled every 30 or 60 seconds, so a notification follows the
-event by up to a minute. They go under the enterprise number, like the objects
-they watch, so without one only linkUp/linkDown, BGP and the default monitors
-are sent. `lab/snmp-traps.sh` receives every monitored one with snmptrapd,
+event by up to a minute. They go under the enterprise number in effect, like
+the objects they watch. `lab/snmp-traps.sh` receives every monitored one with snmptrapd,
 and `lab/routing.sh` the two BGP ones; OSPF's neighbour notifications are sent
 by ospfd by the same path and have not been verified end to end.
 

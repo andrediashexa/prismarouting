@@ -4651,9 +4651,9 @@ for _stmt in ("no snmp enterprise-number", "no snmp port",
         sh.do_config(_stmt)
     check("error" not in o.getvalue(),
           f"{_stmt!r} was refused: {o.getvalue()!r}")
-check(sh.candidate.snmp.get("enterprise-number") == ""
+check(sh.candidate.snmp.get("enterprise-number") == "32473"
       and "enterprise-number" not in sh.candidate.text(),
-      f"the number is still set: {sh.candidate.snmp}")
+      f"back to the product's number, and not written: {sh.candidate.snmp}")
 check(sh.candidate.snmp.get("enabled") == "no"
       and sh.candidate.snmp.get("port") == "161",
       f"not back to the defaults: {sh.candidate.snmp}")
@@ -6881,13 +6881,23 @@ check("::= { enterprises 70000 }" in _out and "@PEN@" not in _out
       f"the MIB is printed whole, rooted at 70000: {_out[:200]!r}")
 _sh = _mib_shell("")
 _, _out = driven(_sh.show_snmp_mib)
-check("no enterprise number is set" in _out and "BEGIN" not in _out,
-      f"with no number there is no MIB to print, and it says why: {_out!r}")
+check("::= { enterprises 32473 }" in _out,
+      f"with no number named, the product's (#508): {_out[:120]!r}")
+# A box whose snmpd.conf predates #508 serves no enterprise subtree until SNMP
+# is written again; its running configuration says "", and there is no MIB to
+# hand out for a subtree nobody answers.
+_sh = _mib_shell("")
+_c = _sh.running_config()
+_c.snmp["enterprise-number"] = ""
+_sh.running_config = lambda: _c
+_, _out = driven(_sh.show_snmp_mib)
+check("serves no enterprise subtree" in _out and "BEGIN" not in _out,
+      f"an agent serving no subtree has no MIB to print: {_out!r}")
 prismash.SNMP_MIB_TEMPLATE = os.path.join(_root, "no-such-mib")
 _, _out = driven(_mib_shell("snmp enterprise-number 70000\n").show_snmp_mib)
 check("not on this box" in _out, f"a missing file is named: {_out!r}")
 with contextlib.redirect_stdout(io.StringIO()):
-    _mib_shell("").show_snmp_mib()
+    _mib_shell("snmp enterprise-number 70000\n").show_snmp_mib()
 prismash.SNMP_MIB_TEMPLATE = _was
 ok("show snmp mib: printed with the number, or refused with the reason")
 

@@ -1168,6 +1168,32 @@ check(_rd[3] == [("10.0.0.9", "t1", "trap"), ("2001:db8::9", "t2", "inform")]
       f"read back: the destinations, and the internal user is nobody's: {_rd}")
 print("  [ ok ] destinations, monitors and read-back")
 
+print("\n=== the product's number by default, not written, read as served (#508) ===")
+check(system.PRODUCT_PEN == "32473",
+      f"the provisional number is IANA's documentation one: {system.PRODUCT_PEN}")
+from config import Config as _C
+_cfg = _C.parse("snmp enabled yes\nsnmp community c\n")
+check(_cfg.snmp["enterprise-number"] == "32473"
+      and "enterprise-number" not in _cfg.text(),
+      "a configuration naming no number takes the product's, and does not "
+      "write it - or every box would pin it the day it changes")
+check("snmp enterprise-number 70000" in
+      _C.parse("snmp enterprise-number 70000\n").text(),
+      "an operator's own number is written")
+_b = system._snmpd_body(_cfg.snmp, ["c"], {}, agent="/x/agent", release="0.1")
+check("pass_persist .1.3.6.1.4.1.32473 /x/agent --enterprise 32473" in _b,
+      f"and snmpd serves the product's MIB under it: {_b}")
+_root = tempfile.mkdtemp()
+os.makedirs(_root + "/etc/snmp")
+with open(_root + "/etc/snmp/snmpd.conf", "w") as _f:
+    _f.write("agentAddress udp:127.0.0.1:161\nrocommunity c default -V hexa\n"
+             "pass_persist .1.3.6.1.2.1.123 /x/agent\n")
+_rd = system.SnmpDaemon(root=_root, runner=lambda *a, **k: (0, "")).read()
+check(_rd[0]["enterprise-number"] == "",
+      f"an snmpd.conf from before serves no subtree and reads as none, so the "
+      f"next load has a change to write: {_rd[0]}")
+print("  [ ok ] 32473 by default, unwritten, and an old file read as it is")
+
 if fail:
     print(f"{fail} FAILURES")
     sys.exit(1)

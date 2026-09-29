@@ -2543,8 +2543,8 @@ TREE = {
                 "enabled": ("the agent off, which is the default", None),
                 "listen-address": ("back to 127.0.0.1", None),
                 "port": ("back to 161", None),
-                "enterprise-number": ("none: the product's own objects are "
-                                      "not served", None),
+                "enterprise-number": ("back to the product's own number",
+                                      None),
                 "community": ("remove one community", ARG_WORD),
                 "trap-host": ("stop sending notifications there", "<address>"),
             }),
@@ -2607,8 +2607,9 @@ TREE = {
             "enabled": ("run the agent", {"yes": ("", None), "no": ("", None)}),
             "listen-address": ("address to listen on", ARG_WORD),
             "port": ("UDP port", ARG_PORT),
-            "enterprise-number": ("your organisation's IANA Private "
-                                  "Enterprise Number", "<1-4294967295>"),
+            "enterprise-number": ("the IANA number the product's MIB is "
+                                  "served under; the product's own if unset",
+                                  "<1-4294967295>"),
             "community": ("an SNMPv2c community, read-only", ARG_WORD),
             "trap-host": ("where to send notifications: '<address> community "
                           "<string> [inform]'", "<address>"),
@@ -14522,9 +14523,11 @@ class Shell:
         """
         pen = self.running_config().snmp.get("enterprise-number", "")
         if not pen:
-            self.err("no enterprise number is set, and the MIB is rooted at it")
-            print_prose("'snmp enterprise-number <number>' and a commit, "
-                        "then this prints the file for the NMS")
+            # Only a box whose snmpd.conf was written before the product had
+            # a number (#508): the next load, or any SNMP commit, writes it.
+            self.err("the agent serves no enterprise subtree yet")
+            print_prose("the next commit that touches snmp writes it under the "
+                        "product's number; this prints the file after that")
             return
         try:
             with open(SNMP_MIB_TEMPLATE) as f:
