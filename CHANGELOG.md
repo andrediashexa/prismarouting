@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.141.1 - a physical card on uio reaches the dataplane
+
+### Fixed
+
 * **A physical card on `uio_pci_generic` never reached the dataplane.**
   ([#494](https://github.com/andrediashexa/hexarouting/issues/494))
   On a box with no IOMMU the card is bound to `uio_pci_generic`, and there
