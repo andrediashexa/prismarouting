@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.143.0 - PRISMA-ROUTING-MIB: the CGNAT, its records and the box, over SNMP
+
+### Added
+
 * **PRISMA-ROUTING-MIB: the CGNAT, its records and the box, over SNMP.**
   ([#504](https://github.com/andrediashexa/hexarouting/issues/504))
   Asked by the maintainer: the product's own MIB, documented, so the CGNAT
@@ -103,8 +109,6 @@ version has a chance of seeing it.
   six were Counter32, which an NMS computing rates drew as false wraps - and
   `.1.5.0` counts every refusal since the dataplane started instead of those
   of the subscribers still holding a block.
-
-### Fixed
 
 ## 0.142.1 - OSPFv3 over SNMP verified, and the FIB's size without the FIB
 
