@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.143.2 - the compare screen shows no secret, and an SNMP setting can be taken out
+
+### Fixed
+
 * **`show configuration compare` printed the SNMP community, and every other
   secret, in clear.**
   ([#506](https://github.com/andrediashexa/hexarouting/issues/506))
