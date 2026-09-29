@@ -45,6 +45,13 @@ $HX -c "configure" \
     -c "commit" 2>&1 | sed 's/^/  /'
 CONF=$(cat /etc/snmp/snmpd.conf 2>/dev/null || echo "")
 printf '%s\n' "$CONF" | sed 's/^/  |/'
+# THE RETENTION LOG'S FILESYSTEM, AS A REAL ONE (#497). In this container /
+# and /tmp are overlay, which net-snmp leaves out of dskTable on purpose, so a
+# disk line on either stays empty here while it answers on the box, where both
+# are ext4. /src is a bind of the host's ext4, so a directory of it mounted on
+# the path the box uses is the same kind of filesystem the box has.
+mkdir -p /src/.lab-retention /var/log/prisma-routing
+mount --bind /src/.lab-retention /var/log/prisma-routing
 # snmpd is not under systemd in this container; start it the way the unit does.
 pkill snmpd 2>/dev/null; sleep 0.5
 snmpd -Lo -f -C -c /etc/snmp/snmpd.conf > /tmp/snmpd.log 2>&1 &
@@ -56,6 +63,22 @@ printf 'get\n1.3.6.1.4.1.99999.1.1.0\n' | /usr/lib/prisma-routing/snmp-agent | s
 
 echo
 echo "=========== 2. poll it ==========="
+# WHAT AN NMS SEES FIRST (#497): the box's identity, CPU, memory and disks,
+# which net-snmp serves and the view used to keep out.
+DESCR=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.1.1.0 2>&1)
+UPTIME=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.1.3.0 2>&1)
+# The processors as HOST-RESOURCES lists them: hrDeviceType rows that are
+# hrDeviceProcessor. Not hrProcessorLoad, which net-snmp only fills after a
+# minute of samples - a poll two seconds after start would read an empty table
+# on a box that has one.
+CPUS=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.25.3.2.1.2 2>&1 | grep -c "25.3.1.3$")
+MEMTOTAL=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.2021.4.5.0 2>&1)
+DISKS=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.2021.9.1.2 2>&1)
+echo "  sysDescr:  $DESCR"
+echo "  sysUpTime: $UPTIME"
+echo "  processors in hrDeviceTable: $CPUS"
+echo "  memTotalReal: $MEMTOTAL"
+printf '%s\n' "$DISKS" | sed 's/^/  dskPath: /'
 UDPT=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.123.1.1.2.0 2>&1)
 ICMPT=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.123.1.1.3.0 2>&1)
 SUBS=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.99999.1.1.0 2>&1)
@@ -116,6 +139,11 @@ expect_not_in "and NO writable community" "rwcommunity" "$CONF"
 # pins the value this lab asked for; the second pins it to what the DATAPLANE
 # answers, and an agent serving a constant is indistinguishable from an agent
 # reading the box until somebody asks the box.
+expect_in "sysDescr names the product" "Prisma Routing" "$DESCR"
+expect "sysUpTime answers" sh -c "case \"$UPTIME\" in *No\ Such*|*Timeout*|'') exit 1;; *) exit 0;; esac"
+expect "HOST-RESOURCES lists the processors ($CPUS)" test "${CPUS:-0}" -ge 1
+expect "UCD reports the memory" sh -c "case \"$MEMTOTAL\" in [0-9]*) exit 0;; *) exit 1;; esac"
+expect_in "and the retention log's filesystem has a disk threshold" "/var/log/prisma-routing" "$DISKS"
 expect "the UDP timeout came back over SNMP" test "$UDPT" = "600"
 expect "and it is the value the dataplane actually holds, not a constant" \
   test "$UDPT" = "${DP_UDPT:-unread}"

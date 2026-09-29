@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **An NMS polling the box got no name, no uptime, no CPU, memory or disk.**
+  ([#497](https://github.com/andrediashexa/hexarouting/issues/497))
+  The `snmpd.conf` the VTY writes admitted only NAT-MIB's timeouts and the
+  operator's enterprise subtree. It now admits the system group
+  (`sysDescr` names the product and its release), HOST-RESOURCES-MIB and
+  UCD-SNMP-MIB - net-snmp's own - and sets a disk threshold on `/` and on the
+  retention log's filesystem, `/var/log/prisma-routing`, whose filling is the
+  compliance log stopping. Found on the way: with UCD's `.1.3.6.1.4.1.2021`
+  in the view, the CGNAT agent and the VTY's reader both took 2021 for the
+  operator's enterprise number - the agent served the CGNAT under net-snmp's
+  subtree in `lab/snmp.sh` - and both read it from the agent's own
+  registration now. The first slice of #496's phase 1.
+
 ## 0.141.2 - a plan for monitoring everything the box does over SNMP
 
 ### Added

@@ -60,15 +60,16 @@ def _enterprise():
         with open(os.environ.get("PRISMA_SNMPD_CONF", "/etc/snmp/snmpd.conf")) as f:
             for line in f:
                 w = line.split()
-                if not w or w[0] != "view":
-                    continue
-                # Scanned rather than indexed. "view hexa included <oid>" puts
-                # the OID in the FOURTH field, and reading the third gave
-                # "included" - so the enterprise subtree was silently dark
-                # while every standard object answered normally.
-                for field in w[1:]:
-                    if field.startswith(".1.3.6.1.4.1."):
-                        return field.rsplit(".", 1)[-1]
+                # FROM THIS AGENT'S OWN REGISTRATION, "pass_persist <oid>
+                # <agent>", and not from a view line (#497): the view carries
+                # UCD-SNMP-MIB's .1.3.6.1.4.1.2021 as well, and reading the
+                # first enterprise OID there made this agent serve the CGNAT
+                # under net-snmp's number - measured in lab/snmp.sh, a getnext
+                # from .1.3.6.1.4.1 answered .1.3.6.1.4.1.2021.1.1.0. The
+                # NAT-MIB registration is under .1.3.6.1.2.1 and never matches.
+                if len(w) > 1 and w[0] == "pass_persist" \
+                        and w[1].startswith(".1.3.6.1.4.1."):
+                    return w[1].rsplit(".", 1)[-1]
     except OSError:
         pass
     return ""
