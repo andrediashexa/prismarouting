@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.140.5 - a collector for the retention log, and a page that asks it who held an address
+
+### Added
+
 * **A collector for the retention log, and a page that asks it who held an
   address.** ([#491](https://github.com/andrediashexa/hexarouting/issues/491))
   `lab/collector/`: IPFIX on udp/4739 (RFC 8158 NAT events and the boot
@@ -90,8 +96,6 @@ version has a chance of seeing it.
   both lost the syslog stream at the #492 cut, which this reader skips past
   and counts. Lab infrastructure, in no medium; its functions are held by
   `test/test_collector.py`, on templates captured from the bench.
-
-### Fixed
 
 ## 0.140.4 - records written while the collector restarts reach the next one
 
