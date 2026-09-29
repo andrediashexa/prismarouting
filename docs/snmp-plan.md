@@ -2,6 +2,14 @@
 
 ## TL;DR
 
+**Where it stands (#504).** Delivered: the view and the host MIBs (#497),
+IF-MIB for the dataplane's cards (#498), BGP, OSPF, OSPFv3 and IS-IS over
+AgentX and the FIB's size (#502, #503), and PRISMA-ROUTING-MIB for the CGNAT,
+its logging transports and the running build (#504) - rooted, until the
+product has its own number, at the operator's, which `show snmp mib` fills
+in. `docs/snmp-mib.md` is the reference for what is served. Next: HA, LACP,
+identity sources and workers (#505); notifications wait on decision 4 below.
+
 The maintainer asked (2026-09-29) for the box to be monitorable over SNMP in
 **every function it has**, planned in full before anything is built. This is
 that plan. It says what the box answers today, what an operator of a CGNAT and

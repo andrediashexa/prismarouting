@@ -77,6 +77,33 @@ version has a chance of seeing it.
 
 ### Added
 
+* **PRISMA-ROUTING-MIB: the CGNAT, its records and the box, over SNMP.**
+  ([#504](https://github.com/andrediashexa/hexarouting/issues/504))
+  Asked by the maintainer: the product's own MIB, documented, so the CGNAT
+  can be monitored beside BGP, OSPF and IF-MIB. `show snmp mib` prints it
+  rooted at the box's `snmp enterprise-number`, and it holds a table of the
+  pools - mode, size, capacity, the guaranteed floor, subscribers, blocks,
+  utilisation, sessions, ports, subscribers at 90%, refusals - the drops by
+  reason, the sessions, the IPFIX, TCP and syslog transports, and the
+  release against the running dataplane's build. `docs/snmp-mib.md` is the
+  reference, object by object, with what to alarm on and what the box does
+  not serve yet (#505). **Measured before building**: every one of these
+  numbers existed only as prose on a `show bpa` screen, and the agent got
+  its six totals by parsing `show bpa top 100000` - a walk of every
+  subscriber in every worker's table, on each ten-second refresh. The
+  dataplane now keeps them in VPP's statistics segment where they change,
+  per pool and per thread, charged to the thread that owns the subscriber
+  (sessions expire on the main thread, and VPP asserts a counter slot never
+  goes below zero). Read on a two-worker lab against `show bpa top`: 2
+  subscribers, 473 ports, 1 at 91%, and all of it back to zero when the
+  sessions expire. `lab/snmp.sh` checks the printed MIB with `smilint -l 6`
+  and walks it loaded, every row by name; `test_snmp_agent.py` holds each
+  served OID and type against the file. **Changed**: the six totals keep
+  their OIDs, but the four that fall as well as rise are Gauge32 now - all
+  six were Counter32, which an NMS computing rates drew as false wraps - and
+  `.1.5.0` counts every refusal since the dataplane started instead of those
+  of the subscribers still holding a block.
+
 ### Fixed
 
 ## 0.142.1 - OSPFv3 over SNMP verified, and the FIB's size without the FIB
