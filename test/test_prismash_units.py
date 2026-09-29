@@ -6795,5 +6795,38 @@ finally:
     prismash.FRR_RELOAD = _was
 ok("agentx: read, dropped, carried, and following snmp enabled")
 
+# ---------------------------------------------------- show snmp mib (#504)
+print("\n=== show snmp mib: the MIB, rooted at this box's number (#504) ===")
+_was = prismash.SNMP_MIB_TEMPLATE
+
+
+def _mib_shell(text):
+    """A Shell whose running configuration is `text`."""
+    from config import Config as _C
+    sh = prismash.Shell()
+    sh.caps = {prismash.CAP_ALL}
+    sh.running_config = lambda: _C.parse(text)
+    return sh
+
+
+prismash.SNMP_MIB_TEMPLATE = os.path.join(os.path.dirname(__file__), "..",
+                                          "appliance", "PRISMA-ROUTING-MIB.in")
+_sh = _mib_shell("snmp enterprise-number 70000\n")
+_, _out = driven(_sh.show_snmp_mib)
+check("::= { enterprises 70000 }" in _out and "@PEN@" not in _out
+      and _out.rstrip().endswith("END"),
+      f"the MIB is printed whole, rooted at 70000: {_out[:200]!r}")
+_sh = _mib_shell("")
+_, _out = driven(_sh.show_snmp_mib)
+check("no enterprise number is set" in _out and "BEGIN" not in _out,
+      f"with no number there is no MIB to print, and it says why: {_out!r}")
+prismash.SNMP_MIB_TEMPLATE = os.path.join(_root, "no-such-mib")
+_, _out = driven(_mib_shell("snmp enterprise-number 70000\n").show_snmp_mib)
+check("not on this box" in _out, f"a missing file is named: {_out!r}")
+with contextlib.redirect_stdout(io.StringIO()):
+    _mib_shell("").show_snmp_mib()
+prismash.SNMP_MIB_TEMPLATE = _was
+ok("show snmp mib: printed with the number, or refused with the reason")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

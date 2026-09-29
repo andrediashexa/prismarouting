@@ -113,10 +113,6 @@ bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   return sub;
 }
 
-/* not a unit: the session table is VPP's: a bihash the worker owns, a pool of
- * subscribers indexed by a hash, and per-thread vectors. This returns the
- * record when its last session goes, releasing the blocks with it.
- * lab/ipfix-stop.sh reads the records that release writes. */
 /* not a unit: VPP's counters; the arithmetic is bpa_subblocks_usage(),
  * which test/test_bpa_subblock.c holds, and lab/snmp.sh fills a subscriber
  * past 90% and reads the pool's count move */
@@ -147,6 +143,10 @@ bpa_sub_seen (bpa_per_thread_t *pt, u32 pool_index, bpa_sub_t *sub)
     }
 }
 
+/* not a unit: the session table is VPP's: a bihash the worker owns, a pool of
+ * subscribers indexed by a hash, and per-thread vectors. This returns the
+ * record when its last session goes, releasing the blocks with it.
+ * lab/ipfix-stop.sh reads the records that release writes. */
 static void
 bpa_sub_put (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 	     bpa_sub_t *sub)

@@ -1,0 +1,551 @@
+PRISMA-ROUTING-MIB DEFINITIONS ::= BEGIN
+
+--
+-- The MIB of Prisma Routing's own objects: the CGNAT, the retention log's
+-- transports and the release the box runs (#504).
+--
+-- ROOTED AT THE OPERATOR'S ENTERPRISE NUMBER until the product has its own.
+-- The number below is `snmp enterprise-number` on the box that printed this
+-- file (`show snmp mib`); a file printed by another box, or kept from before
+-- the number changed, names a subtree that box does not serve. When the
+-- product's IANA number is registered it becomes the default, and nothing
+-- under it moves.
+--
+-- What the box also serves, from standard MIBs, and is not repeated here:
+-- IF-MIB (the dataplane's cards, 64-bit counters), BGP4-MIB, OSPF-MIB,
+-- OSPFV3-MIB, ISIS-MIB, the FIB's size in IP-FORWARD-MIB, NAT-MIB's default
+-- timeouts, HOST-RESOURCES-MIB and UCD-SNMP-MIB. docs/snmp-mib.md lists them.
+--
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, enterprises,
+    Counter32, Counter64, Gauge32, Unsigned32
+        FROM SNMPv2-SMI
+    DisplayString, TruthValue
+        FROM SNMPv2-TC
+    MODULE-COMPLIANCE, OBJECT-GROUP
+        FROM SNMPv2-CONF;
+
+prismaRouting MODULE-IDENTITY
+    LAST-UPDATED "202609290000Z"
+    ORGANIZATION "Prisma Routing"
+    CONTACT-INFO "https://prismarouting.com.br"
+    DESCRIPTION
+        "Prisma Routing's CGNAT, the transports of its connection records,
+        and the build the box runs. Read-only: every object is
+        read-only, and the agent refuses every SET."
+    REVISION "202609290000Z"
+    DESCRIPTION "First version (#504)."
+    ::= { enterprises @PEN@ }
+
+prObjects      OBJECT IDENTIFIER ::= { prismaRouting 1 }
+prConformance  OBJECT IDENTIFIER ::= { prismaRouting 2 }
+
+--
+-- The box's totals, at the OIDs they have been served at since the agent
+-- was written: an NMS configured against them keeps working.
+--
+
+prSubscribers OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Subscribers holding at least one port block now, over every pool."
+    ::= { prObjects 1 }
+
+prPortsInUse OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Ports allocated to subscribers now, over every pool, including a
+        port in hold-down: it is not free to hand out either."
+    ::= { prObjects 2 }
+
+prPortsHeld OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Ports in the blocks subscribers hold now: prPortsInUse over this is
+        how full the handed-out blocks are."
+    ::= { prObjects 3 }
+
+prSubscribersNearFull OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Subscribers using 90% or more of the ports they hold. The early
+        alarm: at 100% the subscriber is refused a port."
+    ::= { prObjects 4 }
+
+prPortRefusals OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Times a subscriber was refused a port because its blocks were full,
+        since the dataplane started. Any increase is a subscriber who could
+        not open a connection."
+    ::= { prObjects 5 }
+
+prPacketsDropped OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Packets the CGNAT did not pass, for any reason, since the dataplane
+        started. prDropTable says which reasons."
+    ::= { prObjects 6 }
+
+--
+-- The CGNAT.
+--
+
+prCgnat OBJECT IDENTIFIER ::= { prObjects 10 }
+
+prPoolTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrPoolEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The CGNAT pools, one row each: what the pool is, what it can serve,
+        and what it is serving now."
+    ::= { prCgnat 1 }
+
+prPoolEntry OBJECT-TYPE
+    SYNTAX      PrPoolEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One pool."
+    INDEX       { prPoolIndex }
+    ::= { prPoolTable 1 }
+
+PrPoolEntry ::= SEQUENCE {
+    prPoolIndex                Unsigned32,
+    prPoolName                 DisplayString,
+    prPoolMode                 INTEGER,
+    prPoolBlockSize            Unsigned32,
+    prPoolInsideAddresses      Unsigned32,
+    prPoolOutsideAddresses     Unsigned32,
+    prPoolBlocksTotal          Unsigned32,
+    prPoolCapacity             Unsigned32,
+    prPoolGuaranteed           Unsigned32,
+    prPoolSubscribers          Gauge32,
+    prPoolBlocksHeld           Gauge32,
+    prPoolUtilisation          Gauge32,
+    prPoolSessions             Gauge32,
+    prPoolPortsInUse           Gauge32,
+    prPoolSubscribersNearFull  Gauge32,
+    prPoolRefusals             Counter64
+}
+
+prPoolIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..4294967295)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The pool's index in the dataplane, plus one. Stable while the pool
+        exists; a pool deleted and created again may take another."
+    ::= { prPoolEntry 1 }
+
+prPoolName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The pool's name, as the configuration gives it."
+    ::= { prPoolEntry 2 }
+
+prPoolMode OBJECT-TYPE
+    SYNTAX      INTEGER { deterministic(1), dynamic(2) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "deterministic: a subscriber's block follows from its address by
+        formula. dynamic: blocks are allocated on demand (BPA)."
+    ::= { prPoolEntry 3 }
+
+prPoolBlockSize OBJECT-TYPE
+    SYNTAX      Unsigned32
+    UNITS       "ports"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Ports in one block."
+    ::= { prPoolEntry 4 }
+
+prPoolInsideAddresses OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Subscriber addresses the pool's inside ranges hold."
+    ::= { prPoolEntry 5 }
+
+prPoolOutsideAddresses OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Public addresses the pool translates to."
+    ::= { prPoolEntry 6 }
+
+prPoolBlocksTotal OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Blocks the pool can hand out: public addresses times the blocks
+        each maps, reserve excluded."
+    ::= { prPoolEntry 7 }
+
+prPoolCapacity OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Subscribers the pool can serve at once: a ceiling. On a dynamic pool
+        with several workers a subscriber can be refused below it; see
+        prPoolGuaranteed."
+    ::= { prPoolEntry 8 }
+
+prPoolGuaranteed OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Subscribers the pool serves whatever worker each lands on: the
+        number to size against. Equal to prPoolCapacity on a deterministic
+        pool or a single worker."
+    ::= { prPoolEntry 9 }
+
+prPoolSubscribers OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Subscribers holding a block of this pool now."
+    ::= { prPoolEntry 10 }
+
+prPoolBlocksHeld OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Blocks those subscribers hold now."
+    ::= { prPoolEntry 11 }
+
+prPoolUtilisation OBJECT-TYPE
+    SYNTAX      Gauge32 (0..100)
+    UNITS       "percent"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "prPoolBlocksHeld over prPoolBlocksTotal, in percent: how much of the
+        pool is handed out. The number to alarm on for a pool running out."
+    ::= { prPoolEntry 12 }
+
+prPoolSessions OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Translation sessions open in this pool now."
+    ::= { prPoolEntry 13 }
+
+prPoolPortsInUse OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Ports allocated in this pool now, hold-down included."
+    ::= { prPoolEntry 14 }
+
+prPoolSubscribersNearFull OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Subscribers of this pool using 90% or more of the ports they hold."
+    ::= { prPoolEntry 15 }
+
+prPoolRefusals OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Times a subscriber of this pool was refused a port, since the pool
+        was created."
+    ::= { prPoolEntry 16 }
+
+prDropTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrDropEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "What the CGNAT did not pass, by the node that counted it and the
+        reason. A reason that has never happened has no row."
+    ::= { prCgnat 2 }
+
+prDropEntry OBJECT-TYPE
+    SYNTAX      PrDropEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One reason, at one node."
+    INDEX       { prDropIndex }
+    ::= { prDropTable 1 }
+
+PrDropEntry ::= SEQUENCE {
+    prDropIndex    Unsigned32,
+    prDropNode     DisplayString,
+    prDropReason   DisplayString,
+    prDropPackets  Counter64
+}
+
+prDropIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..4294967295)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The row's position, by node and then by reason. A reason seen for
+        the first time can move the rows after it: read prDropNode and
+        prDropReason, not the index."
+    ::= { prDropEntry 1 }
+
+prDropNode OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "bpa-in2out (towards the internet) or bpa-out2in (back)."
+    ::= { prDropEntry 2 }
+
+prDropReason OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The reason, in the words `show cgnat drops` uses."
+    ::= { prDropEntry 3 }
+
+prDropPackets OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Packets dropped for it since the dataplane started."
+    ::= { prDropEntry 4 }
+
+prSessions OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Translation sessions open now, over every pool."
+    ::= { prCgnat 3 }
+
+--
+-- The connection records: IPFIX over UDP, and the TCP and syslog streams.
+-- A transport that stops is the compliance log stopping.
+--
+
+prLogging OBJECT IDENTIFIER ::= { prObjects 11 }
+
+prLogIpfixEnabled OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Whether IPFIX export of block events over UDP is on."
+    ::= { prLogging 1 }
+
+prLogIpfixRecords OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "IPFIX records emitted since the dataplane started."
+    ::= { prLogging 2 }
+
+prLogIpfixDropped OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Block events with no IPFIX collector to go to, since the dataplane
+        started. Rising while logging is required is a gap in the record."
+    ::= { prLogging 3 }
+
+prLogTransportTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrLogTransportEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The reliable streams: IPFIX over TCP (1) and syslog (2), each with
+        its spill file for when the collector is away."
+    ::= { prLogging 10 }
+
+prLogTransportEntry OBJECT-TYPE
+    SYNTAX      PrLogTransportEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One stream."
+    INDEX       { prLogTransportIndex }
+    ::= { prLogTransportTable 1 }
+
+PrLogTransportEntry ::= SEQUENCE {
+    prLogTransportIndex      Unsigned32,
+    prLogTransportName       DisplayString,
+    prLogTransportEnabled    TruthValue,
+    prLogTransportConnected  TruthValue,
+    prLogTransportRecords    Counter64,
+    prLogTransportSent       Counter64,
+    prLogTransportSpilled    Counter64,
+    prLogTransportDropped    Counter64,
+    prLogTransportConnects   Counter32
+}
+
+prLogTransportIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..2)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "1: IPFIX over TCP. 2: syslog."
+    ::= { prLogTransportEntry 1 }
+
+prLogTransportName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "tcp or syslog."
+    ::= { prLogTransportEntry 2 }
+
+prLogTransportEnabled OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Whether the stream is configured on."
+    ::= { prLogTransportEntry 3 }
+
+prLogTransportConnected OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Whether the collector's connection is up. Enabled and not connected
+        is records going to the spill file: alarm on it."
+    ::= { prLogTransportEntry 4 }
+
+prLogTransportRecords OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Records given to the stream."
+    ::= { prLogTransportEntry 5 }
+
+prLogTransportSent OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Records the collector's socket took."
+    ::= { prLogTransportEntry 6 }
+
+prLogTransportSpilled OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Records written to the spill file, to replay later."
+    ::= { prLogTransportEntry 7 }
+
+prLogTransportDropped OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Records lost: neither sent nor spilled. Anything but zero is a gap
+        in the connection records."
+    ::= { prLogTransportEntry 8 }
+
+prLogTransportConnects OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Connections made to the collector. Rising is a connection that keeps
+        dropping."
+    ::= { prLogTransportEntry 9 }
+
+--
+-- The box.
+--
+
+prSystem OBJECT IDENTIFIER ::= { prObjects 12 }
+
+prSystemRelease OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The Prisma Routing release installed on the box."
+    ::= { prSystem 1 }
+
+prSystemDataplaneBuild OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The build of the CGNAT plugin the RUNNING dataplane loaded, as
+        `show version` prints it."
+    ::= { prSystem 2 }
+
+prSystemDataplaneCurrent OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Whether the running dataplane is the release installed. false after
+        an upgrade until the next reboot: the new files are on disk and the
+        old build is forwarding, and a commit that needs the new build is
+        refused."
+    ::= { prSystem 3 }
+
+--
+-- Conformance.
+--
+
+prGroups       OBJECT IDENTIFIER ::= { prConformance 1 }
+prCompliances  OBJECT IDENTIFIER ::= { prConformance 2 }
+
+prTotalsGroup OBJECT-GROUP
+    OBJECTS { prSubscribers, prPortsInUse, prPortsHeld,
+              prSubscribersNearFull, prPortRefusals, prPacketsDropped }
+    STATUS      current
+    DESCRIPTION "The box's totals."
+    ::= { prGroups 1 }
+
+prCgnatGroup OBJECT-GROUP
+    OBJECTS { prPoolName, prPoolMode, prPoolBlockSize,
+              prPoolInsideAddresses, prPoolOutsideAddresses,
+              prPoolBlocksTotal, prPoolCapacity, prPoolGuaranteed,
+              prPoolSubscribers, prPoolBlocksHeld, prPoolUtilisation,
+              prPoolSessions, prPoolPortsInUse, prPoolSubscribersNearFull,
+              prPoolRefusals, prDropNode, prDropReason, prDropPackets,
+              prSessions }
+    STATUS      current
+    DESCRIPTION "The CGNAT's pools, drops and sessions."
+    ::= { prGroups 2 }
+
+prLoggingGroup OBJECT-GROUP
+    OBJECTS { prLogIpfixEnabled, prLogIpfixRecords, prLogIpfixDropped,
+              prLogTransportName, prLogTransportEnabled,
+              prLogTransportConnected, prLogTransportRecords,
+              prLogTransportSent, prLogTransportSpilled,
+              prLogTransportDropped, prLogTransportConnects }
+    STATUS      current
+    DESCRIPTION "The connection records' transports."
+    ::= { prGroups 3 }
+
+prSystemGroup OBJECT-GROUP
+    OBJECTS { prSystemRelease, prSystemDataplaneBuild,
+              prSystemDataplaneCurrent }
+    STATUS      current
+    DESCRIPTION "The release and the running dataplane's build."
+    ::= { prGroups 4 }
+
+prCompliance MODULE-COMPLIANCE
+    STATUS      current
+    DESCRIPTION "What every Prisma Routing box serves."
+    MODULE
+        MANDATORY-GROUPS { prTotalsGroup, prCgnatGroup, prLoggingGroup,
+                           prSystemGroup }
+    ::= { prCompliances 1 }
+
+END
