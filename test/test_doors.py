@@ -28,7 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "src", "prismash")
 sys.path.insert(0, SRC)
 import doors  # noqa: E402
-from system import LOGIN_SHELL, MANAGED_GROUPS, GROUP_ADMIN  # noqa: E402
+from system import LOGIN_SHELL, MANAGED_GROUPS, GROUP_ADMIN, SNMPD_USER  # noqa: E402
 
 fail = 0
 
@@ -46,7 +46,8 @@ print("=== every command system.py runs is a door ===")
 # at before it is let through.
 # In prismash.py the doors are `self.host_run([...])`: the Linux end of a
 # dataplane interface (`host`), its MTU, `up`/`down`, and a description.
-SLOTS = {"name": ["ops"], "g": list(MANAGED_GROUPS), "host": ["tap4096", "ens19"]}
+SLOTS = {"name": ["ops"], "g": list(MANAGED_GROUPS), "host": ["tap4096", "ens19"],
+         "SNMPD_USER": [SNMPD_USER]}
 
 
 def slot(e):

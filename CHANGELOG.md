@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **On an installed box the SNMP agent answered no CGNAT object at all.**
+  ([#499](https://github.com/andrediashexa/hexarouting/issues/499))
+  snmpd runs as `Debian-snmp`, and so does the agent it spawns. That user
+  could not connect to VPP's sockets (`root:vpp`: 'connect: Permission
+  denied', measured on the #475 bench), nor open the `0600` snmpd.conf the
+  agent read the operator's enterprise number from - so every NAT-MIB and
+  enterprise object answered as absent, the way a stopped dataplane
+  answers. `lab/snmp.sh` started snmpd as root and passed. Enabling SNMP now
+  adds `Debian-snmp` to the `vpp` group before snmpd starts, the enterprise
+  number reaches the agent on its own `pass_persist` line, and the lab runs
+  snmpd as `Debian-snmp` against sockets owned by `vpp`, as the box has them.
+
 ## 0.141.3 - an NMS polling the box sees who it is, its CPU, memory and disks
 
 ### Fixed

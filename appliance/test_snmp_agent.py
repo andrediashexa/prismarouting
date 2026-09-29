@@ -132,6 +132,18 @@ w(f"{BOX}/snmpd.conf", "view hexa included .1.3.6.1.4.1.2021\n"
 check(agent._enterprise() == "",
       f"a conf with no enterprise registration gave "
       f"{agent._enterprise()!r}")
+# ON ITS OWN COMMAND LINE (#499): the agent runs as Debian-snmp and cannot
+# open the 0600 snmpd.conf, so the number comes on the pass_persist line.
+os.chmod(f"{BOX}/snmpd.conf", 0)
+_argv = sys.argv
+sys.argv = ["snmp-agent", "--enterprise", "31337"]
+check(agent._enterprise() == "31337",
+      f"the number on the command line was read as {agent._enterprise()!r}")
+sys.argv = ["snmp-agent", "--enterprise"]
+check(agent._enterprise() == "",
+      "a flag with no number after it was taken for one")
+sys.argv = _argv
+os.chmod(f"{BOX}/snmpd.conf", 0o600)
 os.environ["PRISMA_SNMP_ENTERPRISE"] = " 4242 "
 check(agent._enterprise() == "4242",
       f"the PRISMA_SNMP_ENTERPRISE override read as {agent._enterprise()!r}")
