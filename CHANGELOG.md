@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.142.0 - BGP, OSPF and IS-IS over SNMP, from the daemons that run them
+
+### Added
+
 * **BGP, OSPF and IS-IS over SNMP, from the daemons that run them.**
   ([#502](https://github.com/andrediashexa/hexarouting/issues/502))
   The third phase of the SNMP plan (#496), and the first that needed no
@@ -94,8 +100,6 @@ version has a chance of seeing it.
   out of the operator's routing, and the FRR container's start takes it out
   of `frr.conf` once SNMP is off - which the commit that turns SNMP off says.
   An image change, so a Y release.
-
-### Fixed
 
 ## 0.141.7 - IF-MIB counts unicast packets where the driver does not count by type
 
