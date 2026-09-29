@@ -39,6 +39,8 @@ typedef struct
   vlib_simple_counter_main_t blocks;
   vlib_simple_counter_main_t sessions;
   vlib_simple_counter_main_t refused;
+  vlib_simple_counter_main_t ports;     /* ports in use, hold-down included */
+  vlib_simple_counter_main_t near_full; /* subscribers at 90% or more */
   /* What the pool IS, set once it is built, in thread 0's slot: mode (1
    * deterministic, 2 dynamic), block size, inside and outside addresses,
    * blocks it can hand out, subscribers it can serve and the floor it

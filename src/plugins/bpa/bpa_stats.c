@@ -38,6 +38,10 @@ bpa_stats_init (void)
   sm->sessions.stat_segment_name = "/bpa/pool/sessions";
   sm->refused.name = "bpa-pool-refused";
   sm->refused.stat_segment_name = "/bpa/pool/refused";
+  sm->ports.name = "bpa-pool-ports";
+  sm->ports.stat_segment_name = "/bpa/pool/ports";
+  sm->near_full.name = "bpa-pool-near-full";
+  sm->near_full.stat_segment_name = "/bpa/pool/near-full";
   sm->names = vlib_stats_add_string_vector ("/bpa/pool/names");
   for (i = 0; i < 7; i++)
     {
@@ -72,6 +76,8 @@ bpa_stats_pool_add (u32 pool_index, const u8 *name)
   vlib_validate_simple_counter (&sm->blocks, pool_index);
   vlib_validate_simple_counter (&sm->sessions, pool_index);
   vlib_validate_simple_counter (&sm->refused, pool_index);
+  vlib_validate_simple_counter (&sm->ports, pool_index);
+  vlib_validate_simple_counter (&sm->near_full, pool_index);
   for (i = 0; i < 7; i++)
     {
       vlib_validate_simple_counter (&sm->conf[i], pool_index);
@@ -83,6 +89,8 @@ bpa_stats_pool_add (u32 pool_index, const u8 *name)
   vlib_zero_simple_counter (&sm->blocks, pool_index);
   vlib_zero_simple_counter (&sm->sessions, pool_index);
   vlib_zero_simple_counter (&sm->refused, pool_index);
+  vlib_zero_simple_counter (&sm->ports, pool_index);
+  vlib_zero_simple_counter (&sm->near_full, pool_index);
   vlib_stats_set_string_vector (&sm->names, pool_index, "%v", name);
 }
 
@@ -124,6 +132,8 @@ bpa_stats_pool_del (u32 pool_index)
   vlib_zero_simple_counter (&sm->blocks, pool_index);
   vlib_zero_simple_counter (&sm->sessions, pool_index);
   vlib_zero_simple_counter (&sm->refused, pool_index);
+  vlib_zero_simple_counter (&sm->ports, pool_index);
+  vlib_zero_simple_counter (&sm->near_full, pool_index);
   for (i = 0; i < 7; i++)
     vlib_zero_simple_counter (&sm->conf[i], pool_index);
   /* An empty name is the reader's sign that the index holds no pool. */

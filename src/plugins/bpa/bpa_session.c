@@ -117,6 +117,36 @@ bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
  * subscribers indexed by a hash, and per-thread vectors. This returns the
  * record when its last session goes, releasing the blocks with it.
  * lab/ipfix-stop.sh reads the records that release writes. */
+/* not a unit: VPP's counters; the arithmetic is bpa_subblocks_usage(),
+ * which test/test_bpa_subblock.c holds, and lab/snmp.sh fills a subscriber
+ * past 90% and reads the pool's count move */
+/*
+ * Tells the statistics segment what this subscriber uses now (#504): the
+ * pool's port total moves by the difference, and its count of subscribers at
+ * 90% or more by the crossing. Called where the usage changes - a session
+ * made or freed, a block added - so no reader ever walks the subscribers,
+ * which is what the SNMP agent used to do on each refresh.
+ */
+static void
+bpa_sub_seen (bpa_per_thread_t *pt, u32 pool_index, bpa_sub_t *sub)
+{
+  u32 used, total;
+  u8 near;
+
+  bpa_sub_usage (sub, &used, &total);
+  near = total && (u64) used * 10 >= (u64) total * 9;
+  if (used != sub->ports_seen)
+    {
+      BPA_STAT (ports, pt, pool_index, (i64) used - (i64) sub->ports_seen);
+      sub->ports_seen = used;
+    }
+  if (near != sub->near_full)
+    {
+      BPA_STAT (near_full, pt, pool_index, near ? 1 : -1);
+      sub->near_full = near;
+    }
+}
+
 static void
 bpa_sub_put (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 	     bpa_sub_t *sub)
@@ -128,6 +158,9 @@ bpa_sub_put (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
 
   BPA_STAT (subscribers, pt, pool_index, -1);
   BPA_STAT (blocks, pt, pool_index, -(i64) vec_len (sub->blocks));
+  BPA_STAT (ports, pt, pool_index, -(i64) sub->ports_seen);
+  if (sub->near_full)
+    BPA_STAT (near_full, pt, pool_index, -1);
   vec_foreach (sb, sub->blocks)
     clib_mem_free (sb->map.bits);
   vec_free (sub->blocks);
@@ -171,6 +204,7 @@ bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
     return;
   bpa_sub_add_block (pool_elt_at_index (pt->subs, q[0]), p, b);
   BPA_STAT (blocks, pt, pool_index, 1);
+  bpa_sub_seen (pt, pool_index, pool_elt_at_index (pt->subs, q[0]));
 }
 
 /*
@@ -210,6 +244,7 @@ bpa_sub_adopt_block (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 
   bpa_sub_add_block (sub, p, b);
   BPA_STAT (blocks, pt, pool_index, 1);
+  bpa_sub_seen (pt, pool_index, sub);
 }
 
 /*
@@ -274,6 +309,7 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 
   sub->n_sessions++;
   BPA_STAT (sessions, pt, pool_index, 1);
+  bpa_sub_seen (pt, pool_index, sub);
 
   bpa_key_in (&kv, s->ip_priv, s->port_priv, proto, s->fib_index);
   kv.value = s - pt->sessions;
@@ -660,6 +696,7 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
 
   sub->n_sessions++;
   BPA_STAT (sessions, pt, pool_index, 1);
+  bpa_sub_seen (pt, pool_index, sub);
 
   /* Inbound: the server will send GRE carrying the Call ID we just handed
    * out, and it came from the block, so the pre-check and the handoff find
@@ -777,6 +814,7 @@ bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
 
   sub->n_sessions++;
   BPA_STAT (sessions, pt, pool_index, 1);
+  bpa_sub_seen (pt, pool_index, sub);
 
   bpa_key_esp (&kv, ip_priv, remote, fib);
   kv.value = s - pt->sessions;
@@ -1048,6 +1086,7 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 	  sub->n_sessions--;
 	  BPA_STAT (sessions, pt, s->pool_index, -1);
 	}
+      bpa_sub_seen (pt, s->pool_index, sub);
 
       /*
        * Last session gone: a block that was ALLOCATED enters hold-down
