@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.141.3 - an NMS polling the box sees who it is, its CPU, memory and disks
+
+### Fixed
+
 * **An NMS polling the box got no name, no uptime, no CPU, memory or disk.**
   ([#497](https://github.com/andrediashexa/hexarouting/issues/497))
   The `snmpd.conf` the VTY writes admitted only NAT-MIB's timeouts and the
