@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.143.1 - the workers, session capacity, VRRP, LACP and identity sources, over SNMP
+
+### Added
+
 * **The workers, the session capacity, VRRP, LACP bundles and identity
   sources, over SNMP.**
   ([#505](https://github.com/andrediashexa/hexarouting/issues/505))
@@ -92,8 +98,6 @@ version has a chance of seeing it.
   and 960,390 sessions that fit - what `show cgnat memory` says - by name,
   through the MIB. Not over SNMP, and said so: whether the HA peer agrees on
   the mapping, the forwards and the self-test.
-
-### Fixed
 
 ## 0.143.0 - PRISMA-ROUTING-MIB: the CGNAT, its records and the box, over SNMP
 
