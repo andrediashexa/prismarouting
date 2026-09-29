@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.141.0 - the CGNAT plugin is built optimised: half the cycles a packet
+
+### Fixed
+
 * **The CGNAT plugin shipped compiled without optimisation, in every
   release.** ([#490](https://github.com/andrediashexa/hexarouting/issues/490))
   `CMakeLists.txt` never set `CMAKE_BUILD_TYPE`, and with it empty CMake
