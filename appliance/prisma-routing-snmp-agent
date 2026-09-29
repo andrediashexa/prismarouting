@@ -56,6 +56,15 @@ def _enterprise():
     override = os.environ.get("PRISMA_SNMP_ENTERPRISE", "").strip()
     if override:
         return override
+    # ON ITS OWN COMMAND LINE FIRST (#499): snmpd runs this agent as
+    # Debian-snmp, and the snmpd.conf the VTY writes is 0600 root - it holds
+    # the communities - so on an installed box the file below cannot be
+    # opened, the number came back empty, and the whole enterprise half was
+    # dark while the lab, running everything as root, read it fine. The VTY
+    # writes the number onto the pass_persist line instead.
+    for i, a in enumerate(sys.argv[1:-1], 1):
+        if a == "--enterprise" and sys.argv[i + 1].isdigit():
+            return sys.argv[i + 1]
     try:
         with open(os.environ.get("PRISMA_SNMPD_CONF", "/etc/snmp/snmpd.conf")) as f:
             for line in f:

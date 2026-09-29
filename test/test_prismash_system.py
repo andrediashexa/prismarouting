@@ -753,7 +753,7 @@ check(body.splitlines()[1:] == [
     "rouser amy priv -V hexa",
     "rouser zed priv -V hexa",
     "pass_persist .1.3.6.1.2.1.123 /x/agent",
-    "pass_persist .1.3.6.1.4.1.70000 /x/agent"],
+    "pass_persist .1.3.6.1.4.1.70000 /x/agent --enterprise 70000"],
     f"address, both views, every community, users sorted, both agents: "
     f"{body.splitlines()}")
 check(body.endswith("\n") and "rw" not in body,

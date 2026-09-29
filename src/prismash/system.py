@@ -1043,6 +1043,9 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
 # one that matters: a full disk there is the compliance log stopping, a year
 # of connection records under a court's obligation (docs/logging.md).
 SNMP_DISKS = [("/", "10%"), ("/var/log/prisma-routing", "15%")]
+#: The account Debian's snmpd runs as, and so the one that has to reach the
+#: dataplane's sockets (#499).
+SNMPD_USER = "Debian-snmp"
 SNMP_VERSION_FILE = os.environ.get("PRISMA_VERSION_FILE",
                                    "/usr/share/prisma-routing/VERSION")
 
@@ -1079,7 +1082,9 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None):
         out.append(f"rouser {name} priv -V hexa")
     out.append(f"pass_persist .1.3.6.1.2.1.123 {agent}")
     if pen:
-        out.append(f"pass_persist .1.3.6.1.4.1.{pen} {agent}")
+        # The number on the agent's own command line (#499): it runs as
+        # Debian-snmp and cannot read this 0600 file to find it.
+        out.append(f"pass_persist .1.3.6.1.4.1.{pen} {agent} --enterprise {pen}")
     out.append("")
     return "\n".join(out)
 
@@ -1176,6 +1181,15 @@ class SnmpDaemon:
         self.files.write(self.conf,
                          _snmpd_body(settings, communities, users, self.agent),
                          mode=0o600)
+
+        # THE AGENT HAS TO REACH THE DATAPLANE (#499). snmpd runs as
+        # Debian-snmp, in no group but its own, and VPP's sockets are
+        # srwxrwxr-x root:vpp: measured as that user, vppctl said "connect:
+        # Permission denied" and vpp_get_stats could not connect, so every
+        # CGNAT object answered as absent - which is also how a stopped
+        # dataplane answers. Before the restart, because a group is read
+        # when the process starts; gpasswd -a is a no-op on a member.
+        self._run(["gpasswd", "-a", SNMPD_USER, "vpp"])
 
         # v3 users are created in net-snmp's own persistent store, which it
         # rewrites on first use. Written only when absent, or every restart

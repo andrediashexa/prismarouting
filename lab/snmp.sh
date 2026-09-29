@@ -54,9 +54,21 @@ mkdir -p /src/.lab-retention /var/log/prisma-routing
 mount --bind /src/.lab-retention /var/log/prisma-routing
 # snmpd is not under systemd in this container; start it the way the unit does.
 pkill snmpd 2>/dev/null; sleep 0.5
-snmpd -Lo -f -C -c /etc/snmp/snmpd.conf > /tmp/snmpd.log 2>&1 &
+# THE SOCKETS AS THE BOX HAS THEM: root:vpp, srwxrwxr-x, measured on the #475
+# bench. Here VPP leaves them root:root, and Debian-snmp could not connect to
+# them whatever group it was in - which would test nothing about the box.
+chgrp vpp /run/vpp/cli.sock /run/vpp/api.sock /run/vpp/stats.sock 2>/dev/null
+# AS THE BOX RUNS IT (#499): Debian's unit starts snmpd as Debian-snmp, and
+# the agent it spawns is that user too. Run as root here, the lab read the
+# dataplane through sockets the box's snmpd could not open, and passed.
+snmpd -Lo -f -C -u Debian-snmp -g Debian-snmp -c /etc/snmp/snmpd.conf > /tmp/snmpd.log 2>&1 &
 sleep 2
 
+echo "  --- the snmpd user and the dataplane's sockets ---"
+id Debian-snmp | sed 's/^/    /'
+ls -la /run/vpp/ | sed 's/^/    /'
+ls -la /etc/snmp/snmpd.conf | sed 's/^/    /'
+printf 'get\n1.3.6.1.2.1.123.1.1.2.0\n' | runuser -u Debian-snmp -- /usr/lib/prisma-routing/snmp-agent 2>&1 | sed 's/^/    as Debian-snmp: /'
 echo "  --- what the agent itself serves, run by hand ---"
 printf 'getnext\n1.3.6.1.4.1\n' | /usr/lib/prisma-routing/snmp-agent | sed 's/^/    /'
 printf 'get\n1.3.6.1.4.1.99999.1.1.0\n' | /usr/lib/prisma-routing/snmp-agent | sed 's/^/    /'
