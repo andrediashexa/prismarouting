@@ -452,6 +452,37 @@ echo "  --- show ipv6 ospf6 neighbor ---"
 vtysh -c "show ipv6 ospf6 neighbor" 2>&1 | sed 's/^/    /'
 expect "the OSPFv3 adjacency reached Full (${T_OSPF6}s)" ospf6_full
 
+# --- OSPFv3 and the size of the FIB, over SNMP (#503) ---
+# The adjacency just asserted Full with vtysh, read through the box's own
+# snmpd: ospf6d registers OSPFV3-MIB with it over AgentX. And the FIB's two
+# counts, which are in the view where the tables are not - a full table is
+# about a million routes (docs/snmp-plan.md).
+echo "=========== OSPFv3 and the FIB's size over SNMP (#503) ==========="
+install -d -m 0750 /var/agentx; chgrp frr /var/agentx
+$HX -c "configure" -c "snmp enabled yes" -c "snmp listen-address 127.0.0.1" \
+    -c "snmp community hexro" -c "commit" 2>&1 | sed 's/^/  /'
+snmpd -Lo -f -C -u Debian-snmp -g Debian-snmp -c /etc/snmp/snmpd.conf \
+  > /tmp/snmpd.log 2>&1 &
+# A subagent that lost its master reconnects at its next ping, 15 s apart.
+_n=0; NBR6=""
+until printf '%s\n' "$NBR6" | grep -qx 8 || [ "$_n" -ge 40 ]; do
+  sleep 1; _n=$((_n + 1))
+  NBR6=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.191.1.9.1.8 2>&1)
+done
+ROUTES=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.4.24.6.0 2>&1)
+TABLE=$(snmpgetnext -v2c -c hexro -On 127.0.0.1 1.3.6.1.2.1.4.24.7 2>&1)
+echo "  ospfv3NbrState: $(printf '%s' "$NBR6" | tr '\n' ' ')"
+echo "  inetCidrRouteNumber: $ROUTES"
+echo "  the next object after inetCidrRouteTable: $TABLE"
+expect "OSPFV3-MIB reads the neighbour full (8), as vtysh does" \
+  sh -c "printf '%s\\n' \"$NBR6\" | grep -qx 8"
+expect "the FIB's size answers ($ROUTES)" \
+  sh -c "case \"$ROUTES\" in ''|*[!0-9]*|0) exit 1;; *) exit 0;; esac"
+expect_not_in "and its table does not: a walk of the FIB is not in the view" \
+  ".1.3.6.1.2.1.4.24.7." "$TABLE"
+pkill -x snmpd 2>/dev/null
+$HX -c "configure" -c "snmp enabled no" -c "commit" >/dev/null 2>&1
+
 # Full is not the route, for OSPFv3 exactly as for OSPFv2: after Full there is
 # an LSA exchange, an install into the kernel and a linux_nl walk into the VPP
 # FIB, and it is the FIB that forwards. Nothing in this suite had ever put an

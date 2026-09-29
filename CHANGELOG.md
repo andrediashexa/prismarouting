@@ -77,6 +77,16 @@ version has a chance of seeing it.
 
 ### Added
 
+* **OSPFv3 over SNMP verified, and the FIB's size without the FIB.**
+  ([#503](https://github.com/andrediashexa/hexarouting/issues/503))
+  0.142.0 served OSPFV3-MIB by the path it verified for BGP, OSPF and IS-IS,
+  and verified it nowhere. `lab/igp.sh`, which runs a real OSPFv3 adjacency,
+  now reads it through the box's snmpd: `ospfv3NbrState` is 8 (full) for the
+  neighbour vtysh shows Full. And the view admits the FIB's two counts,
+  `ipCidrRouteNumber` and `inetCidrRouteNumber` (IPv4 and IPv6; 14 routes in
+  that lab), and not its tables - a full table is about a million routes,
+  and the lab checks a walk of it answers nothing.
+
 ### Fixed
 
 ## 0.142.0 - BGP, OSPF and IS-IS over SNMP, from the daemons that run them

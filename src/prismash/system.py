@@ -1045,7 +1045,14 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              ".1.3.6.1.2.1.15",         # BGP4-MIB: bgpd's peers and their state
              ".1.3.6.1.2.1.14",         # OSPF-MIB: ospfd
              ".1.3.6.1.2.1.191",        # OSPFV3-MIB: ospf6d
-             ".1.3.6.1.2.1.138"]        # ISIS-MIB: isisd
+             ".1.3.6.1.2.1.138",        # ISIS-MIB: isisd
+             # The FIB's SIZE and not the FIB (#503): a full table is about a
+             # million routes, and a walk of it is never the default view
+             # (docs/snmp-plan.md). Measured in lab/igp.sh: .24.3 counts IPv4
+             # (6 there) and .24.6 IPv4 and IPv6 (14), read by net-snmp off
+             # the kernel, where FRR installs what linux_nl copies to VPP.
+             ".1.3.6.1.2.1.4.24.3",     # IP-FORWARD-MIB ipCidrRouteNumber
+             ".1.3.6.1.2.1.4.24.6"]     # IP-FORWARD-MIB inetCidrRouteNumber
 #: Where snmpd listens for FRR's daemons (#502). A unix socket and not TCP 705,
 #: which any local account could register a subtree on; the directory is the
 #: box's frr group's, and FRR's container is given it (appliance/compose.yaml).
