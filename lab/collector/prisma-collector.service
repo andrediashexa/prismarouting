@@ -1,0 +1,12 @@
+# The lab collector (#491): IPFIX udp/4739, syslog tcp/601, a page on http/8080.
+[Unit]
+Description=Prisma Routing lab collector - the retention log, and a page to ask it
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/lib/prisma-collector/prisma_collector.py
+Restart=always
+Environment=PRISMA_COLLECTOR_DB=/var/lib/prisma-collector/events.db
+
+[Install]
+WantedBy=multi-user.target

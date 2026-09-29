@@ -358,6 +358,13 @@ def python_files():
             first = fh.readline()
         if first.startswith(b"#!") and b"python" in first:
             out.append(p)
+    # The lab collector (#491): not shipped, and still the thing that answers
+    # who held an address on the bench, so its functions are held to the
+    # same rule as the product's.
+    cdir = os.path.join(REPO, "lab", "collector")
+    if os.path.isdir(cdir):
+        out += sorted(os.path.join(cdir, f) for f in os.listdir(cdir)
+                      if f.endswith(".py"))
     return out
 
 
