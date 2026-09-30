@@ -480,6 +480,14 @@ echo "  ospfNbrState: $(printf '%s' "$OSPFNBR" | tr '\n' ' ')"
 # isisISAdjState, ISIS-MIB's adjacency table: up is 3.
 ISISADJ=$(snmpwalk -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.138.1.6.1.1.2 2>&1)
 echo "  isisISAdjState: $(printf '%s' "$ISISADJ" | tr '\n' ' ')"
+# BGP4V2-MIB (#521), draft-ietf-idr-bgp4-mibv2 under the experimental arc,
+# which bgpd serves beside BGP4-MIB: its peer table is indexed by address type
+# and address, so the IPv6 unnumbered session above - which BGP4-MIB, keyed on
+# an IPv4 address, cannot hold - is in it. bgp4V2PeerState is column 13;
+# the index is the instance, the type (1 IPv4, 2 IPv6) and the address.
+V2ST=$(snmpwalk -v2c -c hexro -On 127.0.0.1 1.3.6.1.3.5.1.1.2.1.13 2>&1)
+V2AS=$(snmpwalk -v2c -c hexro -On 127.0.0.1 1.3.6.1.3.5.1.1.2.1.10 2>&1)
+printf '%s\n' "$V2ST" | sed 's/^/  bgp4V2PeerState /'
 AXRUN=$(vtysh -c "show running-config" 2>/dev/null | grep -x agentx)
 AXVTY=$($HX -c "show running-config" 2>&1 | grep -x agentx)
 expect_in "snmpd.conf makes it the AgentX master" "master agentx" \
@@ -490,6 +498,12 @@ expect "BGP4-MIB reads the session established (6), as vtysh does ($BGPST)" \
   test "$BGPST" = "6"
 expect "the local AS is the one configured ($LOCALAS)" test "$LOCALAS" = "65000"
 expect "and the peer's is the upstream's ($PEERAS)" test "$PEERAS" = "65001"
+expect "BGP4V2-MIB reads the IPv4 peer established (6)" \
+  sh -c "printf '%s\\n' \"$V2ST\" | grep -qE '\\.1(\\.4)?\\.10\\.0\\.0\\.2 = INTEGER: 6$'"
+expect "and the IPv6 unnumbered peer, which BGP4-MIB has no row for" \
+  sh -c "printf '%s\\n' \"$V2ST\" | grep -qE '\\.2(\\.16)?\\.254\\.128\\.[0-9.]+ = INTEGER: 6$'"
+expect "with the upstream's AS beside the IPv4 peer" \
+  sh -c "printf '%s\\n' \"$V2AS\" | grep -qE '\\.1(\\.4)?\\.10\\.0\\.0\\.2 = Gauge32: 65001$'"
 expect "OSPF-MIB reads the neighbour full (8)" \
   sh -c "printf '%s\n' \"$OSPFNBR\" | grep -qx 8"
 expect "ISIS-MIB reads the adjacency up (3)" \
