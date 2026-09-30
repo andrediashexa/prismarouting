@@ -7232,6 +7232,33 @@ class Shell:
         cached = getattr(self.api, "cached_dumps", None)
         return cached() if cached else contextlib.nullcontext()
 
+    def carry_saved_snmp(self, cfg):
+        """
+        Put the last saved file's SNMP settings in `cfg`, whose own could not
+        be read (#525), and say which: `cfg.snmp_unread` is "saved", or
+        "none" when the file cannot be read either and the defaults stay.
+        """
+        try:
+            with open(CONFIG_PATH) as f:
+                saved = Config.parse(f.read())
+        except (OSError, ValueError):
+            cfg.snmp_unread = "none"
+            return
+        cfg.snmp = dict(saved.snmp)
+        cfg.snmp_communities = list(saved.snmp_communities)
+        cfg.snmp_users = dict(saved.snmp_users)
+        cfg.snmp_trap_hosts = list(saved.snmp_trap_hosts)
+        cfg.snmp_unread = "saved"
+
+    #: Said under a configuration whose SNMP could not be read (#525).
+    SNMP_UNREAD_NOTE = {
+        "saved": "note: snmp: this session cannot read the box's snmpd.conf "
+                 "(root can); the snmp lines are the last saved file's",
+        "none": "note: snmp: this session cannot read the box's snmpd.conf "
+                "(root can), nor the saved file; the snmp lines are the "
+                "defaults, not the box's",
+    }
+
     def running_config(self) -> Config:
         """
         The configuration in effect, read with the dataplane's dumps answered
@@ -7309,6 +7336,14 @@ class Shell:
         cfg.users = self.sys.read_users()
         (cfg.snmp, cfg.snmp_communities, cfg.snmp_users,
          cfg.snmp_trap_hosts) = self.snmp.read()
+        # A session that cannot read snmpd.conf does not know the box's SNMP
+        # (#525), and the defaults it got back say "off". They were taken for
+        # the box's, `save` wrote them, and the next boot deleted snmpd.conf
+        # and its community. What stands in is the last saved file's, said as
+        # such - the configuration this box boots into, which is the one thing
+        # a save may not make worse.
+        if getattr(self.snmp, "unread", False):
+            self.carry_saved_snmp(cfg)
         # What the policy compiler emitted is not the operator's routing: it
         # is taken out, and the policy it came from is read back from its own
         # file (#458).
@@ -10369,11 +10404,21 @@ class Shell:
         # (#523): an upgrade changes what goes in it and no setting, and the
         # boot's --load is where an upgraded box first gets to say so.
         name = target.hostname or running.hostname
-        if d["snmp_changed"] or (d.get("hostname_changed")
-                                 and target.snmp.get("enabled") == "yes") \
+        # A session that could not read snmpd.conf does not know what it
+        # would be replacing (#525): it changes nothing of SNMP, and refuses
+        # a change to it rather than write over a file it has not seen.
+        if running.snmp_unread and d["snmp_changed"]:
+            self.err("snmp: refused, snmpd.conf is unreadable here")
+            print_prose("this session cannot read the box's SNMP "
+                        "configuration, so it cannot know what a change would "
+                        "replace; change SNMP as root")
+            return False
+        if not running.snmp_unread and (
+                d["snmp_changed"] or (d.get("hostname_changed")
+                                      and target.snmp.get("enabled") == "yes")
                 or self.snmp.stale(target.snmp, target.snmp_communities,
                                    target.snmp_users, target.snmp_trap_hosts,
-                                   hostname=name):
+                                   hostname=name)):
             ok, msg = self.snmp.apply(target.snmp, target.snmp_communities,
                                       target.snmp_users,
                                       target.snmp_trap_hosts,
@@ -15355,6 +15400,9 @@ class Shell:
         """
         print("\n".join(mark_unchecked(
             identity_redact(snmp_redact(redact(cfg.text().splitlines()))))))
+        note = Shell.SNMP_UNREAD_NOTE.get(getattr(cfg, "snmp_unread", ""))
+        if note:
+            print_prose(note)
 
     def show_this(self):
         """
@@ -18657,13 +18705,23 @@ class Shell:
         directory the operator's own group had been given, so the first save on
         the box was the last one a non-root account could make (#188).
         """
+        running = self.running_config()
+        # Refused rather than written (#525): with neither snmpd.conf nor the
+        # saved file readable, the SNMP half of this file would be the
+        # defaults - SNMP off - and the next boot would apply that.
+        if running.snmp_unread == "none":
+            self.err("save: refused, nothing was written")
+            print_prose("this session cannot read the box's SNMP "
+                        "configuration or the saved file, so the file would "
+                        "switch SNMP off at the next boot; save as root")
+            return
         d = os.path.dirname(CONFIG_PATH)
         old_umask = os.umask(CONFIG_UMASK)
         try:
             if d:
                 os.makedirs(d, exist_ok=True)
             with open(CONFIG_PATH, "w") as f:
-                f.write(self.running_config().text())
+                f.write(running.text())
         except OSError as e:
             # The path on a row of its own: with the errno text beside it the
             # one row measured 120 columns, and the path is what the operator

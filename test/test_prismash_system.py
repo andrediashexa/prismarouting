@@ -849,8 +849,9 @@ with _tf.TemporaryDirectory() as _d:
     _sn = system.SnmpDaemon(runner=lambda a, stdin=None, timeout=30: (1, ""),
                             root="", conf=_conf)
     _on = {"enabled": "yes"}
-    check(_sn.stale(_on, ["p"], {}) is False,
-          "no file to read is not stale: from the container it cannot be read")
+    check(_sn.stale(_on, ["p"], {}) is True,
+          "SNMP on and no file where the file goes is stale: it is written "
+          "(#525; from the container, which cannot see, it is unread instead)")
     with open(_conf, "w") as _f:
         _f.write(system._snmpd_body(_on, ["p"], {}, release="0.145.1",
                                     hostname="edge1"))
@@ -866,6 +867,62 @@ with _tf.TemporaryDirectory() as _d:
           and _sn.stale(_on, [], {}) is False,
           "SNMP off, or nobody to poll it: nothing to rewrite")
 system.SNMP_VERSION_FILE = _old
+
+print("--- SnmpDaemon._conf: the file, through the door, or unread (#525)")
+with _tf.TemporaryDirectory() as _d:
+    _asked = []
+
+    def _door(answer):
+        # not a unit: a stand-in for the host's door, answering one way
+        def run(argv, stdin=None, timeout=30):
+            _asked.append(list(argv))
+            return answer
+        return run
+    _body = system._snmpd_body({"enabled": "yes"}, ["c0mm"], {}, release="x")
+    _here = system.SnmpDaemon(runner=_door((126, "only root may")), root=_d)
+    os.makedirs(_d + "/etc/snmp")
+    with open(_d + system.SNMPD_CONF, "w") as _f:
+        _f.write(_body)
+    check(_here._conf() == ("text", _body) and not _asked,
+          "a file this process can open is read, and the door is not asked")
+    # From here on, the management container's view: compose.yaml sets
+    # PRISMA_IN_MGMT there, and a file missing here says nothing.
+    _was_mgmt = os.environ.get("PRISMA_IN_MGMT")
+    os.environ["PRISMA_IN_MGMT"] = "1"
+    _mgmt = system.SnmpDaemon(runner=_door((0, _body)),
+                              root=_d + "/nothing-mounted")
+    check(_mgmt._conf() == ("text", _body)
+          and _asked == [["cat", system.SNMPD_CONF]],
+          f"from the container, the host's own path through the door: {_asked}")
+    _s, _c, _u, _t = _mgmt.read()
+    check(_s["enabled"] == "yes" and _c == ["c0mm"] and not _mgmt.unread,
+          "and read through it, it is the box's configuration")
+    _missing = _door((1, "cat: /etc/snmp/snmpd.conf: No such file or directory"))
+    _alone = system.SnmpDaemon(runner=_missing, root=_d + "/nothing-mounted")
+    check(_alone._conf() == ("unread", None) and not _alone._host_answers(),
+          "a missing file said by no door is unread: the runner ran cat here")
+    _missing.door = _d                              # a path that exists
+    _gone = system.SnmpDaemon(runner=_missing, root=_d + "/nothing-mounted")
+    _s, _c, _u, _t = _gone.read()
+    check(_gone._conf() == ("absent", None) and _s["enabled"] == "no"
+          and not _gone.unread,
+          "a file the host says is not there is SNMP off - an answer")
+    _refused = system.SnmpDaemon(runner=_door((126, "only root may")),
+                                 root=_d + "/nothing-mounted")
+    _s, _c, _u, _t = _refused.read()
+    check(_refused._conf() == ("unread", None) and _refused.unread,
+          "a refusal is UNREAD, not off: the bench's save took it for off")
+    check(_refused.stale({"enabled": "yes"}, ["c0mm"], {}) is False,
+          "and an unread file is never stale: nothing to compare")
+    check(_gone.stale({"enabled": "yes"}, ["c0mm"], {}) is True,
+          "while a file the host says is missing, with SNMP on, is")
+    if _was_mgmt is None:
+        del os.environ["PRISMA_IN_MGMT"]
+    else:
+        os.environ["PRISMA_IN_MGMT"] = _was_mgmt
+    os.remove(_d + system.SNMPD_CONF)
+    check(_here._conf() == ("absent", None),
+          "and on the host a missing file is an answer of its own: off")
 
 print("--- User.__eq__: two accounts are equal by what they would write")
 a = account("alice", keys=["k1"], password="$6$h", role=system.ROLE_ADMIN)

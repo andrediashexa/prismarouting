@@ -37,6 +37,8 @@ O `commit` recusa um agente ligado sem nenhuma comunidade e sem nenhum usuário 
 
 A partir da versão 0.144.1 a caixa responde **só em SNMPv2c e SNMPv3**: uma consulta em SNMPv1, mesmo com a comunidade certa, fica sem resposta. O v1 não carrega contadores de 64 bits, então as portas do dataplane e os contadores da MIB do Prisma nem apareceriam para ele.
 
+A configuração do SNMP carrega as comunidades, então só o **root** a lê. A partir da versão 0.147.4, uma sessão que não consegue lê-la (um administrador que não é root, por exemplo) avisa embaixo do `show running-config` que as linhas `snmp` são as da última configuração salva, e não as da caixa. Essa sessão não altera o SNMP e só grava um `save` com o SNMP da configuração salva — nunca desligado. Antes disso, um `save` feito na VTY desligava o SNMP no boot seguinte e apagava a comunidade.
+
 O usuário v3 é criado com acesso somente leitura e exige autenticação **e** privacidade: configure as duas linhas, `auth` e `priv`. O `commit` também funciona dentro do bloco `snmp-user`, sem precisar sair dele.
 
 A comunidade e as frases secretas do v3 são senhas que trafegam na rede, e são tratadas como tal: `show running-config` mostra `<set, not shown>` no lugar delas.

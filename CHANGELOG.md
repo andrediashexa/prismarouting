@@ -79,6 +79,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A `save` from the VTY no longer switches SNMP off.**
+  ([#525](https://github.com/andrediashexa/hexarouting/issues/525))
+  Found on the X520 bench: the maintainer renamed the box and saved from an
+  interactive session, the saved file came out with `snmp enabled no` and no
+  community, and the next boot deleted snmpd.conf. The interactive VTY runs in
+  the management container, which does not mount `/etc/snmp`, and the file is
+  0600 root on the host too - and a snmpd.conf that could not be read was
+  taken for SNMP off. It is read through the host's door now, for root only
+  since it carries the communities; a session that still cannot read it says
+  so under `show running-config`, stands the last saved file's SNMP in for the
+  box's, refuses an SNMP change it cannot see the other side of, and refuses a
+  `save` when it cannot read the saved file either, rather than write SNMP off
+  into the file the next boot applies. `lab/doors.sh` saves from a mount
+  namespace with nothing at `/etc/snmp`, as the container has, and runs the
+  boot's load: SNMP stays on with its community, where the release before
+  lost both.
+
 ## 0.147.3 - two decisions recorded: rebalance stays off, the containers stay as they are
 
 ### Changed

@@ -2159,5 +2159,31 @@ check("no candidate configuration" in _buf.getvalue() and not _ca.calls,
       f"_do_commit is the commit itself: {_buf.getvalue()!r}")
 
 
+print("=== SNMP that could not be read is not changed, nor written over (#525) ===")
+_run_text = "snmp enabled yes\nsnmp community c0mm\n"
+_su = shell_with(FakeApi(), running_text=_run_text)
+_unread = config.Config.parse(_run_text)
+_unread.snmp_unread = "saved"
+_su.running_config = lambda: _unread
+_wrote = []
+_su.snmp = type("S", (), {
+    "stale": lambda self, *a, **k: True,
+    "apply": lambda self, *a, **k: (_wrote.append(a), (True, ""))[1]})()
+_t = config.Config.parse(_run_text)
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ok = _su.apply(_t)
+check(_ok and not _wrote,
+      f"nothing of SNMP is written when it could not be read, stale or not: "
+      f"{_buf.getvalue()!r}")
+_t = config.Config.parse("snmp enabled yes\nsnmp community other\n")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ok = _su.apply(_t)
+check(not _ok and not _wrote
+      and "snmp: refused, snmpd.conf is unreadable here" in _buf.getvalue(),
+      f"and a change to it is refused, not written over: {_buf.getvalue()!r}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
