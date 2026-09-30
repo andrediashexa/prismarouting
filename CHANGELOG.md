@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.147.0 - monitor interface: each interface's traffic as a live chart
+
+### Added
+
 * **`monitor interface`: each interface's traffic as a live chart.**
   ([#519](https://github.com/andrediashexa/hexarouting/issues/519))
   Asked for by the maintainer: `show interface utilization` samples for ten
@@ -95,8 +101,6 @@ version has a chance of seeing it.
   10, 9 and 0.3 ms for the statistics segment - under 1% of a core either way.
   `lab/monitor-interface.sh` measures that cost, then drives the view under a
   pty against a stream set to 800 kbit/s and reads the terminal's modes back.
-
-### Fixed
 
 ## 0.146.1 - the worker cap from the VTY, and a commit that reads each dump once
 
