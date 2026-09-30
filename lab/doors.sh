@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 8
+# OFF-RED-AT-LEAST: 12
 # The host's doors (#448, phase B): the VTY's accounts, and the files it
 # writes on the host (resolv.conf, authorized_keys, snmpd.conf), are made by
 # the doors daemon, and the daemon does them for root only. So is the Linux
@@ -75,6 +75,27 @@ KEYS=$(cat /home/ro/.ssh/authorized_keys 2>&1)
 KEYMODE=$(stat -c %a /home/ro/.ssh/authorized_keys 2>&1)
 SNMPMODE=$(stat -c %a /etc/snmp/snmpd.conf 2>&1)
 echo "    resolv: $(echo $RESOLV) | keys $KEYMODE: $KEYS | snmpd.conf $SNMPMODE"
+
+# THE X520 BENCH'S SAVE (#525): the VTY in the management container cannot
+# see /etc/snmp, took SNMP for off, and a `save` from it wrote that into the
+# file the next boot applied - snmpd.conf and its community deleted. The
+# container's view is reproduced as it is: a mount namespace with nothing at
+# /etc/snmp, the daemon outside it seeing the real file.
+echo "  -- a save from where /etc/snmp cannot be seen, then the boot's load"
+hidden() { unshare -m sh -c "mount -t tmpfs none /etc/snmp && PRISMA_IN_MGMT=1 $1" 2>&1; }
+HSAVE=$(hidden "$HX -c save")
+printf '%s\n' "$HSAVE" | sed 's/^/    /'
+SAVED=$(grep -E '^snmp (enabled|community)' "$PRISMA_CONFIG" 2>&1)
+HSHOW=$(hidden "$HX -c 'show running-config'" | grep -E '^snmp enabled|note: snmp')
+# An administrator the door does not read snmpd.conf for: not root.
+chmod 0644 "$PRISMA_CONFIG" 2>/dev/null
+NSHOW=$(hidden "su netadm -s /bin/sh -c \"PRISMA_IN_MGMT=1 $HX -c 'show running-config'\"" \
+        | tr '\n' ' ')
+LOAD=$($HX --load "$PRISMA_CONFIG" 2>&1)
+AFTER=$(grep -c 'doorlabro' /etc/snmp/snmpd.conf 2>&1)
+echo "    saved: $(echo $SAVED | sed 's/doorlabro/<community>/')"
+echo "    hidden show: $(echo $HSHOW)"
+echo "    snmpd.conf after the load names the community $AFTER time(s)"
 printf '%s\n' "$DEL" | sed 's/^/    /'
 IDS="ro=$(id -nG ro 2>&1) | netadm=$(id -nG netadm 2>&1) | gone=$(id -u gone 2>&1)"
 echo "    $IDS"
@@ -139,6 +160,17 @@ expect_said "the description reached the Linux end" "alias door-uplink" "$LINUX_
 expect_said "the daemon set it" "door: uid 0: ip link set dev host-dv0 alias door-uplink -> 0" "$(cat /tmp/doors.log)"
 expect_said "the MTU reached the Linux end" "mtu 1400" "$LINUX_END"
 expect_said "the daemon set that too" "door: uid 0: ip link set dev host-dv0 mtu 1400 -> 0" "$(cat /tmp/doors.log)"
+expect_said "a save made where /etc/snmp is hidden keeps SNMP on (#525)" \
+  "snmp enabled yes" "$SAVED"
+expect_said "and keeps its community" "snmp community doorlabro" "$SAVED"
+expect_said "the daemon read snmpd.conf for it, for root" \
+  "door: uid 0: cat /etc/snmp/snmpd.conf -> 0" "$(cat /tmp/doors.log)"
+expect_said "show running-config from there reads the box's SNMP" \
+  "snmp enabled yes" "$HSHOW"
+expect_said "an administrator the door refuses is told whose lines they are" \
+  "note: snmp: this session cannot read" "$NSHOW"
+expect "and the boot's load leaves snmpd.conf with its community ($AFTER)" \
+  sh -c "[ \"$AFTER\" -ge 1 ] 2>/dev/null"
 case "$SNEAK" in
   *"no such user"*) echo "  [ ok ] an account with no privilege made nothing" ;;
   *) echo "  [FAIL] an account with no privilege made 'sneak': $SNEAK"

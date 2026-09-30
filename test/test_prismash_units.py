@@ -7343,5 +7343,50 @@ check(_mib_shell("snmp enterprise-number 70000\n").text_with_pen(prismash.ZABBIX
 prismash.ZABBIX_TEMPLATE = _was
 ok("show snmp zabbix-template: the MIB's rule, for the template")
 
+print("\n=== a session that cannot read snmpd.conf does not save SNMP off (#525) ===")
+_saved_path = prismash.CONFIG_PATH
+prismash.CONFIG_PATH = os.path.join(_root, "saved-snmp.conf")
+with open(prismash.CONFIG_PATH, "w") as _f:
+    _f.write("snmp enabled yes\nsnmp community c0mm\nsnmp trap-host 192.0.2.9 "
+             "community tr4p\n")
+_c = Config()
+prismash.Shell().carry_saved_snmp(_c)
+check(_c.snmp_unread == "saved" and _c.snmp.get("enabled") == "yes"
+      and _c.snmp_communities == ["c0mm"]
+      and _c.snmp_trap_hosts == [("192.0.2.9", "tr4p", "trap")],
+      f"the saved file's SNMP stands in, and says so: {_c.snmp_unread} "
+      f"{_c.snmp} {_c.snmp_communities}")
+_, _out = driven(prismash.Shell.print_config, _c)
+check("snmp enabled yes" in _out and "note: snmp: this session cannot read"
+      in " ".join(_out.split()) and "last saved file" in " ".join(_out.split()),
+      f"show running-config says whose lines they are: {_out[-200:]!r}")
+# A save carries them: the file keeps SNMP on and its community.
+sh = shell()
+sh.running_config = lambda: _c
+_, _out = driven(sh.save_running)
+check("configuration saved" in _out
+      and "snmp community c0mm" in open(prismash.CONFIG_PATH).read()
+      and "snmp enabled yes" in open(prismash.CONFIG_PATH).read(),
+      f"a save from such a session keeps SNMP as it was: {_out!r}")
+os.remove(prismash.CONFIG_PATH)
+_n = Config()
+prismash.Shell().carry_saved_snmp(_n)
+check(_n.snmp_unread == "none" and _n.snmp.get("enabled", "no") == "no",
+      "no saved file either: the defaults stay, and it says none")
+_, _out = driven(prismash.Shell.print_config, _n)
+check("nor the saved file" in " ".join(_out.split()),
+      "and show running-config says that too")
+sh = shell()
+sh.running_config = lambda: _n
+_, _out = driven(sh.save_running)
+check("save: refused, nothing was written" in _out
+      and not os.path.exists(prismash.CONFIG_PATH),
+      f"and a save is refused rather than writing SNMP off: {_out!r}")
+_r = Config()
+check(_r.snmp_unread == "" and "snmp_unread" not in _r.text()
+      and not driven(prismash.Shell.print_config, _r)[1].count("note: snmp"),
+      "a configuration that was read carries no note and writes no flag")
+prismash.CONFIG_PATH = _saved_path
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

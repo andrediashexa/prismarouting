@@ -1358,21 +1358,67 @@ class SnmpDaemon:
                  agent=SNMP_AGENT, files=None):
         self.root = root
         self.conf = root + conf
+        # The path the host's door is asked for: the box's own, whatever
+        # root this process reads under (#525).
+        self.conf_on_host = conf
+        self.unread = False
         self.agent = agent
         self._run = runner or System._subprocess
         self.files = files or LocalFiles()
 
+    def _conf(self):
+        """
+        ("text", the file) | ("absent", None) | ("unread", None): snmpd.conf
+        as this process can see it (#525).
+
+        Opened directly where it can be, and asked of the host's door where it
+        cannot: the management container does not mount /etc/snmp, and the
+        file is 0600 root on the host too. Only an answer is believed. A file
+        the door says is not there is SNMP off; a refusal, or no door, is
+        UNREAD - which is not the same thing, and was read as "off" until
+        #525: on the X520 bench a `save` from the container wrote
+        `snmp enabled no` into the file and the next boot deleted snmpd.conf
+        and its community.
+        """
+        try:
+            with open(self.conf) as f:
+                return "text", f.read()
+        except FileNotFoundError:
+            # On the host a missing file is an answer: SNMP is off. In the
+            # management container it is not - compose.yaml sets
+            # PRISMA_IN_MGMT there and mounts no /etc/snmp - so only the host
+            # can say it.
+            if not os.environ.get("PRISMA_IN_MGMT"):
+                return "absent", None
+        except OSError:
+            pass
+        rc, out = self._run(["cat", self.conf_on_host])
+        if rc == 0:
+            return "text", out
+        # "No such file" is believed only from the host: with no door
+        # listening the runner runs `cat` HERE, and in the container, which
+        # has no /etc/snmp at all, every file is missing.
+        if "No such file" in (out or "") and self._host_answers():
+            return "absent", None
+        return "unread", None
+
+    def _host_answers(self):
+        """Does this process's runner reach the host's door right now?"""
+        door = getattr(self._run, "door", None)
+        return door is not None and os.path.exists(door)
+
     def read(self):
         """
         (settings, communities, users, trap_hosts) as the file on disk
-        describes them.
+        describes them. `self.unread` says whether it could be read at all:
+        when it could not, what comes back is the defaults and MUST NOT be
+        taken for the box's configuration (#525).
         """
         settings = dict(SNMP_DEFAULTS)
         communities, users, traps = [], {}, []
-        try:
-            with open(self.conf) as f:
-                text = f.read()
-        except OSError:
+        state, text = self._conf()
+        self.unread = state == "unread"
+        if state != "text":
             return settings, communities, users, traps
         settings["enabled"] = "yes"
         # What the FILE serves, not the default (#508): a box configured before
@@ -1441,10 +1487,8 @@ class SnmpDaemon:
         if settings.get("enabled", "no") != "yes" or (not communities
                                                       and not users):
             return False
-        try:
-            with open(self.conf) as f:
-                on_disk = f.read()
-        except OSError:
+        state, on_disk = self._conf()
+        if state == "unread":
             return False
         return on_disk != _snmpd_body(settings, communities, users, self.agent,
                                       trap_hosts=trap_hosts, hostname=hostname)

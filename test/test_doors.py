@@ -29,7 +29,7 @@ SRC = os.path.join(HERE, "..", "src", "prismash")
 sys.path.insert(0, SRC)
 import doors  # noqa: E402
 from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_ADMIN, SNMPD_USER,  # noqa: E402
-                    SET_HOSTNAME)
+                    SET_HOSTNAME, SNMPD_CONF)
 
 fail = 0
 
@@ -71,7 +71,8 @@ def slot(e):
     return {"verb": ["reboot", "poweroff"],
             "self.TUNE_UNIT": ["prisma-routing-tune"],
             "gw": ["192.0.2.1", "2001:db8::1"],
-            "mgmt['name']": ["ens18"]}.get(u)
+            "mgmt['name']": ["ens18"],
+            "self.conf_on_host": [SNMPD_CONF]}.get(u)
 
 
 # In prismash.py, `self.sys._run` and `self.snmp._run` are the doors as well:
@@ -174,6 +175,20 @@ check(r == {"rc": 0, "out": "done"} and ran, f"uid 0 is given it: {r}")
 ran.clear()
 r = doors.answer(json.dumps({"argv": ["sh", "-c", "id"]}), 0, execute=fake)
 check(r["rc"] == 126 and not ran, f"and not even root gets a non-door: {r}")
+# snmpd.conf carries the communities (#525): read for root, as on the host,
+# and for nobody else - and only that file.
+ran.clear()
+r = doors.answer(json.dumps({"argv": ["cat", SNMPD_CONF]}), 1000, execute=fake)
+check(r["rc"] == 126 and "only root" in r["out"] and not ran,
+      f"snmpd.conf is not read for uid 1000: {r}")
+r = doors.answer(json.dumps({"argv": ["cat", SNMPD_CONF]}), 0, execute=fake)
+check(r == {"rc": 0, "out": "done"} and ran == [["cat", SNMPD_CONF]],
+      f"and is read for root: {r}")
+ran.clear()
+r = doors.answer(json.dumps({"argv": ["cat", "/etc/shadow"]}), 0, execute=fake)
+check(r["rc"] == 126 and not ran, f"and no other file is, even for root: {r}")
+check(doors.runner("/no/such/door.sock").door == "/no/such/door.sock",
+      "a runner says which door it asks, for whoever must know who answered")
 r = doors.answer("{not json", 0, execute=fake)
 check(r["rc"] == 126 and not ran, "a request that is not JSON is refused")
 doors.answer(json.dumps({"argv": ["systemctl", "restart", "snmpd"],

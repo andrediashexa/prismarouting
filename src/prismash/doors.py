@@ -88,6 +88,11 @@ FIXED = {
     ("systemctl", "reboot"): "restart the box",
     ("systemctl", "poweroff"): "shut the box down",
     ("systemctl", "restart", "prisma-routing-tune"): "recompute the tuning",
+    # snmpd's configuration, READ (#525). The management container does not
+    # mount /etc/snmp, and the file carries the communities, so it is a
+    # door and not a mount - and not a query: FIXED is root's, which is who
+    # may see a community on the host too (the file is 0600 root there).
+    ("cat", SNMPD_CONF): "read snmpd's configuration",
 }
 
 #: What any account may ask of the host from the management plane (#448):
@@ -329,6 +334,10 @@ def runner(path=SOCKET):
             return 125, f"{argv[0]}: the host's door did not answer: {e}"
         finally:
             s.close()
+    # Where the answers come from when something listens there: the
+    # SnmpDaemon asks, before it believes a file the host says is missing,
+    # whether it was the host that said so (#525).
+    run.door = path
     return run
 
 

@@ -2526,6 +2526,11 @@ class Config:
         self.snmp_users: dict = {}
         # (address, community, kind) per notification destination (#507)
         self.snmp_trap_hosts: list = []
+        # Whether the SNMP settings above were READ off the box (#525): "" when
+        # they were, "saved" when this session could not read snmpd.conf and
+        # they are the last saved file's, "none" when it could read neither.
+        # Not configuration: never written, never compared.
+        self.snmp_unread: str = ""
         # The card the DATAPLANE forwards on, by the name LINUX gives it.
         #
         # Not one of the interfaces above, and the difference is the whole
