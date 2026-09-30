@@ -6983,5 +6983,33 @@ with contextlib.redirect_stdout(io.StringIO()):
 prismash.SNMP_MIB_TEMPLATE = _was
 ok("show snmp mib: printed with the number, or refused with the reason")
 
+# ------------------------------------------- show snmp zabbix-template (#514)
+print("\n=== show snmp zabbix-template: the template, with this box's number ===")
+_was = prismash.ZABBIX_TEMPLATE
+prismash.ZABBIX_TEMPLATE = os.path.join(os.path.dirname(__file__), "..", "appliance",
+                                        "prisma-routing-zabbix.json.in")
+_, _out = driven(_mib_shell("snmp enterprise-number 70000\n").show_snmp_zabbix_template)
+_tpl = json.loads(_out)["zabbix_export"]["templates"][0]
+check([m["value"] for m in _tpl["macros"] if m["macro"] == "{$PRISMA.PEN}"] == ["70000"]
+      and "@PEN@" not in _out,
+      "the template is printed whole, {$PRISMA.PEN} defaulting to 70000")
+_, _out = driven(_mib_shell("").show_snmp_zabbix_template)
+check('"value": "32473"' in _out, "and to the product's with no number named (#508)")
+with contextlib.redirect_stdout(io.StringIO()) as _buf:
+    _mib_shell("").show_snmp_zabbix_template()
+check(json.loads(_buf.getvalue())["zabbix_export"]["version"] == "7.0",
+      "and what it prints is JSON Zabbix 7.0 imports")
+prismash.ZABBIX_TEMPLATE = os.path.join(_root, "no-such-template")
+_, _out = driven(_mib_shell("snmp enterprise-number 70000\n").show_snmp_zabbix_template)
+check("the Zabbix template is not on this box" in _out and "no-such-template" in _out,
+      f"a missing file is named, by what it is: {_out!r}")
+check(_mib_shell("snmp enterprise-number 70000\n").text_with_pen(prismash.ZABBIX_TEMPLATE) == ""
+      and _mib_shell("snmp enterprise-number 70000\n").text_with_pen(
+          os.path.join(os.path.dirname(__file__), "..", "appliance",
+                       "prisma-routing-zabbix.json.in")).count('"70000"') == 1,
+      "text_with_pen: '' for a missing file, the text with the number otherwise")
+prismash.ZABBIX_TEMPLATE = _was
+ok("show snmp zabbix-template: the MIB's rule, for the template")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

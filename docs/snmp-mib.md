@@ -35,6 +35,76 @@ An operator may still name a number of its own with
 `snmp enterprise-number <number>`, and `no snmp enterprise-number` goes back
 to the product's.
 
+## Zabbix (#514)
+
+A Zabbix 7.0 template covers everything below: the dataplane's interfaces,
+the CGNAT's totals, pools and workers, the connection records, HA, LACP, BGP,
+OSPF, OSPFv3, IS-IS, the FIB's size, the control plane's CPU, memory and
+disks, and the box's notifications. The box prints it with its enterprise
+number filled in, the same way it prints the MIB:
+
+```
+show snmp zabbix-template
+```
+
+Save the output as `prisma-routing-zabbix.json` and import it in Zabbix
+(*Data collection* > *Templates* > *Import*). It is JSON, which Zabbix imports
+exactly as it does YAML. Then give the host an SNMP interface - v2c with an
+`snmp community` of the box, or v3 with an `snmp user` - and link
+**Prisma Routing by SNMP**. v1 is refused by the box (#511).
+
+**The macros** an operator may want to set on the host:
+
+| Macro | Default | What it decides |
+|---|---|---|
+| `{$PRISMA.PEN}` | the box's number | the root the product's objects are read under: filled in by `show snmp zabbix-template` |
+| `{$IFCONTROL:"<ifName>"}` | 1 | 0 silences "link down" for an interface that may be down |
+| `{$IF.UTIL.MAX}` | 90 | percent of ifHighSpeed that raises "above its speed" |
+| `{$IF.ERRORS.WARN}` | 2 | errors per second that raise "has errors" |
+| `{$NET.IF.IFNAME.MATCHES}`, `{$NET.IF.IFNAME.NOT_MATCHES}` | `.*`, `^(local0\|tap[0-9]+)$` | which interfaces are discovered |
+| `{$PRISMA.POOL.UTIL.WARN}`, `{$PRISMA.POOL.UTIL.CRIT}` | 80, 95 | a pool's block utilisation that raises a warning, a high |
+| `{$PRISMA.SESSIONS.FIT.WARN}`, `{$PRISMA.SESSIONS.FIT.CRIT}` | 200000, 20000 | sessions still fitting in the CGNAT's memory that raise a warning, a high |
+| `{$PRISMA.FIB.DROP.PCT}`, `{$PRISMA.FIB.MIN}` | 50, 100 | the FIB falling below this percent of its hourly maximum raises an average, on a table larger than the minimum |
+| `{$MEMORY.UTIL.MAX}` | 90 | the control plane's memory |
+| `{$BGP4V2.INDEX.MATCHES}` | `^[0-9]+\.2\.` | BGP4V2-MIB peers discovered: IPv6 only, since BGP4-MIB has the IPv4 ones |
+| `{$SNMP.TIMEOUT}` | 5m | no answer for this long is "no SNMP data collection" |
+
+**What it alarms on** is the table in *What is worth an alarm* below, with
+three decisions:
+
+* **No trigger on CPU.** The dataplane's worker cores poll their cards at 100%
+  by design; `hrProcessorLoad` is collected per core and not alarmed.
+* **One alarm per event.** VRRP and the CGNAT are alarmed on the product's
+  tables, which name the interface and the pool; the same routers and pools
+  in VRRPV3-MIB and NATV2-MIB are collected without triggers. BGP is alarmed
+  on BGP4-MIB for IPv4 and on BGP4V2-MIB for IPv6 only.
+* **A shut interface is not a down one.** "Link down" needs ifAdminStatus up,
+  and ifAdminStatus is polled as often as ifOperStatus: polled every five
+  minutes, it still said up when an operator had just shut an interface, and
+  the alarm fired - measured on the lab below.
+
+**Notifications** arrive as SNMP trap items when the box sends them to a
+Zabbix server or proxy running Zabbix's SNMP trap receiver
+(`snmp trap-host <its address> community <string>`): one item per
+notification in *Notifications*, matched by name or OID, and a fallback for
+anything else.
+
+`ipCidrRouteNumber` is not in the template: the box's net-snmp answers it
+with noSuchObject, and `inetCidrRouteNumber` counts both families.
+
+**What was verified, and on what.** The template was imported into Zabbix
+7.0.31 through its API and polled against a lab box - VPP with a pool, pg0
+carrying traffic, a VRRP router and a bundle, snmpd with the agent - over
+v2c: every discovery rule found its rows and 106 of 107 items got values, the
+one left being `ipCidrRouteNumber`, since dropped. Taking pg0 down sent
+`linkDown`, `linkUp` and `vrrpStateChange` to Zabbix's trap receiver, each
+landing in its own item, and raised and cleared the VRRP triggers. Not
+verified against a live Zabbix: SNMPv3, and the routing tables, which that
+lab box has no daemon for - `lab/routing.sh` and `lab/igp.sh` read their
+OIDs from live daemons, and `test/test_zabbix_template.py` holds every OID in
+the template to the module that defines it and to the view snmpd.conf grants.
+`tools/zabbix-template.py` writes the file; it is regenerated, never edited.
+
 ## The standard MIBs
 
 Served by net-snmp itself, by the CGNAT's agent or by FRR's daemons over

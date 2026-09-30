@@ -176,6 +176,10 @@ FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 #: puts beside the version stamp (#504).
 SNMP_MIB_TEMPLATE = os.environ.get(
     "PRISMA_SNMP_MIB", "/usr/share/prisma-routing/PRISMA-ROUTING-MIB.in")
+#: The Zabbix 7.0 template for the box (#514), its {$PRISMA.PEN} macro left
+#: as @PEN@ the same way, installed beside the MIB.
+ZABBIX_TEMPLATE = os.environ.get(
+    "PRISMA_ZABBIX_TEMPLATE", "/usr/share/prisma-routing/prisma-routing-zabbix.json.in")
 
 # The three reachability tools, each with the package that carries it (#395).
 #
@@ -1035,7 +1039,9 @@ SHOW = {
     "version": ("Prisma Routing, VPP and FRR versions", None),
     "snmp": ("the SNMP agent", {
         "mib": ("PRISMA-ROUTING-MIB, rooted at this box's enterprise number, "
-                "to load into the NMS", None)}),
+                "to load into the NMS", None),
+        "zabbix-template": ("the Zabbix 7.0 template for this box, its "
+                            "enterprise number filled in, to import", None)}),
     "lacp": ("LACP bundles: each member and whether it is in the bundle",
              None),
     "policy": ("routing policies: each one, its terms, and where it is "
@@ -14604,6 +14610,34 @@ class Shell:
         own, and a file naming another number is a MIB for objects this box
         does not serve.
         """
+        text = self.text_with_pen(SNMP_MIB_TEMPLATE)
+        if text == "":
+            self.err("PRISMA-ROUTING-MIB is not on this box")
+            print_prose(f"it is installed as {SNMP_MIB_TEMPLATE}")
+        elif text:
+            sys.stdout.write(text)
+
+    def show_snmp_zabbix_template(self):
+        """
+        The Zabbix 7.0 template (#514), with {$PRISMA.PEN} defaulting to the
+        number this box serves PRISMA-ROUTING-MIB under - the reason it is
+        printed and not handed out as a file, the same as the MIB's.
+        """
+        text = self.text_with_pen(ZABBIX_TEMPLATE)
+        if text == "":
+            # Each caller says what is missing in its own words: a message
+            # built from the name would carry a value with no widest ahead
+            # of the VTY's words, which test_prismash_refusals refuses.
+            self.err("the Zabbix template is not on this box")
+            print_prose(f"it is installed as {ZABBIX_TEMPLATE}")
+        elif text:
+            sys.stdout.write(text)
+
+    def text_with_pen(self, path):
+        """
+        `path` with @PEN@ replaced by the running enterprise number; "" when
+        the file is missing, None when there is no number (said here).
+        """
         pen = self.running_config().snmp.get("enterprise-number", "")
         if not pen:
             # Only a box whose snmpd.conf was written before the product had
@@ -14611,15 +14645,12 @@ class Shell:
             self.err("the agent serves no enterprise subtree yet")
             print_prose("the next commit that touches snmp writes it under the "
                         "product's number; this prints the file after that")
-            return
+            return None
         try:
-            with open(SNMP_MIB_TEMPLATE) as f:
-                text = f.read()
+            with open(path) as f:
+                return f.read().replace("@PEN@", pen)
         except OSError:
-            self.err("PRISMA-ROUTING-MIB is not on this box")
-            print_prose(f"it is installed as {SNMP_MIB_TEMPLATE}")
-            return
-        sys.stdout.write(text.replace("@PEN@", pen))
+            return ""
 
     def show_system_memory(self):
         """
@@ -14765,6 +14796,9 @@ class Shell:
             return
         if line == "show snmp mib":
             self.show_snmp_mib()
+            return
+        if line == "show snmp zabbix-template":
+            self.show_snmp_zabbix_template()
             return
         # Before the forwarding below, which would otherwise hand `ha` to a
         # dataplane that has no such command.

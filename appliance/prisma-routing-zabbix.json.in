@@ -1,0 +1,3015 @@
+{
+  "zabbix_export": {
+    "version": "7.0",
+    "template_groups": [
+      {
+        "uuid": "f8470bfd58514254ae8724eabb9c0310",
+        "name": "Templates/Network devices"
+      }
+    ],
+    "templates": [
+      {
+        "uuid": "aff0644b6b8a45d88c9d1e8534efef44",
+        "template": "Prisma Routing by SNMP",
+        "name": "Prisma Routing by SNMP",
+        "description": "Prisma Routing (#514): the dataplane's interfaces, the CGNAT, the connection records, HA, LACP, BGP, OSPF and IS-IS, over SNMP v2c or v3 (v1 is refused). Print it with the box's enterprise number filled in: `show snmp zabbix-template`.",
+        "vendor": {
+          "name": "Prisma Routing",
+          "version": "0.146"
+        },
+        "groups": [
+          {
+            "name": "Templates/Network devices"
+          }
+        ],
+        "items": [
+          {
+            "uuid": "49ea21d23e70467797f61f24d52be0ff",
+            "name": "SNMP agent availability",
+            "type": "INTERNAL",
+            "key": "zabbix[host,snmp,available]",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "valuemap": {
+              "name": "Zabbix::SNMP availability"
+            },
+            "tags": [
+              {
+                "tag": "component",
+                "value": "health"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "49f6e57c67404b87b16c13b3f161fe1f",
+                "expression": "max(/Prisma Routing by SNMP/zabbix[host,snmp,available],{$SNMP.TIMEOUT})=0",
+                "name": "Prisma Routing: no SNMP data collection",
+                "priority": "WARNING",
+                "description": "The box has not answered SNMP for {$SNMP.TIMEOUT}: down, unreachable, or snmpd stopped (`snmp enabled`).",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "70a7f21ecbf540b4b3ff20ccddc50b18",
+            "name": "System name",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.2.1.1.5.0",
+            "key": "system.name",
+            "delay": "15m",
+            "history": "7d",
+            "trends": "0",
+            "value_type": "CHAR",
+            "preprocessing": [
+              {
+                "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                "parameters": [
+                  "1d"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "system"
+              }
+            ]
+          },
+          {
+            "uuid": "ad1b1ab7140342edbbf5d35ce65e26a8",
+            "name": "System description",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.2.1.1.1.0",
+            "key": "system.descr",
+            "delay": "15m",
+            "history": "7d",
+            "trends": "0",
+            "value_type": "CHAR",
+            "preprocessing": [
+              {
+                "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                "parameters": [
+                  "1d"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "system"
+              }
+            ]
+          },
+          {
+            "uuid": "c89a66dbd7654e2a80d7e182e1f0a892",
+            "name": "Uptime",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.2.1.25.1.1.0",
+            "key": "system.hw.uptime",
+            "delay": "5m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "uptime",
+            "preprocessing": [
+              {
+                "type": "MULTIPLIER",
+                "parameters": [
+                  "0.01"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "system"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "3fe4991df7814f2f9833eccad89345ff",
+                "expression": "last(/Prisma Routing by SNMP/system.hw.uptime)<10m",
+                "name": "Prisma Routing: the box has been restarted (uptime < 10m)",
+                "priority": "WARNING",
+                "description": "hrSystemUptime: the host, not the SNMP daemon.",
+                "manual_close": "YES",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "notice"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "bb094efa0cd44aa596a33e4265be5bfa",
+            "name": "Load average (1m)",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.2021.10.1.3.1",
+            "key": "system.cpu.load.avg1",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cpu"
+              }
+            ]
+          },
+          {
+            "uuid": "d12598516318417293d7b05d6e94e31f",
+            "name": "Memory: total",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.2021.4.5.0",
+            "key": "vm.memory.total",
+            "delay": "15m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "units": "B",
+            "preprocessing": [
+              {
+                "type": "MULTIPLIER",
+                "parameters": [
+                  "1024"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "memory"
+              }
+            ]
+          },
+          {
+            "uuid": "b633850da0f24dd09b4a4fb26102c392",
+            "name": "Memory: available",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.2021.4.6.0",
+            "key": "vm.memory.avail",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "units": "B",
+            "preprocessing": [
+              {
+                "type": "MULTIPLIER",
+                "parameters": [
+                  "1024"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "memory"
+              }
+            ]
+          },
+          {
+            "uuid": "7b96bc17cf8e483da26289ae46dba2c9",
+            "name": "Memory: buffers",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.2021.4.14.0",
+            "key": "vm.memory.buffers",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "units": "B",
+            "preprocessing": [
+              {
+                "type": "MULTIPLIER",
+                "parameters": [
+                  "1024"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "memory"
+              }
+            ]
+          },
+          {
+            "uuid": "d0553ecd4905448c97604e863280d676",
+            "name": "Memory: cached",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.2021.4.15.0",
+            "key": "vm.memory.cached",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "units": "B",
+            "preprocessing": [
+              {
+                "type": "MULTIPLIER",
+                "parameters": [
+                  "1024"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "memory"
+              }
+            ]
+          },
+          {
+            "uuid": "00cb7dd7d8884cce86c6ce11c42b7bdf",
+            "name": "Memory utilisation",
+            "type": "CALCULATED",
+            "key": "vm.memory.util",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "%",
+            "params": "100*(last(//vm.memory.total)-last(//vm.memory.avail)-last(//vm.memory.buffers)-last(//vm.memory.cached))/last(//vm.memory.total)",
+            "description": "The control plane's RAM: the dataplane's hugepages are reserved at boot and count as used.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "memory"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "3666ca2471d2450698578f9a24554f5b",
+                "expression": "min(/Prisma Routing by SNMP/vm.memory.util,5m)>{$MEMORY.UTIL.MAX}",
+                "name": "Prisma Routing: high memory utilisation (>{$MEMORY.UTIL.MAX}% for 5m)",
+                "priority": "AVERAGE",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "capacity"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "ea2db408d13e41d888507b04df560239",
+            "name": "FIB: routes (IPv4 and IPv6)",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.2.1.4.24.6.0",
+            "key": "fib.routes",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "inetCidrRouteNumber, IPv4 and IPv6: the size of the table, not the table. ipCidrRouteNumber is left out: the box's net-snmp answers it with noSuchObject.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "routing"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "3bec724e1fed46ff8c4b96a999aff5d4",
+                "expression": "last(/Prisma Routing by SNMP/fib.routes)<{$PRISMA.FIB.DROP.PCT}/100*max(/Prisma Routing by SNMP/fib.routes,1h) and max(/Prisma Routing by SNMP/fib.routes,1h)>{$PRISMA.FIB.MIN}",
+                "name": "Prisma Routing: the FIB fell below {$PRISMA.FIB.DROP.PCT}% of its size in the last hour",
+                "priority": "AVERAGE",
+                "description": "A session that dropped took its routes with it.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "33027abfeaa94790b596d209218724a2",
+            "name": "Release installed",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.12.1.0",
+            "key": "prisma.release",
+            "delay": "1h",
+            "history": "7d",
+            "trends": "0",
+            "value_type": "CHAR",
+            "preprocessing": [
+              {
+                "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                "parameters": [
+                  "1d"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "system"
+              }
+            ]
+          },
+          {
+            "uuid": "b245da9f2f184574ba910bea4b35efb3",
+            "name": "Dataplane build running",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.12.2.0",
+            "key": "prisma.dataplane.build",
+            "delay": "1h",
+            "history": "7d",
+            "trends": "0",
+            "value_type": "CHAR",
+            "preprocessing": [
+              {
+                "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                "parameters": [
+                  "1d"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "system"
+              }
+            ]
+          },
+          {
+            "uuid": "c9a16eafa643498c9fe36decf127db68",
+            "name": "Dataplane running the release installed",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.12.3.0",
+            "key": "prisma.dataplane.current",
+            "delay": "5m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "valuemap": {
+              "name": "SNMPv2-TC::TruthValue"
+            },
+            "tags": [
+              {
+                "tag": "component",
+                "value": "system"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "ca449162791b40369476c8add3c1859c",
+                "expression": "last(/Prisma Routing by SNMP/prisma.dataplane.current)=2",
+                "name": "Prisma Routing: the dataplane is running the old build (reboot pending)",
+                "priority": "WARNING",
+                "description": "An upgrade waits for a reboot: the box forwards with the old build and refuses a commit that needs the new one.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "notice"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "a4ea384d064841298d41f51929010129",
+            "name": "CGNAT: subscribers",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.1.0",
+            "key": "prisma.cgnat.subscribers",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cgnat"
+              }
+            ]
+          },
+          {
+            "uuid": "a0a3724658764dceb870de93d09984e4",
+            "name": "CGNAT: ports in use",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.2.0",
+            "key": "prisma.cgnat.ports",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cgnat"
+              }
+            ]
+          },
+          {
+            "uuid": "16dfa03ccf334874b1370cb7d1f48546",
+            "name": "CGNAT: ports in held blocks",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.3.0",
+            "key": "prisma.cgnat.ports.held",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cgnat"
+              }
+            ]
+          },
+          {
+            "uuid": "17369ff2e7a94c608a749132ed80f04b",
+            "name": "CGNAT: subscribers near full",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.4.0",
+            "key": "prisma.cgnat.nearfull",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "Subscribers using 90% or more of their ports.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cgnat"
+              }
+            ]
+          },
+          {
+            "uuid": "b7245fefe4c54227abaa4b8e61e20d06",
+            "name": "CGNAT: port refusals per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.5.0",
+            "key": "prisma.cgnat.refusals.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cgnat"
+              }
+            ]
+          },
+          {
+            "uuid": "8c5883027b454459b0a4c874c30d5583",
+            "name": "CGNAT: packets dropped per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.6.0",
+            "key": "prisma.cgnat.drops.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "pps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cgnat"
+              }
+            ]
+          },
+          {
+            "uuid": "50ef2f54f0b24db7a04e185e814213dc",
+            "name": "CGNAT: sessions",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.3.0",
+            "key": "prisma.cgnat.sessions",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cgnat"
+              }
+            ]
+          },
+          {
+            "uuid": "5350ec769e6a40aa990d84a1b26dd336",
+            "name": "CGNAT: sessions that still fit in memory",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.4.0",
+            "key": "prisma.cgnat.sessions.fit",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "At zero, new sessions are refused while the open ones go on.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "cgnat"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "72bcca73f9204f79b1a5681d3ca40e87",
+                "expression": "last(/Prisma Routing by SNMP/prisma.cgnat.sessions.fit)<{$PRISMA.SESSIONS.FIT.CRIT}",
+                "name": "Prisma Routing: CGNAT memory nearly exhausted (fewer than {$PRISMA.SESSIONS.FIT.CRIT} sessions fit)",
+                "priority": "HIGH",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "capacity"
+                  }
+                ]
+              },
+              {
+                "uuid": "8a4c12b47345452782f8b920ead53e84",
+                "expression": "last(/Prisma Routing by SNMP/prisma.cgnat.sessions.fit)<{$PRISMA.SESSIONS.FIT.WARN}",
+                "name": "Prisma Routing: CGNAT memory running low (fewer than {$PRISMA.SESSIONS.FIT.WARN} sessions fit)",
+                "priority": "WARNING",
+                "dependencies": [
+                  {
+                    "name": "Prisma Routing: CGNAT memory nearly exhausted (fewer than {$PRISMA.SESSIONS.FIT.CRIT} sessions fit)",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.cgnat.sessions.fit)<{$PRISMA.SESSIONS.FIT.CRIT}"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "capacity"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "a49c341810b64b8c8e5004f145ffd685",
+            "name": "Connection records: IPFIX over UDP enabled",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.11.1.0",
+            "key": "prisma.log.ipfix.enabled",
+            "delay": "5m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "valuemap": {
+              "name": "SNMPv2-TC::TruthValue"
+            },
+            "tags": [
+              {
+                "tag": "component",
+                "value": "logging"
+              }
+            ]
+          },
+          {
+            "uuid": "88d26b400d924ef489cdf26f62a57cfb",
+            "name": "Connection records: IPFIX over UDP records per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.11.2.0",
+            "key": "prisma.log.ipfix.records.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "logging"
+              }
+            ]
+          },
+          {
+            "uuid": "0068d81b67774046b8c5b5b9dc6100c5",
+            "name": "Connection records: IPFIX over UDP dropped per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.11.3.0",
+            "key": "prisma.log.ipfix.dropped.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "logging"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "07a34c52084240f3becc6f5eb94d9885",
+                "expression": "last(/Prisma Routing by SNMP/prisma.log.ipfix.dropped.rate)>0",
+                "name": "Prisma Routing: IPFIX records are being lost",
+                "priority": "HIGH",
+                "description": "A gap in the compliance log.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "compliance"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "e630532388b348f38183348e5003443d",
+            "name": "Identity: subscribers named",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.15.1.0",
+            "key": "prisma.identity.entries",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "identity"
+              }
+            ]
+          },
+          {
+            "uuid": "e5b4515fcb574920bf961bad61f5adab",
+            "name": "Identity: table read at",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.15.2.0",
+            "key": "prisma.identity.readat",
+            "delay": "15m",
+            "history": "7d",
+            "trends": "0",
+            "value_type": "CHAR",
+            "preprocessing": [
+              {
+                "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                "parameters": [
+                  "1d"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "identity"
+              }
+            ]
+          },
+          {
+            "uuid": "f4416a3017754c83b5d0b3512a37e29e",
+            "name": "RADIUS accounting received per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.15.3.0",
+            "key": "prisma.radius.received.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "identity"
+              }
+            ]
+          },
+          {
+            "uuid": "71a87ade57cf46cba63ad48bbfff5400",
+            "name": "RADIUS accounting applied per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.15.4.0",
+            "key": "prisma.radius.applied.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "identity"
+              }
+            ]
+          },
+          {
+            "uuid": "f2347bdb0077460a97a5872592822ec2",
+            "name": "RADIUS accounting refused per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.15.5.0",
+            "key": "prisma.radius.refused.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "identity"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "fc5aed9734af40f08cfc2b95287a5007",
+                "expression": "last(/Prisma Routing by SNMP/prisma.radius.refused.rate)>0",
+                "name": "Prisma Routing: RADIUS accounting refused",
+                "priority": "WARNING",
+                "description": "A bad authenticator or a malformed packet; the first is usually a shared secret that differs between the BNG and the box.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "compliance"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "1a6997880384434ca8d334d252fc8a69",
+            "name": "Notification: linkDown",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"linkDown|1\\.3\\.6\\.1\\.6\\.3\\.1\\.1\\.5\\.3\\b\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "bd649bd1ca69497e95cda05943f0b404",
+            "name": "Notification: linkUp",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"linkUp|1\\.3\\.6\\.1\\.6\\.3\\.1\\.1\\.5\\.4\\b\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "2d7e65c7552f4a3f97b7fb5051e83551",
+            "name": "Notification: bgpBackwardTransition",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"bgpBackwardTrans|1\\.3\\.6\\.1\\.2\\.1\\.15\\.0\\.2\\b\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "11bddf91df074c94b1cc89b653cdea64",
+            "name": "Notification: bgpEstablished",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"bgpEstablished|1\\.3\\.6\\.1\\.2\\.1\\.15\\.0\\.1\\b\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "9fc0d0406613432b90a577ea43f63f5d",
+            "name": "Notification: ospfNbrStateChange",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"ospfNbrStateChange|1\\.3\\.6\\.1\\.2\\.1\\.14\\.16\\.2\\.2\\b\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "8bde1e81d6044c5f8f33d9faa6e07861",
+            "name": "Notification: vrrpStateChange",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"vrrpStateChange\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "1a6c36e0475c4f02878cdef422cd34d8",
+            "name": "Notification: poolNearlyFull",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"poolNearlyFull\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "e4e8d726178940468940b7915d4f5d6a",
+            "name": "Notification: portsRefused",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"portsRefused\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "3466fd735e544f93ab3cdc562fcf59ab",
+            "name": "Notification: recordsTransportChange",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"recordsTransportChange\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "6bbb86e9cdaa4cd7b22918f0b033b271",
+            "name": "Notification: recordsLost",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"recordsLost\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "74574dc916ca454fb1b006df612ec3c0",
+            "name": "Notification: bundleMembersChange",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"bundleMembersChange\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "2187331bf2ad4d3ea90fdb8c4fee85f0",
+            "name": "Notification: dataplaneNotCurrent",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"dataplaneNotCurrent\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "ddd1750f80584d16a6bcaf4dfd4ee466",
+            "name": "Notification: anything else",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap.fallback",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          }
+        ],
+        "discovery_rules": [
+          {
+            "uuid": "e2b19a1e9dc54b50a202f6258127c521",
+            "name": "CPU discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#SNMPVALUE},1.3.6.1.2.1.25.3.3.1.2]",
+            "key": "system.cpu.discovery",
+            "delay": "1h",
+            "description": "hrProcessorLoad per core. No trigger: the dataplane's worker cores poll at 100% by design.",
+            "item_prototypes": [
+              {
+                "uuid": "97dae919286a4a82b555f7d2f4e6ba5c",
+                "name": "CPU {#SNMPINDEX}: utilisation",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.25.3.3.1.2.{#SNMPINDEX}",
+                "key": "system.cpu.util[hrProcessorLoad.{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "%",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cpu"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "f38c81e009c346f0a2e2c5180cb70de8",
+            "name": "Disk discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#DSKPATH},1.3.6.1.4.1.2021.9.1.2]",
+            "key": "vfs.fs.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "849528108c934671850c9fc39c89c4ae",
+                "name": "{#DSKPATH}: space used",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.2021.9.1.9.{#SNMPINDEX}",
+                "key": "vfs.fs.pused[dskPercent.{#SNMPINDEX}]",
+                "delay": "5m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "%",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "storage"
+                  },
+                  {
+                    "tag": "filesystem",
+                    "value": "{#DSKPATH}"
+                  }
+                ]
+              },
+              {
+                "uuid": "9fb6a155db5841f5918ad37a98bd6e10",
+                "name": "{#DSKPATH}: below its minimum free",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.2021.9.1.100.{#SNMPINDEX}",
+                "key": "vfs.fs.error[dskErrorFlag.{#SNMPINDEX}]",
+                "delay": "5m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "UCD-SNMP-MIB::UCDErrorFlag"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "storage"
+                  },
+                  {
+                    "tag": "filesystem",
+                    "value": "{#DSKPATH}"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "62c698380c7e4d1585d490a8b26fbcda",
+                    "expression": "last(/Prisma Routing by SNMP/vfs.fs.error[dskErrorFlag.{#SNMPINDEX}])=1",
+                    "name": "Prisma Routing: {#DSKPATH} is below its minimum free space",
+                    "priority": "AVERAGE",
+                    "description": "On /var/log/prisma-routing this is the retention log's filesystem filling.",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "capacity"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "45773e3b8e1c464bb34cb1d9211de5a7",
+            "name": "Network interfaces discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#IFNAME},1.3.6.1.2.1.31.1.1.1.1,{#IFALIAS},1.3.6.1.2.1.31.1.1.1.18]",
+            "key": "net.if.discovery",
+            "delay": "1h",
+            "filter": {
+              "evaltype": "AND",
+              "conditions": [
+                {
+                  "macro": "{#IFNAME}",
+                  "value": "{$NET.IF.IFNAME.MATCHES}",
+                  "formulaid": "A"
+                },
+                {
+                  "macro": "{#IFNAME}",
+                  "value": "{$NET.IF.IFNAME.NOT_MATCHES}",
+                  "formulaid": "B",
+                  "operator": "NOT_MATCHES_REGEX"
+                }
+              ]
+            },
+            "description": "The dataplane's cards, under the ifIndex the agent keeps for each for good (#498).",
+            "item_prototypes": [
+              {
+                "uuid": "fd27b2f1d9e64671915e4ef0e8f63d9b",
+                "name": "Interface {#IFNAME}({#IFALIAS}): bits received",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.31.1.1.1.6.{#SNMPINDEX}",
+                "key": "net.if.in[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "bps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  },
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "8"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "e175cc6df554417d806f82f2b7e3f41c",
+                "name": "Interface {#IFNAME}({#IFALIAS}): bits sent",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.31.1.1.1.10.{#SNMPINDEX}",
+                "key": "net.if.out[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "bps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  },
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "8"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "1b4ee60a2e6342e6a2840c59794b6231",
+                "name": "Interface {#IFNAME}({#IFALIAS}): inbound errors",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.2.2.1.14.{#SNMPINDEX}",
+                "key": "net.if.in.errors[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "1a065d1fcdaa422081fc22732b7a17f8",
+                "name": "Interface {#IFNAME}({#IFALIAS}): outbound errors",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.2.2.1.20.{#SNMPINDEX}",
+                "key": "net.if.out.errors[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "11a05af1128c4e559fb3da10737a7d7c",
+                "name": "Interface {#IFNAME}({#IFALIAS}): inbound discards",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.2.2.1.13.{#SNMPINDEX}",
+                "key": "net.if.in.discards[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "91f7a517aef94874bffb77c90e1e0832",
+                "name": "Interface {#IFNAME}({#IFALIAS}): outbound discards",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.2.2.1.19.{#SNMPINDEX}",
+                "key": "net.if.out.discards[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "23e6e3e95642418ab6c11aed3fbac31f",
+                "name": "Interface {#IFNAME}({#IFALIAS}): operational status",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.2.2.1.8.{#SNMPINDEX}",
+                "key": "net.if.status[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "IF-MIB::ifOperStatus"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "228875ba645b4ecc9766e0e936037b7b",
+                "name": "Interface {#IFNAME}({#IFALIAS}): administrative status",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.2.2.1.7.{#SNMPINDEX}",
+                "key": "net.if.adminstatus[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "description": "Polled as often as the operational status: a slower poll raised 'link down' for an interface an operator had just shut, with the old 'up' still stored.",
+                "valuemap": {
+                  "name": "IF-MIB::ifAdminStatus"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "534c2f8889ce4e6ba23fe0084220aa8d",
+                "name": "Interface {#IFNAME}({#IFALIAS}): speed",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.31.1.1.1.15.{#SNMPINDEX}",
+                "key": "net.if.speed[{#SNMPINDEX}]",
+                "delay": "5m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "units": "bps",
+                "preprocessing": [
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "1000000"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "network"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#IFNAME}"
+                  }
+                ]
+              }
+            ],
+            "trigger_prototypes": [
+              {
+                "uuid": "bb1c20d66e124dc8a0c4a5d760c70022",
+                "expression": "{$IFCONTROL:\"{#IFNAME}\"}=1 and last(/Prisma Routing by SNMP/net.if.adminstatus[{#SNMPINDEX}])=1 and last(/Prisma Routing by SNMP/net.if.status[{#SNMPINDEX}])=2",
+                "name": "Prisma Routing: interface {#IFNAME}({#IFALIAS}) is down",
+                "priority": "AVERAGE",
+                "description": "Administratively up and operationally down. {$IFCONTROL:\"<ifName>\"}=0 silences one.",
+                "manual_close": "YES",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              },
+              {
+                "uuid": "92bc0bb1f35641a19bee8532ebf68202",
+                "expression": "(avg(/Prisma Routing by SNMP/net.if.in[{#SNMPINDEX}],15m)>({$IF.UTIL.MAX:\"{#IFNAME}\"}/100)*last(/Prisma Routing by SNMP/net.if.speed[{#SNMPINDEX}]) or avg(/Prisma Routing by SNMP/net.if.out[{#SNMPINDEX}],15m)>({$IF.UTIL.MAX:\"{#IFNAME}\"}/100)*last(/Prisma Routing by SNMP/net.if.speed[{#SNMPINDEX}])) and last(/Prisma Routing by SNMP/net.if.speed[{#SNMPINDEX}])>0",
+                "name": "Prisma Routing: interface {#IFNAME}({#IFALIAS}) above {$IF.UTIL.MAX:\"{#IFNAME}\"}% of its speed",
+                "priority": "WARNING",
+                "manual_close": "YES",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "performance"
+                  }
+                ]
+              },
+              {
+                "uuid": "0e66b965b3f24f70bbecb810054818c6",
+                "expression": "min(/Prisma Routing by SNMP/net.if.in.errors[{#SNMPINDEX}],5m)>{$IF.ERRORS.WARN:\"{#IFNAME}\"} or min(/Prisma Routing by SNMP/net.if.out.errors[{#SNMPINDEX}],5m)>{$IF.ERRORS.WARN:\"{#IFNAME}\"}",
+                "name": "Prisma Routing: interface {#IFNAME}({#IFALIAS}) has errors",
+                "priority": "WARNING",
+                "manual_close": "YES",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "performance"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "b5b113f1a4ac4f0bab1e75e914f36e12",
+            "name": "CGNAT pool discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#POOLNAME},1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.2]",
+            "key": "prisma.pool.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "39e7a77e2e62460087e76c725fb6b411",
+                "name": "Pool {#POOLNAME}: mode",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.3.{#SNMPINDEX}",
+                "key": "prisma.pool.mode[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "PRISMA-ROUTING-MIB::prPoolMode"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "c3fd715bddb1485d94aa17d8b23fdb28",
+                "name": "Pool {#POOLNAME}: capacity (subscribers at once)",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.8.{#SNMPINDEX}",
+                "key": "prisma.pool.capacity[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "0cf9bf4e84134b25b1336381a593491f",
+                "name": "Pool {#POOLNAME}: guaranteed (subscribers on any worker)",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.9.{#SNMPINDEX}",
+                "key": "prisma.pool.guaranteed[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "0c630db023f64165b85f48e2e90558d7",
+                "name": "Pool {#POOLNAME}: subscribers",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.10.{#SNMPINDEX}",
+                "key": "prisma.pool.subscribers[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "727c497c6fed40cfb3664b2580a2f4fd",
+                "name": "Pool {#POOLNAME}: block utilisation",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.12.{#SNMPINDEX}",
+                "key": "prisma.pool.util[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "units": "%",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "719313b3051f466aa4b6d8bda0b9199f",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.pool.util[{#SNMPINDEX}])>={$PRISMA.POOL.UTIL.CRIT}",
+                    "name": "Prisma Routing: pool {#POOLNAME} at {$PRISMA.POOL.UTIL.CRIT}% of its blocks",
+                    "priority": "HIGH",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "capacity"
+                      }
+                    ]
+                  },
+                  {
+                    "uuid": "ff3f0a009e8f46cead3ce74e17d5ece7",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.pool.util[{#SNMPINDEX}])>={$PRISMA.POOL.UTIL.WARN}",
+                    "name": "Prisma Routing: pool {#POOLNAME} at {$PRISMA.POOL.UTIL.WARN}% of its blocks",
+                    "priority": "WARNING",
+                    "dependencies": [
+                      {
+                        "name": "Prisma Routing: pool {#POOLNAME} at {$PRISMA.POOL.UTIL.CRIT}% of its blocks",
+                        "expression": "last(/Prisma Routing by SNMP/prisma.pool.util[{#SNMPINDEX}])>={$PRISMA.POOL.UTIL.CRIT}"
+                      }
+                    ],
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "capacity"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "uuid": "693027048c9e40219fdd5925073e92ab",
+                "name": "Pool {#POOLNAME}: sessions",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.13.{#SNMPINDEX}",
+                "key": "prisma.pool.sessions[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "025120fc903e4e4c871e12cce4a44dba",
+                "name": "Pool {#POOLNAME}: ports in use",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.14.{#SNMPINDEX}",
+                "key": "prisma.pool.ports[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "3d6e32e762954da98bff4d8bb5de742b",
+                "name": "Pool {#POOLNAME}: subscribers near full",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.15.{#SNMPINDEX}",
+                "key": "prisma.pool.nearfull[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "a4e0365d3eba418f8cc85bc2d416ffe1",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.pool.nearfull[{#SNMPINDEX}])>0",
+                    "name": "Prisma Routing: pool {#POOLNAME} has subscribers at 90% of their ports",
+                    "priority": "WARNING",
+                    "description": "The early warning: at 100% a subscriber is refused ports.",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "capacity"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "uuid": "c0f48ee827444c2898c4806ed2637b51",
+                "name": "Pool {#POOLNAME}: port refusals per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.1.1.16.{#SNMPINDEX}",
+                "key": "prisma.pool.refusals.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "pool",
+                    "value": "{#POOLNAME}"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "36cd960688cd4b55881f5085bcef9d11",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.pool.refusals.rate[{#SNMPINDEX}])>0",
+                    "name": "Prisma Routing: pool {#POOLNAME} is refusing ports",
+                    "priority": "WARNING",
+                    "description": "A subscriber could not open a connection.",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "capacity"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "d1cb318a45b74fe881a001fe5acaae01",
+            "name": "CGNAT worker discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#WORKERSESSIONS},1.3.6.1.4.1.{$PRISMA.PEN}.1.10.5.1.3]",
+            "key": "prisma.worker.discovery",
+            "delay": "1h",
+            "description": "One row per dataplane thread (index = thread + 1). A worker far ahead of the others is the early sign of refusals with blocks free elsewhere.",
+            "item_prototypes": [
+              {
+                "uuid": "484f835d60964e61b00843d864030cb5",
+                "name": "Worker {#SNMPINDEX}: subscribers",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.5.1.2.{#SNMPINDEX}",
+                "key": "prisma.worker.subscribers[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "worker",
+                    "value": "{#SNMPINDEX}"
+                  }
+                ]
+              },
+              {
+                "uuid": "2b32d780f07848ada0155be76fa25b29",
+                "name": "Worker {#SNMPINDEX}: sessions",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.5.1.3.{#SNMPINDEX}",
+                "key": "prisma.worker.sessions[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "worker",
+                    "value": "{#SNMPINDEX}"
+                  }
+                ]
+              },
+              {
+                "uuid": "f8a1e71eab514695a81da75d5c8cecb0",
+                "name": "Worker {#SNMPINDEX}: ports in use",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.10.5.1.4.{#SNMPINDEX}",
+                "key": "prisma.worker.ports[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  },
+                  {
+                    "tag": "worker",
+                    "value": "{#SNMPINDEX}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "679f52482c384f37bf772d5a373da74c",
+            "name": "Connection records transport discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#TRANSPORT},1.3.6.1.4.1.{$PRISMA.PEN}.1.11.10.1.2]",
+            "key": "prisma.log.transport.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "8625f6ee35be49d4860a0c691f9ac648",
+                "name": "Records transport {#TRANSPORT}: enabled",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.11.10.1.3.{#SNMPINDEX}",
+                "key": "prisma.log.transport.enabled[{#SNMPINDEX}]",
+                "delay": "5m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "SNMPv2-TC::TruthValue"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "logging"
+                  }
+                ]
+              },
+              {
+                "uuid": "29ed23e240804a5c8315253b367ecee7",
+                "name": "Records transport {#TRANSPORT}: connected",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.11.10.1.4.{#SNMPINDEX}",
+                "key": "prisma.log.transport.connected[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "SNMPv2-TC::TruthValue"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "logging"
+                  }
+                ]
+              },
+              {
+                "uuid": "3254d7a6271b48c29e7d244cf176cb25",
+                "name": "Records transport {#TRANSPORT}: records per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.11.10.1.5.{#SNMPINDEX}",
+                "key": "prisma.log.transport.records.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "logging"
+                  }
+                ]
+              },
+              {
+                "uuid": "c9859b9561924ccb84a204fb37f53a35",
+                "name": "Records transport {#TRANSPORT}: spilled per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.11.10.1.7.{#SNMPINDEX}",
+                "key": "prisma.log.transport.spilled.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "logging"
+                  }
+                ]
+              },
+              {
+                "uuid": "88c81db20d1e4d57a830c803afa62cda",
+                "name": "Records transport {#TRANSPORT}: dropped per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.11.10.1.8.{#SNMPINDEX}",
+                "key": "prisma.log.transport.dropped.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "logging"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "bcb14dfa65e44a6cb3662ea0d4fc5dde",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.log.transport.dropped.rate[{#SNMPINDEX}])>0",
+                    "name": "Prisma Routing: {#TRANSPORT} connection records are being lost",
+                    "priority": "HIGH",
+                    "description": "A gap in the compliance log.",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "compliance"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "trigger_prototypes": [
+              {
+                "uuid": "8efe9080e494459aad0cc97e1a19d905",
+                "expression": "last(/Prisma Routing by SNMP/prisma.log.transport.enabled[{#SNMPINDEX}])=1 and min(/Prisma Routing by SNMP/prisma.log.transport.connected[{#SNMPINDEX}],5m)=2",
+                "name": "Prisma Routing: {#TRANSPORT} records transport disconnected for 5m",
+                "priority": "AVERAGE",
+                "description": "The records go to the spill file until the collector is back.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "compliance"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "aa18955572214e3a965602e0c4fc896a",
+            "name": "VRRP router discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#VRRPIF},1.3.6.1.4.1.{$PRISMA.PEN}.1.13.1.1.2,{#VRID},1.3.6.1.4.1.{$PRISMA.PEN}.1.13.1.1.3]",
+            "key": "prisma.vrrp.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "b6d8bc56975849d6801b1173d8986ce9",
+                "name": "VRRP {#VRRPIF} VRID {#VRID}: priority advertised",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.13.1.1.4.{#SNMPINDEX}",
+                "key": "prisma.vrrp.priority[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "ha"
+                  }
+                ]
+              },
+              {
+                "uuid": "79c793fcfc90482d889a79f2864d9765",
+                "name": "VRRP {#VRRPIF} VRID {#VRID}: state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.13.1.1.5.{#SNMPINDEX}",
+                "key": "prisma.vrrp.state[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "PRISMA-ROUTING-MIB::prVrrpState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "ha"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "f2de27de6bee4da6a974243291cbd155",
+                    "expression": "change(/Prisma Routing by SNMP/prisma.vrrp.state[{#SNMPINDEX}])<>0",
+                    "name": "Prisma Routing: VRRP {#VRRPIF} VRID {#VRID} changed state to {ITEM.VALUE}",
+                    "priority": "WARNING",
+                    "description": "A takeover.",
+                    "manual_close": "YES",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "availability"
+                      }
+                    ]
+                  },
+                  {
+                    "uuid": "d7a8754356f54d5cbb7bed34c9ca3aab",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.vrrp.state[{#SNMPINDEX}])=4",
+                    "name": "Prisma Routing: VRRP {#VRRPIF} VRID {#VRID}: its interface is down",
+                    "priority": "AVERAGE",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "availability"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "da0d7793a3814f77860fd291938352dc",
+            "name": "LACP bundle discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#BUNDLE},1.3.6.1.4.1.{$PRISMA.PEN}.1.14.1.1.2]",
+            "key": "prisma.bundle.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "e03f3562f9e94879926ae7898bed43b0",
+                "name": "Bundle {#BUNDLE}: members configured",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.14.1.1.4.{#SNMPINDEX}",
+                "key": "prisma.bundle.members[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "lacp"
+                  }
+                ]
+              },
+              {
+                "uuid": "3690c22275084b58bb616dbc6c14c850",
+                "name": "Bundle {#BUNDLE}: members carrying traffic",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.14.1.1.5.{#SNMPINDEX}",
+                "key": "prisma.bundle.active[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "lacp"
+                  }
+                ]
+              }
+            ],
+            "trigger_prototypes": [
+              {
+                "uuid": "798e4ee553884b5ebc6b7effbff18180",
+                "expression": "last(/Prisma Routing by SNMP/prisma.bundle.active[{#SNMPINDEX}])=0 and last(/Prisma Routing by SNMP/prisma.bundle.members[{#SNMPINDEX}])>0",
+                "name": "Prisma Routing: bundle {#BUNDLE} has no member carrying traffic",
+                "priority": "HIGH",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              },
+              {
+                "uuid": "82f831c0ce5e4b8495a4747373004326",
+                "expression": "last(/Prisma Routing by SNMP/prisma.bundle.active[{#SNMPINDEX}])<last(/Prisma Routing by SNMP/prisma.bundle.members[{#SNMPINDEX}])",
+                "name": "Prisma Routing: bundle {#BUNDLE} running on fewer members than it has",
+                "priority": "AVERAGE",
+                "description": "Up in IF-MIB and at a fraction of its capacity.",
+                "dependencies": [
+                  {
+                    "name": "Prisma Routing: bundle {#BUNDLE} has no member carrying traffic",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.bundle.active[{#SNMPINDEX}])=0 and last(/Prisma Routing by SNMP/prisma.bundle.members[{#SNMPINDEX}])>0"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "53cac0b5fb7d45d58a0e2f82dc4c7b66",
+            "name": "NATV2 instance discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#NATV2ALIAS},1.3.6.1.2.1.234.2.1.1.2]",
+            "key": "natv2.instance.discovery",
+            "delay": "1h",
+            "description": "NATV2-MIB (RFC 7659), one instance per pool. The alarms are on the pool discovery above, which names the pool the same way.",
+            "item_prototypes": [
+              {
+                "uuid": "fa3faf303fdb4023977678edb8491b1e",
+                "name": "NATV2 {#NATV2ALIAS}: address map entries",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.234.2.1.1.7.{#SNMPINDEX}",
+                "key": "natv2.instance.addrmap[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  }
+                ]
+              },
+              {
+                "uuid": "df6aafba2d5b4549bfca147b2c9a8b90",
+                "name": "NATV2 {#NATV2ALIAS}: port map entries",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.234.2.1.1.8.{#SNMPINDEX}",
+                "key": "natv2.instance.portmap[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  }
+                ]
+              },
+              {
+                "uuid": "f3e2ff5f5e7e45d18b1c592fc872a99d",
+                "name": "NATV2 {#NATV2ALIAS}: port map failure drops per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.234.2.1.1.16.{#SNMPINDEX}",
+                "key": "natv2.instance.failures.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "pps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "cgnat"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "ba1ef6bb319c4596b18c674738894add",
+            "name": "VRRPv3 router discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#VRRPV3STATUS},1.3.6.1.2.1.207.1.1.1.1.6]",
+            "key": "vrrpv3.discovery",
+            "delay": "1h",
+            "description": "VRRPV3-MIB (RFC 6527), indexed ifIndex.VRID.family. The alarms are on the VRRP router discovery above.",
+            "item_prototypes": [
+              {
+                "uuid": "9564dd7cd96249c3900e790c21794903",
+                "name": "VRRPv3 {#SNMPINDEX}: status",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.207.1.1.1.1.6.{#SNMPINDEX}",
+                "key": "vrrpv3.status[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "VRRPV3-MIB::vrrpv3OperationsStatus"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "ha"
+                  }
+                ]
+              },
+              {
+                "uuid": "3672acfbcb5747e6b2d929a177841298",
+                "name": "VRRPv3 {#SNMPINDEX}: priority",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.207.1.1.1.1.7.{#SNMPINDEX}",
+                "key": "vrrpv3.priority[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "ha"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "78870a4c4787424ab01370b6af46bddb",
+            "name": "LACP member discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#LAGAGG},1.2.840.10006.300.43.1.2.1.1.12]",
+            "key": "lag.port.discovery",
+            "delay": "1h",
+            "description": "IEEE8023-LAG-MIB, a row per member under its IF-MIB ifIndex.",
+            "item_prototypes": [
+              {
+                "uuid": "67d432b7f02e410096ac7ba28cb357f0",
+                "name": "LACP member ifIndex {#SNMPINDEX}: attached to aggregator",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.2.840.10006.300.43.1.2.1.1.13.{#SNMPINDEX}",
+                "key": "lag.port.attached[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "lacp"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "64543f08a67042f594505e91162586f5",
+                    "expression": "last(/Prisma Routing by SNMP/lag.port.attached[{#SNMPINDEX}])=0",
+                    "name": "Prisma Routing: LACP member ifIndex {#SNMPINDEX} is detached from its bundle",
+                    "priority": "WARNING",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "availability"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "uuid": "94c8b08ae33c418eaa56bb30e2e48a0c",
+                "name": "LACP member ifIndex {#SNMPINDEX}: mux state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.2.840.10006.300.43.1.2.3.1.3.{#SNMPINDEX}",
+                "key": "lag.port.mux[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "IEEE8023-LAG-MIB::dot3adAggPortDebugMuxState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "lacp"
+                  }
+                ]
+              },
+              {
+                "uuid": "1a75c4356a874457b3332436068eb58d",
+                "name": "LACP member ifIndex {#SNMPINDEX}: LACPDUs received per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.2.840.10006.300.43.1.2.2.1.1.{#SNMPINDEX}",
+                "key": "lag.port.lacpdu.rx.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "lacp"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "f5a78765a84a4e09910e17f4c318ada0",
+            "name": "BGP peer discovery (IPv4, BGP4-MIB)",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#BGPPEER},1.3.6.1.2.1.15.3.1.7]",
+            "key": "bgp.peer.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "e95df977fdeb4e418ee0332e12392757",
+                "name": "BGP peer {#BGPPEER}: state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.15.3.1.2.{#SNMPINDEX}",
+                "key": "bgp.peer.state[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "BGP4-MIB::bgpPeerState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  },
+                  {
+                    "tag": "peer",
+                    "value": "{#BGPPEER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "f9059910354540e28171b17cd4586336",
+                "name": "BGP peer {#BGPPEER}: administrative status",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.15.3.1.3.{#SNMPINDEX}",
+                "key": "bgp.peer.admin[{#SNMPINDEX}]",
+                "delay": "5m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "BGP4-MIB::bgpPeerAdminStatus"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  },
+                  {
+                    "tag": "peer",
+                    "value": "{#BGPPEER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "42fa69065ed74c629009af187751eb66",
+                "name": "BGP peer {#BGPPEER}: remote AS",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.15.3.1.9.{#SNMPINDEX}",
+                "key": "bgp.peer.as[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  },
+                  {
+                    "tag": "peer",
+                    "value": "{#BGPPEER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "2fb9b2203ce5444a97a5772e39d8afe8",
+                "name": "BGP peer {#BGPPEER}: updates received per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.15.3.1.10.{#SNMPINDEX}",
+                "key": "bgp.peer.in.updates[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  },
+                  {
+                    "tag": "peer",
+                    "value": "{#BGPPEER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "1b52cb0a2893433cb9dd3727c7aed389",
+                "name": "BGP peer {#BGPPEER}: updates sent per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.15.3.1.11.{#SNMPINDEX}",
+                "key": "bgp.peer.out.updates[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  },
+                  {
+                    "tag": "peer",
+                    "value": "{#BGPPEER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "b59fd43197474cfca7dc8b85d9d56393",
+                "name": "BGP peer {#BGPPEER}: established for",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.15.3.1.16.{#SNMPINDEX}",
+                "key": "bgp.peer.uptime[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "units": "uptime",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  },
+                  {
+                    "tag": "peer",
+                    "value": "{#BGPPEER}"
+                  }
+                ]
+              }
+            ],
+            "trigger_prototypes": [
+              {
+                "uuid": "7be0b596098d4818960fdfbc24dae875",
+                "expression": "last(/Prisma Routing by SNMP/bgp.peer.state[{#SNMPINDEX}])<>6 and last(/Prisma Routing by SNMP/bgp.peer.admin[{#SNMPINDEX}])=2",
+                "name": "Prisma Routing: BGP peer {#BGPPEER} is not established",
+                "priority": "AVERAGE",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "78f699a8e1974c61aa194db0b9ad7692",
+            "name": "BGP peer discovery (BGP4V2-MIB)",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#BGP4V2STATE},1.3.6.1.3.5.1.1.2.1.13,{#BGP4V2DESCR},1.3.6.1.3.5.1.1.2.1.14]",
+            "key": "bgp4v2.peer.discovery",
+            "delay": "1h",
+            "filter": {
+              "evaltype": "AND",
+              "conditions": [
+                {
+                  "macro": "{#SNMPINDEX}",
+                  "value": "{$BGP4V2.INDEX.MATCHES}",
+                  "formulaid": "A"
+                }
+              ]
+            },
+            "description": "BGP4V2-MIB (draft-ietf-idr-bgp4-mibv2, experimental arc), which bgpd indexes instance.type.address with no length byte: type 2 is IPv6, and an unnumbered session peers on a link-local address. IPv6 only by default: BGP4-MIB has the IPv4 peers.",
+            "item_prototypes": [
+              {
+                "uuid": "0cbc4639caa342f1a2e1864078ad3981",
+                "name": "BGP peer {#SNMPINDEX} ({#BGP4V2DESCR}): state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.3.5.1.1.2.1.13.{#SNMPINDEX}",
+                "key": "bgp4v2.peer.state[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "BGP4-MIB::bgpPeerState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  }
+                ]
+              },
+              {
+                "uuid": "439ae526f4fd4bc99159cd4bacec5d5f",
+                "name": "BGP peer {#SNMPINDEX} ({#BGP4V2DESCR}): administrative status",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.3.5.1.1.2.1.12.{#SNMPINDEX}",
+                "key": "bgp4v2.peer.admin[{#SNMPINDEX}]",
+                "delay": "5m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "BGP4V2-MIB::bgp4V2PeerAdminStatus"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  }
+                ]
+              },
+              {
+                "uuid": "58a46bc96947451198d51e0b90b9ccc1",
+                "name": "BGP peer {#SNMPINDEX} ({#BGP4V2DESCR}): remote AS",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.3.5.1.1.2.1.10.{#SNMPINDEX}",
+                "key": "bgp4v2.peer.as[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "bgp"
+                  }
+                ]
+              }
+            ],
+            "trigger_prototypes": [
+              {
+                "uuid": "8ba61525c61b46089a0f46f0d8e3148e",
+                "expression": "last(/Prisma Routing by SNMP/bgp4v2.peer.state[{#SNMPINDEX}])<>6 and last(/Prisma Routing by SNMP/bgp4v2.peer.admin[{#SNMPINDEX}])=2",
+                "name": "Prisma Routing: BGP peer {#SNMPINDEX} ({#BGP4V2DESCR}) is not established",
+                "priority": "AVERAGE",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "7e25133621c04f45a5918017dc5028ee",
+            "name": "OSPF neighbour discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#OSPFNBR},1.3.6.1.2.1.14.10.1.3]",
+            "key": "ospf.nbr.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "c7966099b647440092a218fce8678b93",
+                "name": "OSPF neighbour {#OSPFNBR}: state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.14.10.1.6.{#SNMPINDEX}",
+                "key": "ospf.nbr.state[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "OSPF-MIB::ospfNbrState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "ospf"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "9ff8d2b0df3048779ecd84972fd08aaa",
+                    "expression": "max(/Prisma Routing by SNMP/ospf.nbr.state[{#SNMPINDEX}],3m)<8 and last(/Prisma Routing by SNMP/ospf.nbr.state[{#SNMPINDEX}])<>4",
+                    "name": "Prisma Routing: OSPF neighbour {#OSPFNBR} is not full",
+                    "priority": "AVERAGE",
+                    "description": "twoWay is left alone: it is the steady state between two routers that are not DR or BDR.",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "availability"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "uuid": "9c102883970b4594858e39e43081299e",
+                "name": "OSPF neighbour {#OSPFNBR}: events per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.14.10.1.7.{#SNMPINDEX}",
+                "key": "ospf.nbr.events.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "ospf"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "21c61f2efd9e4dcc9c262af5238f654f",
+            "name": "OSPFv3 neighbour discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#OSPFV3STATE},1.3.6.1.2.1.191.1.9.1.8]",
+            "key": "ospfv3.nbr.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "024abc61fa6c4997973b5ba8baea6f71",
+                "name": "OSPFv3 neighbour {#SNMPINDEX}: state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.191.1.9.1.8.{#SNMPINDEX}",
+                "key": "ospfv3.nbr.state[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "OSPF-MIB::ospfNbrState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "ospf"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "1370b7edf4c049cf9b9c8eb2df22ef77",
+                    "expression": "max(/Prisma Routing by SNMP/ospfv3.nbr.state[{#SNMPINDEX}],3m)<8 and last(/Prisma Routing by SNMP/ospfv3.nbr.state[{#SNMPINDEX}])<>4",
+                    "name": "Prisma Routing: OSPFv3 neighbour {#SNMPINDEX} is not full",
+                    "priority": "AVERAGE",
+                    "description": "Indexed ifIndex.instance.router-id. twoWay is left alone.",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "availability"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "e22388bfb9c84e629f88a46dfd2a510a",
+            "name": "IS-IS adjacency discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#ISISSYSID},1.3.6.1.2.1.138.1.6.1.1.6]",
+            "key": "isis.adj.discovery",
+            "delay": "1h",
+            "item_prototypes": [
+              {
+                "uuid": "c5788479ea624e2b9fdff7acaeb3e1cd",
+                "name": "IS-IS adjacency {#SNMPINDEX}: state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.138.1.6.1.1.2.{#SNMPINDEX}",
+                "key": "isis.adj.state[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "ISIS-MIB::isisISAdjState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "isis"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "d01dba1d627545d9adaa982a98472c8f",
+                    "expression": "last(/Prisma Routing by SNMP/isis.adj.state[{#SNMPINDEX}])<>3",
+                    "name": "Prisma Routing: IS-IS adjacency {#SNMPINDEX} is not up",
+                    "priority": "AVERAGE",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "availability"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "tags": [
+          {
+            "tag": "class",
+            "value": "network"
+          },
+          {
+            "tag": "target",
+            "value": "prisma-routing"
+          }
+        ],
+        "macros": [
+          {
+            "macro": "{$PRISMA.PEN}",
+            "value": "@PEN@",
+            "description": "The enterprise number the box serves PRISMA-ROUTING-MIB under: `snmp enterprise-number`, or the product's."
+          },
+          {
+            "macro": "{$SNMP.TIMEOUT}",
+            "value": "5m",
+            "description": "How long without an SNMP answer before the box is reported unreachable."
+          },
+          {
+            "macro": "{$IFCONTROL}",
+            "value": "1",
+            "description": "1 raises 'link down' for an interface; set {$IFCONTROL:\"<ifName>\"} to 0 for one that may be down."
+          },
+          {
+            "macro": "{$IF.UTIL.MAX}",
+            "value": "90",
+            "description": "Interface utilisation, percent of ifHighSpeed, above which a warning is raised."
+          },
+          {
+            "macro": "{$IF.ERRORS.WARN}",
+            "value": "2",
+            "description": "Errors per second on an interface above which a warning is raised."
+          },
+          {
+            "macro": "{$NET.IF.IFNAME.MATCHES}",
+            "value": ".*",
+            "description": "Interfaces discovered: ifName matching this."
+          },
+          {
+            "macro": "{$NET.IF.IFNAME.NOT_MATCHES}",
+            "value": "^(local0|tap[0-9]+)$",
+            "description": "Interfaces not discovered: ifName matching this."
+          },
+          {
+            "macro": "{$PRISMA.POOL.UTIL.WARN}",
+            "value": "80",
+            "description": "A pool's block utilisation, percent, above which a warning is raised."
+          },
+          {
+            "macro": "{$PRISMA.POOL.UTIL.CRIT}",
+            "value": "95",
+            "description": "A pool's block utilisation, percent, above which a high is raised."
+          },
+          {
+            "macro": "{$PRISMA.SESSIONS.FIT.WARN}",
+            "value": "200000",
+            "description": "Sessions still fitting in the CGNAT's memory below which a warning is raised."
+          },
+          {
+            "macro": "{$PRISMA.SESSIONS.FIT.CRIT}",
+            "value": "20000",
+            "description": "Sessions still fitting in the CGNAT's memory below which a high is raised."
+          },
+          {
+            "macro": "{$PRISMA.FIB.MIN}",
+            "value": "100",
+            "description": "FIB size below which a sudden drop is not reported (a lab or a box with a handful of routes)."
+          },
+          {
+            "macro": "{$PRISMA.FIB.DROP.PCT}",
+            "value": "50",
+            "description": "The FIB falling below this percent of its maximum over the last hour raises an average."
+          },
+          {
+            "macro": "{$MEMORY.UTIL.MAX}",
+            "value": "90",
+            "description": "Control-plane memory utilisation, percent, above which an average is raised."
+          },
+          {
+            "macro": "{$BGP4V2.INDEX.MATCHES}",
+            "value": "^[0-9]+\\.2\\.",
+            "description": "BGP4V2-MIB peers discovered, by index (instance.type.address): IPv6 only by default, since BGP4-MIB already has the IPv4 ones."
+          }
+        ],
+        "valuemaps": [
+          {
+            "uuid": "bd6df67957554551acd058cc7920c194",
+            "name": "IF-MIB::ifOperStatus",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "up"
+              },
+              {
+                "value": "2",
+                "newvalue": "down"
+              },
+              {
+                "value": "3",
+                "newvalue": "testing"
+              },
+              {
+                "value": "4",
+                "newvalue": "unknown"
+              },
+              {
+                "value": "5",
+                "newvalue": "dormant"
+              },
+              {
+                "value": "6",
+                "newvalue": "notPresent"
+              },
+              {
+                "value": "7",
+                "newvalue": "lowerLayerDown"
+              }
+            ]
+          },
+          {
+            "uuid": "a76438790cff4de687082948994984e2",
+            "name": "IF-MIB::ifAdminStatus",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "up"
+              },
+              {
+                "value": "2",
+                "newvalue": "down"
+              },
+              {
+                "value": "3",
+                "newvalue": "testing"
+              }
+            ]
+          },
+          {
+            "uuid": "3d4313bb2b2a407f8f5c2e2d19b44319",
+            "name": "BGP4-MIB::bgpPeerState",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "idle"
+              },
+              {
+                "value": "2",
+                "newvalue": "connect"
+              },
+              {
+                "value": "3",
+                "newvalue": "active"
+              },
+              {
+                "value": "4",
+                "newvalue": "opensent"
+              },
+              {
+                "value": "5",
+                "newvalue": "openconfirm"
+              },
+              {
+                "value": "6",
+                "newvalue": "established"
+              }
+            ]
+          },
+          {
+            "uuid": "8fcf3c39279b4aba8a547b1ad85071b5",
+            "name": "BGP4-MIB::bgpPeerAdminStatus",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "stop"
+              },
+              {
+                "value": "2",
+                "newvalue": "start"
+              }
+            ]
+          },
+          {
+            "uuid": "1f2ff08c6213491395ba264d2f39b0de",
+            "name": "BGP4V2-MIB::bgp4V2PeerAdminStatus",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "halted"
+              },
+              {
+                "value": "2",
+                "newvalue": "running"
+              }
+            ]
+          },
+          {
+            "uuid": "dbffc5eeef5c47e7a9d40eb5f46c79d8",
+            "name": "OSPF-MIB::ospfNbrState",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "down"
+              },
+              {
+                "value": "2",
+                "newvalue": "attempt"
+              },
+              {
+                "value": "3",
+                "newvalue": "init"
+              },
+              {
+                "value": "4",
+                "newvalue": "twoWay"
+              },
+              {
+                "value": "5",
+                "newvalue": "exchangeStart"
+              },
+              {
+                "value": "6",
+                "newvalue": "exchange"
+              },
+              {
+                "value": "7",
+                "newvalue": "loading"
+              },
+              {
+                "value": "8",
+                "newvalue": "full"
+              }
+            ]
+          },
+          {
+            "uuid": "ddee7783dcfe469c85654e031074b4ed",
+            "name": "ISIS-MIB::isisISAdjState",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "down"
+              },
+              {
+                "value": "2",
+                "newvalue": "initializing"
+              },
+              {
+                "value": "3",
+                "newvalue": "up"
+              },
+              {
+                "value": "4",
+                "newvalue": "failed"
+              }
+            ]
+          },
+          {
+            "uuid": "bf2c24a171504b82929abb4eda5d34f0",
+            "name": "SNMPv2-TC::TruthValue",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "true"
+              },
+              {
+                "value": "2",
+                "newvalue": "false"
+              }
+            ]
+          },
+          {
+            "uuid": "cd6c0e0d8b704482a237c083dd68453a",
+            "name": "PRISMA-ROUTING-MIB::prPoolMode",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "deterministic"
+              },
+              {
+                "value": "2",
+                "newvalue": "dynamic"
+              }
+            ]
+          },
+          {
+            "uuid": "81533ce901494e799a8179b82ace70c3",
+            "name": "PRISMA-ROUTING-MIB::prVrrpState",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "init"
+              },
+              {
+                "value": "2",
+                "newvalue": "backup"
+              },
+              {
+                "value": "3",
+                "newvalue": "master"
+              },
+              {
+                "value": "4",
+                "newvalue": "interfaceDown"
+              }
+            ]
+          },
+          {
+            "uuid": "147b2fa2e4344fefbacc7af4c68da435",
+            "name": "VRRPV3-MIB::vrrpv3OperationsStatus",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "initialize"
+              },
+              {
+                "value": "2",
+                "newvalue": "backup"
+              },
+              {
+                "value": "3",
+                "newvalue": "master"
+              }
+            ]
+          },
+          {
+            "uuid": "c2af8ae5070e42f480995237e9d0fe44",
+            "name": "IEEE8023-LAG-MIB::dot3adAggPortDebugMuxState",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "detached"
+              },
+              {
+                "value": "2",
+                "newvalue": "waiting"
+              },
+              {
+                "value": "3",
+                "newvalue": "attached"
+              },
+              {
+                "value": "4",
+                "newvalue": "collecting"
+              },
+              {
+                "value": "5",
+                "newvalue": "distributing"
+              },
+              {
+                "value": "6",
+                "newvalue": "collectingDistributing"
+              }
+            ]
+          },
+          {
+            "uuid": "58cebffcd42f47878b09ad3c4c413d45",
+            "name": "UCD-SNMP-MIB::UCDErrorFlag",
+            "mappings": [
+              {
+                "value": "0",
+                "newvalue": "noError"
+              },
+              {
+                "value": "1",
+                "newvalue": "error"
+              }
+            ]
+          },
+          {
+            "uuid": "505fd33d24484655b9b157620b411a08",
+            "name": "Zabbix::SNMP availability",
+            "mappings": [
+              {
+                "value": "0",
+                "newvalue": "not available"
+              },
+              {
+                "value": "1",
+                "newvalue": "available"
+              },
+              {
+                "value": "2",
+                "newvalue": "unknown"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

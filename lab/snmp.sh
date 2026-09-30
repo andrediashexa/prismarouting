@@ -157,6 +157,12 @@ cp /src/test/mibs/*.txt /tmp/mibs/
 PRISMA_SNMP_MIB=/src/appliance/PRISMA-ROUTING-MIB.in $HX -c "show snmp mib" \
   > /tmp/mibs/PRISMA-ROUTING-MIB.txt 2>&1
 SMILINT=$(SMIPATH=/tmp/mibs smilint -l 6 -s /tmp/mibs/PRISMA-ROUTING-MIB.txt 2>&1)
+# The Zabbix template (#514), printed the same way: {$PRISMA.PEN} defaulting
+# to the number this box serves under.
+ZBXPEN=$(PRISMA_ZABBIX_TEMPLATE=/src/appliance/prisma-routing-zabbix.json.in \
+         $HX -c "show snmp zabbix-template" 2>&1 | python3 -c "import json, sys
+t = json.load(sys.stdin)['zabbix_export']['templates'][0]
+print([m['value'] for m in t['macros'] if m['macro'] == '{\$PRISMA.PEN}'][0])" 2>&1)
 PM="snmpget -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB -Ov -Oq 127.0.0.1"
 POOLNAME=$($PM PRISMA-ROUTING-MIB::prPoolName.1 2>&1)
 POOLMODE=$($PM PRISMA-ROUTING-MIB::prPoolMode.1 2>&1)
@@ -356,6 +362,8 @@ expect "and the prefix row it points at is the dataplane's, set by hand ($IPPFX)
   sh -c "case \"$IPPFX\" in manual|2) exit 0;; *) exit 1;; esac"
 expect_not_in "no Linux address in ipAddrTable: the loopback is Linux's" \
   "127.0.0.1" "$IPWALK"
+expect "show snmp zabbix-template fills in this box's number ($ZBXPEN)" \
+  test "$ZBXPEN" = "99999"
 expect "and the ports it holds" test "$PORTS" = "3"
 # Refused at the daemon (noAccess, from the read-only community and view) or
 # by the agent (notWritable). Either is a refusal; asserting one spelling

@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A Zabbix 7.0 template for the box: `show snmp zabbix-template`.**
+  ([#514](https://github.com/andrediashexa/hexarouting/issues/514))
+  Asked for by the maintainer: one template for everything the box serves
+  over SNMP - the dataplane's interfaces, the CGNAT's totals, pools and
+  workers, the connection records, VRRP, LACP, BGP (BGP4-MIB for IPv4,
+  BGP4V2-MIB for IPv6), OSPF, OSPFv3, IS-IS, the FIB's size, CPU, memory and
+  disks - with the triggers an operator acts on, value maps for every enum,
+  and an item per notification the box sends. Printed by the VTY with the
+  box's enterprise number as `{$PRISMA.PEN}`'s default, as `show snmp mib`
+  prints the MIB, from a file `appliance/install.sh` installs beside it and
+  `tools/zabbix-template.py` writes. `test/test_zabbix_template.py` holds
+  every OID in it to the module that defines it and to snmpd's view, and
+  every trigger, macro and value map to what the template defines. Imported
+  into Zabbix 7.0.31 and polled against a lab box, traps included; the first
+  import was refused for UUIDs that were not v4, and the first poll raised
+  "link down" for an interface an operator had just shut.
+
 ### Fixed
 
 ## 0.145.2 - an upgraded box writes the snmpd.conf of the release it runs

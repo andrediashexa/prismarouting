@@ -226,6 +226,28 @@ A partir da versão 0.143.1:
 
 Os números do CGNAT são mantidos pelo próprio dataplane no momento em que mudam, e o agente lê tudo de uma vez: consultar a caixa não custa uma varredura dos assinantes, por maior que ela seja.
 
+## Zabbix: o template pronto
+
+A partir da versão 0.146.0 a caixa entrega um **template para o Zabbix 7.0** que monitora tudo o que está nesta página: as portas do dataplane, os totais, os pools e os workers do CGNAT, os registros de conexão, o VRRP, o LACP, o BGP, o OSPF, o OSPFv3, o IS-IS, o tamanho da FIB, a CPU, a memória e os discos, e os avisos que a caixa envia. Ele sai da própria caixa, já com o número da MIB do Prisma preenchido:
+
+```
+show snmp zabbix-template
+```
+
+Salve a saída como `prisma-routing-zabbix.json` e importe no Zabbix, em *Coleta de dados* > *Templates* > *Importar*. O arquivo é JSON, que o Zabbix importa do mesmo jeito que YAML. No host, crie uma interface SNMP v2c com uma `snmp community` da caixa, ou v3 com um `snmp user`, e vincule o template **Prisma Routing by SNMP**. SNMPv1 é recusado pela caixa.
+
+Os alarmes já vêm prontos: porta administrativamente ligada e operacionalmente fora, porta acima de 90% da velocidade ou com erros, pool acima de 80% e de 95% dos blocos, assinantes perto de esgotar as portas, portas recusadas, memória do CGNAT acabando, vizinho BGP fora de *established*, vizinho OSPF que não chega a *full*, adjacência IS-IS fora de *up*, troca de estado do VRRP, bundle LACP com menos membros ativos que configurados, a FIB perdendo metade das rotas em uma hora, registros de conexão perdidos ou transporte desconectado, dataplane rodando a versão antiga depois de uma atualização e a caixa sem responder SNMP. Os limites são macros do template, que você ajusta no host: `{$IF.UTIL.MAX}`, `{$PRISMA.POOL.UTIL.WARN}`, `{$PRISMA.POOL.UTIL.CRIT}`, `{$PRISMA.SESSIONS.FIT.WARN}` e as demais. Para uma porta que pode ficar fora sem alarme, use `{$IFCONTROL:"<nome da porta>"}` = 0.
+
+Três escolhas do template:
+
+* **Sem alarme de CPU.** Os núcleos dos workers do dataplane ficam em 100% o tempo todo, por projeto. A carga de cada núcleo é coletada, mas não gera alarme.
+* **Um alarme por evento.** O VRRP e os pools geram alarme pela MIB do Prisma, que dá o nome da interface e do pool. As mesmas informações na VRRPV3-MIB e na NATV2-MIB são só coletadas. O BGP gera alarme pela BGP4-MIB para vizinhos IPv4 e pela BGP4V2-MIB só para os IPv6.
+* **Porta desligada pelo operador não é porta caída.** O alarme de porta fora só dispara com a porta administrativamente ligada.
+
+Para receber os **avisos** no Zabbix, aponte a caixa para um servidor ou proxy com o receptor de traps do Zabbix: `snmp trap-host <endereço> community <comunidade>`. Cada aviso da tabela da seção seguinte cai no seu próprio item, e o que não for reconhecido cai em um item de sobra.
+
+O template foi importado no Zabbix 7.0 e testado contra uma caixa de laboratório: as descobertas acharam as portas, os pools, os workers, o VRRP e os bundles, os itens receberam valores, e os avisos `linkDown`, `linkUp` e `vrrpStateChange` chegaram cada um no seu item. O SNMPv3 e as tabelas de roteamento não foram testados contra um Zabbix de verdade. As tabelas de roteamento são conferidas contra os daemons pelos testes do produto.
+
 ## O que não é servido
 
 * **Nada por assinante nem por sessão.** Isso significaria percorrer a tabela de sessões a cada consulta.
