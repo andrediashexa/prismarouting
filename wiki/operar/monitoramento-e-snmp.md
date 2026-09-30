@@ -103,7 +103,7 @@ A partir da versão 0.142.0, as sessões de roteamento aparecem nas MIBs padrão
 
 O que vale alertar: `bgpPeerState` (`.1.3.6.1.2.1.15.3.1.2.<endereço do vizinho>`) diferente de 6 (*established*), `ospfNbrState` diferente de 8 (*full*) e `isisISAdjState` diferente de 3 (*up*). O mesmo vale para o OSPFv3: `ospfv3NbrState` (`.1.3.6.1.2.1.191.1.9.1.8`) diferente de 8. Os quatro foram conferidos pelos testes do produto numa sessão real (o do OSPFv3 a partir da versão 0.142.1). A BGP4-MIB só conhece vizinhos IPv4; para um vizinho IPv6 use `bgp4V2PeerState` (`.1.3.6.1.3.5.1.1.2.1.13.1.<tipo>.<endereço>`, tipo 1 = IPv4, 2 = IPv6), que também deve ser 6.
 
-A partir da versão 0.142.1, o tamanho da tabela de rotas também responde: `inetCidrRouteNumber` (`.1.3.6.1.2.1.4.24.6.0`) conta as rotas IPv4 e IPv6, e `ipCidrRouteNumber` (`.1.3.6.1.2.1.4.24.3.0`) só as IPv4. A tabela em si fica de fora de propósito: com a tabela completa da internet são perto de um milhão de linhas, e uma NMS que a percorresse pesaria na caixa a cada consulta. Uma queda brusca nesse número é uma sessão que caiu levando as rotas junto.
+A partir da versão 0.142.1, o tamanho da tabela de rotas também responde: `inetCidrRouteNumber` (`.1.3.6.1.2.1.4.24.6.0`) conta as rotas IPv4 e IPv6. (`ipCidrRouteNumber`, a versão antiga só IPv4, não é respondido pelo net-snmp da caixa.) A tabela em si fica de fora de propósito: com a tabela completa da internet são perto de um milhão de linhas, e uma NMS que a percorresse pesaria na caixa a cada consulta. Uma queda brusca nesse número é uma sessão que caiu levando as rotas junto.
 
 Nada precisa ser configurado além do `snmp enabled yes`: o commit liga o vínculo dos daemons de roteamento com o agente.
 
@@ -225,6 +225,28 @@ A partir da versão 0.143.1:
 | `prRadiusReceived`, `prRadiusApplied`, `prRadiusRefused` | o accounting RADIUS vindo do BNG. Recusa costuma ser segredo diferente entre o BNG e a caixa |
 
 Os números do CGNAT são mantidos pelo próprio dataplane no momento em que mudam, e o agente lê tudo de uma vez: consultar a caixa não custa uma varredura dos assinantes, por maior que ela seja.
+
+## Zabbix: o template pronto
+
+A partir da versão 0.146.0 a caixa entrega um **template para o Zabbix 7.0** que monitora tudo o que está nesta página: as portas do dataplane, os totais, os pools e os workers do CGNAT, os registros de conexão, o VRRP, o LACP, o BGP, o OSPF, o OSPFv3, o IS-IS, o tamanho da FIB, a CPU, a memória e os discos, e os avisos que a caixa envia. Ele sai da própria caixa, já com o número da MIB do Prisma preenchido:
+
+```
+show snmp zabbix-template
+```
+
+Salve a saída como `prisma-routing-zabbix.json` e importe no Zabbix, em *Coleta de dados* > *Templates* > *Importar*. O arquivo é JSON, que o Zabbix importa do mesmo jeito que YAML. No host, crie uma interface SNMP v2c com uma `snmp community` da caixa, ou v3 com um `snmp user`, e vincule o template **Prisma Routing by SNMP**. SNMPv1 é recusado pela caixa.
+
+Os alarmes já vêm prontos: porta administrativamente ligada e operacionalmente fora, porta acima de 90% da velocidade ou com erros, pool acima de 80% e de 95% dos blocos, assinantes perto de esgotar as portas, portas recusadas, memória do CGNAT acabando, vizinho BGP fora de *established*, vizinho OSPF que não chega a *full*, adjacência IS-IS fora de *up*, troca de estado do VRRP, bundle LACP com menos membros ativos que configurados, a FIB perdendo metade das rotas em uma hora, registros de conexão perdidos ou transporte desconectado, dataplane rodando a versão antiga depois de uma atualização e a caixa sem responder SNMP. Os limites são macros do template, que você ajusta no host: `{$IF.UTIL.MAX}`, `{$PRISMA.POOL.UTIL.WARN}`, `{$PRISMA.POOL.UTIL.CRIT}`, `{$PRISMA.SESSIONS.FIT.WARN}` e as demais. Para uma porta que pode ficar fora sem alarme, use `{$IFCONTROL:"<nome da porta>"}` = 0.
+
+Três escolhas do template:
+
+* **Sem alarme de CPU.** Os núcleos dos workers do dataplane ficam em 100% o tempo todo, por projeto. A carga de cada núcleo é coletada, mas não gera alarme.
+* **Um alarme por evento.** O VRRP e os pools geram alarme pela MIB do Prisma, que dá o nome da interface e do pool. As mesmas informações na VRRPV3-MIB e na NATV2-MIB são só coletadas. O BGP gera alarme pela BGP4-MIB para vizinhos IPv4 e pela BGP4V2-MIB só para os IPv6.
+* **Porta desligada pelo operador não é porta caída.** O alarme de porta fora só dispara com a porta administrativamente ligada.
+
+Para receber os **avisos** no Zabbix, aponte a caixa para um servidor ou proxy com o receptor de traps do Zabbix: `snmp trap-host <endereço> community <comunidade>`. Cada aviso da tabela da seção seguinte cai no seu próprio item, e o que não for reconhecido cai em um item de sobra.
+
+O template foi importado no Zabbix 7.0 e testado contra uma caixa de laboratório: as descobertas acharam as portas, os pools, os workers, o VRRP e os bundles, os itens receberam valores, e os avisos `linkDown`, `linkUp` e `vrrpStateChange` chegaram cada um no seu item. O SNMPv3 e as tabelas de roteamento não foram testados contra um Zabbix de verdade. As tabelas de roteamento são conferidas contra os daemons pelos testes do produto.
 
 ## O que não é servido
 

@@ -480,6 +480,10 @@ printf '%s\n' "$stamp" > "$DESTDIR/usr/share/prisma-routing/VERSION"
 # management plane's container is given read-only.
 install -m 0644 "$REPO/appliance/PRISMA-ROUTING-MIB.in" \
   "$DESTDIR/usr/share/prisma-routing/PRISMA-ROUTING-MIB.in"
+# The Zabbix template (#514), its enterprise-number macro left the same way,
+# for `show snmp zabbix-template`.
+install -m 0644 "$REPO/appliance/prisma-routing-zabbix.json.in" \
+  "$DESTDIR/usr/share/prisma-routing/prisma-routing-zabbix.json.in"
 chmod 0644 "$DESTDIR/usr/share/prisma-routing/VERSION"
 
 # What the operating system says it is (#438): os-release, the login banners,
