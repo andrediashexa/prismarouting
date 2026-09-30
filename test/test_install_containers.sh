@@ -100,5 +100,24 @@ grep -q "install from a medium of this" "$INSTALL" \
   && ok "and says what would move it" \
   || bad "the message does not say how to get the containers"
 
+echo
+echo "=== tun and vhost-net are loaded before the dataplane starts (#510) ==="
+# A device the container is given before its module is loaded has no
+# /dev/char link, systemd leaves it out, and the first daemon-reload took it
+# from the dataplane: every card pair after that failed, and a box whose
+# management card is in the dataplane came back from a reboot unreachable.
+U="$REPO/appliance/systemd/prisma-routing-containers.service"
+_mod=$(grep -n '^ExecStartPre=-/sbin/modprobe -a tun vhost_net$' "$U" | cut -d: -f1)
+_settle=$(grep -n '^ExecStartPre=-/bin/udevadm settle' "$U" | cut -d: -f1)
+_up=$(grep -n '^ExecStart=/usr/bin/docker-compose .* up -d$' "$U" | cut -d: -f1)
+[ -n "$_mod" ] && [ -n "$_settle" ] && [ -n "$_up" ] \
+  && [ "$_mod" -lt "$_settle" ] && [ "$_settle" -lt "$_up" ] \
+  && ok "the containers unit loads both, waits for their links, then starts the containers" \
+  || bad "modprobe ($_mod), settle ($_settle) and compose up ($_up) are not in that order"
+grep -q 'prisma-routing-dataplane.modules' "$INSTALL" \
+  && [ "$(grep -v '^#' "$REPO/appliance/prisma-routing-dataplane.modules" | tr '\n' ' ')" = "tun vhost_net " ] \
+  && ok "and the installer loads them at every boot" \
+  || bad "the installer writes no modules-load.d file for tun and vhost_net"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

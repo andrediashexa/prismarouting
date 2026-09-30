@@ -675,6 +675,17 @@ grep -E "^bgpd_options=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
 # with the module and no `agentx` line opens no socket and logs nothing.
 # `agentx` itself follows `snmp enabled` (appliance/frr-entrypoint), because
 # one daemon with it and no snmpd listening logs a warning every 15 s.
+# TUN AND VHOST-NET AT BOOT (#510), for the same reason the containers unit
+# loads them: a device the dataplane is given before its module is loaded is
+# one the first `systemctl daemon-reload` takes away from it, and every card
+# pair made after that fails. Here as well as there so a box has them from
+# early boot, before anything asks.
+say "dataplane modules"
+install -d -m 0755 "$DESTDIR/etc/modules-load.d"
+install -m 0644 "$REPO/appliance/prisma-routing-dataplane.modules" \
+  "$DESTDIR/etc/modules-load.d/prisma-routing-dataplane.conf"
+sed 's/^/  /' "$DESTDIR/etc/modules-load.d/prisma-routing-dataplane.conf"
+
 say "SNMP module"
 for d in zebra bgpd ospfd ospf6d isisd; do
   if grep -q "^${d}_options=.*-M snmp" "$DESTDIR/etc/frr/daemons" 2>/dev/null; then

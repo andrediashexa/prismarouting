@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box could come back from a reboot with no card paired - and, with its
+  management card in the dataplane, unreachable.**
+  ([#510](https://github.com/andrediashexa/hexarouting/issues/510))
+  The X520 box did not come back from a reboot on 0.143.4, and prisma-bench
+  came back with its cards unpaired, the boot load failing every 16 s with
+  `could not pair ens19 with ens19: the dataplane refused it: error -12` -
+  the words of the maintainer's report of a box losing ens18. VPP said why:
+  `open '/dev/net/tun': Operation not permitted`. The container is given
+  `/dev/net/tun` and `/dev/vhost-net`, but at boot neither module is loaded,
+  so the `/dev/char` links runc asks systemd to allow do not exist yet;
+  systemd leaves them out, and the first `systemctl daemon-reload` rebuilt
+  the container's device filter without them. The boot load's own
+  `systemctl enable snmpd` was that reload - which 0.143.4 put before the
+  pairs on a box whose snmpd.conf predated it. Both modules are now loaded,
+  and their links waited for, before the containers start, and at every boot
+  from modules-load.d. Measured on prisma-bench under the same condition:
+  0 pairs without the fix, both pairs up with it. A box in that state
+  recovers from its console with `modprobe tun; modprobe vhost_net; docker
+  restart prisma-routing_vpp_1`.
+
 ## 0.143.5 - OSPF's neighbour notification and a records transport's, received in a lab
 
 ### Added
