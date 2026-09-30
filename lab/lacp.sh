@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 5
+# OFF-RED-AT-LEAST: 9
 # LACP (#455): a bundle of two dataplane ports against a Linux 802.3ad bond.
 #
 #  [default] VPP bond ae0 10.9.0.1/24     [netns peer] bond0 10.9.0.2/24
@@ -71,6 +71,32 @@ echo "$PART" | sed -n '/802.3ad info/,/^$/p;/Slave Interface/,/Partner Mac/p' | 
 PING=$(ip netns exec peer ping -c 5 -i 0.2 -W 1 10.9.0.1 2>&1 | tail -2)
 echo "  ping: $PING"
 
+# IEEE8023-LAG-MIB (#515): the same bundle as 802.1AX's tables, read by a real
+# snmpget with the module loaded, against the partner the kernel is. The
+# module and what it imports are in test/mibs (Q-BRIDGE-MIB's chain for
+# PortList, which Debian ships only in non-free).
+mkdir -p /etc/snmp /var/lib/snmp /tmp/mibs
+install -D -m 0755 /src/appliance/prisma-routing-snmp-agent /usr/lib/prisma-routing/snmp-agent
+cp /src/test/mibs/*.txt /tmp/mibs/
+$HX -c configure -c "snmp enabled yes" -c "snmp listen-address 127.0.0.1" \
+    -c "snmp community hexro" -c commit >/dev/null 2>&1
+pkill snmpd 2>/dev/null; sleep 0.5
+snmpd -Lo -f -C -c /etc/snmp/snmpd.conf > /tmp/snmpd.log 2>&1 &
+sleep 2
+AEIX=$(snmpwalk -v2c -c hexro -On 127.0.0.1 1.3.6.1.2.1.2.2.1.2 2>&1 | awk '/"BondEthernet0"/{n=split($1, o, "."); print o[n]; exit}')
+M1IX=$(snmpwalk -v2c -c hexro -On 127.0.0.1 1.3.6.1.2.1.2.2.1.2 2>&1 | awk '/"host-m1"/{n=split($1, o, "."); print o[n]; exit}')
+LG="snmpget -v2c -c hexro -M /tmp/mibs -m IEEE8023-LAG-MIB -Ov -Oq 127.0.0.1"
+LGPART=$($LG IEEE8023-LAG-MIB::dot3adAggPartnerSystemID.${AEIX:-0} 2>&1)
+LGATT=$($LG IEEE8023-LAG-MIB::dot3adAggPortAttachedAggID.${M1IX:-0} 2>&1)
+LGMUX=$($LG IEEE8023-LAG-MIB::dot3adAggPortDebugMuxState.${M1IX:-0} 2>&1)
+LGRX=$($LG IEEE8023-LAG-MIB::dot3adAggPortStatsLACPDUsRx.${M1IX:-0} 2>&1)
+LGWALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m IEEE8023-LAG-MIB 127.0.0.1 \
+         IEEE8023-LAG-MIB::lagMIB 2>&1)
+PARTMAC=$(printf '%s\n' "$PART" | awk -F': ' '/System MAC address/ { print $2; exit }')
+echo "  IEEE8023-LAG-MIB: bundle ifIndex ${AEIX:-none}, partner $LGPART (the Linux bond says ${PARTMAC:-nothing})"
+echo "  host-m1 (ifIndex ${M1IX:-none}): attached to $LGATT, mux $LGMUX, $LGRX LACPDUs received"
+echo "  ... $(printf '%s\n' "$LGWALK" | grep -c .) IEEE8023-LAG-MIB rows walked"
+
 echo; echo "=========== one member cut ==========="
 ip link set m1 down
 sleep 4
@@ -85,6 +111,18 @@ expect "the partner sees an LACP partner on both members" \
 expect_in "the partner's aggregator has both ports" "Number of ports: 2" "$PART"
 expect_in "the box's own show lacp says both members distribute" \
   "MUX-state: COLLECTING_DISTRIBUTING" "$LACP"
+# net-snmp prints a MacAddress one hex digit per octet where it can (2:fe:..),
+# and the kernel two - compared as numbers.
+expect "IEEE8023-LAG-MIB names the Linux bond as the partner ($LGPART)" \
+  python3 -c "import sys; n = lambda m: [int(x, 16) for x in m.replace(' ', ':').split(':') if x]; sys.exit(0 if n(sys.argv[1]) == n(sys.argv[2]) != [] else 1)" "$LGPART" "${PARTMAC:-}"
+expect "host-m1 is attached to the bundle's ifIndex ($LGATT)" \
+  test -n "${AEIX:-}" -a "$LGATT" = "${AEIX:-x}"
+expect "and collecting and distributing ($LGMUX)" \
+  test "$LGMUX" = "collectingDistributing"
+expect "having received LACPDUs from the partner ($LGRX)" \
+  sh -c "[ \"$LGRX\" -gt 0 ] 2>/dev/null"
+expect_not_in "every IEEE8023-LAG-MIB row resolves to a name in IEEE's module" \
+  "iso.2.840" "$LGWALK"
 expect_in "packets cross the bundle" " 0% packet loss" "$PING"
 expect_in "and still cross it with one member cut" " 0% packet loss" "$PING2"
 expect_said "the running configuration reads the bundle back" \

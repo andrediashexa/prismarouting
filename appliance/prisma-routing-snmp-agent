@@ -166,6 +166,13 @@ class Values:
         if_names = parse_stats_dump(stats_dump("^/if/names$"))[0]
         vrrp_detail = parse_vrrp_detail(vrrp_text, if_names)
         free = heap_free(vppctl("show memory main-heap") or "")
+        bonds = parse_bond(vppctl("show bond") or "")
+        # IEEE8023-LAG-MIB (#515): the LACP bundles only, and the two screens
+        # read only when there is one.
+        lag = ({b: v for b, v in parse_bond_details(
+                   vppctl("show bond details") or "").items()
+                if b in {x[0] for x in bonds if x[1] == "lacp"}}
+               if any(x[1] == "lacp" for x in bonds) else {})
         d["extra"] = {
             "fit": free // SESSION_BYTES if free is not None else None,
             "workers": worker_rows(parse_stats_threads(stats, "/bpa/pool/")),
@@ -178,7 +185,12 @@ class Values:
                 if_indexes(sorted({r["interface"] for r in vrrp_detail})),
                 parse_interface_addresses(vppctl("show interface address") or ""))
             if vrrp_detail else [],
-            "bonds": parse_bond(vppctl("show bond") or ""),
+            "bonds": bonds,
+            "lag": lag_rows(lag, parse_lacp_details(
+                vppctl("show lacp details") or ""),
+                if_indexes(sorted(set(lag) | {m for b in lag.values()
+                                              for m in b["members"]})))
+            if lag else [],
             "identity": parse_identity(vppctl("show bpa identity") or ""),
         }
         self.data = d
@@ -730,6 +742,158 @@ def vrrpv3_rows(routers, indexes, own):
     return out
 
 
+# --- IEEE8023-LAG-MIB: the LACP bundles in IEEE 802.1AX's MIB (#515) -------
+#
+# The aggregator table has a row per bundle and the port tables a row per
+# member, each indexed by the IF-MIB ifIndex this agent gives the card (#498).
+# What VPP keeps is what is served: the actor and partner of each member as
+# the last LACPDU left them, its PDU counters and its state machines. The
+# partner's admin values, the conversation tables (802.1AX-2014's per-service
+# distribution) and DRNI are not served - VPP has none of them.
+
+LAG = "1.2.840.10006.300.43"
+LAG_MUX = {"DETACHED": 1, "WAITING": 2, "ATTACHED": 3, "COLLECTING": 4,
+           "DISTRIBUTING": 5, "COLLECTING_DISTRIBUTING": 6}
+LAG_RX = {"CURRENT": 1, "EXPIRED": 2, "DEFAULTED": 3, "INITIALIZE": 4,
+          "LACP_DISABLED": 5, "PORT_DISABLED": 6}
+
+
+def parse_bond_details(text):
+    """
+    {bundle: {"members": [...], "active": [...]}} off `show bond details`:
+    a bundle's name at the margin, its member lists under the two counts.
+    """
+    out, cur, into = {}, None, None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if not line[0].isspace():
+            cur = out.setdefault(line.split()[0], {"members": [], "active": []})
+            into = None
+            continue
+        t = line.strip()
+        if cur is None:
+            continue
+        if t.startswith("number of active members"):
+            into = "active"
+        elif t.startswith("number of members"):
+            into = "members"
+        elif ":" in t:
+            into = None
+        elif into and len(line) - len(line.lstrip()) >= 4:
+            cur[into].append(t)
+    return out
+
+
+def parse_lacp_details(text):
+    """
+    {member: {...}} off `show lacp details`: each member's PDU counters, its
+    actor and partner (system, priority, key, port priority, port number,
+    state byte) and its receive and mux machines' states.
+    """
+    out, cur, side = {}, None, None
+    for line in text.splitlines():
+        t = line.strip()
+        ind = len(line) - len(line.lstrip())
+        if not t:
+            continue
+        if ind == 2 and not t.startswith("Number of"):
+            cur = out.setdefault(t, {"actor": {}, "partner": {}})
+            side = None
+            continue
+        if cur is None:
+            continue
+        if t in ("Actor", "Partner"):
+            side = cur[t.lower()]
+            continue
+        k, _, v = t.partition(":")
+        k, v = k.strip(), v.strip()
+        num = v.split()[0] if v else ""
+        if k in ("Good LACP PDUs received", "Bad LACP PDUs received",
+                 "LACP PDUs sent", "Good Marker PDUs received",
+                 "Bad Marker PDUs received") and num.isdigit():
+            cur[k] = int(num)
+        elif k in ("RX-state", "MUX-state"):
+            cur[k] = v
+            side = None
+        elif side is not None and k in ("system", "system priority", "key",
+                                        "port priority", "port number", "state"):
+            if k == "system":
+                side[k] = v
+            elif k == "state":
+                side[k] = int(v, 16)
+            elif num.isdigit():
+                side[k] = int(num)
+    return out
+
+
+def _lacp_state(b):
+    """
+    VPP's state byte (bit 0 is LACP activity) as LacpState BITS: SNMP's first
+    bit is the octet's most significant.
+    """
+    return f"{int(format(b & 0xFF, '08b')[::-1], 2):02X}"
+
+
+def lag_rows(bonds, lacp, indexes):
+    """
+    IEEE8023-LAG-MIB's aggregator, port, port statistics and port debug rows
+    for the LACP bundles in `bonds` (parse_bond_details) whose members
+    `lacp` (parse_lacp_details) knows, indexed by `indexes` (the agent's
+    ifIndex file).
+    """
+    agg, port = f"{LAG}.1.1.1.1", f"{LAG}.1.2"
+    rows = []
+    for name in sorted(bonds):
+        members = [m for m in bonds[name]["members"] if m in lacp]
+        if name not in indexes or not members:
+            continue
+        a, p = lacp[members[0]]["actor"], lacp[members[0]]["partner"]
+        i = indexes[name]
+        rows += [(f"{agg}.3.{i}", "integer", a.get("system priority", 0)),
+                 (f"{agg}.4.{i}", "octet", mac_octets(a.get("system", ""))),
+                 (f"{agg}.5.{i}", "integer", 1),
+                 (f"{agg}.6.{i}", "integer", a.get("key", 0)),
+                 (f"{agg}.7.{i}", "integer", a.get("key", 0)),
+                 (f"{agg}.8.{i}", "octet", mac_octets(p.get("system", ""))),
+                 (f"{agg}.9.{i}", "integer", p.get("system priority", 0)),
+                 (f"{agg}.10.{i}", "integer", p.get("key", 0)),
+                 (f"{agg}.11.{i}", "integer", 0)]
+        for m in members:
+            if m not in indexes:
+                continue
+            j, d = indexes[m], lacp[m]
+            a, p = d["actor"], d["partner"]
+            attached = i if m in bonds[name]["active"] else 0
+            rows += [
+                (f"{port}.1.1.2.{j}", "integer", a.get("system priority", 0)),
+                (f"{port}.1.1.3.{j}", "octet", mac_octets(a.get("system", ""))),
+                (f"{port}.1.1.4.{j}", "integer", a.get("key", 0)),
+                (f"{port}.1.1.5.{j}", "integer", a.get("key", 0)),
+                (f"{port}.1.1.7.{j}", "integer", p.get("system priority", 0)),
+                (f"{port}.1.1.9.{j}", "octet", mac_octets(p.get("system", ""))),
+                (f"{port}.1.1.11.{j}", "integer", p.get("key", 0)),
+                (f"{port}.1.1.12.{j}", "integer", i),
+                (f"{port}.1.1.13.{j}", "integer", attached),
+                (f"{port}.1.1.14.{j}", "integer", a.get("port number", 0)),
+                (f"{port}.1.1.15.{j}", "integer", a.get("port priority", 0)),
+                (f"{port}.1.1.17.{j}", "integer", p.get("port number", 0)),
+                (f"{port}.1.1.19.{j}", "integer", p.get("port priority", 0)),
+                (f"{port}.1.1.21.{j}", "octet", _lacp_state(a.get("state", 0))),
+                (f"{port}.1.1.23.{j}", "octet", _lacp_state(p.get("state", 0))),
+                (f"{port}.1.1.24.{j}", "integer", 1),
+                (f"{port}.2.1.1.{j}", "counter", d.get("Good LACP PDUs received", 0)),
+                (f"{port}.2.1.2.{j}", "counter", d.get("Good Marker PDUs received", 0)),
+                (f"{port}.2.1.6.{j}", "counter", d.get("LACP PDUs sent", 0)),
+                (f"{port}.2.1.5.{j}", "counter", d.get("Bad LACP PDUs received", 0)
+                 + d.get("Bad Marker PDUs received", 0))]
+            if d.get("RX-state") in LAG_RX:
+                rows.append((f"{port}.3.1.1.{j}", "integer", LAG_RX[d["RX-state"]]))
+            if d.get("MUX-state") in LAG_MUX:
+                rows.append((f"{port}.3.1.3.{j}", "integer", LAG_MUX[d["MUX-state"]]))
+    return rows
+
+
 # --- the interface table: IF-MIB for the dataplane's cards (#498) -----------
 #
 # net-snmp's own IF-MIB reads Linux, and Linux does not have the cards the
@@ -1077,6 +1241,7 @@ def oid_table():
             out.append((f"{NAT_DEF_TIMEOUTS}.{n}.0", "gauge", d[key]))
     out += natv2_rows(d.get("cgnat", {}), d.get("config", {}))
     out += d.get("extra", {}).get("vrrpv3", [])
+    out += d.get("extra", {}).get("lag", [])
     if ENTERPRISE.isdigit():
         base = f"1.3.6.1.4.1.{ENTERPRISE}.1"
         for n, key, typ, _desc in _ENTERPRISE_OBJECTS:

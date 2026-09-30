@@ -139,6 +139,12 @@ A partir da versão 0.144.3 a caixa serve também a **VRRPV3-MIB** (RFC 6527, `.
 
 Para alertar numa troca de master, acompanhe `vrrpv3OperationsStatus`: o dataplane não guarda contadores por roteador, então a tabela de estatísticas e as notificações da RFC não são servidas.
 
+## O LACP na MIB padrão do IEEE: IEEE8023-LAG-MIB
+
+A partir da versão 0.144.4 a caixa serve também a **IEEE8023-LAG-MIB** (IEEE 802.1AX, `.1.2.840.10006.300.43`) para os bundles LACP do dataplane. Cada bundle e cada membro aparecem pelo ifIndex da interface (o mesmo da IF-MIB): o sistema e a prioridade do parceiro, as chaves, a que bundle cada membro está ligado, o estado LACP dos dois lados, os LACPDUs recebidos, enviados e inválidos, e o estado das máquinas de recepção e de mux.
+
+Para alertar quando um membro sai do bundle, acompanhe `dot3adAggPortAttachedAggID` (vai a 0) ou `dot3adAggPortDebugMuxState` (deixa de ser `collectingDistributing`). Os valores administrativos do parceiro, as tabelas de conversação e o DRNI não são servidos: o dataplane não os tem.
+
 ## A MIB do Prisma: o CGNAT, os registros de conexão e a caixa
 
 O que **não tem OID padrão** — os pools do CGNAT, os descartes, o transporte dos registros de conexão, a versão que o dataplane está rodando — está na **PRISMA-ROUTING-MIB**, a MIB do próprio produto. A partir da versão 0.143.4 ela é servida sem nenhuma configuração além de ligar o SNMP, e a própria caixa entrega o arquivo pronto, com o número já preenchido:

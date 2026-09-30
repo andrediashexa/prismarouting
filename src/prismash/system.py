@@ -1085,6 +1085,7 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              ".1.3.6.1.2.1.123",        # NAT-MIB, the timeouts the agent serves
              ".1.3.6.1.2.1.234",        # NATV2-MIB, the pools (#512)
              ".1.3.6.1.2.1.207",        # VRRPV3-MIB, the VRRP routers (#513)
+             ".1.2.840.10006.300.43",   # IEEE8023-LAG-MIB, LACP (#515)
              # The routing protocols, which FRR's daemons serve themselves
              # over AgentX (#502).
              ".1.3.6.1.2.1.15",         # BGP4-MIB: bgpd's peers and their state
@@ -1219,6 +1220,7 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
     out.append(f"pass_persist .1.3.6.1.2.1.123 {agent}")
     out.append(f"pass_persist .1.3.6.1.2.1.234 {agent}")
     out.append(f"pass_persist .1.3.6.1.2.1.207 {agent}")
+    out.append(f"pass_persist .1.2.840.10006.300.43 {agent}")
     if pen:
         # The number on the agent's own command line (#499): it runs as
         # Debian-snmp and cannot read this 0600 file to find it.

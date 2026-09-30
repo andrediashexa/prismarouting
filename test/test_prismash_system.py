@@ -751,6 +751,7 @@ check(body.splitlines()[1:] == [
     "view hexa included .1.3.6.1.2.1.123",
     "view hexa included .1.3.6.1.2.1.234",
     "view hexa included .1.3.6.1.2.1.207",
+    "view hexa included .1.2.840.10006.300.43",
     "view hexa included .1.3.6.1.2.1.15",
     "view hexa included .1.3.6.1.2.1.14",
     "view hexa included .1.3.6.1.2.1.191",
@@ -773,6 +774,7 @@ check(body.splitlines()[1:] == [
     "pass_persist .1.3.6.1.2.1.123 /x/agent",
     "pass_persist .1.3.6.1.2.1.234 /x/agent",
     "pass_persist .1.3.6.1.2.1.207 /x/agent",
+    "pass_persist .1.2.840.10006.300.43 /x/agent",
     "pass_persist .1.3.6.1.4.1.70000 /x/agent --enterprise 70000"],
     f"address, both views, every community, users sorted, both agents: "
     f"{body.splitlines()}")

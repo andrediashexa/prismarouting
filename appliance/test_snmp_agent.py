@@ -601,6 +601,75 @@ for _o, (_t, _x) in _v.items():
           f"{_o} served as {_t}, and VRRPV3-MIB says {_vr.get(_key)}")
 print(f"  [ ok ] {len(_v)} rows, each a VRRPV3-MIB column with its type")
 
+print("\n=== IEEE8023-LAG-MIB: the LACP bundles, 802.1AX's tables (#515) ===")
+# The two screens lab/lacp.sh printed, against a Linux bond in 802.3ad mode.
+BOND = 'BondEthernet0\n  mode: lacp\n  load balance: l34\n  number of active members: 2\n    host-m1\n    host-m2\n  number of members: 2\n    host-m1\n    host-m2\n  device instance: 0\n  interface id: 0\n  sw_if_index: 3\n  hw_if_index: 3\n'
+LACP = 'Number of interfaces: 2\n  host-m1\n    Good LACP PDUs received: 11\n    Bad LACP PDUs received: 0\n    LACP PDUs sent: 13\n    last LACP PDU received:        .51 seconds ago\n    last LACP PDU sent:        .15 seconds ago\n    Good Marker PDUs received: 0\n    Bad Marker PDUs received: 0\n    debug: 0\n    loopback port: 0\n    port_enabled: 1\n    port moved: 0\n    ready_n: 1\n    ready: 1\n    Actor\n      system: 02:fe:8b:6b:e0:41\n      system priority: 65535\n      key: 3\n      port priority: 255\n      port number: 1\n      state: 0x3f\n        LACP_STATE_LACP_ACTIVITY (0)\n        LACP_STATE_LACP_TIMEOUT (1)\n        LACP_STATE_AGGREGATION (2)\n        LACP_STATE_SYNCHRONIZATION (3)\n        LACP_STATE_COLLECTIING (4)\n        LACP_STATE_DISTRIBUTING (5)\n    Partner\n      system: 66:ea:8d:a1:23:03\n      system priority: 65535\n      key: 15\n      port priority: 255\n      port number: 1\n      state: 0x3f\n        LACP_STATE_LACP_ACTIVITY (0)\n        LACP_STATE_LACP_TIMEOUT (1)\n        LACP_STATE_AGGREGATION (2)\n        LACP_STATE_SYNCHRONIZATION (3)\n        LACP_STATE_COLLECTIING (4)\n        LACP_STATE_DISTRIBUTING (5)\n      wait while timer: not running\n      current while timer:       2.49 seconds\n      periodic timer:        .85 seconds\n    RX-state: CURRENT\n    TX-state: TRANSMIT\n    MUX-state: COLLECTING_DISTRIBUTING\n    PTX-state: PERIODIC_TX\n\n  host-m2\n    Good LACP PDUs received: 12\n    Bad LACP PDUs received: 0\n    LACP PDUs sent: 12\n    last LACP PDU received:        .19 seconds ago\n    last LACP PDU sent:        .95 seconds ago\n    Good Marker PDUs received: 0\n    Bad Marker PDUs received: 0\n    debug: 0\n    loopback port: 0\n    port_enabled: 1\n    port moved: 0\n    ready_n: 1\n    ready: 1\n    Actor\n      system: 02:fe:8b:6b:e0:41\n      system priority: 65535\n      key: 3\n      port priority: 255\n      port number: 2\n      state: 0x3f\n        LACP_STATE_LACP_ACTIVITY (0)\n        LACP_STATE_LACP_TIMEOUT (1)\n        LACP_STATE_AGGREGATION (2)\n        LACP_STATE_SYNCHRONIZATION (3)\n        LACP_STATE_COLLECTIING (4)\n        LACP_STATE_DISTRIBUTING (5)\n    Partner\n      system: 66:ea:8d:a1:23:03\n      system priority: 65535\n      key: 15\n      port priority: 255\n      port number: 2\n      state: 0x3f\n        LACP_STATE_LACP_ACTIVITY (0)\n        LACP_STATE_LACP_TIMEOUT (1)\n        LACP_STATE_AGGREGATION (2)\n        LACP_STATE_SYNCHRONIZATION (3)\n        LACP_STATE_COLLECTIING (4)\n        LACP_STATE_DISTRIBUTING (5)\n      wait while timer: not running\n      current while timer:       2.81 seconds\n      periodic timer:        .05 seconds\n    RX-state: CURRENT\n    TX-state: TRANSMIT\n    MUX-state: COLLECTING_DISTRIBUTING\n    PTX-state: PERIODIC_TX\n'
+_bd = agent.parse_bond_details(BOND)
+check(_bd == {"BondEthernet0": {"members": ["host-m1", "host-m2"],
+                                "active": ["host-m1", "host-m2"]}},
+      f"a bundle, its members and the active ones: {_bd}")
+_ld = agent.parse_lacp_details(LACP)
+check(sorted(_ld) == ["host-m1", "host-m2"]
+      and _ld["host-m1"]["actor"] == {"system": "02:fe:8b:6b:e0:41",
+                                      "system priority": 65535, "key": 3,
+                                      "port priority": 255, "port number": 1,
+                                      "state": 0x3f}
+      and _ld["host-m2"]["partner"]["port number"] == 2
+      and _ld["host-m1"]["Good LACP PDUs received"] == 11
+      and _ld["host-m1"]["LACP PDUs sent"] == 13
+      and _ld["host-m1"]["RX-state"] == "CURRENT"
+      and _ld["host-m1"]["MUX-state"] == "COLLECTING_DISTRIBUTING",
+      f"each member's actor, partner, counters and machines: {_ld.get('host-m1')}")
+check(agent.parse_bond_details("") == {} and agent.parse_lacp_details("") == {},
+      "no bundle, nothing")
+check(agent._lacp_state(0x3f) == "FC" and agent._lacp_state(0x01) == "80"
+      and agent._lacp_state(0) == "00",
+      "VPP's state byte as LacpState BITS, activity the first bit")
+_g = {o: (t, v) for o, t, v in agent.lag_rows(
+    _bd, _ld, {"BondEthernet0": 4, "host-m1": 2, "host-m2": 3})}
+G = "1.2.840.10006.300.43.1"
+check(_g.get(f"{G}.1.1.1.4.4") == ("octet", "02 FE 8B 6B E0 41")
+      and _g.get(f"{G}.1.1.1.8.4") == ("octet", "66 EA 8D A1 23 03")
+      and _g.get(f"{G}.1.1.1.7.4") == ("integer", 3)
+      and _g.get(f"{G}.1.1.1.10.4") == ("integer", 15),
+      "the bundle's actor and partner, indexed by its ifIndex")
+check(_g.get(f"{G}.2.1.1.13.2") == ("integer", 4)
+      and _g.get(f"{G}.2.1.1.14.3") == ("integer", 2)
+      and _g.get(f"{G}.2.1.1.21.2") == ("octet", "FC"),
+      "each member attached to the bundle, its port number and state")
+check(_g.get(f"{G}.2.2.1.1.2") == ("counter", 11)
+      and _g.get(f"{G}.2.2.1.6.2") == ("counter", 13)
+      and _g.get(f"{G}.2.3.1.1.2") == ("integer", 1)
+      and _g.get(f"{G}.2.3.1.3.2") == ("integer", 6),
+      "the PDU counters, and the receive and mux machines")
+_off = dict(_bd, BondEthernet0={"members": ["host-m1", "host-m2"],
+                                "active": ["host-m2"]})
+check(dict((o, v) for o, t, v in agent.lag_rows(
+          _off, _ld, {"BondEthernet0": 4, "host-m1": 2, "host-m2": 3}))
+      .get(f"{G}.2.1.1.13.2") == 0,
+      "a member not active is attached to no aggregator")
+check(agent.lag_rows({}, {}, {}) == [], "no bundle, no table")
+# Every column served is one IEEE8023-LAG-MIB defines, with its type.
+_LG = open(os.path.join(os.path.dirname(AGENT), "..", "test", "mibs",
+                        "IEEE8023-LAG-MIB.txt")).read()
+_lg = {}
+for _m in re.finditer(r"^\s*(dot3ad\w+)\s+OBJECT-TYPE(.*?)::=\s*\{\s*(\w+)\s+(\d+)\s*\}",
+                      _LG, re.S | re.M):
+    _lg[(_m.group(3), int(_m.group(4)))] = (_m.group(1),
+        re.search(r"SYNTAX\s+(\S+)", _m.group(2)).group(1))
+_GENT = {"1.1.1": "dot3adAggEntry", "2.1.1": "dot3adAggPortEntry",
+         "2.2.1": "dot3adAggPortStatsEntry", "2.3.1": "dot3adAggPortDebugEntry"}
+_GSYN = {"Integer32": "integer", "MacAddress": "octet", "TruthValue": "integer",
+         "LacpKey": "integer", "InterfaceIndex": "integer", "LacpState": "octet",
+         "Counter32": "counter", "INTEGER": "integer"}
+for _o, (_t, _x) in _g.items():
+    _rest = _o[len(G) + 1:].split(".")
+    _key = (_GENT[".".join(_rest[:3])], int(_rest[3]))
+    check(_key in _lg and _GSYN[_lg[_key][1]] == _t,
+          f"{_o} served as {_t}, and IEEE8023-LAG-MIB says {_lg.get(_key)}")
+print(f"  [ ok ] {len(_g)} rows, each an IEEE8023-LAG-MIB column with its type")
+
 print("\n=== the wire: reply, none, and the key an OID sorts by ===")
 _out = io.StringIO()
 with contextlib.redirect_stdout(_out):

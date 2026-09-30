@@ -77,6 +77,18 @@ version has a chance of seeing it.
 
 ### Added
 
+* **IEEE8023-LAG-MIB: the LACP bundles in IEEE 802.1AX's MIB.**
+  ([#515](https://github.com/andrediashexa/hexarouting/issues/515))
+  The aggregator table, a row per LACP bundle, and the port, port statistics
+  and port debug tables, a row per member - actor and partner as the last
+  LACPDU left them, the aggregator a member is attached to, the LACPDUs
+  received, sent and malformed, and the receive and mux machines - each
+  indexed by the card's IF-MIB ifIndex, from `show bond details` and
+  `show lacp details`, read only when the box has a bundle. Not served: the
+  partner's admin values, the conversation tables and DRNI, which VPP does not
+  have. `lab/lacp.sh` reads the bundle with the module loaded against its
+  Linux partner (in `test/mibs`, with Q-BRIDGE-MIB's chain for `PortList`).
+
 ### Fixed
 
 ## 0.144.3 - VRRPV3-MIB (RFC 6527): the dataplane's VRRP routers in the IETF's MIB

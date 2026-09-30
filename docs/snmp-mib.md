@@ -49,6 +49,7 @@ AgentX. An NMS that knows these needs no template of ours.
 | the CGNAT's default timeouts | NAT-MIB `natDefTimeouts` | `.1.3.6.1.2.1.123.1.1` | the agent | 0.x |
 | the CGNAT's pools, in the IETF's own model | NATV2-MIB (RFC 7659), aggregate | `.1.3.6.1.2.1.234` | the agent | 0.144.2 |
 | the dataplane's VRRP routers | VRRPV3-MIB (RFC 6527) | `.1.3.6.1.2.1.207` | the agent | 0.144.3 |
+| the LACP bundles and their members | IEEE8023-LAG-MIB (IEEE 802.1AX) | `.1.2.840.10006.300.43` | the agent | 0.144.4 |
 | BGP peers: state, AS, updates, last error | BGP4-MIB | `.1.3.6.1.2.1.15` | bgpd | 0.142.0 |
 | OSPF neighbours, interfaces, LSDB | OSPF-MIB | `.1.3.6.1.2.1.14` | ospfd | 0.142.0 |
 | OSPFv3 | OSPFV3-MIB | `.1.3.6.1.2.1.191` | ospf6d | 0.142.0 |
@@ -97,6 +98,26 @@ notifications - the dataplane keeps no per-router counters or transition time;
 a takeover is seen as `vrrpv3OperationsStatus` changing, as it is as
 `prVrrpState` changing in PRISMA-ROUTING-MIB. Read-only, as everything here.
 `lab/snmp.sh` reads pg0's router with the RFC's module loaded.
+
+## IEEE8023-LAG-MIB, IEEE 802.1AX (#515)
+
+IEEE's MIB for link aggregation, over the dataplane's LACP bundles. A bundle
+and each of its members are indexed by the ifIndex IF-MIB gives the card.
+
+| Table | Served | From |
+|---|---|---|
+| `dot3adAggTable` (`.1.1.1`) | per bundle: the actor's and the partner's system ID and priority, the keys, aggregate (always true), collector max delay 0 | `show lacp details`, from the bundle's first member |
+| `dot3adAggPortTable` (`.2.1`) | per member: actor and partner system, priority, key, port number and port priority as the last LACPDU left them; the selected aggregator, and the attached one (0 while the member is not active); the actor's and partner's state as LacpState | `show lacp details`, `show bond details` |
+| `dot3adAggPortStatsTable` (`.2.2`) | LACPDUs received and sent, marker PDUs received, illegal (bad LACP and marker PDUs) received | `show lacp details` |
+| `dot3adAggPortDebugTable` (`.2.3`) | the receive machine's and the mux machine's states | `show lacp details` |
+
+**Not served**: the partner's admin columns and the actor's admin state,
+which VPP does not keep apart from the operational ones; the aggregator X
+table and the port list; the conversation tables of 802.1AX-2014; DRNI; and
+the churn and change counters. A member leaving the bundle is seen as
+`dot3adAggPortAttachedAggID` going to 0 and `dot3adAggPortDebugMuxState`
+leaving collectingDistributing. `lab/lacp.sh` reads the bundle with the
+module loaded, against a Linux 802.3ad bond as the partner.
 
 ## PRISMA-ROUTING-MIB
 
