@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`monitor interface`: each interface's traffic as a live chart.**
+  ([#519](https://github.com/andrediashexa/hexarouting/issues/519))
+  Asked for by the maintainer: `show interface utilization` samples for ten
+  seconds and leaves one character per sample. `monitor interface [<name>...]
+  [interval <s>]` redraws one screen in place until `q` or Ctrl-C - rx and tx
+  as charts four rows tall with the axis in bit/s and the scale printed on
+  them, the rate, packets per second, and the errors and drops in the window
+  beside them; `l` turns every chart to its line rate, `n`/`p` page across
+  interfaces that do not fit. It fits a 79-column console in UTF-8 and in
+  ASCII, and gives the terminal back as it found it on q, Ctrl-C and a
+  dataplane that stops mid-view. The two commands share one sampler, so they
+  cannot disagree about a rate; `prismash -c` and a pipe are refused and told
+  to use `show interface utilization`. The default of one sample a second was
+  chosen after measuring it: on 201 interfaces with traffic, `show interface`
+  takes 4 ms, 3 ms of the reader's CPU and 2.2 ms of VPP's main thread, against
+  10, 9 and 0.3 ms for the statistics segment - under 1% of a core either way.
+  `lab/monitor-interface.sh` measures that cost, then drives the view under a
+  pty against a stream set to 800 kbit/s and reads the terminal's modes back.
+
 ### Fixed
 
 ## 0.146.1 - the worker cap from the VTY, and a commit that reads each dump once

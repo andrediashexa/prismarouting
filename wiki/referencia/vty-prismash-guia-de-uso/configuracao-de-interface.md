@@ -510,6 +510,7 @@ prisma> system dataplane restart
 * `show interface terse` traz uma linha por interface com **duas** colunas de estado — `Admin`, que é o que alguém configurou, e `Link`, que é o que o cabo está fazendo: up/down é problema de enlace, down/down é `shutdown`;
 * `show interface description` mostra a descrição de todas, ao lado dessas duas colunas;
 * `show interface utilization <nome>` amostra os contadores e mostra quanto está passando agora, em bit/s;
+* `monitor interface <nome>` mostra o mesmo ao vivo, num gráfico por sentido redesenhado a cada segundo até `q`;
 * `show running-config` mostra o bloco da interface como o equipamento o lê de volta — o que está lá é o que está em vigor, não o que foi digitado.
 
 # Ver também

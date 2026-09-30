@@ -2500,6 +2500,15 @@ TREE = {
         "ping": ("send echo requests and say what came back", ARG_HOST),
         "traceroute": ("the path to a host, one row per hop", ARG_HOST),
         "mtr": ("ping every hop of the path, as a report", ARG_HOST),
+        # A live view (#519): one screen redrawn until q, where `show
+        # interface utilization` samples, prints and returns.
+        "monitor": ("watch something live, until q", {
+            "interface": ("each interface's traffic as a live chart", {
+                "interval": ("seconds between samples (default 1)",
+                             "<seconds>"),
+                ARG_INTERFACE: ("only this interface", None),
+            }),
+        }),
         "show": ("display information", SHOW),
         "clear": ("reset a session, without changing the configuration", {
             "bgp": ("a BGP session", ARG_NEIGHBOUR),
@@ -4202,6 +4211,323 @@ def terminal_rows():
     except (OSError, ValueError):
         rows = 0
     return rows if rows > 0 else 24
+
+
+# --- monitor interface (#519): a live chart of each interface's traffic ----
+#
+# `show interface utilization` answers "is it busy now" for ten seconds and
+# leaves one character per sample. This is the view that stays: one screen,
+# redrawn in place at each sample until q or Ctrl-C, a chart per interface
+# four rows tall for each direction, its scale printed on it.
+#
+# WHAT A SAMPLE COSTS, measured before the interval default was chosen (the
+# issue's precondition). lab/monitor-interface.sh, 201 interfaces (pg0 and
+# 200 sub-interfaces) with a stream running, two workers, 30 samples each:
+#
+#   show interface (CLI)     4 ms wall (41 worst), 3 ms of the reader's CPU,
+#                            +2.2 ms of VPP's main thread, 14 KB
+#   vpp_get_stats ^/if/      10 ms wall (15 worst), 9 ms of the reader's CPU,
+#                            +0.3 ms of VPP's main thread, 387 KB
+#
+# One a second is under 1% of a control-plane core either way, and of the
+# main thread. The CLI is the cheaper of the two for the reader and is what
+# `show interface utilization` already reads, so the two commands share one
+# sampler (the issue's point 9) and cannot disagree about a rate; the
+# statistics segment would add a socket the VTY's accounts do not otherwise
+# need. The default interval is 1 s.
+
+#: Rows of chart per direction: the issue's floor, and eight levels to a row.
+MONITOR_CHART_ROWS = 4
+#: The axis label: rate()'s widest short of a terabit, "675.56 Mbit/s" and
+#: "400.00 Gbit/s" both.
+MONITOR_LABEL = 13
+#: The column beside the chart: "rx 400.00 Gbit/s", "14880952 pps".
+MONITOR_SIDE = 22
+#: A title row and the two charts.
+MONITOR_BLOCK = 1 + 2 * MONITOR_CHART_ROWS
+#: The smallest terminal the view draws on - the header, one interface and
+#: two rows of notes; below it, it says so.
+MONITOR_MIN_COLS, MONITOR_MIN_ROWS = 50, MONITOR_BLOCK + 3
+#: Samples kept per interface: wider than any terminal shows.
+MONITOR_KEEP = 1000
+#: One to eight eighths of a cell. The ASCII set is for a serial console
+#: answering in ASCII (the issue's point 6), where a block character would
+#: arrive as a question mark: coarser, and still a chart.
+MONITOR_CELLS_UTF = "▁▂▃▄▅▆▇█"
+MONITOR_CELLS_ASCII = "..::++##"
+#: The counters a step reads, besides the four rates. `show interface` omits
+#: a counter that is zero, so an absent one is zero (parse_interface_counters).
+MONITOR_LOST = ("drops", "rx-miss", "rx-no-buf")
+MONITOR_ERRORS = ("rx-error", "tx-error")
+
+
+def interface_steps(before, after, dt):
+    """
+    ({name: step}, reset) between two readings of `show interface`, `dt`
+    seconds apart - the one sampler `show interface utilization` and
+    `monitor interface` share (#519), so the two cannot disagree about a rate.
+
+    A step is rx and tx in bit/s and in packets/s over the MEASURED `dt`,
+    `drops` (the dataplane's own drop counter, which `show interface
+    utilization` reports), `lost` (that and what the card had no room for,
+    rx-miss and rx-no-buf) and `errors` (rx-error and tx-error), as counts.
+
+    An interface that is not in `before` appeared mid-sample and has no step:
+    its counter is a total since it was created, and a rate from it would
+    invent a spike. A counter that went backwards - `clear interfaces` ran -
+    reads as zero for this step, and `reset` says it happened.
+    """
+    steps, reset = {}, False
+    if dt <= 0:
+        return steps, reset
+    for name, now in after.items():
+        was = before.get(name)
+        if was is None:
+            continue
+        d = {}
+        for key in ("rx bytes", "tx bytes", "rx packets", "tx packets") \
+                + MONITOR_LOST + MONITOR_ERRORS:
+            delta = now.get(key, 0) - was.get(key, 0)
+            if delta < 0:
+                reset = True
+                delta = 0
+            d[key] = delta
+        steps[name] = {
+            "rx": d["rx bytes"] * 8 / dt, "tx": d["tx bytes"] * 8 / dt,
+            "rx_pps": d["rx packets"] / dt, "tx_pps": d["tx packets"] / dt,
+            "drops": d["drops"],
+            "lost": sum(d[k] for k in MONITOR_LOST),
+            "errors": sum(d[k] for k in MONITOR_ERRORS),
+        }
+    return steps, reset
+
+
+def nice_scale(bits):
+    """
+    The top of an auto-scaled axis for a peak of `bits`: the next 1, 2 or 5
+    times a power of ten, so the label reads as a round figure and does not
+    move with every sample. 0 for nothing.
+    """
+    if bits <= 0:
+        return 0
+    power = 10 ** (len(str(int(bits))) - 1)
+    for f in (1, 2, 5, 10):
+        if bits <= f * power:
+            return f * power
+    return 10 * power
+
+
+def chart_rows(values, full, rows, width, utf8):
+    """
+    `values` drawn as `rows` strings of `width` cells, top row first, the
+    newest value in the rightmost column and nothing to the left of the
+    oldest. A value is a column of eighths against `full`; None is a sample
+    this interface has no step for, drawn blank.
+
+    A zero is a baseline mark, not a blank: "no traffic" is the answer on a
+    link somebody is asking about, and a blank reads as "no data" (the rule
+    Shell.bars() already follows). Anything above zero is at least one
+    eighth, because a trickle and silence are different answers.
+    """
+    cells = MONITOR_CELLS_UTF if utf8 else MONITOR_CELLS_ASCII
+    base = "·" if utf8 else "_"
+    shown = list(values)[-width:] if width > 0 else []
+    grid = [[" "] * width for _ in range(rows)]
+    offset = width - len(shown)
+    for col, v in enumerate(shown, offset):
+        if v is None:
+            continue
+        if not full or v <= 0:
+            grid[rows - 1][col] = base
+            continue
+        eighths = int(round(v / full * rows * 8))
+        eighths = max(1, min(rows * 8, eighths))
+        for r in range(rows):
+            level = eighths - r * 8
+            if level <= 0:
+                break
+            grid[rows - 1 - r][col] = cells[min(8, level) - 1]
+    return ["".join(row) for row in grid]
+
+
+def monitor_fit(text, width):
+    """`text` cut to `width`, and said to be cut rather than cut silently."""
+    if len(text) <= width:
+        return text
+    return text[:max(0, width - 3)] + "..."
+
+
+def render_monitor(view, cols, rows, utf8):
+    """
+    One screen of `monitor interface`, as (lines, pages): a pure function of
+    the view, the width, the height and the encoding (the issue's
+    acceptance), so every row it can print is a row a test can measure.
+
+    `view` holds `interval`, `names` (in order), `windows` ({name: [step or
+    None, ...]}, oldest first), `speeds` ({name: bit/s or None}), `mode`
+    ("auto" or "line"), `page`, `notes` and `clock`. `cols` is the widest a
+    row may be - one less than the terminal, so the last column never wraps.
+
+    Each interface is a title row that states the scale, then rx and tx as
+    charts MONITOR_CHART_ROWS tall with the axis labelled in bit/s, and
+    beside them the latest rate, packets per second, and the errors and
+    drops summed over the samples on screen. What cannot be said is "--",
+    never 0: before the second sample there is no rate.
+    """
+    if cols < MONITOR_MIN_COLS or rows < MONITOR_MIN_ROWS:
+        return [monitor_fit(f"this view needs {MONITOR_MIN_COLS} columns "
+                            f"and {MONITOR_MIN_ROWS} rows; the terminal is "
+                            f"{cols + 1}x{rows}", cols),
+                "q leaves"], 1
+    names = view["names"]
+    # One row per note at the bottom, two at most: the dataplane going quiet
+    # and a counter reset come together when it restarts, and one row cut
+    # to fit would lose the second - which the issue says MUST be said.
+    notes = [monitor_fit(n, cols) for n in view.get("notes", [])][:2] or [""]
+    per = max(1, (rows - 1 - len(notes)) // MONITOR_BLOCK)
+    pages = max(1, -(-len(names) // per))
+    page = min(max(view.get("page", 0), 0), pages - 1)
+    width = cols - MONITOR_LABEL - 1 - 1 - MONITOR_SIDE
+    bar, tick = ("│", "┤") if utf8 else ("|", "+")
+    rate = Shell.rate
+    head = (f"monitor interface   every {view['interval']:g}s   "
+            f"page {page + 1}/{pages}   q quit  l scale  n/p page")
+    clock = view.get("clock", "")
+    if len(head) + 2 + len(clock) <= cols:
+        head = head + " " * (cols - len(head) - len(clock)) + clock
+    lines = [monitor_fit(head, cols)]
+    for name in names[page * per:(page + 1) * per]:
+        window = view["windows"].get(name, [])[-width:]
+        seen = [s for s in window if s]
+        last = window[-1] if window else None
+        peak = max((max(s["rx"], s["tx"]) for s in seen), default=0)
+        speed = view["speeds"].get(name)
+        if view.get("mode") == "line" and speed:
+            full = speed
+            scale = f"line rate {rate(speed)}"
+            if last:
+                scale += (f": rx {last['rx'] / speed * 100:.1f}%"
+                          f" tx {last['tx'] / speed * 100:.1f}%")
+        else:
+            full = nice_scale(peak)
+            if not seen:
+                scale = "waiting for a second sample"
+            elif not full:
+                scale = "scale: nothing passed in this window"
+            elif view.get("mode") == "line":
+                scale = f"no line rate known; scale {rate(full)}, auto"
+            else:
+                scale = f"scale {rate(full)}, auto"
+        lines.append(monitor_fit(f"{name}   {scale}", cols))
+        errors = sum(s["errors"] for s in seen) if seen else None
+        lost = sum(s["lost"] for s in seen) if seen else None
+        for key, label, count in (("rx", "rx", ("errors", errors)),
+                                  ("tx", "tx", ("drops", lost))):
+            chart = chart_rows([s[key] if s else None for s in window],
+                               full, MONITOR_CHART_ROWS, width, utf8)
+            side = [f"{label} {rate(last[key]) if last else '--'}",
+                    f"   {round(last[key + '_pps']) if last else '--'} pps",
+                    "",
+                    f"{count[0]} {count[1] if count[1] is not None else '--'}"]
+            for r in range(MONITOR_CHART_ROWS):
+                if r == 0:
+                    axis = rate(full) if full else "--"
+                elif r == MONITOR_CHART_ROWS - 1:
+                    axis = "0"
+                else:
+                    axis = ""
+                row = (f"{axis:>{MONITOR_LABEL}}{tick if axis else bar}"
+                       f"{chart[r]} {side[r]}")
+                lines.append(monitor_fit(row.rstrip(), cols))
+    body = rows - len(notes)
+    lines = (lines + [""] * body)[:body]
+    return lines + notes, pages
+
+
+def monitor_key(data):
+    """
+    What the keys read in one go mean: "quit", "scale", "next", "prev" or
+    None. Arrows and Page Up/Down arrive as escape sequences, so `data` is
+    everything read at once rather than one character.
+    """
+    if not data:
+        return None
+    if data in ("\x1b[C", "\x1b[B", "\x1b[6~") or data[0] in "nN ":
+        return "next"
+    if data in ("\x1b[D", "\x1b[A", "\x1b[5~") or data[0] in "pPbB":
+        return "prev"
+    if data[0] in "qQ\x03":
+        return "quit"
+    if data[0] in "lL":
+        return "scale"
+    return None
+
+
+class MonitorTerminal:
+    """
+    The terminal `monitor interface` draws on, and gives back exactly as it
+    found it: cbreak and no echo for single keys, the alternate screen so the
+    session's scrollback is untouched, the cursor hidden - and all three
+    undone in __exit__, which runs on q, on Ctrl-C and on an exception alike.
+
+    Ctrl-C stays a signal (cbreak keeps ISIG), so it arrives as
+    KeyboardInterrupt wherever the loop is, including inside a sample.
+    """
+
+    # not a unit: it takes over the process's own terminal; lab/monitor-
+    # interface.sh drives it under a pty and reads the modes back after q
+    def __init__(self, stdin=None, stdout=None):
+        self.stdin = stdin or sys.stdin
+        self.stdout = stdout or sys.stdout
+        self.saved = None
+
+    # not a unit: termios on a real terminal, as __init__ says
+    def __enter__(self):
+        import termios
+        import tty
+        fd = self.stdin.fileno()
+        self.saved = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        self.stdout.write("\x1b[?1049h\x1b[?25l")
+        self.stdout.flush()
+        return self
+
+    # not a unit: termios on a real terminal, as __init__ says
+    def __exit__(self, *exc):
+        import termios
+        self.stdout.write("\x1b[?25h\x1b[?1049l")
+        self.stdout.flush()
+        if self.saved is not None:
+            termios.tcsetattr(self.stdin.fileno(), termios.TCSADRAIN,
+                              self.saved)
+        return False
+
+    # not a unit: the real terminal's size, as __init__ says
+    def size(self):
+        """(columns, rows), read now, so a resized window redraws at it."""
+        try:
+            s = os.get_terminal_size(self.stdout.fileno())
+            return s.columns or 80, s.lines or 24
+        except (OSError, ValueError):
+            return 80, 24
+
+    # not a unit: select() on a real terminal, as __init__ says
+    def keys(self, timeout):
+        """What was typed within `timeout` seconds, all of it, or ""."""
+        import select
+        fd = self.stdin.fileno()
+        ready, _, _ = select.select([fd], [], [], max(0.0, timeout))
+        if not ready:
+            return ""
+        return os.read(fd, 32).decode("utf-8", "replace")
+
+    # not a unit: writes to the real terminal, as __init__ says
+    def draw(self, lines):
+        """The frame, over the last one: home, each row cleared to its end."""
+        self.stdout.write("\x1b[H" + "".join(l + "\x1b[K\r\n"
+                                             for l in lines[:-1])
+                          + lines[-1] + "\x1b[K\x1b[J")
+        self.stdout.flush()
 
 
 def interface_aliases(name, pairs):
@@ -12638,6 +12964,9 @@ class Shell:
             # same question two ways depending on which one the operator
             # reached (#395).
             self.do_probe(w[0], w[1:])
+        elif w[0] == "monitor":
+            # Before show_or_pass, which would hand the word to FRR (#519).
+            self.do_monitor(w[1:])
         elif w[0] == "clear":
             self.do_clear(line)
         elif w[:2] == ["test", "policy"]:
@@ -15304,13 +15633,12 @@ class Shell:
         samples = []
         try:
             for n in range(count + 1):
-                rc, out = self.dp.run("show interface")
-                if rc != 0 or not out.strip():
+                got = self.sample_counters()
+                if got is None:
                     self.err("the dataplane stopped answering part-way "
                              "through the sample")
                     return
-                samples.append((time.monotonic(),
-                                routes.parse_interface_counters(out)))
+                samples.append(got)
                 if n < count:
                     time.sleep(interval)
         except KeyboardInterrupt:
@@ -15323,30 +15651,17 @@ class Shell:
                 "a total since boot")
             return
 
+        # The sampler `monitor interface` reads too (#519): an interface that
+        # appeared mid-sample has no step, and a counter that went backwards
+        # (`clear interfaces` ran) reads as zero and sets `reset`.
         series, drops, reset = {}, {}, False
         for (t0, c0), (t1, c1) in zip(samples, samples[1:]):
-            dt = t1 - t0
-            if dt <= 0:
-                continue
-            for name, now in c1.items():
-                was = c0.get(name)
-                if was is None:
-                    # Appeared mid-sample. Its counter is a total since it was
-                    # created, and reporting that as a rate would invent a
-                    # spike out of an interface somebody just made.
-                    continue
-                step = []
-                for key in ("rx bytes", "tx bytes"):
-                    delta = now.get(key, 0) - was.get(key, 0)
-                    if delta < 0:
-                        # `clear interfaces` ran while this was sampling.
-                        reset = True
-                        delta = 0
-                    step.append(delta * 8 / dt)
-                series.setdefault(name, []).append(tuple(step))
-                lost = now.get("drops", 0) - was.get("drops", 0)
-                if lost > 0:
-                    drops[name] = drops.get(name, 0) + lost
+            steps, went_back = interface_steps(c0, c1, t1 - t0)
+            reset = reset or went_back
+            for name, step in steps.items():
+                series.setdefault(name, []).append((step["rx"], step["tx"]))
+                if step["drops"] > 0:
+                    drops[name] = drops.get(name, 0) + step["drops"]
 
         if names:
             series = {n: v for n, v in series.items()
@@ -15412,6 +15727,186 @@ class Shell:
             print_prose("a counter went backwards - something cleared the "
                         "interfaces mid-sample; that step reads as zero",
                         indent="  ")
+
+    #: `monitor interface`'s default: once a second, whose cost is measured
+    #: where the renderer is (#519).
+    MONITOR_INTERVAL = 1.0
+
+    def sample_counters(self, clock=None):
+        """
+        (when, {name: {counter: int}}) off one `show interface`, or None when
+        the dataplane does not answer: the one reading both `show interface
+        utilization` and `monitor interface` take (#519). `when` is `clock`
+        read as the answer came back.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0 or not out.strip():
+            return None
+        # Looked up now, not bound as a default: test_prismash_complete
+        # replaces time.monotonic to prove the rate uses the measured time.
+        return (clock or time.monotonic)(), \
+            routes.parse_interface_counters(out)
+
+    def do_monitor(self, args):
+        """monitor interface [<name>...] [interval <s>]"""
+        if args[:1] == ["interface"]:
+            self.monitor_interface(args[1:])
+            return
+        self.err("monitor what? 'monitor interface' is the one there is")
+
+    def monitor_interface(self, args):
+        """
+        A live chart of each interface's traffic, redrawn in place until q or
+        Ctrl-C (#519). Everything that can be refused is refused here, before
+        the screen is taken: a pipe or a script (which gets no escape
+        sequences in its file, and the name of the command that serves it),
+        an interval out of range, a dataplane that is not answering, a name
+        that matches nothing.
+        """
+        interval, names, i = self.MONITOR_INTERVAL, [], 0
+        while i < len(args):
+            if args[i] == "interval":
+                if i + 1 >= len(args):
+                    self.err("interval needs a number of seconds after it")
+                    return
+                try:
+                    interval = float(args[i + 1])
+                except ValueError:
+                    # The operator's word last on the row, where a long one
+                    # folds nothing of the VTY's own after it.
+                    self.err(f"interval needs a number of seconds: "
+                             f"{args[i + 1]}")
+                    return
+                if not 0.5 <= interval <= 60:
+                    self.err("interval must be between 0.5 and 60 seconds")
+                    return
+                i += 2
+                continue
+            names.append(args[i])
+            i += 1
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            self.err_prose(
+                "monitor interface needs a terminal",
+                "it redraws one screen until q; for a script or a pipe, "
+                "'show interface utilization' samples and prints once")
+            return
+        first = self.sample_counters()
+        if first is None:
+            self.err("the dataplane is not answering, so there is nothing to "
+                     "sample")
+            return
+        shown = self.monitor_names(first[1], names)
+        if not shown:
+            self.err("no interface matches")
+            return
+        _, hw = self.dp.run("show hardware-interfaces brief")
+        hardware = routes.parse_hardware(hw)
+        speeds = {n: (hardware.get(n) or {}).get("speed")
+                  or (hardware.get(n.split(".")[0]) or {}).get("speed")
+                  for n in first[1]}
+        with MonitorTerminal() as term:
+            self.monitor_run(term, shown, names, interval, speeds)
+
+    def monitor_names(self, counters, wanted):
+        """
+        The interfaces `monitor interface` draws, in order: for each of the
+        `wanted` names, the interface it names exactly, else every one it
+        starts (all of them when none is given), and never local0 unless it is
+        named - it carries nothing, and a page of its flat line would push a
+        card that does off the screen.
+
+        EXACT FIRST, measured on lab/monitor-interface.sh: `monitor interface
+        pg0` on a card with 200 sub-interfaces drew pg0.1 to pg0.200 too, 101
+        pages of them, when the operator had named one card.
+        """
+        if not wanted:
+            return sorted(n for n in counters if n != self.NULL_INTERFACE)
+        exact = {n.lower(): n for n in counters}
+        out = set()
+        for w in wanted:
+            if w.lower() in exact:
+                out.add(exact[w.lower()])
+            else:
+                out.update(n for n in counters if _starts(n, w))
+        return sorted(out)
+
+    def monitor_run(self, term, shown, wanted, interval, speeds,
+                    clock=None, wall=None):
+        """
+        The loop: draw, wait for a key until the next sample is due, sample,
+        and draw again - until q or Ctrl-C, which `term` restores the terminal
+        after. `term` is MonitorTerminal, or a stand-in that scripts the keys.
+
+        A dataplane that stops answering does not end the view: the chart
+        holds its last sample and the bottom row says since when, so the
+        operator watching a restart sees it come back. A sample is due every
+        `interval` from the last one; one that ran late is not followed by a
+        burst to catch up, since the rate comes from the measured time - on
+        `clock`, which every reading here is stamped with, so no rate is a
+        difference between two clocks.
+        """
+        wall = wall or (lambda: time.strftime("%H:%M:%S"))
+        clock = clock or time.monotonic
+        utf8 = self.bars() is self.BARS_UTF
+        view = {"interval": interval, "names": list(shown),
+                "windows": {n: [] for n in shown}, "speeds": speeds,
+                "mode": "auto", "page": 0, "notes": [], "clock": wall()}
+        silent = reset = None
+        t_prev, prev = self.sample_counters(clock) or (clock(), None)
+        next_at = clock() + interval
+        redraw, drawn, pages = True, None, 1
+        try:
+            while True:
+                if redraw:
+                    drawn = term.size()
+                    view["clock"] = wall()
+                    view["notes"] = [n for n in (silent, reset) if n]
+                    lines, pages = render_monitor(view, drawn[0] - 1,
+                                                  drawn[1], utf8)
+                    term.draw(lines)
+                    redraw = False
+                left = next_at - clock()
+                if left > 0:
+                    action = monitor_key(term.keys(min(left, 0.25)))
+                    if action == "quit":
+                        return
+                    if action == "scale":
+                        view["mode"] = ("line" if view["mode"] == "auto"
+                                        else "auto")
+                    elif action in ("next", "prev"):
+                        view["page"] = (view["page"]
+                                        + (1 if action == "next" else -1)) \
+                            % pages
+                    redraw = bool(action) or term.size() != drawn
+                    continue
+                next_at = max(next_at + interval, clock() + interval / 2)
+                redraw = True
+                got = self.sample_counters(clock)
+                if got is None:
+                    silent = silent or (f"the dataplane stopped answering at "
+                                        f"{wall()}; holding the last sample")
+                    continue
+                silent = None
+                t, now = got
+                if prev is None:
+                    # The dataplane was not answering when the view began:
+                    # this is the first reading, and a rate needs two.
+                    t_prev, prev = t, now
+                    continue
+                steps, went_back = interface_steps(prev, now, t - t_prev)
+                if went_back:
+                    reset = (f"counters went backwards at {wall()} "
+                             "(cleared); that step reads as zero")
+                for n in self.monitor_names(now, wanted):
+                    if n not in view["windows"]:
+                        view["windows"][n] = []
+                        view["names"] = sorted(view["names"] + [n])
+                for n, w in view["windows"].items():
+                    w.append(steps.get(n))
+                    del w[:-MONITOR_KEEP]
+                t_prev, prev = t, now
+        except KeyboardInterrupt:
+            return
 
     def show_one_interface(self, name, ifaces):
         """
