@@ -63,6 +63,20 @@ LOG=${LOGCOPY:-/src/install-console.log}
 # the timing of the keystrokes - and because the point of the assertions below
 # is that these exact values reach the disk.
 NEW_HOST=${NEW_HOST:-cgnat-lab}
+# THE PROMPT THE INSTALLED BOX PRINTS (#526): its own name, which is this
+# lab's answer to the installer - the product's `prisma` only on the
+# installer's default name, and a name past 20 characters cut to 19 and a
+# `~`, as Shell.prompt_name() does. Every wait for the VTY below waits for
+# this box's prompt and no other, so a VTY still printing `prisma> ` on a
+# renamed box goes red here instead of passing.
+case "$NEW_HOST" in
+  prisma-routing) VTY_PROMPT="prisma> " ;;
+  *) if [ ${#NEW_HOST} -gt 20 ]; then
+       VTY_PROMPT="$(printf '%s' "$NEW_HOST" | cut -c1-19)~> "
+     else
+       VTY_PROMPT="$NEW_HOST> "
+     fi ;;
+esac
 NEW_TZ=${NEW_TZ:-America/Sao_Paulo}
 NEW_PW=${NEW_PW:-lab-secret-42}
 
@@ -1130,7 +1144,7 @@ mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exi
 # \r goes, because a serial console ends every line with one and a pattern
 # anchored on the start of a line would never match otherwise. The escape
 # sequences go with it: readline redraws its prompt with them, so the string
-# "prisma> " arrives cut in half by a cursor move often enough to matter.
+# "$VTY_PROMPT" arrives cut in half by a cursor move often enough to matter.
 console_since() {
   tail -c "+$CONSOLE_POS" "$CONSOLE_LOG" 2>/dev/null \
     | tr -d '\r' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g'
@@ -1412,7 +1426,7 @@ ask_the_silent_box() {
   send 'echo "HX""LAB ---- end ----"'
   wait_for "HXLAB ---- end ----" 120 "the box to answer the ten questions" || true
   send "exit"
-  wait_for "prisma> " 60 "the shell escape to return to the VTY" || true
+  wait_for "$VTY_PROMPT" 60 "the shell escape to return to the VTY" || true
 }
 
 drive_console() {
@@ -1575,7 +1589,7 @@ drive_console() {
     *) return 1 ;;
   esac
   send "exit"
-  wait_for "prisma> " 60 \
+  wait_for "$VTY_PROMPT" 60 \
     "the first session to leave configuration mode" || return 1
   send "exit"
   wait_for "$NEW_HOST login:" 120 \
@@ -1614,7 +1628,7 @@ drive_console() {
   send "commit"
   wait_for "commit complete" 300 "root's commit to apply the accounts" || return 1
   send "exit"
-  wait_for "prisma> " 30 "the VTY to leave configuration mode" || return 1
+  wait_for "$VTY_PROMPT" 30 "the VTY to leave configuration mode" || return 1
 
   echo "  -- what the BOX says those accounts got, read off the box"
   send "start shell"
@@ -1963,7 +1977,7 @@ drive_console() {
   wait_for "commit complete" 300 \
     "an administrator's commit to be applied on the installed box" || return 1
   send "exit"
-  wait_for "prisma> " 30 "the VTY to leave configuration mode" || return 1
+  wait_for "$VTY_PROMPT" 30 "the VTY to leave configuration mode" || return 1
 
   # Read back from FRR and from the dataplane, by the account itself. "commit
   # complete" is this VTY's own sentence; whether the routing daemon and the
@@ -2095,7 +2109,7 @@ drive_console() {
     CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
   fi
   send "exit"
-  wait_for "prisma> " 30 "the VTY to leave configuration mode" || return 1
+  wait_for "$VTY_PROMPT" 30 "the VTY to leave configuration mode" || return 1
   send "start shell"
   wait_for "entering /bin" 60 "root's shell escape to open" || return 1
   # Out of /etc/passwd, not out of what the VTY said. The account has to be
@@ -3933,7 +3947,7 @@ then
   if wait_for "$NEW_HOST login:" 420 "the box to come up for the VTY reboot" \
      && { send "root"; wait_for "Password:" 60 \
           "the login to ask for root's password"; } \
-     && { send "$LOGIN_PW"; wait_for "prisma> " 180 \
+     && { send "$LOGIN_PW"; wait_for "$VTY_PROMPT" 180 \
           "root's login to land at the VTY prompt"; }; then
     VR_DRIVEN=1
     send "system reboot"
@@ -3974,7 +3988,7 @@ then
       # prompt it just returned to rather than waiting for a fresh one.
       if { send "root"; wait_for "Password:" 60 \
            "the reboot's login to ask for root's password"; } \
-         && { send "$LOGIN_PW"; wait_for "prisma> " 180 \
+         && { send "$LOGIN_PW"; wait_for "$VTY_PROMPT" 180 \
               "the reboot's login to land at the VTY prompt"; }; then
         send "start shell"
         if wait_for "entering /bin" 60 \
@@ -4215,7 +4229,7 @@ then
     wait_for "HXLAB ho-addr0=" 30 "the box to say what address it is on" \
       || fail=1
     send "exit"
-    wait_for "prisma> " 60 "the shell to close before the handover" \
+    wait_for "$VTY_PROMPT" 60 "the shell to close before the handover" \
       || fail=1
 
     # ------------------------------------------------------- the handover
@@ -4272,7 +4286,7 @@ then
     send "exit"
     send "exit"
     send "exit"
-    wait_for "prisma> " 120 "the VTY to leave configuration mode" || fail=1
+    wait_for "$VTY_PROMPT" 120 "the VTY to leave configuration mode" || fail=1
 
     # --------------------------------- what the commit itself did to the card
     #
@@ -4454,7 +4468,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     wait_for "HXLAB ho-dpmtu=" 60 \
       "the dataplane to give the state and MTU of its interfaces" || fail=1
     send "exit"
-    wait_for "prisma> " 60 "the shell to close" || fail=1
+    wait_for "$VTY_PROMPT" 60 "the shell to close" || fail=1
     # ------------------- the card, by its own name, at the console (#389)
     #
     # THE ISSUE'S TRANSCRIPT. On the maintainer's box `show interface` said
@@ -4533,14 +4547,14 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       HO_COMMIT=unread
     fi
     send "exit"
-    wait_for "prisma> " 120 "the VTY to leave configuration mode" \
+    wait_for "$VTY_PROMPT" 120 "the VTY to leave configuration mode" \
       || fail=1
     # And in the operator's own words, on the console, so the log carries what
     # they would see. Nothing is armed by this commit since #378, and nothing
     # is written down beside the card since #385: what the box does with the
     # card is decided at the next start, and PHASE 5 reads it there.
     send "show interface | no-more"
-    wait_for "prisma> " 120 "the dataplane to list its interfaces" \
+    wait_for "$VTY_PROMPT" 120 "the dataplane to list its interfaces" \
       || fail=1
     # ------------- and the same card in the words an operator types (#393)
     #
@@ -4596,11 +4610,11 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send "commit"
     wait_for "[edit]" 300 "the commit of 'no shut' to answer" || fail=1
     send "exit"
-    wait_for "prisma> " 120 "the VTY to leave configuration mode" \
+    wait_for "$VTY_PROMPT" 120 "the VTY to leave configuration mode" \
       || fail=1
     _ab_show=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
     send "show interface | no-more"
-    wait_for "prisma> " 120 \
+    wait_for "$VTY_PROMPT" 120 \
       "the VTY to list its interfaces after 'no shut'" || fail=1
     tail -c "+$_ab_show" "$CONSOLE_LOG" | tr -d '\r' \
       | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' > /tmp/ab-show.txt

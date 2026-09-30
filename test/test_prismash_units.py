@@ -883,6 +883,8 @@ def shell(api=None, dp=None, frr=None, caps=None, runner=None, running=None):
     """
     sh = prismash.Shell()
     sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT} if caps is None else caps
+    # A box on the installer's name (#526), not the machine running this.
+    sh._prompt_name = prismash.HOSTNAME_DEFAULT
     sh.api = api or RecApi()
     sh.dp = dp or RecDp()
     sh.frr = frr or RecFrr()
@@ -3004,6 +3006,7 @@ def frr_stub(shows=None, available=True):
 def shell(dp=None, api=None, frr=None, running=None):
     sh = prismash.Shell()
     sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+    sh._prompt_name = prismash.HOSTNAME_DEFAULT       # not this machine's (#526)
     sh.dp = dp or Dp()
     sh.api = api or Api()
     sh.frr = frr or frr_stub()
@@ -5082,6 +5085,81 @@ try:
 finally:
     prismash.readline = saved_rl
 ok("readline's completer, over _options")
+
+print("\n=== Shell.prompt_name: the box's name in the prompt (#526) ===")
+_asked = []
+
+
+class _NameSys:
+    """read_hostname() answering `name`, counting how often it is asked."""
+
+    def __init__(self, name, broken=False):
+        self.name, self.broken = name, broken
+
+    def read_hostname(self):
+        _asked.append(self.name)
+        if self.broken:
+            raise OSError("no door")
+        return self.name
+
+
+_ps = prismash.Shell()
+_ps.sys = _NameSys("edge-sp-01")
+check(_ps.prompt() == "edge-sp-01> " and _ps.prompt() == "edge-sp-01> "
+      and _asked == ["edge-sp-01"],
+      f"a named box's prompt, the host asked once for the session: {_asked}")
+_ps.mode = "configuration"
+check(_ps.prompt() == "edge-sp-01# [edit] ",
+      f"and in configuration mode: {_ps.prompt()!r}")
+for _name, _want in ((prismash.HOSTNAME_DEFAULT, "prisma> "), ("", "prisma> ")):
+    _ps = prismash.Shell()
+    _ps.sys = _NameSys(_name)
+    check(_ps.prompt() == _want,
+          f"the installer's name, or none read, is the product's: {_name!r} -> {_ps.prompt()!r}")
+_saved_cn = prismash.Shell.__dict__["container_name"]
+try:
+    prismash.Shell.container_name = staticmethod(lambda: "abc123def456")
+    _ps = prismash.Shell()
+    _ps.sys = _NameSys("abc123def456")
+    check(_ps.prompt() == "prisma> ",
+          "a door nobody answered read the container's own id: not the box's name")
+    prismash.Shell.container_name = staticmethod(lambda: "edge-lab")
+    _ps = prismash.Shell()
+    _ps.sys = _NameSys("edge-lab")
+    check(_ps.prompt() == "edge-lab> ",
+          "a container that is the box, renamed for real, keeps its name")
+finally:
+    prismash.Shell.container_name = _saved_cn
+check(prismash.Shell.container_name() == ""
+      or os.path.exists("/.dockerenv"),
+      "container_name() is empty on a host, which is where this suite runs")
+_ps = prismash.Shell()
+_ps.sys = _NameSys("x", broken=True)
+check(_ps.prompt_name() == "prisma", "a door that fails is the product's name, not a crash")
+_long = "pop-" + "a" * 60
+_ps = prismash.Shell()
+_ps.sys = _NameSys(_long)
+check(_ps.prompt_name() == _long[:19] + "~" and len(_ps.prompt_name()) == 20,
+      f"a long name keeps its start and is marked cut: {_ps.prompt_name()!r}")
+_ps.mode = "configuration"
+_ps.nat_ctx = ["nat", "cgnat", "pool " + "r" * 60]
+_p = _ps.prompt()
+check(len(_p) == len("prisma# [edit ") + prismash.Shell.PROMPT_MAX + 2
+      and "~# [edit ..." in _p,
+      f"and the block path gives up the columns the name took ({len(_p)}): {_p!r}")
+# A commit that renames the box sets the prompt in the same session.
+_ps = prismash.Shell()
+_ps.sys = _NameSys("old-name")
+_ps.prompt()
+_ps.sys.write_hostname = lambda n: (True, "")
+_ps.frr = type("F", (), {"available": lambda self: False})()
+check(_ps.apply_hostname("new-name") == (True, "")
+      and _ps.prompt() == "new-name> ",
+      f"a rename is the next prompt: {_ps.prompt()!r}")
+_ps.sys.write_hostname = lambda n: (False, "refused")
+check(_ps.apply_hostname("bad") == (False, "refused")
+      and _ps.prompt() == "new-name> ",
+      "a rename the host refused leaves the prompt as it was")
 
 print("\n=== Shell.display_matches: the options, then the prompt again ===")
 # Mutation shown red: the prompt redraw dropped.
