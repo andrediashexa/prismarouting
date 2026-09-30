@@ -226,9 +226,32 @@ A partir da versão 0.143.1:
 
 Os números do CGNAT são mantidos pelo próprio dataplane no momento em que mudam, e o agente lê tudo de uma vez: consultar a caixa não custa uma varredura dos assinantes, por maior que ela seja.
 
+### O estado da própria caixa: tuning, self-test, commits e trilha
+
+A partir da versão 0.147.1:
+
+| Objeto | O que traz |
+|--------|------------|
+| `prTuningState` | `tuned` (o kernel tem o que o tuner pediu), `betweenPlans` (a caixa roda com menos workers que o planejado até o próximo reboot) ou `firstBoot` (configuração conservadora até o reboot) |
+| `prTuningWorkers`, `prTuningWorkersNextBoot` | workers agora e no próximo boot |
+| `prTuningIsolated`, `prTuningIsolatedWanted` | CPUs isoladas agora e as que o tuner pediu |
+| `prTuningHugepages`, `prTuningHugepagesWanted` | hugepages reservadas agora e as pedidas. Menos que o pedido é memória do dataplane menor que a planejada |
+| `prSelfTestVerdict` | o veredito do self-test do boot: `ready`, `readyWithWarnings`, `notForwarding` (saudável, mas sem interface para encaminhar) ou `failed` |
+| `prSelfTestFailures`, `prSelfTestWarnings`, `prSelfTestRanAt` | falhas, avisos e quando rodou |
+| `prConfigCommits` | configurações aplicadas desde o boot (commits, o carregamento do boot, rollbacks, reversões) |
+| `prConfigLastCommitAt`, `prConfigLastCommitBy` | quando e quem aplicou a última — `boot` para o carregamento do boot, `confirm-expired` para uma reversão |
+| `prConfigConfirmPending`, `prConfigConfirmDeadline` | um `commit confirmed` esperando confirmação, e quando a caixa reverte se ninguém confirmar |
+| `prConfigConfirmReverts` | `commit confirmed` que ninguém confirmou e a caixa reverteu — quase sempre uma mudança que derrubou a sessão de quem a fez |
+| `prConfigRollbacks` | rollbacks para uma revisão anterior |
+| `prConfigSavedDiffers` | a configuração em uso não está salva: um reboot voltaria sem as mudanças. Falta um `save` |
+| `prAuditState` | a trilha de configuração: `intact`, `empty`, `broken` (entrada alterada ou removida do meio), `truncated` (removidas do fim) ou `incomplete` (escritas que falharam) |
+| `prAuditEntries`, `prAuditHeadSeq`, `prAuditHeadDigest`, `prAuditLost` | as entradas, a última e seu SHA-256, e as perdidas. **Guarde o digest na NMS**: uma trilha reescrita do zero ainda confere, e só a cabeça guardada fora da caixa mostra a diferença |
+
+O tuning, o self-test e os commits continuam respondendo com o dataplane parado — é justamente a caixa cujo dataplane não subiu que precisa deles. Os contadores recomeçam a cada boot. Um grupo que a caixa ainda não tem (o self-test não rodou, nenhuma configuração aplicada desde o boot) simplesmente não aparece, em vez de aparecer zerado.
+
 ## Zabbix: o template pronto
 
-A partir da versão 0.146.0 a caixa entrega um **template para o Zabbix 7.0** que monitora tudo o que está nesta página: as portas do dataplane, os totais, os pools e os workers do CGNAT, os registros de conexão, o VRRP, o LACP, o BGP, o OSPF, o OSPFv3, o IS-IS, o tamanho da FIB, a CPU, a memória e os discos, e os avisos que a caixa envia. Ele sai da própria caixa, já com o número da MIB do Prisma preenchido:
+A partir da versão 0.146.0 a caixa entrega um **template para o Zabbix 7.0** que monitora tudo o que está nesta página: as portas do dataplane, os totais, os pools e os workers do CGNAT, os registros de conexão, o VRRP, o LACP, o BGP, o OSPF, o OSPFv3, o IS-IS, o tamanho da FIB, a CPU, a memória e os discos, o estado da própria caixa (tuning, self-test, commits e trilha, a partir da 0.147.1), e os avisos que a caixa envia. Ele sai da própria caixa, já com o número da MIB do Prisma preenchido:
 
 ```
 show snmp zabbix-template
@@ -285,9 +308,13 @@ Cada destino recebe **trap**, a não ser que diga `inform` — o inform é confi
 | registros de conexão são perdidos | `recordsLost` |
 | os membros ativos de um bundle mudam | `bundleMembersChange` |
 | uma atualização deixou o dataplane antigo rodando | `dataplaneNotCurrent` |
+| o self-test do boot falhou | `selfTestFailed` |
+| um `commit confirmed` que ninguém confirmou foi revertido | `configReverted` |
+| o tuning espera um reboot | `tuningBetweenPlans` |
+| a trilha de configuração deixou de conferir | `auditTrailDamaged` |
 | disco, memória ou carga passam do limite | os avisos padrão do net-snmp |
 
-Os avisos com nome (`vrrpStateChange` e os demais) chegam como `mteTriggerFired` da DISMAN-EVENT-MIB, com o nome no campo `mteHotTrigger`, e ficam sob o mesmo número da MIB. A caixa confere cada condição a cada 30 ou 60 segundos, então o aviso chega até um minuto depois do evento.
+Os avisos com nome (`vrrpStateChange` e os demais) chegam como `mteTriggerFired` da DISMAN-EVENT-MIB, com o nome no campo `mteHotTrigger`, e ficam sob o mesmo número da MIB. A caixa confere cada condição a cada 30 ou 60 segundos, então o aviso chega até um minuto depois do evento — o tuning e a trilha, a cada cinco minutos.
 
 # O que vale colocar em gráfico
 

@@ -5198,5 +5198,21 @@ own:$_unreadable"
   fi
 fi
 
+echo "=== the verdict for the NMS: the counts the console printed, 0644 (#524) ==="
+rm -f "$FAKE/root/run/prisma-routing/state/selftest"
+run
+_sf="$FAKE/root/run/prisma-routing/state/selftest"
+_fails=$(printf '%s\n' "$OUTPUT" | grep -c '\[FAIL\]')
+_warns=$(printf '%s\n' "$OUTPUT" | grep -c '\[warn\]')
+if [ -f "$_sf" ] \
+   && grep -qx "fail $_fails" "$_sf" && grep -qx "warn $_warns" "$_sf" \
+   && grep -qE '^forwarding (yes|no)$' "$_sf" && grep -qE '^at [0-9]+$' "$_sf" \
+   && [ "$(stat -c %a "$_sf")" = 644 ]; then
+  ok "prSelfTest's file says $_fails fail(s) and $_warns warning(s), as the console did"
+else
+  bad "the self-test's state file does not match its console ($_fails [FAIL], \
+$_warns [warn]): $(cat "$_sf" 2>&1 | tr '\n' ' ')"
+fi
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

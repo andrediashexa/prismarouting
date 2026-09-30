@@ -638,6 +638,286 @@ def natv2_rows(state, config):
     return out
 
 
+# --- the box's own state: tuning, self-test, configuration, trail (#524) ----
+#
+# Phase 4 of docs/snmp-plan.md. Four groups under PRISMA-ROUTING-MIB, each
+# read from what the box already writes, and each LEFT OUT - not served as a
+# zero - when its source cannot be read: a box whose self-test never ran is
+# not a box whose self-test found nothing.
+#
+# WHO CAN READ WHAT. This agent is Debian-snmp, in no group but its own and
+# vpp's. The tuner's files and /sys are world-readable. The configuration
+# store is not, and must not be: /etc/prisma-routing is 2770 root:prisma-cgnat
+# and every revision in it carries password hashes. So the VTY and the
+# self-test each write a few lines that say nothing secret into
+# /run/prisma-routing/state, 0644, and those are what is read here.
+#
+# Tuning, self-test and configuration are served whether or not the
+# dataplane answers: they are about the box, and the box whose dataplane did
+# not come up is the one somebody needs them for. The trail is the
+# dataplane's own answer and goes with it.
+
+STARTUP_CONF = os.environ.get("PRISMA_STARTUP_CONF", "/etc/vpp/startup.conf")
+GRUB_CFG = os.environ.get("PRISMA_GRUB_CFG",
+                          "/etc/default/grub.d/prisma-routing.cfg")
+SYSFS = os.environ.get("PRISMA_SYSFS_ROOT", "/sys")
+STATE_DIR = os.environ.get("PRISMA_STATE_DIR", "/run/prisma-routing/state")
+#: `show bpa pool history verify` reads the whole trail, so it is asked at
+#: most this often; the trail changes at a commit, not every poll.
+AUDIT_SECONDS = float(os.environ.get("PRISMA_SNMP_AUDIT_CACHE", "300"))
+TUNING_STATES = {"tuned": 1, "between": 2, "firstboot": 3}
+SELFTEST_VERDICTS = {"ready": 1, "warnings": 2, "notforwarding": 3,
+                     "failed": 4}
+AUDIT_STATES = {"intact": 1, "empty": 2, "broken": 3, "truncated": 4,
+                "incomplete": 5}
+
+
+def _read_or_none(path):
+    """A file's text, or None when it is not there or cannot be read."""
+    try:
+        with open(path) as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def cpu_count(spec):
+    """How many CPUs a list like '2-6,9' names; 0 for none."""
+    n = 0
+    for part in spec.replace(" ", "").split(","):
+        if not part:
+            continue
+        a, _, b = part.partition("-")
+        if a.isdigit() and (not b or b.isdigit()):
+            n += int(b or a) - int(a) + 1
+    return n
+
+
+def parse_startup_state(text):
+    """
+    (state, workers this boot, workers the next boot) off the header and the
+    `corelist-workers` line prisma-routing-tune writes into startup.conf.
+    """
+    if text is None:
+        return None
+    m = re.search(r"^\s*corelist-workers\s+(\S+)", text, re.M)
+    now = cpu_count(m.group(1)) if m else 0
+    m = re.search(r"# BETWEEN TWO PLANS\..*?runs (\d+)\.", text, re.S)
+    if m:
+        return ("between", now, int(m.group(1)))
+    if "# FIRST BOOT MODE" in text:
+        return ("firstboot", now, now)
+    return ("tuned", now, now)
+
+
+def parse_grub_request(text):
+    """
+    What the tuner asked the kernel for: (isolcpus, hugepage size in kB,
+    hugepages), off its GRUB_CMDLINE line. None when it asked nothing.
+    """
+    if not text:
+        return None
+    iso = re.search(r"isolcpus=(?:[a-z_]+,)*([0-9][0-9,-]*)", text)
+    size = re.search(r"\bhugepagesz=(\d+)([GMK])", text)
+    count = re.search(r"\bhugepages=(\d+)", text)
+    kb = 0
+    if size:
+        kb = int(size.group(1)) * {"G": 1048576, "M": 1024, "K": 1}[size.group(2)]
+    return (iso.group(1) if iso else "", kb, int(count.group(1)) if count else 0)
+
+
+def hugepages_reserved(kb, root=None):
+    """The kernel's pages of `kb` kB reserved now, or None if it cannot say."""
+    root = root or SYSFS
+    if not kb:
+        return None
+    t = _read_or_none(os.path.join(
+        root, f"kernel/mm/hugepages/hugepages-{kb}kB/nr_hugepages"))
+    return int(t) if t and t.strip().isdigit() else None
+
+
+def parse_state_file(text):
+    """{key: value} off the `key value` lines of a file in STATE_DIR."""
+    if text is None:
+        return None
+    out = {}
+    for line in text.splitlines():
+        k, _, v = line.strip().partition(" ")
+        if k and not k.startswith("#"):
+            out[k] = v.strip()
+    return out
+
+
+def parse_audit_verify(text):
+    """
+    The configuration trail's verdict off `show bpa pool history verify`:
+    state, entries checked, the head's sequence and digest, entries lost.
+    """
+    if not text or "configuration trail:" not in text:
+        return None
+    d = {"state": "intact", "entries": 0, "seq": 0, "digest": "", "lost": 0}
+    m = re.search(r"(\d+) entr(?:y|ies) checked", text)
+    if m:
+        d["entries"] = int(m.group(1))
+    m = re.search(r"head\s+seq (\d+) sha256 ([0-9a-f]+)", text)
+    if m:
+        d["seq"], d["digest"] = int(m.group(1)), m.group(2)
+    m = re.search(r"INCOMPLETE: (\d+) entr", text)
+    if m:
+        d["lost"] = int(m.group(1))
+    if "BROKEN" in text:
+        d["state"] = "broken"
+    elif "TRUNCATED" in text:
+        d["state"] = "truncated"
+    elif d["lost"]:
+        d["state"] = "incomplete"
+    elif "no chained entries" in text or "no trail at" in text:
+        d["state"] = "empty"
+    return d
+
+
+def _utc(epoch):
+    """An epoch as the UTC time the product MIB prints, '' for none."""
+    try:
+        e = int(epoch)
+    except (TypeError, ValueError):
+        return ""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(e)) if e else ""
+
+
+def box_state(startup=None, grub=None, sysfs=None, state_dir=None):
+    """
+    What box_rows() serves, read now: tuning, self-test and configuration,
+    each None when its source cannot be read. The paths default to the
+    module's, read at the call so a test can point them elsewhere.
+    """
+    startup = startup or STARTUP_CONF
+    grub = grub or GRUB_CFG
+    sysfs = sysfs or SYSFS
+    state_dir = state_dir or STATE_DIR
+    tuning = None
+    st = parse_startup_state(_read_or_none(startup))
+    if st is not None:
+        req = parse_grub_request(_read_or_none(grub)) or ("", 0, 0)
+        tuning = {"state": st[0], "workers": st[1], "workers_next": st[2],
+                  "isolated": (_read_or_none(os.path.join(
+                      sysfs, "devices/system/cpu/isolated")) or "").strip(),
+                  "isolated_wanted": req[0],
+                  "hugepages": hugepages_reserved(req[1], sysfs),
+                  "hugepages_wanted": req[2]}
+    return {"tuning": tuning,
+            "selftest": parse_state_file(_read_or_none(
+                os.path.join(state_dir, "selftest"))),
+            "config": parse_state_file(_read_or_none(
+                os.path.join(state_dir, "config")))}
+
+
+def _int(d, k):
+    """d[k] as a non-negative int, 0 when it is missing or not a number."""
+    v = str(d.get(k, "")).strip()
+    return int(v) if v.isdigit() else 0
+
+
+def box_rows(base, box, trail=None):
+    """
+    PRISMA-ROUTING-MIB's #524 rows under `base` for `box` (box_state()) and
+    `trail` (parse_audit_verify()): prTuning (.16), prSelfTest (.17),
+    prConfig (.18), prAudit (.19). A group whose source was not read is
+    left out whole.
+    """
+    truth = {True: 1, False: 2}
+    out = []
+    t = box.get("tuning")
+    if t:
+        out += [(f"{base}.16.1.0", "integer", TUNING_STATES[t["state"]]),
+                (f"{base}.16.2.0", "gauge", t["workers"]),
+                (f"{base}.16.3.0", "gauge", t["workers_next"]),
+                (f"{base}.16.4.0", "string", t["isolated"]),
+                (f"{base}.16.5.0", "string", t["isolated_wanted"]),
+                (f"{base}.16.7.0", "gauge", t["hugepages_wanted"])]
+        if t["hugepages"] is not None:
+            out.append((f"{base}.16.6.0", "gauge", t["hugepages"]))
+    s = box.get("selftest")
+    if s is not None:
+        fails, warns = _int(s, "fail"), _int(s, "warn")
+        verdict = ("failed" if fails else "notforwarding"
+                   if s.get("forwarding") == "no" else "warnings" if warns
+                   else "ready")
+        out += [(f"{base}.17.1.0", "integer", SELFTEST_VERDICTS[verdict]),
+                (f"{base}.17.2.0", "gauge", fails),
+                (f"{base}.17.3.0", "gauge", warns),
+                (f"{base}.17.4.0", "string", _utc(s.get("at")))]
+    c = box.get("config")
+    if c is not None:
+        out += [(f"{base}.18.1.0", "counter", _int(c, "commits") % 2 ** 32),
+                (f"{base}.18.2.0", "string", _utc(c.get("commit_at"))),
+                (f"{base}.18.3.0", "string", c.get("commit_by", "")),
+                (f"{base}.18.4.0", "integer",
+                 truth[c.get("confirm_pending") == "yes"]),
+                (f"{base}.18.5.0", "string",
+                 _utc(c.get("confirm_deadline"))
+                 if c.get("confirm_pending") == "yes" else ""),
+                (f"{base}.18.6.0", "counter",
+                 _int(c, "confirm_reverts") % 2 ** 32),
+                (f"{base}.18.7.0", "counter", _int(c, "rollbacks") % 2 ** 32),
+                (f"{base}.18.8.0", "integer",
+                 truth[c.get("saved_differs") == "yes"])]
+    if trail is not None:
+        out += [(f"{base}.19.1.0", "integer", AUDIT_STATES[trail["state"]]),
+                (f"{base}.19.2.0", "gauge", trail["entries"]),
+                (f"{base}.19.3.0", "gauge", trail["seq"] % 2 ** 32),
+                (f"{base}.19.4.0", "string", trail["digest"]),
+                (f"{base}.19.5.0", "gauge", trail["lost"])]
+    return out
+
+
+class Audit:
+    """
+    The trail's verdict, asked of the dataplane at most every AUDIT_SECONDS:
+    verify reads the whole file, and a poll every ten seconds would read it
+    six times a minute for an answer that changes at a commit.
+    """
+
+    def __init__(self):
+        self.at = 0.0
+        self.data = None
+
+    # not a unit: asks the running dataplane through vppctl; the parsing is
+    # parse_audit_verify(), which test_snmp_agent.py holds.
+    def refresh(self):
+        if time.time() - self.at < AUDIT_SECONDS and self.data is not None:
+            return self.data
+        self.data = parse_audit_verify(vppctl("show bpa pool history verify"))
+        self.at = time.time()
+        return self.data
+
+
+AUDIT = Audit()
+
+
+class Box:
+    """
+    box_state(), read at most every CACHE_SECONDS like the rest: a walk asks
+    this table once per OID, and each asking would read six files.
+    """
+
+    def __init__(self):
+        self.at = 0.0
+        self.data = None
+
+    # not a unit: box_state() and the clock; box_state() is held by
+    # test_snmp_agent.py, and the window is Values' own.
+    def refresh(self):
+        if time.time() - self.at < CACHE_SECONDS and self.data is not None:
+            return self.data
+        self.data = box_state()
+        self.at = time.time()
+        return self.data
+
+
+BOX = Box()
+
+
 # --- VRRPV3-MIB, RFC 6527: the VRRP routers in the IETF's own MIB (#513) ----
 
 VRRPV3 = "1.3.6.1.2.1.207"
@@ -1323,9 +1603,15 @@ def oid_table():
         return sorted(INTERFACES.refresh(),
                       key=lambda r: [int(x) for x in r[0].split(".")])
     d = VALUES.refresh()
-    if not d:
-        return []                       # dataplane silent: serve nothing
     out = []
+    base = f"1.3.6.1.4.1.{ENTERPRISE}.1" if ENTERPRISE.isdigit() else None
+    if base:
+        # The box's own state (#524), served with the dataplane silent too:
+        # it is the box whose dataplane did not come up that it is for.
+        out += box_rows(base, BOX.refresh(), AUDIT.refresh() if d else None)
+    if not d:
+        # dataplane silent: serve nothing of it
+        return sorted(out, key=lambda r: [int(x) for x in r[0].split(".")])
     for n, key in _TIMEOUT_OIDS:
         if key in d:
             out.append((f"{NAT_DEF_TIMEOUTS}.{n}.0", "gauge", d[key]))

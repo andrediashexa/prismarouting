@@ -3636,6 +3636,75 @@ check(any("2026-09-10T00:26:40Z" in r for r in text),
 sh.confirm.clear()
 ok("read from the file the unit reverts from")
 
+print("\n=== ConfigState: the configuration's state for SNMP (#524) ===")
+_cs = prismash.ConfigState(os.path.join(_root, "state", "config"))
+check(_cs.read() == {}, "nothing written is nothing read")
+_cs.record(confirm_pending="yes", confirm_deadline=1790745000)
+_cs.applied("amy", saved_differs="yes")
+_cs.bump("rollbacks")
+_cs.bump("rollbacks")
+_d = _cs.read()
+check(_d["confirm_pending"] == "yes" and _d["commits"] == "1"
+      and _d["commit_by"] == "amy" and _d["rollbacks"] == "2"
+      and prismash.is_number(_d["commit_at"]) and _d["saved_differs"] == "yes",
+      f"recorded, kept, counted: {_d}")
+check(oct(os.stat(_cs.path).st_mode & 0o777) == "0o644",
+      "0644: the SNMP agent is not in the operators' group")
+_cs.applied("bob")
+check(_cs.read()["commits"] == "2" and _cs.read()["rollbacks"] == "2",
+      "the next commit counts on and keeps the rest")
+_ro = os.path.join(_root, "ro-state")
+os.makedirs(_ro, exist_ok=True)
+os.chmod(_ro, 0o500)
+_bad = prismash.ConfigState(os.path.join(_ro, "config"))
+_bad.record(commits=1)
+_bad.applied("amy")
+_bad.bump("rollbacks")
+check(_bad.read() == {} or os.geteuid() == 0,
+      "a store it cannot write is silence, not a failed commit")
+os.chmod(_ro, 0o700)
+ok("key value lines, rewritten whole, 0644, and never a refusal")
+
+print("\n=== Shell.record_applied: who, when, and whether a reboot loses it ===")
+_saved_path = prismash.CONFIG_PATH
+prismash.CONFIG_PATH = os.path.join(_root, "saved-for-state.conf")
+with open(prismash.CONFIG_PATH, "w") as _f:
+    _f.write("ssh port 22\n")
+sh = shell()
+sh.state = prismash.ConfigState(os.path.join(_root, "state", "applied"))
+sh.record_applied("amy", Config.parse("ssh port 22\n"))
+check(sh.state.read()["saved_differs"] == "no"
+      and sh.state.read()["commit_by"] == "amy",
+      f"the saved file is what runs: {sh.state.read()}")
+sh.record_applied("amy", Config.parse("ssh port 2222\n"))
+check(sh.state.read()["saved_differs"] == "yes"
+      and sh.state.read()["commits"] == "2",
+      "a change nobody saved is one a reboot would lose")
+os.remove(prismash.CONFIG_PATH)
+sh.record_applied("amy", Config.parse("ssh port 22\n"))
+check(sh.state.read()["saved_differs"] == "unknown",
+      "no saved file to compare is not a claim either way")
+prismash.CONFIG_PATH = _saved_path
+# The commit writes it, and a rollback's commit counts as one.
+sh = shell(running=Config.parse("ssh port 22\n"))
+sh.state = prismash.ConfigState(os.path.join(_root, "state", "commit"))
+sh.rb = prismash.Rollback(os.path.join(_root, "rb-state"))
+sh.confirm = prismash.ConfirmPending(os.path.join(_root, "confirm-state"))
+sh.apply = lambda target, check_only=False: True
+sh.candidate = Config.parse("ssh port 2222\n")
+sh.from_rollback = True
+with spoken() as _o:
+    sh.do_commit([])
+_d = sh.state.read()
+check(_d.get("commits") == "1" and _d.get("rollbacks") == "1"
+      and not sh.from_rollback and _d.get("confirm_pending") == "yes"
+      and prismash.is_number(_d.get("confirm_deadline", "")),
+      f"a commit is recorded, the rollback it applied counted, and the "
+      f"confirm window the SSH change opened is pending: {_d} "
+      f"{_o.getvalue()[-300:]!r}")
+sh.confirm.clear()
+ok("the commit, the boot and the revert all say it through here")
+
 print("\n=== Shell.pool_range: raises with the range, or nothing ===")
 # Mutation shown red: `return why` in place of the raise.
 sh = shell()
