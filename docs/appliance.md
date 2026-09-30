@@ -2737,8 +2737,10 @@ distribution kernel, which is where the security updates arrive on their own.
 Debian 13 would bring kernel 6.12 LTS at no extra cost — which is a lifecycle
 argument for
 [#36](https://github.com/andrediashexa/hexarouting/issues/36), not a
-performance one. That upgrade is currently blocked upstream; the issue records
-why, with evidence.
+performance one. That upgrade was decided against on 2026-09-30 and the issue
+closed: fd.io publishes no trixie suite and Debian 13 rejects its key, and the
+only ways past both - unauthenticated packages or a VPP build of our own - are
+not worth a version number. The box stays on Debian 12.
 
 ### And building our own? Yes, since #449, and what it costs
 
@@ -2795,7 +2797,7 @@ here:
 |---|---|
 | `PREEMPT_RT` for latency | Poll-mode workers never sleep and take no kernel path. RT preemption bounds the latency of **kernel** threads, and the packet path has none — that is the whole point of `vfio-pci`. Debian's kernel is already built `PREEMPT_DYNAMIC`, so even the preemption model is a boot parameter rather than a rebuild |
 | Strip drivers and subsystems | Reduces attack surface and boot time. Neither is a problem this project has stated, and neither is on the datapath. It also cuts the other way: a stripped kernel is a kernel that does not have the driver for the NIC in the next box |
-| Newer in-tree NIC drivers (`mlx5`) | Real, and it is an argument for a newer **distribution** kernel — [#36](https://github.com/andrediashexa/hexarouting/issues/36) — not for rebuilding the same source. A rebuild of 6.1 buys no driver that 6.1 does not have |
+| Newer in-tree NIC drivers (`mlx5`) | Real, and it is an argument for a newer **distribution** kernel — [#36](https://github.com/andrediashexa/hexarouting/issues/36), decided against on 2026-09-30 — not for rebuilding the same source. A rebuild of 6.1 buys no driver that 6.1 does not have |
 | Tickless operation, a custom `CONFIG_HZ` | Already obtained on the stock kernel through `nohz_full`, which the tuner puts on every isolated core. The stock `CONFIG_HZ=250` then governs only the housekeeping cores, where nobody is forwarding |
 | Hugepages, IOMMU, `vfio-pci` configuration | Already on. Read off the shipped configuration of the kernel this tree develops against: `CONFIG_NO_HZ_FULL=y`, `CONFIG_RCU_NOCB_CPU=y`, `CONFIG_HARDLOCKUP_DETECTOR=y`, `CONFIG_AUDIT=y`, `CONFIG_HZ=250`, and `pdpe1gb` in `/proc/cpuinfo` for the 1 GB pages. There is nothing here to turn on |
 

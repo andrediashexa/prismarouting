@@ -83,7 +83,6 @@ shipped: #486, #487.
   need a NIC DPDK drives natively; a virtio VM measures the hypervisor.
 * **#163** - its first part is superseded by #449; what remains, the boot
   tuning, needs the same hardware.
-* **#36** - Debian 13: fd.io still publishes no trixie suite.
 
 ## Deferred by their own issues
 
