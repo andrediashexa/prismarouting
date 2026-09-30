@@ -70,6 +70,9 @@ fresh_tree() {
     "$WORK/stand-in.c"
   truncate -s 1085448 "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
   head -c 50160  /dev/zero > "$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+  # The plugin's API definitions, built with it (#527).
+  mkdir -p "$TREE/.build-vpp/src/plugins/bpa"
+  echo '{"messages": []}' > "$TREE/.build-vpp/src/plugins/bpa/bpa.api.json"
   # The container images, where tools/build-images.sh saves them (#427). A
   # stand-in of 1 MB rather than the real 118: what is asked here is that the
   # file travels and lands, and its bytes are this suite's own so the copy on

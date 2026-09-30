@@ -165,6 +165,58 @@ expect_in "a vat2 that segfaulted is reported as the client's failure" \
 expect_in "with the one fact that decides what to do next" \
   "the dataplane never saw it" "$CLI"
 
+# --- the same checks over ONE CONNECTION: vpp_papi (#527) ---
+# prismash's own client, against the same dataplane. The pool outcomes, the
+# refusal and its reason must be what vat2 gave; vat2's segfault has no
+# counterpart here and is not asked.
+PAPI=$(python3 /src/lab/api_client_check.py papi 2>&1)
+echo "$PAPI" | sed 's/^/  /'
+expect_in "the client uses one vpp_papi connection" "transport: vpp_papi" "$PAPI"
+expect_in "and reports the dataplane ready over it" "available: ok" "$PAPI"
+expect_in "a valid pool comes back ok over it" "valid: ok 0" "$PAPI"
+expect_in "an invalid pool comes back refused -7 over it" \
+  "invalid: refused -7" "$PAPI"
+expect_in "with the same reason an operator can act on" "power of two" "$PAPI"
+expect_in "and a value it cannot encode is still refused before it is sent" \
+  "unencodable: cannot-send" "$PAPI"
+expect_in "the valid pool is on the dataplane" "client-ok-papi" \
+  "$(vppctl show bpa pool)"
+
+# EVERY READ THE VTY MAKES, through both, on a dataplane with something in it:
+# a loopback with addresses of both families, a description, a VRF, a
+# sub-interface and the pools above. The two answers must be the same once
+# vpp_papi's reply is converted - that conversion is what every caller reads.
+vppctl create loopback interface >/dev/null
+vppctl set interface state loop0 up
+vppctl set interface ip address loop0 10.9.0.1/24
+vppctl set interface ip address loop0 2001:db8::1/64
+vppctl set interface tag loop0 uplink-desc >/dev/null 2>&1
+vppctl ip table add 7 >/dev/null
+vppctl create loopback interface >/dev/null
+vppctl set interface ip table loop1 7
+vppctl create sub-interfaces loop0 100 >/dev/null
+# A row in each of the other reads, so none of them is compared empty: a
+# virtual router, a bundle, and an exporter with addresses in it.
+vppctl vrrp vr add loop0 vr_id 7 priority 150 interval 100 10.9.0.254 >/dev/null
+vppctl create bond mode lacp >/dev/null
+vppctl set ipfix exporter collector 10.9.0.9 src 10.9.0.1 >/dev/null
+DEFINED=$(python3 /src/lab/api_client_check.py papi defined 2>&1)
+echo "$DEFINED" | sed 's/^/  /'
+expect_not_in "every message prismash sends is in the definitions it loads" \
+  "; not:" "$DEFINED"
+PARITY=$(python3 /src/lab/api_client_check.py papi parity 2>&1)
+echo "$PARITY" | sed 's/^/  /'
+expect_not_in "every read answers the same through vpp_papi as through vat2" \
+  "DIFFERENT" "$PARITY"
+expect_in "the interface table was compared, loop0 and all" \
+  "parity sw_interface_dump: same" "$PARITY"
+expect_in "and a table read through a call" \
+  "parity sw_interface_get_table: same" "$PARITY"
+expect_in "a virtual router compared, not an empty list" \
+  "parity vrrp_vr_dump: same (ok/ok, 1 answer(s))" "$PARITY"
+expect_in "a bundle compared" \
+  "parity sw_bond_interface_dump: same (ok/ok, 1 answer(s))" "$PARITY"
+
 # --- with the dataplane stopped: the case that used to be a traceback ---
 pkill -f "vpp -c" 2>/dev/null
 sleep 2
@@ -172,4 +224,9 @@ DOWN=$(python3 /src/lab/api_client_check.py down 2>&1)
 echo "  $DOWN"
 expect_in "a stopped dataplane is reported, not crashed into" "not-running" "$DOWN"
 expect_in "and says what to check" "systemctl" "$DOWN"
+# And over vpp_papi: no socket to connect to is vat2's answer, the same one.
+DOWNP=$(python3 /src/lab/api_client_check.py papi down 2>&1)
+echo "$DOWNP" | sed 's/^/  /'
+expect_in "a stopped dataplane over vpp_papi falls back and says so" \
+  "not-running" "$DOWNP"
 verdict

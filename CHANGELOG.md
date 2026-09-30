@@ -79,6 +79,24 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A commit reached the dataplane through a vat2 process per message.**
+  ([#527](https://github.com/andrediashexa/hexarouting/issues/527))
+  Asked for by the maintainer: a change should take effect faster. On the X520
+  bench one interface description took 9.7 s to commit, 6.5 s of it starting
+  50 vat2 processes at ~130 ms each. The VTY now holds ONE binary-API
+  connection per session, through vpp_papi (`python3-vpp-api`, fd.io's own
+  package at VPP's version) behind the same `call()`/`dump()` every caller
+  already used; vpp_papi's typed replies are converted to the JSON vat2
+  printed, and `lab/api.sh` compares every read the VTY makes through both on
+  one dataplane - identical. vat2 stays the fallback when the library, the
+  definitions or the socket are missing (`PRISMA_API=vat2` forces it), and
+  `show version` names the one in use. A commit reads the running
+  configuration once until it writes, not four times. `lab/commit.sh`, on
+  eight interfaces: the same commit 2.15 s and 30 vat2 before, 1.48 s and none
+  after; ten more labs driving the VTY pass over it. The images, the medium
+  and the upgrade artifact carry `python3-vpp-api` and the plugin's
+  `bpa.api.json`.
+
 ## 0.147.3 - two decisions recorded: rebalance stays off, the containers stay as they are
 
 ### Changed

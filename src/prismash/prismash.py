@@ -6983,7 +6983,7 @@ class Shell:
         self.sys = System(runner=doors.runner(), files=doors.DoorFiles())
         self.snmp = SnmpDaemon(runner=doors.runner(), files=doors.DoorFiles())
         self.dp = Vpp()
-        self.api = vppapi.Vat2()
+        self.api = vppapi.client()
         self.frr = Frr()
         self.rb = Rollback()
         self.confirm = ConfirmPending()
@@ -7231,6 +7231,16 @@ class Shell:
         """
         cached = getattr(self.api, "cached_dumps", None)
         return cached() if cached else contextlib.nullcontext()
+
+    def forget_reads(self):
+        """
+        End the reads_cached() answers now: the caller is about to write, by
+        whatever path (#527). A stand-in API without forget_dumps() keeps
+        none to forget.
+        """
+        forget = getattr(self.api, "forget_dumps", None)
+        if forget:
+            forget()
 
     def running_config(self) -> Config:
         """
@@ -9096,6 +9106,11 @@ class Shell:
         which the box is half-configured as short as possible.
         """
         running = self.running_config()
+        if not check_only:
+            # What follows writes - over the API, through vppctl and through
+            # the host's doors - so no answer read before it may be served
+            # after it (#527).
+            self.forget_reads()
         # The default a claimed card's pair gets, written into the target
         # before the delta is taken so that the delta carries it (#389).
         self.pair_cards(target, running)
@@ -11560,14 +11575,14 @@ class Shell:
         """
         commit [check | remap | cutoff | confirmed <min> | comment <text>]
 
-        A `commit check` writes nothing, so every reading it makes - the
-        running configuration, then the check's own - shares one answer per
-        dump (#520); a commit that applies reads fresh (_do_commit).
+        Every reading a commit makes before it writes - the running
+        configuration, the check's, the apply's own first one - shares one
+        answer per dump (#520, #527). A `commit check` writes nothing; a
+        commit that applies drops the answers as soon as its apply has read
+        (Shell._apply), so what it does afterwards reads fresh.
         """
-        if args and args[0] == "check":
-            with self.reads_cached():
-                return self._do_commit(args)
-        return self._do_commit(args)
+        with self.reads_cached():
+            return self._do_commit(args)
 
     def _do_commit(self, args):
         """commit, as do_commit() decided to read for it."""
@@ -18281,6 +18296,7 @@ class Shell:
         rc, out = self.dp.run("show version")
         print(f"  dataplane: {out.strip().splitlines()[0] if rc == 0 and out.strip() else 'not responding'}")
         self.show_plugin_build()
+        self.show_api_transport()
         rc, out = self.frr.show("show version")
         line = out.strip().splitlines()[0] if out.strip() else ""
         print(f"  routing:   {line or 'not responding'}")
@@ -18294,6 +18310,25 @@ class Shell:
     # measurement, and a hand-counted string of spaces is the thing #252 found
     # shipping an 82-column line under the belief it was inside 80.
     VERSION_INDENT = " " * 13
+
+    def show_api_transport(self):
+        """
+        How this session reaches the dataplane (#527): one vpp_papi connection,
+        or a vat2 process per message and why. The second works and is ~20
+        times slower per message, so a box on it is worth knowing about.
+        """
+        api = self.api
+        which = getattr(api, "transport", None)
+        if which is None:
+            return
+        if which == "vpp_papi" and hasattr(api, "_connect"):
+            api._connect()
+            which = api.transport
+        if which == "vpp_papi":
+            print("  api:       one connection (vpp_papi)")
+        else:
+            print("  api:       vat2, a process per message")
+            print_prose(api.why_vat2, indent=self.VERSION_INDENT)
 
     def show_plugin_build(self):
         """
@@ -19342,7 +19377,22 @@ class Shell:
         drives that pair, a `commit check` refused for a collector that is not
         configured and the `commit` behind it answering "candidate did not
         pass validation; nothing applied".
+
+        A BATCH THAT COMMITS READS THE BOX ONCE (#527). `configure` reads the
+        running configuration to build the candidate and `commit` reads it
+        again to diff against, a second apart in one process; one cached block
+        over the batch lets the commit use the configure's answers. The
+        commit's apply drops them before it writes (Shell._apply), so nothing
+        after it is served from before it. A batch with no `commit` - a
+        question, or a `clear` and a `show` - reads fresh, as it always did.
         """
+        if any(c.split()[:1] == ["commit"] for c in cmds):
+            with self.reads_cached():
+                return self._feed_batch(cmds)
+        return self._feed_batch(cmds)
+
+    def _feed_batch(self, cmds):
+        """feed_batch() inside whatever reading it decided on."""
         for c in cmds:
             before = self.failed
             self.feed(c)

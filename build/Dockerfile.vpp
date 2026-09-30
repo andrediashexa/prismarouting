@@ -36,6 +36,10 @@ RUN apt-get update -qq \
 # Where VPP looks for plugins it did not ship with. tools/build-images.sh
 # copies the plugin this repository compiled into this directory.
 COPY vpp_plugins/ /usr/lib/x86_64-linux-gnu/vpp_plugins/
+# And its API definitions beside VPP's own (#527): the management image is
+# built FROM this one, and its VTY reaches the plugin over vpp_papi, which
+# knows only the messages it has a definition for.
+COPY vpp_api/bpa.api.json /usr/share/vpp/api/plugins/bpa.api.json
 
 # THE DRAIN'S DROP-IN, in an image that has no systemd to read it. It is the
 # one statement of what stopping this dataplane means, and both supervisors

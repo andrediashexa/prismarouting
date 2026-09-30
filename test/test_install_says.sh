@@ -162,6 +162,9 @@ echo "stand-in for a compiled bpa_plugin.so" \
   > "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
 echo "stand-in for a compiled vat2 plugin" \
   > "$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+# The plugin's API definitions, built with it (#527).
+mkdir -p "$TREE/.build-vpp/src/plugins/bpa"
+echo '{"messages": []}' > "$TREE/.build-vpp/src/plugins/bpa/bpa.api.json"
 # The Debian package's own defaults, because the installer edits this file and
 # appends to it, and a missing directory would stop the run under `set -e`
 # before it reached anything this suite is about.
@@ -414,6 +417,29 @@ version of"
 installing anything" \
   || bad "the refused install narrated work on stdout before it refused, so \
 it got past the point where refusing is free: $OUT4"
+
+# THE PLUGIN'S API DEFINITIONS (#527) are refused the same way and for the
+# same reason: built with the two plugins, so a tree without them did not
+# finish building. The vat2 plugin is put back first, so this run reaches the
+# new refusal rather than the one above.
+echo "stand-in for a compiled vat2 plugin" > "$BUILT_VAT2"
+BUILT_AJ=$TREE/.build-vpp/src/plugins/bpa/bpa.api.json
+mv "$BUILT_AJ" "$BUILT_AJ.away"
+if install_try "$NEXT_V" "$WORK/out5" "$WORK/err5"; then
+  bad "the installer exited 0 on a build tree with no bpa.api.json"
+else
+  ok "it refuses a build tree with the plugins and no bpa.api.json"
+fi
+said "$(cat "$WORK/err5")" "bpa.api.json not found under .build-vpp" \
+  && said "$(cat "$WORK/err5")" "Nothing has been written." \
+  && ok "naming the file, and saying the root was not touched" \
+  || bad "the refusal does not name bpa.api.json or does not say nothing was \
+written: $(cat "$WORK/err5")"
+[ "$(cat "$STAMP_FILE" 2>/dev/null)" = "$WAS_STAMP" ] && [ ! -s "$WORK/out5" ] \
+  && ok "and the stamp did not move, and nothing was narrated" \
+  || bad "the refused install moved the stamp or narrated work"
+mv "$BUILT_AJ.away" "$BUILT_AJ"
+rm -f "$BUILT_VAT2"
 
 # #252, #271, #285. This is prose an operator reads on an 80-column serial
 # console, and three messages in this product have shipped wider than one.

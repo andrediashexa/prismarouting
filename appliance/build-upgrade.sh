@@ -141,9 +141,13 @@ cp -a "$REPO/src" "$REPO/appliance" "$REPO/tools" "$REPO/docs" "$STAGE/"
 # operator's box is byte for byte the script the release gate and
 # lab/upgrade.sh have been driving, not a variant of it with a new branch that
 # only ever runs on a machine nothing in this repository can reach.
-mkdir -p "$STAGE/.build-vpp/lib/vpp_plugins" "$STAGE/.build-vpp/lib/vat2_plugins"
+mkdir -p "$STAGE/.build-vpp/lib/vpp_plugins" "$STAGE/.build-vpp/lib/vat2_plugins" \
+         "$STAGE/.build-vpp/src/plugins/bpa"
 cp "$SO"  "$STAGE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
 cp "$VSO" "$STAGE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+# The plugin's API definitions (#527), where install.sh's preflight looks.
+cp "$REPO/.build-vpp/src/plugins/bpa/bpa.api.json" \
+   "$STAGE/.build-vpp/src/plugins/bpa/bpa.api.json"
 
 # THE CONTAINER IMAGES (#427), at the path install.sh looks for them in the
 # tree it runs from - the same name tools/build-images.sh writes, so a source
@@ -223,6 +227,7 @@ fi
 # the tree, and neither would reach install.sh's own refusal.
 for f in usr/lib/x86_64-linux-gnu/vpp_plugins/bpa_plugin.so \
          usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so \
+         usr/share/vpp/api/plugins/bpa.api.json \
          usr/share/prisma-routing/VERSION usr/share/prisma-routing/MANIFEST; do
   [ -f "$PROOF/$f" ] || {
     echo "the install from this artifact left no /$f, so a box taking it" >&2
