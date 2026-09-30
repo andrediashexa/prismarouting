@@ -77,6 +77,18 @@ version has a chance of seeing it.
 
 ### Added
 
+* **VRRPV3-MIB (RFC 6527): the dataplane's virtual routers in the IETF's MIB.**
+  ([#513](https://github.com/andrediashexa/hexarouting/issues/513))
+  The operations table - master and primary address, virtual MAC, state,
+  priority, address count, advertisement interval, preempt and accept mode -
+  indexed by the card's IF-MIB ifIndex, the VRID and the address family, and
+  the associated-address table, read from `show vrrp vr` and
+  `show interface address`. Read-only; no statistics table, since the
+  dataplane counts nothing per router. `lab/snmp.sh` reads pg0's router with
+  the RFC's module loaded (in `test/mibs`, with IF-MIB and the modules it
+  imports), and the agent's test holds every served column to the type the
+  module declares.
+
 ### Fixed
 
 ## 0.144.2 - NATV2-MIB (RFC 7659): the CGNAT in the IETF's own MIB

@@ -133,6 +133,12 @@ A partir da versão 0.144.2 a caixa serve também a **NATV2-MIB** (RFC 7659, `.1
 
 Só os números agregados: não há tabela com uma linha por assinante nem por sessão, que numa caixa em produção seriam milhões de linhas. Para os detalhes que a RFC não cobre — capacidade garantida, ocupação, carga por worker — vale a MIB do Prisma, abaixo.
 
+## O VRRP na MIB padrão do IETF: VRRPV3-MIB
+
+A partir da versão 0.144.3 a caixa serve também a **VRRPV3-MIB** (RFC 6527, `.1.3.6.1.2.1.207`) para os roteadores virtuais VRRP do dataplane. Cada roteador é uma linha indexada pelo ifIndex da interface (o mesmo da IF-MIB), pelo VRID e pela família de endereço (1 = IPv4, 2 = IPv6), com o estado (inicializando, backup, master), a prioridade, o MAC virtual, o intervalo de anúncio, os modos preempt e accept e os endereços virtuais.
+
+Para alertar numa troca de master, acompanhe `vrrpv3OperationsStatus`: o dataplane não guarda contadores por roteador, então a tabela de estatísticas e as notificações da RFC não são servidas.
+
 ## A MIB do Prisma: o CGNAT, os registros de conexão e a caixa
 
 O que **não tem OID padrão** — os pools do CGNAT, os descartes, o transporte dos registros de conexão, a versão que o dataplane está rodando — está na **PRISMA-ROUTING-MIB**, a MIB do próprio produto. A partir da versão 0.143.4 ela é servida sem nenhuma configuração além de ligar o SNMP, e a própria caixa entrega o arquivo pronto, com o número já preenchido:

@@ -48,6 +48,7 @@ AgentX. An NMS that knows these needs no template of ours.
 | load, memory, disk thresholds | UCD-SNMP-MIB | `.1.3.6.1.4.1.2021` | net-snmp | 0.141.3 |
 | the CGNAT's default timeouts | NAT-MIB `natDefTimeouts` | `.1.3.6.1.2.1.123.1.1` | the agent | 0.x |
 | the CGNAT's pools, in the IETF's own model | NATV2-MIB (RFC 7659), aggregate | `.1.3.6.1.2.1.234` | the agent | 0.144.2 |
+| the dataplane's VRRP routers | VRRPV3-MIB (RFC 6527) | `.1.3.6.1.2.1.207` | the agent | 0.144.3 |
 | BGP peers: state, AS, updates, last error | BGP4-MIB | `.1.3.6.1.2.1.15` | bgpd | 0.142.0 |
 | OSPF neighbours, interfaces, LSDB | OSPF-MIB | `.1.3.6.1.2.1.14` | ospfd | 0.142.0 |
 | OSPFv3 | OSPFV3-MIB | `.1.3.6.1.2.1.191` | ospf6d | 0.142.0 |
@@ -79,6 +80,23 @@ fragment and resource drops - rather than put under one pool a number that
 pool did not count; and the RFC's own notifications, whose thresholds read -1
 (the product's are sent instead, #507). `lab/snmp.sh` walks the MIB loaded -
 the RFC's module, in `test/mibs` - and compares the rows with the dataplane.
+
+## VRRPV3-MIB, RFC 6527 (#513)
+
+The IETF's VRRP MIB, over the virtual routers the dataplane runs. A row is
+indexed by the card's ifIndex - the one IF-MIB gives it - the VRID and the
+address family (1 IPv4, 2 IPv6).
+
+| Table | Served | From |
+|---|---|---|
+| `vrrpv3OperationsTable` (`.1.1.1`) | master address (only while this box is master), primary address (the card's first own address), virtual MAC, status (initialize, backup, master), priority (the configured one), address count, advertisement interval in centiseconds, preempt and accept mode, row status active | `show vrrp vr`, `show interface address` |
+| `vrrpv3AssociatedIpAddrTable` (`.1.2.1`) | the router's virtual addresses, each indexed by type, length and octets | `show vrrp vr` |
+
+**Not served**: `vrrpv3OperationsUpTime`, the statistics group and the RFC's
+notifications - the dataplane keeps no per-router counters or transition time;
+a takeover is seen as `vrrpv3OperationsStatus` changing, as it is as
+`prVrrpState` changing in PRISMA-ROUTING-MIB. Read-only, as everything here.
+`lab/snmp.sh` reads pg0's router with the RFC's module loaded.
 
 ## PRISMA-ROUTING-MIB
 

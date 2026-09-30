@@ -190,6 +190,16 @@ NVBEGIN=$($NV NATV2-MIB::natv2PoolRangeBegin.1.1.1 2>&1)
 NVEND=$($NV NATV2-MIB::natv2PoolRangeEnd.1.1.1 2>&1)
 NVWALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m NATV2-MIB 127.0.0.1 \
          NATV2-MIB::natv2MIB 2>&1)
+# VRRPV3-MIB, RFC 6527 (#513): the same router as the IETF's table indexes
+# it - pg0's ifIndex from IF-MIB, the VRID, and 1 for IPv4.
+VV="snmpget -v2c -c hexro -M /tmp/mibs -m VRRPV3-MIB -Ov -Oq 127.0.0.1"
+VVIX="${PG0:-0}.7.1"
+VVST=$($VV VRRPV3-MIB::vrrpv3OperationsStatus.$VVIX 2>&1)
+VVPRI=$($VV VRRPV3-MIB::vrrpv3OperationsPriority.$VVIX 2>&1)
+VVMAC=$($VV VRRPV3-MIB::vrrpv3OperationsVirtualMacAddr.$VVIX 2>&1)
+VVCNT=$($VV VRRPV3-MIB::vrrpv3OperationsAddrCount.$VVIX 2>&1)
+VVWALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m VRRPV3-MIB 127.0.0.1 \
+         VRRPV3-MIB::vrrpv3MIB 2>&1)
 WALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB 127.0.0.1 \
        PRISMA-ROUTING-MIB::prismaRouting 2>&1)
 DP_CAP=$(vc show bpa pool | awk '$1 == "capacity" { print $2; exit }')
@@ -203,6 +213,8 @@ echo "  sessions that fit $FIT (show cgnat memory says ${DP_FIT:-nothing}); per 
 echo "  VRRP 1: $VRIF, $VRST, priority $VRPRI; bundle 1: $BNAME with $BMEM member(s); identity entries $IDENT"
 echo "  NATV2-MIB: instance 1 $NVALIAS, $NVPORTS port map entries, $NVSUBS address map entries, ports from $NVMIN, range $NVBEGIN - $NVEND"
 echo "  ... $(printf '%s\n' "$NVWALK" | grep -c .) NATV2-MIB rows walked"
+echo "  VRRPV3-MIB: router $VVIX $VVST, priority $VVPRI, MAC $VVMAC, $VVCNT address(es)"
+echo "  ... $(printf '%s\n' "$VVWALK" | grep -c .) VRRPV3-MIB rows walked"
 
 echo
 echo "=========== 3. a SET must be refused ==========="
@@ -298,6 +310,12 @@ expect_in "and its outside range begins at 200.150.0.16 (C8 96 00 10)" \
 expect_in "and ends at 200.150.0.19 (C8 96 00 13)" "C8 96 00 13" "$NVEND"
 expect_not_in "every NATV2-MIB row resolves to a name in the RFC's module" \
   "iso.3.6.1.2.1.234" "$NVWALK"
+expect "VRRPV3-MIB finds pg0's VRID 7 master ($VVST)" test "$VVST" = "master"
+expect "with the priority configured ($VVPRI)" test "$VVPRI" = "150"
+expect_in "and VRID 7's virtual MAC (0:0:5e:0:1:7)" "0:0:5e:0:1:7" "$VVMAC"
+expect "and its one virtual address ($VVCNT)" test "$VVCNT" = "1"
+expect_not_in "every VRRPV3-MIB row resolves to a name in the RFC's module" \
+  "iso.3.6.1.2.1.207" "$VVWALK"
 expect "and the ports it holds" test "$PORTS" = "3"
 # Refused at the daemon (noAccess, from the read-only community and view) or
 # by the agent (notWritable). Either is a refusal; asserting one spelling
