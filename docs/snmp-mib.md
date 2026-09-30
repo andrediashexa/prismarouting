@@ -126,7 +126,7 @@ AgentX. An NMS that knows these needs no template of ours.
 | OSPFv3 | OSPFV3-MIB | `.1.3.6.1.2.1.191` | ospf6d | 0.142.0 |
 | IS-IS adjacencies, circuits | ISIS-MIB | `.1.3.6.1.2.1.138` | isisd | 0.142.0 |
 | BGP peers of both families, IPv6 and unnumbered included | BGP4V2-MIB (draft-ietf-idr-bgp4-mibv2, experimental arc) | `.1.3.6.1.3.5.1` | bgpd | 0.144.5 |
-| the FIB's size (not the FIB) | IP-FORWARD-MIB `ipCidrRouteNumber`, `inetCidrRouteNumber` | `.1.3.6.1.2.1.4.24.3`, `.24.6` | net-snmp | 0.142.1 |
+| the FIB's size (not the FIB), both families | IP-FORWARD-MIB `inetCidrRouteNumber` (`ipCidrRouteNumber` is in the view and answers noSuchObject on Debian's net-snmp) | `.1.3.6.1.2.1.4.24.6` | net-snmp | 0.142.1 |
 
 BGP4-MIB keys a peer on an IPv4 address, so an IPv6 session - and every
 unnumbered one, which peers on a link-local address - has no row in it.

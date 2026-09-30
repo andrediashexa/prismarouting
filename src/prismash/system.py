@@ -1171,7 +1171,10 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              # (docs/snmp-plan.md). Measured in lab/igp.sh: .24.3 counts IPv4
              # (6 there) and .24.6 IPv4 and IPv6 (14), read by net-snmp off
              # the kernel, where FRR installs what linux_nl copies to VPP.
-             ".1.3.6.1.2.1.4.24.3",     # IP-FORWARD-MIB ipCidrRouteNumber
+             # ipCidrRouteNumber: in the view, and Debian's net-snmp answers
+             # it noSuchObject (#514's Zabbix run); inetCidrRouteNumber below
+             # is the one that counts.
+             ".1.3.6.1.2.1.4.24.3",
              ".1.3.6.1.2.1.4.24.6"]     # IP-FORWARD-MIB inetCidrRouteNumber
 #: Where snmpd listens for FRR's daemons (#502). A unix socket and not TCP 705,
 #: which any local account could register a subtree on; the directory is the
