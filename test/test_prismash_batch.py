@@ -129,7 +129,8 @@ def batch(*cmds):
     Returns the exit status, what the box printed, and the dataplane.
     """
     api = FakeApi()
-    prismash.vppapi.Vat2 = lambda *a, **k: api
+    # client(), which Shell() builds its API through since #527.
+    prismash.vppapi.client = lambda *a, **k: api
     argv = sys.argv
     out = io.StringIO()
     try:

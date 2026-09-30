@@ -3135,7 +3135,9 @@ needs of the host it asks through the doors above.
 
 **What it shares, each for one reason:**
 - `ipc: host`, because `vat2` talks to VPP over `/dev/shm/global_vm`;
-- `/run/vpp`, the CLI socket;
+- `/run/vpp`, the CLI socket, and the API socket the VTY's one vpp_papi
+  connection uses since #527 (the image carries `python3-vpp-api` at VPP's
+  version, and this tree's `bpa.api.json` beside VPP's definitions);
 - `/var/run/frr` and `/etc/frr`, for `vtysh` and `frr-reload.py`;
 - `/etc/prisma-routing`, the configuration and its revisions;
 - `/run/prisma-routing`, the doors' socket;

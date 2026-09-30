@@ -157,6 +157,10 @@ chroot "$ROOT" /bin/sh -c "
   echo 'deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr bookworm frr-stable' > /etc/apt/sources.list.d/frr.list
 "
 
+# python3-vpp-api is the VTY's one connection to the dataplane (#527), at
+# VPP's own version: the boot's `--load` runs prismash on the host, and
+# without it every message of that load is a vat2 process of its own.
+#
 # iputils-ping, traceroute and mtr-tiny are the three the VTY's own `ping`,
 # `traceroute` and `mtr` statements run (#395). They are in THIS list and not
 # the debootstrap one above because they are the product's, not the base
@@ -172,7 +176,7 @@ chroot "$ROOT" /bin/sh -c "
     squashfs-tools dosfstools parted fdisk mdadm \
     iputils-ping traceroute mtr-tiny \
     vpp=$VPP_VERSION vpp-plugin-core=$VPP_VERSION vpp-plugin-dpdk=$VPP_VERSION \
-    libvppinfra=$VPP_VERSION \
+    libvppinfra=$VPP_VERSION python3-vpp-api=$VPP_VERSION \
     frr=$FRR_VERSION frr-pythontools=$FRR_VERSION \
     frr-rpki-rtrlib=$FRR_VERSION frr-snmp=$FRR_VERSION \
     docker.io docker-compose apparmor

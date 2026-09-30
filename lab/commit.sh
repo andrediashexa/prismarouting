@@ -519,15 +519,19 @@ done
 cat > /tmp/vat2-count <<'VAT2EOF'
 #!/bin/sh
 echo "$1" >> /tmp/vat2.calls
-exec vat2 "$@"
+t0=$(date +%s.%N); vat2 "$@"; rc=$?; t1=$(date +%s.%N)
+echo "$(echo "$t1 $t0" | awk '{printf "%.2f", $1-$2}') $1" >> /tmp/vat2.times
+exit $rc
 VAT2EOF
 chmod +x /tmp/vat2-count
 : > /tmp/vat2.calls
-VAT2=/tmp/vat2-count $HX -c "show running-config" >/dev/null 2>&1
+# PRISMA_API=vat2 for these two: they measure #520's reads, and over vpp_papi
+# (#527, below) no vat2 would be started to count.
+PRISMA_API=vat2 VAT2=/tmp/vat2-count $HX -c "show running-config" >/dev/null 2>&1
 SHOWN=$(grep -c . /tmp/vat2.calls); SHOWIF=$(grep -cx sw_interface_dump /tmp/vat2.calls)
 : > /tmp/vat2.calls
 T0=$(date +%s.%N)
-CHK=$(VAT2=/tmp/vat2-count $HX -c configure -c "commit check" 2>&1)
+CHK=$(PRISMA_API=vat2 VAT2=/tmp/vat2-count $HX -c configure -c "commit check" 2>&1)
 T1=$(date +%s.%N)
 CHKN=$(grep -c . /tmp/vat2.calls); CHKIF=$(grep -cx sw_interface_dump /tmp/vat2.calls)
 echo "  show running-config: $SHOWN vat2, $SHOWIF of them sw_interface_dump"
@@ -540,5 +544,67 @@ expect "a commit check asks it at most once per reading it makes ($CHKIF)" \
   test "$CHKIF" -le 3
 expect_not_in "and the check refuses nothing" \
   "error" "$CHK"
+
+echo
+echo "=========== a commit over one API connection (#527) ==========="
+# The same commit - one interface description - through each transport:
+# PRISMA_API=vat2, a vat2 process per message, and prismash's default, one
+# vpp_papi connection. Counted by the vat2 above and a vppctl that logs each
+# start the same way, and timed. On the X520 bench this commit took 9.7 s,
+# 6.5 s of it in 50 vat2 processes.
+cat > /tmp/vppctl-count <<'VPPCTLEOF'
+#!/bin/sh
+echo "$1" >> /tmp/vppctl.calls
+exec vppctl "$@"
+VPPCTLEOF
+chmod +x /tmp/vppctl-count
+measure() {  # <label> <description> [PRISMA_API value]
+  : > /tmp/vat2.calls; : > /tmp/vppctl.calls
+  _t0=$(date +%s.%N)
+  _out=$(PRISMA_API="${3:-}" VAT2=/tmp/vat2-count VPPCTL=/tmp/vppctl-count \
+         $HX -c configure -c "interface pg0" -c "description $2" -c exit \
+         -c commit 2>&1)
+  _t1=$(date +%s.%N)
+  eval "${1}_VAT2=\$(grep -c . /tmp/vat2.calls)"
+  eval "${1}_VPPCTL=\$(grep -c . /tmp/vppctl.calls)"
+  eval "${1}_SECS=\$(python3 -c \"print(round($_t1 - $_t0, 2))\")"
+  eval "${1}_OUT=\$(printf '%s' \"\$_out\" | tail -1)"
+}
+# Packet-generator interfaces in the loopbacks' place, the same eight with an
+# address each: this lab runs without linux_cp, and a real commit gives every
+# loopback a Linux end (#404) - a different lab's subject, refused here for
+# both transports alike. A pg interface is never paired.
+for i in 0 1 2 3 4 5 6; do
+  vppctl delete loopback interface intfc loop$i >/dev/null 2>&1
+  vppctl create packet-generator interface pg$((i + 1)) >/dev/null
+  vppctl set interface state pg$((i + 1)) up
+  vppctl set interface ip address pg$((i + 1)) 10.78.$i.1/24
+done
+: > /tmp/vat2.times
+measure BEFORE via-vat2 vat2
+# This lab's VPP has no linux_cp plugin, and the commit asks it for a pair per
+# interface: vat2 waits ~5 s for each answer that never comes, vpp_papi is
+# told at once that VPP does not know the message. That wait is the lab's, not
+# the transport's, so it is reported apart.
+LCPT=$(awk '$2 == "lcp_itf_pair_add_del" { s += $1 } END { printf "%.2f", s + 0 }' /tmp/vat2.times)
+
+measure AFTER via-papi
+DESC=$($HX -c "show running-config" 2>&1 | grep -A3 "^interface pg0" | grep description)
+APIROW=$($HX -c "show version" 2>&1 | grep "api:")
+echo "  vat2 per message:   $BEFORE_VAT2 vat2, $BEFORE_VPPCTL vppctl, $BEFORE_SECS s ($BEFORE_OUT)"
+echo "    of which $LCPT s waiting on lcp_itf_pair_add_del, which this lab's VPP has no plugin for:"
+echo "    $(python3 -c "print(round($BEFORE_SECS - $LCPT, 2))") s without it"
+echo "  one connection:     $AFTER_VAT2 vat2, $AFTER_VPPCTL vppctl, $AFTER_SECS s ($AFTER_OUT)"
+echo "  pg0 now:$DESC"
+echo "  show version:$APIROW"
+expect_in "the commit over vat2 completes" "commit complete" "$BEFORE_OUT"
+expect_in "and over one connection" "commit complete" "$AFTER_OUT"
+expect_in "and the description it set is on the dataplane" \
+  "description via-papi" "$DESC"
+expect "over one connection a commit starts no vat2 ($AFTER_VAT2)" \
+  test "$AFTER_VAT2" -eq 0
+expect "where vat2 per message started $BEFORE_VAT2" test "$BEFORE_VAT2" -gt 10
+expect_in "show version says the session holds one connection" \
+  "one connection (vpp_papi)" "$APIROW"
 
 verdict

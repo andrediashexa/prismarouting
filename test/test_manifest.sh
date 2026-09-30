@@ -124,6 +124,9 @@ fresh_tree() {
   # the appliance #302 was written from.
   head -c 1085408 /dev/zero > "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
   head -c 120000  /dev/zero > "$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+  # The plugin's API definitions, built with it (#527).
+  mkdir -p "$TREE/.build-vpp/src/plugins/bpa"
+  echo '{"messages": []}' > "$TREE/.build-vpp/src/plugins/bpa/bpa.api.json"
 }
 
 fresh_root() {

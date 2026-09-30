@@ -7,13 +7,19 @@ only evidence of a refusal is the text it printed. A control plane built on
 that cannot tell "pool created" from "pool rejected", and `commit` reports
 success while the dataplane holds none of the configuration.
 
-Why vat2 and not vpp_papi: fd.io does not package the Python bindings. Using
-them would mean vendoring vpp_papi out of the VPP source tree and keeping that
-copy in step with every VPP bump. vat2 ships inside the `vpp` package itself,
-so it is already on every installed box and every ISO, and it is versioned with
-VPP by construction. The cost is a process per call rather than a persistent
-connection, which is irrelevant for configuration - that happens at human
-speed, and configuration is all prismash does.
+Two transports behind one interface (#527). `Papi` holds ONE connection to
+the dataplane's API socket for the whole session, through vpp_papi - fd.io
+packages it as python3-vpp-api, at the same version as the `vpp` it talks to,
+so it is pinned with VPP like vat2 is. `Vat2` starts a vat2 process per
+message, and is what `Papi` falls back to when the library, the API
+definitions or the socket are not there.
+
+WHY NOT vat2 ALONE ANY MORE. This file used to say a process per call is
+irrelevant, because configuration happens at human speed. Measured, it is not:
+on the X520 bench (a VM, #475) a vat2 costs ~130 ms whatever the message, a
+commit of one interface description sent 50 of them and took 9.7 s, 6.5 s of
+it starting processes. Over one connection the same 50 messages take ~0.1 s
+(lab: 2.64 s against 0.117 s, after a 0.4-0.5 s connect).
 """
 
 from __future__ import annotations
@@ -324,6 +330,19 @@ class Vat2:
                 self._dumps = None
 
 
+    def forget_dumps(self):
+        """
+        Stop answering from the block's cache, now, until another block opens.
+
+        For the one place a block has to end before its `with` does (#527): a
+        real apply reads the running configuration and then WRITES - over this
+        API, which clears the cache itself, but also through vppctl and the
+        host's doors, which cannot, and linux_cp carries a Linux change back
+        into what a dump says. So the apply drops the answers the moment it
+        has read, and everything after it asks the dataplane.
+        """
+        self._dumps = None
+
     @staticmethod
     def _client_failure(message, rc, text):
         """
@@ -518,3 +537,286 @@ class Vat2:
             if "bpa" in line and ("err" in line.lower() or "error" in line.lower()):
                 return line.split("bpa", 1)[-1].lstrip(" :/").strip()[:160]
         return ""
+
+
+# --- one connection: vpp_papi (#527) ---------------------------------------
+
+#: The binary API's unix socket: `socksvr { default }` in the box's
+#: startup.conf, and /run/vpp is mounted into the management container.
+API_SOCKET = os.environ.get("PRISMA_API_SOCKET", "/run/vpp/api.sock")
+#: Where the API definitions are: VPP's own (the `vpp` package) and this
+#: tree's plugin's bpa.api.json, which install.sh and the dataplane image put
+#: beside them.
+API_JSON_DIR = os.environ.get("PRISMA_API_JSON", "/usr/share/vpp/api")
+#: `PRISMA_API=vat2` keeps every message on vat2: the way back if the
+#: library misbehaves on a box, and how a lab measures the two against each
+#: other.
+FORCE_VAT2 = os.environ.get("PRISMA_API", "") == "vat2"
+#: The plugins whose messages prismash sends, beside VPP's core definitions.
+#: Loading these and not all 80-odd plugin files halves the connect (lab:
+#: 0.48 s for 144 files, 0.24 s for 59). A message outside them is still sent
+#: - over vat2, one process, by _defined() - and lab/api.sh reads prismash.py
+#: for every message it sends and fails if one would take that way.
+API_PLUGINS = ("bpa", "lcp", "urpf", "vrrp")
+
+
+def plain(value, top=True):
+    """
+    A vpp_papi reply as the JSON vat2 prints for it, which is what every
+    caller of call() and dump() reads.
+
+    vpp_papi hands back typed values - a namedtuple per message and per
+    struct, IntEnum and IntFlag members, MACAddress, ipaddress objects - and
+    vat2 printed names and strings. Converted here, once, so no caller learns
+    there are two transports: a message's fields become a dict (without the
+    papi-only `_0` and `context`), an enum its member's name, an address or a
+    MAC its text. A flag field comes back as its members joined with "|";
+    vat2 printed "Invalid ENUM" for most of them, and nothing reads one.
+    `_msgname` is the MESSAGE's, as vat2 prints it: a struct inside one has
+    none (`top`, measured by lab/api.sh's parity run).
+    """
+    import enum
+    if isinstance(value, tuple) and hasattr(value, "_asdict"):
+        out = {"_msgname": type(value).__name__} if top else {}
+        for k, v in value._asdict().items():
+            if k not in ("_0", "context"):
+                out[k] = plain(v, False)
+        return out
+    if isinstance(value, enum.Enum):
+        return value.name if value.name else int(value.value)
+    if isinstance(value, (list, tuple)):
+        return [plain(v, top) for v in value]
+    if isinstance(value, bytes):
+        return list(value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def encode(message, args, fieldtypes, types):
+    """
+    `args`, written for vat2, as vpp_papi packs them.
+
+    The one difference that matters: vat2 takes an enum by its member's NAME
+    ("URPF_API_MODE_STRICT") and vpp_papi packs only the number, refusing the
+    name with a serializer error. Every call site in prismash writes names, so
+    they are turned into numbers here, by the type the message declares for
+    the field - a struct field is followed into its own declaration. Strings
+    for addresses, prefixes and MACs pack as they are.
+
+    `fieldtypes` is {field: type name} for the message; `types` is
+    vpp_papi's registry of type objects. A name that is not a member raises
+    KeyError, which the caller reports as a value the client cannot send.
+    """
+    # not a unit: a closure inside encode, driven through encode() by
+    # test/test_vppapi.py on enums, flag lists, structs and arrays.
+    def conv(tname, value):
+        t = types.get(tname)
+        if t is None:
+            return value
+        members = getattr(t, "enum", None)
+        if members is not None:
+            if isinstance(value, str):
+                return int(members[value])
+            if isinstance(value, list):
+                out = 0
+                for name in value:
+                    out |= int(members[name]) if isinstance(name, str) else int(name)
+                return out
+            return value
+        sub = getattr(t, "msgdef", None)
+        if isinstance(value, dict) and sub:
+            inner = {f[1]: f[0] for f in sub if isinstance(f, list) and len(f) >= 2}
+            return {k: conv(inner.get(k, ""), v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [conv(tname, v) for v in value]
+        return value
+
+    return {k: conv(fieldtypes.get(k, ""), v) for k, v in args.items()}
+
+
+class Papi(Vat2):
+    """
+    The dataplane over one vpp_papi connection per process, and vat2 when that
+    cannot be had.
+
+    Connected on the first message, not at start: a `show` that never asks
+    the dataplane anything pays nothing. A connection that dies (VPP
+    restarted under a long session) is re-opened once. A QUESTION is then
+    asked again; a WRITE is not re-sent, because nothing here can tell
+    whether the first copy reached VPP before the socket went, and a write
+    applied twice is worse than a commit that says it failed.
+
+    `transport` says which is in use, and `why_vat2` why it is not vpp_papi.
+    """
+
+    def __init__(self, vat2=None, vppctl=None, runner=None, identity=identity,
+                 papi=None, socket=None, apidir=None):
+        super().__init__(vat2=vat2, vppctl=vppctl, runner=runner,
+                         identity=identity)
+        self._papi = papi
+        self._socket = socket or API_SOCKET
+        self._apidir = apidir or API_JSON_DIR
+        self._conn = None
+        self.why_vat2 = "PRISMA_API=vat2" if FORCE_VAT2 else ""
+
+    # not a unit: a property is read and never called; test/test_vppapi.py
+    # reads it on a connection, a missing library and PRISMA_API=vat2.
+    @property
+    def transport(self):
+        """'vpp_papi' while the connection is (or can be) used, else 'vat2'."""
+        return "vat2" if self.why_vat2 else "vpp_papi"
+
+    def _module(self):
+        """vpp_papi, or None with why_vat2 saying why not."""
+        if self._papi is None:
+            try:
+                import vpp_papi
+                self._papi = vpp_papi
+            except ImportError:
+                self.why_vat2 = "python3-vpp-api is not installed"
+                return None
+        return self._papi
+
+    def _connect(self):
+        """The open connection, opening it if need be; None means vat2."""
+        if self._conn is not None:
+            return self._conn
+        if self.why_vat2:
+            return None
+        papi = self._module()
+        if papi is None:
+            return None
+        import glob
+        files = glob.glob(os.path.join(self._apidir, "core", "*.api.json"))
+        files += [f for f in (os.path.join(self._apidir, "plugins",
+                                           f"{p}.api.json")
+                              for p in API_PLUGINS) if os.path.exists(f)]
+        if not files:
+            self.why_vat2 = f"no API definitions under {self._apidir}"
+            return None
+        try:
+            conn = papi.VPPApiClient(apifiles=files, use_socket=True,
+                                     server_address=self._socket,
+                                     read_timeout=15)
+            conn.connect(f"prismash-{os.getpid()}")
+        except Exception as e:  # noqa: BLE001 - every failure means vat2
+            self.why_vat2 = f"{self._socket}: {str(e)[:80] or type(e).__name__}"
+            return None
+        self._conn = conn
+        return conn
+
+    def close(self):
+        """Disconnect; the next message connects again."""
+        if self._conn is not None:
+            try:
+                self._conn.disconnect()
+            except Exception:  # noqa: BLE001 - it is going away either way
+                pass
+            self._conn = None
+
+    def _send(self, message, args, question):
+        """
+        (Reply or None, answer): None and vpp_papi's answer when it was
+        asked, or a Reply saying why not. Re-connects once on a dead socket,
+        and asks again only a `question`.
+        """
+        for attempt in (0, 1):
+            conn = self._connect()
+            if conn is None:
+                return Reply(NOT_RUNNING, reason=self.why_vat2), None
+            fn = getattr(conn.api, message, None)
+            if fn is None:
+                # Defined, and VPP did not list it at connect: the plugin that
+                # answers it is not loaded.
+                return Reply(NO_PLUGIN, reason=(
+                    f"the dataplane does not know '{message}'")), None
+            try:
+                msg = conn.messages[message]
+                fields = dict(zip(msg.fields, msg.fieldtypes))
+                packed = encode(message, args, fields,
+                                self._papi.vpp_serializer.types)
+            except Exception as e:  # noqa: BLE001 - a value it cannot say
+                return Reply(CANNOT_SEND, reason=(
+                    f"'{message}' cannot be sent over the binary API: "
+                    f"{str(e)[:120]}")), None
+            try:
+                return None, fn(**packed)
+            except (OSError, EOFError) as e:
+                self._conn = None
+                if attempt or not question:
+                    return Reply(NOT_RUNNING, reason=(
+                        f"the connection to the dataplane was lost: "
+                        f"{str(e)[:100] or type(e).__name__}")), None
+            except Exception as e:  # noqa: BLE001
+                name = type(e).__name__
+                if "Serializer" in name or isinstance(e, (TypeError,
+                                                          ValueError)):
+                    return Reply(CANNOT_SEND, reason=(
+                        f"'{message}' cannot be sent over the binary API: "
+                        f"{str(e)[:120]}")), None
+                self._conn = None
+                if attempt or not question:
+                    return Reply(NOT_RUNNING, reason=(
+                        f"no reply from the dataplane: {str(e)[:100] or name}")), None
+        return Reply(NOT_RUNNING, reason="no reply from the dataplane"), None
+
+    def _defined(self, message):
+        """
+        Is `message` in the API definitions this connection loaded? When it
+        is not - bpa.api.json missing beside VPP's own, as on a box upgraded
+        from before #527 - vat2 still sends it: vpp_papi having no method for
+        a message it was never told about says nothing about the dataplane.
+        """
+        conn = self._connect()
+        return conn is not None and message in conn.messages
+
+    def available(self):
+        """available(), over the connection when there is one."""
+        conn = self._connect()
+        if conn is None or not self._defined("bpa_pool_add_del"):
+            return super().available()
+        if getattr(conn.api, "bpa_pool_add_del", None) is None:
+            return NO_PLUGIN, (
+                "VPP is running but the CGNAT API is not registered; the "
+                "bpa plugin is not loaded, or bpa.api.json is missing")
+        return OK, "ready"
+
+    def _call(self, message, args, timeout=15):
+        """_call() over the connection, or vat2's when there is none."""
+        if not self._defined(message):
+            return super()._call(message, args, timeout)
+        why = unsendable(message, args)
+        if why:
+            return Reply(CANNOT_SEND, reason=(
+                f"'{message}' cannot be sent over the binary API: {why}"))
+        if message in WRITE_MESSAGES:
+            name, uid = self._identity()
+            args = dict(args, audit_user=name, audit_uid=uid)
+        failed, answer = self._send(message, args, is_question(message))
+        if failed:
+            return failed
+        payload = plain(answer)
+        retval = int(payload.get("retval", 0) or 0)
+        if retval == 0:
+            return Reply(OK, fields=payload)
+        name = RETVAL_NAMES.get(retval, f"error {retval}")
+        detail = self._last_log_error()
+        reason = f"the dataplane refused it: {name}"
+        if detail:
+            reason += f" ({detail})"
+        return Reply(REFUSED, retval=retval, reason=reason, fields=payload)
+
+    def _dump(self, message, args, timeout=15):
+        """_dump() over the connection, or vat2's when there is none."""
+        if not self._defined(message):
+            return super()._dump(message, args, timeout)
+        failed, answer = self._send(message, args, True)
+        if failed:
+            return failed
+        return Reply(OK, fields={"rows": [plain(r) for r in answer or []]})
+
+
+def client():
+    """The dataplane client the VTY uses: one connection, or vat2."""
+    return Papi()

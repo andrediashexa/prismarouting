@@ -26,6 +26,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
         vpp-dev=${VPP_VERSION} \
         libvppinfra=${VPP_VERSION} \
         libvppinfra-dev=${VPP_VERSION} \
+        python3-vpp-api=${VPP_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
 # FRR: plano de controle (bgpd, ospfd, ospf6d, isisd, zebra)

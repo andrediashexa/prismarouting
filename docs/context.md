@@ -137,17 +137,28 @@ remembered from one commit.
 `lab/hw-lab.sh`, `lab/install-iso.sh` (PHASE 4 and 5: the box takes its own
 card and answers from outside afterwards).
 
-### 1.6 The VTY changes the dataplane through vat2 — one process per call
+### 1.6 The VTY changes the dataplane over one API connection per session
 
-Not a persistent connection. Every change goes over the binary API; what still
+Since #527, through vpp_papi (`python3-vpp-api`, fd.io's package at VPP's own
+version) on VPP's API socket (`socksvr` in its startup configuration): connected at the first
+message, kept for the session, re-opened once if VPP restarted under it. vat2
+- one process per message, which is what this section used to describe - is
+the fallback when the library, the definitions or the socket are not there,
+and `PRISMA_API=vat2` forces it; `show version` says which one a session uses.
+The difference is measured: ~130 ms per vat2 on the X520 bench, ~2 ms per
+message over the connection. Every change goes over the binary API; what still
 goes over `vppctl` text is reading — `show interface`, `show lcp`,
 `show bpa config` — and the pool validation behind `commit check`, which has no
 API message of its own.
 
+vpp_papi answers typed values and vat2 printed JSON; `vppapi.plain()` turns the
+first into the second, so no caller knows there are two, and `lab/api.sh`
+compares every read the VTY makes through both on one dataplane.
+
 The API half decides more than it looks: it is why an identity has to travel
-*inside each API message* (there is no connection to attach it to), and why the
-transport — shared memory — carries no peer credentials the plugin could check
-that identity against.
+*inside each API message* (a connection is per session and says nothing about
+who typed a line), and why the transport carries no peer credentials the
+plugin could check that identity against.
 
 *Authoritative:* `src/prismash/vppapi.py`, `bpa.api`.
 

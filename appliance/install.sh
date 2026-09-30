@@ -170,6 +170,21 @@ else
   exit 1
 fi
 
+# THE PLUGIN'S API DEFINITIONS (#527), built with the two plugins above. The
+# VTY reaches the plugin over one vpp_papi connection, and vpp_papi knows only
+# the messages it has a definition for: without this file every bpa message
+# falls back to a vat2 process each, which works and is what #527 measured at
+# ~130 ms a message. Refused like the vat2 plugin, for the reason given there:
+# a tree with the plugins and not this did not finish building.
+API_JSON_DIR=${API_JSON_DIR:-/usr/share/vpp/api/plugins}
+AJ="$REPO/.build-vpp/src/plugins/bpa/bpa.api.json"
+if [ ! -f "$AJ" ]; then
+  echo "bpa.api.json not found under .build-vpp; run tools/build.sh plugin" >&2
+  echo "first. It is built with bpa_plugin.so, so this build did not finish." >&2
+  echo "Nothing has been written." >&2
+  exit 1
+fi
+
 # END OF THE PREFLIGHT. Every line below this one writes into ${DESTDIR:-/}.
 # test/test_install_manifest.py reads this file to keep it that way, because a
 # refusal that comes after the first write is a refusal that has already cost
@@ -373,6 +388,7 @@ say "dataplane plugin"
 # dataplane (#301). There is nothing left to decide at this point in the file.
 install -D -m 0644 "$SO" "$DESTDIR$PLUGIN_DIR/bpa_plugin.so"
 install -D -m 0644 "$VSO" "$DESTDIR$VAT2_DIR/bpa_test_plugin_bpa_plugin.so"
+install -D -m 0644 "$AJ" "$DESTDIR$API_JSON_DIR/bpa.api.json"
 
 # THE COMPOSE FILE AND THE UNIT (#396), where the box looks for them rather
 # than where this tree keeps them. Installed on every box, enabled on none:
