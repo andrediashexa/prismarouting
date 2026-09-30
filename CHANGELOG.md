@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.145.1 - IP-MIB: the dataplane's addresses under IF-MIB's ifIndex
+
+### Added
+
 * **IP-MIB: the dataplane's addresses under IF-MIB's ifIndex.**
   ([#522](https://github.com/andrediashexa/hexarouting/issues/522))
   net-snmp's IP-MIB listed the linux_cp taps' addresses under their Linux
@@ -86,8 +92,6 @@ version has a chance of seeing it.
   under the agent's ifIndex, registered above net-snmp's module on the OIDs it
   registers (each of ipAddrTable's columns). Link-local addresses and the
   taps are left out. `lab/snmp.sh` reads pg0's address under pg0's ifIndex.
-
-### Fixed
 
 ## 0.145.0 - the box's name from the VTY: hostname <name>
 
