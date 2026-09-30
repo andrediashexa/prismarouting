@@ -178,6 +178,18 @@ BNAME=$($PM PRISMA-ROUTING-MIB::prBundleName.1 2>&1)
 BMEM=$($PM PRISMA-ROUTING-MIB::prBundleMembers.1 2>&1)
 IDENT=$($PM PRISMA-ROUTING-MIB::prIdentityEntries.0 2>&1)
 DP_FIT=$($HX -c "show cgnat memory" 2>&1 | awk '/sessions that fit/ { gsub(",", "", $NF); print $NF }')
+# NATV2-MIB, RFC 7659 (#512): the IETF's module, loaded as an NMS loads it,
+# one instance per pool. test/mibs carries it, cut from the RFC, with the two
+# modules it imports that Debian ships only in non-free.
+NV="snmpget -v2c -c hexro -M /tmp/mibs -m NATV2-MIB -Ov -Oq 127.0.0.1"
+NVALIAS=$($NV NATV2-MIB::natv2InstanceAlias.1 2>&1)
+NVPORTS=$($NV NATV2-MIB::natv2InstancePortMapEntries.1 2>&1)
+NVSUBS=$($NV NATV2-MIB::natv2PoolAddressMapEntries.1.1 2>&1)
+NVMIN=$($NV NATV2-MIB::natv2PoolMinimumPort.1.1 2>&1)
+NVBEGIN=$($NV NATV2-MIB::natv2PoolRangeBegin.1.1.1 2>&1)
+NVEND=$($NV NATV2-MIB::natv2PoolRangeEnd.1.1.1 2>&1)
+NVWALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m NATV2-MIB 127.0.0.1 \
+         NATV2-MIB::natv2MIB 2>&1)
 WALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB 127.0.0.1 \
        PRISMA-ROUTING-MIB::prismaRouting 2>&1)
 DP_CAP=$(vc show bpa pool | awk '$1 == "capacity" { print $2; exit }')
@@ -189,6 +201,8 @@ echo "  subscribers $POOLSUBS, sessions $POOLSESS, ports $POOLPORTS; prSessions 
 echo "  dataplane build $BUILD, current $CURRENT; TCP transport enabled $TCPON"
 echo "  sessions that fit $FIT (show cgnat memory says ${DP_FIT:-nothing}); per worker $(printf '%s' "$WSESS" | tr '\n' ' ')"
 echo "  VRRP 1: $VRIF, $VRST, priority $VRPRI; bundle 1: $BNAME with $BMEM member(s); identity entries $IDENT"
+echo "  NATV2-MIB: instance 1 $NVALIAS, $NVPORTS port map entries, $NVSUBS address map entries, ports from $NVMIN, range $NVBEGIN - $NVEND"
+echo "  ... $(printf '%s\n' "$NVWALK" | grep -c .) NATV2-MIB rows walked"
 
 echo
 echo "=========== 3. a SET must be refused ==========="
@@ -273,6 +287,14 @@ expect "advertising the priority configured ($VRPRI)" test "$VRPRI" = "150"
 expect "the bundle is in the table ($BNAME), at zero members" \
   test "$BNAME/$BMEM" = "BondEthernet0/0"
 expect "and a box with no identity table says zero entries" test "$IDENT" = "0"
+expect "NATV2-MIB names the pool as instance 1 ($NVALIAS)" test "$NVALIAS" = "nb"
+expect "with the dataplane's three ports and one subscriber" \
+  test "$NVPORTS/$NVSUBS" = "3/1"
+expect "the pool's ports from 1024 ($NVMIN)" test "$NVMIN" = "1024"
+expect_in "and its outside range, begin and end" "200.150.0.16" "$NVBEGIN $NVEND"
+expect_in "to 200.150.0.19" "200.150.0.19" "$NVEND"
+expect_not_in "every NATV2-MIB row resolves to a name in the RFC's module" \
+  "iso.3.6.1.2.1.234" "$NVWALK"
 expect "and the ports it holds" test "$PORTS" = "3"
 # Refused at the daemon (noAccess, from the read-only community and view) or
 # by the agent (notWritable). Either is a refusal; asserting one spelling

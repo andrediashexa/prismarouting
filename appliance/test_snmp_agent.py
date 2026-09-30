@@ -18,6 +18,7 @@ fail before being kept.
 import contextlib
 import io
 import os
+import re
 import sys
 import tempfile
 
@@ -472,6 +473,63 @@ check(_mr.get(f"{P}.13.1.1.5.1") == ("integer", 3)
 check(agent.more_rows(P, {}) == [],
       "nothing read is nothing served, not a row of zeros")
 print("  [ ok ] the parsers read the screens a lab printed")
+
+print("\n=== NATV2-MIB, RFC 7659: one instance per pool, aggregate only (#512) ===")
+CONF = ("cgnat pool nb\n inside 100.64.0.0/22\n outside 200.150.0.16/30\n"
+        " outside 200.150.1.0/31\n block-size 512\n ports 2000 60000\n"
+        " max-blocks 4\n filter address-dependent\n exit\n"
+        "cgnat pool dyn\n outside 10.0.0.0/24\n exit\n"
+        "cgnat interface pg0 inside\n")
+_c = agent.parse_bpa_config(CONF)
+check(_c["nb"] == {"outside": [("200.150.0.16", "200.150.0.19"),
+                               ("200.150.1.0", "200.150.1.1")],
+                   "ports": (2000, 60000), "max_blocks": 4, "filter": 1},
+      f"a pool's outside ranges, ports, extension and filter: {_c['nb']}")
+check(_c["dyn"] == {"outside": [("10.0.0.0", "10.0.0.255")],
+                    "ports": (1024, 65535), "max_blocks": 1, "filter": 0},
+      f"and the defaults for what the dataplane leaves unprinted: {_c['dyn']}")
+_st = {"pools": {0: {"name": "nb", "subscribers": 3, "ports": 900,
+                     "refused": 2},
+                 1: {"name": "dyn", "subscribers": 0, "ports": 0,
+                     "refused": 0}}}
+_n = {o: (t, v) for o, t, v in agent.natv2_rows(_st, _c)}
+N = "1.3.6.1.2.1.234"
+check(_n.get(f"{N}.2.1.1.2.1") == ("string", "nb")
+      and _n.get(f"{N}.2.1.1.4.1") == ("integer", 1)
+      and _n.get(f"{N}.2.1.1.5.1") == ("integer", 0)
+      and _n.get(f"{N}.2.1.1.5.2") == ("integer", 1),
+      "instance 1 is nb, address-dependent, arbitrary pooling (4 blocks); "
+      "instance 2 is paired")
+check(_n.get(f"{N}.2.1.1.8.1") == ("gauge", 900)
+      and _n.get(f"{N}.2.3.1.5.1.1") == ("gauge", 2000)
+      and _n.get(f"{N}.2.3.1.6.1.1") == ("gauge", 60000)
+      and _n.get(f"{N}.2.3.1.12.1.1") == ("counter64", 2),
+      "port map entries, the pool's ports and its refusals")
+check(_n.get(f"{N}.2.4.1.4.1.1.2") == ("octet", "C8 96 01 00")
+      and _n.get(f"{N}.2.4.1.5.1.1.1") == ("octet", "C8 96 00 13"),
+      "the pool's ranges as begin and end addresses")
+check(not any(o.startswith(f"{N}.2.1.1.9.") for o in _n),
+      "no translations column: the box counts them box-wide, not per pool")
+# Every column served is one NATV2-MIB defines, with the type it declares.
+_NV = open(os.path.join(os.path.dirname(AGENT), "..", "test", "mibs",
+                        "NATV2-MIB.txt")).read()
+_nv = {}
+for _m in re.finditer(r"^\s*(natv2\w+)\s+OBJECT-TYPE(.*?)::=\s*\{\s*(\w+)\s+(\d+)\s*\}",
+                      _NV, re.S | re.M):
+    _nv[(_m.group(3), int(_m.group(4)))] = (_m.group(1),
+        re.search(r"SYNTAX\s+(\S+)", _m.group(2)).group(1))
+_ENT = {"2.1.1": "natv2InstanceEntry", "2.3.1": "natv2PoolEntry",
+        "2.4.1": "natv2PoolRangeEntry"}
+_NSYN = {"DisplayString": "string", "SnmpAdminString": "string",
+         "INTEGER": "integer", "Integer32": "integer", "InetAddressType": "integer",
+         "Unsigned32": "gauge", "InetPortNumber": "gauge", "Counter64": "counter64",
+         "TimeStamp": "timeticks", "InetAddress": "octet"}
+for _o, (_t, _v) in _n.items():
+    _rest = _o[len(N) + 1:].split(".")
+    _key = (_ENT[".".join(_rest[:3])], int(_rest[3]))
+    check(_key in _nv and _NSYN[_nv[_key][1]] == _t,
+          f"{_o} served as {_t}, and NATV2-MIB says {_nv.get(_key)}")
+print(f"  [ ok ] {len(_n)} rows, each a NATV2-MIB column with its type")
 
 print("\n=== the wire: reply, none, and the key an OID sorts by ===")
 _out = io.StringIO()

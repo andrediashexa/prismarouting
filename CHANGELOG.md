@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Added
 
+* **NATV2-MIB (RFC 7659): the CGNAT in the IETF's own MIB.**
+  ([#512](https://github.com/andrediashexa/hexarouting/issues/512))
+  Asked by the maintainer with the other standard MIBs; BGP4-MIB, OSPF-MIB,
+  OSPFV3-MIB, ISIS-MIB and IF-MIB were served already. One NATV2 instance per
+  pool - filtering is a pool's setting, and an instance is where the RFC puts
+  it - with its instance, pool and pool-range tables, from the statistics
+  segment and `show bpa config`. Aggregate only, by the maintainer's
+  decision: no subscriber, address map or port map table, no protocol table,
+  and no column the box counts only box-wide. `lab/snmp.sh` walks it with the
+  RFC's module loaded (in `test/mibs`, with the two modules it imports) and
+  compares the rows with the dataplane; the agent's test holds every served
+  column to the type the module declares.
+
 ### Fixed
 
 ## 0.144.1 - SNMP answers v2c and v3 only
