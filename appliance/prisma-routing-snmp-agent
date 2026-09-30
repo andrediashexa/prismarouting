@@ -157,6 +157,7 @@ class Values:
         stats = stats_dump("^/bpa/")
         drops = parse_drops(vppctl("show bpa drops") or "")
         d["cgnat"] = cgnat_state(stats, drops)
+        d["config"] = parse_bpa_config(vppctl("show bpa config") or "")
         d.update(cgnat_totals(d["cgnat"]))
         d["release"] = _read(VERSION_FILE).split()[0] if _read(VERSION_FILE) else ""
         d["build"] = plugin_build(vppctl("show plugins") or "")
@@ -504,6 +505,112 @@ def parse_identity(text):
     return d
 
 
+# --- NATV2-MIB, RFC 7659: the IETF's own CGNAT MIB, aggregate only (#512) ---
+#
+# ONE NAT INSTANCE PER POOL. Filtering behaviour is a pool's setting here, and
+# an instance is where RFC 7659 puts it. By the maintainer's decision no table
+# with a row per subscriber or per mapping is served: the protocol,
+# subscriber, address map and port map tables are left out, and so is every
+# column whose number the box keeps only box-wide - served under a pool, it
+# would be a number that pool did not count.
+
+NATV2 = "1.3.6.1.2.1.234"
+
+
+def parse_bpa_config(text):
+    """
+    {pool name: {"outside": [(first, last)], "ports": (min, max),
+    "max_blocks": n, "filter": 0|1}} off `show bpa config`, which prints the
+    configuration in VTY syntax and walks nothing. A field left at its
+    default is not printed there, and is the default here.
+    """
+    import ipaddress
+    pools, cur = {}, None
+    for line in text.replace("\r", "").splitlines():
+        w = line.split()
+        if not w:
+            continue
+        if not line.startswith(" "):
+            # A pool's block opens at `cgnat pool <name>`; any other line at
+            # the left margin - `cgnat interface`, another pool - closes it.
+            cur = (pools.setdefault(w[2], {"outside": [],
+                                           "ports": (1024, 65535),
+                                           "max_blocks": 1, "filter": 0})
+                   if w[:2] == ["cgnat", "pool"] and len(w) == 3 else None)
+            continue
+        if cur is None:
+            continue
+        try:
+            if w[0] == "outside" and len(w) == 2:
+                net = ipaddress.ip_network(w[1], strict=False)
+                cur["outside"].append((str(net.network_address),
+                                       str(net.broadcast_address)))
+            elif w[0] == "ports" and len(w) == 3:
+                cur["ports"] = (int(w[1]), int(w[2]))
+            elif w[0] == "max-blocks" and len(w) == 2:
+                cur["max_blocks"] = int(w[1])
+            elif w[:2] == ["filter", "address-dependent"]:
+                cur["filter"] = 1
+        except ValueError:
+            continue
+    return pools
+
+
+def natv2_rows(state, config):
+    """
+    NATV2-MIB's rows for the pools the statistics segment names, with what
+    `show bpa config` says of each. Every value is the pool's own.
+    """
+    out = []
+    pools = state.get("pools", {})
+    rows = [(idx + 1, pools[idx], config.get(pools[idx]["name"], {}))
+            for idx in sorted(pools)]
+    inst = f"{NATV2}.2.1.1"
+    cols = [
+        (2, "string", lambda p, c: p["name"]),                 # alias
+        (3, "integer", lambda p, c: 0),     # endpointIndependent: lab/nat-behaviour.sh
+        (4, "integer", lambda p, c: c.get("filter", 0)),       # the pool's filter
+        # paired unless a subscriber may hold blocks on several addresses
+        (5, "integer", lambda p, c: 1 if c.get("max_blocks", 1) <= 1 else 0),
+        (6, "integer", lambda p, c: 1),     # fragmentInOrder: what lab/frag.sh measures
+        (7, "gauge", lambda p, c: p["subscribers"]),           # address map entries
+        (8, "gauge", lambda p, c: p["ports"]),                 # port map entries
+        (16, "counter64", lambda p, c: p["refused"]),          # port map failure drops
+        (19, "timeticks", lambda p, c: 0),                     # discontinuity
+        (20, "integer", lambda p, c: -1),   # thresholds: the RFC's notifications
+        (21, "integer", lambda p, c: -1),   # are not sent; the product's are (#507)
+        (22, "gauge", lambda p, c: 60),
+        (23, "gauge", lambda p, c: 0), (24, "gauge", lambda p, c: 0),
+        (25, "gauge", lambda p, c: 0), (26, "gauge", lambda p, c: 0),
+    ]
+    for col, typ, f in cols:
+        for i, p, c in rows:
+            out.append((f"{inst}.{col}.{i}", typ, f(p, c)))
+    pool = f"{NATV2}.2.3.1"
+    pcols = [
+        (3, "string", lambda p, c: "external"),
+        (4, "integer", lambda p, c: 1),                        # ipv4
+        (5, "gauge", lambda p, c: c.get("ports", (1024, 65535))[0]),
+        (6, "gauge", lambda p, c: c.get("ports", (1024, 65535))[1]),
+        (7, "gauge", lambda p, c: p["subscribers"]),
+        (8, "gauge", lambda p, c: p["ports"]),
+        (12, "counter64", lambda p, c: p["refused"]),
+        (13, "timeticks", lambda p, c: 0),
+        (14, "integer", lambda p, c: -1), (15, "integer", lambda p, c: -1),
+        (18, "gauge", lambda p, c: 60),
+    ]
+    for col, typ, f in pcols:
+        for i, p, c in rows:
+            out.append((f"{pool}.{col}.{i}.1", typ, f(p, c)))
+    rng = f"{NATV2}.2.4.1"
+    for col, at in ((4, 0), (5, 1)):
+        for i, p, c in rows:
+            for n, r in enumerate(c.get("outside", []), 1):
+                out.append((f"{rng}.{col}.{i}.1.{n}", "octet",
+                            " ".join(f"{int(b):02X}" for b in r[at].split("."))))
+    return out
+
+
 # --- the interface table: IF-MIB for the dataplane's cards (#498) -----------
 #
 # net-snmp's own IF-MIB reads Linux, and Linux does not have the cards the
@@ -849,6 +956,7 @@ def oid_table():
     for n, key in _TIMEOUT_OIDS:
         if key in d:
             out.append((f"{NAT_DEF_TIMEOUTS}.{n}.0", "gauge", d[key]))
+    out += natv2_rows(d.get("cgnat", {}), d.get("config", {}))
     if ENTERPRISE.isdigit():
         base = f"1.3.6.1.4.1.{ENTERPRISE}.1"
         for n, key, typ, _desc in _ENTERPRISE_OBJECTS:

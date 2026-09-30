@@ -47,6 +47,7 @@ AgentX. An NMS that knows these needs no template of ours.
 | processors, memory, storage, processes | HOST-RESOURCES-MIB | `.1.3.6.1.2.1.25` | net-snmp | 0.141.3 |
 | load, memory, disk thresholds | UCD-SNMP-MIB | `.1.3.6.1.4.1.2021` | net-snmp | 0.141.3 |
 | the CGNAT's default timeouts | NAT-MIB `natDefTimeouts` | `.1.3.6.1.2.1.123.1.1` | the agent | 0.x |
+| the CGNAT's pools, in the IETF's own model | NATV2-MIB (RFC 7659), aggregate | `.1.3.6.1.2.1.234` | the agent | 0.144.2 |
 | BGP peers: state, AS, updates, last error | BGP4-MIB | `.1.3.6.1.2.1.15` | bgpd | 0.142.0 |
 | OSPF neighbours, interfaces, LSDB | OSPF-MIB | `.1.3.6.1.2.1.14` | ospfd | 0.142.0 |
 | OSPFv3 | OSPFV3-MIB | `.1.3.6.1.2.1.191` | ospf6d | 0.142.0 |
@@ -56,6 +57,28 @@ AgentX. An NMS that knows these needs no template of ours.
 The route tables themselves are left out of the view on purpose: a full table
 is about a million rows, and an NMS walking it would weigh on the box at every
 poll.
+
+## NATV2-MIB, RFC 7659 (#512)
+
+The IETF's MIB for NAT and CGNAT, which an NMS that knows it reads with no
+template of ours. **One NATV2 instance per pool**, because the filtering
+behaviour is a pool's setting here and an instance is where RFC 7659 puts it.
+Served at aggregate level only, by the maintainer's decision: no table with a
+row per subscriber or per mapping.
+
+| Table | Served | From |
+|---|---|---|
+| `natv2InstanceTable` (`.2.1`) | alias (the pool's name), port mapping behaviour endpointIndependent (measured by `lab/nat-behaviour.sh`), filtering (the pool's `filter`), pooling (paired, or arbitrary when `max-blocks` lets a subscriber hold blocks on several addresses), fragment behaviour fragmentInOrder (what `lab/frag.sh` measures), address map entries (subscribers holding a block), port map entries (ports in use), port map failure drops (refusals); thresholds -1 and limits 0 | the statistics segment and `show bpa config` |
+| `natv2PoolTable` (`.2.3`) | one pool per instance: realm, IPv4, the port range, address and port map entries, port map failure drops | the same |
+| `natv2PoolRangeTable` (`.2.4`) | the pool's outside prefixes, each as a begin and an end address | `show bpa config` |
+
+**Not served**, so the compliance is partial: `natv2ProtocolTable`,
+`natv2SubscriberTable`, `natv2AddressMapTable` and `natv2PortMapTable`; the
+instance columns the box counts only box-wide - translations, creations,
+fragment and resource drops - rather than put under one pool a number that
+pool did not count; and the RFC's own notifications, whose thresholds read -1
+(the product's are sent instead, #507). `lab/snmp.sh` walks the MIB loaded -
+the RFC's module, in `test/mibs` - and compares the rows with the dataplane.
 
 ## PRISMA-ROUTING-MIB
 

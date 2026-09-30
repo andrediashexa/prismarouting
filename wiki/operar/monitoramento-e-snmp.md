@@ -127,6 +127,12 @@ Nada precisa ser configurado além do `snmp enabled yes`: o commit liga o víncu
 
 O resto da RFC 4008 é por interface ou por *binding*: este equipamento não rastreia nenhuma dessas formas, e por *binding* significaria percorrer a tabela de sessões, coisa que nenhum `show` daqui tem permissão de fazer.
 
+## O CGNAT na MIB padrão do IETF: NATV2-MIB
+
+A partir da versão 0.144.2 a caixa serve também a **NATV2-MIB** (RFC 7659, `.1.3.6.1.2.1.234`), a MIB que o IETF definiu para NAT e CGNAT — uma NMS que já a conhece lê os pools sem template nosso. Cada pool aparece como uma instância de NAT, com o nome dele, o tipo de filtragem, a faixa de portas, os assinantes e portas em uso agora, as portas recusadas e as faixas de endereços públicos.
+
+Só os números agregados: não há tabela com uma linha por assinante nem por sessão, que numa caixa em produção seriam milhões de linhas. Para os detalhes que a RFC não cobre — capacidade garantida, ocupação, carga por worker — vale a MIB do Prisma, abaixo.
+
 ## A MIB do Prisma: o CGNAT, os registros de conexão e a caixa
 
 O que **não tem OID padrão** — os pools do CGNAT, os descartes, o transporte dos registros de conexão, a versão que o dataplane está rodando — está na **PRISMA-ROUTING-MIB**, a MIB do próprio produto. A partir da versão 0.143.4 ela é servida sem nenhuma configuração além de ligar o SNMP, e a própria caixa entrega o arquivo pronto, com o número já preenchido:
