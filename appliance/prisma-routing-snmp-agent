@@ -818,10 +818,10 @@ def _int(d, k):
     return int(v) if v.isdigit() else 0
 
 
-def box_rows(base, box, audit=None):
+def box_rows(base, box, trail=None):
     """
     PRISMA-ROUTING-MIB's #524 rows under `base` for `box` (box_state()) and
-    `audit` (parse_audit_verify()): prTuning (.16), prSelfTest (.17),
+    `trail` (parse_audit_verify()): prTuning (.16), prSelfTest (.17),
     prConfig (.18), prAudit (.19). A group whose source was not read is
     left out whole.
     """
@@ -862,12 +862,12 @@ def box_rows(base, box, audit=None):
                 (f"{base}.18.7.0", "counter", _int(c, "rollbacks") % 2 ** 32),
                 (f"{base}.18.8.0", "integer",
                  truth[c.get("saved_differs") == "yes"])]
-    if audit is not None:
-        out += [(f"{base}.19.1.0", "integer", AUDIT_STATES[audit["state"]]),
-                (f"{base}.19.2.0", "gauge", audit["entries"]),
-                (f"{base}.19.3.0", "gauge", audit["seq"] % 2 ** 32),
-                (f"{base}.19.4.0", "string", audit["digest"]),
-                (f"{base}.19.5.0", "gauge", audit["lost"])]
+    if trail is not None:
+        out += [(f"{base}.19.1.0", "integer", AUDIT_STATES[trail["state"]]),
+                (f"{base}.19.2.0", "gauge", trail["entries"]),
+                (f"{base}.19.3.0", "gauge", trail["seq"] % 2 ** 32),
+                (f"{base}.19.4.0", "string", trail["digest"]),
+                (f"{base}.19.5.0", "gauge", trail["lost"])]
     return out
 
 
