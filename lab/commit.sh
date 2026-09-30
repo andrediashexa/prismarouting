@@ -504,4 +504,41 @@ expect_in "under the size it has" " MB per table" "$SESS_SHOW"
 expect_not_in "which is not the size the refused commit asked for" \
   "buckets 1024, memory 64 MB" "$SESS_SHOW"
 
+echo
+echo "=========== the reads a commit check makes (#520) ==========="
+# Every vat2 is a process, 100-150 ms of start-up on the X520 bench whatever
+# it asks, and a commit check with nothing to change took 15.5 s there, 12.7 s
+# of it in 96 of them - sw_interface_dump asked again for every interface a
+# reading names. Counted here by a vat2 that logs each start, on a box with
+# eight interfaces carrying an address.
+for i in 0 1 2 3 4 5 6; do
+  vppctl create loopback interface >/dev/null
+  vppctl set interface state loop$i up
+  vppctl set interface ip address loop$i 10.77.$i.1/24
+done
+cat > /tmp/vat2-count <<'VAT2EOF'
+#!/bin/sh
+echo "$1" >> /tmp/vat2.calls
+exec vat2 "$@"
+VAT2EOF
+chmod +x /tmp/vat2-count
+: > /tmp/vat2.calls
+VAT2=/tmp/vat2-count $HX -c "show running-config" >/dev/null 2>&1
+SHOWN=$(grep -c . /tmp/vat2.calls); SHOWIF=$(grep -cx sw_interface_dump /tmp/vat2.calls)
+: > /tmp/vat2.calls
+T0=$(date +%s.%N)
+CHK=$(VAT2=/tmp/vat2-count $HX -c configure -c "commit check" 2>&1)
+T1=$(date +%s.%N)
+CHKN=$(grep -c . /tmp/vat2.calls); CHKIF=$(grep -cx sw_interface_dump /tmp/vat2.calls)
+echo "  show running-config: $SHOWN vat2, $SHOWIF of them sw_interface_dump"
+echo "  configure + commit check: $CHKN vat2, $CHKIF of them sw_interface_dump, $(python3 -c "print(round($T1 - $T0, 2))") s"
+sort /tmp/vat2.calls | uniq -c | sort -rn | head -6 | sed 's/^/    /'
+printf '%s\n' "$CHK" | tail -2 | sed 's/^/  /'
+expect "show running-config asks sw_interface_dump once, not once per interface ($SHOWIF)" \
+  test "$SHOWIF" -le 1
+expect "a commit check asks it at most once per reading it makes ($CHKIF)" \
+  test "$CHKIF" -le 3
+expect_not_in "and the check refuses nothing" \
+  "error" "$CHK"
+
 verdict

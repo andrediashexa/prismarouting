@@ -2234,6 +2234,10 @@ try:
     prismash.Shell.TUNE_ENV = os.path.join(_root, "no-such", "deeper", "z")
     sh2 = shell()
     sh2.candidate = prismash.Shell.running_config(sh2)
+    # The reading itself, outside the dump cache running_config() opens
+    # (#520): the same configuration either way, since nothing in it writes.
+    check(prismash.Shell._running_config(sh2).text() == sh2.candidate.text(),
+          "_running_config reads what running_config does")
     sh2.candidate.memory = {"buffers": "65536"}
     rv, text = driven(lambda: sh2.do_commit([]))
     check("memory:" in text, f"an unwritable tune.env fails the commit: "

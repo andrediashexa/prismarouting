@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A commit check spent its time starting vat2.**
+  ([#520](https://github.com/andrediashexa/hexarouting/issues/520))
+  Every vat2 is a process - 100-150 ms of start-up on the X520 bench whatever
+  it asks - and reading the running configuration asked the same
+  `sw_interface_dump` again for every interface it named. `configure` and a
+  `commit check` with nothing to change took 15.5 s there, 12.7 s of it in 96
+  vat2 processes. A dump, and a question VPP names `*_get`, is answered once
+  for the whole reading now - inside `running_config()`, a check's apply and
+  all of `commit check` - and anything sent forgets every answer, so a real
+  apply reads fresh. Measured by `lab/commit.sh` on eight interfaces with an
+  address: 120 vat2 and 7.5 s before, 24 and 1.9 s after; `show
+  running-config` from 40 vat2 (29 of them the same dump) to 12.
+
 ## 0.146.0 - a Zabbix 7.0 template for the box: show snmp zabbix-template
 
 ### Added

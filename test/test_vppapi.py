@@ -447,5 +447,75 @@ rc, out, err = Segment._subprocess(
 check(rc == 124 and "timed out" in err,
       f"a hang is 124 after the timeout, not a hung commit: {(rc, err)}")
 
+print("\n=== cached_dumps: one vat2 per dump asked, until anything is sent (#520) ===")
+_n = []
+
+
+def _counting(argv, timeout=10):
+    _n.append(argv[1])
+    if argv[1] == "sw_interface_dump":
+        return (0, '[{"sw_if_index": 1, "interface_name": "pg0"}]', "")
+    if argv[1] == "ip_table_dump":
+        return (1, "", "connect: no such file")
+    return (0, '{"retval": 0}', "")
+
+
+api = vppapi.Vat2(runner=_counting)
+with api.cached_dumps():
+    a = api.interface_index("pg0")
+    b = api.interface_index("pg0")
+    c = api.dump("sw_interface_dump", {"sw_if_index": 0xFFFFFFFF,
+                                       "name_filter": "",
+                                       "name_filter_valid": False})
+check(a == b == 1 and _n.count("sw_interface_dump") == 1 and c.ok,
+      f"the same dump, asked three ways, is one vat2: {_n}")
+_n.clear()
+with api.cached_dumps():
+    api.interface_index("pg0")
+    api.call("sw_interface_set_flags", {"sw_if_index": 1, "flags": 1})
+    api.interface_index("pg0")
+check(_n.count("sw_interface_dump") == 2,
+      f"anything sent in between and the next dump asks again: {_n}")
+_n.clear()
+with api.cached_dumps():
+    api.dump("ip_table_dump", {})
+    api.dump("ip_table_dump", {})
+check(_n.count("ip_table_dump") == 2, "a failure is not kept: asked again")
+_n.clear()
+with api.cached_dumps():
+    with api.cached_dumps():
+        api.interface_index("pg0")
+    api.interface_index("pg0")
+check(_n.count("sw_interface_dump") == 1,
+      "a nested block shares the outer one's answers, and does not end them")
+_n.clear()
+api.interface_index("pg0")
+api.interface_index("pg0")
+check(_n.count("sw_interface_dump") == 2 and api._dumps is None,
+      "outside a block every dump is its own vat2, as it always was")
+_n.clear()
+r = api._dump("sw_interface_dump", {}, 15)
+check(r.ok and r.fields["rows"][0]["interface_name"] == "pg0" and len(_n) == 1,
+      "_dump is the one uncached vat2")
+check(vppapi.is_question("sw_interface_get_table")
+      and vppapi.is_question("lcp_osi_proto_get")
+      and not vppapi.is_question("sw_interface_set_table")
+      and not vppapi.is_question("bpa_pool_add_del"),
+      "a *_get only asks; anything else may change what the dataplane says")
+_n.clear()
+with api.cached_dumps():
+    api.interface_index("pg0")
+    api.call("sw_interface_get_table", {"sw_if_index": 1, "is_ipv6": False})
+    api.call("sw_interface_get_table", {"sw_if_index": 1, "is_ipv6": False})
+    api.call("sw_interface_get_table", {"sw_if_index": 2, "is_ipv6": False})
+    api.interface_index("pg0")
+check(_n.count("sw_interface_get_table") == 2
+      and _n.count("sw_interface_dump") == 1,
+      f"a question is answered once per argument, and forgets nothing: {_n}")
+_n.clear()
+r = api._call("sw_interface_get_table", {"sw_if_index": 1, "is_ipv6": False})
+check(r.ok and len(_n) == 1, "_call is the one uncached vat2 for a message")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -6825,7 +6825,24 @@ class Shell:
 
     # ---------------------------------------------------------- device
 
+    def reads_cached(self):
+        """
+        The dataplane's dumps answered once for the block (#520), where the
+        API can; a stand-in API without cached_dumps() reads as it always did.
+        """
+        cached = getattr(self.api, "cached_dumps", None)
+        return cached() if cached else contextlib.nullcontext()
+
     def running_config(self) -> Config:
+        """
+        The configuration in effect, read with the dataplane's dumps answered
+        once (#520): the reading below asks sw_interface_dump for every
+        interface it names, and nothing in it writes.
+        """
+        with self.reads_cached():
+            return self._running_config()
+
+    def _running_config(self) -> Config:
         """
         The configuration actually in effect, read from the device.
 
@@ -8661,6 +8678,17 @@ class Shell:
         return True
 
     def apply(self, target: Config, check_only=False) -> bool:
+        """
+        Converge the device onto `target` (_apply). A check writes nothing,
+        so its reads share one answer per dump (#520); a real apply reads
+        fresh, since what it writes changes what the dumps say.
+        """
+        if check_only:
+            with self.reads_cached():
+                return self._apply(target, check_only=True)
+        return self._apply(target, check_only=False)
+
+    def _apply(self, target: Config, check_only=False) -> bool:
         """
         Converge the device onto `target`. Returns True on success.
 
@@ -11130,7 +11158,20 @@ class Shell:
 
     @sigint_ignored
     def do_commit(self, args):
-        """commit [check | remap | cutoff | confirmed <min> | comment <text>]"""
+        """
+        commit [check | remap | cutoff | confirmed <min> | comment <text>]
+
+        A `commit check` writes nothing, so every reading it makes - the
+        running configuration, then the check's own - shares one answer per
+        dump (#520); a commit that applies reads fresh (_do_commit).
+        """
+        if args and args[0] == "check":
+            with self.reads_cached():
+                return self._do_commit(args)
+        return self._do_commit(args)
+
+    def _do_commit(self, args):
+        """commit, as do_commit() decided to read for it."""
         if self.candidate is None:
             self.err("no candidate configuration")
             return
