@@ -200,6 +200,16 @@ VVMAC=$($VV VRRPV3-MIB::vrrpv3OperationsVirtualMacAddr.$VVIX 2>&1)
 VVCNT=$($VV VRRPV3-MIB::vrrpv3OperationsAddrCount.$VVIX 2>&1)
 VVWALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m VRRPV3-MIB 127.0.0.1 \
          VRRPV3-MIB::vrrpv3MIB 2>&1)
+# IP-MIB (#522): pg0's address under the ifIndex IF-MIB gives pg0, which is
+# the join an NMS makes to name an interface by its address. net-snmp's own
+# would list the Linux interfaces instead, under Linux's numbering.
+IM="snmpget -v2c -c hexro -M /tmp/mibs -m IP-MIB -Ov -Oq 127.0.0.1"
+IPFWD=$($IM IP-MIB::ipForwarding.0 2>&1)
+IPADIX=$($IM IP-MIB::ipAdEntIfIndex.100.64.3.254 2>&1)
+IPADMASK=$($IM IP-MIB::ipAdEntNetMask.100.64.3.254 2>&1)
+IPAIX=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.4.34.1.3.1.4.100.64.3.254 2>&1)
+IPPFX=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.4.32.1.5.${PG0:-0}.1.4.100.64.0.0.22 2>&1)
+IPWALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m IP-MIB 127.0.0.1 IP-MIB::ipAddrTable 2>&1)
 WALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB 127.0.0.1 \
        PRISMA-ROUTING-MIB::prismaRouting 2>&1)
 DP_CAP=$(vc show bpa pool | awk '$1 == "capacity" { print $2; exit }')
@@ -215,6 +225,8 @@ echo "  NATV2-MIB: instance 1 $NVALIAS, $NVPORTS port map entries, $NVSUBS addre
 echo "  ... $(printf '%s\n' "$NVWALK" | grep -c .) NATV2-MIB rows walked"
 echo "  VRRPV3-MIB: router $VVIX $VVST, priority $VVPRI, MAC $VVMAC, $VVCNT address(es)"
 echo "  ... $(printf '%s\n' "$VVWALK" | grep -c .) VRRPV3-MIB rows walked"
+echo "  IP-MIB: ipForwarding $IPFWD; 100.64.3.254 on ifIndex $IPADIX (ipAddressTable $IPAIX, pg0 is ${PG0:-none}), mask $IPADMASK"
+printf '%s\n' "$IPWALK" | sed 's/^/    /' | head -12
 
 echo
 echo "=========== 3. a SET must be refused ==========="
@@ -316,6 +328,15 @@ expect_in "and VRID 7's virtual MAC (0:0:5e:0:1:7)" "0:0:5e:0:1:7" "$VVMAC"
 expect "and its one virtual address ($VVCNT)" test "$VVCNT" = "1"
 expect_not_in "every VRRPV3-MIB row resolves to a name in the RFC's module" \
   "iso.3.6.1.2.1.207" "$VVWALK"
+expect "IP-MIB says the box forwards ($IPFWD)" test "$IPFWD" = "forwarding"
+expect "ipAddrTable puts pg0's address under pg0's ifIndex ($IPADIX)" \
+  test -n "${PG0:-}" -a "$IPADIX" = "${PG0:-x}"
+expect "with its /22 mask ($IPADMASK)" test "$IPADMASK" = "255.255.252.0"
+expect "and so does ipAddressTable ($IPAIX)" test "$IPAIX" = "${PG0:-x}"
+expect "and the prefix row it points at is the dataplane's, set by hand ($IPPFX)" \
+  sh -c "case \"$IPPFX\" in manual|2) exit 0;; *) exit 1;; esac"
+expect_not_in "no Linux address in ipAddrTable: the loopback is Linux's" \
+  "127.0.0.1" "$IPWALK"
 expect "and the ports it holds" test "$PORTS" = "3"
 # Refused at the daemon (noAccess, from the read-only community and view) or
 # by the agent (notWritable). Either is a refusal; asserting one spelling

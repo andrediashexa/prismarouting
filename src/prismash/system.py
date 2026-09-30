@@ -1138,6 +1138,15 @@ def snmp_redact(lines):
 # system group, HOST-RESOURCES-MIB and UCD-SNMP-MIB are net-snmp's own and
 # cost this product nothing to answer. The dataplane's interfaces are not
 # here: net-snmp's IF-MIB reads Linux, which does not have them (#496, 1b).
+#: IP-MIB's objects the agent serves from the dataplane (#522): ipForwarding,
+#: ipAddrTable, ipv6IpForwarding, ipAddressPrefixTable, ipAddressTable.
+IP_MIB_SUBTREES = ("1", "20", "25", "32", "34")
+#: Where each is registered above net-snmp's module: on the OIDs that module
+#: registers, which for ipAddrTable is each of its five columns - one
+#: registration on the table lost all but the column net-snmp does not serve,
+#: and lab/snmp.sh read Linux's loopback in it.
+IP_MIB_REGISTERED = ("1", "20.1.1", "20.1.2", "20.1.3", "20.1.4", "20.1.5",
+                     "25", "32", "34")
 SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              ".1.3.6.1.2.1.2",          # IF-MIB: ifNumber, ifTable (#498)
              ".1.3.6.1.2.1.31",         # IF-MIB: ifXTable, 64-bit counters
@@ -1147,6 +1156,9 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              ".1.3.6.1.2.1.234",        # NATV2-MIB, the pools (#512)
              ".1.3.6.1.2.1.207",        # VRRPV3-MIB, the VRRP routers (#513)
              ".1.2.840.10006.300.43",   # IEEE8023-LAG-MIB, LACP (#515)
+             # IP-MIB (#522): the forwarding scalars and the address tables,
+             # the agent's; the rest of IP-MIB is Linux's and stays out.
+             *(f".1.3.6.1.2.1.4.{sub}" for sub in IP_MIB_SUBTREES),
              # The routing protocols, which FRR's daemons serve themselves
              # over AgentX (#502).
              ".1.3.6.1.2.1.15",         # BGP4-MIB: bgpd's peers and their state
@@ -1284,6 +1296,12 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
     out.append(f"pass_persist -p 10 .1.3.6.1.2.1.2.1 {agent} --interfaces")
     out.append(f"pass_persist -p 10 .1.3.6.1.2.1.2.2 {agent} --interfaces")
     out.append(f"pass_persist -p 10 .1.3.6.1.2.1.31.1.1 {agent} --interfaces")
+    # IP-MIB's address tables, from the dataplane under the same ifIndex
+    # (#522): net-snmp's list the linux_cp taps under their Linux ifIndex,
+    # which no row above has. Above its module the same way, on the OIDs it
+    # registers.
+    for sub in IP_MIB_REGISTERED:
+        out.append(f"pass_persist -p 10 .1.3.6.1.2.1.4.{sub} {agent}")
     out.append(f"pass_persist .1.3.6.1.2.1.123 {agent}")
     out.append(f"pass_persist .1.3.6.1.2.1.234 {agent}")
     out.append(f"pass_persist .1.3.6.1.2.1.207 {agent}")

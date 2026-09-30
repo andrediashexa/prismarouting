@@ -50,6 +50,7 @@ AgentX. An NMS that knows these needs no template of ours.
 | the CGNAT's pools, in the IETF's own model | NATV2-MIB (RFC 7659), aggregate | `.1.3.6.1.2.1.234` | the agent | 0.144.2 |
 | the dataplane's VRRP routers | VRRPV3-MIB (RFC 6527) | `.1.3.6.1.2.1.207` | the agent | 0.144.3 |
 | the LACP bundles and their members | IEEE8023-LAG-MIB (IEEE 802.1AX) | `.1.2.840.10006.300.43` | the agent | 0.144.4 |
+| the dataplane's addresses, under IF-MIB's ifIndex; the box as a router | IP-MIB `ipForwarding`, `ipAddrTable`, `ipv6IpForwarding`, `ipAddressPrefixTable`, `ipAddressTable` | `.1.3.6.1.2.1.4.1`, `.20`, `.25`, `.32`, `.34` | the agent | 0.145.1 |
 | BGP peers: state, AS, updates, last error | BGP4-MIB | `.1.3.6.1.2.1.15` | bgpd | 0.142.0 |
 | OSPF neighbours, interfaces, LSDB | OSPF-MIB | `.1.3.6.1.2.1.14` | ospfd | 0.142.0 |
 | OSPFv3 | OSPFV3-MIB | `.1.3.6.1.2.1.191` | ospf6d | 0.142.0 |
@@ -129,6 +130,29 @@ the churn and change counters. A member leaving the bundle is seen as
 `dot3adAggPortAttachedAggID` going to 0 and `dot3adAggPortDebugMuxState`
 leaving collectingDistributing. `lab/lacp.sh` reads the bundle with the
 module loaded, against a Linux 802.3ad bond as the partner.
+
+## IP-MIB, the dataplane's addresses (#522)
+
+net-snmp's IP-MIB reads Linux, whose interfaces are the linux_cp taps: the
+dataplane's addresses were in it, each under the tap's Linux ifIndex, which is
+no row of the IF-MIB above. An NMS names an interface by joining the two, and
+that join found nothing. These objects are served from the dataplane instead,
+under the ifIndex IF-MIB gives the card, and registered above net-snmp's
+module the way IF-MIB is - on each of ipAddrTable's five columns, which is
+where its module registers them.
+
+| Object | Served |
+|---|---|
+| `ipForwarding`, `ipv6IpForwarding` | forwarding (1): the box routes, whatever the host's own sysctl says |
+| `ipAddrTable` (`.20`) | each IPv4 address of a card: its ifIndex, its mask, broadcast 1, reassembly 65535 |
+| `ipAddressTable` (`.34`) | each address of both families, indexed by type, length and octets: ifIndex, unicast, a pointer to its prefix's row, manual, preferred, active, nonVolatile |
+| `ipAddressPrefixTable` (`.32`) | each on-link prefix: manual, on-link, not autonomous, infinite lifetimes |
+
+**Not served**: link-local IPv6 addresses (ipv6z, whose zone the dataplane
+does not give), local0 and the linux_cp taps (the rule IF-MIB applies), and
+the rest of IP-MIB - the statistics and neighbour tables, which are Linux's
+and stay out of the view. `lab/snmp.sh` reads pg0's address under pg0's
+ifIndex with the module loaded, and Linux's loopback absent.
 
 ## PRISMA-ROUTING-MIB
 

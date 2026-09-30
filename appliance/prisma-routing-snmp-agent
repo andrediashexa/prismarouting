@@ -165,6 +165,10 @@ class Values:
         vrrp_text = vppctl("show vrrp vr") or ""
         if_names = parse_stats_dump(stats_dump("^/if/names$"))[0]
         vrrp_detail = parse_vrrp_detail(vrrp_text, if_names)
+        addr_text = vppctl("show interface address") or ""
+        # IP-MIB (#522): the cards with an address, by vpp_cards' rule.
+        prefixes = {n: p for n, p in parse_interface_prefixes(addr_text).items()
+                    if p and n != "local0" and not n.startswith("tap")}
         free = heap_free(vppctl("show memory main-heap") or "")
         bonds = parse_bond(vppctl("show bond") or "")
         # IEEE8023-LAG-MIB (#515): the LACP bundles only, and the two screens
@@ -183,7 +187,7 @@ class Values:
                 # given an ifIndex for good, and local0 and the taps have none
                 # in IF-MIB (#498).
                 if_indexes(sorted({r["interface"] for r in vrrp_detail})),
-                parse_interface_addresses(vppctl("show interface address") or ""))
+                parse_interface_addresses(addr_text))
             if vrrp_detail else [],
             "bonds": bonds,
             "lag": lag_rows(lag, parse_lacp_details(
@@ -192,6 +196,7 @@ class Values:
                                               for m in b["members"]})))
             if lag else [],
             "identity": parse_identity(vppctl("show bpa identity") or ""),
+            "ip": ip_rows(prefixes, if_indexes(sorted(prefixes))),
         }
         self.data = d
         self.at = time.time()
@@ -684,8 +689,8 @@ def parse_vrrp_detail(text, names=None):
     return sorted(out, key=lambda r: (r["interface"], r["vr_id"], r["family"]))
 
 
-def parse_interface_addresses(text):
-    """{interface: [address, ...]} off `show interface address`."""
+def parse_interface_prefixes(text):
+    """{interface: [(address, prefix length), ...]} off `show interface address`."""
     out, cur = {}, None
     for line in text.replace("\r", "").splitlines():
         if line and not line.startswith(" "):
@@ -693,9 +698,17 @@ def parse_interface_addresses(text):
             out.setdefault(cur, [])
             continue
         w = line.split()
-        if cur and w[:1] == ["L3"] and len(w) > 1:
-            out[cur].append(w[1].split("/")[0])
+        if cur and w[:1] == ["L3"] and len(w) > 1 and "/" in w[1]:
+            a, _, plen = w[1].partition("/")
+            if plen.isdigit():
+                out[cur].append((a, int(plen)))
     return out
+
+
+def parse_interface_addresses(text):
+    """{interface: [address, ...]} off `show interface address`."""
+    return {n: [a for a, _ in p]
+            for n, p in parse_interface_prefixes(text).items()}
 
 
 def _inet_octets(address):
@@ -892,6 +905,83 @@ def lag_rows(bonds, lacp, indexes):
             if d.get("MUX-state") in LAG_MUX:
                 rows.append((f"{port}.3.1.3.{j}", "integer", LAG_MUX[d["MUX-state"]]))
     return rows
+
+
+# --- IP-MIB: the dataplane's addresses, under the ifIndex IF-MIB gives them --
+#
+# net-snmp's own IP-MIB reads Linux, whose interfaces are the linux_cp taps:
+# the addresses are there, but each under the TAP's Linux ifIndex, which is no
+# row of the IF-MIB this agent serves (#498) - an NMS that joins the two, as
+# every one does to name an interface by its address, joins nothing. So the
+# address tables are served here, from the dataplane, under the same ifIndex,
+# and the two forwarding scalars say what the box is: a router, whatever the
+# host's own sysctl says.
+#
+# Served: ipForwarding and ipv6IpForwarding; ipAddrTable (IPv4, deprecated
+# and still what most NMS read); ipAddressTable and ipAddressPrefixTable (both
+# families). Not served: the link-local IPv6 addresses (ipv6z, whose zone the
+# dataplane does not give), the statistics tables and the neighbour tables.
+
+IP_MIB = "1.3.6.1.2.1.4"
+
+
+def ip_rows(prefixes, indexes):
+    """
+    IP-MIB's forwarding scalars and address rows for `prefixes`
+    (parse_interface_prefixes), under `indexes` (the agent's ifIndex file).
+    An interface IF-MIB has no row for - local0, a linux_cp tap - is left out,
+    by vpp_cards' rule.
+    """
+    import ipaddress
+    out = [(f"{IP_MIB}.1.0", "integer", 1),          # ipForwarding: forwarding
+           (f"{IP_MIB}.25.0", "integer", 1)]         # ipv6IpForwarding
+    v4, addr, pfx = [], [], {}
+    for name in sorted(prefixes):
+        if name == "local0" or name.startswith("tap") or name not in indexes:
+            continue
+        i = indexes[name]
+        for a, plen in prefixes[name]:
+            ip = ipaddress.ip_address(a)
+            if ip.version == 6 and ip.is_link_local:
+                continue
+            t = 1 if ip.version == 4 else 2
+            b = ip.packed
+            net = ipaddress.ip_network(f"{a}/{plen}", strict=False)
+            if t == 1:
+                v4.append((a, i, str(net.netmask)))
+            key = f"{t}.{len(b)}." + ".".join(str(x) for x in b)
+            nkey = (f"{i}.{t}.{len(b)}."
+                    + ".".join(str(x) for x in net.network_address.packed)
+                    + f".{plen}")
+            addr.append((key, i, nkey))
+            pfx[nkey] = True
+    for col, typ, f in ((1, "ipaddress", lambda r: r[0]),
+                        (2, "integer", lambda r: r[1]),
+                        (3, "ipaddress", lambda r: r[2]),
+                        (4, "integer", lambda r: 1),
+                        (5, "integer", lambda r: 65535)):
+        for r in v4:
+            out.append((f"{IP_MIB}.20.1.{col}.{r[0]}", typ, f(r)))
+    for col, typ, f in ((3, "integer", lambda r: r[1]),
+                        (4, "integer", lambda r: 1),       # unicast
+                        (5, "objectid",
+                         lambda r: f".{IP_MIB}.32.1.5.{r[2]}"),
+                        (6, "integer", lambda r: 2),       # manual
+                        (7, "integer", lambda r: 1),       # preferred
+                        (8, "timeticks", lambda r: 0),
+                        (9, "timeticks", lambda r: 0),
+                        (10, "integer", lambda r: 1),      # active
+                        (11, "integer", lambda r: 3)):     # nonVolatile
+        for r in addr:
+            out.append((f"{IP_MIB}.34.1.{col}.{r[0]}", typ, f(r)))
+    for col, typ, v in ((5, "integer", 2),                 # manual
+                        (6, "integer", 1),                 # on-link: true
+                        (7, "integer", 2),                 # autonomous: false
+                        (8, "gauge", 4294967295),          # infinite
+                        (9, "gauge", 4294967295)):
+        for k in sorted(pfx):
+            out.append((f"{IP_MIB}.32.1.{col}.{k}", typ, v))
+    return out
 
 
 # --- the interface table: IF-MIB for the dataplane's cards (#498) -----------
@@ -1242,6 +1332,7 @@ def oid_table():
     out += natv2_rows(d.get("cgnat", {}), d.get("config", {}))
     out += d.get("extra", {}).get("vrrpv3", [])
     out += d.get("extra", {}).get("lag", [])
+    out += d.get("extra", {}).get("ip", [])
     if ENTERPRISE.isdigit():
         base = f"1.3.6.1.4.1.{ENTERPRISE}.1"
         for n, key, typ, _desc in _ENTERPRISE_OBJECTS:
