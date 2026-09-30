@@ -146,6 +146,12 @@ A partir da versão 0.144.4 a caixa serve também a **IEEE8023-LAG-MIB** (IEEE 8
 
 Para alertar quando um membro sai do bundle, acompanhe `dot3adAggPortAttachedAggID` (vai a 0) ou `dot3adAggPortDebugMuxState` (deixa de ser `collectingDistributing`). Os valores administrativos do parceiro, as tabelas de conversação e o DRNI não são servidos: o dataplane não os tem.
 
+## Os endereços das interfaces: IP-MIB
+
+A partir da versão 0.145.1 as tabelas de endereços da **IP-MIB** (`ipAddrTable`, `ipAddressTable` e `ipAddressPrefixTable`) listam os endereços das interfaces do dataplane, IPv4 e IPv6, **com o mesmo ifIndex da IF-MIB**. É por essa ligação que a NMS (o Zabbix, por exemplo) descobre qual endereço está em qual interface. Antes, ela via os endereços das interfaces espelho do Linux, com uma numeração que não batia com nenhuma porta da IF-MIB.
+
+`ipForwarding` e `ipv6IpForwarding` respondem 1 (*forwarding*): a caixa é um roteador. Endereços link-local IPv6 ficam de fora.
+
 ## A MIB do Prisma: o CGNAT, os registros de conexão e a caixa
 
 O que **não tem OID padrão** — os pools do CGNAT, os descartes, o transporte dos registros de conexão, a versão que o dataplane está rodando — está na **PRISMA-ROUTING-MIB**, a MIB do próprio produto. A partir da versão 0.143.4 ela é servida sem nenhuma configuração além de ligar o SNMP, e a própria caixa entrega o arquivo pronto, com o número já preenchido:

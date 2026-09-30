@@ -670,6 +670,62 @@ for _o, (_t, _x) in _g.items():
           f"{_o} served as {_t}, and IEEE8023-LAG-MIB says {_lg.get(_key)}")
 print(f"  [ ok ] {len(_g)} rows, each an IEEE8023-LAG-MIB column with its type")
 
+print("\n=== IP-MIB: the dataplane's addresses, under IF-MIB's ifIndex (#522) ===")
+ADDR = ("pg0 (up):\n  L3 100.64.3.254/22\n  L3 2001:db8::1/64\n"
+        "  L3 fe80::1/64\nlocal0 (dn):\ntap1 (up):\n  L3 10.0.0.9/24\n")
+_px = agent.parse_interface_prefixes(ADDR)
+check(_px == {"pg0": [("100.64.3.254", 22), ("2001:db8::1", 64),
+                      ("fe80::1", 64)], "local0": [],
+              "tap1": [("10.0.0.9", 24)]},
+      f"each card's addresses with their prefix length: {_px}")
+check(agent.parse_interface_addresses(ADDR)["pg0"]
+      == ["100.64.3.254", "2001:db8::1", "fe80::1"],
+      "and the addresses alone, as VRRPV3-MIB reads them")
+_ip = {o: (t, v) for o, t, v in agent.ip_rows(_px, {"pg0": 7, "tap1": 9})}
+I = "1.3.6.1.2.1.4"
+check(_ip.get(f"{I}.1.0") == ("integer", 1)
+      and _ip.get(f"{I}.25.0") == ("integer", 1),
+      "a router: ipForwarding and ipv6IpForwarding forwarding")
+check(_ip.get(f"{I}.20.1.2.100.64.3.254") == ("integer", 7)
+      and _ip.get(f"{I}.20.1.3.100.64.3.254") == ("ipaddress", "255.255.252.0"),
+      "ipAddrTable: pg0's address under pg0's ifIndex, with its mask")
+check(_ip.get(f"{I}.34.1.3.1.4.100.64.3.254") == ("integer", 7)
+      and _ip.get(f"{I}.34.1.3.2.16.32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.1")
+      == ("integer", 7),
+      "ipAddressTable: both families, indexed by type, length and octets")
+check(_ip.get(f"{I}.34.1.5.1.4.100.64.3.254")
+      == ("objectid", f".{I}.32.1.5.7.1.4.100.64.0.0.22")
+      and _ip.get(f"{I}.32.1.5.7.1.4.100.64.0.0.22") == ("integer", 2),
+      "and each points at its prefix's row, which is served")
+check(not any(".254.128." in o for o in _ip)
+      and not any(o.endswith(".10.0.0.9") for o in _ip),
+      "no link-local address, and no tap")
+check(len(agent.ip_rows({}, {})) == 2, "no address: the two scalars alone")
+# Every column served is one IP-MIB defines, with the type it declares.
+_IM = open(os.path.join(os.path.dirname(AGENT), "..", "test", "mibs",
+                        "IP-MIB.txt")).read()
+_im = {}
+for _m in re.finditer(r"^\s*(ip\w+)\s+OBJECT-TYPE(.*?)::=\s*\{\s*(\w+)\s+(\d+)\s*\}",
+                      _IM, re.S | re.M):
+    _im[(_m.group(3), int(_m.group(4)))] = (_m.group(1),
+        re.search(r"SYNTAX\s+(\S+)", _m.group(2)).group(1))
+_IENT = {"1": "ip", "25": "ip", "20.1": "ipAddrEntry",
+         "32.1": "ipAddressPrefixEntry", "34.1": "ipAddressEntry"}
+_ISYN = {"INTEGER": "integer", "IpAddress": "ipaddress",
+         "InterfaceIndex": "integer", "RowPointer": "objectid",
+         "IpAddressOriginTC": "integer", "IpAddressStatusTC": "integer",
+         "TimeStamp": "timeticks", "RowStatus": "integer",
+         "StorageType": "integer", "TruthValue": "integer",
+         "IpAddressPrefixOriginTC": "integer", "Unsigned32": "gauge"}
+for _o, (_t, _x) in _ip.items():
+    _rest = _o[len(I) + 1:].split(".")
+    _tab = _rest[0] if _rest[0] in ("1", "25") else ".".join(_rest[:2])
+    _col = int(_rest[0]) if _rest[0] in ("1", "25") else int(_rest[2])
+    _key = (_IENT[_tab], _col)
+    check(_key in _im and _ISYN.get(_im[_key][1]) == _t,
+          f"{_o} served as {_t}, and IP-MIB says {_im.get(_key)}")
+print(f"  [ ok ] {len(_ip)} rows, each an IP-MIB column with its type")
+
 print("\n=== the wire: reply, none, and the key an OID sorts by ===")
 _out = io.StringIO()
 with contextlib.redirect_stdout(_out):

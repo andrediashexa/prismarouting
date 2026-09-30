@@ -77,6 +77,16 @@ version has a chance of seeing it.
 
 ### Added
 
+* **IP-MIB: the dataplane's addresses under IF-MIB's ifIndex.**
+  ([#522](https://github.com/andrediashexa/hexarouting/issues/522))
+  net-snmp's IP-MIB listed the linux_cp taps' addresses under their Linux
+  ifIndex, which no IF-MIB row has, so an NMS naming an interface by its
+  address joined nothing. `ipForwarding`, `ipv6IpForwarding`, `ipAddrTable`,
+  `ipAddressTable` and `ipAddressPrefixTable` come from the dataplane now,
+  under the agent's ifIndex, registered above net-snmp's module on the OIDs it
+  registers (each of ipAddrTable's columns). Link-local addresses and the
+  taps are left out. `lab/snmp.sh` reads pg0's address under pg0's ifIndex.
+
 ### Fixed
 
 ## 0.145.0 - the box's name from the VTY: hostname <name>
