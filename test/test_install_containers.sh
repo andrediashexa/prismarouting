@@ -114,7 +114,8 @@ _up=$(grep -n '^ExecStart=/usr/bin/docker-compose .* up -d$' "$U" | cut -d: -f1)
   && [ "$_mod" -lt "$_settle" ] && [ "$_settle" -lt "$_up" ] \
   && ok "the containers unit loads both, waits for their links, then starts the containers" \
   || bad "modprobe ($_mod), settle ($_settle) and compose up ($_up) are not in that order"
-grep -q 'tun vhost_net > "$DESTDIR/etc/modules-load.d/prisma-routing-dataplane.conf"' "$INSTALL" \
+grep -q 'prisma-routing-dataplane.modules' "$INSTALL" \
+  && [ "$(grep -v '^#' "$REPO/appliance/prisma-routing-dataplane.modules" | tr '\n' ' ')" = "tun vhost_net " ] \
   && ok "and the installer loads them at every boot" \
   || bad "the installer writes no modules-load.d file for tun and vhost_net"
 

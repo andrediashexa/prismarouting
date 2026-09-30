@@ -682,8 +682,8 @@ grep -E "^bgpd_options=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
 # early boot, before anything asks.
 say "dataplane modules"
 install -d -m 0755 "$DESTDIR/etc/modules-load.d"
-printf '%s\n' "# Prisma Routing: the dataplane's card pairs need both (#510)." \
-  tun vhost_net > "$DESTDIR/etc/modules-load.d/prisma-routing-dataplane.conf"
+install -m 0644 "$REPO/appliance/prisma-routing-dataplane.modules" \
+  "$DESTDIR/etc/modules-load.d/prisma-routing-dataplane.conf"
 sed 's/^/  /' "$DESTDIR/etc/modules-load.d/prisma-routing-dataplane.conf"
 
 say "SNMP module"

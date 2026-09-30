@@ -1,0 +1,4 @@
+# Prisma Routing: the dataplane's card pairs need both, loaded before its
+# container starts (#510).
+tun
+vhost_net
