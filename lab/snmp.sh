@@ -97,6 +97,10 @@ echo "=========== 2. poll it ==========="
 # WHAT AN NMS SEES FIRST (#497): the box's identity, CPU, memory and disks,
 # which net-snmp serves and the view used to keep out.
 DESCR=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.1.1.0 2>&1)
+# The same community in v1 (#511): v2c and v3 only, by the maintainer's
+# decision. A v1 request is answered as an unknown community - which snmpget
+# sees as no answer at all.
+V1=$(snmpget -v1 -c hexro -Ovq -t 1 -r 0 127.0.0.1 1.3.6.1.2.1.1.1.0 2>&1)
 UPTIME=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.1.3.0 2>&1)
 # The processors as HOST-RESOURCES lists them: hrDeviceType rows that are
 # hrDeviceProcessor. Not hrProcessorLoad, which net-snmp only fills after a
@@ -233,6 +237,7 @@ expect "and so did its unicast packets, which pg does not count by type ($PG0UC)
   sh -c "case \"$PG0UC\" in ''|*[!0-9]*) exit 1;; 0) exit 1;; *) exit 0;; esac"
 expect "and it reads up ($PG0OPER)" sh -c "case \"$PG0OPER\" in up*|1*) exit 0;; *) exit 1;; esac"
 expect_in "sysDescr names the product" "Prisma Routing" "$DESCR"
+expect_not_in "and the same community in SNMPv1 gets nothing ($V1)" "Prisma" "$V1"
 expect "sysUpTime answers" sh -c "case \"$UPTIME\" in *No\ Such*|*Timeout*|'') exit 1;; *) exit 0;; esac"
 expect "HOST-RESOURCES lists the processors ($CPUS)" test "${CPUS:-0}" -ge 1
 expect "UCD reports the memory" sh -c "case \"$MEMTOTAL\" in [0-9]*) exit 0;; *) exit 1;; esac"

@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **SNMP answered v1.**
+  ([#511](https://github.com/andrediashexa/hexarouting/issues/511))
+  The box grants v2c and v3, by the maintainer's decision, and wrote each
+  community as `rocommunity`, which net-snmp applies to v1 as well - a
+  version with no 64-bit counters, so the dataplane's HC columns and the
+  product MIB's Counter64 objects were invisible to it, while its community
+  travels as v2c's does. Each community now goes through VACM, bound to the
+  v2c model and read-only; `lab/snmp.sh` asks the same community in v1 and
+  gets no answer, and in v2c the box's name.
+
 ## 0.144.0 - a box comes back from a reboot with its cards paired
 
 ### Fixed

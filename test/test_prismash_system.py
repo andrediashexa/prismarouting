@@ -759,8 +759,10 @@ check(body.splitlines()[1:] == [
     "sysdescr Prisma Routing 0.141.2",
     "disk / 10%",
     "disk /var/log/prisma-routing 15%",
-    "rocommunity public default -V hexa",
-    "rocommunity ops default -V hexa",
+    "com2sec prismaCommunity default public",
+    "com2sec prismaCommunity default ops",
+    "group prismaV2c v2c prismaCommunity",
+    'access prismaV2c "" v2c noauth exact hexa none none',
     "rouser amy priv -V hexa",
     "rouser zed priv -V hexa",
     "pass_persist -p 10 .1.3.6.1.2.1.2.1 /x/agent --interfaces",
@@ -1201,6 +1203,27 @@ check("pass_persist .1.3.6.1.4.1.32473 /x/agent --enterprise 32473" in _b,
       "a candidate copied from a file with no number - Debian's, or one from "
       "before #508 - still writes the product's")
 print("  [ ok ] 32473 by default, unwritten, and an old file read as it is")
+
+print("\n=== v2c and v3 only: a community is not granted to v1 (#511) ===")
+_b = system._snmpd_body({"enabled": "yes"}, ["c1", "c2"], {}, agent="/x/a",
+                        release="0.1")
+check("rocommunity" not in _b and "rwcommunity" not in _b
+      and "group prismaV2c v2c prismaCommunity" in _b
+      and 'access prismaV2c "" v2c noauth exact hexa none none' in _b,
+      f"each community through VACM, bound to v2c, read-only: {_b}")
+check("group prismaV2c v1" not in _b and "any" not in
+      [l.split()[2] for l in _b.splitlines() if l.startswith("group ")],
+      "and no group line admits v1 or any model")
+check("com2sec" not in system._snmpd_body({"enabled": "yes"}, [], {},
+                                          agent="/x/a", release="0.1"),
+      "no community, no VACM lines")
+_root = tempfile.mkdtemp()
+os.makedirs(_root + "/etc/snmp")
+with open(_root + "/etc/snmp/snmpd.conf", "w") as _f:
+    _f.write(_b)
+_rd = system.SnmpDaemon(root=_root, runner=lambda *a, **k: (0, "")).read()
+check(_rd[1] == ["c1", "c2"], f"read back as communities: {_rd[1]}")
+print("  [ ok ] communities through VACM, v2c only, read back")
 
 if fail:
     print(f"{fail} FAILURES")

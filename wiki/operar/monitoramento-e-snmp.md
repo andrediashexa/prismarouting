@@ -35,6 +35,8 @@ Qualquer uma dessas linhas volta ao padrão com `no` na frente — `no snmp ente
 
 O `commit` recusa um agente ligado sem nenhuma comunidade e sem nenhum usuário v3: seria um agente que ninguém consegue consultar. E o agente é conferido pelo **efeito**: o arquivo é escrito, o serviço reinicia, e se ele não subir com a configuração nova a caixa devolve a anterior e diz isso no `commit`.
 
+A partir da versão 0.144.1 a caixa responde **só em SNMPv2c e SNMPv3**: uma consulta em SNMPv1, mesmo com a comunidade certa, fica sem resposta. O v1 não carrega contadores de 64 bits, então as portas do dataplane e os contadores da MIB do Prisma nem apareceriam para ele.
+
 O usuário v3 é criado com acesso somente leitura e exige autenticação **e** privacidade: configure as duas linhas, `auth` e `priv`. O `commit` também funciona dentro do bloco `snmp-user`, sem precisar sair dele.
 
 A comunidade e as frases secretas do v3 são senhas que trafegam na rede, e são tratadas como tal: `show running-config` mostra `<set, not shown>` no lugar delas.
