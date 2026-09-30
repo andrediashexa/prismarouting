@@ -1412,6 +1412,32 @@ class SnmpDaemon:
                 settings["enabled"] = "no"
         return settings, communities, users, traps
 
+    def stale(self, settings, communities, users, trap_hosts=(), hostname=""):
+        """
+        Does the snmpd.conf on disk differ from the one these settings would
+        write? False when SNMP is off, and when the file cannot be read -
+        from the management container it cannot, and a question that cannot
+        be answered is not a reason to restart the daemon.
+
+        WHY IT IS ASKED AT ALL: the file is written only when an SNMP setting
+        changes, and what a release puts in it changes with the release - the
+        view, the agent's registrations, sysDescr's release. An upgraded box
+        kept the file the release before wrote: measured on the X520 bench
+        after 0.144.2 -> 0.145.1, it served none of VRRPV3-MIB, the LAG and
+        BGP4V2 MIBs or IP-MIB, and said sysDescr 0.144.2, until somebody
+        changed a community.
+        """
+        if settings.get("enabled", "no") != "yes" or (not communities
+                                                      and not users):
+            return False
+        try:
+            with open(self.conf) as f:
+                on_disk = f.read()
+        except OSError:
+            return False
+        return on_disk != _snmpd_body(settings, communities, users, self.agent,
+                                      trap_hosts=trap_hosts, hostname=hostname)
+
     def apply(self, settings, communities, users, trap_hosts=(), hostname=""):
         why = validate_snmp(settings)
         if why:

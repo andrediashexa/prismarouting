@@ -229,6 +229,25 @@ echo "  IP-MIB: ipForwarding $IPFWD; 100.64.3.254 on ifIndex $IPADIX (ipAddressT
 printf '%s\n' "$IPWALK" | sed 's/^/    /' | head -12
 
 echo
+echo "=========== the boot after an upgrade rewrites snmpd.conf (#523) ==========="
+# What an upgrade leaves: the file the release before wrote, with none of this
+# release's lines and its release in sysDescr. No SNMP setting changed, so
+# only the boot's --load can notice - and before #523 it did not.
+$HX -c save >/dev/null 2>&1
+sed -i -e '/\.1\.3\.6\.1\.2\.1\.4\.34/d' -e 's/^sysdescr .*/sysdescr Prisma Routing 0.0.1/' \
+  /etc/snmp/snmpd.conf
+OLDCONF=$(grep -c '4\.34' /etc/snmp/snmpd.conf)
+LOADOUT=$($HX --load "$PRISMA_CONFIG" 2>&1)
+printf '%s\n' "$LOADOUT" | tail -3 | sed 's/^/  /'
+NEWCONF=$(grep -c '4\.34' /etc/snmp/snmpd.conf)
+NEWDESCR=$(grep '^sysdescr' /etc/snmp/snmpd.conf)
+echo "  lines naming ipAddressTable: $OLDCONF before the load, $NEWCONF after; $NEWDESCR"
+expect "the boot's load puts this release's lines back ($OLDCONF -> $NEWCONF)" \
+  test "$OLDCONF" = "0" -a "$NEWCONF" -gt 0
+expect "and this release's sysDescr ($NEWDESCR)" \
+  sh -c "! printf '%s' \"$NEWDESCR\" | grep -q 0.0.1"
+
+echo
 echo "=========== 3. a SET must be refused ==========="
 SETOUT=$(snmpset -v2c -c hexro 127.0.0.1 1.3.6.1.2.1.123.1.1.2.0 u 5 2>&1)
 printf '%s\n' "$SETOUT" | sed 's/^/  /'

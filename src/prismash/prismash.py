@@ -9932,13 +9932,19 @@ class Shell:
                 return False
         # sysName is the box's name (#516), so a rename rewrites snmpd.conf
         # on a box whose agent runs, and the SNMP settings with it.
+        # And whenever the file on disk is not the one this release writes
+        # (#523): an upgrade changes what goes in it and no setting, and the
+        # boot's --load is where an upgraded box first gets to say so.
+        name = target.hostname or running.hostname
         if d["snmp_changed"] or (d.get("hostname_changed")
-                                 and target.snmp.get("enabled") == "yes"):
+                                 and target.snmp.get("enabled") == "yes") \
+                or self.snmp.stale(target.snmp, target.snmp_communities,
+                                   target.snmp_users, target.snmp_trap_hosts,
+                                   hostname=name):
             ok, msg = self.snmp.apply(target.snmp, target.snmp_communities,
                                       target.snmp_users,
                                       target.snmp_trap_hosts,
-                                      hostname=target.hostname
-                                      or running.hostname)
+                                      hostname=name)
             if not ok:
                 self.err(f"snmp: {msg}")
                 return False

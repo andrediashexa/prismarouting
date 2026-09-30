@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **An upgrade leaves snmpd.conf as the release before wrote it.**
+  ([#523](https://github.com/andrediashexa/hexarouting/issues/523))
+  The file was written only when an SNMP setting changed, and what a release
+  puts in it - the view, the agent's registrations, sysDescr's release -
+  changes with the release and no setting. Measured on the X520 bench after
+  0.144.2 -> 0.145.1 and a reboot: none of VRRPV3-MIB, IEEE8023-LAG-MIB,
+  BGP4V2-MIB or IP-MIB was served, sysName was absent and sysDescr said
+  0.144.2. It is rewritten now whenever the file on disk is not the one this
+  release writes, in the apply the boot's `--load` runs, so the first boot of
+  a new release puts it right. `lab/snmp.sh` leaves an older file in place,
+  runs the boot's load and reads this release's lines back.
+
 ## 0.145.1 - IP-MIB: the dataplane's addresses under IF-MIB's ifIndex
 
 ### Added
