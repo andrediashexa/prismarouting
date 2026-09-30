@@ -72,6 +72,20 @@ ExecStartPre=/usr/lib/prisma-routing/load-the-images
 # measured on the version the medium carries - so the fragment adds the
 # card's node to the two above rather than replacing them.
 ExecStartPre=/bin/sh -c 'install -d -m 0755 /run/prisma-routing && /usr/lib/prisma-routing/bind-dataplane-nic --compose-devices > /run/prisma-routing/compose-devices.yaml'
+# TUN AND VHOST-NET LOADED BEFORE THE DATAPLANE STARTS, AND THEIR LINKS MADE
+# (#510). The two nodes exist at boot whether the modules are loaded or not,
+# so the container is given them - but runc asks systemd to allow
+# /dev/char/10:200 and /dev/char/10:238, which udev creates only once each
+# module is loaded, and systemd leaves out a path it cannot resolve. The
+# container could open both until the first `systemctl daemon-reload`, which
+# rebuilt its device filter without them: every pair the dataplane made after
+# that failed with "open '/dev/net/tun': Operation not permitted". Measured on
+# prisma-bench after a reboot, where the boot load's own `systemctl enable
+# snmpd` was that reload, and on the X520 box, which lost its management card
+# with its pairs. The leading - because a kernel with either one built in has
+# no module to load, and that is not a reason to start no dataplane.
+ExecStartPre=-/sbin/modprobe -a tun vhost_net
+ExecStartPre=-/bin/udevadm settle --timeout=10
 ExecStart=/usr/bin/docker-compose -f /etc/prisma-routing/compose.yaml -f /run/prisma-routing/compose-devices.yaml up -d
 # THE BINARY API, MADE REACHABLE BY THE ACCOUNTS THIS BOX GAVE A ROLE.
 # prismash runs on the HOST and maps /dev/shm/global_vm and /dev/shm/vpe-api.
