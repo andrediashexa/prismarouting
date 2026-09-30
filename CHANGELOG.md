@@ -77,6 +77,10 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.147.3 - two decisions recorded: rebalance stays off, the containers stay as they are
+
 ### Changed
 
 * **Two decisions recorded, and their issues closed.**
@@ -90,8 +94,6 @@ version has a chance of seeing it.
   plane and the VTY in their own, none privileged - and the SNMP agent and
   the telemetry get no container of their own: they read the host's /proc,
   /sys and the statistics segment, so the isolation would be nominal.
-
-### Fixed
 
 ## 0.147.2 - Debian 13 decided against: the box stays on Debian 12
 
