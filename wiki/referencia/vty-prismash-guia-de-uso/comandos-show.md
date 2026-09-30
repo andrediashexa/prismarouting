@@ -212,13 +212,13 @@ pg0   scale 1.00 Mbit/s, auto
 | Tecla | Efeito |
 |-------|--------|
 | `q` ou `Ctrl-C` | sai, e devolve o terminal exatamente como estava |
-| `l` | troca a escala de todos os gráficos entre a própria e a taxa de linha |
+| `l`   | troca a escala de todos os gráficos entre a própria e a taxa de linha |
 | `n`, espaço, seta para a direita ou para baixo, Page Down | próxima página |
 | `p`, `b`, seta para a esquerda ou para cima, Page Up | página anterior |
 
 | Argumento | Efeito |
 |-----------|--------|
-| `<nome>` | essa interface; uma palavra que não é o nome de nenhuma vale para todas que começam assim. Sem nome, todas menos `local0` |
+| `<nome>`  | essa interface; uma palavra que não é o nome de nenhuma vale para todas que começam assim. Sem nome, todas menos `local0` |
 | `interval <segundos>` | tempo entre amostras; padrão 1, entre 0,5 e 60 |
 
 O que vale saber para ler a tela:
@@ -226,7 +226,7 @@ O que vale saber para ler a tela:
 * **A escala está sempre escrita.** Por padrão cada interface usa a própria, arredondada para 1, 2 ou 5 vezes uma potência de dez — assim um fio de 10 Mbit/s numa porta de 10G aparece. Com `l` o gráfico passa a ser a fatia da taxa de linha, e o título diz, por exemplo, `line rate 10.00 Gbit/s: rx 12.4% tx 0.1%`. Uma interface cuja velocidade o dataplane não informa diz `no line rate known` e fica na própria escala.
 * **Ao lado de cada gráfico**: a taxa mais recente em bit/s e em pacotes por segundo, e os erros e descartes somados sobre as amostras da tela. Antes da segunda leitura não há taxa, e a coluna diz `--` — nunca 0.
 * **A janela anda**: tantas amostras quanto o terminal tem de largura, a mais nova à direita. Interfaces que não cabem na altura vão para as páginas seguintes, nunca são cortadas. Cabe num console serial de 80 colunas, e num console que responde em ASCII o gráfico é desenhado em ASCII.
-* **Mesma amostragem de `show interface utilization`**, então os dois não discordam de uma taxa. Se o dataplane parar de responder a tela não fecha: o gráfico segura a última amostra e a linha de baixo diz desde quando.
+* **Mesma amostragem de** `**show interface utilization**`, então os dois não discordam de uma taxa. Se o dataplane parar de responder a tela não fecha: o gráfico segura a última amostra e a linha de baixo diz desde quando.
 * **Não é para script.** Em `prismash -c`, num pipe ou num arquivo o comando se recusa e indica `show interface utilization`, sem escrever nenhuma sequência de controle.
 * **O custo foi medido antes do padrão de 1 segundo**: com 201 interfaces e tráfego, cada leitura levou 4 ms e ocupou 2,2 ms da thread principal do VPP — menos de 1% de um núcleo a uma leitura por segundo.
 
