@@ -978,6 +978,9 @@ def validate_snmp(settings: dict):
 #: resends until it does. A choice per destination, so that nobody had to
 #: make it for everybody.
 TRAP_KINDS = ("trap", "inform")
+#: The VACM names the communities are granted under (#511): v2c only.
+SNMP_V2C_SECNAME = "prismaCommunity"
+SNMP_V2C_GROUP = "prismaV2c"
 #: The user snmpd queries ITSELF as, for the monitors behind the
 #: notifications. Not an operator's account: read() leaves it out, or it
 #: would come back as one in the running configuration.
@@ -1183,12 +1186,24 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
         out.append(f"view hexa included .1.3.6.1.4.1.{pen}")
     out.append("sysdescr Prisma Routing" + (f" {rel}" if rel else ""))
     out += [f"disk {path} {free}" for path, free in SNMP_DISKS]
-    # READ-ONLY, at the daemon as well as in the agent. rocommunity and rouser
-    # only: there is no rwcommunity line anywhere and there must never be one.
+    # READ-ONLY, at the daemon as well as in the agent: every `access` line
+    # has no write view ("none" in the write column) and every user is a
+    # `rouser`; there is no rwcommunity line anywhere and there must never be
+    # one.
     # An SNMP SET that reconfigures a CGNAT is an outage one typo away, and
     # configuration belongs to the VTY where it is validated and rollback-able.
+    # v2c AND NOT v1 (#511), by the maintainer's decision. `rocommunity`
+    # grants v1 and v2c alike, and v1 cannot carry a Counter64 - IF-MIB's HC
+    # columns and the product MIB's counters are invisible to it - while its
+    # community travels exactly as v2c's does. So each community goes through
+    # VACM: a security name, a group bound to the v2c model only, and a
+    # read-only access on the view. A v1 request with the right community is
+    # answered as an unknown one.
     for c in communities:
-        out.append(f"rocommunity {c} default -V hexa")
+        out.append(f"com2sec {SNMP_V2C_SECNAME} default {c}")
+    if communities:
+        out.append(f"group {SNMP_V2C_GROUP} v2c {SNMP_V2C_SECNAME}")
+        out.append(f'access {SNMP_V2C_GROUP} "" v2c noauth exact hexa none none')
     for name in sorted(users):
         out.append(f"rouser {name} priv -V hexa")
     # THE INTERFACE TABLE IS THE AGENT'S, not net-snmp's (#498): net-snmp's
@@ -1273,7 +1288,11 @@ class SnmpDaemon:
                     settings["listen-address"] = parts[1]
                     settings["port"] = parts[2]
             elif w[0] == "rocommunity" and len(w) > 1:
+                # A file written before #511.
                 communities.append(w[1])
+            elif (w[0] == "com2sec" and len(w) > 3
+                  and w[1] == SNMP_V2C_SECNAME):
+                communities.append(w[3])
             elif w[0] == "rouser" and len(w) > 1:
                 if w[1] != SNMP_INTERNAL_USER:
                     users.setdefault(w[1], SnmpUser(w[1]))
