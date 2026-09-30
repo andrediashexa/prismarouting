@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+### Changed
+
+* **Debian 13 is decided against: the box stays on Debian 12.**
+  ([#36](https://github.com/andrediashexa/hexarouting/issues/36))
+  Decided by the maintainer on 2026-09-30 and the issue closed. The move had
+  no measured benefit, and the only ways past its two blockers - fd.io
+  publishing no trixie suite, and Debian 13 rejecting the fd.io key's SHA-1
+  binding - were to ship packages without authentication or to maintain a VPP
+  build of our own. `docs/roadmap.md` no longer lists it as blocked work.
+
 ## 0.147.1 - the box's own state over SNMP: tuning, self-test, commits, audit
 
 ### Added

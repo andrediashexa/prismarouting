@@ -544,11 +544,12 @@ waiting for somebody to start it:
   the VPP boundary, [#210](https://github.com/andrediashexa/hexarouting/issues/210) the
   per-worker partition. [#337](https://github.com/andrediashexa/hexarouting/issues/337),
   the disclosure, was decided on 2026-09-24: not to be made, because the
-  maintainer is the only one testing boxes for now;
-* **blocked on the same hardware as phase 7**, or on Debian
+  maintainer is the only one testing boxes for now.
+  [#36](https://github.com/andrediashexa/hexarouting/issues/36), Debian 13, was
+  decided on 2026-09-30: not to be made, and closed;
+* **blocked on the same hardware as phase 7**
   ([#163](https://github.com/andrediashexa/hexarouting/issues/163),
-  [#172](https://github.com/andrediashexa/hexarouting/issues/172)'s last half,
-  [#36](https://github.com/andrediashexa/hexarouting/issues/36));
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172)'s last half);
 * **deferred by its own issue until there is demand for it** -
   [#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP and
   [#80](https://github.com/andrediashexa/hexarouting/issues/80) pool selection by ACL both
@@ -1575,7 +1576,7 @@ actually start.
 | [#345](https://github.com/andrediashexa/hexarouting/issues/345) the rx queues the dataplane really opened, read on a booted box | **delivered.** The reader is in `appliance/selftest`, written from a capture of `show hardware-interfaces`, and the assertion in `lab/install-iso.sh` ran on the gate's own guest in 0.79.0: `rx queues: 1 of 1 on ens9, as requested (1)`, against the dataplane's own row |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29) | hardware this box does not have: real NICs and a load generator |
 | HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | **no longer blocked, and delivered**: the pair runs as two dataplanes in one container, each in its own namespace with its own API segment, so a second machine turned out not to be the requirement. What still needs hardware is one narrow question, and it is [#28](https://github.com/andrediashexa/hexarouting/issues/28)'s: whether a real NIC's driver reports a pulled cable. An af_packet host interface does not, and neither does a VPP tap, so the lab causes that failure in the dataplane as well as at the bridge |
-| [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
+| [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | **decided against on 2026-09-30**, closed: the box stays on Debian 12 |
 
 #### Installation - what the installer did not do, and now does
 
@@ -1792,15 +1793,22 @@ updates on an appliance shipped to providers.
 
 #### Outside the queue
 
-[#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13, blocked upstream with measured evidence: fd.io
+[#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 - **decided on 2026-09-30 by the
+maintainer: not to be made; the box stays on Debian 12 (bookworm) and the
+issue is closed.** The reasons were already on the issue and did not change:
+the move has no measured benefit, the only ways past the blockers are to strip
+package authentication (`[trusted=yes]`) or to maintain a VPP build of our
+own, and neither is a trade for a version number. What stood in the way when
+it was open: fd.io
 publishes no trixie suite. **Re-tested 2026-09-09 against v0.51.0 and both
 blockers still hold** — with a stronger datum than the first measurement: two
 newer release trains have shipped since (`fdio/2510`, `fdio/2602`) and neither
 added a trixie suite, so this is no longer an absence about to be corrected.
 The second blocker is the harder one and is a property of the fd.io key itself:
 Debian 13 verifies with `sqv`, which rejects the key's SHA-1 binding signature,
-so it would survive trixie packages appearing under the same key. Revisit when
-upstream moves, not on a schedule.
+so it would survive trixie packages appearing under the same key. Reopening it
+takes a new argument - a benefit measured on this box - not upstream catching
+up alone.
 
 #### Upgrading a box
 
