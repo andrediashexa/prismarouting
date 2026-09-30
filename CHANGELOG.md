@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.144.3 - VRRPV3-MIB (RFC 6527): the dataplane's VRRP routers in the IETF's MIB
+
+### Added
+
 * **VRRPV3-MIB (RFC 6527): the dataplane's virtual routers in the IETF's MIB.**
   ([#513](https://github.com/andrediashexa/hexarouting/issues/513))
   The operations table - master and primary address, virtual MAC, state,
@@ -88,8 +94,6 @@ version has a chance of seeing it.
   the RFC's module loaded (in `test/mibs`, with IF-MIB and the modules it
   imports), and the agent's test holds every served column to the type the
   module declares.
-
-### Fixed
 
 ## 0.144.2 - NATV2-MIB (RFC 7659): the CGNAT in the IETF's own MIB
 
