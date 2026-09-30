@@ -839,6 +839,34 @@ with _tf.TemporaryDirectory() as _d:
     check(system._release() == "0.141.2", "the release read from VERSION")
 system.SNMP_VERSION_FILE = _old
 
+print("--- SnmpDaemon.stale: the file on disk against the one this release writes")
+_old = system.SNMP_VERSION_FILE
+with _tf.TemporaryDirectory() as _d:
+    system.SNMP_VERSION_FILE = os.path.join(_d, "VERSION")
+    with open(system.SNMP_VERSION_FILE, "w") as _f:
+        _f.write("0.145.1\n")
+    _conf = os.path.join(_d, "snmpd.conf")
+    _sn = system.SnmpDaemon(runner=lambda a, stdin=None, timeout=30: (1, ""),
+                            root="", conf=_conf)
+    _on = {"enabled": "yes"}
+    check(_sn.stale(_on, ["p"], {}) is False,
+          "no file to read is not stale: from the container it cannot be read")
+    with open(_conf, "w") as _f:
+        _f.write(system._snmpd_body(_on, ["p"], {}, release="0.145.1",
+                                    hostname="edge1"))
+    check(_sn.stale(_on, ["p"], {}, hostname="edge1") is False,
+          "the file this release writes is not stale")
+    with open(_conf, "w") as _f:
+        _f.write(system._snmpd_body(_on, ["p"], {}, release="0.144.2",
+                                    hostname="edge1"))
+    check(_sn.stale(_on, ["p"], {}, hostname="edge1") is True,
+          "the file the release before wrote is (#523): its sysDescr, and "
+          "on the bench its view and registrations")
+    check(_sn.stale({"enabled": "no"}, ["p"], {}) is False
+          and _sn.stale(_on, [], {}) is False,
+          "SNMP off, or nobody to poll it: nothing to rewrite")
+system.SNMP_VERSION_FILE = _old
+
 print("--- User.__eq__: two accounts are equal by what they would write")
 a = account("alice", keys=["k1"], password="$6$h", role=system.ROLE_ADMIN)
 b = account("alice", keys=["k1"], password="$6$h", role=system.ROLE_ADMIN)
