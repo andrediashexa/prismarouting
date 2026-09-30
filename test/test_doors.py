@@ -28,7 +28,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "src", "prismash")
 sys.path.insert(0, SRC)
 import doors  # noqa: E402
-from system import LOGIN_SHELL, MANAGED_GROUPS, GROUP_ADMIN, SNMPD_USER  # noqa: E402
+from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_ADMIN, SNMPD_USER,  # noqa: E402
+                    SET_HOSTNAME)
 
 fail = 0
 
@@ -47,7 +48,7 @@ print("=== every command system.py runs is a door ===")
 # In prismash.py the doors are `self.host_run([...])`: the Linux end of a
 # dataplane interface (`host`), its MTU, `up`/`down`, and a description.
 SLOTS = {"name": ["ops"], "g": list(MANAGED_GROUPS), "host": ["tap4096", "ens19"],
-         "SNMPD_USER": [SNMPD_USER]}
+         "SNMPD_USER": [SNMPD_USER], "SET_HOSTNAME": [SET_HOSTNAME]}
 
 
 def slot(e):
@@ -104,7 +105,10 @@ for where, choices, stdin in sites:
         check(False, f"{where}: an argument this suite does not know")
         continue
     for argv in choices:
-        check(doors.verb_of(argv, stdin) is not None,
+        # A question any account may ask (the box's name, #516) is a door
+        # too, of the kind answer() takes before verb_of.
+        check(doors.verb_of(argv, stdin) is not None
+              or (stdin is None and tuple(argv) in doors.QUERIES),
               f"{where}: {' '.join(argv)} is a door")
 
 print("\n=== and nothing else is ===")
@@ -136,6 +140,12 @@ for argv, stdin, why in (
         (["ip", "link", "set", "dev", "ens19", "alias", "x" * 256], None, "an alias of 256"),
         (["ip", "link", "set", "dev", "ens19", "netns", "1"], None, "another ip-link verb"),
         (["ip", "link", "del", "ens19"], None, "a deletion"),
+        ([SET_HOSTNAME, "-f"], None, "an option for a hostname (#516)"),
+        ([SET_HOSTNAME, "a;b"], None, "a hostname with a ';'"),
+        ([SET_HOSTNAME, "9box"], None, "a hostname FRR would refuse"),
+        ([SET_HOSTNAME, "a" * 65], None, "a hostname of 65"),
+        ([SET_HOSTNAME, "box", "x"], None, "a second argument"),
+        (["hostname", "evil"], None, "renaming through hostname(1)"),
         (["ip", "route", "replace", "default", "via", "gw", "dev", "ens18"],
          None, "a gateway that is not an address"),
         (["ip", "route", "replace", "10.0.0.0/8", "via", "192.0.2.1", "dev",

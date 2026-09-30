@@ -1,0 +1,62 @@
+#!/bin/sh
+# set-hostname <name>: rename this box (#516). Run by the VTY through the
+# host's door of the same shape, on the host, as root.
+#
+# THREE PLACES, ONE NAME. The kernel's (what `hostname`, the shell prompt and
+# syslog say now), /etc/hostname (what the next boot sets) and the 127.0.1.1
+# line of /etc/hosts (the name resolving to this box, which sudo and every
+# program that looks itself up ask - the installer writes that line with the
+# same answer, and a rename that left it would make the box a stranger to
+# itself). FRR's `hostname` and SNMP's sysName follow from the VTY, which
+# owns their configurations.
+#
+# THE NAME IS CHECKED AGAIN HERE, with the rule the VTY and the door apply
+# (system.py's hostname_error): this runs as root, and a program that trusted
+# its caller for what it writes into /etc would be only as safe as every
+# caller it ever gets.
+#
+# PRISMA_ETC and PRISMA_HOSTNAME_CMD point it somewhere else, for the tests.
+set -u
+ETC=${PRISMA_ETC:-/etc}
+SETNAME=${PRISMA_HOSTNAME_CMD:-hostname}
+NAME=${1:-}
+
+[ $# -eq 1 ] || { echo "usage: set-hostname <name>" >&2; exit 2; }
+# A letter first (FRR refuses anything else), then letters, digits, hyphens
+# and dots, at most 64; no part between dots empty, over 63, or with a hyphen
+# at either end.
+case "$NAME" in
+  [A-Za-z]*) ;;
+  *) echo "set-hostname: '$NAME' does not start with a letter" >&2; exit 2 ;;
+esac
+case "$NAME" in
+  *[!A-Za-z0-9.-]*|*..*|*.|*-.*|*.-*|*-)
+    echo "set-hostname: '$NAME' is not letters, digits and hyphens between dots" >&2
+    exit 2 ;;
+esac
+if [ ${#NAME} -gt 64 ] || printf '%s\n' "$NAME" | tr '.' '\n' | awk 'length > 63 { bad = 1 } END { exit !bad }'; then
+  echo "set-hostname: '$NAME' is too long" >&2
+  exit 2
+fi
+
+# Written whole beside the file and renamed over it, so nothing ever reads
+# half a name. In a container the file is a bind mount, which a rename cannot
+# replace (EBUSY); there it is written in place, which is the only way there
+# is.
+put() {  # put <file> - stdin becomes the file's content, mode 0644
+  _tmp="$1.prisma-new"
+  cat > "$_tmp" && chmod 0644 "$_tmp" || { rm -f "$_tmp"; return 1; }
+  mv -f "$_tmp" "$1" 2>/dev/null && return 0
+  cat "$_tmp" > "$1" && rm -f "$_tmp"
+}
+
+printf '%s\n' "$NAME" | put "$ETC/hostname" \
+  || { echo "set-hostname: $ETC/hostname could not be written" >&2; exit 1; }
+# Every 127.0.1.1 line becomes the one name; none, and it is added.
+{ [ -f "$ETC/hosts" ] && cat "$ETC/hosts"; } 2>/dev/null \
+  | awk -v n="$NAME" '$1 == "127.0.1.1" { if (!done) print "127.0.1.1 " n; done = 1; next }
+                      { print } END { if (!done) print "127.0.1.1 " n }' \
+  | put "$ETC/hosts" \
+  || { echo "set-hostname: $ETC/hosts could not be written" >&2; exit 1; }
+"$SETNAME" "$NAME" \
+  || { echo "set-hostname: the kernel refused the name; it is written for the next boot" >&2; exit 1; }

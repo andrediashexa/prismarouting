@@ -312,6 +312,22 @@ configure
 
 **O** `**commit**` **recusa uma configuração em que ninguém mais consegue entrar por SSH**, ou em que ninguém que entra consegue mudar nada — tirar o papel do último administrador, por exemplo. O console não conta: pode não estar ao alcance de quem está configurando.
 
+# Nome da caixa (hostname)
+
+```
+configure
+ hostname cgnat-sp1
+ commit
+```
+
+O nome da caixa, num lugar só: o do Linux (o que `hostname` responde, o `/etc/hostname` e a linha `127.0.1.1` do `/etc/hosts`) e o `sysName` que o SNMP responde. Antes da versão 0.145.0, mudar o nome era editar esses arquivos à mão.
+
+O nome segue as regras de hostname: letras, dígitos e hífens, com pontos separando as partes, até 64 caracteres, e **começando por letra** — o FRR recusa qualquer outro. `no hostname` volta ao nome padrão da instalação, `prisma-routing`.
+
+`show running-config` mostra o nome que a caixa tem agora. Uma configuração salva antes da 0.145.0 não tem essa linha e não muda o nome da caixa ao carregar; o primeiro `save` depois do upgrade passa a gravá-la. O prompt continua `prisma>`.
+
+Os daemons do FRR recebem o nome no `commit`, mas continuam mostrando o nome com que foram iniciados.
+
 # DNS
 
 ```

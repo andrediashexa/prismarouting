@@ -42,7 +42,8 @@ import sys
 import threading
 
 from system import (LOGIN_SHELL, MANAGED_GROUPS, LocalFiles, RESOLV_CONF,
-                    RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, is_number)
+                    RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, SET_HOSTNAME,
+                    hostname_error, is_number)
 from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
                     probe_host_ok, probe_source_ok)
 
@@ -101,6 +102,8 @@ QUERIES = {
         "ask where the ssh host keys came from",
     ("/usr/lib/prisma-routing/bind-dataplane-nic", "--which-driver"):
         "ask which driver DPDK would get",
+    # The container has a name of its own (#516).
+    ("hostname",): "ask the box's name",
 }
 
 #: The longest a door may take. The VTY's own default is 30 seconds.
@@ -157,6 +160,8 @@ def verb_of(argv, stdin=None):
     if n == 6 and argv[:5] == ("ip", "-o", "link", "show", "dev") \
             and NETDEV.match(argv[5]):
         return "read a Linux interface"
+    if n == 2 and argv[0] == SET_HOSTNAME and hostname_error(argv[1]) is None:
+        return "rename the box"
     if n == 8 and argv[:5] == ("ip", "route", "replace", "default", "via") \
             and _address(argv[5]) and argv[6] == "dev" \
             and NETDEV.match(argv[7]):

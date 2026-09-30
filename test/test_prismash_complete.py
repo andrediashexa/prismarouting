@@ -3437,6 +3437,7 @@ def box_193():
                             "running": lambda s: ["router bgp 65000"],
                             "show": lambda s, c: (1, "")})()
     sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [],
+                            "read_hostname": lambda s: "",
                             "read_users": lambda s: {}})()
     sh.snmp = type("N", (), {"read": lambda s: ({}, [], {}, [])})()
     sh.feed("configure")
@@ -3994,7 +3995,8 @@ def box_211(reachable, cfg_text):
                            "reachable": lambda _s: run(_s, "show version")[0] == 0})()
     sh.frr = type("F", (prismash.Frr,), {"available": lambda s: False, "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
-    sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [], "read_users": lambda s: {}})()
+    sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [],
+                            "read_hostname": lambda s: "", "read_users": lambda s: {}})()
     sh.snmp = type("N", (), {"read": lambda s: ({}, [], {}, [])})()
     return sh
 
@@ -4912,17 +4914,17 @@ check(not _from_screen.unknown,
 # proportionate on a box that is working - a display where everything is
 # marked says as little as one where nothing is.
 #
-# Three statements of twenty-four, and each of the three is genuinely a
-# statement this VTY has no grammar for. The count is the one the assertion
-# below names one by one; this comment said four of twenty-five and was
-# wrong on the day it was written (#319), which is what a count in prose
+# Two statements of twenty-three, and each of the two is genuinely a
+# statement this VTY has no grammar for; `hostname` was the third until #516
+# made it the box's, which Frr.running() no longer returns. The count is the
+# one the assertion below names one by one; this comment said four of
+# twenty-five and was wrong on the day it was written (#319), which is what a count in prose
 # beside an assertion that disagrees with it is for. `no bgp ebgp-requires-policy` is the
 # interesting one: nearly every FRR BGP configuration carries it, this VTY
 # models no `no` inside a block at all, and the marker naming it is the marker
 # working rather than the marker being noisy.
 print("\n=== a real FRR read-back, and how much of it is outside ===")
 FRR_READBACK = """!
-hostname prisma-routing
 service integrated-vtysh-config
 !
 ip prefix-list PL-MEUS-BLOCOS seq 5 permit 200.150.8.0/22
@@ -4957,10 +4959,9 @@ exit
 _real, _n_real = mark_routing(FRR_READBACK)
 _marked_now = [l.strip()[:-len(UNCHECKED_MARK.strip())].strip()
                for l in _real if l.endswith(UNCHECKED_MARK)]
-check(sorted(_marked_now) == ["hostname prisma-routing",
-                              "no bgp ebgp-requires-policy",
+check(sorted(_marked_now) == ["no bgp ebgp-requires-policy",
                               "service integrated-vtysh-config"],
-      f"these three, and no others, are outside the grammar: {_marked_now}")
+      f"these two, and no others, are outside the grammar: {_marked_now}")
 # The other twenty-one are NOT marked, which is the half that makes the mark
 # mean something. Named one by one rather than counted, because a count passes
 # just as well when the wrong lines are clean.
@@ -5755,6 +5756,7 @@ def _shell271(candidate_text, running_text="", caps=None, api=None, dp=None,
         "apply_users": lambda self, *a, **k: (True, ""),
         "read_ssh": lambda self: {},
         "read_dns": lambda self: [],
+        "read_hostname": lambda self: "",
         "read_users": lambda self: {}})()
     # Fixtures written flat, in the model's words, and read as the file
     # format they stand for (#446).

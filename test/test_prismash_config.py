@@ -2141,5 +2141,36 @@ check("ens20" in _big.declared and "Ten0/0/0.7" not in _big.declared,
 print("  a large file parses in linear time")
 
 
+print("\n=== hostname: the box's name as a statement (#516) ===")
+# Mutations shown red, one at a time: the routing half's `hostname` kept
+# (routing_changed on every box after the upgrade, FRR's line saved twice);
+# adopted as the box's name (every upgraded box renamed to the image's
+# "prisma-routing" at its next boot); hostname_changed without the
+# bool(other.hostname) test (a file with no statement renames the box to "").
+_c = config.Config.parse("hostname cgnat-sp1\nssh port 22\n")
+check(_c.hostname == "cgnat-sp1" and not _c.unknown,
+      f"read off the file: {_c.hostname!r} {_c.unknown}")
+check("hostname cgnat-sp1" in _c.text().splitlines(),
+      "and written back, a line of its own")
+_c = config.Config.parse("hostname 9box\nhostname a b\n")
+check(_c.hostname == "" and len(_c.unknown) == 2
+      and "letter" in _c.unknown[0][2] and "expected" in _c.unknown[1][2],
+      f"the file refuses what the prompt refuses: {_c.unknown}")
+_old = config.Config.parse("ssh port 22\n! routing\nhostname prisma-routing\n"
+                           "router bgp 65001\n exit\n")
+check(_old.hostname == "" and _old.routing == ["router bgp 65001", " exit"],
+      f"a file saved before #516: FRR's line dropped, not adopted: "
+      f"{_old.hostname!r} {_old.routing}")
+check("hostname" not in _old.text(),
+      "and nothing about a name written back where nothing stated one")
+_run = config.Config.parse("hostname edge1\n")
+check(not _run.delta_to(_old)["hostname_changed"],
+      "a file with no statement leaves the box's name alone")
+check(_run.delta_to(config.Config.parse("hostname edge2\n"))
+      ["hostname_changed"]
+      and not _run.delta_to(config.Config.parse("hostname edge1\n"))
+      ["hostname_changed"], "a different name is a change, the same is not")
+print("  read, refused, dropped from the routing half, and diffed")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

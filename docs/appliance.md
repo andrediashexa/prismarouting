@@ -2231,6 +2231,55 @@ rewrite it on **every lease and every renewal**, through `make_resolv_conf()`.
 
 Out of scope: `search` and `domain`, and a resolver per VRF.
 
+### The box's name from the VTY
+
+```
+prisma# [edit] hostname cgnat-sp1
+prisma# [edit] commit
+```
+
+Before [#516](https://github.com/andrediashexa/hexarouting/issues/516) the
+name was the installer's answer for good: changing it meant editing
+`/etc/hostname` and `/etc/hosts` by hand, and FRR's `hostname` was a routing
+line of its own, shown as "not checked", that said `prisma-routing` on every
+box whatever the installer had been told.
+
+* **`hostname <name>`**: RFC 1123 labels - letters, digits and hyphens, a
+  hyphen at neither end of one, dots between them - at most 64 characters (the
+  kernel's `HOST_NAME_MAX`), and **a letter first**, because FRR refuses any
+  other `hostname`. `no hostname` is the installer's default, `prisma-routing`,
+  stated: a Linux box cannot have no name.
+* **Applied on the host by one program.** The VTY's container has a name of its
+  own, so the commit asks the host's door to run
+  `/usr/lib/prisma-routing/set-hostname <name>`, which checks the name again
+  and writes `/etc/hostname`, every `127.0.1.1` line of `/etc/hosts` (the line
+  the installer writes) and the kernel's name. The read goes through the door
+  too: `running_config()` asks the host's `hostname`.
+* **SNMP's sysName follows.** `snmpd.conf` carries `sysname <name>`, and a
+  rename rewrites it on a box whose agent runs - net-snmp reads the kernel's
+  name once, when it starts.
+* **FRR is told, and not held to it.** Measured on FRR 10.7.1: `hostname`
+  through vtysh - to every daemon, to one with `-d`, or as frr-reload sends it
+  - exits 0 and changes nothing any daemon's `show running-config` says, and
+  vtysh adds a `hostname` line of its own with the kernel's name as it read it
+  when it started. So the commit sends it and does not refuse on the answer;
+  FRR's lines are kept out of the routing half, where they read as routing
+  somebody typed, and `Frr.reload()` carries them so frr-reload never sends
+  `no hostname`.
+* **A file saved before this keeps the box's name.** Every one of them carries
+  FRR's `hostname prisma-routing` in its routing half. It is dropped there and
+  **not** adopted: taken as the box's name, it would rename every upgraded box
+  to the image's at its next boot. A file with no `hostname` statement changes
+  nothing; the first `save` after the upgrade writes the name the box has.
+* **The prompt stays `prisma`.** The ISO labs and every screen in the wiki wait
+  for `prisma> `; a prompt that followed the name would be one more thing an
+  operator's own automation had to learn per box.
+
+`lab/hostname.sh` renames a box and reads the name back from the kernel,
+`/etc/hostname`, `/etc/hosts`, sysName and the running configuration, commits
+routing after it, and gives the name back; its off run leaves the host program
+out and goes red.
+
 ### The medium carries no credentials
 
 The live image's root account is **locked** and `ssh.service` is **masked** on

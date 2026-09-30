@@ -1232,6 +1232,65 @@ _rd = system.SnmpDaemon(root=_root, runner=lambda *a, **k: (0, "")).read()
 check(_rd[1] == ["c1", "c2"], f"read back as communities: {_rd[1]}")
 print("  [ ok ] communities through VACM, v2c only, read back")
 
+print("\n=== hostname_error: the names `hostname` takes (#516) ===")
+# Mutations shown red, one at a time: the letter-first test removed ("9box",
+# which FRR refuses, is taken); the per-label hyphen test removed ("a-.b").
+for _v in ("prisma-routing", "cgnat-sp1", "edge.example.net", "A1",
+           "a" * 32 + "." + "b" * 31):
+    check(system.hostname_error(_v) is None, f"{_v!r} is a hostname")
+for _v, _needle in (("", "1 to 64"), ("a" * 65, "1 to 64"),
+                    ("9box", "starts with a letter"),
+                    ("-box", "starts with a letter"),
+                    ("box-", "letters, digits and hyphens"),
+                    ("a-.b", "letters, digits and hyphens"),
+                    ("a..b", "letters, digits and hyphens"),
+                    ("a_b", "letters, digits and hyphens"),
+                    ("a b", "letters, digits and hyphens"),
+                    ("caf\u00e9", "letters, digits and hyphens"),
+                    ("a." + "b" * 62, None)):
+    _why = system.hostname_error(_v)
+    if _needle is None:
+        check(_why is None, f"{_v!r}: a 63-character label is one: {_why}")
+    else:
+        check(_needle in " ".join(_why or ()), f"{_v!r} is refused: {_why!r}")
+
+print("\n=== System.read_hostname / write_hostname: asked of the host ===")
+# Mutation shown red: read_hostname() without the hostname_error() test - a
+# box named "9box" by hand reports it, the next `save` writes a statement the
+# file parser refuses, and the box does not load at boot.
+_calls = []
+def _hn_run(argv, stdin=None, timeout=30):
+    _calls.append(list(argv))
+    return _hn_answer
+_hn = system.System(runner=_hn_run)
+_hn_answer = (0, "cgnat-sp1\n")
+check(_hn.read_hostname() == "cgnat-sp1" and _calls[-1] == ["hostname"],
+      f"the host's name, through `hostname`: {_calls[-1:]}")
+_hn_answer = (0, "9box\n")
+check(_hn.read_hostname() == "", "a name the VTY could not write back is none")
+_hn_answer = (127, "hostname: not found")
+check(_hn.read_hostname() == "", "no answer is no name, not an exception")
+_hn_answer = (0, "")
+check(_hn.write_hostname("edge1") == (True, "")
+      and _calls[-1] == [system.SET_HOSTNAME, "edge1"],
+      f"a rename runs the host program: {_calls[-1]}")
+_n = len(_calls)
+_ok, _msg = _hn.write_hostname("9box")
+check(not _ok and "letter" in _msg and len(_calls) == _n,
+      f"a bad name is refused before the host is asked: {_msg}")
+_hn_answer = (1, "set-hostname: the kernel refused the name\n")
+check(_hn.write_hostname("edge1") == (False, "set-hostname: the kernel "
+                                             "refused the name"),
+      "the host program's own words come back")
+_hn_answer = (2, "")
+check(_hn.write_hostname("edge1")[1].endswith("exited 2"),
+      "and its status when it said nothing")
+check("sysname edge1" in system._snmpd_body({}, ["c"], {}, release="",
+                                            hostname="edge1").splitlines()
+      and not any(l.startswith("sysname") for l in system._snmpd_body(
+          {}, ["c"], {}, release="").splitlines()),
+      "sysName is the box's name when there is one, and absent otherwise")
+
 if fail:
     print(f"{fail} FAILURES")
     sys.exit(1)

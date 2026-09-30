@@ -39,6 +39,16 @@ DNS_OWNED = "# Written by Prisma Routing: 'dns server' in the VTY owns this file
 DNS_MAX = 3
 LOGIN_SHELL = "/usr/bin/prismash-login"
 
+# THE BOX'S NAME (#516): Linux's, FRR's and SNMP's sysName, set in one place.
+# The default is the installer's own ("prisma-routing", #202), which is what
+# `no hostname` goes back to.
+HOSTNAME_DEFAULT = "prisma-routing"
+#: HOST_NAME_MAX: the kernel keeps 64 characters and cuts the rest.
+HOSTNAME_MAX = 64
+#: The host program that renames the box - /etc/hostname, the 127.0.1.1 line
+#: of /etc/hosts and the kernel's name - behind the door of the same shape.
+SET_HOSTNAME = "/usr/lib/prisma-routing/set-hostname"
+
 # Order matters: it is the order these are written out in, and a stable order
 # is what keeps a candidate built from the running configuration identical to
 # it when nothing changed.
@@ -471,6 +481,33 @@ def dns_error(value):
     return None
 
 
+def hostname_error(value):
+    """
+    None if `value` is a name `hostname` can take, else why not, as
+    (verdict, prose). One predicate for the prompt, the file, the door and
+    what is read back (#516).
+
+    RFC 1123's labels - letters, digits and hyphens, a hyphen at neither end
+    of one, dots between them - which is what the installer accepts, and a
+    LETTER FIRST: FRR refuses any other `hostname` ("Please specify string
+    starting with alphabet"), and a name half the box took would be two.
+    """
+    if not value or len(value) > HOSTNAME_MAX:
+        return ("hostname: 1 to 64 characters",
+                f"'{value}' is {len(value)}; the kernel keeps {HOSTNAME_MAX}")
+    if not value[0].isascii() or not value[0].isalpha():
+        return ("hostname: starts with a letter",
+                f"'{value}' does not, and FRR refuses a name that does not")
+    for label in value.split("."):
+        if not label or len(label) > 63 or label[0] == "-" \
+                or label[-1] == "-" or not all(
+                    c.isascii() and (c.isalnum() or c == "-") for c in label):
+            return ("hostname: letters, digits and hyphens",
+                    f"'{value}' is not: each part between dots is 1 to 63 of "
+                    f"them, a hyphen at neither end")
+    return None
+
+
 class LocalFiles:
     """
     Every file the VTY writes on the host, written here (#448, phase B).
@@ -640,6 +677,30 @@ class System:
         """Write `path` whole, by rename, mode 0644 - resolv.conf is read by
         every account on the box, and a lookup must never see half of it."""
         self.files.write(path, text, mode=0o644, atomic=True)
+
+    def read_hostname(self) -> str:
+        """
+        The host's name, asked of the host (#516): the VTY's container has a
+        name of its own. "" when it cannot be asked, or when it is one the
+        VTY could not write back - reported, it would be saved, and a saved
+        statement the file parser refuses is a box that does not load.
+        """
+        rc, out = self._run(["hostname"])
+        name = out.strip() if rc == 0 else ""
+        return name if hostname_error(name) is None else ""
+
+    def write_hostname(self, name) -> tuple:
+        """
+        Rename the host to `name`: (ok, message). The host program checks the
+        name again and says what it could not do.
+        """
+        why = hostname_error(name)
+        if why:
+            return False, " - ".join(why)
+        rc, out = self._run([SET_HOSTNAME, name])
+        if rc != 0:
+            return False, out.strip() or f"{SET_HOSTNAME} exited {rc}"
+        return True, ""
 
     def read_ssh(self) -> dict:
         s = dict(SSH_DEFAULTS)
@@ -1166,7 +1227,7 @@ def snmp_monitors(pen):
 
 
 def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
-                trap_hosts=()):
+                trap_hosts=(), hostname=""):
     """The snmpd.conf this VTY owns. Every line is generated; none is copied."""
     # No number means the product's (#508). A running configuration read off a
     # file with no enterprise line says "" - measured, the file Debian ships
@@ -1189,6 +1250,11 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
     if pen:
         out.append(f"view hexa included .1.3.6.1.4.1.{pen}")
     out.append("sysdescr Prisma Routing" + (f" {rel}" if rel else ""))
+    # The box's name as sysName (#516), written rather than left to net-snmp,
+    # which reads the kernel's once, when it starts: a rename would answer
+    # the old name until something restarted it.
+    if hostname:
+        out.append(f"sysname {hostname}")
     out += [f"disk {path} {free}" for path, free in SNMP_DISKS]
     # READ-ONLY, at the daemon as well as in the agent: every `access` line
     # has no write view ("none" in the write column) and every user is a
@@ -1328,7 +1394,7 @@ class SnmpDaemon:
                 settings["enabled"] = "no"
         return settings, communities, users, traps
 
-    def apply(self, settings, communities, users, trap_hosts=()):
+    def apply(self, settings, communities, users, trap_hosts=(), hostname=""):
         why = validate_snmp(settings)
         if why:
             return False, why
@@ -1354,7 +1420,7 @@ class SnmpDaemon:
 
         self.files.write(self.conf,
                          _snmpd_body(settings, communities, users, self.agent,
-                                     trap_hosts=trap_hosts),
+                                     trap_hosts=trap_hosts, hostname=hostname),
                          mode=0o600)
 
         # THE AGENT HAS TO REACH THE DATAPLANE (#499). snmpd runs as

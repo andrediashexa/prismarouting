@@ -783,7 +783,7 @@ _target.snmp = {"location": "rack 4"}
 _sh = shell()
 _sh.running_config = lambda: config.Config()
 _sh.snmp = type("N", (), {
-    "apply": lambda self, s, c, u, t=(): (False, "snmpd did not restart"),
+    "apply": lambda self, s, c, u, t=(), hostname="": (False, "snmpd did not restart"),
 })()
 _rv, _text = driven(_sh.apply, _target)
 says("snmp write", _text, "error: snmp: snmpd did not restart", _rv)

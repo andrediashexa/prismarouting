@@ -355,6 +355,10 @@ install -D -m 0644 "$REPO/appliance/dhclient-prisma-routing-dns" \
 # VTY banner by absolute path. Two readers of one answer (#248).
 install -D -m 0755 "$REPO/appliance/ssh-host-key-origin" \
     "$DESTDIR/usr/lib/prisma-routing/ssh-host-key-origin"
+# The one program that renames the box (#516), run by the VTY through the
+# host's door of the same shape.
+install -D -m 0755 "$REPO/appliance/set-hostname" \
+    "$DESTDIR/usr/lib/prisma-routing/set-hostname"
 install -D -m 0755 "$REPO/appliance/prisma-routing-install" "$DESTDIR/usr/sbin/prisma-routing-install"
 install -D -m 0755 "$REPO/appliance/install-from-cmdline" "$DESTDIR/usr/lib/prisma-routing/install-from-cmdline"
 install -D -m 0755 "$REPO/tools/ipfix_collector.py"   "$DESTDIR/usr/lib/prisma-routing/ipfix-collector"
