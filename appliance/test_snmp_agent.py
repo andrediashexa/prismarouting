@@ -552,6 +552,10 @@ check([(r["interface"], r["vr_id"], r["family"], r["status"], r["priority"],
           ("pg0", 20, 6, 2, 90, 200, False, True, ["2001:db8::1"])],
       f"each router's interface, VRID, family, state and settings: {_vd}")
 check(agent.parse_vrrp_detail("", {}) == [], "no routers, no rows")
+check(agent._inet_octets("10.9.0.2") == "0A 09 00 02"
+      and agent._inet_octets("2001:db8::1")
+      == "20 01 0D B8 00 00 00 00 00 00 00 00 00 00 00 01",
+      "an InetAddress as pass_persist's octets, four or sixteen")
 _own = agent.parse_interface_addresses(
     "loop0 (up):\n  L3 10.9.0.2/24\n  L3 fe80::1/64\n"
     "pg0 (up):\n  L3 2001:db8::2/64\nlocal0 (dn):\n")
