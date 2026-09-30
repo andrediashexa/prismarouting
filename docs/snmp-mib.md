@@ -54,7 +54,18 @@ AgentX. An NMS that knows these needs no template of ours.
 | OSPF neighbours, interfaces, LSDB | OSPF-MIB | `.1.3.6.1.2.1.14` | ospfd | 0.142.0 |
 | OSPFv3 | OSPFV3-MIB | `.1.3.6.1.2.1.191` | ospf6d | 0.142.0 |
 | IS-IS adjacencies, circuits | ISIS-MIB | `.1.3.6.1.2.1.138` | isisd | 0.142.0 |
+| BGP peers of both families, IPv6 and unnumbered included | BGP4V2-MIB (draft-ietf-idr-bgp4-mibv2, experimental arc) | `.1.3.6.1.3.5.1` | bgpd | 0.144.5 |
 | the FIB's size (not the FIB) | IP-FORWARD-MIB `ipCidrRouteNumber`, `inetCidrRouteNumber` | `.1.3.6.1.2.1.4.24.3`, `.24.6` | net-snmp | 0.142.1 |
+
+BGP4-MIB keys a peer on an IPv4 address, so an IPv6 session - and every
+unnumbered one, which peers on a link-local address - has no row in it.
+BGP4V2-MIB, which bgpd serves beside it (#521), keys its peer table on the
+instance, the address type (1 IPv4, 2 IPv6) and the address, with no length
+byte: `bgp4V2PeerState` for an IPv4 peer is
+`.1.3.6.1.3.5.1.1.2.1.13.1.1.<a.b.c.d>`. The module is still an IETF draft,
+so it sits under the experimental arc and is not in Debian's MIB set; an NMS
+reads it by number or with the draft's module. `lab/routing.sh` reads an IPv4
+and an unnumbered IPv6 peer established in it.
 
 The route tables themselves are left out of the view on purpose: a full table
 is about a million rows, and an NMS walking it would weigh on the box at every

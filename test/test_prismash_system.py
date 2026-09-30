@@ -756,6 +756,7 @@ check(body.splitlines()[1:] == [
     "view hexa included .1.3.6.1.2.1.14",
     "view hexa included .1.3.6.1.2.1.191",
     "view hexa included .1.3.6.1.2.1.138",
+    "view hexa included .1.3.6.1.3.5.1",
     "view hexa included .1.3.6.1.2.1.4.24.3",
     "view hexa included .1.3.6.1.2.1.4.24.6",
     "view hexa included .1.3.6.1.4.1.70000",

@@ -1092,6 +1092,7 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              ".1.3.6.1.2.1.14",         # OSPF-MIB: ospfd
              ".1.3.6.1.2.1.191",        # OSPFV3-MIB: ospf6d
              ".1.3.6.1.2.1.138",        # ISIS-MIB: isisd
+             ".1.3.6.1.3.5.1",          # BGP4V2-MIB: bgpd, IPv6 peers too (#521)
              # The FIB's SIZE and not the FIB (#503): a full table is about a
              # million routes, and a walk of it is never the default view
              # (docs/snmp-plan.md). Measured in lab/igp.sh: .24.3 counts IPv4
