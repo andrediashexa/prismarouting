@@ -1576,7 +1576,7 @@ actually start.
 | [#345](https://github.com/andrediashexa/hexarouting/issues/345) the rx queues the dataplane really opened, read on a booted box | **delivered.** The reader is in `appliance/selftest`, written from a capture of `show hardware-interfaces`, and the assertion in `lab/install-iso.sh` ran on the gate's own guest in 0.79.0: `rx queues: 1 of 1 on ens9, as requested (1)`, against the dataplane's own row |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29) | hardware this box does not have: real NICs and a load generator |
 | HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | **no longer blocked, and delivered**: the pair runs as two dataplanes in one container, each in its own namespace with its own API segment, so a second machine turned out not to be the requirement. What still needs hardware is one narrow question, and it is [#28](https://github.com/andrediashexa/hexarouting/issues/28)'s: whether a real NIC's driver reports a pulled cable. An af_packet host interface does not, and neither does a VPP tap, so the lab causes that failure in the dataplane as well as at the bridge |
-| [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | **decided against on 2026-09-30**, closed: the box stays on Debian 12 |
+| [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | **withdrawn on 2026-09-30**: decided against by the maintainer; the box stays on Debian 12 |
 
 #### Installation - what the installer did not do, and now does
 
