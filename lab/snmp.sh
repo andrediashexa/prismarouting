@@ -291,8 +291,11 @@ expect "NATV2-MIB names the pool as instance 1 ($NVALIAS)" test "$NVALIAS" = "nb
 expect "with the dataplane's three ports and one subscriber" \
   test "$NVPORTS/$NVSUBS" = "3/1"
 expect "the pool's ports from 1024 ($NVMIN)" test "$NVMIN" = "1024"
-expect_in "and its outside range, begin and end" "200.150.0.16" "$NVBEGIN $NVEND"
-expect_in "to 200.150.0.19" "200.150.0.19" "$NVEND"
+# An InetAddress is printed as its bytes: the type that would make net-snmp
+# print it dotted is natv2PoolAddressType, a column of another table.
+expect_in "and its outside range begins at 200.150.0.16 (C8 96 00 10)" \
+  "C8 96 00 10" "$NVBEGIN"
+expect_in "and ends at 200.150.0.19 (C8 96 00 13)" "C8 96 00 13" "$NVEND"
 expect_not_in "every NATV2-MIB row resolves to a name in the RFC's module" \
   "iso.3.6.1.2.1.234" "$NVWALK"
 expect "and the ports it holds" test "$PORTS" = "3"
