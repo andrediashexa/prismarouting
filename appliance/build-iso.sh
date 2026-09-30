@@ -104,6 +104,19 @@ else
   echo "configured on the installed box." >&2
   exit 1
 fi
+# THE PLUGIN'S API DEFINITIONS (#527), built by the same ninja run as the two
+# plugins above. install.sh refuses a tree without them, and it runs in the
+# chroot below, which sees only what is copied into it - so the medium of
+# 0.148.0's first cut failed there, at install.sh's refusal, with the file
+# sitting in the build tree out here. Refused here too, before anything is
+# built, and copied in beside the tree install.sh reads.
+API_JSON="$REPO/.build-vpp/src/plugins/bpa/bpa.api.json"
+if [ ! -f "$API_JSON" ]; then
+  echo "bpa.api.json not found under .build-vpp; run tools/build.sh plugin" >&2
+  echo "first. Without it the VTY reaches the CGNAT through a vat2 process" >&2
+  echo "per message on every box installed from this medium." >&2
+  exit 1
+fi
 
 # Optimised, or not shipped (#490): every release to 0.140.2 carried the
 # plugin at -O0, 3.6x the clocks a packet, and nothing said so.
@@ -246,6 +259,8 @@ cp -a "$REPO/src" "$REPO/appliance" "$REPO/tools" "$REPO/docs" "$ROOT/src/"
 mkdir -p "$ROOT/vpp_plugins" "$ROOT/vat2_plugins"
 cp "$PLUGIN_SO" "$ROOT/vpp_plugins/"
 cp "$VAT2_SO" "$ROOT/vat2_plugins/"
+mkdir -p "$ROOT/src/.build-vpp/src/plugins/bpa"
+cp "$API_JSON" "$ROOT/src/.build-vpp/src/plugins/bpa/"
 # The chroot cannot see the host's .git, so the stamp is computed here and
 # passed in. Without it every ISO would declare itself "unknown".
 if [ -z "${PRISMA_VERSION_STAMP:-}" ]; then
