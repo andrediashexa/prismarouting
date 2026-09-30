@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.145.0 - the box's name from the VTY: hostname <name>
+
+### Added
+
 * **The box's name from the VTY: `hostname <name>`.**
   ([#516](https://github.com/andrediashexa/hexarouting/issues/516))
   One statement for the name Linux has - `/etc/hostname`, the `127.0.1.1` line
@@ -92,8 +98,6 @@ version has a chance of seeing it.
   it: measured on FRR 10.7.1, a live `hostname` changes nothing its daemons
   report. The prompt stays `prisma`. `lab/hostname.sh` reads the name back
   from every place that says one.
-
-### Fixed
 
 ## 0.144.5 - BGP4V2-MIB: IPv6 BGP peers over SNMP
 
