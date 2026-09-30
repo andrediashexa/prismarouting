@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.146.0 - a Zabbix 7.0 template for the box: show snmp zabbix-template
+
+### Added
+
 * **A Zabbix 7.0 template for the box: `show snmp zabbix-template`.**
   ([#514](https://github.com/andrediashexa/hexarouting/issues/514))
   Asked for by the maintainer: one template for everything the box serves
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   into Zabbix 7.0.31 and polled against a lab box, traps included; the first
   import was refused for UUIDs that were not v4, and the first poll raised
   "link down" for an interface an operator had just shut.
-
-### Fixed
 
 ## 0.145.2 - an upgraded box writes the snmpd.conf of the release it runs
 
