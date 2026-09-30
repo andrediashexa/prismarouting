@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.147.1 - the box's own state over SNMP: tuning, self-test, commits, audit
+
+### Added
+
 * **The box's own state over SNMP: tuning, self-test, commits, the trail.**
   ([#524](https://github.com/andrediashexa/hexarouting/issues/524))
   Phase 4 of `docs/snmp-plan.md`, four groups in PRISMA-ROUTING-MIB:
@@ -97,8 +103,6 @@ version has a chance of seeing it.
   triggers. `lab/snmp.sh` reads them all by name - the real self-test's counts
   against its console, a `commit confirmed` pending and then confirmed - and
   `lab/snmp-traps.sh` receives `selfTestFailed`.
-
-### Fixed
 
 ## 0.147.0 - monitor interface: each interface's traffic as a live chart
 
