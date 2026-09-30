@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.144.5 - BGP4V2-MIB: IPv6 BGP peers over SNMP
+
+### Added
+
 * **BGP4V2-MIB: IPv6 BGP peers over SNMP.**
   ([#521](https://github.com/andrediashexa/hexarouting/issues/521))
   BGP4-MIB keys a peer on an IPv4 address, so an IPv6 session - and every
@@ -85,8 +91,6 @@ version has a chance of seeing it.
   `1.3.6.1.3.5.1`), keyed on address type and address; its subtree is in the
   view now. `lab/routing.sh` reads the IPv4 peer and the unnumbered IPv6 one
   established in it, and the upstream's AS beside the first.
-
-### Fixed
 
 ## 0.144.4 - IEEE8023-LAG-MIB: the LACP bundles in IEEE 802.1AX's MIB
 
