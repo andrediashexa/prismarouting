@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.144.1 - SNMP answers v2c and v3 only
+
+### Fixed
+
 * **SNMP answered v1.**
   ([#511](https://github.com/andrediashexa/hexarouting/issues/511))
   The box grants v2c and v3, by the maintainer's decision, and wrote each
