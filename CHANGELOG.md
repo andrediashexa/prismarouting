@@ -97,6 +97,22 @@ version has a chance of seeing it.
   and the upgrade artifact carry `python3-vpp-api` and the plugin's
   `bpa.api.json`.
 
+### Changed
+
+* **The VTY prompt says the box's name.**
+  ([#526](https://github.com/andrediashexa/hexarouting/issues/526))
+  Reported by the maintainer on 0.147.1: after `hostname <name>` Linux took
+  the name and the prompt still said `prisma>`, which #516 had kept on
+  purpose. It is `<name>> ` and `<name># [edit ...]` now, read from the host
+  once per session and set again by the commit that renames the box. A box on
+  the installer's default name, and one whose name cannot be read, keeps
+  `prisma>` - every screen in the documents - and a name read off a door
+  nobody answered, the management container's own id, is not taken for the
+  box's. A name past 20 characters shows its first 19 and a `~`, and the
+  block path gives up the columns it takes. `lab/install-iso.sh` waits for the
+  prompt of the name it installed with; `lab/hostname.sh` reads a new
+  session's prompt after the rename and after `no hostname`.
+
 ## 0.147.4 - a save from the VTY's container no longer drops SNMP
 
 ### Fixed

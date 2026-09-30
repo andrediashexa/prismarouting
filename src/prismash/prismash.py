@@ -20,6 +20,7 @@ import io
 import ipaddress
 import json
 import os
+import socket
 import re
 import shlex
 import shutil
@@ -6981,6 +6982,8 @@ class Shell:
         # Through the host's doors (#448, phase B), which run the command
         # itself when no daemon listens.
         self.sys = System(runner=doors.runner(), files=doors.DoorFiles())
+        # The box's name the prompt shows, read on first use (#526).
+        self._prompt_name = None
         self.snmp = SnmpDaemon(runner=doors.runner(), files=doors.DoorFiles())
         self.dp = Vpp()
         self.api = vppapi.client()
@@ -7064,18 +7067,73 @@ class Shell:
     #: An 80-column serial console is what a racked box is seen through, and a
     #: prompt that pushes the cursor off the line is worse than a vague one.
     PROMPT_MAX = 44
+    #: The most of the box's name a prompt shows (#526). A hostname may be 64
+    #: characters; the prompt is a label, and one that long leaves no line to
+    #: type on.
+    PROMPT_NAME_MAX = 20
+    #: What the prompt says of a box nobody named, and of one whose name the
+    #: VTY could not read: the product. Every screen in the documents shows
+    #: it, and a box on the installer's default name is the one they describe.
+    PROMPT_NAME_DEFAULT = "prisma"
+
+    @staticmethod
+    def container_name():
+        """
+        This process's own hostname when it runs in a container (the
+        management container's is its id), "" on the host.
+        """
+        if not os.path.exists("/.dockerenv"):
+            return ""
+        return socket.gethostname()
+
+    def prompt_name(self):
+        """
+        The box's name as the prompt shows it (#526), read once per session:
+        the host's, asked through the door #516 added, since the VTY's
+        container has a name of its own. A commit that renames the box sets
+        it again (apply_hostname); a prompt drawn per keystroke asks nobody.
+
+        The installer's default name, and a name that cannot be read, show as
+        the product - `prisma>`, what every document shows. A name longer
+        than PROMPT_NAME_MAX keeps its start, which is the part people choose
+        to tell boxes apart.
+        """
+        if getattr(self, "_prompt_name", None) is None:
+            try:
+                name = self.sys.read_hostname()
+            except Exception:
+                name = ""
+            # A door nobody answered runs `hostname` where the VTY is, and in
+            # the management container that is the container's id - twelve
+            # hex digits, a valid hostname when the first is a letter, and no
+            # box's name. Only that shape: a lab whose container IS the box
+            # renames it for real.
+            if name and name == self.container_name() \
+                    and re.fullmatch(r"[0-9a-f]{12}", name):
+                name = ""
+            self._prompt_name = name
+        name = self._prompt_name
+        if not name or name == HOSTNAME_DEFAULT:
+            return self.PROMPT_NAME_DEFAULT
+        if len(name) > self.PROMPT_NAME_MAX:
+            return name[:self.PROMPT_NAME_MAX - 1] + "~"
+        return name
 
     def prompt(self):
+        name = self.prompt_name()
         if self.mode == "operational":
-            return "prisma> "
+            return f"{name}> "
         where = self.where()
         if not where:
-            return "prisma# [edit] "
-        if len(where) > self.PROMPT_MAX:
+            return f"{name}# [edit] "
+        # The line the operator types on is what is left, so a longer name
+        # takes its columns from the block path and not from them.
+        room = self.PROMPT_MAX - max(0, len(name) - len(self.PROMPT_NAME_DEFAULT))
+        if len(where) > room:
             # Keep the END: the innermost block is where the next statement
             # lands, and it is the half worth the space.
-            where = "..." + where[-(self.PROMPT_MAX - 3):]
-        return f"prisma# [edit {where}] "
+            where = "..." + where[-(room - 3):]
+        return f"{name}# [edit {where}] "
 
     def require(self, cap, what):
         """
@@ -14364,6 +14422,8 @@ class Shell:
         ok, msg = self.sys.write_hostname(name)
         if not ok:
             return False, msg
+        # The prompt follows in this session (#526); a new session reads it.
+        self._prompt_name = name
         if self.frr.available():
             self.frr.apply_lines([f"hostname {name}"])
         return True, ""
