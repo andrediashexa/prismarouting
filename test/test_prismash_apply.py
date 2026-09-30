@@ -2074,5 +2074,30 @@ check(_ok and _sh.sys.read_dns() == ["1.1.1.1", "9.9.9.9"],
 print("  a commit of `dns server` rewrites resolv.conf and reads back")
 
 
+print("\n=== hostname at commit: the host renamed, and sysName with it (#516) ===")
+# Mutation shown red: the snmp apply left on `snmp_changed` alone - a rename
+# on a box whose agent runs keeps answering the old sysName until somebody
+# touches an SNMP setting.
+_asked = []
+_sh = shell_with(FakeApi(), "hostname old\nsnmp enabled yes\nsnmp community c\n")
+_sh.sys = system.System(runner=lambda a, stdin=None, timeout=30:
+                        (_asked.append(list(a)) or (0, "")))
+_snmp = []
+_sh.snmp = type("N", (), {"apply": lambda self, *a, **k:
+                          (_snmp.append(k.get("hostname")) or (True, "")),
+                          "read": lambda self: ({}, [], {}, [])})()
+_ok = _sh.apply(parse_nested("hostname edge9\nsnmp enabled yes\n"
+                             "snmp community c\n"))
+check(_ok and [system.SET_HOSTNAME, "edge9"] in _asked and _snmp == ["edge9"],
+      f"renamed, and snmpd.conf rewritten with the name: {_ok} {_asked} {_snmp}")
+_asked.clear(); _snmp.clear()
+_ok = _sh.apply(parse_nested("snmp enabled yes\nsnmp community c2\n"))
+check(_ok and not any(a[0] == system.SET_HOSTNAME for a in _asked)
+      and _snmp == ["old"],
+      f"a file with no name renames nothing, and sysName stays the box's: "
+      f"{_asked} {_snmp}")
+print("  a commit of `hostname` renames the host and rewrites sysName")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

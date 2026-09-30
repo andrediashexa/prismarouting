@@ -19,7 +19,7 @@ import hashlib
 import policy as policy_mod
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
-                    dns_error, DNS_MAX,
+                    dns_error, DNS_MAX, hostname_error,
                     address_error,
                     is_number,
                     validate_role,
@@ -2510,6 +2510,10 @@ class Config:
         # The resolvers `dns server` set, in order (#437). Empty when the
         # VTY does not own /etc/resolv.conf - DHCP or the installer does.
         self.dns_servers: list = []
+        # The box's name (#516): Linux's, FRR's and sysName. "" is no
+        # statement - a file saved before there was one - which changes
+        # nothing; `no hostname` is the installer's default, stated.
+        self.hostname: str = ""
         self.users: dict = {}
         self.snmp: dict = dict(SNMP_DEFAULTS)
         self.snmp_communities: list = []
@@ -2707,6 +2711,8 @@ class Config:
         # box and make the file describe a decision nobody took.
         out += nest_system(self.dataplane_if, self.cpu, self.memory)
         out += policy_mod.nest(self.policy)
+        if self.hostname:
+            out.append(f"hostname {self.hostname}")
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
         out += [f"dns server {a}" for a in self.dns_servers]
@@ -2994,6 +3000,14 @@ class Config:
                 continue
             if section == "routing":
                 cfg.n_statements += 1
+                # FRR's `hostname` follows the box's since #516, and is not
+                # routing anybody typed. Every file saved before then carries
+                # FRR's own here - "hostname prisma-routing", from the image,
+                # whatever the installer named the box - so it is dropped and
+                # NOT adopted: taken as the box's name, it would rename every
+                # upgraded box to the image's at its next boot.
+                if line.startswith("hostname ") or line == "hostname":
+                    continue
                 cfg.routing.append(line)
                 routing_lines.append(lineno)
                 continue
@@ -3068,6 +3082,18 @@ class Config:
                         cfg.unknown.append((lineno, s, why))
                     else:
                         cfg.snmp[w[1]] = w[2]
+                continue
+            if s == "hostname" or s.startswith("hostname "):
+                # The prompt's predicate, so the file refuses what the prompt
+                # refuses (#516).
+                w = s.split()
+                if len(w) != 2:
+                    cfg.unknown.append((lineno, s, "expected: hostname <name>"))
+                elif hostname_error(w[1]):
+                    cfg.unknown.append((lineno, s,
+                                        " - ".join(hostname_error(w[1]))))
+                else:
+                    cfg.hostname = w[1]
                 continue
             if s.startswith("ssh "):
                 w = s.split(None, 2)
@@ -4014,6 +4040,9 @@ class Config:
             "snmp_changed": snmp_changed,
             "ssh_changed": ssh_changed,
             "dns_changed": self.dns_servers != other.dns_servers,
+            # Only a name that is stated: a file with none leaves the box's.
+            "hostname_changed": bool(other.hostname)
+            and other.hostname != self.hostname,
             "users_changed": users_changed,
             "pool_add": add,
             "pool_remove": remove,

@@ -237,6 +237,7 @@ Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e
 | `ip prefix-list <nome> ...` / `ipv6 prefix-list <nome> ...` | uma lista de prefixos, na sintaxe do FRR, para casar em route-map |
 | `bgp as-path access-list` / `bgp community-list` / `bgp large-community-list` | as listas que uma route-map consulta |
 | `system` | a máquina: `dataplane` (a placa entregue ao dataplane), `cpu` (núcleos por papel) e `memory` (memória por papel) |
+| `hostname <nome>` / `no hostname` | o nome da caixa: o do Linux e o `sysName` do SNMP |
 | `dns server <endereço>` / `no dns server <endereço>` | os resolvedores que a caixa consulta, até três |
 | `ssh ...` | daemon SSH |
 | `user <nome>` | uma conta que pode logar |

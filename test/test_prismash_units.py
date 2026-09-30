@@ -1007,7 +1007,8 @@ text = ("Building configuration...\n\nCurrent configuration:\n!\n"
         "frr version 10.7.1\nfrr defaults traditional\nhostname box\n"
         "router bgp 65000\n neighbor 10.0.0.2 remote-as 65001   \n!\nend\n")
 got = prismash.Frr.running(RecFrr({"show running-config": (0, text)}))
-check(got == ["!", "hostname box", "router bgp 65000",
+# `hostname` is the box's statement since #516, not routing: dropped too.
+check(got == ["!", "router bgp 65000",
               " neighbor 10.0.0.2 remote-as 65001", "!"],
       f"framing out, blank rows out, right side stripped: {got}")
 check(prismash.Frr.running(RecFrr()) == [],
@@ -3132,7 +3133,7 @@ f = frr_stub({"show running-config": (
     "Building configuration...\n\nCurrent configuration:\n!\n"
     "frr version 10.7.1\nfrr defaults traditional\nhostname box\n!\n"
     "router bgp 65000\n neighbor 10.0.0.2 remote-as 65001   \n!\nend\n")})
-check(f.running() == ["!", "hostname box", "!", "router bgp 65000",
+check(f.running() == ["!", "!", "router bgp 65000",
                       " neighbor 10.0.0.2 remote-as 65001", "!"],
       f"framing out, indentation kept, trailing blanks off: {f.running()!r}")
 check(frr_stub({}).running() == [],
@@ -6857,6 +6858,87 @@ try:
 finally:
     prismash.FRR_RELOAD = _was
 ok("agentx: read, dropped, carried, and following snmp enabled")
+
+# ------------------------------------------------------ hostname (#516)
+print("\n=== hostname: the box's name, and FRR's following it (#516) ===")
+# As FRR 10.7.1 shows it: the daemons' line, then vtysh's own.
+_RUN_HN = ("!\nfrr version 10.7.1\nhostname edge1\nhostname 7db79d7ce413\n"
+           "router bgp 65001\nexit\n!\nend\n")
+check(RecFrr(shows={"show running-config": (0, _RUN_HN)}).hostname_lines()
+      == ["hostname edge1", "hostname 7db79d7ce413"]
+      and RecFrr().hostname_lines() == []
+      and RecFrr(shows={"show running-config": (0, "!\nend\n")})
+      .hostname_lines() == [],
+      "every hostname line FRR shows, in order; none when down or without")
+check("hostname edge1" not in RecFrr(
+          shows={"show running-config": (0, _RUN_HN)}).running(),
+      "and never read back as routing an operator typed")
+
+# The reload carries FRR's lines, as it carries agentx. Mutation shown red:
+# the carry removed - frr-reload is handed no hostname and sends
+# `no hostname` for each line, on every commit.
+prismash.FRR_RELOAD = _stub
+try:
+    _f = RecFrr(shows={"show running-config": (0, _RUN_HN)})
+    _f.reload(["router bgp 65001", "exit"], check_only=True)
+    with open(_seen) as _h:
+        _lines = _h.read().splitlines()
+    check("hostname edge1" in _lines and "hostname 7db79d7ce413" in _lines
+          and "router bgp 65001" in _lines,
+          f"reload hands frr-reload every name FRR shows: {_lines}")
+    _f.reload(["hostname edge2", "router bgp 65001", "exit"], check_only=True)
+    with open(_seen) as _h:
+        _lines = _h.read().splitlines()
+    check(_lines.count("hostname edge2") == 1
+          and "hostname edge1" not in _lines,
+          f"and not a second one beside a name it was given: {_lines}")
+finally:
+    prismash.FRR_RELOAD = _was
+
+# At the prompt. Mutation shown red: `no hostname` staging "" - the file then
+# has no statement, and the box keeps the name it was told to drop.
+_sh = at()
+_sh.do_config("hostname cgnat-sp1")
+check(_sh.candidate.hostname == "cgnat-sp1", "staged as typed")
+_sh.hostname_statement(["no", "hostname"])
+check(_sh.candidate.hostname == prismash.HOSTNAME_DEFAULT,
+      f"'no hostname' is the installer's default: {_sh.candidate.hostname!r}")
+for _typed, _needle in (("hostname 9box", "starts with a letter"),
+                        ("hostname a_b", "letters, digits and hyphens"),
+                        ("hostname", "usage: hostname <name>"),
+                        ("hostname a b", "usage: hostname <name>")):
+    with spoken() as _o:
+        _sh.do_config(_typed)
+    check(_needle in _o.getvalue()
+          and _sh.candidate.hostname == prismash.HOSTNAME_DEFAULT,
+          f"{_typed!r} is refused, and nothing changes: {_o.getvalue()!r}")
+
+
+# Applied: the host first, then FRR. Mutation shown red: FRR told before the
+# host is asked - a refused name leaves FRR told and the host not.
+def _hn_shell(frr, runner):
+    """A Shell over `frr`, its host answered by `runner`."""
+    sh = shell(frr=frr)
+    sh.sys = system.System(runner=runner)
+    return sh
+
+
+_rr = RecRunner()
+_f = AxFrr()
+_sh = _hn_shell(_f, _rr)
+check(_sh.apply_hostname("edge7") == (True, "")
+      and [system.SET_HOSTNAME, "edge7"] in _rr.asked
+      and _f.applied == [["hostname edge7"]],
+      f"the host renamed and FRR told: {_rr.asked} {_f.applied}")
+_rr = RecRunner({(system.SET_HOSTNAME,): (1, "set-hostname: no\n")})
+_f = AxFrr()
+_ok, _msg = _hn_shell(_f, _rr).apply_hostname("edge7")
+check(not _ok and "set-hostname: no" in _msg and _f.applied == [],
+      f"a host that refuses: FRR is not asked: {_msg!r} {_f.applied}")
+_f = AxFrr(up=False)
+check(_hn_shell(_f, RecRunner()).apply_hostname("edge7") == (True, "")
+      and _f.applied == [], "a box with no routing daemons: the host only")
+ok("hostname: read, dropped, carried, staged and applied")
 
 # ---------------------------------------------------- show snmp mib (#504)
 print("\n=== show snmp mib: the MIB, rooted at this box's number (#504) ===")

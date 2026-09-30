@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The box's name from the VTY: `hostname <name>`.**
+  ([#516](https://github.com/andrediashexa/hexarouting/issues/516))
+  One statement for the name Linux has - `/etc/hostname`, the `127.0.1.1` line
+  of `/etc/hosts` and the kernel's, written on the host by the new
+  `/usr/lib/prisma-routing/set-hostname` through a door of its own - and for
+  SNMP's sysName, which `snmpd.conf` now states. Read back from the host in
+  the running configuration; `no hostname` is the installer's default,
+  `prisma-routing`. RFC 1123 labels with a letter first, because FRR refuses
+  any other. FRR's `hostname` lines are no longer read back as routing - every
+  saved file carried `hostname prisma-routing` there, marked "not checked" -
+  and are dropped from a saved file's routing half rather than adopted, so an
+  upgraded box keeps its name. FRR is told the name at commit and not held to
+  it: measured on FRR 10.7.1, a live `hostname` changes nothing its daemons
+  report. The prompt stays `prisma`. `lab/hostname.sh` reads the name back
+  from every place that says one.
+
 ### Fixed
 
 ## 0.144.5 - BGP4V2-MIB: IPv6 BGP peers over SNMP

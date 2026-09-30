@@ -61,6 +61,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     vrrp_statement, vrrp_remove, vrrp_pair_findings)
 import doors
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
+                    hostname_error, HOSTNAME_DEFAULT,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
                     snmp_redact, SNMP_DEFAULTS, SNMP_FIELDS, validate_snmp,
@@ -2125,7 +2126,7 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "if_remove", "globals")
 DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "routing_changed", "route_desc_changed", "ssh_changed",
-               "dns_changed",
+               "dns_changed", "hostname_changed",
                "users_changed",
                "snmp_changed", "dataplane_if_changed", "cgnat_memory_changed",
                "policy_changed", "cpu_changed", "memory_changed",
@@ -2551,7 +2552,9 @@ TREE = {
             "dns": ("stop asking a resolver", {
                 "server": ("the last one removed gives /etc/resolv.conf back "
                            "to DHCP or the installer's answer",
-                           "<address>")})}),
+                           "<address>")}),
+            "hostname": ("back to the installer's default, prisma-routing",
+                         None)}),
         "ip": ("IP configuration", {
             "prefix-list": ("a named list of prefixes, for matching in policy",
                             ARG_PREFIX_LIST)}),
@@ -2588,6 +2591,8 @@ TREE = {
         "system": ("this machine: the card the dataplane is given", None),
         "policy-options": ("routing policy: prefix lists, communities, "
                            "policy-statements", None),
+        "hostname": ("the box's name: Linux's, FRR's and SNMP's sysName",
+                     "<name>"),
         "dns": ("the resolvers this box asks", {
             "server": ("a resolver, by address; up to 3, asked in the order "
                        "typed", "<address>")}),
@@ -5896,10 +5901,24 @@ class Frr:
                 "frr version", "frr defaults", "end")
         # `agentx` is the box's and not the operator's (#502): it follows
         # `snmp enabled`, and read back as routing it would be saved into the
-        # routing an operator typed and shown as if they had.
+        # routing an operator typed and shown as if they had. `hostname` is
+        # the same since #516: it follows the box's `hostname`.
         return [l.rstrip() for l in out.splitlines()
                 if l.strip() and not l.startswith(skip)
-                and l.strip() != "agentx"]
+                and l.strip() != "agentx" and not l.startswith("hostname ")]
+
+    def hostname_lines(self):
+        """
+        Every `hostname` line FRR shows (#516), in its order; [] when it
+        cannot be asked. More than one on a box: measured on FRR 10.7.1,
+        vtysh adds its own - the kernel's name, as vtysh read it when it
+        started - beside the daemons' from their configuration.
+        """
+        rc, out = self.show("show running-config")
+        if rc:
+            return []
+        return [l.rstrip() for l in out.splitlines()
+                if l.startswith("hostname ")]
 
     def agentx_on(self):
         """Do the running daemons have `agentx`? (#502)"""
@@ -5971,6 +5990,12 @@ class Frr:
         # would fail. It goes when FRR next starts (appliance/frr-entrypoint).
         if "agentx" not in lines and self.agentx_on():
             lines = ["agentx"] + list(lines)
+        # Carried for the same reason as `agentx`, from the other side
+        # (#516): the routing half never holds `hostname`, so frr-reload
+        # would send `no hostname` for each line FRR shows, on every commit.
+        # All of them, so it sees nothing to change.
+        if not any(l.startswith("hostname ") for l in lines):
+            lines = self.hostname_lines() + list(lines)
         # A directory of our own, per run, and every path frr-reload writes to
         # pointed into it - because with --reload it writes to two places that
         # belong to FRR and not to the account applying the change (#186):
@@ -6835,6 +6860,7 @@ class Shell:
         # reason the CGNAT half is read back from the dataplane.
         cfg.ssh = self.sys.read_ssh()
         cfg.dns_servers = self.sys.read_dns()
+        cfg.hostname = self.sys.read_hostname()
         # From the tuner's own input, which is the only place that knows. Read
         # back rather than remembered for the same reason as everything above,
         # and with one extra consequence: editing that file by hand was the
@@ -9899,10 +9925,20 @@ class Shell:
             if not ok:
                 self.err_prose("dns: nothing was changed", msg)
                 return False
-        if d["snmp_changed"]:
+        if d.get("hostname_changed"):
+            ok, msg = self.apply_hostname(target.hostname)
+            if not ok:
+                self.err_prose("hostname: the rename did not complete", msg)
+                return False
+        # sysName is the box's name (#516), so a rename rewrites snmpd.conf
+        # on a box whose agent runs, and the SNMP settings with it.
+        if d["snmp_changed"] or (d.get("hostname_changed")
+                                 and target.snmp.get("enabled") == "yes"):
             ok, msg = self.snmp.apply(target.snmp, target.snmp_communities,
                                       target.snmp_users,
-                                      target.snmp_trap_hosts)
+                                      target.snmp_trap_hosts,
+                                      hostname=target.hostname
+                                      or running.hostname)
             if not ok:
                 self.err(f"snmp: {msg}")
                 return False
@@ -13047,6 +13083,8 @@ class Shell:
                 return True
             self.candidate.dataplane_if = w[2]
             return True
+        if w[0] == "hostname" or w[:2] == ["no", "hostname"]:
+            return self.hostname_statement(w)
         if w[:2] == ["dns", "server"] or w[:3] == ["no", "dns", "server"]:
             return self.dns_statement(w)
         if w[0] == "dns" or w[:2] == ["no", "dns"]:
@@ -13750,6 +13788,45 @@ class Shell:
                 return True
         self.candidate.routing += lines
         return True
+
+    def hostname_statement(self, w):
+        """
+        `hostname <name>` and `no hostname` (#516): the box's name, which is
+        Linux's, FRR's and SNMP's sysName. `no hostname` is the installer's
+        default, stated - "no name" is not a state a Linux box can be in.
+        """
+        if w == ["no", "hostname"]:
+            self.candidate.hostname = HOSTNAME_DEFAULT
+            return True
+        if len(w) != 2 or w[0] != "hostname":
+            self.err("usage: hostname <name>, or no hostname")
+            return True
+        why = hostname_error(w[1])
+        if why:
+            self.err_prose(*why)
+            return True
+        self.candidate.hostname = w[1]
+        return True
+
+    def apply_hostname(self, name):
+        """
+        Rename the box: (ok, message) (#516). The host first; FRR is told
+        after it, and only when the host took the name.
+
+        FRR IS TOLD, AND NOT HELD TO IT. Measured on FRR 10.7.1: `hostname`
+        through vtysh - to every daemon, to one with -d, or as frr-reload
+        sends it - exits 0 and leaves what each daemon's `show
+        running-config` says unchanged, so there is no read-back that could
+        tell a rename that took from one that did not. Refusing the commit
+        on it would refuse every rename; the daemons' own name is the one
+        they start with.
+        """
+        ok, msg = self.sys.write_hostname(name)
+        if not ok:
+            return False, msg
+        if self.frr.available():
+            self.frr.apply_lines([f"hostname {name}"])
+        return True, ""
 
     def dns_statement(self, w):
         """
