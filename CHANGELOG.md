@@ -77,6 +77,10 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.147.2 - Debian 13 decided against: the box stays on Debian 12
+
 ### Changed
 
 * **Debian 13 is decided against: the box stays on Debian 12.**
@@ -86,8 +90,6 @@ version has a chance of seeing it.
   publishing no trixie suite, and Debian 13 rejecting the fd.io key's SHA-1
   binding - were to ship packages without authentication or to maintain a VPP
   build of our own. `docs/roadmap.md` no longer lists it as blocked work.
-
-### Fixed
 
 ## 0.147.1 - the box's own state over SNMP: tuning, self-test, commits, audit
 
