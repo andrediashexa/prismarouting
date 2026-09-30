@@ -317,6 +317,9 @@ install -D -m 0755 "$REPO/appliance/load-the-images" "$DESTDIR/usr/lib/prisma-ro
 # The containers' backplane, 128.0.0.0/8 in VRF prisma-bp (#447), brought up
 # by prisma-routing-backplane.service before them.
 install -D -m 0755 "$REPO/appliance/prisma-backplane" "$DESTDIR/usr/lib/prisma-routing/prisma-backplane"
+# The VTY's container on an upgraded release's images, at the end of `system
+# upgrade` (#528); the dataplane and the control plane wait for a reboot.
+install -D -m 0755 "$REPO/appliance/refresh-the-vty" "$DESTDIR/usr/lib/prisma-routing/refresh-the-vty"
 # The initramfs hook that leaves out what no root on this box sits behind
 # (#450). The medium builds its initrd with it.
 #

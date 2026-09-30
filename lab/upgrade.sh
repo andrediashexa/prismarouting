@@ -1269,4 +1269,18 @@ expect_in "including the pool's first appearance, in the old version's words" \
 expect "and the new dataplane went on writing to the same file" \
   test "${TRAIL_LINES_NOW:-0}" -gt "${TRAIL_LINES:-0}"
 
+# The VTY on the new release without a reboot (#528). This lab upgrades a
+# box on the units path, which has no management container, so what it can
+# hold is that the upgrade installed the program `system upgrade` asks the
+# host for, and that on such a box it changes nothing and says why. Its
+# container case is test/test_refresh_the_vty.sh's; no lab here runs the
+# compose stack through a real `system upgrade`.
+RTV=$(/usr/lib/prisma-routing/refresh-the-vty 2>&1); RTV_RC=$?
+echo "  refresh-the-vty: $RTV"
+expect "the upgrade installed refresh-the-vty" \
+  test -x /usr/lib/prisma-routing/refresh-the-vty
+expect_in "and on a box with no VTY container it touches nothing" \
+  "nothing to do" "$RTV"
+expect "and exits 0 there ($RTV_RC)" test "$RTV_RC" = 0
+
 verdict

@@ -6798,12 +6798,37 @@ try:
         check(_needle in text and "downloading" not in text,
               f"{_v!r} is refused before anything is downloaded: {text!r}")
 
+    # The host's side of the last step (#528), stubbed: what is asked, and
+    # what it answers.
+    _asked = []
+    _sh.sys._run = lambda argv, stdin=None, timeout=30: (
+        _asked.append(tuple(argv)) or (0, ""))
     rv, text = driven(lambda: _sh.system_upgrade(["0.99.8"]))
     check("sha256" in text and "matches" in text
           and "UPGRADE-RAN 0.99.8" in text and "upgraded to 0.99.8" in text
           and "'save' before rebooting" in " ".join(text.split()),
           f"a release is downloaded, verified, and its own upgrade run: "
           f"{text!r}")
+    check(_asked == [prismash.doors.REFRESH_VTY_ARGV]
+          and "the VTY restarts on 0.99.8 in a few seconds" in " ".join(text.split())
+          and "keep running the previous images until a reboot" in " ".join(text.split()),
+          f"and then the VTY is put on it, detached, and the rest said to wait "
+          f"for a reboot (#528): {_asked} {text!r}")
+    # Mutation shown red: the rc test inverted - the refusal below reads as
+    # a restart that is on its way.
+    _sh.sys._run = lambda argv, stdin=None, timeout=30: (
+        1, "Failed to start transient timer unit: Unit already exists.\n")
+    rv, text = driven(lambda: _sh.refresh_the_vty("0.99.8"))
+    _t = " ".join(text.split())
+    check("could not be restarted on the new release" in _t
+          and "Unit already exists" in _t and "restarts on" not in _t
+          and "'save' before rebooting" in _t,
+          f"a host that could not start it is quoted, and the VTY is said to "
+          f"stay the previous release's until a reboot: {text!r}")
+    _sh.sys._run = lambda argv, stdin=None, timeout=30: (125, "")
+    rv, text = driven(lambda: _sh.refresh_the_vty("0.99.8"))
+    check("exit 125 and nothing else" in " ".join(text.split()),
+          f"and a host that said nothing is named as such: {text!r}")
     check(os.listdir(prismash.UPGRADE_WORK) == [],
           "and the unpacked package is gone once it succeeded")
 
