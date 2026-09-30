@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.144.2 - NATV2-MIB (RFC 7659): the CGNAT in the IETF's own MIB
+
+### Added
+
 * **NATV2-MIB (RFC 7659): the CGNAT in the IETF's own MIB.**
   ([#512](https://github.com/andrediashexa/hexarouting/issues/512))
   Asked by the maintainer with the other standard MIBs; BGP4-MIB, OSPF-MIB,
@@ -89,8 +95,6 @@ version has a chance of seeing it.
   RFC's module loaded (in `test/mibs`, with the two modules it imports) and
   compares the rows with the dataplane; the agent's test holds every served
   column to the type the module declares.
-
-### Fixed
 
 ## 0.144.1 - SNMP answers v2c and v3 only
 
