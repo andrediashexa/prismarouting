@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.145.2 - an upgraded box writes the snmpd.conf of the release it runs
+
+### Fixed
+
 * **An upgrade leaves snmpd.conf as the release before wrote it.**
   ([#523](https://github.com/andrediashexa/hexarouting/issues/523))
   The file was written only when an SNMP setting changed, and what a release
