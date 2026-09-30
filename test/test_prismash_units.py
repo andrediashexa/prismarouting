@@ -3853,6 +3853,254 @@ check(rows_of(o.getvalue()) == ["error: count must be between 1 and 120"],
       f"a count outside its range: {o.getvalue()!r}")
 ok("two counters, the time between, the difference")
 
+print("\n=== monitor interface: the live view (#519) ===")
+_steps, _reset = prismash.interface_steps(
+    {"pg0": {"rx bytes": 0, "tx bytes": 100, "rx packets": 0, "drops": 5,
+             "rx-miss": 1, "rx-error": 2},
+     "pg1": {"rx bytes": 500}},
+    {"pg0": {"rx bytes": 1000, "tx bytes": 100, "rx packets": 10,
+             "drops": 7, "rx-miss": 2, "rx-error": 5, "tx-error": 1},
+     "pg1": {"rx bytes": 100},
+     "loop9": {"rx bytes": 99999}}, 2.0)
+check(_steps["pg0"]["rx"] == 4000 and _steps["pg0"]["tx"] == 0
+      and _steps["pg0"]["rx_pps"] == 5 and _steps["pg0"]["drops"] == 2
+      and _steps["pg0"]["lost"] == 3 and _steps["pg0"]["errors"] == 4,
+      f"bits and packets over the measured time, counts as counts: {_steps}")
+check("loop9" not in _steps,
+      "an interface that appeared mid-sample has no step: its total is no rate")
+check(_reset and _steps["pg1"]["rx"] == 0,
+      "a counter that went backwards reads zero, and says it happened")
+check(prismash.interface_steps({"a": {}}, {"a": {}}, 0) == ({}, False),
+      "no time between the readings, no rate")
+check([prismash.nice_scale(b) for b in (0, 1, 7, 800e3, 1.2e6, 1e9, 3e9)]
+      == [0, 1, 10, 1000000, 2000000, 1000000000, 5000000000],
+      "the axis tops at 1, 2 or 5 times a power of ten")
+_c = prismash.chart_rows([None, 0, 1, 50, 100], 100, 2, 6, True)
+check(_c == ["     █", "  ·▁██"],
+      f"right-aligned, a zero is the baseline, a trickle is an eighth: {_c!r}")
+_c = prismash.chart_rows([0, 100], 0, 2, 3, False)
+check(_c == ["   ", " __"], f"no scale: every sample on the baseline: {_c!r}")
+check(prismash.chart_rows([100], 100, 1, 1, False) == ["#"],
+      "ASCII for a console that answers in ASCII")
+check(prismash.monitor_fit("abcdef", 5) == "ab..." and
+      prismash.monitor_fit("abc", 5) == "abc", "cut, and said to be cut")
+check([prismash.monitor_key(k) for k in
+       ("q", "\x03", "l", "n", " ", "\x1b[C", "\x1b[6~", "p", "\x1b[D", "x",
+        "")]
+      == ["quit", "quit", "scale", "next", "next", "next", "next", "prev",
+          "prev", None, None], "the keys, arrows and pages included")
+
+_s = {"rx": 800e3, "tx": 0, "rx_pps": 1000, "tx_pps": 0, "drops": 0,
+      "lost": 1, "errors": 2}
+_view = {"interval": 1, "names": ["pg0", "pg1"],
+         "windows": {"pg0": [None, _s, _s], "pg1": []},
+         "speeds": {"pg0": 10e9, "pg1": None}, "mode": "auto", "page": 0,
+         "notes": [], "clock": "12:00:00"}
+_l, _pages = prismash.render_monitor(_view, 79, 24, True)
+check(_pages == 1 and len(_l) == 24 and _l[0].endswith("12:00:00"),
+      f"a whole screen, the time at the right: {_l[0]!r}")
+check(_l[1] == "pg0   scale 1.00 Mbit/s, auto"
+      and _l[2].startswith("  1.00 Mbit/s┤")
+      and _l[2].endswith("rx 800.00 kbit/s")
+      and _l[3].endswith("1000 pps") and _l[5].endswith("errors 4")
+      and _l[9].endswith("drops 2"),
+      f"the scale stated, the axis labelled, the rate, pps, the window's "
+      f"errors and drops: {_l[1:10]!r}")
+check(_l[10] == "pg1   waiting for a second sample"
+      and _l[11].endswith("rx --") and _l[12].endswith("-- pps")
+      and _l[14].endswith("errors --"),
+      f"no step yet is --, never 0: {_l[10:15]!r}")
+_view["mode"] = "line"
+_l, _ = prismash.render_monitor(_view, 79, 24, True)
+check(_l[1] == "pg0   line rate 10.00 Gbit/s: rx 0.0% tx 0.0%"
+      and _l[2].startswith(" 10.00 Gbit/s"),
+      f"one key away: the share of the line rate, and its axis: {_l[1:3]!r}")
+_view["windows"]["pg1"] = [dict(_s, rx=0)]
+_l, _ = prismash.render_monitor(_view, 79, 24, True)
+check(_l[10] == "pg1   no line rate known; scale 0 bit/s, auto"
+      or _l[10] == "pg1   scale: nothing passed in this window",
+      f"no line rate to be a share of, and nothing passed: {_l[10]!r}")
+_view.update(mode="auto", names=[f"if{i}" for i in range(5)],
+             windows={f"if{i}": [_s] for i in range(5)}, page=9,
+             notes=["first note", "second note"])
+_l, _pages = prismash.render_monitor(_view, 79, 24, False)
+check(_pages == 3 and "page 3/3" in _l[0] and _l[1].startswith("if4")
+      and _l[-2:] == ["first note", "second note"],
+      f"paged, not cut; a page past the end is the last; two notes: "
+      f"{_l[0]!r} {_l[-2:]!r}")
+_l, _ = prismash.render_monitor(_view, 40, 10, True)
+check(_l == ["this view needs 50 columns and 12 row...", "q leaves"],
+      f"too small a terminal is said, not drawn: {_l!r}")
+
+# The widest value on every axis, in both encodings (the issue's
+# acceptance): a 400G port at 399.99 Gbit/s, 14.88 Mpps, a sub-interface's
+# long name, counts in the billions, both notes.
+_w = {"rx": 399.99e9, "tx": 399.99e9, "rx_pps": 14880952,
+      "tx_pps": 14880952, "drops": 0, "lost": 999999999, "errors": 999999999}
+for _utf in (True, False):
+    for _mode in ("auto", "line"):
+        _view = {"interval": 0.5, "names": ["TenGigabitEthernet3b/0/1.4094"],
+                 "windows": {"TenGigabitEthernet3b/0/1.4094": [_w] * 900},
+                 "speeds": {"TenGigabitEthernet3b/0/1.4094": 400e9},
+                 "mode": _mode, "page": 0, "clock": "23:59:59",
+                 "notes": ["the dataplane stopped answering at 23:59:59; "
+                           "holding the last sample",
+                           "counters went backwards at 23:59:59 (cleared); "
+                           "that step reads as zero"]}
+        _l, _ = prismash.render_monitor(_view, _config.CONSOLE_COLUMNS, 24,
+                                        _utf)
+        check(max(map(len, _l)) <= _config.CONSOLE_COLUMNS
+              and not any(r.endswith("...") for r in _l[1:]),
+              f"fits {_config.CONSOLE_COLUMNS} columns uncut, "
+              f"{'UTF-8' if _utf else 'ASCII'}, {_mode}: "
+              f"{[r for r in _l if len(r) > _config.CONSOLE_COLUMNS]!r}")
+
+MON = ("              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)"
+       "     Counter          Count\n"
+       "pg0                               1      up          9000/0/0/0"
+       "     rx bytes    {rx}\n"
+       "local0                            0     down          0/0/0/0\n")
+_sh = shell(dp=Dp({"show interface": MON.format(rx=7)}))
+_t, _cnt = _sh.sample_counters()
+check(_cnt["pg0"]["rx bytes"] == 7 and _t > 0,
+      "one reading of show interface, stamped when it came back")
+check(shell(dp=Dp({"show interface": (1, "")})).sample_counters() is None,
+      "a dataplane that does not answer is no reading")
+check(_sh.monitor_names({"pg0": {}, "pg0.1": {}, "pg1": {}}, ["pg0"])
+      == ["pg0"]
+      and _sh.monitor_names({"pg0": {}, "pg0.1": {}, "pg1": {}}, ["pg"])
+      == ["pg0", "pg0.1", "pg1"],
+      "a name that is an interface is that interface; a prefix is them all")
+check(_sh.monitor_names(_cnt, []) == ["pg0"]
+      and _sh.monitor_names(_cnt, ["LOC"]) == ["local0"]
+      and _sh.monitor_names(_cnt, ["eth"]) == [],
+      "every interface but local0, or those the names start")
+with spoken() as o:
+    _sh.do_monitor(["routes"])
+check(rows_of(o.getvalue())
+      == ["error: monitor what? 'monitor interface' is the one there is"],
+      f"a thing it does not monitor: {o.getvalue()!r}")
+for _args, _said in (
+        (["interval"], "error: interval needs a number of seconds after it"),
+        (["interval", "x"], "error: interval needs a number of seconds: x"),
+        (["interval", "0.1"],
+         "error: interval must be between 0.5 and 60 seconds")):
+    with spoken() as o:
+        _sh.do_monitor(["interface"] + _args)
+    check(rows_of(o.getvalue()) == [_said], f"{_args}: {o.getvalue()!r}")
+with spoken() as o:
+    _sh.monitor_interface([])
+check(o.getvalue().startswith("error: monitor interface needs a terminal")
+      and "show interface utilization" in " ".join(o.getvalue().split())
+      and "\x1b" not in o.getvalue(),
+      f"a pipe is told what serves it, and gets no escapes: {o.getvalue()!r}")
+
+
+class _Tty(io.StringIO):
+    """A stand-in terminal: isatty() says yes."""
+
+    def isatty(self):
+        return True
+
+
+class _Term:
+    """
+    MonitorTerminal's stand-in: keys come off a script, each wait moves a
+    clock of its own, and every frame drawn is kept.
+    """
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.now = 1000.0
+        self.frames = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def size(self):
+        return 80, 24
+
+    def clock(self):
+        return self.now
+
+    def keys(self, timeout):
+        self.now += timeout
+        key = self.script.pop(0) if self.script else "q"
+        if key == "^C":
+            raise KeyboardInterrupt
+        return key
+
+    def draw(self, lines):
+        self.frames.append(list(lines))
+
+
+def _monitor(dp, script, args=()):
+    """monitor_interface on a stand-in terminal; its frames."""
+    term = _Term(script)
+    sh = shell(dp=dp)
+    was = prismash.MonitorTerminal, sys.stdin
+    prismash.MonitorTerminal = lambda: term
+    sys.stdin = _Tty()
+    try:
+        run = sh.monitor_run
+        sh.monitor_run = lambda t, n, w, i, s: run(t, n, w, i, s,
+                                                   clock=term.clock,
+                                                   wall=lambda: "12:00:00")
+        with contextlib.redirect_stdout(_Tty()) as out:
+            sh.monitor_interface(list(args))
+    finally:
+        prismash.MonitorTerminal, sys.stdin = was
+    return term.frames, out.getvalue()
+
+
+_frames, _out = _monitor(Dp({"show interface": (1, "")}), [])
+check(_frames == [] and "error: the dataplane is not answering, so there is "
+      "nothing to sample" in _out,
+      f"refused before the screen is taken: {_out!r}")
+_frames, _out = _monitor(Dp({"show interface": MON.format(rx=0)}), [],
+                         ["eth9"])
+check(_frames == [] and "error: no interface matches" in _out,
+      f"a name that matches nothing: {_out!r}")
+# The command's own check reads once, then the view: 0 -> 1000 -> 1000
+# bytes, silence, and the dataplane back with a counter at 5 - a rate, a flat
+# step, a gap held, and a reset.
+_dp = Dp({"show interface": [MON.format(rx=0), MON.format(rx=0),
+                             MON.format(rx=1000),
+                             MON.format(rx=1000), (1, ""),
+                             MON.format(rx=5), MON.format(rx=5)],
+          "show hardware-interfaces brief": ""})
+_frames, _out = _monitor(_dp, [""] * 28 + ["l", "n", "x", "q"])
+check("waiting for a second sample" in _frames[0][1],
+      f"the first frame has one reading and says so: {_frames[0][1]!r}")
+_rates = [f[2] for f in _frames if "rx " in f[2] and "--" not in f[2]]
+check(_rates and _rates[0].endswith("rx 8.00 kbit/s"),
+      f"1000 bytes over a measured second is 8 kbit/s: {_rates[:2]!r}")
+check(any("the dataplane stopped answering at 12:00:00; holding the last "
+          "sample" in f[-2:] for f in _frames),
+      "a dataplane that goes quiet is said and the view stays")
+check(any("counters went backwards at 12:00:00 (cleared); that step reads "
+          "as zero" in f[-2:] for f in _frames),
+      "and a counter that went backwards when it came back")
+check(any("no line rate known" in f[1] for f in _frames),
+      "l turns the line-rate scale on, and pg0 has none to show")
+check(_out == "", f"nothing printed around the screen: {_out!r}")
+# The view begun with the dataplane already quiet: said, and held open.
+_t = _Term([""] * 8)
+shell(dp=Dp({"show interface": (1, "")})).monitor_run(
+    _t, ["pg0"], [], 1.0, {}, clock=_t.clock, wall=lambda: "12:00:00")
+check(any("the dataplane stopped answering at 12:00:00" in f[-1]
+          for f in _t.frames) and _t.frames[0][1].startswith("pg0"),
+      f"monitor_run starts on a quiet dataplane and says so: "
+      f"{_t.frames[-1][-2:]!r}")
+_frames, _out = _monitor(Dp({"show interface": MON.format(rx=0)}), ["^C"])
+check(len(_frames) == 1 and _out == "",
+      "Ctrl-C leaves the view like q does, and the terminal is given back")
+ok("a live chart: the sampler shared, the screen a pure function, "
+   "every refusal before the screen is taken")
+
 #: One virtual router as `vrrp_vr_dump` reports it, copied from a running
 #: box: a master holding one address, with the MAC RFC 5798 gives its id.
 VRRP_ROWS = [{

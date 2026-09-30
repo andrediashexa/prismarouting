@@ -249,6 +249,36 @@ print("  IPv6 one - the same open half as the interpolated print() rows "
       "above, and")
 print("  honest only when driven (#276, #349, #355).")
 
+print()
+print("=== monitor interface's screen at its widest, UTF-8 and ASCII (#519) ===")
+# DRIVEN, the only honest way for rows that carry values (#276): the widest
+# value on every axis - a 400G port at 399.99 Gbit/s, 14.88 Mpps, a long
+# sub-interface name, counts in the billions, both notes at once.
+import prismash  # noqa: E402
+_w = {"rx": 399.99e9, "tx": 399.99e9, "rx_pps": 14880952,
+      "tx_pps": 14880952, "drops": 0, "lost": 999999999, "errors": 999999999}
+_name = "TenGigabitEthernet3b/0/1.4094"
+for _utf in (True, False):
+    for _mode in ("auto", "line"):
+        _rows, _ = prismash.render_monitor(
+            {"interval": 0.5, "names": [_name], "windows": {_name: [_w] * 900},
+             "speeds": {_name: 400e9}, "mode": _mode, "page": 0,
+             "clock": "23:59:59",
+             "notes": ["the dataplane stopped answering at 23:59:59; "
+                       "holding the last sample",
+                       "counters went backwards at 23:59:59 (cleared); "
+                       "that step reads as zero"]},
+            config.CONSOLE_COLUMNS, 24, _utf)
+        _over = [r for r in _rows if len(r) > config.CONSOLE_COLUMNS]
+        _how = f"{'UTF-8' if _utf else 'ASCII'}, {_mode} scale"
+        if _over:
+            fail += 1
+            print(f"  FAIL: {_how}: {len(_over)} row(s) over "
+                  f"{config.CONSOLE_COLUMNS}: {_over!r}")
+        else:
+            print(f"  [ ok ] {_how}: {len(_rows)} rows, the widest "
+                  f"{max(map(len, _rows))} of {config.CONSOLE_COLUMNS}")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

@@ -348,6 +348,65 @@ to have hung.
   run without, rather than by looking for a particular character, which would be
   an assertion about the terminal.
 
+### `monitor interface` — the same counters, live
+
+**`monitor interface [<name>...] [interval <s>]`** is the view that stays
+([#519](https://github.com/andrediashexa/hexarouting/issues/519)): one screen,
+redrawn in place at every sample until `q` or Ctrl-C, a chart per interface for
+each direction. This is `lab/monitor-interface.sh`'s screen, pg0 carrying a
+stream set to 800 kbit/s:
+
+```
+monitor interface   every 1s   page 1/1   q quit  l scale  n/p page    07:17:26
+pg0   scale 1.00 Mbit/s, auto
+  1.00 Mbit/s┤                                      ▂ ▂▂ rx 822.98 kbit/s
+             │                                      █▄██    1029 pps
+             │                                      ████
+            0┤                                      ████ errors 0
+  1.00 Mbit/s┤                                           tx 0 bit/s
+             │                                              0 pps
+             │
+            0┤                                      ···· drops 0
+```
+
+* **The keys.** `q` or Ctrl-C leaves, and the terminal is given back exactly as
+  it was - its modes, the screen under the view, the cursor; `lab/monitor-
+  interface.sh` compares them before and after, including after the dataplane
+  was stopped mid-view. `l` switches every chart between its own scale and its
+  line rate; `n`, space, the right or down arrow and Page Down turn the page,
+  and `p`, `b`, left, up and Page Up turn it back.
+* **The scale is always printed.** By default each interface is scaled to its
+  own busiest sample on screen, rounded up to 1, 2 or 5 times a power of ten,
+  so a 10 Mbit/s trickle on a 10G port is visible; `l` draws it against the
+  line rate instead and the title says `line rate 10.00 Gbit/s: rx 12.4% tx
+  0.1%`. An interface whose dataplane reports no speed says `no line rate
+  known` and stays on its own scale.
+* **Beside each chart**: the latest rate in bit/s and in packets per second,
+  and the errors (`rx-error`, `tx-error`) and drops (`drops`, `rx-miss`,
+  `rx-no-buf`) summed over the samples on screen. Before the second sample
+  there is no rate, and the column says `--`, never 0.
+* **The window scrolls**: as many samples as the terminal is wide, the newest
+  on the right. The rows are four per direction, eight levels to a row, in
+  Unicode blocks when stdout is UTF-8 and in ASCII otherwise. Interfaces that
+  do not fit the terminal's height are on further pages, never cut.
+* **A name** is that interface; a word that is no interface's name is every
+  interface it starts. With none, every interface but `local0`.
+* **The same sampler** as `show interface utilization`, so the two cannot
+  disagree about a rate: the rate over the measured time between readings, an
+  interface that appeared mid-sample skipped, a counter that went backwards read
+  as zero and said on the bottom row. A dataplane that stops answering does not
+  end the view: the chart holds its last sample and the bottom row says since
+  when.
+* **Not in a script.** `prismash -c`, a pipe or a file gets a refusal naming
+  `show interface utilization`, which samples and prints once, and no escape
+  sequence.
+* **What a sample costs**, measured before the default of one a second was
+  chosen: on 201 interfaces with traffic, `show interface` took 4 ms (41 ms at
+  its worst), 3 ms of the reader's CPU and 2.2 ms of VPP's main thread; the
+  statistics segment read through `vpp_get_stats` took 10 ms, 9 ms and 0.3 ms.
+  Either is under 1% of a core at one a second, and the CLI is the one
+  `show interface utilization` already reads.
+
 ## `show hardware` — the NICs the box has, before the dataplane has any
 
 `show interface` answers from the dataplane, and that is the right source for
