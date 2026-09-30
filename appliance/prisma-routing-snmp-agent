@@ -162,12 +162,22 @@ class Values:
         d["release"] = _read(VERSION_FILE).split()[0] if _read(VERSION_FILE) else ""
         d["build"] = plugin_build(vppctl("show plugins") or "")
         # #505: each one command the VTY's own screens run, none a walk.
+        vrrp_text = vppctl("show vrrp vr") or ""
+        if_names = parse_stats_dump(stats_dump("^/if/names$"))[0]
+        vrrp_detail = parse_vrrp_detail(vrrp_text, if_names)
         free = heap_free(vppctl("show memory main-heap") or "")
         d["extra"] = {
             "fit": free // SESSION_BYTES if free is not None else None,
             "workers": worker_rows(parse_stats_threads(stats, "/bpa/pool/")),
-            "vrrp": parse_vrrp(vppctl("show vrrp vr") or "",
-                               parse_stats_dump(stats_dump("^/if/names$"))[0]),
+            "vrrp": parse_vrrp(vrrp_text, if_names),
+            "vrrpv3": vrrpv3_rows(
+                vrrp_detail,
+                # Only the VRRP routers' interfaces: every name handed over is
+                # given an ifIndex for good, and local0 and the taps have none
+                # in IF-MIB (#498).
+                if_indexes(sorted({r["interface"] for r in vrrp_detail})),
+                parse_interface_addresses(vppctl("show interface address") or ""))
+            if vrrp_detail else [],
             "bonds": parse_bond(vppctl("show bond") or ""),
             "identity": parse_identity(vppctl("show bpa identity") or ""),
         }
@@ -611,6 +621,115 @@ def natv2_rows(state, config):
     return out
 
 
+# --- VRRPV3-MIB, RFC 6527: the VRRP routers in the IETF's own MIB (#513) ----
+
+VRRPV3 = "1.3.6.1.2.1.207"
+VRRPV3_STATUS = {"initialize": 1, "backup": 2, "master": 3, "interface down": 1}
+
+
+def parse_vrrp_detail(text, names=None):
+    """
+    Every virtual router `show vrrp vr` prints, as a dict: interface (named
+    through /if/names), vr_id, family (4 or 6), status as VRRPV3-MIB numbers
+    it, the configured priority, the advertisement interval in centiseconds,
+    the virtual MAC, preempt and accept, and the virtual addresses.
+    """
+    names = names or {}
+    out, cur = [], None
+    for line in text.replace("\r", "").splitlines():
+        t = line.strip()
+        m = re.match(r"\[\d+\] sw_if_index (\d+) VR ID (\d+) IPv(\d)", t)
+        if m:
+            cur = {"interface": names.get(int(m.group(1)),
+                                         f"sw_if_index {m.group(1)}"),
+                   "vr_id": int(m.group(2)), "family": int(m.group(3)),
+                   "status": 1, "priority": 0, "adv": 100, "mac": "",
+                   "preempt": False, "accept": False, "addresses": []}
+            out.append(cur)
+            continue
+        if cur is None:
+            continue
+        m = re.match(r"state (.+?) flags: preempt (\w+) accept (\w+)", t)
+        if m:
+            cur["status"] = VRRPV3_STATUS.get(m.group(1).lower(), 1)
+            cur["preempt"] = m.group(2) == "yes"
+            cur["accept"] = m.group(3) == "yes"
+            continue
+        m = re.match(r"priority: configured (\d+)", t)
+        if m:
+            cur["priority"] = int(m.group(1))
+            continue
+        m = re.match(r"timers: adv interval (\d+)", t)
+        if m:
+            cur["adv"] = int(m.group(1))
+            continue
+        m = re.match(r"virtual MAC (\S+)", t)
+        if m:
+            cur["mac"] = m.group(1)
+            continue
+        if t.startswith("addresses"):
+            cur["addresses"] = t.split()[1:]
+    return sorted(out, key=lambda r: (r["interface"], r["vr_id"], r["family"]))
+
+
+def parse_interface_addresses(text):
+    """{interface: [address, ...]} off `show interface address`."""
+    out, cur = {}, None
+    for line in text.replace("\r", "").splitlines():
+        if line and not line.startswith(" "):
+            cur = line.split()[0]
+            out.setdefault(cur, [])
+            continue
+        w = line.split()
+        if cur and w[:1] == ["L3"] and len(w) > 1:
+            out[cur].append(w[1].split("/")[0])
+    return out
+
+
+def _inet_octets(address):
+    """An address as the hex octets an InetAddress is written in."""
+    import ipaddress
+    return " ".join(f"{b:02X}" for b in ipaddress.ip_address(address).packed)
+
+
+def vrrpv3_rows(routers, indexes, own):
+    """
+    VRRPV3-MIB's operations and associated-address rows for `routers`
+    (parse_vrrp_detail), indexed by the interface's IF-MIB ifIndex
+    (`indexes`, the agent's own file). The master's address is served only
+    when this box is the master - its own primary address, from `own` - since
+    VPP does not say who the master is.
+    """
+    import ipaddress
+    out = []
+    ops = f"{VRRPV3}.1.1.1.1"
+    for r in routers:
+        if r["interface"] not in indexes:
+            continue
+        idx = f"{indexes[r['interface']]}.{r['vr_id']}.{1 if r['family'] == 4 else 2}"
+        mine = [a for a in own.get(r["interface"], [])
+                if ipaddress.ip_address(a).version == r["family"]]
+        if r["status"] == 3 and mine:
+            out.append((f"{ops}.3.{idx}", "octet", _inet_octets(mine[0])))
+        if mine:
+            out.append((f"{ops}.4.{idx}", "octet", _inet_octets(mine[0])))
+        if r["mac"]:
+            out.append((f"{ops}.5.{idx}", "octet",
+                        " ".join(r["mac"].upper().split(":"))))
+        out += [(f"{ops}.6.{idx}", "integer", r["status"]),
+                (f"{ops}.7.{idx}", "gauge", r["priority"]),
+                (f"{ops}.8.{idx}", "integer", len(r["addresses"])),
+                (f"{ops}.9.{idx}", "integer", r["adv"]),
+                (f"{ops}.10.{idx}", "integer", 1 if r["preempt"] else 2),
+                (f"{ops}.11.{idx}", "integer", 1 if r["accept"] else 2),
+                (f"{ops}.13.{idx}", "integer", 1)]
+        for a in r["addresses"]:
+            b = ipaddress.ip_address(a).packed
+            out.append((f"{VRRPV3}.1.1.2.1.2.{idx}.{len(b)}."
+                        + ".".join(str(x) for x in b), "integer", 1))
+    return out
+
+
 # --- the interface table: IF-MIB for the dataplane's cards (#498) -----------
 #
 # net-snmp's own IF-MIB reads Linux, and Linux does not have the cards the
@@ -957,6 +1076,7 @@ def oid_table():
         if key in d:
             out.append((f"{NAT_DEF_TIMEOUTS}.{n}.0", "gauge", d[key]))
     out += natv2_rows(d.get("cgnat", {}), d.get("config", {}))
+    out += d.get("extra", {}).get("vrrpv3", [])
     if ENTERPRISE.isdigit():
         base = f"1.3.6.1.4.1.{ENTERPRISE}.1"
         for n, key, typ, _desc in _ENTERPRISE_OBJECTS:

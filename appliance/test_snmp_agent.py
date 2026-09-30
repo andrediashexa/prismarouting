@@ -531,6 +531,72 @@ for _o, (_t, _v) in _n.items():
           f"{_o} served as {_t}, and NATV2-MIB says {_nv.get(_key)}")
 print(f"  [ ok ] {len(_n)} rows, each a NATV2-MIB column with its type")
 
+print("\n=== VRRPV3-MIB, RFC 6527: the dataplane's virtual routers (#513) ===")
+VR = ("[0] sw_if_index 1 VR ID 10 IPv4\n"
+      "   state Master flags: preempt yes accept no unicast no\n"
+      "   priority: configured 120 adjusted 110\n"
+      "   timers: adv interval 100 master adv 100 skew 53 master down 353\n"
+      "   virtual MAC 00:00:5e:00:01:0a\n"
+      "   addresses 10.9.0.1 \n"
+      "   peer addresses \n"
+      "[1] sw_if_index 2 VR ID 20 IPv6\n"
+      "   state Backup flags: preempt no accept yes unicast no\n"
+      "   priority: configured 90 adjusted 90\n"
+      "   timers: adv interval 200 master adv 0 skew 0 master down 0\n"
+      "   virtual MAC 00:00:5e:00:02:14\n"
+      "   addresses 2001:db8::1 \n")
+_vd = agent.parse_vrrp_detail(VR, {1: "loop0", 2: "pg0"})
+check([(r["interface"], r["vr_id"], r["family"], r["status"], r["priority"],
+        r["adv"], r["preempt"], r["accept"], r["addresses"]) for r in _vd]
+      == [("loop0", 10, 4, 3, 120, 100, True, False, ["10.9.0.1"]),
+          ("pg0", 20, 6, 2, 90, 200, False, True, ["2001:db8::1"])],
+      f"each router's interface, VRID, family, state and settings: {_vd}")
+check(agent.parse_vrrp_detail("", {}) == [], "no routers, no rows")
+_own = agent.parse_interface_addresses(
+    "loop0 (up):\n  L3 10.9.0.2/24\n  L3 fe80::1/64\n"
+    "pg0 (up):\n  L3 2001:db8::2/64\nlocal0 (dn):\n")
+check(_own.get("loop0", [])[:1] == ["10.9.0.2"]
+      and "2001:db8::2" in _own.get("pg0", []) and not _own.get("local0"),
+      f"each card's own addresses, the primary first: {_own}")
+_v = {o: (t, v) for o, t, v in agent.vrrpv3_rows(_vd, {"loop0": 3, "pg0": 1}, _own)}
+V = "1.3.6.1.2.1.207.1.1"
+check(_v.get(f"{V}.1.1.6.3.10.1") == ("integer", 3)
+      and _v.get(f"{V}.1.1.6.1.20.2") == ("integer", 2),
+      "the status, indexed by ifIndex, VRID and address family")
+check(_v.get(f"{V}.1.1.3.3.10.1") == ("octet", "0A 09 00 02")
+      and f"{V}.1.1.3.1.20.2" not in _v,
+      "the master's address where this box is master, none where it waits")
+check(_v.get(f"{V}.1.1.5.3.10.1") == ("octet", "00 00 5E 00 01 0A")
+      and _v.get(f"{V}.1.1.7.3.10.1") == ("gauge", 120)
+      and _v.get(f"{V}.1.1.8.3.10.1") == ("integer", 1)
+      and _v.get(f"{V}.1.1.9.1.20.2") == ("integer", 200)
+      and _v.get(f"{V}.1.1.10.3.10.1") == ("integer", 1)
+      and _v.get(f"{V}.1.1.11.3.10.1") == ("integer", 2),
+      "the MAC, priority, address count, interval and the two modes")
+check(_v.get(f"{V}.2.1.2.3.10.1.4.10.9.0.1") == ("integer", 1)
+      and _v.get(f"{V}.2.1.2.1.20.2.16.32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.1")
+      == ("integer", 1),
+      "the virtual addresses, indexed by type, length and octets")
+check(agent.vrrpv3_rows([], {}, {}) == [], "no routers, no table")
+# Every column served is one VRRPV3-MIB defines, with the type it declares.
+_VR = open(os.path.join(os.path.dirname(AGENT), "..", "test", "mibs",
+                        "VRRPV3-MIB.txt")).read()
+_vr = {}
+for _m in re.finditer(r"^\s*(vrrpv3\w+)\s+OBJECT-TYPE(.*?)::=\s*\{\s*(\w+)\s+(\d+)\s*\}",
+                      _VR, re.S | re.M):
+    _vr[(_m.group(3), int(_m.group(4)))] = (_m.group(1),
+        re.search(r"SYNTAX\s+(\S+)", _m.group(2)).group(1))
+_VENT = {"1.1": "vrrpv3OperationsEntry", "2.1": "vrrpv3AssociatedIpAddrEntry"}
+_VSYN = {"InetAddress": "octet", "MacAddress": "octet", "INTEGER": "integer",
+         "Unsigned32": "gauge", "Integer32": "integer", "TimeInterval": "integer",
+         "TruthValue": "integer", "RowStatus": "integer"}
+for _o, (_t, _x) in _v.items():
+    _rest = _o[len(V) + 1:].split(".")
+    _key = (_VENT[".".join(_rest[:2])], int(_rest[2]))
+    check(_key in _vr and _VSYN[_vr[_key][1]] == _t,
+          f"{_o} served as {_t}, and VRRPV3-MIB says {_vr.get(_key)}")
+print(f"  [ ok ] {len(_v)} rows, each a VRRPV3-MIB column with its type")
+
 print("\n=== the wire: reply, none, and the key an OID sorts by ===")
 _out = io.StringIO()
 with contextlib.redirect_stdout(_out):
