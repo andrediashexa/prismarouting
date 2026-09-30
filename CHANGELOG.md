@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.146.1 - the worker cap from the VTY, and a commit that reads each dump once
+
+### Added
+
 * **`workers <n>` under `system` > `cpu`: the worker cap from the VTY.**
   ([#517](https://github.com/andrediashexa/hexarouting/issues/517))
   `PRISMA_MAX_WORKERS` was the one tuning key with no statement, so capping
