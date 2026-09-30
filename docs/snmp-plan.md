@@ -340,6 +340,13 @@ for**, and it is the one thing that blocks the MIB's first object.
 
 Each phase is its own issue and its own release, with its measurements.
 
+Phase 4 shipped in 0.147.1 (#524): the tuning in effect, the self-test, the
+configuration's commits and confirm window and the trail's head, with four
+notifications - `docs/snmp-mib.md` lists them. Logins are not in it: their
+source is sshd's journal, which the SNMP agent's account cannot read, and a
+file of login counts would need the login path to write it; that is its own
+issue when somebody asks. The versions were already served (`prSystem`).
+
 ## Decisions for the maintainer
 
 1. **The PEN**: apply to IANA for the product's own enterprise number (free,

@@ -116,6 +116,13 @@ PEER_CONFIG_PATH = os.environ.get("PRISMA_PEER_CONFIG",
 # dataplane that is still starting, and giving up on that would turn a boot
 # into a box that stayed broken.
 CONFIRM_ATTEMPTS = 5
+# What the box says about its configuration for the SNMP agent (#524): when
+# it last changed, by whom, the confirm window, the reverts. Beside the
+# self-test's verdict, in a directory the agent can read, because the agent
+# must not read /etc/prisma-routing: every revision there carries password
+# hashes. Nothing written here is secret.
+CONFIG_STATE_PATH = os.environ.get("PRISMA_CONFIG_STATE",
+                                   "/run/prisma-routing/state/config")
 # What the VTY may do to the mode of the configuration store, which is:
 # create it no wider than the group, and nothing else.
 #
@@ -6696,6 +6703,61 @@ class Rollback:
             os.umask(old_umask)
 
 
+class ConfigState:
+    """
+    The configuration's state as PRISMA-ROUTING-MIB's prConfig serves it
+    (#524): a few `key value` lines, rewritten whole at every change.
+
+    Best effort, and silent. It is monitoring, written after the change it
+    describes has happened: a commit that took effect is not refused, or
+    reported as failed, because this file could not be written - the NMS
+    then reads the state from before it, which is the gap a box that could
+    not say anything leaves anyway. /run, so it starts empty at every boot,
+    and the counters with it; the boot's own load is the first change.
+    """
+
+    def __init__(self, path=CONFIG_STATE_PATH):
+        self.path = path
+
+    def read(self):
+        """{key: value}; {} when there is nothing, or nothing readable."""
+        out = {}
+        try:
+            with open(self.path) as fh:
+                for line in fh:
+                    k, _, v = line.strip().partition(" ")
+                    if k:
+                        out[k] = v.strip()
+        except OSError:
+            pass
+        return out
+
+    def record(self, **fields):
+        """Set `fields`, keep the rest, write it whole and 0644 by rename."""
+        d = self.read()
+        d.update({k: str(v) for k, v in fields.items()})
+        tmp = self.path + ".new"
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(tmp, "w") as fh:
+                fh.write("".join(f"{k} {v}\n" for k, v in sorted(d.items())))
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
+
+    def applied(self, by, **fields):
+        """A configuration took effect now, applied by `by`."""
+        n = self.read().get("commits", "0")
+        self.record(commits=(int(n) if is_number(n) else 0) + 1,
+                    commit_at=int(time.time()), commit_by=by, **fields)
+
+    def bump(self, key):
+        """One more of the counter `key`."""
+        n = self.read().get(key, "0")
+        self.record(**{key: (int(n) if is_number(n) else 0) + 1})
+
+
 class ConfirmPending:
     """
     The revert a "commit confirmed" is waiting for, on disk.
@@ -6925,6 +6987,10 @@ class Shell:
         self.frr = Frr()
         self.rb = Rollback()
         self.confirm = ConfirmPending()
+        self.state = ConfigState()
+        # Set by `rollback <n>`, so the commit that applies it is counted
+        # as a rollback in prConfigRollbacks (#524).
+        self.from_rollback = False
         self.caps = capabilities()
         # Lines the dataplane returned about subscribers changing mapping,
         # refilled by every check. A commit that would move them is refused
@@ -11662,6 +11728,7 @@ class Shell:
                 self.confirm_deadline = None
                 self.confirm_backup = None
                 self.confirm_on_box = False
+                self.state.record(confirm_pending="no", confirm_deadline=0)
                 print("confirmed: the box will not roll this change back")
             except OSError as e:
                 # Said as a failure, because it is one. The window is still
@@ -11837,6 +11904,10 @@ class Shell:
             self.apply(Config.parse(backup))
             return
 
+        self.record_applied(vppapi.identity()[0], self.candidate)
+        if self.from_rollback:
+            self.state.bump("rollbacks")
+            self.from_rollback = False
         try:
             self.rb.push(self.candidate.text(), comment)
         except RollbackUnavailable as e:
@@ -12049,6 +12120,8 @@ class Shell:
         try:
             self.confirm.arm(deadline, backup, minutes)
             self.confirm_on_box = True
+            self.state.record(confirm_pending="yes",
+                              confirm_deadline=int(deadline))
         except OSError as e:
             why = f"{e.filename or self.confirm.path}: {e.strerror}"
         if self.confirm_on_box:
@@ -12130,6 +12203,9 @@ class Shell:
         print_prose(why, indent="")
         if not self.apply(target):
             return False
+        self.record_applied("confirm-expired", target, confirm_pending="no",
+                            confirm_deadline=0)
+        self.state.bump("confirm_reverts")
         try:
             self.confirm.clear()
         except OSError as e:
@@ -12188,6 +12264,20 @@ class Shell:
         self.candidate = self.running_config()
 
     @sigint_ignored
+    def record_applied(self, by, cfg, **fields):
+        """
+        Tell the SNMP agent a configuration took effect (#524): who, when,
+        and whether a reboot would lose it - the saved file compared with
+        what is running now, read as the boot reads it.
+        """
+        try:
+            with open(CONFIG_PATH) as fh:
+                saved = Config.parse(fh.read()).text()
+            fields["saved_differs"] = "no" if saved == cfg.text() else "yes"
+        except OSError:
+            fields["saved_differs"] = "unknown"
+        self.state.applied(by, **fields)
+
     def do_rollback(self, args):
         try:
             n = int(args[0]) if args else 0
@@ -12210,6 +12300,7 @@ class Shell:
             self.err(f"revision {n} does not exist")
             return
         self.candidate = Config.parse(text)
+        self.from_rollback = True
         print(f"load complete (revision {n})")
         print("use 'show configuration compare' to review, 'commit' to apply")
 
@@ -18584,6 +18675,7 @@ class Shell:
         finally:
             os.umask(old_umask)
         print(f"configuration saved to {CONFIG_PATH}")
+        self.state.record(saved_differs="no")
         # The one place the two halves of this can disagree.
         #
         # "commit confirmed" puts the RUNNING configuration back; `save`
@@ -19485,6 +19577,13 @@ class Shell:
             self.apply_management_path(way_back)
 
         if self.apply(target):
+            # A window armed before the reboot is still pending: the file
+            # outlives the boot, and so does the deadline (#212).
+            pending = self.confirm.read()
+            self.record_applied(
+                "boot", target,
+                confirm_pending="yes" if pending else "no",
+                confirm_deadline=int(pending["deadline"]) if pending else 0)
             try:
                 self.rb.push(target.text(), "loaded from file")
             except RollbackUnavailable as e:

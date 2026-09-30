@@ -40,7 +40,9 @@ to the product's.
 A Zabbix 7.0 template covers everything below: the dataplane's interfaces,
 the CGNAT's totals, pools and workers, the connection records, HA, LACP, BGP,
 OSPF, OSPFv3, IS-IS, the FIB's size, the control plane's CPU, memory and
-disks, and the box's notifications. The box prints it with its enterprise
+disks, the box's own state - the tuning in effect, the boot self-test, the
+configuration's commits and confirm window, the configuration trail's head
+(#524) - and the box's notifications. The box prints it with its enterprise
 number filled in, the same way it prints the MIB:
 
 ```
@@ -326,6 +328,58 @@ prints it; `prRadiusReceived`, `prRadiusApplied` and `prRadiusRefused`
 from a BNG. A refusal is a bad authenticator or a malformed packet, and the
 first is usually a shared secret that differs between the two.
 
+### The box's own state - `.1.16` to `.1.19` (#524)
+
+Phase 4 of `docs/snmp-plan.md`: what the box says about itself. Each group is
+left out whole - not served as zeros - when its source cannot be read, and
+the first three are served while the dataplane is down too, since the box
+whose dataplane did not come up is the one somebody reads them for.
+
+| OID | Object | Type | What it is | From |
+|---|---|---|---|---|
+| `.1.16.1.0` | `prTuningState` | INTEGER | tuned(1), betweenPlans(2), firstBoot(3) | the header prisma-routing-tune writes into `/etc/vpp/startup.conf` |
+| `.1.16.2.0` | `prTuningWorkers` | Gauge32 | worker threads this boot runs | `corelist-workers` in the same file |
+| `.1.16.3.0` | `prTuningWorkersNextBoot` | Gauge32 | worker threads the next boot runs | the between-plans header, else the same |
+| `.1.16.4.0` | `prTuningIsolated` | DisplayString | CPUs the kernel isolates now | `/sys/devices/system/cpu/isolated` |
+| `.1.16.5.0` | `prTuningIsolatedWanted` | DisplayString | CPUs the tuner asked to isolate | `isolcpus=` in `/etc/default/grub.d/prisma-routing.cfg` |
+| `.1.16.6.0` | `prTuningHugepages` | Gauge32 | hugepages of the tuner's size held now; absent when it asked none | `/sys/kernel/mm/hugepages/.../nr_hugepages` |
+| `.1.16.7.0` | `prTuningHugepagesWanted` | Gauge32 | hugepages the tuner asked for | `hugepages=` in the grub file |
+| `.1.17.1.0` | `prSelfTestVerdict` | INTEGER | ready(1), readyWithWarnings(2), notForwarding(3), failed(4) | `/run/prisma-routing/state/selftest`, written by the boot self-test |
+| `.1.17.2.0` | `prSelfTestFailures` | Gauge32 | checks failed | the same |
+| `.1.17.3.0` | `prSelfTestWarnings` | Gauge32 | warnings | the same |
+| `.1.17.4.0` | `prSelfTestRanAt` | DisplayString | when it finished, UTC | the same |
+| `.1.18.1.0` | `prConfigCommits` | Counter32 | configurations applied since boot: commits, the boot's load, rollbacks, reverts | `/run/prisma-routing/state/config`, written by the VTY |
+| `.1.18.2.0` | `prConfigLastCommitAt` | DisplayString | when the last one took effect, UTC | the same |
+| `.1.18.3.0` | `prConfigLastCommitBy` | DisplayString | the account; `boot` for the boot's load, `confirm-expired` for a revert | the same |
+| `.1.18.4.0` | `prConfigConfirmPending` | TruthValue | a commit confirmed waits for its confirmation | the same |
+| `.1.18.5.0` | `prConfigConfirmDeadline` | DisplayString | when it reverts, UTC; empty for none | the same |
+| `.1.18.6.0` | `prConfigConfirmReverts` | Counter32 | commits confirmed nobody confirmed, reverted by the box | the same |
+| `.1.18.7.0` | `prConfigRollbacks` | Counter32 | rollbacks to an earlier revision, committed | the same |
+| `.1.18.8.0` | `prConfigSavedDiffers` | TruthValue | a reboot would come back without the changes since the last `save` | the same |
+| `.1.19.1.0` | `prAuditState` | INTEGER | intact(1), empty(2), broken(3), truncated(4), incomplete(5) | `show cgnat history verify`'s check, asked of the dataplane at most every five minutes |
+| `.1.19.2.0` | `prAuditEntries` | Gauge32 | chained entries checked | the same |
+| `.1.19.3.0` | `prAuditHeadSeq` | Gauge32 | the last entry's sequence | the same |
+| `.1.19.4.0` | `prAuditHeadDigest` | DisplayString | the last entry's SHA-256: kept by the NMS, the chain's head off the box | the same |
+| `.1.19.5.0` | `prAuditLost` | Gauge32 | entries this dataplane could not write | the same |
+
+**Why the state files.** The agent is Debian-snmp and must not read
+`/etc/prisma-routing` (2770 root:prisma-cgnat): every revision there, the
+confirm store and the saved file carry password hashes. So the self-test and
+the VTY write a few lines with nothing secret in them into
+`/run/prisma-routing/state` (2775 root:prisma-cgnat, from tmpfiles), each file
+0644, and those are what the agent reads. `/run`, so they start empty at each
+boot, the counters with them; the boot's own load is the first change. A box
+where the self-test has not run, or no configuration has been applied since
+boot, serves no `prSelfTest` or `prConfig` at all, which is what the absence
+means. The files are written after the change they describe and never refuse
+it: a commit that took effect is not reported as failed because monitoring
+could not be written.
+
+`lab/snmp.sh` reads all four groups by name with the MIB loaded: the tuner's
+header between two plans, the real self-test's counts against its console, a
+`commit confirmed` pending with its deadline and then confirmed, and the
+trail's state.
+
 ## Notifications (#507)
 
 The box tells the NMS when something changes, rather than waiting for the
@@ -356,6 +410,10 @@ sending there.
 | records are lost | `recordsLost`, with the stream | a monitor on `prLogTransportDropped` |
 | a bundle's active members change | `bundleMembersChange`, with the bundle | a monitor on `prBundleActiveMembers` |
 | an upgrade leaves the old dataplane forwarding | `dataplaneNotCurrent` | a monitor on `prSystemDataplaneCurrent` |
+| the boot self-test failed | `selfTestFailed` | a monitor on `prSelfTestFailures` (#524) |
+| a commit confirmed nobody confirmed was reverted | `configReverted` | a monitor on `prConfigConfirmReverts` (#524) |
+| the tuning waits for a reboot | `tuningBetweenPlans` | a monitor on `prTuningState`, every five minutes (#524) |
+| the configuration trail no longer verifies | `auditTrailDamaged` | a monitor on `prAuditState`, every five minutes (#524) |
 | a disk, memory or load threshold | net-snmp's default monitors (`dskErrorFlag` and the rest) | net-snmp |
 
 The monitors are polled every 30 or 60 seconds, so a notification follows the
@@ -364,7 +422,11 @@ the objects they watch. `lab/snmp-traps.sh` receives the monitored ones with
 snmptrapd - `recordsTransportChange` from a TCP collector connecting and going
 away (#509) - and `lab/routing.sh` the BGP pair and `ospfNbrStateChange`. Not
 received in a lab: `recordsLost`, which needs the spill file to fail, and
-`bundleMembersChange`, which needs a bundle with a partner.
+`bundleMembersChange`, which needs a bundle with a partner. `selfTestFailed`
+is received too (#524); `configReverted`, `tuningBetweenPlans` and
+`auditTrailDamaged` are not, the first needing a window to expire and the
+other two polled every five minutes - their objects are read in
+`lab/snmp.sh`.
 
 Two things measured on the way, both in the monitors' definitions: a monitor
 fires when its test **becomes** true - one already true when snmpd starts is
@@ -393,6 +455,11 @@ password, and it is not an account: asked from outside, it answers
 | `prVrrpState` changing | a takeover |
 | `prBundleActiveMembers` below `prBundleMembers` | a bundle running on fewer legs than it has |
 | `prIdentityEntries` zero on a box that logs identities, or `prRadiusRefused` rising | records naming nobody, or a BNG the box will not listen to |
+| `prTuningState` not tuned, or `prTuningHugepages` below `prTuningHugepagesWanted` | the dataplane runs smaller than planned until a reboot |
+| `prSelfTestVerdict` failed | a check at boot failed; the console says which |
+| `prConfigConfirmReverts` rising | a change made and lost, usually because it cut the session it was made from |
+| `prConfigSavedDiffers` true for long | a reboot would come back without the changes |
+| `prAuditState` 3 or more, or `prAuditHeadDigest` other than the one the NMS kept | the configuration trail was altered, cut or rewritten |
 
 ## Where the values come from, and what reading them costs
 
@@ -423,5 +490,6 @@ last one seen.
 | LACP bundles: members in the bundle | PRISMA-ROUTING-MIB | served (#505) |
 | identity sources: entries, last read, RADIUS | PRISMA-ROUTING-MIB | served (#505) |
 | HA: whether the peer agrees on the mapping | `show cgnat ha` | not over SNMP: the check reads the peer's configuration off the box's own files, which the agent does not |
-| static forwards, the self-test | `show cgnat forward`, the console at boot | not over SNMP |
+| the tuning in effect, the boot self-test, commits and the confirm window, the configuration trail | PRISMA-ROUTING-MIB | served (#524) |
+| static forwards | `show cgnat forward` | not over SNMP |
 | notifications | traps or informs, per destination | served (#507) |

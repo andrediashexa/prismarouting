@@ -2400,6 +2400,17 @@ else
 fi
 say "============================================================="
 say ""
+# THE VERDICT FOR THE NMS (#524), beside the console's: the counts, whether
+# the box has anything to forward on, and when. PRISMA-ROUTING-MIB's
+# prSelfTest reads this; the journal, where the rest goes, is not readable by
+# the SNMP agent's account. Best effort, like everything after the verdict:
+# a box that cannot write it is a box whose NMS says the self-test never ran.
+_state="$ROOT/run/prisma-routing/state"
+mkdir -p "$_state" 2>/dev/null
+{ printf 'fail %s\nwarn %s\nforwarding %s\nat %s\n' "$fail" "$warns" \
+    "$([ -n "$noforward" ] && echo no || echo yes)" "$(date +%s)" \
+    > "$_state/selftest.new" && chmod 0644 "$_state/selftest.new" \
+    && mv -f "$_state/selftest.new" "$_state/selftest"; } 2>/dev/null
 # The diagnostic MUST NOT bring down the boot (docs/appliance.md). It reports a
 # verdict about the box; it does not answer for it. The one moment this script
 # must not add a failure of its own is the moment it has just found one, since

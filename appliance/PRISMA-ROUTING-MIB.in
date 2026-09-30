@@ -27,13 +27,18 @@ IMPORTS
         FROM SNMPv2-CONF;
 
 prismaRouting MODULE-IDENTITY
-    LAST-UPDATED "202609291200Z"
+    LAST-UPDATED "202609300600Z"
     ORGANIZATION "Prisma Routing"
     CONTACT-INFO "https://prismarouting.com.br"
     DESCRIPTION
         "Prisma Routing's CGNAT, the transports of its connection records,
         and the build the box runs. Read-only: every object is
         read-only, and the agent refuses every SET."
+    REVISION "202609300600Z"
+    DESCRIPTION
+        "The box's own state: the tuning in effect, the boot self-test, the
+        configuration's commits and confirm window, and the configuration
+        trail's chain (#524)."
     REVISION "202609291200Z"
     DESCRIPTION
         "The workers, the session capacity, HA, the LACP bundles and the
@@ -760,6 +765,238 @@ prRadiusRefused OBJECT-TYPE
     ::= { prIdentity 5 }
 
 --
+-- The tuning in effect (#524): what prisma-routing-tune wrote into the
+-- dataplane's startup.conf and asked the kernel for, and what the kernel did.
+--
+
+prTuning OBJECT IDENTIFIER ::= { prObjects 16 }
+
+prTuningState OBJECT-TYPE
+    SYNTAX      INTEGER { tuned(1), betweenPlans(2), firstBoot(3) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "tuned: the kernel holds what the tuner asked for. betweenPlans: a
+        change asked the kernel for more isolated CPUs than this boot has,
+        so the dataplane runs on the ones isolated now until the next reboot
+        (prTuningWorkers against prTuningWorkersNextBoot). firstBoot: the
+        kernel is not tuned yet and the dataplane runs the conservative
+        configuration until a reboot."
+    ::= { prTuning 1 }
+
+prTuningWorkers OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Dataplane worker threads this boot runs."
+    ::= { prTuning 2 }
+
+prTuningWorkersNextBoot OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Worker threads the next boot runs; prTuningWorkers when the box is
+        not between two plans."
+    ::= { prTuning 3 }
+
+prTuningIsolated OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The CPUs the running kernel isolates, as a list (2-7)."
+    ::= { prTuning 4 }
+
+prTuningIsolatedWanted OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The CPUs the tuner asked the kernel to isolate, for the next boot."
+    ::= { prTuning 5 }
+
+prTuningHugepages OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Hugepages of the tuner's size the kernel holds now. Absent when the
+        tuner asked for none."
+    ::= { prTuning 6 }
+
+prTuningHugepagesWanted OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Hugepages the tuner asked the kernel for. Fewer held than asked is a
+        kernel that could not reserve them, or a boot before the request."
+    ::= { prTuning 7 }
+
+--
+-- The boot self-test's verdict (#524), as the console's last line says it.
+--
+
+prSelfTest OBJECT IDENTIFIER ::= { prObjects 17 }
+
+prSelfTestVerdict OBJECT-TYPE
+    SYNTAX      INTEGER { ready(1), readyWithWarnings(2),
+                          notForwarding(3), failed(4) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The last self-test's verdict. notForwarding is a healthy box with a
+        step left: nothing to forward on yet."
+    ::= { prSelfTest 1 }
+
+prSelfTestFailures OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Checks the last self-test failed."
+    ::= { prSelfTest 2 }
+
+prSelfTestWarnings OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Warnings the last self-test gave."
+    ::= { prSelfTest 3 }
+
+prSelfTestRanAt OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "When the last self-test finished, UTC (2026-09-30T06:00:00Z)."
+    ::= { prSelfTest 4 }
+
+--
+-- The configuration (#524): commits, the commit-confirmed window, rollbacks.
+-- The counters count since the box started.
+--
+
+prConfig OBJECT IDENTIFIER ::= { prObjects 18 }
+
+prConfigCommits OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Configurations applied since the box started: every commit, the
+        boot's own load, a rollback and a confirm window's revert."
+    ::= { prConfig 1 }
+
+prConfigLastCommitAt OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "When the last configuration was applied, UTC."
+    ::= { prConfig 2 }
+
+prConfigLastCommitBy OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The account that applied it; 'boot' for the configuration loaded at
+        boot, 'confirm-expired' for a revert."
+    ::= { prConfig 3 }
+
+prConfigConfirmPending OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A commit confirmed is waiting for its confirmation, and the box
+        reverts it at prConfigConfirmDeadline unless it comes."
+    ::= { prConfig 4 }
+
+prConfigConfirmDeadline OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "When a pending commit confirmed reverts, UTC; empty for none."
+    ::= { prConfig 5 }
+
+prConfigConfirmReverts OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Commits confirmed nobody confirmed, reverted by the box. Each one is
+        a change somebody made and then could not reach the box to keep."
+    ::= { prConfig 6 }
+
+prConfigRollbacks OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Rollbacks to an earlier revision an operator committed."
+    ::= { prConfig 7 }
+
+prConfigSavedDiffers OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The running configuration is not the saved one: a reboot would come
+        back without the changes since the last save."
+    ::= { prConfig 8 }
+
+--
+-- The configuration trail (#524): the dataplane's hash-chained record of
+-- every pool change, as `show bpa pool history verify` checks it.
+--
+
+prAudit OBJECT IDENTIFIER ::= { prObjects 19 }
+
+prAuditState OBJECT-TYPE
+    SYNTAX      INTEGER { intact(1), empty(2), broken(3), truncated(4),
+                          incomplete(5) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "intact: every entry matches its digest and follows the last. empty:
+        nothing chained to check. broken: an entry was altered or removed
+        from the middle. truncated: entries removed from the end. incomplete:
+        writes this dataplane could not make are missing from the file.
+        Checked at most every five minutes."
+    ::= { prAudit 1 }
+
+prAuditEntries OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Chained entries the check read."
+    ::= { prAudit 2 }
+
+prAuditHeadSeq OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The last entry's sequence number."
+    ::= { prAudit 3 }
+
+prAuditHeadDigest OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The last entry's SHA-256, in hex. Kept by the NMS, it is the chain's
+        head off the box: a trail rewritten from scratch verifies, and only a
+        head recorded elsewhere tells it from the one that was there."
+    ::= { prAudit 4 }
+
+prAuditLost OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Entries this dataplane could not write since it started: missing
+        from the file and from everywhere else."
+    ::= { prAudit 5 }
+
+--
 -- Conformance.
 --
 
@@ -824,13 +1061,45 @@ prIdentityGroup OBJECT-GROUP
     DESCRIPTION "The identity sources."
     ::= { prGroups 7 }
 
+prTuningGroup OBJECT-GROUP
+    OBJECTS { prTuningState, prTuningWorkers, prTuningWorkersNextBoot,
+              prTuningIsolated, prTuningIsolatedWanted, prTuningHugepages,
+              prTuningHugepagesWanted }
+    STATUS      current
+    DESCRIPTION "The tuning in effect."
+    ::= { prGroups 8 }
+
+prSelfTestGroup OBJECT-GROUP
+    OBJECTS { prSelfTestVerdict, prSelfTestFailures, prSelfTestWarnings,
+              prSelfTestRanAt }
+    STATUS      current
+    DESCRIPTION "The boot self-test."
+    ::= { prGroups 9 }
+
+prConfigGroup OBJECT-GROUP
+    OBJECTS { prConfigCommits, prConfigLastCommitAt, prConfigLastCommitBy,
+              prConfigConfirmPending, prConfigConfirmDeadline,
+              prConfigConfirmReverts, prConfigRollbacks,
+              prConfigSavedDiffers }
+    STATUS      current
+    DESCRIPTION "The configuration's commits and confirm window."
+    ::= { prGroups 10 }
+
+prAuditGroup OBJECT-GROUP
+    OBJECTS { prAuditState, prAuditEntries, prAuditHeadSeq,
+              prAuditHeadDigest, prAuditLost }
+    STATUS      current
+    DESCRIPTION "The configuration trail."
+    ::= { prGroups 11 }
+
 prCompliance MODULE-COMPLIANCE
     STATUS      current
     DESCRIPTION "What every Prisma Routing box serves."
     MODULE
         MANDATORY-GROUPS { prTotalsGroup, prCgnatGroup, prLoggingGroup,
                            prSystemGroup, prHaGroup, prLacpGroup,
-                           prIdentityGroup }
+                           prIdentityGroup, prTuningGroup, prSelfTestGroup,
+                           prConfigGroup, prAuditGroup }
     ::= { prCompliances 1 }
 
 END

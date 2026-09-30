@@ -1238,6 +1238,14 @@ def snmp_monitors(pen):
         f"monitor -r 30 -D -o {b}.14.1.1.2 -o {b}.14.1.1.5 "
         f"bundleMembersChange {b}.14.1.1.5 != 0",
         f"monitor -r 60 -I dataplaneNotCurrent {b}.12.3.0 == 2",
+        # The box's own state (#524): a self-test that failed, a commit
+        # confirmed nobody confirmed and the box reverted, a tuning that
+        # waits for a reboot, and a configuration trail that no longer
+        # verifies (broken, truncated or incomplete are 3 and up).
+        f"monitor -r 60 -I selfTestFailed {b}.17.2.0 > 0",
+        f"monitor -r 60 -I -D configReverted {b}.18.6.0 > 0",
+        f"monitor -r 300 -I tuningBetweenPlans {b}.16.1.0 == 2",
+        f"monitor -r 300 -I auditTrailDamaged {b}.19.1.0 >= 3",
     ]
 
 

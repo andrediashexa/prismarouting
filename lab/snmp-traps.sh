@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 7
+# OFF-RED-AT-LEAST: 8
 # SNMP notifications (#507): the box telling the NMS, rather than waiting to
 # be asked.
 #
@@ -13,6 +13,7 @@
 #   a pool at 90% of its blocks     mteTriggerFired "poolNearlyFull"
 #   a subscriber refused ports      mteTriggerFired "portsRefused"
 #   an older dataplane than the box mteTriggerFired "dataplaneNotCurrent"
+#   a boot self-test that failed    mteTriggerFired "selfTestFailed" (#524)
 #
 # And the half that must NOT happen: the user snmpd queries itself as is not
 # an account anybody outside can read the box with.
@@ -48,6 +49,11 @@ vppctl vrrp vr add pg0 vr_id 7 priority 150 interval 100 100.64.3.1 >/dev/null
 # monitor fires when its test BECOMES true, and one already true when snmpd
 # starts is evaluated before the agent answers and never fires - which is
 # not the box's case, where the stale state begins at an upgrade.
+# The self-test's verdict as it writes it (#524), healthy until section 2.
+mkdir -p /run/prisma-routing/state
+printf 'fail 0\nwarn 0\nforwarding yes\nat %s\n' "$(date +%s)" \
+  > /run/prisma-routing/state/selftest
+chmod 0644 /run/prisma-routing/state/selftest
 mkdir -p /usr/share/prisma-routing
 vppctl show plugins | tr -d '\r' | awk '/bpa_plugin.so/ { print $3; exit }' \
   > /usr/share/prisma-routing/VERSION
@@ -99,6 +105,9 @@ echo "  $(vppctl show bpa pool | grep -E 'utilisation') ; $(vppctl show bpa top 
 echo "  the refused subscriber: $(vppctl show bpa top 200 | grep '100.64.0.120 ')"
 # The upgrade: a newer release on disk, the old build still forwarding.
 echo "9.9.9" > /usr/share/prisma-routing/VERSION
+# And a self-test that found two failures, as the next boot's would write it.
+printf 'fail 2\nwarn 0\nforwarding yes\nat %s\n' "$(date +%s)" \
+  > /run/prisma-routing/state/selftest
 echo "  prPortRefusals now: $(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.99999.1.5.0 2>&1)"
 echo "  $(vpp_get_stats socket-name /run/vpp/stats.sock dump '^/bpa/pool/refused$' | tr '\n' ' ')"
 echo "  TCP transport: $(vppctl show bpa logging | tr -d '\r' | grep -iA2 '^TCP' | tr '\n' ' ')"
@@ -128,6 +137,8 @@ expect "a card taken down arrives as linkDown" test "${LINKDOWN:-0}" -ge 1
 expect_in "the VRRP router starting arrives as vrrpStateChange" "vrrpStateChange" "$NAMES"
 expect_in "a pool at 90% arrives as poolNearlyFull" "poolNearlyFull" "$NAMES"
 expect_in "a subscriber refused ports arrives as portsRefused" "portsRefused" "$NAMES"
+expect_in "a failed self-test arrives as selfTestFailed (#524)" \
+  "selfTestFailed" "$NAMES"
 expect_in "a dataplane older than the release arrives as dataplaneNotCurrent" \
   "dataplaneNotCurrent" "$NAMES"
 expect_in "a records transport connecting and dropping arrives as recordsTransportChange" \

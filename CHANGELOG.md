@@ -77,6 +77,27 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The box's own state over SNMP: tuning, self-test, commits, the trail.**
+  ([#524](https://github.com/andrediashexa/hexarouting/issues/524))
+  Phase 4 of `docs/snmp-plan.md`, four groups in PRISMA-ROUTING-MIB:
+  `prTuning` - tuned, between two plans or on a first boot, the workers now
+  and at the next boot, the CPUs isolated and the hugepages held against what
+  the tuner asked; `prSelfTest` - the boot self-test's verdict, failures,
+  warnings and when; `prConfig` - changes applied since boot, the last one's
+  time and account, a commit confirmed pending and its deadline, reverts,
+  rollbacks, running unsaved; `prAudit` - the configuration trail's state,
+  entries, head sequence and digest, entries lost. The agent must not read
+  `/etc/prisma-routing`, whose revisions carry password hashes, so the
+  self-test and the VTY write a few lines with nothing secret into
+  `/run/prisma-routing/state` (0644, the directory from tmpfiles); the trail
+  is asked of the dataplane at most every five minutes. Tuning, self-test and
+  configuration are served with the dataplane down too. Four notifications:
+  `selfTestFailed`, `configReverted`, `tuningBetweenPlans`,
+  `auditTrailDamaged`, and the Zabbix template carries the items and
+  triggers. `lab/snmp.sh` reads them all by name - the real self-test's counts
+  against its console, a `commit confirmed` pending and then confirmed - and
+  `lab/snmp-traps.sh` receives `selfTestFailed`.
+
 ### Fixed
 
 ## 0.147.0 - monitor interface: each interface's traffic as a live chart
