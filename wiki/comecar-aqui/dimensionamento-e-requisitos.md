@@ -170,7 +170,7 @@ Numa caixa de 4 ou 8 núcleos isso é equilibrado. Num processador de 32 núcleo
 
 ## Devolvendo núcleos
 
-`PRISMA_MAX_WORKERS`, em `/etc/prisma-routing/tune.env`, limita quantos núcleos físicos viram threads de encaminhamento. Ele **vem vazio**, e vazio significa sem limite - exatamente o comportamento acima. Preenchendo, os núcleos liberados deixam de ser isolados e voltam para o escalonador, onde o roteamento e a VTY podem usá-los de fato.
+`workers <n>`, em `system` > `cpu` na VTY (a partir da 0.144.4; antes, só editando `PRISMA_MAX_WORKERS` em `/etc/prisma-routing/tune.env`), limita quantos núcleos físicos viram threads de encaminhamento. Ele **vem vazio**, e vazio significa sem limite - exatamente o comportamento acima. Preenchendo, os núcleos liberados deixam de ser isolados e voltam para o escalonador, onde o roteamento e a VTY podem usá-los de fato.
 
 Cada núcleo devolvido é aquela fatia da capacidade de encaminhamento. Não existe um valor padrão porque a troca depende de quanto trabalho de controle a caixa carrega: uma caixa que só recebe rota padrão quase não tem plano de controle; uma que recebe duas tabelas cheias, refaz política BGP e ainda serve consultas tem bastante.
 
@@ -214,8 +214,9 @@ prisma# [edit system / cpu] commit
 | `control-plane <n>` | quantos núcleos físicos ficam com o sistema, o roteamento, o SSH, a VTY e os containers | `1`    |
 | `main-thread shared` | a thread principal do dataplane divide o primeiro núcleo do plano de controle | sim    |
 | `main-thread dedicated` | a thread principal ganha um núcleo só dela, isolado como o de um worker; custa um worker | não    |
+| `workers <n>` | no máximo `n` workers; os núcleos que sobram ficam com o Linux, sem ser isolados | um worker por núcleo restante |
 | `cgnat-workers <n>` | quantos workers traduzem; os outros só recebem da placa e entregam ao worker dono do assinante | todos fazem as duas coisas |
-| `no control-plane`, `no main-thread`, `no cgnat-workers` | volta ao padrão |        |
+| `no control-plane`, `no main-thread`, `no workers`, `no cgnat-workers` | volta ao padrão |        |
 
 **Por que dar um núcleo à thread principal:** uma vez por segundo ela para os workers para expirar sessões, e o encaminhamento espera enquanto ela não roda. Dividindo núcleo com o roteamento, ela espera o roteamento - numa tabela BGP cheia convergindo, isso aparece. Num núcleo só dela, não espera ninguém.
 

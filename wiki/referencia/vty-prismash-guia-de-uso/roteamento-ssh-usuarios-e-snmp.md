@@ -279,7 +279,7 @@ configure
 |---------|------|-----------|
 | `interface <placa>` | `system` > `dataplane` | entrega esta placa, pelo nome que o **Linux** dá a ela, ao dataplane no próximo início dele; um nome que o Linux não tem é recusado com a lista dos que ele tem |
 | `no interface` | `system` > `dataplane` | a caixa deixa de pegar placa no próximo início do dataplane |
-| `control-plane`, `main-thread`, `cgnat-workers` | `system` > `cpu` | os núcleos por papel |
+| `control-plane`, `main-thread`, `workers`, `cgnat-workers` | `system` > `cpu` | os núcleos por papel |
 | `control-plane`, `buffers` | `system` > `memory` | a memória por papel |
 
 As três valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).

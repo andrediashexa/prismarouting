@@ -2099,5 +2099,65 @@ check(_ok and not any(a[0] == system.SET_HOSTNAME for a in _asked)
 print("  a commit of `hostname` renames the host and rewrites sysName")
 
 
+print("=== a check reads each dump once; an apply reads fresh (#520) ===")
+
+
+class CachingApi(FakeApi):
+    """FakeApi with the cached_dumps() seam, counting the blocks opened."""
+
+    def __init__(self):
+        super().__init__()
+        self.opened = 0
+
+    # not a unit: the stand-in's seam, which Shell.reads_cached opens
+    @contextlib.contextmanager
+    def cached_dumps(self):
+        self.opened += 1
+        yield self
+
+
+_ca = CachingApi()
+_sh = shell_with(_ca)
+with _sh.reads_cached():
+    pass
+check(_ca.opened == 1, "Shell.reads_cached opens the API's cached_dumps()")
+check(isinstance(shell_with(FakeApi()).reads_cached(),
+                 contextlib.nullcontext),
+      "and a stand-in API without it reads as it always did")
+_ca.opened = 0
+_sh.apply(target_with("rc", "100.64.0.0/24", "203.0.113.0/30"),
+          check_only=True)
+check(_ca.opened == 1, f"a commit check runs inside one block ({_ca.opened})")
+_ca.opened = 0
+_sh._apply(target_with("rc", "100.64.0.0/24", "203.0.113.0/30"),
+           check_only=True)
+check(_ca.opened == 0, "_apply itself opens none: apply() is where it is decided")
+_ca.opened = 0
+_sh.apply(target_with("rc", "100.64.0.0/24", "203.0.113.0/30"))
+check(_ca.opened == 0,
+      f"a real apply opens none, since its writes change the dumps ({_ca.opened})")
+_ca.opened = 0
+_rs = prismash.Shell()
+_rs.api = _ca
+_rs._running_config = lambda: "read"
+check(_rs.running_config() == "read" and _ca.opened == 1,
+      "running_config() reads inside one block, through _running_config()")
+_ca.opened = 0
+_cs = shell_with(_ca)
+_cs.candidate = None
+_seen = []
+_cs._do_commit = lambda args: _seen.append((args, _ca.opened))
+_cs.do_commit(["check"])
+_cs.do_commit([])
+check(_seen == [(["check"], 1), ([], 1)],
+      f"commit check runs inside one block, a commit outside any: {_seen}")
+_ca.calls.clear()
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    prismash.Shell._do_commit(_cs, [])
+check("no candidate configuration" in _buf.getvalue() and not _ca.calls,
+      f"_do_commit is the commit itself: {_buf.getvalue()!r}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

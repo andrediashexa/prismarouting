@@ -18,6 +18,7 @@ speed, and configuration is all prismash does.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -116,6 +117,16 @@ RETVAL_NAMES = {
 }
 
 
+def is_question(message):
+    """
+    Does `message` only ask? VPP's convention names the ones that answer
+    without changing anything *_get (sw_interface_get_table,
+    lcp_osi_proto_get); everything else sent through call() may change
+    what the dataplane says (#520).
+    """
+    return message.endswith(("_get", "_get_table"))
+
+
 # The messages that CHANGE something. Only these carry an identity: a dump
 # that named an operator would put a line in nobody's trail and invite the
 # reader to think reading was recorded too.
@@ -197,6 +208,8 @@ class Vat2:
         # Injected for the same reason the runner is: a test asserting what
         # goes on the wire must not depend on which account runs it.
         self._identity = identity
+        # The dumps answered inside cached_dumps(), or None outside it (#520).
+        self._dumps = None
 
     #: VPP's shared-memory API segment, and the group an operator account
     #: reaches it through.
@@ -284,6 +297,33 @@ class Vat2:
 
     # ------------------------------------------------------------- calling
 
+    @contextlib.contextmanager
+    def cached_dumps(self):
+        """
+        Answer a dump asked again with what it answered the first time, for
+        as long as the block runs - and forget everything at any call().
+
+        WHY (#520): every vat2 is a process, 100-150 ms of start-up on the
+        X520 bench whatever the message, and one `show running-config` asked
+        for the same sw_interface_dump twenty times over, once per
+        interface_index(). A commit check with nothing to change took 15.5 s,
+        12.7 s of it in 96 vat2 processes.
+
+        FOR READS ONLY. The caller opens it where nothing is written - reading
+        the running configuration, checking a candidate - and call() clears
+        it anyway, so a write inside the block is never followed by the
+        answer from before it. Nested blocks share the outermost's answers.
+        """
+        outer = self._dumps is None
+        if outer:
+            self._dumps = {}
+        try:
+            yield self
+        finally:
+            if outer:
+                self._dumps = None
+
+
     @staticmethod
     def _client_failure(message, rc, text):
         """
@@ -308,6 +348,25 @@ class Vat2:
         return None
 
     def call(self, message, args, timeout=15):
+        """
+        One message and its reply. Inside cached_dumps() a question - VPP
+        names them *_get - is answered once like a dump, and anything else
+        forgets every answer, since it may change them (#520).
+        """
+        if self._dumps is not None:
+            if is_question(message):
+                key = ("call", message, json.dumps(args, sort_keys=True))
+                if key not in self._dumps:
+                    r = self._call(message, args, timeout)
+                    if r.state != OK:
+                        return r
+                    self._dumps[key] = r
+                return self._dumps[key]
+            self._dumps.clear()
+        return self._call(message, args, timeout)
+
+    def _call(self, message, args, timeout=15):
+        """call() without the cache: one vat2, its reply or why not."""
         why = unsendable(message, args)
         if why:
             return Reply(CANNOT_SEND, reason=(
@@ -377,6 +436,17 @@ class Vat2:
         An empty dump is a legitimate answer and comes back as an empty list,
         which is not the same as a failure and must not be reported as one.
         """
+        key = (message, json.dumps(args, sort_keys=True))
+        if self._dumps is not None and key in self._dumps:
+            return self._dumps[key]
+        r = self._dump(message, args, timeout)
+        # Only an answer is kept: a failure asked again is asked again.
+        if self._dumps is not None and r.state == OK:
+            self._dumps[key] = r
+        return r
+
+    def _dump(self, message, args, timeout):
+        """dump() without the cache: one vat2, its rows or why not."""
         rc, out, err = self._run(
             [self.vat2, message, json.dumps(args)], timeout=timeout)
 

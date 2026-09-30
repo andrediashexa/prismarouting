@@ -77,7 +77,32 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`workers <n>` under `system` > `cpu`: the worker cap from the VTY.**
+  ([#517](https://github.com/andrediashexa/hexarouting/issues/517))
+  `PRISMA_MAX_WORKERS` was the one tuning key with no statement, so capping
+  the workers - leaving cores to Linux, which a VM sharing its host with other
+  guests needs, since a worker polls its core whether a packet comes or not -
+  meant editing tune.env by hand. Written to that key, shown by
+  `show system cpu`, in effect from the next reboot like the rest of `cpu`.
+  The refusal of an unknown `no` under `cpu` and `memory` now lists the
+  statements as `no <a|b|...>`, which fits the console. **A cap set by hand in
+  tune.env is cleared by the next `cpu` commit that does not carry it**: set
+  it through the VTY.
+
 ### Fixed
+
+* **A commit check spent its time starting vat2.**
+  ([#520](https://github.com/andrediashexa/hexarouting/issues/520))
+  Every vat2 is a process - 100-150 ms of start-up on the X520 bench whatever
+  it asks - and reading the running configuration asked the same
+  `sw_interface_dump` again for every interface it named. `configure` and a
+  `commit check` with nothing to change took 15.5 s there, 12.7 s of it in 96
+  vat2 processes. A dump, and a question VPP names `*_get`, is answered once
+  for the whole reading now - inside `running_config()`, a check's apply and
+  all of `commit check` - and anything sent forgets every answer, so a real
+  apply reads fresh. Measured by `lab/commit.sh` on eight interfaces with an
+  address: 120 vat2 and 7.5 s before, 24 and 1.9 s after; `show
+  running-config` from 40 vat2 (29 of them the same dump) to 12.
 
 ## 0.146.0 - a Zabbix 7.0 template for the box: show snmp zabbix-template
 

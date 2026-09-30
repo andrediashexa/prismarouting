@@ -2692,10 +2692,17 @@ TREE["cpu"] = {
         "shared": ("on the control plane's first core, the default", None),
         "dedicated": ("a core of its own, isolated like a worker's; costs "
                       "one worker", None)}),
+    # PRISMA_MAX_WORKERS had no statement: tune.env by hand was the only
+    # way to leave cores to Linux, which is what a VM sharing its host with
+    # other guests needs - a worker polls its core whether or not a packet
+    # comes.
+    "workers": ("at most this many VPP workers; the cores past them stay "
+                "with Linux", "<1-1024>"),
     "cgnat-workers": ("how many workers translate; the rest take packets off "
                       "the cards and hand them over", "<1-1024>"),
     "no": ("go back to the default", {
         "cgnat-workers": ("every worker receives and translates", None),
+        "workers": ("a worker on every core left", None),
         "control-plane": ("one control-plane core", None),
         "main-thread": ("the main thread shares the control plane's core",
                         None)}),
@@ -6825,7 +6832,24 @@ class Shell:
 
     # ---------------------------------------------------------- device
 
+    def reads_cached(self):
+        """
+        The dataplane's dumps answered once for the block (#520), where the
+        API can; a stand-in API without cached_dumps() reads as it always did.
+        """
+        cached = getattr(self.api, "cached_dumps", None)
+        return cached() if cached else contextlib.nullcontext()
+
     def running_config(self) -> Config:
+        """
+        The configuration in effect, read with the dataplane's dumps answered
+        once (#520): the reading below asks sw_interface_dump for every
+        interface it names, and nothing in it writes.
+        """
+        with self.reads_cached():
+            return self._running_config()
+
+    def _running_config(self) -> Config:
         """
         The configuration actually in effect, read from the device.
 
@@ -8661,6 +8685,17 @@ class Shell:
         return True
 
     def apply(self, target: Config, check_only=False) -> bool:
+        """
+        Converge the device onto `target` (_apply). A check writes nothing,
+        so its reads share one answer per dump (#520); a real apply reads
+        fresh, since what it writes changes what the dumps say.
+        """
+        if check_only:
+            with self.reads_cached():
+                return self._apply(target, check_only=True)
+        return self._apply(target, check_only=False)
+
+    def _apply(self, target: Config, check_only=False) -> bool:
         """
         Converge the device onto `target`. Returns True on success.
 
@@ -11130,7 +11165,20 @@ class Shell:
 
     @sigint_ignored
     def do_commit(self, args):
-        """commit [check | remap | cutoff | confirmed <min> | comment <text>]"""
+        """
+        commit [check | remap | cutoff | confirmed <min> | comment <text>]
+
+        A `commit check` writes nothing, so every reading it makes - the
+        running configuration, then the check's own - shares one answer per
+        dump (#520); a commit that applies reads fresh (_do_commit).
+        """
+        if args and args[0] == "check":
+            with self.reads_cached():
+                return self._do_commit(args)
+        return self._do_commit(args)
+
+    def _do_commit(self, args):
+        """commit, as do_commit() decided to read for it."""
         if self.candidate is None:
             self.err("no candidate configuration")
             return
@@ -13208,7 +13256,7 @@ class Shell:
             held = getattr(self.candidate, _lvl)
             if w[0] == "no":
                 if len(w) != 3 or w[2] not in keys:
-                    self.err(f"{_lvl}: no " + ", or no ".join(keys))
+                    self.err(f"{_lvl}: no <" + "|".join(keys) + ">")
                 else:
                     held.pop(w[2], None)
                 return True
@@ -14469,6 +14517,8 @@ class Shell:
         print("configured, in effect from the next reboot:")
         print(f"  control-plane cores   {cp}")
         print(f"  VPP main thread       {main}")
+        mw = self.read_tune_key("PRISMA_MAX_WORKERS")
+        print(f"  VPP workers at most   {mw if mw else 'every core left'}")
         cw = self.read_tune_key("PRISMA_CGNAT_WORKERS")
         print(f"  CGNAT workers         "
               f"{cw if cw else 'all, each also receiving'}")
@@ -16409,6 +16459,8 @@ class Shell:
         # One figure a row, and last on it.
         print(f"cpu: control-plane cores {cpu.get('control-plane', '1')}")
         print(f"cpu: VPP main thread {cpu.get('main-thread', 'shared')}")
+        print(f"cpu: VPP workers at most "
+              f"{cpu.get('workers', 'every core left')}")
         print(f"cpu: CGNAT workers "
               f"{cpu.get('cgnat-workers', 'all, each also receiving')}")
         print_prose("in effect from the next reboot: the cores are isolated "
