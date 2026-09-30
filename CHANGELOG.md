@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Added
 
+### Changed
+
+* **Two decisions recorded, and their issues closed.**
+  ([#210](https://github.com/andrediashexa/hexarouting/issues/210),
+  [#396](https://github.com/andrediashexa/hexarouting/issues/396))
+  By the maintainer on 2026-09-30. `bpa rebalance`, the block that moves
+  between workers, stays **off** by default: in the lab's three-block pool it
+  served fewer subscribers on than off, and whether retrying subscribers turn
+  that around is measured on #475's bench with real traffic, which now
+  carries it. The containers stay as they are - the dataplane, the control
+  plane and the VTY in their own, none privileged - and the SNMP agent and
+  the telemetry get no container of their own: they read the host's /proc,
+  /sys and the statistics segment, so the isolation would be nominal.
+
 ### Fixed
 
 ## 0.147.2 - Debian 13 decided against: the box stays on Debian 12

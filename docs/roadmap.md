@@ -400,7 +400,7 @@ of the logging obligation. If the scope ever changes, that is where to start.
 | **A /0 prefix became a single address** - [#473](https://github.com/andrediashexa/hexarouting/issues/473), open | `1u << 32` is undefined in C, and on x86 it is 1: a /0 in a pool or a bypass was one address. One helper computes a prefix's range now, and /0 is refused where it is typed. | S |
 | **Every CGNAT function has a unit test, headers included** - [#472](https://github.com/andrediashexa/hexarouting/issues/472), open | The checker did not read `.h` files; 69 functions in them had no test. Their pure part moved where the plain-cc harness compiles it, and the untested ceiling is 0. | M |
 | **`lab/vty.sh` fails three checks on 0.138.1** - [#474](https://github.com/andrediashexa/hexarouting/issues/474), open | An interface block offers `cgnat`, which the lab reads as a leak; and a loaded `router static` never reaches FRR because the load stops at a subinterface the dataplane lacks. Whether each is the lab or the product is the first thing to settle. | S |
-| **BPA under real traffic, on a three-VM bench** - [#475](https://github.com/andrediashexa/hexarouting/issues/475), open | The labs drive BPA with VPP's own packet generator in a container; no packet had crossed a box in dynamic mode from hosts opening real connections. Subscribers, the box installed from the ISO and an internet, on bridges with no uplink. | M |
+| **BPA under real traffic, on a three-VM bench** - [#475](https://github.com/andrediashexa/hexarouting/issues/475), open | The labs drive BPA with VPP's own packet generator in a container; no packet had crossed a box in dynamic mode from hosts opening real connections. Subscribers, the box installed from the ISO and an internet, on bridges with no uplink. The same bench answers [#210](https://github.com/andrediashexa/hexarouting/issues/210)'s one open question: the pool with `bpa rebalance` off and on, refusals and allocations from `show bpa blocks`, under subscribers that retry on their own schedule. | M |
 | **The installer does not know the live medium renamed the cards** - *delivered in 0.139.0, [#476](https://github.com/andrediashexa/hexarouting/issues/476)* | On a live boot with no DHCP every card is the dataplane's and is called `xdp-<name>`; the installer refuses `mgmt-interface=ens18` and its menu offers names the installed box will not have. Found installing the #475 bench. A Y release. | S |
 | **Every `exit` after a commit warned about discarded changes** - *delivered in 0.138.5, [#477](https://github.com/andrediashexa/hexarouting/issues/477)* | Entering an interface left an empty FRR block in the candidate that FRR never keeps, so candidate and running never matched again and the warning that protects uncommitted work was printed after every commit. Found on the #475 bench. | S |
 | **The box ignored an ACPI shutdown** - *delivered in 0.140.0, [#478](https://github.com/andrediashexa/hexarouting/issues/478)* | No logind on a minbase medium, so the power key - a hypervisor's Shutdown - reached the kernel and went nowhere. A product-file service watches the button now; it needs the medium and install.sh, so a Y release. | S |
@@ -539,10 +539,11 @@ Everything else still open is one of three things, and none of them is work
 waiting for somebody to start it:
 
 * **a decision the maintainer has not taken**, with the evidence already on the
-  issue - [#396](https://github.com/andrediashexa/hexarouting/issues/396) containers,
-  [#390](https://github.com/andrediashexa/hexarouting/issues/390) the C functions behind
-  the VPP boundary, [#210](https://github.com/andrediashexa/hexarouting/issues/210) the
-  per-worker partition. [#337](https://github.com/andrediashexa/hexarouting/issues/337),
+  issue - [#390](https://github.com/andrediashexa/hexarouting/issues/390) the C functions
+  behind the VPP boundary. [#396](https://github.com/andrediashexa/hexarouting/issues/396),
+  containers, and [#210](https://github.com/andrediashexa/hexarouting/issues/210), the
+  per-worker partition, were decided on 2026-09-30 and closed: the stack stays as it
+  is, and `bpa rebalance` stays off until #475's bench measures it. [#337](https://github.com/andrediashexa/hexarouting/issues/337),
   the disclosure, was decided on 2026-09-24: not to be made, because the
   maintainer is the only one testing boxes for now.
   [#36](https://github.com/andrediashexa/hexarouting/issues/36), Debian 13, was
@@ -1009,7 +1010,7 @@ had.**
 | [#207](https://github.com/andrediashexa/hexarouting/issues/207) | a session pointer held across a second `pool_get`, twice | *fixed* |
 | [#206](https://github.com/andrediashexa/hexarouting/issues/206) | `alg <x> off` on the pool line accepted and ignored, taking a lab's whole `off` mode with it | *fixed* |
 | [#209](https://github.com/andrediashexa/hexarouting/issues/209) | UDP IPFIX export has never worked on an installed box | *fixed* |
-| [#210](https://github.com/andrediashexa/hexarouting/issues/210) | a subscriber refused while blocks stand free, and the pool reporting capacity it cannot deliver | **open**; the claim is honest now, the mechanism is a decision |
+| [#210](https://github.com/andrediashexa/hexarouting/issues/210) | a subscriber refused while blocks stand free, and the pool reporting capacity it cannot deliver | **fixed**: the pool states the capacity it can deliver, a block moves between workers since 0.112.0 (`bpa rebalance`, off by default by the maintainer's decision until #475 measures it) |
 
 **#209 was the one to do next and it is done.** In dynamic mode the allocation
 log *is* the connection record — kept a year, on its own filesystem, and what
@@ -1569,7 +1570,7 @@ actually start.
 
 | | |
 |---|---|
-| [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
+| [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | **done**: option (2) shipped in 0.112.0 behind `bpa rebalance enable`, and on 2026-09-30 the maintainer decided it stays **off** by default until [#475](https://github.com/andrediashexa/hexarouting/issues/475)'s bench measures it on and off under real traffic |
 | [#226](https://github.com/andrediashexa/hexarouting/issues/226) whether a dynamic pool's pairing rate is high enough | **delivered.** The allocator prefers a free block on the subscriber's own public address before it takes one off the free stack, and the rate is asserted rather than claimed: 100%, 99.6% and 99.2% at the worst cell of three arrival patterns over 1 to 256 public addresses and 1 to 8 workers, against 0.0%, 0.0% and 0.2% on the allocator it replaced. `n_paired_placed` and `n_paired_missed` are what an operator reads |
 | [#337](https://github.com/andrediashexa/hexarouting/issues/337) the disclosure for boxes already in the field | the repair is done ([#248](https://github.com/andrediashexa/hexarouting/issues/248)): a box tells whoever logs in that its host keys were not made on it, names them, says the private half is in the published download and that the session being read can be impersonated, and gives the three commands that fix it. What is left is not code. Nothing here names which releases shipped those keys, and a box that is never taken to a new version never runs the code that would tell it, so where the disclosure is said and whether it names the releases is the maintainer's. **withdrawn on 2026-09-24:** not to be made. The maintainer is the only one testing boxes, so there is nobody to disclose to |
 | [#340](https://github.com/andrediashexa/hexarouting/issues/340) the eight release titles that are not their heading | **delivered in 0.80.0.** `tools/release-titles.sh` compares every published release with its CHANGELOG heading, accepts a title that extends the heading and refuses one that is shorter; the three that still differed are corrected and 83 of 83 agree |
@@ -2827,8 +2828,13 @@ still named on the list. An unattended install takes `none` too, unless it
 asks for an address, which is an install saying it wants a management network
 - and is how `lab/install-iso.sh` installs the box it then reaches over ssh.
 **Docker: the control plane, the agent and the dataplane in containers**
-([#396](https://github.com/andrediashexa/hexarouting/issues/396)) - proposed,
-and the decisions are the maintainer's. Most of what the proposal asks for is
+([#396](https://github.com/andrediashexa/hexarouting/issues/396)) - **done and
+closed on 2026-09-30.** The dataplane and the control plane have run as
+containers since 0.117.0 (images in the medium, no container privileged, each
+capability measured), the VTY in its own since 0.138.0 (#448); the maintainer
+decided the SNMP agent and the telemetry get no container of their own, since
+they read the host's /proc, /sys and the statistics segment and the isolation
+would be nominal. What follows is the reading the issue opened with. Most of what the proposal asks for is
 already here without Docker: dedicated cores, hugepages, `vfio-pci`, FRR as
 control plane, VPP as dataplane, an agent that touches no packet, and a
 failure boundary that keeps forwarding up when the control plane restarts.
