@@ -77,6 +77,10 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.0 - a commit over one API connection, the prompt says the box's name, and an upgrade's VTY without a reboot
+
 ### Changed
 
 * **The VTY prompt says the box's name.**
