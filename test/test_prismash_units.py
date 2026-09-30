@@ -2037,6 +2037,8 @@ check(_config.cpu_error("control-plane", "2") is None
       and _config.cpu_error("control-plane", "0").startswith("expected")
       and _config.cpu_error("control-plane", "1025").startswith("expected")
       and _config.cpu_error("main-thread", "both").startswith("expected")
+      and _config.cpu_error("workers", "4") is None
+      and _config.cpu_error("workers", "0").startswith("expected")
       and "control-plane" in _config.cpu_error("turbo", "on"),
       "cpu_error: the two statements, at their bounds, and a third refused")
 _tune = os.path.join(_root, "tune-cpu", "tune.env")
@@ -2059,23 +2061,26 @@ try:
           f"was written and never read back until now: {sh.candidate.cpu} "
           f"{sh.candidate.cgnat_memory_gb}")
     for _l in ("system", "cpu", "control-plane 2", "main-thread dedicated",
-               "cgnat-workers 2", "no cgnat-workers"):
+               "cgnat-workers 2", "no cgnat-workers", "workers 5"):
         driven(lambda: sh.do_config(_l))
     check(sh.candidate.cpu == {"control-plane": "2",
-                               "main-thread": "dedicated"},
+                               "main-thread": "dedicated", "workers": "5"},
           f"typed under system > cpu, held as the model's words: "
           f"{sh.candidate.cpu}")
     rv, text = driven(lambda: sh.do_config("show this"))
-    check(text.split() == ["control-plane", "2", "main-thread", "dedicated"],
+    check(text.split() == ["control-plane", "2", "main-thread", "dedicated",
+                           "workers", "5"],
           f"show this, at the cpu level: {text!r}")
     for _bad, _why in (("control-plane 0", "expected: control-plane <1-1024>"),
                        ("main-thread alone",
                         "expected: main-thread <shared|dedicated>"),
                        ("turbo on", "there is 'control-plane', "
-                                    "'main-thread' and 'cgnat-workers'"),
+                                    "'main-thread', 'workers' and "
+                                    "'cgnat-workers'"),
+                       ("workers 0", "expected: workers <1-1024>"),
                        ("cgnat-workers 0", "expected: cgnat-workers "
                                            "<1-1024>"),
-                       ("no turbo", "no control-plane, or no main-thread")):
+                       ("no turbo", "cpu: no <control-plane|main-thread|workers|")):
         rv, text = driven(lambda: sh.do_config(_bad))
         check(_why in text and sh.candidate.cpu["control-plane"] == "2",
               f"{_bad!r} refused, nothing changed: {text!r}")
@@ -2084,20 +2089,25 @@ try:
         _got = _f.read()
     check(ok_ and "PRISMA_CONTROL_PLANE_CORES=2\n" in _got
           and "PRISMA_MAIN_THREAD=dedicated\n" in _got
+          and "PRISMA_MAX_WORKERS=5\n" in _got
           and "PRISMA_CGNAT_MEMORY_GB=8\n" in _got,
           f"both keys reach tune.env, and the rest stays: {_got!r}")
     back = _real()
-    check(back.cpu == {"control-plane": "2", "main-thread": "dedicated"},
+    check(back.cpu == {"control-plane": "2", "main-thread": "dedicated",
+                       "workers": "5"},
           f"and are read back as the running configuration: {back.cpu}")
-    check("system\n cpu\n  control-plane 2\n  main-thread dedicated\n  exit"
+    check("system\n cpu\n  control-plane 2\n  main-thread dedicated\n"
+          "  workers 5\n  exit"
           in back.text(), "which writes them in the system block")
     driven(lambda: sh.do_config("no main-thread"))
     driven(lambda: sh.do_config("no control-plane"))
+    driven(lambda: sh.do_config("no workers"))
     ok_, msg = sh.apply_cpu(sh.candidate.cpu)
     with open(_tune) as _f:
         _got = _f.read()
     check(ok_ and "PRISMA_CONTROL_PLANE_CORES=\n" in _got
-          and "PRISMA_MAIN_THREAD=\n" in _got and _real().cpu == {},
+          and "PRISMA_MAIN_THREAD=\n" in _got
+          and "PRISMA_MAX_WORKERS=\n" in _got and _real().cpu == {},
           f"'no' empties both, which is the default: {_got!r}")
     # A tune.env that cannot be written fails the commit, and says so.
     prismash.Shell.TUNE_ENV = os.path.join(_root, "no-such", "deeper", "y")
@@ -2147,6 +2157,8 @@ try:
     rv, text = driven(lambda: sh.show_system_cpu())
     check("translating workers   1-2" in text,
           f"a split, as the plugin's stanza names it: {text!r}")
+    check("VPP workers at most   every core left" in text,
+          f"no bound on the workers, said as such: {text!r}")
     check("control-plane cores   1" in text and "VPP main thread       shared"
           in text and "core 0" in text and "VPP workers           1-3" in text
           and "isolated from Linux   1-3" in text,
@@ -2186,8 +2198,7 @@ try:
     check(text.split() == ["control-plane", "12", "buffers", "65536"],
           f"show this at the memory level: {text!r}")
     for _bad, _why in (("buffers 5", "expected: buffers <1024-"),
-                       ("no turbo", "memory: no control-plane, or no "
-                                    "buffers")):
+                       ("no turbo", "memory: no <control-plane|buffers>")):
         rv, text = driven(lambda: sh.do_config(_bad))
         check(_why in text, f"{_bad!r} refused: {text!r}")
     ok_, msg = sh.apply_memory(sh.candidate.memory)

@@ -96,6 +96,7 @@ CPU_LEVEL = "cpu"
 #: order is the order the block is written in.
 CPU_KEYS = {"control-plane": "PRISMA_CONTROL_PLANE_CORES",
             "main-thread": "PRISMA_MAIN_THREAD",
+            "workers": "PRISMA_MAX_WORKERS",
             "cgnat-workers": "PRISMA_CGNAT_WORKERS"}
 #: A bound on a typo, not on a machine: the tuner gives what the node has and
 #: says so.
@@ -113,13 +114,18 @@ def cpu_error(key, value):
         if value not in ("shared", "dedicated"):
             return "expected: main-thread <shared|dedicated>"
         return None
+    if key == "workers":
+        if not is_number(value) or not 1 <= int(value) <= CPU_CORES_MAX:
+            return (f"expected: workers <1-{CPU_CORES_MAX}>, at most how "
+                    f"many cores VPP polls with")
+        return None
     if key == "cgnat-workers":
         if not is_number(value) or not 1 <= int(value) <= CPU_CORES_MAX:
             return (f"expected: cgnat-workers <1-{CPU_CORES_MAX}>, how many "
                     f"workers translate")
         return None
-    return ("under 'cpu' there is 'control-plane', 'main-thread' and "
-            "'cgnat-workers'")
+    return ("under 'cpu' there is 'control-plane', 'main-thread', "
+            "'workers' and 'cgnat-workers'")
 
 
 #: The memory by role (#466): `system` > `memory`, beside `cpu`.

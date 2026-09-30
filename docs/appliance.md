@@ -287,7 +287,8 @@ beside what this boot runs - startup.conf's `main-core` and
 yet is holding the control plane to its cores by cgroup, and splitting
 workers into RX and CGNAT sets; both are on #466, to be measured.
 
-`PRISMA_MAX_WORKERS` in the same file caps how many physical cores become
+`PRISMA_MAX_WORKERS` in the same file - `workers <n>` under `system` > `cpu`
+in the VTY since #517 - caps how many physical cores become
 forwarding workers. It ships **empty**, which means no cap and is exactly the
 behaviour above: every core on the dataplane node except the first. The cap
 exists because "all but the first" scales the wrong way — on a 32-core socket

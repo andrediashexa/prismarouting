@@ -77,6 +77,18 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`workers <n>` under `system` > `cpu`: the worker cap from the VTY.**
+  ([#517](https://github.com/andrediashexa/hexarouting/issues/517))
+  `PRISMA_MAX_WORKERS` was the one tuning key with no statement, so capping
+  the workers - leaving cores to Linux, which a VM sharing its host with other
+  guests needs, since a worker polls its core whether a packet comes or not -
+  meant editing tune.env by hand. Written to that key, shown by
+  `show system cpu`, in effect from the next reboot like the rest of `cpu`.
+  The refusal of an unknown `no` under `cpu` and `memory` now lists the
+  statements as `no <a|b|...>`, which fits the console. **A cap set by hand in
+  tune.env is cleared by the next `cpu` commit that does not carry it**: set
+  it through the VTY.
+
 ### Fixed
 
 * **A commit check spent its time starting vat2.**

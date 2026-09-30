@@ -2692,10 +2692,17 @@ TREE["cpu"] = {
         "shared": ("on the control plane's first core, the default", None),
         "dedicated": ("a core of its own, isolated like a worker's; costs "
                       "one worker", None)}),
+    # PRISMA_MAX_WORKERS had no statement: tune.env by hand was the only
+    # way to leave cores to Linux, which is what a VM sharing its host with
+    # other guests needs - a worker polls its core whether or not a packet
+    # comes.
+    "workers": ("at most this many VPP workers; the cores past them stay "
+                "with Linux", "<1-1024>"),
     "cgnat-workers": ("how many workers translate; the rest take packets off "
                       "the cards and hand them over", "<1-1024>"),
     "no": ("go back to the default", {
         "cgnat-workers": ("every worker receives and translates", None),
+        "workers": ("a worker on every core left", None),
         "control-plane": ("one control-plane core", None),
         "main-thread": ("the main thread shares the control plane's core",
                         None)}),
@@ -13249,7 +13256,7 @@ class Shell:
             held = getattr(self.candidate, _lvl)
             if w[0] == "no":
                 if len(w) != 3 or w[2] not in keys:
-                    self.err(f"{_lvl}: no " + ", or no ".join(keys))
+                    self.err(f"{_lvl}: no <" + "|".join(keys) + ">")
                 else:
                     held.pop(w[2], None)
                 return True
@@ -14510,6 +14517,8 @@ class Shell:
         print("configured, in effect from the next reboot:")
         print(f"  control-plane cores   {cp}")
         print(f"  VPP main thread       {main}")
+        mw = self.read_tune_key("PRISMA_MAX_WORKERS")
+        print(f"  VPP workers at most   {mw if mw else 'every core left'}")
         cw = self.read_tune_key("PRISMA_CGNAT_WORKERS")
         print(f"  CGNAT workers         "
               f"{cw if cw else 'all, each also receiving'}")
@@ -16450,6 +16459,8 @@ class Shell:
         # One figure a row, and last on it.
         print(f"cpu: control-plane cores {cpu.get('control-plane', '1')}")
         print(f"cpu: VPP main thread {cpu.get('main-thread', 'shared')}")
+        print(f"cpu: VPP workers at most "
+              f"{cpu.get('workers', 'every core left')}")
         print(f"cpu: CGNAT workers "
               f"{cpu.get('cgnat-workers', 'all, each also receiving')}")
         print_prose("in effect from the next reboot: the cores are isolated "
