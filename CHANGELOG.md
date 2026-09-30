@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.147.4 - a save from the VTY's container no longer drops SNMP
+
+### Fixed
+
 * **A `save` from the VTY no longer switches SNMP off.**
   ([#525](https://github.com/andrediashexa/hexarouting/issues/525))
   Found on the X520 bench: the maintainer renamed the box and saved from an
