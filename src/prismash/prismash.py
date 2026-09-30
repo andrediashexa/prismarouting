@@ -12967,9 +12967,41 @@ class Shell:
             return
         shutil.rmtree(work, ignore_errors=True)
         print(f"upgraded to {want}")
-        print_prose("the running configuration is what a reboot replays: "
-                    "'save' before rebooting, so the box comes back as it "
-                    "is now")
+        self.refresh_the_vty(want)
+
+    def refresh_the_vty(self, want):
+        """
+        Put the VTY on release `want` now, instead of at the next boot (#528).
+
+        The VTY runs in the management container since 0.138.0 (#448), and
+        its image is loaded and the container created only when the
+        containers unit starts. Measured on the X520 bench, 0.147.3 ->
+        0.147.4: after the upgrade the VTY was still the previous release's,
+        and a `save` from it reproduced the bug that release fixed.
+
+        The host starts appliance/refresh-the-vty a few seconds on, detached,
+        because this session lives in the container it recreates. The
+        dataplane and the routing daemons are not touched: they move to the
+        new images at a reboot, which stays the operator's decision, and that
+        is said rather than implied. A box with no management container is
+        told nothing is needed by the program itself, in the journal.
+        """
+        rc, out = self.sys._run(list(doors.REFRESH_VTY_ARGV))
+        if rc == 0:
+            print_prose(f"the VTY restarts on {want} in a few seconds: this "
+                        f"session ends then, and the next login is {want}'s")
+        else:
+            said = [" ".join(line.split()) for line in out.splitlines()
+                    if line.strip()]
+            print("note: the VTY could not be restarted on the new release")
+            print_prose("it stays the previous release's until a reboot; "
+                        "the host said:")
+            for line in said or [f"exit {rc} and nothing else"]:
+                print_prose(line, indent="        ")
+        print_prose("the dataplane and the routing daemons keep running "
+                    "the previous images until a reboot, and the running "
+                    "configuration is what a reboot replays: 'save' before "
+                    "rebooting, so the box comes back as it is now")
 
     def say_system_cost(self):
         """

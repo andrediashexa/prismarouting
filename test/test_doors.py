@@ -187,6 +187,23 @@ check(r == {"rc": 0, "out": "done"} and ran == [["cat", SNMPD_CONF]],
 ran.clear()
 r = doors.answer(json.dumps({"argv": ["cat", "/etc/shadow"]}), 0, execute=fake)
 check(r["rc"] == 126 and not ran, f"and no other file is, even for root: {r}")
+# The VTY on an upgraded release (#528): root's, detached through
+# systemd-run, and exactly the one program - a caller that could name
+# another would have a root shell a few seconds later.
+_rv = list(doors.REFRESH_VTY_ARGV)
+ran.clear()
+r = doors.answer(json.dumps({"argv": _rv}), 1000, execute=fake)
+check(r["rc"] == 126 and "only root" in r["out"] and not ran,
+      f"restarting the VTY is refused to uid 1000: {r}")
+r = doors.answer(json.dumps({"argv": _rv}), 0, execute=fake)
+check(r == {"rc": 0, "out": "done"} and ran == [_rv]
+      and _rv[0] == "systemd-run" and _rv[-1] == doors.REFRESH_VTY,
+      f"and started for root, detached, on the host: {r} {ran}")
+ran.clear()
+r = doors.answer(json.dumps({"argv": _rv[:-1] + ["/bin/sh"]}), 0,
+                 execute=fake)
+check(r["rc"] == 126 and not ran,
+      f"and systemd-run is a door for that program only: {r}")
 check(doors.runner("/no/such/door.sock").door == "/no/such/door.sock",
       "a runner says which door it asks, for whoever must know who answered")
 r = doors.answer("{not json", 0, execute=fake)

@@ -97,6 +97,24 @@ version has a chance of seeing it.
   and the upgrade artifact carry `python3-vpp-api` and the plugin's
   `bpa.api.json`.
 
+* **`system upgrade` left the VTY on the previous release until a reboot.**
+  ([#528](https://github.com/andrediashexa/hexarouting/issues/528))
+  The VTY runs in the management container since 0.138.0, and images are
+  loaded and containers created only when the containers unit starts, at
+  boot. Measured on the X520 bench, 0.147.3 -> 0.147.4: the host said
+  0.147.4, the VTY was `prisma-mgmt:0.147.3` - the new image not even loaded
+  - and a `save` from it reproduced the bug that release fixed (#525). The
+  upgrade now ends by asking the host, through a door of its own, to start
+  `refresh-the-vty` a few seconds later and detached: it loads the images and
+  recreates the management container alone, and says so; the session that
+  asked ends with it. The dataplane and the routing daemons are not touched
+  and move to the new images at a reboot, which the upgrade now says in as
+  many words. A box whose images did not load, or whose VTY already runs the
+  release, is left as it is. `test/test_refresh_the_vty.sh` drives it against
+  stubs; `lab/upgrade.sh` holds that an upgraded box on the units path has it
+  and is left alone.
+
+
 ### Changed
 
 * **The VTY prompt says the box's name.**

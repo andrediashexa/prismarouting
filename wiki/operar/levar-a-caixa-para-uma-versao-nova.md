@@ -35,6 +35,8 @@ Três coisas a saber dele:
 
 No fim ele diz `upgraded to <versão>` e lembra do `save`. Vale o que vale para o caminho manual: `save` antes de reiniciar, e o dataplane continua o antigo até você escolher a hora do passo 4.
 
+A partir da versão 0.148.0, a própria VTY passa para a versão nova logo em seguida, sem reboot: poucos segundos depois do `upgraded to`, o container de gerência é recriado com a imagem nova, a sessão que fez o upgrade cai e o próximo login já é da versão nova. O dataplane e os daemons de roteamento **não** são tocados nesse passo e continuam nas imagens anteriores até o reboot. Antes da 0.148.0, a VTY continuava na versão anterior até o reboot, mesmo com a caixa dizendo a versão nova.
+
 Os passos abaixo são o mesmo processo à mão, para uma caixa que não alcança a internet.
 
 
