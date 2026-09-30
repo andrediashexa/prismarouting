@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.144.0 - a box comes back from a reboot with its cards paired
+
+### Fixed
+
 * **A box could come back from a reboot with no card paired - and, with its
   management card in the dataplane, unreachable.**
   ([#510](https://github.com/andrediashexa/hexarouting/issues/510))
