@@ -16,7 +16,7 @@
 #   sh tools/lab.sh hostname        with the host program installed
 #   sh tools/lab.sh hostname off    without it - the rename checks MUST fail
 #
-# OFF-RED-AT-LEAST: 6
+# OFF-RED-AT-LEAST: 7
 #
 # The off run leaves appliance/set-hostname out, which is what a box upgraded
 # without it would be: the commit is refused, and every place still says the
@@ -83,6 +83,12 @@ N1=$(names)
 printf '%s\n' "$N1" | sed 's/^/  | /'
 RUN1=$($HX -c "show running-config" 2>&1)
 printf '%s\n' "$RUN1" | grep -n "hostname" | sed 's/^/  running: /'
+# The prompt a new session draws (#526): the box's name, asked of the host.
+prompt() {
+  (cd /src/src/prismash && python3 -c 'import prismash; print(prismash.Shell().prompt(), end="")')
+}
+PR1=$(prompt)
+echo "  a new session's prompt: '$PR1'"
 
 echo "=========== 2. a routing commit afterwards ==========="
 FRR1=$(vtysh -c 'show running-config' 2>/dev/null | grep "^hostname")
@@ -103,6 +109,8 @@ printf '%s\n' "$BACK" | tail -2 | sed 's/^/  /'
 snmpd_again
 N4=$(names)
 printf '%s\n' "$N4" | sed 's/^/  | /'
+PR4=$(prompt)
+echo "  a new session's prompt: '$PR4'"
 
 echo "=========== VERDICT ==========="
 # Five of the six the off run turns red, the sixth being sysName after
@@ -114,6 +122,7 @@ expect "and the one 127.0.1.1 line of /etc/hosts" \
   test "$(printf '%s\n' "$N1" | grep '^etc-hosts')" = "etc-hosts edge-lab1 "
 expect_in "SNMP answers it as sysName" 'sysname "edge-lab1"' "$N1"
 expect_in "and the running configuration states it" "hostname edge-lab1" "$RUN1"
+expect "and a new VTY session's prompt says it ($PR1)" test "$PR1" = "edge-lab1> "
 # Once, and not as routing: FRR's line is the box's statement now.
 expect "said once in the running configuration, not again under routing" \
   test "$(printf '%s\n' "$RUN1" | grep -c '^hostname ')" = 1
@@ -127,6 +136,7 @@ expect_in "a name FRR would refuse is refused at the prompt" \
 expect_in "no hostname gives the kernel the installer's default back" \
   "kernel prisma-routing" "$N4"
 expect_in "and sysName" 'sysname "prisma-routing"' "$N4"
+expect "and the prompt is the product's again ($PR4)" test "$PR4" = "prisma> "
 expect "and the program is where appliance/install.sh puts it" \
   grep -q "usr/lib/prisma-routing/set-hostname" /src/appliance/install.sh
 

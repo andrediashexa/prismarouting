@@ -610,6 +610,9 @@ TenGigabitEthernet0/8/0           3      up          9000/0/0/0
 def shell_with_box(iface_text=IFACES, dp_rc=0):
     sh = prismash.Shell()
     sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+    # A box on the installer's name (#526): the prompt otherwise asks the
+    # machine running this suite what it is called.
+    sh._prompt_name = prismash.HOSTNAME_DEFAULT
     def run(_self, cmd):
         if cmd.startswith("show interface"):
             return dp_rc, iface_text

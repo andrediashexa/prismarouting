@@ -71,6 +71,17 @@ NETDEV = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:@-]{0,%d}$"
 #: (63), so this bounds what a door takes, not what the VTY sends.
 ALIAS_MAX = 255
 
+#: The host program that puts the management container - the VTY's - on the
+#: images an upgrade just installed, and nothing else (#528).
+REFRESH_VTY = "/usr/lib/prisma-routing/refresh-the-vty"
+#: How `system upgrade` asks for it: DETACHED, a few seconds on, as a unit of
+#: its own. The session asking lives in the container this recreates, so run
+#: in-line it would be killed half way by its own work; systemd-run returns at
+#: once, the timer fires after the session has said what happens, and
+#: --collect lets the next upgrade reuse the name even after a failed run.
+REFRESH_VTY_ARGV = ("systemd-run", "--collect", "--on-active=3",
+                    "--unit=prisma-routing-refresh-vty", REFRESH_VTY)
+
 #: The doors that take no argument: the argv is the whole shape.
 FIXED = {
     ("sshd", "-T"): "read sshd's effective configuration",
@@ -93,6 +104,8 @@ FIXED = {
     # door and not a mount - and not a query: FIXED is root's, which is who
     # may see a community on the host too (the file is 0600 root there).
     ("cat", SNMPD_CONF): "read snmpd's configuration",
+    # `system upgrade`'s last step (#528): the VTY on the new release.
+    REFRESH_VTY_ARGV: "restart the VTY on the upgraded release",
 }
 
 #: What any account may ask of the host from the management plane (#448):

@@ -883,6 +883,8 @@ def shell(api=None, dp=None, frr=None, caps=None, runner=None, running=None):
     """
     sh = prismash.Shell()
     sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT} if caps is None else caps
+    # A box on the installer's name (#526), not the machine running this.
+    sh._prompt_name = prismash.HOSTNAME_DEFAULT
     sh.api = api or RecApi()
     sh.dp = dp or RecDp()
     sh.frr = frr or RecFrr()
@@ -3004,6 +3006,7 @@ def frr_stub(shows=None, available=True):
 def shell(dp=None, api=None, frr=None, running=None):
     sh = prismash.Shell()
     sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+    sh._prompt_name = prismash.HOSTNAME_DEFAULT       # not this machine's (#526)
     sh.dp = dp or Dp()
     sh.api = api or Api()
     sh.frr = frr or frr_stub()
@@ -5083,6 +5086,81 @@ finally:
     prismash.readline = saved_rl
 ok("readline's completer, over _options")
 
+print("\n=== Shell.prompt_name: the box's name in the prompt (#526) ===")
+_asked = []
+
+
+class _NameSys:
+    """read_hostname() answering `name`, counting how often it is asked."""
+
+    def __init__(self, name, broken=False):
+        self.name, self.broken = name, broken
+
+    def read_hostname(self):
+        _asked.append(self.name)
+        if self.broken:
+            raise OSError("no door")
+        return self.name
+
+
+_ps = prismash.Shell()
+_ps.sys = _NameSys("edge-sp-01")
+check(_ps.prompt() == "edge-sp-01> " and _ps.prompt() == "edge-sp-01> "
+      and _asked == ["edge-sp-01"],
+      f"a named box's prompt, the host asked once for the session: {_asked}")
+_ps.mode = "configuration"
+check(_ps.prompt() == "edge-sp-01# [edit] ",
+      f"and in configuration mode: {_ps.prompt()!r}")
+for _name, _want in ((prismash.HOSTNAME_DEFAULT, "prisma> "), ("", "prisma> ")):
+    _ps = prismash.Shell()
+    _ps.sys = _NameSys(_name)
+    check(_ps.prompt() == _want,
+          f"the installer's name, or none read, is the product's: {_name!r} -> {_ps.prompt()!r}")
+_saved_cn = prismash.Shell.__dict__["container_name"]
+try:
+    prismash.Shell.container_name = staticmethod(lambda: "abc123def456")
+    _ps = prismash.Shell()
+    _ps.sys = _NameSys("abc123def456")
+    check(_ps.prompt() == "prisma> ",
+          "a door nobody answered read the container's own id: not the box's name")
+    prismash.Shell.container_name = staticmethod(lambda: "edge-lab")
+    _ps = prismash.Shell()
+    _ps.sys = _NameSys("edge-lab")
+    check(_ps.prompt() == "edge-lab> ",
+          "a container that is the box, renamed for real, keeps its name")
+finally:
+    prismash.Shell.container_name = _saved_cn
+check(prismash.Shell.container_name() == ""
+      or os.path.exists("/.dockerenv"),
+      "container_name() is empty on a host, which is where this suite runs")
+_ps = prismash.Shell()
+_ps.sys = _NameSys("x", broken=True)
+check(_ps.prompt_name() == "prisma", "a door that fails is the product's name, not a crash")
+_long = "pop-" + "a" * 60
+_ps = prismash.Shell()
+_ps.sys = _NameSys(_long)
+check(_ps.prompt_name() == _long[:19] + "~" and len(_ps.prompt_name()) == 20,
+      f"a long name keeps its start and is marked cut: {_ps.prompt_name()!r}")
+_ps.mode = "configuration"
+_ps.nat_ctx = ["nat", "cgnat", "pool " + "r" * 60]
+_p = _ps.prompt()
+check(len(_p) == len("prisma# [edit ") + prismash.Shell.PROMPT_MAX + 2
+      and "~# [edit ..." in _p,
+      f"and the block path gives up the columns the name took ({len(_p)}): {_p!r}")
+# A commit that renames the box sets the prompt in the same session.
+_ps = prismash.Shell()
+_ps.sys = _NameSys("old-name")
+_ps.prompt()
+_ps.sys.write_hostname = lambda n: (True, "")
+_ps.frr = type("F", (), {"available": lambda self: False})()
+check(_ps.apply_hostname("new-name") == (True, "")
+      and _ps.prompt() == "new-name> ",
+      f"a rename is the next prompt: {_ps.prompt()!r}")
+_ps.sys.write_hostname = lambda n: (False, "refused")
+check(_ps.apply_hostname("bad") == (False, "refused")
+      and _ps.prompt() == "new-name> ",
+      "a rename the host refused leaves the prompt as it was")
+
 print("\n=== Shell.display_matches: the options, then the prompt again ===")
 # Mutation shown red: the prompt redraw dropped.
 sh = shell()
@@ -6798,12 +6876,37 @@ try:
         check(_needle in text and "downloading" not in text,
               f"{_v!r} is refused before anything is downloaded: {text!r}")
 
+    # The host's side of the last step (#528), stubbed: what is asked, and
+    # what it answers.
+    _asked = []
+    _sh.sys._run = lambda argv, stdin=None, timeout=30: (
+        _asked.append(tuple(argv)) or (0, ""))
     rv, text = driven(lambda: _sh.system_upgrade(["0.99.8"]))
     check("sha256" in text and "matches" in text
           and "UPGRADE-RAN 0.99.8" in text and "upgraded to 0.99.8" in text
           and "'save' before rebooting" in " ".join(text.split()),
           f"a release is downloaded, verified, and its own upgrade run: "
           f"{text!r}")
+    check(_asked == [prismash.doors.REFRESH_VTY_ARGV]
+          and "the VTY restarts on 0.99.8 in a few seconds" in " ".join(text.split())
+          and "keep running the previous images until a reboot" in " ".join(text.split()),
+          f"and then the VTY is put on it, detached, and the rest said to wait "
+          f"for a reboot (#528): {_asked} {text!r}")
+    # Mutation shown red: the rc test inverted - the refusal below reads as
+    # a restart that is on its way.
+    _sh.sys._run = lambda argv, stdin=None, timeout=30: (
+        1, "Failed to start transient timer unit: Unit already exists.\n")
+    rv, text = driven(lambda: _sh.refresh_the_vty("0.99.8"))
+    _t = " ".join(text.split())
+    check("could not be restarted on the new release" in _t
+          and "Unit already exists" in _t and "restarts on" not in _t
+          and "'save' before rebooting" in _t,
+          f"a host that could not start it is quoted, and the VTY is said to "
+          f"stay the previous release's until a reboot: {text!r}")
+    _sh.sys._run = lambda argv, stdin=None, timeout=30: (125, "")
+    rv, text = driven(lambda: _sh.refresh_the_vty("0.99.8"))
+    check("exit 125 and nothing else" in " ".join(text.split()),
+          f"and a host that said nothing is named as such: {text!r}")
     check(os.listdir(prismash.UPGRADE_WORK) == [],
           "and the unpacked package is gone once it succeeded")
 

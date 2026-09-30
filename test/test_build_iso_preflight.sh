@@ -206,6 +206,21 @@ thing the appliance exists for" ;;
       *) bad "the refusal does not say what the missing plugin costs: $BOUT" ;;
     esac
   fi
+
+  # AND THE API DEFINITIONS (#527), the third file of the same ninja run. The
+  # first cut of 0.148.0 built its medium without them in the chroot and
+  # install.sh refused there, nine minutes in; this is refused at once.
+  mkdir -p "$TREE/.build-vpp/lib/vat2_plugins"
+  echo "a stand-in for a compiled vat2 plugin" \
+    > "$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+  biso "$WORK/bin"
+  [ "$BRC" != 0 ] \
+    && ok "a tree with both plugins and no bpa.api.json is refused before the build" \
+    || bad "a medium was built with no bpa.api.json: install.sh refuses it inside the chroot (#527)"
+  case "$BOUT" in
+    *"bpa.api.json not found"*) ok "naming the file that is missing" ;;
+    *) bad "refused without naming bpa.api.json: $BOUT" ;;
+  esac
 fi
 
 echo

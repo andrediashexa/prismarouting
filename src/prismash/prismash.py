@@ -20,6 +20,7 @@ import io
 import ipaddress
 import json
 import os
+import socket
 import re
 import shlex
 import shutil
@@ -6981,9 +6982,11 @@ class Shell:
         # Through the host's doors (#448, phase B), which run the command
         # itself when no daemon listens.
         self.sys = System(runner=doors.runner(), files=doors.DoorFiles())
+        # The box's name the prompt shows, read on first use (#526).
+        self._prompt_name = None
         self.snmp = SnmpDaemon(runner=doors.runner(), files=doors.DoorFiles())
         self.dp = Vpp()
-        self.api = vppapi.Vat2()
+        self.api = vppapi.client()
         self.frr = Frr()
         self.rb = Rollback()
         self.confirm = ConfirmPending()
@@ -7064,18 +7067,73 @@ class Shell:
     #: An 80-column serial console is what a racked box is seen through, and a
     #: prompt that pushes the cursor off the line is worse than a vague one.
     PROMPT_MAX = 44
+    #: The most of the box's name a prompt shows (#526). A hostname may be 64
+    #: characters; the prompt is a label, and one that long leaves no line to
+    #: type on.
+    PROMPT_NAME_MAX = 20
+    #: What the prompt says of a box nobody named, and of one whose name the
+    #: VTY could not read: the product. Every screen in the documents shows
+    #: it, and a box on the installer's default name is the one they describe.
+    PROMPT_NAME_DEFAULT = "prisma"
+
+    @staticmethod
+    def container_name():
+        """
+        This process's own hostname when it runs in a container (the
+        management container's is its id), "" on the host.
+        """
+        if not os.path.exists("/.dockerenv"):
+            return ""
+        return socket.gethostname()
+
+    def prompt_name(self):
+        """
+        The box's name as the prompt shows it (#526), read once per session:
+        the host's, asked through the door #516 added, since the VTY's
+        container has a name of its own. A commit that renames the box sets
+        it again (apply_hostname); a prompt drawn per keystroke asks nobody.
+
+        The installer's default name, and a name that cannot be read, show as
+        the product - `prisma>`, what every document shows. A name longer
+        than PROMPT_NAME_MAX keeps its start, which is the part people choose
+        to tell boxes apart.
+        """
+        if getattr(self, "_prompt_name", None) is None:
+            try:
+                name = self.sys.read_hostname()
+            except Exception:
+                name = ""
+            # A door nobody answered runs `hostname` where the VTY is, and in
+            # the management container that is the container's id - twelve
+            # hex digits, a valid hostname when the first is a letter, and no
+            # box's name. Only that shape: a lab whose container IS the box
+            # renames it for real.
+            if name and name == self.container_name() \
+                    and re.fullmatch(r"[0-9a-f]{12}", name):
+                name = ""
+            self._prompt_name = name
+        name = self._prompt_name
+        if not name or name == HOSTNAME_DEFAULT:
+            return self.PROMPT_NAME_DEFAULT
+        if len(name) > self.PROMPT_NAME_MAX:
+            return name[:self.PROMPT_NAME_MAX - 1] + "~"
+        return name
 
     def prompt(self):
+        name = self.prompt_name()
         if self.mode == "operational":
-            return "prisma> "
+            return f"{name}> "
         where = self.where()
         if not where:
-            return "prisma# [edit] "
-        if len(where) > self.PROMPT_MAX:
+            return f"{name}# [edit] "
+        # The line the operator types on is what is left, so a longer name
+        # takes its columns from the block path and not from them.
+        room = self.PROMPT_MAX - max(0, len(name) - len(self.PROMPT_NAME_DEFAULT))
+        if len(where) > room:
             # Keep the END: the innermost block is where the next statement
             # lands, and it is the half worth the space.
-            where = "..." + where[-(self.PROMPT_MAX - 3):]
-        return f"prisma# [edit {where}] "
+            where = "..." + where[-(room - 3):]
+        return f"{name}# [edit {where}] "
 
     def require(self, cap, what):
         """
@@ -7258,6 +7316,16 @@ class Shell:
                 "(root can), nor the saved file; the snmp lines are the "
                 "defaults, not the box's",
     }
+
+    def forget_reads(self):
+        """
+        End the reads_cached() answers now: the caller is about to write, by
+        whatever path (#527). A stand-in API without forget_dumps() keeps
+        none to forget.
+        """
+        forget = getattr(self.api, "forget_dumps", None)
+        if forget:
+            forget()
 
     def running_config(self) -> Config:
         """
@@ -9131,6 +9199,11 @@ class Shell:
         which the box is half-configured as short as possible.
         """
         running = self.running_config()
+        if not check_only:
+            # What follows writes - over the API, through vppctl and through
+            # the host's doors - so no answer read before it may be served
+            # after it (#527).
+            self.forget_reads()
         # The default a claimed card's pair gets, written into the target
         # before the delta is taken so that the delta carries it (#389).
         self.pair_cards(target, running)
@@ -11605,14 +11678,14 @@ class Shell:
         """
         commit [check | remap | cutoff | confirmed <min> | comment <text>]
 
-        A `commit check` writes nothing, so every reading it makes - the
-        running configuration, then the check's own - shares one answer per
-        dump (#520); a commit that applies reads fresh (_do_commit).
+        Every reading a commit makes before it writes - the running
+        configuration, the check's, the apply's own first one - shares one
+        answer per dump (#520, #527). A `commit check` writes nothing; a
+        commit that applies drops the answers as soon as its apply has read
+        (Shell._apply), so what it does afterwards reads fresh.
         """
-        if args and args[0] == "check":
-            with self.reads_cached():
-                return self._do_commit(args)
-        return self._do_commit(args)
+        with self.reads_cached():
+            return self._do_commit(args)
 
     def _do_commit(self, args):
         """commit, as do_commit() decided to read for it."""
@@ -12894,9 +12967,41 @@ class Shell:
             return
         shutil.rmtree(work, ignore_errors=True)
         print(f"upgraded to {want}")
-        print_prose("the running configuration is what a reboot replays: "
-                    "'save' before rebooting, so the box comes back as it "
-                    "is now")
+        self.refresh_the_vty(want)
+
+    def refresh_the_vty(self, want):
+        """
+        Put the VTY on release `want` now, instead of at the next boot (#528).
+
+        The VTY runs in the management container since 0.138.0 (#448), and
+        its image is loaded and the container created only when the
+        containers unit starts. Measured on the X520 bench, 0.147.3 ->
+        0.147.4: after the upgrade the VTY was still the previous release's,
+        and a `save` from it reproduced the bug that release fixed.
+
+        The host starts appliance/refresh-the-vty a few seconds on, detached,
+        because this session lives in the container it recreates. The
+        dataplane and the routing daemons are not touched: they move to the
+        new images at a reboot, which stays the operator's decision, and that
+        is said rather than implied. A box with no management container is
+        told nothing is needed by the program itself, in the journal.
+        """
+        rc, out = self.sys._run(list(doors.REFRESH_VTY_ARGV))
+        if rc == 0:
+            print_prose(f"the VTY restarts on {want} in a few seconds: this "
+                        f"session ends then, and the next login is {want}'s")
+        else:
+            said = [" ".join(line.split()) for line in out.splitlines()
+                    if line.strip()]
+            print("note: the VTY could not be restarted on the new release")
+            print_prose("it stays the previous release's until a reboot; "
+                        "the host said:")
+            for line in said or [f"exit {rc} and nothing else"]:
+                print_prose(line, indent="        ")
+        print_prose("the dataplane and the routing daemons keep running "
+                    "the previous images until a reboot, and the running "
+                    "configuration is what a reboot replays: 'save' before "
+                    "rebooting, so the box comes back as it is now")
 
     def say_system_cost(self):
         """
@@ -14349,6 +14454,8 @@ class Shell:
         ok, msg = self.sys.write_hostname(name)
         if not ok:
             return False, msg
+        # The prompt follows in this session (#526); a new session reads it.
+        self._prompt_name = name
         if self.frr.available():
             self.frr.apply_lines([f"hostname {name}"])
         return True, ""
@@ -18329,6 +18436,7 @@ class Shell:
         rc, out = self.dp.run("show version")
         print(f"  dataplane: {out.strip().splitlines()[0] if rc == 0 and out.strip() else 'not responding'}")
         self.show_plugin_build()
+        self.show_api_transport()
         rc, out = self.frr.show("show version")
         line = out.strip().splitlines()[0] if out.strip() else ""
         print(f"  routing:   {line or 'not responding'}")
@@ -18342,6 +18450,25 @@ class Shell:
     # measurement, and a hand-counted string of spaces is the thing #252 found
     # shipping an 82-column line under the belief it was inside 80.
     VERSION_INDENT = " " * 13
+
+    def show_api_transport(self):
+        """
+        How this session reaches the dataplane (#527): one vpp_papi connection,
+        or a vat2 process per message and why. The second works and is ~20
+        times slower per message, so a box on it is worth knowing about.
+        """
+        api = getattr(self, "api", None)
+        which = getattr(api, "transport", None)
+        if which is None:
+            return
+        if which == "vpp_papi" and hasattr(api, "_connect"):
+            api._connect()
+            which = api.transport
+        if which == "vpp_papi":
+            print("  api:       one connection (vpp_papi)")
+        else:
+            print("  api:       vat2, a process per message")
+            print_prose(api.why_vat2, indent=self.VERSION_INDENT)
 
     def show_plugin_build(self):
         """
@@ -19400,7 +19527,22 @@ class Shell:
         drives that pair, a `commit check` refused for a collector that is not
         configured and the `commit` behind it answering "candidate did not
         pass validation; nothing applied".
+
+        A BATCH THAT COMMITS READS THE BOX ONCE (#527). `configure` reads the
+        running configuration to build the candidate and `commit` reads it
+        again to diff against, a second apart in one process; one cached block
+        over the batch lets the commit use the configure's answers. The
+        commit's apply drops them before it writes (Shell._apply), so nothing
+        after it is served from before it. A batch with no `commit` - a
+        question, or a `clear` and a `show` - reads fresh, as it always did.
         """
+        if any(c.split()[:1] == ["commit"] for c in cmds):
+            with self.reads_cached():
+                return self._feed_batch(cmds)
+        return self._feed_batch(cmds)
+
+    def _feed_batch(self, cmds):
+        """feed_batch() inside whatever reading it decided on."""
         for c in cmds:
             before = self.failed
             self.feed(c)

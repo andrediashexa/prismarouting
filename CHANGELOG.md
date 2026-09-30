@@ -77,7 +77,58 @@ version has a chance of seeing it.
 
 ### Added
 
+### Changed
+
+* **The VTY prompt says the box's name.**
+  ([#526](https://github.com/andrediashexa/hexarouting/issues/526))
+  Reported by the maintainer on 0.147.1: after `hostname <name>` Linux took
+  the name and the prompt still said `prisma>`, which #516 had kept on
+  purpose. It is `<name>> ` and `<name># [edit ...]` now, read from the host
+  once per session and set again by the commit that renames the box. A box on
+  the installer's default name, and one whose name cannot be read, keeps
+  `prisma>` - every screen in the documents - and a name read off a door
+  nobody answered, the management container's own id, is not taken for the
+  box's. A name past 20 characters shows its first 19 and a `~`, and the
+  block path gives up the columns it takes. `lab/install-iso.sh` waits for the
+  prompt of the name it installed with; `lab/hostname.sh` reads a new
+  session's prompt after the rename and after `no hostname`.
+
 ### Fixed
+
+* **A commit reached the dataplane through a vat2 process per message.**
+  ([#527](https://github.com/andrediashexa/hexarouting/issues/527))
+  Asked for by the maintainer: a change should take effect faster. On the X520
+  bench one interface description took 9.7 s to commit, 6.5 s of it starting
+  50 vat2 processes at ~130 ms each. The VTY now holds ONE binary-API
+  connection per session, through vpp_papi (`python3-vpp-api`, fd.io's own
+  package at VPP's version) behind the same `call()`/`dump()` every caller
+  already used; vpp_papi's typed replies are converted to the JSON vat2
+  printed, and `lab/api.sh` compares every read the VTY makes through both on
+  one dataplane - identical. vat2 stays the fallback when the library, the
+  definitions or the socket are missing (`PRISMA_API=vat2` forces it), and
+  `show version` names the one in use. A commit reads the running
+  configuration once until it writes, not four times. `lab/commit.sh`, on
+  eight interfaces: the same commit 2.15 s and 30 vat2 before, 1.48 s and none
+  after; ten more labs driving the VTY pass over it. The images, the medium
+  and the upgrade artifact carry `python3-vpp-api` and the plugin's
+  `bpa.api.json`.
+
+* **`system upgrade` left the VTY on the previous release until a reboot.**
+  ([#528](https://github.com/andrediashexa/hexarouting/issues/528))
+  The VTY runs in the management container since 0.138.0, and images are
+  loaded and containers created only when the containers unit starts, at
+  boot. Measured on the X520 bench, 0.147.3 -> 0.147.4: the host said
+  0.147.4, the VTY was `prisma-mgmt:0.147.3` - the new image not even loaded
+  - and a `save` from it reproduced the bug that release fixed (#525). The
+  upgrade now ends by asking the host, through a door of its own, to start
+  `refresh-the-vty` a few seconds later and detached: it loads the images and
+  recreates the management container alone, and says so; the session that
+  asked ends with it. The dataplane and the routing daemons are not touched
+  and move to the new images at a reboot, which the upgrade now says in as
+  many words. A box whose images did not load, or whose VTY already runs the
+  release, is left as it is. `test/test_refresh_the_vty.sh` drives it against
+  stubs; `lab/upgrade.sh` holds that an upgraded box on the units path has it
+  and is left alone.
 
 ## 0.147.4 - a save from the VTY's container no longer drops SNMP
 

@@ -2149,8 +2149,51 @@ _seen = []
 _cs._do_commit = lambda args: _seen.append((args, _ca.opened))
 _cs.do_commit(["check"])
 _cs.do_commit([])
-check(_seen == [(["check"], 1), ([], 1)],
-      f"commit check runs inside one block, a commit outside any: {_seen}")
+check(_seen == [(["check"], 1), ([], 2)],
+      f"commit check and a commit each read inside one block (#527): {_seen}")
+# #527: a real apply drops the answers as soon as it has read.
+_ca.forgot = 0
+CachingApi.forget_dumps = lambda self: setattr(self, "forgot", self.forgot + 1)
+_fs = shell_with(_ca)
+_fs.forget_reads()
+check(_ca.forgot == 1, "Shell.forget_reads ends the API's block")
+shell_with(FakeApi()).forget_reads()      # a stand-in with none: no error
+_ca.forgot = 0
+_fs.apply(target_with("rf", "100.64.0.0/24", "203.0.113.0/30"),
+          check_only=True)
+_checked = _ca.forgot
+_fs.apply(target_with("rf", "100.64.0.0/24", "203.0.113.0/30"))
+check(_checked == 0 and _ca.forgot == 1,
+      f"a check keeps the answers, a real apply drops them after reading "
+      f"({_checked}, {_ca.forgot})")
+# A batch that commits reads inside one block; a question does not.
+_ca.opened = 0
+_bs = shell_with(_ca)
+_fed = []
+_bs.feed = lambda c: _fed.append((c, _ca.opened)) or True
+_bs.feed_batch(["configure", "commit"])
+_bs.feed_batch(["show cgnat pool"])
+check(_fed == [("configure", 1), ("commit", 1), ("show cgnat pool", 1)],
+      f"one block for a batch that commits, none for a question: {_fed}")
+_fed.clear()
+check(_bs._feed_batch(["show version"]) == 0 and _fed == [("show version", 1)],
+      "_feed_batch runs the commands as it is given them")
+# show version names the transport.
+_vs = shell_with(FakeApi())
+_vs.api.transport = "vpp_papi"
+_b2 = io.StringIO()
+with contextlib.redirect_stdout(_b2):
+    _vs.show_api_transport()
+_vs.api = type("V", (), {"transport": "vat2",
+                         "why_vat2": "python3-vpp-api is not installed"})()
+with contextlib.redirect_stdout(_b2):
+    _vs.show_api_transport()
+    shell_with(FakeApi()).show_api_transport()   # no transport: nothing
+check("api:       one connection (vpp_papi)" in _b2.getvalue()
+      and "vat2, a process per message" in _b2.getvalue()
+      and "python3-vpp-api is not installed" in _b2.getvalue(),
+      f"show version says how this session reaches the dataplane: "
+      f"{_b2.getvalue()!r}")
 _ca.calls.clear()
 _buf = io.StringIO()
 with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):

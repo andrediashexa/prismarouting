@@ -4,7 +4,10 @@
 # (this tree's plugin's included) are the same build as the VPP they talk to:
 # a VTY speaking a newer or older binary API than the dataplane is the defect
 # #293 spent a release on. On top of it, FRR's clients at the pinned version -
-# vtysh and frr-reload.py, never the daemons - and prismash itself.
+# vtysh and frr-reload.py, never the daemons - and prismash itself. And
+# python3-vpp-api at the dataplane's own version, from the fd.io repository
+# the base image already carries: the VTY holds one API connection per
+# session rather than starting a vat2 per message (#527).
 #
 # NOTHING HERE RUNS A DAEMON. The container idles (`sleep infinity`) and a
 # session is a `docker exec` the login's broker starts, as the login's own
@@ -13,6 +16,7 @@
 ARG BASE
 FROM ${BASE}
 ARG FRR_VERSION
+ARG VPP_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
@@ -24,6 +28,7 @@ RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
         python3 iproute2 less \
         frr=${FRR_VERSION} frr-pythontools=${FRR_VERSION} \
+        python3-vpp-api=${VPP_VERSION} \
     && apt-get purge -y curl gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 COPY src/prismash/ /usr/lib/prisma-routing/

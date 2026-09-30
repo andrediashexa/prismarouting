@@ -2272,9 +2272,15 @@ box whatever the installer had been told.
   **not** adopted: taken as the box's name, it would rename every upgraded box
   to the image's at its next boot. A file with no `hostname` statement changes
   nothing; the first `save` after the upgrade writes the name the box has.
-* **The prompt stays `prisma`.** The ISO labs and every screen in the wiki wait
-  for `prisma> `; a prompt that followed the name would be one more thing an
-  operator's own automation had to learn per box.
+* **The prompt says the box's name (#526, 0.148.0).** `edge-sp1> ` and
+  `edge-sp1# [edit] `, read from the host once per session and set again by
+  the commit that renames the box. A box on the installer's default name,
+  `prisma-routing`, keeps the product's `prisma> ` - the prompt every screen
+  in these documents shows - and so does one whose name cannot be read. A name
+  past 20 characters shows its first 19 and a `~`, and the block path in
+  configuration mode gives up the columns a long name takes, so the line an
+  operator types on stays as long on an 80-column console. `lab/install-iso.sh`
+  waits for the prompt of the name it installed with, not for `prisma> `.
 
 `lab/hostname.sh` renames a box and reads the name back from the kernel,
 `/etc/hostname`, `/etc/hosts`, sysName and the running configuration, commits
@@ -3135,7 +3141,9 @@ needs of the host it asks through the doors above.
 
 **What it shares, each for one reason:**
 - `ipc: host`, because `vat2` talks to VPP over `/dev/shm/global_vm`;
-- `/run/vpp`, the CLI socket;
+- `/run/vpp`, the CLI socket, and the API socket the VTY's one vpp_papi
+  connection uses since #527 (the image carries `python3-vpp-api` at VPP's
+  version, and this tree's `bpa.api.json` beside VPP's definitions);
 - `/var/run/frr` and `/etc/frr`, for `vtysh` and `frr-reload.py`;
 - `/etc/prisma-routing`, the configuration and its revisions;
 - `/run/prisma-routing`, the doors' socket;

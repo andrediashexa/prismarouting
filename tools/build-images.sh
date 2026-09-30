@@ -62,8 +62,17 @@ fi
 
 CTX=$(mktemp -d)
 trap 'rm -rf "$CTX"' EXIT
-mkdir -p "$CTX/vpp_plugins" "$CTX/appliance/systemd"
+mkdir -p "$CTX/vpp_plugins" "$CTX/vpp_api" "$CTX/appliance/systemd"
 cp "$PLUGIN_SO" "$CTX/vpp_plugins/"
+# The plugin's API definitions, built with it (#527): what the management
+# image's vpp_papi reads to reach the plugin at all.
+API_JSON=$REPO/.build-vpp/src/plugins/bpa/bpa.api.json
+if [ ! -f "$API_JSON" ]; then
+  echo "error: $API_JSON is not there, and it is built with the plugin:" >&2
+  echo "       the build did not finish. Build it:  sh tools/build.sh plugin" >&2
+  exit 1
+fi
+cp "$API_JSON" "$CTX/vpp_api/"
 # The entrypoint and the drop-in it reads, at the paths the Dockerfile names.
 # A build context of the whole repository would send 200 MB of history to the
 # daemon and would let a Dockerfile copy in anything; this one holds the four
@@ -90,6 +99,7 @@ echo "==> management-plane image, the VTY on the dataplane's own clients"
 docker build -q -f "$REPO/build/Dockerfile.mgmt" \
   --build-arg "BASE=prisma-vpp:$VERSION" \
   --build-arg "FRR_VERSION=$FRR_VERSION" \
+  --build-arg "VPP_VERSION=$VPP_VERSION" \
   -t "prisma-mgmt:$VERSION" "$CTX" > /dev/null
 
 # BYTES, and the megabyte is left to the one place that prints it. A size()

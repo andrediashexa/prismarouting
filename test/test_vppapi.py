@@ -10,6 +10,7 @@ so testing only the happy path would miss the entire point.
 """
 import json
 import os
+import tempfile
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "prismash"))
@@ -516,6 +517,268 @@ _n.clear()
 r = api._call("sw_interface_get_table", {"sw_if_index": 1, "is_ipv6": False})
 check(r.ok and len(_n) == 1, "_call is the one uncached vat2 for a message")
 
+
+print("\n=== one connection: vpp_papi behind Vat2's interface (#527) ===")
+import enum
+import types as _types
+
+
+class _Mode(enum.IntEnum):
+    URPF_API_MODE_OFF = 0
+    URPF_API_MODE_STRICT = 2
+
+
+class _Flag(enum.IntFlag):
+    IF_STATUS_API_FLAG_ADMIN_UP = 1
+    IF_STATUS_API_FLAG_LINK_UP = 2
+
+
+_TYPES = {
+    "vl_api_urpf_mode_t": _types.SimpleNamespace(enum=_Mode),
+    "vl_api_if_status_flags_t": _types.SimpleNamespace(enum=_Flag),
+    "vl_api_table_t": _types.SimpleNamespace(
+        msgdef=[["u32", "table_id"], ["vl_api_urpf_mode_t", "mode"]]),
+}
+# encode(): names become numbers by the field's declared type.
+check(vppapi.encode("urpf_update",
+                    {"mode": "URPF_API_MODE_STRICT", "sw_if_index": 3,
+                     "prefix": "10.0.0.1/24"},
+                    {"mode": "vl_api_urpf_mode_t", "sw_if_index": "u32",
+                     "prefix": "vl_api_prefix_t"}, _TYPES)
+      == {"mode": 2, "sw_if_index": 3, "prefix": "10.0.0.1/24"},
+      "an enum name packs as its number; everything else as written")
+check(vppapi.encode("x", {"flags": ["IF_STATUS_API_FLAG_ADMIN_UP",
+                                    "IF_STATUS_API_FLAG_LINK_UP"]},
+                    {"flags": "vl_api_if_status_flags_t"}, _TYPES)
+      == {"flags": 3}, "a list of flag names is their OR")
+check(vppapi.encode("x", {"t": {"table_id": 7, "mode": "URPF_API_MODE_OFF"},
+                          "ms": ["URPF_API_MODE_STRICT"]},
+                    {"t": "vl_api_table_t", "ms": "vl_api_urpf_mode_t"},
+                    _TYPES)
+      == {"t": {"table_id": 7, "mode": 0}, "ms": 2},
+      "a struct is followed into its declaration; a list of one enum ORs")
+try:
+    vppapi.encode("x", {"mode": "NOT_A_MODE"}, {"mode": "vl_api_urpf_mode_t"},
+                  _TYPES)
+    check(False, "an unknown enum name must not pack")
+except KeyError:
+    pass
+
+# plain(): what vpp_papi answers, as vat2's JSON.
+import collections
+import ipaddress
+# rename=True, as vpp_papi builds them: that is where its `_0` comes from -
+# the renamed `_vl_msg_id`.
+_Details = collections.namedtuple("sw_interface_details",
+                                  "_vl_msg_id context sw_if_index flags "
+                                  "l2_address interface_name mtu link_speed "
+                                  "ok addr", rename=True)
+
+
+class _Mac:
+    def __str__(self):
+        return "de:ad:00:00:00:01"
+
+
+_row = vppapi.plain(_Details(820, 1, 1, _Flag(3), _Mac(), "loop0",
+                             [9000, 0, 0, 0], 1.5, True,
+                             ipaddress.ip_address("10.9.0.1")))
+check(_row == {"_msgname": "sw_interface_details", "sw_if_index": 1,
+               "flags": "IF_STATUS_API_FLAG_ADMIN_UP|IF_STATUS_API_FLAG_LINK_UP",
+               "l2_address": "de:ad:00:00:00:01", "interface_name": "loop0",
+               "mtu": [9000, 0, 0, 0], "link_speed": 1.5, "ok": True,
+               "addr": "10.9.0.1"},
+      f"a reply as vat2 printed it, without _0 and context: {_row}")
+_Table = collections.namedtuple("vl_api_ip_table_t", "table_id name")
+_TD = collections.namedtuple("ip_table_details", "_vl_msg_id context table",
+                             rename=True)
+check(vppapi.plain(_TD(1, 2, _Table(7, "ipv4-VRF:7")))
+      == {"_msgname": "ip_table_details",
+          "table": {"table_id": 7, "name": "ipv4-VRF:7"}},
+      "a struct inside a message carries no _msgname, as vat2 prints it")
+check(vppapi.plain(_Mode(2)) == "URPF_API_MODE_STRICT"
+      and vppapi.plain(b"\x01\x02") == [1, 2] and vppapi.plain(None) is None,
+      "an enum by name, bytes as numbers, None as it is")
+
+
+_Reply = collections.namedtuple("urpf_update_reply",
+                                "_vl_msg_id context retval", rename=True)
+
+
+class _Conn:
+    """A stand-in VPPApiClient: counts connects, answers from a table."""
+    connects = 0
+    fail_connect = False
+
+    def __init__(self, apifiles, use_socket, server_address, read_timeout):
+        self.apifiles = apifiles
+        self.server = server_address
+        self.sent = []
+        self.die_once = set()
+        self.api = _types.SimpleNamespace()
+        self.messages = {}
+        for name, answer in _Conn.table.items():
+            self.messages[name] = _types.SimpleNamespace(
+                fields=["_vl_msg_id", "context", "mode", "sw_if_index"],
+                fieldtypes=["u16", "u32", "vl_api_urpf_mode_t", "u32"])
+            setattr(self.api, name, self._method(name, answer))
+
+    def _method(self, name, answer):
+        def call(**kw):
+            if name in self.die_once:
+                self.die_once.discard(name)
+                raise OSError("Broken pipe")
+            self.sent.append((name, kw))
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        return call
+
+    def connect(self, name):
+        _Conn.connects += 1
+        if _Conn.fail_connect:
+            raise OSError("No such file or directory")
+        self.name = name
+
+    def disconnect(self):
+        self.closed = True
+
+
+_Conn.table = {
+    "urpf_update": _Reply(1, 2, 0),
+    "bpa_pool_add_del": _Reply(1, 2, -7),
+    "sw_interface_dump": [_Details(820, 1, 1, _Flag(1), _Mac(), "loop0",
+                                   [1500, 0, 0, 0], 0.0, True,
+                                   ipaddress.ip_address("10.9.0.1"))],
+    "create_subif": ValueError("bad value"),
+}
+_fake = _types.SimpleNamespace(VPPApiClient=_Conn,
+                               vpp_serializer=_types.SimpleNamespace(types=_TYPES))
+with tempfile.TemporaryDirectory() as _d:
+    os.makedirs(os.path.join(_d, "core"))
+    os.makedirs(os.path.join(_d, "plugins"))
+    for _f in ("core/interface.api.json", "plugins/bpa.api.json",
+               "plugins/acl.api.json"):
+        open(os.path.join(_d, _f), "w").close()
+    _vat = []
+
+    def _vrun(argv, timeout=10):
+        _vat.append(argv[1])
+        return (0, '{"retval": 0}', "")
+
+    p = vppapi.Papi(papi=_fake, apidir=_d, runner=_vrun,
+                    identity=lambda: ("alice", 1000))
+    check(p.transport == "vpp_papi", "vpp_papi until something says otherwise")
+    r = p.call("urpf_update", {"sw_if_index": 3, "mode": "URPF_API_MODE_STRICT"})
+    c = p._conn
+    check(sorted(os.path.basename(f) for f in c.apifiles)
+          == ["bpa.api.json", "interface.api.json"],
+          f"VPP's core definitions and the plugins prismash sends to, not every "
+          f"plugin's: {c.apifiles}")
+    check(r.ok and c.sent == [("urpf_update", {"sw_if_index": 3, "mode": 2})]
+          and not _vat, f"one call over the connection, the name packed: {c.sent}")
+    p.call("urpf_update", {"sw_if_index": 4, "mode": "URPF_API_MODE_OFF"})
+    check(_Conn.connects == 1 and p._conn is c,
+          "a second message reuses the connection")
+    r = p.call("bpa_pool_add_del", {"name": "p"})
+    check(r.state == vppapi.REFUSED and r.retval == -7
+          and "invalid value" in r.reason
+          and c.sent[-1][1].get("audit_user") == "alice",
+          f"a refusal named, a write carrying who made it: {r.reason}")
+    r = p.dump("sw_interface_dump", {"sw_if_index": 0xFFFFFFFF})
+    check(r.ok and r.fields["rows"][0]["interface_name"] == "loop0"
+          and p.interface_index("loop0") == 1,
+          "a dump's rows as vat2's, and interface_index() through them")
+    _vat.clear()
+    r = p.call("no_such_message", {})
+    check(r.ok and _vat == ["no_such_message"] and p._defined("urpf_update")
+          and not p._defined("no_such_message"),
+          "a message the definitions lack goes over vat2, not NO_PLUGIN")
+    p._conn.messages["lcp_osi_proto_get"] = p._conn.messages["urpf_update"]
+    r = p.call("lcp_osi_proto_get", {})
+    check(r.state == vppapi.NO_PLUGIN,
+          f"defined, and VPP does not list it: the plugin is missing: {r.reason}")
+    r = p.call("urpf_update", {"mode": "NOT_A_MODE"})
+    check(r.state == vppapi.CANNOT_SEND, f"a name that is no member: {r.reason}")
+    r = p.call("create_subif", {"sub_if_flags": "A"})
+    check(r.state == vppapi.CANNOT_SEND, f"a value the packer refuses: {r.reason}")
+    r = p.call("create_subif", {"sub_if_flags": "A|B"})
+    check(r.state == vppapi.CANNOT_SEND and "ONE flag" in r.reason,
+          "unsendable() still speaks first")
+    # A dead socket: a question is asked again on a new connection, a write
+    # is not re-sent.
+    before = _Conn.connects
+    p._conn.die_once.add("sw_interface_dump")
+    r = p._dump("sw_interface_dump", {}, 15)
+    check(r.ok and _Conn.connects == before + 1,
+          "a question on a dead socket is asked again on a new connection")
+    p._conn.die_once.add("urpf_update")
+    r = p.call("urpf_update", {"mode": "URPF_API_MODE_OFF", "sw_if_index": 1})
+    check(r.state == vppapi.NOT_RUNNING and "lost" in r.reason,
+          f"a write on a dead socket is not re-sent: {r.reason}")
+    failed, answer = p._send("urpf_update", {"mode": 0}, True)
+    check(failed is None and answer.retval == 0, "_send's answer, unconverted")
+    st, msg = p.available()
+    check(st == vppapi.OK, f"available() over the connection: {msg}")
+    delattr(p._conn.api, "bpa_pool_add_del")
+    st, msg = p.available()
+    check(st == vppapi.NO_PLUGIN, f"no bpa API over the connection: {msg}")
+    del p._conn.messages["bpa_pool_add_del"]
+    _vat.clear()
+    p.available()
+    check(_vat[:1] == ["--dump-apis"],
+          "no bpa definitions loaded: vat2 answers available()")
+    last = p._conn
+    p.close()
+    check(p._conn is None and last.closed,
+          "close() disconnects, next message reconnects")
+
+    # The fallbacks, each saying why.
+    _vat.clear()
+    q = vppapi.Papi(papi=_fake, apidir=os.path.join(_d, "none"), runner=_vrun)
+    r = q.call("urpf_update", {"mode": "URPF_API_MODE_OFF"})
+    check(r.ok and _vat == ["urpf_update"] and q.transport == "vat2"
+          and "no API definitions" in q.why_vat2,
+          f"no definitions: vat2, and why: {q.why_vat2}")
+    _Conn.fail_connect = True
+    q = vppapi.Papi(papi=_fake, apidir=_d, runner=_vrun)
+    q.dump("sw_interface_dump", {})
+    check(q.transport == "vat2" and "No such file" in q.why_vat2
+          and q._connect() is None,
+          f"no socket: vat2, and why: {q.why_vat2}")
+    _Conn.fail_connect = False
+    q = vppapi.Papi(apidir=_d, runner=_vrun)
+    q._papi = None
+    import builtins
+    _real_import = builtins.__import__
+
+    def _no_papi(name, *a, **kw):
+        if name == "vpp_papi":
+            raise ImportError(name)
+        return _real_import(name, *a, **kw)
+    builtins.__import__ = _no_papi
+    try:
+        check(q._module() is None and "python3-vpp-api" in q.why_vat2,
+              "no library: vat2, and why")
+    finally:
+        builtins.__import__ = _real_import
+    _old = vppapi.FORCE_VAT2
+    vppapi.FORCE_VAT2 = True
+    check(vppapi.Papi(papi=_fake, apidir=_d).transport == "vat2",
+          "PRISMA_API=vat2 keeps every message on vat2")
+    vppapi.FORCE_VAT2 = _old
+    check(isinstance(vppapi.client(), vppapi.Papi), "client() is the Papi")
+
+# forget_dumps(): the block's answers end now.
+_n = []
+api = vppapi.Vat2(runner=_counting)
+with api.cached_dumps():
+    api.interface_index("pg0")
+    api.forget_dumps()
+    api.interface_index("pg0")
+    api.interface_index("pg0")
+check(_n.count("sw_interface_dump") == 3 and api._dumps is None,
+      f"after forget_dumps() every dump asks: {_n}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

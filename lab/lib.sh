@@ -11,6 +11,12 @@
 use_binary_api() {
   install -D -m 0644 /vat2_plugins/bpa_test_plugin_bpa_plugin.so \
     /usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so
+  # And the plugin's API definitions, where install.sh puts them, so the
+  # VTY's vpp_papi connection can send its messages (#527).
+  if [ -f /src/.build-vpp/src/plugins/bpa/bpa.api.json ]; then
+    install -D -m 0644 /src/.build-vpp/src/plugins/bpa/bpa.api.json \
+      /usr/share/vpp/api/plugins/bpa.api.json
+  fi
 }
 
 # Start FRR the way frrinit.sh does on a real box.

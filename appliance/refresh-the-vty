@@ -1,0 +1,82 @@
+#!/bin/sh
+# refresh-the-vty: the management container, the VTY's, on the images this
+# box now carries - and nothing else (#528).
+#
+# WHY IT EXISTS. `system upgrade` replaces the product's files on the host,
+# and the images with them, but they are LOADED and the containers created
+# only by prisma-routing-containers.service, at boot. Since 0.138.0 (#448)
+# the VTY an operator types into runs in the management container, so after
+# an upgrade it was still the previous release's until a reboot. Measured on
+# the X520 bench on 2026-09-30, 0.147.3 -> 0.147.4: the host said 0.147.4,
+# the VTY was prisma-mgmt:0.147.3, the new image had not been loaded, and a
+# `save` from it reproduced the very bug the release fixed (#525).
+#
+# WHAT IT TOUCHES: the management container only. `up -d --no-deps mgmt`
+# recreates that one service; the dataplane and the control plane keep
+# running on the images they started with - measured on the same bench, vpp
+# and frr up 49 minutes across it - because a dataplane restarted is traffic
+# dropped, and that stays the reboot's decision. Every session in the
+# container ends with it, the one that asked included.
+#
+# Run by the VTY at the end of `system upgrade`, through a door that starts
+# it DETACHED a few seconds later (systemd-run), because the session asking
+# lives in the container this recreates. By hand it runs at once.
+#
+# PRISMA_* point it somewhere else, for test/test_refresh_the_vty.sh.
+set -u
+ROOT=${PRISMA_ROOT:-}
+DOCKER=${PRISMA_DOCKER:-docker}
+COMPOSE=${PRISMA_COMPOSE:-docker-compose}
+LOAD=${PRISMA_LOAD_IMAGES:-$ROOT/usr/lib/prisma-routing/load-the-images}
+BACKPLANE=${PRISMA_BACKPLANE:-$ROOT/usr/lib/prisma-routing/prisma-backplane}
+ENVFILE=${PRISMA_COMPOSE_ENV:-$ROOT/run/prisma-routing/compose.env}
+YAML=${PRISMA_COMPOSE_YAML:-$ROOT/etc/prisma-routing/compose.yaml}
+DEVICES=${PRISMA_COMPOSE_DEVICES:-$ROOT/run/prisma-routing/compose-devices.yaml}
+STAMP=${PRISMA_VERSION_FILE:-$ROOT/usr/share/prisma-routing/VERSION}
+MGMT=prisma-routing_mgmt_1
+
+say() { echo "refresh-the-vty: $*"; }
+
+# A box on the units path has no management container, and nothing to do.
+before=$("$DOCKER" inspect -f '{{.Config.Image}}' "$MGMT" 2>/dev/null) || {
+  say "there is no $MGMT on this box: the VTY runs on the host, nothing to do"
+  exit 0
+}
+
+"$LOAD" || {
+  say "load-the-images refused, so $MGMT stays on $before"
+  exit 1
+}
+
+# load-the-images falls back to whatever image is already here when the
+# tarball does not load, and starts it - right at boot, where no VTY at all is
+# worse. Here it is not: recreating the container on the image it already
+# runs changes nothing and ends every session for it, so it is refused.
+want=$(awk 'NR == 1 { print $1 }' "$STAMP" 2>/dev/null)
+got=$(sed -n 's/^PRISMA_VERSION=//p' "$ENVFILE" 2>/dev/null)
+if [ -z "$want" ] || [ "$got" != "$want" ]; then
+  say "this box is ${want:-<no version stamp>} and the image to run is"
+  say "${got:-<none>}, so $MGMT stays on $before; a reboot starts whatever"
+  say "load-the-images chooses then"
+  exit 1
+fi
+case "$before" in
+  *":$want")
+    say "$MGMT already runs $before: nothing to do"
+    exit 0 ;;
+esac
+
+set -- -f "$YAML"
+[ -f "$DEVICES" ] && set -- "$@" -f "$DEVICES"
+"$COMPOSE" --env-file "$ENVFILE" "$@" up -d --no-deps mgmt || {
+  say "compose could not recreate $MGMT; it was on $before"
+  exit 1
+}
+# The backplane address the containers unit gives it after every start
+# (#447): a recreated container has a new network namespace and no bp0.
+"$BACKPLANE" attach "$MGMT" \
+  || say "$MGMT is up but not on the backplane; 'prisma-backplane attach $MGMT'"
+after=$("$DOCKER" inspect -f '{{.Config.Image}}' "$MGMT" 2>/dev/null)
+say "$MGMT: $before -> ${after:-<unknown>}; the dataplane and the control"
+say "plane were not touched and change images at the next reboot"
+exit 0

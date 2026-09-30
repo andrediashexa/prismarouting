@@ -324,7 +324,9 @@ O nome da caixa, num lugar só: o do Linux (o que `hostname` responde, o `/etc/h
 
 O nome segue as regras de hostname: letras, dígitos e hífens, com pontos separando as partes, até 64 caracteres, e **começando por letra** — o FRR recusa qualquer outro. `no hostname` volta ao nome padrão da instalação, `prisma-routing`.
 
-`show running-config` mostra o nome que a caixa tem agora. Uma configuração salva antes da 0.145.0 não tem essa linha e não muda o nome da caixa ao carregar; o primeiro `save` depois do upgrade passa a gravá-la. O prompt continua `prisma>`.
+`show running-config` mostra o nome que a caixa tem agora. Uma configuração salva antes da 0.145.0 não tem essa linha e não muda o nome da caixa ao carregar; o primeiro `save` depois do upgrade passa a gravá-la.
+
+A partir da versão 0.148.0 **o prompt mostra o nome da caixa**: `cgnat-sp1>` no modo operacional e `cgnat-sp1# [edit]` no de configuração. Ele muda logo depois do `commit` que renomeia a caixa, na mesma sessão. Uma caixa com o nome padrão da instalação (`prisma-routing`) continua mostrando `prisma>`, como nas telas deste guia. Um nome com mais de 20 caracteres aparece cortado, com um `~` no fim.
 
 Os daemons do FRR recebem o nome no `commit`, mas continuam mostrando o nome com que foram iniciados.
 
