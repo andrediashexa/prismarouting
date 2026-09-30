@@ -18317,7 +18317,7 @@ class Shell:
         or a vat2 process per message and why. The second works and is ~20
         times slower per message, so a box on it is worth knowing about.
         """
-        api = self.api
+        api = getattr(self, "api", None)
         which = getattr(api, "transport", None)
         if which is None:
             return

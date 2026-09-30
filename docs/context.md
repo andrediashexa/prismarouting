@@ -140,7 +140,7 @@ card and answers from outside afterwards).
 ### 1.6 The VTY changes the dataplane over one API connection per session
 
 Since #527, through vpp_papi (`python3-vpp-api`, fd.io's package at VPP's own
-version) on the API socket `/run/vpp/api.sock`: connected at the first
+version) on VPP's API socket (`socksvr` in its startup configuration): connected at the first
 message, kept for the session, re-opened once if VPP restarted under it. vat2
 - one process per message, which is what this section used to describe - is
 the fallback when the library, the definitions or the socket are not there,
