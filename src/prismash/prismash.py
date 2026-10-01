@@ -921,6 +921,13 @@ def policy_hit_sections(pol, name, sites, maps):
     return out
 
 
+def wire_route(route):
+    """A simulated route as the API carries it (#538): attribute -> text,
+    a list joined by spaces."""
+    return {k: (" ".join(v) if isinstance(v, list) else str(v))
+            for k, v in route.items()}
+
+
 def hit_label(section, policy, term):
     """How `show policy` names a row of a counter section (#538)."""
     if policy is None:
@@ -16689,10 +16696,6 @@ class Shell:
         if "error" in got:
             return got
 
-        def flat(route):
-            return {k: (" ".join(v) if isinstance(v, list) else str(v))
-                    for k, v in route.items()}
-
         sim = got["sim"]
         p, t = sim["by"]
         return {"verdict": sim["verdict"],
@@ -16700,8 +16703,8 @@ class Shell:
                 "decided_policy": p or "", "decided_term": t or "",
                 "use": policy_mod.use_words(got["use"]),
                 "route_map": got["map"], "daemon": got["daemon"],
-                "route": flat(got["route"]),
-                "route_after": flat(sim["route"])
+                "route": wire_route(got["route"]),
+                "route_after": wire_route(sim["route"])
                 if sim["verdict"] == "accept" else {},
                 "steps": [{"policy": sp or "", "term": st or "",
                            "outcome": so, "why": sw}

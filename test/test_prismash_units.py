@@ -3082,6 +3082,10 @@ check(prismash.Shell.from_received(_route, {"path": "65001 65002",
                                                            "origin"])
       == ["as-path", "metric"] and _route["as-path"] == ["65001", "65002"],
       f"from_received: what received-routes has: {_route}")
+check(prismash.wire_route({"prefix": "x", "as-path": ["1", "2"],
+                           "community": [], "tag": 5})
+      == {"prefix": "x", "as-path": "1 2", "community": "", "tag": "5"},
+      "wire_route: a route as the API carries it")
 # The API's answers (#538): the same computation, as data.
 _pd = sh.policies_data()
 _up = next(x for x in _pd if x["name"] == "UP")
