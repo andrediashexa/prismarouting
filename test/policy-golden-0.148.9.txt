@@ -1,0 +1,165 @@
+### phase-a
+bgp large-community-list standard PO-L-LCX seq 5 permit 65000:9:9
+bgp as-path access-list PO-PRIVATE-AS seq 5 permit ^(6451[2-9]|645[2-9][0-9]|64[6-9][0-9][0-9]|65[0-4][0-9][0-9]|655[0-2][0-9]|6553[0-4]|42[0-8][0-9]{7}|429[0-3][0-9]{6}|4294[0-8][0-9]{5}|42949[0-5][0-9]{4}|429496[0-6][0-9]{3}|4294967[01][0-9]{2}|42949672[0-8][0-9]|429496729[0-4])$
+ip prefix-list PO-BOGONS-T1-4 seq 5 permit 10.0.0.0/8 le 32
+route-map PO-BOGONS-OUT deny 10
+ match ip address prefix-list PO-BOGONS-T1-4
+exit
+route-map PO-BOGONS-OUT permit 65534
+exit
+route-map PO-BOGONS-OUT permit 65535
+exit
+ip prefix-list PO-IN-A-Trtbh-4 seq 5 permit 0.0.0.0/0 le 32
+bgp community-list standard PO-IN-A-Trtbh-C seq 5 permit 65535:666
+ip prefix-list PO-IN-A-Tpeers-4 seq 5 permit 0.0.0.0/0 le 32
+bgp large-community-list standard PO-IN-A-Tsub-L seq 5 permit 65000:1:2
+bgp extcommunity-list standard PO-IN-A-Tsub-E seq 5 permit rt 65000:100 soo 65000:200
+route-map PO-IN-A-OSPF-STATIC permit 10
+ match ip address prefix-list PO-IN-A-Trtbh-4
+ match community PO-IN-A-Trtbh-C
+ set ip next-hop 192.0.2.1
+exit
+route-map PO-IN-A-OSPF-STATIC deny 20
+ match rpki invalid
+exit
+route-map PO-IN-A-OSPF-STATIC permit 30
+ match ip address prefix-list PO-IN-A-Tpeers-4
+ match peer 10.0.0.2
+ match origin igp
+ set local-preference +20
+ set weight 100
+ set metric -5
+ set origin incomplete
+ set large-community 65000:1:2 additive
+ set large-comm-list PO-L-LCX delete
+ set extcommunity rt 65000:100
+ set extcommunity soo 65000:200
+ set as-path exclude as-path-access-list PO-PRIVATE-AS
+ set ip next-hop peer-address
+ on-match goto 65535
+exit
+route-map PO-IN-A-OSPF-STATIC permit 31
+ match ip address prefix-list PO-IN-A-Tpeers-4
+ match peer 10.1.0.2
+ match origin igp
+ set local-preference +20
+ set weight 100
+ set metric -5
+ set origin incomplete
+ set large-community 65000:1:2 additive
+ set large-comm-list PO-L-LCX delete
+ set extcommunity rt 65000:100
+ set extcommunity soo 65000:200
+ set as-path exclude as-path-access-list PO-PRIVATE-AS
+ set ip next-hop peer-address
+ on-match goto 65535
+exit
+route-map PO-IN-A-OSPF-STATIC permit 40
+ match large-community PO-IN-A-Tsub-L
+ match extcommunity PO-IN-A-Tsub-E
+ match local-preference 120
+ match ipv6 next-hop address 2001:db8::1
+ call PO-BOGONS-SUB-OSPF-STATIC
+ set metric igp
+ on-match next
+exit
+route-map PO-IN-A-OSPF-STATIC deny 65535
+exit
+ip prefix-list PO-IN-B-T1-4 seq 5 permit 203.0.113.0/24
+ipv6 prefix-list PO-IN-B-T1-6 seq 5 permit 2001:db8:100::/48
+route-map PO-IN-A+IN-B-IN permit 10
+ match ip address prefix-list PO-IN-A-Trtbh-4
+ match community PO-IN-A-Trtbh-C
+ set ip next-hop 192.0.2.1
+exit
+route-map PO-IN-A+IN-B-IN deny 20
+ match rpki invalid
+exit
+route-map PO-IN-A+IN-B-IN permit 30
+ match ip address prefix-list PO-IN-A-Tpeers-4
+ match peer 10.0.0.2
+ match origin igp
+ set local-preference +20
+ set weight 100
+ set metric -5
+ set origin incomplete
+ set large-community 65000:1:2 additive
+ set large-comm-list PO-L-LCX delete
+ set extcommunity rt 65000:100
+ set extcommunity soo 65000:200
+ set as-path exclude as-path-access-list PO-PRIVATE-AS
+ set ip next-hop peer-address
+ on-match goto 1000
+exit
+route-map PO-IN-A+IN-B-IN permit 31
+ match ip address prefix-list PO-IN-A-Tpeers-4
+ match peer 10.1.0.2
+ match origin igp
+ set local-preference +20
+ set weight 100
+ set metric -5
+ set origin incomplete
+ set large-community 65000:1:2 additive
+ set large-comm-list PO-L-LCX delete
+ set extcommunity rt 65000:100
+ set extcommunity soo 65000:200
+ set as-path exclude as-path-access-list PO-PRIVATE-AS
+ set ip next-hop peer-address
+ on-match goto 1000
+exit
+route-map PO-IN-A+IN-B-IN permit 40
+ match large-community PO-IN-A-Tsub-L
+ match extcommunity PO-IN-A-Tsub-E
+ match local-preference 120
+ match ipv6 next-hop address 2001:db8::1
+ call PO-BOGONS-SUB-IN
+ set metric igp
+ on-match next
+exit
+route-map PO-IN-A+IN-B-IN permit 1010
+ match ip address prefix-list PO-IN-B-T1-4
+ set local-preference 300
+exit
+route-map PO-IN-A+IN-B-IN permit 1011
+ match ipv6 address prefix-list PO-IN-B-T1-6
+ set local-preference 300
+exit
+route-map PO-IN-A+IN-B-IN deny 1999
+exit
+route-map PO-IN-A+IN-B-IN permit 65535
+exit
+route-map PO-OSPF-EXT-OSPF-STATIC permit 10
+ set metric-type type-1
+exit
+route-map PO-OSPF-EXT-OSPF-STATIC deny 65535
+exit
+ip prefix-list PO-OUT-T1-4 seq 5 permit 203.0.113.0/24
+ipv6 prefix-list PO-OUT-T1-6 seq 5 permit 2001:db8:100::/48
+route-map PO-OUT-OUT permit 10
+ match ip address prefix-list PO-OUT-T1-4
+ set as-path prepend last-as 3
+ set ip next-hop peer-address
+exit
+route-map PO-OUT-OUT permit 11
+ match ipv6 address prefix-list PO-OUT-T1-6
+ set as-path prepend last-as 3
+ set ipv6 next-hop peer-address
+exit
+route-map PO-OUT-OUT permit 65535
+exit
+route-map PO-BOGONS-SUB-IN deny 10
+ match ip address prefix-list PO-BOGONS-T1-4
+exit
+route-map PO-BOGONS-SUB-IN permit 65534
+exit
+route-map PO-BOGONS-SUB-IN permit 65535
+exit
+route-map PO-BOGONS-SUB-OSPF-STATIC deny 10
+ match ip address prefix-list PO-BOGONS-T1-4
+exit
+route-map PO-BOGONS-SUB-OSPF-STATIC permit 65534
+exit
+route-map PO-BOGONS-SUB-OSPF-STATIC deny 65535
+exit
+ip route 192.0.2.1/32 blackhole tag 4294967294
+ipv6 route 100::1/128 blackhole tag 4294967294

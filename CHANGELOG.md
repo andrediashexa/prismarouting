@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Routing policy, phase B: a policy wherever the routing decides
+  something.**
+  ([#536](https://github.com/andrediashexa/hexarouting/issues/536))
+  `neighbor <peer> default-originate policy`, `network <prefix> policy`,
+  `aggregate-address <prefix> [summary-only] [policy] [suppress-policy]`,
+  `neighbor <peer> advertise <policy> exist|non-exist <condition>` and
+  `table-policy` in BGP; `default-information originate ... policy` in OSPF
+  and IS-IS; and `fib-policy bgp|ospf|isis|static <policy>`, which decides
+  what zebra installs and takes the new `set src <address>`. Each is stored
+  as the FRR statement it stands for, read back, listed by `show policy`,
+  and refused at the prompt where a policy's term cannot do what it says
+  there. `lab/policy-b.sh` measures each on real daemons, and asks each
+  daemon whether it holds what it was given: a default route sent while its
+  condition holds and withdrawn after, a suppressed specific, a backup
+  advertised once the primary is gone, routes kept out of VPP while their
+  protocol keeps them, a source address on the kernel's route, OSPF and
+  IS-IS defaults following the policy. Three things FRR 10.7.1 does not
+  have were measured before the grammar was written: an aggregate's
+  `attribute-map`, a `distribute-list route-map` in OSPF and IS-IS, and
+  OSPF's `table-map` - so what an IGP installs is filtered by its FIB
+  policy. Phase A's policies compile byte for byte as 0.148.9 did.
+
 ### Fixed
 
 ## 0.148.9 - routing policy, phase A: the BGP an ISP uses

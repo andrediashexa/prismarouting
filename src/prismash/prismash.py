@@ -396,10 +396,62 @@ def strip_compiled(routing):
     return out
 
 
+#: Phase B's attach statements (#536) as FRR writes them back: a pattern
+#: whose named groups are the policy (`p`, in the map's name) and what the
+#: listing says it is applied to, the use, and how `show policy` says it.
+_ATTACH_READS = (
+    (r"neighbor (?P<at>\S+) default-originate route-map "
+     r"PO-(?P<p>\S+)-BGP-DEFAULT", "bgp:default",
+     "neighbor {at} default-originate"),
+    (r"network (?P<at>\S+) route-map PO-(?P<p>\S+)-BGP-NETWORK",
+     "bgp:network", "network {at}"),
+    (r"aggregate-address (?P<at>\S+)(?: summary-only)? route-map "
+     r"PO-(?P<p>\S+)-BGP-AGGREGATE(?: .*)?", "bgp:aggregate",
+     "aggregate-address {at} policy"),
+    (r"aggregate-address (?P<at>\S+) .*suppress-map "
+     r"PO-(?P<p>\S+)-BGP-SUPPRESS", "bgp:suppress",
+     "aggregate-address {at} suppress-policy"),
+    (r"neighbor (?P<at>\S+) advertise-map PO-(?P<p>\S+)-BGP-ADVERTISE "
+     r"\S+ \S+", "bgp:advertise", "neighbor {at} advertise"),
+    (r"neighbor (?P<at>\S+) advertise-map \S+ (?P<kind>\S+)-map "
+     r"PO-(?P<p>\S+)-BGP-CONDITION", "bgp:condition",
+     "neighbor {at} advertise {kind}"),
+    (r"table-map PO-(?P<p>\S+)-BGP-TABLE", "bgp:table", "table-policy"),
+    (r"default-information originate .*route-map "
+     r"PO-(?P<p>\S+)-OSPF-DEFAULT(?: .*)?", "ospf:default",
+     "ospf default-information"),
+    (r"default-information originate .*route-map "
+     r"PO-(?P<p>\S+)-ISIS-DEFAULT(?: .*)?", "isis:default",
+     "isis default-information"),
+    (r"ip(?:v6)? protocol \S+ route-map PO-(?P<p>\S+)-FIB-(?P<at>[A-Z]+)",
+     "fib:{at}", "fib-policy {at}"),
+)
+
+
+def attach_reads(line):
+    """
+    [(policy or chain, use, where)] for each phase B attach point (#536)
+    `line` - one routing line as FRR writes it - names; [] for any other.
+    """
+    out = []
+    for pattern, use, where in _ATTACH_READS:
+        m = re.fullmatch(r"\s*" + pattern, line)
+        if m:
+            g = {k: (v.lower() if k == "at" and use.startswith("fib")
+                     else v) for k, v in m.groupdict().items()}
+            out.append((g["p"], use.format(**g), where.format(**g)))
+    return out
+
+
 def policy_uses(routing):
-    """{(policy, "import"|"export")} the routing applies, from its route-maps."""
+    """
+    {(policy, use)} the routing applies, from its route-maps: "import" or
+    "export" on a neighbor, an IGP export's part, and phase B's attach
+    points (#536).
+    """
     uses = set()
     for line in routing:
+        uses |= {(p, use) for p, use, _ in attach_reads(line)}
         m = re.fullmatch(r"\s*neighbor \S+ route-map PO-(\S+)-(IN|OUT) "
                          r"(in|out)", line)
         if m:
@@ -496,6 +548,206 @@ def policy_names(words):
     return names
 
 
+def _take_names(words, i):
+    """
+    The policies `words` names at `i` (#536): one name, or a chain in
+    brackets. (names, the index after them), or (None, i) when there are
+    none to take.
+    """
+    if i >= len(words):
+        return None, i
+    if not words[i].startswith("["):
+        return policy_names(words[i:i + 1]), i + 1
+    j = i
+    while j < len(words) and not words[j].endswith("]"):
+        j += 1
+    return policy_names(words[i:j + 1]), j + 1
+
+
+#: What each phase B attach statement is typed as (#536), said back when it
+#: is typed otherwise.
+ATTACH_USAGE = {
+    "default-originate": "neighbor <peer> default-originate policy <policy>",
+    "network": "network <prefix> policy <policy>",
+    "aggregate-address": "aggregate-address <prefix> [summary-only] "
+                         "[policy <policy>] [suppress-policy <policy>]",
+    "advertise": "neighbor <peer> advertise <policy> exist|non-exist "
+                 "<policy>",
+    "table-policy": "table-policy <policy>",
+    "ospf": "default-information originate [always] [metric <n>] "
+            "[metric-type 1|2] policy <policy>",
+    "isis": "default-information originate ipv4|ipv6 level-1|level-2 "
+            "[always] [metric <n>] policy <policy>",
+    "fib-policy": "fib-policy bgp|ospf|isis|static <policy>",
+}
+
+
+def attach_statement(words, where):
+    """
+    A phase B attach point (#536) as the FRR statements it stands for:
+    (lines, [(policy or chain, use)]), a usage line when it is typed wrong,
+    or None when `words` is not one. `where` is the block it is typed in:
+    "bgp", "ospf", "isis", or "top" outside every block. `no` in front is
+    the same statement removed. Each line names the map policy.map_name()
+    gives the use, which policy_uses() reads back.
+    """
+    neg = words[:1] == ["no"]
+    w = words[1:] if neg else list(words)
+    got = _attach(w, where)
+    if got is None or isinstance(got, str):
+        return got
+    lines, uses = got
+    return [("no " if neg else "") + l for l in lines], uses
+
+
+def _attach(w, where):
+    """attach_statement() for a statement without `no`."""
+    chained, rmap = policy_mod.chain_name, _attach_map
+    if where == "bgp" and len(w) >= 3 and w[0] == "neighbor" \
+            and w[2] == "default-originate" and "policy" in w[3:4]:
+        names, i = _take_names(w, 4)
+        if names is None or i != len(w):
+            return ATTACH_USAGE["default-originate"]
+        return ([f"neighbor {w[1]} default-originate route-map "
+                 f"{rmap(names, 'bgp:default')}"],
+                [(chained(names), "bgp:default")])
+    if where == "bgp" and len(w) >= 3 and w[0] == "network" \
+            and "policy" in w[2:3]:
+        names, i = _take_names(w, 3)
+        if names is None or i != len(w):
+            return ATTACH_USAGE["network"]
+        return ([f"network {w[1]} route-map {rmap(names, 'bgp:network')}"],
+                [(chained(names), "bgp:network")])
+    if where == "bgp" and w[:1] == ["aggregate-address"] \
+            and ("policy" in w or "suppress-policy" in w):
+        return _attach_aggregate(w)
+    if where == "bgp" and len(w) >= 3 and w[0] == "neighbor" \
+            and w[2] == "advertise":
+        names, i = _take_names(w, 3)
+        kind = w[i] if i < len(w) else None
+        cond, j = _take_names(w, i + 1)
+        if names is None or kind not in ("exist", "non-exist") \
+                or cond is None or j != len(w):
+            return ATTACH_USAGE["advertise"]
+        return ([f"neighbor {w[1]} advertise-map "
+                 f"{rmap(names, 'bgp:advertise')} {kind}-map "
+                 f"{rmap(cond, 'bgp:condition')}"],
+                [(chained(names), "bgp:advertise"),
+                 (chained(cond), "bgp:condition")])
+    if where == "bgp" and w[:1] == ["table-policy"]:
+        names, i = _take_names(w, 1)
+        if names is None or i != len(w):
+            return ATTACH_USAGE["table-policy"]
+        return ([f"table-map {rmap(names, 'bgp:table')}"],
+                [(chained(names), "bgp:table")])
+    if where in ("ospf", "isis") and w[:2] == ["default-information",
+                                               "originate"] \
+            and "policy" in w:
+        return _attach_igp_default(w, where)
+    if where == "top" and w[:1] == ["fib-policy"]:
+        names, i = _take_names(w, 2)
+        if len(w) < 3 or w[1] not in policy_mod.FIB_PROTOCOLS \
+                or names is None or i != len(w):
+            return ATTACH_USAGE["fib-policy"]
+        use = f"fib:{w[1]}"
+        m = rmap(names, use)
+        return ([f"ip protocol {w[1]} route-map {m}",
+                 f"ipv6 protocol {policy_mod.FIB_PROTOCOLS[w[1]]} "
+                 f"route-map {m}"], [(chained(names), use)])
+    return None
+
+
+def _attach_map(names, use):
+    """The route-map the policies `names` compile to for `use` (#536)."""
+    return policy_mod.map_name(policy_mod.chain_name(names), use)
+
+
+def _attach_aggregate(w):
+    """
+    `aggregate-address <prefix> [summary-only] [policy <p>]
+    [suppress-policy <p>]` (#536), in the order FRR writes it back:
+    summary-only, then the route-map, then the suppress-map. FRR 10.7.1
+    refuses summary-only beside a suppress-map - "can't be used at the
+    same time": one suppresses every more specific route, the other the
+    ones it accepts - so this does.
+    """
+    usage = ATTACH_USAGE["aggregate-address"]
+    if len(w) < 2:
+        return usage
+    summary, attr, supp, i = False, None, None, 2
+    while i < len(w):
+        if w[i] == "summary-only" and not summary:
+            summary, i = True, i + 1
+        elif w[i] == "policy" and attr is None:
+            attr, i = _take_names(w, i + 1)
+            if attr is None:
+                return usage
+        elif w[i] == "suppress-policy" and supp is None:
+            supp, i = _take_names(w, i + 1)
+            if supp is None:
+                return usage
+        else:
+            return usage
+    if summary and supp:
+        return ("summary-only suppresses every more specific route, and "
+                "suppress-policy the ones it accepts: one or the other")
+    line, uses = f"aggregate-address {w[1]}", []
+    if summary:
+        line += " summary-only"
+    if attr:
+        name = policy_mod.chain_name(attr)
+        line += f" route-map {policy_mod.map_name(name, 'bgp:aggregate')}"
+        uses.append((name, "bgp:aggregate"))
+    if supp:
+        name = policy_mod.chain_name(supp)
+        line += f" suppress-map {policy_mod.map_name(name, 'bgp:suppress')}"
+        uses.append((name, "bgp:suppress"))
+    return [line], uses
+
+
+def _attach_igp_default(w, igp):
+    """
+    An IGP's `default-information originate ... policy <p>` (#536), as FRR
+    writes it back: OSPF's options, then the route-map; IS-IS's family and
+    level, `always`, the route-map, then the metric.
+    """
+    usage = ATTACH_USAGE[igp]
+    k = w.index("policy")
+    names, i = _take_names(w, k + 1)
+    if names is None or i != len(w):
+        return usage
+    opts = w[2:k]
+    head = []
+    if igp == "isis":
+        if len(opts) < 2 or opts[0] not in ("ipv4", "ipv6") \
+                or opts[1] not in ("level-1", "level-2"):
+            return usage
+        head, opts = opts[:2], opts[2:]
+    always = opts[:1] == ["always"]
+    opts = opts[1:] if always else opts
+    metric = mtype = None
+    while opts:
+        if opts[0] == "metric" and len(opts) > 1 and metric is None \
+                and is_number(opts[1]) and int(opts[1]) <= 16777214:
+            metric, opts = opts[1], opts[2:]
+        elif igp == "ospf" and opts[0] == "metric-type" and len(opts) > 1 \
+                and opts[1] in ("1", "2") and mtype is None:
+            mtype, opts = opts[1], opts[2:]
+        else:
+            return usage
+    name = policy_mod.chain_name(names)
+    use = f"{igp}:default"
+    m = policy_mod.map_name(name, use)
+    line = " ".join(["default-information originate"] + head
+                    + (["always"] if always else []))
+    if igp == "ospf":
+        line += (f" metric {metric}" if metric else "") \
+            + (f" metric-type {mtype}" if mtype else "") + f" route-map {m}"
+    else:
+        line += f" route-map {m}" + (f" metric {metric}" if metric else "")
+    return [line], [(name, use)]
+
+
 def policy_applications(routing):
     """
     {policy: ["neighbor <peer> import", "ospf export", ...]}: where the
@@ -505,6 +757,13 @@ def policy_applications(routing):
     """
     out = {}
     for line in routing:
+        for name, _, where in attach_reads(line):
+            names = policy_mod.chain(name)
+            if len(names) > 1:
+                where += f" [ {' '.join(names)} ]"
+            for n in names:
+                if where not in out.setdefault(n, []):
+                    out[n].append(where)
         m = re.fullmatch(r"\s*neighbor (\S+) route-map PO-(\S+)-(IN|OUT) "
                          r"(in|out)", line)
         if m:
@@ -1416,8 +1675,11 @@ ISIS_BLOCK = {
                  "[route-map <name>]"),
     }),
     "default-information": ("originate a default route", {
-        "originate": ("advertise a default", "ipv4|ipv6 level-1|level-2 "
-                      "[always] [route-map <name>]"),
+        "originate": ("advertise a default; with a policy, while a route "
+                      "it accepts is present (with always: the policy's "
+                      "sets only)", "ipv4|ipv6 level-1|level-2 "
+                      "[always] [metric <n>] [route-map <name>|policy "
+                      "<policy>]"),
     }),
     "domain-password": ("level-2 authentication; never printed back",
                         "[clear|md5] <password>"),
@@ -1469,9 +1731,11 @@ OSPF_BLOCK = {
     "passive-interface": ("run OSPF on it but send no hellos - what every "
                           "subscriber-facing port should be", ARG_INTERFACE),
     "default-information": ("originate a default route", {
-        "originate": ("advertise 0.0.0.0/0",
+        "originate": ("advertise 0.0.0.0/0; with a policy, while a route "
+                      "it accepts is present (with always: the policy's "
+                      "sets only)",
                       "[always] [metric <n>] [metric-type 1|2] "
-                      "[route-map <name>]"),
+                      "[route-map <name>|policy <policy>]"),
     }),
     "export": ("export routes into OSPF through a policy-statement: what "
                "it accepts is redistributed, the rest is not", "<policy>"),
@@ -1927,7 +2191,16 @@ BGP_AF_NEIGHBOUR = {
     "maximum-prefix": ("tear the session down above this many prefixes",
                        "<n> [<percent>] [restart <minutes>]"),
     "remove-private-AS": ("strip private AS numbers on the way out", None),
-    "default-originate": ("advertise a default route to this neighbour", None),
+    "default-originate": ("advertise a default route to this neighbour; "
+                          "with a policy, while a route it accepts is in "
+                          "the BGP table", "[policy <policy>]"),
+    # Conditional advertisement (#536): typed as `advertise`, held and read
+    # back as FRR's advertise-map.
+    "advertise": ("advertise what a policy accepts only while a route "
+                  "another accepts exists, or does not",
+                  "<policy> exist|non-exist <policy>"),
+    "advertise-map": ("a conditional advertisement; type it as advertise",
+                      "<route-map> exist-map|non-exist-map <route-map>"),
 }
 
 BGP_BLOCK = {
@@ -1952,7 +2225,16 @@ BGP_BLOCK = {
         "ipv6": ("IPv6", {"unicast": ("unicast", None)}),
     }),
     "network": ("a prefix this box originates, which MUST be in the FIB",
-                ARG_PREFIX),
+                "<A.B.C.D/M> [policy <policy>]"),
+    # Phase B (#536). table-map is how a table-policy is held and read back.
+    "aggregate-address": ("one route for the more specific ones it covers",
+                          "<A.B.C.D/M> [summary-only] [policy <policy>] "
+                          "[suppress-policy <policy>]"),
+    "table-policy": ("which of BGP's best routes are installed, and with "
+                     "what metric or next hop, through a policy-statement",
+                     "<policy>"),
+    "table-map": ("the route-map on what BGP installs; type it as "
+                  "table-policy", "<route-map>"),
     "redistribute": ("inject routes from another source", {
         "connected": ("directly attached networks", None),
         "static": ("configured static routes", None),
@@ -1965,7 +2247,11 @@ BGP_BLOCK = {
 BGP_AF_BLOCK = {
     "neighbor": ("what a neighbour carries in this address family",
                  ARG_NEIGHBOUR),
-    "network": ("a prefix this box originates in this family", ARG_PREFIX),
+    "network": ("a prefix this box originates in this family",
+                "<A.B.C.D/M> [policy <policy>]"),
+    "aggregate-address": BGP_BLOCK["aggregate-address"],
+    "table-policy": BGP_BLOCK["table-policy"],
+    "table-map": BGP_BLOCK["table-map"],
     "redistribute": ("inject routes from another source", {
         "connected": ("directly attached networks", None),
         "static": ("configured static routes", None),
@@ -2910,10 +3196,23 @@ TREE = {
                          None)}),
         "ip": ("IP configuration", {
             "prefix-list": ("a named list of prefixes, for matching in policy",
-                            ARG_PREFIX_LIST)}),
+                            ARG_PREFIX_LIST),
+            # How a fib-policy is held and read back (#536).
+            "protocol": ("a route-map on what zebra installs from a "
+                         "protocol; type it as fib-policy",
+                         "<protocol> route-map <route-map>")}),
         "ipv6": ("IPv6 configuration", {
             "prefix-list": ("a named list of prefixes, for matching in policy",
-                            ARG_PREFIX_LIST)}),
+                            ARG_PREFIX_LIST),
+            "protocol": ("a route-map on what zebra installs from a "
+                         "protocol; type it as fib-policy",
+                         "<protocol> route-map <route-map>")}),
+        "fib-policy": ("which of a protocol's routes zebra installs, and "
+                       "with what source address, through a "
+                       "policy-statement", {
+            p: (f"routes {w}", "<policy>") for p, w in (
+                ("bgp", "BGP chose"), ("ospf", "OSPF learned"),
+                ("isis", "IS-IS learned"), ("static", "configured"))}),
         "bgp": ("BGP-wide lists a route-map matches on", {
             "as-path": ("AS path matching", {
                 "access-list": ("a named list of AS-path regexes",
@@ -5574,6 +5873,23 @@ def route_map_references(routing):
                           "advertise-map", "exist-map", "non-exist-map"):
                 out.append((line, name, "other"))
     return out
+
+
+def compiled_map_warning(line, handed):
+    """
+    Whether `line`, something FRR said while applying a commit, is its
+    warning about a policy compiler's map that the same commit defines
+    (#536). frr-reload hands bgpd a neighbor's `default-originate
+    route-map` and `advertise-map` before the route-maps of that same text,
+    and bgpd warns at the first: lab/policy-b.sh measured the warning on a
+    commit whose maps were in FRR's running configuration straight after,
+    and whose default route and conditional advertisement followed them.
+    A map of an operator's own, or one the commit does not define, is
+    still said.
+    """
+    m = re.fullmatch(r"The route-map '(PO-\S+)' does not exist\.",
+                     line.strip())
+    return bool(m) and m.group(1) in route_maps_defined(handed)
 
 
 def route_maps_defined(routing):
@@ -11308,7 +11624,8 @@ class Shell:
 
         if d["routing_changed"]:
             if self.frr.available():
-                rc, out = self.frr.reload(frr_lines(target))
+                handed = frr_lines(target)
+                rc, out = self.frr.reload(handed)
                 if rc:
                     print(out)
                     self.err("routing reload failed")
@@ -11317,7 +11634,8 @@ class Shell:
                 # route-map that does not exist, stores the statement and
                 # exits 0 - and that warning used to go nowhere.
                 for line in self.frr.diagnostics(out):
-                    print(f"  frr: {line}")
+                    if not compiled_map_warning(line, handed):
+                        print(f"  frr: {line}")
             elif self.real_routing(target.routing):
                 # The same refusal as the check half above, and the same
                 # object: FRR_SILENT_REFUSED is where it is written.
@@ -14806,6 +15124,15 @@ class Shell:
                                           ["router", "isis"])), None)
         if _igp and (_w[:1] == ["export"] or _w[:2] == ["no", "export"]):
             return self.igp_export(_igp, _w)
+        # Phase B's attach points (#536): a policy where BGP originates,
+        # aggregates, advertises on a condition and installs, where an IGP
+        # originates its default, and on what zebra installs.
+        _where = "bgp" if any(b.startswith("router bgp")
+                              for b in self.frr_ctx) \
+            else _igp or ("top" if not self.frr_ctx else None)
+        _got = attach_statement(_w, _where) if _where else None
+        if _got is not None:
+            return self.attach_policy(_got, _w)
         verdict, frr_said = self.frr.dryrun(
             [b for b in self.frr_ctx if b != STATIC_BLOCK], line)
         if verdict == Frr.DRYRUN_REFUSED:
@@ -14903,6 +15230,57 @@ class Shell:
                                "staged", f"FRR answered: {frr_said}", l)
                 return True
         self.candidate.routing += lines
+        return True
+
+    def attach_policy(self, got, w):
+        """
+        A phase B attach statement (#536), translated by attach_statement():
+        staged as the FRR lines it stands for, after the policies it names
+        are found and use_findings() has nothing against their use there,
+        and after FRR is asked about each line. `no` removes the lines the
+        candidate holds, and stages the removal of the ones it does not.
+        """
+        if isinstance(got, str):
+            if got in ATTACH_USAGE.values():
+                self.err_prose("not how this statement is typed; nothing "
+                               "staged", f"usage: {got}")
+            else:
+                self.err_prose("nothing staged", got)
+            return True
+        lines, uses = got
+        neg = w[0] == "no"
+        if not neg:
+            pol, _ = policy_mod.parse(self.candidate.policy)
+            for name, use in uses:
+                for n in policy_mod.chain(name):
+                    if n not in pol.statements:
+                        self.err(f"no policy-statement named {n}")
+                        return True
+                why = policy_mod.use_findings(pol, name, use)
+                if why:
+                    said = policy_mod.ATTACH_WORDS.get(use, "a fib-policy")
+                    self.err_prose(f"cannot be applied on {said}; "
+                                   f"nothing staged", *why)
+                    return True
+        ctx = [b for b in self.frr_ctx if b != STATIC_BLOCK]
+        staged = []
+        for l in lines:
+            held = [i for i, e in enumerate(self.candidate.routing)
+                    if neg and e.strip() == l[3:]]
+            if held:
+                staged.append(("drop", held[0]))
+                continue
+            verdict, frr_said = self.frr.dryrun(ctx, l)
+            if verdict == Frr.DRYRUN_REFUSED:
+                self.err_prose("not a statement FRR accepts here; nothing "
+                               "staged", f"FRR answered: {frr_said}", l)
+                return True
+            staged.append(("add", l))
+        # Removed from the end first, so each index still names its line.
+        for x in sorted((x for what, x in staged if what == "drop"),
+                        reverse=True):
+            del self.candidate.routing[x]
+        self.candidate.routing += [x for what, x in staged if what == "add"]
         return True
 
     def hostname_statement(self, w):
@@ -15761,6 +16139,11 @@ class Shell:
             print("result: no term decided it")
             print_prose("on a BGP neighbor that is accepted; exported into "
                         "OSPF or IS-IS it is not")
+            # Phase B's attach points (#536), each with its own default.
+            print_prose("as a network, aggregate-address, table or FIB "
+                        "policy it is accepted; as the routes an "
+                        "origination, a suppression or a conditional "
+                        "advertisement waits for, it is not")
 
     #: Where the kernel says how much RAM and how many hugepages (#466), and
     #: what the control plane's slice is using now.

@@ -604,5 +604,109 @@ check(policy.evaluate(_np, "N", "10.0.0.0/8")[-1][1] == "accept"
       "next policy, alone, is the use's default")
 ok("the block and the test")
 
+print("\n=== phase B (#536): what phase A compiled compiles as before ===")
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "policy-golden-0.148.9.txt")) as _f:
+    _golden_a = _f.read()
+check(_gold.compiled(_gold.FIX_A) == _golden_a,
+      "phase A's fixture compiles to the text 0.148.9's compiler gave, byte "
+      "for byte")
+ok("backward compatibility, against 0.148.9")
+
+print("\n=== phase B (#536): the attach points' maps ===")
+B = f"""{P} prefix-list UP 10.9.0.0/16
+{P} policy-statement COND term 1 from prefix-list UP
+{P} policy-statement COND term 1 then accept
+{P} policy-statement FIB term 1 from protocol static
+{P} policy-statement FIB term 1 set src 10.40.0.1
+{P} policy-statement FIB term 1 then accept
+{P} policy-statement FIB term 2 from route-filter 10.66.0.0/16 orlonger
+{P} policy-statement FIB term 2 then reject
+{P} policy-statement SIX term 1 set src 2001:db8::1
+{P} policy-statement LP term 1 set local-preference 5
+{P} policy-statement TBL term 1 set metric 7
+{P} policy-statement OD term 1 set metric-type 1
+{P} policy-statement PROTO term 1 from protocol static""".splitlines()
+pb, bad = policy.parse(B)
+check(bad == [] and pb.statements["FIB"]["1"].sets
+      == [("src", ["10.40.0.1"])], f"set src read: {bad}")
+check(policy._parse_set_a(policy.Term("s"), ["set", "src", "nowhere"])
+      == "set src <address>", "set src takes an address")
+check(policy.map_name("COND", "bgp:default") == "PO-COND-BGP-DEFAULT"
+      and policy.map_name("FIB", "fib:static") == "PO-FIB-FIB-STATIC"
+      and policy.map_name("OD", "isis:default") == "PO-OD-ISIS-DEFAULT",
+      "each attach point named as an IGP export's part is")
+check([policy.use_origin(d) for d in ("import", "ospf:static", "bgp:table",
+                                      "fib:isis", "ospf:default")]
+      == ["bgp", "static", "bgp", "isis", None],
+      "use_origin: whose routes each map sees")
+check([policy.use_default(d) for d in ("import", "ospf:static",
+                                       "bgp:default", "bgp:network",
+                                       "bgp:suppress", "bgp:table",
+                                       "fib:bgp", "isis:default")]
+      == ["permit", "deny", "deny", "permit", "deny", "permit", "permit",
+          "deny"], "use_default: what a route no term decided gets")
+check(policy._verdict("bgp:advertise") == "reject"
+      and policy._verdict("fib:static") == "accept",
+      "_verdict: the default as test policy says it")
+check(policy.term_families(pb.statements["FIB"]["1"]) == ["inet"]
+      and policy.term_families(pb.statements["SIX"]["1"]) == ["inet6"]
+      and policy.term_families(pb.statements["LP"]["1"]) == [],
+      "term_families: a source address makes the term its family's")
+out = "\n".join(policy.compile_all(pb, {("FIB", "fib:static"),
+                                        ("COND", "bgp:default"),
+                                        ("COND", "ospf:default"),
+                                        ("SIX", "fib:bgp")}))
+check("route-map PO-FIB-FIB-STATIC permit 10\n match ip address "
+      "prefix-list PO-FIB-T1-4\n set src 10.40.0.1\nexit" in out
+      and "ip prefix-list PO-FIB-T1-4 seq 5 permit 0.0.0.0/0 le 32" in out
+      and "route-map PO-FIB-FIB-STATIC deny 20" in out
+      and "route-map PO-FIB-FIB-STATIC permit 65535" in out,
+      "a FIB policy: set src on IPv4 routes, a reject, installed by default")
+check(" match ipv6 address prefix-list PO-SIX-T1-6\n set src 2001:db8::1"
+      in out and "route-map PO-COND-BGP-DEFAULT deny 65535" in out
+      and "route-map PO-COND-OSPF-DEFAULT deny 65535" in out,
+      "an IPv6 source on IPv6 routes; a condition's default is no route")
+check(policy._set_lines(pb, pb.statements["FIB"]["1"], "ipv6") == []
+      and policy._set_lines(pb, pb.statements["FIB"]["1"])
+      == [" set src 10.40.0.1"],
+      "_set_lines: a source address only on its family's clause")
+check(policy._compile_term(pb, "PROTO", pb.statements["PROTO"]["1"], 1, 0,
+                           65535, "M", None, "ospf:default")[1][0]
+      == "route-map M permit 10",
+      "_compile_term: no origin, no protocol filter")
+for _pol, _use, _why in (
+        ("FIB", "bgp:default", "set src is for a fib-policy"),
+        ("LP", "fib:static", "set local-preference is for BGP routes"),
+        ("TBL", "fib:static", "set metric does nothing on a fib-policy: it "
+                              "takes set src"),
+        ("LP", "bgp:table", "set local-preference does nothing on "
+                            "table-policy: it takes set metric and set "
+                            "next-hop"),
+        ("TBL", "bgp:suppress", "set metric does nothing on "
+                                "aggregate-address suppress-policy"),
+        ("TBL", "bgp:condition", "does nothing on advertise condition"),
+        ("OD", "isis:default", "set metric-type is for an export into OSPF"),
+        ("PROTO", "ospf:default", "from protocol has nothing to match on "
+                                  "ospf default-information")):
+    _got = policy.use_findings(pb, _pol, _use)
+    check(any(_why in w for w in _got), f"{_pol} as {_use}: {_got}")
+check(policy.use_findings(pb, "LP", "fib:bgp")
+      == ["LP term 1: set local-preference is for BGP routes"],
+      "a BGP set on a FIB policy is said once")
+for _pol, _use in (("FIB", "fib:static"), ("TBL", "bgp:table"),
+                   ("OD", "ospf:default"), ("LP", "bgp:network"),
+                   ("COND", "bgp:advertise"), ("LP", "bgp:aggregate")):
+    check(policy.use_findings(pb, _pol, _use) == [],
+          f"{_pol} as {_use} says nothing: "
+          f"{policy.use_findings(pb, _pol, _use)}")
+r = policy.evaluate(pb, "FIB", "2001:db8::/32", "fib:static")
+check(r[0] == ("1", "no match", "the prefix is not inet")
+      and r[-1] == (None, "accept", "no term decided: the default for this "
+                    "use"), f"test policy for a FIB use: {r}")
+check(policy.evaluate(pb, "COND", "10.1.0.0/16", "bgp:default")[-1][1]
+      == "reject", "a condition's default is reject")
+ok("set src, each use's origin, default and refusals")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
