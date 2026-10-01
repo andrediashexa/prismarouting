@@ -4546,6 +4546,18 @@ from the flat model lines to FRR:
   accept being the outer one's. A reject term whose policy has a reject,
   next term or next policy term with `from policy` would need a call whose
   deny goes on, and is refused at commit, naming that term;
+- the compiler's names are built from the operator's, and a name may hold
+  `-`: a policy literally named `X-SUB` or `X-NOT` compiles its own map to
+  the name of X's called or inverted map, a term `1-Ta` of `X` its list to
+  the name of term `a` of `X-T1` (`PO-X-T1-Ta-4`), a community `Tx-C` that
+  a `set community delete` names its list to the name of policy `C` term
+  `x`'s. FRR holds one object per name, so the two would be merged or one
+  would replace the other, and the routing would be wrong with nothing said.
+  The commit refuses it (#543), naming both and the FRR name:
+  `policy-statement <p>: <one> and <other> compile to the same FRR <kind>
+  <name>; FRR keeps one object per name, so rename one of them`. Each owner is
+  found by compiling it as the commit does, so only a configuration whose
+  names actually meet is refused, and every other compiles as before;
 - `next-hop discard` is `set ip next-hop 192.0.2.1` and `set ipv6 next-hop
   global 100::1`, with `ip route 192.0.2.1/32 blackhole tag 4294967294` and
   its IPv6 twin emitted beside the maps. FRR 10.7.1 refuses `set ip next-hop

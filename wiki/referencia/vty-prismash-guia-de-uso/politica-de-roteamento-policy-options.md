@@ -401,6 +401,7 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 | no `commit`, `set next-hop discard` no `import` de um vizinho eBGP direto sem `disable-connected-check` | `set next-hop discard is not resolved on a single-hop eBGP neighbor: add 'neighbor <vizinho> disable-connected-check', or the route is never installed and its traffic is forwarded` |
 | no `commit`, políticas que se chamam em roda com `from policy` | `policy-statement <política>: from policy reaches itself again` |
 | no `commit`, um term `then reject` com `from policy X`, quando X tem um term com `from policy` que não é `then accept` | `policy-statement <política> term <term>: then reject with from policy X, and ...` |
+| no `commit`, duas coisas que o compilador nomearia igual no FRR: uma política chamada `X-SUB` ou `X-NOT` ao lado do mapa que o `from policy X` chama, um term `1-Ta` da política `X` ao lado do term `a` da política `X-T1`, uma comunidade apagada com o mesmo nome da lista de um term | `policy-statement <política>: <um> and <outro> compile to the same FRR route-map <nome>; FRR keeps one object per name, so rename one of them` (ou a lista que for) |
 | `vrf-import prisma-bp ...`, ou um `vrf-import` dentro do `router bgp <asn> vrf prisma-bp` | `prisma-bp is a VRF of the box's own: no route leaks out of it` (ou `into it`) |
 | `vrf-import red` dentro do `router bgp <asn> vrf red` | `a VRF does not import from itself (red)` |
 | `vrf-import` fora de `address-family ipv4 unicast` ou `ipv6 unicast` | `a VRF imports per address family` |

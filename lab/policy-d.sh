@@ -1,7 +1,7 @@
 #!/bin/sh
 # Routing policy, phase D (#538): per-term hits, test policy, which decided
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
-# OFF-RED-AT-LEAST: 44
+# OFF-RED-AT-LEAST: 45
 # Routing policy, phase D (#538): what the policies did and would do -
 # asserted against the daemons, which are the oracle: the counters `show
 # policy <name>` reads must move with the routes at every attach point
@@ -367,8 +367,22 @@ W_CUST1=$(printf '%s' "$W_CUST" | tr -s ' \n' '  ')
 W_BOGON1=$(printf '%s' "$W_BOGON" | tr -s ' \n' '  ')
 W_NET1=$(printf '%s' "$W_NET" | tr -s ' \n' '  ')
 
+echo; echo "=========== a name the compiler already took (#543) ==========="
+# UP's term gate calls GATE inverted, as the map PO-GATE-NOT-IN; a policy
+# literally named GATE-NOT, imported, compiles its own map to that name.
+# FRR would hold one map for the two: refused at commit, naming both.
+COLLIDE=$($HX -c "configure" -c "policy-options" \
+  -c "policy-statement GATE-NOT" -c "term 1" -c "then accept" -c "exit" \
+  -c "exit" -c "exit" -c "router bgp 65000" \
+  -c "address-family ipv4 unicast" -c "neighbor 10.2.0.2 import GATE-NOT" \
+  -c "exit-address-family" -c "exit" -c "commit check" 2>&1)
+printf '%s\n' "$COLLIDE" | grep -A4 "GATE-NOT" | head -8 | sed 's/^/  /'
+COLLIDE1=$(printf '%s' "$COLLIDE" | tr -s ' \n' '  ')
+
 echo; echo "=========== VERDICT ==========="
 expect_in "the policies commit" "commit complete" "$POL"
+expect_in "a policy named GATE-NOT beside GATE's inverted map is refused (#543)" \
+  "compile to the same FRR route-map PO-GATE-NOT-IN" "$COLLIDE1"
 pos() { [ -n "$1" ] && [ "$1" != "-" ] && [ "$1" -ge 1 ]; }
 expect "import, UP term cust counts the customer's route ($H_CUST)" pos "$H_CUST"
 expect "  term black, the blackholed one ($H_BLACK)" pos "$H_BLACK"

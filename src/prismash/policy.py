@@ -1455,17 +1455,9 @@ def compile_all(pol, uses):
     if any(w == "as-path-remove-private" for w, _ in sets):
         out.append(f"bgp as-path access-list {PRIVATE_AS_LIST} seq 5 permit "
                    f"{PRIVATE_AS_REGEX}")
-    for policy, direction in sorted(uses):
-        out += compile_policy(pol, policy, direction)
-    # The maps `from policy` calls, for every use that reaches them; then
-    # the ones a reject term calls inverted (#542).
-    called = {(p, inv, direction) for policy, direction in uses
-              for top in chain(policy)
-              for p, inv in called_maps(pol, [top])}
-    for p, direction in sorted((p, d) for p, inv, d in called if not inv):
-        out += compile_policy(pol, p, direction, sub=True)
-    for p, direction in sorted((p, d) for p, inv, d in called if inv):
-        out += compile_policy(pol, p, direction, sub=True, inverted=True)
+    for policy, direction, sub, inverted in compiled_maps(pol, uses):
+        out += compile_policy(pol, policy, direction, sub=sub,
+                              inverted=inverted)
     if any(w == "next-hop" and a == ["discard"] for w, a in sets) and uses:
         out += list(DISCARD_ROUTES)
     # A policy used twice - imported on one session and exported on another,
@@ -1479,6 +1471,102 @@ def compile_all(pol, uses):
             seen.add(line)
         unique.append(line)
     return unique
+
+
+def compiled_maps(pol, uses):
+    """
+    [(policy, direction, sub, inverted)]: every route-map compile_all()
+    emits for `uses`, in its order - each use's own map, then the maps
+    `from policy` calls for every use that reaches them, then the ones a
+    reject term calls inverted (#542).
+    """
+    out = [(policy, direction, False, False)
+           for policy, direction in sorted(uses)]
+    called = {(p, inv, direction) for policy, direction in uses
+              for top in chain(policy)
+              for p, inv in called_maps(pol, [top])}
+    out += [(p, d, True, False)
+            for p, d in sorted((p, d) for p, inv, d in called if not inv)]
+    out += [(p, d, True, True)
+            for p, d in sorted((p, d) for p, inv, d in called if inv)]
+    return out
+
+
+def name_collisions(pol, uses):
+    """
+    [(policy, why)] for two things the compiler would emit under one FRR
+    name (#543). Its names are built from the operator's - a policy's
+    route-map PO-<policy>-<use>, the map `from policy` calls
+    PO-<policy>-SUB-<use>, the inverted one PO-<policy>-NOT-<use>, a term's
+    lists PO-<policy>-T<term>-<kind>, a delete's community list
+    PO-C-<community> - and a name may hold `-`, so a policy literally named
+    X-SUB compiles its map to the name of X's called map. FRR keeps one
+    object per name, and the two are merged or one replaces the other:
+    the routing is wrong, and nothing says so. Each object's owner is
+    found by compiling it as compile_all() does, so a configuration whose
+    names are all distinct is not refused and compiles as it did.
+    """
+    owners = {}   # (namespace, FRR name) -> {owner}
+    for policy, direction, sub, inverted in compiled_maps(pol, uses):
+        rmap = inverted_map_name(policy, direction) if inverted \
+            else sub_map_name(policy, direction) if sub \
+            else map_name(policy, direction)
+        owners.setdefault(("route-map", rmap), set()).add(
+            (policy, ("map", "not" if inverted else "sub" if sub else "")))
+        origin = use_origin(direction)
+        for name in chain(policy):
+            for term in pol.statements.get(name, {}).values():
+                got = _compile_term(pol, name, term, 1, 0, DEFAULT_SEQ,
+                                    rmap, origin, direction, inverted)
+                for line in (got[0] if got else []):
+                    namespace, lname = _list_name(line)
+                    owners.setdefault((namespace, lname), set()).add(
+                        (name, term.name))
+    shared = [line for line in compile_all(pol, set())
+              if not line.startswith((" ", "exit", "route-map "))]
+    for line in shared:
+        namespace, lname = _list_name(line)
+        what = "community" if " community-list " in line \
+            else "large-community"
+        owners.setdefault((namespace, lname), set()).add(
+            (None, "set as-path remove-private") if lname == PRIVATE_AS_LIST
+            else (None, f"set {what} delete {lname[len(PREFIX) + 2:]}"))
+    out = []
+    for (namespace, name), who in sorted(owners.items()):
+        if len(who) < 2:
+            continue
+        said = sorted(_owner_words(o) for o in who)
+        # Said at the longest policy name: the one that took a derived
+        # name's shape, X-SUB beside X.
+        first = max((p for p, _ in who if p), key=lambda p: (len(p), p))
+        out.append((first, f"policy-statement {first}: {' and '.join(said)} "
+                           f"compile to the same FRR {namespace} {name}; FRR "
+                           f"keeps one object per name, so rename one of "
+                           f"them"))
+    return out
+
+
+#: How name_collisions() says which of a policy's maps it is.
+MAP_ROLES = {"": "", "sub": " as from policy calls it",
+             "not": " as a reject term's from policy calls it"}
+
+
+def _list_name(line):
+    """(namespace, name) of a list line the compiler emits: the words
+    before `seq`, and the last of them."""
+    w = line.split()
+    i = w.index("seq")
+    return " ".join(w[:i - 1]), w[i - 1]
+
+
+def _owner_words(owner):
+    """How name_collisions() says an owner: a policy, a term, a list."""
+    policy, rest = owner
+    if policy is None:
+        return rest
+    if isinstance(rest, tuple):
+        return f"policy-statement {policy}" + MAP_ROLES[rest[1]]
+    return f"policy-statement {policy} term {rest}"
 
 
 def _filter_matches(route, network, kind, upto):

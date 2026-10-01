@@ -1159,5 +1159,92 @@ check(policy._reject_calls(pr) == []
       "_reject_calls: (policy, why) per reject term FRR cannot run")
 ok("a reject term rejects what its from policy accepts")
 
+print("\n=== #543: two things the compiler names alike are refused ===")
+
+
+def _nc(lines, uses):
+    _p, _b = policy.parse([f"{P} {l}" for l in lines])
+    assert not _b, _b
+    return _p, set(uses)
+
+
+_SUB = ["policy-statement X term a from policy G",
+        "policy-statement X term a then accept",
+        "policy-statement G term g then reject",
+        "policy-statement G-SUB term z then accept"]
+_p, _u = _nc(_SUB, [("X", "import"), ("G-SUB", "import")])
+_maps = [l.split()[1] for l in policy.compile_all(_p, _u)
+         if l.startswith("route-map ")]
+check(_maps.count("PO-G-SUB-IN") == 4,
+      f"the collision is real: G's called map and G-SUB's own are both "
+      f"PO-G-SUB-IN, and FRR would merge their clauses: {_maps}")
+check(policy.name_collisions(_p, _u) == [(
+    "G-SUB", "policy-statement G-SUB: policy-statement G as from policy "
+    "calls it and policy-statement G-SUB compile to the same FRR route-map "
+    "PO-G-SUB-IN; FRR keeps one object per name, so rename one of them")],
+      f"-SUB-: a policy named G-SUB beside G's called map: "
+      f"{policy.name_collisions(_p, _u)}")
+_p, _u = _nc(_SUB, [("X", "import"), ("G-SUB", "export")])
+check(policy.name_collisions(_p, _u) == [],
+      "the same names used where they do not meet (PO-G-SUB-OUT) are not "
+      "refused")
+_p, _u = _nc(["policy-statement X term a from policy G",
+              "policy-statement X term a then reject",
+              "policy-statement G term g then reject",
+              "policy-statement G-NOT term z then accept"],
+             [("X", "import"), ("G-NOT", "import")])
+check([w for _, w in policy.name_collisions(_p, _u)]
+      == ["policy-statement G-NOT: policy-statement G as a reject term's "
+          "from policy calls it and policy-statement G-NOT compile to the "
+          "same FRR route-map PO-G-NOT-IN; FRR keeps one object per name, "
+          "so rename one of them"],
+      f"-NOT-: a policy named G-NOT beside G's inverted map: "
+      f"{policy.name_collisions(_p, _u)}")
+_p, _u = _nc(["prefix-list A 10.0.0.0/8", "prefix-list B 192.0.2.0/24",
+              "policy-statement X term 1-Ta from prefix-list A",
+              "policy-statement X term 1-Ta then accept",
+              "policy-statement X-T1 term a from prefix-list B",
+              "policy-statement X-T1 term a then reject"],
+             [("X", "import"), ("X-T1", "export")])
+check([w for _, w in policy.name_collisions(_p, _u)]
+      == ["policy-statement X-T1: policy-statement X term 1-Ta and "
+          "policy-statement X-T1 term a compile to the same FRR ip "
+          "prefix-list PO-X-T1-Ta-4; FRR keeps one object per name, so "
+          "rename one of them"],
+      f"-T<term>-: a term's list under another policy's term's name: "
+      f"{policy.name_collisions(_p, _u)}")
+_p, _u = _nc(["community Tx-C members 65000:1",
+              "community K members 65000:2",
+              "policy-statement C term x from community K",
+              "policy-statement C term x then accept",
+              "policy-statement D term 1 set community delete Tx-C"],
+             [("C", "import"), ("D", "import")])
+check([p for p, _ in policy.name_collisions(_p, _u)] == ["C"]
+      and "set community delete Tx-C" in policy.name_collisions(_p, _u)[0][1],
+      f"PO-C-: a delete's community list under a term's list name: "
+      f"{policy.name_collisions(_p, _u)}")
+check(policy.name_collisions(pol, {("UP-IN", "import"),
+                                   ("UP-OUT", "export")}) == []
+      and policy.name_collisions(pr, {("X", "import")}) == [],
+      "configurations whose names are all distinct are not refused")
+check(policy.compiled_maps(_p, {("C", "import")})
+      == [("C", "import", False, False)]
+      and policy.compiled_maps(pr, {("X", "import")})[0]
+      == ("X", "import", False, False),
+      "compiled_maps: each use's own map first, then the called ones")
+check(policy._list_name("ip prefix-list PO-X-T1-4 seq 5 permit 10.0.0.0/8")
+      == ("ip prefix-list", "PO-X-T1-4")
+      and policy._list_name("bgp community-list standard PO-C-K seq 5 "
+                            "permit 65000:1")
+      == ("bgp community-list standard", "PO-C-K"),
+      "_list_name: the namespace and the name of a list line")
+check(policy._owner_words(("G", ("map", "sub")))
+      == "policy-statement G as from policy calls it"
+      and policy._owner_words(("X", "t")) == "policy-statement X term t"
+      and policy._owner_words((None, "set as-path remove-private"))
+      == "set as-path remove-private",
+      "_owner_words: a map, a term, a shared list")
+ok("a derived name equal to another is refused, naming both")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
