@@ -4489,15 +4489,42 @@ made none, and `lab/policy-c.sh` made `red` and `svc` by hand; since #540 it
 commits `vrf red table 10` and `vrf svc table 30` and the box makes them and
 puts the LCP host interfaces in them ("A VRF's Linux device").
 
-**A connected route leaked does not reach VPP.** FRR leaks a route whose
-next hop is the other VRF itself - a connected or a `redistribute
-connected` route - into the kernel as `dev <vrf>`, the VRF device. linux-nl
-has no VPP interface for a VRF device, and VPP's table never got the route:
-measured, the echo reply to the customer's connected address was dropped in
-the importing table. A leaked route with a next hop, which is every BGP
-route, reaches VPP. A tenant reached through a router - the lab's customer
-announces its LAN over BGP - works; a tenant's connected subnet leaked into
-another VRF has no dataplane path.
+**A connected route leaked reaches VPP through prisma-routing-leaks
+(#541).** FRR leaks a route whose next hop is the other VRF itself - a
+connected or a `redistribute connected` route - into the kernel as `dev
+<vrf>`, the VRF device. linux-nl has no VPP interface for a VRF device and
+copies nothing for it: until 0.148.14 VPP's table never got the route, and
+the echo reply to the customer's connected address was dropped in the
+importing table. A leaked route with a next hop, which is every BGP route
+learned from a neighbour, reaches VPP the usual way.
+
+`appliance/prisma-routing-leaks`, a host daemon
+(`prisma-routing-leaks.service`), does in VPP what the kernel does with
+such a route: for each `dev <vrf>` route in a tenant VRF's table or the main
+table, a route in the matching VPP table whose path is a lookup in the other
+VRF's table -
+
+    ip route add 10.10.0.0/24 table 30 via ip4-lookup-in-table 10
+
+and VPP resolves the rest in table 10 as for a packet that arrived there.
+It is not a step of the commit, because the route exists only once bgpd has
+leaked it, which is after the commit and again whenever an address, a
+neighbour or the dataplane comes and goes. It reads the kernel's tables on
+every route or link change netlink reports and every 5 seconds, and makes
+VPP agree: a route the kernel lost is removed, one VPP lost (a dataplane
+restart) is put back at the next tick. It removes only routes it added -
+they are listed in `/run/prisma-routing/leaks` - and leaves `prisma-*` VRFs
+alone. Each change is one journal line in VRF names:
+
+    prisma-routing-leaks: 10.10.0.0/24 in svc, through red (VPP table 30, a lookup in table 10): installed
+
+Not copied: an ECMP route with one path through a VRF among real ones (a
+lookup is not one path among others), IPv6 link-local and multicast
+prefixes, and the kernel's own routes. `lab/policy-c.sh` measures it: a
+ping from svc and from the upstream to red's connected subnet, 100% loss
+without the daemon and 0% with it; an import withdrawn removes the route
+from that table only; a route deleted from VPP by hand is back within a
+tick; after the boot's `--load` it is back with the VRFs.
 
 ### What FRR is given
 

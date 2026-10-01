@@ -310,6 +310,14 @@ Não há `rd` nem `route-target` para configurar: o roteamento os escolhe sozinh
 
 **A VRF do Linux vem de** `**vrf <nome> table <n>**`**.** A VRF do roteamento precisa de uma VRF do Linux com o mesmo nome; declare-a com `vrf red table 10`, na mesma tabela do `vrf 10` das interfaces dela (veja [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ)).
 
+**A sub-rede conectada de uma VRF também atravessa.** Quando a VRF de origem tem `redistribute connected` e a outra a importa, o roteamento instala essa rota no Linux apontando para a própria VRF de origem, sem próximo salto. Desde a 0.149.0 a caixa leva essa rota para o plano de dados por conta própria: a VRF que importa passa a procurar o destino na tabela da VRF de origem. Não há nada a configurar; cada rota levada aparece uma vez no journal, com o nome das VRFs:
+
+```
+prisma-routing-leaks: 10.10.0.0/24 in svc, through red (VPP table 30, a lookup in table 10): installed
+```
+
+Ela sai sozinha quando a importação é desfeita, e volta sozinha depois de um reinício do plano de dados. Até a 0.148.16 a rota existia no BGP e no Linux, mas não no plano de dados, e um host da sub-rede conectada não era alcançado pela outra VRF.
+
 A `prisma-bp`, e qualquer VRF cujo nome comece por `prisma-`, é da própria caixa: nenhuma rota entra nela nem sai dela, nem por `vrf-import` nem pelo `import vrf` do roteamento digitado à mão.
 
 Uma rota estática pode levar tag: `<prefixo> next-hop <destino> tag <n>` no `router static`, e `from tag <n>` casa com ela. É o jeito de marcar uma estática para um `export` ou para uma condição.

@@ -79,6 +79,24 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A connected route leaked into another VRF now reaches the dataplane.**
+  ([#541](https://github.com/andrediashexa/hexarouting/issues/541))
+  FRR installs a route leaked through the other VRF itself - a tenant's
+  connected subnet under `vrf-import`, with `redistribute connected` - in
+  the kernel as `dev <vrf>`, and linux-nl, which has no VPP interface for a
+  VRF device, copied nothing: the importing table in VPP had no entry and
+  the reply to a host on that subnet was dropped there. A new host daemon,
+  `prisma-routing-leaks.service`, reads such routes out of the kernel's
+  tables on every route or link change and every 5 seconds, and puts each
+  in VPP as a lookup in the other VRF's table (`via ip4-lookup-in-table
+  10`); it removes them when the kernel's go, removes only routes it added,
+  and puts them back after a dataplane restart. Measured in
+  `lab/policy-c.sh`: from svc and from the upstream, a ping to red's
+  connected subnet lost 100% without the daemon and 0% with it; an import
+  withdrawn takes the route out of that table only; a route taken out of
+  VPP by hand is back within a tick; after the boot's `--load` it is back
+  with the VRFs.
+
 ## 0.148.16 - a policy line a daemon refuses fails the commit
 
 ### Fixed
