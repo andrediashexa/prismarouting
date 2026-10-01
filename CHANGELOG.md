@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.9 - routing policy, phase A: the BGP an ISP uses
+
+### Added
+
 * **Routing policy, phase A: the conditions, actions and flow a transit
   policy needs.**
   ([#535](https://github.com/andrediashexa/hexarouting/issues/535))
@@ -96,8 +102,6 @@ version has a chance of seeing it.
   the clause ran with no set, so the compiler writes the plain statement,
   which merges. And a discard on a single-hop eBGP neighbor is never
   installed without `disable-connected-check`, so the commit asks for it.
-
-### Fixed
 
 ## 0.148.8 - the management API survives an upgrade, and no call hangs on a fork
 
