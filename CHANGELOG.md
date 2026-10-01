@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.148.2 - the Linux name read over the new connection carries no NUL
+
+### Fixed
+
 * **0.148.1 read every card's Linux name with a NUL on the end.**
   ([#530](https://github.com/andrediashexa/hexarouting/issues/530))
   Found on the X520 bench right after the upgrade: `show running-config`
