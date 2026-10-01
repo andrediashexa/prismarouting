@@ -422,7 +422,7 @@ expect_not_in "  and not once it is gone" "0.0.0.0/0" "$ODEF2"
 expect_in "IS-IS default-information always: originated, as the policy accepts" \
   "0.0.0.0/0" "$IDEF1"
 expect "  carrying the policy's metric: 50, and the link's 10" \
-  test "$(printf '%s' "$IDEF1" | awk '{print $3}')" = 60
+  test "$(printf '%s' "$IDEF1" | awk '{print $4}')" = 60
 expect_in "  (the upstream's IS-IS answered)" "10.71.0.0/24" "$ISR2"
 expect "  and withdrawn when the policy rejects" test -z "$IDEF2"
 verdict

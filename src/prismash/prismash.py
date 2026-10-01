@@ -728,7 +728,7 @@ def _attach_igp_default(w, igp):
     metric = mtype = None
     while opts:
         if opts[0] == "metric" and len(opts) > 1 and metric is None \
-                and opts[1].isdigit() and int(opts[1]) <= 16777214:
+                and is_number(opts[1]) and int(opts[1]) <= 16777214:
             metric, opts = opts[1], opts[2:]
         elif igp == "ospf" and opts[0] == "metric-type" and len(opts) > 1 \
                 and opts[1] in ("1", "2") and mtype is None:
