@@ -1,7 +1,7 @@
 #!/bin/sh
 # Routing policy, phase C (#537): route leaking between VRFs, through a policy
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
-# OFF-RED-AT-LEAST: 25
+# OFF-RED-AT-LEAST: 36
 # Routing policy, phase C (#537): a VRF importing routes from another VRF and
 # from the default table through a policy (`vrf-import <vrf>|default policy
 # <p>`, FRR's `import vrf` and `import vrf route-map`) - asserted on what
@@ -25,15 +25,18 @@
 # default table import red without a policy, so the replies find their way
 # to the customer's LAN.
 #
-# A CONNECTED ROUTE LEAKED DOES NOT REACH VPP. red also redistributes its
-# connected 10.10.0.0/24, and svc imports it: bgpd and zebra have it, and
-# the kernel holds it in svc's table as `dev red` - the VRF device, which is
-# how FRR leaks a route whose next hop is the other VRF itself. linux-nl has
-# no VPP interface for a VRF device, so VPP's table 30 never gets it
-# (measured, the first run of this lab: the echo reply to 10.10.0.2 was
-# dropped in table 30). A leaked route with a next hop - every BGP route
-# here - reaches VPP. The lab prints the connected one and does not assert
-# it: it is #537's finding, not the behaviour the box should have.
+# A CONNECTED ROUTE LEAKED REACHES VPP THROUGH prisma-routing-leaks (#541).
+# red also redistributes its connected 10.10.0.0/24, and svc and the default
+# table import it: the kernel holds it in their tables as `dev red` - the
+# VRF device, which is how FRR leaks a route whose next hop is the other VRF
+# itself. linux-nl has no VPP interface for a VRF device and copies nothing
+# for it, so until 0.148.14 VPP's table 30 never got it and the echo reply
+# to 10.10.0.2 was dropped there (#537's finding). The daemon puts it in
+# VPP as a lookup in table 10, started here as its unit starts it on a box;
+# the lab pings red's connected subnet from svc and from the upstream,
+# withdraws one import and sees only that table lose it, takes the route
+# out of VPP by hand as a restarted dataplane would and sees it come back,
+# and after the boot below sees it back with the VRFs.
 #
 # THE LINUX VRFS ARE THE VTY'S (#540). Until then this lab made `red` and
 # `svc` by hand, with `ip link add red type vrf table 10`, because the box
@@ -66,6 +69,7 @@ done
 ip netns exec up ip addr add 10.0.0.2/24 dev veth-up-o
 ip netns exec up ip addr add 10.99.0.1/24 dev lo
 ip netns exec up ip route add 10.11.0.0/24 via 10.0.0.1
+ip netns exec up ip route add 10.10.0.0/24 via 10.0.0.1
 ip netns exec red ip addr add 10.10.0.2/24 dev veth-red-o
 ip netns exec red ip addr add 10.11.0.1/24 dev lo
 ip netns exec red ip route add default via 10.10.0.1
@@ -123,6 +127,10 @@ printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
 printf 'hostname prisma-routing\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
 start_frr bgpd
+# The leaks daemon, as prisma-routing-leaks.service runs it (#541), with a
+# shorter tick so that a repair is seen in seconds.
+PRISMA_LEAKS_STATE=/tmp/leaks.state PRISMA_LEAKS_TICK=2 \
+  python3 /src/appliance/prisma-routing-leaks > /tmp/leaks.log 2>&1 &
 
 # ---------------- the upstream and the shared services ----------------
 peer_frr() {   # <ns> <bgpd.conf>
@@ -318,11 +326,40 @@ echo; echo "=========== a packet: red's customer to the service, across VRFs ===
 R_SVC=$(via 30 10.11.0.0/24 host-veth-red)
 R_UP=$(via 0 10.11.0.0/24 host-veth-red)
 echo "  the way back: 10.11.0.0/24 via red in table 30=$R_SVC, in table 0=$R_UP"
-# The connected route leaked (the header): printed, not asserted.
-echo "  red's connected 10.10.0.0/24 leaked into svc:" \
-     "bgp=$(vtysh -c 'show bgp vrf svc ipv4 unicast 10.10.0.0/24' 2>&1 | grep -c '^BGP routing table entry')" \
-     "kernel='$(ip route show vrf svc 10.10.0.0/24)'" \
-     "VPP table 30=$(fib 30 10.10.0.0/24 | grep -c '^10.10.0.0/24')"
+# The connected route leaked (the header, #541): in VPP as a lookup in
+# red's table, in svc's table and in the default one.
+lookup() {   # <table> <prefix> <source table> -> 1 when VPP looks it up there
+  _f=$(fib "$1" "$2" | tr -d '\r')
+  printf '%s\n' "$_f" | grep -q "^$2 " \
+    && printf '%s\n' "$_f" | grep -qE "lookup in ipv4-VRF:$3[[:space:]]*\$" \
+    && echo 1 || echo 0
+}
+n=0
+while [ "$n" -lt 30 ]; do
+  [ "$(lookup 30 10.10.0.0/24 10)" = 1 ] && [ "$(lookup 0 10.10.0.0/24 10)" = 1 ] \
+    && break
+  sleep 1; n=$((n + 1))
+done
+K_CON=$(ip route show vrf svc 10.10.0.0/24)
+C_SVC=$(lookup 30 10.10.0.0/24 10)
+C_UP=$(lookup 0 10.10.0.0/24 10)
+echo "  red's connected 10.10.0.0/24 leaked: kernel svc '$K_CON';" \
+     "VPP table 30 lookup in 10=$C_SVC, table 0=$C_UP (${n}s)"
+PING_CON=$(ip netns exec svc ping -c 3 -W 1 -I 203.0.113.10 10.10.0.2 2>&1)
+printf '%s\n' "$PING_CON" | grep "packet loss" | sed 's/^/  svc to 10.10.0.2: /'
+PING_CON_UP=$(ip netns exec up ping -c 3 -W 1 -I 10.99.0.1 10.10.0.2 2>&1)
+printf '%s\n' "$PING_CON_UP" | grep "packet loss" | sed 's/^/  upstream to 10.10.0.2: /'
+# A dataplane that lost it - what a restart does to every table - has it
+# back at the next tick, from the kernel's table rather than a commit.
+vppctl ip route del 10.10.0.0/24 table 30 via ip4-lookup-in-table 10
+C_LOST=$(lookup 30 10.10.0.0/24 10)
+n=0
+while [ "$n" -lt 15 ]; do
+  [ "$(lookup 30 10.10.0.0/24 10)" = 1 ] && break
+  sleep 1; n=$((n + 1))
+done
+C_BACK=$(lookup 30 10.10.0.0/24 10)
+echo "  taken out of VPP by hand: gone=$((1 - C_LOST)), back=$C_BACK (${n}s)"
 [ "${2:-}" = trace ] && { vppctl clear trace; vppctl trace add af-packet-input 40; }
 PING=$(ip netns exec red ping -c 3 -W 1 -I 10.11.0.1 203.0.113.10 2>&1)
 printf '%s\n' "$PING" | tail -2 | sed 's/^/  /'
@@ -357,6 +394,24 @@ printf '%s\n' "$B_DEF2" | head -1 | sed 's/^/  bgp 0.0.0.0\/0: /'
 printf '%s\n' "$Z_DEF2" | head -2 | sed 's/^/  zebra 0.0.0.0\/0: /'
 echo "  VPP table 10: 0.0.0.0/0 via up=$F_DEF2, 203.0.113.0/24 via svc=$F_SVC2 (${n}s)"
 
+echo; echo "=========== the default table stops importing red (#541) ==========="
+UNIMP=$($HX -c "configure" -c "router bgp 65000" \
+  -c "address-family ipv4 unicast" -c "no vrf-import red" \
+  -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$UNIMP" | grep -vE "^(note|warning):" | tail -1 | sed 's/^/  /'
+n=0
+while [ "$n" -lt 30 ]; do
+  [ "$(lookup 0 10.10.0.0/24 10)" = 0 ] && break
+  sleep 1; n=$((n + 1))
+done
+W_UP=$(lookup 0 10.10.0.0/24 10)
+W_SVC=$(lookup 30 10.10.0.0/24 10)
+K_UNIMP=$(ip route show 10.10.0.0/24)
+echo "  kernel main '$K_UNIMP'; VPP table 0=$W_UP, table 30=$W_SVC (${n}s)"
+PING_UNIMP=$(ip netns exec up ping -c 2 -W 1 -I 10.99.0.1 10.10.0.2 2>&1)
+printf '%s\n' "$PING_UNIMP" | grep "packet loss" | sed 's/^/  upstream to 10.10.0.2: /'
+sed 's/^/  daemon: /' /tmp/leaks.log
+
 echo; echo "=========== a boot: the saved file makes the VRFs again (#540) ==========="
 # What a reboot does to the Linux side: the devices are gone and FRR is
 # already running with `router bgp 65000 vrf red` in it - the boot unit
@@ -385,6 +440,15 @@ echo "  red's BGP and the leak back after the load (${n}s)"
 B_BGP=$(vtysh -c "show bgp vrf red ipv4 unicast 10.11.0.0/24" 2>&1)
 PING_BOOT=$(ip netns exec red ping -c 3 -W 1 -I 10.11.0.1 203.0.113.10 2>&1)
 printf '%s\n' "$PING_BOOT" | grep "packet loss" | sed 's/^/  /'
+n=0
+while [ "$n" -lt 30 ]; do
+  [ "$(lookup 30 10.10.0.0/24 10)" = 1 ] && break
+  sleep 1; n=$((n + 1))
+done
+B_CON=$(lookup 30 10.10.0.0/24 10)
+PING_BOOT_CON=$(ip netns exec svc ping -c 3 -W 1 -I 203.0.113.10 10.10.0.2 2>&1)
+printf '%s\n' "$PING_BOOT_CON" | grep "packet loss" \
+  | sed "s/^/  svc to 10.10.0.2, VPP table 30 lookup in 10=$B_CON (${n}s): /"
 
 echo; echo "=========== taken back: an interface out, a VRF removed ==========="
 OUT=$($HX -c "configure" -c "interface host-veth-red" -c "no vrf" -c "exit" \
@@ -490,4 +554,27 @@ expect "  and VPP's table 10" test "$F_DEF2" = 0
 expect "  while the service stays" test "$F_SVC2" = 1
 expect_not_in "  bgpd no longer imports the default table" \
   "import vrf default" "$FRRRUN2"
+# #541: the connected route leaked through red reaches VPP.
+expect_in "red's connected route is in svc's kernel table through red" \
+  "dev red" "$K_CON"
+expect "  and in VPP's table 30, a lookup in red's table" test "$C_SVC" = 1
+expect "  and in VPP's table 0, which imports red too" test "$C_UP" = 1
+expect_in "  a packet from svc reaches red's connected subnet" \
+  " 0% packet loss" "$PING_CON"
+expect_in "  and one from the upstream, through the default table" \
+  " 0% packet loss" "$PING_CON_UP"
+expect "  taken out of VPP, it is back from the kernel's table" \
+  test "$C_LOST$C_BACK" = 01
+expect_in "  the daemon says what it installed, in VRF names" \
+  "10.10.0.0/24 in svc, through red" "$(cat /tmp/leaks.log)"
+expect_in "the default table stops importing red: commit" "commit complete" \
+  "$UNIMP"
+expect "  VPP's table 0 loses the connected route" test "$W_UP" = 0
+expect "  and svc's keeps it" test "$W_SVC" = 1
+expect_not_in "  the upstream no longer reaches red's subnet" " 0% packet loss" \
+  "$PING_UNIMP"
+expect "the boot: the connected route is back in VPP's table 30" \
+  test "$B_CON" = 1
+expect_in "  and a packet from svc reaches it" " 0% packet loss" \
+  "$PING_BOOT_CON"
 verdict

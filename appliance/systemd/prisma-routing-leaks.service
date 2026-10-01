@@ -1,0 +1,21 @@
+# A route leaked into a VRF through the other VRF itself - a connected route
+# under vrf-import, which FRR installs as `dev <vrf>` - put in the dataplane
+# as a lookup in that VRF's table (#541). linux-nl has no VPP interface for
+# a VRF device and copies nothing for it.
+[Unit]
+Description=Prisma Routing - put routes leaked through a VRF in the dataplane
+Documentation=file:/usr/share/doc/prisma-routing/routing.md
+After=vpp.service prisma-routing-containers.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/prisma-routing/prisma-routing-leaks
+# A dataplane that is not up yet is waited for inside, a tick at a time; a
+# crash comes back.
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

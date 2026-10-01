@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""
+prisma-routing-leaks - a route leaked into a VRF through the other VRF itself,
+put in the dataplane (#541).
+
+WHAT IS MISSING WITHOUT IT. A VRF that imports another's connected route -
+`vrf-import red` in svc, with red redistributing connected - gets it from FRR
+in the kernel as
+
+    10.10.0.0/24 nhid 31 dev red proto bgp metric 20      (table 30, svc's)
+
+a route whose way out is the VRF device `red` itself, with no next hop: the
+kernel forwards it by looking the packet up again in red's table. linux-nl,
+which copies the kernel's routes into VPP, maps a route's device to the VPP
+interface paired with it, and a VRF device is paired with none. So VPP's
+table 30 never got the route and the reply to a host on red's connected
+subnet was dropped there - measured by #537's lab, and again on 0.148.14
+before this file existed. A leaked route with a next hop (every BGP route
+learned from a neighbour) has a real device and reaches VPP the usual way.
+
+WHAT IT DOES. The same thing in VPP that the kernel does: for each such
+route in a VRF's table (or the main table, when the default VRF imports a
+VRF), a route in VPP's table for that VRF whose path is a lookup in the
+other VRF's table -
+
+    ip route add 10.10.0.0/24 table 30 via ip4-lookup-in-table 10
+
+- and the route removed again when the kernel's goes. VPP resolves the
+rest in table 10 as it would for a packet that arrived there: the connected
+prefix, ARP on red's interface, the adjacency.
+
+WHY A DAEMON AND NOT A STEP OF THE COMMIT. The route exists when bgpd has
+leaked it, which is after the commit returned and again every time an
+interface's address, a neighbour or the dataplane comes and goes - none of
+which is a commit. So this reads the truth, the kernel's tables, on every
+route or link change netlink reports and every TICK seconds besides, and
+makes VPP agree: level-triggered, so a missed event costs one tick, not a
+route.
+
+WHAT IS ITS OWN. Only the routes it added, kept in STATE: a route this
+removes is one this put there, never an operator's or the VTY's, whatever
+VPP's table holds. A dataplane that restarted has lost them all; each tick
+asks VPP whether each wanted route is still there and puts back the ones
+that are not.
+
+THE BOX'S OWN VRFS ARE LEFT ALONE: a VRF whose name starts with prisma-
+(prisma-bp, the containers' backplane) is neither read nor written - no
+route leaks into or out of it, which the VTY already refuses.
+"""
+
+import json
+import os
+import select
+import subprocess
+import sys
+import time
+
+IP = os.environ.get("PRISMA_IP", "ip")
+VPPCTL = os.environ.get("PRISMA_VPPCTL", "vppctl").split()
+STATE = os.environ.get("PRISMA_LEAKS_STATE", "/run/prisma-routing/leaks")
+TICK = float(os.environ.get("PRISMA_LEAKS_TICK", "5"))
+# Netlink reports one change as a burst of lines (the route, its nexthop
+# object, the neighbour); one read after the burst rather than one per line.
+SETTLE = 0.3
+
+MAIN = 254          # the kernel's main table: VPP's table 0
+OWN = "prisma-"     # the box's own VRFs
+
+
+def say(msg):
+    print(f"prisma-routing-leaks: {msg}", flush=True)
+
+
+def vrf_tables(links):
+    """
+    {VRF device name: its kernel table}, from the JSON of
+    `ip -d -j link show type vrf`, leaving out the box's own (prisma-*).
+    """
+    out = {}
+    for link in links:
+        name = link.get("ifname", "")
+        info = link.get("linkinfo", {})
+        if info.get("info_kind") != "vrf" or name.startswith(OWN):
+            continue
+        table = info.get("info_data", {}).get("table")
+        if isinstance(table, int):
+            out[name] = table
+    return out
+
+
+def vpp_table(table):
+    """The VPP FIB table linux-nl gives a kernel table: main is 0."""
+    return 0 if table == MAIN else table
+
+
+def prefix_of(dst, family):
+    """A route's destination as VPP takes it: `default` and a bare address
+    spelled as prefixes."""
+    if dst == "default":
+        return "0.0.0.0/0" if family == 4 else "::/0"
+    if "/" not in dst:
+        return dst + ("/32" if family == 4 else "/128")
+    return dst
+
+
+def leaked(routes, vrfs, table, family):
+    """
+    The routes of one kernel table, from `ip -j -<family> route show table
+    <table>`, whose way out is a VRF device: {(family, VPP table, prefix,
+    VPP table to look up in)}. A route the kernel made (`proto kernel`), one
+    that is not unicast, an IPv6 link-local or multicast prefix, and an
+    ECMP route (its paths are `nexthops`, and one path through a VRF among
+    real ones is not a lookup) are not leaks this can copy.
+    """
+    out = set()
+    by_table = {t: n for n, t in vrfs.items()}
+    for r in routes:
+        if r.get("type", "unicast") != "unicast":
+            continue
+        if r.get("protocol") == "kernel" or "nexthops" in r:
+            continue
+        if "gateway" in r or r.get("dev") not in vrfs:
+            continue
+        source = vrfs[r["dev"]]
+        # A table's own VRF device is the kernel's way of saying "this
+        # table", not a leak.
+        if source == table or by_table.get(table) == r["dev"]:
+            continue
+        prefix = prefix_of(r.get("dst", ""), family)
+        if family == 6 and prefix.lower().startswith(("fe80:", "ff")):
+            continue
+        out.add((family, vpp_table(table), prefix, vpp_table(source)))
+    return out
+
+
+def route_command(op, leak):
+    """The vppctl line that adds or deletes one leak's route."""
+    family, table, prefix, source = leak
+    return (f"ip route {op} {prefix} table {table} "
+            f"via ip{family}-lookup-in-table {source}")
+
+
+def show_command(leak):
+    """The vppctl line that shows one leak's entry in its table."""
+    family, table, prefix, _ = leak
+    return f"show ip{'6' if family == 6 else ''} fib table {table} {prefix}"
+
+
+def installed(text, leak):
+    """
+    Whether VPP's answer to show_command() has the leak's route: an entry
+    for exactly the prefix, with a path that looks up in the source table.
+    VPP prints the covering entry when the prefix has none of its own (the
+    table's 0.0.0.0/0, a drop), so the entry line is matched, not a
+    substring of the text.
+    """
+    family, _, prefix, source = leak
+    # vppctl's lines can end in spaces and a carriage return.
+    lines = [line.rstrip() for line in text.splitlines()]
+    for i, line in enumerate(lines):
+        if not line.startswith(prefix + " ") and line != prefix:
+            continue
+        entry = []
+        for more in lines[i + 1:]:
+            if more and not more[0].isspace():
+                break
+            entry.append(more)
+        # The forwarding line names the TABLE (`lookup in ipv4-VRF:10`);
+        # the path's `fib-index:` is VPP's index of it, a different number.
+        kind = "ipv6" if family == 6 else "ipv4"
+        return any(more.endswith(f"lookup in {kind}-VRF:{source}")
+                   for more in entry)
+    return False
+
+
+def load_state(path):
+    """The leaks this daemon added and has not removed, from STATE."""
+    out = set()
+    try:
+        with open(path) as f:
+            for line in f:
+                w = line.split()
+                if len(w) == 4 and w[0] in ("4", "6"):
+                    out.add((int(w[0]), int(w[1]), w[2], int(w[3])))
+    except OSError:
+        pass
+    return out
+
+
+def save_state(path, state):
+    """Writes STATE whole, through a rename, so a crash leaves the old one."""
+    tmp = path + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, "w") as f:
+            for leak in sorted(state):
+                f.write("%d %d %s %d\n" % leak)
+        os.replace(tmp, path)
+    except OSError as e:
+        say(f"cannot write {path} ({e.strerror})")
+
+
+def reconcile(want, state, vpp, report):
+    """
+    Makes VPP hold exactly the wanted leaks among the ones this daemon owns,
+    and returns what it owns afterwards. `vpp(line)` runs one vppctl line
+    and returns its text, or None when the dataplane did not answer;
+    `report(leak, what)` is told each change and each refusal.
+
+    A wanted leak is added when VPP's table does not show it - the first
+    time, and after a dataplane restart emptied the table. An owned leak no
+    longer wanted is deleted; when VPP no longer has it (it restarted), the
+    delete's complaint is the same answer and ownership ends there too.
+    """
+    state = set(state)
+    for leak in sorted(state - want):
+        out = vpp(route_command("del", leak))
+        if out is None:
+            continue
+        state.discard(leak)
+        report(leak, "removed")
+    for leak in sorted(want):
+        shown = vpp(show_command(leak))
+        if shown is None:
+            continue
+        if installed(shown, leak):
+            state.add(leak)
+            continue
+        out = vpp(route_command("add", leak))
+        if out is None:
+            continue
+        if out.strip():
+            report(leak, "refused: " + " ".join(out.split()))
+            continue
+        state.add(leak)
+        report(leak, "installed")
+    return state
+
+
+def describe(leak, vrfs):
+    """One leak in the operator's words: VRF names, not table numbers."""
+    family, table, prefix, source = leak
+    names = {vpp_table(t): n for n, t in vrfs.items()}
+    names.setdefault(0, "default")
+    return (f"{prefix} in {names.get(table, 'table %d' % table)}, "
+            f"through {names.get(source, 'table %d' % source)} "
+            f"(VPP table {table}, a lookup in table {source})")
+
+
+def report_once(said, leak, what, vrfs, out):
+    """
+    Tells `out` a leak's change or refusal once: a refusal that repeats
+    every tick (a table VPP does not have) is one journal line, not one
+    every TICK seconds. `said` holds the last word per leak.
+    """
+    if said.get(leak) == what:
+        return False
+    out(f"{describe(leak, vrfs)}: {what}")
+    said[leak] = what
+    return True
+
+
+def wanted(run):
+    """
+    Every leak the kernel holds now, and the VRFs it was read with. `run`
+    takes an argument list and returns the command's stdout, or None.
+    """
+    text = run([IP, "-d", "-j", "link", "show", "type", "vrf"])
+    # No answer is not "no VRFs": read as none, every route owned would be
+    # removed.
+    if text is None:
+        return None, {}
+    try:
+        vrfs = vrf_tables(json.loads(text or "[]"))
+    except ValueError:
+        return None, {}
+    want = set()
+    for table in [MAIN] + sorted(set(vrfs.values())):
+        for family in (4, 6):
+            text = run([IP, "-j", f"-{family}", "route", "show",
+                        "table", str(table)])
+            if text is None:
+                return None, vrfs
+            try:
+                routes = json.loads(text or "[]")
+            except ValueError:
+                return None, vrfs
+            want |= leaked(routes, vrfs, table, family)
+    return want, vrfs
+
+
+# not a unit: runs a process; wanted() and reconcile() take it as `run`/`vpp`
+def run_command(argv):
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+# not a unit: the vppctl process; reconcile() is tested with a fake in its place
+def run_vppctl(line):
+    out = run_command(VPPCTL + line.split())
+    # vppctl exits 0 when it could not reach the dataplane, and says so.
+    if out is None or "clib_socket_init" in out or "Connection refused" in out:
+        return None
+    return out
+
+
+# not a unit: the daemon's loop - netlink, the clock and the dataplane
+def main():
+    state = load_state(STATE)
+    said = {}
+
+    monitor = None
+    while True:
+        want, vrfs = wanted(run_command)
+        if want is not None:
+            new = reconcile(want, state, run_vppctl,
+                            lambda leak, what: report_once(said, leak, what,
+                                                           vrfs, say))
+            if new != state:
+                save_state(STATE, new)
+            state = new
+            for leak in list(said):
+                if leak not in want and leak not in state:
+                    del said[leak]
+        if monitor is None or monitor.poll() is not None:
+            try:
+                monitor = subprocess.Popen(
+                    [IP, "-o", "monitor", "route", "link"],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            except OSError as e:
+                say(f"cannot watch the kernel's routes ({e.strerror}); "
+                    f"reading them every {TICK:g} s")
+                monitor = None
+        if monitor is None:
+            time.sleep(TICK)
+            continue
+        ready, _, _ = select.select([monitor.stdout], [], [], TICK)
+        if ready:
+            time.sleep(SETTLE)
+            while select.select([monitor.stdout], [], [], 0)[0]:
+                if not os.read(monitor.stdout.fileno(), 65536):
+                    break
+
+
+if __name__ == "__main__":
+    sys.exit(main())
