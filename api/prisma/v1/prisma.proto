@@ -8,7 +8,7 @@
 // change made here shows in `show running-config` at the prompt.
 //
 // CONFIGURATION TRAVELS AS THE VTY'S OWN TEXT. A candidate is edited with the
-// lines an operator types (`prefix-inside 100.64.0.0/10` under `nat` /
+// lines an operator types (`block-size 256` under `nat` /
 // `cgnat` / `pool X`), and read back as the text `show running-config`
 // prints. Nothing here models a configuration statement as a message:
 // modelling the grammar a second time is how two descriptions of one box
