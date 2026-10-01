@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.148.8 - the management API survives an upgrade, and no call hangs on a fork
+
+### Fixed
+
 * **The management API after an upgrade, and calls that hung.**
   ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
   Found by the web interface on the X520 bench after 0.148.7. The API's unit
