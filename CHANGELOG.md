@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.12 - routing policy, phase D: counters, test policy for everything, policies in the API
+
+### Added
+
 * **Routing policy, phase D: what a policy did, and what it would do.**
   ([#538](https://github.com/andrediashexa/hexarouting/issues/538))
   `show policy <name>` counts, at every place the running routing applies
@@ -97,8 +103,6 @@ version has a chance of seeing it.
   ospfd's own outcome. The API gains `ListPolicies`, `GetPolicyCounters` and
   `TestPolicy` in `prisma.v1`. `lab/policy-d.sh` holds the counters, the
   simulation and the which-decided answer against what the daemons did.
-
-### Fixed
 
 ## 0.148.11 - routing policy, phase C: route leaking between VRFs through a policy
 
