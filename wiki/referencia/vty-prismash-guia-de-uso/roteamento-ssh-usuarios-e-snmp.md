@@ -734,7 +734,6 @@ O que a API oferece, em resumo: abrir uma cópia da configuração (o candidato)
 
 Desde a 0.149.2 ela também:
 
-
 * **lista a tabela de rotas** já separada em campos (VRF, prefixo, próximos saltos, protocolo, distância, métrica, se foi a escolhida), em páginas, com filtro por VRF, família, prefixo e protocolo — pensada para a tabela cheia: a primeira página chega enquanto o resto ainda está sendo lido, e a lista inteira é uma fotografia só, sem rota repetida nem faltando mesmo que a tabela mude no meio. E dá a contagem por VRF e protocolo;
 * diz a **memória** da caixa em números e a **carga de cada worker** do plano de dados — pacotes por chamada e a fração do tempo gasta com pacotes, porque o CPU de um worker que faz polling fica sempre em 100%;
 * diz a **velocidade do link** de cada interface, para calcular a utilização em %;
