@@ -23,6 +23,11 @@ S=$S
 echo "\$*" >> "\$S/calls"
 case "\$*" in
   "link show "*)   grep -qx "\$3" "\$S/links"; exit \$? ;;
+  "-o link show master "*) n=9
+                    for l in \$(cat "\$S/links"); do
+                      [ "\$(cat "\$S/master-\$l" 2>/dev/null)" = "\$5" ] || continue
+                      n=\$((n + 1)); echo "\$n: \$l@if\$n: <UP> mtu 1500 master \$5 state UP"
+                    done ;;
   "-o link show "*) grep -qx "\$4" "\$S/links" || exit 1
                     m=\$(cat "\$S/master-\$4" 2>/dev/null)
                     echo "9: \$4: <UP> mtu 1500 \${m:+master \$m }state UP" ;;
@@ -75,6 +80,32 @@ out=$(BP check); rc=$?
 out=$(BP check); rc=$?
 [ $rc -ne 0 ] && echo "$out" | grep -q "the backplane is not up" \
   && ok "and no backplane at all is said as such" || bad "absent backplane not said: $out"
+
+echo "=== attach sweeps a stale end off the bridge and the neighbour entry (#546) ==="
+# The X520 bench, 0.149.3's upgrade: the old container's netns outlived it,
+# its veth stayed on bp0 answering for 128.0.0.2, and the API's readiness
+# check was refused by a dead container for ten minutes.
+mkdir -p "$T/bin"
+printf '#!/bin/sh\necho 4242\n' > "$T/bin/docker"
+printf '#!/bin/sh\ncase "$*" in *"addr show"*) exit 1 ;; esac\nexit 0\n' > "$T/bin/nsenter"
+chmod +x "$T/bin/docker" "$T/bin/nsenter"
+BP up >/dev/null
+echo bpm1111 >> "$S/links"; echo bp0 > "$S/master-bpm1111"
+echo vpp-tap >> "$S/links"; echo bp0 > "$S/master-vpp-tap"
+: > "$S/calls"
+out=$(PATH="$T/bin:$PATH" BP attach prisma-routing_mgmt_1); rc=$?
+[ $rc -eq 0 ] && ! grep -qx bpm1111 "$S/links" && echo "$out" | grep -q "removed bpm1111" \
+  && ok "the stale bpm1111 is deleted, and said" || bad "the stale end stayed ($rc): $out / $(cat "$S/links")"
+grep -qx vpp-tap "$S/links" && ok "a member that is not a bpm end is left alone" \
+  || bad "attach deleted vpp-tap"
+grep -qx bpm4242 "$S/links" && ok "the new container's end bpm4242 is made" \
+  || bad "no bpm4242: $(cat "$S/links")"
+grep -q "^neigh flush dev bp0 to 128.0.0.2$" "$S/calls" \
+  && ok "the host forgets the old MAC of 128.0.0.2" || bad "no neighbour flush: $(cat "$S/calls")"
+: > "$S/calls"
+out=$(PATH="$T/bin:$PATH" BP attach prisma-routing_mgmt_1)
+grep -qx bpm4242 "$S/links" && ok "attach again keeps the live end it would remake" \
+  || bad "the live end was swept: $(cat "$S/links")"
 
 echo "=== down takes it away ==="
 BP up >/dev/null; BP down >/dev/null

@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **After an upgrade recreated the management container, the API could stay
+  down for minutes.** ([#546](https://github.com/andrediashexa/hexarouting/issues/546))
+  `prisma-backplane attach` counted on the old container's veth leaving with
+  its netns. On the X520 bench the netns outlived the container by about ten
+  minutes: its veth stayed on bp0 holding 128.0.0.2, the host's neighbour
+  entry kept the old MAC, and the API's readiness check was refused by the
+  dead container on every restart. `attach` now removes every other bpm
+  member of the bridge - 128.0.0.2 is one container's address - and flushes
+  the host's neighbour entry for it before making the new pair.
+
 ## 0.149.3 - an unknown link speed is 0 in the API, not 4.3 Tbps
 
 ### Fixed
