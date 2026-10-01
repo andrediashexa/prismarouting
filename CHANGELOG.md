@@ -77,6 +77,21 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A tenant VRF's Linux device, from the VTY: `vrf <name> table <id>`.**
+  ([#540](https://github.com/andrediashexa/hexarouting/issues/540))
+  The statement makes the Linux VRF device on the table the interfaces'
+  `vrf <id>` puts them in, and puts each of those interfaces' Linux ends in
+  it; `no vrf <name> table`, or an interface's `no vrf`, takes it back out.
+  FRR's `router bgp <asn> vrf <name>` and `vrf <name>` blocks then find
+  their table with no step on the host - until now the box made no device
+  but `prisma-bp`, and `lab/policy-c.sh` made `red` and `svc` by hand.
+  Through four new host doors (make and remove a VRF device, put a Linux
+  interface in one and take it out), each checked on the host before it
+  opens: only a VRF is removed, nothing goes into or out of `prisma-bp` or a
+  bridge. `prisma-*` names, `default`, the kernel's tables 253-255 and a
+  table `prisma-bp` holds are refused. Read back by `show running-config`,
+  and made again by the boot's `--load`.
+
 ### Fixed
 
 ## 0.148.13 - a reject term rejects only what its from policy accepts

@@ -240,6 +240,31 @@ A tabela é numérica, igual à de um pool — um número, um significado. A tab
 
 Mover uma interface de VRF **leva os endereços junto**: eles são removidos, a interface muda de tabela, e os endereços voltam. Você escreve só a linha do `vrf`; o resto é consequência.
 
+### A VRF do Linux: `vrf <nome> table <n>`
+
+```
+vrf red table 10
+interface ens18
+ vrf 10
+ ipv4 address 10.10.0.1/24
+ exit
+```
+
+O roteamento chama uma VRF pelo **nome** — `router bgp 65000 vrf red`, o bloco `vrf red` com as estáticas dele — e acha a tabela dela por um dispositivo VRF do Linux com esse nome. `vrf red table 10` cria esse dispositivo na tabela 10, a mesma do `vrf 10` das interfaces, e coloca nele o lado Linux de cada uma dessas interfaces (o par do linux_cp, ou o `linux-name`). Depois do commit o BGP da VRF sobe sem nenhum passo no Linux.
+
+| Você faz | No Linux |
+|---|---|
+| `vrf red table 10` | cria `red` na tabela 10 e o liga |
+| `vrf 10` numa interface | o lado Linux dela entra em `red` |
+| `no vrf` numa interface | o lado Linux dela sai de `red` |
+| `no vrf red table` | remove `red`; as interfaces saem junto |
+
+Sem `table`, `vrf red` continua sendo o bloco do roteamento, como antes.
+
+São recusados: nomes que começam por `prisma-` (a `prisma-bp` é da própria caixa), o nome `default`, as tabelas 253 a 255 do próprio Linux, uma tabela que já é de outra VRF e a tabela da `prisma-bp` (128). A `prisma-bp` não aparece no `show running-config` e nunca é tocada.
+
+As VRFs aparecem no `show running-config` lidas do Linux, e o arquivo salvo as cria de novo no boot, antes de o roteamento precisar delas.
+
 ## Estado administrativo
 
 `shutdown` derruba os dois lados: a interface que encaminha pacotes e o par que o roteamento enxerga. Derrubar só um deixaria o protocolo de roteamento segurando adjacência sobre uma porta que parou de encaminhar — o vizinho acredita que o enlace está bom até o próprio temporizador dele expirar, e o tráfego some nesse meio-tempo.
