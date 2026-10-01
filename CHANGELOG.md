@@ -77,6 +77,10 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.3 - a pool's prefixes are prefix-inside and prefix-outside
+
 ### Changed
 
 * **A pool's prefixes are `prefix-inside` and `prefix-outside`.**
@@ -96,8 +100,6 @@ version has a chance of seeing it.
   interface roles do not change. `lab/commit.sh` loads a file saved with the
   old words through the boot's `--load` and reads the pool on the dataplane
   and the new words in the running configuration.
-
-### Fixed
 
 ## 0.148.2 - the Linux name read over the new connection carries no NUL
 
