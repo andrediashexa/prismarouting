@@ -46,12 +46,14 @@ echo "\$*" >> "$B/compose.argv"
 echo "prisma-mgmt:$3" > "$B/recreated"
 CP
   printf '#!/bin/sh\necho "$*" >> %s/backplane.argv\n' "$B" > "$B/bin/backplane"
+  printf '#!/bin/sh\necho "$*" >> %s/systemctl.argv\n' "$B" > "$B/bin/systemctl"
   chmod +x "$B/bin/"*
   echo "$B"
 }
 run() { # <box>
   PRISMA_DOCKER=$1/bin/docker PRISMA_COMPOSE=$1/bin/compose \
   PRISMA_LOAD_IMAGES=$1/bin/load PRISMA_BACKPLANE=$1/bin/backplane \
+  PRISMA_SYSTEMCTL=$1/bin/systemctl \
   PRISMA_COMPOSE_ENV=$1/run/compose.env \
   PRISMA_COMPOSE_YAML=$1/etc/compose.yaml \
   PRISMA_COMPOSE_DEVICES=$1/run/compose-devices.yaml \
@@ -104,6 +106,12 @@ esac
 printf '%s' "$ARGV" | grep -qE '(^| )(vpp|frr)( |$)' \
   && bad "the dataplane or the control plane was named: '$ARGV'" \
   || ok "and neither vpp nor frr is named to it"
+# The API's server lives in the container just replaced (#532): its unit is
+# asked to come back at once, and only if it was running (try-restart).
+# Mutation shown red: the try-restart line removed from refresh-the-vty.
+grep -qx "try-restart prisma-routing-api.service" "$B/systemctl.argv" 2>/dev/null \
+  && ok "the management API is asked to restart into the new container, if it ran" \
+  || bad "the API's server is left behind in the old container: $(cat "$B/systemctl.argv" 2>/dev/null)"
 grep -q "attach prisma-routing_mgmt_1" "$B/backplane.argv" 2>/dev/null \
   && ok "the recreated container is put back on the backplane" \
   || bad "the backplane was not asked for it"

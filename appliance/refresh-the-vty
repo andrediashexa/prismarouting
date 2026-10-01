@@ -27,6 +27,7 @@ set -u
 ROOT=${PRISMA_ROOT:-}
 DOCKER=${PRISMA_DOCKER:-docker}
 COMPOSE=${PRISMA_COMPOSE:-docker-compose}
+SYSTEMCTL=${PRISMA_SYSTEMCTL:-systemctl}
 LOAD=${PRISMA_LOAD_IMAGES:-$ROOT/usr/lib/prisma-routing/load-the-images}
 BACKPLANE=${PRISMA_BACKPLANE:-$ROOT/usr/lib/prisma-routing/prisma-backplane}
 ENVFILE=${PRISMA_COMPOSE_ENV:-$ROOT/run/prisma-routing/compose.env}
@@ -88,6 +89,12 @@ set -- -f "$YAML"
 # (#447): a recreated container has a new network namespace and no bp0.
 "$BACKPLANE" attach "$MGMT" \
   || say "$MGMT is up but not on the backplane; 'prisma-backplane attach $MGMT'"
+# THE API'S SERVER LIVES IN THE CONTAINER JUST REPLACED (#532). Its unit ends
+# with the old container and Restart= brings it back, but only after its
+# delay; asked here, it is back at once. Only when it was running: a box with
+# the API off is left off.
+"$SYSTEMCTL" try-restart prisma-routing-api.service 2>/dev/null \
+  || say "the management API did not restart; 'systemctl restart prisma-routing-api'"
 after=$("$DOCKER" inspect -f '{{.Config.Image}}' "$MGMT" 2>/dev/null)
 say "$MGMT: $before -> ${after:-<unknown>}; the dataplane and the control"
 say "plane were not touched and change images at the next reboot"
