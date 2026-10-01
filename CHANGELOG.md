@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.5 - a dataplane that restarts after a crash comes back configured
+
+### Fixed
+
 * **A dataplane Docker started again after a crash came back with no
   configuration, and the box forwarded nothing.**
   ([#548](https://github.com/andrediashexa/hexarouting/issues/548))
