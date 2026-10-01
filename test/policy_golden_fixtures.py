@@ -146,6 +146,51 @@ FIX_B = {
    ("FIB", "fib:ospf"), ("FIB", "fib:isis")]),
 }
 
+#: Phase D's (#538) policies with `from policy` in every term shape but the
+#: reject one #542 fixed, pinned by test/policy-golden-0.148.12.txt as the
+#: compiler shipped them in 0.148.12: what #542 changed must not reach them.
+FIX_D = {
+"from-policy": (f"""{P} prefix-list CUST 203.0.113.0/24
+{P} prefix-list CUST 2001:db8:100::/48
+{P} community MINE members 65000:538
+{P} policy-statement GATE term no from route-filter 10.0.0.0/8 orlonger
+{P} policy-statement GATE term no then reject
+{P} policy-statement GATE term tag from community MINE
+{P} policy-statement GATE term tag set metric 5
+{P} policy-statement GATE term tag then next term
+{P} policy-statement GATE term yes from prefix-list CUST
+{P} policy-statement GATE term yes then accept
+{P} policy-statement GATE default-action reject
+{P} policy-statement NEST term a from policy GATE
+{P} policy-statement NEST term a set local-preference 120
+{P} policy-statement NEST term a then accept
+{P} policy-statement NEST term b from route-filter 192.0.2.0/24 exact
+{P} policy-statement NEST term b then next policy
+{P} policy-statement CALLER term acc from policy GATE
+{P} policy-statement CALLER term acc from neighbor 10.0.0.2
+{P} policy-statement CALLER term acc from neighbor 10.1.0.2
+{P} policy-statement CALLER term acc set local-preference 200
+{P} policy-statement CALLER term acc then accept
+{P} policy-statement CALLER term nxt from policy NEST
+{P} policy-statement CALLER term nxt set community add MINE
+{P} policy-statement CALLER term nxt then next term
+{P} policy-statement CALLER term np from policy GATE
+{P} policy-statement CALLER term np from family inet6
+{P} policy-statement CALLER term np then next policy
+{P} policy-statement CALLER term bare from policy NEST
+{P} policy-statement CALLER term drop from route-filter 172.16.0.0/12 orlonger
+{P} policy-statement CALLER term drop then reject
+{P} policy-statement CALLER default-action accept
+{P} policy-statement TAIL term 1 from prefix-list CUST
+{P} policy-statement TAIL term 1 then accept
+{P} policy-statement OEXP term 1 from protocol static
+{P} policy-statement OEXP term 1 from policy GATE
+{P} policy-statement OEXP term 1 set metric 20
+{P} policy-statement OEXP term 1 then accept""".splitlines(),
+  [("CALLER", "import"), ("CALLER+TAIL", "import"), ("CALLER", "export"),
+   ("NEST", "bgp:table"), ("OEXP", "ospf:static"), ("GATE", "export")]),
+}
+
 
 def compiled(fixtures=None):
     """The text every fixture compiles to now, as the golden file holds it."""
@@ -159,5 +204,5 @@ def compiled(fixtures=None):
 
 
 if __name__ == "__main__":
-    sys.stdout.write(compiled({"a": FIX_A, "b": FIX_B}.get(
+    sys.stdout.write(compiled({"a": FIX_A, "b": FIX_B, "d": FIX_D}.get(
         (sys.argv[1:] or [None])[0])))

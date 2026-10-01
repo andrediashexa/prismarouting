@@ -4462,6 +4462,29 @@ from the flat model lines to FRR:
   alone with its own default. The semantics are FRR's, measured in the lab:
   X's reject rejects the route, X's accept goes on into the calling term. A
   term calls one policy, and a policy that reaches itself is refused;
+- `from policy X` on a `then reject` term (#542) rejects exactly the routes
+  X accepts - and the term's other conditions match - and lets the rest go
+  on to the next term. **0.148.9 to 0.148.12 compiled it wrong**: the term
+  was a deny clause, FRR runs `call` only on a permit clause, so X was never
+  asked and the term rejected every route its other conditions matched.
+  It is now a permit clause carrying `call PO-X-NOT-IN` and `on-match next`,
+  no sets: X inverted, its clauses numbered as its own, an accept term a
+  deny clause, a reject term a permit clause that ends the map, its
+  `default-action` and the use's default reversed, and a term that decides
+  nothing kept as it was, sets and `on-match` included. What X's sets did
+  stays on a route X rejects, which goes on with them;
+- what `call` does, measured on FRR 10.7.1 before #542 chose the above: in
+  a matched permit clause the clause's sets run first and then the called
+  map, which sees them (a community the clause adds is one the called map
+  can match, and a value both set is the called map's); the called map's
+  deny denies the route and nothing after it runs, `on-match next` included;
+  its permit goes on to the clause's `on-match`; a called map no clause of
+  matches denies; a deny clause calls nothing. So a call has one terminal
+  branch, its deny, and a map called inverted can hold a `from policy` only
+  on an accept term - its own call inverted in turn, the inner policy's
+  accept being the outer one's. A reject term whose policy has a reject,
+  next term or next policy term with `from policy` would need a call whose
+  deny goes on, and is refused at commit, naming that term;
 - `next-hop discard` is `set ip next-hop 192.0.2.1` and `set ipv6 next-hop
   global 100::1`, with `ip route 192.0.2.1/32 blackhole tag 4294967294` and
   its IPv6 twin emitted beside the maps. FRR 10.7.1 refuses `set ip next-hop
@@ -4529,7 +4552,13 @@ and mapped back from clause to term by the compiler's own numbering
 (`policy.clause_owner()`): a term at position n of policy k in a chain is
 k x 1000 + n x 10, its split clauses are summed, a policy's `default-action`
 and the use's default are rows of their own. A map a `from policy` term
-calls is a section of its own, named for the use. Measured on FRR 10.7.1
+calls is a section of its own, named for the use, and the inverted map a
+reject term calls (#542) one more, `called inverted`: its rows are the
+called policy's terms, so the accept term's hits there are the routes the
+reject term rejected. The reject term's own row counts every route its
+other conditions matched, the ones the call then let go on included -
+measured, `invoked` moves when the clause matches, before its call decides.
+Measured on FRR 10.7.1
 before this was written: a clause's `invoked` counts the routes it
 **matched**, not the ones it was asked about - five static routes
 redistributed through four clauses left the first at 1. A route evaluated
@@ -4595,8 +4624,10 @@ list not given is none; a value not given is not known. `at` takes
 `ospf-default`, `isis-default`, `ospf <protocol>`, `isis <protocol>` and
 `fib <protocol>`. `policy.simulate()` walks the clauses as FRR runs them -
 every phase A to C condition and action, a chain's next policy, a policy's
-`default-action`, `from policy` as FRR's `call` (its reject rejects; a
-reject term calls nothing, as its clause carries no `call`), `from
+`default-action`, `from policy` as FRR's `call` (on an accept, next term
+or next policy term its reject rejects; on a reject term what it accepts is
+rejected and what it rejects goes on, with its sets - #542; the term's own
+sets before the call, as FRR runs them), `from
 protocol` answered by the use, the use's own default - and prints the term
 that decided, the route after its sets, the sets that change nothing at
 that use, and what the box refuses about the policy there.
@@ -4729,6 +4760,12 @@ marking what it sends and a `stayrtr` cache on the box:
   reject` removed what neither took;
 - `from policy`: the subroutine's accept went on into the term, its reject
   removed the route;
+- `from policy` on a reject term (#542, in lab/policy-d.sh): of the routes
+  that reached UP's term gate, bgpd removed the one GATE accepts and kept
+  the others - 198.51.100.0/24 went on to TAIL, 100.64.30.0/24 to the
+  chain's default with the MED 31 GATE set on it - `test policy` and `show
+  policy route` saying the same; against 0.148.12's compiler the same lab
+  lost 198.51.100.0/24, 100.64.10.0/24 and 100.64.30.0/24 there;
 - `metric-type 1` in the box's own external LSA;
 - `next-hop self` on an import and `metric-type` on a BGP export were refused
   at the neighbor.

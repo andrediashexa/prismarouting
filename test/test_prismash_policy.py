@@ -1027,5 +1027,127 @@ check(policy.added_members(pd, "A+B", "community") is None
       "added_members: only when every action on the kind adds")
 ok("counters per term, the simulation, a route described")
 
+print("\n=== #542: a reject term's from policy, and what it left alone ===")
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "policy-golden-0.148.12.txt")) as _f:
+    _golden_d = _f.read()
+check(_gold.compiled(_gold.FIX_D) == _golden_d,
+      "from policy in an accept, next term and next policy term, nested, "
+      "in a chain and into OSPF compiles to 0.148.12's text, byte for byte")
+check(_gold.compiled(_gold.FIX_B) == _golden_b
+      and _gold.compiled(_gold.FIX_A) == _golden_a
+      and _gold.compiled() == _golden,
+      "and phase B's, phase A's and 0.148.6's still")
+R = f"""{P} prefix-list C 203.0.113.0/24
+{P} community MARK members 65000:542
+{P} policy-statement X term a from prefix-list C
+{P} policy-statement X term a then accept
+{P} policy-statement X term m set metric 5
+{P} policy-statement X term n from policy Y
+{P} policy-statement X term n then accept
+{P} policy-statement X default-action reject
+{P} policy-statement Y term 1 from route-filter 10.0.0.0/8 orlonger
+{P} policy-statement Y term 1 then reject
+{P} policy-statement Y term 2 from route-filter 198.51.100.0/24 exact
+{P} policy-statement Y term 2 then accept
+{P} policy-statement Y default-action reject
+{P} policy-statement R term r from policy X
+{P} policy-statement R term r from neighbor 10.0.0.2
+{P} policy-statement R term r then reject
+{P} policy-statement R term z set local-preference 77
+{P} policy-statement R term z then accept
+{P} policy-statement MK term 1 from community MARK
+{P} policy-statement MK term 1 then accept
+{P} policy-statement S term 1 from policy MK
+{P} policy-statement S term 1 set community add MARK
+{P} policy-statement S term 1 then accept"""
+pr, bad = policy.parse(R.splitlines())
+check(not bad and policy.findings(pr) == [], f"parsed, nothing refused: "
+      f"{bad} {policy.findings(pr)}")
+out = "\n".join(policy.compile_all(pr, {("R", "import")}))
+check("route-map PO-R-IN permit 10\n match peer 10.0.0.2\n"
+      " call PO-X-NOT-IN\n on-match next\nexit" in out
+      and "route-map PO-R-IN deny 10" not in out,
+      f"the reject term is a permit clause that calls X inverted and, when "
+      f"X rejects, goes on to the next term: {out}")
+check("route-map PO-X-NOT-IN deny 10\n match ip address prefix-list "
+      "PO-X-Ta-4\nexit" in out
+      and "route-map PO-X-NOT-IN permit 20\n set metric 5\n on-match "
+      "next\nexit" in out
+      and "route-map PO-X-NOT-IN permit 30\n call PO-Y-NOT-IN\nexit" in out
+      and "route-map PO-X-NOT-IN permit 65534\nexit" in out
+      and "route-map PO-X-NOT-IN deny 65535\nexit" in out,
+      "X inverted: its accept a deny, its sets kept, its own from policy "
+      "called inverted, its default-action and the use's default reversed")
+check("route-map PO-Y-NOT-IN permit 10\n match ip address prefix-list "
+      "PO-Y-T1-4\nexit" in out
+      and "route-map PO-Y-NOT-IN deny 20" in out
+      and "route-map PO-Y-NOT-IN permit 65534" in out
+      and "PO-X-SUB-IN" not in out and "PO-Y-SUB-IN" not in out,
+      "Y inverted: its reject a permit that ends the map; no map is "
+      "emitted that nothing calls")
+check(policy.called_maps(pr, ["R"]) == [("X", True), ("Y", True)]
+      and policy.called_maps(pr, ["S"]) == [("MK", False)]
+      and policy.called_maps(pr, ["X"]) == [("Y", False)],
+      "called_maps: a reject term calls inverted, an accept term in an "
+      "inverted map too, everything else as before")
+check(policy.inverted_map_name("X", "ospf:static") == "PO-X-NOT-OSPF-STATIC",
+      "inverted_map_name: named for the use, as the sub map is")
+_rr = {"prefix": "203.0.113.0/24", "neighbor": "10.0.0.2", "community": [],
+       "large-community": [], "extended-community": [], "as-path": ["1"]}
+sim = policy.simulate(pr, "R", _rr, "import")
+check(sim["verdict"] == "reject" and sim["by"] == ("R", "r")
+      and ("R", "r", "match", "from policy X accepted the route: then "
+           "reject") in sim["steps"],
+      f"simulate: what X accepts the reject term rejects: {sim}")
+sim = policy.simulate(pr, "R", dict(_rr, prefix="10.1.0.0/16"), "import")
+check(sim["verdict"] == "accept" and sim["by"] == ("R", "z")
+      and sim["route"]["metric"] == "5"
+      and sim["route"]["local-preference"] == "77"
+      and ("R", "r", "no match", "from policy X rejected the route, so the "
+           "term does not match") in sim["steps"],
+      f"simulate: what X rejects goes on to the next term, with X's sets "
+      f"on it, as the inverted map's permit leaves them: {sim}")
+sim = policy.simulate(pr, "R", dict(_rr, prefix="198.51.100.0/24"),
+                      "import")
+check(sim["verdict"] == "reject" and sim["by"] == ("R", "r"),
+      f"simulate: X accepting through its own from policy, rejected: {sim}")
+sim = policy.simulate(pr, "R", dict(_rr, neighbor="10.9.9.9"), "import")
+check(sim["verdict"] == "accept" and sim["by"] == ("R", "z")
+      and not any(p == "X" for p, _, _, _ in sim["steps"]),
+      f"simulate: the term's other conditions first; X never asked: {sim}")
+sim = policy.simulate(pr, "S", dict(_rr, prefix="192.0.2.0/24"), "import")
+check(sim["verdict"] == "accept" and sim["by"] == ("S", "1"),
+      f"simulate: FRR sets before it calls, and the called map sees the "
+      f"community the caller added (measured on 10.7.1): {sim}")
+check(policy.clause_owner(pr, "X", 30) == ("X", "n")
+      and policy.counters(pr, "X", "import", {"bgpd": {
+          "PO-X-NOT-IN": {"rules": [{"sequenceNumber": 10, "invoked": 4},
+                                    {"sequenceNumber": 20, "invoked": 0},
+                                    {"sequenceNumber": 30, "invoked": 0},
+                                    {"sequenceNumber": 65535,
+                                     "invoked": 1}]}}}, inverted=True)
+      == [("X", "a", 4), ("X", "m", 0), ("X", "n", 0), ("X", None, 0),
+          (None, None, 1)],
+      "counters: the inverted map, numbered as X's own")
+_nr, _ = policy.parse(R.splitlines() + [
+    f"{P} policy-statement BAD term b from policy R",
+    f"{P} policy-statement BAD term b then reject",
+    f"{P} policy-statement NT term 1 from policy X",
+    f"{P} policy-statement OK2 term 1 from policy NT",
+    f"{P} policy-statement OK2 term 1 then reject"])
+check([w for _, w in policy.findings(_nr)] == [
+    "policy-statement BAD term b: then reject with from policy R, and R "
+    "term r has from policy and then reject; FRR can call a policy "
+    "inverted only when every term of it with from policy is an accept "
+    "term",
+    "policy-statement OK2 term 1: then reject with from policy NT, and NT "
+    "term 1 has from policy and then next term; FRR can call a policy "
+    "inverted only when every term of it with from policy is an accept "
+    "term"],
+      f"a reject term whose policy FRR cannot run inverted is refused, "
+      f"naming the term that cannot: {policy.findings(_nr)}")
+ok("a reject term rejects what its from policy accepts")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

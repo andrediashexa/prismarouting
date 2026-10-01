@@ -1,7 +1,7 @@
 #!/bin/sh
 # Routing policy, phase D (#538): per-term hits, test policy, which decided
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
-# OFF-RED-AT-LEAST: 35
+# OFF-RED-AT-LEAST: 44
 # Routing policy, phase D (#538): what the policies did and would do -
 # asserted against the daemons, which are the oracle: the counters `show
 # policy <name>` reads must move with the routes at every attach point
@@ -20,7 +20,15 @@
 #   10.99.0.0/24     UP's term bogon rejects it
 #   100.64.10.0/24   no term of either: the chain's default, accepted
 #
+#   100.64.20.0/24   GATE accepts it, so UP's term gate - then reject,
+#                    from policy GATE - rejects it (#542)
+#   100.64.30.0/24   GATE sets MED 31 and rejects it, so term gate does not
+#                    match: on to TAIL, and the chain's default accepts it,
+#                    MED 31 on it
+#
 # and later 10.98.0.0/24, which bogon rejects too: the counter moves by it.
+# 0.148.9 to 0.148.12 compiled term gate to a deny clause that never asked
+# GATE: it rejected 198.51.100.0/24, 100.64.10.0/24 and 100.64.30.0/24 too.
 # The box imports through the chain [ UP TAIL ], exports to the downstream
 # through DN, sends BGP's best routes to zebra through TBL, installs BGP's
 # routes through FIB, exports into OSPF through OEXP, and originates
@@ -109,6 +117,8 @@ router bgp 65001
   network 192.0.2.0/24 route-map BLACK
   network 10.99.0.0/24
   network 100.64.10.0/24
+  network 100.64.20.0/24
+  network 100.64.30.0/24
   neighbor 10.0.0.1 activate
  exit-address-family"
 peer_frr dn "hostname dn
@@ -157,7 +167,13 @@ POL=$($HX -c "configure" -c "policy-options" \
   -c "then accept" -c "exit" \
   -c "term black" -c "from community BLACK" -c "then reject" -c "exit" \
   -c "term bogon" -c "from route-filter 10.0.0.0/8 orlonger" \
-  -c "then reject" -c "exit" -c "exit" \
+  -c "then reject" -c "exit" \
+  -c "term gate" -c "from policy GATE" -c "then reject" -c "exit" -c "exit" \
+  -c "policy-statement GATE" \
+  -c "term yes" -c "from route-filter 100.64.20.0/24 exact" \
+  -c "then accept" -c "exit" \
+  -c "term med" -c "from route-filter 100.64.30.0/24 exact" \
+  -c "set med 31" -c "exit" -c "default-action reject" -c "exit" \
   -c "policy-statement TAIL" \
   -c "term t" -c "from prefix-list MEDP" -c "set local-preference 150" \
   -c "then accept" -c "exit" -c "exit" \
@@ -207,7 +223,9 @@ while [ "$n" -lt 90 ]; do
   dn "show bgp ipv4 unicast 203.0.113.0/24" | grep -q "^BGP routing table entry" \
     && dn "show bgp ipv4 unicast 10.55.0.0/24" | grep -q "^BGP routing table entry" \
     && vtysh -c "show bgp ipv4 unicast 100.64.10.0/24" 2>/dev/null \
-      | grep -q "^BGP routing table entry" && break
+      | grep -q "^BGP routing table entry" \
+    && vtysh -c "show bgp ipv4 unicast neighbors 10.0.0.2 received-routes" \
+      2>/dev/null | grep -q "100.64.30.0/24" && break
   sleep 1; n=$((n + 1))
 done
 echo "  the box has the upstream's routes, the downstream the box's (${n}s)"
@@ -221,11 +239,12 @@ hits() {
 }
 
 echo; echo "=========== show policy <name>: the hits ==========="
-for p in UP TAIL DN TBL FIB OEXP NET; do
+for p in UP TAIL DN TBL FIB OEXP NET GATE; do
   eval "S_$p=\$(\$HX -c 'show policy $p' 2>&1)"
 done
 printf '%s\n' "$S_UP" | sed -n '/hits/,$p' | sed 's/^/  /'
 printf '%s\n' "$S_DN" | sed -n '/hits/,$p' | sed 's/^/  /'
+printf '%s\n' "$S_GATE" | sed -n '/hits/,$p' | sed 's/^/  /'
 printf '%s\n' "$S_OEXP" | sed -n '/hits/,$p' | sed 's/^/  /'
 for p in TBL FIB NET; do
   eval "printf '%s\n' \"\$S_$p\"" | sed -n '/hits/,$p' | head -6 | sed 's/^/  /'
@@ -234,6 +253,9 @@ H_CUST=$(hits "$S_UP" "UP term cust")
 H_BLACK=$(hits "$S_UP" "UP term black")
 H_BOGON=$(hits "$S_UP" "UP term bogon")
 H_TAIL=$(hits "$S_UP" "TAIL term t")
+H_GATE=$(hits "$S_UP" "UP term gate")
+H_GYES=$(hits "$S_GATE" "term yes")
+H_GMED=$(hits "$S_GATE" "term med")
 H_UPDEF=$(hits "$S_UP" "no term decided: the use's default, accept")
 H_MINE=$(hits "$S_DN" "term mine")
 H_MED=$(hits "$S_DN" "term med")
@@ -254,6 +276,7 @@ OEXP_ST=$(section "$S_OEXP" "ospf export, from static")
 H_OBGP=$(hits "$OEXP_BGP" "term c")
 H_OST=$(hits "$OEXP_ST" "term l")
 echo "  hits: cust=$H_CUST black=$H_BLACK bogon=$H_BOGON t=$H_TAIL" \
+     "gate=$H_GATE gate-yes=$H_GYES gate-med=$H_GMED" \
      "default=$H_UPDEF mine=$H_MINE med=$H_MED local=$H_LOCAL rest=$H_REST" \
      "tbl=$H_TBL fib=$H_FIB ospf-bgp=$H_OBGP ospf-static=$H_OST net=$H_NET"
 
@@ -276,6 +299,10 @@ echo; echo "=========== test policy, against what the daemons did ==========="
 T_CUST=$($HX -c "test policy UP+TAIL route 203.0.113.0/24 neighbor 10.0.0.2 community 65001:10 as-path 65001" 2>&1)
 T_BLACK=$($HX -c "test policy UP+TAIL route 192.0.2.0/24 neighbor 10.0.0.2 community 65001:666 as-path 65001" 2>&1)
 T_MED=$($HX -c "test policy UP+TAIL route 198.51.100.0/24 neighbor 10.0.0.2 med 33 as-path 65001" 2>&1)
+T_GYES=$($HX -c "test policy UP+TAIL route 100.64.20.0/24 neighbor 10.0.0.2 med 0 as-path 65001" 2>&1)
+T_GMED=$($HX -c "test policy UP+TAIL route 100.64.30.0/24 neighbor 10.0.0.2 med 0 as-path 65001" 2>&1)
+printf '%s\n' "$T_GYES" | grep -E "^result|gate" | sed 's/^/  100.64.20.0\/24: /'
+printf '%s\n' "$T_GMED" | grep -E "^result|gate|metric|med" | sed 's/^/  100.64.30.0\/24: /'
 printf '%s\n' "$T_CUST" | sed 's/^/  /'
 printf '%s\n' "$T_BLACK" | grep -E "^result" | sed 's/^/  192.0.2.0\/24: /'
 printf '%s\n' "$T_MED" | grep -E "^result|local-pref" | sed 's/^/  198.51.100.0\/24: /'
@@ -297,6 +324,10 @@ B_CUST=$(vtysh -c "show bgp ipv4 unicast 203.0.113.0/24 json" 2>&1)
 B_MED=$(vtysh -c "show bgp ipv4 unicast 198.51.100.0/24 json" 2>&1)
 B_BLACK=$(vtysh -c "show bgp ipv4 unicast 192.0.2.0/24" 2>&1)
 B_BOGON=$(vtysh -c "show bgp ipv4 unicast 10.99.0.0/24" 2>&1)
+B_GYES=$(vtysh -c "show bgp ipv4 unicast 100.64.20.0/24" 2>&1)
+B_GMED=$(vtysh -c "show bgp ipv4 unicast 100.64.30.0/24 json" 2>&1)
+B_DEF=$(vtysh -c "show bgp ipv4 unicast 100.64.10.0/24" 2>&1)
+MED_GMED=$(printf '%s' "$B_GMED" | python3 -c "import json,sys; print(json.load(sys.stdin)['paths'][0].get('metric'))" 2>/dev/null)
 D_CUST=$(dn "show bgp ipv4 unicast 203.0.113.0/24 json")
 D_DEF=$(dn "show bgp ipv4 unicast 100.64.10.0/24")
 Z_MED=$(vtysh -c "show ip route 198.51.100.0/24 json" 2>&1)
@@ -311,6 +342,8 @@ echo "  bgpd: 203.0.113.0/24 localpref $LP_CUST, 198.51.100.0/24 localpref $LP_M
      "10.99.0.0/24 $(printf '%s\n' "$B_BOGON" | head -1)"
 echo "  the downstream: 203.0.113.0/24 path '$PATH_DN';" \
      "100.64.10.0/24 $(printf '%s\n' "$D_DEF" | head -1)"
+echo "  bgpd: 100.64.20.0/24 $(printf '%s\n' "$B_GYES" | head -1);" \
+     "100.64.30.0/24 MED $MED_GMED; 100.64.10.0/24 $(printf '%s\n' "$B_DEF" | head -1)"
 echo "  zebra: 198.51.100.0/24 metric $ZM_MED; ospfd: 203.0.113.0/24 metric $OM_CUST"
 # The simulated route after the sets, beside it.
 SIM_PATH=$(printf '%s\n' "$R_DN" | sed -n '/after the sets/,$p' | awk '$1 == "as-path" { $1 = ""; sub(/^ /, ""); print; exit }')
@@ -319,10 +352,17 @@ echo; echo "=========== show policy route: which decided ==========="
 W_CUST=$($HX -c "show policy route 203.0.113.0/24" 2>&1)
 W_BOGON=$($HX -c "show policy route 10.99.0.0/24" 2>&1)
 W_NET=$($HX -c "show policy route 10.55.0.0/24" 2>&1)
+W_GYES=$($HX -c "show policy route 100.64.20.0/24" 2>&1)
+W_GMED=$($HX -c "show policy route 100.64.30.0/24" 2>&1)
+printf '%s\n' "$W_GYES" | sed 's/^/  /'
+printf '%s\n' "$W_GMED" | sed 's/^/  /'
 printf '%s\n' "$W_CUST" | sed 's/^/  /'
 printf '%s\n' "$W_BOGON" | sed 's/^/  /'
 printf '%s\n' "$W_NET" | sed 's/^/  /'
-W_ALL=$(printf '%s\n%s\n%s\n' "$W_CUST" "$W_BOGON" "$W_NET" | tr -s ' \n' '  ')
+W_ALL=$(printf '%s\n%s\n%s\n%s\n%s\n' "$W_CUST" "$W_BOGON" "$W_NET" \
+        "$W_GYES" "$W_GMED" | tr -s ' \n' '  ')
+W_GYES1=$(printf '%s' "$W_GYES" | tr -s ' \n' '  ')
+W_GMED1=$(printf '%s' "$W_GMED" | tr -s ' \n' '  ')
 W_CUST1=$(printf '%s' "$W_CUST" | tr -s ' \n' '  ')
 W_BOGON1=$(printf '%s' "$W_BOGON" | tr -s ' \n' '  ')
 W_NET1=$(printf '%s' "$W_NET" | tr -s ' \n' '  ')
@@ -387,5 +427,28 @@ expect_in "the network: NET term 1, and BGP originates it" \
   "network 10.55.0.0/24: NET simulated: accept, by term 1 FRR: BGP originates it" "$W_NET1"
 expect_in "  the upstream sent it back: BGP's loop check, not the policy" \
   "BGP dropped it before the policy: its AS path carries this box's AS, 65000" "$W_NET1"
+# #542: a reject term with from policy, the daemon the oracle.
+expect "reject + from policy: UP term gate asked GATE ($H_GATE)" pos "$H_GATE"
+expect "  GATE, called inverted, accepted 100.64.20.0/24 by term yes ($H_GYES)" \
+  pos "$H_GYES"
+expect "  and set 100.64.30.0/24's MED by term med ($H_GMED)" pos "$H_GMED"
+expect_in "  show policy GATE names the inverted map" "route-map PO-GATE-NOT-IN" "$S_GATE"
+expect_in "  what GATE accepts, bgpd holds no path to" "not in table" "$B_GYES"
+expect_in "  test policy: rejected by UP term gate" \
+  "result: reject, by UP term gate" "$T_GYES"
+expect_in "  show policy route: simulated reject by UP term gate, and bgpd rejected it" \
+  "simulated: reject, by UP term gate" "$W_GYES1"
+expect_in "  FRR's outcome beside it: rejected" \
+  "the BGP table holds no path from 10.0.0.2: rejected" "$W_GYES1"
+expect "  what GATE rejects goes on: bgpd has 100.64.30.0/24 with GATE's MED 31 ($MED_GMED)" \
+  test "$MED_GMED" = 31
+expect_in "  test policy: accepted by the chain's default" \
+  "result: accept, by no term: the default of the use" "$(printf '%s' "$T_GMED" | tr -s ' \n' '  ')"
+expect_in "  test policy: with MED 31" "metric 31" "$T_GMED"
+expect_in "  show policy route agrees with bgpd" \
+  "simulated: accept, by no term: the default of the use FRR: the path from 10.0.0.2 is in the BGP table: accepted" "$W_GMED1"
+expect_in "  the term after gate still sees what GATE rejects: TAIL term t's route" \
+  "result: accept, by TAIL term t" "$T_MED"
+expect_not_in "  and 100.64.10.0/24 is not rejected by it" "not in table" "$B_DEF"
 expect_not_in "the simulation and FRR never disagree" "disagree" "$W_ALL"
 verdict

@@ -897,7 +897,9 @@ def policy_hit_sections(pol, name, sites, maps):
     "daemon", "rows"}], rows as policy.counters() gives them - None when
     the daemon reported no such map. A use whose policies call `name`
     through `from policy` is one more section per use: the map FRR calls is
-    named for `name` and the use, not for the caller, so callers share it.
+    named for `name` and the use, not for the caller, so callers share it;
+    a reject term calls `name` inverted (#542), a section of its own whose
+    deny rows are the routes `name` accepted and the reject term rejected.
     """
     out, called = [], {}
     for (c, u), places in sorted(sites.items()):
@@ -909,15 +911,20 @@ def policy_hit_sections(pol, name, sites, maps):
                         "daemon": policy_mod.use_daemon(u),
                         "rows": None if maps is None
                         else policy_mod.counters(pol, c, u, maps)})
-        if any(name in policy_mod.reached(pol, [top])[1:] for top in names):
-            called.setdefault(u, []).extend(f"{w}, by {c}"
-                                            for w, _, _ in places)
-    for u, where in sorted(called.items()):
+        for inv in (False, True):
+            if any((name, inv) in policy_mod.called_maps(pol, [top])
+                   for top in names):
+                called.setdefault((u, inv), []).extend(
+                    f"{w}, by {c}" for w, _, _ in places)
+    for (u, inv), where in sorted(called.items()):
         out.append({"use": u, "chain": name, "called": True, "where": where,
-                    "map": policy_mod.sub_map_name(name, u),
+                    "inverted": inv,
+                    "map": (policy_mod.inverted_map_name if inv
+                            else policy_mod.sub_map_name)(name, u),
                     "daemon": policy_mod.use_daemon(u),
                     "rows": None if maps is None
-                    else policy_mod.counters(pol, name, u, maps, sub=True)})
+                    else policy_mod.counters(pol, name, u, maps, sub=True,
+                                             inverted=inv)})
     return out
 
 
@@ -16473,6 +16480,11 @@ class Shell:
             print_prose(", ".join(sec["where"]), "    ")
             print_prose(f"{sec['daemon']}, route-map {sec['map']}",
                         "      ")
+            if sec.get("inverted"):
+                print_prose(f"called inverted, by a reject term: what "
+                            f"{name} accepts here the caller rejects, and "
+                            f"what it rejects goes on to the caller's next "
+                            f"term (#542)", "      ")
             if sec["rows"] is None:
                 print_prose(f"no counter: {sec['daemon']} reports no such "
                             f"route-map - it is not running, or FRR did "

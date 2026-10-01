@@ -2778,7 +2778,9 @@ _D_POL = [f"policy-options {l}" for l in (
     "policy-statement LEAK term 1 then accept",
     "policy-statement GATE term 1 then accept",
     "policy-statement CALLER term 1 from policy GATE",
-    "policy-statement CALLER term 1 then accept")]
+    "policy-statement CALLER term 1 then accept",
+    "policy-statement REJ term 1 from policy GATE",
+    "policy-statement REJ term 1 then reject")]
 _maps = {"bgpd": {"PO-UP-IN": {"rules": [
     {"sequenceNumber": 10, "invoked": 5}, {"sequenceNumber": 20,
                                            "invoked": 2},
@@ -2854,6 +2856,16 @@ _sub = prismash.policy_hit_sections(
 check(_sub and _sub[0]["called"] and _sub[0]["map"] == "PO-GATE-SUB-IN"
       and _sub[0]["where"] == ["neighbor x import, by CALLER"],
       f"policy_hit_sections: a called policy's own map: {_sub}")
+_inv = prismash.policy_hit_sections(
+    _dpol, "GATE", {("CALLER", "import"): [("neighbor x import",
+                                            "default", "x")],
+                    ("REJ", "import"): [("neighbor y import", "default",
+                                         "y")]}, {})
+check([(x["map"], x["inverted"], x["where"]) for x in _inv]
+      == [("PO-GATE-SUB-IN", False, ["neighbor x import, by CALLER"]),
+          ("PO-GATE-NOT-IN", True, ["neighbor y import, by REJ"])],
+      f"policy_hit_sections: a reject term's call is the inverted map, a "
+      f"section of its own (#542): {_inv}")
 check(prismash.hit_label(_secs[0], None, None)
       == "no term decided: the use's default, accept"
       and prismash.hit_label({"chain": "A+B", "use": "import"}, "A", None)

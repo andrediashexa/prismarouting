@@ -655,6 +655,7 @@ def findings(pol):
             out += [(pname, f"policy-statement {pname} term {term.name}: "
                             f"{why}") for why in _term_findings_a(pol, term)]
     out += [(None, why) for why in _call_cycles(pol)]
+    out += _reject_calls(pol)
     return out
 
 
@@ -705,6 +706,52 @@ def _call_cycles(pol):
             seen.add(n)
             todo += calls.get(n, ())
     return out
+
+
+def _reject_calls(pol):
+    """
+    A reject term whose `from policy` FRR cannot run (#542): [(policy,
+    why)]. Such a term rejects what the called policy accepts and lets the
+    rest go on, which compiles to a call of the policy INVERTED - its
+    accept a deny, its reject a permit, inverted_map_name(). A clause's
+    `call` has one terminal branch, the called map's deny, so inside the
+    inverted map a term with `from policy` can only be an accept term (its
+    call inverted in turn: the inner policy's accept is the outer one's).
+    A reject, next term or next policy term with `from policy` would need
+    a call whose deny goes on, which FRR has no word for.
+    """
+    out = []
+    for pname, terms in pol.statements.items():
+        for term in terms.values():
+            if term.then != "reject":
+                continue
+            for x in term.policies:
+                why = _not_invertible(pol, x, set())
+                if why:
+                    out.append((pname, f"policy-statement {pname} term "
+                                       f"{term.name}: then reject with from "
+                                       f"policy {x}, and {why}; FRR can "
+                                       f"call a policy inverted only when "
+                                       f"every term of it with from policy "
+                                       f"is an accept term"))
+    return out
+
+
+def _not_invertible(pol, policy, seen):
+    """Why `policy` cannot be called inverted (#542), or None."""
+    seen.add(policy)
+    for term in pol.statements.get(policy, {}).values():
+        if not term.policies:
+            continue
+        if term.then != "accept":
+            return (f"{policy} term {term.name} has from policy and then "
+                    f"{term.then or 'next term'}")
+        for y in term.policies:
+            if y not in seen:
+                why = _not_invertible(pol, y, seen)
+                if why:
+                    return why
+    return None
 
 
 def _combinations(term):
@@ -863,6 +910,38 @@ def sub_map_name(policy, direction):
     """
     full = map_name(policy, direction)
     return f"{PREFIX}{policy}-SUB-{full[len(PREFIX) + len(policy) + 1:]}"
+
+
+def inverted_map_name(policy, direction):
+    """
+    The FRR route-map a reject term's `from policy <policy>` calls (#542):
+    the policy on its own, inverted - what it accepts denied, what it
+    rejects permitted - so the term rejects exactly what the policy accepts.
+    """
+    full = map_name(policy, direction)
+    return f"{PREFIX}{policy}-NOT-{full[len(PREFIX) + len(policy) + 1:]}"
+
+
+def called_maps(pol, policies):
+    """
+    The maps a use of `policies` calls through `from policy` (#542):
+    [(policy, inverted)] in the order first met. A reject term calls its
+    policy inverted, and inside an inverted map an accept term calls its
+    own inverted too; every other call is the policy's own map. Without a
+    reject term calling one, this is reached()'s policies after the first,
+    each not inverted.
+    """
+    out, todo = [], [(p, False, True) for p in policies]
+    while todo:
+        p, inv, top = todo.pop(0)
+        if not top:
+            if (p, inv) in out:
+                continue
+            out.append((p, inv))
+        for term in pol.statements.get(p, {}).values():
+            flip = term.then == "reject" or (inv and term.then == "accept")
+            todo += [(y, flip, False) for y in term.policies]
+    return out
 
 
 def export_lines(policy, igp):
@@ -1048,7 +1127,7 @@ def _family(network):
     return "ipv6" if ":" in network else "ip"
 
 
-def compile_policy(pol, policy, direction, sub=False):
+def compile_policy(pol, policy, direction, sub=False, inverted=False):
     """
     The FRR statements that make `policy` in `direction`: its generated
     lists, then its route-map, then the Junos default. Nothing that another
@@ -1060,9 +1139,16 @@ def compile_policy(pol, policy, direction, sub=False):
     own `default-action` is a clause at the end of its block. One policy on
     its own compiles exactly as before phase A. `sub` is the map a `from
     policy` term calls: the policy alone, under sub_map_name().
+
+    `inverted` is the map a reject term's `from policy` calls (#542), the
+    policy alone under inverted_map_name(): the same clauses, numbered the
+    same, with every decision the other way - an accept term a deny
+    clause, a reject term a permit that ends the map, both defaults
+    reversed - and a term that decides nothing as it was, sets and all.
     """
     names = chain(policy)
-    rmap = sub_map_name(policy, direction) if sub \
+    rmap = inverted_map_name(policy, direction) if inverted \
+        else sub_map_name(policy, direction) if sub \
         else map_name(policy, direction)
     # Which protocol's routes this map sees: BGP's on a neighbor, and on an
     # export into an IGP the one its `redistribute` names. A term naming
@@ -1079,7 +1165,7 @@ def compile_policy(pol, policy, direction, sub=False):
         for pos, term in enumerate(pol.statements.get(name, {}).values(),
                                    start=1):
             got = _compile_term(pol, name, term, pos, offset, nxt, rmap,
-                                origin, direction)
+                                origin, direction, inverted)
             if got:
                 lists += got[0]
                 clauses += got[1]
@@ -1087,6 +1173,8 @@ def compile_policy(pol, policy, direction, sub=False):
             last = (offset + BLOCK - 1) if len(names) > 1 \
                 else DEFAULT_SEQ - 1
             action = "permit" if pol.defaults[name] == "accept" else "deny"
+            if inverted:
+                action = FLIP[action]
             clauses += [f"route-map {rmap} {action} {last}", "exit"]
     # THE JUNOS DEFAULT, which is not one default: a BGP route no term
     # decided is accepted (the maintainer chose it for #458), and a route no
@@ -1094,16 +1182,23 @@ def compile_policy(pol, policy, direction, sub=False):
     # IS-IS export nothing that no policy accepts. Phase B's attach points
     # (#536) each have their own: use_default().
     default = use_default(direction)
+    if inverted:
+        default = FLIP[default]
     clauses += [f"route-map {rmap} {default} {DEFAULT_SEQ}", "exit"]
     return lists + clauses
 
 
+#: A clause's action in a map called inverted (#542).
+FLIP = {"permit": "deny", "deny": "permit"}
+
+
 def _compile_term(pol, policy, term, pos, offset, nxt, rmap, origin,
-                  direction):
+                  direction, inverted=False):
     """
     One term as (lists, clauses), or None when it matches nothing here.
     Its clauses are at offset + pos x 10 + 0..9: one per family its prefixes
     have, times one per combination of its single-value conditions.
+    `inverted`: the term in a map called inverted (compile_policy()).
     """
     if term.protocols and origin and origin not in term.protocols:
         return None
@@ -1174,10 +1269,20 @@ def _compile_term(pol, policy, term, pos, offset, nxt, rmap, origin,
     # single clause would AND `match ip` with `match ipv6` and match
     # nothing. A term with no prefix condition is one clause - times the
     # combinations of its single-value conditions (#535).
+    # The clause's action. A term that decides is a deny where the route
+    # ends rejected - a reject term, or an accept term in an inverted map -
+    # unless it asks a `from policy`: FRR runs `call` only on a permit
+    # clause (#542), so such a term is a permit whose call decides.
+    ends = "reject" if not inverted else "accept"
+    action = "deny" if term.then == ends and not term.policies \
+        else "permit"
+    # Which way the term calls its policy: a reject term asks whether the
+    # policy accepts, which is its inverted map denying, and an accept term
+    # in an inverted map asks the same of its own (_reject_calls()).
+    flip = term.then == "reject" or (inverted and term.then == "accept")
     i = 0
     for fam in families or [None]:
         for combo in _combinations(term):
-            action = "deny" if term.then == "reject" else "permit"
             clause = [f"route-map {rmap} {action} {offset + pos * 10 + i}"]
             i += 1
             if fam:
@@ -1206,14 +1311,24 @@ def _compile_term(pol, policy, term, pos, offset, nxt, rmap, origin,
             if term.metrics:
                 clause.append(f" match metric {term.metrics[-1]}")
             if action == "permit":
-                # FRR's `call`: the called map's deny denies the route, its
-                # permit carries on into this clause's sets (#535).
+                # FRR's `call`, measured on 10.7.1 (#542): this clause's
+                # sets first, then the called map, which sees them; its
+                # deny denies the route, its permit goes on to this
+                # clause's on-match - and a map no clause of matches denies.
                 for p in term.policies:
-                    clause.append(f" call {sub_map_name(p, direction)}")
-                clause += _set_lines(pol, term, fam, direction)
+                    name = inverted_map_name(p, direction) if flip \
+                        else sub_map_name(p, direction)
+                    clause.append(f" call {name}")
+                # A reject term's sets are not for the route it lets go on.
+                if term.then != "reject":
+                    clause += _set_lines(pol, term, fam, direction)
                 if term.then == "next policy":
                     clause.append(f" on-match goto {nxt}")
-                elif term.then != "accept":
+                elif term.then == "reject" and not inverted:
+                    # The policy did not accept: the term did not match,
+                    # and the route goes on to the next term (#542).
+                    clause.append(" on-match next")
+                elif term.then not in ("accept", "reject"):
                     clause.append(" on-match next")
             clauses += clause + ["exit"]
     return lists, clauses
@@ -1342,12 +1457,15 @@ def compile_all(pol, uses):
                    f"{PRIVATE_AS_REGEX}")
     for policy, direction in sorted(uses):
         out += compile_policy(pol, policy, direction)
-    # The maps `from policy` calls, for every use that reaches them.
-    subs = sorted({(p, direction) for policy, direction in uses
-                   for top in chain(policy)
-                   for p in reached(pol, [top])[1:]})
-    for p, direction in subs:
+    # The maps `from policy` calls, for every use that reaches them; then
+    # the ones a reject term calls inverted (#542).
+    called = {(p, inv, direction) for policy, direction in uses
+              for top in chain(policy)
+              for p, inv in called_maps(pol, [top])}
+    for p, direction in sorted((p, d) for p, inv, d in called if not inv):
         out += compile_policy(pol, p, direction, sub=True)
+    for p, direction in sorted((p, d) for p, inv, d in called if inv):
+        out += compile_policy(pol, p, direction, sub=True, inverted=True)
     if any(w == "next-hop" and a == ["discard"] for w, a in sets) and uses:
         out += list(DISCARD_ROUTES)
     # A policy used twice - imported on one session and exported on another,
@@ -1508,13 +1626,14 @@ def clause_owner(pol, policy, seq):
     return (names[k], terms[pos - 1])
 
 
-def counters(pol, policy, direction, maps, sub=False):
+def counters(pol, policy, direction, maps, sub=False, inverted=False):
     """
     How many routes each part of `policy` - one, or a chain - matched where
     it is used in `direction` (#538), from FRR's `show route-map json` read
     into `maps`: [(policy, term or None, hits)], each policy's terms in
     order, then its default-action when it has one, then (None, None, hits)
-    for the use's default. `sub` is the map a `from policy` term calls.
+    for the use's default. `sub` is the map a `from policy` term calls,
+    `inverted` the one a reject term calls (#542), numbered the same.
 
     A hit is a clause that matched: measured on FRR 10.7.1, a clause's
     `invoked` counts the routes it matched, not the ones it was asked about
@@ -1525,7 +1644,8 @@ def counters(pol, policy, direction, maps, sub=False):
     answer is None when the daemon that runs the use did not report the map:
     the daemon is not running, or holds no such map.
     """
-    rmap = sub_map_name(policy, direction) if sub \
+    rmap = inverted_map_name(policy, direction) if inverted \
+        else sub_map_name(policy, direction) if sub \
         else map_name(policy, direction)
     got = (maps.get(use_daemon(direction)) or {}).get(rmap)
     if not got:
@@ -1743,8 +1863,9 @@ def simulate(pol, policy, route, direction="import", depth=0):
     What the map `policy` - one, or a chain - compiles to in `direction`
     does with `route` (#538): every phase A-C condition and action, walked
     in the order and with the semantics FRR runs the map in - a chain's
-    next policy, a policy's default-action, `from policy` as FRR's `call`,
-    the use's own default - so the answer is the daemon's and not a reading
+    next policy, a policy's default-action, `from policy` as FRR's `call`
+    (on a reject term, the policy inverted: #542), the use's own default -
+    so the answer is the daemon's and not a reading
     of the text. `route` is a dict of ROUTE_KEYS and `prefix`.
 
     A condition the route does not say is not guessed: the term is
@@ -1789,11 +1910,15 @@ def _walk(pol, name, out, direction, origin, depth):
         if not got:
             out["steps"].append((name, term.name, "no match", why))
             continue
-        if term.then == "reject":
-            # A reject clause calls nothing (_compile_term): `from policy`
-            # there is not evaluated, by FRR either.
+        if term.then == "reject" and not term.policies:
             out["steps"].append((name, term.name, "match", "then reject"))
             return ("reject", (name, term.name))
+        # FRR runs a clause's sets before its call, and the called map sees
+        # them (measured, #542). A reject term's sets are not compiled.
+        if term.then != "reject":
+            out["route"] = _apply_sets(pol, term, out["route"], direction,
+                                       out["said"])
+        passed = True
         for p in term.policies:
             if depth > 8:
                 out["said"].append(f"from policy {p}: called too deep to "
@@ -1805,14 +1930,31 @@ def _walk(pol, name, out, direction, origin, depth):
                              for sp, st, so, sw in sub["steps"]]
             out["assumed"] += sub["assumed"]
             out["said"] += sub["said"]
+            # What the called map's sets did stays on the route, whichever
+            # way it decided.
+            out["route"] = sub["route"]
+            if term.then == "reject":
+                # The term rejects what the policy accepts; what it rejects
+                # goes on to the next term (#542).
+                passed = sub["verdict"] == "accept"
+                if not passed:
+                    out["steps"].append((name, term.name, "no match",
+                                         f"from policy {p} rejected the "
+                                         f"route, so the term does not "
+                                         f"match"))
+                break
             if sub["verdict"] == "reject":
                 out["steps"].append((name, term.name, "match",
                                      f"from policy {p} rejected the route, "
                                      f"and FRR's call rejects it here"))
                 return ("reject", (name, term.name))
-            out["route"] = sub["route"]
-        out["route"] = _apply_sets(pol, term, out["route"], direction,
-                                   out["said"])
+        if not passed:
+            continue
+        if term.then == "reject":
+            out["steps"].append((name, term.name, "match",
+                                 f"from policy {term.policies[0]} accepted "
+                                 f"the route: then reject"))
+            return ("reject", (name, term.name))
         then = term.then or "next term"
         out["steps"].append((name, term.name, "match", f"then {then}"))
         if then == "accept":
