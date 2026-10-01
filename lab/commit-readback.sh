@@ -1,6 +1,7 @@
 #!/bin/sh
-# A line a daemon refuses after vtysh -C accepted it fails the commit (#539).
-# OFF-RED-AT-LEAST: 8
+# A line a daemon refuses after vtysh -C accepted it fails the commit (#539),
+# whether the policy compiler wrote it or the operator typed it (#544).
+# OFF-RED-AT-LEAST: 16
 #
 # #535's lab found it: `set extcommunity rt 65000:100 additive` passed FRR's
 # syntax check - `vtysh -C`, which the commit check relies on - bgpd refused
@@ -9,9 +10,17 @@
 # line, so lab/commit_readback_hook.py puts the old spelling back for this
 # lab; the line is the real one, refused by the real bgpd.
 #
-# MODE=off runs the same commits through a build without #539's read-back
-# (the hook's READBACK=off), and every check that the commit noticed must go
-# red: that build says "commit complete".
+# The second half types the same line by hand, in a route-map of the
+# operator's own (#544), and an impossible prefix-list entry; FRR keeps the
+# first word for word in its configuration and drops the second from it. A
+# map one BGP neighbor and one OSPF redistribution share, carrying BGP's
+# sets that ospfd holds none of, must still commit.
+#
+# MODE=off runs the same commits through a build without #539's and #544's
+# read-back (the hook's READBACK=off), and every check that the commit
+# noticed must go red: that build says "commit complete" over the route-map
+# line, and over the list entry it says #197's "did not keep them" and rolls
+# nothing back.
 MODE=${1:-on}
 set -u
 . /src/lab/verdict.sh
@@ -31,7 +40,7 @@ wait_vpp
 printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
 printf 'hostname prisma-routing\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
-pgrep zebra >/dev/null || start_frr bgpd
+pgrep zebra >/dev/null || start_frr bgpd ospfd
 sleep 2
 
 HX="python3 /src/src/prismash/prismash.py"
@@ -120,6 +129,86 @@ expect_said "the policy bgpd keeps commits" "commit complete" "$GOOD"
 expect_in "and bgpd holds its set" " set extcommunity rt 65000:100" "$FRRRUN"
 GOODMS=$(( (_t1 - _t0) / 1000000 ))
 
+echo; echo "=========== the same line, typed by hand in a route-map (#544) ==========="
+# Through the hook, so MODE=off is the build before the read-back; the hook
+# changes nothing else about a route-map the operator types.
+commit_typed() {
+  $OLD -c "configure" -c "route-map OP permit 10" \
+    -c "match ip address prefix-list LB" -c "set metric 5" \
+    -c "set extcommunity rt 65000:100$1" -c "exit" \
+    -c "ip prefix-list LB seq 10 permit 192.168.0.0/16 le 24" \
+    -c "router bgp 65000" -c "address-family ipv4 unicast" \
+    -c "neighbor 10.0.0.2 route-map OP out" -c "exit-address-family" \
+    -c "exit" -c "commit" 2>&1
+}
+_t0=$(date +%s%N)
+TYPED=$(commit_typed " additive")
+_t1=$(date +%s%N)
+printf '%s\n' "$TYPED" | grep -vE "^(note|warning):" | sed 's/^/  /'
+FRRRUN=$(vtysh -c "show running-config" 2>&1)
+BOXCFG=$($HX -c "show running-config" 2>&1)
+expect_not_said "the commit does not say 'commit complete'" "commit complete" "$TYPED"
+expect_said "it says a line of the operator's route-maps was refused" \
+  "FRR refused 1 line(s) of your route-maps and lists" "$TYPED"
+expect_in "it names the clause and the line" \
+  "route-map OP permit 10: set extcommunity rt 65000:100 additive" "$TYPED"
+expect_said "and says the commit was rolled back" \
+  "commit failed; rolling back to the previous state" "$TYPED"
+expect_not_in "FRR holds no route-map OP afterwards" "route-map OP permit 10" "$FRRRUN"
+expect_not_in "nor the box's own configuration" "route-map OP permit 10" "$BOXCFG"
+echo "  that commit took $(( (_t1 - _t0) / 1000000 )) ms"
+
+_t0=$(date +%s%N)
+TYPED=$(commit_typed "")
+_t1=$(date +%s%N)
+printf '%s\n' "$TYPED" | grep -vE "^(note|warning):" | tail -2 | sed 's/^/  /'
+FRRRUN=$(vtysh -c "show running-config" 2>&1)
+expect_said "without the refused word the same route-map commits" \
+  "commit complete" "$TYPED"
+expect_in "and bgpd holds its set" " set extcommunity rt 65000:100" "$FRRRUN"
+TYPEDMS=$(( (_t1 - _t0) / 1000000 ))
+
+echo; echo "=========== the lists a route-map matches on (#544) ==========="
+# Every list entry FRR 10.7.1 was found to refuse is caught before the
+# read-back: the VTY refuses an impossible prefix-list range and a regexp
+# that does not compile, and FRR's reload FAILS over a community that is not
+# one - `% Malformed community-list value` - so the commit rolls back there.
+# Shown here, not counted: the read-back is not what catches it.
+LIST=$($OLD -c "configure" \
+  -c "bgp community-list standard CB permit 65000:1" \
+  -c "bgp community-list standard CB permit 70000:100" -c "commit" 2>&1)
+printf '%s\n' "$LIST" | grep -vE "^(note|warning):" | sed 's/^/  /'
+case "$LIST" in *"rolling back to the previous state"*)
+  echo "  (rolled back by the reload, as measured)";; esac
+# What the read-back changes for lists: it COUNTS the entries FRR holds, and
+# #197's word-for-word check no longer judges them. FRR writes a prefix with
+# host bits as its network, and that check called the list "did not keep"
+# over a list FRR holds whole.
+HOSTB=$($OLD -c "configure" -c "ip prefix-list HB seq 5 permit 10.0.0.1/8" \
+  -c "commit" 2>&1)
+printf '%s\n' "$HOSTB" | grep -vE "^(note|warning):" | sed 's/^/  /'
+FRRRUN=$(vtysh -c "show running-config" 2>&1)
+expect_in "FRR keeps the entry, as its network" \
+  "ip prefix-list HB seq 5 permit 10.0.0.0/8" "$FRRRUN"
+expect_not_said "and the commit does not call it dropped" \
+  "did not keep them" "$HOSTB"
+expect_said "it completes" "commit complete" "$HOSTB"
+
+echo; echo "=========== one map for a BGP neighbor and an OSPF redistribution ==========="
+# BGP's sets in a map ospfd also runs: ospfd has no command for them and holds
+# none, which is FRR running the map as written - not a refusal (#544).
+SHARED=$($OLD -c "configure" -c "route-map SH permit 10" \
+  -c "set community 65000:7" -c "set metric 9" -c "exit" \
+  -c "router bgp 65000" -c "address-family ipv4 unicast" \
+  -c "redistribute connected route-map SH" -c "exit-address-family" \
+  -c "exit" -c "router ospf" -c "redistribute connected route-map SH" \
+  -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$SHARED" | grep -vE "^(note|warning):" | tail -2 | sed 's/^/  /'
+OSPFSETS=$(vtysh -c "show route-map SH json" 2>&1 \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["ospfd"]["SH"]["rules"][0]["setClauses"])' 2>&1)
+echo "  ospfd runs SH with set clauses: $OSPFSETS"
+expect_said "the shared map commits" "commit complete" "$SHARED"
+
 echo; echo "=========== what the read-back costs ==========="
 # One `show route-map json` per commit whose compiled route-maps changed, and
 # none for any other commit. Asked five times, the median, beside the commit.
@@ -129,6 +218,7 @@ for _i in 1 2 3 4 5; do
   _b=$(date +%s%N); _ms="$_ms $(( (_b - _a) / 1000000 ))"
 done
 _med=$(printf '%s\n' $_ms | sort -n | sed -n 3p)
-echo "  show route-map json:$_ms ms (median $_med); the commit: $GOODMS ms"
+echo "  show route-map json:$_ms ms (median $_med); the commit: $GOODMS ms;"
+echo "  an operator's route-map commit: $TYPEDMS ms"
 
 verdict

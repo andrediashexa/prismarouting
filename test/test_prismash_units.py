@@ -3581,6 +3581,158 @@ check(prismash.compiled_maps(_pr) == {"PO-R-IN": ("R", "import"),
       f"term: {prismash.compiled_maps(_pr)}")
 ok("the read-back of what the policy compiled to")
 
+print("\n=== a line of the operator's own route-maps and lists a daemon "
+      "refused (#544) ===")
+# Typed in this session, so not indented: the block decides, not the column.
+_typed = ["route-map OP permit 10", "match ip address prefix-list L",
+          "set metric 5", "set extcommunity rt 65000:100 additive", "exit",
+          "router bgp 65000", "neighbor 10.0.0.2 remote-as 65001",
+          "address-family ipv4 unicast",
+          "neighbor 10.0.0.2 route-map OP in", "exit-address-family",
+          "exit", "ip prefix-list L seq 5 permit 10.0.0.0/8 le 7",
+          "ip prefix-list L seq 10 permit 192.168.0.0/16 le 24"]
+check(prismash.typed_route_map_bodies(_typed)
+      == {"route-map OP permit 10": [
+          "match ip address prefix-list L", "set metric 5",
+          "set extcommunity rt 65000:100 additive"]}
+      and prismash.typed_route_map_bodies(
+          ["route-map A permit 10", " set weight 7", "exit"])
+      == {"route-map A permit 10": ["set weight 7"]},
+      "typed_route_map_bodies: each clause's statements, typed or read back")
+check(prismash.changed_clauses({"a": ["x"], "b": ["y"]}, {"a": ["x"]})
+      == {"b": ["y"]}
+      and prismash.changed_clauses({"a": ["x"]}, {"a": ["z"]})
+      == {"a": ["x"]},
+      "changed_clauses: what the last commit did not send the same")
+_od = prismash.operator_map_daemons(
+    _typed + ["router ospf", " redistribute bgp route-map OP",
+              " redistribute static route-map ST", "exit",
+              "ip protocol bgp route-map ZB",
+              "route-map ZB permit 10", " call SUB", "exit"])
+check(_od == {"OP": {"bgpd", "ospfd"}, "ST": {"ospfd"},
+              "ZB": {"zebra"}, "SUB": {"zebra"}},
+      f"operator_map_daemons: each map by the blocks that apply it, a "
+      f"called map where its caller runs: {_od}")
+
+
+def _om(sets, daemon="bgpd", name="OP"):
+    """`show route-map json` with OP 10 running these sets."""
+    return {daemon: {name: {"rules": [
+        {"sequenceNumber": 10,
+         "matchClauses": ["ip address prefix-list L"],
+         "setClauses": list(sets)}]}}}
+
+
+_new = prismash.typed_route_map_bodies(_typed)
+check(prismash.clauses_refused(_new, _reads(_om(["metric 5"])),
+                               {"OP": {"bgpd"}})
+      == [("route-map OP permit 10",
+           "set extcommunity rt 65000:100 additive")],
+      "clauses_refused: the operator's line bgpd does not run is named")
+# One map for a BGP neighbor and an OSPF redistribution: ospfd holds none
+# of BGP's sets, and that is FRR running the map as written.
+_two = _om(["metric 5", "extcommunity rt 65000:100"])
+_two.update(_om(["metric 5"], daemon="ospfd"))
+check(prismash.clauses_refused(_new, _reads(_two), {"OP": {"bgpd", "ospfd"}})
+      == [],
+      "a line one of the map's daemons runs is not refused")
+_two = _om(["metric 5"])
+_two.update(_om(["metric 5"], daemon="ospfd"))
+check(prismash.clauses_refused(_new, _reads(_two), {"OP": {"bgpd", "ospfd"}})
+      == [("route-map OP permit 10",
+           "set extcommunity rt 65000:100 additive")],
+      "and one none of them runs is")
+check(prismash.clauses_refused(_new, _reads({"bgpd": {}}), {"OP": "bgpd"})
+      == [(None, "route-map OP permit 10")]
+      and prismash.clauses_refused(_new, _reads(_om([])), {}) == [],
+      "a clause no daemon has is refused whole; a map nothing applies is "
+      "not judged")
+_le = prismash.list_entries(_typed + [
+    "bgp community-list standard C seq 5 permit 65000:1",
+    "bgp community-list 7 permit 65000:2",
+    "ip prefix-list L description permit all"])
+check(_le == {("ip prefix-list", "L"): [
+                  "ip prefix-list L permit 10.0.0.0/8 le 7",
+                  "ip prefix-list L permit 192.168.0.0/16 le 24"],
+              ("bgp community-list", "C"): [
+                  "bgp community-list standard C permit 65000:1"],
+              ("bgp community-list", "7"): [
+                  "bgp community-list 7 permit 65000:2"]},
+      f"list_entries: each list's entries without their seq: {_le}")
+check(prismash.not_list_entries(
+          ["ip prefix-list L seq 5 permit 10.0.0.1/8",
+           "neighbor 10.0.0.2 remote-as 65001",
+           "ip prefix-list L description permit all"])
+      == ["neighbor 10.0.0.2 remote-as 65001",
+          "ip prefix-list L description permit all"],
+      "not_list_entries: the list entries are the count's to judge, the "
+      "rest #197's")
+_cl = prismash.changed_lists(_typed, [])
+check(_cl == {("ip prefix-list", "L"): _le[("ip prefix-list", "L")]}
+      and prismash.changed_lists(_typed, _typed) == {},
+      "changed_lists: the lists this commit changed")
+# FRR 10.7.1 drops the entry it refused from its configuration.
+_frr = [" ip prefix-list L seq 10 permit 192.168.0.0/16 le 24"]
+check(prismash.lists_refused(_cl, _frr)
+      == ["ip prefix-list L permit 10.0.0.0/8 le 7"]
+      and prismash.lists_refused(_cl, _frr + [
+          "ip prefix-list L seq 5 permit 10.0.0.0/8 le 7"]) == []
+      and prismash.lists_refused(_cl, [
+          "ip prefix-list L seq 5 permit 10.0.0.0/8 ge 8 le 7",
+          "ip prefix-list L seq 10 permit 192.168.0.0/16 ge 16 le 24"])
+      == [],
+      "lists_refused: an entry FRR does not hold is refused, one it words "
+      "its own way is counted, not refused")
+
+
+def _typed_commit(maps, running):
+    """A commit of _typed over an empty box whose FRR runs `maps` and reads
+    back `running`."""
+    sh = shell(frr=RecFrr({"show route-map json": (0, json.dumps(maps)),
+                           "show running-config": (0, "\n".join(running))}))
+    sh.candidate = Config()
+    sh.candidate.routing = list(_typed)
+    applied = []
+
+    def _apply(cfg, check_only=False):
+        if not check_only:
+            applied.append(cfg)
+        return True
+    sh.apply = _apply
+    sh.rb = types.SimpleNamespace(push=lambda *a, **k: None)
+    sh.record_applied = lambda *a, **k: None
+    rv, text = driven(lambda: sh.do_commit([]))
+    return applied, text
+
+
+_whole = ["route-map OP permit 10", " match ip address prefix-list L",
+          " set metric 5", " set extcommunity rt 65000:100 additive",
+          "ip prefix-list L seq 5 permit 10.0.0.0/8 le 7",
+          "ip prefix-list L seq 10 permit 192.168.0.0/16 le 24",
+          "router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+          " address-family ipv4 unicast",
+          "  neighbor 10.0.0.2 route-map OP in", " exit-address-family"]
+_applied, _said = _typed_commit(_om(["metric 5"]), _whole)
+check("FRR refused 1 line(s) of your route-maps and lists" in _said
+      and "route-map OP permit 10: set extcommunity rt 65000:100 additive"
+      in _said and "the routing policy compiled to" not in _said
+      and "rolling back to the previous state" in _said
+      and "commit complete" not in _said and len(_applied) == 2,
+      f"the commit refuses the operator's line and rolls back: {_said!r}")
+_applied, _said = _typed_commit(
+    _om(["metric 5", "extcommunity rt 65000:100 additive"]),
+    [l for l in _whole if "le 7" not in l])
+check("FRR refused 1 line(s) of your route-maps and lists" in _said
+      and "ip prefix-list L permit 10.0.0.0/8 le 7" in _said
+      and "commit complete" not in _said and len(_applied) == 2,
+      f"and a list entry FRR did not keep the same way: {_said!r}")
+_applied, _said = _typed_commit(
+    _om(["metric 5", "extcommunity rt 65000:100 additive"]), _whole)
+check("FRR refused" not in _said and "commit complete" in _said
+      and len(_applied) == 1,
+      f"a commit FRR kept whole is not refused: {_said!r}")
+ok("the read-back of the operator's own route-maps and lists")
+
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
 # Mutation shown red: write only the assignment, dropping the other lines.
 tune = os.path.join(_root, "tune", "tune.env")

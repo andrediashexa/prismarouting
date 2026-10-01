@@ -3348,29 +3348,72 @@ def compiled_refused(sent, before, read_maps, daemons):
     commit, the rollback to the previous one included. The lists a clause
     matches on are not judged: `show route-map` does not show them.
     """
-    had = route_map_bodies(before)
-    new = {c: b for c, b in route_map_bodies(sent).items() if had.get(c) != b}
+    return clauses_refused(changed_clauses(route_map_bodies(sent),
+                                           route_map_bodies(before)),
+                           read_maps, daemons)
+
+
+def changed_clauses(sent, before):
+    """
+    Of the clauses `sent` ({header: statements}, as route_map_bodies() or
+    typed_route_map_bodies() gives them), those `before` did not have the
+    same (#539, #544): the ones this commit is the first to hand FRR.
+    """
+    return {c: b for c, b in sent.items() if before.get(c) != b}
+
+
+def clauses_refused(new, read_maps, daemons):
+    """
+    compiled_refused()'s judgement of the clauses `new` ({header:
+    statements}), whoever wrote them (#544): [(clause, statement)] for each
+    line the daemon running the map is not running, (None, header) for a
+    clause it does not have at all. FRR is asked only when there is a clause
+    to judge.
+
+    `daemons` maps a route-map's name to the daemon that runs it, or to
+    several - an operator's map can be applied by bgpd and by ospfd at once
+    - and then a line is refused only when NONE of them runs it. One map
+    serving a BGP neighbor and an OSPF redistribution carries BGP's sets,
+    which ospfd has no command for and holds none of; that is FRR running
+    the map as written, and refusing it would refuse the configuration
+    every such operator has.
+    """
     if not new:
         return []
     maps = read_maps()
     out = []
     for clause, lines in new.items():
         _, name, _, seq = clause.split()
-        d = daemons.get(name)
-        if maps is None or d not in maps:
+        ds = daemons.get(name) or ()
+        rules = [(clause, l) for l in lines
+                 if l.split()[0] in ("match", "set")]
+        lost, whole = [], True
+        for d in ((ds,) if isinstance(ds, str) else sorted(ds)):
+            if maps is None or d not in maps:
+                continue
+            rule = next((r for r in (maps[d].get(name) or {}).get("rules", [])
+                         if str(r.get("sequenceNumber")) == seq), None)
+            if rule is None:
+                lost.append(set(rules))
+                continue
+            whole = False
+            found = set()
+            for word, key in (("match", "matchClauses"),
+                              ("set", "setClauses")):
+                mine = [l for l in lines if l.split()[0] == word]
+                have = rule.get(key) or []
+                if len(have) >= len(mine):
+                    continue
+                gone = [l for l in mine if l[len(word) + 1:] not in have]
+                found |= {(clause, l) for l in (gone or mine)}
+            lost.append(found)
+        if not lost:
             continue
-        rule = next((r for r in (maps[d].get(name) or {}).get("rules", [])
-                     if str(r.get("sequenceNumber")) == seq), None)
-        if rule is None:
+        if whole:
             out.append((None, clause))
             continue
-        for word, key in (("match", "matchClauses"), ("set", "setClauses")):
-            mine = [l for l in lines if l.split()[0] == word]
-            have = rule.get(key) or []
-            if len(have) >= len(mine):
-                continue
-            gone = [l for l in mine if l[len(word) + 1:] not in have]
-            out += [(clause, l) for l in (gone or mine)]
+        out += [r for r in rules if all(r in v for v in lost)
+                and r not in out]
     return out
 
 
@@ -3422,6 +3465,176 @@ def compiled_owner(cfg, clause):
     if term is None:
         return f"policy-statement {p} default-action"
     return f"policy-statement {p} term {term}"
+
+
+def typed_route_map_bodies(routing):
+    """
+    route_map_bodies() for the routing an operator typed (#544), which is
+    not indented when it was typed in this session (see block_paths): each
+    `route-map <name> permit|deny <seq>` clause and its statements, by the
+    block each line is in rather than by its indentation.
+    """
+    out = {}
+    for line, path in zip(routing, block_paths(routing)):
+        if path is None:
+            continue
+        s = " ".join(line.split())
+        head = " ".join(path[0].split()) if path else s
+        if not head.startswith("route-map ") or len(head.split()) != 4:
+            continue
+        clause = out.setdefault(head, [])
+        if path:
+            clause.append(s)
+    return out
+
+
+# Where a route-map is applied, and so which daemon runs it (#544). Every
+# daemon holds every route-map; the one whose block applies it runs it, the
+# way policy.use_daemon() says it for the compiler's maps.
+MAP_REFERENCE = re.compile(
+    r"(?:^|\s)(?:route-map|table-map|unsuppress-map|advertise-map|"
+    r"exist-map|non-exist-map|attribute-map|suppress-map)\s+(\S+)")
+MAP_BLOCK_DAEMONS = (("router bgp", "bgpd"), ("router ospf6", "ospf6d"),
+                     ("router ospf", "ospfd"), ("router isis", "isisd"),
+                     ("router ripng", "ripngd"), ("router rip", "ripd"))
+MAP_ZEBRA_STATEMENTS = ("ip protocol ", "ipv6 protocol ", "ip import-table ",
+                        "ipv6 import-table ", "ip nht ", "ipv6 nht ")
+
+
+def operator_map_daemons(routing):
+    """
+    {route-map name: {the daemons that run it}} for the routing an operator
+    typed (#544): bgpd for a map a `router bgp` block applies, ospfd, isisd
+    and the rest for their own blocks, zebra for `ip protocol` and its
+    kind, and a map another one `call`s runs wherever its caller does. A map
+    nothing applies is in no daemon's hands and absent here - which is a
+    map nothing judges, since nothing runs it.
+    """
+    out, calls = {}, {}
+    for line, path in zip(routing, block_paths(routing)):
+        if path is None:
+            continue
+        s = " ".join(line.split())
+        top = " ".join(path[0].split()) if path else ""
+        if top.startswith("route-map "):
+            w = s.split()
+            if w[0] == "call" and len(w) > 1:
+                calls.setdefault(top.split()[1], set()).add(w[1])
+            continue
+        if s.startswith("route-map "):
+            continue
+        d = next((dm for k, dm in MAP_BLOCK_DAEMONS
+                  if top == k or top.startswith(k + " ")), None)
+        if d is None and (not top or top.startswith("vrf ")) \
+                and s.startswith(MAP_ZEBRA_STATEMENTS):
+            d = "zebra"
+        if d is None:
+            continue
+        for m in MAP_REFERENCE.finditer(s):
+            out.setdefault(m.group(1), set()).add(d)
+    grew = True
+    while grew:
+        grew = False
+        for caller, called in calls.items():
+            for c in called:
+                more = out.get(caller, set()) - out.get(c, set())
+                if more:
+                    out.setdefault(c, set()).update(more)
+                    grew = True
+    return out
+
+
+# The lists a route-map matches on (#544), by the words before the list's
+# name. A community list's name follows `standard` or `expanded` when it has
+# one; a numbered list has none.
+LIST_KINDS = ("ip prefix-list", "ipv6 prefix-list", "bgp as-path access-list",
+              "bgp community-list", "bgp large-community-list",
+              "bgp extcommunity-list")
+
+
+def list_entries(lines):
+    """
+    {(kind, name): [entries]} for every list entry in `lines` - FRR's
+    read-back or typed routing alike, since lists are top-level - each
+    entry with its `seq <n>` taken out, because FRR numbers the entries
+    typed without one (#544).
+    """
+    out = {}
+    for line in lines:
+        w = line.split()
+        if "permit" not in w and "deny" not in w:
+            continue
+        kind = next((k for k in LIST_KINDS
+                     if w[:len(k.split())] == k.split()), None)
+        if kind is None:
+            continue
+        rest = w[len(kind.split()):]
+        if rest and rest[0] in ("standard", "expanded") and len(rest) > 1:
+            rest = rest[1:]
+        if len(rest) < 2 or rest[1] == "description":
+            continue
+        for i in range(len(w) - 1):
+            if w[i] == "seq" and is_number(w[i + 1]):
+                w = w[:i] + w[i + 2:]
+                break
+        entry = " ".join(w)
+        got = out.setdefault((kind, rest[0]), [])
+        if entry not in got:
+            got.append(entry)
+    return out
+
+
+def changed_lists(sent, before):
+    """
+    Of the lists in `sent`, those `before` did not hold the same (#544):
+    {(kind, name): [entries]}, the ones this commit is the first to hand
+    FRR.
+    """
+    had = list_entries(before)
+    return {k: v for k, v in list_entries(sent).items() if had.get(k) != v}
+
+
+def lists_refused(changed, running):
+    """
+    The list entries a daemon refused, of the lists this commit changed
+    (#544): [entry], from FRR's own read-back `running`.
+
+    A LIST IS ASKED THE CONFIGURATION, unlike a route-map clause, and for
+    the opposite reason. Measured on FRR 10.7.1 (lab/commit-readback.sh): a
+    prefix-list entry whose range is impossible (`le` under the mask), a
+    community-list value that is not one, an as-path regexp that does not
+    compile all pass `vtysh -C`, are refused when applied, and are then
+    ABSENT from `show running-config` - where a refused route-map line stays
+    word for word. One read, of every kind of list at once, where asking
+    the daemons would be a `show` per kind and a text format for three of
+    them.
+
+    COUNTED, like a clause: FRR may write an entry its own way, but a list
+    holding fewer entries than were sent lost one. The entries named are the
+    ones whose words are not there, or all of the list's when every one was
+    reworded.
+    """
+    have = list_entries(running)
+    out = []
+    for key, mine in changed.items():
+        theirs = have.get(key, [])
+        if len(theirs) >= len(mine):
+            continue
+        gone = [e for e in mine if e not in theirs]
+        out += gone or mine
+    return out
+
+
+def not_list_entries(added):
+    """
+    `added` without its list entries (#544), for #197's check once
+    lists_refused() has judged them. That check asks whether each statement
+    came back word for word, and FRR writes some entries its own way - `ip
+    prefix-list L permit 10.0.0.1/8` is kept as 10.0.0.0/8, measured on
+    10.7.1 - which it called "did not keep them" over a list FRR holds
+    whole. The count does not make that mistake.
+    """
+    return [a for a in added if not list_entries([a])]
 
 
 def cap_needed(delta):
@@ -13299,38 +13512,73 @@ class Shell:
             return
 
         # What the daemons run, read once, and only when the route-maps the
-        # policy compiler sent changed (#539): a commit of the CGNAT half, or
-        # of routing with no policy in it, pays nothing for it. #197's check
-        # below reads the configuration, which is a different question.
+        # policy compiler sent changed (#539) or the operator's own did
+        # (#544): a commit of the CGNAT half, or of routing with no
+        # route-map in it, pays nothing for it. #197's check below reads the
+        # configuration, which is a different question.
         added = self.routing_added(running.routing, self.candidate.routing)
-        refused = compiled_refused(compiled_lines(self.candidate),
-                                   compiled_lines(running),
-                                   self.route_map_counts,
-                                   compiled_daemons(self.candidate))
-        # A STATEMENT THE POLICY COMPILER WROTE that a daemon refused after
-        # `vtysh -C` accepted it (#539) - ROLLED BACK, unlike the operator's
-        # own dropped statement below, and the difference is what the line
-        # is. The operator's is one statement of theirs, named, that they can
-        # retype; this is one line of a route-map clause, and a clause that
-        # lost a `set` or a `match` still runs - with no set at all, or
-        # matching more than the term said. That is the policy doing
-        # something nobody wrote, on live routes, so the previous state is
-        # put back rather than described.
-        if refused:
-            self.err(f"FRR refused {len(refused)} line(s) the routing "
-                     "policy compiled to")
-            for clause, stmt in refused[:5]:
-                owner = compiled_owner(self.candidate, clause or stmt)
-                if owner:
-                    print_prose(f"in {owner}:", indent="    ")
-                # Quoted whole, for the reason in `console_prose`.
-                print("      " + (f"{clause}: {stmt}" if clause
-                                  else f"{stmt}: the whole clause"))
-            if len(refused) > 5:
-                print(f"    ... and {len(refused) - 5} more")
-            print_prose("vtysh accepted these lines and the daemon that runs "
-                        "the policy is not running them, so it would decide "
-                        "without them")
+        typed = changed_clauses(typed_route_map_bodies(self.candidate.routing),
+                                typed_route_map_bodies(running.routing))
+        refused = clauses_refused(
+            {**changed_clauses(route_map_bodies(compiled_lines(
+                self.candidate)), route_map_bodies(compiled_lines(running))),
+             **typed},
+            self.route_map_counts,
+            {**operator_map_daemons(self.candidate.routing),
+             **compiled_daemons(self.candidate)})
+        # The lists the clauses match on are asked the configuration, read
+        # once and only when a list changed - and the same read serves #197's
+        # check below (#544).
+        lists = changed_lists(compiled_lines(self.candidate)
+                              + self.candidate.routing,
+                              compiled_lines(running) + running.routing)
+        frr_now = self.frr.running() if lists else None
+        # An FRR that did not answer reads back nothing, which is not every
+        # list refused: a check that cannot run says nothing.
+        refused_lists = lists_refused(lists, frr_now) if frr_now else []
+        # A LINE OF A ROUTE-MAP OR A LIST that a daemon refused after `vtysh
+        # -C` accepted it (#539 for the policy compiler's, #544 for the
+        # operator's own) - ROLLED BACK, unlike the operator's own dropped
+        # statement below, and the difference is what the line is. A
+        # statement of `router bgp` that did not take is one statement,
+        # named, that the operator can retype; this is one line of a
+        # route-map clause or a list, and a clause that lost a `set` or a
+        # `match` still runs - with no set at all, or matching more than was
+        # written - and a list that lost an entry matches differently. That
+        # is routing policy doing something nobody wrote, on live routes,
+        # whoever wrote the rest of it, so the previous state is put back
+        # rather than described.
+        if refused or refused_lists:
+            names = compiled_maps(self.candidate)
+            mine = [(c, l) for c, l in refused
+                    if (c or l).split()[1] not in names]
+            ours = [r for r in refused if r not in mine]
+            if ours:
+                self.err(f"FRR refused {len(ours)} line(s) the routing "
+                         "policy compiled to")
+                for clause, stmt in ours[:5]:
+                    owner = compiled_owner(self.candidate, clause or stmt)
+                    if owner:
+                        print_prose(f"in {owner}:", indent="    ")
+                    # Quoted whole, for the reason in `console_prose`.
+                    print("      " + (f"{clause}: {stmt}" if clause
+                                      else f"{stmt}: the whole clause"))
+                if len(ours) > 5:
+                    print(f"    ... and {len(ours) - 5} more")
+            if mine or refused_lists:
+                self.err(f"FRR refused {len(mine) + len(refused_lists)} "
+                         "line(s) of your route-maps and lists")
+                for clause, stmt in mine[:5]:
+                    print("      " + (f"{clause}: {stmt}" if clause
+                                      else f"{stmt}: the whole clause"))
+                for stmt in refused_lists[:5]:
+                    print("      " + stmt)
+                more = max(len(mine) - 5, 0) + max(len(refused_lists) - 5, 0)
+                if more:
+                    print(f"    ... and {more} more")
+            print_prose("vtysh accepted these lines and the daemons that run "
+                        "the routing policy are not running them, so it "
+                        "would decide without them")
             self.err("commit failed; rolling back to the previous state")
             self.apply(Config.parse(backup))
             return
@@ -13359,8 +13607,11 @@ class Shell:
         # answer this check might explain away. Neither subsumes the other, and
         # a commit that fails both says so once, because this one returns first.
         dropped, stalled = [], []
+        if frr_now:
+            added = not_list_entries(added)
         if added:
-            dropped = statements_frr_dropped(added, self.frr.running())
+            dropped = statements_frr_dropped(
+                added, frr_now if frr_now is not None else self.frr.running())
             # Asked once. It shells out to frr-reload, which is the slowest
             # thing on the commit path, and calling it in the condition and
             # again in the body doubles that for every commit that hits it.

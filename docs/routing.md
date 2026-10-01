@@ -5444,13 +5444,71 @@ said - which is the policy doing something nobody wrote, on live routes:
 error: FRR refused 1 line(s) the routing policy compiled to
     in policy-statement P term ec:
       route-map PO-P-IN permit 10: set extcommunity rt 65000:100 additive
-    vtysh accepted these lines and the daemon that runs the policy is not
-    running them, so it would decide without them
+    vtysh accepted these lines and the daemons that run the routing policy
+    are not running them, so it would decide without them
 error: commit failed; rolling back to the previous state
 ```
 
-The prefix and community lists a clause matches on are not judged this way:
-`show route-map` does not show them.
+### The operator's own route-maps and lists, the same way
+
+A route-map typed in the routing half has the same blind spot, and the same
+answer ([#544](https://github.com/andrediashexa/hexarouting/issues/544)): the
+line bgpd refuses stays in FRR's configuration word for word, so the check of
+the operator's statements above passes it. Each route-map clause the commit
+changes is judged by what the daemons that run it hold, read from the same
+single `show route-map json`:
+
+| the map is applied by | it runs in |
+|---|---|
+| a `router bgp` block - a neighbor, `redistribute`, `network`, `table-map`, `default-originate`, the `-map` options | bgpd |
+| `router ospf`, `router ospf6`, `router isis`, `router rip`, `router ripng` | that daemon |
+| `ip protocol`, `ip import-table`, `ip nht` (and their IPv6 forms) | zebra |
+| a `call` from another map | wherever its caller runs |
+
+A line is refused only when **none** of the daemons that run its map holds
+it. One map shared by a BGP neighbor and an OSPF redistribution carries BGP's
+sets, which ospfd has no command for and holds none of; that is FRR running
+the map as written, and measured so in `lab/commit-readback.sh` (ospfd runs
+the shared map with its `set metric` only, and the commit completes). A map
+nothing applies is in no daemon's hands and is not judged.
+
+**It is rolled back, like the compiler's.** #197 left the operator's dropped
+statement applied and named, because it is one statement to retype; a
+route-map line is not one statement on its own - the clause it was part of
+still runs, without the `set` or matching more than was written, on live
+routes. That is the same harm whoever typed the clause, so the same answer:
+
+```
+error: FRR refused 1 line(s) of your route-maps and lists
+      route-map OP permit 10: set extcommunity rt 65000:100 additive
+    vtysh accepted these lines and the daemons that run the routing policy
+    are not running them, so it would decide without them
+error: commit failed; rolling back to the previous state
+```
+
+**The lists a clause matches on** - prefix-lists, community, large and
+extended community lists, as-path lists - are not in `show route-map`. What
+was measured on FRR 10.7.1 is that a refused list entry never gets this far:
+
+| entry | caught by |
+|---|---|
+| an impossible prefix range (`10.0.0.0/8 le 7`) | the VTY, before FRR is asked |
+| an as-path regexp that does not compile | the VTY, before FRR is asked |
+| a community, large or extended community that is not one (`70000:100`, `65000:1` as a large community, `rt ... additive`) | FRR's reload, which fails - `% Malformed community-list value` - and the commit rolls back |
+
+A list entry FRR does refuse is **absent** from its configuration, unlike a
+route-map line, so the commit reads the lists back from the configuration it
+already reads for the check above - no extra question to FRR - and
+**counts** each changed list's entries: a list holding fewer than were sent
+lost one, named and rolled back like a route-map line. Counting is also why
+#197's word-for-word check no longer judges list entries: FRR keeps `ip
+prefix-list HB permit 10.0.0.1/8` as `10.0.0.0/8`, and that check called the
+list "did not keep them" over a list FRR holds whole.
+
+**What it costs.** The route-map read is one `show route-map json` (about
+25 ms in the lab, beside a commit of about 1.4 s), asked only when a
+route-map clause, compiled or typed, changed. The list read is the
+configuration read the commit was already making.
 
 ### The refusal says whether this VTY had ever read the statement
 

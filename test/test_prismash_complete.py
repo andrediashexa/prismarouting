@@ -5083,6 +5083,12 @@ class _FrrHolding:
     def outstanding(self, _out):
         return []
 
+    def show(self, _cmd):
+        # An FRR that does not answer `show route-map json`: the read-back of
+        # what the daemons run (#539, #544) then says nothing, and the drop
+        # check under test is the only one that can.
+        return 1, ""
+
 
 def _commit(candidate, frr_running):
     """Commit `candidate` against an FRR that came back holding `frr_running`.
