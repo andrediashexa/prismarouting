@@ -20,6 +20,12 @@
 //   * a field that stops being filled is marked `reserved`, never deleted
 //     and re-numbered;
 //   * an rpc or an enum value is only ever added;
+//   * services are grouped by subject: a new rpc goes into the service its
+//     subject belongs to, and a new service only comes with a new subject
+//     (RouteService, SessionService, #533). A client generated with stubs
+//     that answer UNIMPLEMENTED by default (tonic's
+//     generate_default_stubs) keeps building when an rpc is added to a
+//     service it implements;
 //   * anything else - a removed field, a changed meaning, a renamed rpc - is
 //     a breaking change and goes into package prisma.v2, served beside v1.
 // A client built against an older prisma.v1 keeps working against a newer
@@ -320,6 +326,44 @@ message SystemInfo {
   // True when the dataplane started more than five minutes after the box:
   // it restarted on its own since the boot.
   bool dataplane_restarted = 16;
+  // The host's RAM as numbers (#533), from the kernel's meminfo: what it
+  // has, and what is not available to a new allocation - MemTotal less
+  // MemAvailable, so the hugepages the dataplane reserved count as used.
+  uint64 memory_total_bytes = 17;
+  uint64 memory_used_bytes = 18;
+  // Of the used, the 1G hugepages reserved for the dataplane.
+  uint64 memory_hugepages_bytes = 19;
+  // How loaded each dataplane worker is (#533). A polling worker's CPU is
+  // always 100%; these are what the dataplane itself counts.
+  repeated WorkerLoad worker_load = 20;
+}
+
+// One dataplane worker's load, from the dataplane's statistics segment.
+message WorkerLoad {
+  // The worker's number: 0 is the dataplane's vpp_wk_0.
+  uint32 worker = 1;
+  // The CPU it runs on, from `show system cpu`'s this-boot layout; with no
+  // layout read, the worker's number.
+  uint32 cpu = 2;
+  // Packets per call of a graph node over the dataplane's last interval
+  // (VPP's /sys/vector_rate_per_worker, whole vectors): near 0 idle, up to
+  // 256 when every call takes a full frame.
+  double vectors_per_call = 3;
+  // The share of the worker's node time its graph took, 0 to 1, over the
+  // window below: the clocks of the nodes that run only with packets, over
+  // every node's - the input nodes' polling included - from `show
+  // runtime`. Not the receive inside the input node, which shares its
+  // clocks with the polling, so a worker that cannot keep up reads below 1:
+  // 0.49 for the lab's worker saturated by a packet generator. A worker running under 1,000 loops
+  // a second is waiting for interrupts, not polling: 0, and
+  // vectors_per_call 0 with it.
+  double busy_ratio = 4;
+  // The main loop's rate (VPP's /sys/loops_per_worker); the dataplane
+  // updates it, and vectors_per_call, every 10 s.
+  double loops_per_second = 5;
+  // The window busy_ratio was measured over, in milliseconds: since the
+  // server's previous reading, at least a second and at most a minute.
+  uint32 busy_window_ms = 6;
 }
 
 message ListInterfacesRequest {
@@ -349,6 +393,9 @@ message Interface {
   string linux_name = 7;
   string description = 8;
   InterfaceCounters counters = 9;
+  // The link's speed as the dataplane reports it (#533), for utilisation in
+  // percent; 0 when it reports none (a link that is down, a virtual one).
+  uint64 speed_bps = 10;
 }
 
 message ListInterfacesResponse {
@@ -617,6 +664,11 @@ message ShowResponse {
 service TelemetryService {
   // A stream of updates until the client cancels it.
   rpc Subscribe(SubscribeRequest) returns (stream TelemetryUpdate);
+  // The counters the server sampled (#533), oldest first, one sample a
+  // minute for the last 24 hours: so a client that restarts does not start
+  // its graphs from zero. Streamed, one message a sample, because a day of
+  // every interface is more than one message should carry.
+  rpc GetHistory(GetHistoryRequest) returns (stream HistorySample);
 }
 
 message SubscribeRequest {
@@ -649,6 +701,14 @@ message Event {
   string kind = 1;
   string account = 2;
   string text = 3;
+  // The running revision the event left (#533): for a commit, the same id
+  // its CommitResponse.revision and GetRunning's revision carry, so a
+  // client tells its own commits from somebody else's. Empty when the box
+  // did not record one (a release before 0.149.2 wrote none).
+  string revision = 4;
+  // The commit's comment, or the reason the box recorded ("loaded from
+  // file"); empty for none.
+  string comment = 5;
 }
 
 message TelemetryUpdate {
@@ -663,4 +723,145 @@ message TelemetryUpdate {
 
 message InterfaceBatch {
   repeated InterfaceSample samples = 1;
+}
+
+message GetHistoryRequest {
+  // Only these interfaces; empty is every interface the server recorded.
+  repeated string interfaces = 1;
+  // Only samples taken after this; unset is everything held.
+  google.protobuf.Timestamp since = 2;
+  bool interface_counters = 3;
+  bool cgnat_totals = 4;
+  bool workers = 5;
+  bool memory = 6;
+}
+
+// One minute's sample. Counters are the dataplane's running totals, as
+// Subscribe sends them: a client takes differences, and a total smaller
+// than the one before is a dataplane that restarted.
+message HistorySample {
+  google.protobuf.Timestamp at = 1;
+  repeated InterfaceSample interfaces = 2;
+  CgnatTotals cgnat = 3;
+  repeated WorkerLoad workers = 4;
+  uint64 memory_used_bytes = 5;
+}
+
+// ---------------------------------------------------------------- routes
+
+// The routing table, typed (#533): FRR's RIB, every VRF and both families,
+// read the way `show ip route` reads it.
+service RouteService {
+  // The routes, a page at a time. The first call (no page_token) takes a
+  // snapshot of the table and answers its first page as soon as it is
+  // read, while the rest is still being read; each next_page_token
+  // continues the same snapshot, so a table that changes while it is paged
+  // is not paged twice or with holes. A snapshot nobody pages for 10
+  // minutes is dropped, and its token answers FAILED_PRECONDITION.
+  rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse);
+  // How many routes each VRF holds, by family and protocol, in the RIB and
+  // in the FIB: zebra's own count, cheap on a full table.
+  rpc GetRouteSummary(GetRouteSummaryRequest) returns (GetRouteSummaryResponse);
+}
+
+message ListRoutesRequest {
+  // One VRF ("default", "red"); empty is every VRF.
+  string vrf = 1;
+  // 4 or 6; 0 is both.
+  uint32 family = 2;
+  // Only this prefix and the ones inside it ("10.0.0.0/8").
+  string prefix = 3;
+  // Only routes of this protocol, FRR's word: "bgp", "ospf", "ospf6",
+  // "isis", "static", "connected", "local", "kernel", ...
+  string protocol = 4;
+  // Only the routes FRR selected.
+  bool selected_only = 5;
+  // Routes per page: default 1000, at most 5000.
+  uint32 page_size = 6;
+  // next_page_token from the call before; empty starts a snapshot. The
+  // filters above are the snapshot's, and a token ignores them.
+  string page_token = 7;
+}
+
+message RouteNextHop {
+  // The gateway; empty for a route straight onto an interface.
+  string address = 1;
+  string interface = 2;
+  // FRR uses it, and installed it in the FIB.
+  bool active = 3;
+  bool fib = 4;
+  uint32 weight = 5;
+  bool directly_connected = 6;
+  // The VRF the next hop is in, when it is not the route's (a leaked route).
+  string vrf = 7;
+  // "blackhole", "reject" or "" for a forwarding next hop.
+  string blackhole = 8;
+}
+
+message Route {
+  string vrf = 1;
+  string prefix = 2;
+  // 4 or 6.
+  uint32 family = 3;
+  string protocol = 4;
+  uint32 distance = 5;
+  uint32 metric = 6;
+  // FRR's choice among the routes to this prefix.
+  bool selected = 7;
+  // In the FIB.
+  bool installed = 8;
+  repeated RouteNextHop next_hops = 9;
+  // The kernel table the VRF installs into.
+  uint32 table = 10;
+  // How long FRR has held it, as FRR's uptime says it.
+  uint64 age_seconds = 11;
+}
+
+message ListRoutesResponse {
+  repeated Route routes = 1;
+  // Empty when this page is the snapshot's last.
+  string next_page_token = 2;
+  // The routes the whole snapshot matched, once it has all been read;
+  // until then 0, and total_known false.
+  uint64 total = 3;
+  bool total_known = 4;
+  // When the snapshot was taken.
+  google.protobuf.Timestamp snapshot_at = 5;
+}
+
+message GetRouteSummaryRequest {
+  // One VRF; empty is every VRF.
+  string vrf = 1;
+}
+
+message RouteCount {
+  string vrf = 1;
+  uint32 family = 2;
+  string protocol = 3;
+  uint64 rib = 4;
+  uint64 fib = 5;
+}
+
+message GetRouteSummaryResponse {
+  repeated RouteCount counts = 1;
+}
+
+// --------------------------------------------------------------- session
+
+// What a client is to the box (#533).
+service SessionService {
+  // The account this call acts as - its client certificate's Common Name -
+  // and the role the VTY login gives it, without opening a candidate.
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
+}
+
+message WhoAmIRequest {}
+
+message WhoAmIResponse {
+  string account = 1;
+  // "administrator", "cgnat-operator" or "read-only", the VTY's words.
+  string role = 2;
+  // What the role may change: the whole configuration, or the CGNAT half.
+  bool can_configure = 3;
+  bool can_configure_cgnat = 4;
 }

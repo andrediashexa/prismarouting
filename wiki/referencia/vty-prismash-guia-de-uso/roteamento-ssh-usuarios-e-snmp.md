@@ -732,6 +732,17 @@ Para desligar, `no api enabled` e `commit`.
 
 O que a API oferece, em resumo: abrir uma cópia da configuração (o candidato), editar com as linhas da VTY, comparar, validar, aplicar (inclusive com confirmação), confirmar, voltar uma revisão e salvar; ler interfaces, pools, assinantes, BGP, OSPF, IS-IS, VRRP e bundles; rodar qualquer `show`; e receber ao vivo os contadores das interfaces e os totais do CGNAT. Se alguém mudar a configuração enquanto o seu candidato está aberto, o commit dele é recusado mostrando a diferença, em vez de passar por cima.
 
+Desde a 0.149.2 ela também:
+
+
+* **lista a tabela de rotas** já separada em campos (VRF, prefixo, próximos saltos, protocolo, distância, métrica, se foi a escolhida), em páginas, com filtro por VRF, família, prefixo e protocolo — pensada para a tabela cheia: a primeira página chega enquanto o resto ainda está sendo lido, e a lista inteira é uma fotografia só, sem rota repetida nem faltando mesmo que a tabela mude no meio. E dá a contagem por VRF e protocolo;
+* diz a **memória** da caixa em números e a **carga de cada worker** do plano de dados — pacotes por chamada e a fração do tempo gasta com pacotes, porque o CPU de um worker que faz polling fica sempre em 100%;
+* diz a **velocidade do link** de cada interface, para calcular a utilização em %;
+* guarda **24 horas de histórico** dos contadores, uma amostra por minuto, que sobrevive a um reinício da API (um upgrade, por exemplo): o gráfico da interface web não recomeça do zero;
+* põe a **revisão** e o **comentário** no aviso de cada commit, para o cliente saber quais commits foram dele;
+* responde ao **health check** padrão do gRPC, com o mesmo certificado de cliente;
+* diz a quem chama **qual conta ele é e o papel dela** (administrador, operador de CGNAT ou só leitura), sem abrir um candidato.
+
 # Ver também
 
 * [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — o que cada grupo pode mudar

@@ -17,6 +17,9 @@ mkdir -p "$OUT"
 protoc -I "$REPO/api" -I /usr/include \
   --python_out="$OUT" --grpc_out="$OUT" \
   --plugin=protoc-gen-grpc="$PLUGIN" \
-  "$REPO"/api/prisma/v1/*.proto
-# The generated modules import each other as `prisma.v1.<x>_pb2`.
-touch "$OUT/prisma/__init__.py" "$OUT/prisma/v1/__init__.py"
+  "$REPO"/api/prisma/v1/*.proto "$REPO"/api/health/v1/*.proto
+# The generated modules import each other as `prisma.v1.<x>_pb2`; the health
+# protocol's are `health.v1.health_pb2` - its package is grpc.health.v1 on
+# the wire, and a module path of grpc/ would shadow the gRPC library (#533).
+touch "$OUT/prisma/__init__.py" "$OUT/prisma/v1/__init__.py" \
+  "$OUT/health/__init__.py" "$OUT/health/v1/__init__.py"

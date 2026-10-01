@@ -4,6 +4,7 @@ lab/api-grpc.sh's client (#532): drives prisma.v1 over mutual TLS the way the
 web interface's backend will, and prints one RESULT line per check for the
 lab to assert. Arguments: <stubs dir> <certs dir> <host:port>.
 """
+import os
 import sys
 import threading
 import time
@@ -254,3 +255,226 @@ try:
     result("no-client-cert", False, "a call without a client certificate was answered")
 except grpc.RpcError as e:
     result("no-client-cert", e.code() == grpc.StatusCode.UNAVAILABLE, e.code().name)
+
+# ------------------------------------------------------------------ #533
+# The web interface's additions, each against what the box itself says.
+ROUTES_N = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+sess = rpc.SessionServiceStub(root)
+w = sess.WhoAmI(pb.WhoAmIRequest())
+wn = rpc.SessionServiceStub(nv).WhoAmI(pb.WhoAmIRequest())
+result("whoami", w.account == "root" and w.role == "administrator" and w.can_configure
+       and wn.account == "netview" and wn.role == "read-only" and not wn.can_configure
+       and not wn.can_configure_cgnat,
+       f"root {w.role} {w.can_configure}, netview {wn.role} {wn.can_configure}")
+
+# The host's RAM, as the kernel this container shares says it.
+mi = {l.split(":")[0]: int(l.split()[1]) * 1024 for l in open("/proc/meminfo")
+      if l.split()[1:2] and l.split()[1].isdigit()}
+sy = ops.GetSystem(pb.GetSystemRequest())
+result("memory", sy.memory_total_bytes == mi["MemTotal"]
+       and 0 < sy.memory_used_bytes < sy.memory_total_bytes,
+       f"total {sy.memory_total_bytes} (meminfo {mi['MemTotal']}), used {sy.memory_used_bytes}")
+
+# Link speed: the dataplane's own figure, in bits. Neither a pg interface nor
+# an af_packet one reports any here ("Link speed: unknown"), so this holds
+# the API to the dataplane's 0; a 10G card's 10 Gbps is the unit test's.
+hw = subprocess.run(["vppctl", "show", "hardware-interfaces", "pg0"],
+                    capture_output=True, text=True).stdout
+ifs = ops.ListInterfaces(pb.ListInterfacesRequest(names=["pg0"]))
+_spd = ifs.interfaces[0].speed_bps if ifs.interfaces else -1
+result("speed", ("unknown" in hw and _spd == 0) or (_spd > 0 and str(_spd // 10**9) in hw),
+       f"pg0 speed_bps {_spd}, the dataplane: {' '.join(l.strip() for l in hw.splitlines() if 'speed' in l)}")
+
+# A commit's event names the revision its CommitResponse did, and its comment.
+evs = []
+
+
+def events():
+    try:
+        for u in tel.Subscribe(pb.SubscribeRequest(interval_ms=500, events=True), timeout=8):
+            if u.WhichOneof("update") == "event":
+                evs.append(u.event)
+    except grpc.RpcError as e:
+        if e.code() != grpc.StatusCode.DEADLINE_EXCEEDED:
+            raise
+
+
+et = threading.Thread(target=events)
+et.start()
+time.sleep(1.5)
+ec = cfg.OpenCandidate(pb.OpenCandidateRequest())
+cfg.Edit(pb.EditRequest(candidate_id=ec.candidate_id, path=["interface pg0"],
+                        lines=["description event-check"]))
+cr = cfg.Commit(pb.CommitRequest(candidate_id=ec.candidate_id, comment="event check"))
+cfg.CloseCandidate(pb.CandidateRef(candidate_id=ec.candidate_id))
+et.join(10)
+mine = [e for e in evs if e.kind == "commit"]
+result("event-revision", bool(mine) and mine[-1].revision == cr.revision
+       and mine[-1].comment == "event check" and mine[-1].account == "root",
+       f"commit {cr.revision}; events {[(e.kind, e.account, e.revision, e.comment) for e in evs]}")
+gr = cfg.GetRunning(pb.GetRunningRequest())
+result("event-revision-running", bool(mine) and mine[-1].revision == gr.revision,
+       f"the event's revision is GetRunning's: {gr.revision}")
+
+# grpc.health.v1, the protocol a stock client speaks.
+sys.path.insert(0, sys.argv[1])
+from health.v1 import health_pb2 as hpb, health_pb2_grpc as hrpc  # noqa: E402
+hs = hrpc.HealthStub(root)
+st = {n: hs.Check(hpb.HealthCheckRequest(service=n)).status
+      for n in ("", "prisma.v1.ConfigService", "prisma.v1.TelemetryService",
+                "prisma.v1.RouteService")}
+try:
+    hs.Check(hpb.HealthCheckRequest(service="prisma.v1.Nope"))
+    unknown = "answered"
+except grpc.RpcError as e:
+    unknown = e.code().name
+watch = next(iter(hs.Watch(hpb.HealthCheckRequest(service=""), timeout=5)))
+result("health", all(v == hpb.HealthCheckResponse.SERVING for v in st.values())
+       and unknown == "NOT_FOUND" and watch.status == hpb.HealthCheckResponse.SERVING,
+       f"{ {k or '(server)': v for k, v in st.items()} } unknown {unknown}, watch {watch.status}")
+
+# The workers' load: a worker polling an idle stream, then the same worker
+# taking all the packets it can make. The dataplane updates these every 10 s.
+def vpp(*a):
+    return subprocess.run(["vppctl", *a], capture_output=True, text=True).stdout
+
+
+vpp("packet-generator", "new", "name idle1 limit 0 rate 10 node ip4-input interface pg0 "
+    "size 64-64 worker 1 data { UDP: 100.64.0.6 -> 8.8.8.8 UDP: 4000 -> 53 }")
+vpp("packet-generator", "enable-stream", "idle1")
+time.sleep(12)
+idle_w = ops.GetSystem(pb.GetSystemRequest()).worker_load
+vpp("packet-generator", "new", "name load1 limit 0 node ip4-input interface pg0 "
+    "size 64-64 worker 1 data { UDP: 100.64.0.7 -> 8.8.8.8 UDP: 4000 -> 53 incrementing 8 }")
+vpp("packet-generator", "enable-stream", "load1")
+time.sleep(12)
+load_w = ops.GetSystem(pb.GetSystemRequest()).worker_load
+vpp("packet-generator", "disable", "load1")
+vpp("packet-generator", "disable", "idle1")
+fmt = lambda ws: [(x.worker, x.cpu, round(x.vectors_per_call, 1), round(x.busy_ratio, 2),
+                   int(x.loops_per_second), x.busy_window_ms) for x in ws]
+w1i = next((x for x in idle_w if x.worker == 1), None)
+w1l = next((x for x in load_w if x.worker == 1), None)
+w0l = next((x for x in load_w if x.worker == 0), None)
+result("workers", len(load_w) == 2 and w1i is not None and w1l is not None
+       and w1i.busy_ratio < 0.2 and w1l.busy_ratio > w1i.busy_ratio + 0.2
+       and w1l.vectors_per_call > 0 and w0l.busy_ratio == 0.0 and w1l.busy_window_ms >= 1000,
+       f"idle {fmt(idle_w)} loaded {fmt(load_w)}")
+
+# The history: one sample a second here (PRISMA_API_HISTORY_INTERVAL=1).
+hist = list(tel.GetHistory(pb.GetHistoryRequest(interfaces=["pg0"]), timeout=20))
+pg = [s.interfaces[0].counters.rx_packets for s in hist if s.interfaces]
+result("history", len(hist) >= 20 and len(pg) >= 20 and pg[-1] > pg[0]
+       and all(s.memory_used_bytes > 0 for s in hist[-5:])
+       and any(len(s.workers) == 2 for s in hist[-5:])
+       and all(a.at.seconds <= b.at.seconds for a, b in zip(hist, hist[1:])),
+       f"{len(hist)} samples, pg0 rx {pg[:1]} -> {pg[-1:]}, oldest first")
+since = hist[-3].at if len(hist) >= 3 else None
+tail = list(tel.GetHistory(pb.GetHistoryRequest(since=since, memory=True), timeout=10)) \
+    if since else []
+result("history-since", 1 <= len(tail) <= 4 and not tail[0].interfaces
+       and tail[0].memory_used_bytes > 0,
+       f"{len(tail)} samples after {since.seconds if since else '-'}, only the memory asked")
+
+# The routes: the table this lab loaded, paged whole, filtered, counted.
+rt = rpc.RouteServiceStub(root)
+summ = rt.GetRouteSummary(pb.GetRouteSummaryRequest())
+kernel4 = sum(c.rib for c in summ.counts if c.vrf == "default" and c.family == 4
+              and c.protocol == "kernel")
+result("route-summary", kernel4 >= ROUTES_N and any(c.vrf == "red" for c in summ.counts),
+       f"default IPv4 kernel {kernel4} of the {ROUTES_N} loaded; VRFs "
+       f"{sorted({c.vrf for c in summ.counts})}")
+
+
+def rss_kb():
+    """The resident peak of every process of the server, by pid."""
+    out = {}
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            cmd = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ")
+            if b"apiserver.py" in cmd or b"multiprocessing" in cmd:
+                for l in open(f"/proc/{pid}/status"):
+                    if l.startswith("VmHWM:"):
+                        out[int(pid)] = int(l.split()[1])
+        except OSError:
+            pass
+    return out
+
+
+def rss_of(names, stop, seen):
+    """The highest resident size of processes named `names`, while `stop` is unset."""
+    while not stop.is_set():
+        for pid in os.listdir("/proc"):
+            try:
+                if pid.isdigit() and open(f"/proc/{pid}/comm").read().strip() in names:
+                    for l in open(f"/proc/{pid}/status"):
+                        if l.startswith("VmRSS:"):
+                            k = open(f"/proc/{pid}/comm").read().strip()
+                            seen[k] = max(seen.get(k, 0), int(l.split()[1]))
+            except OSError:
+                pass
+        time.sleep(0.2)
+
+
+frr_rss, frr_stop = {}, threading.Event()
+threading.Thread(target=rss_of, args=(("vtysh", "zebra"), frr_stop, frr_rss),
+                 daemon=True).start()
+t0 = time.time()
+first = rt.ListRoutes(pb.ListRoutesRequest(vrf="default", family=4, protocol="kernel",
+                                           page_size=5000), timeout=120)
+t_first = time.time() - t0
+n, tok, pages, seen = len(first.routes), first.next_page_token, 1, set()
+seen.update(r.prefix for r in first.routes)
+last = first
+while tok:
+    last = rt.ListRoutes(pb.ListRoutesRequest(page_token=tok, page_size=5000), timeout=120)
+    n += len(last.routes)
+    seen.update(r.prefix for r in last.routes)
+    tok, pages = last.next_page_token, pages + 1
+t_all = time.time() - t0
+peak = rss_kb()
+frr_stop.set()
+result("routes-all", n == kernel4 and len(seen) == n and last.total_known and last.total == n,
+       f"{n} kernel routes in {pages} pages, first in {t_first:.2f}s, all in {t_all:.1f}s "
+       f"({n / max(t_all, 0.001):.0f}/s); total {last.total}")
+result("routes-first-page", t_first < 5.0,
+       f"the first page in {t_first:.2f}s, while the rest of {n} was still being read")
+result("routes-memory", peak and max(peak.values()) < 200 * 1024,
+       f"the server's processes' resident peak, kB: {sorted(peak.values())}; "
+       f"FRR's while it answered, kB: {frr_rss}")
+r0 = next((r for r in first.routes if r.prefix.startswith("10.")), None)
+result("route-fields", r0 is not None and r0.family == 4 and r0.vrf == "default"
+       and r0.protocol == "kernel" and r0.selected and r0.installed
+       and r0.next_hops and r0.next_hops[0].address == "192.0.2.2"
+       and r0.next_hops[0].interface == "d0" and r0.table == 254,
+       f"{r0.prefix if r0 else '-'} {r0.protocol if r0 else ''} "
+       f"via {[(h.address, h.interface) for h in r0.next_hops] if r0 else ''}")
+sub = rt.ListRoutes(pb.ListRoutesRequest(prefix="10.1.0.0/16", protocol="kernel",
+                                         page_size=1000), timeout=60)
+result("routes-filter", len(sub.routes) == 256 and not sub.next_page_token
+       and all(r.prefix.startswith("10.1.") for r in sub.routes),
+       f"{len(sub.routes)} routes inside 10.1.0.0/16")
+red = rt.ListRoutes(pb.ListRoutesRequest(vrf="red"), timeout=60)
+result("routes-vrf", any(r.prefix == "172.16.0.0/16" and r.vrf == "red" for r in red.routes)
+       and all(r.vrf == "red" for r in red.routes),
+       f"{[(r.vrf, r.prefix, r.protocol) for r in red.routes]}")
+try:
+    rt.ListRoutes(pb.ListRoutesRequest(page_token="0123456789ab:5:100"))
+    gone = "answered"
+except grpc.RpcError as e:
+    gone = e.code().name
+try:
+    rt.ListRoutes(pb.ListRoutesRequest(protocol="bgp json"))
+    bad = "answered"
+except grpc.RpcError as e:
+    bad = e.code().name
+try:
+    rt.ListRoutes(pb.ListRoutesRequest(vrf="blue"))
+    novrf = "answered"
+except grpc.RpcError as e:
+    novrf = e.code().name
+result("routes-refused", gone == "FAILED_PRECONDITION" and bad == "INVALID_ARGUMENT"
+       and novrf == "NOT_FOUND",
+       f"an unknown token {gone}, a protocol FRR has not {bad}, a VRF it has not {novrf}")

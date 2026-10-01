@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 29
+# OFF-RED-AT-LEAST: 48
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -13,7 +13,11 @@
 # the routing policy's (#538): its list, its counters and a route tested
 # through it - a Show, a telemetry stream whose pg0 counters move with
 # traffic, an account without the role and a client with no certificate are
-# each asserted.
+# each asserted. And the web interface's additions (#533): a RIB of
+# LAB_ROUTES routes (200,000) and a VRF paged, filtered and counted, the
+# memory against meminfo, a worker busy under a packet generator and idle
+# without one, a commit's event against its CommitResponse, the history read
+# back by a second server, WhoAmI and the health service.
 #
 # MODE=off starts the same server trusting a CA that signed none of the
 # clients: every call is refused at the handshake, and every check that reads
@@ -32,7 +36,9 @@ use_binary_api
 export PRISMA_ROLLBACK=/tmp/rollback PRISMA_CONFIG=/tmp/prisma-routing.conf
 rm -rf /tmp/rollback
 
-vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
+# Two workers, so GetSystem has a worker load to say (#533).
+SC=$(startup_conf test workers)
+vpp -c "$SC" > /tmp/vpp.log 2>&1 &
 wait_vpp
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl set interface state pg0 up
@@ -59,6 +65,47 @@ $HX -c configure -c policy-options -c "prefix-list C" -c "203.0.113.0/24" \
     -c "router bgp 65000" -c "neighbor 192.0.2.9 remote-as 65009" \
     -c "address-family ipv4 unicast" -c "neighbor 192.0.2.9 import UP" \
     -c "exit-address-family" -c exit -c commit 2>&1 | tail -1 | sed 's/^/  /'
+# A FULL-TABLE-SIZED RIB (#533): ListRoutes is built for a million routes,
+# and is measured here on LAB_ROUTES of them - kernel routes through a dummy
+# interface, which zebra takes into its RIB as it would any - and on a VRF
+# beside the default one.
+LAB_ROUTES=${LAB_ROUTES:-200000}
+ip link add d0 type dummy 2>/dev/null; ip link set d0 up
+ip addr add 192.0.2.1/24 dev d0 2>/dev/null
+# The VRF through the VTY (#540), not by hand: the rollback below commits a
+# revision, and a commit removes a VRF device its configuration does not
+# have - the first run of this lab lost a hand-made `red` that way.
+$HX -c configure -c "vrf red table 10" -c commit 2>&1 | tail -1 | sed 's/^/  /'
+ip link add d1 type dummy 2>/dev/null; ip link set d1 master red; ip link set d1 up
+ip addr add 198.51.100.1/24 dev d1 2>/dev/null
+ip route add 172.16.0.0/16 via 198.51.100.2 vrf red
+vtysh -c "show vrf" | sed 's/^/  zebra: /'
+# In batches of 20,000, each waited for: zebra reads the kernel's routes off
+# a netlink socket, and the third run of this lab, whose 200,000 arrived in
+# one batch right after a commit, still had 36,000 of them missing from
+# zebra's RIB five minutes later, where the two runs before had all of them
+# in 6 s.
+python3 -c "
+import sys
+n = int(sys.argv[1])
+for k in range(0, n, 20000):
+    with open(f'/tmp/routes.{k // 20000:03d}.batch', 'w') as f:
+        for i in range(k, min(n, k + 20000)):
+            f.write(f'route add {10 + i // 65536}.{(i // 256) % 256}.{i % 256}.0/24 via 192.0.2.2 dev d0\\n')
+" "$LAB_ROUTES"
+zebra_kernel() {
+  vtysh -c 'show ip route vrf default summary json' 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(sum(r.get("rib", 0) for r in d.get("routes", []) if r.get("type") == "kernel"))' 2>/dev/null || echo 0
+}
+T0=$(date +%s); LOADED=0
+for b in /tmp/routes.*.batch; do
+  ip -batch "$b"
+  LOADED=$((LOADED + $(wc -l < "$b")))
+  n=0; until [ "$(zebra_kernel)" -ge "$LOADED" ] || [ $n -ge 60 ]; do sleep 1; n=$((n+1)); done
+done
+echo "  $(zebra_kernel) of $LAB_ROUTES kernel routes in zebra's RIB after $(( $(date +%s) - T0 ))s"
 # The account without a role: no prisma-admin, no prisma-cgnat.
 id netview >/dev/null 2>&1 || useradd -M -s /usr/sbin/nologin netview
 chmod 0755 /tmp/rollback 2>/dev/null; chmod 0644 /tmp/rollback/* 2>/dev/null
@@ -98,6 +145,11 @@ echo "  $GEN"
 echo "=========== the server ==========="
 # Its stdin held open by a sleep, as prisma-routing-api.service holds it: the
 # end of this lab ends the sleep and the server has to stop by itself.
+# The history sampled once a second rather than a minute, into a file the
+# second server below reads back (#533).
+export PRISMA_API_HISTORY=/tmp/api-history.json PRISMA_API_HISTORY_INTERVAL=1
+export PRISMA_STARTUP_CONF=$SC
+rm -f $PRISMA_API_HISTORY
 sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50551 --dir $C/box \
   --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver.log 2>&1 &
 n=0; until grep -q "prisma.v1 on" /tmp/apiserver.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
@@ -110,7 +162,7 @@ PGNEW=$(vppctl packet-generator new "name t limit 2000 node ip4-input interface 
 [ -z "$PGNEW" ] || echo "  pg: $PGNEW"
 
 echo "=========== the client ==========="
-OUT=$(python3 lab/api_grpc_check.py /tmp/apistubs $C 127.0.0.1:50551 2>&1)
+OUT=$(python3 lab/api_grpc_check.py /tmp/apistubs $C 127.0.0.1:50551 "$LAB_ROUTES" 2>&1)
 printf '%s\n' "$OUT" | sed 's/^/  /'
 echo "=========== the VTY's own statement ==========="
 APINO=$($HX -c configure -c "api enabled yes" -c "commit check" 2>&1)
@@ -132,6 +184,32 @@ pkill -f "^sleep 900$"
 n=0; while pgrep -f "apiserver.py --listen 127.0.0.1:50551" >/dev/null && [ $n -lt 30 ]; do sleep 0.5; n=$((n+1)); done
 STOPPED=$(pgrep -f "apiserver.py --listen 127.0.0.1:50551" >/dev/null && echo running || echo stopped)
 echo "  after its stdin closed: $STOPPED"
+# THE HISTORY OUTLIVES THE SERVER (#533): the one that stopped wrote it, and
+# a new one - an upgrade restarts the server - reads it back, so a client's
+# graphs go on. Asked of the new server for samples older than it.
+HSAVED=$(python3 -c "import json; print(len(json.load(open('$PRISMA_API_HISTORY'))['times']))" 2>&1)
+H2START=$(date +%s)
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50552 --dir $C/box \
+  --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver3.log 2>&1 &
+n=0; until grep -q "prisma.v1 on" /tmp/apiserver3.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
+HAFTER=$(python3 - /tmp/apistubs $C 127.0.0.1:50552 "$H2START" <<'PY' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+import grpc
+from prisma.v1 import prisma_pb2 as pb, prisma_pb2_grpc as rpc
+c = sys.argv[2]
+creds = grpc.ssl_channel_credentials(open(f"{c}/ca.crt", "rb").read(),
+                                     open(f"{c}/root.key", "rb").read(),
+                                     open(f"{c}/root.crt", "rb").read())
+ch = grpc.secure_channel(sys.argv[3], creds,
+                         options=(("grpc.ssl_target_name_override", "prisma-api"),))
+h = list(rpc.TelemetryServiceStub(ch).GetHistory(pb.GetHistoryRequest(), timeout=10))
+older = [s for s in h if s.at.seconds < int(sys.argv[4])]
+print(f"{len(h)} samples, {len(older)} from before this server started")
+PY
+)
+echo "  a new server on the history file: $HAFTER ($HSAVED saved)"
+pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
 res() { printf '%s\n' "$OUT" | grep -q "^RESULT $1 ok"; }
@@ -167,6 +245,26 @@ expect "the telemetry stream's pg0 counters move with the traffic" res telemetry
 expect "an account without the role is refused a candidate, PERMISSION_DENIED" res unprivileged-refused
 expect "and still reads the running configuration" res unprivileged-reads
 expect "a client with no certificate is refused at the handshake" res no-client-cert
+expect "WhoAmI: the certificate's account and the VTY's role for it (#533)" res whoami
+expect "GetSystem's memory is the kernel's, in bytes" res memory
+expect "speed_bps is the dataplane's link speed, in bits" res speed
+expect "a commit's Event carries its CommitResponse's revision and its comment" res event-revision
+expect "  and that revision is GetRunning's" res event-revision-running
+expect "grpc.health.v1 answers SERVING, and NOT_FOUND for no such service" res health
+expect "a worker taking packets reads busy, with vectors per call; one waiting reads idle" res workers
+expect "GetHistory streams the samples, oldest first, pg0's counters moving" res history
+expect "  since a time, and only what was asked" res history-since
+expect "GetRouteSummary counts the table this lab loaded, the VRF beside it too" res route-summary
+expect "ListRoutes pages the whole table once, the total known at the end" res routes-all
+expect "  its first page comes while the rest is still being read" res routes-first-page
+expect "  and no process of the server holds the table" res routes-memory
+expect "a route's fields: family, VRF, protocol, selected, its next hop, its table" res route-fields
+expect "ListRoutes filters by prefix and protocol" res routes-filter
+expect "  and by VRF" res routes-vrf
+expect "  and refuses an unknown token, protocol or VRF, each with its status" res routes-refused
+expect_in "the history outlives the server: a new one reads it back" \
+  "from before this server started" "$HAFTER"
+expect "  with samples in it" test "$(printf '%s' "$HAFTER" | sed -n 's/.*samples, \([0-9]*\) from before.*/\1/p')" -gt 10 2>/dev/null
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
 expect "a second server on the same port is refused at the bind ($SECOND)" \
   test "$SECOND" = 1

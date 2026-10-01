@@ -29,15 +29,20 @@ imports no gRPC and is what test/test_apiserver.py drives; the servicers at
 the end convert it to and from prisma.v1's messages and are driven by
 lab/api-grpc.sh.
 """
+import array
+import codecs
 import contextlib
 import difflib
 import hashlib
 import io
+import ipaddress
 import json
 import multiprocessing
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -61,6 +66,46 @@ WORKER_IDLE = 300
 SHOW_WORDS = ("show", "ping", "traceroute", "mtr")
 #: The VTY's sentence for an account without the role (Shell.require).
 DENIED = "permission denied for a"
+#: The routes process is kept this long between uses (#533): as long as a
+#: snapshot is, so a client paging slowly keeps its snapshot.
+ROUTE_IDLE = 600
+#: Routes per ListRoutes page when the call names none, and the most it may.
+ROUTE_PAGE = 1000
+ROUTE_PAGE_MAX = 5000
+#: How long a page waits for the snapshot to reach it before answering what
+#: it has, with a token at the point it reached.
+ROUTE_PAGE_WAIT = 60
+#: Snapshots a routes process holds at once; a new one drops the oldest.
+ROUTE_SNAPSHOTS = 4
+#: FRR's protocol words ListRoutes takes, and passes to vtysh only from here.
+ROUTE_PROTOCOLS = ("kernel", "connected", "local", "static", "rip", "ripng",
+                   "ospf", "ospf6", "isis", "bgp", "pim", "eigrp", "nhrp",
+                   "table", "babel", "sharp", "openfabric")
+#: The counter history (#533): one sample a minute, a day of them, and the
+#: interfaces it records at most - 7 counters x 8 bytes x 1440 samples is
+#: 80 KB an interface, so the cap holds the worst case near 20 MB.
+HISTORY_INTERVAL = int(os.environ.get("PRISMA_API_HISTORY_INTERVAL", "60") or 60)
+HISTORY_SAMPLES = int(os.environ.get("PRISMA_API_HISTORY_SAMPLES", "1440") or 1440)
+HISTORY_INTERFACES = 256
+#: Where the history is kept across a restart of the server: the host's
+#: /run, which the container shares - an upgrade restarts the server and
+#: recreates the container, and keeps this; a reboot empties it, and the
+#: dataplane's counters start again from zero then anyway.
+HISTORY_PATH = os.environ.get("PRISMA_API_HISTORY",
+                              "/run/prisma-routing/api/history.json")
+#: Written every this many samples, and when the server stops.
+HISTORY_SAVE_EVERY = 5
+#: A value a series did not have at a sample: an interface that did not
+#: exist yet, a reading that failed.
+MISSING = 2 ** 64 - 1
+#: A worker running fewer main loops a second than this is not polling: it
+#: waits for an interrupt between packets. Measured in lab/api-grpc.sh's
+#: dataplane: a worker polling nothing ran 98 loops a second, one polling an
+#: idle input 750 thousand, the same one saturated by a packet generator 70
+#: thousand. Between the two the line is wide.
+SLEEPING_LOOPS = 1000
+#: The shortest window a busy ratio is measured over.
+BUSY_WINDOW = 1.0
 
 DIAG = re.compile(r"^(error|warning|note): ?(.*)$")
 
@@ -263,6 +308,8 @@ def interfaces_of(sh, names=()):
             "linux_name": linux.get(name, ""),
             "description": getattr(cfg, "descriptions", {}).get(name, ""),
             "sw_if_index": d.get("sw_if_index", 0),
+            # sw_interface_details' link_speed is kbps (#533).
+            "speed_bps": int(d.get("link_speed", 0) or 0) * 1000,
         })
     return rows
 
@@ -441,7 +488,402 @@ READERS = {
     "policies": lambda sh, a: sh.policies_data(),
     "policy_counters": lambda sh, a: sh.policy_counters_data(a or ""),
     "test_policy": lambda sh, a: sh.test_policy_data(a or {}),
+    # #533: who the account is to the VTY, and the routing table typed.
+    "whoami": lambda sh, a: whoami(sh),
+    "routes": lambda sh, a: routes_page(sh, a or {}),
+    "route_summary": lambda sh, a: route_summary(sh, a or ""),
 }
+
+
+# ------------------------------------------------------------- who am I (#533)
+
+def whoami(sh):
+    """
+    The account this process is and the role the VTY gives it: the Shell's
+    own capabilities, read off the process's groups when it started - the
+    same answer the VTY login gives, not a second reading of the groups.
+    """
+    import pwd
+    from prismash import CAP_ALL, CAP_CGNAT, role_name
+    caps = set(getattr(sh, "caps", set()) or set())
+    return {"account": pwd.getpwuid(os.geteuid()).pw_name,
+            "role": role_name(caps),
+            "can_configure": CAP_ALL in caps,
+            "can_configure_cgnat": CAP_CGNAT in caps}
+
+
+# --------------------------------------------------------- the routes (#533)
+#
+# FRR's RIB, read from zebra's own JSON a route at a time. A full table is a
+# million routes, and `show ip route json` for it is far more than a process
+# should hold: so the answer is read as it streams (json_object_items), each
+# route written to a snapshot file as one line, and a page is read back from
+# that file by offset. Memory holds one route and one page, whatever the
+# table; the file is unlinked from the start and goes with the process.
+
+def json_object_items(read, chunk=65536):
+    """
+    The (key, value) pairs of the JSON object `read` returns a chunk at a
+    time (bytes or text), with one value in memory at a time. Raises
+    ValueError when what is read is not a JSON object - vtysh answering a
+    refusal, say - with the start of what it said.
+    """
+    dec = json.JSONDecoder()
+    utf8 = codecs.getincrementaldecoder("utf-8")("replace")
+    st = {"buf": "", "pos": 0, "eof": False}
+
+    # not a unit: a closure of json_object_items(), which the tests drive whole.
+    def more():
+        data = read(chunk)
+        if not data:
+            st["eof"] = True
+            st["buf"] = st["buf"][st["pos"]:] + utf8.decode(b"", True)
+            st["pos"] = 0
+            return False
+        if isinstance(data, bytes):
+            data = utf8.decode(data)
+        st["buf"] = st["buf"][st["pos"]:] + data
+        st["pos"] = 0
+        return True
+
+    # not a unit: a closure of json_object_items(), which the tests drive whole.
+    def peek():
+        while True:
+            buf, pos = st["buf"], st["pos"]
+            while pos < len(buf) and buf[pos] in " \t\r\n":
+                pos += 1
+            st["pos"] = pos
+            if pos < len(buf):
+                return buf[pos]
+            if not more():
+                return ""
+
+    # not a unit: a closure of json_object_items(), which the tests drive whole.
+    def value():
+        while True:
+            try:
+                v, end = dec.raw_decode(st["buf"], st["pos"])
+                # A value that ends where the buffer does may be a number cut
+                # by the chunk; read on, and decode it again whole.
+                if end < len(st["buf"]) or st["eof"]:
+                    st["pos"] = end
+                    return v
+            except ValueError:
+                if st["eof"]:
+                    raise ValueError("the JSON ends inside a value")
+            more()
+
+    if peek() != "{":
+        # What it said instead, a line of it: vtysh's refusal, say.
+        while len(st["buf"]) - st["pos"] < 120 and "\n" not in st["buf"][st["pos"]:] \
+                and more():
+            pass
+        said = st["buf"][st["pos"]:].strip().split("\n")[0][:120]
+        raise ValueError(said or "nothing")
+    st["pos"] += 1
+    while True:
+        c = peek()
+        if c == ",":
+            st["pos"] += 1
+            c = peek()
+        if c == "}" or c == "":
+            return
+        key = value()
+        if peek() != ":":
+            raise ValueError(f"no ':' after {key!r}")
+        st["pos"] += 1
+        peek()
+        yield key, value()
+
+
+def frr_age(text):
+    """
+    Seconds in FRR's uptime words: "00:01:02", "1d02h03m", "02w3d04h".
+    0 for a form it does not know.
+    """
+    t = str(text or "").strip()
+    m = re.match(r"^(\d+):(\d+):(\d+)$", t)
+    if m:
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+    unit = {"w": 604800, "d": 86400, "h": 3600, "m": 60, "s": 1}
+    parts = re.findall(r"(\d+)([wdhms])", t)
+    if not parts or "".join(n + u for n, u in parts) != t:
+        return 0
+    return sum(int(n) * unit[u] for n, u in parts)
+
+
+def route_row(vrf, family, entry):
+    """One of FRR's route entries as a ListRoutes row."""
+    hops = []
+    for n in entry.get("nexthops") or []:
+        hole = ("reject" if n.get("reject") else
+                "blackhole" if n.get("blackhole") or n.get("unreachable") else "")
+        nvrf = n.get("vrf", "")
+        hops.append({"address": n.get("ip", ""),
+                     "interface": n.get("interfaceName", ""),
+                     "active": bool(n.get("active")), "fib": bool(n.get("fib")),
+                     "weight": int(n.get("weight", 0) or 0),
+                     "directly_connected": bool(n.get("directlyConnected")),
+                     "vrf": nvrf if nvrf and nvrf != vrf else "",
+                     "blackhole": hole})
+    return {"vrf": entry.get("vrfName") or vrf, "prefix": entry.get("prefix", ""),
+            "family": family, "protocol": entry.get("protocol", ""),
+            "distance": int(entry.get("distance", 0) or 0),
+            "metric": int(entry.get("metric", 0) or 0),
+            "selected": bool(entry.get("selected")),
+            "installed": bool(entry.get("installed")),
+            "next_hops": hops, "table": int(entry.get("table", 0) or 0),
+            "age_seconds": frr_age(entry.get("uptime"))}
+
+
+def route_request(args):
+    """
+    A ListRoutes request checked: (filters, None), or (None, why) for one
+    the box refuses. Nothing in a request reaches vtysh unchecked.
+    """
+    vrf = str(args.get("vrf") or "")
+    if vrf and not re.match(r"^[A-Za-z0-9_.-]{1,32}$", vrf):
+        return None, f"'{vrf}' is not a VRF name"
+    family = int(args.get("family") or 0)
+    if family not in (0, 4, 6):
+        return None, f"family {family} is not 4, 6 or 0 for both"
+    prefix = str(args.get("prefix") or "")
+    net = None
+    if prefix:
+        try:
+            net = ipaddress.ip_network(prefix, strict=False)
+        except ValueError:
+            return None, f"'{prefix}' is not a prefix"
+        if family and family != net.version:
+            return None, f"{prefix} is not an IPv{family} prefix"
+        family = net.version
+    proto = str(args.get("protocol") or "")
+    if proto and proto not in ROUTE_PROTOCOLS:
+        return None, (f"'{proto}' is not a protocol FRR names; one of "
+                      f"{', '.join(ROUTE_PROTOCOLS)}")
+    size = int(args.get("page_size") or ROUTE_PAGE)
+    return {"vrf": vrf, "families": [family] if family else [4, 6],
+            "prefix": str(net) if net else "", "net": net, "protocol": proto,
+            "selected_only": bool(args.get("selected_only")),
+            "page_size": max(1, min(size, ROUTE_PAGE_MAX))}, None
+
+
+def route_command(vrf, family, prefix="", protocol=""):
+    """The vtysh command that lists one VRF's routes of one family."""
+    words = ["show", "ip" if family == 4 else "ipv6", "route", "vrf", vrf]
+    if prefix:
+        words += [prefix, "longer-prefixes"]
+    if protocol:
+        words.append(protocol)
+    return " ".join(words + ["json"])
+
+
+def route_keeps(f, row):
+    """Does a ListRoutes request's filter `f` keep this row?"""
+    if f["selected_only"] and not row["selected"]:
+        return False
+    if f["protocol"] and row["protocol"] != f["protocol"]:
+        return False
+    if f["net"] is not None:
+        try:
+            net = ipaddress.ip_network(row["prefix"], strict=False)
+        except ValueError:
+            return False
+        if net.version != f["net"].version or not net.subnet_of(f["net"]):
+            return False
+    return True
+
+
+def summary_counts(data, family):
+    """RouteCount rows out of `show ip[v6] route vrf all summary json`."""
+    out = []
+    # One VRF answers its summary unwrapped; several answer one per name.
+    vrfs = {"default": data} if "routes" in data else data
+    for vrf, v in sorted((vrfs or {}).items()):
+        for r in (v or {}).get("routes") or []:
+            out.append({"vrf": vrf, "family": family,
+                        "protocol": r.get("type", ""),
+                        "rib": int(r.get("rib", 0) or 0),
+                        "fib": int(r.get("fib", 0) or 0)})
+    return out
+
+
+def route_summary(sh, vrf=""):
+    """GetRouteSummary: zebra's counts, both families, every VRF or one."""
+    out = []
+    for family, word in ((4, "ip"), (6, "ipv6")):
+        out += summary_counts(frr_json(sh, f"show {word} route vrf all summary json"),
+                              family)
+    return [c for c in out if not vrf or c["vrf"] == vrf]
+
+
+def vtysh_stream(command):
+    """vtysh answering `command`, its output read as it comes."""
+    from prismash import VTYSH
+    return subprocess.Popen([VTYSH, "-c", command], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+
+
+class RouteSnapshot:
+    """
+    One reading of the RIB for one ListRoutes request: filled by a thread of
+    its own, as vtysh answers, into an unlinked file of one JSON line a
+    route; paged from the same file by offset while it is still being filled.
+    """
+
+    #: Rows written together, and announced to a page waiting for them.
+    BATCH = 200
+
+    def __init__(self, commands, keep, run=vtysh_stream):
+        self.id = uuid.uuid4().hex[:12]
+        self.at = time.time()
+        self.used = time.monotonic()
+        self.commands, self.keep, self.run = commands, keep, run
+        self.file = tempfile.TemporaryFile()
+        self.rows = 0
+        self.size = 0
+        self.done = False
+        self.error = ""
+        self.stopped = False
+        self.proc = None
+        self.cond = threading.Condition()
+        threading.Thread(target=self._fill, daemon=True).start()
+
+    # not a unit: the snapshot's thread; RouteSnapshot is driven whole by
+    # test_apiserver, which waits on what this fills.
+    def _fill(self):
+        batch, n = [], 0
+        try:
+            for vrf, family, command in self.commands:
+                if self.stopped:
+                    break
+                self.proc = self.run(command)
+                try:
+                    for _, entries in json_object_items(self.proc.stdout.read):
+                        for e in entries if isinstance(entries, list) else []:
+                            row = route_row(vrf, family, e)
+                            if self.keep(row):
+                                batch.append(json.dumps(row, separators=(",", ":")))
+                                n += 1
+                        if len(batch) >= self.BATCH:
+                            self._write(batch)
+                            batch = []
+                        if self.stopped:
+                            break
+                finally:
+                    self.proc.stdout.close()
+                    self.proc.wait()
+        except ValueError as e:
+            self.error = f"FRR did not answer the routes: {e}"
+        except OSError as e:
+            self.error = f"vtysh could not be asked: {e}"
+        self._write(batch, done=True)
+
+    def _write(self, lines, done=False):
+        """Append rows to the file and wake a page waiting for them."""
+        data = "".join(l + "\n" for l in lines).encode()
+        if data:
+            os.pwrite(self.file.fileno(), data, self.size)
+        with self.cond:
+            self.rows += len(lines)
+            self.size += len(data)
+            self.done = self.done or done
+            self.cond.notify_all()
+
+    def page(self, index, offset, count, wait=ROUTE_PAGE_WAIT):
+        """
+        Up to `count` rows from row `index` at byte `offset`, once the
+        snapshot has them or is done, or after `wait` seconds with what it
+        has: (rows, next index, next offset, more to come).
+        """
+        self.used = time.monotonic()
+        with self.cond:
+            self.cond.wait_for(lambda: self.done or self.rows >= index + count, wait)
+            rows_now, size_now, done = self.rows, self.size, self.done
+        out, pos, used, tail = [], offset, offset, b""
+        while len(out) < count and pos < size_now:
+            data = os.pread(self.file.fileno(), min(1 << 20, size_now - pos), pos)
+            if not data:
+                break
+            pos += len(data)
+            lines = (tail + data).split(b"\n")
+            tail = lines.pop()
+            for line in lines:
+                if len(out) == count:
+                    break
+                out.append(json.loads(line))
+                # The next page starts at the byte after the last row given.
+                used += len(line) + 1
+        nxt = index + len(out)
+        return out, nxt, used, (nxt < rows_now) or not done
+
+    def close(self):
+        """Stop reading and drop the file."""
+        self.stopped = True
+        try:
+            if self.proc is not None and self.proc.poll() is None:
+                self.proc.kill()
+        except OSError:
+            pass
+        self.file.close()
+
+
+def route_snapshots(sh):
+    """The snapshots this process holds, expiring the stale ones."""
+    snaps = sh.__dict__.setdefault("_route_snapshots", {})
+    now = time.monotonic()
+    for sid in [k for k, v in snaps.items() if now - v.used > ROUTE_IDLE]:
+        snaps.pop(sid).close()
+    return snaps
+
+
+def routes_page(sh, args):
+    """
+    ListRoutes in the account's routes process: a page of the snapshot the
+    token names, or of a new one. {"rows", "next", "total", "total_known",
+    "at"}, or {"error", "code"} - code "invalid", "not_found" or "expired".
+    """
+    snaps = route_snapshots(sh)
+    token = str(args.get("page_token") or "")
+    if token:
+        m = re.match(r"^([0-9a-f]{12}):(\d+):(\d+)$", token)
+        snap = snaps.get(m.group(1)) if m else None
+        if snap is None:
+            return {"error": "the page token names no snapshot this box still "
+                    "holds; start again without one", "code": "expired"}
+        size = int(args.get("page_size") or ROUTE_PAGE)
+        index, offset = int(m.group(2)), int(m.group(3))
+    else:
+        f, why = route_request(args)
+        if f is None:
+            return {"error": why, "code": "invalid"}
+        known = {c["vrf"] for c in route_summary(sh)}
+        if f["vrf"] and known and f["vrf"] not in known:
+            return {"error": f"no VRF {f['vrf']}", "code": "not_found"}
+        vrfs = [f["vrf"]] if f["vrf"] else sorted(known, key=lambda v: (v != "default", v)) \
+            or ["default"]
+        commands = [(v, fam, route_command(v, fam, f["prefix"], f["protocol"]))
+                    for v in vrfs for fam in f["families"]]
+        snap = RouteSnapshot(commands, lambda r, f=f: route_keeps(f, r),
+                             run=getattr(sh, "vtysh_stream", vtysh_stream))
+        while len(snaps) >= ROUTE_SNAPSHOTS:
+            oldest = min(snaps.values(), key=lambda v: v.used)
+            snaps.pop(oldest.id).close()
+        snaps[snap.id] = snap
+        size, index, offset = f["page_size"], 0, 0
+    size = max(1, min(size, ROUTE_PAGE_MAX))
+    rows, ni, no, more = snap.page(index, offset, size,
+                                   wait=getattr(sh, "route_page_wait", ROUTE_PAGE_WAIT))
+    if snap.error:
+        if not rows and not more:
+            return {"error": snap.error, "code": "unavailable"}
+        # Rows read before FRR stopped answering: handed out, and the call
+        # after them says why there are no more - never a short table
+        # passed off as the whole one.
+        more = True
+    return {"rows": rows, "next": f"{snap.id}:{ni}:{no}" if more else "",
+            "total": snap.rows if snap.done else 0, "total_known": snap.done,
+            "at": snap.at}
 
 
 def handle(sh, op, args):
@@ -592,10 +1034,12 @@ class Sessions:
     one process per account for operational calls.
     """
 
-    def __init__(self, worker=Worker, idle=CANDIDATE_IDLE, ops_idle=WORKER_IDLE):
+    def __init__(self, worker=Worker, idle=CANDIDATE_IDLE, ops_idle=WORKER_IDLE,
+                 route_idle=ROUTE_IDLE):
         self.worker = worker
         self.idle = idle
         self.ops_idle = ops_idle
+        self.route_idle = route_idle
         self.candidates = {}   # id -> {"account", "worker", "base"}
         self.ops = {}          # account -> Worker
         # The console's own process per account (Show): a ping or a traceroute
@@ -603,6 +1047,10 @@ class Sessions:
         # one it held every GetVersion behind it - measured from the code for
         # prisma-web, whose status monitor polls every 5 s with a 4 s limit.
         self.consoles = {}     # account -> Worker
+        # The routes' own process per account (#533): a snapshot of a full
+        # table is read by a thread in it for a minute, and the operational
+        # process answering GetVersion must not share its interpreter.
+        self.routes = {}       # account -> Worker
         self.lock = threading.Lock()
 
     def open(self, account, from_revision=None):
@@ -669,6 +1117,17 @@ class Sessions:
                 self.consoles[account] = w
         return w
 
+    def route_worker(self, account):
+        """The account's process for ListRoutes, whose snapshots it holds."""
+        self.reap()
+        with self.lock:
+            w = self.routes.get(account)
+        if w is None or not w.proc.is_alive():
+            w = self.worker(account)
+            with self.lock:
+                self.routes[account] = w
+        return w
+
     def reap(self):
         """Close candidates and operational processes nobody has used lately."""
         now = time.monotonic()
@@ -681,6 +1140,10 @@ class Sessions:
             quiet = [a for a, w in self.consoles.items()
                      if now - w.used > self.ops_idle]
             gone += [self.consoles.pop(a) for a in quiet]
+            # As long as its snapshots live (ROUTE_IDLE).
+            stale = [a for a, w in self.routes.items()
+                     if now - w.used > self.route_idle]
+            gone += [self.routes.pop(a) for a in stale]
         for w in gone:
             w.close()
 
@@ -768,20 +1231,46 @@ def cgnat_totals(stats):
 
 
 def state_events(before, after):
-    """The configuration events between two readings of the state file (#524)."""
+    """
+    The configuration events between two readings of the state file (#524),
+    each with the revision and the comment the box recorded (#533).
+
+    The keys are the ones Shell.record_applied() writes: `commit_by` and
+    `confirm_reverts`. This read `last_commit_by` and `reverts`, which
+    nothing writes, so every Event's account was empty and no rolled-back
+    event was ever sent - found by lab/api-grpc.sh's event check (#533).
+    """
     out = []
+    by = after.get("commit_by", "")
+    # The revision is the server's to fill (event_revision): it is the
+    # running configuration's id as the subscriber's account reads it.
+    tag = {"revision": "", "comment": after.get("comment", "")}
     if after.get("commits") != before.get("commits") and after.get("commits"):
-        out.append({"kind": "commit", "account": after.get("last_commit_by", ""),
-                    "text": f"commit {after.get('commits')}"})
+        out.append({"kind": "commit", "account": by,
+                    "text": f"commit {after.get('commits')}", **tag})
     if after.get("confirm_pending") != before.get("confirm_pending"):
         pending = after.get("confirm_pending") == "yes"
         out.append({"kind": "confirm-pending" if pending else "confirmed",
-                    "account": after.get("last_commit_by", ""),
-                    "text": after.get("confirm_deadline", "")})
-    if after.get("reverts") != before.get("reverts") and after.get("reverts"):
-        out.append({"kind": "rolled-back", "account": "",
-                    "text": f"reverts {after.get('reverts')}"})
+                    "account": by, "text": after.get("confirm_deadline", ""), **tag})
+    if after.get("confirm_reverts") != before.get("confirm_reverts") \
+            and after.get("confirm_reverts"):
+        out.append({"kind": "rolled-back", "account": by,
+                    "text": f"reverts {after.get('confirm_reverts')}", **tag})
     return out
+
+
+def event_revision(read_running, state_then, read=None):
+    """
+    The revision an event left: the running configuration's id, read now by
+    `read_running` - the subscriber's own reading, so it is the id that
+    account's CommitResponse and GetRunning carry. "" when another change
+    took effect while it was read (the state's commit count moved past
+    `state_then`): that id would be the later change's, and the later
+    change's own event carries it.
+    """
+    text = read_running()
+    now = (read or read_state)()
+    return revision_of(text) if now.get("commits") == state_then.get("commits") else ""
 
 
 def read_state(path="/run/prisma-routing/state/config"):
@@ -796,6 +1285,382 @@ def read_state(path="/run/prisma-routing/state/config"):
     except OSError:
         pass
     return out
+
+
+# ------------------------------------------------- memory and the workers (#533)
+
+def is_number(text):
+    """The VTY's own digits predicate (system.is_number, #412)."""
+    from system import is_number as digits
+    return digits(text)
+
+
+def memory_of(path=None):
+    """
+    The host's RAM in bytes from meminfo: total, used (MemTotal less
+    MemAvailable, so reserved hugepages count as used) and the hugepages.
+    Zeros for what it cannot read.
+    """
+    info = {}
+    try:
+        with open(path or os.environ.get("PRISMA_MEMINFO", "/proc/meminfo")) as f:
+            for raw in f:
+                k, _, v = raw.partition(":")
+                w = v.split()
+                if w and is_number(w[0]):
+                    info[k.strip()] = int(w[0]) * (1024 if w[1:2] == ["kB"] else 1)
+    except OSError:
+        pass
+    total = info.get("MemTotal", 0)
+    avail = info.get("MemAvailable", total)
+    pages = info.get("HugePages_Total", 0)
+    size = info.get("Hugepagesize", 0)
+    return {"memory_total_bytes": total, "memory_used_bytes": max(0, total - avail),
+            "memory_hugepages_bytes": pages * size}
+
+
+def cpu_list(spec):
+    """The CPUs a list like '3-7,9' names, in order."""
+    out = []
+    for part in filter(None, (spec or "").replace(" ", "").split(",")):
+        a, _, b = part.partition("-")
+        if is_number(a) and (not b or is_number(b)):
+            out += list(range(int(a), int(b) + 1)) if b else [int(a)]
+    return out
+
+
+def startup_worker_cpus(path=None):
+    """The `corelist-workers` of the dataplane's startup.conf, or ''."""
+    try:
+        with open(path or os.environ.get("PRISMA_STARTUP_CONF",
+                                         "/etc/vpp/startup.conf")) as f:
+            for raw in f:
+                w = raw.split()
+                if w[:1] == ["corelist-workers"] and len(w) > 1:
+                    return w[1]
+    except OSError:
+        pass
+    return ""
+
+
+def per_worker(stats, name, workers):
+    """
+    A /sys/... per-thread vector from the statistics segment, the workers'
+    values only: index 0 is the main thread, which is not a worker - on the
+    lab's two workers it read [[0, 6354288, 6901372]].
+    """
+    try:
+        rows = stats[name]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return [0] * workers
+    row = list(rows[0]) if rows and isinstance(rows[0], (list, tuple)) else list(rows or [])
+    vals = row[1:] if len(row) == workers + 1 else row[-workers:] if workers else []
+    return [float(v or 0) for v in vals] + [0.0] * (workers - len(vals))
+
+
+RUNTIME_ROW = re.compile(r"^(.*?)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+(?:e[-+]?\d+)?)\s+([\d.]+)\s*$")
+
+
+def runtime_clocks(text):
+    """
+    Each worker's clocks out of `show runtime`: {worker: {"active", "all"}}
+    - the clocks its graph nodes took (state `active`: they run only with
+    packets) and every node's, the input nodes' polling included. A row's
+    Clocks column is per vector when the node had vectors, per call when it
+    had none, so a node's clocks are the column times the one it is per.
+    """
+    out, cur = {}, None
+    for line in text.splitlines():
+        m = re.match(r"^Thread \d+ vpp_wk_(\d+)", line)
+        if m:
+            cur = out.setdefault(int(m.group(1)), {"active": 0.0, "all": 0.0})
+            continue
+        if line.startswith("Thread "):
+            cur = None
+            continue
+        r = RUNTIME_ROW.match(line) if cur is not None else None
+        if not r or r.group(1).strip() in ("Name", ""):
+            continue
+        head = r.group(1).rstrip()
+        state = head.rsplit('"', 2)[1] if head.endswith('"') else head.split()[-1]
+        calls, vectors = int(r.group(2)), int(r.group(3))
+        clocks = float(r.group(5)) * (vectors if vectors else calls)
+        cur["all"] += clocks
+        if state == "active":
+            cur["active"] += clocks
+    return out
+
+
+def busy_between(before, after):
+    """
+    The share of each worker's node time that went to its graph between two
+    runtime_clocks() readings: its packets past the input node, 0 to 1.
+    Not the receive in the input node itself, which is counted with the
+    polling it shares a node with, so a worker that cannot keep up reads
+    below 1 - the lab's worker saturated by a packet generator read 0.49.
+    """
+    out = {}
+    for w, a in after.items():
+        b = before.get(w, {"active": 0.0, "all": 0.0})
+        total = a["all"] - b["all"]
+        work = a["active"] - b["active"]
+        out[w] = round(min(1.0, max(0.0, work / total)), 4) if total > 0 else 0.0
+    return out
+
+
+def vpp_runtime():
+    """`show runtime`, as vppctl prints it; "" when the dataplane does not answer."""
+    try:
+        p = subprocess.run([os.environ.get("PRISMA_VPPCTL", "vppctl"), "show", "runtime"],
+                           capture_output=True, text=True, timeout=10)
+        return p.stdout if p.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+class BusyMeter:
+    """
+    The workers' busy ratios over a window: `show runtime`'s clocks read now
+    against the reading before, which this keeps - at least BUSY_WINDOW
+    old, so a reading taken right after another waits for the rest of it.
+    """
+
+    def __init__(self, read=vpp_runtime, clock=time.monotonic, sleep=time.sleep):
+        self.read, self.clock, self.sleep = read, clock, sleep
+        self.prev = None     # (when, runtime_clocks)
+        self.lock = threading.Lock()
+
+    def busy(self):
+        """{worker: (busy ratio, window in ms)}; {} when there is no reading."""
+        with self.lock:
+            if self.prev is None or self.clock() - self.prev[0] < BUSY_WINDOW:
+                if self.prev is None:
+                    self.prev = (self.clock(), runtime_clocks(self.read()))
+                self.sleep(max(0.0, BUSY_WINDOW - (self.clock() - self.prev[0])))
+            now = (self.clock(), runtime_clocks(self.read()))
+            before, self.prev = self.prev, now
+        ms = int((now[0] - before[0]) * 1000)
+        return {w: (r, ms) for w, r in busy_between(before[1], now[1]).items()}
+
+
+def worker_load(stats, worker_cpus="", busy=None):
+    """
+    WorkerLoad rows: the statistics segment's vector and loop rates, the
+    busy ratios a BusyMeter measured ({worker: (ratio, window ms)}).
+    """
+    busy = busy or {}
+    try:
+        n = int(stats["/sys/num_worker_threads"])
+    except (KeyError, TypeError, ValueError):
+        return []
+    rate = per_worker(stats, "/sys/vector_rate_per_worker", n)
+    loops = per_worker(stats, "/sys/loops_per_worker", n)
+    cpus = cpu_list(worker_cpus)
+    out = []
+    for i in range(n):
+        # A worker waiting for interrupts is not busy, and the dataplane does
+        # not update its vector rate while it waits - the lab read a worker's
+        # 5 for a minute after its traffic stopped - so both are 0.
+        sleeping = loops[i] < SLEEPING_LOOPS
+        ratio, ms = busy.get(i, (0.0, 0))
+        out.append({"worker": i, "cpu": cpus[i] if i < len(cpus) else i,
+                    "vectors_per_call": 0.0 if sleeping else rate[i],
+                    "busy_ratio": 0.0 if sleeping else ratio,
+                    "loops_per_second": loops[i], "busy_window_ms": ms})
+    return out
+
+
+# ------------------------------------------------------ counter history (#533)
+
+class History:
+    """
+    The counters sampled once a HISTORY_INTERVAL, the last HISTORY_SAMPLES of
+    them: one array a series - an interface's counter, a CGNAT total, a
+    worker's figure - aligned on the sample times. Arrays of machine words,
+    not Python objects: a day of a 64-interface box is 64 x 7 x 1440 words,
+    5 MB, where the same as tuples measured some ten times that.
+    """
+
+    def __init__(self, keep=HISTORY_SAMPLES, max_interfaces=HISTORY_INTERFACES):
+        self.keep = keep
+        self.max_interfaces = max_interfaces
+        self.times = array.array("d")
+        self.counters = {}   # key -> array('Q')
+        self.gauges = {}     # key -> array('d')
+        self.lock = threading.Lock()
+
+    def _put(self, table, kind, key, value):
+        a = table.get(key)
+        if a is None:
+            a = table[key] = array.array(kind, [MISSING if kind == "Q" else float("nan")]
+                                         * (len(self.times) - 1))
+        a.append(value)
+
+    def add(self, at, interfaces=(), cgnat=None, workers=(), memory_used=None):
+        """One sample: what was read at `at`; what was not, missing."""
+        with self.lock:
+            self.times.append(at)
+            names = {k[1] for k in self.counters if k[0] == "if"}
+            for smp in interfaces:
+                if smp["name"] not in names and len(names) >= self.max_interfaces:
+                    continue
+                names.add(smp["name"])
+                for f, v in smp["counters"].items():
+                    self._put(self.counters, "Q", ("if", smp["name"], f), int(v))
+            for f, v in (cgnat or {}).items():
+                self._put(self.counters, "Q", ("cgnat", f), int(v))
+            for w in workers:
+                for f in ("cpu", "vectors_per_call", "busy_ratio", "loops_per_second",
+                          "busy_window_ms"):
+                    self._put(self.gauges, "d", ("wk", int(w["worker"]), f), float(w[f]))
+            if memory_used is not None:
+                self._put(self.counters, "Q", ("mem",), int(memory_used))
+            n = len(self.times)
+            for table, gap in ((self.counters, MISSING), (self.gauges, float("nan"))):
+                for a in table.values():
+                    if len(a) < n:
+                        a.append(gap)
+            if n > self.keep:
+                drop = n - self.keep
+                del self.times[:drop]
+                for table in (self.counters, self.gauges):
+                    for a in table.values():
+                        del a[:drop]
+
+    def samples(self, since=0.0, interfaces=(), counters=True, cgnat=True,
+                workers=True, memory=True):
+        """
+        The samples after `since`, oldest first, as GetHistory sends them:
+        copied out under the lock, then built one at a time.
+        """
+        with self.lock:
+            first = next((i for i, t in enumerate(self.times) if t > since), len(self.times))
+            times = list(self.times[first:])
+            cs = {k: a[first:] for k, a in self.counters.items()
+                  if (k[0] == "if" and counters and (not interfaces or k[1] in interfaces))
+                  or (k[0] == "cgnat" and cgnat) or (k[0] == "mem" and memory)}
+            gs = {k: a[first:] for k, a in self.gauges.items() if workers}
+        per_if, per_wk = {}, {}
+        for k, a in cs.items():
+            if k[0] == "if":
+                per_if.setdefault(k[1], []).append((k[2], a))
+        for k, a in gs.items():
+            per_wk.setdefault(k[1], []).append((k[2], a))
+        tots = [(k[1], a) for k, a in cs.items() if k[0] == "cgnat"]
+        mem = cs.get(("mem",))
+        for i, at in enumerate(times):
+            out = {"at": at, "interfaces": [], "cgnat": None, "workers": [],
+                   "memory_used_bytes": None}
+            for name in sorted(per_if):
+                row = {f: a[i] for f, a in per_if[name]}
+                if MISSING not in row.values():
+                    out["interfaces"].append({"name": name, "counters": row})
+            tot = {f: a[i] for f, a in tots}
+            if tot and MISSING not in tot.values():
+                out["cgnat"] = tot
+            for w in sorted(per_wk):
+                row = {f: a[i] for f, a in per_wk[w]}
+                if all(v == v for v in row.values()):
+                    row["worker"], row["cpu"] = w, int(row.get("cpu", w))
+                    row["busy_window_ms"] = int(row.get("busy_window_ms", 0))
+                    out["workers"].append(row)
+            if mem is not None and mem[i] != MISSING:
+                out["memory_used_bytes"] = mem[i]
+            yield out
+
+    def dump(self):
+        """The history as JSON-able data, for the file a restart reads back."""
+        with self.lock:
+            return {"version": 1, "times": list(self.times),
+                    "counters": {"\t".join(map(str, k)): list(a)
+                                 for k, a in self.counters.items()},
+                    "gauges": {"\t".join(map(str, k)): [None if v != v else v for v in a]
+                               for k, a in self.gauges.items()}}
+
+    def load(self, data, now=None, interval=HISTORY_INTERVAL):
+        """
+        A dump() read back: what is no older than the samples kept span, and
+        nothing at all from a file this does not understand.
+        """
+        if not isinstance(data, dict) or data.get("version") != 1:
+            return False
+        times = [float(t) for t in data.get("times", [])]
+        horizon = (now or time.time()) - self.keep * interval
+        first = next((i for i, t in enumerate(times) if t > horizon), len(times))
+        n = len(times) - first
+        with self.lock:
+            self.times = array.array("d", times[first:])
+            self.counters = {history_key(k): array.array("Q", [int(x) for x in v[first:]])
+                             for k, v in data.get("counters", {}).items() if len(v) == len(times)}
+            self.gauges = {history_key(k): array.array("d", [float("nan") if x is None else float(x)
+                                                     for x in v[first:]])
+                           for k, v in data.get("gauges", {}).items() if len(v) == len(times)}
+        return n > 0
+
+    def save(self, path=HISTORY_PATH):
+        """Written whole, by rename, so a reader never sees half of it."""
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".new"
+            with open(tmp, "w") as f:
+                json.dump(self.dump(), f, separators=(",", ":"))
+            os.replace(tmp, path)
+            return True
+        except OSError:
+            return False
+
+    def restore(self, path=HISTORY_PATH):
+        """The file save() wrote, if there is one this understands."""
+        try:
+            with open(path) as f:
+                return self.load(json.load(f))
+        except (OSError, ValueError):
+            return False
+
+
+def history_key(text):
+    """A series' key as dump() wrote it ("if\tpg0\trx_bytes"), as a tuple."""
+    parts = text.split("\t")
+    return tuple(int(p) if parts[0] == "wk" and j == 1 and is_number(p) else p
+                 for j, p in enumerate(parts))
+
+
+def take_sample(history, stats, worker_cpus="", meminfo=None, now=None, meter=None):
+    """
+    One sample of everything the history keeps, read from the statistics
+    segment and meminfo; a part that cannot be read is missing from it, not
+    zero.
+    """
+    try:
+        ifs = interface_samples(stats)
+    except Exception:  # noqa: BLE001 - a dataplane that is restarting
+        ifs = []
+    try:
+        cg = cgnat_totals(stats)[0]
+    except Exception:  # noqa: BLE001 - a dataplane with no CGNAT counters
+        cg = None
+    try:
+        wk = worker_load(stats, worker_cpus, meter.busy() if meter else None)
+    except Exception:  # noqa: BLE001
+        wk = []
+    mem = memory_of(meminfo)["memory_used_bytes"] or None
+    history.add(now or time.time(), ifs, cg, wk, mem)
+
+
+def health_status(service, stats_ok):
+    """
+    grpc.health.v1's answer for `service`: "SERVING", "NOT_SERVING", or None
+    for a service this server does not serve.
+    """
+    served = ("", "prisma.v1.ConfigService", "prisma.v1.OperationalService",
+              "prisma.v1.TelemetryService", "prisma.v1.RouteService",
+              "prisma.v1.SessionService")
+    if service not in served:
+        return None
+    if service in ("prisma.v1.OperationalService", "prisma.v1.TelemetryService") \
+            and not stats_ok:
+        return "NOT_SERVING"
+    return "SERVING"
 
 
 # ------------------------------------------------------------- the servicers
@@ -815,9 +1680,16 @@ def _diag_pb(pb, d):
 
 # not a unit: builds the gRPC servicers around the core above; it needs grpc
 # and the generated stubs, and lab/api-grpc.sh drives every rpc through it.
-def build(sessions, stats_factory, pb, rpc, grpc):
-    """The three servicers, bound to `sessions` and a statistics reader factory."""
+def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
+          meter=None):
+    """
+    The servicers, bound to `sessions`, a statistics reader factory and the
+    counter history: prisma.v1's five, and grpc.health.v1's when its
+    modules `health` (messages, services) are given.
+    """
     from google.protobuf.timestamp_pb2 import Timestamp
+    history = history if history is not None else History()
+    meter = meter if meter is not None else BusyMeter()
 
     # not a unit: a closure of build(), driven by lab/api-grpc.sh.
     def account(context):
@@ -1015,9 +1887,16 @@ def build(sessions, stats_factory, pb, rpc, grpc):
             m = re.search(r"(\d+)\s+(?:1G\s+)?(?:huge)?pages?", mem)
             if m:
                 pages = int(m.group(1))
+            load = []
+            try:
+                load = worker_load(stats_factory(), c["worker_cpus"], meter.busy())
+            except Exception:  # noqa: BLE001 - no dataplane, no workers to say
+                pass
             return pb.SystemInfo(hostname=self._ask(context, "hostname"),
                                  uptime_seconds=up, cpu_text=cpu, memory_text=mem,
                                  hugepages=pages,
+                                 worker_load=[pb.WorkerLoad(**w) for w in load],
+                                 **memory_of(),
                                  **uptime_fields(self._ask(context, "uptime"), ts),
                                  **c)
 
@@ -1037,7 +1916,8 @@ def build(sessions, stats_factory, pb, rpc, grpc):
                                        mac_address=r["mac_address"],
                                        addresses=r["addresses"],
                                        linux_name=r["linux_name"],
-                                       description=r["description"])
+                                       description=r["description"],
+                                       speed_bps=r.get("speed_bps", 0))
                 if r["name"] in counters:
                     i.counters.CopyFrom(pb.InterfaceCounters(**counters[r["name"]]))
             return out
@@ -1160,7 +2040,7 @@ def build(sessions, stats_factory, pb, rpc, grpc):
     class Telemetry(rpc.TelemetryServiceServicer):
         # not a unit: a streaming rpc, driven by lab/api-grpc.sh.
         def Subscribe(self, req, context):
-            account(context)
+            acct = account(context)
             interval = max(500, req.interval_ms or 1000) / 1000.0
             stats = stats_factory()
             state = read_state()
@@ -1178,11 +2058,146 @@ def build(sessions, stats_factory, pb, rpc, grpc):
                 if req.events:
                     after = read_state()
                     for e in state_events(state, after):
+                        try:
+                            e["revision"] = event_revision(
+                                lambda: sessions.ops_worker(acct).ask("running"), after)
+                        except WorkerError:
+                            pass
                         yield pb.TelemetryUpdate(at=ts(now), event=pb.Event(**e))
                     state = after
                 time.sleep(interval)
 
-    return Config(), Operational(), Telemetry()
+        # not a unit: a streaming rpc, driven by lab/api-grpc.sh.
+        def GetHistory(self, req, context):
+            account(context)
+            since = req.since.seconds + req.since.nanos / 1e9 if req.HasField("since") else 0.0
+            # None of the four asked is all four: a bare request is the day.
+            want = (req.interface_counters, req.cgnat_totals, req.workers, req.memory)
+            if not any(want):
+                want = (True, True, True, True)
+            for smp in history.samples(since, list(req.interfaces), *want):
+                at = Timestamp()
+                at.FromNanoseconds(int(smp["at"] * 1e9))
+                out = pb.HistorySample(
+                    at=at,
+                    interfaces=[pb.InterfaceSample(name=i["name"],
+                                                   counters=pb.InterfaceCounters(**i["counters"]))
+                                for i in smp["interfaces"]],
+                    workers=[pb.WorkerLoad(**w) for w in smp["workers"]])
+                if smp["cgnat"] is not None:
+                    out.cgnat.CopyFrom(pb.CgnatTotals(**smp["cgnat"]))
+                if smp["memory_used_bytes"] is not None:
+                    out.memory_used_bytes = smp["memory_used_bytes"]
+                yield out
+
+    class Routes(rpc.RouteServiceServicer):
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def ListRoutes(self, req, context):
+            acct = account(context)
+            try:
+                got = sessions.route_worker(acct).ask("routes", {
+                    "vrf": req.vrf, "family": req.family, "prefix": req.prefix,
+                    "protocol": req.protocol, "selected_only": req.selected_only,
+                    "page_size": req.page_size, "page_token": req.page_token})
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+            if "error" in got:
+                code = {"invalid": grpc.StatusCode.INVALID_ARGUMENT,
+                        "not_found": grpc.StatusCode.NOT_FOUND,
+                        "expired": grpc.StatusCode.FAILED_PRECONDITION}.get(
+                            got["code"], grpc.StatusCode.UNAVAILABLE)
+                context.abort(code, got["error"])
+            out = pb.ListRoutesResponse(next_page_token=got["next"], total=got["total"],
+                                        total_known=got["total_known"],
+                                        snapshot_at=ts(got["at"]))
+            for r in got["rows"]:
+                hops = r.pop("next_hops")
+                out.routes.add(next_hops=[pb.RouteNextHop(**h) for h in hops], **r)
+            return out
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def GetRouteSummary(self, req, context):
+            acct = account(context)
+            try:
+                rows = sessions.ops_worker(acct).ask("route_summary", req.vrf)
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+            return pb.GetRouteSummaryResponse(counts=[pb.RouteCount(**c) for c in rows])
+
+    class Session(rpc.SessionServiceServicer):
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def WhoAmI(self, req, context):
+            try:
+                return pb.WhoAmIResponse(**sessions.ops_worker(account(context)).ask("whoami"))
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+
+    servicers = [Config(), Operational(), Telemetry(), Routes(), Session()]
+    if health is not None:
+        servicers.append(health_servicer(stats_factory, health[0], health[1], grpc))
+    return servicers
+
+
+# not a unit: grpc.health.v1's servicer, a class over health_status() and
+# stats_ok(), which the unit tests drive; lab/api-grpc.sh asks it.
+def health_servicer(stats_factory, hpb, hrpc, grpc):
+    """grpc.health.v1.Health: health_status() for each service asked."""
+    seen = {"at": 0.0, "ok": False}
+
+    # not a unit: a closure; stats_ok() below is the reading it caches.
+    def ok():
+        if time.monotonic() - seen["at"] > 2:
+            seen["ok"], seen["at"] = stats_ok(stats_factory), time.monotonic()
+        return seen["ok"]
+
+    # not a unit: the servicer class, driven by lab/api-grpc.sh.
+    class Health(hrpc.HealthServicer):
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def Check(self, req, context):
+            st = health_status(req.service, ok())
+            if st is None:
+                context.abort(grpc.StatusCode.NOT_FOUND, f"no service {req.service!r}")
+            return hpb.HealthCheckResponse(status=getattr(hpb.HealthCheckResponse, st))
+
+        # not a unit: a streaming rpc, driven by lab/api-grpc.sh.
+        def Watch(self, req, context):
+            last = None
+            while context.is_active():
+                st = health_status(req.service, ok()) or "SERVICE_UNKNOWN"
+                if st != last:
+                    last = st
+                    yield hpb.HealthCheckResponse(status=getattr(hpb.HealthCheckResponse, st))
+                time.sleep(2)
+    return Health()
+
+
+def stats_ok(stats_factory):
+    """Does the dataplane's statistics segment answer?"""
+    try:
+        s = stats_factory()
+        s["/sys/heartbeat"]
+        return True
+    except Exception:  # noqa: BLE001 - any failure is a segment that does not answer
+        return False
+
+
+# not a unit: the sampler's thread body - take_sample() is what it does each
+# time and is tested; lab/api-grpc.sh runs this with a one-second interval.
+def sampler(history, stats_factory, stop, meter, path=HISTORY_PATH,
+            interval=HISTORY_INTERVAL):
+    """Sample every `interval` seconds, keep the file current, until `stop`."""
+    stats, n = None, 0
+    while not stop.wait(interval):
+        try:
+            if stats is None:
+                stats = stats_factory()
+            take_sample(history, stats, startup_worker_cpus(), meter=meter)
+        except Exception:  # noqa: BLE001 - reconnect at the next tick
+            stats = None
+            history.add(time.time())
+        n += 1
+        if n % HISTORY_SAVE_EVERY == 0:
+            history.save(path)
 
 
 # not a unit: the program's entry - reads the certificates, binds the
@@ -1222,7 +2237,16 @@ def main(argv):
         return s
 
     sessions = Sessions()
-    cfg, ops, tel = build(sessions, stats_factory, pb, rpc, grpc)
+    from health.v1 import health_pb2 as hpb, health_pb2_grpc as hrpc
+    history = History()
+    if history.restore():
+        print(f"apiserver: history read back, {len(history.times)} samples", flush=True)
+    stop = threading.Event()
+    meter = BusyMeter()
+    threading.Thread(target=sampler, args=(history, stats_factory, stop, meter),
+                     daemon=True).start()
+    cfg, ops, tel, routes, session, health = build(sessions, stats_factory, pb, rpc,
+                                                   grpc, history, (hpb, hrpc), meter)
     # NO SO_REUSEPORT, which gRPC turns on by default: with it a second server
     # binds the same port beside the first, and the X520 bench (0.148.4) was
     # found with two listeners on 128.0.0.2:50051 after restarts. Without it
@@ -1233,6 +2257,9 @@ def main(argv):
     rpc.add_ConfigServiceServicer_to_server(cfg, server)
     rpc.add_OperationalServiceServicer_to_server(ops, server)
     rpc.add_TelemetryServiceServicer_to_server(tel, server)
+    rpc.add_RouteServiceServicer_to_server(routes, server)
+    rpc.add_SessionServiceServicer_to_server(session, server)
+    hrpc.add_HealthServicer_to_server(health, server)
     # grpcio 1.51 raises where older ones returned 0: both are the same
     # refusal, said in one sentence rather than as a traceback.
     try:
@@ -1258,6 +2285,10 @@ def main(argv):
             server.stop(5)
         threading.Thread(target=watch, daemon=True).start()
     server.wait_for_termination()
+    # The history outlives the server in its file: an upgrade restarts this,
+    # and a client's graphs go on from where they were.
+    stop.set()
+    history.save()
     return 0
 
 

@@ -77,7 +77,34 @@ version has a chance of seeing it.
 
 ### Added
 
+* **prisma.v1 additions for the web interface: the routing table, a day of
+  counters, the workers' load, health, and who a client is.**
+  ([#533](https://github.com/andrediashexa/hexarouting/issues/533))
+  Additions only, inside the contract's compatibility rules, which now say
+  that services are grouped by subject. `RouteService` lists FRR's RIB typed
+  - VRF, prefix, next hops, protocol, distance, metric, selected - a page at
+  a time from one snapshot read as zebra streams it, filtered by VRF, family,
+  prefix and protocol, with a summary per VRF and protocol: in
+  lab/api-grpc.sh, 200,000 routes paged whole with the first page in about a
+  second and no server process above 97 MB. `TelemetryService.GetHistory`
+  streams 24 hours of the counters a minute apart, kept across a restart of
+  the server in the host's /run. `GetSystem` gives the RAM in bytes and a
+  `WorkerLoad` per worker: VPP's vectors per call and loop rate, and the share
+  of node time the graph took from `show runtime`'s clocks.
+  `Interface.speed_bps`, an `Event`'s `revision` (the subscriber's own
+  `GetRunning` id) and `comment`, `SessionService.WhoAmI` (the certificate's
+  account and its VTY role), and gRPC's standard `grpc.health.v1.Health`.
+
 ### Fixed
+
+* **An API event never named who committed, and a revert by an expired
+  `commit confirmed` sent no event.**
+  ([#533](https://github.com/andrediashexa/hexarouting/issues/533))
+  The telemetry stream read `last_commit_by` and `reverts` from the box's
+  state file, keys nothing writes - the VTY writes `commit_by` and
+  `confirm_reverts` - so every `Event.account` was empty and no
+  `rolled-back` event was ever sent. Found by lab/api-grpc.sh's new event
+  check.
 
 ## 0.149.1 - a line a daemon refuses in an operator's route-map fails the commit
 

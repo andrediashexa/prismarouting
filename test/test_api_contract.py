@@ -79,13 +79,34 @@ want = {
                            "ListPolicies", "GetPolicyCounters",
                            "TestPolicy",
                            "Show"],
-    "TelemetryService": ["Subscribe"],
+    "TelemetryService": ["Subscribe", "GetHistory"],
+    # #533: new subjects, new services; their rpcs are the subject's.
+    "RouteService": ["ListRoutes", "GetRouteSummary"],
+    "SessionService": ["WhoAmI"],
 }
 for svc, rpcs in want.items():
     got = re.findall(r"rpc (\w+)\(", services.get(svc, ""))
     check(got == rpcs, f"{svc}: {got}")
 check("returns (stream TelemetryUpdate)" in body,
       "Subscribe streams its updates")
+check("returns (stream HistorySample)" in body,
+      "GetHistory streams a sample a message: a day of every interface is more "
+      "than one message should carry")
+check(set(services) == set(want), f"no service beyond these: {sorted(services)}")
+
+print("=== the health protocol, gRPC's own (#533) ===")
+HEALTH = os.path.join(ROOT, "api", "health", "v1", "health.proto")
+htext = re.sub(r"//[^\n]*", "", open(HEALTH).read())
+check(re.search(r"^package grpc\.health\.v1;", htext, re.M) is not None,
+      "grpc.health.v1 on the wire, so a stock health client works")
+check(re.findall(r"rpc (\w+)\(", htext) == ["Check", "Watch"],
+      "Check and Watch, as gRPC defines them")
+check(re.search(r"ServingStatus status = 1;", htext) is not None
+      and all(w in htext for w in ("UNKNOWN = 0", "SERVING = 1", "NOT_SERVING = 2",
+                                   "SERVICE_UNKNOWN = 3")),
+      "the status enum, number for number")
+check(not os.path.isdir(os.path.join(ROOT, "api", "grpc")),
+      "not under api/grpc: stubs named grpc would shadow the gRPC library")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
