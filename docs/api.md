@@ -1,5 +1,10 @@
 # The management API (prisma.v1)
 
+
+What each release changed for an API client - fields, limits, sentinels,
+known bugs and the lab box's upgrades - is in [docs/clients.md](clients.md),
+newest first.
+
 ## TL;DR
 
 A box serves a gRPC API, package `prisma.v1`, for a management client - the

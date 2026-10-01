@@ -77,6 +77,13 @@ version has a chance of seeing it.
 
 ### Added
 
+* **docs/clients.md: what each release changes for an API client.** Asked
+  for by the maintainer so the web interface's maintainers can follow every
+  change on this side and update theirs: per release, the contract's sha256,
+  API-visible behaviour, new fields with their units and sentinels, known bugs
+  with their workaround and fix, and the lab box's upgrades. Written back from
+  0.149.2; from now on part of every release.
+
 ### Fixed
 
 ## 0.149.5 - a dataplane that restarts after a crash comes back configured
