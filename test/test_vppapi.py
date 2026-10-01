@@ -780,5 +780,161 @@ with api.cached_dumps():
 check(_n.count("sw_interface_dump") == 3 and api._dumps is None,
       f"after forget_dumps() every dump asks: {_n}")
 
+print("\n=== the definitions the VTY uses, pruned and kept (#529) ===")
+check(vppapi._bare("vl_api_address_t") == "address"
+      and vppapi._bare("u32") == "u32",
+      "a type as the definitions key it")
+_MEM = {"module": "memclnt", "messages": [
+    ["sockclnt_create", ["u16", "_vl_msg_id"]],
+    ["control_ping", ["u16", "_vl_msg_id"]],
+    ["control_ping_reply", ["u16", "_vl_msg_id"]]], "services": {}}
+_IFACE = {"module": "interface",
+          "enums": [["address_family", ["ADDRESS_IP4", 0], {"enumtype": "u8"}],
+                    ["if_status_flags", ["UP", 1], {"enumtype": "u32"}],
+                    ["unused_enum", ["X", 0], {"enumtype": "u8"}]],
+          "types": [["address", ["vl_api_address_family_t", "af"],
+                     ["vl_api_address_union_t", "un"]],
+                    ["unused_type", ["u8", "x"]]],
+          "unions": [["address_union", ["vl_api_ip4_address_t", "ip4"]]],
+          "aliases": {"ip4_address": {"type": "u8", "length": 4},
+                      "interface_index": {"type": "u32"},
+                      "unused_alias": {"type": "u8"}},
+          "messages": [
+              ["sw_interface_dump", ["u16", "_vl_msg_id"],
+               ["vl_api_interface_index_t", "sw_if_index"]],
+              ["sw_interface_details", ["u16", "_vl_msg_id"],
+               ["vl_api_address_t", "addr"],
+               ["vl_api_if_status_flags_t", "flags"]],
+              ["not_asked", ["u16", "_vl_msg_id"],
+               ["vl_api_unused_type_t", "x"]]],
+          "services": {"sw_interface_dump": {"reply": "sw_interface_details",
+                                             "stream": True},
+                       "not_asked": {"reply": "not_asked_reply"}}}
+_pr = vppapi.prune_definitions([_MEM, _IFACE],
+                               {"sw_interface_dump", "no_such_request"})
+_names = sorted(m[0] for m in _pr["messages"])
+check(_names == ["control_ping", "control_ping_reply", "sockclnt_create",
+                 "sw_interface_details", "sw_interface_dump"],
+      f"the request, its details, memclnt whole, and nothing else: {_names}")
+check([t[0] for t in _pr["types"]] == ["address"]
+      and [t[0] for t in _pr["unions"]] == ["address_union"]
+      and sorted(t[0] for t in _pr["enums"]) == ["address_family",
+                                                 "if_status_flags"]
+      and sorted(_pr["aliases"]) == ["interface_index", "ip4_address"],
+      f"every type they reach, through types, unions and aliases, and no "
+      f"other: {_pr}")
+check(list(_pr["services"]) == ["sw_interface_dump"],
+      "the services of the messages kept")
+with tempfile.TemporaryDirectory() as _d:
+    _files = []
+    for _n2, _api in (("memclnt.api.json", _MEM), ("interface.api.json", _IFACE)):
+        _files.append(os.path.join(_d, _n2))
+        with open(_files[-1], "w") as _fh:
+            json.dump(_api, _fh)
+    _cd = os.path.join(_d, "cache")
+    os.makedirs(_cd, mode=0o700)
+    _p1 = vppapi.definitions_file(_files, {"sw_interface_dump"}, cachedir=_cd)
+    with open(_p1) as _fh:
+        _k1 = json.load(_fh)
+    check(sorted(m[0] for m in _k1["messages"]) == _names,
+          "made once, into the account's own directory")
+    check(vppapi.definitions_file(_files, {"sw_interface_dump"},
+                                  cachedir=_cd) == _p1,
+          "and read back under the same name while nothing changed")
+    with open(_files[1], "w") as _fh:
+        json.dump(dict(_IFACE, services={}), _fh)
+    _p2 = vppapi.definitions_file(_files, {"sw_interface_dump"}, cachedir=_cd)
+    check(_p2 != _p1,
+          "a definition rewritten by an upgrade is a new name, never the old file")
+    open(_files[1], "w").write("{not json")
+    check(vppapi.definitions_file(_files, {"sw_interface_dump"},
+                                  cachedir=_cd) is None,
+          "an unreadable definition is no file: vpp_papi gets the files themselves")
+    check(vppapi.definitions_file([os.path.join(_d, "gone.api.json")],
+                                  cachedir=_cd) is None,
+          "and so is a file that is not there")
+    _old_x = os.environ.get("XDG_RUNTIME_DIR")
+    _open = os.path.join(_d, "open")
+    os.makedirs(_open, mode=0o777)
+    os.chmod(_open, 0o777)
+    os.environ["XDG_RUNTIME_DIR"] = _open
+    _got = vppapi._cache_dir()
+    check(_got != _open,
+          f"a directory other accounts can write is never used: {_got}")
+    os.environ["XDG_RUNTIME_DIR"] = _cd
+    check(vppapi._cache_dir() == _cd, "the account's own 0700 one is")
+    if _old_x is None:
+        del os.environ["XDG_RUNTIME_DIR"]
+    else:
+        os.environ["XDG_RUNTIME_DIR"] = _old_x
+
+print("\n=== the CLI over the same connection (#529) ===")
+check(vppapi.cli_is_question("show bpa pool")
+      and not vppapi.cli_is_question("bpa pool nb del")
+      and not vppapi.cli_is_question("clear errors"),
+      "a `show` only reads; any other line may write")
+_CliReply = collections.namedtuple("cli_inband_reply", "retval reply")
+
+
+class _CliConn:
+    """A stand-in connection answering cli_inband, and counting what it sent."""
+
+    def __init__(self, dead=False):
+        self.sent = []
+        self.dead = dead
+        self.messages = {"cli_inband": object()}
+        self.api = _types.SimpleNamespace(cli_inband=self._cli)
+
+    def _cli(self, cmd):
+        if self.dead:
+            raise OSError("Broken pipe")
+        self.sent.append(cmd)
+        return _CliReply(0, f"out of {cmd}\n")
+
+
+_cp = vppapi.Papi(papi=_fake, apidir="/nonexistent")
+_cp._conn = _CliConn()
+_cp._papi = _types.SimpleNamespace(vpp_serializer=_types.SimpleNamespace(types={}))
+_cp._conn.messages["cli_inband"] = _types.SimpleNamespace(
+    fields=["_vl_msg_id", "context", "cmd"], fieldtypes=["u16", "u32", "string"])
+check(_cp.cli("show interface") == (True, "out of show interface\n"),
+      "a screen comes back as the text vppctl prints")
+with _cp.cached_dumps():
+    _cp.cli("show bpa pool")
+    _cp.cli("show bpa pool")
+    _cp.remember("running_config", "cfg")
+    check(_cp.recall("running_config") == "cfg",
+          "what a reader built is recalled inside the block")
+    _cp.cli("bpa pool nb del")
+    check(_cp.recall("running_config") is None,
+          "and forgotten at a line that writes")
+    _cp.cli("show bpa pool")
+check(_cp._conn.sent.count("show bpa pool") == 2
+      and "bpa pool nb del" in _cp._conn.sent,
+      f"a screen asked twice in a block is one message, and asked again after "
+      f"a write: {_cp._conn.sent}")
+check(_cp.recall("running_config") is None and _cp.remember("k", 1) is None
+      and _cp.recall("k") is None,
+      "outside a block nothing is kept or recalled")
+_cp._conn = _CliConn(dead=True)
+_cp._conn.messages["cli_inband"] = _types.SimpleNamespace(
+    fields=["_vl_msg_id", "context", "cmd"], fieldtypes=["u16", "u32", "string"])
+_cp._connect = lambda: _cp._conn
+check(_cp.cli("show version") is None,
+      "a question lost with the socket goes to vppctl, which can only read")
+_dead = _CliConn(dead=True)
+_dead.messages["cli_inband"] = _cp._conn.messages["cli_inband"] if _cp._conn else \
+    _types.SimpleNamespace(fields=["_vl_msg_id", "context", "cmd"],
+                           fieldtypes=["u16", "u32", "string"])
+_cp._conn = _dead
+_cp._connect = lambda: _cp._conn if _cp._conn is not None else _dead
+got = _cp.cli("bpa pool nb del")
+check(got is not None and got[0] is False and "lost" in got[1],
+      f"a write lost with the socket is not handed to vppctl to send again: {got}")
+_nv = vppapi.Papi(papi=None, apidir="/nonexistent")
+_nv.why_vat2 = "PRISMA_API=vat2"
+check(_nv.cli("show version") is None,
+      "with no connection, None: the caller runs vppctl as it always did")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

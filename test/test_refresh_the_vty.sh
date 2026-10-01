@@ -59,6 +59,34 @@ run() { # <box>
   sh "$BIN" 2>&1
 }
 
+echo "=== two asked at once: one recreates, the other finds it current (#529) ==="
+# The upgrade script schedules it and a 0.148.0 VTY asks again. Under the lock
+# the second waits for the first, then reads the new image and does nothing.
+if command -v flock >/dev/null 2>&1; then
+  B=$(mkbox "prisma-mgmt:0.148.0" "0.149.0" "0.149.0")
+  # compose takes a second, so an unlocked pair would both run it.
+  cat > "$B/bin/compose" <<CP
+echo "\$*" >> "$B/compose.argv"
+sleep 1
+echo "prisma-mgmt:0.149.0" > "$B/recreated"
+CP
+  chmod +x "$B/bin/compose"
+  export PRISMA_REFRESH_LOCK=$B/run/refresh.lock
+  run "$B" > "$B/one.out" & P1=$!
+  run "$B" > "$B/two.out" & P2=$!
+  wait $P1; wait $P2
+  unset PRISMA_REFRESH_LOCK
+  N=$(grep -c "up -d" "$B/compose.argv" 2>/dev/null)
+  [ "$N" = 1 ] && ok "compose ran once for the two of them" \
+    || bad "compose ran $N times: two refreshes raced on one container"
+  cat "$B/one.out" "$B/two.out" | grep -q "already runs prisma-mgmt:0.149.0" \
+    && ok "and the second said there was nothing left to do" \
+    || bad "the second did not find the image current: $(cat "$B/one.out" "$B/two.out")"
+  rm -rf "$B"
+else
+  echo "  SKIP: no flock on this machine"
+fi
+
 echo "=== an upgraded box: the VTY moves, nothing else does ==="
 B=$(mkbox "prisma-mgmt:0.147.3" "0.147.4" "0.147.4")
 OUT=$(run "$B"); RC=$?

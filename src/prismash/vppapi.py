@@ -330,6 +330,25 @@ class Vat2:
                 self._dumps = None
 
 
+    def recall(self, key):
+        """
+        What remember() kept under `key` in this block, or None: outside a
+        block, after any write, and for a key never kept (#529).
+        """
+        if self._dumps is None:
+            return None
+        return self._dumps.get(("kept", key))
+
+    def remember(self, key, value):
+        """
+        Keep `value` under `key` until the block ends or anything is written
+        (#529) - what a caller built out of this block's reads, such as the
+        whole running configuration, so a second reading is not made of them.
+        Outside a block it keeps nothing.
+        """
+        if self._dumps is not None:
+            self._dumps[("kept", key)] = value
+
     def forget_dumps(self):
         """
         Stop answering from the block's cache, now, until another block opens.
@@ -695,8 +714,12 @@ class Papi(Vat2):
         if not files:
             self.why_vat2 = f"no API definitions under {self._apidir}"
             return None
+        # Only what the VTY sends (#529), made once and kept; the files as
+        # they are when that cannot be had.
+        pruned = definitions_file(files)
         try:
-            conn = papi.VPPApiClient(apifiles=files, use_socket=True,
+            conn = papi.VPPApiClient(apifiles=[pruned] if pruned else files,
+                                     use_socket=True,
                                      server_address=self._socket,
                                      read_timeout=15)
             conn.connect(f"prismash-{os.getpid()}")
@@ -807,6 +830,38 @@ class Papi(Vat2):
             reason += f" ({detail})"
         return Reply(REFUSED, retval=retval, reason=reason, fields=payload)
 
+    def cli(self, cmd):
+        """
+        (reached, text) for one CLI line over the connection, as cli_inband -
+        or None when there is no connection, and the caller runs vppctl as it
+        always did (#529).
+
+        The text is vppctl's, byte for byte: lab/api.sh compares every screen
+        the VTY reads through both on one dataplane. A `show` is answered once
+        inside cached_dumps(); any other line may change what every answer
+        says, and forgets them. A line that was SENT and lost with the socket
+        is not handed to vppctl to send again - it is said as not reached.
+        """
+        question = cli_is_question(cmd)
+        key = ("cli", cmd)
+        if question and self._dumps is not None and key in self._dumps:
+            return self._dumps[key]
+        if not question and self._dumps is not None:
+            self._dumps.clear()
+        if not self._defined("cli_inband"):
+            return None
+        failed, answer = self._send("cli_inband", {"cmd": cmd}, question)
+        if failed:
+            # A question lost with the socket is asked again the old way,
+            # which can only read; a write is not.
+            if question or failed.state == CANNOT_SEND:
+                return None
+            return False, failed.reason
+        got = (True, answer.reply or "")
+        if question and self._dumps is not None:
+            self._dumps[key] = got
+        return got
+
     def _dump(self, message, args, timeout=15):
         """_dump() over the connection, or vat2's when there is none."""
         if not self._defined(message):
@@ -815,6 +870,176 @@ class Papi(Vat2):
         if failed:
             return failed
         return Reply(OK, fields={"rows": [plain(r) for r in answer or []]})
+
+
+#: Every message the VTY sends, and the one it reads its screens with (#529).
+#: The connection loads the definitions of these alone - with their replies,
+#: the types they reach and memclnt whole - rather than 58 files of them:
+#: vpp_papi builds a serializer for every type and message it is handed, and
+#: on the X520 bench that was 0.64 s of every new process. A message missing
+#: here is still sent, over vat2 (_defined answers no), which is slow and
+#: right; test/test_vppapi.py holds this list to prismash's source.
+VTY_MESSAGES = frozenset({
+    "bond_add_member", "bond_create2", "bond_delete", "bond_detach_member",
+    "bpa_bypass_set", "bpa_forward_add_del", "bpa_global_set",
+    "bpa_identity_radius_set", "bpa_identity_source_set",
+    "bpa_interface_add_del_feature", "bpa_limits_set", "bpa_logging_set",
+    "bpa_logging_syslog_set", "bpa_pool_add_del", "bpa_pool_settings_set",
+    "cli_inband", "create_loopback_instance", "create_subif",
+    "create_vlan_subif", "delete_loopback", "delete_subif", "ip_table_add_del",
+    "ip_table_dump", "ipfix_exporter_dump", "lcp_itf_pair_add_del",
+    "lcp_osi_proto_enable", "lcp_osi_proto_get", "set_ipfix_exporter",
+    "sw_bond_interface_dump", "sw_interface_add_del_address",
+    "sw_interface_dump", "sw_interface_get_table",
+    "sw_interface_ip6nd_ra_config", "sw_interface_ip6nd_ra_dump",
+    "sw_interface_set_flags", "sw_interface_set_interface_name",
+    "sw_interface_set_mac_address", "sw_interface_set_mtu",
+    "sw_interface_set_table", "sw_interface_tag_add_del",
+    "sw_member_interface_dump", "urpf_update", "vrrp_vr_add_del",
+    "vrrp_vr_dump", "vrrp_vr_start_stop", "vrrp_vr_track_if_add_del",
+    "vrrp_vr_track_if_dump",
+})
+
+#: The definition sections vpp_papi reads, and how a type is named in each.
+_TYPE_SECTIONS = ("enums", "enumflags", "unions", "types")
+
+
+def _bare(name):
+    """A type as the definitions key it: `vl_api_address_t` is `address`."""
+    if name.startswith("vl_api_") and name.endswith("_t"):
+        return name[len("vl_api_"):-len("_t")]
+    return name
+
+
+def prune_definitions(apis, keep):
+    """
+    One definition file holding what `keep` needs out of `apis` (#529).
+
+    `apis` is the parsed .api.json files, `keep` the request messages. Kept:
+    those messages, the replies and details their services name, every
+    message of memclnt (the connection itself: sockclnt_create, control_ping
+    for the end of a dump, keepalives), the address family enum vpp_papi
+    checks at start, and every type any of them reaches, followed through
+    types, unions and aliases. A request not in any file is left out, and
+    sent over vat2 by whoever asks for it.
+    """
+    msgs, services, tables = {}, {}, {k: {} for k in _TYPE_SECTIONS}
+    aliases, memclnt = {}, set()
+    for api in apis:
+        mod = api.get("module", "") or ""
+        for m in api.get("messages", []):
+            msgs[m[0]] = m
+            if mod == "memclnt" or "memclnt" in str(api.get("paths", "")):
+                memclnt.add(m[0])
+        services.update(api.get("services", {}))
+        for sec in _TYPE_SECTIONS:
+            for t in api.get(sec, []):
+                tables[sec][t[0]] = t
+        aliases.update(api.get("aliases", {}))
+    want = set(memclnt) | {"control_ping", "control_ping_reply"}
+    for k in keep:
+        if k in msgs:
+            want.add(k)
+            reply = services.get(k, {}).get("reply")
+            if reply:
+                want.add(reply)
+            for ev in services.get(k, {}).get("events", []) or []:
+                want.add(ev)
+    want &= set(msgs)
+    types = {sec: {} for sec in _TYPE_SECTIONS}
+    keep_alias = {}
+    todo = ["address_family"]
+    for m in want:
+        todo += [f[0] for f in msgs[m][1:] if isinstance(f, list) and f]
+    seen = set()
+    while todo:
+        name = _bare(todo.pop())
+        if name in seen:
+            continue
+        seen.add(name)
+        for sec in _TYPE_SECTIONS:
+            t = tables[sec].get(name)
+            if t is not None:
+                types[sec][name] = t
+                if sec in ("types", "unions"):
+                    todo += [f[0] for f in t[1:] if isinstance(f, list) and f]
+        if name in aliases:
+            keep_alias[name] = aliases[name]
+            todo.append(aliases[name].get("type", ""))
+    return {
+        "module": "prismash",
+        "messages": [msgs[m] for m in sorted(want)],
+        "services": {k: v for k, v in services.items() if k in want},
+        "aliases": keep_alias,
+        **{sec: list(types[sec].values()) for sec in _TYPE_SECTIONS},
+    }
+
+
+def _cache_dir():
+    """
+    A directory only this account can write, for the pruned definitions, or
+    None. vpp_papi takes files, and one planted under a shared /tmp name by
+    another account would be read as this box's API - so the directory must
+    be ours and closed to everybody else, or nothing is kept.
+    """
+    import tempfile
+    uid = os.geteuid()
+    for d in (os.environ.get("XDG_RUNTIME_DIR", ""),
+              os.path.join(tempfile.gettempdir(), f"prisma-papi-{uid}")):
+        if not d:
+            continue
+        try:
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            st = os.stat(d)
+        except OSError:
+            continue
+        if st.st_uid == uid and not st.st_mode & 0o077:
+            return d
+    return None
+
+
+def definitions_file(files, keep=VTY_MESSAGES, cachedir=None):
+    """
+    The path of one file of pruned definitions for `files`, made once and
+    kept (#529), or None when it cannot be had - the caller then hands
+    vpp_papi the files themselves, which is slower and right.
+
+    Kept under a name made of every file's path, size and mtime and of
+    `keep`: a package upgrade that rewrites a definition makes a new name,
+    so a file for the old one is never read against the new dataplane.
+    """
+    import hashlib
+    try:
+        key = hashlib.sha256()
+        for f in sorted(files):
+            st = os.stat(f)
+            key.update(f"{f}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+        key.update(" ".join(sorted(keep)).encode())
+    except OSError:
+        return None
+    d = cachedir or _cache_dir()
+    if d is None:
+        return None
+    path = os.path.join(d, f"prismash-api-{key.hexdigest()[:24]}.json")
+    if os.path.exists(path):
+        return path
+    try:
+        apis = []
+        for f in files:
+            with open(f) as fh:
+                apis.append(json.load(fh))
+        tmp = f"{path}.{os.getpid()}"
+        with open(tmp, "w") as fh:
+            json.dump(prune_definitions(apis, keep), fh)
+        os.replace(tmp, path)
+    except (OSError, ValueError):
+        return None
+    return path
+
+
+def cli_is_question(cmd):
+    """Is a CLI line one that only reads? `show ...` is; anything else writes."""
+    return cmd.split()[:1] == ["show"]
 
 
 def client():

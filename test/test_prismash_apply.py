@@ -2166,6 +2166,62 @@ _fs.apply(target_with("rf", "100.64.0.0/24", "203.0.113.0/30"))
 check(_checked == 0 and _ca.forgot == 1,
       f"a check keeps the answers, a real apply drops them after reading "
       f"({_checked}, {_ca.forgot})")
+# #529: the running configuration is read once per block and handed out as
+# copies; a write ends it.
+
+
+class KeepingApi(CachingApi):
+    """CachingApi that keeps what remember() is given while a block is open."""
+
+    def __init__(self):
+        super().__init__()
+        self.kept = None
+
+    # not a unit: the stand-in's seam, which Shell.running_config reads
+    def recall(self, key):
+        return self.kept
+
+    # not a unit: the stand-in's seam, which Shell.running_config fills
+    def remember(self, key, value):
+        self.kept = value
+
+
+_ka = KeepingApi()
+_ks = prismash.Shell()
+_ks.api = _ka
+_reads = []
+_ks._running_config = lambda: _reads.append(1) or parse_nested(
+    "cgnat pool kp\n inside 100.64.0.0/24\n outside 203.0.113.0/30\n exit\n")
+_c1 = _ks.running_config()
+_c1.pools.clear()
+_c2 = _ks.running_config()
+check(len(_reads) == 1 and "kp" in _c2.pools,
+      f"a second reading in the block is the first one's, as a copy the first "
+      f"caller could not change: {len(_reads)} reading(s)")
+_ka.kept = None
+_ks.running_config()
+check(len(_reads) == 2, "and after a write forgot it, the box is read again")
+# Vpp.run over the connection: the text as it came, the error rule vppctl's.
+_v = prismash.Vpp()
+_v.api = type("A", (), {"cli": lambda self, c: (True, f"{c} said this\n")})()
+check(_v.run("show bpa pool") == (0, "show bpa pool said this"),
+      "a screen over the connection, stripped as vppctl's was")
+_v.api = type("A", (), {"cli": lambda self, c: (True, "unknown input `x'\n")})()
+check(_v.run("show x")[0] == 1, "an error VPP printed is still an error")
+_v.api = type("A", (), {"cli": lambda self, c: (False, "connection lost")})()
+check(_v.run("bpa pool p del") == (1, "connection lost"),
+      "a line that did not reach the dataplane is said as not reached")
+_forgot = []
+_v.api = type("A", (), {"cli": lambda self, c: None,
+                         "forget_dumps": lambda self: _forgot.append(1)})()
+_saved_vppctl = prismash.VPPCTL
+prismash.VPPCTL = "/nonexistent/vppctl"
+check(_v.run("show version") == (1, "/nonexistent/vppctl not found")
+      and _forgot == [],
+      "no connection: vppctl as it always was, and a screen forgets nothing")
+_v.run("clear errors")
+check(_forgot == [1], "while a line vppctl sends that writes forgets the answers")
+prismash.VPPCTL = _saved_vppctl
 # A batch that commits reads inside one block; a question does not.
 _ca.opened = 0
 _bs = shell_with(_ca)

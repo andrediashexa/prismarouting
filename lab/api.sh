@@ -217,6 +217,19 @@ expect_in "a virtual router compared, not an empty list" \
 expect_in "a bundle compared" \
   "parity sw_bond_interface_dump: same (ok/ok, 1 answer(s))" "$PARITY"
 
+# THE SCREENS TOO (#529): what the VTY reads with vppctl, read over the same
+# connection as cli_inband. Vpp.run() hands its callers this text, so it has
+# to be vppctl's byte for byte, on a dataplane with a pool, a VRF, a bundle
+# and addresses in it.
+CLIP=$(python3 /src/lab/api_client_check.py papi cliparity 2>&1)
+echo "$CLIP" | sed 's/^/  /'
+expect_not_in "every screen the VTY reads is vppctl's, byte for byte, over cli_inband" \
+  "DIFFERENT" "$CLIP"
+expect_in "the pool screen was compared" "cliparity show bpa pool: same" "$CLIP"
+expect_in "and the interface table" "cliparity show interface: same" "$CLIP"
+expect_in "and a screen VPP does not know, whose error the VTY reads" \
+  "cliparity show no-such-screen: same" "$CLIP"
+
 # --- with the dataplane stopped: the case that used to be a traceback ---
 pkill -f "vpp -c" 2>/dev/null
 sleep 2

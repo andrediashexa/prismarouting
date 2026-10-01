@@ -38,6 +38,18 @@ MGMT=prisma-routing_mgmt_1
 say() { echo "refresh-the-vty: $*"; }
 
 # A box on the units path has no management container, and nothing to do.
+# ONE AT A TIME (#529). The upgrade script schedules this and a VTY of
+# 0.148.0 asks for it again after the upgrade it ran; two compose runs on one
+# container at once would race, so the second waits and then finds the image
+# current and does nothing. Best effort: a box with no flock runs unlocked.
+LOCK=${PRISMA_REFRESH_LOCK:-$ROOT/run/prisma-routing/refresh-the-vty.lock}
+if [ -z "${PRISMA_REFRESH_LOCKED:-}" ] && command -v flock >/dev/null 2>&1 \
+   && mkdir -p "$(dirname "$LOCK")" 2>/dev/null; then
+  PRISMA_REFRESH_LOCKED=1
+  export PRISMA_REFRESH_LOCKED
+  exec flock -w 120 "$LOCK" sh "$0" "$@"
+fi
+
 before=$("$DOCKER" inspect -f '{{.Config.Image}}' "$MGMT" 2>/dev/null) || {
   say "there is no $MGMT on this box: the VTY runs on the host, nothing to do"
   exit 0

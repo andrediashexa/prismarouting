@@ -77,7 +77,34 @@ version has a chance of seeing it.
 
 ### Added
 
+### Changed
+
+* **A commit in about a second.**
+  ([#529](https://github.com/andrediashexa/hexarouting/issues/529))
+  After #527 a commit inside a session took 1.9 s on the X520 bench and a
+  `prismash -c` one 4.5 s, and its profile named what was left: 62 `vppctl`
+  processes, the running configuration read four times, and vpp_papi parsing
+  58 definition files. The CLI screens the VTY reads go over the same
+  connection as `cli_inband` - the same text as `vppctl`, byte for byte, on
+  the twenty screens `lab/api.sh` compares - with `vppctl` as their fallback;
+  a commit reads the box once, its CLI screens, FRR's configuration and the
+  doors' reads kept with the dumps until the first write; and the connection
+  loads one pruned file of the messages the VTY sends, kept per account under
+  a name the definitions' sizes and times make (0.18 s to 0.02 s). In
+  `lab/commit.sh`, eight interfaces: a `-c` commit 0.74 s with no `vppctl`
+  and one reading, a commit inside an open session 0.37 s.
+
 ### Fixed
+
+* **The first upgrade into a release left the VTY on the release before.**
+  ([#529](https://github.com/andrediashexa/hexarouting/issues/529))
+  #528 had the VTY that ran `system upgrade` ask for its own refresh - the
+  previous release's VTY, so measured on the X520 bench 0.147.4 -> 0.148.0
+  left it on 0.147.4. The upgrade artifact asks now, through the new
+  `appliance/schedule-vty-refresh` after `install.sh`, since it is always the
+  new release's code; it says so on a line the VTY reads so as not to ask
+  again, and `refresh-the-vty` takes a lock, so a 0.148.0 VTY asking anyway
+  waits and then finds the image current.
 
 ## 0.148.0 - a commit over one API connection, the prompt says the box's name, and an upgrade's VTY without a reboot
 

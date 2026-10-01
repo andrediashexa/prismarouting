@@ -87,6 +87,36 @@ if ARGS == ["parity"]:
             print("  papi:", json.dumps(fb, sort_keys=True)[:700])
     sys.exit(0)
 
+if ARGS == ["cliparity"]:
+    # EVERY SCREEN THE VTY READS (#529), asked of vppctl and of the one
+    # connection's cli_inband on one dataplane, and compared byte for byte -
+    # trailing blanks, line ends and all - as Vpp.run() would receive them.
+    # `show memory main-heap` moves between two asks (it counts the heap the
+    # asking itself uses), so its figures are masked and its shape compared.
+    import re
+    import subprocess
+    screens = ["show version", "show plugins", "show interface",
+               "show interface addr", "show interface loop0",
+               "show interface features loop0", "show interface addr loop0",
+               "show hardware-interfaces", "show hardware-interfaces brief",
+               "show errors", "show ip fib", "show lcp",
+               "show memory main-heap", "show bpa config", "show bpa pool",
+               "show bpa timeouts", "show bpa session", "show bpa urpf",
+               "show lacp details", "show no-such-screen"]
+    for cmd in screens:
+        v = subprocess.run(["vppctl"] + cmd.split(), capture_output=True,
+                           text=True)
+        vo = (v.stdout or "") + (v.stderr or "")
+        got = api.cli(cmd)
+        po = got[1] if got else None
+        if cmd == "show memory main-heap" and po is not None:
+            vo, po = (re.sub(r"[0-9.]+[KMG]?", "N", x) for x in (vo, po))
+        same = po is not None and vo == po
+        other = "" if same else " vs %d" % len(po or "")
+        print(f"cliparity {cmd}: {'same' if same else 'DIFFERENT'} "
+              f"({len(vo)} bytes{other})")
+    sys.exit(0)
+
 if ARGS == ["defined"]:
     # EVERY MESSAGE prismash sends, read off its source, against the
     # definitions the connection loaded (vppapi.API_PLUGINS). One missing is

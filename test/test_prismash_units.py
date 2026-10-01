@@ -6903,6 +6903,21 @@ try:
           and "'save' before rebooting" in _t,
           f"a host that could not start it is quoted, and the VTY is said to "
           f"stay the previous release's until a reboot: {text!r}")
+    # #529: the package's own script scheduled it, and said so - the VTY
+    # does not ask the host a second time, and still says what happens.
+    _asked.clear()
+    _sh.sys._run = lambda argv, stdin=None, timeout=30: (
+        _asked.append(tuple(argv)) or (0, ""))
+    rv, text = driven(lambda: _sh.refresh_the_vty("0.99.8", scheduled=True))
+    check(_asked == [] and "the VTY restarts on 0.99.8" in " ".join(text.split()),
+          f"a refresh the upgrade scheduled is not asked for again: {_asked}")
+    # The line it looks for is the one the upgrade artifact prints
+    # (appliance/schedule-vty-refresh, run by appliance/upgrade), read off
+    # the file: a rewording of either would leave the VTY asking twice.
+    _up = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                            "appliance", "schedule-vty-refresh")).read()
+    check(f'echo "{prismash.REFRESH_SCHEDULED}' in _up,
+          "the upgrade artifact prints the line run_upgrade() reads")
     _sh.sys._run = lambda argv, stdin=None, timeout=30: (125, "")
     rv, text = driven(lambda: _sh.refresh_the_vty("0.99.8"))
     check("exit 125 and nothing else" in " ".join(text.split()),
