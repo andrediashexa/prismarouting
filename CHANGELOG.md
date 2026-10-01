@@ -79,6 +79,27 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A line the policy compiled to that a daemon refused went unnoticed, and
+  the commit said "commit complete".**
+  ([#539](https://github.com/andrediashexa/hexarouting/issues/539))
+  `set extcommunity rt 65000:100 additive` passes `vtysh -C`, the syntax
+  check the commit check uses; applied, bgpd refuses it, and the clause runs
+  with no set at all. Reading the configuration back cannot see it: measured
+  on FRR 10.7.1, the merged `show running-config` and bgpd's own both still
+  carry the line. bgpd's `show route-map` does not. So `commit` now reads
+  `show route-map json` once, only when the route-maps the policy compiled
+  to changed, and judges each new clause by the daemon that runs its map -
+  bgpd for a neighbor, ospfd or isisd for an IGP export, zebra for a FIB
+  policy - counting its match and set rules against what was sent, so a rule
+  FRR words its own way is not a refusal. A refused line names the
+  policy-statement and term it came from and the line, and the commit is
+  rolled back: a clause missing a set or a match still runs, doing what
+  nobody wrote. lab/commit-readback.sh puts the line back through a fixture
+  of the old compiler: 13 checks, 8 red without the read-back; it costs one
+  `show route-map json`, about 25 ms on the lab beside a 1.4 s commit.
+  lab/policy.sh, policy-a to policy-d, policy-igp, bgp-policy, routing, igp
+  and commit pass with it - no correct commit refused.
+
 ## 0.148.15 - two things the policy compiler names alike are refused
 
 ### Fixed

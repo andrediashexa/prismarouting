@@ -1008,9 +1008,13 @@ def frr_lines(cfg):
     uses its routing makes, then the routing itself. The one place both are
     joined, so a reload, a check and a commit check hand FRR the same text.
     """
+    return compiled_lines(cfg) + list(cfg.routing)
+
+
+def compiled_lines(cfg):
+    """What the policy compiles to for the uses `cfg`'s routing makes."""
     pol, _ = policy_mod.parse(cfg.policy)
-    return policy_mod.compile_all(pol, policy_uses(cfg.routing)) \
-        + list(cfg.routing)
+    return policy_mod.compile_all(pol, policy_uses(cfg.routing))
 
 
 def compare_redact(diff):
@@ -3285,6 +3289,139 @@ def statements_frr_dropped(added, running):
         if stmt not in have:
             out.append((stmt, None))
     return out
+
+
+def route_map_bodies(lines):
+    """
+    {clause header: [its statements, stripped]} for every `route-map`
+    clause in `lines`, in their order (#539). Keyed by clause, because the
+    policy compiler writes the same line into many clauses - `on-match
+    next`, `set weight 7` - and a line one clause lost is still present in
+    another.
+    """
+    out, clause = {}, None
+    for line in lines:
+        s = line.strip()
+        if not s or s.startswith("!"):
+            continue
+        if not line.startswith(" "):
+            clause = s if s.startswith("route-map ") else None
+            if clause:
+                out.setdefault(clause, [])
+            continue
+        if clause:
+            out[clause].append(s)
+    return out
+
+
+def compiled_refused(sent, before, read_maps, daemons):
+    """
+    Of the route-map clauses the policy compiler hands FRR in this commit
+    and did not in the last one, the lines the daemon that runs them is not
+    running afterwards (#539): [(clause, statement)], in the order sent -
+    (None, header) when the daemon has no such clause at all.
+
+    `read_maps` is asked for FRR's `show route-map json` (Shell.
+    route_map_counts(), None when vtysh did not answer) only when there is
+    a new clause to judge, so a commit that sends none pays nothing.
+    `daemons` is {map name: the daemon that runs it} (compiled_daemons()).
+    A clause is judged by its map's daemon only, and not at all when that
+    daemon is not in the answer: a check that cannot run says nothing.
+
+    WHAT THE DAEMON RUNS, NOT WHAT IT WAS TOLD - and the configuration
+    read-back cannot answer that. Measured on FRR 10.7.1 with the case #535
+    found (lab/commit-readback.sh): bgpd refused `set extcommunity rt
+    65000:100 additive` - "% [BGP] Argument form is unsupported or
+    malformed" - and both the merged `show running-config` and bgpd's own
+    `show running-config bgpd` still carried the line, word for word. bgpd's
+    `show route-map` had the clause with no set clause at all, which is what
+    it ran.
+
+    COUNTED, then named. FRR prints a clause's match and set rules in its own
+    words, so a line absent by text could be a rewrite; a line the daemon
+    refused leaves it with FEWER rules of that kind than were sent, and no
+    rewrite does that. The lines named are the ones whose words are not
+    there, or all of that kind when every one was reworded.
+
+    Only what is new is asked about. A clause the last commit sent the same
+    is not this commit's to refuse, and refusing it would refuse every later
+    commit, the rollback to the previous one included. The lists a clause
+    matches on are not judged: `show route-map` does not show them.
+    """
+    had = route_map_bodies(before)
+    new = {c: b for c, b in route_map_bodies(sent).items() if had.get(c) != b}
+    if not new:
+        return []
+    maps = read_maps()
+    out = []
+    for clause, lines in new.items():
+        _, name, _, seq = clause.split()
+        d = daemons.get(name)
+        if maps is None or d not in maps:
+            continue
+        rule = next((r for r in (maps[d].get(name) or {}).get("rules", [])
+                     if str(r.get("sequenceNumber")) == seq), None)
+        if rule is None:
+            out.append((None, clause))
+            continue
+        for word, key in (("match", "matchClauses"), ("set", "setClauses")):
+            mine = [l for l in lines if l.split()[0] == word]
+            have = rule.get(key) or []
+            if len(have) >= len(mine):
+                continue
+            gone = [l for l in mine if l[len(word) + 1:] not in have]
+            out += [(clause, l) for l in (gone or mine)]
+    return out
+
+
+def compiled_maps(cfg):
+    """
+    {route-map name: (policy or chain, use)} for every map the policy
+    compiler writes for `cfg` (#539): each use's, and the maps its `from
+    policy` terms call - a reject term's inverted (#542).
+    """
+    pol, _ = policy_mod.parse(cfg.policy)
+    maps = {}
+    for c, use in policy_uses(cfg.routing):
+        maps[policy_mod.map_name(c, use)] = (c, use)
+        for p, inv in policy_mod.called_maps(pol, policy_mod.chain(c)):
+            name = (policy_mod.inverted_map_name if inv
+                    else policy_mod.sub_map_name)(p, use)
+            maps[name] = (p, use)
+    return maps
+
+
+def compiled_daemons(cfg):
+    """{route-map name: the daemon that runs it}, for compiled_maps()."""
+    return {name: policy_mod.use_daemon(use)
+            for name, (_, use) in compiled_maps(cfg).items()}
+
+
+def compiled_owner(cfg, clause):
+    """
+    The policy an operator wrote that a compiled clause header came from,
+    in the VTY's words (#539): `policy-statement P term T`, `policy-statement
+    P default-action`, or the use's own default; None for a header this
+    configuration's compiler would not write (a list, or a map it no longer
+    names).
+    """
+    m = re.fullmatch(r"route-map (\S+) (?:permit|deny) (\d+)", clause or "")
+    if not m:
+        return None
+    maps = compiled_maps(cfg)
+    if m.group(1) not in maps:
+        return None
+    pol, _ = policy_mod.parse(cfg.policy)
+    owner = policy_mod.clause_owner(pol, maps[m.group(1)][0],
+                                    int(m.group(2)))
+    if owner is None:
+        return None
+    p, term = owner
+    if p is None:
+        return "no term decided: the default for this use"
+    if term is None:
+        return f"policy-statement {p} default-action"
+    return f"policy-statement {p} term {term}"
 
 
 def cap_needed(delta):
@@ -13161,6 +13298,43 @@ class Shell:
             self.apply(Config.parse(backup))
             return
 
+        # What the daemons run, read once, and only when the route-maps the
+        # policy compiler sent changed (#539): a commit of the CGNAT half, or
+        # of routing with no policy in it, pays nothing for it. #197's check
+        # below reads the configuration, which is a different question.
+        added = self.routing_added(running.routing, self.candidate.routing)
+        refused = compiled_refused(compiled_lines(self.candidate),
+                                   compiled_lines(running),
+                                   self.route_map_counts,
+                                   compiled_daemons(self.candidate))
+        # A STATEMENT THE POLICY COMPILER WROTE that a daemon refused after
+        # `vtysh -C` accepted it (#539) - ROLLED BACK, unlike the operator's
+        # own dropped statement below, and the difference is what the line
+        # is. The operator's is one statement of theirs, named, that they can
+        # retype; this is one line of a route-map clause, and a clause that
+        # lost a `set` or a `match` still runs - with no set at all, or
+        # matching more than the term said. That is the policy doing
+        # something nobody wrote, on live routes, so the previous state is
+        # put back rather than described.
+        if refused:
+            self.err(f"FRR refused {len(refused)} line(s) the routing "
+                     "policy compiled to")
+            for clause, stmt in refused[:5]:
+                owner = compiled_owner(self.candidate, clause or stmt)
+                if owner:
+                    print_prose(f"in {owner}:", indent="    ")
+                # Quoted whole, for the reason in `console_prose`.
+                print("      " + (f"{clause}: {stmt}" if clause
+                                  else f"{stmt}: the whole clause"))
+            if len(refused) > 5:
+                print(f"    ... and {len(refused) - 5} more")
+            print_prose("vtysh accepted these lines and the daemon that runs "
+                        "the policy is not running them, so it would decide "
+                        "without them")
+            self.err("commit failed; rolling back to the previous state")
+            self.apply(Config.parse(backup))
+            return
+
         self.record_applied(vppapi.identity()[0], self.candidate)
         if self.from_rollback:
             self.state.bump("rollbacks")
@@ -13175,7 +13349,6 @@ class Shell:
                      "be recorded")
             print(f"    {e}")
             print_prose("'rollback' will not be able to undo this commit")
-        added = self.routing_added(running.routing, self.candidate.routing)
         # The GENERAL check (#197), which is now possible: read FRR's own
         # running configuration back and see which of the statements this
         # commit introduced are not in it.

@@ -5378,6 +5378,53 @@ complete**, on a box where OSPF is running perfectly - with two assertions
 beside it proving FRR really did omit and really did rewrite, so that
 "complete" is not simply what this box says to everything.
 
+### What the policy compiled to is judged by what the daemon runs
+
+The check above reads FRR's **configuration**, and for the lines the policy
+compiler writes that is the wrong question
+([#539](https://github.com/andrediashexa/hexarouting/issues/539)). Measured on
+FRR 10.7.1 with the line #535's lab found, `set extcommunity rt 65000:100
+additive` (`lab/commit-readback.sh`):
+
+| asked | answer |
+|---|---|
+| `vtysh -C`, the syntax check the commit check uses | accepted |
+| applied to bgpd | `% [BGP] Argument form is unsupported or malformed.` |
+| `show running-config`, and bgpd's own `show running-config bgpd` | the line, word for word |
+| bgpd's `show route-map` | the clause, with **no set clause at all** |
+
+So a read-back of the configuration passes the very line bgpd refused, and the
+clause runs without it - a term that was to add a community accepts the route
+with nothing added. Before this, that commit said **commit complete**.
+
+`commit` now reads `show route-map json` once, when the route-maps the policy
+compiled to changed, and judges each new clause by the daemon that runs its
+map - bgpd for a neighbor's import or export, ospfd or isisd for an export
+into the IGP, zebra for a FIB policy. Every daemon holds every route-map, and
+zebra holding a clause with no BGP set is not bgpd refusing it. A clause
+whose daemon runs fewer `match` or `set` rules than were sent is a refused
+line: **counted, then named**, because FRR words its rules its own way and a
+line absent by text alone could be a rewrite, while no rewrite leaves fewer
+rules behind. A commit whose compiled route-maps did not change does not ask.
+
+**It is rolled back**, unlike the operator's own dropped statement above, and
+the difference is what the line is. A dropped statement of the operator's is
+one of theirs, named, to retype; a refused line of a compiled clause leaves a
+clause that still runs - without its `set`, or matching more than the term
+said - which is the policy doing something nobody wrote, on live routes:
+
+```
+error: FRR refused 1 line(s) the routing policy compiled to
+    in policy-statement P term ec:
+      route-map PO-P-IN permit 10: set extcommunity rt 65000:100 additive
+    vtysh accepted these lines and the daemon that runs the policy is not
+    running them, so it would decide without them
+error: commit failed; rolling back to the previous state
+```
+
+The prefix and community lists a clause matches on are not judged this way:
+`show route-map` does not show them.
+
 ### The refusal says whether this VTY had ever read the statement
 
 The refusal names statements, so it is a configuration display in miniature,

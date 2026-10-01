@@ -3439,6 +3439,148 @@ check(prismash.bgp_vrf("router bgp 65000 vrf red") == "red"
       "bgp_vrf and leak_error")
 ok("vrf-import typed, translated, refused and read back")
 
+print("\n=== a line the policy compiled to that a daemon refused (#539) ===")
+# The case #535's lab found: `set extcommunity rt ... additive` passed vtysh
+# -C, bgpd refused the line when it was applied, and the commit said "commit
+# complete" over a clause that ran with no set. What decides here is FRR's
+# read-back, so a refusal is a line absent from it.
+_pc = Config()
+_pc.policy = ["policy-options policy-statement P term t from route-filter "
+              "10.0.0.0/8 orlonger",
+              "policy-options policy-statement P term t set weight 7",
+              "policy-options policy-statement P term t then accept"]
+_pc.routing = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+               " address-family ipv4 unicast",
+               "  neighbor 10.0.0.2 route-map PO-P-IN in",
+               " exit-address-family", "exit"]
+_sent = prismash.compiled_lines(_pc)
+check(prismash.route_map_bodies(["route-map A permit 10", " set weight 7",
+                                  "exit", "ip x", "route-map B permit 10",
+                                  " set weight 7", "exit"])
+      == {"route-map A permit 10": ["set weight 7"],
+          "route-map B permit 10": ["set weight 7"]},
+      "route_map_bodies: each clause's statements, so the same line in two "
+      "clauses is two statements")
+_dm = prismash.compiled_daemons(_pc)
+check(_dm == {"PO-P-IN": "bgpd"}
+      and prismash.compiled_maps(_pc) == {"PO-P-IN": ("P", "import")},
+      f"compiled_maps and compiled_daemons: the map, its use, its daemon: "
+      f"{_dm}")
+
+
+def _rm(sets, matches=("ip address prefix-list PO-P-Tt-4",), daemon="bgpd"):
+    """`show route-map json` with PO-P-IN 10 running these rules."""
+    return {daemon: {"PO-P-IN": {"rules": [
+        {"sequenceNumber": 10, "matchClauses": list(matches),
+         "setClauses": list(sets)},
+        {"sequenceNumber": 65535, "matchClauses": [], "setClauses": []}]}}}
+
+
+_asked = []
+
+
+def _reads(maps):
+    def read():
+        _asked.append(1)
+        return maps
+    return read
+
+
+check(prismash.compiled_refused(_sent, [], _reads(_rm(["weight 7"])), _dm)
+      == [] and prismash.compiled_refused(_sent, [], _reads(_rm([])), _dm)
+      == [("route-map PO-P-IN permit 10", "set weight 7")],
+      "compiled_refused: a set the daemon runs is kept, one it does not is "
+      "refused, with its clause")
+check(prismash.compiled_refused(_sent, [], _reads(_rm(["weight 7"], [])),
+                                _dm)
+      == [("route-map PO-P-IN permit 10",
+           "match ip address prefix-list PO-P-Tt-4")],
+      "and a match the same way")
+check(prismash.compiled_refused(_sent, [], _reads(_rm(["weight seven"])),
+                                _dm) == [],
+      "a rule FRR words its own way is not a refusal: it is counted")
+# The measurement that made this the runtime's question: every daemon
+# holds every map, and zebra running the clause with no BGP set is not bgpd
+# refusing it.
+_both = _rm(["weight 7"])
+_both.update(_rm([], daemon="zebra"))
+check(prismash.compiled_refused(_sent, [], _reads(_both), _dm) == [],
+      "another daemon's view of the map is not asked")
+check(prismash.compiled_refused(_sent, [], _reads({"bgpd": {}}), _dm)
+      == [(None, "route-map PO-P-IN permit 10"),
+          (None, "route-map PO-P-IN permit 65535")],
+      "a clause the daemon does not have at all is refused whole")
+check(prismash.compiled_refused(_sent, [], _reads(None), _dm) == []
+      and prismash.compiled_refused(_sent, [], _reads({"zebra": {}}), _dm)
+      == [],
+      "an FRR that did not answer, or a daemon not in the answer, is not a "
+      "refusal")
+_asked.clear()
+check(prismash.compiled_refused(_sent, _sent, _reads(_rm([])), _dm) == []
+      and not _asked,
+      "a clause the last commit sent the same is not judged, nor FRR asked")
+check(prismash.compiled_owner(_pc, "route-map PO-P-IN permit 10")
+      == "policy-statement P term t"
+      and prismash.compiled_owner(_pc, "route-map PO-P-IN permit 65535")
+      == "no term decided: the default for this use"
+      and prismash.compiled_owner(_pc, "route-map PO-Z-IN permit 10") is None
+      and prismash.compiled_owner(_pc, None) is None,
+      "compiled_owner: the term a clause came from, in the VTY's words")
+
+
+def _readback_commit(maps):
+    """A commit of _pc over an empty box whose FRR runs `maps`."""
+    sh = shell(frr=RecFrr({"show route-map json": (0, json.dumps(maps)),
+                           "show running-config": (
+                               0, "\n".join(_sent + _pc.routing))}))
+    sh.candidate = Config.parse(_pc.text())
+    sh.candidate.policy, sh.candidate.routing = _pc.policy, _pc.routing
+    applied = []
+
+    def _apply(cfg, check_only=False):
+        if not check_only:
+            applied.append(cfg)
+        return True
+    sh.apply = _apply
+    sh.rb = types.SimpleNamespace(push=lambda *a, **k: None)
+    sh.record_applied = lambda *a, **k: None
+    rv, text = driven(lambda: sh.do_commit([]))
+    return applied, text
+
+
+_applied, _said = _readback_commit(_rm([]))
+check("FRR refused 1 line(s) the routing policy compiled to" in _said
+      and "in policy-statement P term t:" in _said
+      and "route-map PO-P-IN permit 10: set weight 7" in _said
+      and "rolling back to the previous state" in _said
+      and "commit complete" not in _said,
+      f"the commit refuses, naming the term and the line: {_said!r}")
+check(len(_applied) == 2 and not _applied[1].policy,
+      f"and puts the previous state back: {[a.policy for a in _applied]}")
+_applied, _said = _readback_commit(_rm(["weight 7"]))
+check("commit complete" in _said and len(_applied) == 1,
+      f"a commit FRR kept whole completes: {_said!r}")
+_applied, _said = _readback_commit({})
+check("FRR refused" not in _said and "commit complete" in _said,
+      f"an FRR that does not answer is not a refusal: {_said!r}")
+_pr = Config()
+_pr.policy = ["policy-options policy-statement G term t then accept",
+              "policy-options policy-statement R term t from policy G",
+              "policy-options policy-statement R term t then reject",
+              "policy-options policy-statement S term t from policy G",
+              "policy-options policy-statement S term t then accept"]
+_pr.routing = ["router bgp 65000", " address-family ipv4 unicast",
+               "  neighbor 10.0.0.2 route-map PO-R-IN in",
+               "  neighbor 10.0.0.2 route-map PO-S-OUT out",
+               " exit-address-family", "exit"]
+check(prismash.compiled_maps(_pr) == {"PO-R-IN": ("R", "import"),
+                                      "PO-G-NOT-IN": ("G", "import"),
+                                      "PO-S-OUT": ("S", "export"),
+                                      "PO-G-SUB-OUT": ("G", "export")},
+      f"compiled_maps: the maps from policy calls, inverted under a reject "
+      f"term: {prismash.compiled_maps(_pr)}")
+ok("the read-back of what the policy compiled to")
+
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
 # Mutation shown red: write only the assignment, dropping the other lines.
 tune = os.path.join(_root, "tune", "tune.env")
