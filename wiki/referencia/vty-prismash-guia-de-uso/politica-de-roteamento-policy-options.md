@@ -115,7 +115,7 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 | `from extended-community` | `<nome>`  | a rota carrega a extended community do conjunto |
 | `from validation-state` | `valid`, `invalid` ou `unknown` | o resultado da validação RPKI de origem. `unknown` é a rota que nenhum ROA cobre |
 | `from source-vrf` | `<vrf>` ou `default` | a rota foi importada dessa VRF, ou da tabela default. Só numa política de `vrf-import` |
-| `from policy` | `<política>` | chama outra política como sub-rotina: se ela rejeita, a rota é rejeitada; se aceita, o term segue. Um term chama uma política só |
+| `from policy` | `<política>` | chama outra política como sub-rotina: se ela rejeita, a rota é rejeitada; se aceita, o term segue. Num term `then reject` é diferente: o term rejeita exatamente o que a sub-rotina aceita, e o que ela rejeita segue para o próximo term (até a 0.148.12 esse caso rejeitava tudo que as outras condições do term pegavam). Um term chama uma política só |
 
 **Condições do mesmo tipo valem como "ou"; de tipos diferentes, como "e".** Duas `from prefix-list` casam uma rota que esteja em qualquer das duas; uma `from prefix-list` e uma `from community` exigem as duas coisas. `from prefix-list` e `from route-filter` são do mesmo tipo: as duas falam do prefixo.
 
@@ -400,6 +400,7 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 | no `commit`, um term que cita uma `prefix-list`, `community`, `large-community`, `extended-community`, `as-path` ou política que não existe | `policy-statement <política> term <term>: no prefix-list <lista>` (ou o tipo que for); nada é aplicado |
 | no `commit`, `set next-hop discard` no `import` de um vizinho eBGP direto sem `disable-connected-check` | `set next-hop discard is not resolved on a single-hop eBGP neighbor: add 'neighbor <vizinho> disable-connected-check', or the route is never installed and its traffic is forwarded` |
 | no `commit`, políticas que se chamam em roda com `from policy` | `policy-statement <política>: from policy reaches itself again` |
+| no `commit`, um term `then reject` com `from policy X`, quando X tem um term com `from policy` que não é `then accept` | `policy-statement <política> term <term>: then reject with from policy X, and ...` |
 | `vrf-import prisma-bp ...`, ou um `vrf-import` dentro do `router bgp <asn> vrf prisma-bp` | `prisma-bp is a VRF of the box's own: no route leaks out of it` (ou `into it`) |
 | `vrf-import red` dentro do `router bgp <asn> vrf red` | `a VRF does not import from itself (red)` |
 | `vrf-import` fora de `address-family ipv4 unicast` ou `ipv6 unicast` | `a VRF imports per address family` |
@@ -481,7 +482,7 @@ result: accept, by UP term cust
 
 O `at` diz em que uso: `import` (o padrão), `export`, `default-originate`, `network`, `aggregate`, `suppress`, `advertise`, `condition`, `table`, `vrf-import`, `ospf-default`, `isis-default`, `ospf <protocolo>`, `isis <protocolo>` e `fib <protocolo>`. Isso muda a resposta: o que acontece com a rota que nenhum term decidiu, o que um `from protocol` casa, e quais `set` valem ali - um `set` que aquele uso ignora aparece como "changes nothing here".
 
-A simulação segue a ordem e as regras do roteamento: a cadeia, o `then next policy`, o `default-action`, o `from policy` (cuja recusa recusa a rota). Uma lista que você não descreveu é vazia; um valor que você não deu é **desconhecido**, e o term que precisa dele não é adivinhado: a resposta diz que supôs que ele não casou, e que vale só se não casar.
+A simulação segue a ordem e as regras do roteamento: a cadeia, o `then next policy`, o `default-action`, o `from policy` (cuja recusa recusa a rota; num term `then reject`, o que ela aceita é recusado e o que ela recusa segue). Uma lista que você não descreveu é vazia; um valor que você não deu é **desconhecido**, e o term que precisa dele não é adivinhado: a resposta diz que supôs que ele não casou, e que vale só se não casar.
 
 **Validação RPKI sem cache.** Sem um cache RPKI sincronizado, o roteamento não casa **nenhum** estado de validação - nem `unknown`. A simulação diz isso quando o estado da rota não é conhecido, e uma rota lida da caixa sem estado RPKI não casa nenhum `from validation-state`, como no roteamento.
 

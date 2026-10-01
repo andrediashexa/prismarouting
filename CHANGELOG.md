@@ -79,6 +79,33 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A `then reject` term ignored its `from policy`, and rejected every route
+  its other conditions matched.**
+  ([#542](https://github.com/andrediashexa/hexarouting/issues/542))
+  0.148.9 to 0.148.12 compiled a reject term to a deny clause, and FRR runs
+  `call` only on a permit one, so `from policy X then reject` - "reject what
+  X accepts" - became "reject": on lab/policy-d.sh's import it removed every
+  route that reached it, the ones X rejects and the ones a later term or the
+  default would have accepted. The term now rejects exactly what X accepts
+  and the rest goes on to the next term: a permit clause that calls X
+  INVERTED - `PO-X-NOT-<use>`, X's clauses numbered as its own, an accept a
+  deny, a reject a permit that ends the map, both defaults reversed, a term
+  that decides nothing kept with its sets - with `on-match next`. FRR's
+  `call` was measured on 10.7.1 first: the clause's sets run, then the
+  called map, which sees them; its deny denies the route and nothing
+  follows, its permit goes on to the clause's on-match, a map no clause of
+  matches denies, and a deny clause calls nothing. So a policy can be
+  called inverted only when each of its terms with `from policy` is an
+  accept term (called inverted in turn), and a reject term calling one that
+  is not is refused at commit, naming the term. `test policy` and `show
+  policy route` simulate it, X's sets staying on a route X rejects, and
+  `show policy X` shows the inverted map's counters as a section of its
+  own. The simulation also runs a term's sets before its `from policy`, as
+  FRR does. Every other policy compiles byte for byte as 0.148.12 did,
+  pinned by `test/policy-golden-0.148.12.txt`; `lab/policy-d.sh` holds the
+  case on real sessions with bgpd as the oracle, and against 0.148.12's
+  compiler it goes red on 19 checks.
+
 ## 0.148.12 - routing policy, phase D: counters, test policy for everything, policies in the API
 
 ### Added

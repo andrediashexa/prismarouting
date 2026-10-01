@@ -1,0 +1,235 @@
+### from-policy
+ipv6 prefix-list PO-CALLER-Tnp-6 seq 5 permit ::/0 le 128
+ip prefix-list PO-CALLER-Tdrop-4 seq 5 permit 172.16.0.0/12 le 32
+route-map PO-CALLER-OUT permit 10
+ match peer 10.0.0.2
+ call PO-GATE-SUB-OUT
+ set local-preference 200
+exit
+route-map PO-CALLER-OUT permit 11
+ match peer 10.1.0.2
+ call PO-GATE-SUB-OUT
+ set local-preference 200
+exit
+route-map PO-CALLER-OUT permit 20
+ call PO-NEST-SUB-OUT
+ set community 65000:538 additive
+ on-match next
+exit
+route-map PO-CALLER-OUT permit 30
+ match ipv6 address prefix-list PO-CALLER-Tnp-6
+ call PO-GATE-SUB-OUT
+ on-match goto 65535
+exit
+route-map PO-CALLER-OUT permit 40
+ call PO-NEST-SUB-OUT
+ on-match next
+exit
+route-map PO-CALLER-OUT deny 50
+ match ip address prefix-list PO-CALLER-Tdrop-4
+exit
+route-map PO-CALLER-OUT permit 65534
+exit
+route-map PO-CALLER-OUT permit 65535
+exit
+route-map PO-CALLER-IN permit 10
+ match peer 10.0.0.2
+ call PO-GATE-SUB-IN
+ set local-preference 200
+exit
+route-map PO-CALLER-IN permit 11
+ match peer 10.1.0.2
+ call PO-GATE-SUB-IN
+ set local-preference 200
+exit
+route-map PO-CALLER-IN permit 20
+ call PO-NEST-SUB-IN
+ set community 65000:538 additive
+ on-match next
+exit
+route-map PO-CALLER-IN permit 30
+ match ipv6 address prefix-list PO-CALLER-Tnp-6
+ call PO-GATE-SUB-IN
+ on-match goto 65535
+exit
+route-map PO-CALLER-IN permit 40
+ call PO-NEST-SUB-IN
+ on-match next
+exit
+route-map PO-CALLER-IN deny 50
+ match ip address prefix-list PO-CALLER-Tdrop-4
+exit
+route-map PO-CALLER-IN permit 65534
+exit
+route-map PO-CALLER-IN permit 65535
+exit
+ip prefix-list PO-TAIL-T1-4 seq 5 permit 203.0.113.0/24
+ipv6 prefix-list PO-TAIL-T1-6 seq 5 permit 2001:db8:100::/48
+route-map PO-CALLER+TAIL-IN permit 10
+ match peer 10.0.0.2
+ call PO-GATE-SUB-IN
+ set local-preference 200
+exit
+route-map PO-CALLER+TAIL-IN permit 11
+ match peer 10.1.0.2
+ call PO-GATE-SUB-IN
+ set local-preference 200
+exit
+route-map PO-CALLER+TAIL-IN permit 20
+ call PO-NEST-SUB-IN
+ set community 65000:538 additive
+ on-match next
+exit
+route-map PO-CALLER+TAIL-IN permit 30
+ match ipv6 address prefix-list PO-CALLER-Tnp-6
+ call PO-GATE-SUB-IN
+ on-match goto 1000
+exit
+route-map PO-CALLER+TAIL-IN permit 40
+ call PO-NEST-SUB-IN
+ on-match next
+exit
+route-map PO-CALLER+TAIL-IN deny 50
+ match ip address prefix-list PO-CALLER-Tdrop-4
+exit
+route-map PO-CALLER+TAIL-IN permit 999
+exit
+route-map PO-CALLER+TAIL-IN permit 1010
+ match ip address prefix-list PO-TAIL-T1-4
+exit
+route-map PO-CALLER+TAIL-IN permit 1011
+ match ipv6 address prefix-list PO-TAIL-T1-6
+exit
+route-map PO-CALLER+TAIL-IN permit 65535
+exit
+ip prefix-list PO-GATE-Tno-4 seq 5 permit 10.0.0.0/8 le 32
+bgp community-list standard PO-GATE-Ttag-C seq 5 permit 65000:538
+ip prefix-list PO-GATE-Tyes-4 seq 5 permit 203.0.113.0/24
+ipv6 prefix-list PO-GATE-Tyes-6 seq 5 permit 2001:db8:100::/48
+route-map PO-GATE-OUT deny 10
+ match ip address prefix-list PO-GATE-Tno-4
+exit
+route-map PO-GATE-OUT permit 20
+ match community PO-GATE-Ttag-C
+ set metric 5
+ on-match next
+exit
+route-map PO-GATE-OUT permit 30
+ match ip address prefix-list PO-GATE-Tyes-4
+exit
+route-map PO-GATE-OUT permit 31
+ match ipv6 address prefix-list PO-GATE-Tyes-6
+exit
+route-map PO-GATE-OUT deny 65534
+exit
+route-map PO-GATE-OUT permit 65535
+exit
+ip prefix-list PO-NEST-Tb-4 seq 5 permit 192.0.2.0/24
+route-map PO-NEST-BGP-TABLE permit 10
+ call PO-GATE-SUB-BGP-TABLE
+ set local-preference 120
+exit
+route-map PO-NEST-BGP-TABLE permit 20
+ match ip address prefix-list PO-NEST-Tb-4
+ on-match goto 65535
+exit
+route-map PO-NEST-BGP-TABLE permit 65535
+exit
+route-map PO-OEXP-OSPF-STATIC permit 10
+ call PO-GATE-SUB-OSPF-STATIC
+ set metric 20
+exit
+route-map PO-OEXP-OSPF-STATIC deny 65535
+exit
+route-map PO-GATE-SUB-BGP-TABLE deny 10
+ match ip address prefix-list PO-GATE-Tno-4
+exit
+route-map PO-GATE-SUB-BGP-TABLE permit 20
+ match community PO-GATE-Ttag-C
+ set metric 5
+ on-match next
+exit
+route-map PO-GATE-SUB-BGP-TABLE permit 30
+ match ip address prefix-list PO-GATE-Tyes-4
+exit
+route-map PO-GATE-SUB-BGP-TABLE permit 31
+ match ipv6 address prefix-list PO-GATE-Tyes-6
+exit
+route-map PO-GATE-SUB-BGP-TABLE deny 65534
+exit
+route-map PO-GATE-SUB-BGP-TABLE permit 65535
+exit
+route-map PO-GATE-SUB-OUT deny 10
+ match ip address prefix-list PO-GATE-Tno-4
+exit
+route-map PO-GATE-SUB-OUT permit 20
+ match community PO-GATE-Ttag-C
+ set metric 5
+ on-match next
+exit
+route-map PO-GATE-SUB-OUT permit 30
+ match ip address prefix-list PO-GATE-Tyes-4
+exit
+route-map PO-GATE-SUB-OUT permit 31
+ match ipv6 address prefix-list PO-GATE-Tyes-6
+exit
+route-map PO-GATE-SUB-OUT deny 65534
+exit
+route-map PO-GATE-SUB-OUT permit 65535
+exit
+route-map PO-GATE-SUB-IN deny 10
+ match ip address prefix-list PO-GATE-Tno-4
+exit
+route-map PO-GATE-SUB-IN permit 20
+ match community PO-GATE-Ttag-C
+ set metric 5
+ on-match next
+exit
+route-map PO-GATE-SUB-IN permit 30
+ match ip address prefix-list PO-GATE-Tyes-4
+exit
+route-map PO-GATE-SUB-IN permit 31
+ match ipv6 address prefix-list PO-GATE-Tyes-6
+exit
+route-map PO-GATE-SUB-IN deny 65534
+exit
+route-map PO-GATE-SUB-IN permit 65535
+exit
+route-map PO-GATE-SUB-OSPF-STATIC deny 10
+ match ip address prefix-list PO-GATE-Tno-4
+exit
+route-map PO-GATE-SUB-OSPF-STATIC permit 20
+ match community PO-GATE-Ttag-C
+ set metric 5
+ on-match next
+exit
+route-map PO-GATE-SUB-OSPF-STATIC permit 30
+ match ip address prefix-list PO-GATE-Tyes-4
+exit
+route-map PO-GATE-SUB-OSPF-STATIC permit 31
+ match ipv6 address prefix-list PO-GATE-Tyes-6
+exit
+route-map PO-GATE-SUB-OSPF-STATIC deny 65534
+exit
+route-map PO-GATE-SUB-OSPF-STATIC deny 65535
+exit
+route-map PO-NEST-SUB-OUT permit 10
+ call PO-GATE-SUB-OUT
+ set local-preference 120
+exit
+route-map PO-NEST-SUB-OUT permit 20
+ match ip address prefix-list PO-NEST-Tb-4
+ on-match goto 65535
+exit
+route-map PO-NEST-SUB-OUT permit 65535
+exit
+route-map PO-NEST-SUB-IN permit 10
+ call PO-GATE-SUB-IN
+ set local-preference 120
+exit
+route-map PO-NEST-SUB-IN permit 20
+ match ip address prefix-list PO-NEST-Tb-4
+ on-match goto 65535
+exit
+route-map PO-NEST-SUB-IN permit 65535
+exit
