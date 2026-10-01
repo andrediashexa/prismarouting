@@ -123,6 +123,13 @@ result("rollback", "pool API" not in running.text, f"revision {(before or 0) + 1
 v = ops.GetVersion(pb.GetVersionRequest())
 result("version", bool(v.release) and v.api_transport in ("vpp_papi", "vat2"),
        f"{v.release} {v.plugin_build} {v.api_transport}")
+# The host's name, as the prompt reads it (#533's follow-up): empty on the
+# X520 bench in 0.148.4, where it was asked through a running-config filter.
+import socket as _socket
+_host = _socket.gethostname()
+sy = ops.GetSystem(pb.GetSystemRequest())
+result("hostname", v.hostname == _host and sy.hostname == _host,
+       f"GetVersion {v.hostname!r}, GetSystem {sy.hostname!r}, the host {_host!r}")
 ifs = ops.ListInterfaces(pb.ListInterfacesRequest())
 pg0 = next((i for i in ifs.interfaces if i.name == "pg0"), None)
 result("interfaces", pg0 is not None and pg0.admin_up and "100.64.3.254/22" in pg0.addresses,

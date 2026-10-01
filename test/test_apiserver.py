@@ -255,6 +255,13 @@ check(A.handle(sh, "gates", None) == {"remap": ["s1"], "cutoff": [], "diverge": 
 check(A.handle(sh, "revisions", None)[0][2] == "via api", "the revisions")
 check(A.handle(sh, "confirm", None)["deadline"] == 1700000000, "the confirm window")
 check(A.handle(sh, "pools", None)[0]["name"] == "nb", "a reader by name")
+# The host's name through the VTY's own reader (#516): one door question, where
+# `show running-config | include ^hostname` answered nothing on the X520 bench.
+_sys_was = getattr(sh, "sys", None)
+sh.sys = type("FakeSys", (), {"read_hostname": lambda self: "edge1"})()
+check(A.handle(sh, "hostname", None) == "edge1",
+      "the hostname reader answers the host's name, as the prompt reads it")
+sh.sys = _sys_was
 try:
     A.handle(sh, "rm -rf", None)
     check(False, "an unknown operation is refused")

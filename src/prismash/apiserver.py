@@ -411,6 +411,11 @@ READERS = {
     "isis": lambda sh, a: isis_of(sh),
     "vrrp": lambda sh, a: vrrp_of(sh),
     "bundles": lambda sh, a: bundles_of(sh),
+    # The host's name as the prompt reads it (#516): one question to the
+    # host's door. `show running-config | include ^hostname`, which this used
+    # to ask, answered nothing on the X520 bench (0.148.4), and the whole
+    # running configuration is too dear for a call clients poll every 5 s.
+    "hostname": lambda sh, a: sh.sys.read_hostname(),
 }
 
 
@@ -931,9 +936,7 @@ def build(sessions, stats_factory, pb, rpc, grpc):
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def GetVersion(self, req, context):
             v = parse_version(self._ask(context, "screen", "show version"))
-            host = self._ask(context, "screen", "show running-config | include ^hostname")
-            m = re.search(r"^hostname (\S+)", host, re.M)
-            return pb.VersionInfo(hostname=m.group(1) if m else "", **v)
+            return pb.VersionInfo(hostname=self._ask(context, "hostname"), **v)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def GetSystem(self, req, context):
@@ -950,7 +953,8 @@ def build(sessions, stats_factory, pb, rpc, grpc):
             m = re.search(r"(\d+)\s+(?:1G\s+)?(?:huge)?pages?", mem)
             if m:
                 pages = int(m.group(1))
-            return pb.SystemInfo(uptime_seconds=up, cpu_text=cpu, memory_text=mem,
+            return pb.SystemInfo(hostname=self._ask(context, "hostname"),
+                                 uptime_seconds=up, cpu_text=cpu, memory_text=mem,
                                  hugepages=pages, **c)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.

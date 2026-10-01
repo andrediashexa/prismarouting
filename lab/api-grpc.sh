@@ -34,6 +34,11 @@ vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 wait_vpp
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl set interface state pg0 up
+# A NAME THE VTY WILL READ AS THE HOST'S. A container is named by its id,
+# which the VTY takes for a door nobody answered (#526) and reports as no
+# name at all - so the host's name the API answers is given here, as a box
+# has one.
+hostname api-lab
 printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
 printf 'hostname prisma-routing\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
@@ -137,6 +142,7 @@ expect "the revisions list the API's commit with its comment" res revisions
 expect "a candidate whose base moved is refused with the difference" res moved-base
 expect "rollback loads the revision before, and the commit removes the pool" res rollback
 expect "GetVersion answers the release and the transport" res version
+expect "GetVersion and GetSystem answer the host's name, as the prompt reads it" res hostname
 expect "ListInterfaces has pg0, up, with its address" res interfaces
 expect "ListPools has nb with the dataplane's capacity" res pools
 expect "Show returns the VTY's screen" res show
