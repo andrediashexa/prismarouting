@@ -40,6 +40,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 
 from system import (LOGIN_SHELL, MANAGED_GROUPS, LocalFiles, RESOLV_CONF,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, SET_HOSTNAME,
@@ -711,8 +712,97 @@ def handle(conn, allowed_uids=(0,), execute=run_locally):
             pass
 
 
+# ------------------------------------------------- the accounts, shared
+
+#: Where the host's account files are kept current for the management
+#: container, which mounts /run/prisma-routing already.
+ACCOUNTS_DIR = os.environ.get("PRISMA_ACCOUNTS_DIR", "/run/prisma-routing/accounts")
+ACCOUNT_FILES = ("passwd", "group", "shadow")
+
+
+def share_accounts(src="/etc", dst=ACCOUNTS_DIR):
+    """
+    Copy /etc/passwd, group and shadow into `dst`, each by rename and with its
+    owner and mode, when its content or mode differs from the copy there; the
+    names copied (#532).
+
+    WHY A COPY AND NOT THE FILES. The management container bind-mounted the
+    three FILES, and a bind mount of a file is a mount of its inode: useradd
+    and usermod write a new file and rename it over the old one, so the
+    container went on reading the inode from before. Measured on the X520
+    bench (0.148.4): an account created after the container started was
+    "name not found" to the API and to every VTY session in it, and a `save`
+    from one wrote the configuration without it. A DIRECTORY bind mount sees
+    a rename inside it, so the container's /etc/passwd is a link into this
+    directory, and this keeps the directory current.
+    """
+    os.makedirs(dst, mode=0o755, exist_ok=True)
+    changed = []
+    for name in ACCOUNT_FILES:
+        a, b = os.path.join(src, name), os.path.join(dst, name)
+        try:
+            with open(a, "rb") as f:
+                data = f.read()
+            st = os.stat(a)
+        except OSError:
+            continue
+        try:
+            with open(b, "rb") as f:
+                same = f.read() == data
+            same = same and (os.stat(b).st_mode & 0o7777) == (st.st_mode & 0o7777)
+        except OSError:
+            same = False
+        if same:
+            continue
+        tmp = b + ".new"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except OSError:
+            pass                # a test, not root: the mode still holds
+        os.chmod(tmp, st.st_mode & 0o7777)
+        os.replace(tmp, b)
+        changed.append(name)
+    return changed
+
+
+def accounts_state(src="/etc"):
+    """What says the account files changed: each one's inode and mtime."""
+    out = []
+    for name in ACCOUNT_FILES:
+        try:
+            st = os.stat(os.path.join(src, name))
+            out.append((st.st_ino, st.st_mtime_ns))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+# not a unit: the daemon's watcher loop - share_accounts() and
+# accounts_state() are what test_doors.py drives.
+def watch_accounts(src="/etc", dst=ACCOUNTS_DIR, interval=1.0):
+    seen = None
+    while True:
+        now = accounts_state(src)
+        if now != seen:
+            try:
+                share_accounts(src, dst)
+                seen = now
+            except OSError:
+                pass        # tried again at the next tick
+        time.sleep(interval)
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--share-accounts"]:
+        # prisma-routing-containers.service, before the container starts:
+        # its /etc/passwd is a link into the copy, which must be there.
+        share_accounts()
+        sys.exit(0)
     if sys.argv[1:] != ["--serve"]:
-        print("usage: doors.py --serve", file=sys.stderr)
+        print("usage: doors.py --serve | --share-accounts", file=sys.stderr)
         sys.exit(2)
+    threading.Thread(target=watch_accounts, daemon=True).start()
     serve()

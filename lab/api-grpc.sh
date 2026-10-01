@@ -106,6 +106,13 @@ printf '%s\n' "$APIOK" | tail -2 | sed 's/^/  /'
 APIENV=$(cat /etc/prisma-routing/api.env 2>&1)
 APIRUN=$($HX -c "show running-config" 2>&1 | grep '^api ')
 printf '%s\n' "$APIRUN" | sed 's/^/  /'
+# A SECOND SERVER ON THE SAME PORT IS REFUSED (#532): gRPC's default
+# SO_REUSEPORT let one bind beside the first, and the X520 bench (0.148.4) was
+# found with two listeners on the backplane port after restarts.
+timeout 20 python3 src/prismash/apiserver.py --listen 127.0.0.1:50551 --dir $C/box \
+  --stubs /tmp/apistubs > /tmp/apiserver2.log 2>&1 < /dev/null
+SECOND=$?
+echo "  a second server on 127.0.0.1:50551: exit $SECOND, $(tail -1 /tmp/apiserver2.log)"
 pkill -f "^sleep 900$"
 n=0; while pgrep -f "apiserver.py --listen 127.0.0.1:50551" >/dev/null && [ $n -lt 30 ]; do sleep 0.5; n=$((n+1)); done
 STOPPED=$(pgrep -f "apiserver.py --listen 127.0.0.1:50551" >/dev/null && echo running || echo stopped)
@@ -139,6 +146,9 @@ expect "an account without the role is refused a candidate, PERMISSION_DENIED" r
 expect "and still reads the running configuration" res unprivileged-reads
 expect "a client with no certificate is refused at the handshake" res no-client-cert
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
+expect "a second server on the same port is refused at the bind ($SECOND)" \
+  test "$SECOND" = 1
+expect_in "and says so" "cannot listen on 127.0.0.1:50551" "$(cat /tmp/apiserver2.log)"
 expect "closing the server's stdin stops it, as the host unit's stop does" \
   test "$STOPPED" = "stopped"
 expect_in "and it says why" "stdin closed, stopping" "$(cat /tmp/apiserver.log)"

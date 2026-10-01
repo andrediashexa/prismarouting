@@ -95,7 +95,24 @@ version has a chance of seeing it.
   hung every session, so the watcher reads the descriptor and each session
   process gets its own stdin; and the unit asked for the container stack with
   `Requires=`, which on a units-path box would have started it - `Requisite=`
-  now.
+  now. And what 0.148.4 met on the X520 bench:
+  * the proxy and the readiness probe reached for the server on the backplane
+    from the main table, where 128.0.0.2 goes out of the management card;
+    both run through VRF `prisma-bp` now;
+  * gRPC's default SO_REUSEPORT let a restarted server bind beside the old
+    one, and two listeners were found on the backplane port; a second server
+    is refused at the bind now, in one sentence;
+  * an account created after the management container started was "name not
+    found" inside it - the API's sessions and every VTY session alike - and a
+    `save` from one wrote the configuration without it: the container
+    bind-mounted /etc/passwd, group and shadow as files, which pins the inode
+    `useradd` replaces. The host's doors keep a copy in
+    /run/prisma-routing/accounts current and the container's files are links
+    into it; shown with docker on the build host, a file mount answers "name
+    not found" and the directory answers the new account;
+  * ListInterfaces returned the linux_cp TAPs `show interface` leaves out;
+  * Show offered `monitor`, which the VTY refuses without a terminal; it is
+    not offered, and docs/api.md says the request and idle limits.
 
 ## 0.148.4 - a first cut of the gRPC management API, for the web interface
 

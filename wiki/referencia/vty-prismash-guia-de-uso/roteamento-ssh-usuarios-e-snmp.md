@@ -692,7 +692,7 @@ Ele **não recusa** o commit — anunciar de outro equipamento é um desenho leg
 
 # API de gerência (gRPC)
 
-A partir da versão 0.149.0 a caixa oferece uma API de gerência em gRPC (`prisma.v1`), para a interface web e outros sistemas que precisem configurar e ler a caixa sem passar pelo terminal. Ela **não é um segundo jeito de configurar**: cada chamada de configuração é a própria VTY trabalhando — o `configure`, as linhas que você digitaria, o `commit check`, o `commit`, o `commit confirmed`, o `rollback` e o `save` —, então uma recusa pela API é a mesma recusa da VTY, com as mesmas palavras, e uma mudança feita pela API aparece no `show running-config`.
+A partir da versão 0.148.4 a caixa oferece uma API de gerência em gRPC (`prisma.v1`), para a interface web e outros sistemas que precisem configurar e ler a caixa sem passar pelo terminal. Ela **não é um segundo jeito de configurar**: cada chamada de configuração é a própria VTY trabalhando — o `configure`, as linhas que você digitaria, o `commit check`, o `commit`, o `commit confirmed`, o `rollback` e o `save` —, então uma recusa pela API é a mesma recusa da VTY, com as mesmas palavras, e uma mudança feita pela API aparece no `show running-config`.
 
 Ela vem **desligada**. Para ligar, você precisa de três coisas:
 
