@@ -368,6 +368,9 @@ install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/prisma-r
 # The power button, and a hypervisor's Shutdown, which is the same event
 # (#478): nothing else on this box turns it into a shutdown.
 install -D -m 0755 "$REPO/appliance/prisma-power-button" "$DESTDIR/usr/lib/prisma-routing/prisma-power-button"
+# A route leaked into a VRF through the other VRF itself, which linux-nl
+# cannot copy into the dataplane (#541).
+install -D -m 0755 "$REPO/appliance/prisma-routing-leaks" "$DESTDIR/usr/lib/prisma-routing/prisma-routing-leaks"
 # The DHCP hook that keeps a lease from rewriting the resolvers `dns server`
 # set (#437). A hook directory and not a package's conffile, so an upgrade
 # can carry it.
@@ -436,7 +439,7 @@ for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selft
          prisma-routing-backplane.service prisma-routing-hot-card@.service \
          prisma-routing-doors.service prisma-routing-power-button.service \
          prisma-routing-api-config.service prisma-routing-api.service \
-         prisma-routing-api-proxy.service; do
+         prisma-routing-api-proxy.service prisma-routing-leaks.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
@@ -800,8 +803,10 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
     prisma-routing-selftest.service prisma-routing-installer.service \
     prisma-routing-confirm.timer prisma-routing-backplane.service \
     prisma-routing-doors.service prisma-routing-power-button.service \
-    prisma-routing-api-config.service
+    prisma-routing-api-config.service prisma-routing-leaks.service
   systemctl restart prisma-routing-power-button.service >/dev/null 2>&1 || true
+  # Restarted for the same reason as the doors below: the new code, now.
+  systemctl restart prisma-routing-leaks.service >/dev/null 2>&1 || true
   # The doors (#448) run the code this install just put down: restarted, not
   # only started, or an upgrade leaves the old daemon answering.
   systemctl restart prisma-routing-doors.service >/dev/null 2>&1 || true
@@ -831,7 +836,8 @@ else
   for u in prisma-routing-tune.service prisma-routing.service \
            prisma-routing-selftest.service prisma-routing-installer.service \
            prisma-routing-backplane.service prisma-routing-doors.service \
-           prisma-routing-power-button.service prisma-routing-api-config.service; do
+           prisma-routing-power-button.service prisma-routing-api-config.service \
+           prisma-routing-leaks.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done

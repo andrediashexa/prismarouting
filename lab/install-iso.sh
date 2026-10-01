@@ -5162,6 +5162,18 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send 'echo "HX""LAB ct-pb=$(systemctl is-active prisma-routing-power-button.service)"'
     wait_for "HXLAB ct-pb=" 30 "the box to say whether the power button is watched" || fail=1
     CT_PB=$(live_field ct-pb)
+    # The leaks daemon (#541) runs on every installed box, VRFs or not: it
+    # is what puts a route leaked through a VRF in the dataplane, and a box
+    # that gains its first VRF later must not need a unit started by hand.
+    send 'echo "HX""LAB ct-leaks=$(systemctl is-active prisma-routing-leaks.service)"'
+    wait_for "HXLAB ct-leaks=" 30 "the box to say whether the leaks daemon runs" || fail=1
+    CT_LEAKS=$(live_field ct-leaks)
+    if [ "$CT_LEAKS" = active ]; then
+      echo "  [ ok ] prisma-routing-leaks.service is active on the installed box"
+    else
+      echo "  [FAIL] prisma-routing-leaks.service is ${CT_LEAKS:-<no answer>}, not active"
+      fail=1
+    fi
     send "sync"
     # THE POWER BUTTON, AND NOT A TYPED POWEROFF (#478). A hypervisor's
     # Shutdown is an ACPI power-button press, and this box ignored it: no
