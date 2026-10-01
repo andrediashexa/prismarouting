@@ -32,6 +32,20 @@ RUN apt-get update -qq \
     && apt-get purge -y curl gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 COPY src/prismash/ /usr/lib/prisma-routing/
+# THE MANAGEMENT API (#532): gRPC, prisma.v1. Debian's python3-grpcio and
+# python3-protobuf to run it, and - for this one step only - the protoc and
+# grpc plugin of the same Debian, which generate its stubs from the contract
+# here and are removed after: the stubs are built against the runtime that
+# loads them, and are never committed or edited.
+COPY api/ /tmp/api-src/api/
+COPY tools/gen-api.sh /tmp/api-src/tools/
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        python3-grpcio python3-protobuf \
+        protobuf-compiler protobuf-compiler-grpc libprotobuf-dev \
+    && sh /tmp/api-src/tools/gen-api.sh /usr/lib/prisma-routing/apistubs \
+    && apt-get purge -y protobuf-compiler protobuf-compiler-grpc libprotobuf-dev \
+    && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /tmp/api-src
 COPY appliance/prismash-launcher /usr/bin/prismash
 RUN chmod 0755 /usr/bin/prismash /usr/lib/prisma-routing/prismash.py
 # The VPP image's entrypoint starts VPP; this one must never.

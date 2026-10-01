@@ -1004,6 +1004,109 @@ SNMP_DEFAULTS = {
 PRODUCT_PEN = SNMP_DEFAULTS["enterprise-number"]
 
 
+#: The management API's settings (#532), in the order they are written.
+API_FIELDS = ("enabled", "listen-address", "port")
+API_DEFAULTS = {
+    "enabled": "no",            # off until an operator asks for it
+    "listen-address": "",       # the management address; no default listener
+    "port": "50051",
+}
+#: Where they live: under the directory the management container shares with
+#: the host, read by appliance/api-configure, which writes the listener.
+API_ENV = "/etc/prisma-routing/api.env"
+#: The door that applies them on the host.
+API_CONFIGURE = ("systemctl", "restart", "prisma-routing-api-config.service")
+
+
+def validate_api(settings: dict):
+    """The prompt's and the file's rule for an `api` setting; None when it holds."""
+    for k, v in settings.items():
+        if k not in API_FIELDS:
+            return f"'{k}' is not an api setting"
+        if k == "enabled" and v not in ("yes", "no"):
+            return f"api enabled '{v}': expected yes or no"
+        if k == "port" and (not is_number(str(v)) or not 1 <= int(v) <= 65535):
+            return f"api port '{v}': expected 1-65535"
+        if k == "listen-address" and v:
+            why = address_error(f"api {k}", str(v))
+            if why:
+                return why
+    return None
+
+
+def api_enable_error(settings: dict):
+    """
+    Why these settings cannot be applied as a whole, or None. The API listens
+    on the management network only, so enabling it names the address.
+    """
+    if settings.get("enabled") == "yes" and not settings.get("listen-address"):
+        # One row on an 80-column console: the reason - the API listens
+        # on the management network only - is the docs' and the help's.
+        return "api enabled yes needs 'api listen-address <management address>'"
+    return None
+
+
+def api_env_text(settings: dict) -> str:
+    """api.env's text for `settings`."""
+    return (f"API_ENABLED={settings.get('enabled', 'no')}\n"
+            f"API_LISTEN={settings.get('listen-address', '')}\n"
+            f"API_PORT={settings.get('port', API_DEFAULTS['port'])}\n")
+
+
+class ApiService:
+    """
+    The management API's settings on the box (#532): read from api.env, and
+    applied by writing it and asking the host to apply it.
+    """
+
+    def __init__(self, runner=None, path=API_ENV):
+        self._run = runner or (lambda argv, stdin=None, timeout=30: (127, ""))
+        self.path = path
+
+    def read(self) -> dict:
+        """The settings in effect: api.env's, or the defaults without one."""
+        out = dict(API_DEFAULTS)
+        keys = {"API_ENABLED": "enabled", "API_LISTEN": "listen-address",
+                "API_PORT": "port"}
+        try:
+            with open(self.path) as f:
+                for line in f:
+                    k, _, v = line.strip().partition("=")
+                    if k in keys and validate_api({keys[k]: v}) is None:
+                        out[keys[k]] = v
+        except OSError:
+            pass
+        return out
+
+    def apply(self, settings: dict):
+        """(ok, message): api.env written whole and the host asked to apply it."""
+        why = validate_api(settings) or api_enable_error(settings)
+        if why:
+            return False, why
+        tmp = self.path + ".new"
+        try:
+            with open(tmp, "w") as f:
+                f.write(api_env_text(settings))
+            os.replace(tmp, self.path)
+        except OSError as e:
+            return False, f"{self.path}: {e.strerror}"
+        rc, out = self._run(list(API_CONFIGURE))
+        # No service manager to ask - no systemctl at all, or one with no
+        # systemd behind it, as lab/api-grpc.sh's container answered ("Failed
+        # to connect to bus") - is not a refusal: the file is the setting, and
+        # prisma-routing-api-config.service applies it at the next boot. Told
+        # apart by the answer and not by looking for /run/systemd: from the
+        # management container the request goes through the host's door, and
+        # the container has no systemd of its own either way.
+        if rc == 127 or "Failed to connect to bus" in out \
+                or "not been booted with systemd" in out:
+            return True, ("written, but the host's service manager is not "
+                          "reachable here, so it applies at the next boot")
+        if rc != 0:
+            return False, (out.strip().splitlines() or ["the host refused"])[-1]
+        return True, ""
+
+
 def validate_snmp(settings: dict):
     for k, v in settings.items():
         if k not in SNMP_FIELDS:

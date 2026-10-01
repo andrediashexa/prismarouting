@@ -1,0 +1,14 @@
+# The management API's server (#532), inside the management container: it
+# runs the VTY's own code, as root only to become each call's account.
+[Unit]
+Description=Prisma Routing - the management API (prisma.v1, mutual TLS)
+Requires=prisma-routing-containers.service
+After=prisma-routing-containers.service
+
+[Service]
+ExecStart=/usr/bin/docker exec prisma-routing_mgmt_1 python3 /usr/lib/prisma-routing/apiserver.py --listen 128.0.0.2:50051
+ExecStartPost=/usr/lib/prisma-routing/api-configure --wait
+# Ending `docker exec` does not end the process it started in the container.
+ExecStop=-/usr/bin/docker exec prisma-routing_mgmt_1 pkill -f /usr/lib/prisma-routing/apiserver.py
+Restart=on-failure
+RestartSec=5

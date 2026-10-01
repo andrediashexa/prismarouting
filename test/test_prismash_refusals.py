@@ -1308,6 +1308,11 @@ _settings = [
     # Typed where it is typed since #446: under `nat` > `cgnat`.
     ("a global timeout of zero", "nat|cgnat|timeout udp 0",
      "error: cgnat timeout udp 0: expected 1-4294967295"),
+    # The management API's settings (#532).
+    ("api with no value", "api port",
+     "error: usage: api <setting> <value>"),
+    ("an api port no TCP has", "api port 70000",
+     "error: api port '70000': expected 1-65535"),
 ]
 for _label, _line, _want in _settings:
     _sh = cfg_shell()

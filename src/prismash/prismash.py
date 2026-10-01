@@ -67,6 +67,8 @@ from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     can_anyone_log_in, can_anyone_configure, redact,
                     identity_redact,
                     snmp_redact, SNMP_DEFAULTS, SNMP_FIELDS, validate_snmp,
+                    ApiService, API_DEFAULTS, API_FIELDS, validate_api,
+                    api_enable_error,
                     validate_trap_host, validate_ssh, validate_role,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT,
                     ROLE_ADMIN, ROLE_CGNAT)
@@ -2185,7 +2187,8 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "routing_changed", "route_desc_changed", "ssh_changed",
                "dns_changed", "hostname_changed",
                "users_changed",
-               "snmp_changed", "dataplane_if_changed", "cgnat_memory_changed",
+               "snmp_changed", "api_changed", "dataplane_if_changed",
+               "cgnat_memory_changed",
                "policy_changed", "cpu_changed", "memory_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
@@ -2606,6 +2609,11 @@ TREE = {
         # where `?` is walked from while the operator stands in one.
         "nat": ("address translation: enter it, then 'cgnat'", None),
         "no": ("remove configuration", {
+            "api": ("put an API setting back to its default", {
+                "enabled": ("the API off, which is the default", None),
+                "listen-address": ("no listener", None),
+                "port": ("back to 50051", None),
+            }),
             "snmp": ("put an SNMP setting back to its default", {
                 "enabled": ("the agent off, which is the default", None),
                 "listen-address": ("back to 127.0.0.1", None),
@@ -2686,6 +2694,12 @@ TREE = {
                           "<string> [inform]'", "<address>"),
         }),
         "snmp-user": ("an SNMPv3 user", ARG_SNMP_USER),
+        "api": ("the management API (gRPC, mutual TLS), off by default", {
+            "enabled": ("serve it", {"yes": ("", None), "no": ("", None)}),
+            "listen-address": ("the management address it listens on",
+                               ARG_WORD),
+            "port": ("TCP port", ARG_PORT),
+        }),
         "commit": ("apply the candidate configuration", COMMIT),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
         "show": ("display information", SHOW),
@@ -7051,6 +7065,8 @@ class Shell:
         # The box's name the prompt shows, read on first use (#526).
         self._prompt_name = None
         self.snmp = SnmpDaemon(runner=doors.runner(), files=doors.DoorFiles())
+        # The management API's settings (#532).
+        self.apisvc = ApiService(runner=doors.runner())
         self.dp = Vpp()
         self.api = vppapi.client()
         self.dp.api = self.api
@@ -7485,6 +7501,7 @@ class Shell:
         cfg.users = self.sys.read_users()
         (cfg.snmp, cfg.snmp_communities, cfg.snmp_users,
          cfg.snmp_trap_hosts) = self.snmp.read()
+        cfg.api = self.apisvc.read()
         # A session that cannot read snmpd.conf does not know the box's SNMP
         # (#525), and the defaults it got back say "off". They were taken for
         # the box's, `save` wrote them, and the next boot deleted snmpd.conf
@@ -9331,6 +9348,11 @@ class Shell:
             if why:
                 self.err(why)
                 ok = False
+            # The management API names its address before it listens (#532).
+            why = api_enable_error(target.api)
+            if why:
+                self.err(why)
+                ok = False
             # The same refusals `do_config` gives at the prompt, on the paths
             # that never see the prompt: `rollback` to a revision written when
             # the box had a different card in it, and `--load` of a file
@@ -10584,6 +10606,14 @@ class Shell:
             if msg:
                 print(f"snmp: {msg}")
             self.agentx_follows_snmp(target.snmp.get("enabled") == "yes")
+        # The management API's listener on the host (#532).
+        if d.get("api_changed"):
+            ok, msg = self.apisvc.apply(target.api)
+            if not ok:
+                self.err(f"api: {msg}")
+                return False
+            if msg:
+                print(f"api: {msg}")
         if d["users_changed"]:
             ok, msgs = self.sys.apply_users(target.users, running.users)
             for m in msgs:
@@ -13759,6 +13789,19 @@ class Shell:
             return True
         if w[:2] == ["no", "snmp-user"] and len(w) > 2:
             self.candidate.snmp_users.pop(w[2], None)
+            return True
+        if w[:2] == ["no", "api"] and len(w) == 3 and w[2] in API_FIELDS:
+            self.candidate.api[w[2]] = API_DEFAULTS[w[2]]
+            return True
+        if w[0] == "api":
+            if len(w) != 3:
+                self.err("usage: api <setting> <value>")
+                return True
+            why = validate_api({w[1]: w[2]})
+            if why:
+                self.err(why)
+            else:
+                self.candidate.api[w[1]] = w[2]
             return True
         if w[0] == "snmp":
             if len(w) < 3:

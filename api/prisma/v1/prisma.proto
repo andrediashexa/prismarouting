@@ -1,0 +1,520 @@
+// Prisma Routing management API, version 1 (#532).
+//
+// WHAT THIS IS. The contract a management client - the web interface's Rust
+// backend first (tonic) - speaks to a box. It drives the VTY's own model: the
+// candidate, `show configuration compare`, `commit check`, `commit`,
+// `commit confirmed`, `rollback`, `save`, through the same code `prismash`
+// runs, so a refusal here is the VTY's refusal in the VTY's words, and a
+// change made here shows in `show running-config` at the prompt.
+//
+// CONFIGURATION TRAVELS AS THE VTY'S OWN TEXT. A candidate is edited with the
+// lines an operator types (`block-size 256` under `nat` /
+// `cgnat` / `pool X`), and read back as the text `show running-config`
+// prints. Nothing here models a configuration statement as a message:
+// modelling the grammar a second time is how two descriptions of one box
+// drift apart. What IS typed is the operations and the operational data.
+//
+// COMPATIBILITY RULES, for every message and service in package prisma.v1:
+//   * a field is only ever ADDED, with a number never used before in that
+//     message; a field is never renumbered, retyped or reused;
+//   * a field that stops being filled is marked `reserved`, never deleted
+//     and re-numbered;
+//   * an rpc or an enum value is only ever added;
+//   * anything else - a removed field, a changed meaning, a renamed rpc - is
+//     a breaking change and goes into package prisma.v2, served beside v1.
+// A client built against an older prisma.v1 keeps working against a newer
+// box; it does not see the fields it does not know.
+//
+// ERRORS. A call that is refused answers a gRPC status - INVALID_ARGUMENT for
+// a line the VTY refuses, FAILED_PRECONDITION for a commit the box refuses or
+// a candidate whose base the running configuration has moved past,
+// PERMISSION_DENIED for an account without the role, NOT_FOUND for a
+// candidate that does not exist, UNAVAILABLE when the dataplane does not
+// answer - and carries the VTY's own account of it in the trailing metadata
+// key `prisma-diagnostics-bin`: a serialized `Diagnostics` message. A
+// `commit check` that finds problems is NOT an error: answering that is its
+// job, and it returns them in `CheckResponse`.
+//
+// IDENTITY. The box account a call acts as is the Common Name of the client
+// certificate the mutual-TLS handshake presented; it has the roles the VTY
+// login gives that account, and every change is recorded in the
+// configuration trail as made by it. See docs/api.md.
+
+syntax = "proto3";
+
+package prisma.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------------------------------------------------------- common
+
+// One thing the VTY said about a request: a refusal, a warning or a note,
+// with the configuration path it is about when it names one.
+message Diagnostic {
+  enum Severity {
+    SEVERITY_UNSPECIFIED = 0;
+    SEVERITY_ERROR = 1;
+    SEVERITY_WARNING = 2;
+    SEVERITY_NOTE = 3;
+  }
+  Severity severity = 1;
+  // The VTY's message, as it prints it, without the "error: " prefix.
+  string message = 2;
+  // The hierarchy the message is about, outermost first, e.g.
+  // ["nat", "cgnat", "pool RFC6598"]; empty when it names none.
+  repeated string path = 3;
+  // The configuration line it is about, when it names one.
+  string line = 4;
+}
+
+// What travels in `prisma-diagnostics-bin` on a refused call.
+message Diagnostics {
+  repeated Diagnostic items = 1;
+  // Everything the VTY printed for the request, verbatim.
+  string output = 2;
+}
+
+// A candidate configuration, as OpenCandidate returned it.
+message CandidateRef {
+  string candidate_id = 1;
+}
+
+// A configuration as the VTY's text.
+message ConfigText {
+  string text = 1;
+  // The running revision this text was read at (see ListRevisions); empty for
+  // a candidate.
+  string revision = 2;
+}
+
+// ---------------------------------------------------------------- config
+
+service ConfigService {
+  // Opens a candidate for this call's account: a copy of the running
+  // configuration, or of a committed revision when `from_revision` is set.
+  rpc OpenCandidate(OpenCandidateRequest) returns (OpenCandidateResponse);
+  // Applies lines to a candidate, at a hierarchy path, exactly as typed at
+  // the prompt. A line the VTY refuses stages nothing and answers
+  // INVALID_ARGUMENT with the refusal; the lines before it are kept.
+  rpc Edit(EditRequest) returns (EditResponse);
+  // The candidate's text, as `show running-config` would print it once
+  // committed.
+  rpc ShowCandidate(CandidateRef) returns (ConfigText);
+  // The difference between the candidate and the running configuration,
+  // as `show configuration compare` prints it.
+  rpc Compare(CandidateRef) returns (CompareResponse);
+  // `commit check`: everything the box would refuse or warn about, applied
+  // nowhere.
+  rpc Check(CandidateRef) returns (CheckResponse);
+  // `commit`, with its options. Refused with FAILED_PRECONDITION when the
+  // check refuses, or when the running configuration has changed since the
+  // candidate was opened - the client opens a new candidate and re-applies.
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  // Confirms a `commit confirmed` window, so the box does not roll back.
+  rpc Confirm(ConfirmRequest) returns (ConfirmResponse);
+  // Loads committed revision `n` into the candidate (`rollback <n>`); it is
+  // applied by a Commit, as at the prompt.
+  rpc Rollback(RollbackRequest) returns (EditResponse);
+  // `save`: writes the running configuration to the file the boot loads.
+  rpc Save(SaveRequest) returns (SaveResponse);
+  // Discards a candidate.
+  rpc CloseCandidate(CandidateRef) returns (CloseResponse);
+  // The running configuration, as `show running-config` prints it.
+  rpc GetRunning(GetRunningRequest) returns (ConfigText);
+  // The committed revisions `rollback` can load, newest first.
+  rpc ListRevisions(ListRevisionsRequest) returns (ListRevisionsResponse);
+}
+
+message OpenCandidateRequest {
+  // When set, the candidate starts as committed revision `from_revision`
+  // (0 is the newest) rather than as the running configuration.
+  optional uint32 from_revision = 1;
+}
+
+message OpenCandidateResponse {
+  string candidate_id = 1;
+  // The running revision the candidate was opened on. A Commit refuses a
+  // candidate whose base the running configuration has moved past.
+  string base_revision = 2;
+  // The candidate's text as opened.
+  string text = 3;
+}
+
+message EditRequest {
+  string candidate_id = 1;
+  // Where the lines apply, outermost first, as the prompt enters it:
+  // ["nat", "cgnat", "pool RFC6598"]. Empty is the top of the configuration.
+  repeated string path = 2;
+  // The lines, each exactly as typed at that level ("block-size 256",
+  // "no shutdown", "neighbor 192.0.2.1 remote-as 65000").
+  repeated string lines = 3;
+}
+
+message EditResponse {
+  // Notes and warnings the VTY printed for the accepted lines.
+  repeated Diagnostic diagnostics = 1;
+  string output = 2;
+}
+
+message CompareResponse {
+  // `show configuration compare`'s text; empty when nothing differs.
+  string diff = 1;
+  bool changed = 2;
+}
+
+message CheckResponse {
+  // True when a commit of this candidate would be applied.
+  bool passed = 1;
+  repeated Diagnostic diagnostics = 2;
+  // Subscribers a change would move to other public addresses or blocks
+  // (the VTY's `remap` gate): a Commit needs `acknowledge_remap`.
+  repeated string remap = 3;
+  // The prefix carrying this session the change would stop advertising
+  // (`cutoff`): a Commit needs `acknowledge_cutoff`.
+  repeated string cutoff = 4;
+  // Pools the change would map differently from the HA peer (`diverge`):
+  // a Commit needs `acknowledge_diverge`.
+  repeated string diverge = 5;
+  string output = 6;
+}
+
+message CommitRequest {
+  string candidate_id = 1;
+  // `commit comment <text>`.
+  string comment = 2;
+  // `commit confirmed <minutes>`: the box rolls the change back unless a
+  // Confirm arrives within this many minutes. 0 is a plain commit.
+  uint32 confirmed_minutes = 3;
+  // The VTY's gated words, said in as many words.
+  bool acknowledge_remap = 4;
+  bool acknowledge_cutoff = 5;
+  bool acknowledge_diverge = 6;
+}
+
+message CommitResponse {
+  // The running revision after the commit.
+  string revision = 1;
+  // When `confirmed_minutes` was set: the moment the box rolls back.
+  google.protobuf.Timestamp confirm_deadline = 2;
+  repeated Diagnostic diagnostics = 3;
+  string output = 4;
+}
+
+message ConfirmRequest {}
+
+message ConfirmResponse {
+  repeated Diagnostic diagnostics = 1;
+  string output = 2;
+}
+
+message RollbackRequest {
+  string candidate_id = 1;
+  // 0 is the newest committed revision.
+  uint32 revision = 2;
+}
+
+message SaveRequest {}
+
+message SaveResponse {
+  string output = 1;
+}
+
+message CloseResponse {}
+
+message GetRunningRequest {}
+
+message ListRevisionsRequest {}
+
+message Revision {
+  uint32 number = 1;
+  google.protobuf.Timestamp committed_at = 2;
+  // The comment or the reason the VTY recorded ("loaded from file").
+  string comment = 3;
+}
+
+message ListRevisionsResponse {
+  repeated Revision revisions = 1;
+}
+
+// ----------------------------------------------------------- operational
+
+// Typed operational data, read by the same readers the VTY's `show`
+// commands use. What is not typed yet is reachable through Show.
+service OperationalService {
+  rpc GetVersion(GetVersionRequest) returns (VersionInfo);
+  rpc GetSystem(GetSystemRequest) returns (SystemInfo);
+  rpc ListInterfaces(ListInterfacesRequest) returns (ListInterfacesResponse);
+  rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
+  rpc GetSubscriber(GetSubscriberRequest) returns (Subscriber);
+  rpc GetSessionsSummary(GetSessionsSummaryRequest) returns (SessionsSummary);
+  rpc ListBgpNeighbors(ListBgpNeighborsRequest) returns (ListBgpNeighborsResponse);
+  rpc ListOspfNeighbors(ListOspfNeighborsRequest) returns (ListOspfNeighborsResponse);
+  rpc ListIsisAdjacencies(ListIsisAdjacenciesRequest) returns (ListIsisAdjacenciesResponse);
+  rpc ListVrrp(ListVrrpRequest) returns (ListVrrpResponse);
+  rpc ListBundles(ListBundlesRequest) returns (ListBundlesResponse);
+  // Any operational command the VTY takes (`show ...`, `ping ...`), with
+  // its text exactly as the VTY prints it. Configuration and shell commands
+  // are refused.
+  rpc Show(ShowRequest) returns (ShowResponse);
+}
+
+message GetVersionRequest {}
+
+message VersionInfo {
+  // The installed release ("0.149.0").
+  string release = 1;
+  // The build of the plugin the running dataplane loaded.
+  string plugin_build = 2;
+  // False when the dataplane runs a plugin other than the installed release
+  // (the box was upgraded and not rebooted).
+  bool dataplane_current = 3;
+  string vpp_version = 4;
+  string frr_version = 5;
+  string hostname = 6;
+  // How the VTY reaches the dataplane: "vpp_papi" or "vat2".
+  string api_transport = 7;
+}
+
+message GetSystemRequest {}
+
+message SystemInfo {
+  string hostname = 1;
+  uint64 uptime_seconds = 2;
+  // The `system cpu` layout this boot runs.
+  string control_plane_cpus = 3;
+  string main_thread_cpu = 4;
+  string worker_cpus = 5;
+  uint32 workers = 6;
+  // 1G hugepages reserved now.
+  uint32 hugepages = 7;
+  // `show system cpu` and `show system memory`, verbatim.
+  string cpu_text = 8;
+  string memory_text = 9;
+}
+
+message ListInterfacesRequest {
+  // Only these interfaces; empty is all of them.
+  repeated string names = 1;
+}
+
+message InterfaceCounters {
+  uint64 rx_bytes = 1;
+  uint64 tx_bytes = 2;
+  uint64 rx_packets = 3;
+  uint64 tx_packets = 4;
+  uint64 rx_errors = 5;
+  uint64 tx_errors = 6;
+  uint64 drops = 7;
+}
+
+message Interface {
+  string name = 1;
+  bool admin_up = 2;
+  bool link_up = 3;
+  uint32 mtu = 4;
+  string mac_address = 5;
+  // Addresses with prefix length, both families ("10.40.200.166/24").
+  repeated string addresses = 6;
+  // The Linux end of the pair, when the interface has one.
+  string linux_name = 7;
+  string description = 8;
+  InterfaceCounters counters = 9;
+}
+
+message ListInterfacesResponse {
+  repeated Interface interfaces = 1;
+}
+
+message ListPoolsRequest {}
+
+message Pool {
+  string name = 1;
+  // "dynamic" or "deterministic".
+  string mode = 2;
+  // "interleaved" or "blocked".
+  string policy = 3;
+  uint32 block_size = 4;
+  repeated string prefixes_inside = 5;
+  repeated string prefixes_outside = 6;
+  // Subscribers the pool can hold, and the number it holds whatever the
+  // addresses are (the per-worker floor, #210).
+  uint64 capacity = 7;
+  uint64 guaranteed = 8;
+  uint64 subscribers = 9;
+  uint64 ports_in_use = 10;
+  uint64 refusals = 11;
+  uint64 sessions = 12;
+}
+
+message ListPoolsResponse {
+  repeated Pool pools = 1;
+}
+
+message GetSubscriberRequest {
+  // The subscriber's inside address.
+  string address = 1;
+}
+
+message PortBlock {
+  string public_address = 1;
+  uint32 first_port = 2;
+  uint32 last_port = 3;
+}
+
+message Subscriber {
+  string address = 1;
+  string pool = 2;
+  repeated PortBlock blocks = 3;
+  uint64 sessions = 4;
+  // `show cgnat subscriber <address>`, verbatim.
+  string text = 5;
+}
+
+message GetSessionsSummaryRequest {}
+
+message SessionsSummary {
+  uint64 sessions = 1;
+  // Sessions the dataplane's memory holds room for.
+  uint64 sessions_fit = 2;
+  uint64 subscribers = 3;
+  uint64 ports_in_use = 4;
+}
+
+message ListBgpNeighborsRequest {}
+
+message BgpNeighbor {
+  string vrf = 1;
+  // The peer's address, or the interface for an unnumbered session.
+  string peer = 2;
+  uint32 remote_as = 3;
+  // FRR's state name: "Established", "Active", "Idle", ...
+  string state = 4;
+  uint64 uptime_seconds = 5;
+  uint64 prefixes_received = 6;
+  string description = 7;
+}
+
+message ListBgpNeighborsResponse {
+  repeated BgpNeighbor neighbors = 1;
+}
+
+message ListOspfNeighborsRequest {}
+
+message OspfNeighbor {
+  // "ospf" or "ospf6".
+  string protocol = 1;
+  string router_id = 2;
+  string address = 3;
+  string interface = 4;
+  // FRR's state, e.g. "Full/DR".
+  string state = 5;
+}
+
+message ListOspfNeighborsResponse {
+  repeated OspfNeighbor neighbors = 1;
+}
+
+message ListIsisAdjacenciesRequest {}
+
+message IsisAdjacency {
+  string system_id = 1;
+  string interface = 2;
+  string state = 3;
+  string level = 4;
+}
+
+message ListIsisAdjacenciesResponse {
+  repeated IsisAdjacency adjacencies = 1;
+}
+
+message ListVrrpRequest {}
+
+message VrrpRouter {
+  string interface = 1;
+  uint32 vr_id = 2;
+  // 4 or 6.
+  uint32 family = 3;
+  // "master", "backup", "initialize" or "interface down".
+  string state = 4;
+  uint32 priority = 5;
+  repeated string addresses = 6;
+}
+
+message ListVrrpResponse {
+  repeated VrrpRouter routers = 1;
+}
+
+message ListBundlesRequest {}
+
+message Bundle {
+  string name = 1;
+  string mode = 2;
+  repeated string members = 3;
+  repeated string active_members = 4;
+}
+
+message ListBundlesResponse {
+  repeated Bundle bundles = 1;
+}
+
+message ShowRequest {
+  // The command as typed at the operational prompt ("show bgp summary").
+  string command = 1;
+}
+
+message ShowResponse {
+  string text = 1;
+}
+
+// ------------------------------------------------------------- telemetry
+
+service TelemetryService {
+  // A stream of updates until the client cancels it.
+  rpc Subscribe(SubscribeRequest) returns (stream TelemetryUpdate);
+}
+
+message SubscribeRequest {
+  // How often counters are sampled, in milliseconds; at least 500.
+  uint32 interval_ms = 1;
+  // Interface counters, from the dataplane's statistics segment.
+  bool interface_counters = 2;
+  // Only these interfaces; empty is all of them.
+  repeated string interfaces = 3;
+  // The CGNAT's totals.
+  bool cgnat_totals = 4;
+  // Configuration events: commits, confirm windows, rollbacks.
+  bool events = 5;
+}
+
+message InterfaceSample {
+  string name = 1;
+  InterfaceCounters counters = 2;
+}
+
+message CgnatTotals {
+  uint64 subscribers = 1;
+  uint64 ports_in_use = 2;
+  uint64 sessions = 3;
+  uint64 refusals = 4;
+}
+
+message Event {
+  // "commit", "confirm-pending", "confirmed", "rolled-back", "saved".
+  string kind = 1;
+  string account = 2;
+  string text = 3;
+}
+
+message TelemetryUpdate {
+  google.protobuf.Timestamp at = 1;
+  oneof update {
+    // One sample of every requested interface, taken together.
+    InterfaceBatch interfaces = 2;
+    CgnatTotals cgnat = 3;
+    Event event = 4;
+  }
+}
+
+message InterfaceBatch {
+  repeated InterfaceSample samples = 1;
+}

@@ -1,0 +1,13 @@
+# The management API's settings applied on the host (#532): the listener on
+# the management network, from /etc/prisma-routing/api.env. At boot, and when
+# the VTY asks after a commit that changed `api` (its door restarts this).
+[Unit]
+Description=Prisma Routing - apply the management API's settings
+After=prisma-routing-containers.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/prisma-routing/api-configure
+
+[Install]
+WantedBy=multi-user.target

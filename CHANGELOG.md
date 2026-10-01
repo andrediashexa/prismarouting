@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A gRPC management API, prisma.v1, for the web interface.**
+  ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
+  Asked for by the maintainer: the web interface's Rust backend drives the box
+  over gRPC. It is not a second configuration system: every configuration
+  call is the VTY's own `configure`, the lines an operator types, `commit
+  check`, `commit`, `commit confirmed`, `rollback` and `save`, run by the VTY's
+  code in a process that has become the account the client certificate's
+  Common Name names - its roles, its uid at the host's doors, its name in the
+  trail - so a refusal is the VTY's in its words and a change shows at the
+  prompt. A commit over a candidate whose base the running configuration has
+  moved past is refused with the difference. Typed operational reads, `Show`
+  for any screen, and a telemetry stream of interface counters from the
+  statistics segment. Mutual TLS only, on the management address only, off
+  until `api enabled yes` and `api listen-address <address>`; the host's
+  socket carries each connection to the server on the management container's
+  backplane. The contract is `api/prisma/v1/prisma.proto`, its compatibility
+  rules in its header; `docs/api.md` has the certificates and the tonic setup.
+  `lab/api-grpc.sh` drives every rpc against a dataplane, 29 checks.
+
 ### Fixed
 
 ## 0.148.3 - a pool's prefixes are prefix-inside and prefix-outside

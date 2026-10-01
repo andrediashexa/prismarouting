@@ -144,6 +144,9 @@ python3 test/test_prismash_ctrl_c.py
 python3 test/test_doors.py
 sh test/test_set_hostname.sh
 python3 test/test_zabbix_template.py
+python3 test/test_api_contract.py
+python3 test/test_apiserver.py
+sh test/test_api_configure.sh
 sh test/test_kernel_current.sh
 python3 test/test_pager.py
 python3 test/test_vty_session.py
