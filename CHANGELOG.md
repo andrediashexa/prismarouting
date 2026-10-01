@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.3 - an unknown link speed is 0 in the API, not 4.3 Tbps
+
+### Fixed
+
 * **An interface whose speed the dataplane does not know read 4.3 Tbps in
   the API.** ([#545](https://github.com/andrediashexa/hexarouting/issues/545))
   VPP reports an unknown link speed as 0xFFFFFFFF kbps, and 0.149.2's
