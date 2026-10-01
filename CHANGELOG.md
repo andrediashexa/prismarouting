@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.14 - a tenant VRF's Linux device, from the VTY
+
+### Added
+
 * **A tenant VRF's Linux device, from the VTY: `vrf <name> table <id>`.**
   ([#540](https://github.com/andrediashexa/hexarouting/issues/540))
   The statement makes the Linux VRF device on the table the interfaces'
@@ -91,8 +97,6 @@ version has a chance of seeing it.
   bridge. `prisma-*` names, `default`, the kernel's tables 253-255 and a
   table `prisma-bp` holds are refused. Read back by `show running-config`,
   and made again by the boot's `--load`.
-
-### Fixed
 
 ## 0.148.13 - a reject term rejects only what its from policy accepts
 
