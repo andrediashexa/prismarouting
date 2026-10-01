@@ -143,6 +143,7 @@ expect "a candidate whose base moved is refused with the difference" res moved-b
 expect "rollback loads the revision before, and the commit removes the pool" res rollback
 expect "GetVersion answers the release and the transport" res version
 expect "GetVersion and GetSystem answer the host's name, as the prompt reads it" res hostname
+expect "a long Show does not hold GetVersion behind it" res console-apart
 expect "ListInterfaces has pg0, up, with its address" res interfaces
 expect "ListPools has nb with the dataplane's capacity" res pools
 expect "Show returns the VTY's screen" res show

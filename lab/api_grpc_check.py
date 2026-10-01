@@ -130,6 +130,25 @@ _host = _socket.gethostname()
 sy = ops.GetSystem(pb.GetSystemRequest())
 result("hostname", v.hostname == _host and sy.hostname == _host,
        f"GetVersion {v.hostname!r}, GetSystem {sy.hostname!r}, the host {_host!r}")
+# THE CONSOLE DOES NOT HOLD THE STATUS. A Show that takes seconds (a ping
+# that waits for every reply) used to run in the account's one operational
+# process, and every GetVersion behind it waited - prisma-web polls with a
+# 4 s limit. The ping goes to an address nobody answers, so it takes its
+# whole count; GetVersion is asked while it runs.
+import threading as _th, time as _t
+_slow = {}
+def _ping():
+    _t0 = _t.time()
+    try:
+        ops.Show(pb.ShowRequest(command="ping 192.0.2.1 count 5"), timeout=60)
+    except Exception as _e:  # noqa: BLE001 - the timing is what is asked
+        _slow["err"] = str(_e)[:80]
+    _slow["took"] = _t.time() - _t0
+_pt = _th.Thread(target=_ping); _pt.start(); _t.sleep(1.0)
+_g0 = _t.time(); ops.GetVersion(pb.GetVersionRequest(), timeout=10); _g = _t.time() - _g0
+_pt.join()
+result("console-apart", _g < 2.0 and _slow.get("took", 0) > 3.0,
+       f"GetVersion {_g:.2f}s while a Show ran {_slow.get('took', 0):.1f}s {_slow.get('err', '')}")
 ifs = ops.ListInterfaces(pb.ListInterfacesRequest())
 pg0 = next((i for i in ifs.interfaces if i.name == "pg0"), None)
 result("interfaces", pg0 is not None and pg0.admin_up and "100.64.3.254/22" in pg0.addresses,

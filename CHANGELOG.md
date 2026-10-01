@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The API's hostname, and a console that held the status.**
+  ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
+  Found by the web interface against the X520 bench. `GetVersion` and
+  `GetSystem` answered an empty hostname: they asked for
+  `show running-config | include ^hostname`, which answers nothing, and read
+  it now as the prompt does, with one question to the host. And an account's
+  operational calls shared one process, so a `Show` running a ping held every
+  `GetVersion` behind it - the web's status monitor, polling every 5 s with a
+  4 s limit, would mark the box offline while an operator pinged. `Show` has a
+  process of its own: `lab/api-grpc.sh` asks `GetVersion` while a `Show` pings
+  an address nobody answers, and it answers in 0.06 s against the ping's 14.
+
 ## 0.148.5 - the management API with its lab, and what 0.148.4 met on the X520
 
 ### Fixed

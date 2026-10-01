@@ -555,6 +555,11 @@ class Sessions:
         self.ops_idle = ops_idle
         self.candidates = {}   # id -> {"account", "worker", "base"}
         self.ops = {}          # account -> Worker
+        # The console's own process per account (Show): a ping or a traceroute
+        # holds its process for as long as it runs, and in the operational
+        # one it held every GetVersion behind it - measured from the code for
+        # prisma-web, whose status monitor polls every 5 s with a 4 s limit.
+        self.consoles = {}     # account -> Worker
         self.lock = threading.Lock()
 
     def open(self, account, from_revision=None):
@@ -610,6 +615,17 @@ class Sessions:
                 self.ops[account] = w
         return w
 
+    def console_worker(self, account):
+        """The account's process for Show, apart from its operational one."""
+        self.reap()
+        with self.lock:
+            w = self.consoles.get(account)
+        if w is None or not w.proc.is_alive():
+            w = self.worker(account)
+            with self.lock:
+                self.consoles[account] = w
+        return w
+
     def reap(self):
         """Close candidates and operational processes nobody has used lately."""
         now = time.monotonic()
@@ -619,6 +635,9 @@ class Sessions:
             gone = [self.candidates.pop(k)["worker"] for k in stale]
             idle = [a for a, w in self.ops.items() if now - w.used > self.ops_idle]
             gone += [self.ops.pop(a) for a in idle]
+            quiet = [a for a, w in self.consoles.items()
+                     if now - w.used > self.ops_idle]
+            gone += [self.consoles.pop(a) for a in quiet]
         for w in gone:
             w.close()
 
@@ -1049,7 +1068,11 @@ def build(sessions, stats_factory, pb, rpc, grpc):
                 context.abort(grpc.StatusCode.INVALID_ARGUMENT,
                               f"'{req.command}' is not an operational read; Show "
                               f"takes {', '.join(SHOW_WORDS)}")
-            return pb.ShowResponse(text=self._ask(context, "screen", req.command))
+            try:
+                w = sessions.console_worker(account(context))
+                return pb.ShowResponse(text=w.ask("screen", req.command))
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
 
     class Telemetry(rpc.TelemetryServiceServicer):
         # not a unit: a streaming rpc, driven by lab/api-grpc.sh.
