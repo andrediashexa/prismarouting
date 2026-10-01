@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.11 - routing policy, phase C: route leaking between VRFs through a policy
+
+### Added
+
 * **Routing policy, phase C: a VRF imports another VRF's routes, or the
   default table's, through a policy.**
   ([#537](https://github.com/andrediashexa/hexarouting/issues/537))
@@ -99,8 +105,6 @@ version has a chance of seeing it.
   (the lab makes them by hand), and a leaked connected route reaches the
   kernel as `dev <vrf>`, which linux-nl does not put in VPP. Phase B's
   policies compile byte for byte as 0.148.10 did.
-
-### Fixed
 
 ## 0.148.10 - routing policy, phase B: more places a policy applies
 
