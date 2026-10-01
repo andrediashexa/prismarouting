@@ -53,6 +53,10 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStartPre=/usr/lib/prisma-routing/wait-for-vpp 60
 ExecStart=/usr/bin/prismash --load /etc/prisma-routing/prisma-routing.conf
+# Which dataplane and routing containers the configuration is now on, so
+# watch-the-dataplane can tell one Docker started again under it (#548).
+# `-`: a box whose record cannot be written still has its configuration.
+ExecStartPost=-/usr/lib/prisma-routing/watch-the-dataplane --applied
 # The control plane must not be the process that empties a box sized to the
 # documented floor. docs/appliance.md sets that floor at 4 GB, and the tuner
 # leaves a quarter of RAM outside the hugepage pool for everything that is not

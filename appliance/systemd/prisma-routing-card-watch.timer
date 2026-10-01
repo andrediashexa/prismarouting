@@ -1,4 +1,10 @@
-# Every 30 seconds, and the interval is the cost of being stranded.
+# Every 5 seconds, and the interval is the cost of being stranded.
+#
+# It was 30 while this only looked for a container that gave up. It also
+# notices a dataplane Docker started again with nothing configured on it
+# (#548), and every second of that is a box forwarding nothing: the tick is
+# one `docker inspect` per container, and the service runs at LogLevelMax=
+# notice so systemd does not write three journal lines for each.
 #
 # A box whose dataplane container has given up has no interface at all: no
 # ssh, no VTY, no console but the physical one. Half a minute of that is a
@@ -18,7 +24,7 @@ Documentation=file:/usr/share/doc/prisma-routing/appliance.md
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=30s
+OnUnitActiveSec=5s
 AccuracySec=5s
 Unit=prisma-routing-card-watch.service
 

@@ -5174,6 +5174,36 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       echo "  [FAIL] prisma-routing-leaks.service is ${CT_LEAKS:-<no answer>}, not active"
       fail=1
     fi
+    # A DATAPLANE DOCKER STARTED AGAIN COMES BACK CONFIGURED (#548). The
+    # virtio bench, 0.149.4: VPP aborted, Docker's on-failure policy started
+    # it again, and it came up with every interface down, no pool, no route,
+    # while prisma-routing.service stayed `active (exited)` - dead until a
+    # person restarted the unit. Here the dataplane process is killed from
+    # the host (a crash, not a `docker stop`, which no policy restarts) and
+    # the box has to bring an interface back UP by itself, which only the
+    # configuration does. The control: PRISMA_LAB_NO_REAPPLY=1 stops the
+    # watcher's timer first, and this check MUST then fail.
+    if [ "${PRISMA_LAB_NO_REAPPLY:-0}" = 1 ]; then
+      send 'systemctl stop prisma-routing-card-watch.timer; echo "HX""LAB ct-nore=$(systemctl is-active prisma-routing-card-watch.timer)"'
+      wait_for "HXLAB ct-nore=" 30 "the box to stop the watcher (the control)" || fail=1
+    fi
+    send 'for i in $(seq 1 180); do [ -s /run/prisma-routing/dataplane-applied ] && break; sleep 1; done; echo "HX""LAB ct-rec=$(wc -l < /run/prisma-routing/dataplane-applied 2>/dev/null)"'
+    wait_for "HXLAB ct-rec=" 200 "the box to record which containers it configured" || fail=1
+    send 'echo "HX""LAB ct-upb=$(vppctl show interface 2>/dev/null | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l)"'
+    wait_for "HXLAB ct-upb=" 60 "the box to count its interfaces up before the kill" || fail=1
+    CT_UPB=$(live_field ct-upb)
+    send '_p=$(docker top prisma-routing_vpp_1 -eo pid,comm 2>/dev/null | awk "\$2 == \"vpp\" {print \$1; exit}"); kill -9 $_p; _t=0; _up=0; while [ $_t -lt 90 ]; do sleep 1; _t=$((_t + 1)); _up=$(vppctl show interface 2>/dev/null | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l); [ "$_up" -ge 1 ] && [ "$_up" -ge "'"${CT_UPB:-1}"'" ] && break; done; echo "HX""LAB ct-reapply=pid:${_p:-none} up:$_up of '"${CT_UPB:-?}"' after:${_t}s restarts:$(docker inspect -f "{{.RestartCount}}" prisma-routing_vpp_1)"'
+    wait_for "HXLAB ct-reapply=" 150 "the dataplane to be killed and come back" || fail=1
+    CT_REAPPLY=$(live_field ct-reapply)
+    _ra_up=$(echo "$CT_REAPPLY" | sed -n 's/.*up:\([0-9]*\) of.*/\1/p')
+    if [ -n "$_ra_up" ] && [ "${CT_UPB:-0}" -ge 1 ] && [ "$_ra_up" -ge "$CT_UPB" ] \
+       && ! echo "$CT_REAPPLY" | grep -q "pid:none"; then
+      echo "  [ ok ] a dataplane killed and started again by Docker came back configured: $CT_REAPPLY"
+    else
+      echo "  [FAIL] a dataplane killed and started again by Docker did not come back configured"
+      echo "         (${CT_UPB:-?} interface(s) up before; $CT_REAPPLY)"
+      fail=1
+    fi
     send "sync"
     # THE POWER BUTTON, AND NOT A TYPED POWEROFF (#478). A hypervisor's
     # Shutdown is an ACPI power-button press, and this box ignored it: no

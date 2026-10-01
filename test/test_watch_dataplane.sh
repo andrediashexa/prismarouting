@@ -227,5 +227,136 @@ runwhy "$B" >/dev/null
   || ok "a running dataplane leaves no report behind"
 rm -rf "$B"
 
+echo "=== a dataplane Docker started again gets its configuration back (#548) ==="
+# The virtio bench, 0.149.4: VPP aborted out of memory, Docker's on-failure
+# policy started it again, and it came up with no interface configured, no
+# pool and no route while prisma-routing.service stayed `active (exited)` -
+# dead until somebody restarted the unit by hand. Driven here: the record
+# the boot's apply writes, and every tick comparing it with what runs now.
+mkrbox() { # a box whose containers and units answer from files
+  B=$(mktemp -d)
+  mkdir -p "$B/bin" "$B/run/prisma-routing" "$B/state"
+  echo "running vppid1 2026-10-01T20:01:13Z" > "$B/state/prisma-routing_vpp_1"
+  echo "running frrid1 2026-10-01T20:01:13Z" > "$B/state/prisma-routing_frr_1"
+  : > "$B/state/active-prisma-routing-containers.service"
+  : > "$B/state/active-prisma-routing.service"
+  cat > "$B/bin/systemctl" <<SC
+#!/bin/sh
+echo "\$@" >> "$B/systemctl.calls"
+for u in "\$@"; do :; done
+[ -e "$B/state/active-\$u" ]
+SC
+  cat > "$B/bin/docker" <<DC
+#!/bin/sh
+echo "\$@" >> "$B/docker.calls"
+case "\$1" in
+  inspect)
+    for c in "\$@"; do :; done
+    [ -f "$B/state/\$c" ] || exit 1
+    case "\$3" in
+      *.Id*) cat "$B/state/\$c" ;;
+      *State.Status*) cut -d' ' -f1 "$B/state/\$c" ;;
+      *) echo "exit=134 oom=false error=" ;;
+    esac ;;
+  logs) echo "Out-of-memory, calling os_panic()." ;;
+esac
+DC
+  cat > "$B/bin/prismash" <<PS
+#!/bin/sh
+echo "\$@" >> "$B/prismash.calls"
+[ ! -e "$B/state/prismash-fails" ]
+PS
+  printf '#!/bin/sh\nexit 0\n' > "$B/bin/waitvpp"
+  printf '#!/bin/sh\necho called >> "%s/giveback.calls"\n' "$B" > "$B/bin/giveback"
+  printf '#!/bin/sh\nexit 0\n' > "$B/bin/ifup"
+  chmod +x "$B/bin/"*
+  echo "$B"
+}
+runr() { # <box> [args]
+  _b=$1; shift
+  PRISMA_ROOT=$_b PRISMA_SYSTEMCTL=$_b/bin/systemctl PRISMA_DOCKER=$_b/bin/docker \
+  PRISMA_GIVEBACK=$_b/bin/giveback PRISMA_IFUP=$_b/bin/ifup \
+  PRISMA_PRISMASH=$_b/bin/prismash PRISMA_WAIT_FOR_VPP=$_b/bin/waitvpp \
+  PRISMA_CARD_STAMP=$_b/run/prisma-routing/card-given-back \
+  sh "$BIN" "$@" 2>&1
+}
+reapplied() { grep -c -- "--reapply" "$1/prismash.calls" 2>/dev/null || echo 0; }
+
+B=$(mkrbox)
+runr "$B" --applied >/dev/null
+[ "$(cat "$B/run/prisma-routing/dataplane-applied")" = "vppid1 2026-10-01T20:01:13Z
+frrid1 2026-10-01T20:01:13Z" ] \
+  && ok "the boot's apply records the dataplane and routing containers it configured" \
+  || bad "the record after --applied: $(cat "$B/run/prisma-routing/dataplane-applied" 2>&1)"
+runr "$B" >/dev/null
+[ "$(reapplied "$B")" = 0 ] && ok "the same containers running: nothing is put back" \
+  || bad "a tick with nothing restarted re-applied the configuration"
+
+echo "running vppid1 2026-10-01T20:24:12Z" > "$B/state/prisma-routing_vpp_1"
+OUT=$(runr "$B")
+[ "$(reapplied "$B")" = 1 ] && ok "a dataplane started again (same id, new start) gets the configuration back" \
+  || bad "the restarted dataplane was left unconfigured: $OUT"
+grep -q "vppid1 2026-10-01T20:24:12Z" "$B/run/prisma-routing/dataplane-applied" \
+  && ok "and the record moves to the new run, so the next tick is quiet" \
+  || bad "the record was not updated: $(cat "$B/run/prisma-routing/dataplane-applied")"
+R=$B/var/log/prisma-routing/why-the-dataplane-stopped
+grep -q "Out-of-memory" "$R" 2>/dev/null && grep -q "started again by Docker" "$R" \
+  && ok "and what the dead run printed last is kept, like a container that gave up" \
+  || bad "no report of the restart: $(cat "$R" 2>&1)"
+grep -q -- "logs --until 2026-10-01T20:24:12Z" "$B/docker.calls" \
+  && ok "read up to where the new run started, so it is the old run's last lines" \
+  || bad "the log was not cut at the restart: $(grep logs "$B/docker.calls")"
+case "$OUT" in *"#548"*) ok "and the journal says what happened" ;;
+  *) bad "nothing said about the restart: $OUT" ;; esac
+[ -e "$B/giveback.calls" ] && bad "a restarted dataplane had its card taken away" \
+  || ok "and the card stays where it is: the dataplane is running"
+runr "$B" >/dev/null
+[ "$(reapplied "$B")" = 1 ] && ok "the next tick puts nothing back again" \
+  || bad "the configuration was put back twice for one restart"
+
+echo "running frrid2 2026-10-01T20:30:00Z" > "$B/state/prisma-routing_frr_1"
+rm -f "$R"
+OUT=$(runr "$B")
+[ "$(reapplied "$B")" = 2 ] && ok "a routing container started again gets it back too" \
+  || bad "a restarted FRR was left with the file it started from: $OUT"
+[ -f "$R" ] && bad "a routing restart wrote a dataplane failure report" \
+  || ok "without a dataplane failure report it did not have"
+rm -rf "$B"
+
+B=$(mkrbox)
+echo "running vppid9 2026-10-01T21:00:00Z" > "$B/state/prisma-routing_vpp_1"
+runr "$B" >/dev/null
+[ "$(reapplied "$B")" = 0 ] && [ -s "$B/run/prisma-routing/dataplane-applied" ] \
+  && ok "a box upgraded onto this, with no record: what runs is adopted, nothing put back" \
+  || bad "no record: reapplied=$(reapplied "$B"), record=$(cat "$B/run/prisma-routing/dataplane-applied" 2>&1)"
+rm -rf "$B"
+
+B=$(mkrbox)
+runr "$B" --applied >/dev/null
+echo "running vppid2 2026-10-01T21:00:00Z" > "$B/state/prisma-routing_vpp_1"
+rm -f "$B/state/active-prisma-routing.service"
+runr "$B" >/dev/null
+[ "$(reapplied "$B")" = 0 ] && ok "while prisma-routing.service is not active - the boot's own apply running - nothing" \
+  || bad "it re-applied underneath the boot's apply"
+: > "$B/state/active-prisma-routing.service"
+echo "restarting vppid2 2026-10-01T21:00:00Z" > "$B/state/prisma-routing_vpp_1"
+runr "$B" >/dev/null
+[ "$(reapplied "$B")" = 0 ] && ok "a dataplane Docker is still restarting is waited for" \
+  || bad "it re-applied to a dataplane that is not up"
+echo "running vppid2 2026-10-01T21:00:00Z" > "$B/state/prisma-routing_vpp_1"
+: > "$B/state/prismash-fails"
+for i in 1 2 3 4 5; do OUT=$(runr "$B"); done
+[ "$(reapplied "$B")" = 3 ] && ok "a configuration the new dataplane refuses is tried 3 times, not every tick" \
+  || bad "a failing re-apply was tried $(reapplied "$B") times in 5 ticks"
+grep -q "vppid1" "$B/run/prisma-routing/dataplane-applied" \
+  && ok "and the record still names the configured run: it was not put back" \
+  || bad "a failed re-apply moved the record: $(cat "$B/run/prisma-routing/dataplane-applied")"
+rm -f "$B/state/prismash-fails"
+echo "running vppid3 2026-10-01T21:10:00Z" > "$B/state/prisma-routing_vpp_1"
+runr "$B" >/dev/null
+[ "$(reapplied "$B")" = 4 ] && ok "and the next restart is tried afresh... " \
+  || bad "a later restart was not put back after an earlier one gave up"
+rm -rf "$B"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

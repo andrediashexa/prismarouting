@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dataplane Docker started again after a crash came back with no
+  configuration, and the box forwarded nothing.**
+  ([#548](https://github.com/andrediashexa/hexarouting/issues/548))
+  The configuration reached the dataplane only through the boot's oneshot,
+  prisma-routing.service, which stays `active (exited)` while the container
+  under it restarts: on the virtio bench VPP aborted, Docker's on-failure
+  policy started it again with every interface down at VPP's default MTU of
+  9000, no pool and no route, and the box stayed so until somebody restarted
+  the unit by hand. The boot's apply now records which dataplane and routing
+  containers it configured, and watch-the-dataplane - every 5 seconds now,
+  quiet in the journal - puts the configuration in effect (revision 0, the
+  saved file only when there is none; `prismash --reapply`) back on one that
+  started again since, and keeps what the dead run printed last in
+  /var/log/prisma-routing/why-the-dataplane-stopped. A configuration the new
+  dataplane refuses is tried three times per restart, not every tick.
+
 ## 0.149.4 - the API comes back after an upgrade recreates the VTY's container
 
 ### Fixed
