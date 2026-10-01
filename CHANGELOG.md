@@ -79,6 +79,24 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The management API's server, held by its lab.**
+  ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
+  The follow-up to 0.148.4's first cut, which shipped ahead of it.
+  `lab/api-grpc.sh` drives every rpc over mutual TLS against a dataplane -
+  open, edit, the VTY's refusals at the check and at the commit, compare,
+  commit confirmed, confirm, rollback, a candidate whose base moved, the typed
+  reads, Show, a telemetry stream whose pg0 counters move with traffic, an
+  account without the role, a client with no certificate, the VTY's own `api`
+  statement - 31 checks, and an off run whose server trusts a CA that signed
+  none of the clients, 22 red. What it found: `prisma-routing-api.service`
+  stopped nothing (ending `docker exec` does not end the process it started)
+  and now holds the server's stdin open, the server stopping when it closes;
+  a thread blocked in `sys.stdin`'s reader held its lock across the fork and
+  hung every session, so the watcher reads the descriptor and each session
+  process gets its own stdin; and the unit asked for the container stack with
+  `Requires=`, which on a units-path box would have started it - `Requisite=`
+  now.
+
 ## 0.148.4 - a first cut of the gRPC management API, for the web interface
 
 ### Added
