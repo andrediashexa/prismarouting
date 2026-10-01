@@ -1147,6 +1147,16 @@ check([w for _, w in policy.findings(_nr)] == [
     "term"],
       f"a reject term whose policy FRR cannot run inverted is refused, "
       f"naming the term that cannot: {policy.findings(_nr)}")
+check(policy._not_invertible(pr, "X", set()) is None
+      and policy._not_invertible(_nr, "R", set())
+      == "R term r has from policy and then reject"
+      and policy._not_invertible(_nr, "NT", set())
+      == "NT term 1 has from policy and then next term",
+      "_not_invertible: None when every from-policy term accepts, nested; "
+      "else the first term that does not")
+check(policy._reject_calls(pr) == []
+      and [p for p, _ in policy._reject_calls(_nr)] == ["BAD", "OK2"],
+      "_reject_calls: (policy, why) per reject term FRR cannot run")
 ok("a reject term rejects what its from policy accepts")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
