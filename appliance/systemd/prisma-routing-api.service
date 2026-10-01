@@ -2,13 +2,20 @@
 # runs the VTY's own code, as root only to become each call's account.
 [Unit]
 Description=Prisma Routing - the management API (prisma.v1, mutual TLS)
-Requires=prisma-routing-containers.service
+# Requisite, not Requires: the API runs where the containers already run, and
+# a box on the systemd units path has no management container - asking it
+# would START the container stack beside the units (test_two_dataplanes_one_shape).
+Requisite=prisma-routing-containers.service
 After=prisma-routing-containers.service
 
 [Service]
-ExecStart=/usr/bin/docker exec prisma-routing_mgmt_1 python3 /usr/lib/prisma-routing/apiserver.py --listen 128.0.0.2:50051
+# ENDING `docker exec` DOES NOT END THE PROCESS IT STARTED in the container,
+# so the server is told by its stdin: the `sleep` holds the pipe open for as
+# long as this unit runs, and stopping the unit ends the whole group - the
+# sleep, the docker client - whereupon docker closes the exec's stdin and the
+# server, run with --stop-on-eof, stops. No stop-time command of its own
+# (test_stop_is_not_a_teardown), and nothing else in the container is touched.
+ExecStart=/bin/sh -c 'sleep infinity | exec /usr/bin/docker exec -i prisma-routing_mgmt_1 python3 /usr/lib/prisma-routing/apiserver.py --listen 128.0.0.2:50051 --stop-on-eof'
 ExecStartPost=/usr/lib/prisma-routing/api-configure --wait
-# Ending `docker exec` does not end the process it started in the container.
-ExecStop=-/usr/bin/docker exec prisma-routing_mgmt_1 pkill -f /usr/lib/prisma-routing/apiserver.py
 Restart=on-failure
 RestartSec=5

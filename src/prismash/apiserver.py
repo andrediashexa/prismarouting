@@ -55,8 +55,10 @@ API_DIR = os.environ.get("PRISMA_API_DIR", "/etc/prisma-routing/api")
 CANDIDATE_IDLE = 1800
 #: An account's process for operational calls is kept this long between uses.
 WORKER_IDLE = 300
-#: The commands Show takes: reads, never a change and never a shell.
-SHOW_WORDS = ("show", "ping", "traceroute", "mtr", "monitor")
+#: The commands Show takes: reads, never a change and never a shell. Not
+#: `monitor`: the VTY refuses `monitor interface` without a terminal, and a
+#: call has none - the telemetry stream is the API's live view.
+SHOW_WORDS = ("show", "ping", "traceroute", "mtr")
 #: The VTY's sentence for an account without the role (Shell.require).
 DENIED = "permission denied for a"
 
@@ -243,7 +245,11 @@ def interfaces_of(sh, names=()):
         linux = {}
     for d in (r.fields or {}).get("rows", []) if getattr(r, "ok", False) else []:
         name = d.get("interface_name", "")
-        if not name or name == "local0" or (names and name not in names):
+        # The VTY's rule for what is an interface (#532): not local0, and not
+        # the Linux end of a linux_cp pair - `show interface` lists neither,
+        # and the X520 bench's ListInterfaces returned tap4096 beside it.
+        if not name or name == "local0" or is_lcp_tap(name) \
+                or (names and name not in names):
             continue
         flags = str(d.get("flags", ""))
         rows.append({
@@ -259,6 +265,12 @@ def interfaces_of(sh, names=()):
             "sw_if_index": d.get("sw_if_index", 0),
         })
     return rows
+
+
+def is_lcp_tap(name):
+    """The Linux end of a linux_cp pair, by the VTY's own predicate."""
+    from config import _is_lcp_tap
+    return _is_lcp_tap(name)
 
 
 def cfg_addresses(cfg, name):
@@ -441,6 +453,14 @@ def become(account):
 # builds the Shell and answers its pipe until told to stop; handle() above is
 # what a test drives, and lab/api-grpc.sh drives this.
 def _worker_main(conn, account, shell_factory):
+    # NOT THE SERVER'S STDIN. Under the host unit it is the pipe whose end
+    # stops the server (--stop-on-eof), and a Shell built on it waited on it:
+    # lab/api-grpc.sh measured every session refused "did not start" the day
+    # the server's stdin stopped being /dev/null.
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    sys.stdin = open(os.devnull)
     try:
         become(account)
         if shell_factory is None:
@@ -649,7 +669,8 @@ def interface_samples(stats, only=()):
     rxe, txe, drops = stats["/if/rx-error"], stats["/if/tx-error"], stats["/if/drops"]
     out = []
     for i, name in enumerate(names):
-        if not name or name == "local0" or (only and name not in only):
+        if not name or name == "local0" or is_lcp_tap(name) \
+                or (only and name not in only):
             continue
         out.append({"name": name, "counters": {
             "rx_bytes": sum_combined(rx, i, "bytes"),
@@ -1065,6 +1086,8 @@ def main(argv):
                                                       os.path.join(HERE, "apistubs")))
     ap.add_argument("--stats", default=os.environ.get("PRISMA_STATS_SOCKET",
                                                       "/run/vpp/stats.sock"))
+    ap.add_argument("--stop-on-eof", action="store_true",
+                    help="stop when stdin closes (the host unit's docker exec)")
     a = ap.parse_args(argv)
     sys.path.insert(0, a.stubs)
     import grpc
@@ -1090,15 +1113,40 @@ def main(argv):
 
     sessions = Sessions()
     cfg, ops, tel = build(sessions, stats_factory, pb, rpc, grpc)
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=16))
+    # NO SO_REUSEPORT, which gRPC turns on by default: with it a second server
+    # binds the same port beside the first, and the X520 bench (0.148.4) was
+    # found with two listeners on 128.0.0.2:50051 after restarts. Without it
+    # a second server is refused at the bind and exits, and the one answering
+    # is the one that started first.
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=16),
+                         options=(("grpc.so_reuseport", 0),))
     rpc.add_ConfigServiceServicer_to_server(cfg, server)
     rpc.add_OperationalServiceServicer_to_server(ops, server)
     rpc.add_TelemetryServiceServicer_to_server(tel, server)
-    if not server.add_secure_port(a.listen, creds):
+    # grpcio 1.51 raises where older ones returned 0: both are the same
+    # refusal, said in one sentence rather than as a traceback.
+    try:
+        bound = server.add_secure_port(a.listen, creds)
+    except RuntimeError:
+        bound = 0
+    if not bound:
         print(f"apiserver: cannot listen on {a.listen}", file=sys.stderr)
         return 1
     server.start()
     print(f"apiserver: prisma.v1 on {a.listen}, mutual TLS", flush=True)
+    if a.stop_on_eof:
+        # not a unit: a closure of main(); stdin closing is how the host
+        # unit's stop reaches a server docker exec started (see the unit).
+        def watch():
+            # os.read on the descriptor, not sys.stdin: a thread blocked in
+            # sys.stdin's reader holds its lock across a fork, and every
+            # worker's multiprocessing bootstrap closes sys.stdin first -
+            # measured, each one hung there and no session started.
+            while os.read(0, 4096):
+                pass
+            print("apiserver: stdin closed, stopping", flush=True)
+            server.stop(5)
+        threading.Thread(target=watch, daemon=True).start()
     server.wait_for_termination()
     return 0
 

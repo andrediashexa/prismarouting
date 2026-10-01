@@ -79,6 +79,41 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The management API's server, held by its lab.**
+  ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
+  The follow-up to 0.148.4's first cut, which shipped ahead of it.
+  `lab/api-grpc.sh` drives every rpc over mutual TLS against a dataplane -
+  open, edit, the VTY's refusals at the check and at the commit, compare,
+  commit confirmed, confirm, rollback, a candidate whose base moved, the typed
+  reads, Show, a telemetry stream whose pg0 counters move with traffic, an
+  account without the role, a client with no certificate, the VTY's own `api`
+  statement - 31 checks, and an off run whose server trusts a CA that signed
+  none of the clients, 22 red. What it found: `prisma-routing-api.service`
+  stopped nothing (ending `docker exec` does not end the process it started)
+  and now holds the server's stdin open, the server stopping when it closes;
+  a thread blocked in `sys.stdin`'s reader held its lock across the fork and
+  hung every session, so the watcher reads the descriptor and each session
+  process gets its own stdin; and the unit asked for the container stack with
+  `Requires=`, which on a units-path box would have started it - `Requisite=`
+  now. And what 0.148.4 met on the X520 bench:
+  * the proxy and the readiness probe reached for the server on the backplane
+    from the main table, where 128.0.0.2 goes out of the management card;
+    both run through VRF `prisma-bp` now;
+  * gRPC's default SO_REUSEPORT let a restarted server bind beside the old
+    one, and two listeners were found on the backplane port; a second server
+    is refused at the bind now, in one sentence;
+  * an account created after the management container started was "name not
+    found" inside it - the API's sessions and every VTY session alike - and a
+    `save` from one wrote the configuration without it: the container
+    bind-mounted /etc/passwd, group and shadow as files, which pins the inode
+    `useradd` replaces. The host's doors keep a copy in
+    /run/prisma-routing/accounts current and the container's files are links
+    into it; shown with docker on the build host, a file mount answers "name
+    not found" and the directory answers the new account;
+  * ListInterfaces returned the linux_cp TAPs `show interface` leaves out;
+  * Show offered `monitor`, which the VTY refuses without a terminal; it is
+    not offered, and docs/api.md says the request and idle limits.
+
 ## 0.148.4 - a first cut of the gRPC management API, for the web interface
 
 ### Added

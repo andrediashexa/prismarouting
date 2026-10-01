@@ -56,6 +56,9 @@ TimeoutStartSec=600
 # load-the-images loads them, reads the tag off what this box actually has,
 # and writes PRISMA_VERSION into the environment file below.
 ExecStartPre=/usr/lib/prisma-routing/load-the-images
+# The accounts the management container reads (#532): its /etc/passwd, group
+# and shadow are links into this copy, which has to exist before it starts.
+ExecStartPre=/usr/bin/python3 /usr/lib/prisma-routing/doors.py --share-accounts
 # THE CARD'S DEVICE NODE, READ OFF THIS BOOT AND NOT GUESSED AT.
 # compose.yaml names /dev/net/tun and /dev/vhost-net, which every box has;
 # it deliberately names no /dev/vfio, because a box with no IOMMU has none

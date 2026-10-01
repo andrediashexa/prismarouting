@@ -244,8 +244,11 @@ services:
   #   /run/user             a session's broker socket, under the login's own
   #                         runtime directory (#448's broker)
   #   /var/log/prisma-routing  the audit trail and the records
-  #   /etc/passwd, group, shadow, read-only: the running configuration reads
-  #                         the accounts off them; every change goes through a door
+  #   /etc/passwd, group, shadow: links in the image into
+  #                         /run/prisma-routing/accounts, which the host's doors
+  #                         keep current (#532) - a mount of the FILES pinned
+  #                         their inodes, and an account created after the
+  #                         container started was invisible to it
   #   /usr/share/prisma-routing, read-only: the VERSION stamp `show version`
   #                         reads, which the image does not carry
   mgmt:
@@ -264,9 +267,6 @@ services:
       - /run/prisma-routing:/run/prisma-routing
       - /run/user:/run/user
       - /var/log/prisma-routing:/var/log/prisma-routing
-      - /etc/passwd:/etc/passwd:ro
-      - /etc/group:/etc/group:ro
-      - /etc/shadow:/etc/shadow:ro
       - /usr/share/prisma-routing:/usr/share/prisma-routing:ro
       # The box's timezone, which the installer asked for: the VTY prints
       # times with localtime(), and the image's own is UTC.

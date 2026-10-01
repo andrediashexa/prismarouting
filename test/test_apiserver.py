@@ -72,7 +72,8 @@ check(A.show_allowed("show bgp summary") and A.show_allowed("ping 1.1.1.1")
       "reads are allowed, filters too")
 check(not A.show_allowed("configure") and not A.show_allowed("start shell")
       and not A.show_allowed("save") and not A.show_allowed("")
-      and not A.show_allowed("system reboot"),
+      and not A.show_allowed("system reboot")
+      and not A.show_allowed("monitor interface pg0"),
       "nothing that changes the box or opens a shell")
 
 print("=== account_from_auth: the client certificate's Common Name ===")
@@ -141,6 +142,7 @@ class FakeShell:
             def dump(_, msg, args):
                 return {"sw_interface_dump": R([
                     {"interface_name": "local0", "flags": ""},
+                    {"interface_name": "tap4096", "flags": "IF_STATUS_API_FLAG_ADMIN_UP"},
                     {"interface_name": "pg0", "sw_if_index": 1,
                      "flags": "IF_STATUS_API_FLAG_ADMIN_UP|IF_STATUS_API_FLAG_LINK_UP",
                      "mtu": [9000, 0, 0, 0], "l2_address": "02:fe:00:00:00:01"}]),
@@ -219,6 +221,8 @@ check(len(I) == 1 and I[0]["name"] == "pg0" and I[0]["admin_up"] and I[0]["link_
       and I[0]["linux_name"] == "pg0-linux" and I[0]["description"] == "subs",
       f"an interface: the dataplane's state, the configuration's addresses: {I}")
 check(A.interfaces_of(sh, ["other"]) == [], "only the interfaces asked for")
+check(A.is_lcp_tap("tap4096") and not A.is_lcp_tap("pg0") and not A.is_lcp_tap("tapestry"),
+      "is_lcp_tap: the VTY's own predicate for a linux_cp TAP")
 check(A.cfg_addresses(sh.cfg, "pg0") == ["100.64.3.254/22"] and A.cfg_addresses(sh.cfg, "x") == [],
       "an interface's configured addresses")
 P = A.pools_of(sh)
@@ -372,17 +376,19 @@ class Attr:
 
 
 check(A.sum_combined([[Attr()]], 0, "bytes") == 9, "and one with attributes by name")
-STATS = {"/if/names": ["local0", "pg0"],
-         "/if/rx": [[{"packets": 0, "bytes": 0}, {"packets": 5, "bytes": 300}]],
-         "/if/tx": [[{"packets": 0, "bytes": 0}, {"packets": 1, "bytes": 60}]],
-         "/if/rx-error": [[0, 2]], "/if/tx-error": [[0, 0]], "/if/drops": [[0, 1]],
+STATS = {"/if/names": ["local0", "pg0", "tap4096"],
+         "/if/rx": [[{"packets": 0, "bytes": 0}, {"packets": 5, "bytes": 300},
+                     {"packets": 9, "bytes": 900}]],
+         "/if/tx": [[{"packets": 0, "bytes": 0}, {"packets": 1, "bytes": 60},
+                     {"packets": 9, "bytes": 900}]],
+         "/if/rx-error": [[0, 2, 0]], "/if/tx-error": [[0, 0, 0]], "/if/drops": [[0, 1, 0]],
          "/bpa/pool/names": ["nb", ""], "/bpa/pool/subscribers": [[3, 9], [1, 0]],
          "/bpa/pool/ports": [[700, 0]], "/bpa/pool/sessions": [[40, 0]],
          "/bpa/pool/refused": [[2, 0]]}
 S1 = A.interface_samples(STATS)
 check(S1 == [{"name": "pg0", "counters": {"rx_bytes": 300, "tx_bytes": 60, "rx_packets": 5,
                                           "tx_packets": 1, "rx_errors": 2, "tx_errors": 0,
-                                          "drops": 1}}], f"one sample per interface, local0 left out: {S1}")
+                                          "drops": 1}}], f"one sample per interface, local0 and the taps left out: {S1}")
 check(A.interface_samples(STATS, ["other"]) == [], "only the interfaces asked for")
 tot, pools = A.cgnat_totals(STATS)
 check(tot == {"subscribers": 4, "ports_in_use": 700, "sessions": 40, "refusals": 2}

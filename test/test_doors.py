@@ -681,5 +681,40 @@ check(unit == prismash.DATAPLANE_UNIT_CONTAINERS and drv == "vfio-pci"
       and all(tuple(a) in doors.QUERIES for a in _ask) and len(_ask) == 2,
       f"from the management plane both are asked of the host's doors: {_ask}")
 
+print("\n=== the accounts the management container reads, kept current (#532) ===")
+import tempfile as _tmpf
+with _tmpf.TemporaryDirectory() as _w:
+    _src, _dst = os.path.join(_w, "etc"), os.path.join(_w, "accounts")
+    os.makedirs(_src)
+    for _n, _t, _m in (("passwd", "root:x:0:0::/root:/bin/sh\n", 0o644),
+                       ("group", "root:x:0:\n", 0o644),
+                       ("shadow", "root:!:1::::::\n", 0o640)):
+        with open(os.path.join(_src, _n), "w") as _f:
+            _f.write(_t)
+        os.chmod(os.path.join(_src, _n), _m)
+    _st0 = doors.accounts_state(_src)
+    check(sorted(doors.share_accounts(_src, _dst)) == ["group", "passwd", "shadow"],
+          "share_accounts: the first run copies the three files")
+    check(oct(os.stat(os.path.join(_dst, "shadow")).st_mode & 0o777) == "0o640",
+          "with their mode: shadow stays 0640")
+    check(doors.share_accounts(_src, _dst) == [], "nothing changed, nothing copied")
+    # What useradd does: a new file renamed over the old one, a new inode.
+    _new = os.path.join(_src, "passwd.new")
+    with open(_new, "w") as _f:
+        _f.write("root:x:0:0::/root:/bin/sh\nprisma-web:x:1001:1001::/home/prisma-web:"
+                 "/usr/bin/prismash-login\n")
+    os.chmod(_new, 0o644)
+    os.replace(_new, os.path.join(_src, "passwd"))
+    check(doors.accounts_state(_src) != _st0, "accounts_state: a replaced file is a change")
+    _ino = os.stat(os.path.join(_dst, "passwd")).st_ino
+    check(doors.share_accounts(_src, _dst) == ["passwd"]
+          and "prisma-web" in open(os.path.join(_dst, "passwd")).read(),
+          "the account created after the copy reaches it")
+    check(os.stat(os.path.join(_dst, "passwd")).st_ino != _ino,
+          "by rename, so a reader never sees half a file")
+    check(not [f for f in os.listdir(_dst) if f.endswith(".new")], "and no temporary is left")
+    check(doors.accounts_state(os.path.join(_w, "nowhere")) == (None, None, None),
+          "no files is no state, not a crash")
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

@@ -7,4 +7,8 @@ Requires=prisma-routing-api.service
 After=prisma-routing-api.service
 
 [Service]
-ExecStart=/lib/systemd/systemd-socket-proxyd 128.0.0.2:50051
+# THROUGH THE BACKPLANE'S VRF: bp0 is enslaved to `prisma-bp` (table 128),
+# and from the main table 128.0.0.2 is reached by the default route - out of
+# the management card. Measured on the X520 bench (0.148.4): the proxy never
+# reached the server until it ran inside the VRF.
+ExecStart=/usr/sbin/ip vrf exec prisma-bp /lib/systemd/systemd-socket-proxyd 128.0.0.2:50051

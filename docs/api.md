@@ -24,7 +24,7 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | **Why** | A web interface drives the box without screen-scraping a terminal, and without becoming a second place the configuration is decided. |
 | **Who** | A management client holding a client certificate the box trusts; each call acts as the box account its certificate names. |
 | **Where** | The server runs in the management container; the host listens on the management address and carries the connection to it. |
-| **When** | From 0.149.0, once an operator sets `api enabled yes` and `api listen-address`. |
+| **When** | A first cut from 0.148.4; held by its lab, with what the lab and the X520 bench found, from 0.148.5. Off until an operator sets `api enabled yes` and `api listen-address`. |
 | **How** | gRPC over mutual TLS; configuration as the VTY's own text; typed operational data. |
 | **How much** | One port on the management address; one process per open candidate and per account that reads. |
 
@@ -68,8 +68,21 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `Save` | `save` |
 | | `CloseCandidate`, `GetRunning`, `ListRevisions` | |
 | OperationalService | `GetVersion`, `GetSystem`, `ListInterfaces`, `ListPools`, `GetSubscriber`, `GetSessionsSummary`, `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListVrrp`, `ListBundles` | the readers behind the matching `show` |
-| | `Show` | any `show`, `ping`, `traceroute`, `mtr` or `monitor`, as text |
+| | `Show` | any `show`, `ping`, `traceroute` or `mtr`, as text (not `monitor`: it redraws a terminal, and a call has none - the telemetry stream is the API's live view) |
 | TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events |
+
+## Limits a client meets
+
+* **A request a session does not answer in 300 seconds** fails with
+  `UNAVAILABLE` ("no answer in 300s"); the session's process is left as it
+  is, and the next request reaches it.
+* **A candidate nobody has touched for 30 minutes is closed**, its process
+  ended: the next call naming it is `NOT_FOUND`, and the client opens a new
+  one. An account's process for operational calls is kept 5 minutes between
+  uses and started again on the next.
+* **One request at a time per session.** A client that wants to read while a
+  candidate's commit runs reads through `OperationalService`, which is a
+  process of its own.
 
 ## Security
 

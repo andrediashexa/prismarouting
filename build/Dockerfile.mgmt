@@ -48,5 +48,12 @@ RUN apt-get update -qq \
     && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /tmp/api-src
 COPY appliance/prismash-launcher /usr/bin/prismash
 RUN chmod 0755 /usr/bin/prismash /usr/lib/prisma-routing/prismash.py
+# THE ACCOUNTS ARE THE HOST'S, through a directory and not three file mounts
+# (#532): a file mount pins the inode, and useradd replaces the file, so the
+# container kept the accounts from before it started. The host's doors keep
+# /run/prisma-routing/accounts current (doors.share_accounts), and these
+# links read it.
+RUN for f in passwd group shadow; do \
+      ln -sf /run/prisma-routing/accounts/$f /etc/$f; done
 # The VPP image's entrypoint starts VPP; this one must never.
 ENTRYPOINT ["sleep", "infinity"]

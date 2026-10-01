@@ -27,15 +27,34 @@ BACKPLANE=128.0.0.2:50051
 SOCKET=prisma-routing-api-proxy.socket
 
 if [ "${1:-}" = --wait ]; then
-  python3 - "$BACKPLANE" <<'PY'
+  python3 - "$BACKPLANE" "${PRISMA_BP_VRF:-prisma-bp}" <<'PY'
 import socket, sys, time
 host, port = sys.argv[1].rsplit(":", 1)
+vrf = sys.argv[2].encode()
+
+
+def probe():
+    """One connect to the server, through the backplane's VRF when there is one."""
+    s = socket.socket()
+    s.settimeout(0.5)
+    try:
+        # The backplane is bp0 in VRF prisma-bp (table 128): from the main
+        # table 128.0.0.2 goes out of the management card. Measured on the
+        # X520 bench, this probe found nothing for 20 s until it was bound to
+        # the VRF. A box with no such VRF (a lab) connects from the main table.
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, vrf)
+        except OSError:
+            pass
+        s.connect((host, int(port)))
+    finally:
+        s.close()
 # A deadline, not a count: a connect to an address nobody holds can take its
 # whole timeout each time, and 100 tries of 0.5 s measured 70 s, not 20.
 end = time.monotonic() + 20
 while time.monotonic() < end:
     try:
-        socket.create_connection((host, int(port)), 0.5).close()
+        probe()
         sys.exit(0)
     except OSError:
         time.sleep(0.2)

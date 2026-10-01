@@ -254,14 +254,15 @@ service OperationalService {
   rpc ListBundles(ListBundlesRequest) returns (ListBundlesResponse);
   // Any operational command the VTY takes (`show ...`, `ping ...`), with
   // its text exactly as the VTY prints it. Configuration and shell commands
-  // are refused.
+  // are refused, and so is `monitor`, which redraws a terminal a call has not
+  // got - TelemetryService is the API's live view.
   rpc Show(ShowRequest) returns (ShowResponse);
 }
 
 message GetVersionRequest {}
 
 message VersionInfo {
-  // The installed release ("0.149.0").
+  // The installed release ("0.148.5").
   string release = 1;
   // The build of the plugin the running dataplane loaded.
   string plugin_build = 2;
