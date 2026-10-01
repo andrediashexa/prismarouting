@@ -111,8 +111,8 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 | `from origin` | `igp`, `egp` ou `incomplete` | o atributo origin do BGP |
 | `from local-preference` | `<0-4294967295>` | a rota tem essa preferência local |
 | `from next-hop` | `<endereço>` | o próximo salto do BGP é esse |
-| `from large-community` | `<nome>` | a rota carrega a large community do conjunto |
-| `from extended-community` | `<nome>` | a rota carrega a extended community do conjunto |
+| `from large-community` | `<nome>`  | a rota carrega a large community do conjunto |
+| `from extended-community` | `<nome>`  | a rota carrega a extended community do conjunto |
 | `from validation-state` | `valid`, `invalid` ou `unknown` | o resultado da validação RPKI de origem. `unknown` é a rota que nenhum ROA cobre |
 | `from policy` | `<política>` | chama outra política como sub-rotina: se ela rejeita, a rota é rejeitada; se aceita, o term segue. Um term chama uma política só |
 
@@ -142,7 +142,7 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 | `set metric` | `<0-4294967295>` | a métrica: o MED no BGP, o custo no OSPF e no IS-IS |
 | `set tag` | `<0-4294967295>` | a tag da rota |
 | `set next-hop` | `<endereço>` | o próximo salto no BGP, IPv4 ou IPv6 |
-| `set next-hop` | `self` | num `export`, anuncia esta caixa como próximo salto |
+| `set next-hop` | `self`    | num `export`, anuncia esta caixa como próximo salto |
 | `set next-hop` | `peer-address` | num `import`, usa o endereço do vizinho como próximo salto |
 | `set next-hop` | `discard` | descarta o tráfego para o prefixo: é o blackhole disparado remotamente (RTBH). O próximo salto vira 192.0.2.1 (ou 100::1 no IPv6), que a caixa resolve para um blackhole. Num vizinho eBGP direto, o vizinho precisa de `neighbor <vizinho> disable-connected-check`: sem isso o roteamento não resolve esse próximo salto, a rota não é instalada e o tráfego segue a rota menos específica. O `commit` recusa e diz a linha que falta |
 | `set med` | `<0-4294967295>`, `+<n>`, `-<n>` ou `igp` | o MED do BGP; `igp` usa a métrica do IGP até o próximo salto |
