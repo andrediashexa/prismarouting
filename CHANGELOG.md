@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.148.15 - two things the policy compiler names alike are refused
+
+### Fixed
+
 * **Two things the policy compiler names alike are refused at commit.**
   ([#543](https://github.com/andrediashexa/hexarouting/issues/543))
   The compiler builds FRR names from the operator's, and a name may hold
