@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The management API after an upgrade, and calls that hung.**
+  ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
+  Found by the web interface on the X520 bench after 0.148.7. The API's unit
+  was `sh -c 'sleep infinity | docker exec ...'`: when an upgrade recreated
+  the management container the exec died with it and the sleep kept the
+  service active with no server - "Connection refused" every 5 s. The exec is
+  the service's main process now, so it ends with the container and Restart=
+  brings it back, and refresh-the-vty asks for it at once when the API was
+  running. And calls could hang to DEADLINE_EXCEEDED with the server up: an
+  account's process was forked from the 32-thread gRPC server, and a fork
+  taken while another thread held a lock left the child holding it - three
+  prisma-web processes parked in futex_wait on the bench, after working on
+  the releases before by the luck of when the fork fell. The box spawns them
+  now, a fresh interpreter each. lab/api-grpc.sh passes over spawned
+  processes.
+
 ## 0.148.7 - show system uptime: the box, the dataplane, the routing and since when
 
 ### Added

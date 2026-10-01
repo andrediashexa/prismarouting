@@ -15,7 +15,13 @@ After=prisma-routing-containers.service
 # sleep, the docker client - whereupon docker closes the exec's stdin and the
 # server, run with --stop-on-eof, stops. No stop-time command of its own
 # (test_stop_is_not_a_teardown), and nothing else in the container is touched.
-ExecStart=/bin/sh -c 'sleep infinity | exec /usr/bin/docker exec -i prisma-routing_mgmt_1 python3 /usr/lib/prisma-routing/apiserver.py --listen 128.0.0.2:50051 --stop-on-eof'
+# THE EXEC IS THE SERVICE'S MAIN PROCESS. It was `sh -c 'sleep infinity |
+# docker exec ...'`, and when an upgrade recreated the management container
+# the exec died with it and the sleep kept the pipeline - and the service -
+# alive with no server behind it: "Connection refused" every 5 s on the X520
+# bench after 0.148.7. Here the exec ends the service, Restart= starts it in
+# the new container, and stopping it still closes the server's stdin.
+ExecStart=/bin/bash -c 'exec /usr/bin/docker exec -i prisma-routing_mgmt_1 python3 /usr/lib/prisma-routing/apiserver.py --listen 128.0.0.2:50051 --stop-on-eof < <(exec sleep infinity)'
 ExecStartPost=/usr/lib/prisma-routing/api-configure --wait
 Restart=on-failure
 RestartSec=5

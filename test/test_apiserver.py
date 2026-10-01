@@ -286,6 +286,11 @@ A.become(me)
 check(os.environ.get("USER") == me, "become() as this account sets its environment")
 
 
+check(A.start_method(None) == "spawn" and A.start_method(lambda: None) == "fork",
+      "the box spawns an account's process (a fork of the gRPC server can "
+      "inherit a held lock); a test's stand-in shell forks")
+
+
 def factory():
     return FakeShell()
 

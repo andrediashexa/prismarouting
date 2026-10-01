@@ -511,6 +511,24 @@ def _worker_main(conn, account, shell_factory):
             conn.send(("err", f"{type(e).__name__}: {e}"))
 
 
+def start_method(shell_factory):
+    """
+    How an account's process is started: "spawn" on the box, "fork" for a
+    test's stand-in shell.
+
+    NEVER FORK THE SERVER. It runs gRPC's thread pool, and a fork taken while
+    another thread holds a lock - gRPC's, the logging module's, the
+    allocator's - leaves the child holding it for ever. Measured on the X520
+    bench (0.148.7): three prisma-web processes parked in futex_wait and every
+    call DEADLINE_EXCEEDED, after it had worked on the releases before by the
+    luck of when the fork fell. spawn starts a fresh interpreter, which holds
+    nothing. A test's stand-in shell is a function of the test script, which
+    spawn would have to import again as a program, so a test forks - from a
+    process with no gRPC threads in it.
+    """
+    return "fork" if shell_factory else "spawn"
+
+
 class WorkerError(Exception):
     """A worker that could not start or could not answer."""
 
@@ -523,7 +541,7 @@ class Worker:
         self.timeout = timeout
         self.lock = threading.Lock()
         self.used = time.monotonic()
-        ctx = multiprocessing.get_context("fork")
+        ctx = multiprocessing.get_context(start_method(shell_factory))
         self.conn, child = ctx.Pipe()
         self.proc = ctx.Process(target=_worker_main,
                                 args=(child, account, shell_factory), daemon=True)
