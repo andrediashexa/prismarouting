@@ -79,6 +79,13 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **An interface whose speed the dataplane does not know read 4.3 Tbps in
+  the API.** ([#545](https://github.com/andrediashexa/hexarouting/issues/545))
+  VPP reports an unknown link speed as 0xFFFFFFFF kbps, and 0.149.2's
+  `Interface.speed_bps` multiplied it into 4294967295000 - seen on a virtio
+  port of the X520 bench. It is 0, as the contract says for a speed the
+  dataplane reports none of.
+
 ## 0.149.2 - the API gives the web interface routes, history, load and who it is
 
 ### Added
