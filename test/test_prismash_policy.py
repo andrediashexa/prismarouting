@@ -327,5 +327,282 @@ check([w for _, w in policy.findings(_leak)]
       f"findings() does not name the missing list: {policy.findings(_leak)}")
 ok("a missing or empty list matches nothing; a list with prefixes still does")
 
+print("\n=== phase A (#535): what compiled before compiles exactly as before ===")
+import policy_golden_fixtures as _gold  # noqa: E402
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "policy-golden-0.148.6.txt")) as _f:
+    _golden = _f.read()
+check(_gold.compiled() == _golden,
+      "every fixture compiles to the text 0.148.6's compiler gave, byte for "
+      "byte: a saved policy-options file applies as it did")
+ok("backward compatibility, against the golden text")
+
+print("\n=== phase A (#535): the new definitions, conditions and actions ===")
+A = f"""{P} prefix-list CUST 203.0.113.0/24
+{P} prefix-list CUST 2001:db8:100::/48
+{P} community BH members 65535:666
+{P} large-community LC members 65000:1:2
+{P} large-community LCX members 65000:9:9
+{P} extended-community EC members rt:65000:100 soo:65000:200
+{P} policy-statement BOGONS term 1 from route-filter 10.0.0.0/8 orlonger
+{P} policy-statement BOGONS term 1 then reject
+{P} policy-statement BOGONS default-action accept
+{P} policy-statement IN-A term rtbh from community BH
+{P} policy-statement IN-A term rtbh from route-filter 0.0.0.0/0 upto /32
+{P} policy-statement IN-A term rtbh set next-hop discard
+{P} policy-statement IN-A term rtbh then accept
+{P} policy-statement IN-A term rpki from validation-state invalid
+{P} policy-statement IN-A term rpki then reject
+{P} policy-statement IN-A term peers from neighbor 10.0.0.2
+{P} policy-statement IN-A term peers from neighbor 10.1.0.2
+{P} policy-statement IN-A term peers from origin igp
+{P} policy-statement IN-A term peers from family inet
+{P} policy-statement IN-A term peers set local-preference +20
+{P} policy-statement IN-A term peers set weight 100
+{P} policy-statement IN-A term peers set med -5
+{P} policy-statement IN-A term peers set origin incomplete
+{P} policy-statement IN-A term peers set large-community add LC
+{P} policy-statement IN-A term peers set large-community delete LCX
+{P} policy-statement IN-A term peers set extended-community add EC
+{P} policy-statement IN-A term peers set as-path remove-private
+{P} policy-statement IN-A term peers set next-hop peer-address
+{P} policy-statement IN-A term peers then next policy
+{P} policy-statement IN-A term sub from policy BOGONS
+{P} policy-statement IN-A term sub from large-community LC
+{P} policy-statement IN-A term sub from extended-community EC
+{P} policy-statement IN-A term sub from local-preference 120
+{P} policy-statement IN-A term sub from next-hop 2001:db8::1
+{P} policy-statement IN-A term sub set med igp
+{P} policy-statement IN-B term 1 from prefix-list CUST
+{P} policy-statement IN-B term 1 set local-preference 300
+{P} policy-statement IN-B term 1 then accept
+{P} policy-statement IN-B default-action reject
+{P} policy-statement OUT term 1 from prefix-list CUST
+{P} policy-statement OUT term 1 set as-path-prepend last-as 3
+{P} policy-statement OUT term 1 set next-hop self
+{P} policy-statement OUT term 1 then accept
+{P} policy-statement OSPF-EXT term 1 from protocol static
+{P} policy-statement OSPF-EXT term 1 set metric-type 1
+{P} policy-statement OSPF-EXT term 1 then accept""".splitlines()
+pa, bad = policy.parse(A)
+check(bad == [] and policy.findings(pa) == [], f"phase A reads clean: {bad}")
+check(pa.large_communities == {"LC": ["65000:1:2"], "LCX": ["65000:9:9"]}
+      and pa.ext_communities["EC"] == [("rt", "65000:100"),
+                                       ("soo", "65000:200")]
+      and pa.defaults == {"BOGONS": "accept", "IN-B": "reject"},
+      "large and extended community sets, and the default-actions")
+t = pa.statements["IN-A"]["peers"]
+check(t.neighbors == ["10.0.0.2", "10.1.0.2"] and t.origins == ["igp"]
+      and t.families == ["inet"] and t.then == "next policy",
+      "neighbor ORed, origin, family, then next policy")
+t = pa.statements["IN-A"]["sub"]
+check(t.policies == ["BOGONS"] and t.local_prefs == ["120"]
+      and t.next_hops == ["2001:db8::1"] and t.large_communities == ["LC"]
+      and t.ext_communities == ["EC"]
+      and pa.statements["IN-A"]["rpki"].validation == ["invalid"],
+      "from policy, local-preference, next-hop, the community sets, rpki")
+for line, want in (
+        (f"{P} large-community L members 1:2", "ASN:value:value"),
+        (f"{P} large-community L members 1:2:4294967296", "ASN:value:value"),
+        (f"{P} extended-community E members xx:1:2", "rt:<asn>:<value>"),
+        (f"{P} extended-community E members rt:70000:70000",
+         "rt:<asn>:<value>"),
+        (f"{P} extended-community E members rt:10.0.0.1:70000",
+         "rt:<asn>:<value>"),
+        (f"{P} policy-statement P default-action maybe",
+         "default-action: accept or reject"),
+        (f"{P} policy-statement P term 1 from neighbor nobody",
+         "is not an address"),
+        (f"{P} policy-statement P term 1 from family ipx", "inet or inet6"),
+        (f"{P} policy-statement P term 1 from origin bgp",
+         "igp, egp or incomplete"),
+        (f"{P} policy-statement P term 1 from validation-state good",
+         "valid, invalid or unknown"),
+        (f"{P} policy-statement P term 1 from next-hop x", "not an address"),
+        (f"{P} policy-statement P term 1 from local-preference -1",
+         "from local-preference"),
+        (f"{P} policy-statement P term 1 from color red", "from: prefix-list"),
+        (f"{P} policy-statement P term 1 set weight 70000", "set weight"),
+        (f"{P} policy-statement P term 1 set med up", "set med"),
+        (f"{P} policy-statement P term 1 set origin bgp", "set origin"),
+        (f"{P} policy-statement P term 1 set large-community drop L",
+         "set large-community add|set|delete"),
+        (f"{P} policy-statement P term 1 set extended-community delete E",
+         "set extended-community add|set"),
+        (f"{P} policy-statement P term 1 set as-path rewrite",
+         "set as-path remove-private"),
+        (f"{P} policy-statement P term 1 set metric-type 3",
+         "set metric-type 1|2"),
+        (f"{P} policy-statement P term 1 set as-path-prepend last-as 11",
+         "last-as <1-10>"),
+        (f"{P} policy-statement P term 1 set color red", "set: local-pref"),
+        (f"{P} policy-statement P term 1 then next hop", "next policy")):
+    _, b = policy.parse([line])
+    check(b and want in b[0][1], f"{line!r}: {b}")
+_two = policy.Term("t")
+check(policy._parse_term(_two, ["from", "policy", "A"]) is None
+      and "calls one policy" in policy._parse_term(_two, ["from", "policy",
+                                                          "B"]),
+      "a term calls one policy: FRR holds one `call` a clause")
+check(policy.large_community_error("1:2:3") is None
+      and policy.ext_community_error("rt:65000:4294967295") is None
+      and policy.ext_community_error("soo:192.0.2.1:7") is None
+      and policy.ext_community_error("rt:4200000000:65536") is not None,
+      "a 2-byte ASN leaves 32 bits for the value, a 4-byte one or an "
+      "address 16")
+_t = policy.Term("x")
+check(policy._parse_from_a(_t, ["from", "family", "inet6"]) is None
+      and policy._parse_from_a(_t, ["from", "family", "inet6"]) is None
+      and _t.families == ["inet6"], "_parse_from_a: a family said twice is "
+      "one")
+check(policy._parse_set_a(_t, ["set", "weight", "7"]) is None
+      and _t.sets == [("weight", ["7"])], "_parse_set_a: one action in")
+ok("each new statement read, each refusal said")
+
+print("\n=== phase A: the FRR text (vtysh -C in the product's image: 0) ===")
+uses = {("IN-A+IN-B", "import"), ("OUT", "export"),
+        ("OSPF-EXT", "ospf:static")}
+out = "\n".join(policy.compile_all(pa, uses))
+check(policy.chain("IN-A+IN-B") == ["IN-A", "IN-B"]
+      and policy.chain_name(["IN-A", "IN-B"]) == "IN-A+IN-B"
+      and policy.map_name("IN-A+IN-B", "import") == "PO-IN-A+IN-B-IN",
+      "a chain is one map named for its policies")
+check("route-map PO-IN-A+IN-B-IN permit 10\n match ip address prefix-list "
+      "PO-IN-A-Trtbh-4\n match community PO-IN-A-Trtbh-C\n set ip next-hop "
+      "192.0.2.1\nexit" in out
+      and "ip route 192.0.2.1/32 blackhole tag 4294967294" in out
+      and "ipv6 route 100::1/128 blackhole tag 4294967294" in out,
+      "RTBH: discard is the TEST-NET-1 next hop, and the blackhole route the "
+      "compiler emits beside it, tagged")
+check("route-map PO-IN-A+IN-B-IN deny 20\n match rpki invalid\nexit" in out,
+      "validation-state invalid is FRR's match rpki invalid")
+check(" match peer 10.0.0.2\n match origin igp\n set local-preference +20"
+      "\n set weight 100\n set metric -5\n set origin incomplete\n"
+      " set large-community 65000:1:2 additive\n set large-comm-list "
+      "PO-L-LCX delete\n set extcommunity rt 65000:100\n"
+      " set extcommunity soo 65000:200\n set as-path exclude "
+      "as-path-access-list PO-PRIVATE-AS\n set ip next-hop peer-address\n"
+      " on-match goto 1000\nexit" in out
+      and "route-map PO-IN-A+IN-B-IN permit 31\n match ip address "
+      "prefix-list PO-IN-A-Tpeers-4\n match peer 10.1.0.2" in out
+      and "ip prefix-list PO-IN-A-Tpeers-4 seq 5 permit 0.0.0.0/0 le 32"
+      in out,
+      "two neighbors are two clauses; family inet with no prefix is every "
+      "IPv4 prefix; then next policy jumps to the next policy's block")
+check(" match large-community PO-IN-A-Tsub-L\n match extcommunity "
+      "PO-IN-A-Tsub-E\n match local-preference 120\n match ipv6 next-hop "
+      "address 2001:db8::1\n call PO-BOGONS-SUB-IN\n set metric igp\n"
+      " on-match next\nexit" in out
+      and "bgp extcommunity-list standard PO-IN-A-Tsub-E seq 5 permit rt "
+      "65000:100 soo 65000:200" in out
+      and "route-map PO-BOGONS-SUB-IN deny 10" in out
+      and "route-map PO-BOGONS-SUB-IN permit 65534" in out,
+      "from policy calls the subroutine map, compiled once with its own "
+      "default-action")
+check("route-map PO-IN-A+IN-B-IN permit 1010\n match ip address prefix-list "
+      "PO-IN-B-T1-4" in out
+      and "route-map PO-IN-A+IN-B-IN deny 1999\nexit" in out
+      and "route-map PO-IN-A+IN-B-IN permit 65535" in out,
+      "the second policy from 1000, its default-action reject at the end "
+      "of its block")
+check(" set as-path prepend last-as 3\n set ip next-hop peer-address\nexit"
+      in out and " set ipv6 next-hop peer-address" in out,
+      "export: last-as, and next-hop self as FRR's outbound peer-address")
+check("route-map PO-OSPF-EXT-OSPF-STATIC permit 10\n set metric-type "
+      "type-1\nexit" in out, "metric-type on an export into OSPF")
+_es, _ = policy.parse([f"{P} extended-community E members rt:1:2",
+                      f"{P} policy-statement X term 1 set extended-community "
+                      "set E"])
+check(policy._set_lines(_es, _es.statements["X"]["1"])
+      == [" set extcommunity none", " set extcommunity rt 1:2"],
+      "extended-community set clears first: FRR's set merges, and takes no "
+      "additive")
+check(policy.compile_all(pa, uses) == policy.compile_all(pa, set(uses)),
+      "deterministic")
+check(policy._compile_term(pa, "OUT", pa.statements["OUT"]["1"], 1, 0,
+                           65535, "M", "bgp", "export")[1][0]
+      == "route-map M permit 10", "_compile_term: one term's clauses")
+check(policy.sub_map_name("X", "ospf:static") == "PO-X-SUB-OSPF-STATIC"
+      and policy._set_word("as-path-remove-private")
+      == "as-path remove-private",
+      "sub_map_name and _set_word")
+ok("the text FRR accepted, line by line")
+
+print("\n=== phase A: where a policy may be used, and what it reaches ===")
+check(policy.reached(pa, ["IN-A", "IN-B"]) == ["IN-A", "IN-B", "BOGONS"],
+      "reached: the chain, then what it calls")
+check(policy.use_findings(pa, "IN-A+IN-B", "import") == []
+      and policy.use_findings(pa, "OUT", "export") == [],
+      "a correct use says nothing")
+check(policy.use_findings(pa, "OUT", "import")
+      == ["OUT term 1: set next-hop self is for an export to a BGP neighbor"]
+      and policy.use_findings(pa, "IN-A", "export")
+      == ["IN-A term peers: set next-hop peer-address is for an import"]
+      and policy.use_findings(pa, "OSPF-EXT", "import")
+      == ["OSPF-EXT term 1: set metric-type is for an export into OSPF"]
+      and policy.use_findings(pa, "OSPF-EXT", "isis:static")
+      == ["OSPF-EXT term 1: set metric-type is for an export into OSPF"],
+      "self on an import, peer-address on an export, metric-type outside "
+      "OSPF: each refused where the policy is applied")
+_ig = policy.use_findings(pa, "IN-A", "ospf:static")
+check(any("from neighbor" in w and "from origin" in w for w in _ig)
+      and any("from validation-state" in w for w in _ig)
+      and all("is for an import" not in w for w in _ig),
+      f"exported into an IGP, BGP's conditions are said once: {_ig}")
+_cy, _ = policy.parse([f"{P} policy-statement A term 1 from policy B",
+                       f"{P} policy-statement B term 1 from policy A"])
+check(policy._call_cycles(_cy) == [
+    "policy-statement A: from policy reaches itself again",
+    "policy-statement B: from policy reaches itself again"]
+      and any("reaches itself" in w for _, w in policy.findings(_cy)),
+      "a policy that calls itself round is refused at commit")
+_many, _ = policy.parse(
+    [f"{P} policy-statement M term 1 from neighbor 10.0.0.{i}"
+     for i in range(1, 7)]
+    + [f"{P} policy-statement M term 1 from origin igp",
+       f"{P} policy-statement M term 1 from origin egp"])
+check(len(policy._combinations(_many.statements["M"]["1"])) == 12
+      and any("more than 10 combinations" in w
+              for _, w in policy.findings(_many)),
+      "twelve combinations would collide with the next term's numbers")
+_un, _ = policy.parse([f"{P} policy-statement U term 1 from large-community "
+                       "NOPE", f"{P} policy-statement U term 1 set "
+                       "extended-community add NADA",
+                       f"{P} policy-statement U term 2 from policy GONE"])
+check([w for _, w in policy.findings(_un)] == [
+    "policy-statement U term 1: no large-community NOPE",
+    "policy-statement U term 1: no extended-community NADA",
+    "policy-statement U term 2: no policy-statement GONE"],
+      f"names nothing defines: {policy.findings(_un)}")
+check(policy._term_findings_a(_un, _un.statements["U"]["2"])
+      == ["no policy-statement GONE"],
+      "_term_findings_a: one term's phase A names")
+ok("use_findings, reached, cycles, combinations, names")
+
+print("\n=== phase A: the block, default-action, test policy ===")
+blk = policy.nest(A)
+check("  default-action accept" in blk
+      and blk.index("  default-action accept")
+      < blk.index(" policy-statement BOGONS") + 3
+      and " large-community LC members 65000:1:2" in blk,
+      "default-action written first in its policy; the sets as one line")
+back, bad = policy.unnest(list(enumerate(blk, 1)))
+pb, eb = policy.parse([l for _, l in back])
+check(bad == [] and eb == [] and policy.compile_all(pb, uses)
+      == policy.compile_all(pa, uses), "and read back to the same text")
+r = policy.evaluate(pa, "IN-B", "198.51.100.0/24")
+check(r[-1] == (None, "reject", "no term decided: this policy's "
+                "default-action"), f"default-action decides: {r}")
+r = policy.evaluate(pa, "IN-A", "2001:db8::/32")
+check(r[2] == ("peers", "no match", "the prefix is not inet")
+      and "called policy" in r[3][1] and "next-hop" in r[3][1],
+      f"the family answered by the prefix; the rest said, not guessed: {r}")
+_np, _ = policy.parse([f"{P} policy-statement N term 1 then next policy"])
+check(policy.evaluate(_np, "N", "10.0.0.0/8")[-1][1] == "accept"
+      and policy.evaluate(_np, "N", "10.0.0.0/8", "ospf:static")[-1][1]
+      == "reject",
+      "next policy, alone, is the use's default")
+ok("the block and the test")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

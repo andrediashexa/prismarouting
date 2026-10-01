@@ -77,6 +77,26 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Routing policy, phase A: the conditions, actions and flow a transit
+  policy needs.**
+  ([#535](https://github.com/andrediashexa/hexarouting/issues/535))
+  `from neighbor`, `family`, `origin`, `local-preference`, `next-hop`,
+  `large-community`, `extended-community`, `validation-state` and `policy`;
+  `set origin`, `weight`, `med <n>|+n|-n|igp`, `local-preference +n|-n`,
+  `large-community add|set|delete`, `extended-community add|set`,
+  `as-path-prepend last-as`, `as-path remove-private`, `next-hop
+  self|peer-address|discard` and `metric-type`; chains `import [ A B ]`,
+  `then next policy`, and a per-policy `default-action`. Every compiled line
+  was accepted by `vtysh -C` in the product's FRR, and the policies that
+  compiled before compile byte for byte as 0.148.6 did. `lab/policy-a.sh`
+  measures each one on real sessions: RTBH dropped in VPP, an RPKI-invalid
+  route rejected, a chain whose second policy decides, a `from policy`
+  subroutine. Two things were found in FRR on the way. `set extcommunity`
+  takes no `additive`: bgpd refused the line that vtysh's check passed, and
+  the clause ran with no set, so the compiler writes the plain statement,
+  which merges. And a discard on a single-hop eBGP neighbor is never
+  installed without `disable-connected-check`, so the commit asks for it.
+
 ### Fixed
 
 ## 0.148.8 - the management API survives an upgrade, and no call hangs on a fork
