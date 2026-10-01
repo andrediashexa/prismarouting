@@ -4540,9 +4540,10 @@ statement (#539), and held it. Then:
   default of a leak.
 
 MODE=off, which commits the same policies without the `vrf-import`
-statements, turns OFFRED checks red. What phase B compiled compiles byte for
-byte as before: `test/policy-golden-0.148.10.txt` is 0.148.10's output for
-phase B's fixture, and 0.148.9's and 0.148.6's files are compared as well.
+statements, turns 25 of its 41 checks red. What phase B compiled compiles
+byte for byte as before: `test/policy-golden-0.148.10.txt` is 0.148.10's
+output for phase B's fixture, and 0.148.9's and 0.148.6's files are
+compared as well.
 IPv6's import is held by bgpd and not measured in a forwarding plane: the
 lab's tables are IPv4.
 
