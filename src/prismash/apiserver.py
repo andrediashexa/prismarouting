@@ -411,6 +411,11 @@ READERS = {
     "isis": lambda sh, a: isis_of(sh),
     "vrrp": lambda sh, a: vrrp_of(sh),
     "bundles": lambda sh, a: bundles_of(sh),
+    # The host's name as the prompt reads it (#516): one question to the
+    # host's door. `show running-config | include ^hostname`, which this used
+    # to ask, answered nothing on the X520 bench (0.148.4), and the whole
+    # running configuration is too dear for a call clients poll every 5 s.
+    "hostname": lambda sh, a: sh.sys.read_hostname(),
 }
 
 
@@ -550,6 +555,11 @@ class Sessions:
         self.ops_idle = ops_idle
         self.candidates = {}   # id -> {"account", "worker", "base"}
         self.ops = {}          # account -> Worker
+        # The console's own process per account (Show): a ping or a traceroute
+        # holds its process for as long as it runs, and in the operational
+        # one it held every GetVersion behind it - measured from the code for
+        # prisma-web, whose status monitor polls every 5 s with a 4 s limit.
+        self.consoles = {}     # account -> Worker
         self.lock = threading.Lock()
 
     def open(self, account, from_revision=None):
@@ -605,6 +615,17 @@ class Sessions:
                 self.ops[account] = w
         return w
 
+    def console_worker(self, account):
+        """The account's process for Show, apart from its operational one."""
+        self.reap()
+        with self.lock:
+            w = self.consoles.get(account)
+        if w is None or not w.proc.is_alive():
+            w = self.worker(account)
+            with self.lock:
+                self.consoles[account] = w
+        return w
+
     def reap(self):
         """Close candidates and operational processes nobody has used lately."""
         now = time.monotonic()
@@ -614,6 +635,9 @@ class Sessions:
             gone = [self.candidates.pop(k)["worker"] for k in stale]
             idle = [a for a, w in self.ops.items() if now - w.used > self.ops_idle]
             gone += [self.ops.pop(a) for a in idle]
+            quiet = [a for a, w in self.consoles.items()
+                     if now - w.used > self.ops_idle]
+            gone += [self.consoles.pop(a) for a in quiet]
         for w in gone:
             w.close()
 
@@ -931,9 +955,7 @@ def build(sessions, stats_factory, pb, rpc, grpc):
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def GetVersion(self, req, context):
             v = parse_version(self._ask(context, "screen", "show version"))
-            host = self._ask(context, "screen", "show running-config | include ^hostname")
-            m = re.search(r"^hostname (\S+)", host, re.M)
-            return pb.VersionInfo(hostname=m.group(1) if m else "", **v)
+            return pb.VersionInfo(hostname=self._ask(context, "hostname"), **v)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def GetSystem(self, req, context):
@@ -950,7 +972,8 @@ def build(sessions, stats_factory, pb, rpc, grpc):
             m = re.search(r"(\d+)\s+(?:1G\s+)?(?:huge)?pages?", mem)
             if m:
                 pages = int(m.group(1))
-            return pb.SystemInfo(uptime_seconds=up, cpu_text=cpu, memory_text=mem,
+            return pb.SystemInfo(hostname=self._ask(context, "hostname"),
+                                 uptime_seconds=up, cpu_text=cpu, memory_text=mem,
                                  hugepages=pages, **c)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
@@ -1045,7 +1068,11 @@ def build(sessions, stats_factory, pb, rpc, grpc):
                 context.abort(grpc.StatusCode.INVALID_ARGUMENT,
                               f"'{req.command}' is not an operational read; Show "
                               f"takes {', '.join(SHOW_WORDS)}")
-            return pb.ShowResponse(text=self._ask(context, "screen", req.command))
+            try:
+                w = sessions.console_worker(account(context))
+                return pb.ShowResponse(text=w.ask("screen", req.command))
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
 
     class Telemetry(rpc.TelemetryServiceServicer):
         # not a unit: a streaming rpc, driven by lab/api-grpc.sh.

@@ -80,9 +80,14 @@ VTY's refusal in the VTY's words and a change made through the API is in
   ended: the next call naming it is `NOT_FOUND`, and the client opens a new
   one. An account's process for operational calls is kept 5 minutes between
   uses and started again on the next.
-* **One request at a time per session.** A client that wants to read while a
-  candidate's commit runs reads through `OperationalService`, which is a
-  process of its own.
+* **One request at a time per process, and an account has three kinds.**
+  Each candidate is a process; the account's operational reads
+  (`GetVersion`, `GetSystem`, the lists) share one; and `Show` - the
+  console, where a `ping` or a `traceroute` takes as long as it takes - has
+  one of its own (0.148.6). So a status poll is never queued behind a
+  console command or a commit: in `lab/api-grpc.sh`, `GetVersion` answered
+  in 0.06 s while a `Show` ran 14 s. Two `Show`s of one account still run
+  one after the other.
 
 ## Security
 

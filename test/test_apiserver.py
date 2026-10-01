@@ -255,6 +255,13 @@ check(A.handle(sh, "gates", None) == {"remap": ["s1"], "cutoff": [], "diverge": 
 check(A.handle(sh, "revisions", None)[0][2] == "via api", "the revisions")
 check(A.handle(sh, "confirm", None)["deadline"] == 1700000000, "the confirm window")
 check(A.handle(sh, "pools", None)[0]["name"] == "nb", "a reader by name")
+# The host's name through the VTY's own reader (#516): one door question, where
+# `show running-config | include ^hostname` answered nothing on the X520 bench.
+_sys_was = getattr(sh, "sys", None)
+sh.sys = type("FakeSys", (), {"read_hostname": lambda self: "edge1"})()
+check(A.handle(sh, "hostname", None) == "edge1",
+      "the hostname reader answers the host's name, as the prompt reads it")
+sh.sys = _sys_was
 try:
     A.handle(sh, "rm -rf", None)
     check(False, "an unknown operation is refused")
@@ -312,6 +319,10 @@ check(not r["ok"] and "-hostname old" in r["moved"],
       "a candidate whose base the running configuration moved past is refused with the difference")
 ow = S.ops_worker(me)
 check(S.ops_worker(me) is ow, "one operational process per account, reused")
+cw = S.console_worker(me)
+check(S.console_worker(me) is cw and cw is not ow,
+      "the console (Show) has a process of its own, reused, apart from the "
+      "operational one - a long ping no longer holds GetVersion behind it")
 S.close(me, cid)
 try:
     S.get(me, cid)
@@ -322,7 +333,8 @@ S.idle = S.ops_idle = 0
 cid2, *_ = S.open(me)
 time.sleep(0.05)
 S.reap()
-check(cid2 not in S.candidates and me not in S.ops, "reap closes what nobody used lately")
+check(cid2 not in S.candidates and me not in S.ops and me not in S.consoles,
+      "reap closes what nobody used lately, the console's process included")
 
 
 class Denied(A.Worker):
