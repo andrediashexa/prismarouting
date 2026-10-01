@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.2 - the API gives the web interface routes, history, load and who it is
+
+### Added
+
 * **prisma.v1 additions for the web interface: the routing table, a day of
   counters, the workers' load, health, and who a client is.**
   ([#533](https://github.com/andrediashexa/hexarouting/issues/533))
