@@ -94,6 +94,9 @@ version has a chance of seeing it.
   started again since, and keeps what the dead run printed last in
   /var/log/prisma-routing/why-the-dataplane-stopped. A configuration the new
   dataplane refuses is tried three times per restart, not every tick.
+  Measured on the bench, VPP killed from the host: Docker had it running
+  again in 0.6 s, the watcher acted at 5.4 s and the box was configured -
+  both interfaces up at 1500, the pool loaded - at 10.8 s.
 
 ## 0.149.4 - the API comes back after an upgrade recreates the VTY's container
 
