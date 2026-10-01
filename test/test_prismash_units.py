@@ -2923,6 +2923,118 @@ check(prismash.compiled_map_warning(
       "defines, and only that")
 ok("each attach point typed, translated, refused and read back")
 
+print("\n=== routing policy, phase C: a VRF imports through a policy (#537) ===")
+sh = shell()
+sh.candidate = Config()
+sh.mode = "config"
+sh.candidate.policy = [
+    "policy-options prefix-list SVC 203.0.113.0/24",
+    "policy-options policy-statement L term 1 from prefix-list SVC",
+    "policy-options policy-statement L term 1 from source-vrf svc",
+    "policy-options policy-statement L term 1 set local-preference 200",
+    "policy-options policy-statement L term 1 then accept",
+    "policy-options policy-statement M term 1 then accept",
+    "policy-options policy-statement NH term 1 set next-hop 10.0.0.9",
+    "policy-options policy-statement NB term 1 from neighbor 10.0.0.2"]
+sh.candidate.routing = ["router bgp 65000 vrf red",
+                        "address-family ipv4 unicast"]
+sh.frr_ctx = ["router bgp 65000 vrf red", "address-family ipv4 unicast"]
+rv, text = driven(lambda: sh.do_config("vrf-import svc policy L"))
+check(sh.candidate.routing[2:] == ["import vrf svc",
+                                   "import vrf route-map PO-L-BGP-VRFIMPORT"],
+      f"vrf-import with a policy: FRR's import vrf and its route-map: "
+      f"{text!r} {sh.candidate.routing}")
+rv, text = driven(lambda: sh.do_config("vrf-import default policy L"))
+check(sh.candidate.routing[4:] == ["import vrf default"],
+      f"a second VRF through the same policy: the map once: "
+      f"{sh.candidate.routing}")
+_before = list(sh.candidate.routing)
+for _bad, _why in (
+        ("vrf-import blue policy M", "imports through policy L"),
+        ("vrf-import blue", "imports through policy L"),
+        ("vrf-import prisma-bp policy L",
+         "prisma-bp is a VRF of the box's own: no route leaks out of it"),
+        ("vrf-import red policy L", "does not import from itself"),
+        ("vrf-import bad/name policy L", "is not a VRF name"),
+        ("vrf-import blue policy", "usage: vrf-import <vrf>|default"),
+        ("vrf-import blue route-map X", "usage: vrf-import <vrf>|default"),
+        ("import vrf prisma-bp", "no route leaks out of it")):
+    rv, text = driven(lambda: sh.do_config(_bad))
+    check(_why in text and sh.candidate.routing == _before,
+          f"{_bad!r} refused, nothing staged: {text!r}")
+rv, text = driven(lambda: sh.do_config("no vrf-import svc"))
+check("import vrf svc" not in sh.candidate.routing
+      and "import vrf route-map PO-L-BGP-VRFIMPORT" in sh.candidate.routing,
+      f"no takes one import back; the policy stays for the other: "
+      f"{sh.candidate.routing}")
+rv, text = driven(lambda: sh.do_config("no vrf-import default policy L"))
+check(sh.candidate.routing == ["router bgp 65000 vrf red",
+                               "address-family ipv4 unicast"],
+      f"and with the last import, the policy: {sh.candidate.routing}")
+rv, text = driven(lambda: sh.do_config("no vrf-import default"))
+check("does not import default" in text
+      and len(sh.candidate.routing) == 2,
+      f"no of an import nothing holds: nothing removed: {text!r}")
+for _bad, _why in (
+        ("vrf-import blue policy NH",
+         "set next-hop does nothing on vrf-import"),
+        ("vrf-import blue policy NB",
+         "from neighbor matches nothing on vrf-import"),
+        ("vrf-import blue policy NOPE", "no policy-statement named NOPE")):
+    rv, text = driven(lambda: sh.do_config(_bad))
+    check(_why in text and len(sh.candidate.routing) == 2,
+          f"{_bad!r} refused: {text!r}")
+rv, text = driven(lambda: sh.do_config("vrf-import blue"))
+check(sh.candidate.routing[-1] == "import vrf blue",
+      f"an import without a policy, in a family that has none: {text!r}")
+# Each block entered as an operator enters it, so the flat candidate says
+# which block every line is in.
+for _l in ("exit-address-family", "exit", "router bgp 65000 vrf prisma-bp",
+           "address-family ipv4 unicast"):
+    driven(lambda: sh.do_config(_l))
+check(sh.frr_ctx == ["router bgp 65000 vrf prisma-bp",
+                     "address-family ipv4 unicast"], f"in: {sh.frr_ctx}")
+rv, text = driven(lambda: sh.do_config("vrf-import default"))
+check("no route leaks into it" in text, f"nothing leaks into prisma-bp: "
+      f"{text!r}")
+for _l in ("exit-address-family", "exit", "router bgp 65000"):
+    driven(lambda: sh.do_config(_l))
+rv, text = driven(lambda: sh.do_config("vrf-import red"))
+check("a VRF imports per address family" in text,
+      f"per address family: {text!r}")
+driven(lambda: sh.do_config("address-family ipv6 unicast"))
+rv, text = driven(lambda: sh.do_config("vrf-import red policy M"))
+check(sh.candidate.routing[-2:] == ["import vrf red",
+                                    "import vrf route-map PO-M-BGP-VRFIMPORT"],
+      f"the default table imports a VRF, in IPv6: {text!r}")
+rv, text = driven(lambda: sh.vrf_import("router bgp 65000",
+                                        ["vrf-import", "red", "policy", "L"]))
+check("imports through policy M" in text,
+      f"Shell.vrf_import: the family's policy is M: {text!r}")
+sh.frr_ctx = []
+check(prismash.policy_uses(sh.candidate.routing) == {("M", "bgp:vrfimport")}
+      and prismash.policy_applications(sh.candidate.routing)
+      == {"M": ["vrf-import"]},
+      f"read back as its use, and where: "
+      f"{prismash.policy_applications(sh.candidate.routing)}")
+_lr = ["router bgp 65000 vrf prisma-bp", " address-family ipv4 unicast",
+       "  import vrf default", " exit-address-family", "exit",
+       "router bgp 65000", " address-family ipv4 unicast",
+       "  import vrf prisma-bp", "  import vrf red",
+       "  import vrf route-map PO-M-BGP-VRFIMPORT", " exit-address-family",
+       "exit"]
+check([s for s, _ in prismash.leak_findings(_lr)]
+      == ["router bgp 65000 vrf prisma-bp: import vrf default",
+          "router bgp 65000: import vrf prisma-bp"],
+      f"leak_findings: a file's leaks into and out of a reserved VRF: "
+      f"{prismash.leak_findings(_lr)}")
+check(prismash.bgp_vrf("router bgp 65000 vrf red") == "red"
+      and prismash.bgp_vrf("router bgp 65000") == "default"
+      and prismash.leak_error("default", "red") is None
+      and "into it" in prismash.leak_error("prisma-x", "red"),
+      "bgp_vrf and leak_error")
+ok("vrf-import typed, translated, refused and read back")
+
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
 # Mutation shown red: write only the assignment, dropping the other lines.
 tune = os.path.join(_root, "tune", "tune.env")

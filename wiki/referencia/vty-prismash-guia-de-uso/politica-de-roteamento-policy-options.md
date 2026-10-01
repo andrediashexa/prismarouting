@@ -114,13 +114,14 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 | `from large-community` | `<nome>`  | a rota carrega a large community do conjunto |
 | `from extended-community` | `<nome>`  | a rota carrega a extended community do conjunto |
 | `from validation-state` | `valid`, `invalid` ou `unknown` | o resultado da validação RPKI de origem. `unknown` é a rota que nenhum ROA cobre |
+| `from source-vrf` | `<vrf>` ou `default` | a rota foi importada dessa VRF, ou da tabela default. Só numa política de `vrf-import` |
 | `from policy` | `<política>` | chama outra política como sub-rotina: se ela rejeita, a rota é rejeitada; se aceita, o term segue. Um term chama uma política só |
 
 **Condições do mesmo tipo valem como "ou"; de tipos diferentes, como "e".** Duas `from prefix-list` casam uma rota que esteja em qualquer das duas; uma `from prefix-list` e uma `from community` exigem as duas coisas. `from prefix-list` e `from route-filter` são do mesmo tipo: as duas falam do prefixo.
 
 `from tag` e `from metric` valem por um valor só: um segundo, no mesmo term, fica no lugar do primeiro.
 
-`from neighbor`, `from origin`, `from local-preference`, `from next-hop` e `from validation-state` aceitam vários valores, que valem como "ou". Cada combinação deles vira uma regra no roteamento, e um term pode ter no máximo 10 combinações: mais que isso é recusado no `commit`, e a saída é dividir o term em dois.
+`from neighbor`, `from origin`, `from local-preference`, `from next-hop`, `from validation-state` e `from source-vrf` aceitam vários valores, que valem como "ou". Cada combinação deles vira uma regra no roteamento, e um term pode ter no máximo 10 combinações: mais que isso é recusado no `commit`, e a saída é dividir o term em dois.
 
 `from validation-state` só tem sentido com um cache RPKI configurado. Sem cache, toda rota é `unknown`, e o `commit` avisa.
 
@@ -190,6 +191,7 @@ O padrão depende de onde a política é usada, como no Junos:
 | `default-originate policy`, `default-information originate ... policy` | **não conta**: sem um term que aceite, o default não é originado |
 | `suppress-policy`          | **não suprimida**                         |
 | as duas políticas de `advertise` | **fora**: não é anunciada nem conta como presente |
+| `vrf-import ... policy`    | **não importada**: a VRF só recebe o que um term aceitou |
 
 Para rejeitar o resto no BGP, use `default-action reject` na política, ou termine com um term sem `from` e com `then reject`. Para exportar o resto para um IGP, `default-action accept`, ou um term sem `from` e com `then accept`.
 
@@ -281,6 +283,35 @@ prisma# [edit] fib-policy ospf SO-O-QUE-SERVE
 
 Aqui o protocolo escolhe as rotas que olha, e `from protocol` é recusado.
 
+## Entre VRFs: `vrf-import`
+
+Dentro do `router bgp <asn> vrf <vrf>` (ou do `router bgp <asn>`, que é a tabela default), na família de endereço, a VRF importa as rotas do BGP de outra VRF, ou da tabela default, pela política:
+
+```
+router bgp 65000 vrf red
+ address-family ipv4 unicast
+  vrf-import svc policy LEAK
+  vrf-import default policy LEAK
+ exit-address-family
+ exit
+```
+
+| Comando | O que faz |
+|---------|-----------|
+| `vrf-import <vrf>\|default policy <política>` | a VRF recebe as rotas que a política aceita, com os `set` dela. O que nenhum term aceitou fica de fora |
+| `vrf-import <vrf>\|default` | importa tudo, sem política, numa família que ainda não tem política |
+| `no vrf-import <vrf>\|default` | desfaz; a política sai junto com a última importação da família |
+
+**Uma política por família de endereço.** O roteamento aplica a mesma política a todas as VRFs que uma família importa, então uma segunda política na mesma família é recusada, e também uma importação sem política numa família que já tem uma. Para tratar cada origem de um jeito, use `from source-vrf` nos terms. Vale para IPv4 e IPv6, cada família com a sua.
+
+Numa importação a política aceita `set local-preference`, `set community`, `set large-community`, `set med`, `set metric`, `set origin` e `set weight`. O próximo salto é o da VRF de origem, e é por ele que o tráfego vai: `set next-hop` é recusado, e também `set extended-community`, porque os route targets são o que o próprio roteamento usa para importar. `from neighbor` é recusado: a rota importada vem de uma VRF, não de um vizinho, e quem diz qual é a VRF é `from source-vrf`.
+
+Não há `rd` nem `route-target` para configurar: o roteamento os escolhe sozinho para esse tipo de importação.
+
+**A VRF do Linux não é criada pela caixa.** A VRF do roteamento precisa de uma VRF do Linux com o mesmo nome, e a caixa ainda não cria uma para o `vrf <n>` de uma interface. Hoje ela existe só para a `prisma-bp`.
+
+A `prisma-bp`, e qualquer VRF cujo nome comece por `prisma-`, é da própria caixa: nenhuma rota entra nela nem sai dela, nem por `vrf-import` nem pelo `import vrf` do roteamento digitado à mão.
+
 Uma rota estática pode levar tag: `<prefixo> next-hop <destino> tag <n>` no `router static`, e `from tag <n>` casa com ela. É o jeito de marcar uma estática para um `export` ou para uma condição.
 
 # Conferir: `show policy` e `test policy`
@@ -300,7 +331,7 @@ policy-statement SAIDA
   applied: neighbor 10.0.0.2 export, ospf export
 ```
 
-Os outros lugares aparecem do mesmo jeito: `neighbor 10.0.0.2 default-originate`, `network 10.40.0.0/24`, `aggregate-address 10.30.0.0/16 policy` ou `suppress-policy`, `neighbor 10.0.0.2 advertise` e, para a condição, `neighbor 10.0.0.2 advertise non-exist`, `table-policy`, `fib-policy static`, `ospf default-information`.
+Os outros lugares aparecem do mesmo jeito: `neighbor 10.0.0.2 default-originate`, `network 10.40.0.0/24`, `aggregate-address 10.30.0.0/16 policy` ou `suppress-policy`, `neighbor 10.0.0.2 advertise` e, para a condição, `neighbor 10.0.0.2 advertise non-exist`, `table-policy`, `fib-policy static`, `ospf default-information`, `vrf-import`.
 
 Uma política escrita e ainda não usada em lugar nenhum diz `applied: nowhere in the running routing`. Uma política numa cadeia aparece com a cadeia inteira: `neighbor 10.0.0.2 import [ BOGONS CLIENTES ]`. O `default-action`, quando existe, aparece antes dos terms.
 
@@ -313,7 +344,7 @@ prisma> test policy SAIDA 203.0.113.0/24
 result: accept (set as-path-prepend 65000 65000), by term 10
 ```
 
-O teste parte só do prefixo. `from family` ele responde pelo prefixo. Uma condição que o prefixo sozinho não responde (community, large ou extended community, as-path, protocolo, tag, métrica, vizinho, origin, preferência local, próximo salto, validação RPKI, política chamada) não é adivinhada: o term aparece como "decide, se a rota tiver aquilo", e o teste segue como se não tivesse, para você ver os dois caminhos. Um term com `then next policy` termina o teste com `result: next policy, by term <term>`. Uma política com `default-action` termina com `result: reject, by the policy's default-action` (ou `accept`). Quando nenhum term decide e não há `default-action`, a resposta dá os dois padrões:
+O teste parte só do prefixo. `from family` ele responde pelo prefixo. Uma condição que o prefixo sozinho não responde (community, large ou extended community, as-path, protocolo, tag, métrica, vizinho, origin, preferência local, próximo salto, validação RPKI, VRF de origem, política chamada) não é adivinhada: o term aparece como "decide, se a rota tiver aquilo", e o teste segue como se não tivesse, para você ver os dois caminhos. Um term com `then next policy` termina o teste com `result: next policy, by term <term>`. Uma política com `default-action` termina com `result: reject, by the policy's default-action` (ou `accept`). Quando nenhum term decide e não há `default-action`, a resposta dá os dois padrões:
 
 ```
 prisma> test policy SAIDA 198.51.100.0/24
@@ -326,6 +357,7 @@ result: no term decided it
     as a network, aggregate-address, table or FIB policy it is accepted; as the
     routes an origination, a suppression or a conditional advertisement waits
     for, it is not
+    imported into a VRF, by vrf-import, it is not
 ```
 
 # O que é recusado
@@ -365,13 +397,20 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 | no `commit`, um term que cita uma `prefix-list`, `community`, `large-community`, `extended-community`, `as-path` ou política que não existe | `policy-statement <política> term <term>: no prefix-list <lista>` (ou o tipo que for); nada é aplicado |
 | no `commit`, `set next-hop discard` no `import` de um vizinho eBGP direto sem `disable-connected-check` | `set next-hop discard is not resolved on a single-hop eBGP neighbor: add 'neighbor <vizinho> disable-connected-check', or the route is never installed and its traffic is forwarded` |
 | no `commit`, políticas que se chamam em roda com `from policy` | `policy-statement <política>: from policy reaches itself again` |
-| no `commit`, um term com mais de 10 combinações | `more than 10 combinations of neighbor, origin, local-preference, next-hop and validation-state; split it into terms` |
+| `vrf-import prisma-bp ...`, ou um `vrf-import` dentro do `router bgp <asn> vrf prisma-bp` | `prisma-bp is a VRF of the box's own: no route leaks out of it` (ou `into it`) |
+| `vrf-import red` dentro do `router bgp <asn> vrf red` | `a VRF does not import from itself (red)` |
+| `vrf-import` fora de `address-family ipv4 unicast` ou `ipv6 unicast` | `a VRF imports per address family` |
+| `vrf-import <vrf> policy B` numa família que já importa pela política A, ou `vrf-import <vrf>` sem política | `this address family imports through policy A`, e embaixo a forma certa |
+| `set next-hop` ou `set extended-community` numa política de `vrf-import`; `from neighbor` nela | `set next-hop does nothing on vrf-import` (ou a ação que for), com o que ela aceita; `from neighbor matches nothing on vrf-import` |
+| `no vrf-import <vrf>` de uma importação que a família não tem | `nothing removed`, e embaixo `this address family does not import <vrf>` |
+| `from source-vrf` numa política aplicada fora de um `vrf-import` | `from source-vrf is for a vrf-import, where a route is leaked` |
+| no `commit`, um term com mais de 10 combinações | `more than 10 combinations of neighbor, origin, local-preference, next-hop, validation-state and source-vrf; split it into terms` |
 
 ## O que só existe no BGP, exportado para um IGP
 
 Uma rota de OSPF ou de IS-IS não tem community, AS-path, preferência local nem próximo salto de BGP. Um term que fala dessas coisas é recusado na hora do `export`: a caixa responde `this policy cannot be exported into isis; nothing staged` (ou `ospf`) e, embaixo, uma linha por term culpado, dizendo o term e o que nele `is for BGP routes`.
 
-O que conta como só de BGP: `from community`, `from as-path`, `from neighbor`, `from origin`, `from local-preference`, `from next-hop`, `from large-community`, `from extended-community`, `from validation-state`, `set local-preference`, `set community`, `set large-community`, `set extended-community`, `set as-path-prepend`, `set as-path`, `set med`, `set weight`, `set origin` e `set next-hop`. Vale também para as políticas que a exportada chama com `from policy` ou que vêm depois dela na cadeia. A recusa existe porque ignorar a condição em silêncio exportaria justamente o que o term foi escrito para segurar. Se a mesma lógica serve aos dois, escreva duas políticas: uma para o vizinho BGP, outra para o IGP.
+O que conta como só de BGP: `from community`, `from as-path`, `from neighbor`, `from origin`, `from local-preference`, `from next-hop`, `from large-community`, `from extended-community`, `from validation-state`, `from source-vrf`, `set local-preference`, `set community`, `set large-community`, `set extended-community`, `set as-path-prepend`, `set as-path`, `set med`, `set weight`, `set origin` e `set next-hop`. Vale também para as políticas que a exportada chama com `from policy` ou que vêm depois dela na cadeia. A recusa existe porque ignorar a condição em silêncio exportaria justamente o que o term foi escrito para segurar. Se a mesma lógica serve aos dois, escreva duas políticas: uma para o vizinho BGP, outra para o IGP.
 
 
 :::warning

@@ -425,7 +425,62 @@ _ATTACH_READS = (
      "isis default-information"),
     (r"ip(?:v6)? protocol \S+ route-map PO-(?P<p>\S+)-FIB-(?P<at>[A-Z]+)",
      "fib:{at}", "fib-policy {at}"),
+    # Phase C (#537): the policy a VRF's address family imports through.
+    (r"import vrf route-map PO-(?P<p>\S+)-BGP-VRFIMPORT", "bgp:vrfimport",
+     "vrf-import"),
 )
+
+
+#: The VRFs that are the box's own (#537): the containers' backplane,
+#: prisma-bp (#447), and every name under the product's prefix. No route
+#: leaks into or out of one.
+RESERVED_VRF_PREFIX = "prisma-"
+
+
+def bgp_vrf(block):
+    """The VRF a `router bgp <asn> [vrf <name>]` header is for: default."""
+    w = block.split()
+    return w[4] if len(w) >= 5 and w[3] == "vrf" else "default"
+
+
+def leak_error(here, src):
+    """
+    Why the VRF `here` cannot import from `src` (#537), or None: a name
+    that is not a VRF's, a reserved VRF on either side, or itself.
+    """
+    why = None if src == "default" else policy_mod.vrf_name_error(src)
+    if why:
+        return why
+    for v, side in ((src, "out of"), (here, "into")):
+        if v.startswith(RESERVED_VRF_PREFIX):
+            return (f"{v} is a VRF of the box's own: no route leaks {side} "
+                    f"it")
+    if src == here:
+        return f"a VRF does not import from itself ({here})"
+    return None
+
+
+def leak_findings(routing):
+    """
+    [(statement, why)] for each `import vrf` of `routing` that leaks into
+    or out of a reserved VRF (#537), read with its block: what the prompt
+    refuses, said of a file that reached a commit another way.
+    """
+    out = []
+    for line, path in zip(routing, block_paths(routing)):
+        w = line.split()
+        if path is None or len(w) != 3 or w[:2] != ["import", "vrf"] \
+                or w[2] == "route-map":
+            continue
+        bgp = next((b.strip() for b in path
+                    if b.strip().startswith("router bgp")), None)
+        if bgp is None:
+            continue
+        if any(v.startswith(RESERVED_VRF_PREFIX)
+               for v in (bgp_vrf(bgp), w[2])):
+            out.append((f"{bgp}: import vrf {w[2]}",
+                        leak_error(bgp_vrf(bgp), w[2])))
+    return out
 
 
 def attach_reads(line):
@@ -579,6 +634,8 @@ ATTACH_USAGE = {
     "isis": "default-information originate ipv4|ipv6 level-1|level-2 "
             "[always] [metric <n>] policy <policy>",
     "fib-policy": "fib-policy bgp|ospf|isis|static <policy>",
+    "vrf-import": "vrf-import <vrf>|default [policy <policy> | "
+                  "[ <policy>... ]]",
 }
 
 
@@ -2252,6 +2309,13 @@ BGP_AF_BLOCK = {
     "aggregate-address": BGP_BLOCK["aggregate-address"],
     "table-policy": BGP_BLOCK["table-policy"],
     "table-map": BGP_BLOCK["table-map"],
+    # Phase C (#537): typed as vrf-import, held and read back as FRR's
+    # `import vrf`.
+    "vrf-import": ("routes of another VRF, or of the default table, into "
+                   "this one, through a policy",
+                   "<vrf>|default [policy <policy>]"),
+    "import": ("a VRF's routes into this one; type it as vrf-import",
+               "vrf <vrf>|default|route-map <route-map>"),
     "redistribute": ("inject routes from another source", {
         "connected": ("directly attached networks", None),
         "static": ("configured static routes", None),
@@ -3438,6 +3502,8 @@ TREE["term"] = {
                      "invalid": ("an RPKI cache covers it and disagrees",
                                  None),
                      "unknown": ("no RPKI cache covers it", None)}),
+                 "source-vrf": ("leaked from this VRF, or from default: "
+                                "only at a vrf-import", "<vrf>|default"),
                  "policy": ("first through this policy: its reject rejects",
                             "<name>")}),
     "set": ("what changes when the term matches", {
@@ -10589,6 +10655,16 @@ class Shell:
                     self.say_finding("error", stmt, why)
                     ok = False
 
+            # A leak into or out of a box's own VRF (#537), however it got
+            # here. Refused only when this change brings it.
+            carried = {stmt for stmt, _ in leak_findings(running.routing)}
+            for stmt, why in leak_findings(target.routing):
+                if stmt in carried:
+                    self.say_finding("warning", stmt, why)
+                else:
+                    self.say_finding("error", stmt, why)
+                    ok = False
+
             # An eBGP neighbour with no maximum-prefix (#145). A warning and
             # never a refusal: running a session without a limit is a real
             # design and the operator's call, which is what the issue asking
@@ -15124,6 +15200,19 @@ class Shell:
                                           ["router", "isis"])), None)
         if _igp and (_w[:1] == ["export"] or _w[:2] == ["no", "export"]):
             return self.igp_export(_igp, _w)
+        # Phase C (#537): a VRF importing another VRF's routes, or the
+        # default table's, through a policy - and FRR's own `import vrf`
+        # held to the same refusals.
+        _bgp = next((b for b in self.frr_ctx
+                     if b.startswith("router bgp")), None)
+        _v = _w[1:] if _w[:1] == ["no"] else _w
+        if _bgp and _v[:1] == ["vrf-import"]:
+            return self.vrf_import(_bgp, _w)
+        if _bgp and _v[:2] == ["import", "vrf"] and len(_v) == 3:
+            _why = leak_error(bgp_vrf(_bgp), _v[2])
+            if _why:
+                self.err_prose("nothing staged", _why)
+                return True
         # Phase B's attach points (#536): a policy where BGP originates,
         # aggregates, advertises on a condition and installs, where an IGP
         # originates its default, and on what zebra installs.
@@ -15223,6 +15312,109 @@ class Shell:
         lines = [("no " if neg else "") + l.strip()
                  for l in policy_mod.export_lines(name, igp)]
         ctx = [b for b in self.frr_ctx if b != STATIC_BLOCK]
+        for l in lines:
+            verdict, frr_said = self.frr.dryrun(ctx, l)
+            if verdict == Frr.DRYRUN_REFUSED:
+                self.err_prose("not a statement FRR accepts here; nothing "
+                               "staged", f"FRR answered: {frr_said}", l)
+                return True
+        self.candidate.routing += lines
+        return True
+
+    def vrf_import(self, bgp, w):
+        """
+        `[no] vrf-import <vrf>|default [policy <p> | [ <p>... ]]` inside a
+        BGP address family (#537): FRR's `import vrf <vrf>`, and with a
+        policy its `import vrf route-map`. FRR holds one route-map per
+        address family and applies it to every VRF the family imports, so
+        a policy here is the family's: a second one is refused, and so is
+        an import without it once the family has one - it would go
+        through the policy all the same, which the statement would not
+        say. `no` drops the import, and the policy with the last one.
+        """
+        neg = w[0] == "no"
+        v = w[1:] if neg else w
+        usage = ATTACH_USAGE["vrf-import"]
+        af = self.frr_ctx[-1] if self.frr_ctx else ""
+        if af not in ("address-family ipv4 unicast",
+                      "address-family ipv6 unicast"):
+            self.err_prose("nothing staged", "a VRF imports per address "
+                           "family: vrf-import is typed inside "
+                           "'address-family ipv4 unicast' or 'ipv6 unicast'")
+            return True
+        names = None
+        if len(v) > 2 and v[2] == "policy":
+            names, i = _take_names(v, 3)
+            if names is None or i != len(v):
+                names = False
+        if len(v) < 2 or names is False or (len(v) > 2 and v[2] != "policy"):
+            self.err_prose("not how this statement is typed; nothing "
+                           "staged", f"usage: {usage}")
+            return True
+        src, here = v[1], bgp_vrf(bgp)
+        why = leak_error(here, src)
+        if why:
+            self.err_prose("nothing staged", why)
+            return True
+        rmap = policy_mod.map_name(policy_mod.chain_name(names),
+                                   "bgp:vrfimport") if names else None
+        ctx = [b for b in self.frr_ctx if b != STATIC_BLOCK]
+        paths = block_paths(self.candidate.routing)
+        mine = [i for i, p in enumerate(paths)
+                if p is not None and [x.strip() for x in p] == ctx]
+        held_map = next((self.candidate.routing[i].split()[-1] for i in mine
+                         if re.fullmatch(r"import vrf route-map \S+",
+                                         self.candidate.routing[i].strip())),
+                        None)
+        imports = {self.candidate.routing[i].split()[-1]: i for i in mine
+                   if re.fullmatch(r"import vrf (?!route-map )\S+",
+                                   self.candidate.routing[i].strip())}
+        if neg:
+            # The candidate is what FRR runs plus what was typed, so an
+            # import it does not hold is one nothing has. Staged as `no`,
+            # FRR took it, kept nothing, and the commit said it had been
+            # dropped (lab/policy-c.sh, MODE=off).
+            if src not in imports:
+                self.err_prose("nothing removed", f"this address family "
+                               f"does not import {src}")
+                return True
+            drop = [imports[src]]
+            if held_map and set(imports) <= {src}:
+                drop += [i for i in mine if self.candidate.routing[i].strip()
+                         == f"import vrf route-map {held_map}"]
+            for i in sorted(drop, reverse=True):
+                del self.candidate.routing[i]
+            return True
+        held = None
+        if held_map:
+            held = " ".join(policy_mod.chain(
+                held_map[len(policy_mod.PREFIX):-len("-BGP-VRFIMPORT")]))
+        if held_map and rmap != held_map:
+            self.err_prose("nothing staged",
+                           f"this address family imports through policy "
+                           f"{held}, and FRR applies it to every VRF the "
+                           f"family imports from: one policy per address "
+                           f"family",
+                           f"type 'vrf-import {src} policy {held}', or "
+                           f"remove the imports that use it first; to tell "
+                           f"one VRF from another, 'from source-vrf' in "
+                           f"its terms")
+            return True
+        if names:
+            pol, _ = policy_mod.parse(self.candidate.policy)
+            for n in names:
+                if n not in pol.statements:
+                    self.err(f"no policy-statement named {n}")
+                    return True
+            why = policy_mod.use_findings(pol, policy_mod.chain_name(names),
+                                          "bgp:vrfimport")
+            if why:
+                self.err_prose("cannot be applied on vrf-import; nothing "
+                               "staged", *why)
+                return True
+        lines = [] if src in imports else [f"import vrf {src}"]
+        if rmap and not held_map:
+            lines.append(f"import vrf route-map {rmap}")
         for l in lines:
             verdict, frr_said = self.frr.dryrun(ctx, l)
             if verdict == Frr.DRYRUN_REFUSED:
@@ -16144,6 +16336,8 @@ class Shell:
                         "policy it is accepted; as the routes an "
                         "origination, a suppression or a conditional "
                         "advertisement waits for, it is not")
+            # Phase C (#537): a leak carries what a term accepted.
+            print_prose("imported into a VRF, by vrf-import, it is not")
 
     #: Where the kernel says how much RAM and how many hugepages (#466), and
     #: what the control plane's slice is using now.

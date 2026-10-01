@@ -110,6 +110,42 @@ FIX_A = {
    ("IN-A", "ospf:static"), ("BOGONS", "export")]),
 }
 
+#: Phase B's (#536) fixture, pinned by test/policy-golden-0.148.10.txt as the
+#: compiler shipped it in 0.148.10, before phase C (#537) touched it: every
+#: attach point, a chain at one, and a FIB policy per protocol.
+FIX_B = {
+"phase-b": (f"""{P} prefix-list UP 10.9.0.0/16
+{P} community NETC members 65000:44
+{P} policy-statement COND term 1 from prefix-list UP
+{P} policy-statement COND term 1 then accept
+{P} policy-statement NET term 1 set med 44
+{P} policy-statement NET term 1 set community add NETC
+{P} policy-statement NET term 1 then accept
+{P} policy-statement SUP term 1 from route-filter 10.30.1.0/24 exact
+{P} policy-statement SUP term 1 then accept
+{P} policy-statement TBL term drop from route-filter 10.20.2.0/24 exact
+{P} policy-statement TBL term drop then reject
+{P} policy-statement TBL term metric from route-filter 10.20.1.0/24 exact
+{P} policy-statement TBL term metric set metric 77
+{P} policy-statement TBL term metric then accept
+{P} policy-statement FIB term 1 from protocol static
+{P} policy-statement FIB term 1 set src 10.40.0.1
+{P} policy-statement FIB term 1 then accept
+{P} policy-statement FIB term 2 from route-filter 10.66.0.0/16 orlonger
+{P} policy-statement FIB term 2 then reject
+{P} policy-statement SIX term 1 set src 2001:db8::1
+{P} policy-statement ODEF term 1 from tag 60
+{P} policy-statement ODEF term 1 then accept
+{P} policy-statement IDEF term 1 set metric 50
+{P} policy-statement IDEF term 1 then accept""".splitlines(),
+  [("COND", "bgp:default"), ("NET", "bgp:network"),
+   ("NET+COND", "bgp:aggregate"), ("SUP", "bgp:suppress"),
+   ("SUP", "bgp:advertise"), ("COND", "bgp:condition"),
+   ("TBL", "bgp:table"), ("ODEF", "ospf:default"),
+   ("IDEF", "isis:default"), ("FIB", "fib:static"), ("SIX", "fib:bgp"),
+   ("FIB", "fib:ospf"), ("FIB", "fib:isis")]),
+}
+
 
 def compiled(fixtures=None):
     """The text every fixture compiles to now, as the golden file holds it."""
@@ -123,4 +159,5 @@ def compiled(fixtures=None):
 
 
 if __name__ == "__main__":
-    sys.stdout.write(compiled(FIX_A if sys.argv[1:] == ["a"] else None))
+    sys.stdout.write(compiled({"a": FIX_A, "b": FIX_B}.get(
+        (sys.argv[1:] or [None])[0])))
