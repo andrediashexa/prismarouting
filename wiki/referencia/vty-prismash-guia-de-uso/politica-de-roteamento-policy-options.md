@@ -308,7 +308,7 @@ Numa importação a política aceita `set local-preference`, `set community`, `s
 
 Não há `rd` nem `route-target` para configurar: o roteamento os escolhe sozinho para esse tipo de importação.
 
-**A VRF do Linux vem de `vrf <nome> table <n>`.** A VRF do roteamento precisa de uma VRF do Linux com o mesmo nome; declare-a com `vrf red table 10`, na mesma tabela do `vrf 10` das interfaces dela (veja [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ)).
+**A VRF do Linux vem de** `**vrf <nome> table <n>**`**.** A VRF do roteamento precisa de uma VRF do Linux com o mesmo nome; declare-a com `vrf red table 10`, na mesma tabela do `vrf 10` das interfaces dela (veja [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ)).
 
 A `prisma-bp`, e qualquer VRF cujo nome comece por `prisma-`, é da própria caixa: nenhuma rota entra nela nem sai dela, nem por `vrf-import` nem pelo `import vrf` do roteamento digitado à mão.
 

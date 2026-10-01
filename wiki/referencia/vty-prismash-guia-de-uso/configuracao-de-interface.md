@@ -253,7 +253,7 @@ interface ens18
 O roteamento chama uma VRF pelo **nome** — `router bgp 65000 vrf red`, o bloco `vrf red` com as estáticas dele — e acha a tabela dela por um dispositivo VRF do Linux com esse nome. `vrf red table 10` cria esse dispositivo na tabela 10, a mesma do `vrf 10` das interfaces, e coloca nele o lado Linux de cada uma dessas interfaces (o par do linux_cp, ou o `linux-name`). Depois do commit o BGP da VRF sobe sem nenhum passo no Linux.
 
 | Você faz | No Linux |
-|---|---|
+|----------|----------|
 | `vrf red table 10` | cria `red` na tabela 10 e o liga |
 | `vrf 10` numa interface | o lado Linux dela entra em `red` |
 | `no vrf` numa interface | o lado Linux dela sai de `red` |
