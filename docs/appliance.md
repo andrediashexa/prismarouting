@@ -3309,9 +3309,34 @@ because the host is the only place that number exists.
 ([#379](https://github.com/andrediashexa/hexarouting/issues/379)). A
 container reaches no such state, so the compose file says
 `restart: "on-failure:5"` - Docker gives up - and
-`prisma-routing-card-watch.timer` looks every 30 seconds for a dataplane
+`prisma-routing-card-watch.timer` looks every 5 seconds for a dataplane
 container that stopped, undoes the bind and brings the interface back up,
 once per boot. It restarts nothing: Docker has already tried five times.
+
+### When Docker starts the dataplane again
+
+A dataplane Docker's policy started again after a crash comes up with
+nothing on it: every interface down at VPP's default MTU of 9000, no pool,
+no route. The configuration reaches the dataplane from
+`prisma-routing.service`, a oneshot that ran at boot and stays `active
+(exited)` while the container under it restarts - on the virtio bench that
+left a box forwarding nothing until somebody restarted the unit by hand
+([#548](https://github.com/andrediashexa/hexarouting/issues/548)). So the
+boot's apply records which dataplane and routing containers it configured
+(`/run/prisma-routing/dataplane-applied`), and the same watcher compares
+that record with the containers running at every tick. One that started
+again since - a new start time, or a new container - gets the configuration
+in effect put back: `prismash --reapply`, which reads revision 0, the
+configuration that was running when the dataplane died, and the saved file
+only when there is no revision to read. Nothing a person committed and did
+not save is lost to a crash. The dead run's last lines go into
+`why-the-dataplane-stopped`, as for a container that gave up, and the
+journal says it in a line at warning level; the ticks themselves stay out of
+the journal (`LogLevelMax=notice`). A configuration the new dataplane
+refuses is tried three times for that restart and then left, with the
+command that puts the saved file back by hand. FRR's container is watched
+the same way: it starts from `/etc/frr/frr.conf`, which is not the routing
+the box was running.
 
 **Before it undoes the bind it writes down why**, into
 `/var/log/prisma-routing/why-the-dataplane-stopped`: the container's state,

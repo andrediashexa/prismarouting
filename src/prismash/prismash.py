@@ -22048,7 +22048,37 @@ class Shell:
         return 1 if self.failed else 0
 
     @sigint_ignored
-    def load(self, path):
+    def reapply(self):
+        """
+        Put the configuration in effect back on a dataplane that restarted
+        (#548). Returns the path it read, None when there was nothing to read.
+
+        A VPP that crashed and was started again by Docker's restart policy
+        comes back with no interface configured, no pool and no route, while
+        prisma-routing.service - the boot's --load - stays `active (exited)`
+        and runs nothing: the bench box stayed dead that way until somebody
+        restarted the unit by hand. What goes back is revision 0, the
+        configuration that was in effect when the dataplane died - not the
+        saved file, which would silently drop every commit nobody saved,
+        on a restart nobody asked for. The saved file is the fallback for
+        a box with no revision to read. No revision is recorded: the box
+        is put back where it was, not changed.
+        """
+        try:
+            text = self.rb.load(0)
+        except RollbackUnavailable as e:
+            print(f"note: revision 0 cannot be read, so the saved file goes back: {e}")
+            text = None
+        if text is not None:
+            path = os.path.join(self.rb.path, "0.conf")
+            self.load(path, text=text, reapply=True)
+            return path
+        if os.path.exists(CONFIG_PATH):
+            self.load(CONFIG_PATH, reapply=True)
+            return CONFIG_PATH
+        return None
+
+    def load(self, path, text=None, reapply=False):
         """
         Apply a saved configuration file to the device.
 
@@ -22065,10 +22095,11 @@ class Shell:
         loop below, and Pool.stride_inert() decides which pools it means
         (#375).
         """
-        if not os.path.exists(path):
-            return
-        with open(path) as f:
-            text = f.read()
+        if text is None:
+            if not os.path.exists(path):
+                return
+            with open(path) as f:
+                text = f.read()
 
         # THE UPGRADED BOX (#389). A file saved before the card carried its
         # Linux name says `interface GigabitEthernet0/13/0`, and this box
@@ -22272,6 +22303,13 @@ class Shell:
             # A window armed before the reboot is still pending: the file
             # outlives the boot, and so does the deadline (#212).
             pending = self.confirm.read()
+            if reapply:
+                self.record_applied(
+                    "reapply", target,
+                    comment="re-applied after the dataplane restarted",
+                    confirm_pending="yes" if pending else "no",
+                    confirm_deadline=int(pending["deadline"]) if pending else 0)
+                return
             self.record_applied(
                 "boot", target, comment="loaded from file",
                 confirm_pending="yes" if pending else "no",
@@ -22489,6 +22527,17 @@ def main():
 
     if args and args[0] == "--load":
         sh.load(args[1] if len(args) > 1 else CONFIG_PATH)
+        return 1 if sh.failed else 0
+
+    # Not typed either: watch-the-dataplane runs it when the dataplane or
+    # the routing container started again under a box that had already
+    # loaded its configuration (#548).
+    if args and args[0] == "--reapply":
+        path = sh.reapply()
+        if path is None:
+            print("reapply: no configuration to put back")
+            return 0
+        print(f"reapply: {path}")
         return 1 if sh.failed else 0
 
     # Not a command an operator types: it is the one thing a unit file needs

@@ -25,6 +25,20 @@
 # ONCE PER BOOT. The stamp is in /run, so a reboot clears it: after the card
 # is back, this must not keep firing ifup at a box an operator may now be
 # working on.
+#
+# AND A CONTAINER THAT CAME BACK, WHICH IS THE OTHER HALF (#548). Docker's
+# restart policy starts a crashed dataplane again - and that VPP comes up
+# with no interface configured, no pool, no route: the configuration is put
+# on it by prisma-routing.service, which ran once at boot, stays `active
+# (exited)` and runs nothing when a container restarts under it. The X520's
+# older sibling, the virtio bench, stayed dead that way after an
+# out-of-memory abort until somebody restarted the unit by hand. So the
+# boot's apply records which dataplane and routing containers it configured
+# (`watch-the-dataplane --applied`, its ExecStartPost), and every tick here
+# compares that with the containers running now: one that started again
+# since gets the configuration in effect put back (`prismash --reapply`),
+# and what the dead one printed last is kept, like a container that gave up.
+# This restarts nothing either; it puts back what a restart took away.
 set -u
 
 ROOT=${PRISMA_ROOT:-}
@@ -53,9 +67,17 @@ REPORT=${PRISMA_DATAPLANE_REPORT:-$ROOT/var/log/prisma-routing/why-the-dataplane
 #: 80 carries both: the failure AND the configuration it was reading when it
 #: failed, which is the pair that identifies the defect.
 REPORT_LINES=${PRISMA_DATAPLANE_REPORT_LINES:-80}
+FRR_CONTAINER=${PRISMA_FRR_CONTAINER:-prisma-routing_frr_1}
+APPLIED=${PRISMA_APPLIED_STAMP:-$ROOT/run/prisma-routing/dataplane-applied}
+PRISMASH=${PRISMA_PRISMASH:-/usr/bin/prismash}
+WAITVPP=${PRISMA_WAIT_FOR_VPP:-$ROOT/usr/lib/prisma-routing/wait-for-vpp}
+# Attempts at putting one restart's configuration back before this stops
+# trying and says so: a configuration the new dataplane refuses would be
+# refused again every tick otherwise.
+REAPPLY_TRIES=${PRISMA_REAPPLY_TRIES:-3}
 say() { echo "watch-dataplane: $*" >&2; }
 
-record_why() { # <state> - keep what the dataplane said before it died
+record_why() { # <state> [<until>] - keep what the dataplane said before it died
   mkdir -p "$(dirname "$REPORT")" 2>/dev/null || true
   {
     echo "# Why this box's dataplane stopped, written by watch-the-dataplane."
@@ -67,9 +89,86 @@ record_why() { # <state> - keep what the dataplane said before it died
       -f 'exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' \
       "$CONTAINER" 2>&1)"
     echo "--- the last $REPORT_LINES lines the dataplane printed ---"
-    "$DOCKER" logs --tail "$REPORT_LINES" "$CONTAINER" 2>&1
+    if [ -n "${2:-}" ]; then
+      # A container Docker restarted keeps one log: the run that died ends
+      # where the new one started.
+      "$DOCKER" logs --until "$2" --tail "$REPORT_LINES" "$CONTAINER" 2>&1
+    else
+      "$DOCKER" logs --tail "$REPORT_LINES" "$CONTAINER" 2>&1
+    fi
   } > "$REPORT" 2>/dev/null || say "could not write $REPORT"
 }
+
+# The containers the configuration is on: one line each, "<id> <started>",
+# for the dataplane and the routing container, nothing for one not running.
+# A container Docker restarted keeps its id and gets a new start time; one
+# compose recreated gets a new id. Either is a dataplane nobody configured.
+identity() {
+  for _c in "$CONTAINER" "$FRR_CONTAINER"; do
+    "$DOCKER" inspect -f '{{.State.Status}} {{.Id}} {{.State.StartedAt}}' "$_c" \
+      2>/dev/null | awk '$1 == "running" { print $2, $3 }'
+  done
+}
+
+write_applied() {
+  mkdir -p "$(dirname "$APPLIED")" 2>/dev/null || true
+  identity > "$APPLIED.tmp" 2>/dev/null && mv "$APPLIED.tmp" "$APPLIED"
+  rm -f "$APPLIED.tries"
+}
+
+# The containers running now are not the ones the configuration was put on:
+# put it back (#548). Quiet when nothing changed, which is every tick but one.
+reapply_if_restarted() {
+  # Not while the boot's apply - or anybody's restart of it - is running:
+  # that one writes the record itself when it is done.
+  "$SYSTEMCTL" is-active --quiet prisma-routing.service || return 0
+  _now=$(identity)
+  [ "$(printf '%s\n' "$_now" | grep -c .)" -eq 2 ] || return 0
+  if [ ! -s "$APPLIED" ]; then
+    # A box upgraded onto this release: its boot's apply wrote no record,
+    # and what runs now is what it configured.
+    write_applied
+    return 0
+  fi
+  [ "$_now" = "$(cat "$APPLIED")" ] && return 0
+  # Counted per restart: the tries file names the containers it counts for,
+  # so a dataplane that restarts again later is tried afresh.
+  _key=$(printf '%s' "$_now" | tr '\n' ' ')
+  _tries=0
+  if [ "$(sed -n 1p "$APPLIED.tries" 2>/dev/null)" = "$_key" ]; then
+    _tries=$(sed -n 2p "$APPLIED.tries")
+  fi
+  [ "${_tries:-0}" -ge "$REAPPLY_TRIES" ] && return 0
+  _tries=$((${_tries:-0} + 1))
+  printf '%s\n%s\n' "$_key" "$_tries" > "$APPLIED.tries"
+  _vpp_now=$(printf '%s\n' "$_now" | sed -n 1p)
+  if [ "$_vpp_now" != "$(sed -n 1p "$APPLIED")" ]; then
+    record_why "started again by Docker" "${_vpp_now#* }"
+    say "the dataplane container started again at ${_vpp_now#* }, with no"
+    say "configuration on it: the configuration in effect goes back (#548)."
+    say "what the run before it printed last is kept in $REPORT"
+  else
+    say "the routing container started again: the configuration in effect"
+    say "goes back on it (#548)."
+  fi
+  if "$WAITVPP" 60 && "$PRISMASH" --reapply; then
+    write_applied
+    say "the configuration is back on the dataplane."
+    return 0
+  fi
+  say "putting the configuration back failed (attempt $_tries of $REAPPLY_TRIES)."
+  if [ "$_tries" -ge "$REAPPLY_TRIES" ]; then
+    say "not trying again for this restart: 'systemctl restart"
+    say "prisma-routing.service' puts the saved configuration back by hand."
+  fi
+  return 0
+}
+
+# What the boot's apply runs when it is done (#548).
+if [ "${1:-}" = "--applied" ]; then
+  write_applied
+  exit 0
+fi
 
 # THE STACK HAS TO BE THE ONE THIS BOX IS RUNNING. On a box still booting
 # vpp.service - which is every box until the default moves - the containers
@@ -85,7 +184,10 @@ fi
 
 state=$("$DOCKER" inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null)
 case "$state" in
-  running|restarting|created)
+  running)
+    reapply_if_restarted
+    exit 0 ;;
+  restarting|created)
     # `restarting` is the policy still trying, and that is not giving up.
     exit 0 ;;
   "")

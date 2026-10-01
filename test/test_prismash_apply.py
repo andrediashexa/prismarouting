@@ -646,6 +646,64 @@ print(f"  tap0 mtu calls: {mtus}")
 os.unlink(saved)
 os.unlink(own)
 
+print("\n=== reapply: a dataplane that restarted gets the configuration "
+      "in effect back (#548) ===")
+# The virtio bench, 0.149.4: Docker started a crashed VPP again and nothing
+# configured it. watch-the-dataplane runs `prismash --reapply`, and what goes
+# back is revision 0 - the configuration in effect when the dataplane died -
+# not the saved file, which would drop every commit nobody saved.
+rbdir = tempfile.mkdtemp()
+api = FakeDataplane(existing=("tap0",))
+sh = shell_with(api)
+sh.running_config = lambda: config.Config()
+sh.rb = prismash.Rollback(rbdir)
+sh.rb.push("interface tap0\n mtu 1400\n exit\n", "committed, never saved")
+before = len(sh.rb.list())
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("interface tap0\n mtu 1300\n exit\n")
+    saved_old = fh.name
+was_config = prismash.CONFIG_PATH
+prismash.CONFIG_PATH = saved_old
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    got = sh.reapply()
+mtus = [(a.get("mtu") or [0])[0] for m, a in api.calls if m == "sw_interface_set_mtu"]
+check(got == os.path.join(rbdir, "0.conf"),
+      f"revision 0 is what goes back, not the saved file: {got!r} {buf.getvalue()!r}")
+check(1400 in mtus and 1300 not in mtus,
+      f"the committed MTU reaches the new dataplane, the saved one does not: {mtus}")
+check(len(sh.rb.list()) == before,
+      f"putting the box back is not a change: no revision is recorded "
+      f"({before} before, {len(sh.rb.list())} after)")
+print(f"  from {got}: mtu calls {mtus}")
+
+# No revision to read - a box that never committed, or one whose store cannot
+# be read: the saved file is what the box has, so that is what goes back.
+api = FakeDataplane(existing=("tap0",))
+sh = shell_with(api)
+sh.running_config = lambda: config.Config()
+sh.rb = prismash.Rollback(tempfile.mkdtemp())
+with contextlib.redirect_stdout(io.StringIO()):
+    got = sh.reapply()
+mtus = [(a.get("mtu") or [0])[0] for m, a in api.calls if m == "sw_interface_set_mtu"]
+check(got == saved_old and 1300 in mtus,
+      f"with no revision 0 the saved file goes back: {got!r} {mtus}")
+sh.rb = type("R", (), {"path": "/nowhere",
+                       "load": lambda self, n: (_ for _ in ()).throw(
+                           prismash.RollbackUnavailable("0.conf: Permission denied"))})()
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    got = sh.reapply()
+check(got == saved_old and "cannot be read" in buf.getvalue(),
+      f"an unreadable revision 0 is said and the saved file goes back: {got!r} {buf.getvalue()!r}")
+prismash.CONFIG_PATH = os.path.join(rbdir, "no-such.conf")
+sh.rb = prismash.Rollback(tempfile.mkdtemp())
+with contextlib.redirect_stdout(io.StringIO()):
+    got = sh.reapply()
+check(got is None, f"nothing to put back is said as such, not invented: {got!r}")
+prismash.CONFIG_PATH = was_config
+os.unlink(saved_old)
+
 print("\n=== a saved file carrying block-stride on a deterministic pool "
       "(#375) ===")
 # The pair has been accepted since 0.67.0 and the allocator never read the

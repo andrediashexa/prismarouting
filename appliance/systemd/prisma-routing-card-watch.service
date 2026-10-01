@@ -19,3 +19,10 @@ Type=oneshot
 ExecStart=/usr/lib/prisma-routing/watch-the-dataplane
 StandardOutput=journal
 StandardError=journal
+# A tick every 5 seconds (#548): systemd's own "Starting/Finished" for each
+# one is info and stays out of the journal, and what the script says - a
+# restarted dataplane, a card given back - is written at warning, so it is
+# kept. Measured on systemd 252: LogLevelMax= drops PID 1's lines about the
+# unit as well as the unit's own.
+LogLevelMax=notice
+SyslogLevel=warning
