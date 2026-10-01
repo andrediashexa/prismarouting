@@ -924,6 +924,52 @@ with _tf.TemporaryDirectory() as _d:
     check(_here._conf() == ("absent", None),
           "and on the host a missing file is an answer of its own: off")
 
+print("--- the management API's settings (#532)")
+check(system.validate_api({"enabled": "yes", "port": "50051",
+                           "listen-address": "10.40.200.166"}) is None
+      and system.validate_api({"listen-address": ""}) is None,
+      "validate_api: a whole setting, and no address, both hold")
+check(system.validate_api({"port": "0"}) == "api port '0': expected 1-65535"
+      and system.validate_api({"enabled": "maybe"}).startswith("api enabled 'maybe'")
+      and system.validate_api({"color": "red"}) == "'color' is not an api setting"
+      and system.validate_api({"listen-address": "not-an-address"}) is not None,
+      "and refuses a port, a word, a setting and an address that are not")
+check(system.api_enable_error({"enabled": "yes", "listen-address": ""}) is not None
+      and system.api_enable_error({"enabled": "yes", "listen-address": "10.0.0.1"}) is None
+      and system.api_enable_error({"enabled": "no"}) is None,
+      "api_enable_error: enabling names the management address")
+check(system.api_env_text({"enabled": "yes", "listen-address": "10.0.0.1", "port": "9443"})
+      == "API_ENABLED=yes\nAPI_LISTEN=10.0.0.1\nAPI_PORT=9443\n",
+      "api_env_text: the three lines api-configure reads")
+with _tf.TemporaryDirectory() as _d:
+    _env = os.path.join(_d, "api.env")
+    _ran = []
+    _svc = system.ApiService(runner=lambda a, stdin=None, timeout=30: (_ran.append(a) or (0, "")),
+                             path=_env)
+    check(_svc.read() == system.API_DEFAULTS, "ApiService.__init__/read: no file is the defaults")
+    ok, msg = _svc.apply({"enabled": "yes", "listen-address": "10.0.0.1", "port": "9443"})
+    check(ok and msg == "" and _ran == [list(system.API_CONFIGURE)]
+          and _svc.read() == {"enabled": "yes", "listen-address": "10.0.0.1", "port": "9443"},
+          "ApiService.apply writes api.env, asks the host through its door, and reads back")
+    ok, msg = _svc.apply({"enabled": "yes", "listen-address": "", "port": "9443"})
+    check(not ok and "listen-address" in msg, "and refuses enabling with no address")
+    with open(_env, "w") as _f:
+        _f.write("API_ENABLED=yes\nAPI_PORT=99999\nAPI_LISTEN=;reboot\n")
+    check(_svc.read() == {"enabled": "yes", "listen-address": "", "port": "50051"},
+          "a hand-written value the VTY would refuse is read as the default")
+    _down = system.ApiService(path=_env)
+    ok, msg = _down.apply({"enabled": "no", "listen-address": "", "port": "50051"})
+    check(ok and "next boot" in msg, "no door to the host: written, said to apply at the next boot")
+    _bus = system.ApiService(runner=lambda a, stdin=None, timeout=30:
+                             (1, "Failed to connect to bus: Host is down"), path=_env)
+    ok, msg = _bus.apply({"enabled": "no", "listen-address": "", "port": "50051"})
+    check(ok and "next boot" in msg,
+          "a systemctl with no systemd behind it is no service manager, not a refusal")
+    _no = system.ApiService(runner=lambda a, stdin=None, timeout=30: (1, "x\ncannot listen"),
+                            path=_env)
+    check(_no.apply({"enabled": "no", "listen-address": "", "port": "50051"})
+          == (False, "cannot listen"), "the host's refusal is the answer")
+
 print("--- User.__eq__: two accounts are equal by what they would write")
 a = account("alice", keys=["k1"], password="$6$h", role=system.ROLE_ADMIN)
 b = account("alice", keys=["k1"], password="$6$h", role=system.ROLE_ADMIN)

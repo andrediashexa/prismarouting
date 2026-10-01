@@ -1,0 +1,10 @@
+# The management network's connections to the API, carried to the server on
+# the backplane (#532). Started by prisma-routing-api-proxy.socket, which
+# api-configure writes; TLS passes through untouched.
+[Unit]
+Description=Prisma Routing - the management API's proxy to the backplane
+Requires=prisma-routing-api.service
+After=prisma-routing-api.service
+
+[Service]
+ExecStart=/lib/systemd/systemd-socket-proxyd 128.0.0.2:50051

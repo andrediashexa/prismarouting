@@ -690,6 +690,49 @@ Ele **não recusa** o commit — anunciar de outro equipamento é um desenho leg
 
 :::
 
+# API de gerência (gRPC)
+
+A partir da versão 0.149.0 a caixa oferece uma API de gerência em gRPC (`prisma.v1`), para a interface web e outros sistemas que precisem configurar e ler a caixa sem passar pelo terminal. Ela **não é um segundo jeito de configurar**: cada chamada de configuração é a própria VTY trabalhando — o `configure`, as linhas que você digitaria, o `commit check`, o `commit`, o `commit confirmed`, o `rollback` e o `save` —, então uma recusa pela API é a mesma recusa da VTY, com as mesmas palavras, e uma mudança feita pela API aparece no `show running-config`.
+
+Ela vem **desligada**. Para ligar, você precisa de três coisas:
+
+1. **Os certificados.** A API só aceita TLS mútuo: a caixa tem o próprio certificado e só atende quem apresentar um certificado de cliente assinado pela autoridade (CA) que você indicar. Coloque em `/etc/prisma-routing/api/` os arquivos `server.key`, `server.crt` e `clients-ca.crt` (a CA dos clientes). Com OpenSSL, numa máquina qualquer (a chave da CA, `ca.key`, fica fora da caixa):
+
+```sh
+# a CA que assina os clientes
+openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=prisma clients" -keyout ca.key -out ca.crt
+# o certificado da caixa, com o endereço que o cliente usa
+openssl req -newkey rsa:3072 -nodes -subj "/CN=prisma-api" -keyout server.key -out server.csr
+printf 'subjectAltName=IP:10.40.200.166\n' > server.ext
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 825 -extfile server.ext -out server.crt
+# o certificado do cliente: o CN é a conta da caixa que ele usa
+openssl req -newkey rsa:3072 -nodes -subj "/CN=webui" -keyout webui.key -out webui.csr
+printf 'extendedKeyUsage=clientAuth\n' > client.ext
+openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 825 -extfile client.ext -out webui.crt
+```
+
+Na caixa vão `server.key`, `server.crt` e o `ca.crt` com o nome `clients-ca.crt`; o cliente usa `ca.crt`, `webui.crt` e `webui.key`.
+2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê. Tudo o que ela muda fica registrado no histórico em nome dela.
+3. **O endereço.** A API escuta **só na rede de gerência**:
+
+```
+configure
+api enabled yes
+api listen-address 10.40.200.166
+api port 50051
+commit
+```
+
+Ligar sem dizer o endereço é recusado no commit:
+
+```
+error: api enabled yes needs 'api listen-address <management address>'
+```
+
+Para desligar, `no api enabled` e `commit`.
+
+O que a API oferece, em resumo: abrir uma cópia da configuração (o candidato), editar com as linhas da VTY, comparar, validar, aplicar (inclusive com confirmação), confirmar, voltar uma revisão e salvar; ler interfaces, pools, assinantes, BGP, OSPF, IS-IS, VRRP e bundles; rodar qualquer `show`; e receber ao vivo os contadores das interfaces e os totais do CGNAT. Se alguém mudar a configuração enquanto o seu candidato está aberto, o commit dele é recusado mostrando a diferença, em vez de passar por cima.
+
 # Ver também
 
 * [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — o que cada grupo pode mudar

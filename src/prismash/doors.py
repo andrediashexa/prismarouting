@@ -99,6 +99,10 @@ FIXED = {
     ("systemctl", "reboot"): "restart the box",
     ("systemctl", "poweroff"): "shut the box down",
     ("systemctl", "restart", "prisma-routing-tune"): "recompute the tuning",
+    # The management API's listener (#532): api-configure reads api.env,
+    # which the VTY writes, and writes the socket on the management address.
+    ("systemctl", "restart", "prisma-routing-api-config.service"):
+        "apply the management API's settings",
     # snmpd's configuration, READ (#525). The management container does not
     # mount /etc/snmp, and the file carries the communities, so it is a
     # door and not a mount - and not a query: FIXED is root's, which is who

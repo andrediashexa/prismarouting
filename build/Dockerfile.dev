@@ -41,8 +41,11 @@ RUN curl -s https://deb.frrouting.org/frr/keys.gpg -o /usr/share/keyrings/frrout
 
 # python3-ply: o vppapigen precisa dele para compilar o .api do plugin.
 # Ferramentas de lab: inspecao dos TAPs criados pelo linux_cp.
+# gRPC e protoc: o lab da API de gerencia (#532) gera os stubs e fala mTLS.
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
         python3-ply iproute2 iputils-ping tcpdump procps \
+        python3-grpcio python3-protobuf protobuf-compiler \
+        protobuf-compiler-grpc libprotobuf-dev openssl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
