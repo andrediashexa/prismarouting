@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.148.13 - a reject term rejects only what its from policy accepts
+
+### Fixed
+
 * **A `then reject` term ignored its `from policy`, and rejected every route
   its other conditions matched.**
   ([#542](https://github.com/andrediashexa/hexarouting/issues/542))
