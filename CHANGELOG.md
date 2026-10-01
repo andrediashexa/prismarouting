@@ -77,6 +77,10 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.1 - a commit in about a second: the CLI over the same connection, one reading, the API loaded once
+
 ### Changed
 
 * **A commit in about a second.**
