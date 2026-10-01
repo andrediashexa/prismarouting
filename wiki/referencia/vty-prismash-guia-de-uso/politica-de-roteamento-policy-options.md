@@ -185,10 +185,10 @@ O padrão depende de onde a política é usada, como no Junos:
 |----------------------------|-------------------------------------------|
 | `import` ou `export` num vizinho BGP | **aceita**                                |
 | `export` para OSPF ou IS-IS | **não exportada**                         |
-| `network ... policy`, `aggregate-address ... policy`, `table-policy` | **aceita**: anunciada, ou instalada |
-| `fib-policy` | **instalada** |
+| `network ... policy`, `aggregate-address ... policy`, `table-policy` | **aceita**: anunciada, ou instalada       |
+| `fib-policy`               | **instalada**                             |
 | `default-originate policy`, `default-information originate ... policy` | **não conta**: sem um term que aceite, o default não é originado |
-| `suppress-policy` | **não suprimida** |
+| `suppress-policy`          | **não suprimida**                         |
 | as duas políticas de `advertise` | **fora**: não é anunciada nem conta como presente |
 
 Para rejeitar o resto no BGP, use `default-action reject` na política, ou termine com um term sem `from` e com `then reject`. Para exportar o resto para um IGP, `default-action accept`, ou um term sem `from` e com `then accept`.
@@ -268,7 +268,7 @@ prisma# [edit] fib-policy ospf SO-O-QUE-SERVE
 | Comando | O que faz |
 |---------|-----------|
 | `fib-policy bgp\|ospf\|isis\|static <política>` | rota que a política rejeita não é instalada: o protocolo continua com ela, mas o tráfego não a segue. `set src <endereço>` dá à rota instalada o endereço de origem |
-| `no fib-policy <protocolo> <política>` | desfaz |
+| `no fib-policy <protocolo> <política>` | desfaz    |
 
 É assim que se filtra o que o OSPF e o IS-IS instalam: o roteamento não tem filtro de entrada dentro desses protocolos. Vale para IPv4 e IPv6. Uma `fib-policy` só aceita `set src`, e nada que só o BGP tem.
 
