@@ -145,7 +145,8 @@ class FakeShell:
                     {"interface_name": "tap4096", "flags": "IF_STATUS_API_FLAG_ADMIN_UP"},
                     {"interface_name": "pg0", "sw_if_index": 1,
                      "flags": "IF_STATUS_API_FLAG_ADMIN_UP|IF_STATUS_API_FLAG_LINK_UP",
-                     "mtu": [9000, 0, 0, 0], "l2_address": "02:fe:00:00:00:01"}]),
+                     "mtu": [9000, 0, 0, 0], "l2_address": "02:fe:00:00:00:01",
+                     "link_speed": 10000000}]),
                     "bpa_pool_dump": R([{"name": "nb", "capacity": 6, "guaranteed": 3}]),
                     "sw_bond_interface_dump": R([{"interface_name": "BondEthernet0",
                                                   "sw_if_index": 3,
@@ -220,6 +221,8 @@ check(len(I) == 1 and I[0]["name"] == "pg0" and I[0]["admin_up"] and I[0]["link_
       and I[0]["mtu"] == 9000 and I[0]["addresses"] == ["100.64.3.254/22"]
       and I[0]["linux_name"] == "pg0-linux" and I[0]["description"] == "subs",
       f"an interface: the dataplane's state, the configuration's addresses: {I}")
+check(I[0]["speed_bps"] == 10_000_000_000,
+      f"the link speed in bits a second, from the dataplane's kbps (#533): {I[0]['speed_bps']}")
 check(A.interfaces_of(sh, ["other"]) == [], "only the interfaces asked for")
 check(A.is_lcp_tap("tap4096") and not A.is_lcp_tap("pg0") and not A.is_lcp_tap("tapestry"),
       "is_lcp_tap: the VTY's own predicate for a linux_cp TAP")
@@ -360,18 +363,24 @@ cw = S.console_worker(me)
 check(S.console_worker(me) is cw and cw is not ow,
       "the console (Show) has a process of its own, reused, apart from the "
       "operational one - a long ping no longer holds GetVersion behind it")
+rw = S.route_worker(me)
+check(S.route_worker(me) is rw and rw not in (ow, cw),
+      "ListRoutes has a process of its own too (#533): a snapshot's reading "
+      "does not share the operational one's interpreter")
 S.close(me, cid)
 try:
     S.get(me, cid)
     check(False, "a closed candidate is gone")
 except KeyError:
     check(True, "a closed candidate is gone")
-S.idle = S.ops_idle = 0
+S.idle = S.ops_idle = S.route_idle = 0
 cid2, *_ = S.open(me)
 time.sleep(0.05)
 S.reap()
-check(cid2 not in S.candidates and me not in S.ops and me not in S.consoles,
-      "reap closes what nobody used lately, the console's process included")
+check(cid2 not in S.candidates and me not in S.ops and me not in S.consoles
+      and me not in S.routes,
+      "reap closes what nobody used lately, the console's and the routes' "
+      "processes included")
 
 
 class Denied(A.Worker):
@@ -443,16 +452,409 @@ tot, pools = A.cgnat_totals(STATS)
 check(tot == {"subscribers": 4, "ports_in_use": 700, "sessions": 40, "refusals": 2}
       and list(pools) == ["nb"], f"the CGNAT's totals, a deleted pool's index left out: {tot}")
 E = A.state_events({"commits": "1", "confirm_pending": "no"},
-                   {"commits": "2", "confirm_pending": "yes", "last_commit_by": "root",
-                    "confirm_deadline": "1700000000", "reverts": "1"})
+                   {"commits": "2", "confirm_pending": "yes", "commit_by": "root",
+                    "confirm_deadline": "1700000000", "confirm_reverts": "1",
+                    "revision": "0123456789abcdef", "comment": "via api"})
 check([e["kind"] for e in E] == ["commit", "confirm-pending", "rolled-back"]
       and E[0]["account"] == "root", f"the events between two readings: {E}")
+check(E[0]["revision"] == "" and E[0]["comment"] == "via api",
+      "an event carries the comment the box recorded, and leaves the revision "
+      "to the server, which reads it as the subscriber's account (#533)")
+check(A.state_events({"commits": "1"}, {"commits": "2", "last_commit_by": "x"})[0]["account"] == ""
+      and A.state_events({}, {"reverts": "3"}) == [],
+      "read with the keys the VTY writes - commit_by, confirm_reverts - not the "
+      "ones nothing wrote")
 check(A.state_events({"commits": "2"}, {"commits": "2"}) == [], "nothing changed, nothing said")
 with tempfile.NamedTemporaryFile("w", delete=False) as f:
     f.write("commits 3\nlast_commit_by root\n")
 check(A.read_state(f.name) == {"commits": "3", "last_commit_by": "root"}
       and A.read_state("/nonexistent/state") == {}, "the state file read, or {} without one")
 os.unlink(f.name)
+
+
+print("=== #533: a commit's comment, recorded for the API's events ===")
+import prismash as P  # noqa: E402
+
+
+
+with tempfile.TemporaryDirectory() as _d:
+    _st = os.path.join(_d, "config")
+    _was_cfg = P.CONFIG_PATH
+    P.CONFIG_PATH = os.path.join(_d, "none.conf")
+
+    class _Cfg:
+        def text(self):
+            return "hostname r\n"
+    _sh = type("S", (), {"state": P.ConfigState(_st)})()
+    P.Shell.record_applied(_sh, "alice", _Cfg(), comment="two\nlines  here")
+    _got = A.read_state(_st)
+    P.CONFIG_PATH = _was_cfg
+check(_got.get("comment") == "two lines here" and _got.get("commit_by") == "alice"
+      and "revision" not in _got,
+      f"record_applied writes the comment, on one line; the revision is the "
+      f"server's to read: {_got}")
+_reads = iter([{"commits": "4"}, {"commits": "5"}])
+check(A.event_revision(lambda: "hostname r\n", {"commits": "4"}, lambda: next(_reads))
+      == A.revision_of("hostname r\n")
+      and A.event_revision(lambda: "x", {"commits": "4"}, lambda: next(_reads)) == "",
+      "an event's revision is the running configuration's id as read - none "
+      "when another commit landed while it was read")
+
+print("=== #533: who am I ===")
+sh.caps = {P.CAP_CGNAT}
+W0 = A.whoami(sh)
+check(W0["role"] == "cgnat-operator" and W0["can_configure_cgnat"]
+      and not W0["can_configure"] and W0["account"] == me,
+      f"the account and the VTY's role for it: {W0}")
+sh.caps = set()
+check(A.handle(sh, "whoami", None)["role"] == "read-only", "no capability is read-only")
+sh.caps = {P.CAP_ALL, P.CAP_CGNAT}
+check(A.whoami(sh)["can_configure"] and A.whoami(sh)["role"] == "administrator",
+      "an administrator configures everything")
+
+print("=== #533: FRR's route JSON, read as it streams ===")
+
+
+def reader(text, size):
+    data = text.encode()
+    pos = [0]
+
+    def read(n):
+        chunk = data[pos[0]:pos[0] + min(n, size)]
+        pos[0] += len(chunk)
+        return chunk
+    return read
+
+
+ROUTES = ('{"10.0.0.0/24":[{"protocol":"bgp","selected":true,"distance":20,"metric":7,'
+          '"installed":true,"vrfName":"default","prefix":"10.0.0.0/24","table":254,'
+          '"uptime":"01:02:03","nexthops":[{"ip":"192.0.2.2","interfaceName":"d0",'
+          '"active":true,"fib":true,"weight":1}]},{"protocol":"ospf","selected":false,'
+          '"distance":110,"metric":20,"prefix":"10.0.0.0/24","nexthops":[]}]\n'
+          ',"10.0.1.0/24":[{"protocol":"connected","prefix":"10.0.1.0/24",'
+          '"selected":true,"nexthops":[{"directlyConnected":true,"interfaceName":"d0",'
+          '"vrf":"red"}]}]\n,"\\u00e9":[1234567]\n}')
+for size in (1, 7, 65536):
+    items = list(A.json_object_items(reader(ROUTES, size), chunk=size))
+    check([k for k, _ in items] == ["10.0.0.0/24", "10.0.1.0/24", "\u00e9"]
+          and items[2][1] == [1234567] and len(items[0][1]) == 2,
+          f"every key and value, read {size} byte(s) at a time")
+check(list(A.json_object_items(reader("{}", 10))) == [], "an empty table")
+try:
+    list(A.json_object_items(reader("% Unknown command: show ip route vrf x json", 10)))
+    check(False, "what is not a JSON object is refused")
+except ValueError as e:
+    check("Unknown command" in str(e), f"what is not a JSON object is refused, said: {e}")
+try:
+    list(A.json_object_items(reader('{"a":[1,2', 4)))
+    check(False, "a cut answer is refused")
+except ValueError:
+    check(True, "an answer cut in a value is refused, not read as a short table")
+check(A.frr_age("01:02:03") == 3723 and A.frr_age("1d02h03m") == 93780
+      and A.frr_age("02w3d04h") == 1483200 and A.frr_age("never") == 0
+      and A.frr_age(None) == 0, "FRR's uptime words in seconds")
+R0 = A.route_row("default", 4, items[0][1][0])
+check(R0 == {"vrf": "default", "prefix": "10.0.0.0/24", "family": 4, "protocol": "bgp",
+             "distance": 20, "metric": 7, "selected": True, "installed": True,
+             "next_hops": [{"address": "192.0.2.2", "interface": "d0", "active": True,
+                            "fib": True, "weight": 1, "directly_connected": False,
+                            "vrf": "", "blackhole": ""}],
+             "table": 254, "age_seconds": 3723}, f"a route as ListRoutes sends it: {R0}")
+R1 = A.route_row("default", 4, items[1][1][0])
+check(R1["next_hops"][0]["vrf"] == "red" and R1["next_hops"][0]["directly_connected"],
+      "a next hop in another VRF says which")
+check(A.route_row("x", 6, {"nexthops": [{"blackhole": True}, {"reject": True}]})
+      ["next_hops"][1]["blackhole"] == "reject", "a blackhole and a reject next hop")
+
+print("=== #533: a ListRoutes request checked before vtysh sees it ===")
+F, why = A.route_request({"prefix": "10.1.2.3/16", "protocol": "bgp", "page_size": 99999})
+check(why is None and F["prefix"] == "10.1.0.0/16" and F["families"] == [4]
+      and F["page_size"] == A.ROUTE_PAGE_MAX,
+      f"a prefix sets the family and is normalised; the page is capped: {F}")
+for bad in ({"vrf": "red; conf t"}, {"family": 5}, {"prefix": "nope"},
+            {"prefix": "10.0.0.0/8", "family": 6}, {"protocol": "bgp json"}):
+    check(A.route_request(bad)[0] is None, f"refused: {bad} ({A.route_request(bad)[1]})")
+check(A.route_request({})[0]["families"] == [4, 6], "both families by default")
+check(A.route_command("red", 6, "2001:db8::/32", "bgp")
+      == "show ipv6 route vrf red 2001:db8::/32 longer-prefixes bgp json"
+      and A.route_command("default", 4) == "show ip route vrf default json",
+      "the vtysh command for one VRF and family")
+F2, _ = A.route_request({"prefix": "10.0.0.0/8", "selected_only": True, "protocol": "bgp"})
+check(A.route_keeps(F2, R0) and not A.route_keeps(F2, dict(R0, selected=False))
+      and not A.route_keeps(F2, dict(R0, protocol="ospf"))
+      and not A.route_keeps(F2, dict(R0, prefix="11.0.0.0/24"))
+      and not A.route_keeps(F2, dict(R0, prefix="2001:db8::/32")),
+      "the filters: selected, protocol, inside the prefix")
+SUM = {"default": {"routes": [{"type": "bgp", "rib": 9, "fib": 8}]},
+       "red": {"routes": [{"type": "connected", "rib": 1, "fib": 1}]}}
+check(A.summary_counts(SUM, 4) == [
+    {"vrf": "default", "family": 4, "protocol": "bgp", "rib": 9, "fib": 8},
+    {"vrf": "red", "family": 4, "protocol": "connected", "rib": 1, "fib": 1}]
+    and A.summary_counts({"routes": [{"type": "kernel", "rib": 2}]}, 6)[0]["vrf"] == "default",
+    "zebra's summary per VRF, and one VRF's answer unwrapped")
+
+
+class StreamProc:
+    """vtysh's answer, as a process whose output is read."""
+    def __init__(self, text, size=50):
+        self.stdout = type("Out", (), {"read": staticmethod(reader(text, size)),
+                                       "close": lambda self: None})()
+        self.killed = False
+
+    def wait(self):
+        return 0
+
+    def poll(self):
+        return 0
+
+    def kill(self):
+        self.killed = True
+
+
+def big_table(n, vrf="default"):
+    return "{" + "\n,".join(
+        f'"10.{i // 256}.{i % 256}.0/24":[{{"protocol":"{"bgp" if i % 2 else "static"}",'
+        f'"selected":true,"prefix":"10.{i // 256}.{i % 256}.0/24","vrfName":"{vrf}",'
+        f'"nexthops":[{{"ip":"192.0.2.2","interfaceName":"d0"}}]}}]'
+        for i in range(n)) + "}"
+
+
+asked = []
+sh.frr_summary = {"show ip route vrf all summary json": SUM,
+                  "show ipv6 route vrf all summary json": {}}
+_frr_show = sh.frr.show
+sh.frr.show = lambda cmd: (0, __import__("json").dumps(sh.frr_summary.get(cmd, {})))
+sh.vtysh_stream = lambda cmd: (asked.append(cmd), StreamProc(
+    big_table(2500) if "vrf default" in cmd and "ipv6" not in cmd
+    else big_table(3, "red") if "vrf red" in cmd and "ipv6" not in cmd else "{}"))[1]
+sh.route_page_wait = 20
+check(A.route_summary(sh) == A.summary_counts(SUM, 4) and A.route_summary(sh, "red")[0]["vrf"] == "red",
+      "GetRouteSummary: both families, every VRF or the one asked")
+
+print("=== #533: ListRoutes pages one snapshot ===")
+seen, token, pages, first = [], "", 0, None
+while True:
+    got = A.routes_page(sh, {"page_size": 1000, "page_token": token})
+    check("error" not in got, f"page {pages}: {got.get('error', 'answered')}")
+    if "error" in got:
+        break
+    first = first or got
+    seen += [r["prefix"] + "@" + r["vrf"] for r in got["rows"]]
+    pages += 1
+    token = got["next"]
+    if not token:
+        break
+check(len(seen) == 2503 and len(set(seen)) == 2503 and pages == 3,
+      f"every route once, default's and red's, in {pages} pages: {len(seen)}")
+check(got["total_known"] and got["total"] == 2503, "the last page knows the total")
+check(asked[:2] == ["show ip route vrf default json", "show ipv6 route vrf default json"],
+      f"default first, then the other VRFs, each family: {asked}")
+asked.clear()
+got = A.routes_page(sh, {"vrf": "red", "family": 4, "protocol": "bgp", "page_size": 10})
+check([r["prefix"] for r in got["rows"]] == ["10.0.1.0/24"]
+      and asked == ["show ip route vrf red bgp json"] and got["next"] == "",
+      f"one VRF, one family, one protocol: {[r['prefix'] for r in got['rows']]} {asked}")
+check(A.routes_page(sh, {"vrf": "blue"})["code"] == "not_found", "a VRF FRR has not is NOT_FOUND")
+check(A.routes_page(sh, {"prefix": "x"})["code"] == "invalid", "a bad filter is refused")
+check(A.routes_page(sh, {"page_token": "0123456789ab:0:0"})["code"] == "expired"
+      and A.routes_page(sh, {"page_token": "garbage"})["code"] == "expired",
+      "a token naming no snapshot this box holds")
+snaps = A.route_snapshots(sh)
+check(len(snaps) <= A.ROUTE_SNAPSHOTS, f"at most {A.ROUTE_SNAPSHOTS} snapshots held: {len(snaps)}")
+_old = A.ROUTE_IDLE
+A.ROUTE_IDLE = -1
+check(A.route_snapshots(sh) == {}, "a snapshot nobody paged lately is dropped")
+A.ROUTE_IDLE = _old
+
+sh.vtysh_stream = lambda cmd: StreamProc('{"10.0.0.0/24":[{"prefix":"10.0.0.0/24",'
+                                         '"protocol":"bgp"}]\n,"10.0.1.0/24":[{"pre')
+got = A.routes_page(sh, {"page_size": 50})
+nxt = A.routes_page(sh, {"page_token": got["next"]}) if got.get("next") else {}
+check(len(got.get("rows", [])) >= 1 and got["next"] and nxt.get("code") == "unavailable",
+      f"FRR stopping mid-table: the rows read, then the reason - never a short "
+      f"table as the whole one: {got.get('next')!r} {nxt}")
+sh.vtysh_stream = lambda cmd: StreamProc("% vtysh: zebra is not running")
+check(A.routes_page(sh, {"page_size": 5}).get("code") == "unavailable",
+      "vtysh refusing is UNAVAILABLE")
+
+snap = A.RouteSnapshot([("default", 4, "x")], lambda r: True,
+                       run=lambda cmd: StreamProc(big_table(450), 7))
+rows, ni, no, more = snap.page(0, 0, 100, wait=20)
+check(len(rows) == 100 and ni == 100 and more, "a page as soon as the snapshot has it")
+rows2, ni2, no2, more2 = snap.page(ni, no, 1000, wait=20)
+check(len(rows2) == 350 and not more2 and rows2[0]["prefix"] == "10.0.100.0/24",
+      f"the next page from the byte the last ended at: {rows2[0]['prefix']}")
+snap._write(["{}"])
+check(snap.rows == 451, "_write appends rows and counts them")
+snap.close()
+check(snap.file.closed, "close() drops the snapshot's file")
+_vt = P.VTYSH
+P.VTYSH = "echo"
+_p = A.vtysh_stream("show ip route json")
+check(_p.stdout.read().decode().strip() == "-c show ip route json", "vtysh_stream runs vtysh -c")
+_p.wait()
+P.VTYSH = _vt
+sh.frr.show = _frr_show
+
+print("=== #533: memory, the workers' load ===")
+with tempfile.NamedTemporaryFile("w", delete=False) as f:
+    f.write("MemTotal:       16000000 kB\nMemAvailable:    6000000 kB\n"
+            "HugePages_Total:       4\nHugepagesize:    1048576 kB\n")
+M = A.memory_of(f.name)
+check(M == {"memory_total_bytes": 16000000 * 1024, "memory_used_bytes": 10000000 * 1024,
+            "memory_hugepages_bytes": 4 * 1048576 * 1024},
+      f"meminfo in bytes, used as total less available: {M}")
+os.unlink(f.name)
+check(A.memory_of("/nonexistent") == {"memory_total_bytes": 0, "memory_used_bytes": 0,
+                                       "memory_hugepages_bytes": 0}, "nothing read, zeros")
+check(A.cpu_list("3-5,9") == [3, 4, 5, 9] and A.cpu_list("") == [] and A.cpu_list("x") == [],
+      "a CPU list in order")
+with tempfile.NamedTemporaryFile("w", delete=False) as f:
+    f.write("cpu {\n  main-core 2\n  corelist-workers 3-7\n}\n")
+check(A.startup_worker_cpus(f.name) == "3-7" and A.startup_worker_cpus("/none") == "",
+      "the workers' cores from startup.conf")
+os.unlink(f.name)
+WS = {"/sys/num_worker_threads": 2, "/sys/vector_rate_per_worker": [[0, 12, 3]],
+      "/sys/loops_per_worker": [[0, 3000000, 6000000]]}
+check(A.per_worker(WS, "/sys/loops_per_worker", 2) == [3000000.0, 6000000.0]
+      and A.per_worker(WS, "/sys/none", 2) == [0, 0],
+      "a per-thread vector, the main thread left out")
+RT = """Thread 0 vpp_main (lcore 12)
+Time 3.3, 10.000000 sec internal node vector rate 0.00 loops/sec 423047.02
+             Name                 State         Calls          Vectors        Suspends      Packet-Clocks   Vectors/Call
+api-rx-from-ring               "any wait"                0               0               2          1.19e7            0.00
+ip4-input                        active               10            1000               0          5.00e1          100.00
+---------------
+Thread 1 vpp_wk_0 (lcore 1)
+Time 34.8, 10.000000 sec internal node vector rate 5.61 loops/sec 522628.90
+             Name                 State         Calls          Vectors        Suspends      Packet-Clocks   Vectors/Call
+dpdk-input                       polling           1000             500               0          4.00e2            0.50
+ip4-input                        active             100             500               0          2.00e2            5.00
+ip4-drop                         active             100             500               0          1.00e2            5.00
+dhcp6-pd-reply-publisher-proce"event wait"               0               0               1          7.44e3            0.00
+---------------
+Thread 2 vpp_wk_1 (lcore 2)
+             Name                 State         Calls          Vectors        Suspends      Packet-Clocks   Vectors/Call
+dpdk-input                       polling           2000               0               0          1.00e2            0.00
+"""
+C0 = A.runtime_clocks(RT)
+check(C0 == {0: {"active": 150000.0, "all": 350000.0}, 1: {"active": 0.0, "all": 200000.0}},
+      f"the workers' clocks: per vector with vectors, per call without; a "
+      f"process's row and the main thread left out of the graph: {C0}")
+C1 = {0: {"active": 450000.0, "all": 950000.0}, 1: {"active": 0.0, "all": 600000.0}}
+check(A.busy_between(C0, C1) == {0: 0.5, 1: 0.0}
+      and A.busy_between(C1, C1) == {0: 0.0, 1: 0.0}
+      and A.busy_between({}, {2: {"active": 1.0, "all": 4.0}}) == {2: 0.25},
+      "the graph's share of the node time between two readings")
+_vc = os.environ.get("PRISMA_VPPCTL")
+os.environ["PRISMA_VPPCTL"] = "echo"
+check(A.vpp_runtime().strip() == "show runtime", "vpp_runtime asks vppctl for show runtime")
+os.environ["PRISMA_VPPCTL"] = "/nonexistent/vppctl"
+check(A.vpp_runtime() == "", "a dataplane that does not answer is no reading")
+if _vc is None:
+    del os.environ["PRISMA_VPPCTL"]
+else:
+    os.environ["PRISMA_VPPCTL"] = _vc
+_t = [100.0]
+_texts = iter([RT, RT.replace("2.00e2", "8.00e2"), RT.replace("2.00e2", "8.00e2")])
+_slept = []
+BM = A.BusyMeter(read=lambda: next(_texts), clock=lambda: _t[0],
+                 sleep=lambda d: (_slept.append(d), _t.__setitem__(0, _t[0] + d)))
+B1 = BM.busy()
+# ip4-input's 500 vectors at 800 clocks rather than 200: 300000 more in the
+# graph, out of 300000 more node time - all of it.
+check(_slept == [1.0] and B1 == {0: (1.0, 1000), 1: (0.0, 1000)},
+      f"a first reading waits a window for the second: {B1} slept {_slept}")
+_t[0] += 30
+B2 = BM.busy()
+check(_slept == [1.0] and B2[0] == (0.0, 30000),
+      f"a later one measures since the reading before, nothing slept: {B2}")
+L = A.worker_load(WS, "3-4", {0: (0.5, 1000)})
+check(L[0] == {"worker": 0, "cpu": 3, "vectors_per_call": 12.0, "busy_ratio": 0.5,
+               "loops_per_second": 3000000.0, "busy_window_ms": 1000}
+      and L[1]["busy_ratio"] == 0.0 and L[1]["cpu"] == 4 and L[1]["busy_window_ms"] == 0,
+      f"the dataplane's rates and the meter's busy ratio, per worker: {L}")
+check(A.worker_load({}, "", {}) == [], "no statistics, no workers")
+_sl = A.worker_load({"/sys/num_worker_threads": 1, "/sys/vector_rate_per_worker": [[0, 5]],
+                     "/sys/loops_per_worker": [[0, 98]]}, "", {0: (0.7, 1000)})
+check(_sl[0]["busy_ratio"] == 0.0 and _sl[0]["vectors_per_call"] == 0.0,
+      f"a worker waiting for interrupts (98 loops/s) is not busy, and its stale "
+      f"vector rate is not reported: {_sl}")
+check(A.worker_load({"/sys/num_worker_threads": 1, "/sys/loops_per_worker": [[0, 5000]]},
+                    "", {})[0]["cpu"] == 0, "no core list: the worker's number")
+
+print("=== #533: the counter history ===")
+H = A.History(keep=3, max_interfaces=1)
+for t in (1.0, 2.0, 3.0, 4.0):
+    H.add(t, [{"name": "pg0", "counters": {"rx_bytes": int(t * 10), "tx_bytes": 1}},
+              {"name": "pg1", "counters": {"rx_bytes": 5, "tx_bytes": 5}}],
+          {"sessions": int(t)}, L, memory_used=100)
+H.add(5.0)
+smp = list(H.samples())
+check([x["at"] for x in smp] == [3.0, 4.0, 5.0], f"the last `keep` samples: {[x['at'] for x in smp]}")
+check(smp[0]["interfaces"] == [{"name": "pg0", "counters": {"rx_bytes": 30, "tx_bytes": 1}}],
+      f"an interface's counters; past the interface cap, none: {smp[0]['interfaces']}")
+check(smp[2]["interfaces"] == [] and smp[2]["cgnat"] is None and smp[2]["workers"] == []
+      and smp[2]["memory_used_bytes"] is None, "a sample that read nothing has nothing")
+check(smp[1]["cgnat"] == {"sessions": 4} and smp[1]["memory_used_bytes"] == 100
+      and smp[1]["workers"][0]["busy_ratio"] == 0.5 and smp[1]["workers"][0]["cpu"] == 3,
+      "the CGNAT, the workers and the memory")
+check([x["at"] for x in H.samples(since=3.5)] == [4.0, 5.0], "since a time")
+only = list(H.samples(interfaces=["nope"], cgnat=False, workers=False, memory=False))
+check(only[0]["interfaces"] == [] and only[0]["cgnat"] is None and only[0]["workers"] == [],
+      "only what is asked")
+H._put(H.counters, "Q", ("if", "pg9", "rx_bytes"), 1)
+check(len(H.counters[("if", "pg9", "rx_bytes")]) == len(H.times),
+      "_put pads a new series to the samples before it")
+del H.counters[("if", "pg9", "rx_bytes")]
+D = H.dump()
+H2 = A.History(keep=3)
+check(H2.load(D, now=6.0, interval=60) and list(H2.times) == [3.0, 4.0, 5.0]
+      and [x["interfaces"] for x in H2.samples()] == [x["interfaces"] for x in smp],
+      "dump() read back by load()")
+check(not A.History(keep=3).load(D, now=10000.0, interval=1),
+      "samples older than the span kept are not read back")
+check(not A.History().load({"version": 9}) and not A.History().load([]),
+      "a file this does not understand is not read")
+check(A.history_key("wk\t0\tbusy_ratio") == ("wk", 0, "busy_ratio")
+      and A.history_key("if\t10\trx_bytes") == ("if", "10", "rx_bytes"),
+      "a series key read back: a worker's number is a number, an interface named 10 is not")
+with tempfile.TemporaryDirectory() as _d:
+    _hp = os.path.join(_d, "api", "history.json")
+    check(H.save(_hp) and os.path.exists(_hp), "save() writes the file, its directory too")
+    H3 = A.History(keep=3)
+    _now_was = A.time.time
+    A.time.time = lambda: 6.0
+    check(H3.restore(_hp) and len(H3.times) == 3, "restore() reads it back")
+    A.time.time = _now_was
+    check(not A.History().restore(os.path.join(_d, "none")), "no file, nothing restored")
+H4 = A.History()
+with tempfile.NamedTemporaryFile("w", delete=False) as f:
+    f.write("MemTotal: 1000 kB\nMemAvailable: 400 kB\n")
+A.take_sample(H4, dict(STATS, **WS), "3-4", meminfo=f.name, now=9.0,
+              meter=type("M", (), {"busy": lambda self: {0: (0.25, 60000)}})())
+os.unlink(f.name)
+s9 = next(H4.samples())
+check(s9["at"] == 9.0 and s9["interfaces"][0]["name"] == "pg0"
+      and s9["cgnat"]["sessions"] == 40 and len(s9["workers"]) == 2
+      and s9["workers"][0]["busy_ratio"] == 0.25 and s9["workers"][0]["busy_window_ms"] == 60000
+      and s9["memory_used_bytes"] == 600 * 1024,
+      f"take_sample reads every part: {s9}")
+A.take_sample(H4, {}, "", meminfo="/none", now=10.0)
+s10 = list(H4.samples())[-1]
+check(s10["interfaces"] == [] and s10["cgnat"] is None and s10["memory_used_bytes"] is None,
+      "a dataplane that answers nothing is a sample of nothing, not of zeros")
+
+print("=== #533: grpc.health.v1 ===")
+check(A.health_status("", True) == "SERVING"
+      and A.health_status("prisma.v1.ConfigService", False) == "SERVING"
+      and A.health_status("prisma.v1.TelemetryService", False) == "NOT_SERVING"
+      and A.health_status("prisma.v1.OperationalService", True) == "SERVING"
+      and A.health_status("prisma.v1.Nope", True) is None,
+      "SERVING; NOT_SERVING for what needs the dataplane when it does not answer; "
+      "None for a service not served")
+check(A.stats_ok(lambda: {"/sys/heartbeat": 1}) and not A.stats_ok(lambda: {})
+      and not A.stats_ok(lambda: 1 / 0), "the statistics segment answers, or does not")
 
 
 class PB:

@@ -20,7 +20,7 @@ VTY's refusal in the VTY's words and a change made through the API is in
 
 | | |
 |---|---|
-| **What** | `ConfigService` (the candidate and its commit), `OperationalService` (typed reads and any `show`), `TelemetryService` (a stream of counters, CGNAT totals and configuration events). |
+| **What** | `ConfigService` (the candidate and its commit), `OperationalService` (typed reads and any `show`), `TelemetryService` (a stream of counters, CGNAT totals and configuration events, and a day of their history), `RouteService` (the routing table, typed and paged), `SessionService` (who a client is to the box), and gRPC's own `grpc.health.v1.Health`. |
 | **Why** | A web interface drives the box without screen-scraping a terminal, and without becoming a second place the configuration is decided. |
 | **Who** | A management client holding a client certificate the box trusts; each call acts as the box account its certificate names. |
 | **Where** | The server runs in the management container; the host listens on the management address and carries the connection to it. |
@@ -40,6 +40,14 @@ VTY's refusal in the VTY's words and a change made through the API is in
   only ever added, with a number never used before; nothing is renumbered,
   retyped or reused. Anything else is `prisma.v2`, served beside `v1`. The
   rules are at the head of the `.proto`.
+* **Services are grouped by subject** (#533): a new rpc goes into the
+  service its subject belongs to, and a new service comes only with a new
+  subject - the routing table (`RouteService`), the client's own session
+  (`SessionService`). A client that generates its server traits with stubs
+  answering `UNIMPLEMENTED` by default (tonic-prost-build's
+  `generate_default_stubs(true)`) keeps building when an rpc is added to a
+  service it implements, as a mock; one that does not has to implement the
+  new rpc before it builds.
 * **Errors** are gRPC status codes, with the VTY's own account of the refusal
   in the trailing metadata key `prisma-diagnostics-bin` (a serialized
   `Diagnostics`): `INVALID_ARGUMENT` for a line the VTY refuses,
@@ -72,7 +80,89 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `GetPolicyCounters` | `show policy <name>`'s hits (#538): per route-map a policy is in - its `attach_point` as `test policy ... at` says it, every place applying it (`applied_at`), the daemon that runs it - how many routes each term matched; `counted` false when the daemon reported no such map, `compiled` false for a term with no clause at that use. An empty `policy` is every policy, each map once; a policy that does not exist is `NOT_FOUND` |
 | | `TestPolicy` | `test policy <p> route\|rib <prefix> ... at <use>` (#538): `attributes` describe the route, as the words `route` takes; `rib` reads it off the box instead, with `vrf` and `neighbor`. Answers the verdict, the deciding policy and term, every step, the route before and after the sets, what was assumed and what is refused there. A use or an attribute it does not take is `INVALID_ARGUMENT`, a policy that does not exist `NOT_FOUND` |
 | | `Show` | any `show`, `ping`, `traceroute` or `mtr`, as text (not `monitor`: it redraws a terminal, and a call has none - the telemetry stream is the API's live view) |
-| TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events |
+| TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events - each `Event` with the `revision` it left and the commit's `comment` (#533) |
+| | `GetHistory` | the counters the server sampled, a minute apart, for the last 24 hours (#533): interfaces, CGNAT totals, workers, memory; streamed, a sample a message |
+| RouteService | `ListRoutes` | FRR's RIB as `show ip route` reads it (#533): every VRF and both families, a page at a time from one snapshot, filtered by VRF, family, prefix (and what is inside it), protocol and selected |
+| | `GetRouteSummary` | `show ip route vrf all summary`: per VRF, family and protocol, the routes in the RIB and in the FIB |
+| SessionService | `WhoAmI` | the account the client certificate names, and the role the VTY login gives it (#533) |
+| grpc.health.v1.Health | `Check`, `Watch` | `SERVING` for `""` and each prisma.v1 service; `NOT_SERVING` for `OperationalService` and `TelemetryService` while the dataplane's statistics segment does not answer; `NOT_FOUND` for a service not served |
+
+`GetSystem` also carries, since #533, the host's RAM as numbers
+(`memory_total_bytes`, `memory_used_bytes` - MemTotal less MemAvailable, so the
+dataplane's hugepages count as used - and `memory_hugepages_bytes`) and a
+`WorkerLoad` per dataplane worker; `Interface` carries `speed_bps`, the link
+speed the dataplane reports (0 when it reports none).
+
+### A worker's load
+
+A polling worker's CPU is 100% whatever it carries, so `WorkerLoad` says what
+the dataplane counts:
+
+* `vectors_per_call` and `loops_per_second` are VPP's own
+  (`/sys/vector_rate_per_worker`, `/sys/loops_per_worker`), updated by the
+  dataplane every 10 seconds; packets per graph call is near 0 idle and 256
+  when every call takes a full frame.
+* `busy_ratio` is the share of the worker's node time its graph took over
+  `busy_window_ms`: the clocks `show runtime` gives the nodes that run only
+  with packets, over every node's, the input nodes' polling included. It
+  leaves out the receive inside the input node - that shares its clocks with
+  the polling - so a worker that cannot keep up reads below 1: in
+  `lab/api-grpc.sh` a worker saturated by a packet generator (256 vectors a
+  call) read 0.49, the same worker polling an idle stream 0.0.
+* A worker running under 1,000 loops a second waits for interrupts rather
+  than polling: it reads 0 busy and 0 vectors, since the dataplane does not
+  update its vector rate while it waits.
+
+A first measure of busy as one less the loop rate over the idle loop rate was
+refuted in the lab: a worker's idle rate depends on what it polls (6.7 million
+loops a second polling nothing, 750 thousand polling one packet generator), so
+no single idle figure holds.
+
+### The routing table
+
+`ListRoutes` is built for a full table. The first call (no `page_token`) asks
+zebra for the routes the filters name - one `show ip route vrf <name> ...
+json` a VRF and family, `default` first - and reads its answer as it streams,
+a route at a time, into a snapshot file of the routes process (one process per
+account, apart from its operational one); its first page is answered as soon
+as it is read. Each `next_page_token` continues the same snapshot from the byte
+the page before ended at, so a table that changes while it is paged is paged
+once, without holes or repeats. `total` is set, and `total_known` true, once
+the snapshot has been read whole.
+
+Measured in `lab/api-grpc.sh` with 200,001 routes in zebra's RIB, paged 5000
+at a time: the first page in 1.0 s, all of them in 12.4 s; the server's
+largest process peaked at 96,592 kB resident, vtysh - which passes zebra's
+answer on as it comes - at 22,252 kB, and zebra at 196,176 kB while it
+answered. A page holds at most 5000 routes (default 1000), well under a 4 MB
+message.
+
+* A snapshot nobody pages for 10 minutes is dropped; its token then answers
+  `FAILED_PRECONDITION`, and the client starts again. A routes process holds
+  four snapshots at most, the oldest dropped first.
+* A page waits up to 60 seconds for the snapshot to reach it, then answers
+  what it has with a token at the point it reached.
+* If zebra stops answering part-way, the routes read are handed out and the
+  next call is `UNAVAILABLE` with the reason - a short table is never passed
+  off as the whole one.
+* A VRF zebra does not have is `NOT_FOUND`; a protocol FRR does not name, a
+  prefix that is not one, or a family other than 4 or 6 is
+  `INVALID_ARGUMENT`.
+
+### The history
+
+The server samples the counters once a minute and keeps 24 hours of them:
+every interface's (up to 256 interfaces; the 257th is not recorded), the
+CGNAT's totals, each worker's load and the memory used - in arrays of machine
+words, some 80 KB an interface a day. Counters are the dataplane's running
+totals, as `Subscribe` sends them: a client takes differences, and a total
+smaller than the one before is a dataplane that restarted.
+
+It is written every five samples, and when the server stops, to
+`/run/prisma-routing/api/history.json` - the host's `/run`, which the
+management container shares - so a restart of the server or of its container
+(an upgrade does both) reads it back, and a client's graphs go on. A reboot
+empties it, as it zeroes the dataplane's counters.
 
 ## Limits a client meets
 
@@ -90,13 +180,23 @@ VTY's refusal in the VTY's words and a change made through the API is in
   one of its own (0.148.6). So a status poll is never queued behind a
   console command or a commit: in `lab/api-grpc.sh`, `GetVersion` answered
   in 0.06 s while a `Show` ran 14 s. Two `Show`s of one account still run
-  one after the other.
+  one after the other. `ListRoutes` has a process of its own too (#533),
+  kept 10 minutes between uses, as long as its snapshots.
+* **An event's revision is read when it is sent** (#533): the running
+  configuration's id as the subscribing account reads it, so it is the id
+  that account's `CommitResponse` and `GetRunning` carry. An account whose
+  role sees less of the configuration (a read-only account sees no pool)
+  reads a different id for the same configuration. When another commit lands
+  while it is read, the event's revision is empty and the later commit's
+  event carries it.
 
 ## Security
 
 * **Mutual TLS only.** The server refuses to start without
   `/etc/prisma-routing/api/server.key`, `server.crt` and `clients-ca.crt`, and
-  refuses a handshake without a client certificate that CA signed.
+  refuses a handshake without a client certificate that CA signed. That holds
+  for a health check too: it needs a certificate the CA signed, though not
+  one naming a box account.
 * **The account is the client certificate's Common Name.** It MUST be an
   account on the box; it gets the roles the VTY login gives it (`prisma-admin`
   configures everything, `prisma-cgnat` the CGNAT, anyone else reads), and the
@@ -209,7 +309,19 @@ grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
   -d '{"policy": "UP", "prefix": "203.0.113.0/24", "attach_point": "import",
        "attributes": {"neighbor": "10.0.0.2", "community": "65001:10"}}' \
   10.40.200.166:50051 prisma.v1.OperationalService/TestPolicy
+grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
+  -import-path proto -proto prisma/v1/prisma.proto \
+  -d '{"vrf": "default", "protocol": "bgp", "page_size": 1000}' \
+  10.40.200.166:50051 prisma.v1.RouteService/ListRoutes
 ```
+
+The health check is gRPC's own, so a stock client works with the same
+certificate - `grpc_health_probe -tls -tls-ca-cert ca.crt -tls-client-cert
+webui.crt -tls-client-key webui.key -tls-server-name prisma-api -addr
+10.40.200.166:50051`, or tonic's `tonic-health` client. Its contract is
+[`api/health/v1/health.proto`](../api/health/v1/health.proto), gRPC's
+`grpc.health.v1` field for field; a client using a health crate does not need
+it.
 
 `show policy route <prefix>` - which policy decided a route the box holds -
 has no typed call: it is `Show`'s, as text, and the same answer `TestPolicy`
@@ -219,7 +331,7 @@ gives with `rib` at each use.
 
 * `test/test_api_contract.py` reads the contract against the rules above
   without protoc: unique field numbers, no Rust keyword as a name, the services
-  the issue asked for.
+  the issue asked for, and the health protocol number for number.
 * `test/test_apiserver.py` drives the server's core without gRPC: the VTY's
   output read into diagnostics, the lines a call becomes, sessions in their
   own processes, a commit over a moved base, the readers, the telemetry
@@ -230,9 +342,15 @@ gives with `rib` at each use.
   reads the result through the prompt, streams pg0's counters while traffic
   runs, lists a policy applied on a neighbor, counts its terms in bgpd's map
   and tests a route through it, and is refused for an account without the
-  role and for a client with no certificate.
+  role and for a client with no certificate. Since #533 it also pages a RIB
+  of 200,000 routes and a VRF beside it, reads a worker busy under a packet
+  generator and idle without one, matches a commit's event to its
+  `CommitResponse`, reads the history back through a second server, and asks
+  the health service.
 
 **Not covered by a lab**: the host's socket and proxy in front of a running
-management container (the lab runs the server directly), and a client in
-Rust. The first is held by `test/test_api_configure.sh`'s stubs; the second is
+management container (the lab runs the server directly), a client in Rust,
+and a link speed other than 0 - neither the lab's packet generator nor an
+`af_packet` interface reports one, so the conversion from the dataplane's
+kbps is the unit test's. The first is held by `test/test_api_configure.sh`'s stubs; the second is
 the web interface's repository's to hold.

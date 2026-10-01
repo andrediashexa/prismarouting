@@ -13583,7 +13583,8 @@ class Shell:
             self.apply(Config.parse(backup))
             return
 
-        self.record_applied(vppapi.identity()[0], self.candidate)
+        self.record_applied(vppapi.identity()[0], self.candidate,
+                            comment=comment)
         if self.from_rollback:
             self.state.bump("rollbacks")
             self.from_rollback = False
@@ -13885,7 +13886,8 @@ class Shell:
         if not self.apply(target):
             return False
         self.record_applied("confirm-expired", target, confirm_pending="no",
-                            confirm_deadline=0)
+                            confirm_deadline=0,
+                            comment="commit confirmed expired")
         self.state.bump("confirm_reverts")
         try:
             self.confirm.clear()
@@ -13945,12 +13947,19 @@ class Shell:
         self.candidate = self.running_config()
 
     @sigint_ignored
-    def record_applied(self, by, cfg, **fields):
+    def record_applied(self, by, cfg, comment="", **fields):
         """
         Tell the SNMP agent a configuration took effect (#524): who, when,
         and whether a reboot would lose it - the saved file compared with
-        what is running now, read as the boot reads it.
+        what is running now, read as the boot reads it. And for the API's
+        events (#533), its comment. Not its revision: the API's id is of the
+        running configuration as read back, which lab/api-grpc.sh measured
+        differing from the candidate's text it was committed from - the
+        server reads it when it sends the event.
         """
+        # One line of the state file per key: a comment is a line typed at
+        # the prompt, and nothing else in it may break the file's shape.
+        fields["comment"] = " ".join(str(comment).split())
         try:
             with open(CONFIG_PATH) as fh:
                 saved = Config.parse(fh.read()).text()
@@ -22264,7 +22273,7 @@ class Shell:
             # outlives the boot, and so does the deadline (#212).
             pending = self.confirm.read()
             self.record_applied(
-                "boot", target,
+                "boot", target, comment="loaded from file",
                 confirm_pending="yes" if pending else "no",
                 confirm_deadline=int(pending["deadline"]) if pending else 0)
             try:

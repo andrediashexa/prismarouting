@@ -1,0 +1,35 @@
+// The standard gRPC health checking protocol (#533), served beside prisma.v1
+// so a client's own health probe (tonic-health, grpc_health_probe) works
+// against the box unchanged. The messages and the service are gRPC's
+// grpc.health.v1, field for field; this file sits under api/health and not
+// under api/grpc because its Python stubs are generated beside prisma.v1's,
+// and a stubs package named `grpc` would shadow the gRPC library itself.
+//
+// The box answers SERVING for "" (the server) and for each prisma.v1
+// service while it runs, and NOT_SERVING for prisma.v1.TelemetryService and
+// prisma.v1.OperationalService while the dataplane's statistics segment
+// cannot be read. Like every call, a health check needs the client
+// certificate: the box serves mutual TLS only.
+
+syntax = "proto3";
+
+package grpc.health.v1;
+
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+}
+
+service Health {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc Watch(HealthCheckRequest) returns (stream HealthCheckResponse);
+}
