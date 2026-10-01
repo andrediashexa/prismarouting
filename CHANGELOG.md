@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.10 - routing policy, phase B: more places a policy applies
+
+### Added
+
 * **Routing policy, phase B: a policy wherever the routing decides
   something.**
   ([#536](https://github.com/andrediashexa/hexarouting/issues/536))
@@ -98,8 +104,6 @@ version has a chance of seeing it.
   `attribute-map`, a `distribute-list route-map` in OSPF and IS-IS, and
   OSPF's `table-map` - so what an IGP installs is filtered by its FIB
   policy. Phase A's policies compile byte for byte as 0.148.9 did.
-
-### Fixed
 
 ## 0.148.9 - routing policy, phase A: the BGP an ISP uses
 
