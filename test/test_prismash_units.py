@@ -1922,11 +1922,52 @@ print("\n=== Shell.do_pool: the statements, bounded where the request is "
 # Mutation shown red: drop the Pool.check_order() refusal.
 sh = shell()
 sh.mode, sh.pool = "pool", Pool("A")
-sh.do_pool("inside 10.0.0.0/8")
-sh.do_pool("outside 203.0.113.0/24")
+sh.do_pool("prefix-inside 10.0.0.0/8")
+sh.do_pool("prefix-outside 203.0.113.0/24")
 check(sh.pool.inside == ["10.0.0.0/8"]
       and sh.pool.outside == ["203.0.113.0/24"],
-      "inside and outside append")
+      "prefix-inside and prefix-outside append")
+# The old spellings, typed by habit or pasted from an earlier release's saved
+# file, are still read as the same statements (#531) - and `no` takes them too.
+sh.do_pool("inside 10.1.0.0/16")
+sh.do_pool("outside 198.51.100.0/30")
+check(sh.pool.inside == ["10.0.0.0/8", "10.1.0.0/16"]
+      and sh.pool.outside == ["203.0.113.0/24", "198.51.100.0/30"],
+      f"inside / outside are read as prefix-inside / -outside: "
+      f"{sh.pool.inside} {sh.pool.outside}")
+sh.do_pool("no inside 10.1.0.0/16")
+sh.do_pool("no prefix-outside 198.51.100.0/30")
+check(sh.pool.inside == ["10.0.0.0/8"]
+      and sh.pool.outside == ["203.0.113.0/24"],
+      f"and removed by either spelling after no: {sh.pool.inside} "
+      f"{sh.pool.outside}")
+rv, text = driven(sh.do_pool, "no prefix-inside 192.0.2.0/24")
+check("the pool has no prefix-inside 192.0.2.0/24" in text,
+      f"a prefix the pool does not have is named in the new word: {text!r}")
+check(prismash.pool_prefix_spelled(["inside", "10.0.0.0/8"])
+      == ["prefix-inside", "10.0.0.0/8"]
+      and prismash.pool_prefix_spelled(["no", "outside", "x"])
+      == ["no", "prefix-outside", "x"]
+      and prismash.pool_prefix_spelled(["bypass", "inside", "x"])
+      == ["bypass", "inside", "x"]
+      and prismash.pool_prefix_spelled([]) == [],
+      "pool_prefix_spelled renames the statement, and the word after no, "
+      "and nothing else")
+_half = Pool("H")
+_half.inside = ["100.64.0.0/22"]
+check(prismash.pool_prefixes_missing(_half)
+      == ("pool 'H': no prefix-outside",
+          "e.g. 'prefix-outside 203.0.113.0/28'"),
+      f"one half missing names that half: {prismash.pool_prefixes_missing(_half)}")
+_half = Pool("O")
+_half.outside = ["203.0.113.0/30"]
+check(prismash.pool_prefixes_missing(_half)
+      == ("pool 'O': no prefix-inside", "e.g. 'prefix-inside 100.64.0.0/10'"),
+      f"the other half: {prismash.pool_prefixes_missing(_half)}")
+check(prismash.pool_prefixes_missing(Pool("E"))
+      == ("pool 'E': no prefix-inside and no prefix-outside",
+          "e.g. 'prefix-inside 100.64.0.0/10', 'prefix-outside 203.0.113.0/28'"),
+      f"both missing names both: {prismash.pool_prefixes_missing(Pool('E'))}")
 rv, text = driven(sh.do_pool, "block-size 100")
 check(sh.pool.block_size != "100" and "power of two" in text,
       f"100 is not a power of two and is said here, not at commit: {text!r}")

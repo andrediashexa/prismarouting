@@ -74,8 +74,13 @@ print("  'conf' -> configure ; 'show cgnat po' -> pool")
 
 print("\n=== modo pool: opcoes proprias ===")
 o, _, _ = opts("pool", "")
-check({"inside", "outside", "block-size", "policy", "mode", "exit"} <= o,
-      f"faltam opcoes de pool: {o}")
+check({"prefix-inside", "prefix-outside", "block-size", "policy", "mode",
+       "exit"} <= o, f"faltam opcoes de pool: {o}")
+# The old words are read and never offered (#531): `inside` / `outside` are an
+# interface's role under the same `cgnat`, and offering both would be the
+# confusion the rename is for.
+check(not {"inside", "outside"} & o,
+      f"a pool offers inside/outside again: {sorted(o & {'inside', 'outside'})}")
 o, _, _ = opts("pool", "policy ")
 check(o == {"interleaved", "blocked"}, f"policy should have two options: {o}")
 o, _, _ = opts("pool", "mode ")
@@ -83,12 +88,12 @@ check(o == {"deterministic", "dynamic"}, f"mode should have two options: {o}")
 print(f"  policy -> {sorted(o)} ; mode has two options")
 
 print("\n=== a free argument becomes a hint, not an empty list ===")
-o, hint, _ = opts("pool", "inside ")
+o, hint, _ = opts("pool", "prefix-inside ")
 check(hint == prismash.ARG_PREFIX, f"expected a prefix hint, got {hint!r}")
-check(not o, f"should not list options after 'inside': {o}")
+check(not o, f"should not list options after 'prefix-inside': {o}")
 o, hint, _ = opts("config", "block-holddown ", nat=("nat", "cgnat"))
 check(hint == prismash.ARG_SECONDS, f"expected a numeric hint, got {hint!r}")
-print(f"  'inside ' -> {prismash.ARG_PREFIX} ; "
+print(f"  'prefix-inside ' -> {prismash.ARG_PREFIX} ; "
       f"'block-holddown ' -> {prismash.ARG_SECONDS}")
 
 print("\n=== config: CGNAT and routing at the same level ===")
@@ -887,7 +892,7 @@ sh.feed("nat")
 sh.feed("cgnat")
 sh.feed("pool p")
 opts, _, _ = sh._options("", False)
-check("inside" in opts and "cgnat" not in opts,
+check("prefix-inside" in opts and "cgnat" not in opts,
       f"a pool still offers its own tree: {sorted(opts)[:6]}")
 sh.feed("top")
 

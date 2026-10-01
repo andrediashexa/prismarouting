@@ -977,8 +977,8 @@ echo "=========== a subscriber-facing port speaking OSPF, in both spellings ====
 # forwards is touched by it.
 facing_check() {   # extra VTY lines, then commit check
   $HX -c "configure" \
-      -c "nat" -c "cgnat" -c "pool facing" -c "inside 10.0.0.0/24" \
-      -c "outside 203.0.113.8/32" -c "block-size 512" -c "exit" \
+      -c "nat" -c "cgnat" -c "pool facing" -c "prefix-inside 10.0.0.0/24" \
+      -c "prefix-outside 203.0.113.8/32" -c "block-size 512" -c "exit" \
       -c "top" "$@" -c "commit check" 2>&1
 }
 FACING_BARE=$(facing_check)

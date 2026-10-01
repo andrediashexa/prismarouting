@@ -382,7 +382,7 @@ echo "=== the pair is asked to diverge, and the commit refuses (#8) ==="
 pair_pool() {   # <box>: the same pool on both, which is what makes the
                 # mapping a function of the configuration and not of the box
   hx "$1" -c "configure" -c "nat" -c "cgnat" -c "pool residential" \
-     -c "inside 100.64.0.0/26" -c "outside 200.150.16.0/28" \
+     -c "prefix-inside 100.64.0.0/26" -c "prefix-outside 200.150.16.0/28" \
      -c "block-size 2048" -c "mode deterministic" -c "exit" -c "commit"
 }
 pair_pool a | sed 's/^/  a: /'
@@ -400,7 +400,7 @@ new_pool() {   # <box> <commit words...>
   _box=$1; shift
   PRISMA_PEER_CONFIG=/etc/prisma-routing/peer-for-b.conf \
   hx "$_box" -c "configure" -c "nat" -c "cgnat" -c "pool business" \
-     -c "inside 100.64.1.0/26" -c "outside 200.150.17.0/28" \
+     -c "prefix-inside 100.64.1.0/26" -c "prefix-outside 200.150.17.0/28" \
      -c "block-size 2048" -c "mode deterministic" -c "exit" -c "top" -c "$*"
 }
 DIVERGE=$(new_pool b commit)

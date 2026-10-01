@@ -1967,8 +1967,8 @@ drive_console() {
   wait_for "[edit nat / cgnat]" 30 "the cgnat level to open" || return 1
   send "pool lab-a"
   wait_for "[edit nat / cgnat / pool lab-a]" 30 "the pool block to open" || return 1
-  send "inside 100.64.0.0/22"
-  send "outside 198.51.100.64/30"
+  send "prefix-inside 100.64.0.0/22"
+  send "prefix-outside 198.51.100.64/30"
   send "exit"
   wait_for "[edit nat / cgnat]" 30 "the pool block to close, back to cgnat" || return 1
   send "top"

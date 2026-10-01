@@ -495,8 +495,11 @@ _sh = shell()
 _sh.running_config = lambda: config.Config()
 _cfg.pools["subs"] = _p
 _rv, _text = driven(_sh.apply, _cfg, check_only=True)
-says("half a pool", _text, "error: pool 'subs': inside and outside required",
-     _rv)
+says("half a pool", _text, "error: pool 'subs': no prefix-outside", _rv)
+check("e.g. 'prefix-outside 203.0.113.0/28'" in _text
+      and "prefix-inside" not in _text,
+      f"it shows the statement that supplies the missing half, and only it "
+      f"(#531): {_text!r}")
 print("  a pool with an inside and no outside is refused at check time")
 
 print("\n=== a block-stride on a deterministic pool, by all three routes ===")
@@ -2570,7 +2573,9 @@ OVER_AT_MOST = 22
 # rows it is about are folded through print_prose or measured at runtime now,
 # and the same reading found two of the older 50 - the interface table's rows,
 # whose widths were already measured off the box - were never foldable either.
-UNSAFE_AT_MOST = 48
+# AND 47 SINCE #531: the half-a-pool refusal put a pool's name in front of
+# the VTY's own words through err(); it is a verdict and a prose row now.
+UNSAFE_AT_MOST = 47
 
 
 def ceiling(found, allowed, what, detail):

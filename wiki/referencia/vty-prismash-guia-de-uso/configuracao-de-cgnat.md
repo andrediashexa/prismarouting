@@ -7,7 +7,7 @@ prisma> configure
 prisma# [edit] nat
 prisma# [edit nat] cgnat
 prisma# [edit nat / cgnat] pool residencial
-prisma# [edit nat / cgnat / pool residencial] inside 100.64.0.0/22
+prisma# [edit nat / cgnat / pool residencial] prefix-inside 100.64.0.0/22
 prisma# [edit nat / cgnat / pool residencial] exit
 prisma# [edit nat / cgnat] top
 prisma# [edit] interface ens18
@@ -132,8 +132,8 @@ Um pool dinâmico, ou determinístico com `reserve`, numa caixa que não exporta
 nat
  cgnat
   pool residencial
-   inside 100.64.0.0/22
-   outside 203.0.113.0/28
+   prefix-inside 100.64.0.0/22
+   prefix-outside 203.0.113.0/28
    block-size 512
    policy interleaved
    mode deterministic

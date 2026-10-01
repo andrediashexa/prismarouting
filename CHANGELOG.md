@@ -77,6 +77,26 @@ version has a chance of seeing it.
 
 ### Added
 
+### Changed
+
+* **A pool's prefixes are `prefix-inside` and `prefix-outside`.**
+  ([#531](https://github.com/andrediashexa/hexarouting/issues/531))
+  Asked for by the maintainer on the X520 bench: a pool committed without its
+  prefixes was refused with "inside and outside required", and under `nat` /
+  `cgnat` the same two words are an interface's role (`interface <name>
+  inside|outside`), which is what it was read as. The pool's statements are
+  `prefix-inside <A.B.C.D/M>` and `prefix-outside <A.B.C.D/M>` now, and `no`
+  takes them the same way. **The old spellings still load**: a saved file, an
+  upgraded box's file, a rollback revision and a line typed or pasted at the
+  prompt are all read, as the new statements; `?` offers only the new ones and
+  everything the box writes - `show running-config`, `show this`, `save`, the
+  revisions - uses them. The refusal says which is missing and shows the
+  statement: `pool 'X': no prefix-inside and no prefix-outside`, then `e.g.
+  'prefix-inside 100.64.0.0/10', 'prefix-outside 203.0.113.0/28'`. The
+  interface roles do not change. `lab/commit.sh` loads a file saved with the
+  old words through the boot's `--load` and reads the pool on the dataplane
+  and the new words in the running configuration.
+
 ### Fixed
 
 ## 0.148.2 - the Linux name read over the new connection carries no NUL

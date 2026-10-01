@@ -821,6 +821,17 @@ def ungroup_static(lines: list, descriptions=None, refused=None) -> list:
 CGNAT_HEADER = "! cgnat"
 
 
+#: A pool's two prefix statements, as each spelling is read (#531). They are
+#: `prefix-inside` and `prefix-outside`: under `nat` > `cgnat` the bare words
+#: `inside` and `outside` also name an INTERFACE's role (#465), and an
+#: operator on the X520 bench read the pool's "inside and outside required" as
+#: asking for that. The old spellings are still read - every box saved them,
+#: a rollback revision holds them, and `show bpa config` still prints the
+#: dataplane's own `inside`/`outside` - and nothing this VTY writes uses them.
+POOL_PREFIX_WORDS = {"prefix-inside": "inside", "prefix-outside": "outside",
+                     "inside": "inside", "outside": "outside"}
+
+
 class Pool:
     """One CGNAT pool. Order of prefixes is preserved for a stable diff."""
 
@@ -1129,8 +1140,8 @@ class Pool:
         port is not a change anyone would ask for (issue #69).
         """
         out = [f"cgnat pool {self.name}"]
-        out += [f" inside {p}" for p in self.inside]
-        out += [f" outside {p}" for p in self.outside]
+        out += [f" prefix-inside {p}" for p in self.inside]
+        out += [f" prefix-outside {p}" for p in self.outside]
         out.append(f" block-size {self.block_size}")
         if self.ports:
             out.append(f" ports {self.ports}")
@@ -3560,11 +3571,12 @@ class Config:
         w = s.split()
         if not w:
             return None
-        if w[0] in ("inside", "outside") and len(w) > 1:
-            why = prefix_error(w[0], w[1])
+        side = POOL_PREFIX_WORDS.get(w[0])
+        if side and len(w) > 1:
+            why = prefix_error(f"prefix-{side}", w[1])
             if why:
                 return prefix_why(why)
-            (pool.inside if w[0] == "inside" else pool.outside).append(w[1])
+            (pool.inside if side == "inside" else pool.outside).append(w[1])
         elif w[0] == "block-size" and len(w) > 1:
             # NOT BOUNDED HERE, and that is the whole of #357. This function
             # is the reader for THREE things: a statement typed at the prompt,

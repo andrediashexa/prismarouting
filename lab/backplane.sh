@@ -60,8 +60,8 @@ $HX -c "configure" \
   -c "interface ens18" -c "linux-name ens18" -c "ipv4 address 100.64.0.1/22" -c "no shutdown" -c "exit" \
   -c "interface ens19" -c "linux-name ens19" -c "ipv4 address 198.51.100.2/30" -c "no shutdown" -c "exit" \
   -c "router static" -c "0.0.0.0/0 next-hop 198.51.100.1" -c "exit" \
-  -c "nat" -c "cgnat" -c "pool residencial" -c "inside 100.64.0.0/22" \
-  -c "outside 203.0.113.0/28" -c "block-size 512" -c "exit" \
+  -c "nat" -c "cgnat" -c "pool residencial" -c "prefix-inside 100.64.0.0/22" \
+  -c "prefix-outside 203.0.113.0/28" -c "block-size 512" -c "exit" \
   -c "interface ens18 inside" -c "interface ens19 outside" \
   -c "commit" >/tmp/setup.log 2>&1 || { cat /tmp/setup.log; }
 

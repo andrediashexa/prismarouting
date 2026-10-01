@@ -125,8 +125,8 @@ prisma> configure
 prisma# [edit] nat
 prisma# [edit nat] cgnat
 prisma# [edit nat / cgnat] pool residencial
-prisma# [edit nat / cgnat / pool residencial] inside 100.64.0.0/22
-prisma# [edit nat / cgnat / pool residencial] outside 203.0.113.0/28
+prisma# [edit nat / cgnat / pool residencial] prefix-inside 100.64.0.0/22
+prisma# [edit nat / cgnat / pool residencial] prefix-outside 203.0.113.0/28
 prisma# [edit nat / cgnat / pool residencial] block-size 512
 prisma# [edit nat / cgnat / pool residencial] ports 1024 65535
 prisma# [edit nat / cgnat / pool residencial] policy interleaved
@@ -175,8 +175,8 @@ prisma# [edit] show configuration compare
 +nat
 + cgnat
 +  pool residencial
-+   inside 100.64.0.0/22
-+   outside 203.0.113.0/28
++   prefix-inside 100.64.0.0/22
++   prefix-outside 203.0.113.0/28
 +   block-size 512
 +   ports 1024 65535
 +   policy interleaved
@@ -208,7 +208,7 @@ O `commit check` recusa aqui o que não daria certo, e diz por quê. A recusa qu
 ```
 error: pool 'errado': public address 198.51.100.2 is configured on ens19
     interface ens19 / ipv4 address 198.51.100.2/30
-    nat / cgnat / pool errado / outside 198.51.100.0/30
+    nat / cgnat / pool errado / prefix-outside 198.51.100.0/30
 ```
 
 Ela existe porque o CGNAT olha o pacote antes de a caixa decidir se ele é para ela mesma: um endereço de enlace dentro do pool faz a sessão BGP daquele enlace cair sem motivo aparente. Corrija o `outside` para um prefixo que não esteja em interface nenhuma.

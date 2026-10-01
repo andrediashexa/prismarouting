@@ -981,13 +981,13 @@ nothing.
 nat
  cgnat
   pool tenant-a
-   inside 100.64.0.0/22
-   outside 200.150.0.16/30
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.16/30
    vrf 1
    exit
   pool tenant-b
-   inside 100.64.0.0/22
-   outside 200.150.0.32/30
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.32/30
    vrf 2
    exit
   exit

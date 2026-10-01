@@ -279,9 +279,16 @@ error: routing is configured and FRR is not answering
 
 A configuração não é o problema. Um daemon que não está de pé não recusa nada, não responde nada e não deixa log nenhum na candidata - quem for procurar o erro na configuração vai procurar muito tempo.
 
-### `pool '<nome>': inside and outside required`
+### `pool '<nome>': no prefix-inside` / `no prefix-outside`
 
-Um pool sem um dos dois lados não traduz nada. Não é um ajuste que se completa depois: um pool assim aceito seria um pool que existe e não serve.
+Um pool sem um dos dois lados não traduz nada. Não é um ajuste que se completa depois: um pool assim aceito seria um pool que existe e não serve. A recusa diz qual dos dois falta e mostra a instrução que o completa:
+
+```
+error: pool 'RFC6598': no prefix-inside and no prefix-outside
+    e.g. 'prefix-inside 100.64.0.0/10', 'prefix-outside 203.0.113.0/28'
+```
+
+São os **prefixos do pool** - quem chega (`prefix-inside`) e para onde é traduzido (`prefix-outside`) -, não o papel da interface (`interface <nome> inside|outside`), que é outra coisa. Até a versão 0.148.2 a mensagem dizia `inside and outside required`.
 
 ### `pool '<nome>' would be refused`
 

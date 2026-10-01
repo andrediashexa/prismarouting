@@ -164,8 +164,8 @@ interface pg0
 nat
  cgnat
   pool boot
-   inside 100.64.0.0/22
-   outside 200.150.0.16/28
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.16/28
    block-size 512
    exit
   exit
@@ -194,7 +194,7 @@ echo "=========== 6. and typed at a box that already carries it ==========="
 $HX -c "configure" -c "interface pg0" -c "ipv4 address 200.150.0.20/28" \
     -c "exit" -c "commit comment \"the uplink address\"" 2>&1 | sed 's/^/    /'
 TYPED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool typed" \
-        -c "inside 100.64.0.0/22" -c "outside 200.150.0.16/28" \
+        -c "prefix-inside 100.64.0.0/22" -c "prefix-outside 200.150.0.16/28" \
         -c "block-size 512" -c "exit" -c "commit" 2>&1); TYPED_RC=$?
 printf '%s\n' "$TYPED" | sed 's/^/    /'
 echo "  exit status: $TYPED_RC"
@@ -207,7 +207,7 @@ echo "=========== 7. a pool the VTY has no reason to refuse ==========="
 # A VTY that refused every pool would satisfy both of them, and the refusal
 # would have been a blanket one nobody could configure a box through.
 VTY_CLEAN=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool vtyclean" \
-            -c "inside 100.64.4.0/22" -c "outside 198.51.100.0/28" \
+            -c "prefix-inside 100.64.4.0/22" -c "prefix-outside 198.51.100.0/28" \
             -c "block-size 512" -c "exit" -c "commit" 2>&1); VTY_CLEAN_RC=$?
 printf '%s\n' "$VTY_CLEAN" | sed 's/^/    /'
 VTY_CLEAN_POOLS=$(vppctl show bpa pool | grep -c "^pool vtyclean" || true)
@@ -260,7 +260,7 @@ expect_said "and what the operator can do about it" \
 expect_in "and quotes the address statement whole" \
   "    interface pg0 / ipv4 address 200.150.0.20/28" "$BOOTLOAD"
 expect_in "and the pool statement whole" \
-  "    nat / cgnat / pool boot / outside 200.150.0.16/28" "$BOOTLOAD"
+  "    nat / cgnat / pool boot / prefix-outside 200.150.0.16/28" "$BOOTLOAD"
 expect "and NOTHING was applied: no pool" test "${BOOT_POOLS:-1}" -eq 0
 expect "and no address" test "${BOOT_L3:-1}" -eq 0
 
