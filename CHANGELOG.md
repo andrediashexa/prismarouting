@@ -79,6 +79,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Two things the policy compiler names alike are refused at commit.**
+  ([#543](https://github.com/andrediashexa/hexarouting/issues/543))
+  The compiler builds FRR names from the operator's, and a name may hold
+  `-`: a policy literally named `X-SUB` or `X-NOT` compiled its map to the
+  name of the map `from policy X` calls (or calls inverted, #542), a term
+  `1-Ta` of `X` its prefix list to term `a` of `X-T1`'s, a community a
+  `set community delete` names its list to a term's. FRR keeps one object
+  per name - the two maps' clauses merged, the two lists' entries pooled -
+  and nothing said so. The commit now refuses exactly those, naming both
+  owners and the FRR name; a configuration whose names do not meet is not
+  refused and compiles byte for byte as before (the golden files hold).
+  lab/policy-d.sh commits a policy named GATE-NOT beside UP's reject term
+  that calls GATE inverted, and is refused.
+
 ## 0.148.14 - a tenant VRF's Linux device, from the VTY
 
 ### Added

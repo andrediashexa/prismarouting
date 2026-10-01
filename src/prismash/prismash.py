@@ -10918,6 +10918,21 @@ class Shell:
                     self.say_finding("error", why.split(":")[0], why)
                     ok = False
 
+            # TWO THINGS UNDER ONE FRR NAME (#543): a policy named X-SUB
+            # beside X's called map, and the like - name_collisions() has
+            # the shapes. Refused only when this change brings it.
+            carried = {why for _, why in policy_mod.name_collisions(
+                policy_mod.parse(running.policy)[0],
+                policy_uses(running.routing))}
+            for _pname, why in policy_mod.name_collisions(
+                    policy_mod.parse(target.policy)[0],
+                    policy_uses(target.routing)):
+                if why in carried:
+                    self.say_finding("warning", why.split(":")[0], why)
+                else:
+                    self.say_finding("error", why.split(":")[0], why)
+                    ok = False
+
             # RTBH that would not drop (#535): discard_findings() has the
             # measurement. Refused only when this change brings it.
             _pt = policy_mod.parse(target.policy)[0]
