@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.148.16 - a policy line a daemon refuses fails the commit
+
+### Fixed
+
 * **A line the policy compiled to that a daemon refused went unnoticed, and
   the commit said "commit complete".**
   ([#539](https://github.com/andrediashexa/hexarouting/issues/539))
