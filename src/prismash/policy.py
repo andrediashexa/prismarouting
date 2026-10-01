@@ -1961,3 +1961,21 @@ def set_keys(pol, policy):
     return sorted({SET_KEYS[what] for p in reached(pol, chain(policy))
                    for term in pol.statements.get(p, {}).values()
                    for what, _ in term.sets if what in SET_KEYS})
+
+
+def added_members(pol, policy, what):
+    """
+    The members a use of `policy` - one, or a chain - adds to a route's
+    `what`, community or large-community (#538), when every action on it
+    adds; None when one sets or deletes, or none acts on it. A route read
+    after the use, less these, is the route before it - unless it arrived
+    already carrying one of them.
+    """
+    lists = pol.communities if what == "community" \
+        else pol.large_communities
+    ops = [args for p in reached(pol, chain(policy))
+           for term in pol.statements.get(p, {}).values()
+           for w, args in term.sets if w == what]
+    if not ops or any(op != "add" for op, _ in ops):
+        return None
+    return sorted({m for _, name in ops for m in lists.get(name, [])})

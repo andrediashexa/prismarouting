@@ -1020,6 +1020,11 @@ check(policy.set_keys(pd, "A+B") == ["as-path", "community",
       and policy.set_keys(pd, "CALL") == ["extended-community",
                                           "large-community"],
       f"set_keys: what a use may change: {policy.set_keys(pd, 'A+B')}")
+check(policy.added_members(pd, "A+B", "community") is None
+      and policy.added_members(pd, "A", "community") == ["65000:1",
+                                                         "65000:2"]
+      and policy.added_members(pd, "A", "large-community") is None,
+      "added_members: only when every action on the kind adds")
 ok("counters per term, the simulation, a route described")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

@@ -1789,8 +1789,9 @@ SHOW = {
                             "enterprise number filled in, to import", None)}),
     "lacp": ("LACP bundles: each member and whether it is in the bundle",
              None),
-    "policy": ("routing policies: each one, its terms, and where it is "
-               "applied", "[<policy>]"),
+    "policy": ("routing policies: each one, its terms, where it is "
+               "applied; named, what each term matched; route <prefix>, "
+               "which decided it", "[<policy> | route <prefix>]"),
     "system": ("this machine", {
         "cpu": ("which cores do what: configured, and in effect", None),
         "memory": ("the RAM by role: configured, and in effect", None),
@@ -3305,8 +3306,9 @@ TREE = {
         # `test policy` (#458 step 3), Junos's word: what a policy does with a
         # route to a prefix, term by term, before it is applied anywhere.
         "test": ("try something before it is applied", {
-            "policy": ("what a policy does with a route to a prefix, term by "
-                       "term", "<policy> <prefix>")}),
+            "policy": ("what a policy does with a route, term by term: a "
+                       "prefix, a route described, or one the box holds",
+                       "<policy> [route|rib] <prefix>")}),
         # Offered rather than hidden. The comment on start_shell() already
         # made this argument: hiding it was never the boundary, the capability
         # check is - and a command an administrator cannot find is one they
@@ -16547,37 +16549,20 @@ class Shell:
         (policy.simulate()): the term that decided, the route after its
         sets, and what could not be known, said rather than guessed.
         """
-        name, form, prefix = args[:3]
-        pol, _ = policy_mod.parse(self.policy_in_view())
-        missing = [n for n in policy_mod.chain(name)
-                   if n not in pol.statements]
-        if missing:
-            self.err(f"no policy-statement named {missing[0]}")
+        name = args[0]
+        got = self.policy_simulation(name, args[1], args[2], args[3:])
+        if "error" in got:
+            self.err(got["error"])
+            for more in got["more"]:
+                print_prose(more)
             return
-        if form == "route":
-            route, use, why = policy_mod.route_from_words(prefix, args[3:])
-            notes = ["as described: a list not given is none, a value not "
-                     "given is not known"]
-        else:
-            route, use, why, notes = self.rib_words(prefix, args[3:])
-        if why:
-            self.err(why)
-            if why.startswith("at:"):
-                print_prose(policy_mod.AT_USAGE)
-            elif form == "route" and "not a prefix" not in why:
-                print_prose(policy_mod.ROUTE_USAGE)
-            elif form == "rib":
-                for note in notes:
-                    print_prose(note)
-            return
+        use, sim = got["use"], got["sim"]
         print_prose(f"at {policy_mod.use_words(use)}: {name}", "")
-        print_prose(f"{policy_mod.use_daemon(use)}, route-map "
-                    f"{policy_mod.map_name(name, use)}", "  ")
-        for note in notes:
+        print_prose(f"{got['daemon']}, route-map {got['map']}", "  ")
+        for note in got["notes"]:
             print_prose(f"the route: {note}", "  ")
-        for line in policy_mod.describe_route(route):
+        for line in policy_mod.describe_route(got["route"]):
             print(f"    {line}")
-        sim = policy_mod.simulate(pol, name, route, use)
         for p, t, outcome, why in sim["steps"]:
             if t is None:
                 continue        # a default: the result says it
@@ -16591,8 +16576,138 @@ class Shell:
             for line in policy_mod.describe_route(sim["route"]):
                 print(f"    {line}")
         self.print_sim_notes(sim)
-        for why in policy_mod.use_findings(pol, name, use):
+        for why in got["refused"]:
             print_prose(f"refused at this use: {why}", "  ")
+
+    def policy_simulation(self, name, form, prefix, words):
+        """
+        What `test policy <name> route|rib <prefix> <words>` answers (#538),
+        as data, for the VTY and the API's TestPolicy alike: {"use",
+        "route", "notes", "sim", "refused", "map", "daemon"} - sim as
+        policy.simulate() gives it - or {"error", "more"}: the refusal and
+        what to say after it.
+        """
+        pol, _ = policy_mod.parse(self.policy_in_view())
+        missing = [n for n in policy_mod.chain(name)
+                   if n not in pol.statements]
+        if missing:
+            return {"error": f"no policy-statement named {missing[0]}",
+                    "more": []}
+        if form == "route":
+            route, use, why = policy_mod.route_from_words(prefix, words)
+            notes = ["as described: a list not given is none, a value not "
+                     "given is not known"]
+        else:
+            route, use, why, notes = self.rib_words(prefix, words)
+        if why:
+            more = notes if form == "rib" else []
+            if why.startswith("at:"):
+                more = [policy_mod.AT_USAGE]
+            elif form == "route" and "not a prefix" not in why:
+                more = [policy_mod.ROUTE_USAGE]
+            return {"error": why, "more": more}
+        return {"use": use, "route": route, "notes": notes,
+                "sim": policy_mod.simulate(pol, name, route, use),
+                "refused": policy_mod.use_findings(pol, name, use),
+                "map": policy_mod.map_name(name, use),
+                "daemon": policy_mod.use_daemon(use)}
+
+    def policies_data(self):
+        """
+        Every policy-statement the box runs (#538), for the API's
+        ListPolicies: [{"name", "terms": [{"name", "then", "lines"}],
+        "default_action", "text", "applied"}] - text the block as it is
+        typed under `policy-options`, applied where `show policy` says.
+        """
+        lines = self.read_policy()
+        pol, _ = policy_mod.parse(lines)
+        uses = policy_applications(self.frr.running())
+        out = []
+        for name in sorted(pol.statements):
+            own = [l for l in lines
+                   if l.split()[1:3] == ["policy-statement", name]]
+            terms = [{"name": t, "then": term.then or "",
+                      "lines": [" ".join(l.split()[5:]) for l in own
+                                if l.split()[3:5] == ["term", t]
+                                and len(l.split()) > 5]}
+                     for t, term in pol.statements[name].items()]
+            out.append({"name": name, "terms": terms,
+                        "default_action": pol.defaults.get(name, ""),
+                        "text": "\n".join(policy_mod.nest(own)) + "\n",
+                        "applied": uses.get(name, [])})
+        return out
+
+    def policy_counters_data(self, name=""):
+        """
+        The API's GetPolicyCounters (#538): {"uses": [...]} - one per
+        route-map a policy is in, policy_hit_sections()'s, every policy's
+        when `name` is empty and each map once - or {"error"}.
+        """
+        pol, _ = policy_mod.parse(self.read_policy())
+        if name and name not in pol.statements:
+            return {"error": f"no policy-statement named {name}"}
+        sites = use_sites(self.frr.running())
+        maps = self.route_map_counts()
+        out, seen = [], set()
+        for n in [name] if name else sorted(pol.statements):
+            for sec in policy_hit_sections(pol, n, sites, maps):
+                if sec["map"] in seen:
+                    continue
+                seen.add(sec["map"])
+                out.append({
+                    "policy": sec["chain"],
+                    "use": policy_mod.use_words(sec["use"]),
+                    "where": sec["where"], "route_map": sec["map"],
+                    "daemon": sec["daemon"], "called": sec["called"],
+                    "counted": sec["rows"] is not None,
+                    "terms": [{"policy": p or "", "term": t or "",
+                               "hits": h or 0, "compiled": h is not None}
+                              for p, t, h in sec["rows"] or []]})
+        return {"uses": out}
+
+    def test_policy_data(self, req):
+        """
+        The API's TestPolicy (#538): `req` - {"policy", "prefix", "use",
+        "attributes", "rib", "vrf", "neighbor"} - said as the words `test
+        policy` takes, and policy_simulation()'s answer, flattened for the
+        wire: lists joined by spaces, the decision split into its policy
+        and term.
+        """
+        words = []
+        if req.get("rib"):
+            for key in ("vrf", "neighbor"):
+                if req.get(key):
+                    words += [key, req[key]]
+        else:
+            for key, val in sorted((req.get("attributes") or {}).items()):
+                words += [key, ",".join(str(val).replace(",", " ").split())]
+        if req.get("use"):
+            words += ["at"] + req["use"].split()
+        got = self.policy_simulation(req.get("policy", ""),
+                                     "rib" if req.get("rib") else "route",
+                                     req.get("prefix", ""), words)
+        if "error" in got:
+            return got
+
+        def flat(route):
+            return {k: (" ".join(v) if isinstance(v, list) else str(v))
+                    for k, v in route.items()}
+
+        sim = got["sim"]
+        p, t = sim["by"]
+        return {"verdict": sim["verdict"],
+                "decided_by": self.sim_by(req.get("policy", ""), sim),
+                "decided_policy": p or "", "decided_term": t or "",
+                "use": policy_mod.use_words(got["use"]),
+                "route_map": got["map"], "daemon": got["daemon"],
+                "route": flat(got["route"]),
+                "route_after": flat(sim["route"])
+                if sim["verdict"] == "accept" else {},
+                "steps": [{"policy": sp or "", "term": st or "",
+                           "outcome": so, "why": sw}
+                          for sp, st, so, sw in sim["steps"]],
+                "assumed": sim["assumed"], "notes": got["notes"],
+                "said": sim["said"], "refused": got["refused"]}
 
     def show_policy_route(self, args):
         """
@@ -16630,7 +16745,15 @@ class Shell:
                                    prefix, [])
         print_prose(f"route {prefix}{in_vrf}", "")
         found, skipped = 0, set()
-        for (c, u), places in sorted(sites.items()):
+        # In the order a route passes them: in, into the table and the FIB,
+        # then out.
+        order = ("import", "bgp:vrfimport", "bgp:network", "bgp:aggregate",
+                 "bgp:table", "fib", "ospf", "isis", "export")
+        for (c, u), places in sorted(
+                sites.items(), key=lambda kv: (
+                    next((i for i, o in enumerate(order)
+                          if kv[0][1] == o or kv[0][1].startswith(o + ":")),
+                         len(order)), kv[0])):
             for where, v, at in places:
                 if v != vrf and not u.startswith("fib:"):
                     continue
@@ -16657,7 +16780,11 @@ class Shell:
                 if route is not None and verdict is not None \
                         and verdict != sim["verdict"]:
                     print_prose(f"the simulation says {sim['verdict']} and "
-                                f"FRR {verdict}: they disagree here", "    ")
+                                f"FRR {verdict}: they disagree here"
+                                + (" - the simulation assumed what it "
+                                   "could not know, and FRR's is what "
+                                   "happened" if sim["assumed"] else ""),
+                                "    ")
         if not found:
             print_prose("no policy the running routing applies has decided "
                         "it" + ("" if paths or zebra
@@ -16680,13 +16807,22 @@ class Shell:
             if any(p.get("peer", {}).get("peerId") == at for p in paths):
                 return "accept", (f"the path from {at} is in the BGP table: "
                                   f"accepted"), None
-            rx = (self.frr_json(f"show bgp{in_vrf} {afi} unicast neighbors "
-                                f"{at} received-routes json") or {}).get(
-                                    "receivedRoutes", {})
-            if prefix in rx:
-                return "reject", (f"{at} sent it and the BGP table holds no "
-                                  f"path from {at}: rejected"), None
-            return None
+            got = self.frr_json(f"show bgp{in_vrf} {afi} unicast neighbors "
+                                f"{at} received-routes json") or {}
+            rx = got.get("receivedRoutes", {})
+            if prefix not in rx:
+                return None
+            # A path carrying this box's own AS is dropped by BGP's loop
+            # check before any policy sees it: measured in lab/policy-d.sh,
+            # the upstream sent the box's own network back, and
+            # received-routes kept it.
+            own = str(got.get("localAS", ""))
+            if own and own in str(rx[prefix].get("path", "")).split():
+                return None, (f"{at} sent it, and BGP dropped it before the "
+                              f"policy: its AS path carries this box's AS, "
+                              f"{own}"), None
+            return "reject", (f"{at} sent it and the BGP table holds no "
+                              f"path from {at}: rejected"), None
         best = any(p.get("bestpath", {}).get("overall") for p in paths)
         if use == "export":
             if not best:
@@ -16699,7 +16835,11 @@ class Shell:
             return "reject", (f"not advertised to {at} - by the policy, or "
                               f"by BGP's own rules"), None
         if use == "bgp:table":
-            if not best:
+            # BGP hands zebra no route it originates itself: the table
+            # policy is not asked about one.
+            if not best or any(p.get("bestpath", {}).get("overall")
+                               and p.get("peer", {}).get("peerId")
+                               in (None, "0.0.0.0") for p in paths):
                 return None
             if any(e.get("protocol") == "bgp" for e in zebra):
                 return "accept", "zebra holds it from BGP", None
@@ -16912,11 +17052,20 @@ class Shell:
         if not keys:
             return
         got = self.from_received(route, rx, keys) if rx else []
-        lost = [k for k in keys if k not in got]
+        less = []
+        for kind in ("community", "large-community"):
+            added = policy_mod.added_members(running, applied, kind)
+            if kind in keys and kind not in got and added is not None:
+                route[kind] = [m for m in route.get(kind, [])
+                               if m not in added]
+                less.append(kind)
+        lost = [k for k in keys if k not in got + less]
         for k in lost:
             route.pop(k, None)
         notes.append(f"{applied}, applied there, may set {', '.join(keys)}"
                      + (f": {', '.join(got)} as received" if got else "")
+                     + (f"; {', '.join(less)} less what it adds, taken as "
+                        f"not carried before" if less else "")
                      + (f"; {', '.join(lost)} not known, FRR shows only "
                         f"what the policy made of it" if lost else ""))
 
