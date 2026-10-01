@@ -1,6 +1,6 @@
 # Política de roteamento (policy-options)
 
-Referência de tudo o que `policy-options` aceita no `prismash`: listas de prefixos, communities, large e extended communities, expressões de AS-path, políticas com seus terms, onde uma política é aplicada e como conferi-la antes e depois. Para quem escreve filtros de BGP ou decide o que entra no OSPF e no IS-IS.
+Referência de tudo o que `policy-options` aceita no `prismash`: listas de prefixos, communities, large e extended communities, expressões de AS-path, políticas com seus terms, onde uma política é aplicada e como conferi-la antes e depois - quantas rotas cada term casou, o que ela faria com uma rota e qual política decidiu uma rota que a caixa tem. Para quem escreve filtros de BGP ou decide o que entra no OSPF e no IS-IS.
 
 A política é escrita uma vez, com nome, no formato do Junos, e aplicada em quantos lugares for preciso. A caixa a traduz para o que o roteamento entende no `commit`.
 
@@ -319,8 +319,11 @@ Uma rota estática pode levar tag: `<prefixo> next-hop <destino> tag <n>` no `ro
 | Comando | Modo | O que mostra |
 |---------|------|--------------|
 | `show policy` | operacional e configuração | cada política, quantos terms tem e onde o roteamento em vigor a aplica |
-| `show policy <política>` | operacional e configuração | a mesma coisa, com os terms como foram digitados |
+| `show policy <política>` | operacional e configuração | a mesma coisa, com os terms como foram digitados e, em cada lugar onde ela é aplicada, quantas rotas cada term casou |
 | `test policy <política> <prefixo>` | operacional | o que a política faz com uma rota para aquele prefixo, term por term |
+| `test policy <política> route <prefixo> ... [at <uso>]` | operacional | o mesmo para uma rota que você descreve - communities, AS-path, vizinho, MED e o resto -, no lugar onde a política é usada, com a rota depois dos `set` |
+| `test policy <política> rib <prefixo> ... [at <uso>]` | operacional | o mesmo para a rota que a caixa tem |
+| `show policy route <prefixo> [vrf <nome>]` | operacional e configuração | qual política decidiu uma rota que a caixa tem, em cada lugar por onde ela passou, ao lado do que o roteamento fez |
 
 No modo operacional as duas leem a política aplicada. Em modo de configuração, `show policy` lê a candidata, o que você está escrevendo e ainda não aplicou.
 
@@ -417,6 +420,107 @@ O que conta como só de BGP: `from community`, `from as-path`, `from neighbor`, 
 **Confira com** `**show policy <política>**` **e** `**test policy**` **antes do** `**commit**`**.** Uma política aplicada num vizinho decide o que a sessão carrega: um term que não faz o que você pensava derruba ou vaza prefixos na sessão inteira. O term pode ser digitado antes da lista que ele cita, mas o `commit` recusa um term que cita uma lista que não existe. Uma `prefix-list` que existe e está **vazia** não casa rota nenhuma: o term que depende só dela não pega nada. E lembre que, num vizinho BGP, o que nenhum term decide é **aceito**; para anunciar só o que as listas dizem, termine a política com um term que rejeita o resto.
 
 :::
+
+## Quantas rotas cada term casou
+
+`show policy <política>` termina com os contadores: em cada lugar onde a política é aplicada, quantas rotas cada term casou. Vêm do próprio roteamento - o processo que roda aquele uso (`bgpd` no BGP, `ospfd` e `isisd` na exportação para o IGP, `zebra` na `fib-policy`) conta quantas vezes cada cláusula casou - e a caixa devolve cada cláusula ao term, e à política dentro da cadeia, de onde ela veio:
+
+```
+prisma> show policy UP
+policy-statement UP
+  terms: 3
+  ...
+  applied: neighbor 10.0.0.2 import [ UP TAIL ]
+  hits, the routes each term matched, by FRR's counters:
+    neighbor 10.0.0.2 import
+      bgpd, route-map PO-UP+TAIL-IN
+              1  UP term cust
+              1  UP term black
+              1  UP term bogon
+              1  TAIL term t
+              1  no term decided: the use's default, accept
+  a hit is a clause that matched a route, each time the daemon ran the map: a
+  route evaluated again - a soft reset, a change - counts again. One route-map
+  serves every place it is applied, and they share its counts.
+```
+
+Três coisas para ler certo:
+
+* **Conta casamentos, não rotas.** Uma rota avaliada de novo - um soft reset, uma atualização do vizinho - conta de novo. O número sobe com as rotas, mas não é o tamanho da tabela.
+* **Dois lugares que aplicam a mesma política dividem o contador.** Dois vizinhos com `import UP` são uma conta só; a lista de lugares aparece acima dela.
+* `**-**` **e** `**no counter**` **não são zero.** `-` é um term que não existe naquele uso (um `from protocol` de outro protocolo, por exemplo). `no counter` é um processo que não respondeu por aquela política - não está rodando, ou não a tem.
+
+## Testar com uma rota descrita: `test policy ... route`
+
+Em vez de só o prefixo, descreva a rota e diga onde a política está: `neighbor`, `community`, `large-community`, `extended-community`, `as-path`, `origin`, `local-preference`, `med`, `tag`, `next-hop`, `validation-state`, `source-vrf` e `weight`. Listas vão separadas por vírgula, sem espaço: `community 65001:10,65001:20`, `as-path 65001,64512`. Uma cadeia se testa com o nome das políticas ligado por `+`: `UP+TAIL`.
+
+```
+prisma> test policy UP+TAIL route 203.0.113.0/24 neighbor 10.0.0.2 community 65001:10 as-path 65001
+at import: UP+TAIL
+  bgpd, route-map PO-UP+TAIL-IN
+  the route: as described: a list not given is none, a value not given is not
+  known
+    prefix 203.0.113.0/24
+    neighbor 10.0.0.2
+    community 65001:10
+    large-community (none)
+    extended-community (none)
+    as-path 65001
+  UP term cust: match
+      then accept
+result: accept, by UP term cust
+  the route after the sets:
+    prefix 203.0.113.0/24
+    neighbor 10.0.0.2
+    community 65001:10 65000:538
+    large-community (none)
+    extended-community (none)
+    as-path 65001
+    local-preference 200
+```
+
+O `at` diz em que uso: `import` (o padrão), `export`, `default-originate`, `network`, `aggregate`, `suppress`, `advertise`, `condition`, `table`, `vrf-import`, `ospf-default`, `isis-default`, `ospf <protocolo>`, `isis <protocolo>` e `fib <protocolo>`. Isso muda a resposta: o que acontece com a rota que nenhum term decidiu, o que um `from protocol` casa, e quais `set` valem ali - um `set` que aquele uso ignora aparece como "changes nothing here".
+
+A simulação segue a ordem e as regras do roteamento: a cadeia, o `then next policy`, o `default-action`, o `from policy` (cuja recusa recusa a rota). Uma lista que você não descreveu é vazia; um valor que você não deu é **desconhecido**, e o term que precisa dele não é adivinhado: a resposta diz que supôs que ele não casou, e que vale só se não casar.
+
+**Validação RPKI sem cache.** Sem um cache RPKI sincronizado, o roteamento não casa **nenhum** estado de validação - nem `unknown`. A simulação diz isso quando o estado da rota não é conhecido, e uma rota lida da caixa sem estado RPKI não casa nenhum `from validation-state`, como no roteamento.
+
+## Testar com uma rota que a caixa tem: `test policy ... rib`
+
+`test policy <política> rib <prefixo> [vrf <nome>] [neighbor <endereço>] [at <uso>]` lê a rota da caixa em vez de você descrevê-la: a rota do protocolo do uso na tabela do roteamento para uma exportação para IGP e uma `fib-policy`, e o melhor caminho do BGP para o resto. No `import`, é o caminho que veio do `neighbor` (ou o do melhor caminho); no `export`, o `neighbor` é para quem a rota vai; no `vrf-import`, o `vrf` é a VRF **de onde** a rota vem.
+
+O que a caixa guarda de uma rota importada já passou pela política. Para testar o `import`, a caixa desfaz o que dá para desfazer e diz o resto:
+
+* o que a política aplicada pode mudar é tirado da cópia que o vizinho mandou, quando ela existe - e ela só existe com `neighbor <endereço> soft-reconfiguration inbound`;
+* communities que a política só acrescenta são retiradas;
+* o que não dá para saber fica desconhecido, e a resposta diz qual atributo;
+* uma rota que o `import` recusou só pode ser testada com `soft-reconfiguration inbound`, e sem as communities dela, que aquela cópia não guarda.
+
+## Qual política decidiu esta rota: `show policy route`
+
+O roteamento não guarda qual term decidiu cada rota - só quantas rotas cada term casou. `show policy route <prefixo>` responde com o que dá para saber: em cada lugar por onde a rota passou, o term que decidiu, **simulado** como no `test policy ... rib`, e ao lado o que o roteamento de fato fez - o caminho na tabela do BGP, o anúncio ao vizinho, a rota na tabela do roteamento e no encaminhamento, o LSA externo do OSPF:
+
+```
+prisma> show policy route 203.0.113.0/24
+route 203.0.113.0/24
+  neighbor 10.0.0.2 import: UP+TAIL
+    simulated: accept, by UP term cust
+    FRR: the path from 10.0.0.2 is in the BGP table: accepted
+  table-policy: TBL
+    simulated: accept, by no term: the default of the use
+    FRR: zebra holds it from BGP
+  fib-policy bgp: FIB
+    simulated: accept, by term c
+    FRR: zebra installed it
+  ospf export, from bgp: OEXP
+    simulated: accept, by term c
+    FRR: ospfd originates it, as external
+  neighbor 10.2.0.2 export: DN
+    simulated: accept, by term mine
+    FRR: advertised to 10.2.0.2
+```
+
+Se a simulação e o roteamento discordarem, a linha diz; se a simulação precisou supor algo que não sabia, ela diz também que a resposta do roteamento é a que vale. Uma rota que o vizinho mandou com o próprio AS da caixa no caminho é descartada pelo BGP antes de qualquer política, e aparece assim, e não como recusa da política. A origem do default, o anúncio condicional e a supressão de um agregado não são sobre uma rota; os contadores do `show policy <política>` dizem o que eles casaram.
 
 # Ver também
 

@@ -436,6 +436,11 @@ READERS = {
     "hostname": lambda sh, a: sh.sys.read_hostname(),
     # The clocks `show system uptime` reads (#534), from the same Shell.
     "uptime": lambda sh, a: sh.uptime_facts(),
+    # Routing policy (#538): what `show policy`, `show policy <name>` and
+    # `test policy` compute, as data, from the same Shell methods.
+    "policies": lambda sh, a: sh.policies_data(),
+    "policy_counters": lambda sh, a: sh.policy_counters_data(a or ""),
+    "test_policy": lambda sh, a: sh.test_policy_data(a or {}),
 }
 
 
@@ -1101,6 +1106,44 @@ def build(sessions, stats_factory, pb, rpc, grpc):
         def ListBundles(self, req, context):
             return pb.ListBundlesResponse(
                 bundles=[pb.Bundle(**r) for r in self._ask(context, "bundles")])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def ListPolicies(self, req, context):
+            return pb.ListPoliciesResponse(policies=[
+                pb.Policy(name=p["name"], default_action=p["default_action"],
+                          text=p["text"], applied=p["applied"],
+                          terms=[pb.PolicyTerm(**t) for t in p["terms"]])
+                for p in self._ask(context, "policies")])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def GetPolicyCounters(self, req, context):
+            got = self._ask(context, "policy_counters", req.policy)
+            if "error" in got:
+                context.abort(grpc.StatusCode.NOT_FOUND, got["error"])
+            return pb.GetPolicyCountersResponse(uses=[
+                pb.PolicyUseCounters(
+                    policy=u["policy"], attach_point=u["use"],
+                    applied_at=u["where"], route_map=u["route_map"],
+                    daemon=u["daemon"], called=u["called"],
+                    counted=u["counted"],
+                    terms=[pb.PolicyTermHits(**t) for t in u["terms"]])
+                for u in got["uses"]])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def TestPolicy(self, req, context):
+            got = self._ask(context, "test_policy", {
+                "policy": req.policy, "prefix": req.prefix,
+                "use": req.attach_point, "attributes": dict(req.attributes),
+                "rib": req.rib, "vrf": req.vrf, "neighbor": req.neighbor})
+            if "error" in got:
+                code = (grpc.StatusCode.NOT_FOUND
+                        if got["error"].startswith("no policy-statement")
+                        else grpc.StatusCode.INVALID_ARGUMENT)
+                context.abort(code, " ".join([got["error"]] + got["more"]))
+            steps = got.pop("steps")
+            got["attach_point"] = got.pop("use")
+            return pb.TestPolicyResponse(
+                steps=[pb.TestPolicyStep(**x) for x in steps], **got)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def Show(self, req, context):

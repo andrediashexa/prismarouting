@@ -157,6 +157,41 @@ pools = ops.ListPools(pb.ListPoolsRequest())
 nb = next((p for p in pools.pools if p.name == "nb"), None)
 result("pools", nb is not None and nb.capacity > 0 and list(nb.prefixes_inside),
        f"{[(p.name, p.capacity, p.subscribers) for p in pools.pools]}")
+# routing policy (#538): the policy the lab applied on a neighbor
+pols = ops.ListPolicies(pb.ListPoliciesRequest())
+up = next((p for p in pols.policies if p.name == "UP"), None)
+result("policies", up is not None and up.terms[0].name == "cust"
+       and "set local-preference 200" in up.terms[0].lines
+       and up.terms[0].then == "accept"
+       and "neighbor 192.0.2.9 import" in up.applied
+       and " policy-statement UP" in up.text,
+       f"{[(p.name, len(p.terms), list(p.applied)) for p in pols.policies]}")
+cn = ops.GetPolicyCounters(pb.GetPolicyCountersRequest(policy="UP"))
+u = next((x for x in cn.uses if x.route_map == "PO-UP-IN"), None)
+result("policy-counters", u is not None and u.counted and u.daemon == "bgpd"
+       and u.attach_point == "import" and u.terms[0].term == "cust"
+       and u.terms[0].compiled,
+       f"{[(x.route_map, x.daemon, x.counted, [(t.term, t.hits) for t in x.terms]) for x in cn.uses]}")
+try:
+    ops.GetPolicyCounters(pb.GetPolicyCountersRequest(policy="NOPE"))
+    result("policy-counters-unknown", False, "a policy nobody wrote was counted")
+except grpc.RpcError as e:
+    result("policy-counters-unknown", e.code() == grpc.StatusCode.NOT_FOUND,
+           f"{e.code().name}: {e.details()[:80]}")
+tp = ops.TestPolicy(pb.TestPolicyRequest(policy="UP", prefix="203.0.113.0/24",
+                                         attributes={"neighbor": "192.0.2.9"}))
+result("test-policy", tp.verdict == "accept" and tp.decided_term == "cust"
+       and tp.route_after.get("local-preference") == "200"
+       and tp.route_map == "PO-UP-IN",
+       f"{tp.verdict} by {tp.decided_by}, after {dict(tp.route_after)}")
+try:
+    ops.TestPolicy(pb.TestPolicyRequest(policy="UP", prefix="203.0.113.0/24",
+                                        attach_point="nowhere"))
+    result("test-policy-refused", False, "an unknown use was simulated")
+except grpc.RpcError as e:
+    result("test-policy-refused", e.code() == grpc.StatusCode.INVALID_ARGUMENT
+           and "is not a use" in e.details(),
+           f"{e.code().name}: {e.details()[:100]}")
 s = ops.Show(pb.ShowRequest(command="show cgnat pool"))
 result("show", "nb" in s.text, s.text.splitlines()[0][:80] if s.text else "")
 try:

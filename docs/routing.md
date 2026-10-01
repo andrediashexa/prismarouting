@@ -4211,7 +4211,16 @@ a
   this half, a `set` that applied to everything would pass every test that only
   checked the routes it was supposed to affect.
 
-## Routing policy: `policy-options` (#458, #535, #536, #537)
+## Routing policy: `policy-options` (#458, #535, #536, #537, #538)
+
+One reference for the whole language, after its four phases: what a policy
+says, where it is applied, what FRR is given for it, what it did and would
+do, and what was measured. Each phase's issue - #458 for the language and
+BGP neighbors, #535 for the rest of Junos's conditions and actions, #536
+for the other attach points, #537 for leaking between VRFs, #538 for the
+counters and the simulation - is named where its part is.
+
+### The language
 
 The maintainer chose Junos's shape (2026-09-25). Named prefix lists,
 communities, large and extended communities and AS-path expressions, and
@@ -4241,6 +4250,195 @@ policy or a chain, `[ A B ]`.
 - **The default, decided with the maintainer, is Junos's.** A route no term
   decided is accepted on a BGP neighbor and not exported into an IGP, unless
   the policy says otherwise with `default-action accept|reject`.
+
+### Where a policy is applied
+
+Every place, the statement typed, the route-map FRR holds, the daemon that
+runs it - whose counters `show policy` reads - and what a route no term
+decided gets:
+
+| Typed | FRR holds | Run by | Default |
+|---|---|---|---|
+| `neighbor <peer> import <p>` | `neighbor <peer> route-map PO-<p>-IN in` | bgpd | accept |
+| `neighbor <peer> export <p>` | `neighbor <peer> route-map PO-<p>-OUT out` | bgpd | accept |
+| `export <p>` in `router ospf` | `redistribute <proto> route-map PO-<p>-OSPF-<PROTO>`, one per protocol | ospfd | reject |
+| `export <p>` in `router isis` | `redistribute ipv4\|ipv6 <proto> level-1\|level-2 route-map PO-<p>-ISIS-<PROTO>` | isisd | reject |
+| `neighbor <peer> default-originate policy <p>` | `... route-map PO-<p>-BGP-DEFAULT` | bgpd | reject |
+| `network <prefix> policy <p>` | `... route-map PO-<p>-BGP-NETWORK` | bgpd | accept |
+| `aggregate-address <prefix> policy <p> suppress-policy <s>` | `route-map PO-<p>-BGP-AGGREGATE`, `suppress-map PO-<s>-BGP-SUPPRESS` | bgpd | accept, reject |
+| `neighbor <peer> advertise <p> exist\|non-exist <c>` | `advertise-map PO-<p>-BGP-ADVERTISE ... PO-<c>-BGP-CONDITION` | bgpd | reject, reject |
+| `table-policy <p>` | `table-map PO-<p>-BGP-TABLE` | bgpd | accept |
+| `vrf-import <vrf>\|default policy <p>` | `import vrf route-map PO-<p>-BGP-VRFIMPORT` | bgpd | reject |
+| `default-information originate ... policy <p>` in OSPF | `... route-map PO-<p>-OSPF-DEFAULT` | ospfd | reject |
+| `default-information originate ... policy <p>` in IS-IS | `... route-map PO-<p>-ISIS-DEFAULT` | isisd | reject |
+| `fib-policy bgp\|ospf\|isis\|static <p>` | `ip protocol <proto> route-map PO-<p>-FIB-<PROTO>` | zebra | accept |
+
+Each takes one policy or a chain, `[ A B ]`, and `test policy ... at <use>`
+names each with the word after `at` (below). The four kinds are below in
+turn.
+
+#### On a BGP neighbor
+
+The first use (#458), and the one the default was decided on: a route no
+term decided is accepted, on an import and an export alike, which is
+Junos's - FRR's route-map would deny it, and `bgp ebgp-requires-policy`
+would then exchange nothing. `then next policy` and `from policy` work
+everywhere, but the chain is most often a neighbor's: `neighbor <peer>
+import [ A B ]`.
+
+#### Exported into OSPF and IS-IS
+
+`export <policy>` inside `router ospf` or `router isis` redistributes what the
+policy accepts. It is staged as one `redistribute` per protocol the IGP can
+take routes from (`policy.export_lines()`), each with a map compiled for that
+protocol alone, `PO-<policy>-OSPF-STATIC` and so on. A map per source
+protocol, because ospfd and isisd evaluate a redistribute route-map without
+knowing where the route came from: which `redistribute` carries the map is
+what says it. A term whose `from protocol` names another protocol is left out
+of that map rather than compiled into a clause that would match the wrong
+routes. Every protocol gets its `redistribute`, not only the ones the policy
+names today, so a term added later applies without the export being typed
+again. IS-IS takes both families and both levels, `ospf6` for IPv6.
+
+**The default is Junos's, and it is not BGP's.** A route no term decided is
+not exported into an IGP, so those maps end in `deny 65535`. What only a BGP
+route has - `from community`, `from as-path`, and the `local-preference`,
+`community`, `as-path-prepend` and `next-hop` sets - is refused at the
+export (`policy.igp_findings()`). A map that ignored the condition would
+export exactly what the term was written to hold back.
+
+#### Where BGP originates and installs, and the IGPs' defaults (#536)
+
+A policy is also applied where BGP originates, aggregates, advertises on a
+condition and installs, where OSPF and IS-IS originate their default, and on
+what zebra installs from each protocol. Each statement is typed in the VTY's
+words and stored as the FRR statement it stands for, naming a map the
+compiler emits; `policy_uses()` reads every one back off FRR's running
+configuration, so a box that is read back compiles the same maps again.
+
+| Typed | Where | FRR holds | Default |
+|---|---|---|---|
+| `neighbor <peer> default-originate policy <p>` | BGP | `default-originate route-map PO-<p>-BGP-DEFAULT` | reject |
+| `network <prefix> policy <p>` | BGP | `network <prefix> route-map PO-<p>-BGP-NETWORK` | accept |
+| `aggregate-address <prefix> [summary-only] [policy <p>] [suppress-policy <s>]` | BGP | `route-map PO-<p>-BGP-AGGREGATE`, `suppress-map PO-<s>-BGP-SUPPRESS` | accept, reject |
+| `neighbor <peer> advertise <p> exist\|non-exist <c>` | BGP | `advertise-map PO-<p>-BGP-ADVERTISE exist-map\|non-exist-map PO-<c>-BGP-CONDITION` | reject, reject |
+| `table-policy <p>` | BGP | `table-map PO-<p>-BGP-TABLE` | accept |
+| `fib-policy bgp\|ospf\|isis\|static <p>` | top level | `ip protocol <proto> route-map PO-<p>-FIB-<PROTO>`, and `ipv6 protocol` (`ospf6` for OSPF) | accept |
+| `default-information originate [always] [metric <n>] [metric-type 1\|2] policy <p>` | OSPF | `... route-map PO-<p>-OSPF-DEFAULT` | reject |
+| `default-information originate ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] policy <p>` | IS-IS | `... route-map PO-<p>-ISIS-DEFAULT` | reject |
+
+Each takes one policy or a chain, and `no` in front removes it. The default
+column is what a route no term decided gets (`policy.ATTACHES`,
+`policy.use_default()`): the attach point with no policy where it has one -
+a network or an aggregate is announced, a route is installed - and nothing
+where the policy names the routes something waits for: the default route is
+not sent, nothing is suppressed, nothing is advertised on the condition.
+
+What a use cannot do is refused where the policy is applied
+(`policy.use_findings()`):
+- a FIB policy and an IGP's default take nothing only BGP has, as an IGP
+  export does;
+- a FIB policy sets nothing but `src`: zebra's maps take `set src` and no
+  other set;
+- a table policy sets `metric` and `next-hop` only, which is what FRR applies
+  on `table-map`;
+- a suppress-policy and the two policies of an `advertise` only match: a set
+  there changes nothing;
+- `set src <address>` is new, and for a FIB policy only. A term that sets an
+  IPv4 source is a term about IPv4 routes, as if it said `from family inet`
+  (`policy.term_families()`): zebra cannot give an IPv6 route an IPv4 source.
+  `test policy` says so for a prefix of the other family;
+- `from protocol` is refused on an IGP's default, whose daemon chooses the
+  routes it looks at;
+- `summary-only` beside a `suppress-policy` is refused: FRR 10.7.1 refuses
+  the pair, "can't be used at the same time".
+
+**What FRR 10.7.1 does not have, measured with `vtysh` before this was
+written:** `aggregate-address ... attribute-map` (the aggregate's attributes
+are its `route-map`), `distribute-list route-map ... in` in OSPF and IS-IS,
+and `table-map` in OSPF. So the policy on what an IGP installs is its FIB
+policy, `fib-policy ospf|isis`, applied by zebra, and not a filter inside the
+IGP: ospfd and isisd keep the route, and it is not installed.
+`ip protocol connected` is refused too, so a FIB policy is per BGP, OSPF,
+IS-IS or static. Static routes already took `tag`; `from tag` matches it.
+
+**bgpd warns about a map the same commit defines.** frr-reload hands bgpd a
+neighbor's `default-originate route-map` and `advertise-map` before the
+route-maps of the same text, and bgpd prints "The route-map ... does not
+exist." The maps were in FRR's running configuration straight after, and the
+default route and the conditional advertisement followed them, so the commit
+drops that warning for a `PO-` map it defined (`compiled_map_warning()`), and
+still prints it for any other.
+
+#### Between VRFs (#537)
+
+A VRF imports the BGP routes of another VRF, or of the default table,
+through a policy. It is typed inside a BGP address family, `address-family
+ipv4|ipv6 unicast` under `router bgp <asn> vrf <vrf>` - or under `router bgp
+<asn>`, which is the default table importing a VRF:
+
+| Typed | FRR holds | Default |
+|---|---|---|
+| `vrf-import <vrf>\|default policy <p>` | `import vrf <vrf>\|default` and `import vrf route-map PO-<p>-BGP-VRFIMPORT` | reject |
+| `vrf-import <vrf>\|default` | `import vrf <vrf>\|default` | everything |
+
+**One policy per address family.** FRR 10.7.1 holds one `import vrf
+route-map` per address family and applies it to every VRF the family
+imports, so the policy is the family's, not the import's: a second policy in
+the same family is refused, and so is an import without a policy in a family
+that has one - it would go through the policy all the same, which the
+statement would not say. `no vrf-import <vrf>` drops the import, and the
+policy with the last import of the family; an import the family does not
+have is refused, "nothing removed", rather than staged as a `no` FRR would
+keep nothing of and the commit would report as dropped. The VRF a route came from is the
+new condition `from source-vrf <vrf>|default` (FRR's `match source-vrf`),
+ORed with itself like `from neighbor`, and refused anywhere but a
+`vrf-import`. A route no term decided is not imported - Junos's vrf-import
+default - so the policy says what leaks.
+
+At a leak a policy sets `local-preference`, `community`, `large-community`,
+`med`, `metric`, `origin` and `weight`. It does not set `next-hop`, which is
+the exporting VRF's and is what carries the traffic there, nor
+`extended-community`, the route targets FRR's leak is made of. `from
+neighbor` is refused: a leaked route comes from a VRF.
+
+**No RD or route target to configure.** FRR's `import vrf` derives both
+for the leak itself (`Imported from 10.30.0.1:2:203.0.113.0/24`, the
+exporting VRF's router ID and an index), and nothing else on the box uses
+L3VPN. Exposing them would be an L3VPN feature with one use.
+
+**Measured with `vtysh -C -f`** in the product's FRR image
+(`prisma-frr:0.148.9`, FRR 10.7.1) before the grammar was written: `import
+vrf <name>`, `import vrf default` inside a VRF, `import vrf <name>` in the
+default instance, `import vrf route-map`, all in IPv4 and IPv6 unicast, and
+`match source-vrf` - each returned 0.
+
+**Refused, at the prompt and at commit.** No route leaks into or out of a
+VRF of the box's own: `prisma-bp` (the containers' backplane, #447) and every
+name under `prisma-`. That is `leak_error()`, at the prompt, for `vrf-import`
+and for FRR's own `import vrf` typed by hand; and `leak_findings()` at
+commit, for a file that reached it another way, refused when the change
+brings it. A VRF importing itself is refused too.
+
+**The Linux VRF is not the box's.** FRR's BGP in a VRF needs a Linux VRF
+device of that name, and the VTY makes none: `vrf <n>` on an interface is a
+VPP table (above), and the one Linux VRF on the box is `prisma-bp`, made by
+`appliance/prisma-backplane`. `lab/policy-c.sh` makes `red` and `svc` by
+hand, with the table numbers of their VPP tables - linux-nl syncs kernel
+table N into VPP table N - and puts the LCP host interfaces in them. Until
+the box makes them, phase C works on a box where someone did the same.
+
+**A connected route leaked does not reach VPP.** FRR leaks a route whose
+next hop is the other VRF itself - a connected or a `redistribute
+connected` route - into the kernel as `dev <vrf>`, the VRF device. linux-nl
+has no VPP interface for a VRF device, and VPP's table never got the route:
+measured, the echo reply to the customer's connected address was dropped in
+the importing table. A leaked route with a next hop, which is every BGP
+route, reaches VPP. A tenant reached through a router - the lab's customer
+announces its LAN over BGP - works; a tenant's connected subnet leaked into
+another VRF has no dataplane path.
+
+### What FRR is given
 
 **Compiled, not interpreted.** `src/prismash/policy.py` is a pure compiler
 from the flat model lines to FRR:
@@ -4310,6 +4508,196 @@ a check and a commit check all go through it. The `PO-` namespace is the
 compiler's, so a route-map or list typed by hand with that name is refused at
 the prompt.
 
+### What it did, and what it would do (#538)
+
+FRR keeps no record of which clause decided a route. What it keeps is how
+many routes each clause matched, per daemon, and the routes themselves
+after the policy. So the box answers the two questions an operator has of a
+policy - what did it do, and what would it do - from those, and says which
+answer is FRR's and which is the box's own simulation.
+
+**`show policy`** lists each policy-statement, its terms, and where the
+running routing applies it (`policy_applications()`, read off the compiled
+route-maps FRR holds). In configuration mode it reads the candidate. It says
+`default-action`, and where a chain is applied, under each of its policies.
+
+**`show policy <name>`** adds the policy in full, as it is typed, and its
+**hits**: at each place it is applied, how many routes each term matched.
+They are FRR's route-map counters (`show route-map json`), read in the
+daemon that runs that use - bgpd, ospfd, isisd or zebra, the table above -
+and mapped back from clause to term by the compiler's own numbering
+(`policy.clause_owner()`): a term at position n of policy k in a chain is
+k x 1000 + n x 10, its split clauses are summed, a policy's `default-action`
+and the use's default are rows of their own. A map a `from policy` term
+calls is a section of its own, named for the use. Measured on FRR 10.7.1
+before this was written: a clause's `invoked` counts the routes it
+**matched**, not the ones it was asked about - five static routes
+redistributed through four clauses left the first at 1. A route evaluated
+again - a soft reset, an update - counts again, so a hit is a match, not a
+route. One route-map serves every place it is applied, and they share its
+counts: two neighbors importing the same policy are one count. A daemon that
+reports no such map is said - `no counter` - rather than shown as 0, and so
+is a term that compiled to no clause at a use (a protocol it does not
+name), `-`.
+
+```
+prisma> show policy UP
+policy-statement UP
+  terms: 3
+  term cust
+   from prefix-list CUST
+   from community CUSTC
+   set local-preference 200
+   set community add MINE
+   then accept
+   exit
+  term black
+   from community BLACK
+   then reject
+   exit
+  term bogon
+   from route-filter 10.0.0.0/8 orlonger
+   then reject
+   exit
+  applied: neighbor 10.0.0.2 import [ UP TAIL ]
+  hits, the routes each term matched, by FRR's counters:
+    neighbor 10.0.0.2 import
+      bgpd, route-map PO-UP+TAIL-IN
+              1  UP term cust
+              1  UP term black
+              1  UP term bogon
+              1  TAIL term t
+              1  no term decided: the use's default, accept
+  a hit is a clause that matched a route, each time the daemon ran the map: a
+  route evaluated again - a soft reset, a change - counts again. One route-map
+  serves every place it is applied, and they share its counts.
+```
+
+**`test policy <policy> <prefix>`** walks a route to that prefix through the
+terms (`policy.evaluate()`), from the prefix alone: a prefix list matches
+exactly, as FRR's `permit <network>` does, and a route-filter as its kind
+says. A condition the prefix cannot answer - community, AS path, protocol,
+tag, metric and every phase A condition but the family - is reported as
+deciding only if the route carries it, and the walk goes on, so both
+outcomes are on the screen. When no term decides, every use's default is
+said, because this form is asked before any use. `from family` is answered
+from the prefix, and the walk ends at `then next policy`.
+
+**`test policy <policy> route <prefix> [<attribute> <value>]... [at <use>]`**
+simulates the map the policy - one, or a chain, `A+B` - compiles to at a
+use, with a route described: `neighbor`, `community`, `large-community`,
+`extended-community`, `as-path`, `origin`, `local-preference`, `med`,
+`tag`, `next-hop`, `validation-state`, `source-vrf` and `weight`, lists
+comma-separated (`community 65001:10,65001:20`, `as-path 65001,64512`). A
+list not given is none; a value not given is not known. `at` takes
+`import` (the default), `export`, `default-originate`, `network`,
+`aggregate`, `suppress`, `advertise`, `condition`, `table`, `vrf-import`,
+`ospf-default`, `isis-default`, `ospf <protocol>`, `isis <protocol>` and
+`fib <protocol>`. `policy.simulate()` walks the clauses as FRR runs them -
+every phase A to C condition and action, a chain's next policy, a policy's
+`default-action`, `from policy` as FRR's `call` (its reject rejects; a
+reject term calls nothing, as its clause carries no `call`), `from
+protocol` answered by the use, the use's own default - and prints the term
+that decided, the route after its sets, the sets that change nothing at
+that use, and what the box refuses about the policy there.
+
+**What cannot be simulated is said, not guessed.** A condition on what the
+route does not say makes its term `unknown`: the walk goes on as if it did
+not match, and the answer says it assumed so. RPKI is the one that cannot
+be described away: with no cache in sync FRR's `match rpki` matches **no**
+state - measured with bgpd's RPKI module loaded and no cache, a `match rpki
+notfound` clause matched nothing - and FRR's JSON then carries no state for
+the path, so a route read off the box has the state `none`, which no
+`from validation-state` matches, as in FRR.
+
+```
+prisma> test policy UP+TAIL route 203.0.113.0/24 neighbor 10.0.0.2 community 65001:10 as-path 65001
+at import: UP+TAIL
+  bgpd, route-map PO-UP+TAIL-IN
+  the route: as described: a list not given is none, a value not given is not
+  known
+    prefix 203.0.113.0/24
+    neighbor 10.0.0.2
+    community 65001:10
+    large-community (none)
+    extended-community (none)
+    as-path 65001
+  UP term cust: match
+      then accept
+result: accept, by UP term cust
+  the route after the sets:
+    prefix 203.0.113.0/24
+    neighbor 10.0.0.2
+    community 65001:10 65000:538
+    large-community (none)
+    extended-community (none)
+    as-path 65001
+    local-preference 200
+```
+
+**`test policy <policy> rib <prefix> [vrf <name>] [neighbor <address>] [at
+<use>]`** simulates the same with the route the box holds
+(`Shell.rib_route()`): zebra's route of the use's protocol for an IGP export
+and a FIB policy, BGP's best path for the rest, the path from `neighbor` at
+an import, and going to `neighbor` at an export. At a `vrf-import`, `vrf`
+is the VRF the route comes from. **What FRR shows is after the policy**,
+and that is said where it matters: a path in the BGP table carries its
+import's sets, and `received-routes` - kept only with
+`soft-reconfiguration inbound` - has the path as it came but no
+communities, while its `detail` form shows the attributes after the import
+again (all three measured on FRR 10.7.1). So at an import, an attribute the
+applied import may set is taken from `received-routes` where that has it;
+communities the import only adds are the table's less those, taken as not
+carried before; and the rest is not known. A route the import rejected is
+read from `received-routes`, or, without soft reconfiguration, not at all,
+which the refusal says.
+
+**`show policy route <prefix> [vrf <name>]`** answers which policy decided a
+route the box holds: each place the running routing applies a policy that
+the route passed, the term that decided there - simulated, from the route
+as `rib` reads it, and said so - and beside it what FRR shows of the
+outcome: the path from the neighbor in the BGP table (accepted) or only in
+`received-routes` (rejected), what was advertised to a neighbor, whether
+zebra holds it from BGP after the table policy, whether zebra installed it,
+whether ospfd originates it as an external LSA, whether BGP originates a
+`network`, the VRF a leaked path came from. Where the simulation and FRR
+differ, the line says so, and when the simulation assumed something, that
+FRR's is what happened. A default origination, a conditional advertisement
+and a suppression are not about one route, and are said as such; their
+counters say what they matched.
+
+```
+prisma> show policy route 203.0.113.0/24
+route 203.0.113.0/24
+  neighbor 10.0.0.2 import: UP+TAIL
+    simulated: accept, by UP term cust
+    FRR: the path from 10.0.0.2 is in the BGP table: accepted
+  table-policy: TBL
+    simulated: accept, by no term: the default of the use
+    FRR: zebra holds it from BGP
+  fib-policy bgp: FIB
+    simulated: accept, by term c
+    FRR: zebra installed it
+  ospf export, from bgp: OEXP
+    simulated: accept, by term c
+    FRR: ospfd originates it, as external
+  neighbor 10.2.0.2 export: DN
+    simulated: accept, by term mine
+    FRR: advertised to 10.2.0.2
+```
+
+A path the neighbor sent that carries this box's own AS is dropped by BGP's
+loop check before any policy sees it, and `received-routes` still holds it -
+measured, the upstream sent the box's own `network` back. That is said as
+BGP's, not as the policy's reject.
+
+**The API** (#532) answers the same, from the same code
+(`Shell.policies_data()`, `policy_counters_data()`, `test_policy_data()`):
+`ListPolicies`, `GetPolicyCounters` and `TestPolicy` in
+`OperationalService`, described in `docs/api.md`.
+
+### Measured
+
 **Measured in `lab/policy.sh`**, on two sessions to one peer with a third AS
 behind it:
 - `then reject` removed the other AS's prefix from that session;
@@ -4349,73 +4737,11 @@ MODE=off, which commits the same policies without the `import`/`export`
 lines, turns 27 checks red. `from family inet6` is measured in the unit suite
 only: the lab's sessions are IPv4.
 
-`show policy` says `default-action` and where a chain is applied, under each
-of its policies. `test policy` answers `from family` from the prefix, says the
-conditions the prefix cannot answer, ends at `then next policy`, and reports
-a `default-action` when no term decided.
-
-### Phase B: more attach points (#536)
-
-A policy is also applied where BGP originates, aggregates, advertises on a
-condition and installs, where OSPF and IS-IS originate their default, and on
-what zebra installs from each protocol. Each statement is typed in the VTY's
-words and stored as the FRR statement it stands for, naming a map the
-compiler emits; `policy_uses()` reads every one back off FRR's running
-configuration, so a box that is read back compiles the same maps again.
-
-| Typed | Where | FRR holds | Default |
-|---|---|---|---|
-| `neighbor <peer> default-originate policy <p>` | BGP | `default-originate route-map PO-<p>-BGP-DEFAULT` | reject |
-| `network <prefix> policy <p>` | BGP | `network <prefix> route-map PO-<p>-BGP-NETWORK` | accept |
-| `aggregate-address <prefix> [summary-only] [policy <p>] [suppress-policy <s>]` | BGP | `route-map PO-<p>-BGP-AGGREGATE`, `suppress-map PO-<s>-BGP-SUPPRESS` | accept, reject |
-| `neighbor <peer> advertise <p> exist\|non-exist <c>` | BGP | `advertise-map PO-<p>-BGP-ADVERTISE exist-map\|non-exist-map PO-<c>-BGP-CONDITION` | reject, reject |
-| `table-policy <p>` | BGP | `table-map PO-<p>-BGP-TABLE` | accept |
-| `fib-policy bgp\|ospf\|isis\|static <p>` | top level | `ip protocol <proto> route-map PO-<p>-FIB-<PROTO>`, and `ipv6 protocol` (`ospf6` for OSPF) | accept |
-| `default-information originate [always] [metric <n>] [metric-type 1\|2] policy <p>` | OSPF | `... route-map PO-<p>-OSPF-DEFAULT` | reject |
-| `default-information originate ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] policy <p>` | IS-IS | `... route-map PO-<p>-ISIS-DEFAULT` | reject |
-
-Each takes one policy or a chain, and `no` in front removes it. The default
-column is what a route no term decided gets (`policy.ATTACHES`,
-`policy.use_default()`): the attach point with no policy where it has one -
-a network or an aggregate is announced, a route is installed - and nothing
-where the policy names the routes something waits for: the default route is
-not sent, nothing is suppressed, nothing is advertised on the condition.
-
-What a use cannot do is refused where the policy is applied
-(`policy.use_findings()`):
-- a FIB policy and an IGP's default take nothing only BGP has, as an IGP
-  export does;
-- a FIB policy sets nothing but `src`: zebra's maps take `set src` and no
-  other set;
-- a table policy sets `metric` and `next-hop` only, which is what FRR applies
-  on `table-map`;
-- a suppress-policy and the two policies of an `advertise` only match: a set
-  there changes nothing;
-- `set src <address>` is new, and for a FIB policy only. A term that sets an
-  IPv4 source is a term about IPv4 routes, as if it said `from family inet`
-  (`policy.term_families()`): zebra cannot give an IPv6 route an IPv4 source.
-  `test policy` says so for a prefix of the other family;
-- `from protocol` is refused on an IGP's default, whose daemon chooses the
-  routes it looks at;
-- `summary-only` beside a `suppress-policy` is refused: FRR 10.7.1 refuses
-  the pair, "can't be used at the same time".
-
-**What FRR 10.7.1 does not have, measured with `vtysh` before this was
-written:** `aggregate-address ... attribute-map` (the aggregate's attributes
-are its `route-map`), `distribute-list route-map ... in` in OSPF and IS-IS,
-and `table-map` in OSPF. So the policy on what an IGP installs is its FIB
-policy, `fib-policy ospf|isis`, applied by zebra, and not a filter inside the
-IGP: ospfd and isisd keep the route, and it is not installed.
-`ip protocol connected` is refused too, so a FIB policy is per BGP, OSPF,
-IS-IS or static. Static routes already took `tag`; `from tag` matches it.
-
-**bgpd warns about a map the same commit defines.** frr-reload hands bgpd a
-neighbor's `default-originate route-map` and `advertise-map` before the
-route-maps of the same text, and bgpd prints "The route-map ... does not
-exist." The maps were in FRR's running configuration straight after, and the
-default route and the conditional advertisement followed them, so the commit
-drops that warning for a `PO-` map it defined (`compiled_map_warning()`), and
-still prints it for any other.
+Measured in `lab/policy-igp.sh`: a policy accepting one of two static routes,
+from protocol static, with `set metric 77`, put that route in the OSPF
+neighbour's table at cost 77 and not the other. With FRR's plain
+`redistribute static` instead, both arrived at the default metric (the off
+run).
 
 **Measured in `lab/policy-b.sh`**, one link to an upstream with BGP, OSPF and
 IS-IS over it. Each daemon was asked whether it held what it was given
@@ -4449,74 +4775,6 @@ MODE=off, which commits the same policies without the attach statements,
 turns 34 checks red. What phase A compiled compiles byte for byte as before:
 `test/policy-golden-0.148.9.txt` is 0.148.9's output for phase A's fixture.
 
-### Phase C: route leaking between VRFs (#537)
-
-A VRF imports the BGP routes of another VRF, or of the default table,
-through a policy. It is typed inside a BGP address family, `address-family
-ipv4|ipv6 unicast` under `router bgp <asn> vrf <vrf>` - or under `router bgp
-<asn>`, which is the default table importing a VRF:
-
-| Typed | FRR holds | Default |
-|---|---|---|
-| `vrf-import <vrf>\|default policy <p>` | `import vrf <vrf>\|default` and `import vrf route-map PO-<p>-BGP-VRFIMPORT` | reject |
-| `vrf-import <vrf>\|default` | `import vrf <vrf>\|default` | everything |
-
-**One policy per address family.** FRR 10.7.1 holds one `import vrf
-route-map` per address family and applies it to every VRF the family
-imports, so the policy is the family's, not the import's: a second policy in
-the same family is refused, and so is an import without a policy in a family
-that has one - it would go through the policy all the same, which the
-statement would not say. `no vrf-import <vrf>` drops the import, and the
-policy with the last import of the family; an import the family does not
-have is refused, "nothing removed", rather than staged as a `no` FRR would
-keep nothing of and the commit would report as dropped. The VRF a route came from is the
-new condition `from source-vrf <vrf>|default` (FRR's `match source-vrf`),
-ORed with itself like `from neighbor`, and refused anywhere but a
-`vrf-import`. A route no term decided is not imported - Junos's vrf-import
-default - so the policy says what leaks.
-
-At a leak a policy sets `local-preference`, `community`, `large-community`,
-`med`, `metric`, `origin` and `weight`. It does not set `next-hop`, which is
-the exporting VRF's and is what carries the traffic there, nor
-`extended-community`, the route targets FRR's leak is made of. `from
-neighbor` is refused: a leaked route comes from a VRF.
-
-**No RD or route target to configure.** FRR's `import vrf` derives both
-for the leak itself (`Imported from 10.30.0.1:2:203.0.113.0/24`, the
-exporting VRF's router ID and an index), and nothing else on the box uses
-L3VPN. Exposing them would be an L3VPN feature with one use.
-
-**Measured with `vtysh -C -f`** in the product's FRR image
-(`prisma-frr:0.148.9`, FRR 10.7.1) before the grammar was written: `import
-vrf <name>`, `import vrf default` inside a VRF, `import vrf <name>` in the
-default instance, `import vrf route-map`, all in IPv4 and IPv6 unicast, and
-`match source-vrf` - each returned 0.
-
-**Refused, at the prompt and at commit.** No route leaks into or out of a
-VRF of the box's own: `prisma-bp` (the containers' backplane, #447) and every
-name under `prisma-`. That is `leak_error()`, at the prompt, for `vrf-import`
-and for FRR's own `import vrf` typed by hand; and `leak_findings()` at
-commit, for a file that reached it another way, refused when the change
-brings it. A VRF importing itself is refused too.
-
-**The Linux VRF is not the box's.** FRR's BGP in a VRF needs a Linux VRF
-device of that name, and the VTY makes none: `vrf <n>` on an interface is a
-VPP table (above), and the one Linux VRF on the box is `prisma-bp`, made by
-`appliance/prisma-backplane`. `lab/policy-c.sh` makes `red` and `svc` by
-hand, with the table numbers of their VPP tables - linux-nl syncs kernel
-table N into VPP table N - and puts the LCP host interfaces in them. Until
-the box makes them, phase C works on a box where someone did the same.
-
-**A connected route leaked does not reach VPP.** FRR leaks a route whose
-next hop is the other VRF itself - a connected or a `redistribute
-connected` route - into the kernel as `dev <vrf>`, the VRF device. linux-nl
-has no VPP interface for a VRF device, and VPP's table never got the route:
-measured, the echo reply to the customer's connected address was dropped in
-the importing table. A leaked route with a next hop, which is every BGP
-route, reaches VPP. A tenant reached through a router - the lab's customer
-announces its LAN over BGP - works; a tenant's connected subnet leaked into
-another VRF has no dataplane path.
-
 **Measured in `lab/policy-c.sh`**, three tables - the default one to an
 upstream, `red` with a customer's router, `svc` with a shared-services
 router - each a VPP table and a Linux VRF of the same number. `red` imports
@@ -4546,6 +4804,31 @@ output for phase B's fixture, and 0.148.9's and 0.148.6's files are
 compared as well.
 IPv6's import is held by bgpd and not measured in a forwarding plane: the
 lab's tables are IPv4.
+
+**Measured in `lab/policy-d.sh`** (#538), the box between an upstream that
+marks what it sends and a downstream, with the policies on a neighbor's
+import as a chain, an export, the table policy, a FIB policy, an export
+into OSPF and a `network`. FRR's daemons are the oracle:
+- every term of every policy there counted the routes it took, in the
+  daemon that runs it - bgpd for the chain's terms, its default, the
+  export's four terms, the table policy and the network; zebra for the FIB
+  policy; ospfd for the export into OSPF, from BGP and from static;
+- a route the upstream sent later moved its term's counter;
+- `test policy ... route`, with each route as the upstream sends it, decided
+  as bgpd did: the term, and the local preference bgpd holds (200 by UP's
+  term, 150 by TAIL's in the chain), and the rejections;
+- `test policy ... rib` read the import's path back to before its sets, and
+  decided it by the same term; a rejected route from soft
+  reconfiguration's copy; the export by DN's term, with the AS path the
+  downstream received behind the box's AS; the table policy's metric, which
+  zebra holds; the OSPF export's metric, which ospfd originates;
+- `show policy route` named the deciding term at each place, beside bgpd's,
+  zebra's and ospfd's outcome, and never disagreed with them.
+
+MODE=off, which commits the same policies without attaching any, turns
+35 of its 46 checks red. The which-decided answer for IS-IS's export, a
+default origination, a conditional advertisement and a suppression is not
+per route, and is not asserted.
 
 ## A route-map referenced and not defined
 
@@ -4643,47 +4926,6 @@ worked on; a commit that introduces the reference is refused.
 `bgp route-map delay-timer 10` names no route-map, and neither does a
 `description` an operator writes a sentence in. Read as references, the first
 would refuse a commit over a timer and the second over a comment.
-
-### `show policy` and `test policy` (step 3)
-
-`show policy [<policy>]` lists each policy-statement, its terms, and where
-the running routing applies it (`policy_applications()`, read off the
-compiled route-maps FRR holds). `test policy <policy> <prefix>` walks a route
-to that prefix through the terms (`policy.evaluate()`). It works from the
-prefix alone: a prefix list matches exactly, as FRR's `permit <network>`
-does, and a route-filter as its kind says. A condition the prefix cannot
-answer - community, AS path, protocol, tag, metric - is reported as deciding
-only if the route carries it, and the walk goes on, so both outcomes are on
-the screen. When no term decides, both defaults are said, because a test is
-asked before any use: accepted on a BGP neighbor, not exported into an IGP.
-In configuration mode both read the candidate.
-
-### Exported into OSPF and IS-IS (step 2)
-
-`export <policy>` inside `router ospf` or `router isis` redistributes what the
-policy accepts. It is staged as one `redistribute` per protocol the IGP can
-take routes from (`policy.export_lines()`), each with a map compiled for that
-protocol alone, `PO-<policy>-OSPF-STATIC` and so on. A map per source
-protocol, because ospfd and isisd evaluate a redistribute route-map without
-knowing where the route came from: which `redistribute` carries the map is
-what says it. A term whose `from protocol` names another protocol is left out
-of that map rather than compiled into a clause that would match the wrong
-routes. Every protocol gets its `redistribute`, not only the ones the policy
-names today, so a term added later applies without the export being typed
-again. IS-IS takes both families and both levels, `ospf6` for IPv6.
-
-**The default is Junos's, and it is not BGP's.** A route no term decided is
-not exported into an IGP, so those maps end in `deny 65535`. What only a BGP
-route has - `from community`, `from as-path`, and the `local-preference`,
-`community`, `as-path-prepend` and `next-hop` sets - is refused at the
-export (`policy.igp_findings()`). A map that ignored the condition would
-export exactly what the term was written to hold back.
-
-Measured in `lab/policy-igp.sh`: a policy accepting one of two static routes,
-from protocol static, with `set metric 77`, put that route in the OSPF
-neighbour's table at cost 77 and not the other. With FRR's plain
-`redistribute static` instead, both arrived at the default metric (the off
-run).
 
 ## A policy that withdraws the prefix carrying this session
 

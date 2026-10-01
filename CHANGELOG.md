@@ -77,6 +77,27 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Routing policy, phase D: what a policy did, and what it would do.**
+  ([#538](https://github.com/andrediashexa/hexarouting/issues/538))
+  `show policy <name>` counts, at every place the running routing applies
+  the policy - a neighbor's import or export, a chain, a network or
+  aggregate, an advertisement, the table policy, a leak, an export into OSPF
+  or IS-IS and their defaults, a FIB policy - how many routes each term
+  matched, read off FRR's route-map counters in the daemon that runs it
+  (bgpd, ospfd, isisd, zebra) and mapped back to the term and its policy in
+  the chain; a daemon that reports no such map is said, not shown as 0.
+  `test policy <p> route <prefix> [<attribute> <value>]... [at <use>]` and
+  `test policy <p> rib <prefix> [vrf] [neighbor] [at <use>]` simulate the
+  map as FRR runs it - every phase A to C condition and action - for a
+  route described or one the box holds, with the deciding term, the route
+  after the sets, and what cannot be known said rather than guessed (an
+  RPKI state with no cache, a route's attributes before an import that set
+  them). `show policy route <prefix> [vrf]` says which policy decided a route
+  at each place it passed, simulated and said so, beside bgpd's, zebra's and
+  ospfd's own outcome. The API gains `ListPolicies`, `GetPolicyCounters` and
+  `TestPolicy` in `prisma.v1`. `lab/policy-d.sh` holds the counters, the
+  simulation and the which-decided answer against what the daemons did.
+
 ### Fixed
 
 ## 0.148.11 - routing policy, phase C: route leaking between VRFs through a policy

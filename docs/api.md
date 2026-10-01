@@ -68,6 +68,9 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `Save` | `save` |
 | | `CloseCandidate`, `GetRunning`, `ListRevisions` | |
 | OperationalService | `GetVersion`, `GetSystem`, `ListInterfaces`, `ListPools`, `GetSubscriber`, `GetSessionsSummary`, `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListVrrp`, `ListBundles` | the readers behind the matching `show`; `GetSystem` carries `show system uptime`'s clocks (0.148.7, #534): `boot_time`, `dataplane_started`, `control_plane_started`, `vty_started`, `release_installed_at` (unset when not read), `last_boot_reason` (only as recorded: `system reboot by <account>`, or `not recorded`) and `dataplane_restarted` |
+| | `ListPolicies` | `show policy` (#538): every policy-statement, its terms with their statements and `then`, its `default-action`, its `policy-options` block as typed, and where the running routing applies it |
+| | `GetPolicyCounters` | `show policy <name>`'s hits (#538): per route-map a policy is in - its `attach_point` as `test policy ... at` says it, every place applying it (`applied_at`), the daemon that runs it - how many routes each term matched; `counted` false when the daemon reported no such map, `compiled` false for a term with no clause at that use. An empty `policy` is every policy, each map once; a policy that does not exist is `NOT_FOUND` |
+| | `TestPolicy` | `test policy <p> route\|rib <prefix> ... at <use>` (#538): `attributes` describe the route, as the words `route` takes; `rib` reads it off the box instead, with `vrf` and `neighbor`. Answers the verdict, the deciding policy and term, every step, the route before and after the sets, what was assumed and what is refused there. A use or an attribute it does not take is `INVALID_ARGUMENT`, a policy that does not exist `NOT_FOUND` |
 | | `Show` | any `show`, `ping`, `traceroute` or `mtr`, as text (not `monitor`: it redraws a terminal, and a call has none - the telemetry stream is the API's live view) |
 | TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events |
 
@@ -201,7 +204,16 @@ grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
   -import-path proto -proto prisma/v1/prisma.proto \
   -d '{"command": "show cgnat pool"}' \
   10.40.200.166:50051 prisma.v1.OperationalService/Show
+grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
+  -import-path proto -proto prisma/v1/prisma.proto \
+  -d '{"policy": "UP", "prefix": "203.0.113.0/24", "attach_point": "import",
+       "attributes": {"neighbor": "10.0.0.2", "community": "65001:10"}}' \
+  10.40.200.166:50051 prisma.v1.OperationalService/TestPolicy
 ```
+
+`show policy route <prefix>` - which policy decided a route the box holds -
+has no typed call: it is `Show`'s, as text, and the same answer `TestPolicy`
+gives with `rib` at each use.
 
 ## How it is held
 
@@ -216,8 +228,9 @@ grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
   nothing in `api.env` to anything but data.
 * `lab/api-grpc.sh` drives every rpc over mutual TLS against a dataplane,
   reads the result through the prompt, streams pg0's counters while traffic
-  runs, and is refused for an account without the role and for a client with
-  no certificate.
+  runs, lists a policy applied on a neighbor, counts its terms in bgpd's map
+  and tests a route through it, and is refused for an account without the
+  role and for a client with no certificate.
 
 **Not covered by a lab**: the host's socket and proxy in front of a running
 management container (the lab runs the server directly), and a client in

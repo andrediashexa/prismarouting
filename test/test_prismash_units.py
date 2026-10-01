@@ -24,6 +24,7 @@ record what they were asked, points vtysh, the installer and the login shell
 at scripts of this suite's own, and puts every file the methods write under
 the suite's directory.
 """
+import json
 import os
 import re
 import sys
@@ -2736,6 +2737,397 @@ sh.candidate.policy = []
 rv, text = driven(lambda: sh.show_policy([]))
 check("no policy-statement is configured" in text, f"none: {text!r}")
 ok("where, what, and a prefix walked through it")
+
+print("\n=== routing policy, phase D: counters, test, which decided (#538) ===")
+_D_RUN = """router bgp 65000
+ neighbor 10.0.0.2 remote-as 65001
+ neighbor 10.2.0.2 remote-as 65002
+ address-family ipv4 unicast
+  network 198.51.100.0/24 route-map PO-NET-BGP-NETWORK
+  neighbor 10.0.0.2 route-map PO-UP-IN in
+  neighbor 10.2.0.2 route-map PO-DN-OUT out
+  table-map PO-TBL-BGP-TABLE
+ exit-address-family
+exit
+router bgp 65000 vrf red
+ address-family ipv4 unicast
+  import vrf svc
+  import vrf route-map PO-LEAK-BGP-VRFIMPORT
+ exit-address-family
+exit
+router ospf
+ redistribute bgp route-map PO-UP-OSPF-BGP
+exit
+ip protocol bgp route-map PO-FIB-FIB-BGP
+"""
+_D_POL = [f"policy-options {l}" for l in (
+    "prefix-list C 203.0.113.0/24",
+    "community T members 65001:10",
+    "policy-statement UP term cust from prefix-list C",
+    "policy-statement UP term cust set local-preference 200",
+    "policy-statement UP term cust then accept",
+    "policy-statement UP term bogon from route-filter 10.0.0.0/8 orlonger",
+    "policy-statement UP term bogon then reject",
+    "policy-statement DN term t from community T",
+    "policy-statement DN term t then reject",
+    "policy-statement NET term 1 set community add T",
+    "policy-statement NET term 1 then accept",
+    "policy-statement TBL term 1 then accept",
+    "policy-statement FIB term 1 then accept",
+    "policy-statement LEAK term 1 from source-vrf svc",
+    "policy-statement LEAK term 1 then accept",
+    "policy-statement GATE term 1 then accept",
+    "policy-statement CALLER term 1 from policy GATE",
+    "policy-statement CALLER term 1 then accept")]
+_maps = {"bgpd": {"PO-UP-IN": {"rules": [
+    {"sequenceNumber": 10, "invoked": 5}, {"sequenceNumber": 20,
+                                           "invoked": 2},
+    {"sequenceNumber": 65535, "invoked": 3}]}}}
+_path = {"aspath": {"string": "65001"}, "origin": "IGP", "metric": 0,
+         "locPrf": 200, "community": {"list": ["65001:10"]},
+         "bestpath": {"overall": True}, "nexthops": [{"ip": "10.0.0.2"}],
+         "peer": {"peerId": "10.0.0.2"}}
+_D_SHOWS = {
+    "show running-config": (0, _D_RUN),
+    "show route-map json": (0, json.dumps(_maps)),
+    "show bgp ipv4 unicast 203.0.113.0/24 json": (0, json.dumps(
+        {"paths": [_path]})),
+    "show bgp ipv4 unicast 198.51.100.0/24 json": (0, json.dumps(
+        {"paths": [{"aspath": {"string": "Local"}, "origin": "IGP",
+                    "weight": 32768, "community": {"list": ["65001:10"]},
+                    "bestpath": {"overall": True},
+                    "peer": {"peerId": "0.0.0.0"}}]})),
+    "show bgp ipv4 unicast 10.1.0.0/16 json": (0, "{}"),
+    "show bgp vrf svc ipv4 unicast 203.0.113.0/24 json": (0, json.dumps(
+        {"paths": [{"aspath": {"string": "65030"}, "origin": "IGP",
+                    "bestpath": {"overall": True},
+                    "peer": {"peerId": "10.30.0.2"}}]})),
+    "show bgp vrf red ipv4 unicast 203.0.113.0/24 json": (0, json.dumps(
+        {"paths": [{"aspath": {"string": "65030"}, "nhVrfName": "svc",
+                    "locPrf": 200, "bestpath": {"overall": True},
+                    "peer": {"peerId": "0.0.0.0"}}]})),
+    "show bgp ipv4 unicast neighbors 10.0.0.2 received-routes json": (
+        0, json.dumps({"receivedRoutes": {
+            "203.0.113.0/24": {"path": "65001", "metric": 0,
+                               "origin": "IGP", "nextHop": "10.0.0.2"},
+            "10.1.0.0/16": {"path": "65001 64999", "metric": 7,
+                            "origin": "IGP", "nextHop": "10.0.0.2"}}})),
+    "show bgp ipv4 unicast neighbors 10.2.0.2 advertised-routes json": (
+        0, json.dumps({"advertisedRoutes": {}})),
+    "show ip route 203.0.113.0/24 json": (0, json.dumps(
+        {"203.0.113.0/24": [{"protocol": "bgp", "selected": True,
+                             "installed": True, "metric": 0,
+                             "nexthops": [{"ip": "10.0.0.2"}]}]})),
+    "show ip route 10.1.0.0/16 json": (0, "{}"),
+    "show ip ospf database external 203.0.113.0 self-originate json": (
+        0, json.dumps({"asExternalLinkStates": [
+            {"linkStateId": "203.0.113.0", "networkMask": 24}]})),
+}
+check(prismash._attach_matches(" table-map PO-TBL-BGP-TABLE")
+      == [("TBL", "bgp:table", "table-policy", None)]
+      and prismash._attach_matches(" network 198.51.100.0/24 route-map "
+                                   "PO-NET-BGP-NETWORK")
+      == [("NET", "bgp:network", "network 198.51.100.0/24",
+           "198.51.100.0/24")],
+      "_attach_matches: attach_reads() with what each is applied to")
+_sites = prismash.use_sites(_D_RUN.splitlines())
+check(_sites[("UP", "import")] == [("neighbor 10.0.0.2 import", "default",
+                                    "10.0.0.2")]
+      and _sites[("LEAK", "bgp:vrfimport")] == [("vrf-import (vrf red)",
+                                                 "red", None)]
+      and _sites[("UP", "ospf:bgp")] == [("ospf export, from bgp",
+                                          "default", None)]
+      and _sites[("FIB", "fib:bgp")] == [("fib-policy bgp", "default",
+                                          None)],
+      f"use_sites: every place, its VRF and what it is on: {_sites}")
+_dpol = prismash.policy_mod.parse(_D_POL)[0]
+_secs = prismash.policy_hit_sections(_dpol, "UP", _sites, _maps)
+check([(x["use"], x["daemon"], x["rows"]) for x in _secs]
+      == [("import", "bgpd", [("UP", "cust", 5), ("UP", "bogon", 2),
+                              (None, None, 3)]),
+          ("ospf:bgp", "ospfd", None)],
+      f"policy_hit_sections: per use, a daemon with no such map said: "
+      f"{_secs}")
+_sub = prismash.policy_hit_sections(
+    _dpol, "GATE", {("CALLER", "import"): [("neighbor x import",
+                                            "default", "x")]}, {})
+check(_sub and _sub[0]["called"] and _sub[0]["map"] == "PO-GATE-SUB-IN"
+      and _sub[0]["where"] == ["neighbor x import, by CALLER"],
+      f"policy_hit_sections: a called policy's own map: {_sub}")
+check(prismash.hit_label(_secs[0], None, None)
+      == "no term decided: the use's default, accept"
+      and prismash.hit_label({"chain": "A+B", "use": "import"}, "A", None)
+      == "A default-action",
+      "hit_label: the default rows, a chain's policy named")
+check(prismash.bgp_path_route("203.0.113.0/24", dict(
+    _path, extendedCommunity={"string": "RT:65001:5 SoO:1:2"},
+    rpkiValidationState="not found")) == {
+        "prefix": "203.0.113.0/24", "as-path": ["65001"],
+        "community": ["65001:10"], "large-community": [],
+        "extended-community": ["rt:65001:5", "soo:1:2"], "weight": "0",
+        "tag": "0", "origin": "igp", "local-preference": "200",
+        "metric": "0", "next-hop": "10.0.0.2", "neighbor": "10.0.0.2",
+        "validation-state": "unknown"},
+      "bgp_path_route: FRR's path as the simulation reads it")
+check(prismash.bgp_path_route("x", {})["validation-state"].startswith(
+    "none") and "as-path" in prismash.bgp_path_route("x", {}),
+      "bgp_path_route: no RPKI state is said as none, which FRR matches")
+check(prismash.zebra_route("10.0.0.0/8", {"metric": 20, "tag": 7,
+                                          "nexthops": [{"ip": "1.1.1.1"}]})
+      == {"prefix": "10.0.0.0/8", "metric": "20", "tag": "7",
+          "next-hop": "1.1.1.1"},
+      "zebra_route: the metric, tag and next hop an IGP export sees")
+sh = shell(frr=RecFrr(_D_SHOWS))
+sh.read_policy = lambda: list(_D_POL)
+check(sh.route_map_counts() == _maps
+      and shell(frr=RecFrr({})).route_map_counts() is None,
+      "route_map_counts: FRR's counters, or None when it did not answer")
+rv, text = driven(lambda: sh.show_policy(["UP"]))
+check("hits, the routes each term matched" in text
+      and "    neighbor 10.0.0.2 import\n      bgpd, route-map PO-UP-IN\n"
+          "              5  term cust\n              2  term bogon\n"
+          "              3  no term decided: the use's default, accept" in text
+      and "no counter: ospfd reports no such route-map" in text,
+      f"show policy UP: hits per term per use (print_policy_hits): {text}")
+rv, text = driven(lambda: sh.show_policy([]))
+check("hits" not in text, "show policy: the list carries no counters")
+rv, text = driven(lambda: sh.test_policy(
+    ["UP", "route", "203.0.113.0/24", "neighbor", "10.0.0.2"]))
+check("at import: UP" in text and "bgpd, route-map PO-UP-IN" in text
+      and "  term cust: match\n      then accept" in text
+      and "result: accept, by term cust" in text
+      and "    local-preference 200" in text,
+      f"test policy route (test_policy_route, sim_by): {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["DN", "route", "203.0.113.0/24", "at", "export"]))
+check("result: accept, by no term: the default of the use" in text,
+      f"test policy route, the use's default: {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["DN", "route", "203.0.113.0/24", "community", "65001:10", "at",
+     "table"]))
+check("result: reject, by term t" in text and "after the sets" not in text,
+      f"test policy route, a reject: {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["DN", "route", "203.0.113.0/24", "community", "65001:10,1:1",
+     "at", "ospf", "bgp"]))
+check("refused at this use: DN term t: from community is for BGP" in text,
+      f"test policy: what the use refuses is said: {text}")
+rv, text = driven(lambda: sh.test_policy(["UP", "rib", "203.0.113.0/24"]))
+text = " ".join(text.split())
+check("the path from 10.0.0.2 in the BGP table" in text
+      and "UP, applied there, may set local-preference" in text
+      and "local-preference not known" in text
+      and "result: accept, by term cust" in text,
+      f"test policy rib at import: the path before its import's sets "
+      f"(rib_words, rib_route, unset_applied): {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["UP", "rib", "10.1.0.0/16", "neighbor", "10.0.0.2"]))
+text = " ".join(text.split())
+check("its import rejected it" in text and "as-path 65001 64999" in text
+      and "result: reject, by term bogon" in text,
+      f"test policy rib: a rejected route from received-routes "
+      f"(from_received): {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["DN", "rib", "203.0.113.0/24", "neighbor", "10.2.0.2", "at",
+     "export"]))
+check("going to 10.2.0.2" in text and "result: reject, by term t" in text,
+      f"test policy rib at export: the best path, going there: {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["DN", "rib", "203.0.113.0/24", "at", "export"]))
+check("from neighbor is not known" in text, f"export, no neighbor: {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["FIB", "rib", "203.0.113.0/24", "at", "fib", "bgp"]))
+check("zebra's bgp route" in text and "result: accept, by term 1" in text,
+      f"test policy rib at a FIB policy: zebra's route: {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["LEAK", "rib", "203.0.113.0/24", "vrf", "svc", "at", "vrf-import"]))
+check("VRF svc's best path" in text and "source-vrf svc" in text
+      and "result: accept, by term 1" in text,
+      f"test policy rib at vrf-import: the source VRF's path: {text}")
+rv, text = driven(lambda: sh.test_policy(
+    ["NET", "rib", "198.51.100.0/24", "at", "network"]))
+check("community less what it adds" in " ".join(text.split())
+      and "community (none)" in text,
+      f"network: what its policy adds is taken off: {text}")
+for _a, _why in (
+        (["NOPE", "route", "1.0.0.0/8"], "no policy-statement named NOPE"),
+        (["UP", "route", "1.0.0.0/8", "colour", "red"],
+         "not an attribute of a route"),
+        (["UP", "route", "1.0.0.0/8", "colour", "red"],
+         "the attributes are\n    neighbor, community"),
+        (["UP", "rib", "1.0.0.0/8", "at", "nowhere"], "at: nowhere is not"),
+        (["UP", "rib", "1.0.0.0/8", "at", "nowhere"], "the uses: import"),
+        (["UP", "rib", "1.0.0.0/8", "colour"], "rib <prefix> [vrf <name>]"),
+        (["UP", "rib", "1.0.0.0/8", "neighbor", "x"], "is not an address"),
+        (["UP", "rib", "banana"], "not a prefix: banana"),
+        (["UP", "rib", "10.9.0.0/16", "neighbor", "10.0.0.2"],
+         "and no copy of what 10.0.0.2 sent"),
+        (["UP", "rib", "10.9.0.0/16"], "which neighbor's path"),
+        (["UP", "rib", "10.9.0.0/16", "at", "table"], "holds no path"),
+        (["LEAK", "rib", "10.9.0.0/16", "at", "vrf-import"],
+         "holds no path"),
+        (["FIB", "rib", "10.9.0.0/16", "at", "fib", "static"],
+         "zebra holds no static route"),
+        (["UP", "a", "b"], "usage: test policy <policy> <prefix>")):
+    rv, text = driven(lambda: sh.test_policy(_a))
+    check(_why in text, f"test policy {_a}: {text!r}")
+rv, text = driven(lambda: sh.show_policy(["route", "203.0.113.0/24"]))
+check("route 203.0.113.0/24" in text
+      and "  neighbor 10.0.0.2 import: UP\n    simulated: accept, by term "
+          "cust" in text
+      and "FRR: the path from 10.0.0.2 is in the BGP table: accepted" in text
+      and "neighbor 10.2.0.2 export: DN" in text
+      and "FRR: not advertised to 10.2.0.2" in text
+      and "table-policy: TBL" in text and "zebra holds it from BGP" in text
+      and "fib-policy bgp: FIB" in text and "zebra installed it" in text
+      and "ospf export, from bgp: UP" in text
+      and "ospfd originates it, as external" in text
+      and "they disagree" not in text,
+      f"show policy route: each use, the term, FRR's outcome "
+      f"(show_policy_route, policy_outcome): {text}")
+rv, text = driven(lambda: sh.show_policy(["route", "10.1.0.0/16"]))
+check("simulated: reject, by term bogon" in text
+      and "10.0.0.2 sent it and the BGP table holds no path" in text
+      and text.index("import: UP") < text.index("export: DN")
+      if "export: DN" in text else True
+      and "they disagree" not in text,
+      f"show policy route: a rejected route, from received-routes: {text}")
+_loop = dict(_D_SHOWS)
+_loop["show bgp ipv4 unicast neighbors 10.0.0.2 received-routes json"] = (
+    0, json.dumps({"localAS": 65000, "receivedRoutes": {
+        "10.1.0.0/16": {"path": "65001 65000", "origin": "IGP"}}}))
+sh.frr = RecFrr(_loop)
+rv, text = driven(lambda: sh.show_policy(["route", "10.1.0.0/16"]))
+text = " ".join(text.split())
+check("BGP dropped it before the policy: its AS path carries this box's "
+      "AS, 65000" in text and "disagree" not in text,
+      f"show policy route: a loop is BGP's, not the policy's: {text}")
+sh.frr = RecFrr(_D_SHOWS)
+rv, text = driven(lambda: sh.show_policy(["route", "203.0.113.0/24"]))
+check(text.index("neighbor 10.0.0.2 import") < text.index("table-policy")
+      < text.index("fib-policy") < text.index("ospf export")
+      < text.index("neighbor 10.2.0.2 export"),
+      f"show policy route: in the order a route passes them: {text}")
+rv, text = driven(lambda: sh.show_policy(["route", "203.0.113.0/24", "vrf",
+                                          "red"]))
+check("vrf-import (vrf red): LEAK" in text
+      and "leaked from svc" in text and "accept, by term 1" in text,
+      f"show policy route vrf: the leak: {text}")
+rv, text = driven(lambda: sh.show_policy(["route", "198.51.100.0/24"]))
+check("network 198.51.100.0/24: NET" in text
+      and "BGP originates it" in text,
+      f"show policy route: a network: {text}")
+_lie = dict(_D_SHOWS)
+_lie["show bgp ipv4 unicast neighbors 10.2.0.2 advertised-routes json"] = (
+    0, json.dumps({"advertisedRoutes": {"203.0.113.0/24": {}}}))
+sh.frr = RecFrr(_lie)
+rv, text = driven(lambda: sh.show_policy(["route", "203.0.113.0/24"]))
+check("the simulation says reject and FRR accept: they disagree here"
+      in text, f"show policy route: a disagreement is said: {text}")
+sh.frr = RecFrr({"show running-config": (0, _D_RUN)})
+rv, text = driven(lambda: sh.show_policy(["route", "192.0.2.0/24"]))
+text = " ".join(text.split())
+check("neither BGP nor zebra holds it" in text,
+      f"show policy route: nothing there: {text}")
+for _a, _why in ((["route", "banana"], "not a prefix: banana"),
+                 (["route", "1.0.0.0/8", "x", "y"],
+                  "usage: show policy route <prefix> [vrf <name>]")):
+    rv, text = driven(lambda: sh.show_policy(_a))
+    check(_why in text, f"show policy {_a}: {text!r}")
+# The helpers on their own, named as the methods they are.
+sh.frr = RecFrr(_D_SHOWS)
+rv, text = driven(lambda: sh.print_policy_hits("UP"))
+check("5  term cust" in text, f"print_policy_hits: {text}")
+rv, text = driven(lambda: sh.test_policy_route(["UP", "route",
+                                                "10.1.0.0/16"]))
+check("result: reject, by term bogon" in text, f"test_policy_route: {text}")
+rv, text = driven(lambda: sh.show_policy_route(["10.1.0.0/16"]))
+check("rejected" in text, f"show_policy_route: {text}")
+check(sh.policy_outcome("10.1.0.0/16", "default", "import", "10.0.0.2", [],
+                        [])[0] == "reject"
+      and sh.policy_outcome("10.9.0.0/16", "default", "import", "10.0.0.2",
+                            [], []) is None
+      and sh.policy_outcome("10.1.0.0/16", "default", "export", "x", [], [])
+      is None
+      and sh.policy_outcome("10.1.0.0/16", "default", "bgp:advertise", "x",
+                            [], []) is None,
+      "policy_outcome: rejected by what FRR shows; None where the route did "
+      "not pass, or the use is not per route")
+check(prismash.Shell.sim_by("A", {"by": ("A", None)}) == "A's default-action"
+      and prismash.Shell.sim_by("A", {"by": ("B", "t")}) == "B term t"
+      and prismash.Shell.sim_by("A", {"by": (None, None)})
+      == "no term: the default of the use",
+      "sim_by: what decided, said")
+rv, text = driven(lambda: prismash.Shell.print_sim_notes(
+    {"assumed": ["x did not match"], "said": ["y"]}))
+check("assumed: x did not match" in text and "simulated with what is known"
+      in text, f"print_sim_notes: {text}")
+_rw = sh.rib_words("203.0.113.9/24", ["neighbor", "10.0.0.2", "at",
+                                      "import"])
+check(_rw[1] == "import" and _rw[2] is None
+      and _rw[0]["prefix"] == "203.0.113.0/24",
+      f"rib_words: the words, then the route: {_rw}")
+_rr = sh.rib_route("203.0.113.0/24", "default", "10.2.0.2", "export")
+check(_rr[0]["neighbor"] == "10.2.0.2" and _rr[1] is None,
+      f"rib_route: at an export, the neighbor it goes to: {_rr}")
+_route, _notes = {"prefix": "x", "local-preference": "200"}, []
+sh.unset_applied(_route, _notes, "import", "default", "10.0.0.2", None)
+check("local-preference" not in _route and "UP, applied there" in _notes[0],
+      f"unset_applied: what the applied import may set is not known: "
+      f"{_notes}")
+_route = {"prefix": "x"}
+check(prismash.Shell.from_received(_route, {"path": "65001 65002",
+                                            "metric": 4}, ["as-path",
+                                                           "metric",
+                                                           "origin"])
+      == ["as-path", "metric"] and _route["as-path"] == ["65001", "65002"],
+      f"from_received: what received-routes has: {_route}")
+check(prismash.wire_route({"prefix": "x", "as-path": ["1", "2"],
+                           "community": [], "tag": 5})
+      == {"prefix": "x", "as-path": "1 2", "community": "", "tag": "5"},
+      "wire_route: a route as the API carries it")
+# The API's answers (#538): the same computation, as data.
+_pd = sh.policies_data()
+_up = next(x for x in _pd if x["name"] == "UP")
+check(_up["terms"][0] == {"name": "cust", "then": "accept",
+                          "lines": ["from prefix-list C",
+                                    "set local-preference 200",
+                                    "then accept"]}
+      and _up["applied"] == ["neighbor 10.0.0.2 import", "ospf export"]
+      and _up["text"].startswith("policy-options\n policy-statement UP\n")
+      and _up["default_action"] == "",
+      f"policies_data: terms, their lines, the block, where: {_up}")
+_cd = sh.policy_counters_data("UP")
+check(_cd["uses"][0]["route_map"] == "PO-UP-IN"
+      and _cd["uses"][0]["terms"][0] == {"policy": "UP", "term": "cust",
+                                         "hits": 5, "compiled": True}
+      and _cd["uses"][0]["terms"][-1]["term"] == ""
+      and not _cd["uses"][1]["counted"]
+      and sh.policy_counters_data("NOPE") == {
+          "error": "no policy-statement named NOPE"}
+      and len({u["route_map"] for u in sh.policy_counters_data()["uses"]})
+      == len(sh.policy_counters_data()["uses"]),
+      f"policy_counters_data: per use, per term, each map once: {_cd}")
+_td = sh.test_policy_data({"policy": "UP", "prefix": "203.0.113.0/24",
+                           "attributes": {"neighbor": "10.0.0.2",
+                                          "community": "65001:10 65001:20"},
+                           "use": "import"})
+check(_td["verdict"] == "accept" and _td["decided_term"] == "cust"
+      and _td["decided_by"] == "term cust"
+      and _td["route"]["community"] == "65001:10 65001:20"
+      and _td["route_after"]["local-preference"] == "200"
+      and _td["route_map"] == "PO-UP-IN",
+      f"test_policy_data: a described route: {_td}")
+_td = sh.test_policy_data({"policy": "FIB", "prefix": "203.0.113.0/24",
+                           "rib": True, "use": "fib bgp"})
+check(_td["verdict"] == "accept" and "zebra's bgp route" in _td["notes"][0],
+      f"test_policy_data: a route of the RIB: {_td}")
+check(sh.test_policy_data({"policy": "UP", "prefix": "x"})["error"]
+      == "not a prefix: x"
+      and sh.policy_simulation("UP", "route", "1.0.0.0/8", ["at", "x"])[
+          "more"] == [prismash.policy_mod.AT_USAGE],
+      "test_policy_data, policy_simulation: a refusal, and what follows it")
+ok("hits per term, a route simulated, which policy decided")
 
 print("\n=== routing policy, phase B: the attach points (#536) ===")
 check(prismash._take_names(["A", "x"], 0) == (["A"], 1)

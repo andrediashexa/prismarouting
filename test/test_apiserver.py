@@ -269,6 +269,26 @@ check(A.handle(sh, "confirm", None)["deadline"] == 1700000000, "the confirm wind
 check(A.handle(sh, "pools", None)[0]["name"] == "nb", "a reader by name")
 # The host's name through the VTY's own reader (#516): one door question, where
 # `show running-config | include ^hostname` answered nothing on the X520 bench.
+# Routing policy (#538): the Shell's own data methods, by name, with what
+# the call carried - the policy, the request - handed through as it came.
+_was = {k: getattr(sh, k, None) for k in ("policies_data",
+                                          "policy_counters_data",
+                                          "test_policy_data")}
+sh.policies_data = lambda: [{"name": "UP"}]
+sh.policy_counters_data = lambda name: {"asked": name}
+sh.test_policy_data = lambda req: {"req": req}
+check(A.handle(sh, "policies", None) == [{"name": "UP"}]
+      and A.handle(sh, "policy_counters", "UP") == {"asked": "UP"}
+      and A.handle(sh, "policy_counters", None) == {"asked": ""}
+      and A.handle(sh, "test_policy", {"policy": "UP"})
+      == {"req": {"policy": "UP"}}
+      and A.handle(sh, "test_policy", None) == {"req": {}},
+      "the policy readers: ListPolicies, GetPolicyCounters, TestPolicy")
+for _k, _v in _was.items():
+    if _v is None:
+        delattr(sh, _k)
+    else:
+        setattr(sh, _k, _v)
 _sys_was = getattr(sh, "sys", None)
 sh.sys = type("FakeSys", (), {"read_hostname": lambda self: "edge1"})()
 check(A.handle(sh, "hostname", None) == "edge1",

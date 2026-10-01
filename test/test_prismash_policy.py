@@ -10,6 +10,7 @@ there is a verdict and not a check that read nothing. This suite pins the
 text that was checked; lab/policy.sh measures what it does to routes.
 """
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -780,6 +781,251 @@ r = policy.evaluate(pc, "LEAK", "203.0.113.0/24", "bgp:vrfimport")
 check("source-vrf" in r[0][1] and r[-1][1] == "reject",
       f"test policy: the source VRF is not guessed, a reject by default: {r}")
 ok("from source-vrf, the leak's map, its refusals")
+
+print("\n=== phase D (#538): counters, and the simulation ===")
+pd, _ = policy.parse(f"""{P} prefix-list C 203.0.113.0/24
+{P} prefix-list C 2001:db8::/32
+{P} community T members 65001:10
+{P} community NEW members 65000:1 65000:2
+{P} large-community L members 65001:1:2
+{P} extended-community E members rt:65001:5
+{P} as-path PRIV "_6451[2-9]_"
+{P} policy-statement A term cust from prefix-list C
+{P} policy-statement A term cust set local-preference +10
+{P} policy-statement A term cust set community add NEW
+{P} policy-statement A term cust then next policy
+{P} policy-statement A term tagged from community T
+{P} policy-statement A term tagged then reject
+{P} policy-statement A default-action reject
+{P} policy-statement B term priv from as-path PRIV
+{P} policy-statement B term priv set as-path remove-private
+{P} policy-statement B term priv set med igp
+{P} policy-statement B term priv then accept
+{P} policy-statement B term ospf from protocol ospf
+{P} policy-statement B term ospf then accept
+{P} policy-statement B term rest set as-path-prepend last-as 2
+{P} policy-statement B term rest set community delete T
+{P} policy-statement B term rest set next-hop self
+{P} policy-statement CALL term 1 from policy GATE
+{P} policy-statement CALL term 1 set large-community set L
+{P} policy-statement CALL term 1 set extended-community add E
+{P} policy-statement CALL term 1 then accept
+{P} policy-statement GATE term no from route-filter 10.0.0.0/8 orlonger
+{P} policy-statement GATE term no then reject
+{P} policy-statement RPKI term v from validation-state valid
+{P} policy-statement RPKI term v then accept
+{P} policy-statement RPKI term n from neighbor 192.0.2.1
+{P} policy-statement RPKI term n from neighbor 192.0.2.2
+{P} policy-statement RPKI term n set next-hop peer-address
+{P} policy-statement RPKI term n then accept
+{P} policy-statement TBL term 1 set local-preference 50
+{P} policy-statement TBL term 1 set metric 9
+{P} policy-statement TBL term 1 then accept""".splitlines())
+check(policy.clause_owner(pd, "A", 10) == ("A", "cust")
+      and policy.clause_owner(pd, "A", 11) == ("A", "cust")
+      and policy.clause_owner(pd, "A", 20) == ("A", "tagged")
+      and policy.clause_owner(pd, "A", 65534) == ("A", None)
+      and policy.clause_owner(pd, "A", 65535) == (None, None)
+      and policy.clause_owner(pd, "A", 30) is None
+      and policy.clause_owner(pd, "A+B", 999) == ("A", None)
+      and policy.clause_owner(pd, "A+B", 1010) == ("B", "priv")
+      and policy.clause_owner(pd, "A+B", 1999) == ("B", None)
+      and policy.clause_owner(pd, "A+B", 2010) is None,
+      "clause_owner: the inverse of the numbering, alone and in a chain")
+# Read back from what the compiler wrote: every clause it emits has an
+# owner, and the owner is the term whose text the clause carries.
+_rm = [l.split() for l in policy.compile_policy(pd, "A+B", "import")
+       if l.startswith("route-map ")]
+check(all(policy.clause_owner(pd, "A+B", int(w[3])) is not None
+          for w in _rm),
+      f"every clause of a chain's map has an owner: {_rm}")
+check([policy.use_daemon(u) for u in ("import", "export", "bgp:table",
+                                      "bgp:vrfimport", "ospf:static",
+                                      "ospf:default", "isis:bgp",
+                                      "fib:static")]
+      == ["bgpd", "bgpd", "bgpd", "bgpd", "ospfd", "ospfd", "isisd",
+          "zebra"],
+      "use_daemon: the daemon whose counters move for each use")
+_maps = {"bgpd": {"PO-A+B-IN": {"rules": [
+    {"sequenceNumber": 10, "invoked": 3}, {"sequenceNumber": 11,
+                                           "invoked": 2},
+    {"sequenceNumber": 20, "invoked": 1}, {"sequenceNumber": 999,
+                                           "invoked": 4},
+    {"sequenceNumber": 1010, "invoked": 5},
+    {"sequenceNumber": 1030, "invoked": 6},
+    {"sequenceNumber": 65535, "invoked": 7}]}},
+    "zebra": {"PO-A+B-IN": {"rules": [{"sequenceNumber": 10,
+                                        "invoked": 99}]}}}
+_c = policy.counters(pd, "A+B", "import", _maps)
+check(_c == [("A", "cust", 5), ("A", "tagged", 1), ("A", None, 4),
+             ("B", "priv", 5), ("B", "ospf", None), ("B", "rest", 6),
+             (None, None, 7)],
+      f"counters: a term's clauses summed (IPv4 and IPv6), a term not "
+      f"compiled here None, bgpd's and not zebra's: {_c}")
+check(policy.counters(pd, "A", "export", _maps) is None
+      and policy.counters(pd, "A", "import", {}) is None,
+      "counters: a map the daemon does not report is no counter, not zero")
+check(policy.counters(pd, "GATE", "import", {"bgpd": {
+    "PO-GATE-SUB-IN": {"rules": [{"sequenceNumber": 10, "invoked": 2}]}}},
+    sub=True) == [("GATE", "no", 2), (None, None, 0)],
+      "counters: the map a from policy term calls")
+
+_r = {"prefix": "203.0.113.0/24", "community": ["65001:10"],
+      "large-community": [], "extended-community": [],
+      "as-path": ["3356", "64512"], "neighbor": "192.0.2.1",
+      "local-preference": "100"}
+sim = policy.simulate(pd, "A+B", _r, "import")
+check(sim["verdict"] == "accept" and sim["by"] == ("B", "priv")
+      and sim["route"]["local-preference"] == "110"
+      and sim["route"]["community"] == ["65001:10", "65000:1", "65000:2"]
+      and sim["route"]["as-path"] == ["3356"]
+      and sim["route"]["metric"] == "the IGP metric to the next hop"
+      and ("A", "tagged", "no match", "the prefix is in none of its lists "
+           "or filters") not in sim["steps"],
+      f"simulate: next policy skips the rest of A and its default-action, "
+      f"B decides, every set in order: {sim}")
+check(not any(t == "tagged" for _, t, _, _ in sim["steps"]),
+      "next policy leaves the policy: its later terms are not walked")
+_r2 = dict(_r, prefix="198.51.100.0/24", **{"as-path": ["3356"]})
+sim = policy.simulate(pd, "A+B", _r2, "import")
+check(sim["verdict"] == "reject" and sim["by"] == ("A", "tagged"),
+      f"simulate: the community term rejects: {sim}")
+_r3 = dict(_r2, community=[])
+sim = policy.simulate(pd, "A+B", _r3, "import")
+check(sim["verdict"] == "reject" and sim["by"] == ("A", None),
+      f"simulate: no term decided, A's default-action: {sim}")
+sim = policy.simulate(pd, "B", _r3, "export")
+check(sim["verdict"] == "accept" and sim["by"] == (None, None)
+      and sim["route"]["as-path"] == ["3356", "3356", "3356"]
+      and sim["route"]["next-hop"] == "this box's address on the session"
+      and sim["route"]["community"] == [],
+      f"simulate: sets with no then go on, the use's default accepts, "
+      f"prepend last-as, next-hop self: {sim}")
+_igp = {"prefix": "10.1.0.0/16", "metric": "0", "tag": "0"}
+sim = policy.simulate(pd, "B", _igp, "ospf:static")
+check(sim["verdict"] == "reject"
+      and any(t == "ospf" and o == "no match" and "not compiled here" in w
+              for _, t, o, w in sim["steps"])
+      and any("as-path" in w for w in sim["assumed"])
+      and any("changes nothing here" in w for w in sim["said"]),
+      f"simulate: from protocol answered by the use, an IGP export rejects "
+      f"by default, a BGP set changes nothing: {sim}")
+sim = policy.simulate(pd, "CALL", dict(_r, prefix="10.1.0.0/16"), "import")
+check(sim["verdict"] == "reject" and sim["by"] == ("CALL", "1")
+      and any(p == "GATE" and "called by CALL term 1" in w
+              for p, _, _, w in sim["steps"]),
+      f"simulate: from policy is FRR's call, its reject rejects: {sim}")
+sim = policy.simulate(pd, "CALL", _r, "import")
+check(sim["verdict"] == "accept"
+      and sim["route"]["large-community"] == ["65001:1:2"]
+      and sim["route"]["extended-community"] == ["rt:65001:5"],
+      f"simulate: the call permits, the caller's sets apply: {sim}")
+sim = policy.simulate(pd, "RPKI", {"prefix": "203.0.113.0/24",
+                                   "neighbor": "192.0.2.2"}, "import")
+check(sim["verdict"] == "accept" and sim["by"] == ("RPKI", "n")
+      and sim["route"]["next-hop"] == "192.0.2.2"
+      and any("validation-state is not known" in a and "RPKI cache" in a
+              for a in sim["assumed"]),
+      f"simulate: an RPKI state not known is said, not guessed; "
+      f"peer-address on an import is the neighbor: {sim}")
+sim = policy.simulate(pd, "TBL", {"prefix": "203.0.113.0/24"}, "bgp:table")
+check(sim["route"].get("metric") == "9"
+      and "local-preference" not in sim["route"]
+      and any("set local-preference changes nothing" in w
+              for w in sim["said"]),
+      f"simulate: table-policy applies its metric and nothing else: {sim}")
+_out = {"steps": [], "assumed": [], "said": [],
+        "route": {"prefix": "10.1.0.0/16", "community": []}}
+check(policy._walk(pd, "GATE", _out, "import", "bgp", 0)
+      == ("reject", ("GATE", "no"))
+      and _out["steps"] == [("GATE", "no", "match", "then reject")]
+      and policy._walk(pd, "A", dict(_out, steps=[]), "import", "bgp", 0)
+      is None,
+      "_walk: one policy's terms, a decision or None when none decided")
+check(policy._relative("100", "+10") == "110"
+      and policy._relative(None, "-5") == "its own -5"
+      and policy._relative("3", "-5") == "0"
+      and policy._relative("3", "7") == "7",
+      "_relative: +n and -n on what is known, said on what is not")
+check(re.search(policy.as_path_regex("_6451[2-9]_"), "65001 64512")
+      and not re.search(policy.as_path_regex("_6451[2-9]_"), "645123"),
+      "as_path_regex: FRR's _ is a boundary")
+check(policy._members_match([["a", "b"], ["c"]], ["c", "x"])
+      and not policy._members_match([["a", "b"]], ["a"])
+      and not policy._members_match([[]], ["a"]),
+      "_members_match: entries ORed, an entry's members ANDed, none empty")
+check(policy._term_matches(pd, pd.statements["A"]["tagged"],
+                           {"prefix": "10.0.0.0/8"}, "bgp")[0] is None
+      and "community is not known" in policy._term_matches(
+          pd, pd.statements["A"]["tagged"], {"prefix": "10.0.0.0/8"},
+          "bgp")[1],
+      "_term_matches: a value not known is None, with what was not known")
+_t = policy.Term("x")
+_t.sets = [("community", ["set", "NEW"]), ("origin", ["egp"]),
+           ("metric-type", ["1"]), ("next-hop", ["discard"])]
+_said = []
+_got = policy._apply_sets(pd, _t, {"prefix": "2001:db8::/32",
+                                   "community": ["1:1"]}, "ospf:bgp", _said)
+check(_got.get("metric-type") == "type-1" and _got["community"] == ["1:1"]
+      and len(_said) == 3,
+      f"_apply_sets: metric-type into OSPF, BGP's sets said, not done: "
+      f"{_got} {_said}")
+_said = []
+_got = policy._apply_sets(pd, _t, {"prefix": "2001:db8::/32",
+                                   "community": ["1:1"]}, "import", _said)
+check(_got["community"] == ["65000:1", "65000:2"] and _got["origin"] == "egp"
+      and _got["next-hop"] == "100::1 (discard)" and len(_said) == 1,
+      f"_apply_sets: set replaces, discard is the family's address: {_got}")
+check(policy.use_from_words(["fib", "static", "x"]) == ("fib:static", ["x"])
+      and policy.use_from_words(["isis", "ospf"]) == ("isis:ospf", [])
+      and policy.use_from_words(["table"]) == ("bgp:table", [])
+      and policy.use_from_words(["fib", "kernel"])[0] is None
+      and policy.use_words("bgp:vrfimport") == "vrf-import"
+      and policy.use_words("ospf:static") == "ospf static",
+      "use_from_words and use_words: at's words, both ways")
+_route, _use, _why = policy.route_from_words(
+    "203.0.113.7/24", ["neighbor", "192.0.2.1", "community",
+                       "65001:10,65001:20", "as-path", "65001,64512", "med",
+                       "5", "validation-state", "invalid", "at", "export"])
+check(_why is None and _use == "export"
+      and _route == {"prefix": "203.0.113.0/24", "neighbor": "192.0.2.1",
+                     "community": ["65001:10", "65001:20"],
+                     "large-community": [], "extended-community": [],
+                     "as-path": ["65001", "64512"], "metric": "5",
+                     "validation-state": "invalid"},
+      f"route_from_words: the described route: {_route} {_use} {_why}")
+for _w, _bad in ((["community", "1:x"], "is not a community"),
+                 (["as-path", "a"], "as-path: AS numbers"),
+                 (["neighbor", "x"], "is not an address"),
+                 (["origin", "x"], "origin: igp"),
+                 (["validation-state", "x"], "validation-state: valid"),
+                 (["source-vrf", "a/b"], "source-vrf:"),
+                 (["tag", "x"], "tag <0-"),
+                 (["colour", "red"], "colour: not an attribute of a route"),
+                 (["tag"], "tag: a value after it"),
+                 (["at", "nowhere"], "at: nowhere is not a use")):
+    check(_bad in (policy.route_from_words("10.0.0.0/8", _w)[2] or ""),
+          f"route_from_words {_w}: {policy.route_from_words('10/8', _w)}")
+check(policy._route_value("large-community", "1:2:3")[0] == ["1:2:3"]
+      and policy._route_value("extended-community", "soo:1:2")[0]
+      == ["soo:1:2"],
+      "_route_value: the lists, comma-separated")
+check(policy.describe_route({"prefix": "x", "as-path": [], "tag": "5",
+                             "src": "10.0.0.1"})
+      == ["prefix x", "as-path (none)", "tag 5", "src 10.0.0.1"],
+      "describe_route: a line per attribute known, an empty list said none")
+check(policy.set_keys(pd, "A+B") == ["as-path", "community",
+                                     "local-preference", "metric",
+                                     "next-hop"]
+      and policy.set_keys(pd, "CALL") == ["extended-community",
+                                          "large-community"],
+      f"set_keys: what a use may change: {policy.set_keys(pd, 'A+B')}")
+check(policy.added_members(pd, "A+B", "community") is None
+      and policy.added_members(pd, "A", "community") == ["65000:1",
+                                                         "65000:2"]
+      and policy.added_members(pd, "A", "large-community") is None,
+      "added_members: only when every action on the kind adds")
+ok("counters per term, the simulation, a route described")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
