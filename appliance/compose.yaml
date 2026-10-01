@@ -302,6 +302,8 @@ services:
       - PRISMA_MGMT_CONF=/host/etc/network/interfaces.d/prisma-routing
       - PRISMA_SYS_CLASS_NET=/host/sys/class/net
       - PRISMA_PROC_NET_ROUTE=/host/proc/1/net/route
+      # The kernel's boot time, for show system uptime (#534).
+      - PRISMA_PROC_STAT=/host/proc/stat
       # AND WHAT ACTS ON THE HOST, OR ASKS IT, GOES THROUGH ITS DOORS (#448):
       # the probes (this network ends at the backplane), which unit runs the
       # dataplane, the ssh host keys' origin, the driver DPDK would get.

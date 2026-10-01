@@ -274,6 +274,18 @@ replaces 16384 per worker in `buffers-per-numa`. The VTY writes both from
 beside this boot's RAM, hugepages, main heap, buffers, statistics segment and
 what `system.slice` is using now.
 
+`show system uptime` (#534) says since when each part runs and for how long:
+the box (the kernel's btime), the dataplane (VPP's own `show clock`), the
+routing (FRR's `watchfrr.pid`, written as FRR starts), the VTY's container,
+and the release with when it was installed (VERSION's mtime). A dataplane or
+a routing younger than the box by more than five minutes is said in words -
+"restarted after the boot" - because that is the case an operator came to
+find. The last boot's reason is said only as recorded: `system reboot` and
+`system shutdown` write who asked and when into
+`/etc/prisma-routing/last-reboot`, and a record from just before this boot
+is its reason; a power cut, a hypervisor or a reboot from a shell is "not
+recorded", never a guess. `show version` carries one row of it.
+
 **Cores by role** (#466). The node's physical cores are taken in order: the
 control plane's (`PRISMA_CONTROL_PLANE_CORES`, one by default), then - with
 `PRISMA_MAIN_THREAD=dedicated` - one for VPP's main thread alone, isolated like

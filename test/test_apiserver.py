@@ -246,6 +246,18 @@ check(A.bundles_of(sh) == [{"name": "BondEthernet0", "mode": "lacp",
                             "members": ["m1", "m2"], "active_members": ["m1"]}],
       "a bundle and which members are active")
 
+print("=== uptime_fields: GetSystem's clocks (#534) ===")
+_f = A.uptime_fields({"boot": 100, "dataplane": 700, "control_plane": None, "vty": 90,
+                      "release_installed": 50, "boot_reason": "system reboot by root",
+                      "dataplane_restarted": True}, lambda e: ("ts", e))
+check(_f == {"boot_time": ("ts", 100), "dataplane_started": ("ts", 700),
+             "vty_started": ("ts", 90), "release_installed_at": ("ts", 50),
+             "last_boot_reason": "system reboot by root", "dataplane_restarted": True},
+      f"a Timestamp for each clock read, none for one that was not: {_f}")
+check(A.uptime_fields({}, lambda e: e) == {"last_boot_reason": "not recorded",
+                                           "dataplane_restarted": False},
+      "nothing read: not recorded, not restarted")
+
 print("=== handle: what a worker answers ===")
 check(A.handle(sh, "candidate", None) is sh.cfg.text() or A.handle(sh, "candidate", None) == "hostname x\n",
       "the candidate's text")

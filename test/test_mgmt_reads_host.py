@@ -45,9 +45,19 @@ for n in ast.walk(tree):
         defaults.add(id(n.args[1]))
         if HOSTY.match(n.args[1].value):
             reads[n.args[0].value] = n.args[1].value
+# THE CONTAINER'S OWN, BY NAME. A path below that is read in the container ON
+# PURPOSE, never pointed at /host, each with the reason. Anything not named
+# here stays a failure: the list is the exception, not a new rule.
+CONTAINER_OWN = {
+    # The VTY's own init: its start is when the management container started,
+    # which show system uptime reports (#534). /host/proc/1 is the host's
+    # systemd, the wrong clock.
+    "/proc/1/stat",
+}
 bare = [(n.lineno, n.value) for n in ast.walk(tree)
         if isinstance(n, ast.Constant) and isinstance(n.value, str)
-        and HOSTY.match(n.value) and id(n) not in defaults]
+        and HOSTY.match(n.value) and id(n) not in defaults
+        and n.value not in CONTAINER_OWN]
 
 # The mgmt service, read as text: the file has no YAML reader in this image,
 # and the two lists it is held to are one line per entry.
@@ -79,6 +89,9 @@ check(not any(m[0] in ("/", "/run") for m in mounts),
 
 print("\n=== no host path is a bare literal no environment reaches ===")
 check(not bare, f"bare host paths in prismash.py: {bare}")
+check(not any(env.get(k, "").endswith(p) and env[k].startswith("/host")
+              for k in env for p in CONTAINER_OWN),
+      "and no container-own path is pointed at the host's")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

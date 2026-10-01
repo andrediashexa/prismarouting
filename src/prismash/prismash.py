@@ -624,6 +624,185 @@ def prisma_routing_version():
     return prisma_routing_version_source()[0]
 
 
+# ---------------------------------------------------------- uptime (#534)
+#
+# FIVE CLOCKS, AND WHERE EACH ONE IS READ. The VTY runs in the management
+# container, so nothing below may be the container's own idea of the box:
+#
+#   the box          btime in /proc/stat. The kernel's, whichever namespace
+#                    reads it: a container's /proc/stat says the host's boot.
+#   the dataplane    `show clock`'s "Time now", the seconds VPP's own clock has
+#                    run since VPP started - asked of VPP, not inferred from a
+#                    container or a process table.
+#   the control      the mtime of /var/run/frr/watchfrr.pid: watchfrr writes it
+#    plane           as FRR starts, and the directory is the one the VTY
+#                    already shares with FRR. FRR has its own pid namespace, so
+#                    the pid inside the file means nothing out here.
+#   the VTY          the starttime of this container's pid 1, in clock ticks
+#                    after the boot - only when the VTY runs in its container.
+#   the release      the mtime of VERSION, which install.sh and every upgrade
+#                    write.
+#
+# A BOOT'S REASON IS SAID ONLY WHEN IT WAS RECORDED. `system reboot` and
+# `system shutdown` write who asked and when into REBOOT_RECORD just before
+# asking systemd; a record from before this boot's btime, and close to it, is
+# that boot's reason. Anything else - a power cut, a hypervisor, a reboot from
+# a shell - is "not recorded", never a guess.
+
+#: Where `system reboot` / `system shutdown` say who asked (#534). Survives the
+#: boot it causes, which is the whole point: /run would not.
+REBOOT_RECORD = os.environ.get("PRISMA_REBOOT_RECORD",
+                               "/etc/prisma-routing/last-reboot")
+#: The kernel's boot time; any namespace reads the host's.
+PROC_STAT = os.environ.get("PRISMA_PROC_STAT", "/proc/stat")
+#: FRR's first daemon writes this as FRR starts.
+FRR_STARTED_FILE = os.environ.get("PRISMA_FRR_STARTED",
+                                  "/var/run/frr/watchfrr.pid")
+#: How long before this boot a recorded reboot may have been asked and still
+#: be this boot's reason. A box takes a minute or two to go down and come
+#: back; a record older than this belongs to some earlier boot.
+REBOOT_RECORD_WINDOW = 900
+#: The VTY's OWN init, deliberately not the host's: its start is when this
+#: management container started (#534). The one container-own path
+#: test/test_mgmt_reads_host.py lets through, and it says why.
+VTY_INIT_STAT = "/proc/1/stat"
+#: A clock younger than the box by more than this restarted after the boot.
+#: The dataplane starts a few seconds after the kernel on every boot.
+RESTARTED_AFTER = 300
+
+
+def human_duration(seconds):
+    """`seconds` as an operator reads it: '3 days 4 h', '2 h 13 min', '45 s'."""
+    s = int(max(0, seconds))
+    d, rem = divmod(s, 86400)
+    h, rem = divmod(rem, 3600)
+    m, sec = divmod(rem, 60)
+    if d:
+        return f"{d} day{'s' if d != 1 else ''} {h} h"
+    if h:
+        return f"{h} h {m} min"
+    if m:
+        return f"{m} min {sec} s"
+    return f"{sec} s"
+
+
+def read_btime(path=None):
+    """The kernel's boot time (epoch seconds) from /proc/stat, or None."""
+    try:
+        with open(path or PROC_STAT) as f:
+            for line in f:
+                if line.startswith("btime "):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def proc_started(stat_path, btime, hz=None):
+    """
+    When the process whose /proc/<pid>/stat is `stat_path` started (epoch
+    seconds), from its starttime - clock ticks after the boot - or None.
+    """
+    if btime is None:
+        return None
+    try:
+        with open(stat_path) as f:
+            text = f.read()
+        # The command is parenthesised and may hold spaces; the fields after
+        # it are fixed. starttime is the 22nd field, the 20th after ") ".
+        after = text.rsplit(")", 1)[1].split()
+        ticks = int(after[19])
+    except (OSError, ValueError, IndexError):
+        return None
+    hz = hz or os.sysconf("SC_CLK_TCK")
+    return btime + ticks / hz
+
+
+def vpp_uptime(clock_text):
+    """Seconds VPP's clock has run, from `show clock`'s first row, or None."""
+    m = re.search(r"Time now\s+([0-9.]+)", clock_text or "")
+    return float(m.group(1)) if m else None
+
+
+def file_mtime(path):
+    """A file's mtime (epoch seconds), or None when it is not there."""
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return None
+
+
+def boot_reason(record, btime, window=REBOOT_RECORD_WINDOW):
+    """
+    Why this boot happened, as far as anything recorded it: (text, at) from
+    REBOOT_RECORD's "<epoch> <account> <verb>", when that was asked before
+    `btime` and within `window` of it; ("not recorded", None) otherwise.
+    """
+    w = (record or "").split()
+    if btime is not None and len(w) >= 3:
+        try:
+            at = int(float(w[0]))
+        except ValueError:
+            at = None
+        if at is not None and 0 <= btime - at <= window:
+            # `system <verb>` names the VTY's own statement; "at the VTY"
+            # beside it took a 32-character account past 79 columns.
+            return f"system {w[2]} by {w[1][:32]}", at
+    return "not recorded", None
+
+
+def uptime_rows(now, facts, when):
+    """
+    `show system uptime`'s rows from `facts` (epoch seconds per clock; None
+    for one that could not be read), `now`, and `when(epoch)` formatting a
+    time in the box's zone. Pure: everything it says is in its arguments.
+    """
+    pad = " " * 15
+
+    # not a unit: a closure inside uptime_rows, measured on the rows it builds
+    # in test/test_prismash_units.py.
+    def row(label, started):
+        if started is None:
+            return f"  {label:<13}not read"
+        return (f"  {label:<13}since {when(started)}, up "
+                f"{human_duration(now - started)}")
+
+    boot = facts.get("boot")
+    out = [row("box", boot),
+           f"{pad}last boot: {facts.get('boot_reason') or 'not recorded'}"]
+    for key, label in (("dataplane", "dataplane"), ("control_plane", "routing")):
+        started = facts.get(key)
+        out.append(row(label, started))
+        # On a row of its own: it is the case an operator came to find, and
+        # beside the duration it took the row to 88 columns on a console of 79.
+        if started is not None and boot is not None \
+                and started - boot > RESTARTED_AFTER:
+            out.append(f"{pad}restarted after the boot")
+    if facts.get("vty") is not None:
+        out.append(row("vty", facts.get("vty")))
+    rel = facts.get("release") or VERSION_UNKNOWN
+    inst = facts.get("release_installed")
+    out.append(f"  {'release':<13}{rel}")
+    if inst is not None:
+        out.append(f"{pad}installed {when(inst)}, "
+                   f"{human_duration(now - inst)} ago")
+    return out
+
+
+def uptime_summary(now, facts):
+    """`show version`'s one row: the box's and the dataplane's uptime."""
+    boot, dp = facts.get("boot"), facts.get("dataplane")
+    parts = [f"box {human_duration(now - boot)}" if boot is not None
+             else "box not read"]
+    if dp is None:
+        parts.append("dataplane not read")
+    else:
+        parts.append(f"dataplane {human_duration(now - dp)}")
+        if boot is not None and dp - boot > RESTARTED_AFTER:
+            parts[-1] += " (restarted after the boot)"
+    return ", ".join(parts)
+
+
 # Where `system upgrade` finds releases (#440), the public directory #439
 # publishes to. A box behind a mirror points this elsewhere; nothing on a box
 # sets it otherwise.
@@ -1059,7 +1238,9 @@ SHOW = {
                "applied", "[<policy>]"),
     "system": ("this machine", {
         "cpu": ("which cores do what: configured, and in effect", None),
-        "memory": ("the RAM by role: configured, and in effect", None)}),
+        "memory": ("the RAM by role: configured, and in effect", None),
+        "uptime": ("since when the box, the dataplane and the routing run",
+                   None)}),
     "logging": ("system log (FRR)", None),
 }
 
@@ -12897,6 +13078,7 @@ class Shell:
             self.say_system_cost()
             print_prose("it comes back by itself, claiming its dataplane card "
                         "at boot; nothing needs typing at its console")
+            self.record_reboot("reboot")
             rc, said = self.ask_systemd("reboot")
             if rc != 0:
                 self.err_prose("the box could not be restarted", *said)
@@ -12908,6 +13090,7 @@ class Shell:
             self.say_system_cost()
             print_prose("it stays off until something powers it on again, and "
                         "then comes back claiming its card by itself")
+            self.record_reboot("shutdown")
             rc, said = self.ask_systemd("poweroff")
             if rc != 0:
                 self.err_prose("the box could not be shut down", *said)
@@ -15207,6 +15390,57 @@ class Shell:
         "PRISMA_CPU_FENCE",
         "/sys/fs/cgroup/system.slice/cpuset.cpus.effective")
 
+    def uptime_facts(self):
+        """
+        The clocks `show system uptime` reads (#534), as epoch seconds, None
+        for one this session could not read; and the release, and the last
+        boot's reason as far as REBOOT_RECORD says it. Where each comes from
+        is written above REBOOT_RECORD.
+        """
+        now = time.time()
+        boot = read_btime()
+        rc, out = self.dp.run("show clock")
+        up = vpp_uptime(out) if rc == 0 else None
+        vty = None
+        if os.environ.get("PRISMA_IN_MGMT"):
+            vty = proc_started(VTY_INIT_STAT, boot)
+        try:
+            with open(REBOOT_RECORD) as f:
+                record = f.read()
+        except OSError:
+            record = ""
+        reason, _at = boot_reason(record, boot)
+        dp = now - up if up is not None else None
+        return {"boot": boot,
+                "dataplane": dp,
+                "dataplane_restarted": (dp is not None and boot is not None
+                                        and dp - boot > RESTARTED_AFTER),
+                "control_plane": file_mtime(FRR_STARTED_FILE),
+                "vty": vty,
+                "release": prisma_routing_version(),
+                "release_installed": file_mtime(VERSION_PATH),
+                "boot_reason": reason}
+
+    def show_system_uptime(self):
+        """`show system uptime` (#534): each clock, since when and for how long."""
+        when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(t))
+        for row in uptime_rows(time.time(), self.uptime_facts(), when):
+            print(row)
+
+    def record_reboot(self, verb):
+        """
+        Write who asked for `verb` (reboot or shutdown) and when into
+        REBOOT_RECORD, so the next boot can say why it happened (#534). Best
+        effort and silent: a record that could not be written costs the next
+        `show system uptime` its reason, never the reboot.
+        """
+        name = vppapi.identity()[0] or "unknown"
+        try:
+            with open(REBOOT_RECORD, "w") as f:
+                f.write(f"{int(time.time())} {name} {verb}\n")
+        except OSError:
+            pass
+
     def show_system_cpu(self):
         """
         Which cores do what (#466): what is configured - tune.env, in effect
@@ -15547,6 +15781,9 @@ class Shell:
             return
         if line == "show system memory":
             self.show_system_memory()
+            return
+        if line == "show system uptime":
+            self.show_system_uptime()
             return
         if line == "show snmp mib":
             self.show_snmp_mib()
@@ -18573,6 +18810,7 @@ class Shell:
         line = out.strip().splitlines()[0] if out.strip() else ""
         print(f"  routing:   {line or 'not responding'}")
         self.show_daemons()
+        print(f"  uptime:    {uptime_summary(time.time(), self.uptime_facts())}")
 
     #: The column the rows of `show version` line their values up on, and the
     #: indent the prose under them is wrapped against.

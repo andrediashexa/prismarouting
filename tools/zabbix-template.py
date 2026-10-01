@@ -212,6 +212,14 @@ def build():
                             "Prisma Routing: the dataplane is running the old build (reboot pending)",
                             "WARNING", "An upgrade waits for a reboot: the box forwards with the old build and refuses a commit that needs the new one.",
                             tags=[("scope", "notice")])]),
+        item("Dataplane uptime", f"{P}.12.4.0", "prisma.dataplane.uptime", "FLOAT", "5m", "uptime",
+             pre=[("MULTIPLIER", ["0.01"])], tags=[("component", "system")],
+             desc="prSystemDataplaneUptime: VPP's own clock (#534).",
+             triggers=[trig(f"last({ref('prisma.dataplane.uptime')})<10m"
+                            f" and last({ref('system.hw.uptime')})>15m",
+                            "Prisma Routing: the dataplane restarted without the box",
+                            "AVERAGE", "VPP's clock is younger than the box's: the dataplane restarted on its own (a crash, a restart of its service, a tuning change). Every session on the box was lost with it.",
+                            tags=[("scope", "availability")])]),
         # ------------------------------------------------ the box's own state (#524)
         item("Tuning: state", f"{P}.16.1.0", "prisma.tuning.state", "UNSIGNED", "5m",
              vmap="PRISMA-ROUTING-MIB::prTuningState", tags=[("component", "tuning")],

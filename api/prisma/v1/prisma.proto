@@ -291,6 +291,25 @@ message SystemInfo {
   // `show system cpu` and `show system memory`, verbatim.
   string cpu_text = 8;
   string memory_text = 9;
+  // Since when each part of the box runs (#534, 0.148.7), as
+  // `show system uptime` reads them; a field left unset was not read.
+  // The kernel's boot.
+  google.protobuf.Timestamp boot_time = 10;
+  // The dataplane (VPP), from VPP's own clock.
+  google.protobuf.Timestamp dataplane_started = 11;
+  // The routing daemons (FRR).
+  google.protobuf.Timestamp control_plane_started = 12;
+  // The VTY's management container; unset when the VTY runs on the host.
+  google.protobuf.Timestamp vty_started = 13;
+  // Why the box last booted, only as recorded: "system reboot by <account>",
+  // "system shutdown by <account>", or "not recorded" (a power cut, a
+  // hypervisor, a reboot from a shell). Never a guess.
+  string last_boot_reason = 14;
+  // When the release the box runs was installed or upgraded to.
+  google.protobuf.Timestamp release_installed_at = 15;
+  // True when the dataplane started more than five minutes after the box:
+  // it restarted on its own since the boot.
+  bool dataplane_restarted = 16;
 }
 
 message ListInterfacesRequest {
