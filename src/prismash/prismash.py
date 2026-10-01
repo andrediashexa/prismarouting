@@ -17074,7 +17074,7 @@ class Shell:
         """The attributes `keys` of `route` from a received-routes entry,
         where it has them; the ones it had."""
         fields = {"as-path": [a for a in rx.get("path", "").split()
-                              if a.isdigit()],
+                              if is_number(a)],
                   "metric": str(rx.get("metric", 0)),
                   "origin": rx.get("origin", "").lower() or None,
                   "next-hop": rx.get("nextHop"),
