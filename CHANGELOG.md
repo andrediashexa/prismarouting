@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show system uptime`: since when the box, the dataplane and the routing run.**
+  ([#534](https://github.com/andrediashexa/hexarouting/issues/534))
+  Asked for by the maintainer: the VTY showed no uptime at all. The box from
+  the kernel's boot time, the dataplane from VPP's own clock, the routing from
+  FRR's watchfrr.pid, the VTY's container, and the release with when it was
+  installed - each since when and for how long, in the box's zone, inside 79
+  columns. A dataplane younger than the box says "restarted after the boot".
+  The last boot's reason is said only as recorded: `system reboot` and
+  `system shutdown` now write who asked into
+  `/etc/prisma-routing/last-reboot`; anything else is "not recorded".
+  `show version` has a row of it; the API's `GetSystem` gains the same as
+  prisma.v1 additions (`boot_time`, `dataplane_started`,
+  `control_plane_started`, `vty_started`, `release_installed_at`,
+  `last_boot_reason`, `dataplane_restarted`); SNMP serves
+  `prSystemDataplaneUptime` and the Zabbix template raises "the dataplane
+  restarted without the box". `lab/commit.sh` restarts VPP and reads the
+  dataplane's start move.
+
 ### Fixed
 
 ## 0.148.6 - the API answers the hostname, and its console does not hold the status

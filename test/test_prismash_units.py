@@ -7547,5 +7547,144 @@ check(_r.snmp_unread == "" and "snmp_unread" not in _r.text()
       "a configuration that was read carries no note and writes no flag")
 prismash.CONFIG_PATH = _saved_path
 
+
+print("=== show system uptime: the box, the dataplane, the routing, since when (#534) ===")
+check(prismash.human_duration(45) == "45 s"
+      and prismash.human_duration(125) == "2 min 5 s"
+      and prismash.human_duration(2 * 3600 + 13 * 60) == "2 h 13 min"
+      and prismash.human_duration(86400 + 4 * 3600) == "1 day 4 h"
+      and prismash.human_duration(3 * 86400) == "3 days 0 h"
+      and prismash.human_duration(-5) == "0 s",
+      "a duration as an operator reads it")
+_ud = tempfile.mkdtemp(prefix="uptime-", dir=_root)
+_stat = os.path.join(_ud, "stat")
+with open(_stat, "w") as _f:
+    _f.write("cpu  1 2 3\nbtime 1790836414\nprocesses 9\n")
+check(prismash.read_btime(_stat) == 1790836414, "the kernel's boot time from btime")
+check(prismash.read_btime(os.path.join(_ud, "none")) is None,
+      "no /proc/stat is no boot time, not a crash")
+_pstat = os.path.join(_ud, "pid1")
+with open(_pstat, "w") as _f:
+    # The command holds a space and a parenthesis, as one may.
+    _f.write("1 (sleep (x) y) S 0 1 1 0 -1 4194560 89 0 0 0 0 0 0 0 20 0 1 0 1886 "
+             "2400256 120 18446744073709551615\n")
+check(prismash.proc_started(_pstat, 1790836414, hz=100) == 1790836414 + 18.86,
+      "a process's start: the boot plus starttime's ticks, past a command with spaces")
+check(prismash.proc_started(_pstat, None) is None
+      and prismash.proc_started(os.path.join(_ud, "none"), 1, hz=100) is None,
+      "no boot time or no stat file is no start")
+check(prismash.vpp_uptime("Time now 539.710725, Thu, 01 Oct 2026 06:43:15 GMT\n") == 539.710725
+      and prismash.vpp_uptime("") is None and prismash.vpp_uptime(None) is None,
+      "VPP's uptime from show clock's first row")
+_pid = os.path.join(_ud, "watchfrr.pid")
+with open(_pid, "w") as _f:
+    _f.write("45\n")
+os.utime(_pid, (1790836426, 1790836426))
+check(prismash.file_mtime(_pid) == 1790836426
+      and prismash.file_mtime(os.path.join(_ud, "none")) is None,
+      "a file's mtime, or None")
+check(prismash.boot_reason("1790836300 root reboot\n", 1790836414)
+      == ("system reboot by root", 1790836300),
+      "a reboot asked at the VTY just before this boot is this boot's reason")
+check(prismash.boot_reason("1790836300 ana shutdown\n", 1790836414)[0]
+      == "system shutdown by ana", "and a shutdown, by whom")
+check(prismash.boot_reason("1790800000 root reboot\n", 1790836414)
+      == ("not recorded", None),
+      "a record from an earlier boot is not this one's reason")
+check(prismash.boot_reason("1790836500 root reboot\n", 1790836414)
+      == ("not recorded", None),
+      "a record written after this boot is not its reason either")
+check(prismash.boot_reason("", 1790836414) == ("not recorded", None)
+      and prismash.boot_reason("garbage", 1790836414) == ("not recorded", None)
+      and prismash.boot_reason("1790836300 root reboot", None) == ("not recorded", None),
+      "no record, a broken one or no boot time: not recorded, never a guess")
+_when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(t))
+_facts = {"boot": 1790836414, "dataplane": 1790836420, "control_plane": 1790836426,
+          "vty": 1790836394, "release": "0.148.7 (abc)",
+          "release_installed": 1790832420, "boot_reason": "system reboot by root"}
+_r = prismash.uptime_rows(1790837000, _facts, _when)
+check(_r[0] == "  box          since 2026-10-01 06:33:34 UTC, up 9 min 46 s"
+      and _r[1].strip() == "last boot: system reboot by root"
+      and _r[2].startswith("  dataplane    since") and _r[3].startswith("  routing")
+      and _r[4].startswith("  vty") and _r[5] == "  release      0.148.7 (abc)"
+      and "installed 2026-10-01 05:27:00 UTC, 1 h 16 min ago" in _r[6]
+      and not any("restarted" in x for x in _r),
+      f"each clock since when and for how long, nothing restarted: {_r}")
+_late = dict(_facts, dataplane=1790836900, vty=None, release_installed=None)
+_r = prismash.uptime_rows(1790837000, _late, _when)
+check(_r[3].strip() == "restarted after the boot" and not any(x.startswith("  vty") for x in _r)
+      and _r[-1] == "  release      0.148.7 (abc)",
+      f"a dataplane younger than the box says so on a row of its own: {_r}")
+_r = prismash.uptime_rows(1790837000, {"boot": None, "dataplane": None}, _when)
+check(_r[0] == "  box          not read" and "not recorded" in _r[1]
+      and _r[2] == "  dataplane    not read",
+      "a clock that could not be read says so")
+_wide = dict(_late, boot_reason="system shutdown by " + "a" * 32)
+check(max(len(x) for x in prismash.uptime_rows(1790837000 + 86400 * 999, _wide, _when)) <= 79,
+      "every row inside 79 columns, at its widest")
+check(prismash.uptime_summary(1790837000, _facts) == "box 9 min 46 s, dataplane 9 min 40 s"
+      and prismash.uptime_summary(1790837000, _late)
+      == "box 9 min 46 s, dataplane 1 min 40 s (restarted after the boot)"
+      and prismash.uptime_summary(1, {}) == "box not read, dataplane not read",
+      "show version's one row")
+
+
+class _ClockDp:
+    """A dataplane whose `show clock` says how long VPP has run."""
+
+    def __init__(self, up):
+        self.up = up
+
+    def run(self, line):
+        if line == "show clock" and self.up is not None:
+            return 0, f"Time now {self.up}, Thu, 01 Oct 2026 06:43:15 GMT\n"
+        return 1, "not answering"
+
+
+_saved = (prismash.PROC_STAT, prismash.FRR_STARTED_FILE, prismash.REBOOT_RECORD,
+          prismash.VERSION_PATH, os.environ.get("PRISMA_IN_MGMT"))
+_ver = os.path.join(_ud, "VERSION")
+with open(_ver, "w") as _f:
+    _f.write("0.148.7 (abc)\n")
+os.utime(_ver, (1790832420, 1790832420))
+_rec = os.path.join(_ud, "last-reboot")
+prismash.PROC_STAT, prismash.FRR_STARTED_FILE = _stat, _pid
+prismash.REBOOT_RECORD, prismash.VERSION_PATH = _rec, _ver
+os.environ.pop("PRISMA_IN_MGMT", None)
+try:
+    _sh = shell(dp=_ClockDp(60.0))
+    _sh.record_reboot("reboot")
+    with open(_rec) as _f:
+        _w = _f.read().split()
+    check(len(_w) == 3 and _w[2] == "reboot" and abs(int(_w[0]) - time.time()) < 5,
+          f"system reboot records when, who and which verb: {_w}")
+    with open(_rec, "w") as _f:
+        _f.write("1790836300 root reboot\n")
+    _fx = _sh.uptime_facts()
+    check(_fx["boot"] == 1790836414 and abs(_fx["dataplane"] - (time.time() - 60)) < 5
+          and _fx["control_plane"] == 1790836426 and _fx["vty"] is None
+          and _fx["release_installed"] == 1790832420
+          and _fx["boot_reason"] == "system reboot by root"
+          and _fx["dataplane_restarted"] is True,
+          f"uptime_facts reads each clock where it lives: {_fx}")
+    check(shell(dp=_ClockDp(None)).uptime_facts()["dataplane"] is None,
+          "a dataplane that does not answer is a clock not read")
+    _, _out = driven(_sh.show_system_uptime)
+    check("  box          since" in _out and "  dataplane    since" in _out
+          and "restarted after the boot" in _out and "last boot: system reboot by root" in _out,
+          f"show system uptime prints the rows: {_out}")
+    with contextlib.redirect_stdout(io.StringIO()) as _buf:
+        _sh.show_system_uptime()
+    check(_buf.getvalue() == _out, "and prints the same rows asked again")
+    prismash.REBOOT_RECORD = os.path.join(_ud, "no-such-dir", "last-reboot")
+    _sh.record_reboot("shutdown")
+    check(True, "a record that cannot be written costs nothing")
+finally:
+    (prismash.PROC_STAT, prismash.FRR_STARTED_FILE, prismash.REBOOT_RECORD,
+     prismash.VERSION_PATH, _mg) = _saved
+    if _mg is not None:
+        os.environ["PRISMA_IN_MGMT"] = _mg
+ok("show system uptime: each clock where it lives, the boot's reason only as recorded")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

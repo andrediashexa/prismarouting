@@ -161,6 +161,7 @@ class Values:
         d.update(cgnat_totals(d["cgnat"]))
         d["release"] = _read(VERSION_FILE).split()[0] if _read(VERSION_FILE) else ""
         d["build"] = plugin_build(vppctl("show plugins") or "")
+        d["dp_uptime"] = vpp_clock(vppctl("show clock") or "")
         # #505: each one command the VTY's own screens run, none a walk.
         vrrp_text = vppctl("show vrrp vr") or ""
         if_names = parse_stats_dump(stats_dump("^/if/names$"))[0]
@@ -312,7 +313,16 @@ def cgnat_totals(state):
     }
 
 
-def product_rows(base, state, release, build):
+def vpp_clock(text):
+    """
+    Seconds the dataplane has run, from `show clock`'s "Time now <s>" (#534),
+    or None - the reading the VTY's `show system uptime` makes.
+    """
+    m = re.search(r"Time now\s+([0-9.]+)", text)
+    return float(m.group(1)) if m else None
+
+
+def product_rows(base, state, release, build, dp_uptime=None):
     """
     PRISMA-ROUTING-MIB's rows under `base` (the enterprise's .1), beyond the
     six totals: the pool table, the drops, the sessions, the transports and
@@ -368,6 +378,9 @@ def product_rows(base, state, release, build):
     out.append((f"{base}.12.2.0", "string", build))
     out.append((f"{base}.12.3.0", "integer",
                 truth[bool(release) and build.split()[:1] == [release]]))
+    # #534: VPP's own clock, in hundredths; left out when it did not answer.
+    if dp_uptime is not None:
+        out.append((f"{base}.12.4.0", "timeticks", int(dp_uptime * 100)))
     return out
 
 
@@ -1625,7 +1638,8 @@ def oid_table():
             if key in d:
                 out.append((f"{base}.{n}.0", typ,
                             d[key] % 2 ** 32 if typ == "counter" else d[key]))
-        out += product_rows(base, d["cgnat"], d["release"], d["build"])
+        out += product_rows(base, d["cgnat"], d["release"], d["build"],
+                            d.get("dp_uptime"))
         out += more_rows(base, d.get("extra", {}))
     return sorted(out, key=lambda r: [int(x) for x in r[0].split(".")])
 

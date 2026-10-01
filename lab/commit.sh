@@ -711,4 +711,34 @@ expect_in "the commit completes" "commit complete" "$NEW_LAST"
 expect "and one inside an open session completes" test "$INT_OK" = "complete"
 expect "the pruned definitions are kept for the next process" test -n "$KEPT"
 
+echo
+echo "=========== show system uptime: the box, the dataplane, the routing (#534) ==========="
+# This container runs FRR's daemons without watchfrr, so the routing's clock is
+# zebra's pidfile here; on a box it is watchfrr's, which FRR's container writes
+# first. The kernel is the host's, long booted: so the dataplane here is always
+# younger than the box - what is asserted is that a restart MOVES it.
+export PRISMA_FRR_STARTED=/var/run/frr/zebra.pid
+UP1=$($HX -c "show system uptime" 2>&1)
+printf '%s\n' "$UP1" | sed 's/^/  /'
+DP1=$(printf '%s\n' "$UP1" | sed -n 's/^  dataplane *since \(.*\), up.*/\1/p')
+VER=$($HX -c "show version" 2>&1 | grep '^  uptime:')
+echo "  show version: $VER"
+pkill -x vpp_main 2>/dev/null || pkill vpp; sleep 2
+vpp -c "$(startup_conf test)" > /tmp/vpp2.log 2>&1 &
+wait_vpp /tmp/vpp2.log
+sleep 2
+UP2=$($HX -c "show system uptime" 2>&1)
+DP2=$(printf '%s\n' "$UP2" | sed -n 's/^  dataplane *since \(.*\), up.*/\1/p')
+DPUP2=$(printf '%s\n' "$UP2" | sed -n 's/^  dataplane *since .*, up \(.*\)/\1/p')
+echo "  dataplane before the restart: since $DP1; after: since $DP2, up $DPUP2"
+expect_in "the box's clock" "  box          since" "$UP1"
+expect_in "the boot's reason, only as recorded" "last boot: " "$UP1"
+expect_in "the dataplane's, from VPP's own clock" "  dataplane    since" "$UP1"
+expect_in "the routing's" "  routing      since" "$UP1"
+expect_in "and the release" "  release      " "$UP1"
+expect_in "show version carries one row of it" "dataplane " "$VER"
+expect "restarting VPP moves the dataplane's start ($DP1 -> $DP2)" \
+  sh -c "[ -n \"$DP1\" ] && [ -n \"$DP2\" ] && [ \"$DP1\" != \"$DP2\" ]"
+expect_in "and says it restarted after the boot" "restarted after the boot" "$UP2"
+
 verdict

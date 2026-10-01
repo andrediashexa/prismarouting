@@ -549,7 +549,8 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show lacp` | os bundles LACP: cada membro e se ele está no bundle |
 | `show system cpu` | quais núcleos fazem o quê: o configurado e o que está em vigor |
 | `show system memory` | a RAM por papel: o configurado e o que está em vigor |
-| `show version` | versões do Prisma Routing, do VPP e do FRR, **qual build o dataplane carregado é** e **quais daemons de roteamento estão rodando** |
+| `show system uptime` | desde quando a caixa, o dataplane (VPP) e o roteamento (FRR) estão no ar, o motivo do último boot quando foi registrado (`system reboot by <conta>`; senão `not recorded`) e quando a versão foi instalada. Um dataplane mais novo que a caixa aparece como `restarted after the boot`: ele reiniciou sozinho |
+| `show version` | versões do Prisma Routing, do VPP e do FRR, **qual build o dataplane carregado é**, **quais daemons de roteamento estão rodando** e uma linha `uptime` com o tempo da caixa e do dataplane |
 | `show route [verbose] [<prefixo>]` | a tabela que encaminha (acima) |
 | `show bgp summary` | uma linha por sessão BGP, com o que chegou à tabela que encaminha |
 | `show bgp neighbor <vizinho>` | uma sessão em detalhe; com `received-routes`, o que o vizinho mandou antes da política de entrada |

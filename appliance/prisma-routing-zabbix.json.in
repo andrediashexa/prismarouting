@@ -412,6 +412,47 @@
             ]
           },
           {
+            "uuid": "f3f052273c0245868e1531ac062a5d7e",
+            "name": "Dataplane uptime",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.12.4.0",
+            "key": "prisma.dataplane.uptime",
+            "delay": "5m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "uptime",
+            "description": "prSystemDataplaneUptime: VPP's own clock (#534).",
+            "preprocessing": [
+              {
+                "type": "MULTIPLIER",
+                "parameters": [
+                  "0.01"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "system"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "34877b4ed9a74aa68bf5c20a0423467d",
+                "expression": "last(/Prisma Routing by SNMP/prisma.dataplane.uptime)<10m and last(/Prisma Routing by SNMP/system.hw.uptime)>15m",
+                "name": "Prisma Routing: the dataplane restarted without the box",
+                "priority": "AVERAGE",
+                "description": "VPP's clock is younger than the box's: the dataplane restarted on its own (a crash, a restart of its service, a tuning change). Every session on the box was lost with it.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "uuid": "e2ac203eca44417c8c90adb057b77b0c",
             "name": "Tuning: state",
             "type": "SNMP_AGENT",

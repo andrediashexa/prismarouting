@@ -52,6 +52,7 @@ D="{BOX}"
 [ -e "$D/down" ] && exit 1
 case "$*" in
   "show version") echo "vpp v26.06-release" ;;
+  "show clock") echo "Time now 539.710725, Thu, 01 Oct 2026 06:43:15 GMT" ;;
   "bpa timeouts") cat "$D/timeouts" ;;
   "show plugins") cat "$D/plugins" ;;
   "show memory main-heap") cat "$D/heap" ;;
@@ -366,7 +367,16 @@ print("\n=== PRISMA-ROUTING-MIB: the rows, and the file they are defined in ==="
 _st = agent.cgnat_state(STATS, agent.parse_drops(open(f"{BOX}/drops").read()))
 _rows = {o: (t, v) for o, t, v in agent.product_rows("1.3.6.1.4.1.99999.1",
                                                     _st, "0.142.1",
-                                                    "0.142.1 (4ccb50d)")}
+                                                    "0.142.1 (4ccb50d)", 539.71)}
+check(_rows.get("1.3.6.1.4.1.99999.1.12.4.0") == ("timeticks", 53971),
+      "prSystemDataplaneUptime: VPP's clock in hundredths (#534)")
+check(agent.vpp_clock("Time now 539.710725, Thu, 01 Oct 2026 06:43:15 GMT\n") == 539.710725
+      and agent.vpp_clock("") is None,
+      "the dataplane's uptime from show clock, as the VTY reads it")
+check("1.3.6.1.4.1.99999.1.12.4.0" not in dict(
+          (o, v) for o, t, v in agent.product_rows("1.3.6.1.4.1.99999.1", _st,
+                                                   "0.142.1", "0.142.1 (4ccb50d)")),
+      "and absent when the dataplane did not answer")
 P = "1.3.6.1.4.1.99999.1"
 check(_rows.get(f"{P}.10.1.1.2.1") == ("string", "p1")
       and _rows.get(f"{P}.10.1.1.3.1") == ("integer", 2)
@@ -438,7 +448,8 @@ for _name, (_par, _n, _body) in _defs.items():
     _want[".".join(map(str, _oid(_name)))] = (_name, _syn)
 _SYN = {"Gauge32": "gauge", "Counter32": "counter", "Counter64": "counter64",
         "DisplayString": "string", "INTEGER": "integer",
-        "TruthValue": "integer", "Unsigned32": "gauge"}
+        "TruthValue": "integer", "Unsigned32": "gauge",
+        "TimeTicks": "timeticks"}
 agent.VALUES.data = {}
 agent.VALUES.at = 0.0
 w(f"{BOX}/stats", STATS)

@@ -303,7 +303,10 @@ records (5), sent (6), spilled (7), dropped (8) and connects (9).
 dataplane loaded; `prSystemDataplaneCurrent` (`.1.12.3.0`, TruthValue) whether
 they are the same. It is false after an upgrade until the next reboot, which
 is a box forwarding with the old build and refusing any commit that needs the
-new one.
+new one. `prSystemDataplaneUptime` (`.1.12.4.0`, TimeTicks, 0.148.7, #534) is
+how long the dataplane has run by VPP's own clock (`show clock`): younger than
+`hrSystemUptime` when the dataplane restarted without the box, which the
+Zabbix template raises as "the dataplane restarted without the box".
 
 ### High availability - `.1.13` (#505)
 

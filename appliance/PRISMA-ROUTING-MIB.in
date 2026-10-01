@@ -19,7 +19,7 @@ PRISMA-ROUTING-MIB DEFINITIONS ::= BEGIN
 
 IMPORTS
     MODULE-IDENTITY, OBJECT-TYPE, enterprises,
-    Counter32, Counter64, Gauge32, Unsigned32
+    Counter32, Counter64, Gauge32, Unsigned32, TimeTicks
         FROM SNMPv2-SMI
     DisplayString, TruthValue
         FROM SNMPv2-TC
@@ -573,6 +573,18 @@ prSystemDataplaneCurrent OBJECT-TYPE
         refused."
     ::= { prSystem 3 }
 
+prSystemDataplaneUptime OBJECT-TYPE
+    SYNTAX      TimeTicks
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "How long the dataplane has run, from VPP's own clock (`show clock`).
+        Younger than the box's hrSystemUptime when the dataplane restarted
+        without the box - a crash, a restart of its service, a tuning change
+        - which is the case worth an alarm. Absent when the dataplane does
+        not answer."
+    ::= { prSystem 4 }
+
 --
 -- High availability: the VRRP virtual routers the dataplane runs.
 --
@@ -1035,7 +1047,7 @@ prLoggingGroup OBJECT-GROUP
 
 prSystemGroup OBJECT-GROUP
     OBJECTS { prSystemRelease, prSystemDataplaneBuild,
-              prSystemDataplaneCurrent }
+              prSystemDataplaneCurrent, prSystemDataplaneUptime }
     STATUS      current
     DESCRIPTION "The release and the running dataplane's build."
     ::= { prGroups 4 }

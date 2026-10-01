@@ -402,6 +402,24 @@ def subscriber_blocks(text):
     return out
 
 
+def uptime_fields(facts, ts):
+    """
+    GetSystem's uptime fields (#534) from Shell.uptime_facts(): a Timestamp
+    built by `ts` for each clock that was read, none for one that was not, the
+    boot's recorded reason, and whether the dataplane restarted after the boot.
+    """
+    out = {}
+    for key, field in (("boot", "boot_time"), ("dataplane", "dataplane_started"),
+                       ("control_plane", "control_plane_started"),
+                       ("vty", "vty_started"),
+                       ("release_installed", "release_installed_at")):
+        if facts.get(key) is not None:
+            out[field] = ts(facts[key])
+    out["last_boot_reason"] = facts.get("boot_reason") or "not recorded"
+    out["dataplane_restarted"] = bool(facts.get("dataplane_restarted"))
+    return out
+
+
 #: The operational readers a worker runs, by name.
 READERS = {
     "interfaces": lambda sh, a: interfaces_of(sh, a or ()),
@@ -416,6 +434,8 @@ READERS = {
     # to ask, answered nothing on the X520 bench (0.148.4), and the whole
     # running configuration is too dear for a call clients poll every 5 s.
     "hostname": lambda sh, a: sh.sys.read_hostname(),
+    # The clocks `show system uptime` reads (#534), from the same Shell.
+    "uptime": lambda sh, a: sh.uptime_facts(),
 }
 
 
@@ -974,7 +994,9 @@ def build(sessions, stats_factory, pb, rpc, grpc):
                 pages = int(m.group(1))
             return pb.SystemInfo(hostname=self._ask(context, "hostname"),
                                  uptime_seconds=up, cpu_text=cpu, memory_text=mem,
-                                 hugepages=pages, **c)
+                                 hugepages=pages,
+                                 **uptime_fields(self._ask(context, "uptime"), ts),
+                                 **c)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def ListInterfaces(self, req, context):
