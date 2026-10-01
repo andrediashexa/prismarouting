@@ -76,6 +76,17 @@ down() {
 # has its address, it changes nothing - which is what an ExecStartPost that
 # runs on every start of the containers needs.
 MGMT_ADDR=128.0.0.2/8
+# sweep <keep>: every bpm* member of the bridge but <keep> deleted, and the
+# host's neighbour entry for the management address forgotten (#546).
+sweep() {
+  for _m in $($IP -o link show master "$BRIDGE" 2>/dev/null \
+                | sed -n 's/^[0-9]*: \(bpm[0-9]*\)[@:].*/\1/p'); do
+    [ "$_m" = "$1" ] && continue
+    $IP link del "$_m" 2>/dev/null || true
+    say "attach: removed $_m, a stale end left on $BRIDGE"
+  done
+  $IP neigh flush dev "$BRIDGE" to "${MGMT_ADDR%/*}" 2>/dev/null || true
+}
 attach() {
   name=${1:?usage: prisma-backplane attach <container>}
   pid=$(docker inspect -f '{{.State.Pid}}' "$name" 2>/dev/null) || pid=
@@ -88,8 +99,16 @@ attach() {
     return 0
   fi
   # The host end is named for the container's pid, so a container that
-  # restarted gets a fresh pair and the stale end goes with its netns.
+  # restarted gets a fresh pair. The stale end USUALLY goes with its netns -
+  # but not always at once: on the X520 bench (0.149.3's upgrade, #546) the
+  # old container's netns outlived it by about ten minutes, its veth stayed
+  # on the bridge still holding 128.0.0.2, the host's neighbour entry kept
+  # its MAC, and the API's readiness check got "connection refused" from the
+  # dead container on every restart. 128.0.0.2 is ONE container's address,
+  # so any other bpm member of the bridge is stale: it goes, and so does the
+  # neighbour entry, before the new pair is made.
   host_end=bpm$pid
+  sweep "$host_end"
   $IP link del "$host_end" 2>/dev/null || true
   $IP link add "$host_end" type veth peer name bpm${pid}c
   $IP link set "$host_end" master "$BRIDGE"
