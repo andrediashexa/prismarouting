@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.7 - show system uptime: the box, the dataplane, the routing and since when
+
+### Added
+
 * **`show system uptime`: since when the box, the dataplane and the routing run.**
   ([#534](https://github.com/andrediashexa/hexarouting/issues/534))
   Asked for by the maintainer: the VTY showed no uptime at all. The box from
@@ -94,8 +100,6 @@ version has a chance of seeing it.
   `prSystemDataplaneUptime` and the Zabbix template raises "the dataplane
   restarted without the box". `lab/commit.sh` restarts VPP and reads the
   dataplane's start move.
-
-### Fixed
 
 ## 0.148.6 - the API answers the hostname, and its console does not hold the status
 
