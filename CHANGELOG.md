@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.7 - CGNAT log export no longer takes the dataplane with it
+
+### Fixed
+
 * **Log export no longer takes the dataplane with it.**
   ([#547](https://github.com/andrediashexa/hexarouting/issues/547)) Found on
   the legacy #475 bench after its upgrade to 0.149.4, and measured there by
