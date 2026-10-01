@@ -239,7 +239,7 @@ PROBE_COUNT_DEFAULT = 5
 # been filtered is not.
 POLICY_STATEMENT = ("ip prefix-list", "ipv6 prefix-list", "route-map",
                     "bgp as-path access-list", "bgp community-list",
-                    "bgp large-community-list")
+                    "bgp large-community-list", "bgp extcommunity-list")
 POLICY_DAEMONS = ("mgmtd", "zebra")
 
 # A static route is not a policy statement and not a `router` line, so neither
@@ -359,12 +359,19 @@ def refused_for_memory(text):
 POLICY_PATH = os.environ.get("PRISMA_POLICY_PATH",
                              "/etc/prisma-routing/policy-options")
 _COMPILED = ("route-map PO-", "ip prefix-list PO-", "ipv6 prefix-list PO-",
-             "bgp community-list standard PO-", "bgp as-path access-list PO-")
+             "bgp community-list standard PO-", "bgp as-path access-list PO-",
+             "bgp large-community-list standard PO-",
+             "bgp extcommunity-list standard PO-")
 
 
 def compiled_object(line):
-    """Whether `line` opens or names an FRR object of the policy compiler."""
-    return line.strip().startswith(_COMPILED)
+    """
+    Whether `line` opens or names an FRR object of the policy compiler: a
+    PO- object, or one of the blackhole routes `set next-hop discard` is
+    resolved through (#535), told from an operator's by their tag.
+    """
+    s = line.strip()
+    return s.startswith(_COMPILED) or s in policy_mod.DISCARD_ROUTES
 
 
 def strip_compiled(routing):
@@ -407,6 +414,23 @@ def policy_uses(routing):
     return uses
 
 
+def policy_names(words):
+    """
+    The policies an `import`, `export` or IGP `export` names (#535): one
+    word, or a chain in brackets, `[ A B ]` - the brackets may touch the
+    names. None when it is neither, or names a policy twice.
+    """
+    text = " ".join(words)
+    if "[" not in text and "]" not in text:
+        return words if len(words) == 1 else None
+    m = re.fullmatch(r"\[\s*(.*?)\s*\]", text.strip())
+    names = m.group(1).split() if m else []
+    if not names or len(set(names)) != len(names) \
+            or any(c in n for n in names for c in "[]"):
+        return None
+    return names
+
+
 def policy_applications(routing):
     """
     {policy: ["neighbor <peer> import", "ospf export", ...]}: where the
@@ -419,16 +443,25 @@ def policy_applications(routing):
         m = re.fullmatch(r"\s*neighbor (\S+) route-map PO-(\S+)-(IN|OUT) "
                          r"(in|out)", line)
         if m:
-            out.setdefault(m.group(2), []).append(
-                f"neighbor {m.group(1)} "
-                f"{'import' if m.group(3) == 'IN' else 'export'}")
+            # A chain (#535) is one map named for all of its policies: each
+            # is said applied there, with the chain it is part of.
+            names = policy_mod.chain(m.group(2))
+            where = (f"neighbor {m.group(1)} "
+                     f"{'import' if m.group(3) == 'IN' else 'export'}")
+            if len(names) > 1:
+                where += f" [ {' '.join(names)} ]"
+            for n in names:
+                out.setdefault(n, []).append(where)
             continue
         m = re.fullmatch(r"\s*redistribute .*route-map "
                          r"PO-(\S+)-(OSPF|ISIS)-[A-Z]+", line)
         if m:
-            where = f"{m.group(2).lower()} export"
-            if where not in out.setdefault(m.group(1), []):
-                out[m.group(1)].append(where)
+            names = policy_mod.chain(m.group(1))
+            where = f"{m.group(2).lower()} export" + (
+                f" [ {' '.join(names)} ]" if len(names) > 1 else "")
+            for n in names:
+                if where not in out.setdefault(n, []):
+                    out[n].append(where)
     return out
 
 
@@ -2983,6 +3016,10 @@ TREE["policy-options"] = {
                     "<name>"),
     "community": ("a named set of BGP communities",
                   "<name> members <asn:value>..."),
+    "large-community": ("a named set of BGP large communities",
+                        "<name> members <asn:v1:v2>..."),
+    "extended-community": ("a named set of BGP extended communities",
+                           "<name> members rt|soo:<asn>:<value>..."),
     "as-path": ("a named AS-path regular expression", "<name> <regex>"),
     "policy-statement": ("a named policy, made of ordered terms", "<name>"),
     "no": ("remove a list, a community, an as-path or a policy",
@@ -2999,6 +3036,9 @@ TREE["prefix-list"] = {
 TREE["policy-statement"] = {
     "term": ("a term, evaluated in the order the terms were typed",
              "<name>"),
+    "default-action": ("what a route no term decided gets from this policy",
+                       {"accept": ("accept it", None),
+                        "reject": ("reject it", None)}),
     "no": ("remove a term", "term <name>"),
     "exit": ("leave the policy-statement", None),
     **_EVERY_LEVEL,
@@ -3016,20 +3056,58 @@ TREE["term"] = {
                      p: ("", None) for p in
                      ("bgp", "ospf", "isis", "static", "direct", "kernel")}),
                  "tag": ("carrying this route tag", "<0-4294967295>"),
-                 "metric": ("with this metric", "<0-4294967295>")}),
+                 "metric": ("with this metric", "<0-4294967295>"),
+                 "large-community": ("carrying a large community set",
+                                     "<name>"),
+                 "extended-community": ("carrying an extended community set",
+                                        "<name>"),
+                 "neighbor": ("from or to this BGP neighbor", "<address>"),
+                 "family": ("of this address family", {
+                     "inet": ("IPv4", None), "inet6": ("IPv6", None)}),
+                 "origin": ("with this BGP origin", {
+                     o: ("", None) for o in ("igp", "egp", "incomplete")}),
+                 "local-preference": ("with this local preference",
+                                      "<0-4294967295>"),
+                 "next-hop": ("whose next hop is this address", "<address>"),
+                 "validation-state": ("with this RPKI state", {
+                     "valid": ("an RPKI cache covers it and agrees", None),
+                     "invalid": ("an RPKI cache covers it and disagrees",
+                                 None),
+                     "unknown": ("no RPKI cache covers it", None)}),
+                 "policy": ("first through this policy: its reject rejects",
+                            "<name>")}),
     "set": ("what changes when the term matches", {
-        "local-preference": ("the BGP local preference", "<0-4294967295>"),
+        "local-preference": ("the BGP local preference, or +n / -n",
+                             "<0-4294967295>|+<n>|-<n>"),
         "community": ("add, set or delete a community set",
                       "add|set|delete <name>"),
-        "as-path-prepend": ("prepend these ASNs", "<asn>..."),
+        "as-path-prepend": ("prepend these ASNs, or the last AS n times",
+                            "<asn>...|last-as <1-10>"),
+        "as-path": ("rewrite the AS path", {
+            "remove-private": ("take out the private ASNs", None)}),
+        "large-community": ("add, set or delete a large community set",
+                            "add|set|delete <name>"),
+        "extended-community": ("add or set an extended community set",
+                               "add|set <name>"),
+        "med": ("the BGP MED, or +n / -n, or the IGP cost",
+                "<n>|+<n>|-<n>|igp"),
+        "weight": ("the BGP weight, on this box only", "<0-65535>"),
+        "origin": ("the BGP origin", {
+            o: ("", None) for o in ("igp", "egp", "incomplete")}),
+        "metric-type": ("the OSPF external type, on an export into OSPF", {
+            "1": ("type 1", None), "2": ("type 2", None)}),
         "metric": ("the metric: the MED on BGP, the cost in OSPF and IS-IS",
                    "<0-4294967295>"),
         "tag": ("the route tag", "<0-4294967295>"),
-        "next-hop": ("the BGP next hop", "<address>")}),
+        "next-hop": ("the BGP next hop: an address, self, peer-address, "
+                     "or discard (a blackhole)",
+                     "<address>|self|peer-address|discard")}),
     "then": ("how the term ends", {
         "accept": ("accept the route, and stop", None),
         "reject": ("reject the route, and stop", None),
-        "next": ("apply the sets and go on", {"term": ("", None)})}),
+        "next": ("apply the sets and go on", {
+            "term": ("to the next term", None),
+            "policy": ("to the next policy of the chain", None)})}),
     "no": ("remove a from, set or then", "<statement>"),
     "exit": ("leave the term", None),
     **_EVERY_LEVEL,
@@ -13569,8 +13647,11 @@ class Shell:
                 self.err(bad[0][1])
             return True
         w = line.split()
-        if w[1] in ("community", "as-path"):
+        if w[1] in ("community", "as-path", "large-community",
+                    "extended-community"):
             pol[:] = [l for l in pol if l.split()[:3] != w[:3]]
+        elif w[1] == "policy-statement" and w[3:4] == ["default-action"]:
+            pol[:] = [l for l in pol if l.split()[:4] != w[:4]]
         elif "then" in w[5:6]:
             pol[:] = [l for l in pol if l.split()[:6] != w[:6]]
         if line not in pol:
@@ -14615,17 +14696,29 @@ class Shell:
         # applied, as the route-map it compiles to (#458). Refused here when
         # no policy-statement has that name, rather than at commit.
         _w = line.split()
-        if len(_w) == 4 and _w[0] == "neighbor" and _w[2] in ("import",
+        if len(_w) >= 4 and _w[0] == "neighbor" and _w[2] in ("import",
                                                                "export") \
                 and any(b.startswith("router bgp") for b in self.frr_ctx):
+            _names = policy_names(_w[3:])
+            if _names is None:
+                self.err("usage: neighbor <peer> import|export <policy> | "
+                         "[ <policy>... ]")
+                return True
             _pol, _ = policy_mod.parse(self.candidate.policy)
-            if _w[3] not in _pol.statements:
-                # One value, and last: the policy's name is the one thing
-                # the operator has to go and fix.
-                self.err(f"no policy-statement named {_w[3]}")
+            for _n in _names:
+                if _n not in _pol.statements:
+                    # One value, and last: the policy's name is the one
+                    # thing the operator has to go and fix.
+                    self.err(f"no policy-statement named {_n}")
+                    return True
+            _chain = policy_mod.chain_name(_names)
+            _why = policy_mod.use_findings(_pol, _chain, _w[2])
+            if _why:
+                self.err_prose(f"this policy cannot be applied as {_w[2]}; "
+                               "nothing staged", *_why)
                 return True
             line = (f"neighbor {_w[1]} route-map "
-                    f"{policy_mod.map_name(_w[3], _w[2])} "
+                    f"{policy_mod.map_name(_chain, _w[2])} "
                     f"{'in' if _w[2] == 'import' else 'out'}")
         # `export <policy>` inside `router ospf` or `router isis` (#458 step
         # 2): the `redistribute` statements it stands for, one per protocol
@@ -14705,16 +14798,18 @@ class Shell:
         was written to hold back.
         """
         neg = w[0] == "no"
-        args = w[2:] if neg else w[1:]
-        if len(args) != 1:
-            self.err("usage: [no] export <policy>")
+        names = policy_names(w[2:] if neg else w[1:])
+        if names is None:
+            self.err("usage: [no] export <policy> | [ <policy>... ]")
             return True
-        name = args[0]
+        name = policy_mod.chain_name(names)
         pol, _ = policy_mod.parse(self.candidate.policy)
-        if not neg and name not in pol.statements:
-            self.err(f"no policy-statement named {name}")
-            return True
-        why = [] if neg else policy_mod.igp_findings(pol, name)
+        for n in names:
+            if not neg and n not in pol.statements:
+                self.err(f"no policy-statement named {n}")
+                return True
+        why = [] if neg else policy_mod.use_findings(pol, name,
+                                                     f"{igp}:static")
         if why:
             self.err_prose(f"this policy cannot be exported into {igp}; "
                            "nothing staged", *why)

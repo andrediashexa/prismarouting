@@ -2509,6 +2509,91 @@ check("redistribute ipv6 static level-2 route-map PO-EXT-ISIS-STATIC"
 sh.frr_ctx = []
 ok("the namespace, the file, the levels, the staging")
 
+print("\n=== routing policy, phase A in the VTY (#535) ===")
+check(prismash.policy_names(["A"]) == ["A"]
+      and prismash.policy_names(["[", "A", "B", "]"]) == ["A", "B"]
+      and prismash.policy_names(["[A", "B]"]) == ["A", "B"]
+      and prismash.policy_names(["A", "B"]) is None
+      and prismash.policy_names(["[", "A", "A", "]"]) is None
+      and prismash.policy_names(["[", "]"]) is None
+      and prismash.policy_names(["[", "A"]) is None,
+      "one name, or a chain in brackets; two bare names, a repeat, an empty "
+      "or an open bracket are not")
+check(prismash.compiled_object(prismash.policy_mod.DISCARD_ROUTES[0])
+      and prismash.compiled_object(prismash.policy_mod.DISCARD_ROUTES[1])
+      and not prismash.compiled_object("ip route 192.0.2.1/32 blackhole")
+      and prismash.compiled_object("bgp large-community-list standard PO-L-X "
+                                   "seq 5 permit 1:2:3"),
+      "the discard routes the compiler emits are its own; one typed with no "
+      "tag is the operator's")
+_run = ["router bgp 65000", " address-family ipv4 unicast",
+        "  neighbor 10.0.0.2 route-map PO-A+B-IN in",
+        "  neighbor 10.0.0.2 route-map PO-C-OUT out"]
+check(prismash.policy_applications(_run)
+      == {"A": ["neighbor 10.0.0.2 import [ A B ]"],
+          "B": ["neighbor 10.0.0.2 import [ A B ]"],
+          "C": ["neighbor 10.0.0.2 export"]},
+      f"a chain is said under each of its policies: "
+      f"{prismash.policy_applications(_run)}")
+sh = shell()
+sh.candidate = Config()
+sh.mode = "config"
+sh.candidate.policy = [
+    "policy-options policy-statement A term 1 then next policy",
+    "policy-options policy-statement B term 1 then accept",
+    "policy-options policy-statement S term 1 set next-hop self",
+    "policy-options policy-statement OM term 1 set metric-type 2"]
+sh.frr_ctx = ["router bgp 65000"]
+_before = list(sh.candidate.routing)
+rv, text = driven(lambda: sh.do_config("neighbor 10.0.0.2 import [ A B ]"))
+check(sh.candidate.routing[len(_before):]
+      == ["neighbor 10.0.0.2 route-map PO-A+B-IN in"],
+      f"a chain staged as the one map it compiles to: "
+      f"{sh.candidate.routing[len(_before):]} {text!r}")
+_before = list(sh.candidate.routing)
+for _bad, _why in (
+        ("neighbor 10.0.0.2 import [ A A ]",
+         "usage: neighbor <peer> import|export <policy> | [ <policy>... ]"),
+        ("neighbor 10.0.0.2 export A B",
+         "usage: neighbor <peer> import|export <policy> | [ <policy>... ]"),
+        ("neighbor 10.0.0.2 import [ A NOPE ]",
+         "no policy-statement named NOPE"),
+        ("neighbor 10.0.0.2 import S",
+         "set next-hop self is for an export"),
+        ("neighbor 10.0.0.2 export OM",
+         "set metric-type is for an export into OSPF")):
+    rv, text = driven(lambda: sh.do_config(_bad))
+    check(_why in text and sh.candidate.routing == _before,
+          f"{_bad!r} refused, nothing staged: {text!r}")
+sh.frr_ctx = ["router ospf"]
+rv, text = driven(lambda: sh.do_config("export [ OM B ]"))
+check("redistribute static route-map PO-OM+B-OSPF-STATIC"
+      in sh.candidate.routing, f"a chain exported into OSPF: {text!r}")
+rv, text = driven(lambda: sh.do_config("export [ OM"))
+check("usage: [no] export <policy> | [ <policy>... ]" in text,
+      f"an open bracket is a usage: {text!r}")
+sh.frr_ctx = []
+driven(lambda: sh.stage_policy("policy-options policy-statement B "
+                               "default-action reject"))
+driven(lambda: sh.stage_policy("policy-options policy-statement B "
+                               "default-action accept"))
+driven(lambda: sh.stage_policy("policy-options large-community L members "
+                               "1:2:3"))
+driven(lambda: sh.stage_policy("policy-options large-community L members "
+                               "4:5:6"))
+driven(lambda: sh.stage_policy("policy-options extended-community E members "
+                               "rt:1:2"))
+driven(lambda: sh.stage_policy("policy-options extended-community E members "
+                               "soo:3:4"))
+check([l for l in sh.candidate.policy if "default-action" in l
+       or "-community" in l]
+      == ["policy-options policy-statement B default-action accept",
+          "policy-options large-community L members 4:5:6",
+          "policy-options extended-community E members soo:3:4"],
+      f"a default-action, and a community set, said again replaces: "
+      f"{sh.candidate.policy}")
+ok("chains, the refusals at the neighbor, the new definitions staged")
+
 print("\n=== show policy and test policy (#458 step 3) ===")
 _run = ["router bgp 65000", " address-family ipv4 unicast",
         "  neighbor 10.0.0.2 route-map PO-UP-IN in",

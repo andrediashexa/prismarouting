@@ -1,0 +1,141 @@
+### example
+bgp community-list standard PO-C-NOEXP seq 5 permit 65000:666
+bgp as-path access-list PO-UP-IN-T1-A seq 5 permit _6451[2-9]_
+route-map PO-UP-IN-IN deny 10
+ match as-path PO-UP-IN-T1-A
+exit
+route-map PO-UP-IN-IN permit 20
+ set local-preference 200
+ on-match next
+exit
+route-map PO-UP-IN-IN permit 65535
+exit
+ip prefix-list PO-UP-OUT-T10-4 seq 5 permit 203.0.113.0/24
+ipv6 prefix-list PO-UP-OUT-T10-6 seq 5 permit 2001:db8::/32
+ip prefix-list PO-UP-OUT-T20-4 seq 5 permit 198.51.100.0/22 le 24
+bgp community-list standard PO-UP-OUT-T30-C seq 5 permit 65000:666
+route-map PO-UP-OUT-OUT permit 10
+ match ip address prefix-list PO-UP-OUT-T10-4
+ set as-path prepend 65000 65000
+ set community 65000:100 65000:200 additive
+exit
+route-map PO-UP-OUT-OUT permit 11
+ match ipv6 address prefix-list PO-UP-OUT-T10-6
+ set as-path prepend 65000 65000
+ set community 65000:100 65000:200 additive
+exit
+route-map PO-UP-OUT-OUT deny 20
+ match ip address prefix-list PO-UP-OUT-T20-4
+exit
+route-map PO-UP-OUT-OUT permit 30
+ match community PO-UP-OUT-T30-C
+ set comm-list PO-C-NOEXP delete
+ on-match next
+exit
+route-map PO-UP-OUT-OUT permit 65535
+exit
+route-map PO-UP-OUT-IN permit 10
+ match ip address prefix-list PO-UP-OUT-T10-4
+ set as-path prepend 65000 65000
+ set community 65000:100 65000:200 additive
+exit
+route-map PO-UP-OUT-IN permit 11
+ match ipv6 address prefix-list PO-UP-OUT-T10-6
+ set as-path prepend 65000 65000
+ set community 65000:100 65000:200 additive
+exit
+route-map PO-UP-OUT-IN deny 20
+ match ip address prefix-list PO-UP-OUT-T20-4
+exit
+route-map PO-UP-OUT-IN permit 30
+ match community PO-UP-OUT-T30-C
+ set comm-list PO-C-NOEXP delete
+ on-match next
+exit
+route-map PO-UP-OUT-IN permit 65535
+exit
+### step2
+route-map PO-EXT-ISIS-BGP deny 65535
+exit
+ip prefix-list PO-EXT-T2-4 seq 5 permit 10.255.0.0/16
+route-map PO-EXT-ISIS-CONNECTED permit 20
+ match ip address prefix-list PO-EXT-T2-4
+exit
+route-map PO-EXT-ISIS-CONNECTED deny 65535
+exit
+route-map PO-EXT-ISIS-KERNEL deny 65535
+exit
+route-map PO-EXT-ISIS-OSPF deny 65535
+exit
+route-map PO-EXT-ISIS-STATIC permit 10
+ set metric 20
+ set tag 7
+exit
+route-map PO-EXT-ISIS-STATIC deny 65535
+exit
+route-map PO-EXT-OSPF-BGP deny 65535
+exit
+route-map PO-EXT-OSPF-CONNECTED permit 20
+ match ip address prefix-list PO-EXT-T2-4
+exit
+route-map PO-EXT-OSPF-CONNECTED deny 65535
+exit
+route-map PO-EXT-OSPF-ISIS deny 65535
+exit
+route-map PO-EXT-OSPF-KERNEL deny 65535
+exit
+route-map PO-EXT-OSPF-STATIC permit 10
+ set metric 20
+ set tag 7
+exit
+route-map PO-EXT-OSPF-STATIC deny 65535
+exit
+route-map PO-NH-OUT permit 10
+ match tag 7
+ match metric 20
+ set ip next-hop 192.0.2.1
+ on-match next
+exit
+route-map PO-NH-OUT permit 65535
+exit
+route-map PO-NH-IN permit 10
+ match tag 7
+ match metric 20
+ set ip next-hop 192.0.2.1
+ on-match next
+exit
+route-map PO-NH-IN permit 65535
+exit
+### filters
+ip prefix-list PO-F-Ta-4 seq 5 permit 10.0.0.0/8
+ip prefix-list PO-F-Ta-4 seq 10 permit 10.0.0.0/8 le 32
+ip prefix-list PO-F-Ta-4 seq 15 permit 10.0.0.0/8 ge 9 le 32
+ipv6 prefix-list PO-F-Ta-6 seq 5 permit 2001:db8::/32 le 48
+route-map PO-F-OUT permit 10
+ match ip address prefix-list PO-F-Ta-4
+ set ipv6 next-hop global 2001:db8::1
+ on-match next
+exit
+route-map PO-F-OUT permit 11
+ match ipv6 address prefix-list PO-F-Ta-6
+ set ipv6 next-hop global 2001:db8::1
+ on-match next
+exit
+route-map PO-F-OUT deny 30
+exit
+route-map PO-F-OUT permit 65535
+exit
+route-map PO-F-IN permit 10
+ match ip address prefix-list PO-F-Ta-4
+ set ipv6 next-hop global 2001:db8::1
+ on-match next
+exit
+route-map PO-F-IN permit 11
+ match ipv6 address prefix-list PO-F-Ta-6
+ set ipv6 next-hop global 2001:db8::1
+ on-match next
+exit
+route-map PO-F-IN deny 30
+exit
+route-map PO-F-IN permit 65535
+exit
