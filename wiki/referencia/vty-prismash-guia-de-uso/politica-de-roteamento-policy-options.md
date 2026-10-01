@@ -448,7 +448,7 @@ Três coisas para ler certo:
 
 * **Conta casamentos, não rotas.** Uma rota avaliada de novo - um soft reset, uma atualização do vizinho - conta de novo. O número sobe com as rotas, mas não é o tamanho da tabela.
 * **Dois lugares que aplicam a mesma política dividem o contador.** Dois vizinhos com `import UP` são uma conta só; a lista de lugares aparece acima dela.
-* **`-` e `no counter` não são zero.** `-` é um term que não existe naquele uso (um `from protocol` de outro protocolo, por exemplo). `no counter` é um processo que não respondeu por aquela política - não está rodando, ou não a tem.
+* `**-**` **e** `**no counter**` **não são zero.** `-` é um term que não existe naquele uso (um `from protocol` de outro protocolo, por exemplo). `no counter` é um processo que não respondeu por aquela política - não está rodando, ou não a tem.
 
 ## Testar com uma rota descrita: `test policy ... route`
 
