@@ -2178,6 +2178,62 @@ IFACE_VRF_MIN, IFACE_VRF_MAX = 1, 4294967295
 IFACE_VRF_RANGE = f"<{IFACE_VRF_MIN}-{IFACE_VRF_MAX}>"
 
 
+#: The tables the kernel names for itself (#540): `ip route show table main`
+#: is 254, and a VRF device given one of these would route through the box's
+#: own table rather than one of its own.
+LINUX_OWN_TABLES = {253: "default", 254: "main", 255: "local"}
+
+#: The VRFs that are the box's own (#447, #537): prisma-bp, the containers'
+#: backplane, and every name under the prefix. The VTY never makes, removes,
+#: reads back or enslaves into one.
+VRF_RESERVED_PREFIX = "prisma-"
+
+
+def vrf_device_error(name, table):
+    """
+    Why `vrf <name> table <table>` cannot be a statement (#540), or None, as
+    (verdict, prose). One predicate for the prompt, the file and the door.
+
+    The name is FRR's VRF and the Linux device both, so it is what both
+    take: policy.VRF_NAME, the rule `vrf-import` checks a name with (#537),
+    which is a Linux interface name. The table is the interface statement's
+    `vrf <n>`, the number VPP and the kernel key the same FIB by.
+    """
+    why = policy_mod.vrf_name_error(name)
+    if why:
+        return (f"vrf {name}: not a name", why)
+    if name == "default":
+        return ("vrf default: the table without a VRF",
+                "FRR calls the main table 'default'; a device of that name "
+                "would be a second VRF answering to it")
+    if name.startswith(VRF_RESERVED_PREFIX):
+        return (f"vrf {name}: {VRF_RESERVED_PREFIX}* is the box's own",
+                "prisma-bp is the containers' backplane (#447); a VRF of the "
+                "operator's takes another name")
+    if not is_number(str(table)) or not (
+            IFACE_VRF_MIN <= int(table) <= IFACE_VRF_MAX):
+        return (f"vrf {name}: table {table} is not a table",
+                f"the number an interface's 'vrf' takes, "
+                f"{IFACE_VRF_RANGE}")
+    if int(table) in LINUX_OWN_TABLES:
+        return (f"vrf {name}: table {table} is the kernel's own",
+                f"Linux calls {table} '{LINUX_OWN_TABLES[int(table)]}'; a "
+                f"VRF routes through a table of its own")
+    return None
+
+
+def vrf_table_taken(devices, name, table):
+    """
+    Why `name` cannot take `table` beside `devices` ({name: table}), or
+    None: two devices on one table would be two names FRR gives one FIB.
+    """
+    for other, t in devices.items():
+        if other != name and str(t) == str(table):
+            return (f"vrf {name}: table {table} is vrf {other}'s",
+                    "one table, one VRF; 'no vrf <name> table' frees it")
+    return None
+
+
 def vlan_tag_error(word: str, what: str = "vlan"):
     """
     None when `word` is a VLAN tag, a sentence when it is not.
@@ -2532,6 +2588,9 @@ class Config:
         # statement - a file saved before there was one - which changes
         # nothing; `no hostname` is the installer's default, stated.
         self.hostname: str = ""
+        # The Linux VRF devices (#540), {name: table}: `vrf <name> table
+        # <id>`. Read back from the host's devices, the box's own excepted.
+        self.vrf_devices: dict[str, int] = {}
         self.users: dict = {}
         self.snmp: dict = dict(SNMP_DEFAULTS)
         # The management API's listener (#532): read back from api.env.
@@ -2720,6 +2779,9 @@ class Config:
     def text(self) -> str:
         out = [CGNAT_HEADER]
         out += self.cgnat_block()
+        # Ahead of the interfaces whose `vrf <n>` names their tables (#540).
+        out += [f"vrf {name} table {self.vrf_devices[name]}"
+                for name in sorted(self.vrf_devices)]
         for ifname in sorted(self.interface_names()):
             out.append(f"interface {ifname}")
             out += self.interface_lines(ifname)
@@ -3139,6 +3201,21 @@ class Config:
                                         " - ".join(hostname_error(w[1]))))
                 else:
                     cfg.hostname = w[1]
+                continue
+            if s.startswith("vrf ") and line == s:
+                # A Linux VRF device (#540). Column 0 and in this half: an
+                # interface's ` vrf <n>` is indented, and FRR's `vrf <name>`
+                # block is under the routing header.
+                w = s.split()
+                why = (vrf_device_error(w[1], w[3])
+                       if len(w) == 4 and w[2] == "table"
+                       else ("expected: vrf <name> table <id>", ""))
+                why = why or vrf_table_taken(cfg.vrf_devices, w[1], w[3])
+                if why:
+                    cfg.unknown.append((lineno, s,
+                                        " - ".join(x for x in why if x)))
+                else:
+                    cfg.vrf_devices[w[1]] = int(w[3])
                 continue
             if s.startswith("ssh "):
                 w = s.split(None, 2)
@@ -4090,6 +4167,12 @@ class Config:
             # Only a name that is stated: a file with none leaves the box's.
             "hostname_changed": bool(other.hostname)
             and other.hostname != self.hostname,
+            # A device's table is fixed when it is made, so a new table is
+            # the device removed and made again (#540).
+            "vrfdev_add": {k: v for k, v in other.vrf_devices.items()
+                           if self.vrf_devices.get(k) != v},
+            "vrfdev_del": sorted(k for k, v in self.vrf_devices.items()
+                                 if other.vrf_devices.get(k) != v),
             "users_changed": users_changed,
             "pool_add": add,
             "pool_remove": remove,

@@ -3446,7 +3446,11 @@ def box_193():
                             "show": lambda s, c: (1, "")})()
     sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [],
                             "read_hostname": lambda s: "",
-                            "read_users": lambda s: {}})()
+                            "read_users": lambda s: {},
+                            # The host's link list, for its VRF devices
+                            # (#540): a host with none.
+                            "_run": lambda s, argv, stdin=None, timeout=30:
+                            (0, "")})()
     sh.snmp = type("N", (), {"read": lambda s: ({}, [], {}, [])})()
     sh.feed("configure")
     return sh
@@ -4004,7 +4008,9 @@ def box_211(reachable, cfg_text):
     sh.frr = type("F", (prismash.Frr,), {"available": lambda s: False, "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
     sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_dns": lambda s: [],
-                            "read_hostname": lambda s: "", "read_users": lambda s: {}})()
+                            "read_hostname": lambda s: "", "read_users": lambda s: {},
+                            "_run": lambda s, argv, stdin=None, timeout=30:
+                            (0, "")})()
     sh.snmp = type("N", (), {"read": lambda s: ({}, [], {}, [])})()
     return sh
 
@@ -5765,7 +5771,8 @@ def _shell271(candidate_text, running_text="", caps=None, api=None, dp=None,
         "read_ssh": lambda self: {},
         "read_dns": lambda self: [],
         "read_hostname": lambda self: "",
-        "read_users": lambda self: {}})()
+        "read_users": lambda self: {},
+        "_run": lambda self, argv, stdin=None, timeout=30: (0, "")})()
     # Fixtures written flat, in the model's words, and read as the file
     # format they stand for (#446).
     sh.candidate = _cfg.Config.parse(in_nat_block(candidate_text))
