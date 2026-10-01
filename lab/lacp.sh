@@ -125,6 +125,16 @@ expect_not_in "every IEEE8023-LAG-MIB row resolves to a name in IEEE's module" \
   "iso.2.840" "$LGWALK"
 expect_in "packets cross the bundle" " 0% packet loss" "$PING"
 expect_in "and still cross it with one member cut" " 0% packet loss" "$PING2"
+# THE TWO TRANSPORTS READ THE SAME BOX THE SAME WAY (#527, #530). This lab
+# has linux_cp pairs, which lab/api.sh's parity run has not: on the X520
+# bench 0.148.1 read every pair's Linux name through vpp_papi with a NUL on
+# the end and printed `linux-name <card><NUL>` under every interface.
+RC_PAPI=$($HX -c "show running-config" 2>/dev/null)
+RC_VAT2=$(PRISMA_API=vat2 $HX -c "show running-config" 2>/dev/null)
+NULS=$($HX -c "show running-config" 2>/dev/null | tr -dc '\000' | wc -c)
+expect "the running configuration read over vpp_papi is the one vat2 reads" \
+  test "$RC_PAPI" = "$RC_VAT2"
+expect "and carries no NUL byte ($NULS)" test "$NULS" = "0"
 expect_said "the running configuration reads the bundle back" \
   "interface ae0 member host-m1 member host-m2" "$RUN"
 verdict

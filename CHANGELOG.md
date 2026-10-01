@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **0.148.1 read every card's Linux name with a NUL on the end.**
+  ([#530](https://github.com/andrediashexa/hexarouting/issues/530))
+  Found on the X520 bench right after the upgrade: `show running-config`
+  printed `linux-name <card><NUL>` under every interface, which a `save` would
+  have written into the file the boot loads. #529 reads the dataplane's CLI
+  screens over cli_inband, and VPP prints the Linux name in `show lcp` with its
+  C terminator inside the row - vppctl's output of the same screen has none.
+  A screen read over the connection loses its NUL bytes now, a papi string
+  field ends at its first NUL as vat2 printed it, and the `ERROR:root:select
+  failed` vpp_papi logged on about one exit in five is filtered. `lab/lacp.sh`,
+  which has linux_cp pairs - `lab/api.sh`'s parity run has none - compares the
+  running configuration read through both transports: identical, no NUL.
+
 ## 0.148.1 - a commit in about a second: the CLI over the same connection, one reading, the API loaded once
 
 ### Changed
