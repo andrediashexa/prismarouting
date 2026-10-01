@@ -35,11 +35,13 @@
 # here - reaches VPP. The lab prints the connected one and does not assert
 # it: it is #537's finding, not the behaviour the box should have.
 #
-# THE LINUX VRFS ARE MADE HERE BY HAND. The box models an interface's VRF as
-# a VPP table (`vrf <n>` on an interface) and makes no Linux VRF device for
-# it - only prisma-bp, the containers' backplane, has one (#447). FRR's BGP
-# in a VRF needs that device, so this lab makes `red` and `svc` and puts the
-# LCP host interfaces in them: the gap #537 reports, not something it closes.
+# THE LINUX VRFS ARE THE VTY'S (#540). Until then this lab made `red` and
+# `svc` by hand, with `ip link add red type vrf table 10`, because the box
+# made no Linux VRF device - only prisma-bp, the containers' backplane, had
+# one (#447) - and FRR's BGP in a VRF needs that device. Now `vrf red table
+# 10` makes it and puts the LCP host interface of table 10 in it, and the
+# lab asserts that, and that the boot's `--load` makes them again on a host
+# that has lost them.
 #
 # MODE=off commits the same box and the same policies without the vrf-import
 # statements, and every check that a route leaked must go red.
@@ -89,18 +91,24 @@ for n in up red svc; do
 done
 vppctl set interface ip table host-veth-red 10
 vppctl set interface ip table host-veth-svc 30
-$HX -c "configure" -c "interface host-veth-up" -c "linux-name vppup0" \
+# The backplane's VRF, as appliance/prisma-backplane makes it on a box: the
+# VTY must neither list it nor take its table (#540).
+ip link add prisma-bp type vrf table 128
+ip link set prisma-bp up
+# The Linux VRFs, by the VTY (#540), in the commit that makes the pairs:
+# the same table numbers as VPP's, which is what linux-nl syncs a kernel
+# table into.
+PAIRS=$($HX -c "configure" -c "vrf red table 10" -c "vrf svc table 30" \
+    -c "interface host-veth-up" -c "linux-name vppup0" \
     -c "exit" -c "interface host-veth-red" -c "linux-name vppred0" \
     -c "exit" -c "interface host-veth-svc" -c "linux-name vppsvc0" \
-    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pairs: /'
-# The Linux VRFs, by hand (above): the same table numbers as VPP's, which
-# is what linux-nl syncs a kernel table into.
-ip link add red type vrf table 10
-ip link add svc type vrf table 30
-ip link set red up
-ip link set svc up
-ip link set vppred0 master red
-ip link set vppsvc0 master svc
+    -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$PAIRS" | tail -1 | sed 's/^/  pairs and VRFs: /'
+L_RED=$(ip -d -o link show red 2>&1)
+L_SVC=$(ip -d -o link show svc 2>&1)
+L_RED0=$(ip -o link show vppred0 2>&1)
+L_SVC0=$(ip -o link show vppsvc0 2>&1)
+L_UP0=$(ip -o link show vppup0 2>&1)
 vppctl set interface ip address host-veth-up 10.0.0.1/24
 vppctl set interface ip address host-veth-red 10.10.0.1/24
 vppctl set interface ip address host-veth-svc 10.30.0.1/24
@@ -349,7 +357,82 @@ printf '%s\n' "$B_DEF2" | head -1 | sed 's/^/  bgp 0.0.0.0\/0: /'
 printf '%s\n' "$Z_DEF2" | head -2 | sed 's/^/  zebra 0.0.0.0\/0: /'
 echo "  VPP table 10: 0.0.0.0/0 via up=$F_DEF2, 203.0.113.0/24 via svc=$F_SVC2 (${n}s)"
 
+echo; echo "=========== a boot: the saved file makes the VRFs again (#540) ==========="
+# What a reboot does to the Linux side: the devices are gone and FRR is
+# already running with `router bgp 65000 vrf red` in it - the boot unit
+# replays the file after the containers and FRR. Removed by hand here, the
+# one thing this lab still does to the VRFs without the VTY, because a
+# reboot is not something the VTY does to them either.
+$HX -c "save" 2>&1 | tail -1 | sed 's/^/  /'
+cp "${PRISMA_CONFIG:-/etc/prisma-routing/prisma-routing.conf}" /tmp/boot.conf
+grep -E "^vrf " /tmp/boot.conf | sed 's/^/  saved: /'
+ip link del red
+ip link del svc
+B_GONE=$(ip -d -o link show type vrf | grep -cE ": (red|svc):")
+LOAD=$($HX --load /tmp/boot.conf 2>&1); LOAD_RC=$?
+printf '%s\n' "$LOAD" | grep -vE "^(note|warning):" | tail -2 | sed 's/^/  load: /'
+B_RED=$(ip -d -o link show red 2>&1)
+B_SVC0=$(ip -o link show vppsvc0 2>&1)
+B_RED0=$(ip -o link show vppred0 2>&1)
+n=0
+while [ "$n" -lt 90 ]; do
+  vtysh -c "show bgp vrf red ipv4 unicast 10.11.0.0/24" 2>/dev/null \
+      | grep -q "^BGP routing table entry" \
+    && [ "$(via 10 203.0.113.0/24 host-veth-svc)" = 1 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  red's BGP and the leak back after the load (${n}s)"
+B_BGP=$(vtysh -c "show bgp vrf red ipv4 unicast 10.11.0.0/24" 2>&1)
+PING_BOOT=$(ip netns exec red ping -c 3 -W 1 -I 10.11.0.1 203.0.113.10 2>&1)
+printf '%s\n' "$PING_BOOT" | grep "packet loss" | sed 's/^/  /'
+
+echo; echo "=========== taken back: an interface out, a VRF removed ==========="
+OUT=$($HX -c "configure" -c "interface host-veth-red" -c "no vrf" -c "exit" \
+  -c "no vrf svc table" -c "commit" 2>&1)
+printf '%s\n' "$OUT" | grep -vE "^(note|warning):" | tail -1 | sed 's/^/  /'
+U_RED0=$(ip -o link show vppred0 2>&1)
+U_SVC=$(ip -o link show svc 2>&1)
+U_SVC0=$(ip -o link show vppsvc0 2>&1)
+U_RED=$(ip -d -o link show red 2>&1)
+U_RUN=$($HX -c "show running-config" 2>&1)
+BP_TAKE=$($HX -c "configure" -c "vrf mgmt table 128" -c "commit check" 2>&1)
+printf '%s\n' "$BP_TAKE" | grep -E "^error" | sed 's/^/  /'
+U_BP=$(ip -d -o link show prisma-bp 2>&1)
+printf '%s\n' "$U_RUN" | grep -E "^vrf " | sed 's/^/  running: /'
+
 echo; echo "=========== VERDICT ==========="
+# #540: the VRF devices are the VTY's.
+expect_in "the pairs and the VRFs commit" "commit complete" "$PAIRS"
+expect_in "vrf red table 10 is a Linux VRF on table 10" "vrf table 10 " "$L_RED"
+expect_in "vrf svc table 30, on table 30" "vrf table 30 " "$L_SVC"
+expect_in "  red's TAP is in red" "master red " "$L_RED0"
+expect_in "  svc's TAP in svc" "master svc " "$L_SVC0"
+expect_not_in "  the upstream's TAP in neither" "master " "$L_UP0"
+expect_in "show running-config reads them back" "vrf red table 10" "$RUN"
+expect_in "  both" "vrf svc table 30" "$RUN"
+expect "the boot: both devices gone before the load" test "$B_GONE" -eq 0
+expect "  the load succeeds (rc $LOAD_RC)" test "$LOAD_RC" -eq 0
+expect_in "  red made again on table 10" "vrf table 10 " "$B_RED"
+expect_in "  its TAP in it" "master red " "$B_RED0"
+expect_in "  and svc's in svc" "master svc " "$B_SVC0"
+expect_in "  red's BGP comes back with no manual step" \
+  "BGP routing table entry" "$B_BGP"
+expect_in "  and a packet crosses from red to svc again" " 0% packet loss" \
+  "$PING_BOOT"
+expect_in "taken back: commit" "commit complete" "$OUT"
+expect_not_in "  an interface out of table 10 has its TAP out of red" \
+  "master " "$U_RED0"
+expect_in "  red stays" "vrf table 10 " "$U_RED"
+expect_in "  svc is removed" "does not exist" "$U_SVC"
+expect_not_in "  and its TAP is in nothing" "master " "$U_SVC0"
+expect_in "  prisma-bp is never the VTY's: running-config has no prisma-*" \
+  "vrf red table 10" "$U_RUN"
+# FRR's own `vrf prisma-bp` stanza is in the routing half, as it always was:
+# zebra writes one for every VRF device it knows. The statement is not.
+expect_not_in "  (none listed)" "vrf prisma-bp table" "$U_RUN"
+expect_said "  and its table is not a tenant's" \
+  "vrf mgmt: table 128 is prisma-bp's" "$BP_TAKE"
+expect_in "  prisma-bp is untouched through all of it" "vrf table 128 " "$U_BP"
 expect_in "the policies commit" "commit complete" "$POL"
 expect_said "nothing leaks out of prisma-bp" \
   "prisma-bp is a VRF of the box's own: no route leaks out of it" "$WRONG"

@@ -1053,6 +1053,68 @@ left the first. That second pair is what catches a commit that moves the
 interface and leaves its addresses behind — which reports success and produces
 a port in the right table with nothing on it.
 
+### A VRF's Linux device
+
+```
+vrf red table 10
+interface GigabitEthernet0/12/0
+  vrf 10
+  ipv4 address 10.10.0.1/24
+  exit
+```
+
+`vrf <name> table <id>` makes the Linux VRF device `red` on table 10, the
+number the interface's `vrf 10` puts it in, and puts the interface's Linux end
+(its linux_cp TAP, or its `linux-name`) in it. That device is what FRR calls
+the VRF: `router bgp 65000 vrf red`, `vrf red` with its static routes, and
+`show vrf` all find the table through it, so after the commit they work with
+no step on the host
+([#540](https://github.com/andrediashexa/hexarouting/issues/540)).
+
+Before #540 a tenant VRF had a table in VPP and no device in Linux: FRR's
+`router bgp 65000 vrf red` stayed inactive, and `lab/policy-c.sh` made `red`
+and `svc` by hand with `ip link add red type vrf table 10`. It does not any
+more; it commits the statement and asserts what the host holds.
+
+It is told from FRR's `vrf red` block by its `table`: FRR has no `vrf <name>
+table`, so the words cannot be one of FRR's statements, and `vrf red` alone is
+still FRR's block, handed to FRR as before.
+
+| Done | On the host | In VPP |
+|---|---|---|
+| `vrf red table 10` | `ip link add red type vrf table 10`, then up | nothing: the table is the interfaces' `vrf 10` |
+| an interface's `vrf 10` | its Linux end `master red` | the interface into table 10, as before |
+| an interface's `no vrf` | its Linux end `nomaster` | the interface back to table 0 |
+| `no vrf red table` | `ip link del red`; the kernel takes the members out | nothing |
+| `vrf red table 11` over 10 | `red` removed and made again: a device's table is fixed when it is made | nothing |
+
+**Through the host's doors, not a shell.** From the management container the
+same `ip link` would act on the container's own interfaces, so each of these
+is a door of `src/prismash/doors.py`, with its words checked. A name does not
+say what a device is - `ip link del dev eth0 type vrf` deletes eth0, measured
+on Debian's 6.1, the `type` is not a filter - so the daemon asks the host
+before it opens the door: only a VRF is removed, a member is taken out only of
+a VRF, and nothing goes into or out of `prisma-bp` or out of a bridge.
+
+**The box's own VRF is not one of these.** `prisma-*` names are refused
+(`prisma-bp` is the containers' backplane, #447), `show running-config` does
+not list them, and a table one of them holds - `prisma-bp`'s 128 - is refused
+at `commit check`, read off the host rather than assumed. The kernel's own
+tables, 253 to 255, and the name `default` are refused too.
+
+**Read back, not remembered.** `show running-config` lists the VRF devices the
+host has, so a device made by hand appears there, and a `--load` or a
+`rollback` to a configuration without it removes it. The members are converged on every
+commit that has a VRF device, from what the host says: a dataplane restart
+makes every TAP anew, and the next commit puts each back in its VRF.
+
+**At boot.** `prisma-routing.service` runs `prismash --load` after the
+containers and FRR, so FRR starts with `router bgp 65000 vrf red` and no `red`;
+the load makes the device and FRR activates the VRF when it appears.
+`lab/policy-c.sh` measures exactly that: it removes `red` and `svc` from the
+host, loads the saved file, and asserts the devices, their members, red's BGP
+session and a packet across the leak come back.
+
 ### What the lab asserts, and why the second one is the point
 
 ```
@@ -4420,13 +4482,12 @@ and for FRR's own `import vrf` typed by hand; and `leak_findings()` at
 commit, for a file that reached it another way, refused when the change
 brings it. A VRF importing itself is refused too.
 
-**The Linux VRF is not the box's.** FRR's BGP in a VRF needs a Linux VRF
-device of that name, and the VTY makes none: `vrf <n>` on an interface is a
-VPP table (above), and the one Linux VRF on the box is `prisma-bp`, made by
-`appliance/prisma-backplane`. `lab/policy-c.sh` makes `red` and `svc` by
-hand, with the table numbers of their VPP tables - linux-nl syncs kernel
-table N into VPP table N - and puts the LCP host interfaces in them. Until
-the box makes them, phase C works on a box where someone did the same.
+**The Linux VRF is `vrf <name> table <id>`.** FRR's BGP in a VRF needs a
+Linux VRF device of that name, on the table number of the VPP table -
+linux-nl syncs kernel table N into VPP table N. When phase C shipped the VTY
+made none, and `lab/policy-c.sh` made `red` and `svc` by hand; since #540 it
+commits `vrf red table 10` and `vrf svc table 30` and the box makes them and
+puts the LCP host interfaces in them ("A VRF's Linux device").
 
 **A connected route leaked does not reach VPP.** FRR leaks a route whose
 next hop is the other VRF itself - a connected or a `redistribute

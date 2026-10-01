@@ -34,6 +34,7 @@ import textwrap
 import time
 
 from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
+                    VRF_RESERVED_PREFIX, vrf_device_error, vrf_table_taken,
                     PROBE_DEADLINE, Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
                     MTU_MIN, MTU_MAX, MTU_RANGE,
@@ -2971,6 +2972,7 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
 DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "routing_changed", "route_desc_changed", "ssh_changed",
                "dns_changed", "hostname_changed",
+               "vrfdev_add", "vrfdev_del",
                "users_changed",
                "snmp_changed", "api_changed", "dataplane_if_changed",
                "cgnat_memory_changed",
@@ -8338,6 +8340,8 @@ class Shell:
         cfg.ssh = self.sys.read_ssh()
         cfg.dns_servers = self.sys.read_dns()
         cfg.hostname = self.sys.read_hostname()
+        # The Linux VRF devices (#540), through the seam the reads above take.
+        cfg.vrf_devices = self.device_vrf_devices()
         # From the tuner's own input, which is the only place that knows. Read
         # back rather than remembered for the same reason as everything above,
         # and with one extra consequence: editing that file by hand was the
@@ -9298,6 +9302,117 @@ class Shell:
             return False
         return True
 
+    def device_vrf_devices(self, everything=False) -> dict:
+        """
+        The Linux VRF devices, {name: table} (#540), read off the host
+        through its door: the box's own (prisma-bp) left out unless
+        `everything`, because no statement makes or removes one. The VRF
+        doors go through `self.sys`, the seam the host's other doors take.
+        """
+        rc, out = self.sys._run(list(doors.LINKS_ARGV))
+        if rc != 0:
+            return {}
+        return {name: link["vrf"]
+                for name, link in doors.ip_links(out).items()
+                if link["vrf"] is not None
+                and (everything or not name.startswith(VRF_RESERVED_PREFIX))}
+
+    def vrf_tables_free(self, target):
+        """
+        False, said, when a `vrf <name> table <id>` of `target` takes a table
+        a VRF of the box's own already holds (#540): prisma-bp's 128, read
+        off the host and not assumed, since the backplane takes its number
+        from the environment.
+        """
+        if not target.vrf_devices:
+            return True
+        own = {t: n for n, t in self.device_vrf_devices(everything=True)
+               .items() if n.startswith(VRF_RESERVED_PREFIX)}
+        ok = True
+        for name, table in sorted(target.vrf_devices.items()):
+            if table in own:
+                self.err_prose(f"vrf {name}: table {table} is {own[table]}'s",
+                               f"{own[table]} is the box's own VRF; a tenant "
+                               f"VRF takes another table, and its "
+                               f"interfaces' 'vrf' with it")
+                ok = False
+        return ok
+
+    def apply_vrf_devices(self, d, target):
+        """
+        The Linux VRF devices onto `target` (#540), then their members.
+
+        Removed first: a VRF given another table is its device removed and
+        made again, since a VRF device's table is fixed when it is made, and
+        the kernel takes the members out with it.
+        """
+        for vrf in d["vrfdev_del"]:
+            rc, out = self.sys._run(["ip", "link", "del", "dev", vrf])
+            if rc != 0:
+                self.err_prose(f"vrf {vrf}: the device was not removed",
+                               out.strip())
+                return False
+        for vrf, table in d["vrfdev_add"].items():
+            rc, out = self.sys._run(["ip", "link", "add", vrf, "type",
+                                     "vrf", "table", str(table)])
+            if rc == 0:
+                rc, out = self.sys._run(["ip", "link", "set", "dev", vrf,
+                                         "up"])
+            if rc != 0:
+                self.err_prose(f"vrf {vrf}: the device was not made",
+                               out.strip())
+                return False
+        return self.enslave_vrf_members(target)
+
+    def enslave_vrf_members(self, target):
+        """
+        Each interface's Linux end in the VRF device of its table (#540), or
+        in none: an interface whose `vrf <n>` names a declared device has its
+        TAP in that device, and one moved out has its TAP taken out.
+
+        Read off the host every time rather than kept, so a pair made again
+        - a dataplane restart makes every TAP anew - is put back. A TAP in
+        anything that is not a tenant VRF (the box's own, a bridge) is left
+        where it is: the host's door refuses it too.
+        """
+        by_table = {t: n for n, t in target.vrf_devices.items()}
+        rc, out = self.sys._run(list(doors.LINKS_ARGV))
+        links = doors.ip_links(out) if rc == 0 else {}
+        rc, lcp_out = self.dp.run("show lcp")
+        if rc != 0:
+            return True
+        pairs = routes.lcp_pairs(lcp_out)
+        names = self.dataplane_names()
+        # One pass per PAIR, keyed by the dataplane's member: the TAP is a
+        # dataplane interface too, in no table, and asked by its own name
+        # it would take the Linux end back out of the VRF.
+        for members in sorted({tuple(m) for m in pairs.values()}):
+            ifname = routes.dataplane_end(pairs, members[0], names)
+            host = routes.linux_end(pairs, ifname, names) if ifname else None
+            if not host or host not in links:
+                continue
+            link = links[host]
+            have = link["master"] if link["vrf_slave"] is not None else None
+            if link["master"] and have is None \
+                    or (have or "").startswith(VRF_RESERVED_PREFIX):
+                continue
+            want = by_table.get(target.vrfs.get(ifname, 0))
+            if want == have:
+                continue
+            if want:
+                rc, out = self.sys._run(["ip", "link", "set", "dev", host,
+                                         "master", want])
+                did = f"put in {want}"
+            else:
+                rc, out = self.sys._run(["ip", "link", "set", "dev", host,
+                                         "nomaster"])
+                did = f"taken out of {have}"
+            if rc != 0:
+                self.err_prose(f"interface {ifname}: {host} was not {did}",
+                               out.strip())
+                return False
+        return True
+
     def set_vrf(self, ifname, table):
         """
         Put an interface in a routing table, creating the table if needed.
@@ -10215,6 +10330,9 @@ class Shell:
             why = api_enable_error(target.api)
             if why:
                 self.err(why)
+                ok = False
+            # A table the box's own VRF holds (#540).
+            if not self.vrf_tables_free(target):
                 ok = False
             # The same refusals `do_config` gives at the prompt, on the paths
             # that never see the prompt: `rollback` to a revision written when
@@ -11633,6 +11751,13 @@ class Shell:
             for a in want:
                 if not self.set_address(ifname, a, True):
                     return False
+
+        # The Linux VRF devices and their members (#540), after the pairs and
+        # the tables they join and before FRR is reloaded: `router bgp <as>
+        # vrf <name>` is a VRF FRR finds through the device.
+        if (target.vrf_devices or running.vrf_devices) \
+                and not self.apply_vrf_devices(d, target):
+            return False
 
         # Addresses before everything except the admin state, and removals
         # before additions: an operator replacing 10.0.0.1/24 with
@@ -14738,6 +14863,12 @@ class Shell:
             return True
         if w[0] == "hostname" or w[:2] == ["no", "hostname"]:
             return self.hostname_statement(w)
+        # A Linux VRF device (#540), told from FRR's `vrf <name>` block by
+        # its `table`: FRR has no `vrf <name> table`, so the words cannot be
+        # one of its statements.
+        if (w[0] == "vrf" and w[2:3] == ["table"]) or (
+                w[:2] == ["no", "vrf"] and w[3:4] == ["table"]):
+            return self.vrf_device_statement(w)
         if w[:2] == ["dns", "server"] or w[:3] == ["no", "dns", "server"]:
             return self.dns_statement(w)
         if w[0] == "dns" or w[:2] == ["no", "dns"]:
@@ -15649,6 +15780,31 @@ class Shell:
             self.err_prose(*why)
             return True
         self.candidate.hostname = w[1]
+        return True
+
+    def vrf_device_statement(self, w):
+        """
+        `vrf <name> table <id>` and `no vrf <name> table [<id>]` (#540): the
+        Linux VRF device FRR's VRF of that name is, on the table the
+        interfaces' `vrf <id>` puts them in.
+        """
+        if w[0] == "no":
+            have = self.candidate.vrf_devices.get(w[2])
+            if len(w) > 5 or len(w) == 5 and str(have) != w[4]:
+                self.err(f"usage: no vrf {w[2]} table"
+                         + (f" [{have}]" if have else ""))
+                return True
+            self.candidate.vrf_devices.pop(w[2], None)
+            return True
+        if len(w) != 4:
+            self.err("usage: vrf <name> table <id>")
+            return True
+        why = vrf_device_error(w[1], w[3]) or vrf_table_taken(
+            self.candidate.vrf_devices, w[1], w[3])
+        if why:
+            self.err_prose(*why)
+            return True
+        self.candidate.vrf_devices[w[1]] = int(w[3])
         return True
 
     def apply_hostname(self, name):

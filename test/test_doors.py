@@ -48,7 +48,9 @@ print("=== every command system.py runs is a door ===")
 # In prismash.py the doors are `self.host_run([...])`: the Linux end of a
 # dataplane interface (`host`), its MTU, `up`/`down`, and a description.
 SLOTS = {"name": ["ops"], "g": list(MANAGED_GROUPS), "host": ["tap4096", "ens19"],
-         "SNMPD_USER": [SNMPD_USER], "SET_HOSTNAME": [SET_HOSTNAME]}
+         "SNMPD_USER": [SNMPD_USER], "SET_HOSTNAME": [SET_HOSTNAME],
+         # A tenant VRF's device (#540), and the one a member goes into.
+         "vrf": ["red"], "want": ["red"]}
 
 
 def slot(e):
@@ -71,6 +73,7 @@ def slot(e):
     return {"verb": ["reboot", "poweroff"],
             "self.TUNE_UNIT": ["prisma-routing-tune"],
             "gw": ["192.0.2.1", "2001:db8::1"],
+            "str(table)": ["10", "4294967295"],
             "mgmt['name']": ["ens18"],
             "self.conf_on_host": [SNMPD_CONF]}.get(u)
 

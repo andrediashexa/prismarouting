@@ -46,7 +46,8 @@ from system import (LOGIN_SHELL, MANAGED_GROUPS, LocalFiles, RESOLV_CONF,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, SET_HOSTNAME,
                     hostname_error, is_number)
 from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
-                    probe_host_ok, probe_source_ok)
+                    VRF_RESERVED_PREFIX, probe_host_ok, probe_source_ok,
+                    vrf_device_error)
 
 SOCKET = "/run/prisma-routing/doors.sock"
 
@@ -82,6 +83,10 @@ REFRESH_VTY = "/usr/lib/prisma-routing/refresh-the-vty"
 #: --collect lets the next upgrade reuse the name even after a failed run.
 REFRESH_VTY_ARGV = ("systemd-run", "--collect", "--on-active=3",
                     "--unit=prisma-routing-refresh-vty", REFRESH_VTY)
+
+#: The host's Linux interfaces, read (#540): one line each, with the VRF
+#: table of a VRF device and of a VRF's member on it - what ip_links() reads.
+LINKS_ARGV = ("ip", "-d", "-o", "link", "show")
 
 #: The doors that take no argument: the argv is the whole shape.
 FIXED = {
@@ -127,6 +132,10 @@ QUERIES = {
         "ask which driver DPDK would get",
     # The container has a name of its own (#516).
     ("hostname",): "ask the box's name",
+    # The Linux VRF devices (#540), which `show running-config` reads back
+    # whoever asks: the container has no network to list them in. What any
+    # account on the host reads with `ip link`.
+    LINKS_ARGV: "list the Linux interfaces, VRFs and members",
 }
 
 #: The longest a door may take. The VTY's own default is 30 seconds.
@@ -189,6 +198,94 @@ def verb_of(argv, stdin=None):
             and _address(argv[5]) and argv[6] == "dev" \
             and NETDEV.match(argv[7]):
         return "put the management default route back"
+    # A tenant VRF's device and its members (#540). Every name a VRF's is
+    # the statement's own predicate, which refuses prisma-*: the backplane's
+    # VRF is not reachable through these by its name. What a name cannot
+    # say - that a device IS a VRF, that a TAP is in no bridge - guard_of()
+    # asks the host before the door opens.
+    if n == 8 and argv[:3] == ("ip", "link", "add") \
+            and argv[4:7] == ("type", "vrf", "table") \
+            and vrf_device_error(argv[3], argv[7]) is None:
+        return "make a VRF device"
+    if n == 5 and argv[:4] == ("ip", "link", "del", "dev") \
+            and vrf_device_error(argv[4], 1) is None:
+        return "remove a VRF device"
+    if n == 7 and argv[:4] == ("ip", "link", "set", "dev") \
+            and NETDEV.match(argv[4]) and argv[5] == "master" \
+            and vrf_device_error(argv[6], 1) is None:
+        return "put a Linux interface in a VRF"
+    if n == 6 and argv[:4] == ("ip", "link", "set", "dev") \
+            and NETDEV.match(argv[4]) and argv[5] == "nomaster":
+        return "take a Linux interface out of its VRF"
+    return None
+
+
+def ip_links(text):
+    """
+    {name: {"master", "vrf", "vrf_slave"}} from `ip -d -o link show`: the
+    device a link is enslaved to, the table it is a VRF of, and the table
+    of the VRF it is a member of - None where it has none (#540).
+    """
+    out = {}
+    for line in (text or "").splitlines():
+        m = re.match(r"^\d+: ([^:@\s]+)(?:@\S+)?: ", line)
+        if not m:
+            continue
+        master = re.search(r" master (\S+) ", line)
+        vrf = re.search(r"\\\s+vrf table (\d+)\b", line)
+        slave = re.search(r"\bvrf_slave table (\d+)\b", line)
+        out[m.group(1)] = {
+            "master": master.group(1) if master else None,
+            "vrf": int(vrf.group(1)) if vrf else None,
+            "vrf_slave": int(slave.group(1)) if slave else None}
+    return out
+
+
+def _link(name, execute):
+    """ip_links() of the one device `name`, or None when there is none."""
+    rc, out = execute(["ip", "-d", "-o", "link", "show", "dev", name],
+                      None, 10)
+    return ip_links(out).get(name) if rc == 0 else None
+
+
+def guard_of(argv, execute=None):
+    """
+    Why the host refuses the door `argv` as it stands now, or None (#540).
+
+    The VRF doors' second half. A name says what a device is called, not
+    what it is: `ip link del dev eth0` passes any check of the words, and
+    the kernel deletes whatever has the name - `type vrf` on the same line
+    is not a filter, measured on Debian's 6.1. So the host is asked: only a
+    VRF is removed, a member is taken out only of a VRF, and nothing goes
+    in or out of the box's own (prisma-bp) or out of a bridge.
+    """
+    argv = tuple(argv)
+    execute = execute or run_locally
+    if argv[:4] == ("ip", "link", "del", "dev"):
+        dev = _link(argv[4], execute)
+        if dev is None or dev["vrf"] is None:
+            return f"{argv[4]} is not a VRF device"
+        return None
+    if argv[:4] != ("ip", "link", "set", "dev") or len(argv) < 6 \
+            or argv[5] not in ("master", "nomaster"):
+        return None
+    name = argv[4]
+    if name.startswith(VRF_RESERVED_PREFIX):
+        return f"{name} is the box's own"
+    dev = _link(name, execute)
+    if dev is None:
+        return f"{name}: the host has no such device"
+    if dev["vrf"] is not None:
+        return f"{name} is a VRF device, not a member of one"
+    held = dev["master"]
+    if held and (dev["vrf_slave"] is None
+                 or held.startswith(VRF_RESERVED_PREFIX)):
+        return f"{name} is in {held}, which is not a tenant VRF"
+    if argv[5] == "nomaster":
+        return None if held else f"{name} is in no VRF"
+    vrf = _link(argv[6], execute)
+    if vrf is None or vrf["vrf"] is None:
+        return f"{argv[6]} is not a VRF device"
     return None
 
 
@@ -407,6 +504,9 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None):
                                   "VTY is allowed on the host"}
     if uid not in allowed_uids:
         return {"rc": 126, "out": f"the host's door: {verb}: only root may"}
+    why = guard_of(argv, execute)
+    if why:
+        return {"rc": 126, "out": f"the host's door: {verb}: {why}"}
     if not isinstance(timeout, (int, float)) or timeout <= 0:
         timeout = 30
     rc, out = execute(argv, stdin, min(timeout, MAX_TIMEOUT))

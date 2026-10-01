@@ -142,6 +142,7 @@ sh test/test_frr_entrypoint.sh
 sh test/test_publish_release.sh
 python3 test/test_prismash_ctrl_c.py
 python3 test/test_doors.py
+python3 test/test_vrf_devices.py
 sh test/test_set_hostname.sh
 python3 test/test_zabbix_template.py
 python3 test/test_api_contract.py
