@@ -146,10 +146,22 @@ message, kept for the session, re-opened once if VPP restarted under it. vat2
 the fallback when the library, the definitions or the socket are not there,
 and `PRISMA_API=vat2` forces it; `show version` says which one a session uses.
 The difference is measured: ~130 ms per vat2 on the X520 bench, ~2 ms per
-message over the connection. Every change goes over the binary API; what still
-goes over `vppctl` text is reading — `show interface`, `show lcp`,
-`show bpa config` — and the pool validation behind `commit check`, which has no
-API message of its own.
+message over the connection. Every change goes over the binary API. The CLI
+screens the VTY reads — `show interface`, `show lcp`, `show bpa config` — and
+the pool validation behind `commit check`, which has no API message of its
+own, go over the same connection since #529, as `cli_inband`, whose text is
+`vppctl`'s byte for byte (`lab/api.sh` compares twenty screens); `vppctl` is
+their fallback, as vat2 is the messages'.
+
+ONE READING PER COMMIT (#529). Inside a commit the answers are kept - the API's
+dumps and questions, the CLI screens, and the running configuration built out
+of them with FRR's and the doors' reads - until anything is written, through
+any of the three; a `configure` + `commit` batch read the box four times before.
+And the connection loads one pruned definition file, only the messages the VTY
+sends (`vppapi.VTY_MESSAGES`, held to prismash's source by its test) with the
+types they reach, kept per account under a name made of the definitions' sizes
+and times: 0.18 s became 0.02 s in a lab, 0.64 s on the X520 bench. On that
+bench a commit inside a session took 9.7 s before #527 and 1.9 s after it.
 
 vpp_papi answers typed values and vat2 printed JSON; `vppapi.plain()` turns the
 first into the second, so no caller knows there are two, and `lab/api.sh`

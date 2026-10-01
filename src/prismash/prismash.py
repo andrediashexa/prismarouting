@@ -15,6 +15,7 @@ and does not pin us to an FRR release.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import io
 import ipaddress
@@ -3178,6 +3179,11 @@ def _tree_reads(node, words):
     return True
 
 
+#: The line appliance/upgrade prints when it has scheduled the VTY's refresh
+#: itself (#529); run_upgrade() does not ask the host a second time then.
+REFRESH_SCHEDULED = "upgrade: refresh-the-vty is scheduled"
+
+
 class Vpp:
     """Talks to the bpa plugin through VPP's CLI."""
 
@@ -3185,9 +3191,27 @@ class Vpp:
     #: that shows a mutating command here is a bug, not a nuance.
     TRACE = os.environ.get("PRISMA_TRACE") == "1"
 
+    #: The API client whose connection carries the CLI too (#529), set by
+    #: the Shell; None, or a client without cli(), is vppctl for every line.
+    api = None
+
     def run(self, cmd):
         if self.TRACE:
             print(f"[device] {cmd}", file=sys.stderr)
+        # OVER THE CONNECTION THE VTY ALREADY HOLDS (#529): cli_inband, one
+        # message, where vppctl is a process - 62 of them in one commit on the
+        # X520 bench, ~11 ms each. The same text either way (lab/api.sh).
+        cli = getattr(self.api, "cli", None)
+        got = cli(cmd) if cli else None
+        if got is not None:
+            reached, out = got
+            out = out.rstrip()
+            first = out.splitlines()[0] if out else ""
+            return (0 if reached and not VPP_ERROR.match(first) else 1), out
+        forget = getattr(self.api, "forget_dumps", None)
+        if forget and not vppapi.cli_is_question(cmd):
+            # A line vppctl sends may change what every cached answer says.
+            forget()
         try:
             p = subprocess.run([VPPCTL] + shlex.split(cmd),
                                capture_output=True, text=True, timeout=15)
@@ -6987,6 +7011,7 @@ class Shell:
         self.snmp = SnmpDaemon(runner=doors.runner(), files=doors.DoorFiles())
         self.dp = Vpp()
         self.api = vppapi.client()
+        self.dp.api = self.api
         self.frr = Frr()
         self.rb = Rollback()
         self.confirm = ConfirmPending()
@@ -7334,7 +7359,21 @@ class Shell:
         interface it names, and nothing in it writes.
         """
         with self.reads_cached():
-            return self._running_config()
+            # ONE READING PER BLOCK (#529). A `configure` + `commit` batch read
+            # it four times on the X520 bench - the candidate, the commit's
+            # diff, the check and the apply - 0.55 s each with every CLI
+            # screen, FRR's running configuration and the doors asked again.
+            # Kept as a copy, handed out as copies (callers edit what they
+            # get), and gone with the block's other answers at the first write.
+            recall = getattr(self.api, "recall", None)
+            kept = recall("running_config") if recall else None
+            if kept is not None:
+                return copy.deepcopy(kept)
+            cfg = self._running_config()
+            remember = getattr(self.api, "remember", None)
+            if remember:
+                remember("running_config", copy.deepcopy(cfg))
+            return cfg
 
     def _running_config(self) -> Config:
         """
@@ -12953,8 +12992,10 @@ class Shell:
             p = subprocess.Popen(["sh", script], stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, text=True,
                                  cwd=os.path.join(work, name))
+            said = []
             for row in p.stdout:
-                print(row.rstrip("\n"))
+                said.append(row.rstrip("\n"))
+                print(said[-1])
             rc = p.wait()
         except OSError as e:
             print(f"  {e}")
@@ -12967,9 +13008,12 @@ class Shell:
             return
         shutil.rmtree(work, ignore_errors=True)
         print(f"upgraded to {want}")
-        self.refresh_the_vty(want)
+        # The package's own script asked already (#529), when it could: it
+        # is the new release's, and it says so on a line of its own.
+        self.refresh_the_vty(want, scheduled=any(
+            r.startswith(REFRESH_SCHEDULED) for r in said))
 
-    def refresh_the_vty(self, want):
+    def refresh_the_vty(self, want, scheduled=False):
         """
         Put the VTY on release `want` now, instead of at the next boot (#528).
 
@@ -12986,7 +13030,8 @@ class Shell:
         is said rather than implied. A box with no management container is
         told nothing is needed by the program itself, in the journal.
         """
-        rc, out = self.sys._run(list(doors.REFRESH_VTY_ARGV))
+        rc, out = (0, "") if scheduled else self.sys._run(
+            list(doors.REFRESH_VTY_ARGV))
         if rc == 0:
             print_prose(f"the VTY restarts on {want} in a few seconds: this "
                         f"session ends then, and the next login is {want}'s")

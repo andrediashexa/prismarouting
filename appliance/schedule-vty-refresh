@@ -1,0 +1,28 @@
+#!/bin/sh
+# schedule-vty-refresh - run by appliance/upgrade after install.sh (#529).
+#
+# ASKED BY THE RELEASE BEING INSTALLED. #528 had the VTY that ran the upgrade
+# ask for appliance/refresh-the-vty - the PREVIOUS release's VTY, so the first
+# upgrade into a release that knows how did not do it: measured on the X520
+# bench, 0.147.4 -> 0.148.0 left the VTY on 0.147.4. This file comes in the
+# new release's upgrade artifact, so every upgrade asks.
+#
+# Detached and a few seconds on, because the session that ran the upgrade may
+# live in the container that is recreated; only onto a box systemd runs, and
+# only when installing onto it (no DESTDIR). Its own unit name, so a VTY of
+# 0.148.0 asking again after it does not collide with it - refresh-the-vty's
+# lock serializes the two, and the second finds the image current. The line it
+# prints is what run_upgrade() reads to know it need not ask again
+# (prismash.REFRESH_SCHEDULED).
+#
+# PRISMA_REFRESH_VTY, PRISMA_SYSTEMD_DIR and PATH point it elsewhere for
+# test/test_schedule_vty_refresh.sh.
+set -u
+REFRESH=${PRISMA_REFRESH_VTY:-/usr/lib/prisma-routing/refresh-the-vty}
+SYSTEMD=${PRISMA_SYSTEMD_DIR:-/run/systemd/system}
+[ -z "${DESTDIR:-}" ] || exit 0
+[ -d "$SYSTEMD" ] && [ -x "$REFRESH" ] || exit 0
+command -v systemd-run >/dev/null 2>&1 || exit 0
+systemd-run --collect --on-active=3 --unit=prisma-routing-refresh-vty-upgrade \
+  "$REFRESH" >/dev/null 2>&1 || exit 0
+echo "upgrade: refresh-the-vty is scheduled: the VTY restarts on the new release in a few seconds"

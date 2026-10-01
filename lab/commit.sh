@@ -607,4 +607,78 @@ expect "where vat2 per message started $BEFORE_VAT2" test "$BEFORE_VAT2" -gt 10
 expect_in "show version says the session holds one connection" \
   "one connection (vpp_papi)" "$APIROW"
 
+echo
+echo "=========== a commit in about a second (#529) ==========="
+# The screens over the same connection (cli_inband, not a vppctl each), the
+# running configuration read once per commit, and the API loaded from one
+# pruned file. Readings are counted by the trace: every reading asks
+# `show bpa config` exactly once, so its [device] lines are the readings.
+readings() {  # <PRISMA_API value> -> "<readings> <vppctl> <seconds> <last line>"
+  : > /tmp/vppctl.calls
+  _t0=$(date +%s.%N)
+  _o=$(PRISMA_TRACE=1 PRISMA_API="$1" VPPCTL=/tmp/vppctl-count \
+       $HX -c configure -c "interface pg0" -c "description $2" -c exit \
+       -c commit 2>&1)
+  _t1=$(date +%s.%N)
+  echo "$(printf '%s\n' "$_o" | grep -c '^\[device\] show bpa config$')" \
+       "$(grep -c . /tmp/vppctl.calls)" \
+       "$(python3 -c "print(round($_t1 - $_t0, 2))")" \
+       "$(printf '%s' "$_o" | tail -1)"
+}
+set -- $(readings vat2 reads-vat2); OLD_READS=$1; OLD_VPPCTL=$2; OLD_SECS=$3
+set -- $(readings "" reads-papi);   NEW_READS=$1; NEW_VPPCTL=$2; NEW_SECS=$3
+shift 3; NEW_LAST="$*"
+# The same commit INSIDE a session that is already open, which is how an
+# operator commits: the process and its connection exist before the line is
+# typed. Driven under a pty and timed from Enter to the next prompt.
+INT=$(python3 - "$HX" <<'PTYEOF'
+import os, pty, re, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1].split()[0], sys.argv[1].split())
+buf = b""
+def until(pat, t=60):
+    global buf
+    end = time.time() + t
+    while time.time() < end:
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if r:
+            try:
+                buf += os.read(fd, 65536)
+            except OSError:
+                return False
+            if re.search(pat, buf):
+                return True
+    return False
+def line(c):
+    global buf
+    buf = b""
+    t0 = time.time()
+    os.write(fd, c.encode() + b"\r")
+    until(rb"[#>] (\[edit[^\]]*\] )?$")
+    return time.time() - t0
+until(rb"> $", 30)
+for c in ("configure", "interface pg0", "description in-session", "exit"):
+    line(c)
+t = line("commit")
+print(f"{t:.2f} {'complete' if b'commit complete' in buf else 'NOT-COMPLETE'}")
+line("exit"); line("exit")
+PTYEOF
+)
+set -- $INT; INT_SECS=$1; INT_OK=$2
+KEPT=$(ls -la "${XDG_RUNTIME_DIR:-/tmp/prisma-papi-$(id -u)}"/prismash-api-*.json 2>/dev/null | head -1)
+echo "  -c batch, vppctl per screen: $OLD_READS reading(s), $OLD_VPPCTL vppctl, $OLD_SECS s"
+echo "    (0.148.0 read it 4 times in this batch: X520 bench, #529)"
+echo "  -c batch, one connection:    $NEW_READS reading(s), $NEW_VPPCTL vppctl, $NEW_SECS s ($NEW_LAST)"
+echo "  inside an open session:      commit $INT_SECS s ($INT_OK)"
+echo "  pruned definitions kept:     ${KEPT:-none}"
+expect "a commit reads the running configuration once ($NEW_READS)" \
+  test "$NEW_READS" -eq 1
+expect "and starts no vppctl over the connection ($NEW_VPPCTL)" \
+  test "$NEW_VPPCTL" -eq 0
+expect "where it started $OLD_VPPCTL" test "$OLD_VPPCTL" -gt 5
+expect_in "the commit completes" "commit complete" "$NEW_LAST"
+expect "and one inside an open session completes" test "$INT_OK" = "complete"
+expect "the pruned definitions are kept for the next process" test -n "$KEPT"
+
 verdict

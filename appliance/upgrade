@@ -243,5 +243,9 @@ echo "    platform: vpp $HAVE_VPP, frr $HAVE_FRR"
 # costs (#291) is said by the one file that knows - and is not repeated here,
 # where a second copy would fall out of step with the first.
 echo
-exec env DESTDIR="$DESTDIR" PRISMA_VERSION_STAMP="$STAMP" \
-     sh "$ART/appliance/install.sh"
+env DESTDIR="$DESTDIR" PRISMA_VERSION_STAMP="$STAMP" \
+    sh "$ART/appliance/install.sh" || exit $?
+
+# THE VTY, RIGHT AFTER (#529): asked from here, by the release being
+# installed - see appliance/schedule-vty-refresh for why not by the VTY.
+DESTDIR="$DESTDIR" sh "$ART/appliance/schedule-vty-refresh"
