@@ -103,6 +103,16 @@ E as recusas não são todas iguais. A maioria é decidida **antes** de qualquer
 
 A recusa de leitura de volta é a exceção, e é a que importa aqui. Ela só pode ser decidida **depois** que o roteamento já recebeu a configuração, porque é exatamente a descoberta de que ele recebeu e não guardou. Nessa **o resto do commit está em efeito** — o CGNAT e a configuração da própria caixa — e a volta é `rollback 1`. A própria mensagem diz isso.
 
+Uma linha de **route-map** ou de **lista** (prefix-list, community-list, as-path) é diferente, e aí o commit **volta atrás sozinho**. Uma linha que o daemon recusou depois de a conferência de sintaxe aceitar fica no texto da configuração do roteamento, palavra por palavra, mas a cláusula roda sem ela — sem o `set`, ou casando mais do que foi escrito — em rotas de verdade. Por isso o `commit` lê o que cada daemon que aplica o route-map está rodando de fato e, se nenhum deles roda a linha, recusa, nomeia a linha e põe o estado anterior de volta. Vale para o route-map que você digita e para o que a política compila:
+
+```
+error: FRR refused 1 line(s) of your route-maps and lists
+      route-map OP permit 10: set extcommunity rt 65000:100 additive
+error: commit failed; rolling back to the previous state
+```
+
+Um route-map usado ao mesmo tempo por um vizinho BGP e por uma redistribuição do OSPF pode ter `set community`: o OSPF não roda essa linha, o BGP roda, e o commit passa.
+
 :::
 
 Antes esse comando dizia apenas *"configuration check succeeds"*, o que prometia mais do que ele tinha conferido — e numa janela de manutenção é essa frase que decide se a pessoa segue em frente.

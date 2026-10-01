@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A line a daemon refused inside the operator's own route-map went
+  unnoticed, and the commit said "commit complete".**
+  ([#544](https://github.com/andrediashexa/hexarouting/issues/544))
+  #539 judged only the route-maps the policy compiler writes. A route-map
+  typed in the routing half is now judged the same way: each changed clause
+  by what the daemons that apply it hold (`show route-map json`, read once),
+  a line refused only when none of them runs it - so a map shared by a BGP
+  neighbor and an OSPF redistribution, carrying sets ospfd has no command
+  for, still commits - and the commit rolls back. The lists clauses match on
+  are read back from FRR's configuration, which a refused entry leaves, and
+  counted; that count also replaces #197's word-for-word check for list
+  entries, which called `ip prefix-list L permit 10.0.0.1/8` (kept by FRR as
+  10.0.0.0/8) "did not keep them". Measured in lab/commit-readback.sh: the
+  old build says "commit complete" over bgpd's refused line typed by hand,
+  this one refuses it, names it and rolls back.
+
 ## 0.149.0 - a connected route leaked between VRFs reaches the dataplane
 
 ### Fixed
