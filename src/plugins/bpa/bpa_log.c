@@ -174,13 +174,13 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
 		     && !bpa_log_syslog.enabled))
     return;
 
-  if (PREDICT_FALSE (vec_len (pt->log_queue) >= BPA_LOG_QUEUE_MAX))
+  if (PREDICT_FALSE (pt->log_head - pt->log_tail >= BPA_LOG_QUEUE_MAX))
     {
       pt->log_dropped++;
       return;
     }
 
-  vec_add2 (pt->log_queue, e, 1);
+  e = &pt->log_ring[pt->log_head & (BPA_LOG_QUEUE_MAX - 1)];
   /* THE IDENTITY IS TAKEN HERE, at the instant of the allocation, for the
    * reason the field's own comment gives: a lookup at drain time would name
    * whoever holds the address by then (#21). */
@@ -216,6 +216,9 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
   e->port_lo = port_lo;
   e->port_hi = port_hi;
   e->pool_id = pool_id;
+  /* The event whole before the reader can see it. */
+  CLIB_MEMORY_STORE_BARRIER ();
+  pt->log_head++;
 }
 
 /*
@@ -448,14 +451,21 @@ bpa_log_drain (vlib_main_t *vm)
     {
       bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
 
-      for (j = 0; j < vec_len (pt->log_queue); j++)
+      u32 head = pt->log_head, tail = pt->log_tail;
+
+      if (!pt->log_ring)
+	continue;
+      /* Read the events the head covers only after reading the head. */
+      CLIB_MEMORY_BARRIER ();
+      for (j = tail; j != head; j++)
 	{
-	  bpa_log_event_t *e = vec_elt_at_index (pt->log_queue, j);
+	  bpa_log_event_t *e = &pt->log_ring[j & (BPA_LOG_QUEUE_MAX - 1)];
 
 	  bpa_log_emit (vm, e->event, e->ip_priv, e->ip_pub, e->port_lo,
 			e->port_hi, e->pool_id, e->identity);
 	}
-      vec_reset_length (pt->log_queue);
+      CLIB_MEMORY_BARRIER ();
+      pt->log_tail = head;
     }
 
   bpa_log_flush (vm);

@@ -24,6 +24,7 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,8 @@
 #include <unistd.h>
 
 #include "bpa_log_shim.h"
+/* The flood test below drives the ceiling without allocating 64 MB. */
+#define BPA_TCP_BUSY_BYTES (4 << 20)
 /*
  * INCLUDED rather than linked: nine of the fifteen functions driven here are
  * static, so nothing compiled beside the file could call one. bpa_log_tcp.c
@@ -83,6 +86,35 @@ rd64 (u32 off)
   return ((u64) rd32 (off) << 32) | rd32 (off + 4);
 }
 
+static char offp_g[160];
+static int drain_fd;
+static volatile long drained;
+
+/* A collector that reads as fast as it can, for the drain check. */
+static void *
+drain_reader (void *arg)
+{
+  char b[1 << 16];
+  ssize_t n;
+
+  (void) arg;
+  while ((n = read (drain_fd, b, sizeof (b))) > 0)
+    drained += n;
+  return 0;
+}
+static u32 n_marker_bytes;
+
+/* A fresh exporter that keeps the spill file and its progress: a restart. */
+static void
+reset_keep_file (void)
+{
+  vec_free (bpa_log_tcp.outbuf);
+  memset (&bpa_log_tcp, 0, sizeof (bpa_log_tcp));
+  bpa_log_tcp.fd = -1;
+  bpa_log_tcp.enabled = 1;
+  bpa_log_tcp.spill_path = (u8 *) spill_file;
+}
+
 /* A fresh exporter: no socket, an empty buffer, a spill path of its own. */
 static void
 reset (int enabled)
@@ -93,6 +125,8 @@ reset (int enabled)
   bpa_log_tcp.enabled = (u8) enabled;
   bpa_log_tcp.spill_path = (u8 *) spill_file;
   unlink (spill_file);
+  snprintf (offp_g, sizeof (offp_g), "%s.off", spill_file);
+  unlink (offp_g);
 }
 
 static long
@@ -373,11 +407,11 @@ main (void)
     bpa_log_tcp.connected = 1;
     bpa_log_tcp.head_sent = 10;
 
-    bpa_tcp_spill_now (&bpa_log_tcp);
+    bpa_tcp_spill_now (&bpa_log_tcp, 1);
     CHECK (file_equals (spill_file, want, n) && bpa_log_tcp.n_spilled == n
 	     && vec_len (bpa_log_tcp.outbuf) == 0 && bpa_log_tcp.fd == -1,
-	   "bpa_tcp_spill_now writes the buffer whole, empties it, counts it "
-	   "and drops a connection holding half a message: file=%ld "
+	   "bpa_tcp_spill_now at the exit writes the buffer whole, empties it, "
+	   "counts it and drops a connection holding half a message: file=%ld "
 	   "spilled=%llu left=%u fd=%d",
 	   file_size (spill_file), (unsigned long long) bpa_log_tcp.n_spilled,
 	   vec_len (bpa_log_tcp.outbuf), bpa_log_tcp.fd);
@@ -408,33 +442,406 @@ main (void)
     }
   }
 
-  printf ("\n--- and back out of it, in order ---\n");
+  printf ("\n--- and back out of it, in order, a chunk at a time (#547) ---\n");
   {
     int fd;
+    u8 older[45 + 36], frag[20 + 45], *big;
+    char offp[160];
+    u32 i, nbig = (3u << 20) / 45, first;
 
+    /* Two whole messages in the file, then a newer one written since: the
+     * newer one goes BEHIND them, in the file, and the chunk comes back out
+     * in that order. */
     reset (1);
+    fake_message (45);
+    fake_message (36);
+    memcpy (older, bpa_log_tcp.outbuf, sizeof (older));
+    vec_reset_length (bpa_log_tcp.outbuf);
     fd = open (spill_file, O_WRONLY | O_CREAT | O_TRUNC, 0640);
-    if (fd < 0 || write (fd, "OLDER", 5) != 5)
+    if (fd < 0 || write (fd, older, sizeof (older)) != (ssize_t) sizeof (older))
       {
 	printf ("  could not write the spill file\n");
 	return bpa_test_verdict (checks, failures + 1);
       }
     close (fd);
-    {
-      u8 *b = bpa_log_tcp.outbuf;
-      bpa_tcp_put (&b, "NEWER", 5);
-      bpa_log_tcp.outbuf = b;
-    }
-
-    bpa_tcp_replay_spill (&bpa_log_tcp);
-    CHECK (vec_len (bpa_log_tcp.outbuf) == 10
-	     && memcmp (bpa_log_tcp.outbuf, "OLDERNEWER", 10) == 0
-	     && bpa_log_tcp.n_replayed == 5 && file_size (spill_file) == -1,
-	   "bpa_tcp_replay_spill puts the older bytes IN FRONT and removes "
-	   "the file: \"%.10s\" replayed=%llu file=%ld",
-	   (const char *) bpa_log_tcp.outbuf,
+    fake_message (20);
+    bpa_tcp_backlog_open (&bpa_log_tcp);
+    bpa_tcp_backlog_tail (&bpa_log_tcp);
+    bpa_tcp_replay_chunk (&bpa_log_tcp);
+    CHECK (vec_len (bpa_log_tcp.outbuf) == 45 + 36 + 20
+	     && memcmp (bpa_log_tcp.outbuf, older, sizeof (older)) == 0
+	     && bpa_log_tcp.outbuf[45 + 36 + 3] == 20
+	     && bpa_log_tcp.replay_len == 101 && bpa_log_tcp.n_replayed == 101
+	     && bpa_log_tcp.n_spilled == 20 && file_size (spill_file) == 101,
+	   "the older bytes come out IN FRONT, the newer behind them through the "
+	   "file: len=%u replay=%u replayed=%llu spilled=%llu file=%ld",
+	   vec_len (bpa_log_tcp.outbuf), bpa_log_tcp.replay_len,
 	   (unsigned long long) bpa_log_tcp.n_replayed,
-	   file_size (spill_file));
+	   (unsigned long long) bpa_log_tcp.n_spilled, file_size (spill_file));
+    /* Sent whole: the file and its progress go. */
+    bpa_log_tcp.head_sent = vec_len (bpa_log_tcp.outbuf);
+    bpa_tcp_drop_sent (&bpa_log_tcp);
+    bpa_tcp_replay_chunk (&bpa_log_tcp);
+    snprintf (offp, sizeof (offp), "%s.off", spill_file);
+    CHECK (vec_len (bpa_log_tcp.outbuf) == 0 && bpa_log_tcp.replay_len == 0
+	     && !bpa_log_tcp.backlog && file_size (spill_file) == -1
+	     && file_size (offp) == -1,
+	   "a backlog sent whole removes the file and its progress: len=%u "
+	   "backlog=%u file=%ld off=%ld", vec_len (bpa_log_tcp.outbuf),
+	   bpa_log_tcp.backlog, file_size (spill_file), file_size (offp));
+
+    /* A file that begins mid-message, as one written by a release with the
+     * #492 cut does - the tail of a message, then a whole one. */
+    reset (1);
+    fake_message (45);
+    memset (frag, 0x41, 20);
+    memcpy (frag + 20, bpa_log_tcp.outbuf, 45);
+    vec_reset_length (bpa_log_tcp.outbuf);
+    fd = open (spill_file, O_WRONLY | O_CREAT | O_TRUNC, 0640);
+    if (fd < 0 || write (fd, frag, sizeof (frag)) != (ssize_t) sizeof (frag))
+      {
+	printf ("  could not write the spill file\n");
+	return bpa_test_verdict (checks, failures + 1);
+      }
+    close (fd);
+    bpa_tcp_backlog_open (&bpa_log_tcp);
+    bpa_tcp_replay_chunk (&bpa_log_tcp);
+    CHECK (vec_len (bpa_log_tcp.outbuf) == 45 && bpa_log_tcp.outbuf[1] == 10
+	     && bpa_log_tcp.n_resynced == 20 && bpa_log_tcp.n_replayed == 45,
+	   "a spill that begins mid-message is replayed from its first whole "
+	   "message, the fragment counted: len=%u resynced=%llu replayed=%llu",
+	   vec_len (bpa_log_tcp.outbuf),
+	   (unsigned long long) bpa_log_tcp.n_resynced,
+	   (unsigned long long) bpa_log_tcp.n_replayed);
+
+    /* Three megabytes of backlog: never more than a chunk in memory, cut on
+     * a message; given back on a disconnect; and its progress survives a
+     * restart. The bench's file was 573 MB, read whole, and VPP aborted. */
+    reset (1);
+    for (i = 0; i < nbig; i++)
+      fake_message (45);
+    big = bpa_log_tcp.outbuf;
+    bpa_log_tcp.outbuf = 0;
+    fd = open (spill_file, O_WRONLY | O_CREAT | O_TRUNC, 0640);
+    if (fd < 0 || write (fd, big, nbig * 45) != (ssize_t) (nbig * 45))
+      {
+	printf ("  could not write the spill file\n");
+	return bpa_test_verdict (checks, failures + 1);
+      }
+    close (fd);
+    vec_free (big);
+    bpa_tcp_backlog_open (&bpa_log_tcp);
+    bpa_tcp_replay_chunk (&bpa_log_tcp);
+    first = bpa_log_tcp.replay_len;
+    CHECK (first <= BPA_TCP_REPLAY_CHUNK && first > BPA_TCP_REPLAY_CHUNK - 45
+	     && first % 45 == 0 && vec_len (bpa_log_tcp.outbuf) == first
+	     && bpa_log_tcp.spill_off == first,
+	   "a 3 MB backlog is read %u bytes at a time, on a message boundary "
+	   "(chunk %u): in memory %u, offset %llu", first, BPA_TCP_REPLAY_CHUNK,
+	   vec_len (bpa_log_tcp.outbuf),
+	   (unsigned long long) bpa_log_tcp.spill_off);
+    /* Half of it sent, then the connection drops: the rest is given back. */
+    bpa_log_tcp.head_sent = 45 * 100;
+    bpa_tcp_drop_sent (&bpa_log_tcp);
+    fake_message (36); /* a newer record, written meanwhile */
+    bpa_tcp_disconnect (&bpa_log_tcp);
+    CHECK (bpa_log_tcp.spill_off == 45 * 100 && bpa_log_tcp.replay_len == 0
+	     && vec_len (bpa_log_tcp.outbuf) == 0
+	     && file_size (spill_file) == (long) (nbig * 45 + 36),
+	   "a disconnect gives the unsent chunk back to the file and puts the "
+	   "newer record behind it: offset %llu, in memory %u, file %ld",
+	   (unsigned long long) bpa_log_tcp.spill_off,
+	   vec_len (bpa_log_tcp.outbuf), file_size (spill_file));
+    bpa_tcp_backlog_tail (&bpa_log_tcp);
+    bpa_tcp_replay_chunk (&bpa_log_tcp); /* saves 45 * 100 as taken */
+    CHECK (file_size (spill_file) == (long) (nbig * 45 + 36)
+	     && bpa_log_tcp.outbuf[3] == 45 && bpa_log_tcp.spill_off > 45 * 100,
+	   "the newer record went to the end of the file, and the next chunk "
+	   "starts where the collector stopped: file %ld, offset %llu",
+	   file_size (spill_file), (unsigned long long) bpa_log_tcp.spill_off);
+    reset_keep_file ();
+    bpa_tcp_backlog_open (&bpa_log_tcp);
+    CHECK (bpa_log_tcp.backlog && bpa_log_tcp.spill_off == 45 * 100,
+	   "a restart reads the backlog from where it was taken, not from the "
+	   "start: offset %llu", (unsigned long long) bpa_log_tcp.spill_off);
+    /* The exit: the chunk in flight given back, and what was taken saved. */
+    bpa_tcp_replay_chunk (&bpa_log_tcp);
+    bpa_log_tcp.head_sent = 45 * 10;
+    bpa_tcp_drop_sent (&bpa_log_tcp);
+    bpa_log_stream_flush_exit (&bpa_log_tcp);
+    reset_keep_file ();
+    bpa_tcp_backlog_open (&bpa_log_tcp);
+    CHECK (bpa_log_tcp.spill_off == 45 * 110,
+	   "the exit saves what the collector took of the chunk in flight: "
+	   "offset %llu, not %u", (unsigned long long) bpa_log_tcp.spill_off,
+	   45 * 110);
+    /* A spill made while disconnected joins that backlog, progress kept. */
+    fake_message (36);
+    bpa_log_tcp.backlog = 0;
+    bpa_tcp_spill_now (&bpa_log_tcp, 0);
+    CHECK (bpa_log_tcp.backlog && bpa_log_tcp.spill_off == 45 * 110
+	     && file_size (spill_file) == (long) (nbig * 45 + 36 + 36),
+	   "a spill joins the backlog already on disk without losing its "
+	   "progress: offset %llu, file %ld",
+	   (unsigned long long) bpa_log_tcp.spill_off, file_size (spill_file));
+    unlink (offp);
+    unlink (spill_file);
+  }
+
+  printf ("\n--- the backlog's own bookkeeping (#547) ---\n");
+  {
+    char p[160];
+    u8 two[45 + 36];
+
+    reset (1);
+    bpa_tcp_off_path (&bpa_log_tcp, p, sizeof (p));
+    CHECK (strlen (p) == strlen (spill_file) + 4
+	     && strcmp (p + strlen (spill_file), ".off") == 0,
+	   "bpa_tcp_off_path is the spill's name and .off: %s", p);
+    bpa_tcp_save_off (&bpa_log_tcp, 123456789ULL);
+    CHECK (bpa_tcp_load_off (&bpa_log_tcp) == 123456789ULL
+	     && file_size (p) == 8,
+	   "bpa_tcp_save_off and bpa_tcp_load_off round-trip the progress in "
+	   "8 bytes: %llu", (unsigned long long) bpa_tcp_load_off (&bpa_log_tcp));
+    fake_message (45);
+    fake_message (36);
+    memcpy (two, bpa_log_tcp.outbuf, sizeof (two));
+    bpa_tcp_append (&bpa_log_tcp, two, sizeof (two));
+    CHECK (file_equals (spill_file, two, sizeof (two))
+	     && bpa_log_tcp.n_spilled == sizeof (two) && bpa_log_tcp.backlog
+	     && bpa_tcp_load_off (&bpa_log_tcp) == 0,
+	   "bpa_tcp_append writes, counts and opens a backlog, dropping a "
+	   "progress file no backlog owns: spilled=%llu backlog=%u",
+	   (unsigned long long) bpa_log_tcp.n_spilled, bpa_log_tcp.backlog);
+    bpa_log_tcp.front_extra = 30;
+    bpa_log_tcp.replay_len = 81;
+    bpa_tcp_front_dropped (&bpa_log_tcp, 45);
+    CHECK (bpa_log_tcp.front_extra == 0 && bpa_log_tcp.replay_len == 66,
+	   "bpa_tcp_front_dropped takes the template first, then the chunk: "
+	   "extra=%u replay=%u", bpa_log_tcp.front_extra, bpa_log_tcp.replay_len);
+    bpa_tcp_save_off (&bpa_log_tcp, 7);
+    bpa_tcp_backlog_done (&bpa_log_tcp);
+    CHECK (!bpa_log_tcp.backlog && file_size (spill_file) == -1
+	     && file_size (p) == -1 && bpa_log_tcp.spill_off == 0,
+	   "bpa_tcp_backlog_done removes the file and its progress: file=%ld "
+	   "off=%ld", file_size (spill_file), file_size (p));
+  }
+
+  printf ("\n--- a collector that never reads, under a flood of events (#547) "
+	  "---\n");
+  {
+    int sv[2], one = 4096;
+    u32 i, peak = 0, events = 400000;
+
+    reset (1);
+    if (socketpair (AF_UNIX, SOCK_STREAM, 0, sv))
+      {
+	printf ("  no socketpair\n");
+	return bpa_test_verdict (checks, failures + 1);
+      }
+    setsockopt (sv[0], SOL_SOCKET, SO_SNDBUF, &one, sizeof (one));
+    fcntl (sv[0], F_SETFL, O_NONBLOCK);
+    bpa_log_tcp.fd = sv[0];
+    bpa_log_tcp.connected = 1;
+    bpa_log_tcp.last_progress = 0;
+    for (i = 0; i < events; i++)
+      {
+	bpa_log_tcp_record (1700000000.5, 12, 0x64400000 + (i & 1023),
+			    0xcb007100, 0, 0, 1);
+	if (vec_len (bpa_log_tcp.outbuf) > peak)
+	  peak = vec_len (bpa_log_tcp.outbuf);
+	if (i % 20000 == 0)
+	  bpa_log_stream_service (&bpa_log_tcp, 100.0 + i / 20000);
+      }
+    CHECK (peak <= BPA_TCP_BUSY_BYTES + 256 && file_size (spill_file) > 0
+	     && bpa_log_tcp.n_dropped == 0,
+	   "%u events into a collector that reads nothing: the buffer peaked at "
+	   "%u bytes (ceiling %u), the rest on disk (%ld), nothing dropped",
+	   events, peak, BPA_TCP_BUSY_BYTES, file_size (spill_file));
+    close (sv[1]);
+    if (bpa_log_tcp.fd >= 0)
+      bpa_tcp_disconnect (&bpa_log_tcp);
+    vec_reset_length (bpa_log_tcp.outbuf);
+    unlink (spill_file);
+    snprintf (offp_g, sizeof (offp_g), "%s.off", spill_file);
+    unlink (offp_g);
+  }
+
+  printf ("\n--- a slow collector keeps its connection (#547) ---\n");
+  {
+    u32 kept_busy, kept_stalled, n;
+    int pipefd[2];
+
+    /* Half of the first message on the wire, 1 MB behind it. A collector
+     * still taking bytes keeps all of it in memory; one that took nothing for
+     * BPA_TCP_STALL_SECS has everything the socket had not started moved to
+     * the file - the message on the wire stays, and so does the connection.
+     * Spilling at the first EAGAIN and dropping the connection mid-message
+     * capped the stream at ~500 KB a connection on the #475 bench. */
+    reset (1);
+    if (pipe (pipefd))
+      {
+	printf ("  could not make a pipe\n");
+	return bpa_test_verdict (checks, failures + 1);
+      }
+    bpa_log_tcp.fd = pipefd[1];
+    bpa_log_tcp.connected = 1;
+    for (n = 0; vec_len (bpa_log_tcp.outbuf) < BPA_TCP_SPILL_BYTES + 45; n++)
+      fake_message (45);
+    bpa_log_tcp.head_sent = 20;
+    bpa_log_tcp.last_progress = 100.0;
+    bpa_tcp_spill_stalled (&bpa_log_tcp, 100.0 + BPA_TCP_STALL_SECS - 1);
+    kept_busy = vec_len (bpa_log_tcp.outbuf);
+    bpa_tcp_spill_stalled (&bpa_log_tcp, 100.0 + BPA_TCP_STALL_SECS + 1);
+    kept_stalled = vec_len (bpa_log_tcp.outbuf);
+    CHECK (kept_busy == n * 45 && kept_stalled == 45
+	     && file_size (spill_file) == (long) ((n - 1) * 45)
+	     && bpa_log_tcp.n_stalls == 1 && bpa_log_tcp.fd == pipefd[1]
+	     && bpa_log_tcp.backlog && bpa_log_tcp.front_extra == 45
+	     && bpa_log_tcp.head_sent == 20,
+	   "a collector still taking bytes keeps the buffer, a stalled one has "
+	   "all but the message on the wire moved to the file, connection kept: "
+	   "busy=%u stalled=%u file=%ld stalls=%llu fd=%d front=%u",
+	   kept_busy, kept_stalled, file_size (spill_file),
+	   (unsigned long long) bpa_log_tcp.n_stalls, bpa_log_tcp.fd,
+	   bpa_log_tcp.front_extra);
+    /* A record written meanwhile: bpa_tcp_offload on a backlog sends it to the
+     * end of the file, behind everything older, the wire untouched. */
+    fake_message (36);
+    bpa_tcp_offload (&bpa_log_tcp);
+    CHECK (vec_len (bpa_log_tcp.outbuf) == 45
+	     && file_size (spill_file) == (long) ((n - 1) * 45 + 36),
+	   "bpa_tcp_offload puts a newer record behind the backlog: in memory "
+	   "%u, file %ld", vec_len (bpa_log_tcp.outbuf), file_size (spill_file));
+    /* The message finishes; the backlog's first chunk comes in behind it. */
+    bpa_log_tcp.head_sent = 45;
+    bpa_tcp_drop_sent (&bpa_log_tcp);
+    bpa_tcp_replay_chunk (&bpa_log_tcp);
+    CHECK (bpa_log_tcp.front_extra == 0 && bpa_log_tcp.replay_len > 0
+	     && bpa_log_tcp.replay_len % 45 == 0 && bpa_log_tcp.spill_off
+	     == bpa_log_tcp.replay_len,
+	   "the message on the wire finishes and the backlog follows it on the "
+	   "same connection: front=%u chunk=%u offset %llu",
+	   bpa_log_tcp.front_extra, bpa_log_tcp.replay_len,
+	   (unsigned long long) bpa_log_tcp.spill_off);
+    close (pipefd[0]);
+    close (pipefd[1]);
+    bpa_log_tcp.fd = -1;
+    vec_reset_length (bpa_log_tcp.outbuf);
+    unlink (spill_file);
+    snprintf (offp_g, sizeof (offp_g), "%s.off", spill_file);
+    unlink (offp_g);
+  }
+
+  printf ("\n--- a 20 MB backlog drains to a reader in a bounded number of passes "
+	  "(#547) ---\n");
+  {
+    int sv[2];
+    pthread_t rd;
+    u32 passes = 0, i;
+    int fd;
+    u8 *all = 0;
+
+    reset (1);
+    for (i = 0; vec_len (bpa_log_tcp.outbuf) < (20u << 20); i++)
+      fake_message (200);
+    all = bpa_log_tcp.outbuf;
+    bpa_log_tcp.outbuf = 0;
+    fd = open (spill_file, O_WRONLY | O_CREAT | O_TRUNC, 0640);
+    if (fd < 0 || write (fd, all, vec_len (all)) != (ssize_t) vec_len (all)
+	|| socketpair (AF_UNIX, SOCK_STREAM, 0, sv))
+      {
+	printf ("  could not make the backlog or the pair\n");
+	return bpa_test_verdict (checks, failures + 1);
+      }
+    close (fd);
+    drain_fd = sv[1];
+    drained = 0;
+    pthread_create (&rd, 0, drain_reader, 0);
+    fcntl (sv[0], F_SETFL, O_NONBLOCK);
+    bpa_log_tcp.fd = sv[0];
+    bpa_log_tcp.connected = 1;
+    bpa_tcp_backlog_open (&bpa_log_tcp);
+    while (bpa_log_tcp.backlog && passes < 20000)
+      {
+	bpa_log_stream_service (&bpa_log_tcp, 1.0 + passes * 0.005);
+	passes++;
+	usleep (200);
+      }
+    CHECK (!bpa_log_tcp.backlog && bpa_log_tcp.n_sent == vec_len (all)
+	     && file_size (spill_file) == -1,
+	   "a 20 MB backlog went out whole to a reader in %u passes (sent %llu of "
+	   "%u), its file gone", passes, (unsigned long long) bpa_log_tcp.n_sent,
+	   vec_len (all));
+    close (sv[0]);
+    bpa_log_tcp.fd = -1;
+    pthread_join (rd, 0);
+    close (sv[1]);
+    vec_free (all);
+  }
+
+  printf ("\n--- a frame claiming more than the buffer holds (#547) ---\n");
+  reset (1);
+  fake_message (45);
+  bpa_log_tcp.outbuf[3] = 200; /* says 200 bytes; 45 are there */
+  bpa_log_tcp.replay_len = 45;
+  bpa_log_tcp.backlog = 1;
+  bpa_log_tcp.head_sent = 45;
+  bpa_tcp_drop_sent (&bpa_log_tcp);
+  CHECK (vec_len (bpa_log_tcp.outbuf) == 0 && bpa_log_tcp.head_sent == 0
+	   && bpa_log_tcp.replay_len == 0,
+	 "a buffer the socket took whole is dropped whole, whatever its framing "
+	 "claims - or the backlog stops for good: left=%u head=%u chunk=%u",
+	 vec_len (bpa_log_tcp.outbuf), bpa_log_tcp.head_sent,
+	 bpa_log_tcp.replay_len);
+  bpa_log_tcp.backlog = 0;
+
+  printf ("\n--- what bpa-log-process serves quickly (#547) ---\n");
+  reset (1);
+  CHECK (!bpa_log_stream_pending (&bpa_log_tcp),
+	 "an empty stream is not pending");
+  fake_message (45);
+  CHECK (bpa_log_stream_pending (&bpa_log_tcp), "a buffered one is");
+  vec_reset_length (bpa_log_tcp.outbuf);
+  bpa_log_tcp.backlog = 1;
+  CHECK (bpa_log_stream_pending (&bpa_log_tcp), "and so is a backlog on disk");
+  bpa_log_tcp.enabled = 0;
+  CHECK (!bpa_log_stream_pending (&bpa_log_tcp), "a disabled one never is");
+  bpa_log_tcp.backlog = 0;
+
+  printf ("\n--- the spill's ceiling on disk, and one boot marker (#547) ---\n");
+  {
+    u8 one[45];
+    u64 dropped0;
+
+    reset (1);
+    fake_message (45);
+    memcpy (one, bpa_log_tcp.outbuf, 45);
+    vec_reset_length (bpa_log_tcp.outbuf);
+    bpa_tcp_append (&bpa_log_tcp, one, 45);
+    dropped0 = bpa_log_tcp.n_dropped;
+    /* A file already at the ceiling: truncate() makes it so without writing. */
+    if (truncate (spill_file, (off_t) BPA_TCP_SPILL_MAX))
+      {
+	printf ("  could not size the spill file\n");
+	return bpa_test_verdict (checks, failures + 1);
+      }
+    bpa_tcp_append (&bpa_log_tcp, one, 45);
+    CHECK (file_size (spill_file) == (long) BPA_TCP_SPILL_MAX
+	     && bpa_log_tcp.n_capped == 45 && bpa_log_tcp.n_dropped == dropped0 + 45,
+	   "a spill at its %llu MB ceiling takes nothing more, and counts it: "
+	   "file %ld, capped %llu", (unsigned long long) (BPA_TCP_SPILL_MAX >> 20),
+	   file_size (spill_file), (unsigned long long) bpa_log_tcp.n_capped);
+    unlink (spill_file);
+
+    reset (1);
+    bpa_log_stream_marker (&bpa_log_tcp, 1700000000.0, 1699999000.0);
+    n_marker_bytes = vec_len (bpa_log_tcp.outbuf);
+    bpa_log_stream_marker (&bpa_log_tcp, 1700000030.0, 1699999000.0);
+    CHECK (n_marker_bytes > 0 && vec_len (bpa_log_tcp.outbuf) == n_marker_bytes
+	     && bpa_log_tcp.marker_written,
+	   "the boot marker goes into a stream once, not every 30 s: %u bytes "
+	   "after one, %u after two", n_marker_bytes, vec_len (bpa_log_tcp.outbuf));
   }
 
   printf ("\n--- what the socket has taken whole ---\n");
@@ -451,23 +858,32 @@ main (void)
     left_after = vec_len (bpa_log_tcp.outbuf);
     head_after = bpa_log_tcp.head_sent;
 
-    /* A length no message this file writes could carry. Guessing where the
-     * next one starts would misframe everything behind it for good, so the
-     * walk stops. */
+    /* A front that does not frame - a fragment, then a whole message the
+     * socket took half of. Until #547 the walk stopped there for good: the
+     * buffer was never dropped from again, and the whole of it went back to
+     * the spill file and out again on every connection. It now skips to the
+     * next whole message and counts what it skipped. */
     reset (1);
+    {
+      u8 *p;
+
+      vec_add2 (bpa_log_tcp.outbuf, p, 12);
+      memset (p, 0x41, 12);
+    }
     fake_message (45);
-    bpa_log_tcp.outbuf[2] = 0;
-    bpa_log_tcp.outbuf[3] = 8;
-    bpa_log_tcp.head_sent = 45;
+    bpa_log_tcp.head_sent = 12 + 10;
     bpa_tcp_drop_sent (&bpa_log_tcp);
     left_bogus = vec_len (bpa_log_tcp.outbuf);
     head_bogus = bpa_log_tcp.head_sent;
 
     CHECK (left_after == 45 && head_after == 10 && left_bogus == 45
-	     && head_bogus == 45,
-	   "bpa_tcp_drop_sent drops whole messages only, and stops on a "
-	   "length it cannot trust: left=%u head=%u, bogus left=%u head=%u",
-	   left_after, head_after, left_bogus, head_bogus);
+	     && head_bogus == 10 && bpa_log_tcp.n_resynced == 12
+	     && bpa_log_tcp.outbuf[1] == 10,
+	   "bpa_tcp_drop_sent drops whole messages only, and skips a front "
+	   "that does not frame to the next one (#547): left=%u head=%u, "
+	   "fragment left=%u head=%u resynced=%llu",
+	   left_after, head_after, left_bogus, head_bogus,
+	   (unsigned long long) bpa_log_tcp.n_resynced);
   }
 
   printf ("\n--- one turn of the service loop ---\n");

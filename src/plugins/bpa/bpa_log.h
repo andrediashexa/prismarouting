@@ -139,6 +139,13 @@ typedef struct
  * in an accounted way, rather than growing without bound. */
 #define BPA_LOG_QUEUE_MAX 8192
 
+/* A TCP stream's spill file's ceiling on disk: past it a record is dropped
+ * and counted (#547). A collector away for days must not fill the box's
+ * disk. */
+#ifndef BPA_TCP_SPILL_MAX
+#define BPA_TCP_SPILL_MAX (256ULL << 20)
+#endif
+
 typedef struct
 {
   u32 template_id;
@@ -211,6 +218,28 @@ typedef struct
   u32 seq;
   u64 n_records, n_sent, n_spilled, n_replayed, n_dropped, n_connects;
   u64 n_service, n_send_calls;
+  /* #547: bytes skipped to find a message boundary (a spill or buffer whose
+   * front did not frame), spills made because the collector stopped taking
+   * bytes, how many records the spill's ceiling refused, and when the
+   * collector last took some. */
+  u64 n_resynced, n_stalls, n_capped;
+  f64 last_progress;
+  /* The boot marker went into this stream: once per enable, which is once
+   * per boot - repeated every 30 s into a reliable stream it was most of a
+   * collector's 55 million rows on the #475 bench (#547). */
+  u8 marker_written;
+  /*
+   * THE BACKLOG (#547). While the spill file holds anything not yet sent, it
+   * is read a chunk at a time from spill_off - never whole: a 573 MB spill
+   * read whole aborted VPP for want of heap on the #475 bench - and every new
+   * record goes to the END of the file, which is what keeps it behind the
+   * older ones. The front of outbuf is then front_extra bytes of template,
+   * replay_len bytes of the file, and after them only records written since
+   * the last service tick, on their way to the file.
+   */
+  u8 backlog;
+  u64 spill_off;
+  u32 replay_len, front_extra;
   int last_errno;
   /*
    * WHICH WIRE THIS STREAM SPEAKS (#20). The reliability machinery below -
@@ -249,6 +278,7 @@ void bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event,
 			    u32 pool_id, const char *identity);
 void bpa_log_stream_marker (bpa_log_stream_t *s, f64 wall, f64 init);
 void bpa_log_stream_service (bpa_log_stream_t *s, f64 now);
+int bpa_log_stream_pending (bpa_log_stream_t *s);
 u32 bpa_log_stream_flush_exit (bpa_log_stream_t *s);
 clib_error_t *bpa_log_stream_enable (bpa_log_stream_t *s,
 				     ip4_address_t *collector, u16 port,

@@ -79,6 +79,62 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Log export no longer takes the dataplane with it.**
+  ([#547](https://github.com/andrediashexa/hexarouting/issues/547)) Found on
+  the legacy #475 bench after its upgrade to 0.149.4, and measured there by
+  the maintainer's team:
+  - the syslog spill began with the tail of a boot marker written by 0.140.2
+    (the #492 cut); the exporter left a front it could not frame where it
+    was, never dropped a sent message behind it, and sent the whole backlog
+    again on every connection - 55 million boot markers at the collector;
+  - every connection replayed the WHOLE spill into the main heap - a 573 MB
+    file aborted VPP, "Out-of-memory, calling os_panic()", with no traffic;
+  - each connection sent until EAGAIN (~500 KB), spilled the rest and
+    dropped the connection mid-message, so anything above ~130 lines/s grew
+    the spill for ever;
+  - with a collector that never read, 78% of a 30k pps burst was lost at rx:
+    workers grew their event queues on the main heap while the main thread
+    copied megabytes of spill under its lock.
+
+  Now:
+  - the spill is read a chunk (1 MB of whole messages) at a time from an
+    offset saved beside it (`<spill>.off`); records written meanwhile go to its
+    end; a disconnect gives the chunk in flight back; a front that does not
+    frame is skipped to the next message and counted;
+  - a slow collector keeps its connection: what the socket has not started
+    goes to the file once it has taken nothing for 10 s, or past 8 MB, and
+    the message on the wire finishes;
+  - the spill has a ceiling, 256 MB, past which records are dropped and
+    counted;
+  - the boot marker goes into a TCP stream once per boot, not every 30 s;
+  - each worker's event queue is a ring of 8192 made at start: a full one
+    drops and counts, a worker never allocates or waits;
+  - the streams run on their own process, every millisecond while they
+    have something to send - not a bigger socket buffer, which would put
+    more in the kernel of a connection a stopped box abandons.
+
+  `show cgnat logging` gains a `file` line (the spill now, its ceiling, what
+  the ceiling refused, bytes resynced, stalls), a `queue` line and a
+  `transmit` line. The lab collector (`lab/collector/prisma_collector.py`)
+  runs its store in WAL and closes a connection idle for 300 s. Measured in
+  `lab/syslog-spill-resync.sh` (the bench's fragment in front of 40 planted
+  lines: each arrives exactly once, the 124 bytes counted) and
+  `lab/syslog-stall-heap.sh` (a 200 MB spill and a collector that never
+  reads: the main heap moves 2 MB; a reading one then drains it at ~790
+  KB/s in whole lines, against ~130 lines/s before).
+* **natEvent 12 was logged once per refused packet.**
+  ([#549](https://github.com/andrediashexa/hexarouting/issues/549)) On the
+  #475 bench 772 subscribers without a block produced 1,621,448 IPFIX
+  records, and 71,107 of the packets carrying them were dropped at transmit
+  while the exporter counted none lost. It is now logged once per subscriber
+  per 10 s on each worker - decided in the node on the frame's own clock, so a
+  refused packet in between queues nothing and makes no system call - and
+  `show cgnat logging` says how many repeats were not reported; the refusal
+  counters still count packets. A packet the NIC fails to send after the
+  exporter handed it on is invisible to the exporter; the new `transmit` line
+  shows the egress interface's transmit failures instead, for every sender
+  on it.
+
 ## 0.149.6 - docs/clients.md: what each release changes for an API client
 
 ### Added

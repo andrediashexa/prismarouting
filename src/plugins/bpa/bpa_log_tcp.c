@@ -62,6 +62,23 @@
 #define BPA_TCP_TEMPLATE_IVL 60.0
 /* Above this, the in-memory buffer goes to the spill file. */
 #define BPA_TCP_SPILL_BYTES  (1 << 20)
+/*
+ * A CONNECTED stream is never disconnected for being slow (#547). Spilling
+ * at the first EAGAIN and dropping the connection mid-message capped the
+ * stream at about 500 KB per connection on the #475 bench - 501,008 bytes,
+ * every time - so any rate above ~130 lines/s grew the spill for ever. Now
+ * what the socket has not started goes to the file once the collector has
+ * taken nothing for BPA_TCP_STALL_SECS, or at BPA_TCP_BUSY_BYTES whatever it
+ * is doing; the message on the wire stays, and the connection with it.
+ */
+#define BPA_TCP_STALL_SECS   10.0
+#ifndef BPA_TCP_BUSY_BYTES /* the flood test sets it lower */
+/* 8 MB, not more: a spill is one write() on the main thread, and logging must
+ * never be what holds anything else up. */
+#define BPA_TCP_BUSY_BYTES   (8 << 20)
+#endif
+/* How much of the spill file is in memory at once (#547). */
+#define BPA_TCP_REPLAY_CHUNK (1 << 20)
 
 bpa_log_stream_t bpa_log_tcp;
 bpa_log_stream_t bpa_log_syslog;
@@ -91,6 +108,12 @@ static const u16 bpa_tcp_ies[][2] = {
 static const u16 bpa_tcp_marker_ies[][2] = {
   { 323, 8 }, { 160, 8 },
 };
+
+static void bpa_tcp_spill_now (bpa_log_stream_t *s, int all);
+static void bpa_tcp_offload (bpa_log_stream_t *s);
+static void bpa_tcp_backlog_open (bpa_log_stream_t *s);
+static void bpa_tcp_backlog_tail (bpa_log_stream_t *s);
+static void bpa_tcp_save_off (bpa_log_stream_t *s, u64 off);
 
 static void
 bpa_tcp_put (u8 **b, const void *data, u32 n)
@@ -192,6 +215,7 @@ bpa_tcp_prepend_template (bpa_log_stream_t *s, f64 now)
 
   vec_insert (s->outbuf, vec_len (tmp), 0);
   clib_memcpy_fast (s->outbuf, tmp, vec_len (tmp));
+  s->front_extra += vec_len (tmp);
   vec_free (tmp);
 
   s->last_template = now;
@@ -209,6 +233,16 @@ bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv,
 
   if (!s->enabled)
     return;
+  /* A ceiling on the heap whatever happens between two service ticks: a
+   * flood of 1.4 million exhaustion events into a stalled collector grew this
+   * buffer until VPP aborted, "Out-of-memory, calling os_panic()" (#547). */
+  if (vec_len (s->outbuf) >= BPA_TCP_BUSY_BYTES)
+    {
+      if (s->fd >= 0 && s->connected)
+	bpa_tcp_offload (s);
+      else
+	bpa_tcp_spill_now (s, 0);
+    }
 
   /*
    * THE SYSLOG WIRE, framed by RFC 6587 octet counting (#20).
@@ -302,11 +336,25 @@ bpa_log_stream_marker (bpa_log_stream_t *s, f64 wall, f64 init)
 
   if (!s->enabled)
     return;
+  /* A ceiling on the heap whatever happens between two service ticks: a
+   * flood of 1.4 million exhaustion events into a stalled collector grew this
+   * buffer until VPP aborted, "Out-of-memory, calling os_panic()" (#547). */
+  if (vec_len (s->outbuf) >= BPA_TCP_BUSY_BYTES)
+    {
+      if (s->fd >= 0 && s->connected)
+	bpa_tcp_offload (s);
+      else
+	bpa_tcp_spill_now (s, 0);
+    }
 
   /* The syslog wire has its own line for this, in the same grammar as a block
    * line: without this branch a syslog stream received IPFIX bytes here, and
    * a collector reading them would have taken the next line's length from
    * the middle of a binary record (#20). */
+  if (s->marker_written)
+    return;
+  s->marker_written = 1;
+
   if (s->wire == BPA_WIRE_SYSLOG)
     {
       char line[512];
@@ -355,6 +403,28 @@ bpa_tcp_disconnect (bpa_log_stream_t *s)
     close (s->fd);
   s->fd = -1;
   s->connected = 0;
+  /* The chunk of the backlog this connection was sending is still in the
+   * file: it is read again, whole, by the next one (#547). */
+  if (s->backlog)
+    {
+      u32 front = s->front_extra, n = s->replay_len;
+
+      if (front > vec_len (s->outbuf))
+	front = vec_len (s->outbuf);
+      if (front + n > vec_len (s->outbuf))
+	n = vec_len (s->outbuf) - front;
+      /* What was written since the last tick goes behind the backlog first;
+       * the chunk is given back to the file; the message in front of it -
+       * one the socket had started, older than the whole file - stays, to go
+       * out whole on the next connection. */
+      bpa_tcp_backlog_tail (s);
+      vec_delete (s->outbuf, n, front);
+      s->spill_off -= s->replay_len;
+      s->replay_len = 0;
+      bpa_tcp_save_off (s, s->spill_off);
+    }
+  else
+    s->front_extra = 0;
   /* A new connection is a new stream: whatever the old one took half of goes
    * out again from its start, behind the template the next one begins with. */
   s->head_sent = 0;
@@ -389,6 +459,9 @@ bpa_tcp_try_connect (bpa_log_stream_t *s, f64 now)
       s->connected = (errno == EINPROGRESS) ? 0 : 1;
       s->pending_connect = (errno == EINPROGRESS) ? 1 : 0;
       s->n_connects++;
+      s->last_progress = now;
+      if (s->connected)
+	bpa_tcp_backlog_open (s);
       /* every new connection starts with the template: without it the collector
        * drops. An explicit flag, not clock arithmetic: vlib_time_now() is
        * monotonic and starts at zero, so "now - 0 > interval" is false during
@@ -399,37 +472,168 @@ bpa_tcp_try_connect (bpa_log_stream_t *s, f64 now)
   close (fd);
 }
 
+/* The file beside the spill that says how much of it went out (#547). */
+static void
+bpa_tcp_off_path (bpa_log_stream_t *s, char *p, u32 size)
+{
+  snprintf (p, size, "%s.off", (char *) s->spill_path);
+}
+
+/*
+ * Records how much of the spill file has been taken by a collector, so a
+ * restart does not send the whole backlog again: the backlog is not cut from
+ * the front of the file as it goes - rewriting 573 MB a megabyte at a time is
+ * not an option - so its progress lives here (#547).
+ */
+static void
+bpa_tcp_save_off (bpa_log_stream_t *s, u64 off)
+{
+  char p[512];
+  int fd;
+
+  if (!s->spill_path)
+    return;
+  bpa_tcp_off_path (s, p, sizeof (p));
+  fd = open (p, O_WRONLY | O_CREAT | O_TRUNC, 0640);
+  if (fd >= 0)
+    {
+      if (write (fd, &off, sizeof (off)) != (ssize_t) sizeof (off))
+	s->last_errno = errno;
+      close (fd);
+    }
+}
+
+/* The saved progress through the spill file, or 0 when there is none. */
+static u64
+bpa_tcp_load_off (bpa_log_stream_t *s)
+{
+  u64 off = 0;
+  char p[512];
+  int fd;
+
+  if (!s->spill_path)
+    return 0;
+  bpa_tcp_off_path (s, p, sizeof (p));
+  fd = open (p, O_RDONLY);
+  if (fd >= 0)
+    {
+      if (read (fd, &off, sizeof (off)) != (ssize_t) sizeof (off))
+	off = 0;
+      close (fd);
+    }
+  return off;
+}
+
+/* The backlog is gone: the file and its progress, the progress first. */
+static void
+bpa_tcp_backlog_done (bpa_log_stream_t *s)
+{
+  char p[512];
+
+  bpa_tcp_off_path (s, p, sizeof (p));
+  unlink (p);
+  unlink ((char *) s->spill_path);
+  s->backlog = 0;
+  s->spill_off = 0;
+  s->replay_len = 0;
+}
+
+/* Appends `n` bytes to the spill file: counted as spilled, or as dropped. */
+static void
+bpa_tcp_append (bpa_log_stream_t *s, const u8 *data, u32 n)
+{
+  int fd;
+
+  if (!n)
+    return;
+  /* A file already there - an earlier connection's, an earlier boot's - is
+   * the backlog this joins, with its progress; none, and any progress file
+   * left beside it is stale. */
+  if (!s->backlog)
+    {
+      bpa_tcp_backlog_open (s);
+      if (!s->backlog)
+	{
+	  char p[512];
+
+	  bpa_tcp_off_path (s, p, sizeof (p));
+	  unlink (p);
+	  s->spill_off = 0;
+	}
+    }
+  {
+    struct stat st;
+
+    if (stat ((char *) s->spill_path, &st) == 0
+	&& (u64) st.st_size + n > BPA_TCP_SPILL_MAX)
+      {
+	/* The file at its ceiling: the newest records go, counted - the
+	 * disk is the box's, not the log's (#547). */
+	s->n_capped += n;
+	s->n_dropped += n;
+	return;
+      }
+  }
+  fd = open ((char *) s->spill_path, O_WRONLY | O_APPEND | O_CREAT, 0640);
+  if (fd < 0)
+    {
+      /* Nowhere left to write: dropping is the only way out, but it is counted. */
+      s->n_dropped += n;
+      return;
+    }
+  if (write (fd, data, n) == (ssize_t) n)
+    {
+      s->n_spilled += n;
+      s->backlog = 1;
+    }
+  else
+    s->n_dropped += n;
+  close (fd);
+}
+
 /*
  * Writes whatever is in the buffer to disk, whether or not it is over the
  * threshold. Split out from bpa_tcp_spill() for the exit path, which has no
  * threshold to wait for: see bpa_log_tcp_flush_exit().
+ *
+ * In a backlog the front of the buffer is a chunk of the file itself: it is
+ * not written again but given back - spill_off moves back over it - and only
+ * what was written after it goes to the end of the file (#547).
  */
 static void
-bpa_tcp_spill_now (bpa_log_stream_t *s)
+bpa_tcp_spill_now (bpa_log_stream_t *s, int all)
 {
-  int fd;
+  u32 from = 0;
 
-  if (!vec_len (s->outbuf) || !s->spill_path)
+  if (!s->spill_path)
     return;
-
-  fd = open ((char *) s->spill_path,
-	     O_WRONLY | O_APPEND | O_CREAT, 0640);
-  if (fd < 0)
+  if (s->backlog)
     {
-      /* Nowhere left to write: dropping is the only way out, but it is counted. */
-      s->n_dropped += vec_len (s->outbuf);
-      vec_reset_length (s->outbuf);
-      return;
-    }
-  if (write (fd, s->outbuf, vec_len (s->outbuf))
-      == (ssize_t) vec_len (s->outbuf))
-    s->n_spilled += vec_len (s->outbuf);
-  else
-    s->n_dropped += vec_len (s->outbuf);
-  close (fd);
-  vec_reset_length (s->outbuf);
+      u32 front = s->front_extra, n = s->replay_len;
 
-  if (s->head_sent)
+      if (front > vec_len (s->outbuf))
+	front = vec_len (s->outbuf);
+      if (front + n > vec_len (s->outbuf))
+	n = vec_len (s->outbuf) - front;
+      vec_delete (s->outbuf, n, front);
+      s->spill_off -= s->replay_len;
+      s->replay_len = 0;
+      /* What the collector took stays taken across the exit this may be. */
+      bpa_tcp_save_off (s, s->spill_off);
+      /* The message in front of the chunk - one a connection had started,
+       * older than the file - stays in memory to go out first, except at the
+       * exit, where memory is about to go: it is written last, the one record
+       * a backlog can put out of order (#547). */
+      if (!all)
+	from = front;
+    }
+  if (all)
+    s->front_extra = 0;
+  if (vec_len (s->outbuf) > from)
+    bpa_tcp_append (s, s->outbuf + from, vec_len (s->outbuf) - from);
+  vec_set_len (s->outbuf, from);
+
+  if (all && s->head_sent)
     {
       /*
        * The collector holds the first head_sent bytes of a message whose rest
@@ -444,46 +648,191 @@ bpa_tcp_spill_now (bpa_log_stream_t *s)
     }
 }
 
+/*
+ * A CONNECTED stream's excess to disk without dropping the connection (#547):
+ * everything the socket has not started goes to the file - behind the
+ * backlog when there is one, and as its start when there is not - and the
+ * message on the wire stays in memory to finish.
+ */
+static void
+bpa_tcp_offload (bpa_log_stream_t *s)
+{
+  u32 keep = 0, len = vec_len (s->outbuf);
+
+  if (s->backlog)
+    {
+      bpa_tcp_backlog_tail (s);
+      return;
+    }
+  if (s->head_sent)
+    {
+      keep = bpa_frame_len (s->wire == BPA_WIRE_SYSLOG, s->outbuf, len);
+      if (!keep || keep < s->head_sent || keep > len)
+	keep = len; /* nothing it can cut cleanly: the next tick will */
+    }
+  if (keep >= len)
+    return;
+  bpa_tcp_append (s, s->outbuf + keep, len - keep);
+  vec_set_len (s->outbuf, keep);
+  if (s->backlog)
+    {
+      s->front_extra = keep;
+      s->replay_len = 0;
+    }
+}
+
 /* Writes the excess to disk, to neither grow without bound nor lose an event. */
 static void
 bpa_tcp_spill (bpa_log_stream_t *s)
 {
   if (vec_len (s->outbuf) < BPA_TCP_SPILL_BYTES)
     return;
-  bpa_tcp_spill_now (s);
+  bpa_tcp_spill_now (s, 0);
 }
 
-/* Resends the spill before anything new, to preserve ordering. */
+/*
+ * The spill of a CONNECTED stream (#547): only once the collector has taken
+ * nothing for BPA_TCP_STALL_SECS, or the buffer is past BPA_TCP_BUSY_BYTES.
+ * A collector that is reading, however slowly, keeps its connection and
+ * drains the backlog; one that is not loses it, and is not offered another
+ * for a while.
+ */
 static void
-bpa_tcp_replay_spill (bpa_log_stream_t *s)
+bpa_tcp_spill_stalled (bpa_log_stream_t *s, f64 now)
 {
-  struct stat st;
-  u8 *buf;
-  int fd;
-  ssize_t n;
+  u32 len = vec_len (s->outbuf);
 
-  if (stat ((char *) s->spill_path, &st) || st.st_size == 0)
+  if (len < BPA_TCP_SPILL_BYTES)
     return;
+  if (len < BPA_TCP_BUSY_BYTES && now - s->last_progress <= BPA_TCP_STALL_SECS)
+    return;
+  s->n_stalls++;
+  bpa_tcp_offload (s);
+}
 
+/*
+ * In a backlog, the records written since the last tick go to the end of the
+ * file, behind everything older (#547). What stays in memory is the template
+ * and the chunk being sent.
+ */
+static void
+bpa_tcp_backlog_tail (bpa_log_stream_t *s)
+{
+  u32 front = s->front_extra + s->replay_len;
+
+  if (!s->backlog || vec_len (s->outbuf) <= front)
+    return;
+  bpa_tcp_append (s, s->outbuf + front, vec_len (s->outbuf) - front);
+  vec_set_len (s->outbuf, front);
+}
+
+/*
+ * The next chunk of the spill file into the buffer, behind the template: at
+ * most BPA_TCP_REPLAY_CHUNK, cut at the last whole message, the file's front
+ * resynchronised when it does not frame. Called with nothing of the file in
+ * the buffer. The file is never read whole: a 573 MB spill read whole aborted
+ * VPP on the #475 bench, "Out-of-memory, calling os_panic()" (#547).
+ */
+static void
+bpa_tcp_replay_chunk (bpa_log_stream_t *s)
+{
+  int is_syslog = s->wire == BPA_WIRE_SYSLOG;
+  struct stat st;
+  u8 *buf = 0;
+  int fd;
+
+  if (!s->backlog || s->replay_len || !s->spill_path)
+    return;
+  if (stat ((char *) s->spill_path, &st) || (u64) st.st_size <= s->spill_off)
+    {
+      bpa_tcp_backlog_done (s);
+      return;
+    }
   fd = open ((char *) s->spill_path, O_RDONLY);
   if (fd < 0)
     return;
-
-  buf = 0;
-  vec_validate (buf, st.st_size - 1);
-  n = read (fd, buf, st.st_size);
-  close (fd);
-
-  if (n == st.st_size)
+  bpa_tcp_save_off (s, s->spill_off);
+  vec_validate (buf, BPA_TCP_REPLAY_CHUNK - 1);
+  while (s->spill_off < (u64) st.st_size)
     {
-      /* Prepend: the spill is older than what is in memory, and an allocation
-       * has to reach the collector before its own release. */
-      vec_insert (s->outbuf, n, 0);
-      clib_memcpy_fast (s->outbuf, buf, n);
-      unlink ((char *) s->spill_path);
-      s->n_replayed += n;
+      u64 left = (u64) st.st_size - s->spill_off;
+      u32 want = left < BPA_TCP_REPLAY_CHUNK ? (u32) left : BPA_TCP_REPLAY_CHUNK;
+      ssize_t got = pread (fd, buf, want, (off_t) s->spill_off);
+      u32 n, off = 0, m;
+
+      if (got <= 0)
+	break;
+      n = (u32) got;
+#ifndef BPA_RESYNC_OFF /* lab/syslog-spill-resync.sh's off mode; no box */
+      if (!bpa_frame_plausible (is_syslog, buf, n))
+	{
+	  /* Bytes that do not frame - a fragment the #492 cut wrote, and every
+	   * release since replayed for ever - are skipped to the next message,
+	   * counted. */
+	  u32 skip = bpa_frame_resync (is_syslog, buf, n);
+
+	  if (!skip)
+	    skip = 1;
+	  s->spill_off += skip;
+	  s->n_resynced += skip;
+	  continue;
+	}
+#endif
+      while (off < n && (m = bpa_frame_len (is_syslog, buf + off, n - off))
+	     && off + m <= n)
+	off += m;
+      if (!off)
+	{
+	  /* One message longer than the chunk, or a front this build does not
+	   * resynchronise: sent as read, which is what 0.149.4 did. */
+	  off = n;
+	}
+      {
+	u8 *dst;
+
+	vec_add2 (s->outbuf, dst, off);
+	clib_memcpy_fast (dst, buf, off);
+      }
+      s->replay_len = off;
+      s->spill_off += off;
+      s->n_replayed += off;
+      break;
     }
+  close (fd);
   vec_free (buf);
+  if (!s->replay_len && s->spill_off >= (u64) st.st_size)
+    bpa_tcp_backlog_done (s);
+}
+
+/*
+ * A backlog found on connecting: a file left by an earlier connection or an
+ * earlier boot, read from where the saved progress says it was left.
+ */
+static void
+bpa_tcp_backlog_open (bpa_log_stream_t *s)
+{
+  struct stat st;
+
+  if (s->backlog || !s->spill_path)
+    return;
+  if (stat ((char *) s->spill_path, &st) || st.st_size == 0)
+    return;
+  s->backlog = 1;
+  s->spill_off = bpa_tcp_load_off (s);
+  if (s->spill_off > (u64) st.st_size)
+    s->spill_off = 0;
+}
+
+/* `n` bytes left the front of the buffer: the template's first, then the
+ * backlog chunk's (#547). */
+static void
+bpa_tcp_front_dropped (bpa_log_stream_t *s, u32 n)
+{
+  u32 t = n < s->front_extra ? n : s->front_extra;
+
+  s->front_extra -= t;
+  n -= t;
+  s->replay_len -= n < s->replay_len ? n : s->replay_len;
 }
 
 /*
@@ -501,6 +850,19 @@ bpa_tcp_drop_sent (bpa_log_stream_t *s)
 {
   while (s->head_sent)
     {
+      /* All of it taken: all of it goes, whatever the framing claims. A frame
+       * claiming more than the buffer holds - read out of a damaged file -
+       * otherwise waited for a rest that never comes, the chunk was never
+       * let go, and the backlog stopped for good (#547). */
+      if (s->head_sent >= vec_len (s->outbuf))
+	{
+	  u32 all = vec_len (s->outbuf);
+
+	  vec_reset_length (s->outbuf);
+	  s->head_sent = 0;
+	  bpa_tcp_front_dropped (s, all);
+	  break;
+	}
       /* By the stream's own framing (#492): this read the IPFIX length on
        * the syslog wire too, and cut the stream 12576 bytes in, mid-message.
        * A front it cannot read is left as it is: guessing at where the next
@@ -514,17 +876,49 @@ bpa_tcp_drop_sent (bpa_log_stream_t *s)
 				vec_len (s->outbuf));
 #endif
 
+#if !defined(BPA_FRAME_OFF) && !defined(BPA_RESYNC_OFF)
+      if (!bpa_frame_plausible (s->wire == BPA_WIRE_SYSLOG, s->outbuf,
+				vec_len (s->outbuf)))
+	{
+	  /* Not a frame at the front. Left there, nothing behind it is ever
+	   * dropped and the whole buffer is sent again on every connection
+	   * (#547): the bytes before the next message go, counted. */
+	  u32 skip = bpa_frame_resync (s->wire == BPA_WIRE_SYSLOG, s->outbuf,
+				       vec_len (s->outbuf));
+	  if (!skip)
+	    break;
+	  vec_delete (s->outbuf, skip, 0);
+	  s->head_sent = s->head_sent > skip ? s->head_sent - skip : 0;
+	  s->n_resynced += skip;
+	  bpa_tcp_front_dropped (s, skip);
+	  continue;
+	}
+#endif
       if (!mlen || s->head_sent < mlen)
 	break;
       vec_delete (s->outbuf, mlen, 0);
       s->head_sent -= mlen;
+      bpa_tcp_front_dropped (s, mlen);
     }
+}
+
+/*
+ * Whether this stream has anything to send: a buffer, or a backlog on disk
+ * (#547). bpa-log-process serves a stream that has every few milliseconds,
+ * one that has not once a second - served only by the once-a-second expiry
+ * process, a stream took one socket buffer a second, and on the #475 bench a
+ * backlog drained at ~135 KB/s while records arrived faster.
+ */
+int
+bpa_log_stream_pending (bpa_log_stream_t *s)
+{
+  return s->enabled && (vec_len (s->outbuf) > 0 || s->backlog);
 }
 
 void
 bpa_log_stream_service (bpa_log_stream_t *s, f64 now)
 {
-  ssize_t n;
+  ssize_t n = 0;
 
   if (!s->enabled)
     return;
@@ -571,8 +965,14 @@ bpa_log_stream_service (bpa_log_stream_t *s, f64 now)
 
       s->pending_connect = 0;
       s->connected = 1;
-      bpa_tcp_replay_spill (s);
+      s->last_progress = now;
+      bpa_tcp_backlog_open (s);
     }
+
+  /* The backlog first: what was written since the last tick goes behind it
+   * in the file, and the next chunk of it comes in (#547). */
+  bpa_tcp_backlog_tail (s);
+  bpa_tcp_replay_chunk (s);
 
   /* Never in front of a message the socket has already started: the template
    * would land in the middle of it on the wire. head_sent is zero on every
@@ -608,6 +1008,7 @@ bpa_log_stream_service (bpa_log_stream_t *s, f64 now)
 	{
 	  s->head_sent += n;
 	  s->n_sent += n;
+	  s->last_progress = now;
 	  bpa_tcp_drop_sent (s);
 	  continue;
 	}
@@ -616,8 +1017,49 @@ bpa_log_stream_service (bpa_log_stream_t *s, f64 now)
       bpa_tcp_disconnect (s);
       break;
     }
+  /* The chunk went out whole: the next one, up to a few a tick (#547). */
+  {
+    int more = 8;
 
-  bpa_tcp_spill (s);
+    while (s->fd >= 0 && s->backlog && !s->replay_len && more-- > 0
+	   && vec_len (s->outbuf) == s->head_sent)
+      {
+	u32 before;
+
+	bpa_tcp_backlog_tail (s);
+	bpa_tcp_replay_chunk (s);
+	if (!s->replay_len)
+	  break;
+	before = s->head_sent;
+	while (vec_len (s->outbuf) > s->head_sent)
+	  {
+	    n = send (s->fd, s->outbuf + s->head_sent,
+		      vec_len (s->outbuf) - s->head_sent, MSG_NOSIGNAL);
+	    s->n_send_calls++;
+	    if (n <= 0)
+	      break;
+	    s->head_sent += n;
+	    s->n_sent += n;
+	    s->last_progress = now;
+	    bpa_tcp_drop_sent (s);
+	  }
+	if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+	  {
+	    s->last_errno = errno;
+	    bpa_tcp_disconnect (s);
+	    break;
+	  }
+	if (s->head_sent == before && vec_len (s->outbuf))
+	  break;
+      }
+  }
+
+  if (s->fd < 0)
+    {
+      bpa_tcp_spill (s);
+      return;
+    }
+  bpa_tcp_spill_stalled (s, now);
 }
 
 /*
@@ -673,7 +1115,7 @@ bpa_log_stream_flush_exit (bpa_log_stream_t *s)
   if (!s->enabled || !vec_len (s->outbuf))
     return 0;
 
-  bpa_tcp_spill_now (s);
+  bpa_tcp_spill_now (s, 1);
   /* What reached the FILE, not what was offered to it. A spill path that
    * cannot be written counts the bytes as dropped and empties the buffer just
    * the same, and measuring by how much the buffer shrank would report that
@@ -702,6 +1144,8 @@ bpa_log_stream_enable (bpa_log_stream_t *s, ip4_address_t *collector, u16 port, 
     /* See bpa_log_enable(): the same transition, from the other transport. */
     int was = s->enabled || bpa_log_main.enabled;
 
+    if (!s->enabled)
+      s->marker_written = 0; /* a stream switched on announces the boot once */
     s->collector = *collector;
     s->port = port ? port : (s->wire == BPA_WIRE_SYSLOG ? 601 : 4739);
     s->fd = -1;

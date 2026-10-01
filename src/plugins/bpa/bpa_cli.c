@@ -40,6 +40,7 @@
  */
 
 #include <time.h>
+#include <sys/stat.h>
 
 #include <vlib/vlib.h>
 #include <vnet/ip/ip.h>
@@ -50,7 +51,9 @@
 #include "bpa_mss.h"
 #include "bpa_errors.h"
 #include "bpa_log.h"
+#include "bpa_exhaust.h"
 #include <vnet/fib/fib_table.h>
+#include <vnet/fib/fib_entry.h>
 #include <vnet/ipfix-export/flow_report.h>
 
 /* not a unit: a VPP format function over a va_list - see the header */
@@ -2865,6 +2868,79 @@ VLIB_CLI_COMMAND (bpa_stop_drain_command, static) = {
   .is_mp_safe = 1,
 };
 
+/*
+ * not a unit: one vlib_cli_output of a stat(). The spill line above gives
+ * TOTALS since start, and on the #475 bench "171600136 bytes on disk" was
+ * read as a file that size when it held 1.75 MB (#547): what is in the file
+ * NOW, and what was skipped to find a message, said apart.
+ */
+static void
+bpa_show_spill_now (vlib_main_t *vm, bpa_log_stream_t *s)
+{
+  struct stat st;
+  u64 now = 0;
+
+  if (s->spill_path && stat ((char *) s->spill_path, &st) == 0)
+    now = (u64) st.st_size;
+  vlib_cli_output (vm,
+		   "  file        %Lu bytes now of %Lu MB at most, %Lu dropped "
+		   "over it, %Lu resynced, %Lu stalls",
+		   now, (u64) (BPA_TCP_SPILL_MAX >> 20), s->n_capped,
+		   s->n_resynced, s->n_stalls);
+}
+
+/*
+ * not a unit: it asks the FIB which interface reaches the collector and sums
+ * that interface's transmit node error counters on every thread - none of
+ * which exists outside a running VPP; lab/ipfix.sh prints it.
+ *
+ * What a record lost AFTER the exporter costs (#549): on the #475 bench 71,107
+ * packets of the exhaustion flood were dropped at ens20's transmit ("dpdk tx
+ * failure") while this screen said "0 dropped". The exporter cannot see a
+ * packet the NIC did not send; the interface's transmit node can, so it is
+ * shown here - for every sender on that interface, which is said.
+ */
+static void
+bpa_show_egress_tx_lost (vlib_main_t *vm, ip4_address_t *dst)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  fib_prefix_t pfx = { .fp_proto = FIB_PROTOCOL_IP4, .fp_len = 32 };
+  fib_node_index_t fei;
+  vnet_hw_interface_t *hw;
+  vlib_node_t *n;
+  u32 sw, t, i;
+  u64 lost = 0;
+
+  pfx.fp_addr.ip4 = *dst;
+  fei = fib_table_lookup (0, &pfx);
+  sw = fib_entry_get_resolving_interface (fei);
+  if (sw == ~0)
+    {
+      vlib_cli_output (vm, "  transmit    no interface reaches the collector");
+      return;
+    }
+  hw = vnet_get_sup_hw_interface (vnm, sw);
+  n = vlib_get_node (vm, hw->tx_node_index);
+  for (t = 0; t < vlib_get_n_threads (); t++)
+    {
+      vlib_error_main_t *em = &vlib_get_main_by_index (t)->error_main;
+
+      for (i = 0; i < n->n_errors; i++)
+	{
+	  u32 at = n->error_heap_index + i;
+
+	  if (at < vec_len (em->counters))
+	    lost += em->counters[at]
+		    - (at < vec_len (em->counters_last_clear)
+			 ? em->counters_last_clear[at] : 0);
+	}
+    }
+  vlib_cli_output (vm,
+		   "  transmit    %v: %Lu packet(s) the interface failed to "
+		   "send, from every sender on it",
+		   hw->name, lost);
+}
+
 /* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
@@ -2899,6 +2975,34 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
   vlib_cli_output (vm, "  records     %Lu emitted, %Lu dropped",
 		   lm->n_records, lm->n_dropped);
   vlib_cli_output (vm, "  natEvent    16 allocation, 17 de-allocation, 12 exhaustion");
+  /* What the once-per-interval rule held back (#549): the operator reads here
+   * that 772 subscribers ran out, not 1.6 million packets. */
+  {
+    bpa_main_t *bm = &bpa_main;
+    u64 held = 0;
+    u32 ti;
+
+    for (ti = 0; ti < vec_len (bm->per_thread); ti++)
+      {
+	bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, ti);
+
+	if (pt->exhaust)
+	  held += pt->exhaust->suppressed;
+      }
+    vlib_cli_output (vm,
+		     "  exhaustion  one record per subscriber per %.0fs: %Lu "
+		     "repeats not reported",
+		     BPA_EXHAUST_IVL, held);
+    held = 0;
+    for (ti = 0; ti < vec_len (bm->per_thread); ti++)
+      held += vec_elt_at_index (bm->per_thread, ti)->log_dropped;
+    /* A worker never waits for the log (#547): a full queue drops, here. */
+    vlib_cli_output (vm,
+		     "  queue       %Lu event(s) dropped with a worker's queue "
+		     "full (%u each)",
+		     held, BPA_LOG_QUEUE_MAX);
+  }
+  bpa_show_egress_tx_lost (vm, &exp->ipfix_collector.ip.ip4);
   /*
    * The marker's own line. Without it an operator cannot tell an exporter that
    * is announcing this incarnation from one that never registered the second
@@ -2938,6 +3042,7 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       "%Lu dropped",
 		       bpa_log_tcp.n_spilled, bpa_log_tcp.n_replayed,
 		       bpa_log_tcp.n_dropped);
+      bpa_show_spill_now (vm, &bpa_log_tcp);
       vlib_cli_output (vm,
 		       "  connections %Lu, service %Lu, send %Lu, errno %d",
 		       bpa_log_tcp.n_connects, bpa_log_tcp.n_service,
@@ -2970,6 +3075,7 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       "%Lu dropped",
 		       bpa_log_syslog.n_spilled, bpa_log_syslog.n_replayed,
 		       bpa_log_syslog.n_dropped);
+      bpa_show_spill_now (vm, &bpa_log_syslog);
     }
   else
     vlib_cli_output (vm, "syslog transport: disabled");

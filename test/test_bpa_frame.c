@@ -92,6 +92,43 @@ main (void)
     printf ("  bytes 2-3, at least the 16-byte header\n");
   }
 
+  printf ("\n=== a front that does not frame is skipped to the next message "
+	  "(#547) ===\n");
+  {
+    /* The #475 bench's spill, as written by 0.140.2 and replayed by every
+     * release since: the tail of a boot marker, then whole lines. */
+    const char *spill = "otTime=\"2026-09-28T18:19:18.534Z\" observedAt=x]"
+			" up\n" "12 <134>1 a b c" "9 <134>1 xyz";
+    u32 len = (u32) strlen (spill), at = (u32) (strstr (spill, "12 <") - spill);
+    const char *chance = "40 ok 12 <134>1 a b c";
+    u8 ip[40] = { 0x41, 0x41, 0x41, 0x00, 0x0a, 0x00, 0x14 };
+
+    CHECK (bpa_frame_resync (1, (const u8 *) spill, len) == at,
+	   "the fragment is skipped to the first whole line: %u, not %u",
+	   bpa_frame_resync (1, (const u8 *) spill, len), at);
+    CHECK (bpa_frame_resync (1, (const u8 *) spill + at, len - at) == 0,
+	   "a front that frames is kept where it is");
+    CHECK (bpa_frame_resync (1, (const u8 *) chance, (u32) strlen (chance))
+	     == 6,
+	   "two digits and a space mid-line are not a frame unless a \"<\" "
+	   "follows: %u, not 6",
+	   bpa_frame_resync (1, (const u8 *) chance, (u32) strlen (chance)));
+    CHECK (bpa_frame_resync (1, (const u8 *) "no frame at all", 15) == 15,
+	   "nothing that frames resyncs to the end");
+    /* IPFIX: three stray bytes, then a 20-byte message and another. */
+    ip[3 + 20 + 1] = 0x0a;
+    ip[3 + 20 + 3] = 0x10;
+    CHECK (bpa_frame_resync (0, ip, 3 + 20 + 16) == 3,
+	   "an IPFIX stream resyncs on version 10 and a length: %u, not 3",
+	   bpa_frame_resync (0, ip, 3 + 20 + 16));
+    CHECK (!bpa_frame_plausible (0, ip, 39) && bpa_frame_plausible (0, ip + 3, 36),
+	   "bpa_frame_plausible: 0x4141 is no IPFIX version, 10 is");
+    CHECK (bpa_frame_plausible (1, (const u8 *) "12 <134>1 a b c1", 16),
+	   "a whole line followed by a header too short to read is plausible");
+    printf ("  the bench's fragment skipped; a frame needs \"<\" or version "
+	    "10, and a frame after it\n");
+  }
+
   printf ("\n%u checks, %d failures\n", checks, failures);
   printf (failures ? "%d FAILURES\n" : "ALL TESTS PASSED\n", failures);
   return failures ? 1 : 0;
