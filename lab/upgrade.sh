@@ -391,6 +391,18 @@ build_plugin() {  # <source tree> <build dir> <log> <version stamp>
   cp /vpp_plugins/bpa_plugin.so "$1/.build-vpp/lib/vpp_plugins/" || return 1
   cp /vat2_plugins/bpa_test_plugin_bpa_plugin.so \
      "$1/.build-vpp/lib/vat2_plugins/" || return 1
+  # Since 0.148.0 appliance/install.sh also reads the plugin's API description
+  # from <tree>/.build-vpp/src/plugins/bpa/bpa.api.json. The old tree is built
+  # in a directory of its own, so the file is carried over like the two
+  # plugins; without it a released 0.148.x installer stops before writing
+  # anything (0.149.0's first gate, 2026-10-01). When the build dir IS the
+  # tree's .build-vpp the file is already there.
+  _aj="$2/src/plugins/bpa/bpa.api.json"
+  [ -s "$_aj" ] || return 1
+  if [ "$2" != "$1/.build-vpp" ]; then
+    mkdir -p "$1/.build-vpp/src/plugins/bpa" || return 1
+    cp "$_aj" "$1/.build-vpp/src/plugins/bpa/" || return 1
+  fi
 }
 
 echo "  compiling ${OLD_TAG}'s dataplane plugin (the price of the tag route)"
