@@ -1288,7 +1288,7 @@ check("clash" in _said,
 # the operator's next move (#252).
 check("    interface pg1 / ipv4 address 200.150.0.20/28" in _said,
       f"the address statement is not printed whole: {_said!r}")
-check("    nat / cgnat / pool clash / outside 200.150.0.16/28" in _said,
+check("    nat / cgnat / pool clash / prefix-outside 200.150.0.16/28" in _said,
       f"the pool statement is not printed whole: {_said!r}")
 # WHAT IT COSTS, not only that it is refused. The needle is collapsed on both
 # sides: console_prose wraps by measurement, so a raw-text needle only matches

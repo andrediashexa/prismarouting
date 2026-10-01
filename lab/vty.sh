@@ -71,9 +71,9 @@ echo "=========== CGNAT THROUGH THE VTY ==========="
 # check that caught it is the reason each lab states its own verdict.
 $HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool provider-a" \
-    -c "inside 100.64.0.0/22" \
-    -c "outside 200.150.0.0/24" \
-    -c "outside 45.170.16.0/26" \
+    -c "prefix-inside 100.64.0.0/22" \
+    -c "prefix-outside 200.150.0.0/24" \
+    -c "prefix-outside 45.170.16.0/26" \
     -c "block-size 512" \
     -c "policy interleaved" \
     -c "mode deterministic" \
@@ -110,8 +110,8 @@ echo
 echo "=========== an invalid pool must be refused and NOT enter the config ==========="
 $HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool bad" \
-    -c "inside 100.64.0.0/22" \
-    -c "outside 10.0.0.0/24" \
+    -c "prefix-inside 100.64.0.0/22" \
+    -c "prefix-outside 10.0.0.0/24" \
     -c "exit" \
     -c "commit" 2>&1 | sed 's/^/  /'
 echo "  -- does 'bad' appear in the running-config? (it must not)"
@@ -234,7 +234,7 @@ echo "  -- read-only account tries to configure"
 RO_CONF=$(as ro -c "'configure'")
 printf '%s\n' "$RO_CONF" | sed 's/^/    /'
 echo "  -- read-only account tries to commit a pool, command issued directly"
-RO_COMMIT=$(as ro -c "'configure'" -c "'nat'" -c "'cgnat'" -c "'pool nope'" -c "'inside 192.168.0.0/24'" -c "'outside 198.51.100.64/30'" -c "'exit'" -c "'commit'")
+RO_COMMIT=$(as ro -c "'configure'" -c "'nat'" -c "'cgnat'" -c "'pool nope'" -c "'prefix-inside 192.168.0.0/24'" -c "'prefix-outside 198.51.100.64/30'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$RO_COMMIT" | sed 's/^/    /'
 echo "  -- read-only account tries the hidden shell escape"
 RO_SHELL=$(as ro -c "'start shell'")
@@ -333,8 +333,8 @@ print("HINT:", hint)
 sh.feed("nat")
 sh.feed("cgnat")
 sh.feed("pool lab")
-sh.feed("inside 100.64.0.0/22")
-sh.feed("outside 200.150.0.16/30")
+sh.feed("prefix-inside 100.64.0.0/22")
+sh.feed("prefix-outside 200.150.0.16/30")
 import io, contextlib
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
@@ -509,8 +509,8 @@ API_TRACE=$(PRISMA_TRACE=1 $HX -c "configure" \
     -c "bypass destination 198.51.100.0/24" \
     -c "exit" \
     -c "pool trace-only" \
-    -c "inside 100.65.0.0/22" \
-    -c "outside 45.170.17.0/26" \
+    -c "prefix-inside 100.65.0.0/22" \
+    -c "prefix-outside 45.170.17.0/26" \
     -c "exit" \
     -c "interface host-veth-vpp outside" \
     -c "timeout icmp 90" \
@@ -940,7 +940,7 @@ PG0_ROW=$(printf '%s\n' "$COMP_SHOWIF" | tr '|' '\n' \
 echo "  show interface's own row for pg0: '${PG0_ROW:-<none>}'"
 expect_in "show interface reports the dataplane's interfaces" "pg0" "$PG0_ROW"
 expect_in "with their state, on that same row" "up" "$PG0_ROW"
-expect_in "with the statements inside it" "inside 100.64.0.0/22" "$COMP"
+expect_in "with the statements inside it" "prefix-inside 100.64.0.0/22" "$COMP"
 
 # --- issue #180: show this, for what is being typed right now ---
 #
@@ -1128,8 +1128,8 @@ vppctl bpa pool provider-a del 2>/dev/null
 cat > /tmp/old-format.conf <<'OLDEOF'
 ! cgnat
 cgnat pool provider-a
- inside 100.64.0.0/22
- outside 200.150.0.16/30
+ prefix-inside 100.64.0.0/22
+ prefix-outside 200.150.0.16/30
  block-size 512
  policy interleaved
  mode deterministic
@@ -1146,8 +1146,8 @@ cat > /tmp/new-format.conf <<'NEWEOF'
 nat
  cgnat
   pool provider-a
-   inside 100.64.0.0/22
-   outside 200.150.0.16/30
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.16/30
    block-size 512
    policy interleaved
    mode deterministic

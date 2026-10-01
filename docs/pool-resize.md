@@ -83,7 +83,7 @@ definitions and runs the same arithmetic it would run afterwards.
 nat
  cgnat
   pool residential
-   outside 45.170.16.0/26
+   prefix-outside 45.170.16.0/26
    exit
   exit
  exit
@@ -124,12 +124,12 @@ one:
 nat
  cgnat
   pool residential      ← untouched, keeps its mapping
-   inside 100.64.0.0/22
-   outside 200.150.0.16/28
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.16/28
    exit
   pool residential-2    ← the new capacity
-   inside 100.64.4.0/22
-   outside 45.170.16.0/26
+   prefix-inside 100.64.4.0/22
+   prefix-outside 45.170.16.0/26
    exit
   exit
  exit

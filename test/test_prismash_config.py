@@ -447,8 +447,15 @@ for _bad, _why in (("nat\n pool x\n exit\n", "under 'nat'"),):
 
 # Written back out, it comes out in the NEW hierarchy...
 new_text = old.text()
-check("nat\n cgnat\n  pool residential\n   inside 100.64.0.0/22" in new_text,
+check("nat\n cgnat\n  pool residential\n   prefix-inside 100.64.0.0/22"
+      in new_text,
       f"CGNAT is written as the nat > cgnat block: {new_text}")
+# The file above spells the pool's prefixes `inside` / `outside`, as every box
+# saved them before #531: read, and written back in the new spelling only.
+check(" inside 100.64.0.0/22" not in new_text.replace("prefix-inside", "")
+      and "prefix-outside " in new_text,
+      f"an old file's inside/outside comes back as prefix-inside/-outside: "
+      f"{new_text}")
 check("router static" in new_text
       and " 0.0.0.0/0 next-hop 10.0.0.2" in new_text,
       f"and static routes as a block under router: {new_text}")
@@ -2171,6 +2178,28 @@ check(_run.delta_to(config.Config.parse("hostname edge2\n"))
       and not _run.delta_to(config.Config.parse("hostname edge1\n"))
       ["hostname_changed"], "a different name is a change, the same is not")
 print("  read, refused, dropped from the routing half, and diffed")
+
+print("\n=== a pool's prefixes: prefix-inside / prefix-outside, the old words read (#531) ===")
+for _spell in (("inside", "outside"), ("prefix-inside", "prefix-outside")):
+    _c = config.Config.parse(
+        "! cgnat\nnat\n cgnat\n  pool p\n"
+        f"   {_spell[0]} 100.64.0.0/22\n   {_spell[1]} 203.0.113.0/30\n"
+        "   block-size 512\n   exit\n  exit\n exit\n")
+    _t = _c.text()
+    check(_c.pools["p"].inside == ["100.64.0.0/22"]
+          and _c.pools["p"].outside == ["203.0.113.0/30"]
+          and "   prefix-inside 100.64.0.0/22\n" in _t
+          and "   prefix-outside 203.0.113.0/30\n" in _t
+          and "   inside " not in _t and "   outside " not in _t,
+          f"{_spell[0]} / {_spell[1]} is read, and written as the new words: {_t}")
+check(config.POOL_PREFIX_WORDS["inside"] == "inside"
+      and config.POOL_PREFIX_WORDS["prefix-outside"] == "outside",
+      "both spellings name the same side")
+_c = config.Config.parse("! cgnat\nnat\n cgnat\n  interface pg0 inside\n"
+                  "  exit\n exit\n")
+check(_c.interfaces.get("pg0") == "inside" and not _c.unknown,
+      f"the interface role keeps its own words: {_c.interfaces} {_c.unknown}")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

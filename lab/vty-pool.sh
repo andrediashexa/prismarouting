@@ -30,8 +30,8 @@ vppctl set interface state pg0 up; vppctl set interface state pg1 up
 echo "=========== 1. every per-pool setting, typed into the VTY ==========="
 $HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool lab" \
-    -c "inside 100.64.0.0/22" \
-    -c "outside 200.150.0.16/30" \
+    -c "prefix-inside 100.64.0.0/22" \
+    -c "prefix-outside 200.150.0.16/30" \
     -c "block-size 512" \
     -c "mode dynamic" \
     -c "max-blocks 3" \
@@ -70,8 +70,8 @@ cat > /tmp/bad.conf <<'EOF'
 nat
  cgnat
   pool lab
-   inside 100.64.0.0/22
-   outside 200.150.0.16/30
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.16/30
    block-size 512
    policy interleaved
    mode deterministic
@@ -93,8 +93,8 @@ echo "=========== 5. a static port forward, through the VTY ==========="
 #   10.0.0.5 is subscriber 5 of this pool -> 203.0.113.17, block 1088-1151
 $HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool fwd" \
-    -c "inside 10.0.0.0/24" \
-    -c "outside 203.0.113.16/30" \
+    -c "prefix-inside 10.0.0.0/24" \
+    -c "prefix-outside 203.0.113.16/30" \
     -c "block-size 64" \
     -c "forward tcp 1100 to 10.0.0.5 80" \
     -c "exit" \

@@ -37,7 +37,7 @@ configure
  nat
   cgnat
    pool residencial
-    outside 45.170.16.0/26
+    prefix-outside 45.170.16.0/26
     exit
    exit
   exit
@@ -106,12 +106,12 @@ Um pool é selecionado pelo prefixo interno, então um pool novo servindo uma fa
 nat
  cgnat
   pool residencial      ← intocado, mantém o mapeamento
-   inside 100.64.0.0/22
-   outside 200.150.0.16/28
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.16/28
    exit
   pool residencial-2    ← a capacidade nova
-   inside 100.64.4.0/22
-   outside 45.170.16.0/26
+   prefix-inside 100.64.4.0/22
+   prefix-outside 45.170.16.0/26
    exit
   exit
  exit

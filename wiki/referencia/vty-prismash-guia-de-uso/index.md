@@ -76,7 +76,7 @@ Duas palavras movem você **dentro** do modo de configuração, sem sair dele e 
 prisma# [edit] nat
 prisma# [edit nat] cgnat
 prisma# [edit nat / cgnat] pool residencial
-prisma# [edit nat / cgnat / pool residencial] inside 100.64.0.0/10
+prisma# [edit nat / cgnat / pool residencial] prefix-inside 100.64.0.0/10
 prisma# [edit nat / cgnat / pool residencial] top
 prisma# [edit] router bgp 65000
 prisma# [edit router bgp 65000] address-family ipv4 unicast

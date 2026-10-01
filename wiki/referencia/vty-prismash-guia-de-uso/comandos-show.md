@@ -368,8 +368,8 @@ Dentro de um bloco de configuração, mostra o que aquele bloco tem e nada acima
 ```
 prisma# [edit nat / cgnat / pool residential] show this
 pool residential
- inside 100.64.0.0/22
- outside 200.150.0.16/30
+ prefix-inside 100.64.0.0/22
+ prefix-outside 200.150.0.16/30
  block-size 512
  policy interleaved
  mode deterministic

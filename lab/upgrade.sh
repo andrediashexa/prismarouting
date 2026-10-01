@@ -532,8 +532,8 @@ $HX -c "configure" \
 if [ "${OLD_NAT_BLOCK:-0}" -gt 0 ]; then
   $HX -c "configure" -c "nat" -c "cgnat" \
       -c "pool minas" \
-      -c "inside 100.64.0.0/22" \
-      -c "outside 200.150.0.16/30" \
+      -c "prefix-inside 100.64.0.0/22" \
+      -c "prefix-outside 200.150.0.16/30" \
       -c "block-size 512" \
       -c "timeout udp 300" \
       -c "exit" \
@@ -543,8 +543,8 @@ if [ "${OLD_NAT_BLOCK:-0}" -gt 0 ]; then
 else
   $HX -c "configure" \
       -c "cgnat pool minas" \
-      -c "inside 100.64.0.0/22" \
-      -c "outside 200.150.0.16/30" \
+      -c "prefix-inside 100.64.0.0/22" \
+      -c "prefix-outside 200.150.0.16/30" \
       -c "block-size 512" \
       -c "timeout udp 300" \
       -c "exit" \
@@ -824,7 +824,7 @@ printf '%s\n' "$SPLIT" | tail -4 | sed 's/^/    /'
 # existing pool goes through, and creating one sends a message whose shape
 # moved between the two releases.
 SPLIT_ADD=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool split291" \
-            -c "inside 10.77.0.0/22" -c "outside 198.51.100.0/30" \
+            -c "prefix-inside 10.77.0.0/22" -c "prefix-outside 198.51.100.0/30" \
             -c "block-size 512" -c "exit" \
             -c "commit comment \"a pool created in the split window\"" 2>&1)
 echo "  and to create a pool it has never seen:"

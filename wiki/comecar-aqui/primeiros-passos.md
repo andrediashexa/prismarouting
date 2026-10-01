@@ -220,8 +220,8 @@ configure
  nat
   cgnat
    pool residencial
-    inside 100.64.0.0/10
-    outside 203.0.113.0/24
+    prefix-inside 100.64.0.0/10
+    prefix-outside 203.0.113.0/24
     block-size 512
     ports 1024 65535
     policy interleaved

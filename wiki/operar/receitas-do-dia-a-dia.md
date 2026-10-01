@@ -139,8 +139,8 @@ configure
  nat
   cgnat
    pool residencial-2
-    inside 100.64.4.0/22
-    outside 45.170.16.0/26
+    prefix-inside 100.64.4.0/22
+    prefix-outside 45.170.16.0/26
     block-size 512
     policy interleaved
     mode deterministic

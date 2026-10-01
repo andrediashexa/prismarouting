@@ -173,8 +173,8 @@ HX="python3 /src/src/prismash/prismash.py"
 VTY_STRIDE=1
 VTY_SAY=$($HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool vtystride" \
-    -c "inside 10.30.0.0/24" \
-    -c "outside 45.170.20.0/30" \
+    -c "prefix-inside 10.30.0.0/24" \
+    -c "prefix-outside 45.170.20.0/30" \
     -c "block-size 512" \
     -c "ports 1024 65535" \
     -c "policy blocked" \
@@ -197,8 +197,8 @@ echo "  and a stride this box CAN honour, committed the same way:"
 # paragraph here, on a commit that had nothing to do with it.
 VTY_QUIET=$($HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool vtyokstride" \
-    -c "inside 10.30.1.0/24" \
-    -c "outside 45.170.21.0/30" \
+    -c "prefix-inside 10.30.1.0/24" \
+    -c "prefix-outside 45.170.21.0/30" \
     -c "block-size 512" \
     -c "ports 1024 65535" \
     -c "policy blocked" \

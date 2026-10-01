@@ -1695,9 +1695,50 @@ BGP_AF_BLOCK = {
     "exit": ("leave the address family", None),
 }
 
+
+def pool_prefixes_missing(pool):
+    """
+    The refusal of a pool committed without one of its prefixes (#531): what
+    is missing, and the statement that supplies it. It said "inside and
+    outside required", and on the X520 bench that was read as the interface
+    roles, which are spelled the same.
+    """
+    # One literal per case, not a joined list: the wiki quotes these rows,
+    # and test/test_wiki_screens.py finds a quoted row by the string the
+    # product builds it from.
+    if not pool.inside and not pool.outside:
+        return (f"pool '{pool.name}': no prefix-inside and no prefix-outside",
+                "e.g. 'prefix-inside 100.64.0.0/10', "
+                "'prefix-outside 203.0.113.0/28'")
+    if not pool.inside:
+        return (f"pool '{pool.name}': no prefix-inside",
+                "e.g. 'prefix-inside 100.64.0.0/10'")
+    return (f"pool '{pool.name}': no prefix-outside",
+            "e.g. 'prefix-outside 203.0.113.0/28'")
+
+
+def pool_prefix_spelled(words):
+    """
+    `words`, a line typed in a pool, with the old `inside` / `outside` - as
+    statement or after `no` - spelled `prefix-inside` / `prefix-outside`
+    (#531). Typed by habit, pasted from a saved file of an earlier release:
+    either is still read, and read as the new statement.
+    """
+    out = list(words)
+    for i in (0, 1):
+        if i < len(out) and out[i] in ("inside", "outside") \
+                and (i == 0 or out[0] == "no"):
+            out[i] = "prefix-" + out[i]
+    return out
+
+
 CGNAT_POOL = {
-    "inside": ("inside prefix, may repeat", ARG_PREFIX),
-    "outside": ("public prefix, may repeat", ARG_PREFIX),
+    # prefix-inside / prefix-outside, not inside / outside (#531): those two
+    # words are also an interface's role under `cgnat`. The old spellings are
+    # still read - see do_pool and Config._pool_line - and offered by nothing.
+    "prefix-inside": ("the subscribers' prefix, may repeat", ARG_PREFIX),
+    "prefix-outside": ("the public prefix they are translated to, may repeat",
+                       ARG_PREFIX),
     # <64-65536> was wrong at BOTH ends and the top end was the expensive
     # one: the dataplane carries block_size in a u16, `bpa_cli.c` casts to it,
     # and 65536 arrives as 0 - so the documented maximum came back as "block
@@ -1814,7 +1855,7 @@ CGNAT_POOL = {
 # drift: a statement is offered after `no` because a handler for it exists,
 # and for no other reason.
 def _pool_no_item(lst, what, w):
-    """`no inside <prefix>` and its siblings: remove one named member."""
+    """`no prefix-inside <prefix>` and its siblings: remove one named member."""
     if len(w) < 3:
         return f"usage: no {what} <prefix>"
     if w[2] not in lst:
@@ -1898,10 +1939,11 @@ def _pool_no_clear(attr, value):
 
 
 POOL_NEGATE = {
-    "inside": ("remove one inside prefix", ARG_PREFIX,
-               lambda p, w: _pool_no_item(p.inside, "inside", w)),
-    "outside": ("remove one public prefix", ARG_PREFIX,
-                lambda p, w: _pool_no_item(p.outside, "outside", w)),
+    "prefix-inside": ("remove one subscriber prefix", ARG_PREFIX,
+                      lambda p, w: _pool_no_item(p.inside, "prefix-inside", w)),
+    "prefix-outside": ("remove one public prefix", ARG_PREFIX,
+                       lambda p, w: _pool_no_item(p.outside, "prefix-outside",
+                                                  w)),
     "ports": ("go back to the device's own port range", None,
               _pool_no_clear("ports", "")),
     "timeout": ("stop overriding one timeout; the pool inherits the global "
@@ -10090,7 +10132,8 @@ class Shell:
                     # the operator's next move is to grep one of them out of
                     # `show configuration` and delete it (#252).
                     print(f"    interface {ifname} / ipv4 address {addr}")
-                    print(f"    nat / cgnat / pool {pname} / outside {hit}")
+                    print(f"    nat / cgnat / pool {pname} / "
+                          f"prefix-outside {hit}")
                     print_prose("cgnat would translate the box's own "
                                 "control-plane traffic on that address: "
                                 "bpa-out2in runs before the box decides a "
@@ -10168,7 +10211,7 @@ class Shell:
                 if pool.name in stride_refused:
                     continue
                 if not pool.inside or not pool.outside:
-                    self.err(f"pool '{pool.name}': inside and outside required")
+                    self.err_prose(*pool_prefixes_missing(pool))
                     ok = False
                     continue
                 # A PORT RANGE TOO NARROW TO HOLD ONE BLOCK, asked HERE and
@@ -14863,7 +14906,7 @@ class Shell:
                     "every statement this VTY passed through unread")
 
     def do_pool(self, line):
-        w = line.split()
+        w = pool_prefix_spelled(line.split())
         p = self.pool
         if self.owns_word(w):
             return True
@@ -14883,7 +14926,7 @@ class Shell:
             return True
 
         try:
-            if w[0] in ("inside", "outside"):
+            if w[0] in ("prefix-inside", "prefix-outside"):
                 # The same rule as the saved file's, from the same function.
                 # A second copy is what lets the two doors disagree, which is
                 # #417 - and `inside potato` reached a commit through this one
@@ -14896,7 +14939,8 @@ class Shell:
                     # the operator's own length.
                     self.err_prose(*why)
                     return True
-                (p.inside if w[0] == "inside" else p.outside).append(w[1])
+                (p.inside if w[0] == "prefix-inside"
+                 else p.outside).append(w[1])
             elif w[0] == "block-size":
                 self.pool_range("block-size", w[1])
                 # The range is one of TWO things `?` promises about this

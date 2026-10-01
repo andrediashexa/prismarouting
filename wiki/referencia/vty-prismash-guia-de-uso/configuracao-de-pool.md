@@ -52,8 +52,10 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 
 | Comando | Argumento | O que define |
 |---------|-----------|--------------|
-| `inside <prefixo>` | `<A.B.C.D/M>` | prefixo interno; pode repetir. Obrigatório: o `commit` recusa um pool sem `inside` ou sem `outside` |
-| `outside <prefixo>` | `<A.B.C.D/M>` | prefixo público; pode repetir |
+| `prefix-inside <prefixo>` | `<A.B.C.D/M>` | prefixo interno (os assinantes); pode repetir. Obrigatório: o `commit` recusa um pool sem `prefix-inside` ou sem `prefix-outside` |
+| `prefix-outside <prefixo>` | `<A.B.C.D/M>` | prefixo público; pode repetir |
+
+Até a 0.148.2 essas duas instruções se chamavam `inside` e `outside`. Os nomes antigos continuam sendo lidos - de uma configuração salva, de uma revisão de rollback ou digitados -, mas a caixa só escreve os novos, e o `?` só oferece os novos. O papel de uma interface no CGNAT (`interface <nome> inside|outside`) não mudou.
 | `block-size <n>` | `<64-32768>` | portas por bloco, potência de dois; padrão `512`. Um número que não é potência de dois é recusado com as duas potências mais próximas |
 | `ports <min> <max>` | `<1-65535> <1-65535>` | faixa de portas utilizável; ausente, vale a faixa do próprio equipamento |
 | `policy interleaved` |           | vizinhos em endereços públicos distintos; é o padrão |
@@ -379,10 +381,10 @@ Os três também são campos de mapeamento: removê-los reconstrói o pool.
 
 ## Remover algo que não está lá é recusado
 
-`no inside 10.0.0.0/8` num pool que não tem esse prefixo é recusado, com o prefixo escrito de volta. O pool continua com o prefixo que você queria, e quase sempre o que aconteceu foi um erro de digitação:
+`no prefix-inside 10.0.0.0/8` num pool que não tem esse prefixo é recusado, com o prefixo escrito de volta. O pool continua com o prefixo que você queria, e quase sempre o que aconteceu foi um erro de digitação:
 
 ```
-error: the pool has no inside 10.0.0.0/8
+error: the pool has no prefix-inside 10.0.0.0/8
 ```
 
 Já `no timeout udp` num pool que não sobrescreve o timeout de UDP é aceito em silêncio: o estado depois é exatamente o estado pedido - este pool não sobrescreve nada.
@@ -394,8 +396,8 @@ configure
  nat
   cgnat
    pool residencial
-    inside 100.64.0.0/10
-    outside 203.0.113.0/24
+    prefix-inside 100.64.0.0/10
+    prefix-outside 203.0.113.0/24
     block-size 512
     ports 1024 65535
     policy interleaved

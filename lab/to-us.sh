@@ -48,8 +48,8 @@ HX="python3 /src/src/prismash/prismash.py"
 $HX -c "configure" \
   -c "interface ens18" -c "ipv4 address 100.64.0.1/24" -c "no shutdown" -c "cgnat inside" -c "exit" \
   -c "interface ens19" -c "ipv4 address 198.51.100.2/30" -c "no shutdown" -c "cgnat outside" -c "exit" \
-  -c "nat" -c "cgnat" -c "pool residencial" -c "inside 100.64.0.0/24" \
-  -c "outside 203.0.113.0/28" -c "block-size 512" -c "exit" -c "exit" -c "exit" \
+  -c "nat" -c "cgnat" -c "pool residencial" -c "prefix-inside 100.64.0.0/24" \
+  -c "prefix-outside 203.0.113.0/28" -c "block-size 512" -c "exit" -c "exit" -c "exit" \
   -c "commit" 2>&1 | sed 's/^/    /' | tail -5
 vppctl ip route add 0.0.0.0/0 via 198.51.100.1 ens19 >/dev/null
 # THE POOL BLACKHOLED, as the reporting box had it and as the wiki tells every

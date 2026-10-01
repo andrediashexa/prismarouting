@@ -1398,8 +1398,8 @@ The configuration of the hierarchy being edited, and nothing above it:
 ```
 prisma# [edit nat / cgnat / pool residential] show this
 pool residential
- inside 100.64.0.0/22
- outside 200.150.0.16/30
+ prefix-inside 100.64.0.0/22
+ prefix-outside 200.150.0.16/30
  block-size 512
  policy interleaved
  mode deterministic
@@ -1825,7 +1825,7 @@ a `router static` block:
 nat
  cgnat
   pool residential
-   inside 100.64.0.0/22
+   prefix-inside 100.64.0.0/22
    exit
   timeout udp 300
   exit
@@ -1945,7 +1945,7 @@ by them:
 prisma# [edit] nat
 prisma# [edit nat] cgnat
 prisma# [edit nat / cgnat] pool residential
-prisma# [edit nat / cgnat / pool residential] inside 100.64.0.0/10
+prisma# [edit nat / cgnat / pool residential] prefix-inside 100.64.0.0/10
 prisma# [edit nat / cgnat / pool residential] top
 prisma# [edit] router bgp 65000
 prisma# [edit router bgp 65000] address-family ipv4 unicast
@@ -3100,7 +3100,7 @@ prisma> show cgnat ?
   top          subscribers closest to exhausting their blocks
   translation  who was behind a public address and port
 
-prisma# [edit nat / cgnat / pool residential] inside ?
+prisma# [edit nat / cgnat / pool residential] prefix-inside ?
   <A.B.C.D/M>
 ```
 
@@ -3464,7 +3464,7 @@ an 80-column console. They are quoted at the width the box prints them.
 
 The check this product can make and nobody else can.
 
-Configure a pool with `outside 200.150.0.16/28`. Configure BGP. Both correct.
+Configure a pool with `prefix-outside 200.150.0.16/28`. Configure BGP. Both correct.
 Unless something advertises a prefix **covering** that /28, every subscriber
 behind the pool is translated to an address the internet cannot route back to:
 traffic leaves and nothing returns. The CGNAT is right, the routing is right,

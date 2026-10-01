@@ -249,8 +249,8 @@ vtysh -c "show bgp ipv4 unicast summary" 2>/dev/null | grep -E "^10\.[01]\.0\.2"
 # dead, and nothing in the box connected them.
 echo "=========== a pool nobody announces ==========="
 NOANN=$($HX -c "configure" \
-        -c "nat" -c "cgnat" -c "pool lab-ann" -c "inside 100.64.8.0/22" \
-        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+        -c "nat" -c "cgnat" -c "pool lab-ann" -c "prefix-inside 100.64.8.0/22" \
+        -c "prefix-outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
         -c "commit check" 2>&1)
 printf '%s\n' "$NOANN" | tail -12 | sed 's/^/  check: /'
 expect_in "an unannounced pool prefix is called out" \
@@ -261,8 +261,8 @@ expect_in "and the message says what it costs" \
 # Announce a COVERING prefix - not the same one - because the check has to
 # understand containment, not string equality. A /24 covers the pool's /28.
 ANN=$($HX -c "configure" \
-      -c "nat" -c "cgnat" -c "pool lab-ann" -c "inside 100.64.8.0/22" \
-      -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+      -c "nat" -c "cgnat" -c "pool lab-ann" -c "prefix-inside 100.64.8.0/22" \
+      -c "prefix-outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
       -c "top" -c "router bgp 65000" -c "address-family ipv4 unicast" \
       -c "network 200.150.9.0/24" -c "exit-address-family" -c "exit" \
       -c "commit check" 2>&1)
@@ -273,8 +273,8 @@ expect_not_in "a covering prefix silences it" \
 # check cannot see. A warning that cries on a working box gets ignored, and
 # then the real one is ignored too.
 RED=$($HX -c "configure" \
-      -c "nat" -c "cgnat" -c "pool lab-ann" -c "inside 100.64.8.0/22" \
-      -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+      -c "nat" -c "cgnat" -c "pool lab-ann" -c "prefix-inside 100.64.8.0/22" \
+      -c "prefix-outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
       -c "top" -c "router bgp 65000" -c "redistribute connected" -c "exit" \
       -c "commit check" 2>&1)
 expect_not_in "and redistribution silences it, because it cannot be seen" \
@@ -288,8 +288,8 @@ expect_not_in "and redistribution silences it, because it cannot be seen" \
 # table, and removing the route empties it - so this configuration ANNOUNCES
 # the pool and must be met with silence.
 RSTAT=$($HX -c "configure" \
-        -c "nat" -c "cgnat" -c "pool lab-ann" -c "inside 100.64.8.0/22" \
-        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+        -c "nat" -c "cgnat" -c "pool lab-ann" -c "prefix-inside 100.64.8.0/22" \
+        -c "prefix-outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
         -c "top" -c "router static" -c "200.150.9.0/24 next-hop blackhole" -c "exit" \
         -c "router bgp 65000" -c "address-family ipv4 unicast" \
         -c "redistribute static" -c "exit-address-family" -c "exit" \
@@ -303,8 +303,8 @@ expect_not_in "a blackhole route redistributed into BGP announces the pool" \
 # that redistributes statics would be exempt whether it announced the pool or
 # not.
 RELSE=$($HX -c "configure" \
-        -c "nat" -c "cgnat" -c "pool lab-ann" -c "inside 100.64.8.0/22" \
-        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+        -c "nat" -c "cgnat" -c "pool lab-ann" -c "prefix-inside 100.64.8.0/22" \
+        -c "prefix-outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
         -c "top" -c "router static" -c "10.0.0.0/8 next-hop blackhole" -c "exit" \
         -c "router bgp 65000" -c "address-family ipv4 unicast" \
         -c "redistribute static" -c "exit-address-family" -c "exit" \
@@ -320,8 +320,8 @@ expect_in "a static route covering something else announces nothing" \
 # wherever it appeared treated this box as one it could not see through, so the
 # ordinary edge box that redistributes into its IGP got no warning at all.
 ROSPF=$($HX -c "configure" \
-        -c "nat" -c "cgnat" -c "pool lab-ann" -c "inside 100.64.8.0/22" \
-        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+        -c "nat" -c "cgnat" -c "pool lab-ann" -c "prefix-inside 100.64.8.0/22" \
+        -c "prefix-outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
         -c "top" -c "router static" -c "200.150.9.0/24 next-hop blackhole" -c "exit" \
         -c "router ospf" -c "redistribute static" -c "exit" \
         -c "router bgp 65000" -c "address-family ipv4 unicast" \
@@ -1332,8 +1332,8 @@ echo "=========== and what the VTY makes of the same statements ==========="
 # The defect as it was reported: an unnumbered neighbour refused the WHOLE
 # candidate, so a CGNAT pool typed beside it was refused with it.
 UNNCK=$($HX -c "configure" \
-        -c "nat" -c "cgnat" -c "pool lab-unnum" -c "inside 100.64.16.0/22" \
-        -c "outside 200.150.9.32/28" -c "block-size 1024" -c "exit" \
+        -c "nat" -c "cgnat" -c "pool lab-unnum" -c "prefix-inside 100.64.16.0/22" \
+        -c "prefix-outside 200.150.9.32/28" -c "block-size 1024" -c "exit" \
         -c "top" -c "router bgp 65000" \
         -c "neighbor vppwan1 interface remote-as external" \
         -c "exit" -c "commit check" 2>&1)

@@ -557,8 +557,8 @@ printf '%s\n' "$VTY_SAY" | sed 's/^/  /'
 VTY_PAIR_ADDRS=4
 VTY_QUIET=$($HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool vtyres4" \
-    -c "inside 100.64.13.0/28" \
-    -c "outside 200.150.9.16/30" \
+    -c "prefix-inside 100.64.13.0/28" \
+    -c "prefix-outside 200.150.9.16/30" \
     -c "block-size $VTY_BSZ" \
     -c "ports $VTY_PORTS" \
     -c "policy interleaved" \
@@ -656,8 +656,8 @@ echo "  the pool screen promises a stride on: ${STRIDE_ROWS:-(nothing)}"
 # and not at either line.
 VTY_STRIDE_SAY=$($HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool vtystride" \
-    -c "inside 100.64.16.0/28" \
-    -c "outside 200.150.12.16/32" \
+    -c "prefix-inside 100.64.16.0/28" \
+    -c "prefix-outside 200.150.12.16/32" \
     -c "block-size $VTY_BSZ" \
     -c "ports $VTY_PORTS" \
     -c "policy interleaved" \
@@ -669,8 +669,8 @@ VTY_STRIDE_SAY=$($HX -c "configure" \
 printf '%s\n' "$VTY_STRIDE_SAY" | sed 's/^/  /'
 VTY_DYNSTRIDE_SAY=$($HX -c "configure" \
     -c "nat" -c "cgnat" -c "pool vtydynstride" \
-    -c "inside 100.64.17.0/28" \
-    -c "outside 200.150.13.16/32" \
+    -c "prefix-inside 100.64.17.0/28" \
+    -c "prefix-outside 200.150.13.16/32" \
     -c "block-size $VTY_BSZ" \
     -c "ports $VTY_PORTS" \
     -c "policy interleaved" \

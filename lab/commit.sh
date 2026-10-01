@@ -29,22 +29,22 @@ HX="python3 /src/src/prismash/prismash.py"
 
 echo "=========== 1. candidate edits do NOT touch the device ==========="
 $HX -c "configure" \
-    -c "nat" -c "cgnat" -c "pool alpha" -c "inside 100.64.0.0/22" \
-    -c "outside 198.19.24.0/24" -c "block-size 512" -c "exit" \
+    -c "nat" -c "cgnat" -c "pool alpha" -c "prefix-inside 100.64.0.0/22" \
+    -c "prefix-outside 198.19.24.0/24" -c "block-size 512" -c "exit" \
     -c "show configuration compare" 2>&1 | sed 's/^/  /'
 echo "  -- device still has:"
 vppctl show bpa pool | head -1 | sed 's/^/    /'
 
 echo
 echo "=========== 2. commit check validates without applying ==========="
-$HX -c "configure" -c "nat" -c "cgnat" -c "pool bad" -c "inside 100.64.0.0/22" -c "exit" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool bad" -c "prefix-inside 100.64.0.0/22" -c "exit" \
     -c "commit check" 2>&1 | sed 's/^/  /'
 
 echo
 echo "=========== 3. commit applies ==========="
 $HX -c "configure" \
-    -c "nat" -c "cgnat" -c "pool alpha" -c "inside 100.64.0.0/22" \
-    -c "outside 198.19.24.0/24" -c "block-size 512" -c "exit" \
+    -c "nat" -c "cgnat" -c "pool alpha" -c "prefix-inside 100.64.0.0/22" \
+    -c "prefix-outside 198.19.24.0/24" -c "block-size 512" -c "exit" \
     -c "interface pg0 inside" \
     -c "commit comment \"first pool\"" 2>&1 | sed 's/^/  /'
 echo "  -- device now has:"
@@ -121,7 +121,7 @@ echo "=========== 8. the check still catches what the device refuses ===========
 # and the device does: bpa_addr_set_* rejects the set before the pool is
 # built. Chosen for that reason and checked for it - a change the VTY caught
 # first would put this section back where it was.
-$HX -c "configure" -c "nat" -c "cgnat" -c "pool alpha" -c "outside 198.19.24.0/25" \
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool alpha" -c "prefix-outside 198.19.24.0/25" \
     -c "exit" -c "commit check" 2>&1 | grep -vE "entering" | sed 's/^/  /'
 echo "  -- device untouched:"
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
@@ -185,8 +185,8 @@ expect "rollback restored the previous MTU" test "$BACK" = "$BEFORE"
 # before the pool is built, and the VTY has no check of its own for it -
 # verified by driving the four statements through a Shell and seeing nothing
 # refused at the prompt.
-BADC=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool doomed" -c "inside 100.64.32.0/22" \
-             -c "outside 10.0.0.0/30" -c "outside 10.0.0.0/31" \
+BADC=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool doomed" -c "prefix-inside 100.64.32.0/22" \
+             -c "prefix-outside 10.0.0.0/30" -c "prefix-outside 10.0.0.0/31" \
              -c "exit" -c "commit" 2>&1)
 echo "$BADC" | tail -3 | sed 's/^/  /'
 expect_in "a refused commit says so" "error" "$BADC"
@@ -503,6 +503,36 @@ expect_in "the session table's screen says what its size means" \
 expect_in "under the size it has" " MB per table" "$SESS_SHOW"
 expect_not_in "which is not the size the refused commit asked for" \
   "buckets 1024, memory 64 MB" "$SESS_SHOW"
+
+echo
+echo "=========== a file saved with inside/outside still loads (#531) ==========="
+# Every box saved its pools' prefixes as `inside` / `outside` before #531, and
+# a rollback revision holds them the same way. The boot's --load reads them as
+# prefix-inside / prefix-outside; the box writes only the new names after.
+cat > /tmp/old-spelling.conf <<'OLDCONF'
+nat
+ cgnat
+  pool oldspell
+   inside 100.66.0.0/24
+   outside 198.18.77.0/30
+   block-size 512
+   exit
+  exit
+ exit
+OLDCONF
+OLDLOAD=$($HX --load /tmp/old-spelling.conf 2>&1); OLDLOAD_RC=$?
+printf '%s\n' "$OLDLOAD" | tail -3 | sed 's/^/  /'
+OLDPOOL=$(vppctl show bpa pool 2>&1 | grep -A3 "oldspell" | head -4)
+OLDRUN=$($HX -c "show running-config" 2>&1)
+printf '%s\n' "$OLDPOOL" | sed 's/^/  /'
+expect "a saved file spelling inside/outside loads (rc $OLDLOAD_RC)" \
+  test "$OLDLOAD_RC" = "0"
+expect_in "and its pool reaches the dataplane" "oldspell" "$OLDPOOL"
+expect_in "and the running configuration writes prefix-inside" \
+  "prefix-inside 100.66.0.0/24" "$OLDRUN"
+expect_in "and prefix-outside" "prefix-outside 198.18.77.0/30" "$OLDRUN"
+expect_not_in "and not the old word" "   inside 100.66.0.0/24" "$OLDRUN"
+$HX -c configure -c nat -c cgnat -c "no pool oldspell" -c commit >/dev/null 2>&1
 
 echo
 echo "=========== the reads a commit check makes (#520) ==========="
