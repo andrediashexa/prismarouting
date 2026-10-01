@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.1 - a line a daemon refuses in an operator's route-map fails the commit
+
+### Fixed
+
 * **A line a daemon refused inside the operator's own route-map went
   unnoticed, and the commit said "commit complete".**
   ([#544](https://github.com/andrediashexa/hexarouting/issues/544))
