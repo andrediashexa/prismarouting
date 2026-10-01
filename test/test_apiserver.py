@@ -221,6 +221,9 @@ check(len(I) == 1 and I[0]["name"] == "pg0" and I[0]["admin_up"] and I[0]["link_
       and I[0]["mtu"] == 9000 and I[0]["addresses"] == ["100.64.3.254/22"]
       and I[0]["linux_name"] == "pg0-linux" and I[0]["description"] == "subs",
       f"an interface: the dataplane's state, the configuration's addresses: {I}")
+check(A.link_speed_bps(0xFFFFFFFF) == 0 and A.link_speed_bps(None) == 0
+      and A.link_speed_bps("x") == 0 and A.link_speed_bps(1_000_000) == 10 ** 9,
+      "link_speed_bps: VPP's unknown speed (~0 kbps) and garbage are 0, a known one in bits (#545)")
 check(I[0]["speed_bps"] == 10_000_000_000,
       f"the link speed in bits a second, from the dataplane's kbps (#533): {I[0]['speed_bps']}")
 check(A.interfaces_of(sh, ["other"]) == [], "only the interfaces asked for")

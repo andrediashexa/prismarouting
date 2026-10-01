@@ -308,10 +308,25 @@ def interfaces_of(sh, names=()):
             "linux_name": linux.get(name, ""),
             "description": getattr(cfg, "descriptions", {}).get(name, ""),
             "sw_if_index": d.get("sw_if_index", 0),
-            # sw_interface_details' link_speed is kbps (#533).
-            "speed_bps": int(d.get("link_speed", 0) or 0) * 1000,
+            "speed_bps": link_speed_bps(d.get("link_speed")),
         })
     return rows
+
+
+def link_speed_bps(kbps):
+    """sw_interface_details' link_speed (kbps) in bits a second, 0 unknown.
+
+    VPP reports a speed it does not know as ~0, 0xFFFFFFFF kbps - a virtio
+    port on the X520 bench read 4294967295000 bps from 0.149.2 (#545). That
+    is "unknown", which the contract says is 0, never a 4.3 Tbps link.
+    """
+    try:
+        k = int(kbps or 0)
+    except (TypeError, ValueError):
+        return 0
+    if k <= 0 or k >= 0xFFFFFFFF:
+        return 0
+    return k * 1000
 
 
 def is_lcp_tap(name):
