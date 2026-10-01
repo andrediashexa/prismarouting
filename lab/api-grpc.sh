@@ -83,6 +83,15 @@ PGNEW=$(vppctl packet-generator new "name t limit 2000 node ip4-input interface 
 echo "=========== the client ==========="
 OUT=$(python3 lab/api_grpc_check.py /tmp/apistubs $C 127.0.0.1:50551 2>&1)
 printf '%s\n' "$OUT" | sed 's/^/  /'
+echo "=========== the VTY's own statement ==========="
+APINO=$($HX -c configure -c "api enabled yes" -c "commit check" 2>&1)
+printf '%s\n' "$APINO" | tail -2 | sed 's/^/  /'
+APIOK=$($HX -c configure -c "api enabled yes" -c "api listen-address 127.0.0.1" \
+            -c "api port 50551" -c commit 2>&1)
+printf '%s\n' "$APIOK" | tail -2 | sed 's/^/  /'
+APIENV=$(cat /etc/prisma-routing/api.env 2>&1)
+APIRUN=$($HX -c "show running-config" 2>&1 | grep '^api ')
+printf '%s\n' "$APIRUN" | sed 's/^/  /'
 TAIL=$(tail -5 /tmp/apiserver.log)
 
 res() { printf '%s\n' "$OUT" | grep -q "^RESULT $1 ok"; }
@@ -112,4 +121,9 @@ expect "an account without the role is refused a candidate, PERMISSION_DENIED" r
 expect "and still reads the running configuration" res unprivileged-reads
 expect "a client with no certificate is refused at the handshake" res no-client-cert
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
+expect_in "enabling the API with no address is refused at the check" \
+  "api enabled yes needs 'api listen-address" "$APINO"
+expect_in "with one, the commit writes api.env for the host" "API_LISTEN=127.0.0.1" "$APIENV"
+expect_in "and the running configuration reads it back" "api listen-address 127.0.0.1" "$APIRUN"
+expect_in "a box with no service manager says when it applies" "next boot" "$APIOK"
 verdict

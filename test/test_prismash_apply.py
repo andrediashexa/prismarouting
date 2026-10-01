@@ -2284,5 +2284,44 @@ check(not _ok and not _wrote
       f"and a change to it is refused, not written over: {_buf.getvalue()!r}")
 
 
+print("=== the management API: its address named, and the host's answer (#532) ===")
+
+
+class ApiStub:
+    """ApiService's seam: records what it was asked, answers what it is told."""
+
+    def __init__(self, answer=(True, "")):
+        self.answer = answer
+        self.applied = []
+
+    def read(self):
+        return dict(system.API_DEFAULTS)
+
+    def apply(self, settings):
+        self.applied.append(dict(settings))
+        return self.answer
+
+
+_ash = shell_with(FakeApi())
+_ash.apisvc = ApiStub()
+_t = config.Config()
+_t.api = {"enabled": "yes", "listen-address": "", "port": "50051"}
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ok = _ash.apply(_t, check_only=True)
+check(not _ok and "api enabled yes needs 'api listen-address" in _buf.getvalue(),
+      f"enabling the API with no address is refused at the check: {_buf.getvalue()!r}")
+_ash = shell_with(FakeApi())
+_ash.apisvc = ApiStub((False, "10.9.9.9:50051 could not be listened on"))
+_t = config.Config()
+_t.api = {"enabled": "yes", "listen-address": "10.9.9.9", "port": "50051"}
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ok = _ash.apply(_t)
+check(not _ok and "api: 10.9.9.9:50051 could not be listened on" in _buf.getvalue()
+      and _ash.apisvc.applied == [_t.api],
+      f"a listener the host could not open fails the commit, in its words: {_buf.getvalue()!r}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

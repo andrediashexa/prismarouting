@@ -216,10 +216,11 @@ def parse_cpu(text):
 
 def cpu_count(spec):
     """How many CPUs a list like '3-7,9' names."""
+    from system import is_number
     n = 0
     for part in filter(None, (spec or "").split(",")):
         a, _, b = part.partition("-")
-        if a.isdigit() and (not b or b.isdigit()):
+        if is_number(a) and (not b or is_number(b)):
             n += int(b) - int(a) + 1 if b else 1
     return n
 

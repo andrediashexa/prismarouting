@@ -335,6 +335,10 @@ install -D -m 0755 "$REPO/appliance/prisma-backplane" "$DESTDIR/usr/lib/prisma-r
 # The VTY's container on an upgraded release's images, at the end of `system
 # upgrade` (#528); the dataplane and the control plane wait for a reboot.
 install -D -m 0755 "$REPO/appliance/refresh-the-vty" "$DESTDIR/usr/lib/prisma-routing/refresh-the-vty"
+# The management API's host half (#532): the listener api-configure writes and
+# the units that carry it to the server in the management container.
+install -D -m 0755 "$REPO/appliance/api-configure" "$DESTDIR/usr/lib/prisma-routing/api-configure"
+install -d -m 0700 "$DESTDIR/etc/prisma-routing/api"
 # The initramfs hook that leaves out what no root on this box sits behind
 # (#450). The medium builds its initrd with it.
 #
@@ -430,7 +434,9 @@ for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selft
          prisma-routing-confirm.timer prisma-routing-containers.service \
          prisma-routing-card-watch.service prisma-routing-card-watch.timer \
          prisma-routing-backplane.service prisma-routing-hot-card@.service \
-         prisma-routing-doors.service prisma-routing-power-button.service; do
+         prisma-routing-doors.service prisma-routing-power-button.service \
+         prisma-routing-api-config.service prisma-routing-api.service \
+         prisma-routing-api-proxy.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
@@ -793,7 +799,8 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   systemctl enable prisma-routing-tune.service prisma-routing.service \
     prisma-routing-selftest.service prisma-routing-installer.service \
     prisma-routing-confirm.timer prisma-routing-backplane.service \
-    prisma-routing-doors.service prisma-routing-power-button.service
+    prisma-routing-doors.service prisma-routing-power-button.service \
+    prisma-routing-api-config.service
   systemctl restart prisma-routing-power-button.service >/dev/null 2>&1 || true
   # The doors (#448) run the code this install just put down: restarted, not
   # only started, or an upgrade leaves the old daemon answering.
@@ -824,7 +831,7 @@ else
   for u in prisma-routing-tune.service prisma-routing.service \
            prisma-routing-selftest.service prisma-routing-installer.service \
            prisma-routing-backplane.service prisma-routing-doors.service \
-           prisma-routing-power-button.service; do
+           prisma-routing-power-button.service prisma-routing-api-config.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done

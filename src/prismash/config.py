@@ -24,6 +24,7 @@ from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
                     is_number,
                     validate_role,
                     SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp,
+                    API_FIELDS, API_DEFAULTS, validate_api,
                     validate_trap_host)
 
 CGNAT_PREFIXES = ("cgnat ", "no cgnat ")
@@ -2522,6 +2523,8 @@ class Config:
         self.hostname: str = ""
         self.users: dict = {}
         self.snmp: dict = dict(SNMP_DEFAULTS)
+        # The management API's listener (#532): read back from api.env.
+        self.api: dict = dict(API_DEFAULTS)
         self.snmp_communities: list = []
         self.snmp_users: dict = {}
         # (address, community, kind) per notification destination (#507)
@@ -2729,6 +2732,13 @@ class Config:
         out += [f"dns server {a}" for a in self.dns_servers]
         for name in sorted(self.users):
             out += self.users[name].lines()
+        # Only what differs from the default (#532): a box that never turned
+        # the API on carries no `api` line, and its saved file stays the file
+        # it was.
+        for k in API_FIELDS:
+            v = self.api.get(k, API_DEFAULTS[k])
+            if v != API_DEFAULTS[k]:
+                out.append(f"api {k} {v}")
         for k in SNMP_FIELDS:
             v = self.snmp.get(k, SNMP_DEFAULTS[k])
             # The product's number is not written (#508): a saved file that
@@ -3082,6 +3092,19 @@ class Config:
                     cfg.unknown.append((lineno, s, "expected: snmp community <name>"))
                 elif w[2] not in cfg.snmp_communities:
                     cfg.snmp_communities.append(w[2])
+                continue
+            if s.startswith("api "):
+                # The prompt's predicate, so the file refuses what the prompt
+                # refuses (#532).
+                w = s.split(None, 2)
+                if len(w) < 3:
+                    cfg.unknown.append((lineno, s, "expected: api <setting> <value>"))
+                else:
+                    why = validate_api({w[1]: w[2]})
+                    if why:
+                        cfg.unknown.append((lineno, s, why))
+                    else:
+                        cfg.api[w[1]] = w[2]
                 continue
             if s.startswith("snmp "):
                 w = s.split(None, 2)
@@ -4049,6 +4072,7 @@ class Config:
             "cgnat_memory_changed":
                 self.cgnat_memory_gb != other.cgnat_memory_gb,
             "snmp_changed": snmp_changed,
+            "api_changed": self.api != other.api,
             "ssh_changed": ssh_changed,
             "dns_changed": self.dns_servers != other.dns_servers,
             # Only a name that is stated: a file with none leaves the box's.

@@ -1,0 +1,95 @@
+#!/bin/sh
+# api-configure [--wait]: the host's half of `api enabled|listen-address|port`
+# (#532). Run by prisma-routing-api-config.service, at boot and when the VTY
+# asks through the door after a commit that changed them.
+#
+# THE SERVER RUNS IN THE MANAGEMENT CONTAINER, which has no network of its own
+# (network_mode: none, #448): it listens on the backplane, 128.0.0.2:50051.
+# What faces the management network is a socket on the HOST, at the address
+# and port the VTY names, handing each connection to systemd-socket-proxyd,
+# which carries it to the backplane. TLS is not terminated here - the proxy
+# moves bytes, and the mutual-TLS handshake is the server's.
+#
+# The socket unit is written under /run, from /etc/prisma-routing/api.env,
+# every time: it is derived state, and a box that boots with the API off has
+# no listener on the management network at all.
+#
+# --wait: return once the server answers on the backplane (the API service's
+# ExecStartPost), so the proxy's first connection does not find nothing.
+#
+# PRISMA_API_ENV, PRISMA_API_UNIT_DIR and PRISMA_SYSTEMCTL point it elsewhere
+# for test/test_api_configure.sh.
+set -u
+ENV=${PRISMA_API_ENV:-/etc/prisma-routing/api.env}
+UNITS=${PRISMA_API_UNIT_DIR:-/run/systemd/system}
+SYSTEMCTL=${PRISMA_SYSTEMCTL:-systemctl}
+BACKPLANE=128.0.0.2:50051
+SOCKET=prisma-routing-api-proxy.socket
+
+if [ "${1:-}" = --wait ]; then
+  python3 - "$BACKPLANE" <<'PY'
+import socket, sys, time
+host, port = sys.argv[1].rsplit(":", 1)
+# A deadline, not a count: a connect to an address nobody holds can take its
+# whole timeout each time, and 100 tries of 0.5 s measured 70 s, not 20.
+end = time.monotonic() + 20
+while time.monotonic() < end:
+    try:
+        socket.create_connection((host, int(port)), 0.5).close()
+        sys.exit(0)
+    except OSError:
+        time.sleep(0.2)
+print(f"api-configure: nothing answers on {sys.argv[1]} after 20 s", file=sys.stderr)
+sys.exit(1)
+PY
+  exit $?
+fi
+
+API_ENABLED=no; API_LISTEN=; API_PORT=50051
+# Read as data, never sourced: the file is written by the VTY, and a line in
+# it is not a command this root program runs.
+if [ -f "$ENV" ]; then
+  while IFS='=' read -r k v; do
+    case "$k" in
+      API_ENABLED) API_ENABLED=$v ;;
+      API_LISTEN) API_LISTEN=$v ;;
+      API_PORT) API_PORT=$v ;;
+    esac
+  done < "$ENV"
+fi
+
+# The same rules the VTY applies, again, because this runs as root.
+case "$API_PORT" in ''|*[!0-9]*) API_PORT=0 ;; esac
+case "$API_LISTEN" in *[!0-9a-fA-F.:]*) API_LISTEN= ;; esac
+if [ "$API_ENABLED" != yes ] || [ -z "$API_LISTEN" ] \
+   || [ "$API_PORT" -lt 1 ] || [ "$API_PORT" -gt 65535 ]; then
+  "$SYSTEMCTL" stop "$SOCKET" prisma-routing-api-proxy.service \
+    prisma-routing-api.service >/dev/null 2>&1
+  rm -f "$UNITS/$SOCKET"
+  "$SYSTEMCTL" daemon-reload >/dev/null 2>&1
+  echo "api-configure: the management API is off"
+  exit 0
+fi
+
+case "$API_LISTEN" in *:*) LISTEN="[$API_LISTEN]:$API_PORT" ;; *) LISTEN="$API_LISTEN:$API_PORT" ;; esac
+mkdir -p "$UNITS"
+cat > "$UNITS/$SOCKET.new" <<UNIT
+# Written by /usr/lib/prisma-routing/api-configure from $ENV.
+[Unit]
+Description=Prisma Routing - the management API's listener on the management network
+After=prisma-routing-containers.service
+
+[Socket]
+ListenStream=$LISTEN
+FreeBind=yes
+
+[Install]
+WantedBy=sockets.target
+UNIT
+mv -f "$UNITS/$SOCKET.new" "$UNITS/$SOCKET"
+"$SYSTEMCTL" daemon-reload
+"$SYSTEMCTL" restart "$SOCKET" || {
+  echo "api-configure: $LISTEN could not be listened on" >&2
+  exit 1
+}
+echo "api-configure: the management API listens on $LISTEN"
