@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.148.4 - a first cut of the gRPC management API, for the web interface
+
+### Added
+
 * **A gRPC management API, prisma.v1, for the web interface.**
   ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
   Asked for by the maintainer: the web interface's Rust backend drives the box
@@ -95,8 +101,6 @@ version has a chance of seeing it.
   backplane. The contract is `api/prisma/v1/prisma.proto`, its compatibility
   rules in its header; `docs/api.md` has the certificates and the tonic setup.
   `lab/api-grpc.sh` drives every rpc against a dataplane, 29 checks.
-
-### Fixed
 
 ## 0.148.3 - a pool's prefixes are prefix-inside and prefix-outside
 
