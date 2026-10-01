@@ -4211,7 +4211,7 @@ a
   this half, a `set` that applied to everything would pass every test that only
   checked the routes it was supposed to affect.
 
-## Routing policy: `policy-options` (#458, #535, #536)
+## Routing policy: `policy-options` (#458, #535, #536, #537)
 
 The maintainer chose Junos's shape (2026-09-25). Named prefix lists,
 communities, large and extended communities and AS-path expressions, and
@@ -4226,7 +4226,8 @@ policy or a chain, `[ A B ]`.
   `metric`, and since #535 `neighbor <address>`, `family inet|inet6`,
   `origin igp|egp|incomplete`, `local-preference <n>`, `next-hop <address>`,
   `large-community <name>`, `extended-community <name>`,
-  `validation-state valid|invalid|unknown` and `policy <name>`. Conditions of
+  `validation-state valid|invalid|unknown`, `policy <name>` and since #537
+  `source-vrf <vrf>|default`, at a `vrf-import` only. Conditions of
   the same kind are ORed; different kinds are ANDed.
 - **`set`** actions: `local-preference <n>|+n|-n`, `community
   add|set|delete`, `large-community add|set|delete`, `extended-community
@@ -4447,6 +4448,104 @@ IS-IS over it. Each daemon was asked whether it held what it was given
 MODE=off, which commits the same policies without the attach statements,
 turns 34 checks red. What phase A compiled compiles byte for byte as before:
 `test/policy-golden-0.148.9.txt` is 0.148.9's output for phase A's fixture.
+
+### Phase C: route leaking between VRFs (#537)
+
+A VRF imports the BGP routes of another VRF, or of the default table,
+through a policy. It is typed inside a BGP address family, `address-family
+ipv4|ipv6 unicast` under `router bgp <asn> vrf <vrf>` - or under `router bgp
+<asn>`, which is the default table importing a VRF:
+
+| Typed | FRR holds | Default |
+|---|---|---|
+| `vrf-import <vrf>\|default policy <p>` | `import vrf <vrf>\|default` and `import vrf route-map PO-<p>-BGP-VRFIMPORT` | reject |
+| `vrf-import <vrf>\|default` | `import vrf <vrf>\|default` | everything |
+
+**One policy per address family.** FRR 10.7.1 holds one `import vrf
+route-map` per address family and applies it to every VRF the family
+imports, so the policy is the family's, not the import's: a second policy in
+the same family is refused, and so is an import without a policy in a family
+that has one - it would go through the policy all the same, which the
+statement would not say. `no vrf-import <vrf>` drops the import, and the
+policy with the last import of the family; an import the family does not
+have is refused, "nothing removed", rather than staged as a `no` FRR would
+keep nothing of and the commit would report as dropped. The VRF a route came from is the
+new condition `from source-vrf <vrf>|default` (FRR's `match source-vrf`),
+ORed with itself like `from neighbor`, and refused anywhere but a
+`vrf-import`. A route no term decided is not imported - Junos's vrf-import
+default - so the policy says what leaks.
+
+At a leak a policy sets `local-preference`, `community`, `large-community`,
+`med`, `metric`, `origin` and `weight`. It does not set `next-hop`, which is
+the exporting VRF's and is what carries the traffic there, nor
+`extended-community`, the route targets FRR's leak is made of. `from
+neighbor` is refused: a leaked route comes from a VRF.
+
+**No RD or route target to configure.** FRR's `import vrf` derives both
+for the leak itself (`Imported from 10.30.0.1:2:203.0.113.0/24`, the
+exporting VRF's router ID and an index), and nothing else on the box uses
+L3VPN. Exposing them would be an L3VPN feature with one use.
+
+**Measured with `vtysh -C -f`** in the product's FRR image
+(`prisma-frr:0.148.9`, FRR 10.7.1) before the grammar was written: `import
+vrf <name>`, `import vrf default` inside a VRF, `import vrf <name>` in the
+default instance, `import vrf route-map`, all in IPv4 and IPv6 unicast, and
+`match source-vrf` - each returned 0.
+
+**Refused, at the prompt and at commit.** No route leaks into or out of a
+VRF of the box's own: `prisma-bp` (the containers' backplane, #447) and every
+name under `prisma-`. That is `leak_error()`, at the prompt, for `vrf-import`
+and for FRR's own `import vrf` typed by hand; and `leak_findings()` at
+commit, for a file that reached it another way, refused when the change
+brings it. A VRF importing itself is refused too.
+
+**The Linux VRF is not the box's.** FRR's BGP in a VRF needs a Linux VRF
+device of that name, and the VTY makes none: `vrf <n>` on an interface is a
+VPP table (above), and the one Linux VRF on the box is `prisma-bp`, made by
+`appliance/prisma-backplane`. `lab/policy-c.sh` makes `red` and `svc` by
+hand, with the table numbers of their VPP tables - linux-nl syncs kernel
+table N into VPP table N - and puts the LCP host interfaces in them. Until
+the box makes them, phase C works on a box where someone did the same.
+
+**A connected route leaked does not reach VPP.** FRR leaks a route whose
+next hop is the other VRF itself - a connected or a `redistribute
+connected` route - into the kernel as `dev <vrf>`, the VRF device. linux-nl
+has no VPP interface for a VRF device, and VPP's table never got the route:
+measured, the echo reply to the customer's connected address was dropped in
+the importing table. A leaked route with a next hop, which is every BGP
+route, reaches VPP. A tenant reached through a router - the lab's customer
+announces its LAN over BGP - works; a tenant's connected subnet leaked into
+another VRF has no dataplane path.
+
+**Measured in `lab/policy-c.sh`**, three tables - the default one to an
+upstream, `red` with a customer's router, `svc` with a shared-services
+router - each a VPP table and a Linux VRF of the same number. `red` imports
+`svc` and the default table through one policy, LEAK; `svc` and the default
+table import `red` without one. bgpd was asked whether it held each
+statement (#539), and held it. Then:
+- the service, 203.0.113.0/24, was in red's BGP `Imported from` svc, with
+  the policy's local preference 200 and community, in zebra's red table, in
+  the kernel's, and in VPP's table 10 forwarding out of svc's interface;
+- svc's second prefix, 192.0.2.0/24, which no term takes, was in none of
+  them;
+- the default table's default route was in red's BGP, zebra and VPP's table
+  10 forwarding out of the upstream's interface, and the upstream's other
+  prefix stayed out;
+- a ping from the customer's LAN reached the service and came back, and
+  another followed the leaked default to the upstream; one to the rejected
+  prefix did not;
+- `no vrf-import default` took the default route out of red's BGP, zebra and
+  VPP's table 10, and the service stayed;
+- `show policy` says `applied: vrf-import`, and `test policy` says the
+  default of a leak.
+
+MODE=off, which commits the same policies without the `vrf-import`
+statements, turns 25 of its 41 checks red. What phase B compiled compiles
+byte for byte as before: `test/policy-golden-0.148.10.txt` is 0.148.10's
+output for phase B's fixture, and 0.148.9's and 0.148.6's files are
+compared as well.
+IPv6's import is held by bgpd and not measured in a forwarding plane: the
+lab's tables are IPv4.
 
 ## A route-map referenced and not defined
 

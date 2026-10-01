@@ -133,7 +133,10 @@ CLAUSES_MAX = 10
 #:   bgp:condition, the routes whose presence it watches: none;
 #: - bgp:table, BGP's best routes on their way to zebra: installed;
 #: - ospf:default and isis:default, the routes whose presence originates
-#:   the IGP's default: none.
+#:   the IGP's default: none;
+#: - bgp:vrfimport (#537), the routes a VRF imports from another VRF or
+#:   from the default table: none, Junos's vrf-import default - a leak
+#:   carries what a term accepted and nothing else.
 ATTACHES = {"bgp:default": ("bgp", "deny"),
             "bgp:network": ("bgp", "permit"),
             "bgp:aggregate": ("bgp", "permit"),
@@ -142,7 +145,8 @@ ATTACHES = {"bgp:default": ("bgp", "deny"),
             "bgp:condition": ("bgp", "deny"),
             "bgp:table": ("bgp", "permit"),
             "ospf:default": (None, "deny"),
-            "isis:default": (None, "deny")}
+            "isis:default": (None, "deny"),
+            "bgp:vrfimport": ("bgp", "deny")}
 #: How each attach point is said where a policy is listed (`show policy`)
 #: and refused.
 ATTACH_WORDS = {"bgp:default": "default-originate",
@@ -153,7 +157,8 @@ ATTACH_WORDS = {"bgp:default": "default-originate",
                 "bgp:condition": "advertise condition",
                 "bgp:table": "table-policy",
                 "ospf:default": "ospf default-information",
-                "isis:default": "isis default-information"}
+                "isis:default": "isis default-information",
+                "bgp:vrfimport": "vrf-import"}
 #: The protocols a FIB policy is per (#536): zebra's `ip protocol` word
 #: for each, and its `ipv6 protocol` one. A `fib:<protocol>` use's map sees
 #: that protocol's routes, and a route no term decided is installed.
@@ -163,12 +168,19 @@ FIB_PROTOCOLS = {"bgp": "bgp", "ospf": "ospf6", "isis": "isis",
 #: maps take `set src` and nothing else; FRR applies `table-map`'s metric
 #: and next hop and no other set; and on a map that only matches - which
 #: routes are suppressed, advertised on a condition or watched - a set
-#: changes nothing.
+#: changes nothing. A leak (#537) takes what describes the route in the VRF
+#: that imports it - its preference, MED, origin, weight and communities -
+#: and not a next hop, which is the exporting VRF's and is what carries the
+#: route's traffic there, nor an extended community, the route targets
+#: FRR's own leak is made of.
 USE_SETS = {"fib": ("src",),
             "bgp:table": ("metric", "next-hop"),
             "bgp:suppress": (),
             "bgp:advertise": (),
-            "bgp:condition": ()}
+            "bgp:condition": (),
+            "bgp:vrfimport": ("local-preference", "community",
+                              "large-community", "med", "metric", "origin",
+                              "weight")}
 
 
 class Term:
@@ -193,6 +205,9 @@ class Term:
         self.ext_communities = []
         self.validation = []     # Junos's words: valid | invalid | unknown
         self.policies = []       # `from policy <name>`: at most one
+        # Phase C (#537): the VRF a leaked route comes from; only at a
+        # vrf-import, the one place a route has one.
+        self.source_vrfs = []
         self.sets = []           # (what, [args])
         # "accept" | "reject" | "next term" | "next policy" | None
         self.then = None
@@ -210,6 +225,19 @@ class Policies:
         self.large_communities = {}  # name -> ["asn:v1:v2", ...]
         self.ext_communities = {}    # name -> [("rt"|"soo", "asn:v"), ...]
         self.defaults = {}           # policy -> "accept" | "reject"
+
+
+#: A VRF name as Linux takes it - an interface name, fifteen characters -
+#: or `default`, FRR's word for the default table (#537).
+VRF_NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,14}"
+
+
+def vrf_name_error(name):
+    """Why `name` cannot be a VRF's name, or None (#537)."""
+    if not re.fullmatch(VRF_NAME, name):
+        return (f"'{name}' is not a VRF name: letters, digits, '_', '.' and "
+                f"'-', at most 15")
+    return None
 
 
 def name_error(kind, name):
@@ -520,6 +548,13 @@ def _parse_from_a(term, w):
             return "from validation-state: valid, invalid or unknown"
         term.validation.append(args[0])
         return None
+    if what == "source-vrf" and one:
+        why = vrf_name_error(args[0])
+        if why:
+            return f"from source-vrf: {why}"
+        if args[0] not in term.source_vrfs:
+            term.source_vrfs.append(args[0])
+        return None
     if what == "policy" and one:
         why = name_error("policy-statement", args[0])
         if why:
@@ -532,8 +567,8 @@ def _parse_from_a(term, w):
         return None
     return ("from: prefix-list, route-filter, community, large-community, "
             "extended-community, as-path, protocol, tag, metric, neighbor, "
-            "family, origin, local-preference, next-hop, validation-state "
-            "or policy")
+            "family, origin, local-preference, next-hop, validation-state, "
+            "source-vrf or policy")
 
 
 def _parse_set_a(term, w):
@@ -644,8 +679,8 @@ def _term_findings_a(pol, term):
     if len(_combinations(term)) * max(1, len(term.families or ["x"])) \
             > CLAUSES_MAX:
         out.append(f"more than {CLAUSES_MAX} combinations of neighbor, "
-                   f"origin, local-preference, next-hop and "
-                   f"validation-state; split it into terms")
+                   f"origin, local-preference, next-hop, validation-state "
+                   f"and source-vrf; split it into terms")
     return out
 
 
@@ -684,7 +719,8 @@ def _combinations(term):
     for kind, vals in (("peer", term.neighbors), ("origin", term.origins),
                        ("local-preference", term.local_prefs),
                        ("next-hop", term.next_hops),
-                       ("rpki", term.validation)):
+                       ("rpki", term.validation),
+                       ("source-vrf", term.source_vrfs)):
         if vals:
             combos = [c + [(kind, v)] for c in combos for v in vals]
     return combos
@@ -877,7 +913,8 @@ def igp_findings(pol, policy):
                            ("local-preference", term.local_prefs),
                            ("large-community", term.large_communities),
                            ("extended-community", term.ext_communities),
-                           ("validation-state", term.validation)):
+                           ("validation-state", term.validation),
+                           ("source-vrf", term.source_vrfs)):
             if vals:
                 bgp_only.append(f"from {kind}")
         bgp_only += [f"set {_set_word(what)}" for what, _ in term.sets
@@ -948,6 +985,16 @@ def use_findings(pol, name, direction):
         if igp:
             out += [f"{p} {why}" for why in igp_findings(pol, p)]
         for term in pol.statements.get(p, {}).values():
+            # Phase C (#537): a route has a source VRF only where it is
+            # leaked, and arrives there from no neighbor of this VRF's.
+            if term.source_vrfs and direction != "bgp:vrfimport" \
+                    and not igp:
+                out.append(f"{p} term {term.name}: from source-vrf is for "
+                           f"a vrf-import, where a route is leaked")
+            if term.neighbors and direction == "bgp:vrfimport":
+                out.append(f"{p} term {term.name}: from neighbor matches "
+                           f"nothing on vrf-import: a leaked route comes "
+                           f"from a VRF, which from source-vrf names")
             if term.protocols and use_origin(direction) is None:
                 out.append(f"{p} term {term.name}: from protocol has nothing "
                            f"to match on {where}: the daemon chooses the "
@@ -1381,6 +1428,7 @@ def evaluate(pol, policy, prefix, direction="import"):
                                   ("local-preference", term.local_prefs),
                                   ("next-hop", term.next_hops),
                                   ("validation-state", term.validation),
+                                  ("source-vrf", term.source_vrfs),
                                   ("called policy", term.policies)) if v]
         action = term.then or "next term"
         sets = ", ".join(f"set {_set_word(w)} {' '.join(a)}".rstrip()

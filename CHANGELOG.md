@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Routing policy, phase C: a VRF imports another VRF's routes, or the
+  default table's, through a policy.**
+  ([#537](https://github.com/andrediashexa/hexarouting/issues/537))
+  `vrf-import <vrf>|default [policy <policy>]` inside a BGP address family,
+  IPv4 or IPv6, of `router bgp <asn> vrf <vrf>` or of the default instance,
+  stored as FRR's `import vrf` and `import vrf route-map`. FRR applies one
+  map to every VRF a family imports, so a policy is the family's: a second
+  one is refused, and the new `from source-vrf <vrf>|default` tells the
+  sources apart. A route no term takes is not imported. A leak's policy sets
+  local preference, MED, origin, weight and communities, and not a next hop
+  or a route target; no RD or route target is configured, FRR derives them
+  for the leak. Nothing leaks into or out of `prisma-bp` or any `prisma-`
+  VRF, refused at the prompt and at commit, FRR's own `import vrf` included.
+  `lab/policy-c.sh` measures it on real daemons and VPP: a shared service
+  leaked into a tenant with the policy's local preference and community,
+  in BGP, zebra, the kernel and VPP's table of the tenant, a ping across,
+  a second prefix rejected, the default table's default route leaked by
+  policy and withdrawn by `no vrf-import`. Two things found and not closed:
+  the box makes no Linux VRF for a tenant, which FRR's BGP in a VRF needs
+  (the lab makes them by hand), and a leaked connected route reaches the
+  kernel as `dev <vrf>`, which linux-nl does not put in VPP. Phase B's
+  policies compile byte for byte as 0.148.10 did.
+
 ### Fixed
 
 ## 0.148.10 - routing policy, phase B: more places a policy applies

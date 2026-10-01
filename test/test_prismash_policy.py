@@ -708,5 +708,78 @@ check(policy.evaluate(pb, "COND", "10.1.0.0/16", "bgp:default")[-1][1]
       == "reject", "a condition's default is reject")
 ok("set src, each use's origin, default and refusals")
 
+print("\n=== phase C (#537): what phase B compiled compiles as before ===")
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "policy-golden-0.148.10.txt")) as _f:
+    _golden_b = _f.read()
+check(_gold.compiled(_gold.FIX_B) == _golden_b,
+      "phase B's fixture compiles to the text 0.148.10's compiler gave, "
+      "byte for byte")
+check(_gold.compiled(_gold.FIX_A) == _golden_a
+      and _gold.compiled() == _golden,
+      "and phase A's, and 0.148.6's, still")
+ok("backward compatibility, against 0.148.10")
+
+print("\n=== phase C (#537): a leak's map ===")
+C = f"""{P} prefix-list SVC 203.0.113.0/24
+{P} community SHARED members 65000:537
+{P} policy-statement LEAK term svc from prefix-list SVC
+{P} policy-statement LEAK term svc from source-vrf svc
+{P} policy-statement LEAK term svc from source-vrf blue
+{P} policy-statement LEAK term svc set local-preference 200
+{P} policy-statement LEAK term svc set community add SHARED
+{P} policy-statement LEAK term svc then accept
+{P} policy-statement DEF term 1 from route-filter 0.0.0.0/0 exact
+{P} policy-statement DEF term 1 from source-vrf default
+{P} policy-statement DEF term 1 then accept
+{P} policy-statement NH term 1 set next-hop self
+{P} policy-statement EC term 1 set extended-community add X
+{P} policy-statement NB term 1 from neighbor 10.0.0.2""".splitlines()
+pc, bad = policy.parse(C)
+check(bad == [] and pc.statements["LEAK"]["svc"].source_vrfs
+      == ["svc", "blue"], f"from source-vrf read, ORed: {bad}")
+check(policy._parse_from_a(policy.Term("t"),
+                           ["from", "source-vrf", "a/b"]).startswith(
+          "from source-vrf: 'a/b' is not a VRF name")
+      and policy.vrf_name_error("x" * 16) is not None
+      and policy.vrf_name_error("default") is None,
+      "a source VRF is a VRF's name, or default")
+check(policy.map_name("LEAK", "bgp:vrfimport") == "PO-LEAK-BGP-VRFIMPORT"
+      and policy.use_origin("bgp:vrfimport") == "bgp"
+      and policy.use_default("bgp:vrfimport") == "deny"
+      and policy._verdict("bgp:vrfimport") == "reject",
+      "vrf-import: named as an attach point, BGP's routes, nothing by default")
+out = "\n".join(policy.compile_all(pc, {("LEAK", "bgp:vrfimport"),
+                                        ("DEF", "bgp:vrfimport")}))
+check("route-map PO-LEAK-BGP-VRFIMPORT permit 10\n match ip address "
+      "prefix-list PO-LEAK-Tsvc-4\n match source-vrf svc\n set "
+      "local-preference 200\n set community 65000:537 additive\nexit" in out
+      and "route-map PO-LEAK-BGP-VRFIMPORT permit 11\n match ip address "
+      "prefix-list PO-LEAK-Tsvc-4\n match source-vrf blue\n" in out
+      and "route-map PO-LEAK-BGP-VRFIMPORT deny 65535" in out
+      and " match source-vrf default" in out,
+      f"one clause per source VRF, a reject by default:\n{out}")
+for _pol, _use, _why in (
+        ("NH", "bgp:vrfimport", "set next-hop does nothing on vrf-import"),
+        ("EC", "bgp:vrfimport", "set extended-community does nothing on "
+                                "vrf-import"),
+        ("NB", "bgp:vrfimport", "from neighbor matches nothing on "
+                                "vrf-import"),
+        ("LEAK", "import", "from source-vrf is for a vrf-import"),
+        ("LEAK", "bgp:table", "from source-vrf is for a vrf-import"),
+        ("DEF", "ospf:static", "from source-vrf is for BGP routes")):
+    _got = policy.use_findings(pc, _pol, _use)
+    check(any(_why in w for w in _got), f"{_pol} as {_use}: {_got}")
+check(policy.use_findings(pc, "DEF", "ospf:static")
+      == ["DEF term 1: from source-vrf is for BGP routes"],
+      "said once on an IGP export")
+check(policy.use_findings(pc, "LEAK", "bgp:vrfimport") == []
+      and policy.use_findings(pc, "DEF", "bgp:vrfimport") == [],
+      "a leak's conditions and actions say nothing at vrf-import")
+r = policy.evaluate(pc, "LEAK", "203.0.113.0/24", "bgp:vrfimport")
+check("source-vrf" in r[0][1] and r[-1][1] == "reject",
+      f"test policy: the source VRF is not guessed, a reject by default: {r}")
+ok("from source-vrf, the leak's map, its refusals")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
