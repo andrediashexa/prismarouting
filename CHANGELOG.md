@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.148.5 - the management API with its lab, and what 0.148.4 met on the X520
+
+### Fixed
+
 * **The management API's server, held by its lab.**
   ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
   The follow-up to 0.148.4's first cut, which shipped ahead of it.
