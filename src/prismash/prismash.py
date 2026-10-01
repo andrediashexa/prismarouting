@@ -662,6 +662,10 @@ FRR_STARTED_FILE = os.environ.get("PRISMA_FRR_STARTED",
 #: be this boot's reason. A box takes a minute or two to go down and come
 #: back; a record older than this belongs to some earlier boot.
 REBOOT_RECORD_WINDOW = 900
+#: The VTY's OWN init, deliberately not the host's: its start is when this
+#: management container started (#534). The one container-own path
+#: test/test_mgmt_reads_host.py lets through, and it says why.
+VTY_INIT_STAT = "/proc/1/stat"
 #: A clock younger than the box by more than this restarted after the boot.
 #: The dataplane starts a few seconds after the kernel on every boot.
 RESTARTED_AFTER = 300
@@ -15399,7 +15403,7 @@ class Shell:
         up = vpp_uptime(out) if rc == 0 else None
         vty = None
         if os.environ.get("PRISMA_IN_MGMT"):
-            vty = proc_started("/proc/1/stat", boot)
+            vty = proc_started(VTY_INIT_STAT, boot)
         try:
             with open(REBOOT_RECORD) as f:
                 record = f.read()
