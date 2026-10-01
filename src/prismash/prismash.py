@@ -488,13 +488,20 @@ def attach_reads(line):
     [(policy or chain, use, where)] for each phase B attach point (#536)
     `line` - one routing line as FRR writes it - names; [] for any other.
     """
+    return [(p, use, where) for p, use, where, _ in _attach_matches(line)]
+
+
+def _attach_matches(line):
+    """attach_reads() with what each is applied to (#538): the neighbor's
+    address, the network's prefix, or None."""
     out = []
     for pattern, use, where in _ATTACH_READS:
         m = re.fullmatch(r"\s*" + pattern, line)
         if m:
             g = {k: (v.lower() if k == "at" and use.startswith("fib")
                      else v) for k, v in m.groupdict().items()}
-            out.append((g["p"], use.format(**g), where.format(**g)))
+            at = None if use.startswith("fib") else g.get("at")
+            out.append((g["p"], use.format(**g), where.format(**g), at))
     return out
 
 
@@ -844,6 +851,140 @@ def policy_applications(routing):
                 if where not in out.setdefault(n, []):
                     out[n].append(where)
     return out
+
+
+def use_sites(routing):
+    """
+    {(policy or chain, use): [(where, vrf, at)]}: every place the routing
+    applies a policy (#538), said as policy_applications() says it, with the
+    VRF of the `router bgp` block it is in and what it is applied to - a
+    neighbor's address, a network's prefix - or None. A use is one FRR
+    route-map, so its places share its counters.
+    """
+    out = {}
+    for line, path in zip(routing, block_paths(routing)):
+        if path is None:
+            continue
+        bgp = next((b.strip() for b in path
+                    if b.strip().startswith("router bgp")), None)
+        vrf = bgp_vrf(bgp) if bgp else "default"
+        found = _attach_matches(line)
+        m = re.fullmatch(r"\s*neighbor (\S+) route-map PO-(\S+)-(IN|OUT) "
+                         r"(in|out)", line)
+        if m:
+            use = "import" if m.group(3) == "IN" else "export"
+            found.append((m.group(2), use, f"neighbor {m.group(1)} {use}",
+                          m.group(1)))
+        m = re.fullmatch(r"\s*redistribute .*route-map "
+                         r"PO-(\S+)-(OSPF|ISIS)-([A-Z]+)", line)
+        if m:
+            igp, proto = m.group(2).lower(), m.group(3).lower()
+            found.append((m.group(1), f"{igp}:{proto}",
+                          f"{igp} export, from {proto}", None))
+        for p, use, where, at in found:
+            if vrf != "default":
+                where += f" (vrf {vrf})"
+            if (where, vrf, at) not in out.setdefault((p, use), []):
+                out[(p, use)].append((where, vrf, at))
+    return out
+
+
+def policy_hit_sections(pol, name, sites, maps):
+    """
+    The counters of the policy `name` at every use the routing makes of it
+    (#538), from use_sites() and FRR's `show route-map json` (`maps`, None
+    when FRR did not answer): [{"use", "chain", "called", "where", "map",
+    "daemon", "rows"}], rows as policy.counters() gives them - None when
+    the daemon reported no such map. A use whose policies call `name`
+    through `from policy` is one more section per use: the map FRR calls is
+    named for `name` and the use, not for the caller, so callers share it.
+    """
+    out, called = [], {}
+    for (c, u), places in sorted(sites.items()):
+        names = policy_mod.chain(c)
+        if name in names:
+            out.append({"use": u, "chain": c, "called": False,
+                        "where": [w for w, _, _ in places],
+                        "map": policy_mod.map_name(c, u),
+                        "daemon": policy_mod.use_daemon(u),
+                        "rows": None if maps is None
+                        else policy_mod.counters(pol, c, u, maps)})
+        if any(name in policy_mod.reached(pol, [top])[1:] for top in names):
+            called.setdefault(u, []).extend(f"{w}, by {c}"
+                                            for w, _, _ in places)
+    for u, where in sorted(called.items()):
+        out.append({"use": u, "chain": name, "called": True, "where": where,
+                    "map": policy_mod.sub_map_name(name, u),
+                    "daemon": policy_mod.use_daemon(u),
+                    "rows": None if maps is None
+                    else policy_mod.counters(pol, name, u, maps, sub=True)})
+    return out
+
+
+def hit_label(section, policy, term):
+    """How `show policy` names a row of a counter section (#538)."""
+    if policy is None:
+        return (f"no term decided: the use's default, "
+                f"{policy_mod._verdict(section['use'])}")
+    label = f"term {term}" if term is not None else "default-action"
+    if len(policy_mod.chain(section["chain"])) > 1:
+        label = f"{policy} {label}"
+    return label
+
+
+def bgp_path_route(prefix, path):
+    """
+    A BGP path of FRR's `show bgp ... <prefix> json` as policy.simulate()'s
+    route (#538). Read as measured on FRR 10.7.1: a weight of 0 and a tag of
+    0 are left out of the JSON; a path with no RPKI state - no cache, or no
+    module - has no field, and FRR's `match rpki` then matches no state, so
+    the route's state is said as none rather than left unknown.
+    """
+    route = {"prefix": prefix,
+             "as-path": [a for a in path.get("aspath", {}).get(
+                 "string", "").split() if a != "Local"],
+             "community": list(path.get("community", {}).get("list", [])),
+             "large-community": list(path.get("largeCommunity", {}).get(
+                 "list", [])),
+             "extended-community": [
+                 e.split(":", 1)[0].lower() + ":" + e.split(":", 1)[1]
+                 for e in path.get("extendedCommunity", {}).get(
+                     "string", "").split() if ":" in e],
+             "weight": str(path.get("weight", 0)),
+             "tag": str(path.get("tag", 0))}
+    if "origin" in path:
+        route["origin"] = path["origin"].lower()
+    for key, field in (("local-preference", "locPrf"), ("metric", "metric")):
+        if field in path:
+            route[key] = str(path[field])
+    hops = [h.get("ip") for h in path.get("nexthops", []) if h.get("ip")]
+    if hops:
+        route["next-hop"] = hops[0]
+    peer = path.get("peer", {}).get("peerId")
+    if peer and peer != "0.0.0.0":
+        route["neighbor"] = peer
+    state = path.get("rpkiValidationState")
+    route["validation-state"] = (
+        "none (FRR holds no RPKI state for it)" if state is None
+        else {"not found": "unknown", "notfound": "unknown"}.get(
+            str(state).lower(), str(state).lower()))
+    if path.get("nhVrfName"):
+        route["source-vrf"] = path["nhVrfName"]
+    return route
+
+
+def zebra_route(prefix, entry):
+    """
+    A route of zebra's `show ip route <prefix> json` as policy.simulate()'s
+    route (#538): what an IGP export and a FIB policy see, its metric and
+    tag (0 when the JSON leaves it out) and its first next hop.
+    """
+    route = {"prefix": prefix, "metric": str(entry.get("metric", 0)),
+             "tag": str(entry.get("tag", 0))}
+    hops = [h.get("ip") for h in entry.get("nexthops", []) if h.get("ip")]
+    if hops:
+        route["next-hop"] = hops[0]
+    return route
 
 
 def frr_lines(cfg):
@@ -16261,9 +16402,13 @@ class Shell:
         its terms and where the running routing applies it, or one of them
         in full, as it is typed under `policy-options`.
         """
+        if len(args) > 1 and args[0] == "route":
+            self.show_policy_route(args[1:])
+            return
         pol, _ = policy_mod.parse(self.policy_in_view())
         if len(args) > 1:
             self.err("usage: show policy [<policy>]")
+            print_prose("or: show policy route <prefix> [vrf <name>]")
             return
         names = args or sorted(pol.statements)
         if not names:
@@ -16287,6 +16432,52 @@ class Shell:
             where = uses.get(name, [])
             print("  applied: " + (", ".join(where) if where
                                    else "nowhere in the running routing"))
+            if args:
+                self.print_policy_hits(name)
+
+    def route_map_counts(self):
+        """FRR's `show route-map json` (#538): {daemon: {map: ...}}, or
+        None when vtysh did not answer with it."""
+        rc, out = self.frr.show("show route-map json")
+        if rc:
+            return None
+        try:
+            return json.loads(out[out.index("{"):])
+        except ValueError:
+            return None
+
+    def print_policy_hits(self, name):
+        """
+        `show policy <name>`'s counters (#538): at each place the running
+        routing applies the policy, how many routes each term matched, read
+        off the clauses FRR's daemon ran - the running policy's, which is
+        what the daemons hold, whatever the candidate says.
+        """
+        pol, _ = policy_mod.parse(self.read_policy())
+        sections = policy_hit_sections(pol, name,
+                                       use_sites(self.frr.running()),
+                                       self.route_map_counts())
+        if not sections:
+            return
+        print("  hits, the routes each term matched, by FRR's counters:")
+        for sec in sections:
+            print_prose(", ".join(sec["where"]), "    ")
+            print_prose(f"{sec['daemon']}, route-map {sec['map']}",
+                        "      ")
+            if sec["rows"] is None:
+                print_prose(f"no counter: {sec['daemon']} reports no such "
+                            f"route-map - it is not running, or FRR did "
+                            f"not answer", "      ")
+                continue
+            for p, t, hits in sec["rows"]:
+                n = "-" if hits is None else str(hits)
+                print(f"      {n:>9}  {hit_label(sec, p, t)}"
+                      + ("  (not compiled here)" if hits is None else ""))
+        print_prose("a hit is a clause that matched a route, each time the "
+                    "daemon ran the map: a route evaluated again - a soft "
+                    "reset, a change - counts again. One route-map serves "
+                    "every place it is applied, and they share its counts.",
+                    "  ")
 
     def test_policy(self, args):
         """
@@ -16294,8 +16485,15 @@ class Shell:
         with a route to that prefix, term by term, from policy.evaluate().
         A condition the prefix alone cannot answer is said, not guessed.
         """
+        if len(args) >= 3 and args[1] in ("route", "rib"):
+            self.test_policy_route(args)
+            return
         if len(args) != 2:
             self.err("usage: test policy <policy> <prefix>")
+            print_prose("or: test policy <policy> route <prefix> "
+                        "[<attribute> <value>]... [at <use>], or test policy "
+                        "<policy> rib <prefix> [vrf <name>] [neighbor "
+                        "<address>] [at <use>]")
             return
         name, prefix = args
         pol, _ = policy_mod.parse(self.policy_in_view())
@@ -16338,6 +16536,406 @@ class Shell:
                         "advertisement waits for, it is not")
             # Phase C (#537): a leak carries what a term accepted.
             print_prose("imported into a VRF, by vrf-import, it is not")
+
+    def test_policy_route(self, args):
+        """
+        `test policy <policy> route <prefix> [<attribute> <value>]... [at
+        <use>]` and `test policy <policy> rib <prefix> [vrf <name>]
+        [neighbor <address>] [at <use>]` (#538): what the policy's map does
+        with a route - one described, or one the box holds - where it is
+        used, simulated clause by clause as FRR runs them
+        (policy.simulate()): the term that decided, the route after its
+        sets, and what could not be known, said rather than guessed.
+        """
+        name, form, prefix = args[:3]
+        pol, _ = policy_mod.parse(self.policy_in_view())
+        missing = [n for n in policy_mod.chain(name)
+                   if n not in pol.statements]
+        if missing:
+            self.err(f"no policy-statement named {missing[0]}")
+            return
+        if form == "route":
+            route, use, why = policy_mod.route_from_words(prefix, args[3:])
+            notes = ["as described: a list not given is none, a value not "
+                     "given is not known"]
+        else:
+            route, use, why, notes = self.rib_words(prefix, args[3:])
+        if why:
+            self.err(why)
+            if why.startswith("at:"):
+                print_prose(policy_mod.AT_USAGE)
+            elif form == "route" and "not a prefix" not in why:
+                print_prose(policy_mod.ROUTE_USAGE)
+            elif form == "rib":
+                for note in notes:
+                    print_prose(note)
+            return
+        print_prose(f"at {policy_mod.use_words(use)}: {name}", "")
+        print_prose(f"{policy_mod.use_daemon(use)}, route-map "
+                    f"{policy_mod.map_name(name, use)}", "  ")
+        for note in notes:
+            print_prose(f"the route: {note}", "  ")
+        for line in policy_mod.describe_route(route):
+            print(f"    {line}")
+        sim = policy_mod.simulate(pol, name, route, use)
+        for p, t, outcome, why in sim["steps"]:
+            if t is None:
+                continue        # a default: the result says it
+            print_prose(f"{'term ' + t if p == name else p + ' term ' + t}: "
+                        f"{outcome}", "  ")
+            print_prose(why, "      ")
+        print_prose(f"result: {sim['verdict']}, by {self.sim_by(name, sim)}",
+                    "")
+        if sim["verdict"] == "accept":
+            print("  the route after the sets:")
+            for line in policy_mod.describe_route(sim["route"]):
+                print(f"    {line}")
+        self.print_sim_notes(sim)
+        for why in policy_mod.use_findings(pol, name, use):
+            print_prose(f"refused at this use: {why}", "  ")
+
+    def show_policy_route(self, args):
+        """
+        `show policy route <prefix> [vrf <name>]` (#538): which policies
+        decided a route the box holds - each place the running routing
+        applies one that the route passed, the term that decided there, and
+        beside it what FRR shows of the outcome: the path in the BGP table,
+        what was advertised to a neighbor, what zebra installed, what ospfd
+        originates.
+
+        THE TERM IS SIMULATED, AND SAID SO. FRR keeps no record of which
+        clause decided a route - only how many routes each clause matched
+        (`show policy <name>`) - so the deciding term is policy.simulate()'s
+        answer, from the route as rib_route() reads it, and FRR's outcome is
+        printed beside it as the check: where they differ, the line says so.
+        """
+        if len(args) not in (1, 3) or len(args) == 3 and args[1] != "vrf":
+            self.err("usage: show policy route <prefix> [vrf <name>]")
+            return
+        try:
+            prefix = str(ipaddress.ip_network(args[0], strict=False))
+        except ValueError:
+            self.err(f"not a prefix: {args[0]}")
+            return
+        vrf = args[2] if len(args) == 3 else "default"
+        v6 = ":" in prefix
+        in_vrf = f" vrf {vrf}" if vrf != "default" else ""
+        afi = "ipv6" if v6 else "ipv4"
+        pol, _ = policy_mod.parse(self.read_policy())
+        sites = use_sites(self.frr.running())
+        paths = (self.frr_json(f"show bgp{in_vrf} {afi} unicast {prefix} "
+                               f"json") or {}).get("paths", [])
+        zebra = (self.frr_json(f"show {'ipv6' if v6 else 'ip'} route"
+                               f"{in_vrf} {prefix} json") or {}).get(
+                                   prefix, [])
+        print_prose(f"route {prefix}{in_vrf}", "")
+        found, skipped = 0, set()
+        for (c, u), places in sorted(sites.items()):
+            for where, v, at in places:
+                if v != vrf and not u.startswith("fib:"):
+                    continue
+                frr = self.policy_outcome(prefix, vrf, u, at, paths, zebra)
+                if frr is None:
+                    if u in ("bgp:default", "bgp:advertise", "bgp:condition",
+                             "bgp:suppress", "ospf:default", "isis:default"):
+                        skipped.add(policy_mod.use_words(u))
+                    continue
+                verdict, said, src_vrf = frr
+                route, why, notes = self.rib_route(
+                    prefix, src_vrf or vrf,
+                    at if u in ("import", "export") else None, u)
+                found += 1
+                print_prose(f"{where}: {c}", "  ")
+                if route is None:
+                    print_prose(f"not simulated: {why}", "    ")
+                else:
+                    sim = policy_mod.simulate(pol, c, route, u)
+                    print_prose(f"simulated: {sim['verdict']}, by "
+                                f"{self.sim_by(c, sim)}", "    ")
+                    self.print_sim_notes(sim, "    ")
+                print_prose(f"FRR: {said}", "    ")
+                if route is not None and verdict is not None \
+                        and verdict != sim["verdict"]:
+                    print_prose(f"the simulation says {sim['verdict']} and "
+                                f"FRR {verdict}: they disagree here", "    ")
+        if not found:
+            print_prose("no policy the running routing applies has decided "
+                        "it" + ("" if paths or zebra
+                                else ": neither BGP nor zebra holds it"),
+                        "  ")
+        if skipped:
+            print_prose(f"not per route: {', '.join(sorted(skipped))} - "
+                        f"show policy <name> counts what they matched", "  ")
+
+    def policy_outcome(self, prefix, vrf, use, at, paths, zebra):
+        """
+        What FRR shows of the outcome of `use` on `at` for the route
+        (#538): (accept|reject|None, how it is known, the VRF the route
+        came from or None), or None when the route did not pass there.
+        """
+        v6 = ":" in prefix
+        in_vrf = f" vrf {vrf}" if vrf != "default" else ""
+        afi = "ipv6" if v6 else "ipv4"
+        if use == "import":
+            if any(p.get("peer", {}).get("peerId") == at for p in paths):
+                return "accept", (f"the path from {at} is in the BGP table: "
+                                  f"accepted"), None
+            rx = (self.frr_json(f"show bgp{in_vrf} {afi} unicast neighbors "
+                                f"{at} received-routes json") or {}).get(
+                                    "receivedRoutes", {})
+            if prefix in rx:
+                return "reject", (f"{at} sent it and the BGP table holds no "
+                                  f"path from {at}: rejected"), None
+            return None
+        best = any(p.get("bestpath", {}).get("overall") for p in paths)
+        if use == "export":
+            if not best:
+                return None
+            adv = (self.frr_json(f"show bgp{in_vrf} {afi} unicast neighbors "
+                                 f"{at} advertised-routes json") or {}).get(
+                                     "advertisedRoutes", {})
+            if prefix in adv:
+                return "accept", f"advertised to {at}", None
+            return "reject", (f"not advertised to {at} - by the policy, or "
+                              f"by BGP's own rules"), None
+        if use == "bgp:table":
+            if not best:
+                return None
+            if any(e.get("protocol") == "bgp" for e in zebra):
+                return "accept", "zebra holds it from BGP", None
+            return "reject", "zebra holds no BGP route to it", None
+        if use in ("bgp:network", "bgp:aggregate"):
+            if at != prefix:
+                return None
+            local = any(p.get("peer", {}).get("peerId") in (None, "0.0.0.0")
+                        and not p.get("nhVrfName") for p in paths)
+            return (("accept", "BGP originates it", None) if local else
+                    ("reject", "BGP does not originate it", None))
+        if use == "bgp:vrfimport":
+            leaked = next((p for p in paths if p.get("nhVrfName")), None)
+            if leaked is None:
+                return None
+            return "accept", (f"leaked from {leaked['nhVrfName']}, in the "
+                              f"BGP table"), leaked["nhVrfName"]
+        scope, _, proto = use.partition(":")
+        want = "ospf6" if v6 and proto == "ospf" else proto
+        entry = next((e for e in zebra if e.get("protocol") == want), None)
+        if scope == "fib" and entry is not None:
+            return (("accept", "zebra installed it", None)
+                    if entry.get("installed") else
+                    ("reject", "zebra did not install it", None))
+        if scope == "ospf" and proto != "default" and entry is not None:
+            net = ipaddress.ip_network(prefix)
+            lsas = (self.frr_json(f"show ip ospf database external "
+                                  f"{net.network_address} self-originate "
+                                  f"json") or {}).get(
+                                      "asExternalLinkStates", [])
+            if any(l.get("networkMask") == net.prefixlen for l in lsas):
+                return "accept", "ospfd originates it, as external", None
+            return "reject", "ospfd does not originate it", None
+        if scope == "isis" and proto != "default" and entry is not None:
+            return None, "isisd does not say which routes it exported", None
+        return None
+
+    @staticmethod
+    def sim_by(name, sim):
+        """What decided a simulated route, as `test policy` says it."""
+        p, t = sim["by"]
+        if p is None:
+            return "no term: the default of the use"
+        if t is None:
+            return f"{p}'s default-action"
+        return f"term {t}" if p == name else f"{p} term {t}"
+
+    @staticmethod
+    def print_sim_notes(sim, indent="  "):
+        """A simulation's assumptions and what its sets did not do."""
+        for a in sim["assumed"]:
+            print_prose(f"assumed: {a}", indent)
+        for said in sim["said"]:
+            print_prose(said, indent)
+        if sim["assumed"]:
+            print_prose("simulated with what is known: a term that needs "
+                        "what is not is taken as not matching, and the "
+                        "answer holds only if it does not", indent)
+
+    def frr_json(self, cmd):
+        """FRR's answer to `cmd`, a `... json` show, or None."""
+        rc, out = self.frr.show(cmd)
+        if rc:
+            return None
+        try:
+            return json.loads(out[out.index("{"):])
+        except ValueError:
+            return None
+
+    def rib_words(self, prefix, words):
+        """
+        `rib <prefix> [vrf <name>] [neighbor <address>] [at <use>]` (#538):
+        (route, use, why, notes) - the route rib_route() reads.
+        """
+        vrf, peer, use, i = "default", None, "import", 0
+        usage = "rib <prefix> [vrf <name>] [neighbor <address>] [at <use>]"
+        while i < len(words):
+            if words[i] == "at":
+                use, rest = policy_mod.use_from_words(words[i + 1:])
+                if use is None:
+                    return None, None, rest, []
+                i = len(words) - len(rest)
+            elif words[i] in ("vrf", "neighbor") and i + 1 < len(words):
+                if words[i] == "neighbor" and policy_mod._address(
+                        words[i + 1]) is None:
+                    return None, None, (f"neighbor: '{words[i + 1]}' is not "
+                                        f"an address"), []
+                if words[i] == "vrf":
+                    vrf = words[i + 1]
+                else:
+                    peer = words[i + 1]
+                i += 2
+            else:
+                return None, None, usage, []
+        try:
+            net = str(ipaddress.ip_network(prefix, strict=False))
+        except ValueError:
+            return None, None, f"not a prefix: {prefix}", []
+        route, why, notes = self.rib_route(net, vrf, peer, use)
+        return route, use, why, notes
+
+    def rib_route(self, prefix, vrf, peer, use):
+        """
+        The route a use is handed, read off what FRR holds (#538): (route,
+        why, notes). Zebra's route of the use's protocol for an IGP export
+        and a FIB policy; BGP's for the rest - at an import, the path from
+        the neighbor (`peer`, or the best path's) as it was before the
+        import's sets; at an export, the best path, going to `peer`; at a
+        vrf-import, `vrf` is the VRF the route comes from, and its best path
+        is what an importing VRF is handed.
+
+        WHAT FRR SHOWS IS AFTER THE POLICY. A path in the BGP table carries
+        its import's sets; `received-routes` - kept only with
+        soft-reconfiguration inbound - carries the path as it came, without
+        its communities, and its `detail` form shows the attributes after
+        the import again (measured on FRR 10.7.1). So an attribute the
+        applied import may have set is taken from received-routes when that
+        has it, and is otherwise not known; the rest are what they were.
+        """
+        v6 = ":" in prefix
+        in_vrf = f" vrf {vrf}" if vrf != "default" else ""
+        scope, _, what = use.partition(":")
+        if scope in ("ospf", "isis", "fib"):
+            got = (self.frr_json(f"show {'ipv6' if v6 else 'ip'} route"
+                                 f"{in_vrf} {prefix} json") or {}).get(
+                                     prefix, [])
+            if what == "default":
+                entry = next((e for e in got if e.get("selected")), None)
+                want = "selected"
+            else:
+                want = "ospf6" if v6 and what == "ospf" else what
+                entry = next((e for e in got if e.get("protocol") == want),
+                             None)
+            if entry is None:
+                return None, (f"zebra holds no {want} route to "
+                              f"{prefix}{in_vrf}"), []
+            return zebra_route(prefix, entry), None, [
+                f"zebra's {entry.get('protocol')} route: its metric, tag "
+                f"and next hop"]
+        afi = "ipv6" if v6 else "ipv4"
+        paths = (self.frr_json(f"show bgp{in_vrf} {afi} unicast {prefix} "
+                               f"json") or {}).get("paths", [])
+        best = next((p for p in paths
+                     if p.get("bestpath", {}).get("overall")),
+                    paths[0] if paths else None)
+        if use == "bgp:vrfimport":
+            if best is None:
+                return None, f"BGP{in_vrf} holds no path to {prefix}", []
+            route = bgp_path_route(prefix, best)
+            route.pop("neighbor", None)
+            route["source-vrf"] = vrf
+            return route, None, [f"VRF {vrf}'s best path, what a VRF that "
+                                 f"imports from it is handed"]
+        if use != "import":
+            if best is None:
+                return None, f"BGP{in_vrf} holds no path to {prefix}", []
+            route = bgp_path_route(prefix, best)
+            notes = ["the best path in the BGP table"]
+            if use == "export":
+                route.pop("neighbor", None)
+                if peer:
+                    route["neighbor"] = peer
+                notes.append(f"going to {peer}" if peer else
+                             "the neighbor it goes to not given: from "
+                             "neighbor is not known")
+            elif use in ("bgp:network", "bgp:aggregate"):
+                # The path is what this use originated: after its sets.
+                self.unset_applied(route, notes, use, vrf, prefix, None)
+            return route, None, notes
+        peer = peer or (best or {}).get("peer", {}).get("peerId")
+        if not peer or peer == "0.0.0.0":
+            return None, ("which neighbor's path: neighbor <address>"), []
+        path = next((p for p in paths
+                     if p.get("peer", {}).get("peerId") == peer), None)
+        rx = (self.frr_json(f"show bgp{in_vrf} {afi} unicast neighbors "
+                            f"{peer} received-routes json") or {}).get(
+                                "receivedRoutes", {}).get(prefix)
+        if path is None and rx is None:
+            return None, (f"BGP{in_vrf} holds no path to {prefix} from "
+                          f"{peer}"), [
+                f"and no copy of what {peer} sent: FRR keeps one only with "
+                f"soft-reconfiguration inbound"]
+        if path is None:
+            route = {"prefix": prefix, "neighbor": peer}
+            notes = [f"the BGP table holds no path from {peer} - its import "
+                     f"rejected it; as it came, from soft-reconfiguration "
+                     f"inbound's copy, which keeps no communities"]
+            self.from_received(route, rx, ("as-path", "metric", "origin",
+                                           "next-hop", "weight"))
+            return route, None, notes
+        route = bgp_path_route(prefix, path)
+        notes = [f"the path from {peer} in the BGP table"]
+        self.unset_applied(route, notes, "import", vrf, peer, rx)
+        return route, None, notes
+
+    def unset_applied(self, route, notes, use, vrf, at, rx):
+        """
+        Undo, as far as it can be known, what the policy applied at `use`
+        on `at` set on a route read after it (rib_route()): each attribute
+        it may set is taken from soft-reconfiguration inbound's copy `rx`
+        when that has it, and is otherwise not known.
+        """
+        applied = next((c for (c, u), places in use_sites(
+            self.frr.running()).items() if u == use
+            for _, v, a in places if a == at and v == vrf), None)
+        if applied is None:
+            return
+        running, _ = policy_mod.parse(self.read_policy())
+        keys = policy_mod.set_keys(running, applied)
+        if not keys:
+            return
+        got = self.from_received(route, rx, keys) if rx else []
+        lost = [k for k in keys if k not in got]
+        for k in lost:
+            route.pop(k, None)
+        notes.append(f"{applied}, applied there, may set {', '.join(keys)}"
+                     + (f": {', '.join(got)} as received" if got else "")
+                     + (f"; {', '.join(lost)} not known, FRR shows only "
+                        f"what the policy made of it" if lost else ""))
+
+    @staticmethod
+    def from_received(route, rx, keys):
+        """The attributes `keys` of `route` from a received-routes entry,
+        where it has them; the ones it had."""
+        fields = {"as-path": [a for a in rx.get("path", "").split()
+                              if a.isdigit()],
+                  "metric": str(rx.get("metric", 0)),
+                  "origin": rx.get("origin", "").lower() or None,
+                  "next-hop": rx.get("nextHop"),
+                  "weight": str(rx.get("weight", 0))}
+        got = []
+        for k in keys:
+            if fields.get(k) is not None:
+                route[k] = fields[k]
+                got.append(k)
+        return got
 
     #: Where the kernel says how much RAM and how many hugepages (#466), and
     #: what the control plane's slice is using now.

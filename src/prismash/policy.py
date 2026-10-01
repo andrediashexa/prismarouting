@@ -1461,3 +1461,503 @@ def evaluate(pol, policy, prefix, direction="import"):
 def _verdict(direction):
     """A use's default as `test policy` says it: accept or reject."""
     return "accept" if use_default(direction) == "permit" else "reject"
+
+
+# ---------------------------------------------------------------------------
+# Phase D (#538): what the policies did, read off FRR's counters, and what
+# they would do with a route, simulated clause by clause as FRR runs them.
+
+def use_daemon(direction):
+    """
+    The FRR daemon whose route-map a use is (#538), as `show route-map
+    json` keys its section: bgpd for a neighbor and BGP's attach points,
+    ospfd and isisd for an export into the IGP and its default, zebra for a
+    FIB policy. Every daemon holds every route-map; only this one runs it,
+    so only its counters move.
+    """
+    scope = direction.split(":")[0]
+    if direction in DIRECTIONS or scope == "bgp":
+        return "bgpd"
+    return {"ospf": "ospfd", "isis": "isisd", "fib": "zebra"}[scope]
+
+
+def clause_owner(pol, policy, seq):
+    """
+    What the clause at `seq` of the map `policy` - one, or a chain - was
+    compiled from (#538): (policy, term name), (policy, None) for a policy's
+    own default-action, (None, None) for the use's default. The inverse of
+    compile_policy()'s numbering; None for a number it never writes.
+    """
+    names = chain(policy)
+    if seq == DEFAULT_SEQ:
+        return (None, None)
+    if len(names) > 1:
+        k, rem = divmod(seq, BLOCK)
+        if k >= len(names):
+            return None
+        if rem == BLOCK - 1:
+            return (names[k], None)
+    else:
+        k, rem = 0, seq
+        if seq == DEFAULT_SEQ - 1:
+            return (names[0], None)
+    terms = list(pol.statements.get(names[k], {}))
+    pos = rem // 10
+    if not 1 <= pos <= len(terms):
+        return None
+    return (names[k], terms[pos - 1])
+
+
+def counters(pol, policy, direction, maps, sub=False):
+    """
+    How many routes each part of `policy` - one, or a chain - matched where
+    it is used in `direction` (#538), from FRR's `show route-map json` read
+    into `maps`: [(policy, term or None, hits)], each policy's terms in
+    order, then its default-action when it has one, then (None, None, hits)
+    for the use's default. `sub` is the map a `from policy` term calls.
+
+    A hit is a clause that matched: measured on FRR 10.7.1, a clause's
+    `invoked` counts the routes it matched, not the ones it was asked about
+    - five static routes redistributed through four clauses left the first
+    at 1, not 5. A term compiled to several clauses (per family, per
+    combination) is their sum. hits is None for a term that compiled to no
+    clause here - one naming a protocol this use does not see. The whole
+    answer is None when the daemon that runs the use did not report the map:
+    the daemon is not running, or holds no such map.
+    """
+    rmap = sub_map_name(policy, direction) if sub \
+        else map_name(policy, direction)
+    got = (maps.get(use_daemon(direction)) or {}).get(rmap)
+    if not got:
+        return None
+    hits = {}
+    for rule in got.get("rules", []):
+        owner = clause_owner(pol, policy, rule.get("sequenceNumber"))
+        if owner is not None:
+            hits[owner] = hits.get(owner, 0) + int(rule.get("invoked", 0))
+    out = []
+    for name in chain(policy):
+        for term in pol.statements.get(name, {}):
+            out.append((name, term, hits.get((name, term))))
+        if name in pol.defaults:
+            out.append((name, None, hits.get((name, None), 0)))
+    out.append((None, None, hits.get((None, None), 0)))
+    return out
+
+
+#: What simulate() reads of a route (#538), besides its `prefix`. A key that
+#: is missing is a value not known - the term that needs it is said
+#: undecided, not guessed; the lists (communities, the AS path) are [] when
+#: the route carries none. `neighbor` is FRR's `match peer`: the neighbor a
+#: route comes from on an import, the one it goes to on an export.
+#: `metric` is the MED on a BGP route.
+ROUTE_KEYS = ("neighbor", "community", "large-community",
+              "extended-community", "as-path", "origin", "local-preference",
+              "metric", "tag", "next-hop", "validation-state", "source-vrf",
+              "weight")
+ROUTE_LISTS = ("community", "large-community", "extended-community",
+               "as-path")
+
+
+def as_path_regex(text):
+    """An as-path expression as Python reads it: FRR's `_` is a boundary."""
+    return text.replace("_", "(^|[,{}() ]|$)")
+
+
+def _members_match(lists, have):
+    """Whether any named set's members are all in `have` (FRR's standard
+    list: entries ORed, an entry's members ANDed)."""
+    have = set(have)
+    return any(m and set(m) <= have for m in lists)
+
+
+def _term_matches(pol, term, route, origin):
+    """
+    Whether `term` matches `route` at a use whose map sees `origin`'s
+    routes: (True|False|None, why). None is a condition the route does not
+    say; False wins over it, as one condition that fails is enough.
+    """
+    if term.protocols and origin and origin not in term.protocols:
+        return False, (f"this use sees {origin} routes, and the term is for "
+                       f"{' or '.join(term.protocols)}: it is not compiled "
+                       f"here")
+    prefix = ipaddress.ip_network(route["prefix"], strict=False)
+    fam = "inet6" if prefix.version == 6 else "inet"
+    fams = term_families(term)
+    if fams and fam not in fams:
+        return False, f"the prefix is not {' or '.join(fams)}"
+    if term.prefix_lists or term.filters:
+        hit = any(ipaddress.ip_network(net) == prefix
+                  for n in term.prefix_lists
+                  for net in pol.prefix_lists.get(n, []))
+        hit = hit or any(_filter_matches(prefix, net, kind, upto)
+                         for net, kind, upto in term.filters)
+        if not hit:
+            return False, "the prefix is in none of its lists or filters"
+    need = [k for k, v in (("community", term.communities),
+                           ("large-community", term.large_communities),
+                           ("extended-community", term.ext_communities),
+                           ("as-path", term.as_paths), ("tag", term.tags),
+                           ("metric", term.metrics),
+                           ("neighbor", term.neighbors),
+                           ("origin", term.origins),
+                           ("local-preference", term.local_prefs),
+                           ("next-hop", term.next_hops),
+                           ("validation-state", term.validation),
+                           ("source-vrf", term.source_vrfs)) if v]
+    unknown = [k for k in need if k not in route]
+    have = {k: route[k] for k in need if k in route}
+    fails = []
+    if "community" in have and not _members_match(
+            [pol.communities.get(n, []) for n in term.communities],
+            have["community"]):
+        fails.append("its communities are not on the route")
+    if "large-community" in have and not _members_match(
+            [pol.large_communities.get(n, [])
+             for n in term.large_communities], have["large-community"]):
+        fails.append("its large communities are not on the route")
+    if "extended-community" in have and not _members_match(
+            [[f"{k}:{v}" for k, v in pol.ext_communities.get(n, [])]
+             for n in term.ext_communities], have["extended-community"]):
+        fails.append("its extended communities are not on the route")
+    if "as-path" in have:
+        path = " ".join(have["as-path"])
+        if not any(re.search(as_path_regex(pol.as_paths.get(n, "")), path)
+                   for n in term.as_paths if n in pol.as_paths):
+            fails.append(f"the AS path '{path}' matches none of its "
+                         f"expressions")
+    # One value each, as the clause holds the last (_compile_term).
+    for key, vals in (("tag", term.tags), ("metric", term.metrics)):
+        if key in have and str(have[key]) != vals[-1]:
+            fails.append(f"the route's {key} is {have[key]}, not "
+                         f"{vals[-1]}")
+    for key, vals in (("neighbor", term.neighbors),
+                      ("origin", term.origins),
+                      ("local-preference", term.local_prefs),
+                      ("next-hop", term.next_hops),
+                      ("validation-state", term.validation),
+                      ("source-vrf", term.source_vrfs)):
+        if key not in have:
+            continue
+        val = str(have[key])
+        if key in ("neighbor", "next-hop"):
+            same = any(_address(v) == _address(val) for v in vals)
+        else:
+            same = val in vals
+        if not same:
+            fails.append(f"the route's {key} is {val}, not "
+                         f"{' or '.join(vals)}")
+    if fails:
+        return False, fails[0]
+    if unknown:
+        why = f"the route's {' and '.join(unknown)} is not known"
+        if "validation-state" in unknown:
+            why += (" - and with no RPKI cache in sync, FRR's match rpki "
+                    "matches no state")
+        return None, why
+    return True, "matches"
+
+
+def _relative(have, arg):
+    """`set ... +n|-n|n` on `have`: the value, or how it is made of it."""
+    if arg[0] not in "+-":
+        return arg
+    if have is None or not re.fullmatch(r"\d+", str(have)):
+        return f"its own {arg}"
+    return str(max(0, int(have) + int(arg)))
+
+
+def _apply_sets(pol, term, route, direction, said):
+    """
+    The route after `term`'s actions at the use `direction`, as FRR's set
+    clauses change it; what changes nothing here goes into `said`.
+    """
+    scope = direction.split(":")[0]
+    igp = direction not in DIRECTIONS and scope in IGPS or scope == "fib"
+    sets_ok = USE_SETS.get(direction, USE_SETS.get(scope))
+    fam = "ipv6" if ":" in route["prefix"] else "ip"
+    r = dict(route)
+    for what, args in term.sets:
+        word = f"set {_set_word(what)}"
+        if sets_ok is not None and what not in sets_ok \
+                or igp and what in BGP_SETS \
+                or what == "metric-type" and scope != "ospf" \
+                or what == "src" and scope != "fib":
+            said.append(f"term {term.name}: {word} changes nothing here")
+            continue
+        if what == "local-preference":
+            r["local-preference"] = _relative(r.get("local-preference"),
+                                              args[0])
+        elif what in ("community", "large-community"):
+            op, name = args
+            members = (pol.communities if what == "community"
+                       else pol.large_communities).get(name, [])
+            have = list(r.get(what, []))
+            if op == "set":
+                have = list(members)
+            elif op == "add":
+                have += [m for m in members if m not in have]
+            else:
+                have = [m for m in have if m not in members]
+            r[what] = have
+        elif what == "extended-community":
+            op, name = args
+            members = [f"{k}:{v}" for k, v in
+                       pol.ext_communities.get(name, [])]
+            have = [] if op == "set" else list(r.get(what, []))
+            r[what] = have + [m for m in members if m not in have]
+        elif what == "as-path-prepend":
+            r["as-path"] = list(args) + list(r.get("as-path", []))
+        elif what == "as-path-prepend-last-as":
+            path = r.get("as-path", [])
+            r["as-path"] = ([path[0]] * int(args[0]) + list(path) if path
+                            else [f"(the neighbor's AS x {args[0]})"])
+        elif what == "as-path-remove-private":
+            r["as-path"] = [a for a in r.get("as-path", [])
+                            if not re.fullmatch(PRIVATE_AS_REGEX, a)]
+        elif what in ("metric", "med"):
+            r["metric"] = ("the IGP metric to the next hop"
+                           if args[0] == "igp"
+                           else _relative(r.get("metric"), args[0]))
+        elif what in ("tag", "weight", "origin", "src"):
+            r[what] = args[0]
+        elif what == "metric-type":
+            r["metric-type"] = f"type-{args[0]}"
+        elif what == "next-hop" and args[0] == "self":
+            r["next-hop"] = "this box's address on the session"
+        elif what == "next-hop" and args[0] == "peer-address":
+            r["next-hop"] = (r.get("neighbor") if direction == "import"
+                             and "neighbor" in r
+                             else "the neighbor's address"
+                             if direction == "import"
+                             else "this box's address on the session")
+        elif what == "next-hop" and args[0] == "discard":
+            r["next-hop"] = f"{DISCARD[fam]} (discard)"
+        elif what == "next-hop":
+            r["next-hop"] = args[0]
+    return r
+
+
+def simulate(pol, policy, route, direction="import", depth=0):
+    """
+    What the map `policy` - one, or a chain - compiles to in `direction`
+    does with `route` (#538): every phase A-C condition and action, walked
+    in the order and with the semantics FRR runs the map in - a chain's
+    next policy, a policy's default-action, `from policy` as FRR's `call`,
+    the use's own default - so the answer is the daemon's and not a reading
+    of the text. `route` is a dict of ROUTE_KEYS and `prefix`.
+
+    A condition the route does not say is not guessed: the term is
+    "unknown", the walk goes on as if it did not match, and the assumption
+    is said. Returns {"steps": [(policy, term or None, outcome, why)],
+    "verdict": accept|reject, "by": (policy, term) - (policy, None) a
+    default-action, (None, None) the use's default -, "route": the
+    attributes after the sets, "assumed": [...], "said": [...]}.
+    """
+    out = {"steps": [], "assumed": [], "said": [], "route": dict(route)}
+    origin = use_origin(direction)
+    names = chain(policy)
+    for k, name in enumerate(names):
+        got = _walk(pol, name, out, direction, origin, depth)
+        if got and got[0] in ("accept", "reject"):
+            out["verdict"], out["by"] = got
+            return out
+        if got is None and name in pol.defaults:
+            out["steps"].append((name, None, "match",
+                                 f"no term decided: default-action "
+                                 f"{pol.defaults[name]}"))
+            out["verdict"], out["by"] = pol.defaults[name], (name, None)
+            return out
+    out["verdict"], out["by"] = _verdict(direction), (None, None)
+    out["steps"].append((None, None, "match", f"no term decided: the "
+                         f"default of the use, {_verdict(direction)}"))
+    return out
+
+
+def _walk(pol, name, out, direction, origin, depth):
+    """
+    One policy's terms against out["route"], for simulate(): ("accept" |
+    "reject", by), ("next policy", by), or None when no term decided.
+    """
+    for term in pol.statements.get(name, {}).values():
+        got, why = _term_matches(pol, term, out["route"], origin)
+        if got is None:
+            out["steps"].append((name, term.name, "unknown", why))
+            out["assumed"].append(f"{name} term {term.name} did not match: "
+                                  f"{why}")
+            continue
+        if not got:
+            out["steps"].append((name, term.name, "no match", why))
+            continue
+        if term.then == "reject":
+            # A reject clause calls nothing (_compile_term): `from policy`
+            # there is not evaluated, by FRR either.
+            out["steps"].append((name, term.name, "match", "then reject"))
+            return ("reject", (name, term.name))
+        for p in term.policies:
+            if depth > 8:
+                out["said"].append(f"from policy {p}: called too deep to "
+                                   f"follow")
+                continue
+            sub = simulate(pol, p, out["route"], direction, depth + 1)
+            out["steps"] += [(sp, st, so, f"called by {name} term "
+                              f"{term.name}: {sw}")
+                             for sp, st, so, sw in sub["steps"]]
+            out["assumed"] += sub["assumed"]
+            out["said"] += sub["said"]
+            if sub["verdict"] == "reject":
+                out["steps"].append((name, term.name, "match",
+                                     f"from policy {p} rejected the route, "
+                                     f"and FRR's call rejects it here"))
+                return ("reject", (name, term.name))
+            out["route"] = sub["route"]
+        out["route"] = _apply_sets(pol, term, out["route"], direction,
+                                   out["said"])
+        then = term.then or "next term"
+        out["steps"].append((name, term.name, "match", f"then {then}"))
+        if then == "accept":
+            return ("accept", (name, term.name))
+        if then == "next policy":
+            return ("next policy", (name, term.name))
+    return None
+
+
+#: How `test policy ... at <use>` names a use (#538) besides `ospf|isis
+#: <protocol>` and `fib <protocol>`: the words of the statements that
+#: apply a policy there.
+AT_WORDS = {"import": "import", "export": "export",
+            "default-originate": "bgp:default", "network": "bgp:network",
+            "aggregate": "bgp:aggregate", "suppress": "bgp:suppress",
+            "advertise": "bgp:advertise", "condition": "bgp:condition",
+            "table": "bgp:table", "vrf-import": "bgp:vrfimport",
+            "ospf-default": "ospf:default", "isis-default": "isis:default"}
+AT_USAGE = ("the uses: import, export, default-originate, network, "
+            "aggregate, suppress, advertise, condition, table, vrf-import, "
+            "ospf-default, isis-default, ospf <protocol>, isis <protocol> "
+            "and fib <protocol>")
+#: What `route <prefix>` takes after it, said after a refusal of it.
+ROUTE_USAGE = ("route <prefix> [<attribute> <value>]... [at <use>]: the "
+               "attributes are " + ", ".join(ROUTE_KEYS) + " and med; the "
+               "lists comma-separated")
+
+
+def use_from_words(words):
+    """The use `at <words>` names: (use, the words after it), or (None,
+    why)."""
+    if words[:1] and words[0] in AT_WORDS:
+        return AT_WORDS[words[0]], words[1:]
+    if len(words) >= 2 and words[0] in IGPS and words[1] in IGPS[words[0]]:
+        return f"{words[0]}:{words[1]}", words[2:]
+    if len(words) >= 2 and words[0] == "fib" and words[1] in FIB_PROTOCOLS:
+        return f"fib:{words[1]}", words[2:]
+    return None, f"at: {' '.join(words[:2]) or 'nothing'} is not a use"
+
+
+def use_words(direction):
+    """A use as `at` takes it: the inverse of use_from_words()."""
+    for word, use in AT_WORDS.items():
+        if use == direction:
+            return word
+    return direction.replace(":", " ")
+
+
+def _route_value(key, text):
+    """A route attribute typed after `route <prefix>`: (value, None) or
+    (None, why)."""
+    if key in ("community", "large-community", "extended-community"):
+        vals = [v for v in text.split(",") if v]
+        check = {"community": community_error,
+                 "large-community": large_community_error,
+                 "extended-community": ext_community_error}[key]
+        bad = next((check(v) for v in vals if check(v)), None)
+        return (None, bad) if bad else (vals, None)
+    if key == "as-path":
+        vals = [v for v in text.split(",") if v]
+        if not all(re.fullmatch(r"\d+", v) and int(v) <= U32 for v in vals):
+            return None, "as-path: AS numbers, comma-separated: 65001,65002"
+        return vals, None
+    if key in ("neighbor", "next-hop"):
+        return (text, None) if _address(text) is not None \
+            else (None, f"{key}: '{text}' is not an address")
+    if key == "origin":
+        return (text, None) if text in ORIGINS \
+            else (None, "origin: igp, egp or incomplete")
+    if key == "validation-state":
+        return (text, None) if text in VALIDATION_STATES \
+            else (None, "validation-state: valid, invalid or unknown")
+    if key == "source-vrf":
+        why = vrf_name_error(text)
+        return (None, f"source-vrf: {why}") if why else (text, None)
+    if not re.fullmatch(r"\d+", text) or int(text) > U32:
+        return None, f"{key} <0-{U32}>"
+    return text, None
+
+
+def route_from_words(prefix, words):
+    """
+    The route `test policy <p> route <prefix> [<attribute> <value>]...
+    [at <use>]` describes (#538): (route, use, None), or (None, None, why).
+    A list attribute not typed is none, a value not typed is unknown
+    (ROUTE_KEYS); lists are comma-separated, as a word takes them.
+    """
+    try:
+        net = ipaddress.ip_network(prefix, strict=False)
+    except ValueError:
+        return None, None, f"not a prefix: {prefix}"
+    route = {"prefix": str(net)}
+    route.update({k: [] for k in ROUTE_LISTS})
+    use, i = "import", 0
+    while i < len(words):
+        if words[i] == "at":
+            use, rest = use_from_words(words[i + 1:])
+            if use is None:
+                return None, None, rest
+            i = len(words) - len(rest)
+            continue
+        key = {"med": "metric"}.get(words[i], words[i])
+        if key not in ROUTE_KEYS:
+            return None, None, f"{words[i]}: not an attribute of a route"
+        if i + 1 >= len(words):
+            return None, None, f"{words[i]}: a value after it"
+        val, why = _route_value(key, words[i + 1])
+        if why:
+            return None, None, why
+        route[key] = val
+        i += 2
+    return route, use, None
+
+
+def describe_route(route):
+    """A route's attributes as `attribute value` lines: its prefix, then
+    ROUTE_KEYS' order, then what a set added (metric-type, src)."""
+    out = [f"prefix {route['prefix']}"] if "prefix" in route else []
+    for key in ROUTE_KEYS + ("metric-type", "src"):
+        if key not in route:
+            continue
+        val = route[key]
+        if key in ROUTE_LISTS:
+            val = " ".join(val) if val else "(none)"
+        out.append(f"{key} {val}")
+    return out
+
+
+#: The route attribute each action changes (#538).
+SET_KEYS = {"local-preference": "local-preference",
+            "community": "community", "large-community": "large-community",
+            "extended-community": "extended-community",
+            "as-path-prepend": "as-path",
+            "as-path-prepend-last-as": "as-path",
+            "as-path-remove-private": "as-path", "metric": "metric",
+            "med": "metric", "tag": "tag", "weight": "weight",
+            "origin": "origin", "next-hop": "next-hop"}
+
+
+def set_keys(pol, policy):
+    """
+    The route attributes a use of `policy` - one, or a chain - may have
+    changed (#538): what any term of any policy it reaches sets. What a
+    route read after the use says of the others is what it was before it.
+    """
+    return sorted({SET_KEYS[what] for p in reached(pol, chain(policy))
+                   for term in pol.statements.get(p, {}).values()
+                   for what, _ in term.sets if what in SET_KEYS})
