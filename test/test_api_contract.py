@@ -76,6 +76,8 @@ want = {
                            "ListPools", "GetSubscriber", "GetSessionsSummary",
                            "ListBgpNeighbors", "ListOspfNeighbors",
                            "ListIsisAdjacencies", "ListVrrp", "ListBundles",
+                           "ListPolicies", "GetPolicyCounters",
+                           "TestPolicy",
                            "Show"],
     "TelemetryService": ["Subscribe"],
 }

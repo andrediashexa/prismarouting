@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 20
+# OFF-RED-AT-LEAST: 29
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -9,9 +9,11 @@
 # compare, `commit confirmed`, confirm, rollback - and reads the result back
 # through `prismash -c "show running-config"`, so the API and the prompt are
 # held to one configuration. A candidate whose base the running configuration
-# moved past is refused with the difference. The typed reads, a Show, a
-# telemetry stream whose pg0 counters move with traffic, an account without
-# the role and a client with no certificate are each asserted.
+# moved past is refused with the difference. The typed reads - among them
+# the routing policy's (#538): its list, its counters and a route tested
+# through it - a Show, a telemetry stream whose pg0 counters move with
+# traffic, an account without the role and a client with no certificate are
+# each asserted.
 #
 # MODE=off starts the same server trusting a CA that signed none of the
 # clients: every call is refused at the handshake, and every check that reads
@@ -49,6 +51,14 @@ HX="python3 /src/src/prismash/prismash.py"
 $HX -c configure -c "interface pg0" -c "ipv4 address 100.64.3.254/22" -c exit \
     -c nat -c cgnat -c "pool nb" -c "inside 100.64.0.0/22" \
     -c "outside 200.150.0.16/30" -c top -c commit 2>&1 | tail -1 | sed 's/^/  /'
+# A policy applied on a neighbor (#538): what ListPolicies, GetPolicyCounters
+# and TestPolicy answer about.
+$HX -c configure -c policy-options -c "prefix-list C" -c "203.0.113.0/24" \
+    -c exit -c "policy-statement UP" -c "term cust" -c "from prefix-list C" \
+    -c "set local-preference 200" -c "then accept" -c exit -c exit -c exit \
+    -c "router bgp 65000" -c "neighbor 192.0.2.9 remote-as 65009" \
+    -c "address-family ipv4 unicast" -c "neighbor 192.0.2.9 import UP" \
+    -c "exit-address-family" -c exit -c commit 2>&1 | tail -1 | sed 's/^/  /'
 # The account without a role: no prisma-admin, no prisma-cgnat.
 id netview >/dev/null 2>&1 || useradd -M -s /usr/sbin/nologin netview
 chmod 0755 /tmp/rollback 2>/dev/null; chmod 0644 /tmp/rollback/* 2>/dev/null
@@ -146,6 +156,11 @@ expect "GetVersion and GetSystem answer the host's name, as the prompt reads it"
 expect "a long Show does not hold GetVersion behind it" res console-apart
 expect "ListInterfaces has pg0, up, with its address" res interfaces
 expect "ListPools has nb with the dataplane's capacity" res pools
+expect "ListPolicies has UP, its term, its text and where it is applied" res policies
+expect "GetPolicyCounters counts UP's terms in bgpd's map" res policy-counters
+expect "  and a policy that does not exist is NOT_FOUND" res policy-counters-unknown
+expect "TestPolicy decides a described route by UP's term, with its set" res test-policy
+expect "  and a use it does not know is INVALID_ARGUMENT" res test-policy-refused
 expect "Show returns the VTY's screen" res show
 expect "and refuses anything that is not a read" res show-refuses-config
 expect "the telemetry stream's pg0 counters move with the traffic" res telemetry

@@ -252,6 +252,16 @@ service OperationalService {
   rpc ListIsisAdjacencies(ListIsisAdjacenciesRequest) returns (ListIsisAdjacenciesResponse);
   rpc ListVrrp(ListVrrpRequest) returns (ListVrrpResponse);
   rpc ListBundles(ListBundlesRequest) returns (ListBundlesResponse);
+  // Routing policy (#538). Every policy-statement the box runs, with its
+  // terms, its text as typed under `policy-options` and where it is
+  // applied: `show policy`.
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  // How many routes each term matched, at each place a policy is applied,
+  // from FRR's route-map counters: `show policy <name>`.
+  rpc GetPolicyCounters(GetPolicyCountersRequest) returns (GetPolicyCountersResponse);
+  // What a policy does with a route - described, or read off the box - at
+  // a use, simulated as FRR runs the map: `test policy <p> route|rib`.
+  rpc TestPolicy(TestPolicyRequest) returns (TestPolicyResponse);
   // Any operational command the VTY takes (`show ...`, `ping ...`), with
   // its text exactly as the VTY prints it. Configuration and shell commands
   // are refused, and so is `monitor`, which redraws a terminal a call has not
@@ -475,6 +485,122 @@ message Bundle {
 
 message ListBundlesResponse {
   repeated Bundle bundles = 1;
+}
+
+message ListPoliciesRequest {}
+
+message PolicyTerm {
+  string name = 1;
+  // "accept", "reject", "next term", "next policy", or "" when it has none.
+  string then = 2;
+  // The term's statements as typed under it: "from prefix-list C".
+  repeated string lines = 3;
+}
+
+message Policy {
+  string name = 1;
+  repeated PolicyTerm terms = 2;
+  // "accept", "reject", or "" when it has none.
+  string default_action = 3;
+  // The `policy-options` block of this policy, as the VTY prints it.
+  string text = 4;
+  // Where the running routing applies it, as `show policy` says it.
+  repeated string applied = 5;
+}
+
+message ListPoliciesResponse {
+  repeated Policy policies = 1;
+}
+
+message GetPolicyCountersRequest {
+  // One policy; empty is every policy.
+  string policy = 1;
+}
+
+message PolicyTermHits {
+  // The policy and term: term "" is the policy's default-action, and both
+  // "" the use's own default.
+  string policy = 1;
+  string term = 2;
+  // The routes the term's clauses matched - each time the daemon ran the
+  // map, so a route evaluated again counts again.
+  uint64 hits = 3;
+  // False for a term that compiled to no clause at this use.
+  bool compiled = 4;
+}
+
+message PolicyUseCounters {
+  // The policy, or the chain ("A+B"), the route-map is.
+  string policy = 1;
+  // The use, as `test policy ... at` takes it: "import", "fib static".
+  string attach_point = 2;
+  // Every place that applies it: one route-map, shared counts.
+  repeated string applied_at = 3;
+  string route_map = 4;
+  // The FRR daemon that runs the map: bgpd, ospfd, isisd or zebra.
+  string daemon = 5;
+  // The map a `from policy` term calls.
+  bool called = 6;
+  // False when the daemon reported no such map: no counter, not zero.
+  bool counted = 7;
+  repeated PolicyTermHits terms = 8;
+}
+
+message GetPolicyCountersResponse {
+  repeated PolicyUseCounters uses = 1;
+}
+
+message TestPolicyRequest {
+  // A policy, or a chain ("A+B").
+  string policy = 1;
+  string prefix = 2;
+  // As `at` takes it: "import" (the default), "export", "table",
+  // "vrf-import", "ospf static", "fib bgp", ...
+  string attach_point = 3;
+  // A described route: attribute -> value, the words `test policy ...
+  // route` takes ("community" -> "65001:10 65001:20"). A list not given is
+  // none, a value not given is not known.
+  map<string, string> attributes = 4;
+  // Read the route off the box instead (`rib`): attributes are ignored.
+  bool rib = 5;
+  string vrf = 6;
+  // At an import, whose path; at an export, where it goes.
+  string neighbor = 7;
+}
+
+message TestPolicyStep {
+  string policy = 1;
+  // "" for a default.
+  string term = 2;
+  // "match", "no match" or "unknown".
+  string outcome = 3;
+  string why = 4;
+}
+
+message TestPolicyResponse {
+  // "accept" or "reject".
+  string verdict = 1;
+  // As the VTY says it: "term cust", "A's default-action", ...
+  string decided_by = 2;
+  string decided_policy = 3;
+  string decided_term = 4;
+  string attach_point = 5;
+  string route_map = 6;
+  string daemon = 7;
+  // The route simulated, and after the sets when accepted: attribute ->
+  // value, lists joined by spaces.
+  map<string, string> route = 8;
+  map<string, string> route_after = 9;
+  repeated TestPolicyStep steps = 10;
+  // The conditions the route did not say, taken as not matching: the
+  // answer holds only if they do not.
+  repeated string assumed = 11;
+  // Where the route came from, and what of it is not known.
+  repeated string notes = 12;
+  // Sets that change nothing at this use.
+  repeated string said = 13;
+  // What the box refuses about this policy at this use.
+  repeated string refused = 14;
 }
 
 message ShowRequest {
