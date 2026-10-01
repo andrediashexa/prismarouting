@@ -323,6 +323,7 @@ BOTH_WAYS="bypass detreserve dynamic esp extblocks forward frag ftp-alg
 # either, and the header says so.
 OFF_MODES="audit:off backplane:off policy:off policy-igp:off heap-full:off hot-card:off control-plane-dies:kill-vpp detreserve:off dns:off drain-slope:no-drain ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off
            in-place:off initial:off cgnat-workers:off lacp:off doors:off
+           api-grpc:off
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off

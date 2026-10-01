@@ -441,6 +441,14 @@ def become(account):
 # builds the Shell and answers its pipe until told to stop; handle() above is
 # what a test drives, and lab/api-grpc.sh drives this.
 def _worker_main(conn, account, shell_factory):
+    # NOT THE SERVER'S STDIN. Under the host unit it is the pipe whose end
+    # stops the server (--stop-on-eof), and a Shell built on it waited on it:
+    # lab/api-grpc.sh measured every session refused "did not start" the day
+    # the server's stdin stopped being /dev/null.
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    sys.stdin = open(os.devnull)
     try:
         become(account)
         if shell_factory is None:
@@ -1065,6 +1073,8 @@ def main(argv):
                                                       os.path.join(HERE, "apistubs")))
     ap.add_argument("--stats", default=os.environ.get("PRISMA_STATS_SOCKET",
                                                       "/run/vpp/stats.sock"))
+    ap.add_argument("--stop-on-eof", action="store_true",
+                    help="stop when stdin closes (the host unit's docker exec)")
     a = ap.parse_args(argv)
     sys.path.insert(0, a.stubs)
     import grpc
@@ -1099,6 +1109,19 @@ def main(argv):
         return 1
     server.start()
     print(f"apiserver: prisma.v1 on {a.listen}, mutual TLS", flush=True)
+    if a.stop_on_eof:
+        # not a unit: a closure of main(); stdin closing is how the host
+        # unit's stop reaches a server docker exec started (see the unit).
+        def watch():
+            # os.read on the descriptor, not sys.stdin: a thread blocked in
+            # sys.stdin's reader holds its lock across a fork, and every
+            # worker's multiprocessing bootstrap closes sys.stdin first -
+            # measured, each one hung there and no session started.
+            while os.read(0, 4096):
+                pass
+            print("apiserver: stdin closed, stopping", flush=True)
+            server.stop(5)
+        threading.Thread(target=watch, daemon=True).start()
     server.wait_for_termination()
     return 0
 

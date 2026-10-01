@@ -1,4 +1,5 @@
 #!/bin/sh
+# OFF-RED-AT-LEAST: 20
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -11,6 +12,12 @@
 # moved past is refused with the difference. The typed reads, a Show, a
 # telemetry stream whose pg0 counters move with traffic, an account without
 # the role and a client with no certificate are each asserted.
+#
+# MODE=off starts the same server trusting a CA that signed none of the
+# clients: every call is refused at the handshake, and every check that reads
+# an answer from the server goes red. What stays green is what never asked it
+# - the stubs, the server's banner, the VTY's own `api` statement.
+MODE=${1:-on}
 set -u
 . /src/lab/verdict.sh
 mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing /var/run/frr /etc/frr
@@ -62,6 +69,11 @@ sign netview netview
 # The layout the box reads: server.key, server.crt, clients-ca.crt.
 mkdir -p $C/box
 cp $C/server.key $C/server.crt $C/box/; cp $C/ca.crt $C/box/clients-ca.crt
+if [ "$MODE" = off ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=nobody's CA" \
+    -keyout $C/other.key -out $C/box/clients-ca.crt 2>/dev/null
+  echo "  MODE=off: the server trusts a CA that signed none of the clients"
+fi
 ls $C/box | sed 's/^/  /'
 
 echo "=========== the stubs, generated from the contract ==========="
@@ -69,8 +81,10 @@ GEN=$(sh tools/gen-api.sh /tmp/apistubs 2>&1 && echo generated)
 echo "  $GEN"
 
 echo "=========== the server ==========="
-python3 src/prismash/apiserver.py --listen 127.0.0.1:50551 --dir $C/box \
-  --stubs /tmp/apistubs > /tmp/apiserver.log 2>&1 &
+# Its stdin held open by a sleep, as prisma-routing-api.service holds it: the
+# end of this lab ends the sleep and the server has to stop by itself.
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50551 --dir $C/box \
+  --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver.log 2>&1 &
 n=0; until grep -q "prisma.v1 on" /tmp/apiserver.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
 sed 's/^/  /' /tmp/apiserver.log
 
@@ -92,6 +106,10 @@ printf '%s\n' "$APIOK" | tail -2 | sed 's/^/  /'
 APIENV=$(cat /etc/prisma-routing/api.env 2>&1)
 APIRUN=$($HX -c "show running-config" 2>&1 | grep '^api ')
 printf '%s\n' "$APIRUN" | sed 's/^/  /'
+pkill -f "^sleep 900$"
+n=0; while pgrep -f "apiserver.py --listen 127.0.0.1:50551" >/dev/null && [ $n -lt 30 ]; do sleep 0.5; n=$((n+1)); done
+STOPPED=$(pgrep -f "apiserver.py --listen 127.0.0.1:50551" >/dev/null && echo running || echo stopped)
+echo "  after its stdin closed: $STOPPED"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
 res() { printf '%s\n' "$OUT" | grep -q "^RESULT $1 ok"; }
@@ -121,6 +139,9 @@ expect "an account without the role is refused a candidate, PERMISSION_DENIED" r
 expect "and still reads the running configuration" res unprivileged-reads
 expect "a client with no certificate is refused at the handshake" res no-client-cert
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
+expect "closing the server's stdin stops it, as the host unit's stop does" \
+  test "$STOPPED" = "stopped"
+expect_in "and it says why" "stdin closed, stopping" "$(cat /tmp/apiserver.log)"
 expect_in "enabling the API with no address is refused at the check" \
   "api enabled yes needs 'api listen-address" "$APINO"
 expect_in "with one, the commit writes api.env for the host" "API_LISTEN=127.0.0.1" "$APIENV"
