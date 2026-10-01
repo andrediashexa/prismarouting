@@ -696,6 +696,7 @@ A partir da versão 0.148.4 a caixa oferece uma API de gerência em gRPC (`prism
 
 Ela vem **desligada**. Para ligar, você precisa de três coisas:
 
+
 1. **Os certificados.** A API só aceita TLS mútuo: a caixa tem o próprio certificado e só atende quem apresentar um certificado de cliente assinado pela autoridade (CA) que você indicar. Coloque em `/etc/prisma-routing/api/` os arquivos `server.key`, `server.crt` e `clients-ca.crt` (a CA dos clientes). Com OpenSSL, numa máquina qualquer (a chave da CA, `ca.key`, fica fora da caixa):
 
 ```sh
@@ -711,9 +712,7 @@ printf 'extendedKeyUsage=clientAuth\n' > client.ext
 openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 825 -extfile client.ext -out webui.crt
 ```
 
-Na caixa vão `server.key`, `server.crt` e o `ca.crt` com o nome `clients-ca.crt`; o cliente usa `ca.crt`, `webui.crt` e `webui.key`.
-2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê. Tudo o que ela muda fica registrado no histórico em nome dela.
-3. **O endereço.** A API escuta **só na rede de gerência**:
+Na caixa vão `server.key`, `server.crt` e o `ca.crt` com o nome `clients-ca.crt`; o cliente usa `ca.crt`, `webui.crt` e `webui.key`. 2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê. Tudo o que ela muda fica registrado no histórico em nome dela. 3. **O endereço.** A API escuta **só na rede de gerência**:
 
 ```
 configure
