@@ -148,7 +148,8 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 | `set med` | `<0-4294967295>`, `+<n>`, `-<n>` ou `igp` | o MED do BGP; `igp` usa a métrica do IGP até o próximo salto |
 | `set weight` | `<0-65535>` | o peso, que só vale nesta caixa e pesa antes da preferência local |
 | `set origin` | `igp`, `egp` ou `incomplete` | o atributo origin |
-| `set metric-type` | `1` ou `2` | o tipo da rota externa no OSPF. Só num `export` para o OSPF |
+| `set metric-type` | `1` ou `2` | o tipo da rota externa no OSPF. Só num `export` para o OSPF ou no `default-information` do OSPF |
+| `set src` | `<endereço>` | o endereço de origem que a rota instalada leva no Linux, para o que a própria caixa envia por ela. Só numa `fib-policy`. Um term com `set src` IPv4 vale só para rotas IPv4, como se tivesse `from family inet` (e o mesmo para IPv6) |
 
 Os `set` só são aplicados quando o term casa.
 
@@ -184,6 +185,11 @@ O padrão depende de onde a política é usada, como no Junos:
 |----------------------------|-------------------------------------------|
 | `import` ou `export` num vizinho BGP | **aceita**                                |
 | `export` para OSPF ou IS-IS | **não exportada**                         |
+| `network ... policy`, `aggregate-address ... policy`, `table-policy` | **aceita**: anunciada, ou instalada |
+| `fib-policy` | **instalada** |
+| `default-originate policy`, `default-information originate ... policy` | **não conta**: sem um term que aceite, o default não é originado |
+| `suppress-policy` | **não suprimida** |
+| as duas políticas de `advertise` | **fora**: não é anunciada nem conta como presente |
 
 Para rejeitar o resto no BGP, use `default-action reject` na política, ou termine com um term sem `from` e com `then reject`. Para exportar o resto para um IGP, `default-action accept`, ou um term sem `from` e com `then accept`.
 
@@ -236,6 +242,47 @@ prisma# [edit router ospf] export PARA-O-OSPF
 
 O `router ospf6` não tem `export`.
 
+## No BGP, além do vizinho
+
+Dentro do `router bgp`, na família de endereço:
+
+| Comando | O que faz |
+|---------|-----------|
+| `neighbor <vizinho> default-originate policy <política>` | anuncia a rota default para o vizinho enquanto houver na tabela do BGP uma rota que a política aceita. Os `set` da política vão na default |
+| `network <prefixo> policy <política>` | origina o prefixo com os `set` da política; se ela rejeita, o prefixo não é anunciado |
+| `aggregate-address <prefixo> [summary-only] [policy <política>] [suppress-policy <política>]` | origina o agregado. `policy` dá os `set` do agregado; `suppress-policy` segura as rotas mais específicas que ela aceita e deixa passar as outras. `summary-only` segura todas, e por isso não vai junto com `suppress-policy` |
+| `neighbor <vizinho> advertise <política> exist <condição>` | anuncia o que a primeira política aceita só enquanto existir na tabela uma rota que a condição aceita |
+| `neighbor <vizinho> advertise <política> non-exist <condição>` | o contrário: anuncia só enquanto **não** existir. É o anúncio de backup |
+| `table-policy <política>` | decide quais das melhores rotas do BGP vão para a tabela de roteamento e para o encaminhamento. A rota rejeitada continua no BGP e continua sendo anunciada; só não é instalada. Aceita `set metric` e `set next-hop` |
+
+O BGP confere a condição do `advertise` a cada 60 segundos. Para menos, `bgp conditional-advertisement timer <segundos>` no `router bgp`.
+
+## Na tabela do roteamento: `fib-policy`
+
+No `[edit]`, uma política por protocolo decide o que entra na tabela de encaminhamento, depois que o protocolo escolheu a rota:
+
+```
+prisma# [edit] fib-policy ospf SO-O-QUE-SERVE
+```
+
+| Comando | O que faz |
+|---------|-----------|
+| `fib-policy bgp\|ospf\|isis\|static <política>` | rota que a política rejeita não é instalada: o protocolo continua com ela, mas o tráfego não a segue. `set src <endereço>` dá à rota instalada o endereço de origem |
+| `no fib-policy <protocolo> <política>` | desfaz |
+
+É assim que se filtra o que o OSPF e o IS-IS instalam: o roteamento não tem filtro de entrada dentro desses protocolos. Vale para IPv4 e IPv6. Uma `fib-policy` só aceita `set src`, e nada que só o BGP tem.
+
+## O default do OSPF e do IS-IS
+
+| Comando | Onde | O que faz |
+|---------|------|-----------|
+| `default-information originate [always] [metric <n>] [metric-type 1\|2] policy <política>` | `router ospf` | sem `always`, origina a default enquanto houver uma rota que a política aceita, entre as que o OSPF redistribui. Com `always`, sempre, com os `set` da política |
+| `default-information originate ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] policy <política>` | `router isis <nome>` | a política é aplicada à própria rota default: aceita, a default é originada com os `set` dela; rejeitada, não é |
+
+Aqui o protocolo escolhe as rotas que olha, e `from protocol` é recusado.
+
+Uma rota estática pode levar tag: `<prefixo> next-hop <destino> tag <n>` no `router static`, e `from tag <n>` casa com ela. É o jeito de marcar uma estática para um `export` ou para uma condição.
+
 # Conferir: `show policy` e `test policy`
 
 | Comando | Modo | O que mostra |
@@ -252,6 +299,8 @@ policy-statement SAIDA
   terms: 2
   applied: neighbor 10.0.0.2 export, ospf export
 ```
+
+Os outros lugares aparecem do mesmo jeito: `neighbor 10.0.0.2 default-originate`, `network 10.40.0.0/24`, `aggregate-address 10.30.0.0/16 policy` ou `suppress-policy`, `neighbor 10.0.0.2 advertise` e, para a condição, `neighbor 10.0.0.2 advertise non-exist`, `table-policy`, `fib-policy static`, `ospf default-information`.
 
 Uma política escrita e ainda não usada em lugar nenhum diz `applied: nowhere in the running routing`. Uma política numa cadeia aparece com a cadeia inteira: `neighbor 10.0.0.2 import [ BOGONS CLIENTES ]`. O `default-action`, quando existe, aparece antes dos terms.
 
@@ -274,6 +323,9 @@ prisma> test policy SAIDA 198.51.100.0/24
       the prefix alone does not say
 result: no term decided it
     on a BGP neighbor that is accepted; exported into OSPF or IS-IS it is not
+    as a network, aggregate-address, table or FIB policy it is accepted; as the
+    routes an origination, a suppression or a conditional advertisement waits
+    for, it is not
 ```
 
 # O que é recusado
@@ -300,6 +352,11 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 | `neighbor ... import [ A A ]` ou dois nomes sem colchetes | `usage: neighbor <peer> import\|export <policy> \| [ <policy>... ]` |
 | `set next-hop self` numa política aplicada como `import`, `set next-hop peer-address` como `export`, `set metric-type` fora de um `export` para o OSPF | `this policy cannot be applied as import; nothing staged` (ou `export`), com uma linha por term culpado |
 | uma ação que não existe | `set:` seguido da lista das ações |
+| `set src` numa política aplicada fora de uma `fib-policy` | `cannot be applied on network; nothing staged` (ou onde for), e embaixo `set src is for a fib-policy` |
+| numa `fib-policy`, um `set` que não é `src`; numa `table-policy`, um que não é `metric` nem `next-hop`; numa `suppress-policy` ou num `advertise`, qualquer `set` | `set <ação> does nothing on <onde>`, com o que aquele lugar aceita |
+| `aggregate-address ... summary-only suppress-policy ...` | `summary-only suppresses every more specific route, and suppress-policy the ones it accepts: one or the other` |
+| `fib-policy connected ...`, ou um dos comandos novos digitado pela metade | `not how this statement is typed; nothing staged`, e embaixo a forma certa |
+| `from protocol` numa política do `default-information` | `from protocol has nothing to match on ospf default-information` (ou `isis`) |
 | `set next-hop abc` | `set next-hop: 'abc' is not an address` |
 | `then` com outra coisa que não `accept`, `reject` ou `next term` | `then: accept, reject or next term; a change to the route is 'set ...'` |
 | `no` de algo que não existe | `policy-options has no such statement; nothing removed`, com a declaração |

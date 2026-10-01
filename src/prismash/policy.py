@@ -115,6 +115,60 @@ BLOCK = 1000
 #: How many clauses one term may compile to: its sequence numbers are
 #: term-position x 10 + 0..9, so the tenth is the last before the next term.
 CLAUSES_MAX = 10
+#: Phase B (#536): the places a policy is used besides a neighbor and an
+#: export into an IGP. Each is "<scope>:<what>", which map_name() names the
+#: way it names an IGP export's part, with the protocol whose routes its
+#: map is handed (None: the daemon's own, so `from protocol` has nothing
+#: to say there) and FRR's verdict on a route no term decided - what the
+#: attach point does with a route the operator's terms did not mention:
+#:
+#: - bgp:default, the routes whose presence sends a neighbor the default
+#:   route (`default-originate`): none, so a default is sent on a term's
+#:   accept and not otherwise;
+#: - bgp:network and bgp:aggregate, the route a `network` or an
+#:   `aggregate-address` originates: announced, as with no policy;
+#: - bgp:suppress, the more specific routes of an aggregate an accept
+#:   holds back: none;
+#: - bgp:advertise, the routes a conditional advertisement concerns, and
+#:   bgp:condition, the routes whose presence it watches: none;
+#: - bgp:table, BGP's best routes on their way to zebra: installed;
+#: - ospf:default and isis:default, the routes whose presence originates
+#:   the IGP's default: none.
+ATTACHES = {"bgp:default": ("bgp", "deny"),
+            "bgp:network": ("bgp", "permit"),
+            "bgp:aggregate": ("bgp", "permit"),
+            "bgp:suppress": ("bgp", "deny"),
+            "bgp:advertise": ("bgp", "deny"),
+            "bgp:condition": ("bgp", "deny"),
+            "bgp:table": ("bgp", "permit"),
+            "ospf:default": (None, "deny"),
+            "isis:default": (None, "deny")}
+#: How each attach point is said where a policy is listed (`show policy`)
+#: and refused.
+ATTACH_WORDS = {"bgp:default": "default-originate",
+                "bgp:network": "network",
+                "bgp:aggregate": "aggregate-address policy",
+                "bgp:suppress": "aggregate-address suppress-policy",
+                "bgp:advertise": "advertise",
+                "bgp:condition": "advertise condition",
+                "bgp:table": "table-policy",
+                "ospf:default": "ospf default-information",
+                "isis:default": "isis default-information"}
+#: The protocols a FIB policy is per (#536): zebra's `ip protocol` word
+#: for each, and its `ipv6 protocol` one. A `fib:<protocol>` use's map sees
+#: that protocol's routes, and a route no term decided is installed.
+FIB_PROTOCOLS = {"bgp": "bgp", "ospf": "ospf6", "isis": "isis",
+                 "static": "static"}
+#: What a use's map may set, where it is not every action. Zebra's FIB
+#: maps take `set src` and nothing else; FRR applies `table-map`'s metric
+#: and next hop and no other set; and on a map that only matches - which
+#: routes are suppressed, advertised on a condition or watched - a set
+#: changes nothing.
+USE_SETS = {"fib": ("src",),
+            "bgp:table": ("metric", "next-hop"),
+            "bgp:suppress": (),
+            "bgp:advertise": (),
+            "bgp:condition": ()}
 
 
 class Term:
@@ -525,9 +579,16 @@ def _parse_set_a(term, w):
             return "set metric-type 1|2"
         term.sets.append(("metric-type", list(args)))
         return None
+    # Phase B (#536): the source address a FIB policy gives the kernel's
+    # route, for what this box itself sends along it.
+    if what == "src":
+        if len(args) != 1 or _address(args[0]) is None:
+            return "set src <address>"
+        term.sets.append(("src", list(args)))
+        return None
     return ("set: local-preference, community, large-community, "
             "extended-community, as-path-prepend, as-path, med, metric, "
-            "tag, weight, origin, next-hop or metric-type")
+            "tag, weight, origin, next-hop, metric-type or src")
 
 
 def findings(pol):
@@ -722,13 +783,41 @@ def unnest(numbered):
 def map_name(policy, direction):
     """
     The FRR route-map a policy becomes when used in `direction`: `import`
-    or `export` on a BGP neighbor, or `<igp>:<protocol>` for the part of an
-    export into an IGP that redistributes from one protocol.
+    or `export` on a BGP neighbor, `<igp>:<protocol>` for the part of an
+    export into an IGP that redistributes from one protocol, and phase B's
+    (#536) `fib:<protocol>` and ATTACHES, named the same way.
     """
     if direction in DIRECTIONS:
         return f"{PREFIX}{policy}-{DIRECTIONS[direction]}"
     igp, proto = direction.split(":")
     return f"{PREFIX}{policy}-{igp.upper()}-{proto.upper()}"
+
+
+def use_origin(direction):
+    """
+    The protocol whose routes the map of a use sees (#536): BGP's on a
+    neighbor and at BGP's attach points, the one an IGP export's part or a
+    FIB policy is for, and None where the daemon hands the map routes of
+    its own choosing - an IGP's default origination.
+    """
+    if direction in DIRECTIONS:
+        return "bgp"
+    if direction in ATTACHES:
+        return ATTACHES[direction][0]
+    return direction.split(":")[1]
+
+
+def use_default(direction):
+    """
+    FRR's verdict, permit or deny, on a route no term of a use decided: the
+    Junos default for a neighbor (accept) and an IGP export (reject), an
+    attach point's own (ATTACHES), and a FIB policy's, installed (#536).
+    """
+    if direction in DIRECTIONS:
+        return "permit"
+    if direction in ATTACHES:
+        return ATTACHES[direction][1]
+    return "permit" if direction.startswith("fib:") else "deny"
 
 
 def sub_map_name(policy, direction):
@@ -763,6 +852,12 @@ def export_lines(policy, igp):
     return out
 
 
+#: The actions only a BGP route takes.
+BGP_SETS = ("local-preference", "community", "as-path-prepend", "next-hop",
+            "as-path-prepend-last-as", "origin", "weight", "med",
+            "large-community", "extended-community", "as-path-remove-private")
+
+
 def igp_findings(pol, policy):
     """
     Why `policy` cannot be exported into an IGP, one reason per term that
@@ -786,12 +881,7 @@ def igp_findings(pol, policy):
             if vals:
                 bgp_only.append(f"from {kind}")
         bgp_only += [f"set {_set_word(what)}" for what, _ in term.sets
-                     if what in ("local-preference", "community",
-                                 "as-path-prepend", "next-hop",
-                                 "as-path-prepend-last-as", "origin",
-                                 "weight", "med", "large-community",
-                                 "extended-community",
-                                 "as-path-remove-private")]
+                     if what in BGP_SETS]
         if bgp_only:
             out.append(f"term {term.name}: {', '.join(bgp_only)} is for "
                        f"BGP routes")
@@ -840,15 +930,41 @@ def use_findings(pol, name, direction):
     and `peer-address` says the neighbour, so for an import. Refused where
     the policy is applied, rather than compiled into a map that would
     ignore what the operator's term was written to do.
+
+    Phase B (#536): a FIB policy and an IGP's default origination take
+    nothing only BGP has either; `set src` is for a FIB policy, and a FIB
+    policy sets nothing else; an attach point that only matches sets
+    nothing (USE_SETS); and where the daemon chooses the routes, `from
+    protocol` has nothing to match.
     """
     out = []
-    igp = direction.split(":")[0] if direction not in DIRECTIONS else None
+    scope = direction.split(":")[0]
+    igp = scope if direction not in DIRECTIONS \
+        and scope in IGPS or scope == "fib" else None
+    sets_ok = USE_SETS.get(direction, USE_SETS.get(scope))
+    where = ATTACH_WORDS.get(direction, "a fib-policy" if scope == "fib"
+                             else None)
     for p in reached(pol, chain(name)):
         if igp:
             out += [f"{p} {why}" for why in igp_findings(pol, p)]
         for term in pol.statements.get(p, {}).values():
+            if term.protocols and use_origin(direction) is None:
+                out.append(f"{p} term {term.name}: from protocol has nothing "
+                           f"to match on {where}: the daemon chooses the "
+                           f"routes it looks at")
             for what, args in term.sets:
-                if what == "metric-type" and igp != "ospf":
+                if igp and what in BGP_SETS:
+                    continue        # said by igp_findings()
+                if sets_ok is not None and what not in sets_ok:
+                    out.append(f"{p} term {term.name}: set {_set_word(what)} "
+                               f"does nothing on {where}"
+                               + (f": it takes set {' and set '.join(sets_ok)}"
+                                  if sets_ok else ""))
+                    continue
+                if what == "src" and scope != "fib":
+                    out.append(f"{p} term {term.name}: set src is for a "
+                               f"fib-policy")
+                if what == "metric-type" and scope != "ospf":
                     out.append(f"{p} term {term.name}: set metric-type is "
                                f"for an export into OSPF")
                 if igp:
@@ -905,7 +1021,7 @@ def compile_policy(pol, policy, direction, sub=False):
     # export into an IGP the one its `redistribute` names. A term naming
     # other protocols never matches here, so it is left out rather than
     # compiled into a clause FRR would evaluate against the wrong routes.
-    origin = "bgp" if direction in DIRECTIONS else direction.split(":")[1]
+    origin = use_origin(direction)
     lists, clauses = [], []
     for k, name in enumerate(names):
         offset = k * BLOCK if len(names) > 1 else 0
@@ -928,8 +1044,9 @@ def compile_policy(pol, policy, direction, sub=False):
     # THE JUNOS DEFAULT, which is not one default: a BGP route no term
     # decided is accepted (the maintainer chose it for #458), and a route no
     # term decided on its way into an IGP is not exported - Junos's OSPF and
-    # IS-IS export nothing that no policy accepts.
-    default = "permit" if direction in DIRECTIONS else "deny"
+    # IS-IS export nothing that no policy accepts. Phase B's attach points
+    # (#536) each have their own: use_default().
+    default = use_default(direction)
     clauses += [f"route-map {rmap} {default} {DEFAULT_SEQ}", "exit"]
     return lists + clauses
 
@@ -941,7 +1058,7 @@ def _compile_term(pol, policy, term, pos, offset, nxt, rmap, origin,
     Its clauses are at offset + pos x 10 + 0..9: one per family its prefixes
     have, times one per combination of its single-value conditions.
     """
-    if term.protocols and origin not in term.protocols:
+    if term.protocols and origin and origin not in term.protocols:
         return None
     base = f"{PREFIX}{policy}-T{term.name}"
     lists = []
@@ -956,7 +1073,8 @@ def _compile_term(pol, policy, term, pos, offset, nxt, rmap, origin,
             per_family[_family(net)].append(entry)
     # `from family` (#535) keeps the prefixes of that family, and on a term
     # with no prefix condition is every prefix of it.
-    allowed = [{"inet": "ip", "inet6": "ipv6"}[f] for f in term.families]
+    allowed = [{"inet": "ip", "inet6": "ipv6"}[f]
+               for f in term_families(term)]
     if allowed:
         for fam in ("ip", "ipv6"):
             if fam not in allowed:
@@ -1054,6 +1172,19 @@ def _compile_term(pol, policy, term, pos, offset, nxt, rmap, origin,
     return lists, clauses
 
 
+def term_families(term):
+    """
+    The families a term is for, as `from family` says them: its own, or,
+    on a term that sets a source address (#536), that address's - zebra
+    cannot give an IPv6 route an IPv4 source, so `set src 10.0.0.1` is a
+    term about IPv4 routes. [] is both.
+    """
+    if term.families:
+        return term.families
+    return sorted({"inet6" if ":" in args[0] else "inet"
+                   for what, args in term.sets if what == "src"})
+
+
 def _set_lines(pol, term, fam=None, direction="import"):
     """
     The FRR `set` lines of a term's actions, for a clause of family `fam`
@@ -1126,6 +1257,8 @@ def _set_lines(pol, term, fam=None, direction="import"):
                     out.append(f" set extcommunity {kind} {' '.join(vals)}")
         elif what == "metric-type" and direction.startswith("ospf:"):
             out.append(f" set metric-type type-{args[0]}")
+        elif what == "src" and fam in (None, _family(args[0])):
+            out.append(f" set src {args[0]}")
     return out
 
 
@@ -1217,9 +1350,10 @@ def evaluate(pol, policy, prefix, direction="import"):
     fam = "inet6" if route.version == 6 else "inet"
     out = []
     for term in pol.statements.get(policy, {}).values():
-        if term.families and fam not in term.families:
+        fams = term_families(term)
+        if fams and fam not in fams:
             out.append((term.name, "no match", f"the prefix is not "
-                        f"{' or '.join(term.families)}"))
+                        f"{' or '.join(fams)}"))
             continue
         prefix_conds = bool(term.prefix_lists or term.filters)
         hit = False
@@ -1263,14 +1397,19 @@ def evaluate(pol, policy, prefix, direction="import"):
         if action == "next policy":
             # This policy is done with the route: in a chain the next one
             # takes it, alone the default does - not this policy's own.
-            out.append((None, "accept" if direction in DIRECTIONS
-                        else "reject", "next policy: the policies after "
-                        "this one, or the default for this use"))
+            out.append((None, _verdict(direction), "next policy: the "
+                        "policies after this one, or the default for this "
+                        "use"))
             return out
     if policy in pol.defaults:
         out.append((None, pol.defaults[policy], "no term decided: this "
                     "policy's default-action"))
         return out
-    default = "accept" if direction in DIRECTIONS else "reject"
-    out.append((None, default, "no term decided: the default for this use"))
+    out.append((None, _verdict(direction), "no term decided: the default "
+                "for this use"))
     return out
+
+
+def _verdict(direction):
+    """A use's default as `test policy` says it: accept or reject."""
+    return "accept" if use_default(direction) == "permit" else "reject"

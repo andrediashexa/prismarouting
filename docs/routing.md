@@ -4211,7 +4211,7 @@ a
   this half, a `set` that applied to everything would pass every test that only
   checked the routes it was supposed to affect.
 
-## Routing policy: `policy-options` (#458, #535)
+## Routing policy: `policy-options` (#458, #535, #536)
 
 The maintainer chose Junos's shape (2026-09-25). Named prefix lists,
 communities, large and extended communities and AS-path expressions, and
@@ -4352,6 +4352,101 @@ only: the lab's sessions are IPv4.
 of its policies. `test policy` answers `from family` from the prefix, says the
 conditions the prefix cannot answer, ends at `then next policy`, and reports
 a `default-action` when no term decided.
+
+### Phase B: more attach points (#536)
+
+A policy is also applied where BGP originates, aggregates, advertises on a
+condition and installs, where OSPF and IS-IS originate their default, and on
+what zebra installs from each protocol. Each statement is typed in the VTY's
+words and stored as the FRR statement it stands for, naming a map the
+compiler emits; `policy_uses()` reads every one back off FRR's running
+configuration, so a box that is read back compiles the same maps again.
+
+| Typed | Where | FRR holds | Default |
+|---|---|---|---|
+| `neighbor <peer> default-originate policy <p>` | BGP | `default-originate route-map PO-<p>-BGP-DEFAULT` | reject |
+| `network <prefix> policy <p>` | BGP | `network <prefix> route-map PO-<p>-BGP-NETWORK` | accept |
+| `aggregate-address <prefix> [summary-only] [policy <p>] [suppress-policy <s>]` | BGP | `route-map PO-<p>-BGP-AGGREGATE`, `suppress-map PO-<s>-BGP-SUPPRESS` | accept, reject |
+| `neighbor <peer> advertise <p> exist\|non-exist <c>` | BGP | `advertise-map PO-<p>-BGP-ADVERTISE exist-map\|non-exist-map PO-<c>-BGP-CONDITION` | reject, reject |
+| `table-policy <p>` | BGP | `table-map PO-<p>-BGP-TABLE` | accept |
+| `fib-policy bgp\|ospf\|isis\|static <p>` | top level | `ip protocol <proto> route-map PO-<p>-FIB-<PROTO>`, and `ipv6 protocol` (`ospf6` for OSPF) | accept |
+| `default-information originate [always] [metric <n>] [metric-type 1\|2] policy <p>` | OSPF | `... route-map PO-<p>-OSPF-DEFAULT` | reject |
+| `default-information originate ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] policy <p>` | IS-IS | `... route-map PO-<p>-ISIS-DEFAULT` | reject |
+
+Each takes one policy or a chain, and `no` in front removes it. The default
+column is what a route no term decided gets (`policy.ATTACHES`,
+`policy.use_default()`): the attach point with no policy where it has one -
+a network or an aggregate is announced, a route is installed - and nothing
+where the policy names the routes something waits for: the default route is
+not sent, nothing is suppressed, nothing is advertised on the condition.
+
+What a use cannot do is refused where the policy is applied
+(`policy.use_findings()`):
+- a FIB policy and an IGP's default take nothing only BGP has, as an IGP
+  export does;
+- a FIB policy sets nothing but `src`: zebra's maps take `set src` and no
+  other set;
+- a table policy sets `metric` and `next-hop` only, which is what FRR applies
+  on `table-map`;
+- a suppress-policy and the two policies of an `advertise` only match: a set
+  there changes nothing;
+- `set src <address>` is new, and for a FIB policy only. A term that sets an
+  IPv4 source is a term about IPv4 routes, as if it said `from family inet`
+  (`policy.term_families()`): zebra cannot give an IPv6 route an IPv4 source.
+  `test policy` says so for a prefix of the other family;
+- `from protocol` is refused on an IGP's default, whose daemon chooses the
+  routes it looks at;
+- `summary-only` beside a `suppress-policy` is refused: FRR 10.7.1 refuses
+  the pair, "can't be used at the same time".
+
+**What FRR 10.7.1 does not have, measured with `vtysh` before this was
+written:** `aggregate-address ... attribute-map` (the aggregate's attributes
+are its `route-map`), `distribute-list route-map ... in` in OSPF and IS-IS,
+and `table-map` in OSPF. So the policy on what an IGP installs is its FIB
+policy, `fib-policy ospf|isis`, applied by zebra, and not a filter inside the
+IGP: ospfd and isisd keep the route, and it is not installed.
+`ip protocol connected` is refused too, so a FIB policy is per BGP, OSPF,
+IS-IS or static. Static routes already took `tag`; `from tag` matches it.
+
+**bgpd warns about a map the same commit defines.** frr-reload hands bgpd a
+neighbor's `default-originate route-map` and `advertise-map` before the
+route-maps of the same text, and bgpd prints "The route-map ... does not
+exist." The maps were in FRR's running configuration straight after, and the
+default route and the conditional advertisement followed them, so the commit
+drops that warning for a `PO-` map it defined (`compiled_map_warning()`), and
+still prints it for any other.
+
+**Measured in `lab/policy-b.sh`**, one link to an upstream with BGP, OSPF and
+IS-IS over it. Each daemon was asked whether it held what it was given
+(#539), and each held it. Then:
+- the default route reached the upstream while 10.9.0.0/16 was in the box's
+  table, and was withdrawn about four seconds after the upstream withdrew it;
+- the `network`'s policy put MED 44 and its community on the upstream's copy;
+- the aggregate carried its policy's community, the more specific route the
+  suppress-policy accepted was held back, and the other was sent;
+- `advertise ... non-exist` held 10.50.0.0/24 back while 10.9.0.0/16 was
+  there and sent it once it was gone, with `bgp conditional-advertisement
+  timer 5` on the box;
+- the table policy kept one BGP route out of zebra and VPP while BGP still
+  held it, and zebra had the other at metric 77;
+- `fib-policy static` kept a static route out of VPP, and put `src 10.0.0.1`
+  on another's kernel route; `fib-policy ospf` and `fib-policy isis` kept a
+  route out of VPP that ospfd and isisd still had;
+- a static route tagged 60 was matched by `from tag 60` and exported into
+  OSPF with metric 66;
+- OSPF's `default-information originate policy` (no `always`) originated a
+  default while the tagged route was there, on a box with no default route,
+  and flushed it when the route was removed. ospfd evaluates the policy
+  against the routes it redistributes, and the tagged route was also
+  exported into OSPF; a condition on a route ospfd does not redistribute was
+  not measured;
+- IS-IS's `default-information originate ... always policy` is applied to the
+  default route itself: accepted with `set metric 50`, the upstream had it at
+  60 (50 and the link's 10); rejected, it was withdrawn.
+
+MODE=off, which commits the same policies without the attach statements,
+turns 34 checks red. What phase A compiled compiles byte for byte as before:
+`test/policy-golden-0.148.9.txt` is 0.148.9's output for phase A's fixture.
 
 ## A route-map referenced and not defined
 

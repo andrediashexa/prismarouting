@@ -2737,6 +2737,192 @@ rv, text = driven(lambda: sh.show_policy([]))
 check("no policy-statement is configured" in text, f"none: {text!r}")
 ok("where, what, and a prefix walked through it")
 
+print("\n=== routing policy, phase B: the attach points (#536) ===")
+check(prismash._take_names(["A", "x"], 0) == (["A"], 1)
+      and prismash._take_names(["[", "A", "B", "]", "x"], 0) == (["A", "B"], 4)
+      and prismash._take_names(["[A", "B]"], 0) == (["A", "B"], 2)
+      and prismash._take_names(["x"], 1) == (None, 1),
+      "_take_names: one name, or a chain in brackets, and where it ends")
+check(prismash._attach_map(["A", "B"], "bgp:table") == "PO-A+B-BGP-TABLE",
+      "_attach_map: the chain's map for the use")
+for _w, _where, _want in (
+        ("neighbor 10.0.0.2 default-originate policy C", "bgp",
+         (["neighbor 10.0.0.2 default-originate route-map PO-C-BGP-DEFAULT"],
+          [("C", "bgp:default")])),
+        ("network 10.6.0.0/16 policy N", "bgp",
+         (["network 10.6.0.0/16 route-map PO-N-BGP-NETWORK"],
+          [("N", "bgp:network")])),
+        ("aggregate-address 10.8.0.0/16 summary-only policy A", "bgp",
+         (["aggregate-address 10.8.0.0/16 summary-only route-map "
+           "PO-A-BGP-AGGREGATE"], [("A", "bgp:aggregate")])),
+        ("aggregate-address 10.8.0.0/16 suppress-policy S policy A", "bgp",
+         (["aggregate-address 10.8.0.0/16 route-map PO-A-BGP-AGGREGATE "
+           "suppress-map PO-S-BGP-SUPPRESS"],
+          [("A", "bgp:aggregate"), ("S", "bgp:suppress")])),
+        ("neighbor 10.0.0.2 advertise [ X Y ] non-exist C", "bgp",
+         (["neighbor 10.0.0.2 advertise-map PO-X+Y-BGP-ADVERTISE "
+           "non-exist-map PO-C-BGP-CONDITION"],
+          [("X+Y", "bgp:advertise"), ("C", "bgp:condition")])),
+        ("table-policy T", "bgp",
+         (["table-map PO-T-BGP-TABLE"], [("T", "bgp:table")])),
+        ("default-information originate always metric 20 metric-type 1 "
+         "policy D", "ospf",
+         (["default-information originate always metric 20 metric-type 1 "
+           "route-map PO-D-OSPF-DEFAULT"], [("D", "ospf:default")])),
+        ("default-information originate ipv4 level-2 always metric 30 "
+         "policy D", "isis",
+         (["default-information originate ipv4 level-2 always route-map "
+           "PO-D-ISIS-DEFAULT metric 30"], [("D", "isis:default")])),
+        ("no fib-policy ospf F", "top",
+         (["no ip protocol ospf route-map PO-F-FIB-OSPF",
+           "no ipv6 protocol ospf6 route-map PO-F-FIB-OSPF"],
+          [("F", "fib:ospf")])),
+        ("network 10.6.0.0/16", "bgp", None),
+        ("fib-policy static F", "bgp", None),
+        ("table-policy T", "top", None),
+        ("fib-policy connected F", "top",
+         prismash.ATTACH_USAGE["fib-policy"]),
+        ("neighbor 10.0.0.2 advertise X maybe C", "bgp",
+         prismash.ATTACH_USAGE["advertise"]),
+        ("network 10.6.0.0/16 policy A B", "bgp",
+         prismash.ATTACH_USAGE["network"]),
+        ("default-information originate ipv4 policy D", "isis",
+         prismash.ATTACH_USAGE["isis"]),
+        ("default-information originate metric-type 3 policy D", "ospf",
+         prismash.ATTACH_USAGE["ospf"]),
+        ("aggregate-address 10.8.0.0/16 as-set policy A", "bgp",
+         prismash.ATTACH_USAGE["aggregate-address"])):
+    _got = prismash.attach_statement(_w.split(), _where)
+    check(_got == _want, f"{_w!r} in {_where}: {_got}")
+check("one or the other" in prismash._attach_aggregate(
+          "aggregate-address 10.8.0.0/16 summary-only suppress-policy S"
+          .split()),
+      "summary-only beside a suppress-policy is refused, as FRR refuses it")
+check(prismash._attach("table-policy T".split(), "bgp")[0]
+      == ["table-map PO-T-BGP-TABLE"]
+      and prismash._attach_igp_default(
+          "default-information originate policy D".split(), "ospf")[0]
+      == ["default-information originate route-map PO-D-OSPF-DEFAULT"],
+      "_attach and _attach_igp_default, called on their own")
+_run = ["router bgp 65000", " address-family ipv4 unicast",
+        "  network 10.6.0.0/16 route-map PO-N-BGP-NETWORK",
+        "  aggregate-address 10.8.0.0/16 route-map PO-A-BGP-AGGREGATE "
+        "suppress-map PO-S+T-BGP-SUPPRESS",
+        "  neighbor 10.0.0.2 default-originate route-map PO-C-BGP-DEFAULT",
+        "  neighbor 10.0.0.2 advertise-map PO-X-BGP-ADVERTISE exist-map "
+        "PO-C-BGP-CONDITION",
+        "  table-map PO-T-BGP-TABLE", "router ospf",
+        " default-information originate always route-map PO-D-OSPF-DEFAULT",
+        "router isis CORE", " default-information originate ipv4 level-2 "
+        "always route-map PO-D-ISIS-DEFAULT metric 30",
+        "ip protocol static route-map PO-F-FIB-STATIC",
+        "ipv6 protocol ospf6 route-map PO-F-FIB-OSPF"]
+check(prismash.policy_uses(_run) == {
+          ("N", "bgp:network"), ("A", "bgp:aggregate"),
+          ("S+T", "bgp:suppress"), ("C", "bgp:default"),
+          ("X", "bgp:advertise"), ("C", "bgp:condition"),
+          ("T", "bgp:table"), ("D", "ospf:default"), ("D", "isis:default"),
+          ("F", "fib:static"), ("F", "fib:ospf")},
+      f"every attach point read back as its use: "
+      f"{prismash.policy_uses(_run)}")
+check(prismash.attach_reads(_run[3])
+      == [("A", "bgp:aggregate", "aggregate-address 10.8.0.0/16 policy"),
+          ("S+T", "bgp:suppress",
+           "aggregate-address 10.8.0.0/16 suppress-policy")]
+      and prismash.attach_reads("router ospf") == [],
+      "attach_reads: both maps of one aggregate")
+_ap = prismash.policy_applications(_run)
+check(_ap["C"] == ["neighbor 10.0.0.2 default-originate",
+                   "neighbor 10.0.0.2 advertise exist"]
+      and _ap["S"] == ["aggregate-address 10.8.0.0/16 suppress-policy "
+                       "[ S T ]"]
+      and _ap["F"] == ["fib-policy static", "fib-policy ospf"]
+      and _ap["D"] == ["ospf default-information", "isis default-information"]
+      and _ap["T"] == ["aggregate-address 10.8.0.0/16 suppress-policy "
+                       "[ S T ]", "table-policy"],
+      f"show policy says where: {_ap}")
+_c = Config()
+_c.policy = ["policy-options policy-statement F term 1 set src 10.40.0.1",
+             "policy-options policy-statement F term 1 then accept"]
+_c.routing = ["ip protocol static route-map PO-F-FIB-STATIC"]
+check("route-map PO-F-FIB-STATIC permit 10" in prismash.frr_lines(_c)
+      and " set src 10.40.0.1" in prismash.frr_lines(_c),
+      "a FIB policy read back is compiled for the next commit")
+sh = shell()
+sh.candidate = Config()
+sh.mode = "config"
+sh.candidate.policy = [
+    "policy-options prefix-list UP 10.9.0.0/16",
+    "policy-options policy-statement C term 1 from prefix-list UP",
+    "policy-options policy-statement C term 1 then accept",
+    "policy-options policy-statement LP term 1 set local-preference 5",
+    "policy-options policy-statement F term 1 set src 10.40.0.1",
+    "policy-options policy-statement P term 1 from protocol static"]
+sh.frr_ctx = ["router bgp 65000", "address-family ipv4 unicast"]
+_before = list(sh.candidate.routing)
+rv, text = driven(lambda: sh.do_config(
+    "neighbor 10.0.0.2 default-originate policy C"))
+check(sh.candidate.routing[len(_before):]
+      == ["neighbor 10.0.0.2 default-originate route-map PO-C-BGP-DEFAULT"],
+      f"default-originate staged as the map: {text!r}")
+_before = list(sh.candidate.routing)
+for _bad, _why in (
+        ("table-policy NOPE", "no policy-statement named NOPE"),
+        ("table-policy LP", "set local-preference does nothing on "
+                            "table-policy"),
+        ("aggregate-address 10.8.0.0/16 suppress-policy LP",
+         "cannot be applied on aggregate-address suppress-policy"),
+        ("network 10.6.0.0/16 policy F", "set src is for a fib-policy"),
+        ("network 10.6.0.0/16 policy", "usage: network <prefix> policy"),
+        ("aggregate-address 10.8.0.0/16 summary-only suppress-policy C",
+         "one or the other")):
+    rv, text = driven(lambda: sh.do_config(_bad))
+    check(_why in text and sh.candidate.routing == _before,
+          f"{_bad!r} refused, nothing staged: {text!r}")
+rv, text = driven(lambda: sh.do_config(
+    "no neighbor 10.0.0.2 default-originate policy C"))
+check(not any("default-originate" in l for l in sh.candidate.routing),
+      f"no takes back the staged line: {sh.candidate.routing}")
+sh.frr_ctx = ["router ospf"]
+rv, text = driven(lambda: sh.do_config(
+    "default-information originate policy P"))
+check("from protocol has nothing to match on ospf default-information"
+      in text, f"the IGP default chooses its routes: {text!r}")
+sh.frr_ctx = []
+rv, text = driven(lambda: sh.do_config("fib-policy static F"))
+check(sh.candidate.routing[-2:]
+      == ["ip protocol static route-map PO-F-FIB-STATIC",
+          "ipv6 protocol static route-map PO-F-FIB-STATIC"],
+      f"a fib-policy is both families' protocol map: {text!r}")
+rv, text = driven(lambda: sh.do_config("fib-policy static C"))
+check(sh.candidate.routing[-1] == "ipv6 protocol static route-map "
+      "PO-C-FIB-STATIC", f"a fib-policy without a set: {text!r}")
+rv, text = driven(lambda: sh.do_config("fib-policy kernel F"))
+check("usage: fib-policy bgp|ospf|isis|static <policy>" in text,
+      f"a protocol zebra takes no map for: {text!r}")
+rv, text = driven(lambda: sh.attach_policy("no such thing", ["x"]))
+check("error: nothing staged" in text and "no such thing" in text,
+      f"Shell.attach_policy says a refusal that is not a usage: {text!r}")
+sh.frr_ctx = ["router bgp 65000"]
+sh.frr = type("F", (prismash.Frr,), {
+    "dryrun": lambda s, ctx, l: (prismash.Frr.DRYRUN_REFUSED, "% Unknown")})()
+_before = list(sh.candidate.routing)
+rv, text = driven(lambda: sh.do_config("table-policy C"))
+check("FRR answered: % Unknown" in text and sh.candidate.routing == _before,
+      f"FRR is asked before anything is staged: {text!r}")
+sh.frr_ctx = []
+_handed = ["route-map PO-C-BGP-DEFAULT permit 10", "exit",
+           "route-map MINE permit 10", "exit"]
+check(prismash.compiled_map_warning(
+          "The route-map 'PO-C-BGP-DEFAULT' does not exist.", _handed)
+      and not prismash.compiled_map_warning(
+          "The route-map 'PO-GONE-BGP-DEFAULT' does not exist.", _handed)
+      and not prismash.compiled_map_warning(
+          "The route-map 'MINE' does not exist.", _handed),
+      "compiled_map_warning: bgpd's warning about a map the same commit "
+      "defines, and only that")
+ok("each attach point typed, translated, refused and read back")
+
 print("\n=== Shell.write_tune_key: one assignment, every other line kept ===")
 # Mutation shown red: write only the assignment, dropping the other lines.
 tune = os.path.join(_root, "tune", "tune.env")
