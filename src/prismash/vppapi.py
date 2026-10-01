@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import subprocess
 
@@ -579,6 +580,27 @@ FORCE_VAT2 = os.environ.get("PRISMA_API", "") == "vat2"
 API_PLUGINS = ("bpa", "lcp", "urpf", "vrrp")
 
 
+class _PapiTeardown(logging.Filter):
+    """
+    Drops the one record vpp_papi's socket transport logs while it is being
+    disconnected: its reader thread selects on a socket disconnect() has just
+    closed, logs "select failed" at ERROR on the root logger and exits.
+    Measured on the X520 bench (0.148.1) as `ERROR:root:select failed` on the
+    stderr of about one `prismash -c` in five, after a command that had
+    succeeded. Anything else vpp_papi logs is left alone.
+    """
+
+    def filter(self, record):
+        return record.getMessage() != "select failed"
+
+
+def quiet_papi_teardown():
+    """Put _PapiTeardown on the root logger, once."""
+    root = logging.getLogger()
+    if not any(isinstance(f, _PapiTeardown) for f in root.filters):
+        root.addFilter(_PapiTeardown())
+
+
 def plain(value, top=True):
     """
     A vpp_papi reply as the JSON vat2 prints for it, which is what every
@@ -607,7 +629,13 @@ def plain(value, top=True):
         return [plain(v, top) for v in value]
     if isinstance(value, bytes):
         return list(value)
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if isinstance(value, str):
+        # A C STRING ENDS AT ITS FIRST NUL, and vat2 printed it that way:
+        # vpp_papi can hand a fixed-size string field back with its padding.
+        # Found looking for #530's NUL, which came through cli() - a field
+        # that kept its padding would have been the same defect by this path.
+        return value.split("\x00", 1)[0]
+    if value is None or isinstance(value, (bool, int, float)):
         return value
     return str(value)
 
@@ -717,6 +745,7 @@ class Papi(Vat2):
         # Only what the VTY sends (#529), made once and kept; the files as
         # they are when that cannot be had.
         pruned = definitions_file(files)
+        quiet_papi_teardown()
         try:
             conn = papi.VPPApiClient(apifiles=[pruned] if pruned else files,
                                      use_socket=True,
@@ -857,7 +886,12 @@ class Papi(Vat2):
             if question or failed.state == CANNOT_SEND:
                 return None
             return False, failed.reason
-        got = (True, answer.reply or "")
+        # NO NUL IN A SCREEN, as vppctl prints none: VPP formats some names
+        # with their C terminator inside the line - `show lcp`'s itf-pair rows
+        # carried "enp6s18\x00" on the X520 bench (0.148.1), and the VTY read
+        # every card's Linux name as differing from its own. vppctl's output
+        # of the same screen has no such byte.
+        got = (True, (answer.reply or "").replace("\x00", ""))
         if question and self._dumps is not None:
             self._dumps[key] = got
         return got

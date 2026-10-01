@@ -936,5 +936,38 @@ _nv.why_vat2 = "PRISMA_API=vat2"
 check(_nv.cli("show version") is None,
       "with no connection, None: the caller runs vppctl as it always did")
 
+print("\n=== a papi string ends at its first NUL, as vat2 printed it ===")
+import collections as _c
+_Pair = _c.namedtuple("lcp_itf_pair_details", "phy_sw_if_index host_if_name netns")
+_r = vppapi.plain(_Pair(1, "enp6s18\x00", "\x00\x00"))
+check(_r["host_if_name"] == "enp6s18" and _r["netns"] == "",
+      f"a fixed-size field's padding is not part of the name: {_r}")
+check(vppapi.plain("a\x00b") == "a" and vppapi.plain("plain") == "plain",
+      "everything after the first NUL goes, and a string without one is untouched")
+
+print("\n=== a screen over cli_inband carries no NUL, as vppctl's carries none ===")
+class _Ans:
+    reply = "itf-pair: [0] enp6s18\x00 tap4096 enp6s18\x00 10 type tap\n"
+_pc = vppapi.Papi.__new__(vppapi.Papi)
+_pc._dumps = None
+_pc._defined = lambda m: True
+_pc._send = lambda m, a, q: (None, _Ans())
+check(_pc.cli("show lcp") == (True, "itf-pair: [0] enp6s18 tap4096 enp6s18 10 type tap\n"),
+      f"the terminator VPP prints inside a row is not part of the screen: {_pc.cli('show lcp')!r}")
+
+print("\n=== vpp_papi's teardown message, and only it, is dropped ===")
+import logging as _lg
+vppapi.quiet_papi_teardown(); vppapi.quiet_papi_teardown()
+_root = _lg.getLogger()
+check(sum(isinstance(f, vppapi._PapiTeardown) for f in _root.filters) == 1,
+      "the filter is put on the root logger once, however often it is asked")
+_rec = lambda m: _lg.LogRecord("root", _lg.ERROR, __file__, 1, m, None, None)
+check(_root.filter(_rec("select failed")) is False
+      and _root.filter(_rec("socket gone")) is True,
+      "\"select failed\" is dropped and any other record still reaches stderr")
+check(vppapi._PapiTeardown().filter(_rec("select failed")) is False,
+      "_PapiTeardown.filter answers the teardown record")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
