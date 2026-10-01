@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.148.6 - the API answers the hostname, and its console does not hold the status
+
+### Fixed
+
 * **The API's hostname, and a console that held the status.**
   ([#532](https://github.com/andrediashexa/hexarouting/issues/532))
   Found by the web interface against the X520 bench. `GetVersion` and
