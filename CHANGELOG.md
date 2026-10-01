@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.0 - a connected route leaked between VRFs reaches the dataplane
+
+### Fixed
+
 * **A connected route leaked into another VRF now reaches the dataplane.**
   ([#541](https://github.com/andrediashexa/hexarouting/issues/541))
   FRR installs a route leaked through the other VRF itself - a tenant's
