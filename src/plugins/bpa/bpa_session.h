@@ -283,8 +283,23 @@ typedef struct
   bpa_sub_t *subs;		  /* pool of per-subscriber port bitmaps */
   bpa_dyn_t *dyn;	  /* dynamic block state, indexed by pool index */
   uword *sub_by_idx;		  /* sub_idx -> index into subs */
-  bpa_log_event_t *log_queue; /* queued by the dataplane, drained by the process */
+  /*
+   * Queued by the dataplane, drained by the process: a ring of
+   * BPA_LOG_QUEUE_MAX events made once at start, one writer (this thread)
+   * and one reader (the main thread's process), the two indexes free-running
+   * (#547). It was a vector the worker grew and the process reset with no
+   * synchronisation between them, and every growth took the main heap's lock
+   * while the main thread was copying megabytes of spill under it: 78% of a
+   * 30k pps burst was lost at rx on the #475 bench. Full, an event is dropped
+   * and counted in log_dropped; the worker never allocates and never waits.
+   */
+  bpa_log_event_t *log_ring;
+  volatile u32 log_head; /* written by this thread */
+  volatile u32 log_tail; /* written by the draining process */
   u64 log_dropped;
+  /* One exhaustion record per subscriber per interval (#549), made on first
+   * use: a worker that never refuses a subscriber carries no table. */
+  struct bpa_exhaust_t_ *exhaust;
   /*
    * The identity each HELD block's allocation record named, so its release
    * record can say the same thing (#397). Per thread because a block belongs

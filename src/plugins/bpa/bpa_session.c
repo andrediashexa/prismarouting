@@ -1,6 +1,7 @@
 /* bpa_session.c - per-worker session table. */
 
 #include "bpa.h"
+#include "bpa_exhaust.h"
 #include "bpa_esp.h"
 #include "bpa_pptp.h"
 #include "bpa_rewrite.h"
@@ -48,6 +49,14 @@ bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
 			 bm->hash_memory);
 
   pt->sub_by_idx = hash_create (0, sizeof (uword));
+  /* Made here, on the main thread at start, so that logging never allocates
+   * on a worker (#547, #549). */
+  pt->log_ring = clib_mem_alloc_aligned (
+    BPA_LOG_QUEUE_MAX * sizeof (bpa_log_event_t), CLIB_CACHE_LINE_BYTES);
+  pt->log_head = pt->log_tail = 0;
+  pt->exhaust = clib_mem_alloc_aligned (sizeof (bpa_exhaust_t),
+					CLIB_CACHE_LINE_BYTES);
+  clib_memset (pt->exhaust, 0, sizeof (bpa_exhaust_t));
   pt->initialised = 1;
   return 0;
 }
@@ -1637,4 +1646,44 @@ VLIB_REGISTER_NODE (bpa_expire_node) = {
   .function = bpa_expire_process,
   .type = VLIB_NODE_TYPE_PROCESS,
   .name = "bpa-expire-process",
+};
+
+/*
+ * not a unit: a VLIB process loop, which exists only inside a running VPP;
+ * what it calls is bpa_log_stream_pending() and bpa_log_stream_service(),
+ * which test/test_bpa_log_tcp.c drives, and lab/syslog-stall-heap.sh measures
+ * the backlog draining through it.
+ *
+ * The TCP log streams, on their own clock (#547): every millisecond while one
+ * has something to send, once a second when neither has. On the expiry
+ * process's one-second clock a stream sent one socket buffer a second. Each
+ * pass sends until the socket would block and reads at most a few 1 MB chunks
+ * of backlog: bounded work on the main thread, and none on a worker.
+ *
+ * Throughput from the cadence and not from a bigger socket buffer: a 4 MB
+ * SO_SNDBUF doubled the drain in lab/syslog-stall-heap.sh, and put that much
+ * more in the kernel of a connection a stopped box abandons - which
+ * lab/ipfix-outbuf.sh caught as a release that reached neither the stop nor
+ * the replay. What the kernel took is out of the spill's reach.
+ */
+static uword
+bpa_log_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
+{
+  while (1)
+    {
+      int busy = bpa_log_stream_pending (&bpa_log_tcp)
+		 || bpa_log_stream_pending (&bpa_log_syslog);
+
+      vlib_process_wait_for_event_or_clock (vm, busy ? 0.001 : 1.0);
+      vlib_process_get_events (vm, 0);
+      bpa_log_tcp_service (vlib_time_now (vm));
+      bpa_log_stream_service (&bpa_log_syslog, vlib_time_now (vm));
+    }
+  return 0;
+}
+
+VLIB_REGISTER_NODE (bpa_log_process_node) = {
+  .function = bpa_log_process,
+  .type = VLIB_NODE_TYPE_PROCESS,
+  .name = "bpa-log-process",
 };

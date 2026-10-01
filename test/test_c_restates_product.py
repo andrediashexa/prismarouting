@@ -253,12 +253,13 @@ harnesses = sorted(glob.glob(os.path.join(TEST, "test_bpa_*.c")))
 # bucket, and 27 since #472 gave the session keys, a subscriber's blocks,
 # the worker ownership and the L4 id theirs, and 28 since #489 gave the
 # box's own addresses one, and 29 since #492 gave the exporter's framing
-# one, and 30 since #493 gave the exporter's view of its peer one. The number is written down so that a glob that stops
+# one, and 30 since #493 gave the exporter's view of its peer one, and 31
+# since #549 gave the once-per-interval exhaustion rule one. The number is written down so that a glob that stops
 # matching goes red instead of quietly reading fewer files than the
 # repository has - which is what this line is for, and why it moves with the
 # harnesses rather than being loosened to a floor.
-check(len(harnesses) == 30,
-      f"{len(harnesses)} C harnesses found, not the 30 this repository has - "
+check(len(harnesses) == 31,
+      f"{len(harnesses)} C harnesses found, not the 31 this repository has - "
       f"the glob is probably wrong and this suite is reading too little")
 
 n_checks = 0

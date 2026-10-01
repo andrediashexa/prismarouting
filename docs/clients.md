@@ -28,21 +28,37 @@ an API client sees - a health status for the export, its drop counters in
 `SystemInfo` or the telemetry stream, events - it is announced in this section
 before the release that carries it.
 
-## Next - CGNAT log export stops endangering the dataplane (in progress)
+## 0.149.7 - CGNAT log export stops endangering the dataplane
 
-Not released yet; this entry gets its version and is completed when it is.
 Fixes #547 and #549.
 
-* **Contract:** expected unchanged.
-* **Behaviour:** a stalled or absent syslog collector could exhaust the
-  dataplane's memory and crash it (0.149.4), and with a stalled collector the
-  box lost up to 78% of packets at receive (measured on 0.149.5). Exhaustion
-  events are aggregated per subscriber instead of one per refused packet.
-* **New counters:** the logging drop counters (records dropped at the box,
-  lost at transmit, spill capped). Where they appear - `show cgnat logging`
-  only, or also an rpc - whether they are cumulative since the dataplane
-  started, and whether syslog and IPFIX are counted apart, is written here
-  when the release is cut.
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`). No field,
+  rpc or event was added or changed.
+* **Behaviour:** a stalled or absent syslog collector no longer grows the
+  dataplane's memory (a 200 MB spill replays with the main heap moving 2 MB)
+  and no longer delays workers. A slow collector keeps its connection. The
+  boot marker goes into a TCP log stream once per boot. Exhaustion
+  (natEvent 12) is reported once per subscriber per 10 s per worker, not
+  once per refused packet. Nothing a client reads over the API changes.
+* **New counters: `show cgnat logging` only.** None is in `SystemInfo`, the
+  telemetry stream or any rpc (that waits for #550, announced above). All
+  are cumulative since the dataplane started (a dataplane restart zeroes
+  them), except the spill file's size, which is a gauge read when asked.
+  - `exhaustion` - repeats not reported: one figure for the box, all
+    workers summed; it is IPFIX and syslog together (the event is held back
+    before either transport sees it).
+  - `queue` - events dropped because a worker's queue was full: one figure
+    for all workers, before either transport (not split by transport).
+  - `transmit` - packets the egress interface toward the IPFIX collector
+    failed to send, since its counters were last cleared, **from every
+    sender on that interface**, not only the log.
+  - `file`, once per TCP stream (the IPFIX-over-TCP stream and the syslog
+    stream, **counted apart**): bytes in the spill now (gauge), the 256 MB
+    ceiling, bytes dropped over it, bytes skipped to find a message, stalls.
+    Bytes dropped over the ceiling are also added to that stream's existing
+    `dropped` figure, which the statistics segment already published.
+* **Lab box:** .166 is upgraded after the release; announced to the
+  prisma-web session before it runs.
 
 ## 0.149.6 - this file
 

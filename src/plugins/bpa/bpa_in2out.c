@@ -9,6 +9,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_exhaust.h"
 #include "bpa_errors.h"
 #include "bpa_esp.h"
 #include "bpa_ftp.h"
@@ -359,9 +360,13 @@ VLIB_NODE_FN (bpa_in2out_node)
 				    sub_idx, w, nw, &blk, &is_new)))
 	    {
 	      /* RFC 8158 natEvent 12: beyond compliance, this is the alarm that
-	       * gets ahead of the support call. */
-	      bpa_log_queue_event (pt, BPA_NAT_EVENT_PORTS_EXHAUSTED, src_host,
-				   0, 0, 0, pool_index);
+	       * gets ahead of the support call. Once per subscriber per
+	       * BPA_EXHAUST_IVL, decided here on the frame's own clock: no queue
+	       * entry, no system call, for the refused packets in between - 1.6
+	       * million records for 772 subscribers on the #475 bench (#549). */
+	      if (bpa_exhaust_report (pt->exhaust, src_host, now))
+		bpa_log_queue_event (pt, BPA_NAT_EVENT_PORTS_EXHAUSTED, src_host,
+				     0, 0, 0, pool_index);
 	      b[0]->error = node->errors[BPA_IN2OUT_ERROR_NO_BLOCK];
 	      goto trace;
 	    }

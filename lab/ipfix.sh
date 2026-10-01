@@ -164,6 +164,18 @@ vppctl packet-generator new "name s12 limit 1 node ip4-input interface pg0 size 
 vppctl packet-generator enable >/dev/null; sleep 1
 vppctl packet-generator delete s12 >/dev/null 2>&1
 
+# #549: the same subscriber, 30 packets more inside the interval. Logged once
+# per refused PACKET, a fill run on the #475 bench made 1,621,448 records for
+# 772 subscribers; once per subscriber per interval, these 30 are counted on
+# the logging screen and none of them is a record.
+vppctl packet-generator new "name s12b limit 30 node ip4-input interface pg0 size 60-60 \
+    data { UDP: 100.64.0.12 -> 8.8.8.8 \
+           UDP: 40001 -> 53 \
+           incrementing 8 }"
+vppctl packet-generator enable >/dev/null; sleep 1
+vppctl packet-generator delete s12b >/dev/null 2>&1
+LOG_EXH=$(vppctl show bpa logging 2>&1 | tr -d '\r')
+
 echo
 echo "=== forcing expiry to produce the 3 releases ==="
 vppctl bpa timeouts udp 2
@@ -341,6 +353,11 @@ EARLY=$(printf '%s\n' "$C" | sed -n 's/^EARLY DATA SETS: \([0-9][0-9]*\) .*/\1/p
 expect "no record reached the collector before its template (got ${EARLY:-none})" \
   test "${EARLY:-1}" -eq 0
 expect_in "allocations arrived" "ALLOCATION" "$C"
+EXH_RECORDS=$(printf '%s\n' "$C" | sed -n 's/.*, \([0-9][0-9]*\) exhaustions).*/\1/p' | tail -1)
+expect "31 refused packets of one subscriber were ONE exhaustion record (got ${EXH_RECORDS:-none}) (#549)" \
+  test "${EXH_RECORDS:-0}" -eq 1
+expect_in "and the logging screen counts the 30 repeats it did not send" \
+  "exhaustion  one record per subscriber per 10s: 30 repeats not reported" "$LOG_EXH"
 expect_in "de-allocations arrived" "DEALLOCATION" "$C"
 expect_in "every allocation had its release" "Every allocation had its matching" "$C"
 

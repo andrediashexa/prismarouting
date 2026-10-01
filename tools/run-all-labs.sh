@@ -328,7 +328,7 @@ OFF_MODES="audit:off backplane:off policy:off policy-a:off policy-b:off policy-c
            nat-behaviour:address-dependent oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
            utilisation:off vrf:off vrrp:off ha-failover:off
-           syslog-reconnect:off identity-empty:off snmp-traps:off
+           syslog-reconnect:off syslog-spill-resync:off identity-empty:off snmp-traps:off
            hostname:off monitor-interface:off"
 
 # What a lab is given for its off run, or nothing when it has none.

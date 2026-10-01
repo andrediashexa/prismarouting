@@ -25,7 +25,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_subblock \
       $(BUILD)/test_bpa_workers \
       $(BUILD)/test_bpa_local \
-      $(BUILD)/test_bpa_frame \
+      $(BUILD)/test_bpa_frame $(BUILD)/test_bpa_exhaust \
       $(BUILD)/test_bpa_sock
 	@sh tools/run-tests.sh
 
@@ -86,6 +86,12 @@ $(BUILD)/test_bpa_local: test/test_bpa_local.c \
                    src/plugins/bpa/bpa_local.h test/bpa_shim.h test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_local.c
+
+# One exhaustion record per subscriber per interval (#549).
+$(BUILD)/test_bpa_exhaust: test/test_bpa_exhaust.c \
+                   src/plugins/bpa/bpa_exhaust.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_exhaust.c
 
 # The length of the message at the front of an exporter's buffer (#492).
 $(BUILD)/test_bpa_frame: test/test_bpa_frame.c \
@@ -265,7 +271,7 @@ $(BUILD)/test_bpa_log_tcp: test/test_bpa_log_tcp.c \
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_log_tcp.c src/plugins/bpa/bpa_log_syslog.c \
-	    src/plugins/bpa/bpa_identity.c
+	    src/plugins/bpa/bpa_identity.c -lpthread
 
 # The configuration trail's hex reader, which is the one function in
 # bpa_audit.c that touches neither format(), nor vppinfra's SHA-2, nor the

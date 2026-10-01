@@ -754,6 +754,63 @@ bending the UDP exporter around.
   stop, all 82917 replayed on the next connection, and **one record decoded out
   of them** - the file began with the tail of a message, and everything behind
   it misframed.
+* A front that does **not** begin at a message boundary **MUST** be skipped to
+  the first whole message, and the skipped bytes counted (#547). Leaving it
+  where it was made it permanent: nothing behind it could be dropped as sent,
+  so the whole buffer went back to the spill file and out again on every
+  connection. On the #475 bench a spill written by 0.140.2 (the #492 cut)
+  survived every upgrade, and the lab collector stored 55 million boot
+  markers in three days, nearly all copies. `show cgnat logging` now has a
+  `file` line: the bytes in the spill file now (the `spill` line's figures are
+  totals since start), the bytes resynchronised, and the stalls below.
+  Measured in `lab/syslog-spill-resync.sh`.
+* The spill file **MUST NOT** be read whole (#547). A 573 MB spill read whole
+  aborted VPP for want of heap. It is replayed a chunk at a time - at most
+  1 MB of whole messages - from an offset saved beside it
+  (`<spill>.off`), records written meanwhile go to its end, behind
+  everything older, and the buffer spills at 8 MB whatever the collector is
+  doing.
+* What `show cgnat logging` says of all this, line by line (#547, #549):
+
+  ```
+    exhaustion  one record per subscriber per 10s: 1620428 repeats not reported
+    queue       0 event(s) dropped with a worker's queue full (8192 each)
+    transmit    ens20: 71107 packet(s) the interface failed to send, from every sender on it
+    ...
+    spill       ... bytes on disk, ... replayed, ... dropped
+    file        1755424 bytes now of 256 MB at most, 0 dropped over it, 124 resynced, 3 stalls
+  ```
+
+  `queue`: a worker never waits for the log - its queue is a ring of 8192
+  events made at start, and a full one drops the event and counts it here.
+  `transmit`: the exporter cannot see a packet the NIC did not send; the
+  egress interface's transmit node can, so its failures since the counters
+  were cleared are shown - for every sender on that interface, which is why
+  the line says so, and "transmit    no interface reaches the collector" when
+  the FIB has no route to it. `file`: the spill file now, its ceiling, what
+  the ceiling refused ("dropped over it"), what was skipped to find a message,
+  and how often a stalled collector had the buffer moved to disk.
+* Exhaustion (natEvent 12) is reported **once per subscriber per 10 s** on each
+  worker, not per refused packet (#549): 772 subscribers without a block made
+  1,621,448 records in one run. `show cgnat logging` counts the repeats not
+  reported.
+* A worker **MUST NOT** allocate or wait for the log (#547): its event queue is
+  a ring of 8192 made at start, one writer and one reader, and a full ring
+  drops the event and counts it (`queue` line). The TCP streams run on
+  `bpa-log-process`, every millisecond while they have something to send and
+  once a second when not (the kernel's own send buffer, not a bigger one: what
+  the kernel holds is lost with a connection a stopped box abandons), and write the boot marker
+  once per boot; the spill file stops at 256 MB, past which records are
+  dropped and counted. Moving the transport out of VPP altogether is #550.
+* A connected stream **MUST NOT** spill while its collector is taking bytes.
+  Spilling at the first EAGAIN meant a backlog over 1 MB - every replay of a
+  spill over 1 MB - went back to the file and dropped its connection
+  mid-message on each tick the collector was slower than the box, and never
+  drained. What the socket has not started goes to the file once the
+  collector has taken nothing for 10 s, or past 8 MB whatever it is doing -
+  one write() on the main thread, no more - and the message on the wire
+  stays, and so does the connection: a slow collector is never dropped for
+  being slow.
 
 Three of those statements held only in prose. Each was mutated in
 `src/plugins/bpa/bpa_log_tcp.c`, and every suite, `lab/ipfix-tcp.sh` and

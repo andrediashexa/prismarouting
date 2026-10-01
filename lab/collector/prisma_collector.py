@@ -48,6 +48,10 @@ except ImportError:  # pragma: no cover - python < 3.9
 
 DB_PATH = os.environ.get("PRISMA_COLLECTOR_DB", "/var/lib/prisma-collector/events.db")
 LOCAL_TZ = os.environ.get("PRISMA_COLLECTOR_TZ", "America/Sao_Paulo")
+# A connection that sends nothing for this long is closed (#547). A box that
+# gave up on a connection - its FIN behind data the collector had not read -
+# left it open here for ever: 193 of them on the #475 bench, a thread each.
+IDLE_SECS = int(os.environ.get("PRISMA_COLLECTOR_IDLE", "300"))
 
 # The information elements this box exports (docs/logging.md) and a few a
 # session exporter would add. Anything else is kept by number.
@@ -334,6 +338,12 @@ COLUMNS = ("ts_ms", "via", "exporter", "kind", "subscriber", "public",
 def open_store(path):
     """The SQLite file, with its one table and the indexes the queries use."""
     db = sqlite3.connect(path, check_same_thread=False)
+    # WAL, and fsync at checkpoints rather than at each commit (#547): every
+    # handler commits under one lock, and on the #475 bench a commit per chunk
+    # of a 10 GB rollback-journal file was what left 411 threads waiting and
+    # the box's window shut. An event is still on disk before the next is read.
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA synchronous=NORMAL")
     db.execute("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, "
                + ", ".join(COLUMNS) + ")")
     db.execute("CREATE INDEX IF NOT EXISTS ev_pub ON events (public, ts_ms)")
@@ -576,8 +586,12 @@ class IpfixHandler(socketserver.BaseRequestHandler):
 class SyslogHandler(socketserver.BaseRequestHandler):
     def handle(self):
         buf, exporter = b"", self.client_address[0]
+        self.request.settimeout(IDLE_SECS)
         while True:
-            chunk = self.request.recv(65536)
+            try:
+                chunk = self.request.recv(65536)
+            except socket.timeout:
+                return
             if not chunk:
                 return
             msgs, buf, skipped = syslog_frames(buf + chunk)

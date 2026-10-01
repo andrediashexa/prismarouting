@@ -246,5 +246,38 @@ check(front.split("Boots seen")[0].count("BOOT-MARKER") == 0,
       "the latest events still list every repeated boot marker")
 print("  local time, escaping, the answer, and the three pages")
 
+print("\n=== a store that does not make every handler wait (#547) ===")
+import socket as _socket, tempfile as _tempfile, threading as _threading, time as _time
+with _tempfile.TemporaryDirectory() as _d:
+    _db = pc.open_store(os.path.join(_d, "e.db"))
+    _mode = _db.execute("PRAGMA journal_mode").fetchone()[0]
+    _sync = _db.execute("PRAGMA synchronous").fetchone()[0]
+    check(_mode == "wal" and _sync == 1,
+          f"the store is WAL with synchronous NORMAL, not {_mode}/{_sync}: a "
+          "rollback journal and a sync per commit is what stalled the bench")
+    _db.close()
+
+# A connection that sends nothing is closed after IDLE_SECS, so a box that
+# abandoned it does not hold a thread here for ever.
+pc.IDLE_SECS = 1
+class _Srv(pc.TCPServer):
+    address_family = _socket.AF_INET
+_srv = _Srv(("127.0.0.1", 0), pc.SyslogHandler)
+_srv.db = pc.open_store(":memory:")
+_threading.Thread(target=_srv.serve_forever, daemon=True).start()
+_c = _socket.create_connection(_srv.server_address)
+_c.settimeout(5)
+_t0 = _time.time()
+try:
+    _closed = _c.recv(1) == b""
+except _socket.timeout:
+    _closed = False
+_took = _time.time() - _t0
+check(_closed and _took < 4,
+      f"an idle connection was not closed after IDLE_SECS ({_took:.1f}s)")
+_c.close(); _srv.shutdown(); _srv.server_close()
+check(isinstance(pc.IDLE_SECS, int), "IDLE_SECS is a number of seconds")
+print("  WAL and NORMAL; an idle connection closed")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
