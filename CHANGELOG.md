@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.4 - the API comes back after an upgrade recreates the VTY's container
+
+### Fixed
+
 * **After an upgrade recreated the management container, the API could stay
   down for minutes.** ([#546](https://github.com/andrediashexa/hexarouting/issues/546))
   `prisma-backplane attach` counted on the old container's veth leaving with
