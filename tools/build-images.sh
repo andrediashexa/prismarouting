@@ -87,7 +87,9 @@ cp "$REPO/appliance/prismash-launcher" "$CTX/appliance/"
 # The management API's contract and the generator of its stubs (#532): the
 # image builds the stubs itself, with the protoc of its own Debian.
 mkdir -p "$CTX/api" "$CTX/tools"
-cp -r "$REPO/api/prisma" "$CTX/api/"
+# All of api/, not api/prisma alone: gen-api.sh compiles every contract under
+# it, and 0.149.2's first gate failed here when api/health arrived (#533).
+cp -r "$REPO"/api/* "$CTX/api/"
 cp "$REPO/tools/gen-api.sh" "$CTX/tools/"
 
 echo "==> dataplane image, VPP $VPP_VERSION with this tree's plugin"
